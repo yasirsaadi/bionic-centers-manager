@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
+import { BranchGate } from "@/components/BranchGate";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
@@ -42,8 +43,6 @@ function Router() {
   }
 
   if (!user) {
-    // Redirect logic handled by backend auth usually, but here we can show a welcome/login screen
-    // For now, let's assume auth redirect happens automatically or show a simple login button
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 gap-4" dir="rtl">
         <h1 className="text-3xl font-display font-bold text-primary">المركز الطبي</h1>
@@ -56,19 +55,21 @@ function Router() {
   }
 
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/patients" component={PatientsList} />
-        <Route path="/patients/new" component={CreatePatient} />
-        <Route path="/patients/:id/edit" component={EditPatient} />
-        <Route path="/patients/:id" component={PatientDetails} />
-        <Route path="/reports" component={Reports} />
-        <Route path="/branches" component={Branches} />
-        <Route path="/branches/:id" component={BranchDetails} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <BranchGate>
+      <Layout>
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/patients" component={PatientsList} />
+          <Route path="/patients/new" component={CreatePatient} />
+          <Route path="/patients/:id/edit" component={EditPatient} />
+          <Route path="/patients/:id" component={PatientDetails} />
+          <Route path="/reports" component={Reports} />
+          <Route path="/branches" component={Branches} />
+          <Route path="/branches/:id" component={BranchDetails} />
+          <Route component={NotFound} />
+        </Switch>
+      </Layout>
+    </BranchGate>
   );
 }
 

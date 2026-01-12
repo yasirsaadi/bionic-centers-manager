@@ -3,6 +3,19 @@ import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
+// Helper to get branch session from sessionStorage
+function getBranchSession() {
+  const stored = sessionStorage.getItem("branch_session");
+  if (stored) {
+    try {
+      return JSON.parse(stored) as { branchId: number; branchName: string; isAdmin: boolean };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // Helper to calculate financials client-side for lists if needed, 
 // though typically backend would aggregate this.
 export type PatientWithDetails = {
@@ -21,9 +34,19 @@ export function usePatients() {
   return useQuery({
     queryKey: [api.patients.list.path],
     queryFn: async () => {
-      const res = await fetch(api.patients.list.path, { credentials: "include" });
+      const branchSession = getBranchSession();
+      const res = await fetch(api.patients.list.path, { 
+        credentials: "include",
+        headers: branchSession ? { "X-Branch-Id": String(branchSession.branchId) } : {},
+      });
       if (!res.ok) throw new Error("فشل في جلب بيانات المرضى");
-      return api.patients.list.responses[200].parse(await res.json());
+      const patients = api.patients.list.responses[200].parse(await res.json());
+      
+      // Filter by branch on client side if not admin
+      if (branchSession && !branchSession.isAdmin && branchSession.branchId > 0) {
+        return patients.filter(p => p.branchId === branchSession.branchId);
+      }
+      return patients;
     },
   });
 }

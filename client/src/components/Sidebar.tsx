@@ -1,11 +1,31 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart, Building2 } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart, Building2, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { clearBranchSession } from "@/components/BranchGate";
+import { useState, useEffect } from "react";
+
+interface BranchSession {
+  branchId: number;
+  branchName: string;
+  isAdmin: boolean;
+}
 
 export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
+  const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("branch_session");
+    if (stored) {
+      try {
+        setBranchSession(JSON.parse(stored));
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const menuItems = [
     { label: "لوحة التحكم", icon: LayoutDashboard, href: "/" },
@@ -47,10 +67,27 @@ export function Sidebar() {
         })}
       </nav>
 
+      {branchSession && (
+        <div className="px-6 py-4 border-t border-border/50 bg-slate-50/50">
+          <div className="flex items-center gap-2 text-sm">
+            {branchSession.isAdmin ? (
+              <ShieldCheck className="w-4 h-4 text-primary" />
+            ) : (
+              <Building2 className="w-4 h-4 text-muted-foreground" />
+            )}
+            <span className="font-medium text-slate-700">{branchSession.branchName}</span>
+          </div>
+        </div>
+      )}
+
       <div className="p-6 border-t border-border/50">
         <button 
-          onClick={() => logout()}
+          onClick={() => {
+            clearBranchSession();
+            logout();
+          }}
           className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-colors duration-200"
+          data-testid="button-logout"
         >
           <LogOut className="w-5 h-5" />
           <span className="font-medium">تسجيل الخروج</span>

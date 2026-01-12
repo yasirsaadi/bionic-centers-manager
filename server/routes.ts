@@ -65,6 +65,43 @@ export async function registerRoutes(
     }
   });
 
+  // Branch password verification
+  app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
+    const { branchId, password } = req.body;
+    
+    // Check if admin login
+    if (branchId === "admin" || branchId === 0) {
+      const adminCode = process.env.ADMIN_CODE;
+      if (password === adminCode) {
+        return res.json({ 
+          branchId: 0, 
+          branchName: "مسؤول النظام",
+          isAdmin: true 
+        });
+      }
+      return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
+    }
+    
+    // Branch passwords stored as BRANCH_PASSWORD_1, BRANCH_PASSWORD_2, etc.
+    const branchPassword = process.env[`BRANCH_PASSWORD_${branchId}`];
+    
+    if (!branchPassword) {
+      return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
+    }
+    
+    if (password === branchPassword) {
+      const branches = await storage.getBranches();
+      const branch = branches.find(b => b.id === Number(branchId));
+      return res.json({ 
+        branchId: Number(branchId), 
+        branchName: branch?.name || "فرع غير معروف",
+        isAdmin: false 
+      });
+    }
+    
+    res.status(401).json({ message: "كلمة السر غير صحيحة" });
+  });
+
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
