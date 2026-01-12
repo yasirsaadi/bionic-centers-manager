@@ -1,22 +1,34 @@
 import { db } from "./db";
 import {
-  patients, payments, documents,
+  patients, payments, documents, visits, branches, users,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
-  type Document, type InsertDocument
+  type Document, type InsertDocument,
+  type Visit, type InsertVisit,
+  type Branch, type InsertBranch
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, sum } from "drizzle-orm";
 
 export interface IStorage {
+  // Branches
+  getBranches(): Promise<Branch[]>;
+  createBranch(branch: InsertBranch): Promise<Branch>;
+  getBranch(id: number): Promise<Branch | undefined>;
+
   // Patients
-  getPatients(): Promise<Patient[]>;
+  getPatients(branchId?: number): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient | undefined>;
   deletePatient(id: number): Promise<void>;
 
+  // Visits
+  getVisitsByPatientId(patientId: number): Promise<Visit[]>;
+  createVisit(visit: InsertVisit): Promise<Visit>;
+
   // Payments
   getPaymentsByPatientId(patientId: number): Promise<Payment[]>;
+  getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
 
@@ -27,8 +39,24 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // Branches
+  async getBranches(): Promise<Branch[]> {
+    return await db.select().from(branches);
+  }
+  async createBranch(insertBranch: InsertBranch): Promise<Branch> {
+    const [branch] = await db.insert(branches).values(insertBranch).returning();
+    return branch;
+  }
+  async getBranch(id: number): Promise<Branch | undefined> {
+    const [branch] = await db.select().from(branches).where(eq(branches.id, id));
+    return branch;
+  }
+
   // Patients
-  async getPatients(): Promise<Patient[]> {
+  async getPatients(branchId?: number): Promise<Patient[]> {
+    if (branchId) {
+      return await db.select().from(patients).where(eq(patients.branchId, branchId)).orderBy(desc(patients.createdAt));
+    }
     return await db.select().from(patients).orderBy(desc(patients.createdAt));
   }
 
@@ -51,22 +79,33 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePatient(id: number): Promise<void> {
-    // Delete related records first (cascade manually if not set in DB)
     await db.delete(payments).where(eq(payments.patientId, id));
     await db.delete(documents).where(eq(documents.patientId, id));
+    await db.delete(visits).where(eq(visits.patientId, id));
     await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  // Visits
+  async getVisitsByPatientId(patientId: number): Promise<Visit[]> {
+    return await db.select().from(visits).where(eq(visits.patientId, patientId)).orderBy(desc(visits.visitDate));
+  }
+  async createVisit(insertVisit: InsertVisit): Promise<Visit> {
+    const [visit] = await db.insert(visits).values(insertVisit).returning();
+    return visit;
   }
 
   // Payments
   async getPaymentsByPatientId(patientId: number): Promise<Payment[]> {
     return await db.select().from(payments).where(eq(payments.patientId, patientId)).orderBy(desc(payments.date));
   }
-
+  async getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]> {
+    // Simplified date filtering for report
+    return await db.select().from(payments).where(eq(payments.branchId, branchId));
+  }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
     const [payment] = await db.insert(payments).values(insertPayment).returning();
     return payment;
   }
-
   async deletePayment(id: number): Promise<void> {
     await db.delete(payments).where(eq(payments.id, id));
   }
@@ -75,12 +114,10 @@ export class DatabaseStorage implements IStorage {
   async getDocumentsByPatientId(patientId: number): Promise<Document[]> {
     return await db.select().from(documents).where(eq(documents.patientId, patientId)).orderBy(desc(documents.uploadedAt));
   }
-
   async createDocument(insertDocument: InsertDocument): Promise<Document> {
     const [document] = await db.insert(documents).values(insertDocument).returning();
     return document;
   }
-
   async deleteDocument(id: number): Promise<void> {
     await db.delete(documents).where(eq(documents.id, id));
   }

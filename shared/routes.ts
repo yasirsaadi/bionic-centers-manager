@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertPatientSchema, insertPaymentSchema, insertDocumentSchema, patients, payments, documents } from './schema';
+import { insertPatientSchema, insertPaymentSchema, insertDocumentSchema, insertVisitSchema, insertBranchSchema, patients, payments, documents, visits, branches } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -15,6 +15,24 @@ export const errorSchemas = {
 };
 
 export const api = {
+  branches: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/branches',
+      responses: {
+        200: z.array(z.custom<typeof branches.$inferSelect>()),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/branches',
+      input: insertBranchSchema,
+      responses: {
+        201: z.custom<typeof branches.$inferSelect>(),
+        400: errorSchemas.validation,
+      },
+    }
+  },
   patients: {
     list: {
       method: 'GET' as const,
@@ -27,7 +45,7 @@ export const api = {
       method: 'GET' as const,
       path: '/api/patients/:id',
       responses: {
-        200: z.custom<typeof patients.$inferSelect & { payments: typeof payments.$inferSelect[], documents: typeof documents.$inferSelect[] }>(),
+        200: z.custom<typeof patients.$inferSelect & { payments: typeof payments.$inferSelect[], documents: typeof documents.$inferSelect[], visits: typeof visits.$inferSelect[] }>(),
         404: errorSchemas.notFound,
       },
     },
@@ -56,6 +74,26 @@ export const api = {
         204: z.void(),
         404: errorSchemas.notFound,
       },
+    },
+    transfer: {
+      method: 'POST' as const,
+      path: '/api/patients/:id/transfer',
+      input: z.object({ branchId: z.number() }),
+      responses: {
+        200: z.custom<typeof patients.$inferSelect>(),
+        404: errorSchemas.notFound,
+      }
+    }
+  },
+  visits: {
+    create: {
+      method: 'POST' as const,
+      path: '/api/visits',
+      input: insertVisitSchema,
+      responses: {
+        201: z.custom<typeof visits.$inferSelect>(),
+        400: errorSchemas.validation,
+      }
     }
   },
   payments: {
@@ -81,9 +119,6 @@ export const api = {
     create: {
       method: 'POST' as const,
       path: '/api/documents',
-      // Input is FormData, simpler to validate on server for file uploads, 
-      // but we can define the metadata schema here if needed.
-      // For simplicity in routes.ts, we usually describe the JSON response.
       responses: {
         201: z.custom<typeof documents.$inferSelect>(),
         400: errorSchemas.validation,
@@ -95,6 +130,20 @@ export const api = {
       responses: {
         204: z.void(),
         404: errorSchemas.notFound,
+      }
+    }
+  },
+  reports: {
+    daily: {
+      method: 'GET' as const,
+      path: '/api/reports/daily/:branchId',
+      responses: {
+        200: z.object({
+          revenue: z.number(),
+          sold: z.number(),
+          paid: z.number(),
+          remaining: z.number()
+        })
       }
     }
   }
