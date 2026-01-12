@@ -267,7 +267,8 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                     <FormControl>
                       <Input 
                         type="number" 
-                        {...field} 
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
                         className="text-left font-mono" 
                         placeholder="0" 
                         data-testid="input-service-cost"
@@ -298,7 +299,8 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                     <FormControl>
                       <Input 
                         type="number" 
-                        {...field} 
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
                         className="text-left font-mono" 
                         placeholder="0" 
                         data-testid="input-initial-payment"
