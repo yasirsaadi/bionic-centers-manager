@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAddVisit } from "@/hooks/use-patients";
+import { api } from "@shared/routes";
 import {
   Dialog,
   DialogContent,
@@ -79,7 +80,8 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/patients', patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       toast({
         title: "تمت إضافة الخدمة بنجاح",
         description: "تم تحديث التكلفة الإجمالية وإضافة الزيارة والدفعة",
