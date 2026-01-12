@@ -69,9 +69,12 @@ export async function registerRoutes(
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
     const { branchId, password } = req.body;
     
+    console.log("Branch verification attempt:", { branchId, passwordLength: password?.length });
+    
     // Check if admin login
     if (branchId === "admin" || branchId === 0) {
       const adminCode = process.env.ADMIN_CODE;
+      console.log("Admin code exists:", !!adminCode);
       if (password === adminCode) {
         return res.json({ 
           branchId: 0, 
@@ -83,7 +86,9 @@ export async function registerRoutes(
     }
     
     // Branch passwords stored as BRANCH_PASSWORD_1, BRANCH_PASSWORD_2, etc.
-    const branchPassword = process.env[`BRANCH_PASSWORD_${branchId}`];
+    const envKey = `BRANCH_PASSWORD_${branchId}`;
+    const branchPassword = process.env[envKey];
+    console.log("Checking branch password:", { envKey, exists: !!branchPassword, branchId, branchIdType: typeof branchId });
     
     if (!branchPassword) {
       return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
