@@ -12,6 +12,7 @@ import PatientsList from "@/pages/PatientsList";
 import CreatePatient from "@/pages/CreatePatient";
 import PatientDetails from "@/pages/PatientDetails";
 import Reports from "@/pages/Reports";
+import Branches from "@/pages/Branches";
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
@@ -60,6 +61,7 @@ function Router() {
         <Route path="/patients/new" component={CreatePatient} />
         <Route path="/patients/:id" component={PatientDetails} />
         <Route path="/reports" component={Reports} />
+        <Route path="/branches" component={Branches} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart, Building2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ export function Sidebar() {
     { label: "سجل المرضى", icon: Users, href: "/patients" },
     { label: "إضافة مريض", icon: UserPlus, href: "/patients/new" },
     { label: "التقارير المالية", icon: FileBarChart, href: "/reports" },
+    { label: "الفروع", icon: Building2, href: "/branches" },
   ];
 
   return (
