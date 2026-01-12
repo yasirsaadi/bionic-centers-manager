@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import { InsertPatient, InsertPayment } from "@shared/schema";
+import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
 // Helper to calculate financials client-side for lists if needed, 
 // though typically backend would aggregate this.
@@ -115,8 +115,6 @@ export function useUploadDocument() {
 
   return useMutation({
     mutationFn: async ({ patientId, formData }: { patientId: number, formData: FormData }) => {
-      // Manually append patientId if not present in formData, or handle via backend logic
-      // Assuming backend expects patientId in the form data
       formData.append("patientId", patientId.toString());
 
       const res = await fetch(api.documents.create.path, {
@@ -133,6 +131,33 @@ export function useUploadDocument() {
       toast({
         title: "تم رفع المستند",
         description: "تمت إضافة الملف إلى سجل المريض",
+      });
+    },
+  });
+}
+
+// POST /api/visits
+export function useAddVisit() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: InsertVisit) => {
+      const res = await fetch(api.visits.create.path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("فشل في تسجيل الزيارة");
+      return api.visits.create.responses[201].parse(await res.json());
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
+      toast({
+        title: "تم تسجيل الزيارة",
+        description: "تمت إضافة الزيارة إلى سجل المريض",
       });
     },
   });

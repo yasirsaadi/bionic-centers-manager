@@ -38,12 +38,17 @@ export default function CreatePatient() {
       age: 0,
       weight: "",
       height: "",
-      medicalCondition: "amputee", // Default
+      medicalCondition: "amputee",
       isAmputee: true,
       isPhysiotherapy: false,
       amputationSite: "",
       diseaseType: "",
       totalCost: 0,
+      injuryDate: "",
+      generalNotes: "",
+      prostheticType: "",
+      treatmentType: "",
+      branchId: 1,
     },
   });
 
@@ -182,37 +187,95 @@ export default function CreatePatient() {
                 )}
               />
 
+              <FormField
+                control={form.control}
+                name="injuryDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>تاريخ الإصابة</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               {conditionType === "amputee" && (
-                <FormField
-                  control={form.control}
-                  name="amputationSite"
-                  render={({ field }) => (
-                    <FormItem className="animate-in fade-in slide-in-from-top-2 duration-300">
-                      <FormLabel>جهة ومستوى البتر</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <FormField
+                    control={form.control}
+                    name="amputationSite"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>جهة ومستوى البتر</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="prostheticType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الطرف الصناعي</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: طرف سفلي ذكي، ركبة ميكانيكية..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               )}
 
               {conditionType === "physiotherapy" && (
-                <FormField
-                  control={form.control}
-                  name="diseaseType"
-                  render={({ field }) => (
-                    <FormItem className="animate-in fade-in slide-in-from-top-2 duration-300">
-                      <FormLabel>تشخيص الحالة / نوع المرض</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="مثال: شلل نصفي، إصابة عمود فقري..." />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <FormField
+                    control={form.control}
+                    name="diseaseType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>تشخيص الحالة / نوع المرض</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="مثال: شلل نصفي، إصابة عمود فقري..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="treatmentType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع العلاج</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: علاج طبيعي، تأهيل حركي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               )}
+
+              <FormField
+                control={form.control}
+                name="generalNotes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ملاحظات عامة</FormLabel>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} placeholder="أي ملاحظات إضافية عن الحالة..." />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               
               <FormField
                 control={form.control}

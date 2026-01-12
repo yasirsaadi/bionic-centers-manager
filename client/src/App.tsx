@@ -11,7 +11,7 @@ import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
 import CreatePatient from "@/pages/CreatePatient";
 import PatientDetails from "@/pages/PatientDetails";
-import Login from "@/pages/Login"; // Assuming this might be needed, else generic auth handles it
+import Reports from "@/pages/Reports";
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
@@ -59,6 +59,7 @@ function Router() {
         <Route path="/patients" component={PatientsList} />
         <Route path="/patients/new" component={CreatePatient} />
         <Route path="/patients/:id" component={PatientDetails} />
+        <Route path="/reports" component={Reports} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

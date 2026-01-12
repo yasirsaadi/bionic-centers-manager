@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, Activity } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
@@ -11,17 +11,18 @@ export function Sidebar() {
     { label: "لوحة التحكم", icon: LayoutDashboard, href: "/" },
     { label: "سجل المرضى", icon: Users, href: "/patients" },
     { label: "إضافة مريض", icon: UserPlus, href: "/patients/new" },
+    { label: "التقارير المالية", icon: FileBarChart, href: "/reports" },
   ];
 
   return (
     <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
-      <div className="p-8 flex items-center gap-3 border-b border-border/50">
+      <div className="p-6 flex items-center gap-3 border-b border-border/50">
         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-primary/30 shadow-lg">
           <Activity className="w-6 h-6" />
         </div>
         <div>
-          <h1 className="font-display font-bold text-xl text-primary">المركز الطبي</h1>
-          <p className="text-xs text-muted-foreground font-body">للأطراف الصناعية</p>
+          <h1 className="font-display font-bold text-lg text-primary leading-tight">مركز بايونك</h1>
+          <p className="text-xs text-muted-foreground font-body">للأطراف الصناعية والعلاج الطبيعي</p>
         </div>
       </div>
 

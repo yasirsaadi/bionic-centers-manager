@@ -13,9 +13,12 @@ import {
   User, 
   Upload, 
   Download,
-  Trash2
+  Calendar,
+  FileDown,
+  ClipboardList
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
+import { VisitModal } from "@/components/VisitModal";
 import { useRef } from "react";
 
 export default function PatientDetails() {
@@ -67,7 +70,15 @@ export default function PatientDetails() {
           <Badge variant={patient.isAmputee ? "default" : "secondary"} className="text-base px-4 py-1.5 h-auto">
             {patient.isAmputee ? "بتر" : "علاج طبيعي"}
           </Badge>
-          {/* Typically Edit button would go here */}
+          <Button 
+            variant="outline" 
+            className="gap-2" 
+            onClick={() => window.print()}
+            data-testid="button-export-pdf"
+          >
+            <FileDown className="w-4 h-4" />
+            تصدير PDF
+          </Button>
         </div>
       </div>
 
@@ -91,12 +102,39 @@ export default function PatientDetails() {
                   <p className="font-semibold text-lg">{patient.height || "--"} سم</p>
                 </div>
               </div>
+              {patient.injuryDate && (
+                <div className="pb-4 border-b border-dashed">
+                  <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
+                  <p className="font-semibold text-base flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-muted-foreground" />
+                    {new Date(patient.injuryDate).toLocaleDateString('ar-IQ')}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-muted-foreground mb-1">التشخيص / الحالة</p>
                 <p className="font-semibold text-base">
                   {patient.isAmputee ? patient.amputationSite : patient.diseaseType}
                 </p>
               </div>
+              {patient.isAmputee && patient.prostheticType && (
+                <div>
+                  <p className="text-muted-foreground mb-1">نوع الطرف الصناعي</p>
+                  <p className="font-semibold text-base">{patient.prostheticType}</p>
+                </div>
+              )}
+              {patient.isPhysiotherapy && patient.treatmentType && (
+                <div>
+                  <p className="text-muted-foreground mb-1">نوع العلاج</p>
+                  <p className="font-semibold text-base">{patient.treatmentType}</p>
+                </div>
+              )}
+              {patient.generalNotes && (
+                <div className="pt-4 border-t border-dashed">
+                  <p className="text-muted-foreground mb-1">ملاحظات عامة</p>
+                  <p className="text-slate-700">{patient.generalNotes}</p>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -131,7 +169,7 @@ export default function PatientDetails() {
               </div>
 
               <div className="pt-4 border-t border-dashed">
-                <PaymentModal patientId={patient.id} />
+                <PaymentModal patientId={patient.id} branchId={patient.branchId} />
               </div>
             </div>
           </Card>
@@ -139,15 +177,51 @@ export default function PatientDetails() {
 
         {/* Right Column: Tabs (Payments, Documents) */}
         <div className="lg:col-span-2">
-          <Tabs defaultValue="payments" className="w-full">
-            <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm">
-              <TabsTrigger value="payments" className="flex-1 max-w-[150px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
+          <Tabs defaultValue="visits" className="w-full">
+            <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm flex-wrap gap-1">
+              <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
+                سجل الزيارات
+              </TabsTrigger>
+              <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 سجل المدفوعات
               </TabsTrigger>
-              <TabsTrigger value="documents" className="flex-1 max-w-[150px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
-                المستندات والتقارير
+              <TabsTrigger value="documents" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
+                المستندات
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="visits" className="space-y-4">
+              <div className="flex justify-end mb-4">
+                <VisitModal patientId={patient.id} branchId={patient.branchId} />
+              </div>
+              <Card className="overflow-hidden border-border/60 shadow-sm">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b">
+                    <tr>
+                      <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">التفاصيل</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {patient.visits?.length === 0 ? (
+                      <tr><td colSpan={3} className="p-8 text-center text-muted-foreground">
+                        <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                        لا يوجد زيارات مسجلة
+                      </td></tr>
+                    ) : (
+                      patient.visits?.map((visit) => (
+                        <tr key={visit.id} className="hover:bg-slate-50/50">
+                          <td className="p-4 text-slate-500">{new Date(visit.visitDate || "").toLocaleDateString('ar-IQ')}</td>
+                          <td className="p-4 text-slate-700">{visit.details || "-"}</td>
+                          <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
               <Card className="overflow-hidden border-border/60 shadow-sm">
@@ -166,7 +240,7 @@ export default function PatientDetails() {
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                          <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('ar-SA')}</td>
+                          <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('ar-IQ')}</td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                         </tr>
                       ))

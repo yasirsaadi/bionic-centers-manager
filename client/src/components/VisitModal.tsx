@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertPaymentSchema, InsertPayment } from "@shared/schema";
-import { useAddPayment } from "@/hooks/use-patients";
+import { insertVisitSchema, InsertVisit } from "@shared/schema";
+import { useAddVisit } from "@/hooks/use-patients";
 import {
   Dialog,
   DialogContent,
@@ -19,29 +19,28 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 
-interface PaymentModalProps {
+interface VisitModalProps {
   patientId: number;
   branchId: number;
 }
 
-const formSchema = insertPaymentSchema.extend({
-  amount: z.coerce.number().min(1, "المبلغ يجب أن يكون أكبر من 0"),
-});
+const formSchema = insertVisitSchema;
 
-export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
+export function VisitModal({ patientId, branchId }: VisitModalProps) {
   const [open, setOpen] = useState(false);
-  const { mutate, isPending } = useAddPayment();
+  const { mutate, isPending } = useAddVisit();
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       patientId: patientId,
       branchId: branchId,
-      amount: 0,
+      details: "",
       notes: "",
     },
   });
@@ -50,7 +49,12 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
     mutate(values, {
       onSuccess: () => {
         setOpen(false);
-        form.reset();
+        form.reset({
+          patientId: patientId,
+          branchId: branchId,
+          details: "",
+          notes: "",
+        });
       },
     });
   }
@@ -58,26 +62,31 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20">
+        <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20" data-testid="button-add-visit">
           <PlusCircle className="w-4 h-4" />
-          تسجيل دفعة جديدة
+          تسجيل زيارة جديدة
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+      <DialogContent className="sm:max-w-[500px] font-body" dir="rtl">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-primary">تسجيل دفعة مالية</DialogTitle>
+          <DialogTitle className="font-display text-xl text-blue-600">تسجيل زيارة</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
             <FormField
               control={form.control}
-              name="amount"
+              name="details"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>المبلغ المدفوع</FormLabel>
+                  <FormLabel>تفاصيل الزيارة</FormLabel>
                   <FormControl>
-                    <Input type="number" {...field} className="text-left font-mono" placeholder="0.00" />
+                    <Textarea 
+                      {...field} 
+                      value={field.value || ""}
+                      placeholder="ما تم خلال الزيارة: فحص، قياسات، تعديلات..."
+                      className="min-h-[100px]"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -89,23 +98,23 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>ملاحظات (اختياري)</FormLabel>
+                  <FormLabel>ملاحظات إضافية (اختياري)</FormLabel>
                   <FormControl>
-                    <Input {...field} placeholder="مثال: دفعة أولى نقداً" />
+                    <Input {...field} value={field.value || ""} placeholder="أي ملاحظات أخرى..." />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <Button type="submit" className="w-full h-11 text-base font-semibold" disabled={isPending}>
+            <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending}>
               {isPending ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
                   جاري التسجيل...
                 </>
               ) : (
-                "حفظ الدفعة"
+                "حفظ الزيارة"
               )}
             </Button>
           </form>

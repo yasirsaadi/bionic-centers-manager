@@ -2,6 +2,7 @@ import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
 import { Users, Activity, Banknote, Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useQuery } from "@tanstack/react-query";
 
 export default function Dashboard() {
   const { data: patients, isLoading } = usePatients();
