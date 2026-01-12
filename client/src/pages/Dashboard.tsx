@@ -5,6 +5,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
   const { data: patients, isLoading } = usePatients();
+  
+  // Fetch branch report for stats
+  const { data: report } = useQuery({
+    queryKey: ["/api/reports/daily", 1], // Default to Baghdad for now or get from auth
+    enabled: !!patients,
+  });
 
   if (isLoading) {
     return (
@@ -52,8 +58,8 @@ export default function Dashboard() {
           color="green"
         />
         <StatsCard 
-          title="الإيرادات (تقريبي)" 
-          value="-- SAR" 
+          title="الإيرادات" 
+          value={`${(report?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
           icon={Banknote} 
           color="blue"
         />
