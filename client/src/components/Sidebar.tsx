@@ -1,9 +1,10 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, Activity, FileBarChart, Building2, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
 import { useState, useEffect } from "react";
+import logoImage from "@/assets/logo.png";
 
 interface BranchSession {
   branchId: number;
@@ -37,13 +38,11 @@ export function Sidebar() {
 
   return (
     <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
-      <div className="p-6 flex items-center gap-3 border-b border-border/50">
-        <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-primary/30 shadow-lg">
-          <Activity className="w-6 h-6" />
-        </div>
+      <div className="p-4 flex items-center gap-3 border-b border-border/50">
+        <img src={logoImage} alt="Logo" className="w-12 h-12 object-contain" />
         <div>
-          <h1 className="font-display font-bold text-lg text-primary leading-tight">مركز بايونك</h1>
-          <p className="text-xs text-muted-foreground font-body">للأطراف الصناعية والعلاج الطبيعي</p>
+          <h1 className="font-display font-bold text-sm text-primary leading-tight">مجموعة مراكز</h1>
+          <p className="text-sm font-bold text-slate-700">د. ياسر الساعدي</p>
         </div>
       </div>
 
