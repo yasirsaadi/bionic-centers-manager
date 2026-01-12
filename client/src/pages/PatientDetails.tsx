@@ -1,10 +1,22 @@
-import { usePatient, useUploadDocument } from "@/hooks/use-patients";
-import { useParams, useLocation } from "wouter";
+import { usePatient, useUploadDocument, useDeletePatient } from "@/hooks/use-patients";
+import { useQuery } from "@tanstack/react-query";
+import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { 
   ArrowRight, 
   FileText, 
@@ -15,18 +27,43 @@ import {
   Download,
   Calendar,
   FileDown,
-  ClipboardList
+  ClipboardList,
+  Pencil,
+  Trash2,
+  Building2
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { useRef } from "react";
+import type { Branch } from "@shared/schema";
 
 export default function PatientDetails() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const { data: patient, isLoading } = usePatient(Number(id));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
+  const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
+  const { data: branches } = useQuery<Branch[]>({
+    queryKey: ["/api/branches"],
+    queryFn: async () => {
+      const res = await fetch("/api/branches", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch branches");
+      return res.json();
+    },
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getBranchName = (branchId: number) => {
+    return branches?.find(b => b.id === branchId)?.name || "-";
+  };
+
+  const handleDelete = () => {
+    deletePatient(Number(id), {
+      onSuccess: () => {
+        setLocation("/patients");
+      },
+    });
+  };
 
   if (isLoading) return <div className="p-8"><Skeleton className="h-96 w-full rounded-3xl" /></div>;
   if (!patient) return <div className="p-8 text-center text-muted-foreground">المريض غير موجود</div>;
@@ -66,10 +103,46 @@ export default function PatientDetails() {
             </div>
           </div>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3 items-center">
+          <Badge variant="outline" className="text-sm px-3 py-1.5 h-auto gap-1">
+            <Building2 className="w-3 h-3" />
+            {getBranchName(patient.branchId)}
+          </Badge>
           <Badge variant={patient.isAmputee ? "default" : "secondary"} className="text-base px-4 py-1.5 h-auto">
             {patient.isAmputee ? "بتر" : "علاج طبيعي"}
           </Badge>
+          <Link href={`/patients/${patient.id}/edit`}>
+            <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
+              <Pencil className="w-4 h-4" />
+              تحرير
+            </Button>
+          </Link>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
+                <Trash2 className="w-4 h-4" />
+                حذف
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
+                <AlertDialogDescription>
+                  سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="gap-2">
+                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogAction 
+                  onClick={handleDelete}
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button 
             variant="outline" 
             className="gap-2" 

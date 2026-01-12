@@ -136,6 +136,75 @@ export function useUploadDocument() {
   });
 }
 
+// PUT /api/patients/:id
+export function useUpdatePatient() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Partial<InsertPatient> }) => {
+      const res = await fetch(`/api/patients/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في تحديث بيانات المريض");
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.id] });
+      toast({
+        title: "تم التحديث",
+        description: "تم تحديث بيانات المريض بنجاح",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+// DELETE /api/patients/:id
+export function useDeletePatient() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/patients/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("فشل في حذف المريض");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      toast({
+        title: "تم الحذف",
+        description: "تم حذف ملف المريض بنجاح",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
 // POST /api/visits
 export function useAddVisit() {
   const queryClient = useQueryClient();

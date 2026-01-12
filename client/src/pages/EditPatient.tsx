@@ -1,8 +1,8 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
-import { useCreatePatient } from "@/hooks/use-patients";
-import { useLocation, useSearch } from "wouter";
+import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
+import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   Form,
@@ -20,14 +20,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Loader2, ArrowRight } from "lucide-react";
 import { z } from "zod";
 import { useEffect } from "react";
 
-// Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
@@ -36,13 +37,13 @@ const formSchema = insertPatientSchema.extend({
 
 type FormValues = z.infer<typeof formSchema>;
 
-export default function CreatePatient() {
+export default function EditPatient() {
+  const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
-  const searchString = useSearch();
-  const searchParams = new URLSearchParams(searchString);
-  const defaultBranchId = Number(searchParams.get("branch")) || 1;
+  const patientId = Number(id);
   
-  const { mutate, isPending } = useCreatePatient();
+  const { data: patient, isLoading: isLoadingPatient } = usePatient(patientId);
+  const { mutate, isPending } = useUpdatePatient();
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -69,13 +70,34 @@ export default function CreatePatient() {
       generalNotes: "",
       prostheticType: "",
       treatmentType: "",
-      branchId: defaultBranchId,
+      branchId: 1,
     },
   });
 
+  useEffect(() => {
+    if (patient) {
+      form.reset({
+        name: patient.name,
+        age: patient.age,
+        weight: patient.weight || "",
+        height: patient.height || "",
+        medicalCondition: patient.medicalCondition,
+        isAmputee: patient.isAmputee,
+        isPhysiotherapy: patient.isPhysiotherapy,
+        amputationSite: patient.amputationSite || "",
+        diseaseType: patient.diseaseType || "",
+        totalCost: patient.totalCost || 0,
+        injuryDate: patient.injuryDate || "",
+        generalNotes: patient.generalNotes || "",
+        prostheticType: patient.prostheticType || "",
+        treatmentType: patient.treatmentType || "",
+        branchId: patient.branchId,
+      });
+    }
+  }, [patient, form]);
+
   const conditionType = form.watch("medicalCondition");
 
-  // Sync boolean flags with string selection
   useEffect(() => {
     if (conditionType === "amputee") {
       form.setValue("isAmputee", true);
@@ -87,22 +109,34 @@ export default function CreatePatient() {
   }, [conditionType, form]);
 
   function onSubmit(values: FormValues) {
-    mutate(values, {
-      onSuccess: (data) => {
-        setLocation(`/patients/${data.id}`);
+    mutate({ id: patientId, data: values }, {
+      onSuccess: () => {
+        setLocation(`/patients/${patientId}`);
       },
     });
+  }
+
+  if (isLoadingPatient) {
+    return (
+      <div className="max-w-3xl mx-auto py-6">
+        <Skeleton className="h-96 w-full rounded-3xl" />
+      </div>
+    );
+  }
+
+  if (!patient) {
+    return <div className="p-8 text-center text-muted-foreground">المريض غير موجود</div>;
   }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 page-transition py-6">
       <div className="flex items-center gap-4 mb-6">
-        <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2">
+        <Button variant="ghost" onClick={() => setLocation(`/patients/${patientId}`)} className="p-2">
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
-          <h2 className="text-2xl font-display font-bold text-slate-800">فتح ملف مريض جديد</h2>
-          <p className="text-muted-foreground">الرجاء إدخال البيانات بدقة لضمان جودة الخدمة</p>
+          <h2 className="text-2xl font-display font-bold text-slate-800">تحرير بيانات المريض</h2>
+          <p className="text-muted-foreground">تعديل معلومات {patient.name}</p>
         </div>
       </div>
 
@@ -176,7 +210,7 @@ export default function CreatePatient() {
                     <FormLabel>الفرع</FormLabel>
                     <Select 
                       onValueChange={(val) => field.onChange(Number(val))} 
-                      defaultValue={String(field.value)}
+                      value={String(field.value)}
                     >
                       <FormControl>
                         <SelectTrigger className="bg-slate-50" data-testid="select-branch">
@@ -210,7 +244,7 @@ export default function CreatePatient() {
                     <FormControl>
                       <RadioGroup
                         onValueChange={field.onChange}
-                        defaultValue={field.value}
+                        value={field.value}
                         className="flex flex-col sm:flex-row gap-4"
                       >
                         <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
@@ -236,30 +270,16 @@ export default function CreatePatient() {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="injuryDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>تاريخ الإصابة</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
               {conditionType === "amputee" && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                <>
                   <FormField
                     control={form.control}
                     name="amputationSite"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>جهة ومستوى البتر</FormLabel>
+                        <FormLabel>موقع البتر</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الطرف الأيمن تحت الركبة" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -272,25 +292,25 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>نوع الطرف الصناعي</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: طرف سفلي ذكي، ركبة ميكانيكية..." />
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: طرف كربون فايبر" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                </div>
+                </>
               )}
 
               {conditionType === "physiotherapy" && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                <>
                   <FormField
                     control={form.control}
                     name="diseaseType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>تشخيص الحالة / نوع المرض</FormLabel>
+                        <FormLabel>نوع الإصابة / المرض</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: شلل نصفي، إصابة عمود فقري..." />
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: إصابة الرباط الصليبي" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -303,37 +323,23 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: علاج طبيعي، تأهيل حركي..." />
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: جلسات علاج طبيعي" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                </div>
+                </>
               )}
 
               <FormField
                 control={form.control}
-                name="generalNotes"
+                name="injuryDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>ملاحظات عامة</FormLabel>
+                    <FormLabel>تاريخ الإصابة (اختياري)</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} placeholder="أي ملاحظات إضافية عن الحالة..." />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="totalCost"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>التكلفة التقديرية للعلاج (د.ع)</FormLabel>
-                    <FormControl>
-                      <Input type="number" {...field} className="font-mono text-left" placeholder="0.00" />
+                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -342,12 +348,45 @@ export default function CreatePatient() {
             </div>
           </Card>
 
-          <div className="flex gap-4 pt-4">
-            <Button type="submit" size="lg" className="w-full md:w-auto min-w-[200px] text-lg h-12" disabled={isPending}>
-              {isPending ? <Loader2 className="ml-2 h-5 w-5 animate-spin" /> : null}
-              حفظ وإنشاء الملف
+          <Card className="p-6 rounded-2xl shadow-sm border-border/60">
+            <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">المعلومات المالية والملاحظات</h3>
+            <div className="space-y-6">
+              <FormField
+                control={form.control}
+                name="totalCost"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>التكلفة الكلية (د.ع)</FormLabel>
+                    <FormControl>
+                      <Input type="number" {...field} className="bg-slate-50" placeholder="0" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="generalNotes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ملاحظات عامة</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} value={field.value || ""} className="bg-slate-50 min-h-[100px]" placeholder="أي ملاحظات إضافية..." />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </Card>
+
+          <div className="flex gap-4">
+            <Button type="submit" disabled={isPending} className="flex-1 h-12 text-lg gap-2">
+              {isPending && <Loader2 className="w-5 h-5 animate-spin" />}
+              حفظ التغييرات
             </Button>
-            <Button type="button" variant="outline" size="lg" className="h-12" onClick={() => setLocation("/patients")}>
+            <Button type="button" variant="outline" onClick={() => setLocation(`/patients/${patientId}`)} className="h-12">
               إلغاء
             </Button>
           </div>

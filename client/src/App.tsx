@@ -11,6 +11,7 @@ import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
 import CreatePatient from "@/pages/CreatePatient";
 import PatientDetails from "@/pages/PatientDetails";
+import EditPatient from "@/pages/EditPatient";
 import Reports from "@/pages/Reports";
 import Branches from "@/pages/Branches";
 import BranchDetails from "@/pages/BranchDetails";
@@ -60,6 +61,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/patients" component={PatientsList} />
         <Route path="/patients/new" component={CreatePatient} />
+        <Route path="/patients/:id/edit" component={EditPatient} />
         <Route path="/patients/:id" component={PatientDetails} />
         <Route path="/reports" component={Reports} />
         <Route path="/branches" component={Branches} />

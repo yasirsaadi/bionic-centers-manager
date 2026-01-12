@@ -13,10 +13,20 @@ export default function BranchDetails() {
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
+    queryFn: async () => {
+      const res = await fetch("/api/branches", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch branches");
+      return res.json();
+    },
   });
 
   const { data: allPatients, isLoading } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
+    queryFn: async () => {
+      const res = await fetch("/api/patients", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch patients");
+      return res.json();
+    },
   });
 
   const branch = branches?.find(b => b.id === branchId);

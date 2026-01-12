@@ -110,6 +110,47 @@ export async function registerRoutes(
     res.json(patient);
   });
 
+  app.put(api.patients.update.path, isAuthenticated, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const ctx = getUserContext(req);
+      const existingPatient = await storage.getPatient(id);
+      
+      if (!existingPatient) {
+        return res.status(404).json({ message: "Patient not found" });
+      }
+      
+      const canAccess = ctx.role === 'admin' || !ctx.branchId || existingPatient.branchId === ctx.branchId;
+      if (!canAccess) {
+        return res.status(403).json({ message: "غير مصرح لك بتعديل هذا المريض" });
+      }
+      
+      const patient = await storage.updatePatient(id, req.body);
+      res.json(patient);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.delete(api.patients.delete.path, isAuthenticated, async (req, res) => {
+    const id = Number(req.params.id);
+    const ctx = getUserContext(req);
+    const patient = await storage.getPatient(id);
+    
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+    
+    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient.branchId === ctx.branchId;
+    if (!canAccess) {
+      return res.status(403).json({ message: "غير مصرح لك بحذف هذا المريض" });
+    }
+    
+    await storage.deletePatient(id);
+    res.status(204).send();
+  });
+
   // Visits
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     const input = api.visits.create.input.parse(req.body);

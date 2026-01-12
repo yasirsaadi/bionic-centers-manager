@@ -1,4 +1,5 @@
 import { usePatients } from "@/hooks/use-patients";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { 
   Table, 
@@ -10,14 +11,27 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Filter } from "lucide-react";
+import { Plus, Search, Eye, Filter, Building2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import type { Branch } from "@shared/schema";
 
 export default function PatientsList() {
   const { data: patients, isLoading } = usePatients();
+  const { data: branches } = useQuery<Branch[]>({
+    queryKey: ["/api/branches"],
+    queryFn: async () => {
+      const res = await fetch("/api/branches", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch branches");
+      return res.json();
+    },
+  });
   const [searchTerm, setSearchTerm] = useState("");
+
+  const getBranchName = (branchId: number) => {
+    return branches?.find(b => b.id === branchId)?.name || "-";
+  };
 
   const filteredPatients = patients?.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -66,6 +80,7 @@ export default function PatientsList() {
               <TableRow>
                 <TableHead className="text-right font-bold text-slate-700 py-4 first:pr-6">الاسم</TableHead>
                 <TableHead className="text-right font-bold text-slate-700">العمر</TableHead>
+                <TableHead className="text-right font-bold text-slate-700">الفرع</TableHead>
                 <TableHead className="text-right font-bold text-slate-700">الحالة الطبية</TableHead>
                 <TableHead className="text-right font-bold text-slate-700">نوع المرض</TableHead>
                 <TableHead className="text-right font-bold text-slate-700">تاريخ التسجيل</TableHead>
@@ -75,7 +90,7 @@ export default function PatientsList() {
             <TableBody>
               {filteredPatients?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                     لا يوجد نتائج مطابقة
                   </TableCell>
                 </TableRow>
@@ -86,6 +101,12 @@ export default function PatientsList() {
                       {patient.name}
                     </TableCell>
                     <TableCell className="text-slate-600">{patient.age}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1 text-slate-600">
+                        <Building2 className="w-3 h-3" />
+                        <span className="text-sm">{getBranchName(patient.branchId)}</span>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge variant={patient.isAmputee ? "default" : "secondary"} className="font-normal">
                         {patient.medicalCondition}
