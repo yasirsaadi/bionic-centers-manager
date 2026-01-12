@@ -83,9 +83,13 @@ export async function registerRoutes(
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const ctx = getUserContext(req);
+      // Use form's branchId if user has no assigned branch, otherwise use user's branch (admins can choose)
+      const branchId = ctx.role === 'admin' 
+        ? (req.body.branchId || 1) 
+        : (ctx.branchId || req.body.branchId || 1);
       const input = api.patients.create.input.parse({
         ...req.body,
-        branchId: ctx.role === 'admin' ? req.body.branchId : ctx.branchId
+        branchId
       });
       const patient = await storage.createPatient(input);
       res.status(201).json(patient);
