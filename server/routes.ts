@@ -68,7 +68,10 @@ export async function registerRoutes(
     const patient = await storage.getPatient(id);
     const ctx = getUserContext(req);
     
-    if (!patient || (ctx.role !== 'admin' && patient.branchId !== ctx.branchId)) {
+    // Allow access if: admin, user has no branch assigned yet, or user's branch matches patient's branch
+    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
+    
+    if (!patient || !canAccess) {
       return res.status(404).json({ message: "Patient not found or unauthorized" });
     }
     
