@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Lock, Loader2, Building2, ShieldCheck } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 import type { Branch } from "@shared/schema";
 
@@ -76,13 +75,17 @@ export function BranchGate({ children }: BranchGateProps) {
     setIsSubmitting(true);
 
     try {
-      const res = await apiRequest("POST", "/api/verify-branch", { 
-        branchId: Number(selectedBranch), 
-        password 
+      const branchValue = selectedBranch === "admin" ? "admin" : Number(selectedBranch);
+      const res = await fetch("/api/verify-branch", { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: branchValue, password }),
+        credentials: "include",
       });
       
+      const data = await res.json();
+      
       if (res.ok) {
-        const data = await res.json();
         const branchSession: BranchSession = {
           branchId: data.branchId,
           branchName: data.branchName,
@@ -95,10 +98,10 @@ export function BranchGate({ children }: BranchGateProps) {
           sessionStorage.setItem("admin_verified", "true");
         }
       } else {
-        const data = await res.json();
         setError(data.message || "كلمة السر غير صحيحة");
       }
-    } catch {
+    } catch (err) {
+      console.error("Branch verification error:", err);
       setError("حدث خطأ في التحقق");
     } finally {
       setIsSubmitting(false);
