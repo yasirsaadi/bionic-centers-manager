@@ -1,38 +1,89 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { db } from "./db";
+import {
+  patients, payments, documents,
+  type Patient, type InsertPatient,
+  type Payment, type InsertPayment,
+  type Document, type InsertDocument
+} from "@shared/schema";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  // Patients
+  getPatients(): Promise<Patient[]>;
+  getPatient(id: number): Promise<Patient | undefined>;
+  createPatient(patient: InsertPatient): Promise<Patient>;
+  updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient | undefined>;
+  deletePatient(id: number): Promise<void>;
+
+  // Payments
+  getPaymentsByPatientId(patientId: number): Promise<Payment[]>;
+  createPayment(payment: InsertPayment): Promise<Payment>;
+  deletePayment(id: number): Promise<void>;
+
+  // Documents
+  getDocumentsByPatientId(patientId: number): Promise<Document[]>;
+  createDocument(document: InsertDocument): Promise<Document>;
+  deleteDocument(id: number): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  // Patients
+  async getPatients(): Promise<Patient[]> {
+    return await db.select().from(patients).orderBy(desc(patients.createdAt));
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async getPatient(id: number): Promise<Patient | undefined> {
+    const [patient] = await db.select().from(patients).where(eq(patients.id, id));
+    return patient;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async createPatient(insertPatient: InsertPatient): Promise<Patient> {
+    const [patient] = await db.insert(patients).values(insertPatient).returning();
+    return patient;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async updatePatient(id: number, updates: Partial<InsertPatient>): Promise<Patient | undefined> {
+    const [updated] = await db.update(patients)
+      .set(updates)
+      .where(eq(patients.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePatient(id: number): Promise<void> {
+    // Delete related records first (cascade manually if not set in DB)
+    await db.delete(payments).where(eq(payments.patientId, id));
+    await db.delete(documents).where(eq(documents.patientId, id));
+    await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  // Payments
+  async getPaymentsByPatientId(patientId: number): Promise<Payment[]> {
+    return await db.select().from(payments).where(eq(payments.patientId, patientId)).orderBy(desc(payments.date));
+  }
+
+  async createPayment(insertPayment: InsertPayment): Promise<Payment> {
+    const [payment] = await db.insert(payments).values(insertPayment).returning();
+    return payment;
+  }
+
+  async deletePayment(id: number): Promise<void> {
+    await db.delete(payments).where(eq(payments.id, id));
+  }
+
+  // Documents
+  async getDocumentsByPatientId(patientId: number): Promise<Document[]> {
+    return await db.select().from(documents).where(eq(documents.patientId, patientId)).orderBy(desc(documents.uploadedAt));
+  }
+
+  async createDocument(insertDocument: InsertDocument): Promise<Document> {
+    const [document] = await db.insert(documents).values(insertDocument).returning();
+    return document;
+  }
+
+  async deleteDocument(id: number): Promise<void> {
+    await db.delete(documents).where(eq(documents.id, id));
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

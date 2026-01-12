@@ -1,0 +1,115 @@
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { insertPaymentSchema, InsertPayment } from "@shared/schema";
+import { useAddPayment } from "@/hooks/use-patients";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { PlusCircle, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { z } from "zod";
+
+interface PaymentModalProps {
+  patientId: number;
+}
+
+// Form expects strings for numbers initially from input
+const formSchema = insertPaymentSchema.extend({
+  amount: z.coerce.number().min(1, "المبلغ يجب أن يكون أكبر من 0"),
+});
+
+export function PaymentModal({ patientId }: PaymentModalProps) {
+  const [open, setOpen] = useState(false);
+  const { mutate, isPending } = useAddPayment();
+  
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      patientId: patientId,
+      amount: 0,
+      notes: "",
+    },
+  });
+
+  function onSubmit(values: z.infer<typeof formSchema>) {
+    mutate(values, {
+      onSuccess: () => {
+        setOpen(false);
+        form.reset();
+      },
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20">
+          <PlusCircle className="w-4 h-4" />
+          تسجيل دفعة جديدة
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl text-primary">تسجيل دفعة مالية</DialogTitle>
+        </DialogHeader>
+        
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+            <FormField
+              control={form.control}
+              name="amount"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>المبلغ المدفوع</FormLabel>
+                  <FormControl>
+                    <Input type="number" {...field} className="text-left font-mono" placeholder="0.00" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ملاحظات (اختياري)</FormLabel>
+                  <FormControl>
+                    <Input {...field} placeholder="مثال: دفعة أولى نقداً" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <Button type="submit" className="w-full h-11 text-base font-semibold" disabled={isPending}>
+              {isPending ? (
+                <>
+                  <Loader2 className="ml-2 h-4 w-4 animate-spin" />
+                  جاري التسجيل...
+                </>
+              ) : (
+                "حفظ الدفعة"
+              )}
+            </Button>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
