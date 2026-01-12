@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Building2, MapPin, Users, ArrowLeft } from "lucide-react";
+import { AdminGate } from "@/components/AdminGate";
 import type { Branch } from "@shared/schema";
 
 export default function Branches() {
@@ -20,6 +21,7 @@ export default function Branches() {
   }
 
   return (
+    <AdminGate>
     <div className="space-y-6 page-transition py-6">
       <div className="flex items-center justify-between">
         <div>
@@ -70,5 +72,6 @@ export default function Branches() {
         ))}
       </div>
     </div>
+    </AdminGate>
   );
 }

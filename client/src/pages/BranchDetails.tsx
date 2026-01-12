@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Building2, ArrowRight, UserPlus, Users, Banknote } from "lucide-react";
+import { AdminGate } from "@/components/AdminGate";
 import type { Branch, Patient } from "@shared/schema";
 
 export default function BranchDetails() {
@@ -45,6 +46,7 @@ export default function BranchDetails() {
   const physioCount = patients.filter(p => p.isPhysiotherapy).length;
 
   return (
+    <AdminGate>
     <div className="space-y-6 page-transition py-6">
       <div className="flex items-center gap-4 mb-6">
         <Button variant="ghost" onClick={() => setLocation("/branches")} className="p-2">
@@ -163,5 +165,6 @@ export default function BranchDetails() {
         </div>
       )}
     </div>
+    </AdminGate>
   );
 }
