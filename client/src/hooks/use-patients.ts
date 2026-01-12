@@ -254,3 +254,73 @@ export function useAddVisit() {
     },
   });
 }
+
+// DELETE /api/visits/:id (admin only)
+export function useDeleteVisit() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ visitId, patientId }: { visitId: number; patientId: number }) => {
+      const res = await fetch(`/api/visits/${visitId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (res.status === 403) {
+        throw new Error("فقط المسؤول يمكنه حذف الزيارات");
+      }
+      if (!res.ok) throw new Error("فشل في حذف الزيارة");
+      return patientId;
+    },
+    onSuccess: (patientId) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      toast({
+        title: "تم الحذف",
+        description: "تم حذف الزيارة بنجاح",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+// DELETE /api/payments/:id (admin only)
+export function useDeletePayment() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ paymentId, patientId }: { paymentId: number; patientId: number }) => {
+      const res = await fetch(`/api/payments/${paymentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (res.status === 403) {
+        throw new Error("فقط المسؤول يمكنه حذف المدفوعات");
+      }
+      if (!res.ok) throw new Error("فشل في حذف الدفعة");
+      return patientId;
+    },
+    onSuccess: (patientId) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      toast({
+        title: "تم الحذف",
+        description: "تم حذف الدفعة بنجاح",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}

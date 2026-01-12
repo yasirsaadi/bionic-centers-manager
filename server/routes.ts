@@ -77,6 +77,11 @@ export async function registerRoutes(
       const trimmedInput = password?.trim();
       console.log("Admin code check:", { exists: !!adminCode, storedLen: adminCode?.length, inputLen: trimmedInput?.length, match: trimmedInput === adminCode });
       if (trimmedInput === adminCode) {
+        // Store admin session info
+        (req.session as any).branchSession = {
+          branchId: 0,
+          isAdmin: true
+        };
         return res.json({ 
           branchId: 0, 
           branchName: "مسؤول النظام",
@@ -106,6 +111,11 @@ export async function registerRoutes(
     if (trimmedInput === branchPassword) {
       const branches = await storage.getBranches();
       const branch = branches.find(b => b.id === Number(branchId));
+      // Store branch session info
+      (req.session as any).branchSession = {
+        branchId: Number(branchId),
+        isAdmin: false
+      };
       return res.json({ 
         branchId: Number(branchId), 
         branchName: branch?.name || "فرع غير معروف",
@@ -276,11 +286,35 @@ export async function registerRoutes(
     res.status(201).json(visit);
   });
 
+  // Delete visit (admin only)
+  app.delete("/api/visits/:id", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف الزيارات" });
+    }
+    
+    const id = Number(req.params.id);
+    await storage.deleteVisit(id);
+    res.status(204).send();
+  });
+
   // Payments
   app.post(api.payments.create.path, isAuthenticated, async (req, res) => {
     const input = api.payments.create.input.parse(req.body);
     const payment = await storage.createPayment(input);
     res.status(201).json(payment);
+  });
+
+  // Delete payment (admin only)
+  app.delete("/api/payments/:id", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف المدفوعات" });
+    }
+    
+    const id = Number(req.params.id);
+    await storage.deletePayment(id);
+    res.status(204).send();
   });
 
   // Daily Report

@@ -25,6 +25,7 @@ export interface IStorage {
   // Visits
   getVisitsByPatientId(patientId: number): Promise<Visit[]>;
   createVisit(visit: InsertVisit): Promise<Visit>;
+  deleteVisit(id: number): Promise<void>;
 
   // Payments
   getPaymentsByPatientId(patientId: number): Promise<Payment[]>;
@@ -92,6 +93,9 @@ export class DatabaseStorage implements IStorage {
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
     const [visit] = await db.insert(visits).values(insertVisit).returning();
     return visit;
+  }
+  async deleteVisit(id: number): Promise<void> {
+    await db.delete(visits).where(eq(visits.id, id));
   }
 
   // Payments
