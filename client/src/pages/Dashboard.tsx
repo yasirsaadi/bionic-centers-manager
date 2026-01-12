@@ -3,13 +3,19 @@ import { StatsCard } from "@/components/StatsCard";
 import { Users, Activity, Banknote, Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
+import { AdminGate } from "@/components/AdminGate";
 
-export default function Dashboard() {
+function DashboardContent() {
   const { data: patients, isLoading } = usePatients();
   
   // Fetch branch report for stats
-  const { data: report } = useQuery({
-    queryKey: ["/api/reports/daily", 1], // Default to Baghdad for now or get from auth
+  const { data: report } = useQuery<{ paid: number; remaining: number; patients: number }>({
+    queryKey: ["/api/reports/daily", 1],
+    queryFn: async () => {
+      const res = await fetch("/api/reports/daily/1", { credentials: "include" });
+      if (!res.ok) return { paid: 0, remaining: 0, patients: 0 };
+      return res.json();
+    },
     enabled: !!patients,
   });
 
@@ -102,5 +108,13 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <AdminGate>
+      <DashboardContent />
+    </AdminGate>
   );
 }

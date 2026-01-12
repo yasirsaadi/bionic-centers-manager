@@ -49,6 +49,22 @@ export async function registerRoutes(
     };
   };
 
+  // Admin code verification
+  app.post("/api/verify-admin", isAuthenticated, async (req, res) => {
+    const { code } = req.body;
+    const adminCode = process.env.ADMIN_CODE;
+    
+    if (!adminCode) {
+      return res.status(500).json({ message: "لم يتم تعيين كود المسؤول" });
+    }
+    
+    if (code === adminCode) {
+      res.json({ success: true });
+    } else {
+      res.status(401).json({ message: "الكود غير صحيح" });
+    }
+  });
+
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
