@@ -19,10 +19,11 @@ import { Loader2, ArrowRight } from "lucide-react";
 import { z } from "zod";
 import { useEffect } from "react";
 
-// Form schema with coercion for numbers
+// Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
+  injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -126,7 +127,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>الوزن (كجم)</FormLabel>
                     <FormControl>
-                      <Input {...field} className="bg-slate-50" placeholder="مثال: 70" />
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 70" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -140,7 +141,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>الطول (سم)</FormLabel>
                     <FormControl>
-                      <Input {...field} className="bg-slate-50" placeholder="مثال: 175" />
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 175" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -210,7 +211,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>جهة ومستوى البتر</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
+                          <Input {...field} value={field.value || ""} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -241,7 +242,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>تشخيص الحالة / نوع المرض</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="مثال: شلل نصفي، إصابة عمود فقري..." />
+                          <Input {...field} value={field.value || ""} placeholder="مثال: شلل نصفي، إصابة عمود فقري..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
