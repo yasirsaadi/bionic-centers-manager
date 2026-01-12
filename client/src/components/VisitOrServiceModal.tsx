@@ -57,8 +57,8 @@ const visitFormSchema = z.object({
 
 const serviceFormSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
-  serviceCost: z.coerce.number().min(1, "تكلفة الخدمة يجب أن تكون أكبر من 0"),
-  initialPayment: z.coerce.number().min(0, "الدفعة لا يمكن أن تكون سالبة"),
+  serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
+  initialPayment: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -110,14 +110,14 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
     resolver: zodResolver(serviceFormSchema),
     defaultValues: {
       serviceType: "",
-      serviceCost: 0,
-      initialPayment: 0,
+      serviceCost: "",
+      initialPayment: "",
       notes: "",
     },
   });
 
-  const serviceCost = serviceForm.watch("serviceCost") || 0;
-  const newTotal = currentTotalCost + serviceCost;
+  const serviceCostValue = Number(serviceForm.watch("serviceCost")) || 0;
+  const newTotal = currentTotalCost + serviceCostValue;
 
   function onVisitSubmit(values: VisitFormValues) {
     addVisit({
@@ -134,7 +134,23 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
   }
 
   function onServiceSubmit(values: ServiceFormValues) {
-    addService(values);
+    const serviceCost = Number(values.serviceCost) || 0;
+    const initialPayment = Number(values.initialPayment) || 0;
+    
+    if (serviceCost <= 0) {
+      toast({
+        title: "خطأ",
+        description: "تكلفة الخدمة يجب أن تكون أكبر من 0",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    addService({
+      ...values,
+      serviceCost,
+      initialPayment,
+    } as any);
   }
 
   const handleModeChange = (value: string) => {
@@ -266,11 +282,11 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                     <FormLabel>تكلفة الخدمة الجديدة (د.ع)</FormLabel>
                     <FormControl>
                       <Input 
-                        type="number" 
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+                        type="text"
+                        inputMode="numeric"
+                        {...field}
                         className="text-left font-mono" 
-                        placeholder="0" 
+                        placeholder="أدخل التكلفة" 
                         data-testid="input-service-cost"
                       />
                     </FormControl>
@@ -298,9 +314,9 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                     <FormLabel>الدفعة الأولية (اختياري)</FormLabel>
                     <FormControl>
                       <Input 
-                        type="number" 
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+                        type="text"
+                        inputMode="numeric"
+                        {...field}
                         className="text-left font-mono" 
                         placeholder="0" 
                         data-testid="input-initial-payment"
