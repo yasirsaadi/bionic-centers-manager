@@ -73,9 +73,10 @@ export async function registerRoutes(
     
     // Check if admin login
     if (branchId === "admin" || branchId === 0) {
-      const adminCode = process.env.ADMIN_CODE;
-      console.log("Admin code exists:", !!adminCode);
-      if (password === adminCode) {
+      const adminCode = process.env.ADMIN_CODE?.trim();
+      const trimmedInput = password?.trim();
+      console.log("Admin code check:", { exists: !!adminCode, storedLen: adminCode?.length, inputLen: trimmedInput?.length, match: trimmedInput === adminCode });
+      if (trimmedInput === adminCode) {
         return res.json({ 
           branchId: 0, 
           branchName: "مسؤول النظام",
@@ -87,14 +88,22 @@ export async function registerRoutes(
     
     // Branch passwords stored as BRANCH_PASSWORD_1, BRANCH_PASSWORD_2, etc.
     const envKey = `BRANCH_PASSWORD_${branchId}`;
-    const branchPassword = process.env[envKey];
-    console.log("Checking branch password:", { envKey, exists: !!branchPassword, branchId, branchIdType: typeof branchId });
+    const branchPassword = process.env[envKey]?.trim();
+    const trimmedInput = password?.trim();
+    console.log("Checking branch password:", { 
+      envKey, 
+      exists: !!branchPassword, 
+      branchId, 
+      storedLen: branchPassword?.length,
+      inputLen: trimmedInput?.length,
+      match: trimmedInput === branchPassword 
+    });
     
     if (!branchPassword) {
       return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
     }
     
-    if (password === branchPassword) {
+    if (trimmedInput === branchPassword) {
       const branches = await storage.getBranches();
       const branch = branches.find(b => b.id === Number(branchId));
       return res.json({ 
