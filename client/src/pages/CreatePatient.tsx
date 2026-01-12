@@ -219,7 +219,7 @@ export default function CreatePatient() {
                 name="totalCost"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>التكلفة التقديرية للعلاج (ر.س)</FormLabel>
+                    <FormLabel>التكلفة التقديرية للعلاج (د.ع)</FormLabel>
                     <FormControl>
                       <Input type="number" {...field} className="font-mono text-left" placeholder="0.00" />
                     </FormControl>

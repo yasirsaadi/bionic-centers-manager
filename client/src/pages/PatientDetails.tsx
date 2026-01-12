@@ -109,7 +109,7 @@ export default function PatientDetails() {
             <div className="space-y-4">
               <div className="flex justify-between items-end">
                 <span className="text-muted-foreground">التكلفة الكلية</span>
-                <span className="font-bold text-xl">{patient.totalCost?.toLocaleString()} ر.س</span>
+                <span className="font-bold text-xl">{patient.totalCost?.toLocaleString('ar-IQ')} د.ع</span>
               </div>
               
               <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
@@ -122,11 +122,11 @@ export default function PatientDetails() {
               <div className="flex justify-between text-sm pt-2">
                 <div>
                   <p className="text-muted-foreground">المدفوع</p>
-                  <p className="font-bold text-emerald-600">{totalPaid.toLocaleString()} ر.س</p>
+                  <p className="font-bold text-emerald-600">{totalPaid.toLocaleString('ar-IQ')} د.ع</p>
                 </div>
                 <div className="text-left">
                   <p className="text-muted-foreground">المتبقي</p>
-                  <p className="font-bold text-red-500">{remaining.toLocaleString()} ر.س</p>
+                  <p className="font-bold text-red-500">{remaining.toLocaleString('ar-IQ')} د.ع</p>
                 </div>
               </div>
 
@@ -165,7 +165,7 @@ export default function PatientDetails() {
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
-                          <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString()} ر.س</td>
+                          <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
                           <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('ar-SA')}</td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                         </tr>
