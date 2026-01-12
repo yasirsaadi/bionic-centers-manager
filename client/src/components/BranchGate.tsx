@@ -127,7 +127,7 @@ export function BranchGate({ children }: BranchGateProps) {
           <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
             <Building2 className="w-10 h-10 text-primary" />
           </div>
-          <h1 className="text-2xl font-display font-bold text-slate-800">مركز بايونك</h1>
+          <h1 className="text-2xl font-display font-bold text-slate-800">مجموعة مراكز الدكتور ياسر الساعدي</h1>
           <p className="text-muted-foreground mt-2">اختر الفرع وأدخل كلمة السر للدخول</p>
         </div>
 
@@ -185,7 +185,7 @@ export function BranchGate({ children }: BranchGateProps) {
         </form>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          نظام إدارة المرضى - مركز بايونك للأطراف الصناعية
+          نظام إدارة المرضى - مجموعة مراكز الدكتور ياسر الساعدي
         </p>
       </Card>
     </div>
