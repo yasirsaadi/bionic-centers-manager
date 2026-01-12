@@ -7,8 +7,9 @@ import { FileText, TrendingUp, Banknote, Clock, Building2 } from "lucide-react";
 import { useState } from "react";
 import { api, buildUrl } from "@shared/routes";
 import type { Branch } from "@shared/schema";
+import { AdminGate } from "@/components/AdminGate";
 
-export default function Reports() {
+function ReportsContent() {
   const [selectedBranch, setSelectedBranch] = useState<string>("1");
 
   const { data: branches } = useQuery<Branch[]>({
@@ -170,5 +171,13 @@ export default function Reports() {
         </>
       )}
     </div>
+  );
+}
+
+export default function Reports() {
+  return (
+    <AdminGate>
+      <ReportsContent />
+    </AdminGate>
   );
 }
