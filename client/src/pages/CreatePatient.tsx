@@ -1,8 +1,9 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertPatientSchema } from "@shared/schema";
+import { insertPatientSchema, type Branch } from "@shared/schema";
 import { useCreatePatient } from "@/hooks/use-patients";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Form,
   FormControl,
@@ -11,6 +12,13 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -30,7 +38,14 @@ type FormValues = z.infer<typeof formSchema>;
 
 export default function CreatePatient() {
   const [, setLocation] = useLocation();
+  const searchString = useSearch();
+  const searchParams = new URLSearchParams(searchString);
+  const defaultBranchId = Number(searchParams.get("branch")) || 1;
+  
   const { mutate, isPending } = useCreatePatient();
+  const { data: branches } = useQuery<Branch[]>({
+    queryKey: ["/api/branches"],
+  });
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -49,7 +64,7 @@ export default function CreatePatient() {
       generalNotes: "",
       prostheticType: "",
       treatmentType: "",
-      branchId: 1,
+      branchId: defaultBranchId,
     },
   });
 
@@ -143,6 +158,34 @@ export default function CreatePatient() {
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 175" />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="branchId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>الفرع</FormLabel>
+                    <Select 
+                      onValueChange={(val) => field.onChange(Number(val))} 
+                      defaultValue={String(field.value)}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50" data-testid="select-branch">
+                          <SelectValue placeholder="اختر الفرع" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {branches?.map((branch) => (
+                          <SelectItem key={branch.id} value={String(branch.id)}>
+                            {branch.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}

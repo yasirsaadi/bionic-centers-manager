@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, MapPin, Users } from "lucide-react";
+import { Building2, MapPin, Users, ArrowLeft } from "lucide-react";
 import type { Branch } from "@shared/schema";
 
 export default function Branches() {
+  const [, setLocation] = useLocation();
   const { data: branches, isLoading } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
   });
@@ -35,6 +37,7 @@ export default function Branches() {
             key={branch.id} 
             className="p-6 rounded-2xl shadow-sm border-border/60 hover-elevate transition-all cursor-pointer"
             data-testid={`card-branch-${branch.id}`}
+            onClick={() => setLocation(`/branches/${branch.id}`)}
           >
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
@@ -51,12 +54,13 @@ export default function Branches() {
                   </div>
                 )}
               </div>
+              <ArrowLeft className="w-5 h-5 text-muted-foreground" />
             </div>
             
             <div className="mt-4 pt-4 border-t border-dashed flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Users className="w-4 h-4" />
-                <span>فرع نشط</span>
+                <span>اضغط للدخول</span>
               </div>
               <Badge variant="outline" className="text-xs">
                 #{branch.id}
