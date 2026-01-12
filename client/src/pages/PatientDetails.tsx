@@ -30,7 +30,10 @@ import {
   ClipboardList,
   Pencil,
   Trash2,
-  Building2
+  Building2,
+  Phone,
+  MapPin,
+  AlertCircle
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
@@ -96,11 +99,22 @@ export default function PatientDetails() {
           </Button>
           <div>
             <h1 className="text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
-            <div className="flex gap-3 mt-2 text-sm text-muted-foreground">
+            <div className="flex flex-wrap gap-3 mt-2 text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-4 h-4" /> العمر: {patient.age}</span>
+              {patient.phone && (
+                <>
+                  <span className="w-1 h-1 bg-slate-300 rounded-full self-center"></span>
+                  <span className="flex items-center gap-1"><Phone className="w-4 h-4" /> {patient.phone}</span>
+                </>
+              )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center"></span>
               <span>تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('ar-SA')}</span>
             </div>
+            {patient.address && (
+              <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
+                <MapPin className="w-4 h-4" /> {patient.address}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-3 items-center">
@@ -181,6 +195,15 @@ export default function PatientDetails() {
                   <p className="font-semibold text-base flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-muted-foreground" />
                     {new Date(patient.injuryDate).toLocaleDateString('ar-IQ')}
+                  </p>
+                </div>
+              )}
+              {patient.injuryCause && (
+                <div className="pb-4 border-b border-dashed">
+                  <p className="text-muted-foreground mb-1">سبب الإصابة</p>
+                  <p className="font-semibold text-base flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                    {patient.injuryCause}
                   </p>
                 </div>
               )}

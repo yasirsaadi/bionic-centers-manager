@@ -57,6 +57,8 @@ export default function EditPatient() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "",
+      phone: "",
+      address: "",
       age: 0,
       weight: "",
       height: "",
@@ -67,6 +69,7 @@ export default function EditPatient() {
       diseaseType: "",
       totalCost: 0,
       injuryDate: "",
+      injuryCause: "",
       generalNotes: "",
       prostheticType: "",
       treatmentType: "",
@@ -78,6 +81,8 @@ export default function EditPatient() {
     if (patient) {
       form.reset({
         name: patient.name,
+        phone: patient.phone || "",
+        address: patient.address || "",
         age: patient.age,
         weight: patient.weight || "",
         height: patient.height || "",
@@ -88,6 +93,7 @@ export default function EditPatient() {
         diseaseType: patient.diseaseType || "",
         totalCost: patient.totalCost || 0,
         injuryDate: patient.injuryDate || "",
+        injuryCause: patient.injuryCause || "",
         generalNotes: patient.generalNotes || "",
         prostheticType: patient.prostheticType || "",
         treatmentType: patient.treatmentType || "",
@@ -154,6 +160,34 @@ export default function EditPatient() {
                     <FormLabel>اسم المريض الكامل</FormLabel>
                     <FormControl>
                       <Input {...field} className="bg-slate-50" placeholder="الاسم الرباعي" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>رقم الهاتف</FormLabel>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 07701234567" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>العنوان</FormLabel>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="المحافظة / المنطقة / الحي" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -340,6 +374,20 @@ export default function EditPatient() {
                     <FormLabel>تاريخ الإصابة (اختياري)</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="injuryCause"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>سبب الإصابة</FormLabel>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: حادث سير، إصابة عمل، مرض..." />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

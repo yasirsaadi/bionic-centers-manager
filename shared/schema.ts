@@ -24,10 +24,13 @@ export const users = pgTable("users", {
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  phone: text("phone"),
+  address: text("address"),
   age: integer("age").notNull(),
   weight: text("weight"),
   height: text("height"),
   medicalCondition: text("medical_condition").notNull(),
+  injuryCause: text("injury_cause"),
   injuryDate: date("injury_date"),
   generalNotes: text("general_notes"),
   
