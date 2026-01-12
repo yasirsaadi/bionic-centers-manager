@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { api } from "@shared/routes";
 import {
   Dialog,
   DialogContent,
@@ -49,8 +50,8 @@ const serviceTypes = [
 
 const formSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
-  serviceCost: z.coerce.number().min(1, "تكلفة الخدمة يجب أن تكون أكبر من 0"),
-  initialPayment: z.coerce.number().min(0, "الدفعة لا يمكن أن تكون سالبة"),
+  serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
+  initialPayment: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -62,14 +63,15 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
   const { toast } = useToast();
   
   const { mutate, isPending } = useMutation({
-    mutationFn: async (data: FormValues) => {
+    mutationFn: async (data: { serviceType: string; serviceCost: number; initialPayment: number; notes?: string }) => {
       return apiRequest("POST", `/api/patients/${patientId}/new-service`, {
         ...data,
         branchId,
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/patients', patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       toast({
         title: "تمت إضافة الخدمة بنجاح",
         description: "تم تحديث التكلفة الإجمالية وإضافة الزيارة والدفعة",
@@ -90,17 +92,34 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
     resolver: zodResolver(formSchema),
     defaultValues: {
       serviceType: "",
-      serviceCost: 0,
-      initialPayment: 0,
+      serviceCost: "",
+      initialPayment: "",
       notes: "",
     },
   });
 
-  const serviceCost = form.watch("serviceCost") || 0;
-  const newTotal = currentTotalCost + serviceCost;
+  const serviceCostValue = Number(form.watch("serviceCost")) || 0;
+  const newTotal = currentTotalCost + serviceCostValue;
 
   function onSubmit(values: FormValues) {
-    mutate(values);
+    const serviceCost = Number(values.serviceCost) || 0;
+    const initialPayment = Number(values.initialPayment) || 0;
+    
+    if (serviceCost <= 0) {
+      toast({
+        title: "خطأ",
+        description: "تكلفة الخدمة يجب أن تكون أكبر من 0",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    mutate({
+      serviceType: values.serviceType,
+      serviceCost,
+      initialPayment,
+      notes: values.notes,
+    });
   }
 
   return (
@@ -151,10 +170,11 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
                   <FormLabel>تكلفة الخدمة الجديدة (د.ع)</FormLabel>
                   <FormControl>
                     <Input 
-                      type="number" 
+                      type="text"
+                      inputMode="numeric"
                       {...field} 
                       className="text-left font-mono" 
-                      placeholder="0" 
+                      placeholder="أدخل التكلفة" 
                       data-testid="input-service-cost"
                     />
                   </FormControl>
@@ -182,7 +202,8 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
                   <FormLabel>الدفعة الأولية (اختياري)</FormLabel>
                   <FormControl>
                     <Input 
-                      type="number" 
+                      type="text"
+                      inputMode="numeric"
                       {...field} 
                       className="text-left font-mono" 
                       placeholder="0" 

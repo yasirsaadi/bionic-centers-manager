@@ -37,7 +37,8 @@ import {
   AlertCircle
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
-import { VisitOrServiceModal } from "@/components/VisitOrServiceModal";
+import { VisitModal } from "@/components/VisitModal";
+import { NewServiceModal } from "@/components/NewServiceModal";
 import { useRef } from "react";
 import type { Branch } from "@shared/schema";
 
@@ -292,11 +293,12 @@ export default function PatientDetails() {
             </TabsList>
 
             <TabsContent value="visits" className="space-y-4">
-              <div className="flex justify-end mb-4">
-                <VisitOrServiceModal 
+              <div className="flex justify-end gap-2 mb-4">
+                <VisitModal patientId={patient.id} branchId={patient.branchId} />
+                <NewServiceModal 
                   patientId={patient.id} 
                   branchId={patient.branchId} 
-                  currentTotalCost={patient.totalCost || 0}
+                  currentTotalCost={patient.totalCost || 0} 
                 />
               </div>
               <Card className="overflow-hidden border-border/60 shadow-sm">
