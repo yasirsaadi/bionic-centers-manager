@@ -86,10 +86,8 @@ export async function registerRoutes(
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const ctx = getUserContext(req);
-      // Use form's branchId if user has no assigned branch, otherwise use user's branch (admins can choose)
-      const branchId = ctx.role === 'admin' 
-        ? (req.body.branchId || 1) 
-        : (ctx.branchId || req.body.branchId || 1);
+      // Always use the form's branchId - allow staff to select branch when creating patients
+      const branchId = req.body.branchId || ctx.branchId || 1;
       const input = api.patients.create.input.parse({
         ...req.body,
         branchId
