@@ -3,7 +3,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Loader2, Building2, ShieldCheck } from "lucide-react";
+import { Lock, Loader2, ShieldCheck } from "lucide-react";
+import logoImage from "@/assets/logo.png";
 import { useQuery } from "@tanstack/react-query";
 import type { Branch } from "@shared/schema";
 
@@ -124,9 +125,7 @@ export function BranchGate({ children }: BranchGateProps) {
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100" dir="rtl">
       <Card className="p-8 w-full max-w-md rounded-2xl shadow-xl border-0">
         <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Building2 className="w-10 h-10 text-primary" />
-          </div>
+          <img src={logoImage} alt="Bionic Logo" className="w-32 h-32 object-contain mx-auto mb-4" />
           <h1 className="text-2xl font-display font-bold text-slate-800">مجموعة مراكز الدكتور ياسر الساعدي</h1>
           <p className="text-muted-foreground mt-2">اختر الفرع وأدخل كلمة السر للدخول</p>
         </div>
