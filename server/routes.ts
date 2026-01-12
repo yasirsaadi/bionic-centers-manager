@@ -218,6 +218,57 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  // New Service (add service to existing patient)
+  app.post("/api/patients/:id/new-service", isAuthenticated, async (req, res) => {
+    try {
+      const patientId = Number(req.params.id);
+      const { serviceType, serviceCost, initialPayment, notes, branchId } = req.body;
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: "Patient not found" });
+      }
+      
+      // Update totalCost
+      const newTotalCost = (patient.totalCost || 0) + serviceCost;
+      await storage.updatePatient(patientId, { totalCost: newTotalCost });
+      
+      // Service type labels in Arabic
+      const serviceLabels: Record<string, string> = {
+        maintenance: "صيانة الطرف الصناعي",
+        additional_therapy: "جلسات علاج إضافية",
+        new_prosthetic: "طرف صناعي جديد",
+        adjustment: "تعديل أو ضبط",
+        consultation: "استشارة طبية",
+        other: "خدمة أخرى",
+      };
+      
+      const serviceLabel = serviceLabels[serviceType] || serviceType;
+      
+      // Create a visit record
+      await storage.createVisit({
+        patientId,
+        branchId: branchId || patient.branchId,
+        notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
+      });
+      
+      // Create initial payment if provided
+      if (initialPayment > 0) {
+        await storage.createPayment({
+          patientId,
+          branchId: branchId || patient.branchId,
+          amount: initialPayment,
+          notes: `دفعة أولية - ${serviceLabel}`,
+        });
+      }
+      
+      res.json({ success: true, newTotalCost });
+    } catch (err) {
+      console.error("Error adding new service:", err);
+      res.status(500).json({ message: "حدث خطأ أثناء إضافة الخدمة" });
+    }
+  });
+
   // Visits
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     const input = api.visits.create.input.parse(req.body);

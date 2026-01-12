@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
+import { NewServiceModal } from "@/components/NewServiceModal";
 import { useRef } from "react";
 import type { Branch } from "@shared/schema";
 
@@ -264,8 +265,13 @@ export default function PatientDetails() {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-dashed">
+              <div className="pt-4 border-t border-dashed space-y-2">
                 <PaymentModal patientId={patient.id} branchId={patient.branchId} />
+                <NewServiceModal 
+                  patientId={patient.id} 
+                  branchId={patient.branchId} 
+                  currentTotalCost={patient.totalCost || 0} 
+                />
               </div>
             </div>
           </Card>
