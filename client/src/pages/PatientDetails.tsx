@@ -225,6 +225,46 @@ export default function PatientDetails() {
                   <p className="font-semibold text-base">{patient.prostheticType}</p>
                 </div>
               )}
+              {patient.isAmputee && patient.siliconType && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-muted-foreground mb-1">نوع السليكون</p>
+                    <p className="font-semibold text-base">{patient.siliconType}</p>
+                  </div>
+                  {patient.siliconSize && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">حجم السليكون</p>
+                      <p className="font-semibold text-base">{patient.siliconSize}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {patient.isAmputee && patient.suspensionSystem && (
+                <div>
+                  <p className="text-muted-foreground mb-1">نظام التعليق</p>
+                  <p className="font-semibold text-base">{patient.suspensionSystem}</p>
+                </div>
+              )}
+              {patient.isAmputee && patient.footType && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-muted-foreground mb-1">نوع القدم</p>
+                    <p className="font-semibold text-base">{patient.footType}</p>
+                  </div>
+                  {patient.footSize && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">حجم القدم</p>
+                      <p className="font-semibold text-base">{patient.footSize}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {patient.isAmputee && patient.kneeJointType && (
+                <div>
+                  <p className="text-muted-foreground mb-1">نوع مفصل الركبة</p>
+                  <p className="font-semibold text-base">{patient.kneeJointType}</p>
+                </div>
+              )}
               {patient.isPhysiotherapy && patient.treatmentType && (
                 <div>
                   <p className="text-muted-foreground mb-1">نوع العلاج</p>

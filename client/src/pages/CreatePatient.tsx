@@ -71,6 +71,12 @@ export default function CreatePatient() {
       injuryCause: "",
       generalNotes: "",
       prostheticType: "",
+      siliconType: "",
+      siliconSize: "",
+      suspensionSystem: "",
+      footType: "",
+      footSize: "",
+      kneeJointType: "",
       treatmentType: "",
       branchId: defaultBranchId,
     },
@@ -318,6 +324,88 @@ export default function CreatePatient() {
                         <FormLabel>نوع الطرف الصناعي</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} placeholder="مثال: طرف سفلي ذكي، ركبة ميكانيكية..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="siliconType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>نوع السليكون</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value || ""} placeholder="مثال: سليكون طبي..." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="siliconSize"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>حجم السليكون</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value || ""} placeholder="مثال: M، L، XL..." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="suspensionSystem"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نظام التعليق</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: حزام، فاكيوم، سليكون..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="footType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>نوع القدم</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value || ""} placeholder="مثال: قدم كربون، قدم مرنة..." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="footSize"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>حجم القدم</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value || ""} placeholder="مثال: 42، 43..." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="kneeJointType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع مفصل الركبة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: مفصل هيدروليكي، مفصل ميكانيكي..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

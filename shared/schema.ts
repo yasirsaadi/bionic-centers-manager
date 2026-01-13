@@ -41,6 +41,12 @@ export const patients = pgTable("patients", {
   isAmputee: boolean("is_amputee").default(false),
   amputationSite: text("amputation_site"),
   prostheticType: text("prosthetic_type"), // نوع الطرف
+  siliconType: text("silicon_type"), // نوع السليكون
+  siliconSize: text("silicon_size"), // حجم السليكون
+  suspensionSystem: text("suspension_system"), // نظام التعليق
+  footType: text("foot_type"), // نوع القدم
+  footSize: text("foot_size"), // حجم القدم
+  kneeJointType: text("knee_joint_type"), // نوع مفصل الركبة
   
   // For physiotherapy
   isPhysiotherapy: boolean("is_physiotherapy").default(false),
