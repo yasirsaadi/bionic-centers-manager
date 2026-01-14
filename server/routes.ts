@@ -317,6 +317,48 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  // Documents
+  app.post(api.documents.create.path, isAuthenticated, upload.single('file'), async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "لم يتم اختيار ملف" });
+      }
+      
+      const patientId = Number(req.body.patientId);
+      const documentType = req.body.documentType || "report";
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: "المريض غير موجود" });
+      }
+      
+      const document = await storage.createDocument({
+        patientId,
+        fileName: file.originalname,
+        fileUrl: `/uploads/${file.filename}`,
+        documentType,
+      });
+      
+      res.status(201).json(document);
+    } catch (err) {
+      console.error("Error uploading document:", err);
+      res.status(500).json({ message: "حدث خطأ أثناء رفع المستند" });
+    }
+  });
+
+  // Delete document (admin only)
+  app.delete(api.documents.delete.path, isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف المستندات" });
+    }
+    
+    const id = Number(req.params.id);
+    await storage.deleteDocument(id);
+    res.status(204).send();
+  });
+
   // Daily Report
   app.get(api.reports.daily.path, isAuthenticated, async (req, res) => {
     const branchId = Number(req.params.branchId);
