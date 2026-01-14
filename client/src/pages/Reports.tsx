@@ -137,7 +137,7 @@ function ReportsContent() {
                   التاريخ: {new Date().toLocaleDateString('ar-IQ')}
                 </p>
               </div>
-              <Button variant="outline" className="gap-2" data-testid="button-print-report">
+              <Button variant="outline" className="gap-2 print:hidden" onClick={() => window.print()} data-testid="button-print-report">
                 <FileText className="w-4 h-4" />
                 طباعة التقرير
               </Button>
