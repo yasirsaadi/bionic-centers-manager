@@ -97,10 +97,55 @@ export default function PatientDetails() {
 
   return (
     <div className="space-y-8 page-transition pb-12">
+      {/* Action Buttons - Print at top */}
+      <div className="flex flex-wrap gap-3 items-center justify-end print:hidden">
+        <Link href={`/patients/${patient.id}/edit`}>
+          <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
+            <Pencil className="w-4 h-4" />
+            تحرير
+          </Button>
+        </Link>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
+              <Trash2 className="w-4 h-4" />
+              حذف
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
+              <AlertDialogDescription>
+                سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-2">
+              <AlertDialogCancel>إلغاء</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleDelete}
+                className="bg-red-600 hover:bg-red-700"
+                disabled={isDeleting}
+              >
+                {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <Button 
+          variant="outline" 
+          className="gap-2" 
+          onClick={() => window.print()}
+          data-testid="button-export-pdf"
+        >
+          <FileDown className="w-4 h-4" />
+          تصدير PDF
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between gap-6 items-start">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={() => setLocation("/patients")} className="h-10 w-10 p-0 rounded-full border">
+          <Button variant="ghost" onClick={() => setLocation("/patients")} className="h-10 w-10 p-0 rounded-full border print:hidden">
             <ArrowRight className="w-5 h-5 text-slate-500" />
           </Button>
           <div>
@@ -131,47 +176,6 @@ export default function PatientDetails() {
           <Badge variant={patient.isAmputee ? "default" : "secondary"} className="text-base px-4 py-1.5 h-auto">
             {patient.isAmputee ? "بتر" : "علاج طبيعي"}
           </Badge>
-          <Link href={`/patients/${patient.id}/edit`}>
-            <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
-              <Pencil className="w-4 h-4" />
-              تحرير
-            </Button>
-          </Link>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
-                <Trash2 className="w-4 h-4" />
-                حذف
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
-                <AlertDialogDescription>
-                  سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter className="gap-2">
-                <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                <AlertDialogAction 
-                  onClick={handleDelete}
-                  className="bg-red-600 hover:bg-red-700"
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          <Button 
-            variant="outline" 
-            className="gap-2" 
-            onClick={() => window.print()}
-            data-testid="button-export-pdf"
-          >
-            <FileDown className="w-4 h-4" />
-            تصدير PDF
-          </Button>
         </div>
       </div>
 
@@ -195,22 +199,26 @@ export default function PatientDetails() {
                   <p className="font-semibold text-lg">{patient.height || "--"} سم</p>
                 </div>
               </div>
-              {patient.injuryDate && (
-                <div className="pb-4 border-b border-dashed">
-                  <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
-                  <p className="font-semibold text-base flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                    {new Date(patient.injuryDate).toLocaleDateString('ar-IQ')}
-                  </p>
-                </div>
-              )}
-              {patient.injuryCause && (
-                <div className="pb-4 border-b border-dashed">
-                  <p className="text-muted-foreground mb-1">سبب الإصابة</p>
-                  <p className="font-semibold text-base flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-muted-foreground" />
-                    {patient.injuryCause}
-                  </p>
+              {(patient.injuryDate || patient.injuryCause) && (
+                <div className="grid grid-cols-2 gap-4 pb-4 border-b border-dashed">
+                  {patient.injuryDate && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
+                      <p className="font-semibold text-base flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-muted-foreground" />
+                        {new Date(patient.injuryDate).toLocaleDateString('ar-IQ')}
+                      </p>
+                    </div>
+                  )}
+                  {patient.injuryCause && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">سبب الإصابة</p>
+                      <p className="font-semibold text-base flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                        {patient.injuryCause}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
               <div>
@@ -225,24 +233,26 @@ export default function PatientDetails() {
                   <p className="font-semibold text-base">{patient.prostheticType}</p>
                 </div>
               )}
-              {patient.isAmputee && patient.siliconType && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-muted-foreground mb-1">نوع السليكون</p>
-                    <p className="font-semibold text-base">{patient.siliconType}</p>
-                  </div>
+              {patient.isAmputee && (patient.siliconType || patient.siliconSize || patient.suspensionSystem) && (
+                <div className="grid grid-cols-3 gap-4">
+                  {patient.siliconType && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">نوع السليكون</p>
+                      <p className="font-semibold text-base">{patient.siliconType}</p>
+                    </div>
+                  )}
                   {patient.siliconSize && (
                     <div>
                       <p className="text-muted-foreground mb-1">حجم السليكون</p>
                       <p className="font-semibold text-base">{patient.siliconSize}</p>
                     </div>
                   )}
-                </div>
-              )}
-              {patient.isAmputee && patient.suspensionSystem && (
-                <div>
-                  <p className="text-muted-foreground mb-1">نظام التعليق</p>
-                  <p className="font-semibold text-base">{patient.suspensionSystem}</p>
+                  {patient.suspensionSystem && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">نظام التعليق</p>
+                      <p className="font-semibold text-base">{patient.suspensionSystem}</p>
+                    </div>
+                  )}
                 </div>
               )}
               {patient.isAmputee && patient.footType && (
