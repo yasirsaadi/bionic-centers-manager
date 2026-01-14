@@ -4,8 +4,11 @@ import { Users, Activity, Banknote, Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { AdminGate } from "@/components/AdminGate";
+import { useLocation } from "wouter";
 
 function DashboardContent() {
+  const [, navigate] = useLocation();
+  
   // Fetch overall stats for all branches
   const { data: stats, isLoading } = useQuery<{ 
     paid: number; 
@@ -105,7 +108,11 @@ function DashboardContent() {
           <p className="text-white/80 mb-6 leading-relaxed">
             يمكنك من هنا إدارة كافة عمليات المركز بسهولة، بدءاً من تسجيل المرضى ومتابعة حالاتهم، وصولاً إلى الإدارة المالية والأرشفة الإلكترونية.
           </p>
-          <button className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-6 py-2.5 rounded-xl font-medium transition-all">
+          <button 
+            onClick={() => navigate("/reports")}
+            data-testid="button-view-reports"
+            className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-6 py-2.5 rounded-xl font-medium transition-all"
+          >
             عرض التقارير
           </button>
         </div>
