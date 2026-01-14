@@ -359,7 +359,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  // Daily Report
+  // Daily Report for specific branch
   app.get(api.reports.daily.path, isAuthenticated, async (req, res) => {
     const branchId = Number(req.params.branchId);
     const branchPatients = await storage.getPatients(branchId);
@@ -373,6 +373,32 @@ export async function registerRoutes(
       sold,
       paid,
       remaining: sold - paid
+    });
+  });
+
+  // Overall stats for all branches (for dashboard)
+  app.get("/api/reports/overall", isAuthenticated, async (req, res) => {
+    const allPatients = await storage.getPatients();
+    const branches = await storage.getBranches();
+    
+    let totalSold = 0;
+    let totalPaid = 0;
+    
+    for (const branch of branches) {
+      const branchPayments = await storage.getPaymentsByBranch(branch.id);
+      totalPaid += branchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+    }
+    
+    totalSold = allPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+    
+    res.json({
+      revenue: totalPaid,
+      sold: totalSold,
+      paid: totalPaid,
+      remaining: totalSold - totalPaid,
+      totalPatients: allPatients.length,
+      amputees: allPatients.filter(p => p.isAmputee).length,
+      physiotherapy: allPatients.filter(p => p.isPhysiotherapy).length
     });
   });
 

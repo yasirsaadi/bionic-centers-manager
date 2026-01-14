@@ -6,18 +6,24 @@ import { useQuery } from "@tanstack/react-query";
 import { AdminGate } from "@/components/AdminGate";
 
 function DashboardContent() {
-  const { data: patients, isLoading } = usePatients();
-  
-  // Fetch branch report for stats
-  const { data: report } = useQuery<{ paid: number; remaining: number; patients: number }>({
-    queryKey: ["/api/reports/daily", 1],
+  // Fetch overall stats for all branches
+  const { data: stats, isLoading } = useQuery<{ 
+    paid: number; 
+    remaining: number; 
+    sold: number;
+    totalPatients: number;
+    amputees: number;
+    physiotherapy: number;
+  }>({
+    queryKey: ["/api/reports/overall"],
     queryFn: async () => {
-      const res = await fetch("/api/reports/daily/1", { credentials: "include" });
-      if (!res.ok) return { paid: 0, remaining: 0, patients: 0 };
+      const res = await fetch("/api/reports/overall", { credentials: "include" });
+      if (!res.ok) return { paid: 0, remaining: 0, sold: 0, totalPatients: 0, amputees: 0, physiotherapy: 0 };
       return res.json();
     },
-    enabled: !!patients,
   });
+
+  const { data: patients } = usePatients();
 
   if (isLoading) {
     return (
@@ -29,13 +35,10 @@ function DashboardContent() {
     );
   }
 
-  // Calculate stats safely
-  const totalPatients = patients?.length || 0;
-  const amputeesCount = patients?.filter(p => p.isAmputee).length || 0;
-  const physioCount = patients?.filter(p => p.isPhysiotherapy).length || 0;
-  
-  // Note: For real-world apps, total revenue should come from a dedicated stats endpoint
-  // to avoid fetching all records. Here we simulate it.
+  // Use stats from the API
+  const totalPatients = stats?.totalPatients || 0;
+  const amputeesCount = stats?.amputees || 0;
+  const physioCount = stats?.physiotherapy || 0;
   
   return (
     <div className="space-y-8 page-transition">
@@ -66,7 +69,7 @@ function DashboardContent() {
         />
         <StatsCard 
           title="الإيرادات" 
-          value={`${(report?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+          value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
           icon={Banknote} 
           color="blue"
         />
