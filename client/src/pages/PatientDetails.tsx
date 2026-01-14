@@ -1,4 +1,4 @@
-import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment } from "@/hooks/use-patients";
+import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -49,6 +49,7 @@ export default function PatientDetails() {
   const isAdmin = branchSession?.isAdmin || false;
   const { data: patient, isLoading } = usePatient(Number(id));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
+  const { mutate: deleteDocument } = useDeleteDocument();
   const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
@@ -470,10 +471,27 @@ export default function PatientDetails() {
                       </div>
                       <div className="flex-1 overflow-hidden">
                         <p className="font-bold truncate text-slate-800">{doc.fileName}</p>
-                        <p className="text-xs text-muted-foreground">{new Date(doc.uploadedAt || "").toLocaleDateString('ar-SA')}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(doc.uploadedAt || "").toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                        </p>
                       </div>
-                      <Button variant="ghost" size="icon" className="text-slate-400 hover:text-primary">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="text-slate-400 hover:text-primary"
+                        onClick={() => window.open(doc.fileUrl, '_blank')}
+                        data-testid={`button-download-doc-${doc.id}`}
+                      >
                         <Download className="w-5 h-5" />
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="text-slate-400 hover:text-red-500"
+                        onClick={() => deleteDocument({ documentId: doc.id, patientId: patient.id })}
+                        data-testid={`button-delete-doc-${doc.id}`}
+                      >
+                        <Trash2 className="w-5 h-5" />
                       </Button>
                     </div>
                   ))

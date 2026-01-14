@@ -159,6 +159,38 @@ export function useUploadDocument() {
   });
 }
 
+// DELETE /api/documents/:id
+export function useDeleteDocument() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ documentId, patientId }: { documentId: number; patientId: number }) => {
+      const res = await fetch(`/api/documents/${documentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("فشل في حذف المستند");
+      return { patientId };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, result.patientId] });
+      toast({
+        title: "تم حذف المستند",
+        description: "تم حذف الملف من سجل المريض",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
 // PUT /api/patients/:id
 export function useUpdatePatient() {
   const queryClient = useQueryClient();
