@@ -469,8 +469,8 @@ export default function PatientDetails() {
                       <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center text-slate-500 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
                         <FileText className="w-6 h-6" />
                       </div>
-                      <div className="flex-1 overflow-hidden">
-                        <p className="font-bold truncate text-slate-800">{doc.fileName}</p>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-slate-800 break-words" title={doc.fileName}>{doc.fileName}</p>
                         <p className="text-xs text-muted-foreground">
                           {new Date(doc.uploadedAt || "").toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                         </p>
