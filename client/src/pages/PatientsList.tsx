@@ -136,7 +136,8 @@ export default function PatientsList() {
                       {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.diseaseType || '-'}
                     </TableCell>
                     <TableCell className="text-slate-500 font-mono text-sm">
-                      {new Date(patient.createdAt || "").toLocaleDateString('en-GB')}
+                      <div>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</div>
+                      <div className="text-xs text-slate-400">{new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
                     </TableCell>
                     <TableCell className="pl-6">
                       <Link href={`/patients/${patient.id}`}>
