@@ -25,7 +25,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Loader2, ArrowRight } from "lucide-react";
 import { z } from "zod";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
@@ -83,6 +83,54 @@ export default function CreatePatient() {
   });
 
   const conditionType = form.watch("medicalCondition");
+
+  // Amputation selection state
+  const [amputationType, setAmputationType] = useState<"single" | "double">("single");
+  const [singleLimb, setSingleLimb] = useState<"upper" | "lower">("lower");
+  const [singleSide, setSingleSide] = useState<"right" | "left">("right");
+  const [singleAmputationDetail, setSingleAmputationDetail] = useState("");
+  
+  const [doubleLimbType, setDoubleLimbType] = useState<"upper" | "lower" | "both">("lower");
+  const [doubleRightDetail, setDoubleRightDetail] = useState("");
+  const [doubleLeftDetail, setDoubleLeftDetail] = useState("");
+  const [bothRightLimb, setBothRightLimb] = useState<"upper" | "lower">("upper");
+  const [bothLeftLimb, setBothLeftLimb] = useState<"upper" | "lower">("upper");
+  const [bothRightDetail, setBothRightDetail] = useState("");
+  const [bothLeftDetail, setBothLeftDetail] = useState("");
+
+  // Build amputationSite string from selections
+  useEffect(() => {
+    if (conditionType !== "amputee") return;
+    
+    let site = "";
+    if (amputationType === "single") {
+      const limbText = singleLimb === "upper" ? "طرف علوي" : "طرف سفلي";
+      const sideText = singleSide === "right" ? "يمين" : "يسار";
+      site = `احادي - ${limbText} - ${sideText}`;
+      if (singleAmputationDetail) site += ` - ${singleAmputationDetail}`;
+    } else {
+      // Double amputation
+      if (doubleLimbType === "upper") {
+        site = `ثنائي - علوي`;
+        if (doubleRightDetail || doubleLeftDetail) {
+          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
+        }
+      } else if (doubleLimbType === "lower") {
+        site = `ثنائي - سفلي`;
+        if (doubleRightDetail || doubleLeftDetail) {
+          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
+        }
+      } else {
+        // both upper and lower
+        const rightLimbText = bothRightLimb === "upper" ? "علوي" : "سفلي";
+        const leftLimbText = bothLeftLimb === "upper" ? "علوي" : "سفلي";
+        site = `ثنائي - علوي وسفلي`;
+        site += ` | يمين (${rightLimbText}): ${bothRightDetail || "-"}`;
+        site += ` | يسار (${leftLimbText}): ${bothLeftDetail || "-"}`;
+      }
+    }
+    form.setValue("amputationSite", site);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, conditionType, form]);
 
   // Sync boolean flags with string selection
   useEffect(() => {
@@ -303,19 +351,148 @@ export default function CreatePatient() {
 
               {conditionType === "amputee" && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <FormField
-                    control={form.control}
-                    name="amputationSite"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>جهة ومستوى البتر</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: تحت الركبة - الجهة اليمنى" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {/* Amputation Type Selection */}
+                  <div className="space-y-4">
+                    <FormLabel className="text-base">نوع البتر</FormLabel>
+                    <RadioGroup
+                      value={amputationType}
+                      onValueChange={(val) => setAmputationType(val as "single" | "double")}
+                      className="flex flex-col sm:flex-row gap-4"
+                    >
+                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <RadioGroupItem value="single" id="single" />
+                        <label htmlFor="single" className="font-normal cursor-pointer flex-1">احادي</label>
+                      </div>
+                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <RadioGroupItem value="double" id="double" />
+                        <label htmlFor="double" className="font-normal cursor-pointer flex-1">ثنائي</label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  {/* Single Amputation Options */}
+                  {amputationType === "single" && (
+                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <FormLabel>الطرف</FormLabel>
+                          <Select value={singleLimb} onValueChange={(val) => setSingleLimb(val as "upper" | "lower")}>
+                            <SelectTrigger className="bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="upper">طرف علوي</SelectItem>
+                              <SelectItem value="lower">طرف سفلي</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <FormLabel>الجهة</FormLabel>
+                          <Select value={singleSide} onValueChange={(val) => setSingleSide(val as "right" | "left")}>
+                            <SelectTrigger className="bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="right">يمين</SelectItem>
+                              <SelectItem value="left">يسار</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>نوع البتر</FormLabel>
+                        <Input 
+                          value={singleAmputationDetail} 
+                          onChange={(e) => setSingleAmputationDetail(e.target.value)}
+                          placeholder="مثال: تحت الركبة، فوق الركبة، تحت المرفق..."
+                          className="bg-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Double Amputation Options */}
+                  {amputationType === "double" && (
+                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
+                      <div className="space-y-2">
+                        <FormLabel>نوع البتر الثنائي</FormLabel>
+                        <Select value={doubleLimbType} onValueChange={(val) => setDoubleLimbType(val as "upper" | "lower" | "both")}>
+                          <SelectTrigger className="bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="upper">علوي</SelectItem>
+                            <SelectItem value="lower">سفلي</SelectItem>
+                            <SelectItem value="both">علوي وسفلي</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Upper or Lower double amputation */}
+                      {(doubleLimbType === "upper" || doubleLimbType === "lower") && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <FormLabel>البتر اليمين</FormLabel>
+                            <Input 
+                              value={doubleRightDetail} 
+                              onChange={(e) => setDoubleRightDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                              className="bg-white"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <FormLabel>البتر اليسار</FormLabel>
+                            <Input 
+                              value={doubleLeftDetail} 
+                              onChange={(e) => setDoubleLeftDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                              className="bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Both upper and lower double amputation */}
+                      {doubleLimbType === "both" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-3 p-3 border rounded-lg bg-white">
+                            <FormLabel className="text-primary">اليمين</FormLabel>
+                            <Select value={bothRightLimb} onValueChange={(val) => setBothRightLimb(val as "upper" | "lower")}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="upper">علوي</SelectItem>
+                                <SelectItem value="lower">سفلي</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input 
+                              value={bothRightDetail} 
+                              onChange={(e) => setBothRightDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                            />
+                          </div>
+                          <div className="space-y-3 p-3 border rounded-lg bg-white">
+                            <FormLabel className="text-primary">اليسار</FormLabel>
+                            <Select value={bothLeftLimb} onValueChange={(val) => setBothLeftLimb(val as "upper" | "lower")}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="upper">علوي</SelectItem>
+                                <SelectItem value="lower">سفلي</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input 
+                              value={bothLeftDetail} 
+                              onChange={(e) => setBothLeftDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <FormField
                     control={form.control}
                     name="prostheticType"
