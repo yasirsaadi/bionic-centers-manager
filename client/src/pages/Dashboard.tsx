@@ -95,7 +95,7 @@ function DashboardContent() {
                   </div>
                 </div>
                 <span className="text-xs font-medium px-2 py-1 rounded-md bg-blue-50 text-blue-600">
-                  {new Date(patient.createdAt || "").toLocaleDateString('ar-SA')}
+                  {new Date(patient.createdAt || "").toLocaleDateString('en-GB')}
                 </span>
               </div>
             ))}

@@ -134,7 +134,7 @@ function ReportsContent() {
               <div>
                 <h3 className="text-xl font-bold text-slate-800">ملخص فرع {selectedBranchName}</h3>
                 <p className="text-muted-foreground text-sm mt-1">
-                  التاريخ: {new Date().toLocaleDateString('ar-IQ')}
+                  التاريخ: {new Date().toLocaleDateString('en-GB')}
                 </p>
               </div>
               <Button variant="outline" className="gap-2 print:hidden" onClick={() => window.print()} data-testid="button-print-report">

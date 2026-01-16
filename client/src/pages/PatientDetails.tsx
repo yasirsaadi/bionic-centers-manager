@@ -160,7 +160,7 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center"></span>
-              <span>تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('ar-SA')}</span>
+              <span>تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('en-GB')} - {new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
@@ -207,7 +207,7 @@ export default function PatientDetails() {
                       <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
                       <p className="font-semibold text-base flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
-                        {new Date(patient.injuryDate).toLocaleDateString('ar-IQ')}
+                        {new Date(patient.injuryDate).toLocaleDateString('en-GB')}
                       </p>
                     </div>
                   )}
@@ -371,7 +371,7 @@ export default function PatientDetails() {
                     ) : (
                       patient.visits?.map((visit) => (
                         <tr key={visit.id} className="hover:bg-slate-50/50">
-                          <td className="p-4 text-slate-500">{new Date(visit.visitDate || "").toLocaleDateString('ar-IQ')}</td>
+                          <td className="p-4 text-slate-500">{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</td>
                           <td className="p-4 text-slate-700">{visit.details || "-"}</td>
                           <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
                           {isAdmin && (
@@ -414,7 +414,7 @@ export default function PatientDetails() {
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                          <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('ar-IQ')}</td>
+                          <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('en-GB')}</td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
                             <td className="p-4">
