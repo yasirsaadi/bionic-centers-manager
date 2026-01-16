@@ -11,10 +11,11 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Filter, Building2 } from "lucide-react";
+import { Plus, Search, Eye, Filter, Building2, ChevronRight, ChevronLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Branch } from "@shared/schema";
 
 export default function PatientsList() {
@@ -28,6 +29,8 @@ export default function PatientsList() {
     },
   });
   const [searchTerm, setSearchTerm] = useState("");
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
@@ -37,6 +40,23 @@ export default function PatientsList() {
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.medicalCondition.includes(searchTerm)
   );
+
+  // Pagination
+  const totalPatients = filteredPatients?.length || 0;
+  const totalPages = Math.ceil(totalPatients / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const paginatedPatients = filteredPatients?.slice(startIndex, startIndex + pageSize);
+
+  // Reset to page 1 when search or page size changes
+  const handlePageSizeChange = (value: string) => {
+    setPageSize(Number(value));
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="space-y-6 page-transition">
@@ -61,7 +81,7 @@ export default function PatientsList() {
               placeholder="بحث باسم المريض أو الحالة..." 
               className="pr-10 h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
             />
           </div>
           <Button variant="outline" className="gap-2 h-11 border-slate-200 text-slate-600">
@@ -88,14 +108,14 @@ export default function PatientsList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredPatients?.length === 0 ? (
+              {paginatedPatients?.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                     لا يوجد نتائج مطابقة
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredPatients?.map((patient) => (
+                paginatedPatients?.map((patient) => (
                   <TableRow key={patient.id} className="hover:bg-slate-50/80 transition-colors">
                     <TableCell className="font-medium text-slate-900 pr-6 py-4">
                       {patient.name}
@@ -116,7 +136,7 @@ export default function PatientsList() {
                       {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.diseaseType || '-'}
                     </TableCell>
                     <TableCell className="text-slate-500 font-mono text-sm">
-                      {new Date(patient.createdAt || "").toLocaleDateString('ar-SA')}
+                      {new Date(patient.createdAt || "").toLocaleDateString('en-GB')}
                     </TableCell>
                     <TableCell className="pl-6">
                       <Link href={`/patients/${patient.id}`}>
@@ -132,6 +152,50 @@ export default function PatientsList() {
             </TableBody>
           </Table>
         )}
+
+        {/* Pagination Controls */}
+        <div className="p-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <span>عرض</span>
+            <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+              <SelectTrigger className="w-20 h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span>من أصل {totalPatients} سجل</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="gap-1"
+            >
+              <ChevronRight className="w-4 h-4" />
+              السابق
+            </Button>
+            <span className="text-sm text-slate-600 px-2">
+              صفحة {currentPage} من {totalPages || 1}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="gap-1"
+            >
+              التالي
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
