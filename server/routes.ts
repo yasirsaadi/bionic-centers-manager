@@ -429,11 +429,17 @@ export async function registerRoutes(
           const createdAt = new Date(p.createdAt);
           return createdAt >= startOfDay && createdAt < endOfDay;
         });
-        // Filter payments made today
+        
+        // Get IDs of today's patients
+        const todayPatientIds = new Set(filteredPatients.map(p => p.id));
+        
+        // Filter payments made today FOR today's patients only
         filteredPayments = branchPayments.filter(p => {
           if (!p.date) return false;
           const paymentDate = new Date(p.date);
-          return paymentDate >= startOfDay && paymentDate < endOfDay;
+          const isToday = paymentDate >= startOfDay && paymentDate < endOfDay;
+          const isForTodayPatient = todayPatientIds.has(p.patientId);
+          return isToday && isForTodayPatient;
         });
       }
       
