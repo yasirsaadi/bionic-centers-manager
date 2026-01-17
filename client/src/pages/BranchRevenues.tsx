@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Building2, Banknote, TrendingUp, Clock } from "lucide-react";
-import { useLocation } from "wouter";
+import { ArrowRight, Building2, Banknote, TrendingUp, Clock, Calendar } from "lucide-react";
+import { useLocation, useSearch } from "wouter";
 import { AdminGate } from "@/components/AdminGate";
 import type { Branch } from "@shared/schema";
-import { api, buildUrl } from "@shared/routes";
+import { api } from "@shared/routes";
 
 interface BranchReport {
   revenue: number;
@@ -17,6 +17,9 @@ interface BranchReport {
 
 function BranchRevenuesContent() {
   const [, navigate] = useLocation();
+  const searchString = useSearch();
+  const isDaily = searchString.includes("daily=true");
+  const todayFormatted = new Date().toLocaleDateString('en-GB');
 
   const { data: branches, isLoading: branchesLoading } = useQuery<Branch[]>({
     queryKey: [api.branches.list.path],
@@ -28,9 +31,10 @@ function BranchRevenuesContent() {
   });
 
   const { data: branchReports, isLoading: reportsLoading } = useQuery<Record<number, BranchReport>>({
-    queryKey: ["/api/reports/all-branches"],
+    queryKey: ["/api/reports/all-branches", isDaily],
     queryFn: async () => {
-      const res = await fetch("/api/reports/all-branches", { credentials: "include" });
+      const url = isDaily ? "/api/reports/all-branches?daily=true" : "/api/reports/all-branches";
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("فشل في جلب التقارير");
       return res.json();
     },
@@ -59,8 +63,13 @@ function BranchRevenuesContent() {
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
-          <h2 className="text-3xl font-display font-bold text-slate-800">إيرادات الفروع</h2>
-          <p className="text-muted-foreground mt-1">تفاصيل الإيرادات لكل فرع</p>
+          <h2 className="text-3xl font-display font-bold text-slate-800 flex items-center gap-3">
+            {isDaily && <Calendar className="w-7 h-7 text-green-600" />}
+            {isDaily ? `إيرادات اليوم (${todayFormatted})` : "إجمالي إيرادات الفروع"}
+          </h2>
+          <p className="text-muted-foreground mt-1">
+            {isDaily ? "تفاصيل إيرادات اليوم لكل فرع" : "تفاصيل إجمالي الإيرادات لكل فرع"}
+          </p>
         </div>
       </div>
 

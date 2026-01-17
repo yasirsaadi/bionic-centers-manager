@@ -109,6 +109,7 @@ function DashboardContent() {
             icon={Banknote} 
             color="primary"
             onClick={() => navigate("/revenues")}
+            data-testid="card-total-revenue"
           />
         </div>
       </div>
@@ -156,7 +157,8 @@ function DashboardContent() {
               value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
               icon={Banknote} 
               color="primary"
-              onClick={() => navigate("/revenues")}
+              onClick={() => navigate("/revenues?daily=true")}
+              data-testid="card-daily-revenue"
             />
           </div>
         )}

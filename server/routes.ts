@@ -403,19 +403,42 @@ export async function registerRoutes(
     });
   });
 
-  // All branches revenues endpoint
+  // All branches revenues endpoint (supports daily filter)
   app.get("/api/reports/all-branches", isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
     const allPatients = await storage.getPatients();
+    const daily = req.query.daily === "true";
+    
+    // Get today's date range if daily filter is enabled
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
     
     const result: Record<number, { revenue: number; sold: number; paid: number; remaining: number }> = {};
     
     for (const branch of branches) {
-      const branchPatients = allPatients.filter(p => p.branchId === branch.id);
       const branchPayments = await storage.getPaymentsByBranch(branch.id);
       
-      const sold = branchPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
-      const paid = branchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+      let filteredPatients = allPatients.filter(p => p.branchId === branch.id);
+      let filteredPayments = branchPayments;
+      
+      if (daily) {
+        // Filter patients registered today
+        filteredPatients = filteredPatients.filter(p => {
+          if (!p.createdAt) return false;
+          const createdAt = new Date(p.createdAt);
+          return createdAt >= startOfDay && createdAt < endOfDay;
+        });
+        // Filter payments made today
+        filteredPayments = branchPayments.filter(p => {
+          if (!p.date) return false;
+          const paymentDate = new Date(p.date);
+          return paymentDate >= startOfDay && paymentDate < endOfDay;
+        });
+      }
+      
+      const sold = filteredPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+      const paid = filteredPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
       
       result[branch.id] = {
         revenue: paid,
