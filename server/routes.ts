@@ -398,7 +398,47 @@ export async function registerRoutes(
       remaining: totalSold - totalPaid,
       totalPatients: allPatients.length,
       amputees: allPatients.filter(p => p.isAmputee).length,
-      physiotherapy: allPatients.filter(p => p.isPhysiotherapy).length
+      physiotherapy: allPatients.filter(p => p.isPhysiotherapy).length,
+      medicalSupport: allPatients.filter(p => p.isMedicalSupport).length
+    });
+  });
+
+  // Daily statistics endpoint
+  app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
+    const allPatients = await storage.getPatients();
+    const branches = await storage.getBranches();
+    
+    // Get today's date range (start of day to end of day)
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    
+    // Filter patients registered today
+    const todayPatients = allPatients.filter(p => {
+      if (!p.createdAt) return false;
+      const createdAt = new Date(p.createdAt);
+      return createdAt >= startOfDay && createdAt < endOfDay;
+    });
+    
+    // Get today's payments
+    let todayPaid = 0;
+    for (const branch of branches) {
+      const branchPayments = await storage.getPaymentsByBranch(branch.id);
+      const todayBranchPayments = branchPayments.filter(p => {
+        if (!p.date) return false;
+        const paymentDate = new Date(p.date);
+        return paymentDate >= startOfDay && paymentDate < endOfDay;
+      });
+      todayPaid += todayBranchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+    }
+    
+    res.json({
+      date: startOfDay.toISOString(),
+      totalPatients: todayPatients.length,
+      amputees: todayPatients.filter(p => p.isAmputee).length,
+      physiotherapy: todayPatients.filter(p => p.isPhysiotherapy).length,
+      medicalSupport: todayPatients.filter(p => p.isMedicalSupport).length,
+      paid: todayPaid
     });
   });
 

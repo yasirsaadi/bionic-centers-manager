@@ -1,6 +1,6 @@
 import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
-import { Users, Activity, Banknote, Clock } from "lucide-react";
+import { Users, Activity, Banknote, Clock, Calendar, HeartPulse } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { AdminGate } from "@/components/AdminGate";
@@ -17,11 +17,29 @@ function DashboardContent() {
     totalPatients: number;
     amputees: number;
     physiotherapy: number;
+    medicalSupport: number;
   }>({
     queryKey: ["/api/reports/overall"],
     queryFn: async () => {
       const res = await fetch("/api/reports/overall", { credentials: "include" });
-      if (!res.ok) return { paid: 0, remaining: 0, sold: 0, totalPatients: 0, amputees: 0, physiotherapy: 0 };
+      if (!res.ok) return { paid: 0, remaining: 0, sold: 0, totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0 };
+      return res.json();
+    },
+  });
+
+  // Fetch daily stats
+  const { data: dailyStats, isLoading: isDailyLoading } = useQuery<{ 
+    date: string;
+    totalPatients: number;
+    amputees: number;
+    physiotherapy: number;
+    medicalSupport: number;
+    paid: number;
+  }>({
+    queryKey: ["/api/reports/daily"],
+    queryFn: async () => {
+      const res = await fetch("/api/reports/daily", { credentials: "include" });
+      if (!res.ok) return { date: "", totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0, paid: 0 };
       return res.json();
     },
   });
@@ -42,6 +60,10 @@ function DashboardContent() {
   const totalPatients = stats?.totalPatients || 0;
   const amputeesCount = stats?.amputees || 0;
   const physioCount = stats?.physiotherapy || 0;
+  const medicalSupportCount = stats?.medicalSupport || 0;
+
+  // Format today's date
+  const todayFormatted = new Date().toLocaleDateString('en-GB');
   
   return (
     <div className="space-y-8 page-transition">
@@ -50,32 +72,92 @@ function DashboardContent() {
         <p className="text-muted-foreground mt-1">ملخص أداء المركز وإحصائيات المرضى</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatsCard 
-          title="إجمالي المرضى" 
-          value={totalPatients} 
-          icon={Users} 
-          color="primary"
-          trend="+5 هذا الشهر"
-        />
-        <StatsCard 
-          title="حالات البتر" 
-          value={amputeesCount} 
-          icon={Activity} 
-          color="accent"
-        />
-        <StatsCard 
-          title="العلاج الطبيعي" 
-          value={physioCount} 
-          icon={Clock} 
-          color="green"
-        />
-        <StatsCard 
-          title="الإيرادات" 
-          value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
-          icon={Banknote} 
-          color="blue"
-        />
+      {/* Overall Stats */}
+      <div>
+        <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <Users className="w-5 h-5 text-primary" />
+          الإحصائيات الإجمالية
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <StatsCard 
+            title="إجمالي المرضى" 
+            value={totalPatients} 
+            icon={Users} 
+            color="primary"
+          />
+          <StatsCard 
+            title="حالات البتر" 
+            value={amputeesCount} 
+            icon={Activity} 
+            color="accent"
+          />
+          <StatsCard 
+            title="العلاج الطبيعي" 
+            value={physioCount} 
+            icon={Clock} 
+            color="green"
+          />
+          <StatsCard 
+            title="مساند طبية" 
+            value={medicalSupportCount} 
+            icon={HeartPulse} 
+            color="blue"
+          />
+          <StatsCard 
+            title="الإيرادات" 
+            value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+            icon={Banknote} 
+            color="primary"
+          />
+        </div>
+      </div>
+
+      {/* Daily Stats */}
+      <div>
+        <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <Calendar className="w-5 h-5 text-green-600" />
+          إحصائيات اليوم ({todayFormatted})
+        </h3>
+        {isDailyLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-28 rounded-2xl w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <StatsCard 
+              title="مرضى اليوم" 
+              value={dailyStats?.totalPatients || 0} 
+              icon={Users} 
+              color="primary"
+            />
+            <StatsCard 
+              title="حالات بتر اليوم" 
+              value={dailyStats?.amputees || 0} 
+              icon={Activity} 
+              color="accent"
+            />
+            <StatsCard 
+              title="علاج طبيعي اليوم" 
+              value={dailyStats?.physiotherapy || 0} 
+              icon={Clock} 
+              color="green"
+            />
+            <StatsCard 
+              title="مساند طبية اليوم" 
+              value={dailyStats?.medicalSupport || 0} 
+              icon={HeartPulse} 
+              color="blue"
+            />
+            <StatsCard 
+              title="إيرادات اليوم" 
+              value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+              icon={Banknote} 
+              color="primary"
+            />
+          </div>
+        )}
       </div>
 
       {/* Recent Activity Section could go here */}
