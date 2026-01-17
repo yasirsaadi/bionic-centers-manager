@@ -403,6 +403,31 @@ export async function registerRoutes(
     });
   });
 
+  // All branches revenues endpoint
+  app.get("/api/reports/all-branches", isAuthenticated, async (req, res) => {
+    const branches = await storage.getBranches();
+    const allPatients = await storage.getPatients();
+    
+    const result: Record<number, { revenue: number; sold: number; paid: number; remaining: number }> = {};
+    
+    for (const branch of branches) {
+      const branchPatients = allPatients.filter(p => p.branchId === branch.id);
+      const branchPayments = await storage.getPaymentsByBranch(branch.id);
+      
+      const sold = branchPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+      const paid = branchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+      
+      result[branch.id] = {
+        revenue: paid,
+        sold,
+        paid,
+        remaining: sold - paid
+      };
+    }
+    
+    res.json(result);
+  });
+
   // Daily statistics endpoint
   app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
     const allPatients = await storage.getPatients();

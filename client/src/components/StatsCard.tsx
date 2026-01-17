@@ -8,9 +8,10 @@ interface StatsCardProps {
   trend?: string;
   color?: "primary" | "accent" | "blue" | "green";
   className?: string;
+  onClick?: () => void;
 }
 
-export function StatsCard({ title, value, icon: Icon, trend, color = "primary", className }: StatsCardProps) {
+export function StatsCard({ title, value, icon: Icon, trend, color = "primary", className, onClick }: StatsCardProps) {
   const colorStyles = {
     primary: "bg-primary/10 text-primary",
     accent: "bg-accent/10 text-accent",
@@ -19,10 +20,14 @@ export function StatsCard({ title, value, icon: Icon, trend, color = "primary", 
   };
 
   return (
-    <div className={cn(
-      "bg-white rounded-2xl p-6 border border-border/50 shadow-sm hover:shadow-md transition-shadow duration-300",
-      className
-    )}>
+    <div 
+      className={cn(
+        "bg-white rounded-2xl p-6 border border-border/50 shadow-sm hover:shadow-md transition-shadow duration-300",
+        onClick && "cursor-pointer hover:border-primary/30",
+        className
+      )}
+      onClick={onClick}
+    >
       <div className="flex justify-between items-start">
         <div>
           <p className="text-sm text-muted-foreground font-medium mb-1">{title}</p>

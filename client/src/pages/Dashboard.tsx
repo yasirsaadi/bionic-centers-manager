@@ -108,6 +108,7 @@ function DashboardContent() {
             value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
             icon={Banknote} 
             color="primary"
+            onClick={() => navigate("/revenues")}
           />
         </div>
       </div>
@@ -155,6 +156,7 @@ function DashboardContent() {
               value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
               icon={Banknote} 
               color="primary"
+              onClick={() => navigate("/revenues")}
             />
           </div>
         )}
