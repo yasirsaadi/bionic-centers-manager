@@ -3,14 +3,236 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { FileText, TrendingUp, Banknote, Clock, Building2 } from "lucide-react";
-import { useState } from "react";
-import { api, buildUrl } from "@shared/routes";
+import { Badge } from "@/components/ui/badge";
+import { FileText, Banknote, Clock, Building2, Calendar, Users, ChevronDown, ChevronUp, UserPlus, CreditCard } from "lucide-react";
+import { useState, useEffect } from "react";
+import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
 import { AdminGate } from "@/components/AdminGate";
 
+interface PaymentDetail {
+  id: number;
+  patientId: number;
+  patientName: string;
+  amount: number;
+  notes: string | null;
+  date: string;
+  patientTotalCost: number;
+}
+
+interface PatientDetail {
+  id: number;
+  name: string;
+  totalCost: number;
+  isAmputee: boolean;
+  isPhysiotherapy: boolean;
+  isMedicalSupport: boolean;
+  createdAt: string;
+}
+
+interface DailySummary {
+  date: string;
+  payments: PaymentDetail[];
+  patients: PatientDetail[];
+  totalPaid: number;
+  totalCosts: number;
+  patientCount: number;
+  paymentCount: number;
+}
+
+interface DetailedReport {
+  branchId: number;
+  dailySummaries: DailySummary[];
+  overall: {
+    totalCost: number;
+    totalPaid: number;
+    remaining: number;
+    totalPatients: number;
+    totalPayments: number;
+  };
+}
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+}
+
+function isToday(dateStr: string): boolean {
+  const today = new Date();
+  const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return dateStr === todayLocal;
+}
+
+function DaySummaryCard({ summary, isExpanded, onToggle }: { 
+  summary: DailySummary; 
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const isTodayDate = isToday(summary.date);
+  
+  return (
+    <Card className={`rounded-2xl overflow-hidden border-border/60 ${isTodayDate ? 'border-2 border-primary/50 shadow-lg' : ''}`}>
+      <div 
+        className={`p-5 cursor-pointer ${isTodayDate ? 'bg-primary/5' : 'bg-white'}`}
+        onClick={onToggle}
+        data-testid={`day-summary-${summary.date}`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isTodayDate ? 'bg-primary/20' : 'bg-slate-100'}`}>
+              <Calendar className={`w-6 h-6 ${isTodayDate ? 'text-primary' : 'text-slate-600'}`} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-lg text-slate-800">
+                  {isTodayDate ? 'اليوم' : formatDate(summary.date)}
+                </h3>
+                {isTodayDate && (
+                  <Badge variant="default" className="bg-primary text-white">
+                    {new Date().toLocaleDateString('en-GB')}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                <span className="flex items-center gap-1">
+                  <UserPlus className="w-4 h-4" />
+                  {summary.patientCount} مريض جديد
+                </span>
+                <span className="flex items-center gap-1">
+                  <CreditCard className="w-4 h-4" />
+                  {summary.paymentCount} عملية دفع
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="text-left">
+              <p className="text-xs text-muted-foreground">التكاليف</p>
+              <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString('ar-IQ')} د.ع</p>
+            </div>
+            <div className="text-left">
+              <p className="text-xs text-muted-foreground">المدفوع</p>
+              <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString('ar-IQ')} د.ع</p>
+            </div>
+            <div className="text-left">
+              <p className="text-xs text-muted-foreground">المتبقي</p>
+              <p className="font-bold font-mono text-red-600">
+                {(summary.totalCosts - summary.totalPaid).toLocaleString('ar-IQ')} د.ع
+              </p>
+            </div>
+            <Button variant="ghost" size="icon" className="mr-2">
+              {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            </Button>
+          </div>
+        </div>
+      </div>
+      
+      {isExpanded && (
+        <div className="border-t bg-slate-50/50 p-5 space-y-6">
+          {summary.patients.length > 0 && (
+            <div>
+              <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                المرضى المسجلين ({summary.patients.length})
+              </h4>
+              <div className="overflow-hidden border rounded-xl bg-white">
+                <table className="w-full">
+                  <thead className="bg-blue-50/80">
+                    <tr>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">نوع الحالة</th>
+                      <th className="text-left p-3 font-semibold text-slate-600 text-sm">التكلفة (د.ع)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {summary.patients.map((patient, idx) => (
+                      <tr key={patient.id} className="hover:bg-slate-50/50">
+                        <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                        <td className="p-3 font-medium text-slate-800">{patient.name}</td>
+                        <td className="p-3">
+                          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
+                            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-left font-mono font-bold text-slate-800">
+                          {patient.totalCost.toLocaleString('ar-IQ')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-blue-50/80">
+                    <tr>
+                      <td colSpan={3} className="p-3 font-bold text-slate-700">إجمالي تكاليف اليوم</td>
+                      <td className="p-3 text-left font-mono font-bold text-slate-800">
+                        {summary.totalCosts.toLocaleString('ar-IQ')} د.ع
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+          
+          {summary.payments.length > 0 && (
+            <div>
+              <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-emerald-600" />
+                المدفوعات ({summary.payments.length})
+              </h4>
+              <div className="overflow-hidden border rounded-xl bg-white">
+                <table className="w-full">
+                  <thead className="bg-emerald-50/80">
+                    <tr>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">ملاحظات</th>
+                      <th className="text-left p-3 font-semibold text-slate-600 text-sm">المبلغ (د.ع)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {summary.payments.map((payment, idx) => (
+                      <tr key={payment.id} className="hover:bg-slate-50/50">
+                        <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                        <td className="p-3 font-medium text-slate-800">{payment.patientName}</td>
+                        <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
+                        <td className="p-3 text-left font-mono font-bold text-emerald-600">
+                          {payment.amount.toLocaleString('ar-IQ')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-emerald-50/80">
+                    <tr>
+                      <td colSpan={3} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
+                      <td className="p-3 text-left font-mono font-bold text-emerald-600">
+                        {summary.totalPaid.toLocaleString('ar-IQ')} د.ع
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+          
+          {summary.patients.length === 0 && summary.payments.length === 0 && (
+            <p className="text-center text-muted-foreground py-4">لا توجد عمليات في هذا اليوم</p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ReportsContent() {
   const [selectedBranch, setSelectedBranch] = useState<string>("1");
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: [api.branches.list.path],
@@ -21,10 +243,10 @@ function ReportsContent() {
     },
   });
 
-  const { data: report, isLoading } = useQuery({
-    queryKey: ["/api/reports/daily", selectedBranch],
+  const { data: report, isLoading } = useQuery<DetailedReport>({
+    queryKey: ["/api/reports/detailed", selectedBranch],
     queryFn: async () => {
-      const res = await fetch(buildUrl(api.reports.daily.path, { branchId: selectedBranch }), { 
+      const res = await fetch(`/api/reports/detailed/${selectedBranch}`, { 
         credentials: "include" 
       });
       if (!res.ok) throw new Error("فشل في جلب التقرير");
@@ -34,12 +256,39 @@ function ReportsContent() {
 
   const selectedBranchName = branches?.find(b => b.id.toString() === selectedBranch)?.name || "الفرع";
 
+  const toggleDay = (date: string) => {
+    setExpandedDays(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(date)) {
+        newSet.delete(date);
+      } else {
+        newSet.add(date);
+      }
+      return newSet;
+    });
+  };
+
+  // Auto-expand today when report data loads
+  useEffect(() => {
+    if (report?.dailySummaries) {
+      const todaySummary = report.dailySummaries.find(s => isToday(s.date));
+      if (todaySummary) {
+        setExpandedDays(prev => {
+          if (!prev.has(todaySummary.date)) {
+            return new Set([todaySummary.date]);
+          }
+          return prev;
+        });
+      }
+    }
+  }, [report?.dailySummaries]);
+
   return (
     <div className="space-y-8 page-transition">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-3xl font-display font-bold text-slate-800">التقارير المالية</h2>
-          <p className="text-muted-foreground mt-1">ملخص الإيرادات والمدفوعات لكل فرع</p>
+          <p className="text-muted-foreground mt-1">تقرير مالي تفصيلي لفرع {selectedBranchName}</p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -56,118 +305,104 @@ function ReportsContent() {
               ))}
             </SelectContent>
           </Select>
+          <Button variant="outline" className="gap-2 print:hidden" onClick={() => window.print()} data-testid="button-print-report">
+            <FileText className="w-4 h-4" />
+            طباعة
+          </Button>
         </div>
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-32 rounded-2xl" />
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-24 rounded-2xl" />
           ))}
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card className="p-6 rounded-2xl border-border/60 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="p-5 rounded-2xl border-border/60 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <Banknote className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">إجمالي التكاليف</p>
+                  <p className="text-xl font-bold text-slate-900" data-testid="text-total-cost">
+                    {(report?.overall?.totalCost || 0).toLocaleString('ar-IQ')} د.ع
+                  </p>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5 rounded-2xl border-border/60 shadow-sm">
+              <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center">
                   <Banknote className="w-6 h-6 text-emerald-600" />
                 </div>
-                <span className="text-xs font-medium px-2 py-1 bg-emerald-50 text-emerald-600 rounded-md">
-                  الإيرادات
-                </span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-1">إجمالي المدفوعات</p>
-              <p className="text-2xl font-bold text-slate-900" data-testid="text-revenue">
-                {(report?.revenue || 0).toLocaleString('ar-IQ')} د.ع
-              </p>
-            </Card>
-
-            <Card className="p-6 rounded-2xl border-border/60 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-blue-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">المبلغ المدفوع</p>
+                  <p className="text-xl font-bold text-emerald-600" data-testid="text-total-paid">
+                    {(report?.overall?.totalPaid || 0).toLocaleString('ar-IQ')} د.ع
+                  </p>
                 </div>
-                <span className="text-xs font-medium px-2 py-1 bg-blue-50 text-blue-600 rounded-md">
-                  المبيعات
-                </span>
               </div>
-              <p className="text-sm text-muted-foreground mb-1">إجمالي التكاليف</p>
-              <p className="text-2xl font-bold text-slate-900" data-testid="text-sold">
-                {(report?.sold || 0).toLocaleString('ar-IQ')} د.ع
-              </p>
             </Card>
 
-            <Card className="p-6 rounded-2xl border-border/60 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-green-50 flex items-center justify-center">
-                  <Banknote className="w-6 h-6 text-green-600" />
-                </div>
-                <span className="text-xs font-medium px-2 py-1 bg-green-50 text-green-600 rounded-md">
-                  المحصّل
-                </span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-1">المبلغ المدفوع</p>
-              <p className="text-2xl font-bold text-slate-900" data-testid="text-paid">
-                {(report?.paid || 0).toLocaleString('ar-IQ')} د.ع
-              </p>
-            </Card>
-
-            <Card className="p-6 rounded-2xl border-border/60 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
+            <Card className="p-5 rounded-2xl border-border/60 shadow-sm">
+              <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
                   <Clock className="w-6 h-6 text-red-600" />
                 </div>
-                <span className="text-xs font-medium px-2 py-1 bg-red-50 text-red-600 rounded-md">
-                  المتبقي
-                </span>
+                <div>
+                  <p className="text-sm text-muted-foreground">المبلغ المتبقي</p>
+                  <p className="text-xl font-bold text-red-600" data-testid="text-remaining">
+                    {(report?.overall?.remaining || 0).toLocaleString('ar-IQ')} د.ع
+                  </p>
+                </div>
               </div>
-              <p className="text-sm text-muted-foreground mb-1">المبلغ المتبقي</p>
-              <p className="text-2xl font-bold text-red-600" data-testid="text-remaining">
-                {(report?.remaining || 0).toLocaleString('ar-IQ')} د.ع
-              </p>
+            </Card>
+
+            <Card className="p-5 rounded-2xl border-border/60 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-purple-50 flex items-center justify-center">
+                  <Users className="w-6 h-6 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">عدد المرضى</p>
+                  <p className="text-xl font-bold text-slate-900" data-testid="text-patients">
+                    {report?.overall?.totalPatients || 0}
+                  </p>
+                </div>
+              </div>
             </Card>
           </div>
 
-          <Card className="p-8 rounded-2xl border-border/60 shadow-sm">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-xl font-bold text-slate-800">ملخص فرع {selectedBranchName}</h3>
-                <p className="text-muted-foreground text-sm mt-1">
-                  التاريخ: {new Date().toLocaleDateString('en-GB')}
-                </p>
+          <div className="space-y-4">
+            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              السجل المالي اليومي
+            </h3>
+            
+            {report?.dailySummaries && report.dailySummaries.length > 0 ? (
+              <div className="space-y-3">
+                {report.dailySummaries.map((summary) => (
+                  <DaySummaryCard 
+                    key={summary.date}
+                    summary={summary}
+                    isExpanded={expandedDays.has(summary.date)}
+                    onToggle={() => toggleDay(summary.date)}
+                  />
+                ))}
               </div>
-              <Button variant="outline" className="gap-2 print:hidden" onClick={() => window.print()} data-testid="button-print-report">
-                <FileText className="w-4 h-4" />
-                طباعة التقرير
-              </Button>
-            </div>
-
-            <div className="overflow-hidden border rounded-xl">
-              <table className="w-full">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="text-right p-4 font-semibold text-slate-600">البند</th>
-                    <th className="text-left p-4 font-semibold text-slate-600">المبلغ (د.ع)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="p-4 text-slate-700">إجمالي تكاليف العلاج</td>
-                    <td className="p-4 font-bold text-left font-mono">{(report?.sold || 0).toLocaleString('ar-IQ')}</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="p-4 text-slate-700">إجمالي المبالغ المحصّلة</td>
-                    <td className="p-4 font-bold text-left font-mono text-emerald-600">{(report?.paid || 0).toLocaleString('ar-IQ')}</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50 bg-red-50/50">
-                    <td className="p-4 text-slate-700 font-semibold">المبالغ المتبقية</td>
-                    <td className="p-4 font-bold text-left font-mono text-red-600">{(report?.remaining || 0).toLocaleString('ar-IQ')}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </Card>
+            ) : (
+              <Card className="p-12 text-center rounded-2xl">
+                <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-slate-700 mb-2">لا توجد عمليات مالية</h3>
+                <p className="text-muted-foreground">لم يتم تسجيل أي عمليات في هذا الفرع</p>
+              </Card>
+            )}
+          </div>
         </>
       )}
     </div>

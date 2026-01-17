@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
+import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -455,6 +456,132 @@ export async function registerRoutes(
     }
     
     res.json(result);
+  });
+
+  // Detailed financial report by branch with transactions grouped by date
+  app.get("/api/reports/detailed/:branchId", isAuthenticated, async (req, res) => {
+    const branchId = parseInt(req.params.branchId);
+    const patients = await storage.getPatients(branchId);
+    const payments = await storage.getPaymentsByBranch(branchId);
+    
+    // Create patient lookup map
+    const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
+    
+    // Define types
+    type PaymentDetail = {
+      id: number;
+      patientId: number;
+      patientName: string;
+      amount: number;
+      notes: string | null;
+      date: string;
+      patientTotalCost: number;
+    };
+    
+    type PatientDetail = {
+      id: number;
+      name: string;
+      totalCost: number;
+      isAmputee: boolean;
+      isPhysiotherapy: boolean;
+      isMedicalSupport: boolean;
+      createdAt: string;
+    };
+    
+    // Group payments by date (YYYY-MM-DD)
+    const paymentsByDate: Record<string, PaymentDetail[]> = {};
+    
+    // Group patients by registration date (for showing new patients)
+    const patientsByDate: Record<string, PatientDetail[]> = {};
+    
+    // Helper function to get local date key (YYYY-MM-DD)
+    const getLocalDateKey = (date: Date | string | null): string => {
+      if (!date) return 'unknown';
+      const d = new Date(date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    // Process payments
+    for (const payment of payments) {
+      const patient = patientMap.get(payment.patientId);
+      const dateKey = getLocalDateKey(payment.date);
+      
+      if (!paymentsByDate[dateKey]) {
+        paymentsByDate[dateKey] = [];
+      }
+      
+      paymentsByDate[dateKey].push({
+        id: payment.id,
+        patientId: payment.patientId,
+        patientName: patient?.name || 'غير معروف',
+        amount: payment.amount,
+        notes: payment.notes,
+        date: payment.date?.toString() || '',
+        patientTotalCost: patient?.totalCost || 0
+      });
+    }
+    
+    // Process patients
+    for (const patient of patients) {
+      const dateKey = getLocalDateKey(patient.createdAt);
+      
+      if (!patientsByDate[dateKey]) {
+        patientsByDate[dateKey] = [];
+      }
+      
+      patientsByDate[dateKey].push({
+        id: patient.id,
+        name: patient.name,
+        totalCost: patient.totalCost || 0,
+        isAmputee: patient.isAmputee || false,
+        isPhysiotherapy: patient.isPhysiotherapy || false,
+        isMedicalSupport: patient.isMedicalSupport || false,
+        createdAt: patient.createdAt?.toString() || ''
+      });
+    }
+    
+    // Get all unique dates and sort (newest first)
+    const paymentDates = Object.keys(paymentsByDate);
+    const patientDates = Object.keys(patientsByDate);
+    const allDatesSet = new Set([...paymentDates, ...patientDates]);
+    const allDates = Array.from(allDatesSet).filter(d => d !== 'unknown').sort((a, b) => b.localeCompare(a));
+    
+    // Calculate daily summaries
+    const dailySummaries = allDates.map(date => {
+      const dayPayments = paymentsByDate[date] || [];
+      const dayPatients = patientsByDate[date] || [];
+      
+      return {
+        date,
+        payments: dayPayments.sort((a: PaymentDetail, b: PaymentDetail) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        ),
+        patients: dayPatients,
+        totalPaid: dayPayments.reduce((acc: number, p: PaymentDetail) => acc + p.amount, 0),
+        totalCosts: dayPatients.reduce((acc: number, p: PatientDetail) => acc + p.totalCost, 0),
+        patientCount: dayPatients.length,
+        paymentCount: dayPayments.length
+      };
+    });
+    
+    // Calculate overall totals
+    const overallTotalCost = patients.reduce((acc: number, p: Patient) => acc + (p.totalCost || 0), 0);
+    const overallTotalPaid = payments.reduce((acc: number, p: Payment) => acc + p.amount, 0);
+    
+    res.json({
+      branchId,
+      dailySummaries,
+      overall: {
+        totalCost: overallTotalCost,
+        totalPaid: overallTotalPaid,
+        remaining: overallTotalCost - overallTotalPaid,
+        totalPatients: patients.length,
+        totalPayments: payments.length
+      }
+    });
   });
 
   // Daily statistics endpoint
