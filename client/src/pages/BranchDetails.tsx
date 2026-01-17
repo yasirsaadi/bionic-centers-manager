@@ -3,7 +3,7 @@ import { useParams, useLocation, Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, ArrowRight, UserPlus, Users, Banknote } from "lucide-react";
+import { Building2, ArrowRight, UserPlus, Users, Banknote, Calendar } from "lucide-react";
 import { AdminGate } from "@/components/AdminGate";
 import type { Branch, Patient } from "@shared/schema";
 
@@ -146,13 +146,17 @@ export default function BranchDetails() {
                     <div>
                       <h4 className="font-bold text-slate-800">{patient.name}</h4>
                       <p className="text-sm text-muted-foreground">
-                        {patient.age} سنة - {patient.medicalCondition}
+                        {patient.age} سنة - {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={patient.isAmputee ? "default" : "secondary"}>
-                      {patient.isAmputee ? "بتر" : "علاج طبيعي"}
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <Calendar className="w-4 h-4" />
+                      <span>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</span>
+                    </div>
+                    <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
+                      {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
                     </Badge>
                     <span className="text-sm font-mono text-muted-foreground">
                       {(patient.totalCost || 0).toLocaleString()} د.ع
