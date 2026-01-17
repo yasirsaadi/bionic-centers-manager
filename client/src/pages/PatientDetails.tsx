@@ -174,8 +174,8 @@ export default function PatientDetails() {
             <Building2 className="w-3 h-3" />
             {getBranchName(patient.branchId)}
           </Badge>
-          <Badge variant={patient.isAmputee ? "default" : "secondary"} className="text-base px-4 py-1.5 h-auto">
-            {patient.isAmputee ? "بتر" : "علاج طبيعي"}
+          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-base px-4 py-1.5 h-auto">
+            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
           </Badge>
         </div>
       </div>
@@ -225,9 +225,15 @@ export default function PatientDetails() {
               <div>
                 <p className="text-muted-foreground mb-1">التشخيص / الحالة</p>
                 <p className="font-semibold text-base">
-                  {patient.isAmputee ? patient.amputationSite : patient.diseaseType}
+                  {patient.isAmputee ? patient.amputationSite : patient.isMedicalSupport ? patient.supportType : patient.diseaseType}
                 </p>
               </div>
+              {patient.isMedicalSupport && patient.injurySide && (
+                <div>
+                  <p className="text-muted-foreground mb-1">جهة الإصابة</p>
+                  <p className="font-semibold text-base">{patient.injurySide}</p>
+                </div>
+              )}
               {patient.isAmputee && patient.prostheticType && (
                 <div>
                   <p className="text-muted-foreground mb-1">نوع الطرف الصناعي</p>

@@ -53,6 +53,11 @@ export const patients = pgTable("patients", {
   diseaseType: text("disease_type"),
   treatmentType: text("treatment_type"), // نوع العلاج
   
+  // For medical support (مساند طبية)
+  isMedicalSupport: boolean("is_medical_support").default(false),
+  supportType: text("support_type"), // نوع المسند
+  injurySide: text("injury_side"), // جهة الاصابة
+  
   totalCost: integer("total_cost").default(0), // in IQD
   createdAt: timestamp("created_at").defaultNow(),
 });

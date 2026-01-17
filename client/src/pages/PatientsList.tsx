@@ -128,12 +128,12 @@ export default function PatientsList() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={patient.isAmputee ? "default" : "secondary"} className="font-normal">
-                        {patient.medicalCondition}
+                      <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal">
+                        {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-slate-600">
-                      {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.diseaseType || '-'}
+                      {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                     </TableCell>
                     <TableCell className="text-slate-500 font-mono text-sm">
                       <div>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</div>

@@ -65,6 +65,7 @@ export default function EditPatient() {
       medicalCondition: "amputee",
       isAmputee: true,
       isPhysiotherapy: false,
+      isMedicalSupport: false,
       amputationSite: "",
       diseaseType: "",
       totalCost: 0,
@@ -79,6 +80,8 @@ export default function EditPatient() {
       footSize: "",
       kneeJointType: "",
       treatmentType: "",
+      supportType: "",
+      injurySide: "",
       branchId: 1,
     },
   });
@@ -95,6 +98,7 @@ export default function EditPatient() {
         medicalCondition: patient.medicalCondition,
         isAmputee: patient.isAmputee,
         isPhysiotherapy: patient.isPhysiotherapy,
+        isMedicalSupport: patient.isMedicalSupport,
         amputationSite: patient.amputationSite || "",
         diseaseType: patient.diseaseType || "",
         totalCost: patient.totalCost || 0,
@@ -109,6 +113,8 @@ export default function EditPatient() {
         footSize: patient.footSize || "",
         kneeJointType: patient.kneeJointType || "",
         treatmentType: patient.treatmentType || "",
+        supportType: patient.supportType || "",
+        injurySide: patient.injurySide || "",
         branchId: patient.branchId,
       });
     }
@@ -193,9 +199,15 @@ export default function EditPatient() {
     if (conditionType === "amputee") {
       form.setValue("isAmputee", true);
       form.setValue("isPhysiotherapy", false);
-    } else {
+      form.setValue("isMedicalSupport", false);
+    } else if (conditionType === "physiotherapy") {
       form.setValue("isAmputee", false);
       form.setValue("isPhysiotherapy", true);
+      form.setValue("isMedicalSupport", false);
+    } else if (conditionType === "medical_support") {
+      form.setValue("isAmputee", false);
+      form.setValue("isPhysiotherapy", false);
+      form.setValue("isMedicalSupport", true);
     }
   }, [conditionType, form]);
 
@@ -380,6 +392,14 @@ export default function EditPatient() {
                           </FormControl>
                           <FormLabel className="font-normal cursor-pointer flex-1">
                             علاج طبيعي / تأهيل
+                          </FormLabel>
+                        </FormItem>
+                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                          <FormControl>
+                            <RadioGroupItem value="medical_support" />
+                          </FormControl>
+                          <FormLabel className="font-normal cursor-pointer flex-1">
+                            مساند طبية
                           </FormLabel>
                         </FormItem>
                       </RadioGroup>
@@ -653,6 +673,37 @@ export default function EditPatient() {
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: جلسات علاج طبيعي" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+
+              {conditionType === "medical_support" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="supportType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع المسند</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مسند ظهر، مسند رقبة، مسند يد..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="injurySide"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>جهة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: يمين، يسار، كلا الجانبين..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
