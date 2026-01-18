@@ -103,7 +103,7 @@ export default function CreatePatient() {
   
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
-  const [siliconeSide, setSiliconeSide] = useState<"right" | "left">("right");
+  const [siliconeSide, setSiliconeSide] = useState<"right" | "left" | "both">("right");
   const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Build amputationSite string from selections
@@ -141,7 +141,7 @@ export default function CreatePatient() {
       site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
       // Add side for all parts except nose
       if (siliconePart && siliconePart !== "انف") {
-        const sideText = siliconeSide === "right" ? "يمين" : "يسار";
+        const sideText = siliconeSide === "right" ? "يمين" : siliconeSide === "left" ? "يسار" : "كلا الجانبين";
         site += ` - ${sideText}`;
       }
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
@@ -551,13 +551,14 @@ export default function CreatePatient() {
                         {siliconePart && siliconePart !== "انف" && (
                           <div className="space-y-2">
                             <FormLabel>جهة البتر</FormLabel>
-                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left")}>
+                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left" | "both")}>
                               <SelectTrigger className="bg-white" data-testid="select-silicone-side">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="right">يمين</SelectItem>
                                 <SelectItem value="left">يسار</SelectItem>
+                                <SelectItem value="both">كلا الجانبين</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>

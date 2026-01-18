@@ -139,7 +139,7 @@ export default function EditPatient() {
   
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
-  const [siliconeSide, setSiliconeSide] = useState<"right" | "left">("right");
+  const [siliconeSide, setSiliconeSide] = useState<"right" | "left" | "both">("right");
   const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Parse existing amputationSite when patient loads
@@ -172,6 +172,7 @@ export default function EditPatient() {
         setSiliconePart(infoParts[0] || "");
         if (infoParts.length >= 2) {
           if (infoParts[1] === "يسار") setSiliconeSide("left");
+          else if (infoParts[1] === "كلا الجانبين") setSiliconeSide("both");
           else setSiliconeSide("right");
         }
         if (mainParts.length >= 2) setSiliconeNotes(mainParts[1] || "");
@@ -213,7 +214,7 @@ export default function EditPatient() {
       site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
       // Add side for all parts except nose
       if (siliconePart && siliconePart !== "انف") {
-        const sideText = siliconeSide === "right" ? "يمين" : "يسار";
+        const sideText = siliconeSide === "right" ? "يمين" : siliconeSide === "left" ? "يسار" : "كلا الجانبين";
         site += ` - ${sideText}`;
       }
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
@@ -604,13 +605,14 @@ export default function EditPatient() {
                         {siliconePart && siliconePart !== "انف" && (
                           <div className="space-y-2">
                             <FormLabel>جهة البتر</FormLabel>
-                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left")}>
+                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left" | "both")}>
                               <SelectTrigger className="bg-white" data-testid="select-silicone-side-edit">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="right">يمين</SelectItem>
                                 <SelectItem value="left">يسار</SelectItem>
+                                <SelectItem value="both">كلا الجانبين</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
