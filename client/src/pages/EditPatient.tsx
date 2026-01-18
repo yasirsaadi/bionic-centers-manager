@@ -139,6 +139,7 @@ export default function EditPatient() {
   
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
+  const [siliconeSide, setSiliconeSide] = useState<"right" | "left">("right");
   const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Parse existing amputationSite when patient loads
@@ -164,13 +165,16 @@ export default function EditPatient() {
         }
       } else if (site.startsWith("اطراف سليكونية")) {
         setAmputationType("silicone");
-        // Parse silicone part and notes
-        const parts = site.split(" - ");
-        if (parts.length >= 2) {
-          const partAndNotes = parts[1].split(" | ملاحظات: ");
-          setSiliconePart(partAndNotes[0] || "");
-          if (partAndNotes.length >= 2) setSiliconeNotes(partAndNotes[1] || "");
+        // Parse silicone part, side and notes
+        const mainParts = site.split(" | ملاحظات: ");
+        const siliconeInfo = mainParts[0].replace("اطراف سليكونية تعويضية - ", "");
+        const infoParts = siliconeInfo.split(" - ");
+        setSiliconePart(infoParts[0] || "");
+        if (infoParts.length >= 2) {
+          if (infoParts[1] === "يسار") setSiliconeSide("left");
+          else setSiliconeSide("right");
         }
+        if (mainParts.length >= 2) setSiliconeNotes(mainParts[1] || "");
       }
       setIsInitialized(true);
     }
@@ -207,10 +211,15 @@ export default function EditPatient() {
     } else if (amputationType === "silicone") {
       // Silicone prosthetics
       site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
+      // Add side for all parts except nose
+      if (siliconePart && siliconePart !== "انف") {
+        const sideText = siliconeSide === "right" ? "يمين" : "يسار";
+        site += ` - ${sideText}`;
+      }
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeNotes, conditionType, form, isInitialized]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form, isInitialized]);
 
   useEffect(() => {
     if (conditionType === "amputee") {
@@ -576,20 +585,36 @@ export default function EditPatient() {
                   {/* Silicone Prosthetics Options */}
                   {amputationType === "silicone" && (
                     <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
-                      <div className="space-y-2">
-                        <FormLabel>نوع الطرف السليكوني</FormLabel>
-                        <Select value={siliconePart} onValueChange={setSiliconePart}>
-                          <SelectTrigger className="bg-white" data-testid="select-silicone-part-edit">
-                            <SelectValue placeholder="اختر نوع الطرف" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="اذن">اذن</SelectItem>
-                            <SelectItem value="انف">انف</SelectItem>
-                            <SelectItem value="محجر عين">محجر عين</SelectItem>
-                            <SelectItem value="اصبع">اصبع</SelectItem>
-                            <SelectItem value="كف">كف</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <FormLabel>نوع الطرف السليكوني</FormLabel>
+                          <Select value={siliconePart} onValueChange={setSiliconePart}>
+                            <SelectTrigger className="bg-white" data-testid="select-silicone-part-edit">
+                              <SelectValue placeholder="اختر نوع الطرف" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="اذن">اذن</SelectItem>
+                              <SelectItem value="انف">انف</SelectItem>
+                              <SelectItem value="محجر عين">محجر عين</SelectItem>
+                              <SelectItem value="اصبع">اصبع</SelectItem>
+                              <SelectItem value="كف">كف</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {siliconePart && siliconePart !== "انف" && (
+                          <div className="space-y-2">
+                            <FormLabel>جهة البتر</FormLabel>
+                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left")}>
+                              <SelectTrigger className="bg-white" data-testid="select-silicone-side-edit">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="right">يمين</SelectItem>
+                                <SelectItem value="left">يسار</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <FormLabel>ملاحظات عامة</FormLabel>

@@ -103,6 +103,7 @@ export default function CreatePatient() {
   
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
+  const [siliconeSide, setSiliconeSide] = useState<"right" | "left">("right");
   const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Build amputationSite string from selections
@@ -138,10 +139,15 @@ export default function CreatePatient() {
     } else if (amputationType === "silicone") {
       // Silicone prosthetics
       site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
+      // Add side for all parts except nose
+      if (siliconePart && siliconePart !== "انف") {
+        const sideText = siliconeSide === "right" ? "يمين" : "يسار";
+        site += ` - ${sideText}`;
+      }
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeNotes, conditionType, form]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form]);
 
   // Sync boolean flags with string selection
   useEffect(() => {
@@ -526,20 +532,36 @@ export default function CreatePatient() {
                   {/* Silicone Prosthetics Options */}
                   {amputationType === "silicone" && (
                     <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
-                      <div className="space-y-2">
-                        <FormLabel>نوع الطرف السليكوني</FormLabel>
-                        <Select value={siliconePart} onValueChange={setSiliconePart}>
-                          <SelectTrigger className="bg-white" data-testid="select-silicone-part">
-                            <SelectValue placeholder="اختر نوع الطرف" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="اذن">اذن</SelectItem>
-                            <SelectItem value="انف">انف</SelectItem>
-                            <SelectItem value="محجر عين">محجر عين</SelectItem>
-                            <SelectItem value="اصبع">اصبع</SelectItem>
-                            <SelectItem value="كف">كف</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <FormLabel>نوع الطرف السليكوني</FormLabel>
+                          <Select value={siliconePart} onValueChange={setSiliconePart}>
+                            <SelectTrigger className="bg-white" data-testid="select-silicone-part">
+                              <SelectValue placeholder="اختر نوع الطرف" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="اذن">اذن</SelectItem>
+                              <SelectItem value="انف">انف</SelectItem>
+                              <SelectItem value="محجر عين">محجر عين</SelectItem>
+                              <SelectItem value="اصبع">اصبع</SelectItem>
+                              <SelectItem value="كف">كف</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {siliconePart && siliconePart !== "انف" && (
+                          <div className="space-y-2">
+                            <FormLabel>جهة البتر</FormLabel>
+                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left")}>
+                              <SelectTrigger className="bg-white" data-testid="select-silicone-side">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="right">يمين</SelectItem>
+                                <SelectItem value="left">يسار</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <FormLabel>ملاحظات عامة</FormLabel>
