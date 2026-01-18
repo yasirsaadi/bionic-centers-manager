@@ -88,7 +88,7 @@ export default function CreatePatient() {
   const conditionType = form.watch("medicalCondition");
 
   // Amputation selection state
-  const [amputationType, setAmputationType] = useState<"single" | "double">("single");
+  const [amputationType, setAmputationType] = useState<"single" | "double" | "silicone">("single");
   const [singleLimb, setSingleLimb] = useState<"upper" | "lower">("lower");
   const [singleSide, setSingleSide] = useState<"right" | "left">("right");
   const [singleAmputationDetail, setSingleAmputationDetail] = useState("");
@@ -100,6 +100,10 @@ export default function CreatePatient() {
   const [bothLeftLimb, setBothLeftLimb] = useState<"upper" | "lower">("upper");
   const [bothRightDetail, setBothRightDetail] = useState("");
   const [bothLeftDetail, setBothLeftDetail] = useState("");
+  
+  // Silicone prosthetics state
+  const [siliconePart, setSiliconePart] = useState("");
+  const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Build amputationSite string from selections
   useEffect(() => {
@@ -111,7 +115,7 @@ export default function CreatePatient() {
       const sideText = singleSide === "right" ? "يمين" : "يسار";
       site = `احادي - ${limbText} - ${sideText}`;
       if (singleAmputationDetail) site += ` - ${singleAmputationDetail}`;
-    } else {
+    } else if (amputationType === "double") {
       // Double amputation
       if (doubleLimbType === "upper") {
         site = `ثنائي - علوي`;
@@ -131,9 +135,13 @@ export default function CreatePatient() {
         site += ` | يمين (${rightLimbText}): ${bothRightDetail || "-"}`;
         site += ` | يسار (${leftLimbText}): ${bothLeftDetail || "-"}`;
       }
+    } else if (amputationType === "silicone") {
+      // Silicone prosthetics
+      site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
+      if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, conditionType, form]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeNotes, conditionType, form]);
 
   // Sync boolean flags with string selection
   useEffect(() => {
@@ -373,7 +381,7 @@ export default function CreatePatient() {
                     <FormLabel className="text-base">نوع البتر</FormLabel>
                     <RadioGroup
                       value={amputationType}
-                      onValueChange={(val) => setAmputationType(val as "single" | "double")}
+                      onValueChange={(val) => setAmputationType(val as "single" | "double" | "silicone")}
                       className="flex flex-col sm:flex-row gap-4"
                     >
                       <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
@@ -383,6 +391,10 @@ export default function CreatePatient() {
                       <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
                         <RadioGroupItem value="double" id="double" />
                         <label htmlFor="double" className="font-normal cursor-pointer flex-1">ثنائي</label>
+                      </div>
+                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <RadioGroupItem value="silicone" id="silicone" />
+                        <label htmlFor="silicone" className="font-normal cursor-pointer flex-1">اطراف سليكونية تعويضية</label>
                       </div>
                     </RadioGroup>
                   </div>
@@ -510,6 +522,41 @@ export default function CreatePatient() {
                       )}
                     </div>
                   )}
+
+                  {/* Silicone Prosthetics Options */}
+                  {amputationType === "silicone" && (
+                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
+                      <div className="space-y-2">
+                        <FormLabel>نوع الطرف السليكوني</FormLabel>
+                        <Select value={siliconePart} onValueChange={setSiliconePart}>
+                          <SelectTrigger className="bg-white" data-testid="select-silicone-part">
+                            <SelectValue placeholder="اختر نوع الطرف" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="اذن">اذن</SelectItem>
+                            <SelectItem value="انف">انف</SelectItem>
+                            <SelectItem value="محجر عين">محجر عين</SelectItem>
+                            <SelectItem value="اصبع">اصبع</SelectItem>
+                            <SelectItem value="كف">كف</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>ملاحظات عامة</FormLabel>
+                        <Input 
+                          value={siliconeNotes} 
+                          onChange={(e) => setSiliconeNotes(e.target.value)}
+                          placeholder="أي ملاحظات إضافية..."
+                          className="bg-white"
+                          data-testid="input-silicone-notes"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show prosthetic details only for single/double amputation */}
+                  {(amputationType === "single" || amputationType === "double") && (
+                    <>
                   <FormField
                     control={form.control}
                     name="prostheticType"
@@ -605,6 +652,8 @@ export default function CreatePatient() {
                       </FormItem>
                     )}
                   />
+                    </>
+                  )}
                 </div>
               )}
 

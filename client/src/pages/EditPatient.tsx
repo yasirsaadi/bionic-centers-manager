@@ -123,7 +123,7 @@ export default function EditPatient() {
   const conditionType = form.watch("medicalCondition");
 
   // Amputation selection state
-  const [amputationType, setAmputationType] = useState<"single" | "double">("single");
+  const [amputationType, setAmputationType] = useState<"single" | "double" | "silicone">("single");
   const [singleLimb, setSingleLimb] = useState<"upper" | "lower">("lower");
   const [singleSide, setSingleSide] = useState<"right" | "left">("right");
   const [singleAmputationDetail, setSingleAmputationDetail] = useState("");
@@ -136,6 +136,10 @@ export default function EditPatient() {
   const [bothRightDetail, setBothRightDetail] = useState("");
   const [bothLeftDetail, setBothLeftDetail] = useState("");
   const [isInitialized, setIsInitialized] = useState(false);
+  
+  // Silicone prosthetics state
+  const [siliconePart, setSiliconePart] = useState("");
+  const [siliconeNotes, setSiliconeNotes] = useState("");
 
   // Parse existing amputationSite when patient loads
   useEffect(() => {
@@ -158,6 +162,15 @@ export default function EditPatient() {
         } else {
           setDoubleLimbType("lower");
         }
+      } else if (site.startsWith("اطراف سليكونية")) {
+        setAmputationType("silicone");
+        // Parse silicone part and notes
+        const parts = site.split(" - ");
+        if (parts.length >= 2) {
+          const partAndNotes = parts[1].split(" | ملاحظات: ");
+          setSiliconePart(partAndNotes[0] || "");
+          if (partAndNotes.length >= 2) setSiliconeNotes(partAndNotes[1] || "");
+        }
       }
       setIsInitialized(true);
     }
@@ -173,7 +186,7 @@ export default function EditPatient() {
       const sideText = singleSide === "right" ? "يمين" : "يسار";
       site = `احادي - ${limbText} - ${sideText}`;
       if (singleAmputationDetail) site += ` - ${singleAmputationDetail}`;
-    } else {
+    } else if (amputationType === "double") {
       if (doubleLimbType === "upper") {
         site = `ثنائي - علوي`;
         if (doubleRightDetail || doubleLeftDetail) {
@@ -191,9 +204,13 @@ export default function EditPatient() {
         site += ` | يمين (${rightLimbText}): ${bothRightDetail || "-"}`;
         site += ` | يسار (${leftLimbText}): ${bothLeftDetail || "-"}`;
       }
+    } else if (amputationType === "silicone") {
+      // Silicone prosthetics
+      site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
+      if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, conditionType, form, isInitialized]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeNotes, conditionType, form, isInitialized]);
 
   useEffect(() => {
     if (conditionType === "amputee") {
@@ -416,7 +433,7 @@ export default function EditPatient() {
                     <FormLabel className="text-base">نوع البتر</FormLabel>
                     <RadioGroup
                       value={amputationType}
-                      onValueChange={(val) => setAmputationType(val as "single" | "double")}
+                      onValueChange={(val) => setAmputationType(val as "single" | "double" | "silicone")}
                       className="flex flex-col sm:flex-row gap-4"
                     >
                       <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
@@ -426,6 +443,10 @@ export default function EditPatient() {
                       <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
                         <RadioGroupItem value="double" id="edit-double" />
                         <label htmlFor="edit-double" className="font-normal cursor-pointer flex-1">ثنائي</label>
+                      </div>
+                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <RadioGroupItem value="silicone" id="edit-silicone" />
+                        <label htmlFor="edit-silicone" className="font-normal cursor-pointer flex-1">اطراف سليكونية تعويضية</label>
                       </div>
                     </RadioGroup>
                   </div>
@@ -552,6 +573,40 @@ export default function EditPatient() {
                     </div>
                   )}
 
+                  {/* Silicone Prosthetics Options */}
+                  {amputationType === "silicone" && (
+                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
+                      <div className="space-y-2">
+                        <FormLabel>نوع الطرف السليكوني</FormLabel>
+                        <Select value={siliconePart} onValueChange={setSiliconePart}>
+                          <SelectTrigger className="bg-white" data-testid="select-silicone-part-edit">
+                            <SelectValue placeholder="اختر نوع الطرف" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="اذن">اذن</SelectItem>
+                            <SelectItem value="انف">انف</SelectItem>
+                            <SelectItem value="محجر عين">محجر عين</SelectItem>
+                            <SelectItem value="اصبع">اصبع</SelectItem>
+                            <SelectItem value="كف">كف</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>ملاحظات عامة</FormLabel>
+                        <Input 
+                          value={siliconeNotes} 
+                          onChange={(e) => setSiliconeNotes(e.target.value)}
+                          placeholder="أي ملاحظات إضافية..."
+                          className="bg-white"
+                          data-testid="input-silicone-notes-edit"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show prosthetic details only for single/double amputation */}
+                  {(amputationType === "single" || amputationType === "double") && (
+                    <>
                   <FormField
                     control={form.control}
                     name="prostheticType"
@@ -647,6 +702,8 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
+                    </>
+                  )}
                 </>
               )}
 
