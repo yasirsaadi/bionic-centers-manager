@@ -66,19 +66,19 @@ function DashboardContent() {
   const todayFormatted = new Date().toLocaleDateString('en-GB');
   
   return (
-    <div className="space-y-8 page-transition">
+    <div className="space-y-6 md:space-y-8 page-transition">
       <div>
-        <h2 className="text-3xl font-display font-bold text-slate-800">نظرة عامة</h2>
-        <p className="text-muted-foreground mt-1">ملخص أداء المركز وإحصائيات المرضى</p>
+        <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">نظرة عامة</h2>
+        <p className="text-sm md:text-base text-muted-foreground mt-1">ملخص أداء المركز وإحصائيات المرضى</p>
       </div>
 
       {/* Overall Stats */}
       <div>
-        <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-          <Users className="w-5 h-5 text-primary" />
+        <h3 className="text-base md:text-lg font-bold text-slate-700 mb-3 md:mb-4 flex items-center gap-2">
+          <Users className="w-4 h-4 md:w-5 md:h-5 text-primary" />
           الإحصائيات الإجمالية
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
           <StatsCard 
             title="إجمالي المرضى" 
             value={totalPatients} 
@@ -116,18 +116,18 @@ function DashboardContent() {
 
       {/* Daily Stats */}
       <div>
-        <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-green-600" />
+        <h3 className="text-base md:text-lg font-bold text-slate-700 mb-3 md:mb-4 flex items-center gap-2">
+          <Calendar className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
           إحصائيات اليوم ({todayFormatted})
         </h3>
         {isDailyLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
             {[1, 2, 3, 4, 5].map((i) => (
               <Skeleton key={i} className="h-28 rounded-2xl w-full" />
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
             <StatsCard 
               title="مرضى اليوم" 
               value={dailyStats?.totalPatients || 0} 

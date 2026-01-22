@@ -63,24 +63,24 @@ function BranchRevenuesContent() {
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
-          <h2 className="text-3xl font-display font-bold text-slate-800 flex items-center gap-3">
-            {isDaily && <Calendar className="w-7 h-7 text-green-600" />}
+          <h2 className="text-xl md:text-3xl font-display font-bold text-slate-800 flex items-center gap-2 md:gap-3">
+            {isDaily && <Calendar className="w-5 h-5 md:w-7 md:h-7 text-green-600" />}
             {isDaily ? `إيرادات اليوم (${todayFormatted})` : "إجمالي إيرادات الفروع"}
           </h2>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-xs md:text-base text-muted-foreground mt-1">
             {isDaily ? "تفاصيل إيرادات اليوم لكل فرع" : "تفاصيل إجمالي الإيرادات لكل فرع"}
           </p>
         </div>
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-64 rounded-2xl" />
+            <Skeleton key={i} className="h-48 md:h-64 rounded-xl md:rounded-2xl" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {branches?.map((branch, index) => {
             const report = branchReports?.[branch.id] || { revenue: 0, sold: 0, paid: 0, remaining: 0 };
             const colorScheme = branchColors[index % branchColors.length];

@@ -175,23 +175,23 @@ export default function CreatePatient() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 page-transition py-6">
-      <div className="flex items-center gap-4 mb-6">
-        <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2">
+    <div className="max-w-3xl mx-auto space-y-4 md:space-y-6 page-transition py-2 md:py-6">
+      <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+        <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2 shrink-0">
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
-          <h2 className="text-2xl font-display font-bold text-slate-800">فتح ملف مريض جديد</h2>
-          <p className="text-muted-foreground">الرجاء إدخال البيانات بدقة لضمان جودة الخدمة</p>
+          <h2 className="text-xl md:text-2xl font-display font-bold text-slate-800">فتح ملف مريض جديد</h2>
+          <p className="text-xs md:text-base text-muted-foreground">الرجاء إدخال البيانات بدقة لضمان جودة الخدمة</p>
         </div>
       </div>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           
-          <Card className="p-6 rounded-2xl shadow-sm border-border/60">
-            <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">البيانات الشخصية</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card className="p-4 md:p-6 rounded-xl md:rounded-2xl shadow-sm border-border/60">
+            <h3 className="text-base md:text-lg font-bold text-primary mb-3 md:mb-4 border-b pb-2">البيانات الشخصية</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               <FormField
                 control={form.control}
                 name="name"

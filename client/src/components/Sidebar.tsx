@@ -1,10 +1,11 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
 import { useState, useEffect } from "react";
 import logoImage from "@/assets/logo.png";
+import { Button } from "@/components/ui/button";
 
 interface BranchSession {
   branchId: number;
@@ -16,6 +17,7 @@ export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
   const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("branch_session");
@@ -28,6 +30,11 @@ export function Sidebar() {
     }
   }, []);
 
+  // Close mobile menu when route changes
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location]);
+
   const menuItems = [
     { label: "لوحة التحكم", icon: LayoutDashboard, href: "/" },
     { label: "سجل المرضى", icon: Users, href: "/patients" },
@@ -36,22 +43,32 @@ export function Sidebar() {
     { label: "الفروع", icon: Building2, href: "/branches" },
   ];
 
-  return (
-    <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
+  const SidebarContent = () => (
+    <>
       <div className="p-4 flex items-center gap-3 border-b border-border/50">
-        <img src={logoImage} alt="Logo" className="w-12 h-12 object-contain" />
+        <img src={logoImage} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
         <div>
-          <h1 className="font-display font-bold text-sm text-primary leading-tight">مجموعة مراكز</h1>
-          <p className="text-sm font-bold text-slate-700">د. ياسر الساعدي</p>
+          <h1 className="font-display font-bold text-xs md:text-sm text-primary leading-tight">مجموعة مراكز</h1>
+          <p className="text-xs md:text-sm font-bold text-slate-700">د. ياسر الساعدي</p>
         </div>
+        {/* Close button for mobile */}
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="md:hidden mr-auto"
+          onClick={() => setMobileOpen(false)}
+          data-testid="button-close-mobile-menu"
+        >
+          <X className="w-5 h-5" />
+        </Button>
       </div>
 
-      <nav className="flex-1 p-6 space-y-2">
+      <nav className="flex-1 p-4 md:p-6 space-y-1 md:space-y-2">
         {menuItems.map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href} className={cn(
-              "flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 font-medium text-base group",
+              "flex items-center gap-3 px-3 md:px-4 py-3 md:py-3.5 rounded-xl transition-all duration-200 font-medium text-sm md:text-base group",
               isActive 
                 ? "bg-primary/10 text-primary shadow-sm" 
                 : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -67,8 +84,8 @@ export function Sidebar() {
       </nav>
 
       {branchSession && (
-        <div className="px-6 py-4 border-t border-border/50 bg-slate-50/50">
-          <div className="flex items-center gap-2 text-sm">
+        <div className="px-4 md:px-6 py-3 md:py-4 border-t border-border/50 bg-slate-50/50">
+          <div className="flex items-center gap-2 text-xs md:text-sm">
             {branchSession.isAdmin ? (
               <ShieldCheck className="w-4 h-4 text-primary" />
             ) : (
@@ -79,19 +96,65 @@ export function Sidebar() {
         </div>
       )}
 
-      <div className="p-6 border-t border-border/50">
+      <div className="p-4 md:p-6 border-t border-border/50">
         <button 
           onClick={() => {
             clearBranchSession();
             logout();
           }}
-          className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-colors duration-200"
+          className="flex items-center gap-3 w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-colors duration-200"
           data-testid="button-logout"
         >
           <LogOut className="w-5 h-5" />
-          <span className="font-medium">تسجيل الخروج</span>
+          <span className="font-medium text-sm md:text-base">تسجيل الخروج</span>
         </button>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile Header */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-border shadow-sm">
+        <div className="flex items-center justify-between p-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileOpen(true)}
+            data-testid="button-open-mobile-menu"
+          >
+            <Menu className="w-6 h-6" />
+          </Button>
+          <div className="flex items-center gap-2">
+            <img src={logoImage} alt="Logo" className="w-8 h-8 object-contain" />
+            <span className="font-display font-bold text-sm text-primary">مراكز د. ياسر الساعدي</span>
+          </div>
+          <div className="w-10" /> {/* Spacer for centering */}
+        </div>
+      </div>
+
+      {/* Mobile Sidebar Overlay */}
+      {mobileOpen && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Mobile Sidebar */}
+      <aside className={cn(
+        "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl",
+        mobileOpen ? "translate-x-0" : "translate-x-full"
+      )}>
+        <div className="flex flex-col h-full">
+          <SidebarContent />
+        </div>
+      </aside>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
+        <SidebarContent />
+      </aside>
+    </>
   );
 }

@@ -144,37 +144,37 @@ export default function PatientDetails() {
       </div>
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between gap-6 items-start">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={() => setLocation("/patients")} className="h-10 w-10 p-0 rounded-full border print:hidden">
-            <ArrowRight className="w-5 h-5 text-slate-500" />
+      <div className="flex flex-col gap-4 md:gap-6">
+        <div className="flex items-start gap-3 md:gap-4">
+          <Button variant="ghost" onClick={() => setLocation("/patients")} className="h-9 w-9 md:h-10 md:w-10 p-0 rounded-full border print:hidden shrink-0">
+            <ArrowRight className="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
           </Button>
-          <div>
-            <h1 className="text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
-            <div className="flex flex-wrap gap-3 mt-2 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1"><User className="w-4 h-4" /> العمر: {patient.age}</span>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl md:text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
+            <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
+              <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> العمر: {patient.age}</span>
               {patient.phone && (
                 <>
-                  <span className="w-1 h-1 bg-slate-300 rounded-full self-center"></span>
-                  <span className="flex items-center gap-1"><Phone className="w-4 h-4" /> {patient.phone}</span>
+                  <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
+                  <span className="flex items-center gap-1"><Phone className="w-3 h-3 md:w-4 md:h-4" /> {patient.phone}</span>
                 </>
               )}
-              <span className="w-1 h-1 bg-slate-300 rounded-full self-center"></span>
-              <span>تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('en-GB')} - {new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
+              <span className="hidden md:inline">تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('en-GB')} - {new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
             {patient.address && (
-              <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
-                <MapPin className="w-4 h-4" /> {patient.address}
+              <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
+                <MapPin className="w-3 h-3 md:w-4 md:h-4" /> {patient.address}
               </div>
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-3 items-center">
-          <Badge variant="outline" className="text-sm px-3 py-1.5 h-auto gap-1">
+        <div className="flex flex-wrap gap-2 md:gap-3 items-center">
+          <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1">
             <Building2 className="w-3 h-3" />
             {getBranchName(patient.branchId)}
           </Badge>
-          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-base px-4 py-1.5 h-auto">
+          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
             {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
           </Badge>
         </div>

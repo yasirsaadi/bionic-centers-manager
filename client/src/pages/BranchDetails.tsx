@@ -47,77 +47,77 @@ export default function BranchDetails() {
 
   return (
     <AdminGate>
-    <div className="space-y-6 page-transition py-6">
-      <div className="flex items-center gap-4 mb-6">
-        <Button variant="ghost" onClick={() => setLocation("/branches")} className="p-2">
+    <div className="space-y-4 md:space-y-6 page-transition py-2 md:py-6">
+      <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+        <Button variant="ghost" onClick={() => setLocation("/branches")} className="p-2 shrink-0">
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Building2 className="w-6 h-6 text-primary" />
+        <div className="flex items-center gap-2 md:gap-3">
+          <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg md:rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+            <Building2 className="w-5 h-5 md:w-6 md:h-6 text-primary" />
           </div>
           <div>
-            <h2 className="text-2xl font-display font-bold text-slate-800">
+            <h2 className="text-lg md:text-2xl font-display font-bold text-slate-800">
               فرع {branch?.name || "..."}
             </h2>
-            <p className="text-muted-foreground">إدارة مرضى الفرع</p>
+            <p className="text-xs md:text-base text-muted-foreground">إدارة مرضى الفرع</p>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4 rounded-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-              <Users className="w-5 h-5 text-blue-600" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <Card className="p-3 md:p-4 rounded-lg md:rounded-xl">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
             </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{patients.length}</p>
-              <p className="text-sm text-muted-foreground">إجمالي المرضى</p>
+            <div className="min-w-0">
+              <p className="text-lg md:text-2xl font-bold text-slate-800">{patients.length}</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">إجمالي المرضى</p>
             </div>
           </div>
         </Card>
         
-        <Card className="p-4 rounded-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center">
-              <Users className="w-5 h-5 text-orange-600" />
+        <Card className="p-3 md:p-4 rounded-lg md:rounded-xl">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4 md:w-5 md:h-5 text-orange-600" />
             </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{amputeeCount}</p>
-              <p className="text-sm text-muted-foreground">حالات بتر</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4 rounded-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-              <Users className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{physioCount}</p>
-              <p className="text-sm text-muted-foreground">علاج طبيعي</p>
+            <div className="min-w-0">
+              <p className="text-lg md:text-2xl font-bold text-slate-800">{amputeeCount}</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">حالات بتر</p>
             </div>
           </div>
         </Card>
 
-        <Card className="p-4 rounded-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
-              <Banknote className="w-5 h-5 text-emerald-600" />
+        <Card className="p-3 md:p-4 rounded-lg md:rounded-xl">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
             </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{totalCost.toLocaleString()}</p>
-              <p className="text-sm text-muted-foreground">إجمالي التكاليف (د.ع)</p>
+            <div className="min-w-0">
+              <p className="text-lg md:text-2xl font-bold text-slate-800">{physioCount}</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">علاج طبيعي</p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-3 md:p-4 rounded-lg md:rounded-xl">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+              <Banknote className="w-4 h-4 md:w-5 md:h-5 text-emerald-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-lg md:text-2xl font-bold text-slate-800 truncate">{totalCost.toLocaleString()}</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">التكاليف (د.ع)</p>
             </div>
           </div>
         </Card>
       </div>
 
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-bold text-slate-800">مرضى الفرع</h3>
-        <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)} className="gap-2">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <h3 className="text-base md:text-lg font-bold text-slate-800">مرضى الفرع</h3>
+        <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)} className="gap-2 w-full sm:w-auto text-sm md:text-base h-9 md:h-10">
           <UserPlus className="w-4 h-4" />
           إضافة مريض للفرع
         </Button>

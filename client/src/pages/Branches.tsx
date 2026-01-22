@@ -22,18 +22,18 @@ export default function Branches() {
 
   return (
     <AdminGate>
-    <div className="space-y-6 page-transition py-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 md:space-y-6 page-transition py-2 md:py-6">
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-2xl font-display font-bold text-slate-800">الفروع</h2>
-          <p className="text-muted-foreground">فروع مركز بايونك في العراق</p>
+          <h2 className="text-xl md:text-2xl font-display font-bold text-slate-800">الفروع</h2>
+          <p className="text-xs md:text-base text-muted-foreground">فروع مركز بايونك في العراق</p>
         </div>
-        <Badge variant="secondary" className="text-sm px-3 py-1">
+        <Badge variant="secondary" className="text-xs md:text-sm px-2 md:px-3 py-1 shrink-0">
           {branches?.length || 0} فروع
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
         {branches?.map((branch) => (
           <Card 
             key={branch.id} 

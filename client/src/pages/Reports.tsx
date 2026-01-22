@@ -284,17 +284,17 @@ function ReportsContent() {
   }, [report?.dailySummaries]);
 
   return (
-    <div className="space-y-8 page-transition">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="space-y-6 md:space-y-8 page-transition">
+      <div className="flex flex-col gap-4">
         <div>
-          <h2 className="text-3xl font-display font-bold text-slate-800">التقارير المالية</h2>
-          <p className="text-muted-foreground mt-1">تقرير مالي تفصيلي لفرع {selectedBranchName}</p>
+          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">التقارير المالية</h2>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">تقرير مالي تفصيلي لفرع {selectedBranchName}</p>
         </div>
         
-        <div className="flex items-center gap-3">
-          <Building2 className="w-5 h-5 text-muted-foreground" />
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
+          <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
           <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-            <SelectTrigger className="w-48 h-11" data-testid="select-branch">
+            <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
               <SelectValue placeholder="اختر الفرع" />
             </SelectTrigger>
             <SelectContent>
@@ -305,9 +305,9 @@ function ReportsContent() {
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" className="gap-2 print:hidden" onClick={() => window.print()} data-testid="button-print-report">
+          <Button variant="outline" className="gap-2 print:hidden h-10 md:h-11 text-sm md:text-base" onClick={() => window.print()} data-testid="button-print-report">
             <FileText className="w-4 h-4" />
-            طباعة
+            <span className="hidden sm:inline">طباعة</span>
           </Button>
         </div>
       </div>
@@ -320,13 +320,13 @@ function ReportsContent() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="p-5 rounded-2xl border-border/60 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
-                  <Banknote className="w-6 h-6 text-blue-600" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <Card className="p-3 md:p-5 rounded-xl md:rounded-2xl border-border/60 shadow-sm">
+              <div className="flex items-center gap-2 md:gap-3">
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg md:rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                  <Banknote className="w-5 h-5 md:w-6 md:h-6 text-blue-600" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm text-muted-foreground">إجمالي التكاليف</p>
                   <p className="text-xl font-bold text-slate-900" data-testid="text-total-cost">
                     {(report?.overall?.totalCost || 0).toLocaleString('ar-IQ')} د.ع
