@@ -18,6 +18,8 @@ import { useBranchSession } from "@/components/BranchGate";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import { AmiriRegular } from "@/lib/amiri-font";
+import ArabicReshaper from "arabic-reshaper";
 
 type PatientWithRelations = Patient & { visits?: Visit[], payments?: Payment[] };
 
@@ -251,47 +253,61 @@ export default function Statistics() {
     }
   }, [timeRange]);
 
+  // Helper function to reshape Arabic text for PDF
+  const reshapeArabic = (text: string): string => {
+    try {
+      return ArabicReshaper.convertArabic(text);
+    } catch {
+      return text;
+    }
+  };
+
   // Export to PDF function
   const exportToPDF = useCallback(() => {
     if (!stats) return;
     
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     
+    // Add Amiri Arabic font
+    doc.addFileToVFS('Amiri-Regular.ttf', AmiriRegular);
+    doc.addFont('Amiri-Regular.ttf', 'Amiri', 'normal');
+    doc.setFont('Amiri');
+    
     // Set RTL direction for Arabic text
     doc.setR2L(true);
     
     // Title
     doc.setFontSize(20);
-    doc.text("تقرير الإحصائيات", 105, 20, { align: 'center' });
+    doc.text(reshapeArabic("تقرير الإحصائيات"), 105, 20, { align: 'center' });
     
     // Subtitle with branch and date info
     doc.setFontSize(12);
-    doc.text(`الفرع: ${currentBranchName}`, 105, 30, { align: 'center' });
-    doc.text(`الفترة: ${timeRangeLabel}`, 105, 37, { align: 'center' });
-    doc.text(`تاريخ التقرير: ${new Date().toLocaleDateString('ar-IQ')}`, 105, 44, { align: 'center' });
+    doc.text(reshapeArabic(`الفرع: ${currentBranchName}`), 105, 30, { align: 'center' });
+    doc.text(reshapeArabic(`الفترة: ${timeRangeLabel}`), 105, 37, { align: 'center' });
+    doc.text(reshapeArabic(`تاريخ التقرير: ${new Date().toLocaleDateString('ar-IQ')}`), 105, 44, { align: 'center' });
     
     let yPos = 55;
     
     // Summary Section
     doc.setFontSize(14);
-    doc.text("ملخص الإحصائيات", 190, yPos, { align: 'right' });
+    doc.text(reshapeArabic("ملخص الإحصائيات"), 190, yPos, { align: 'right' });
     yPos += 10;
     
     autoTable(doc, {
       startY: yPos,
-      head: [['البيان', 'القيمة']],
+      head: [[reshapeArabic('البيان'), reshapeArabic('القيمة')]],
       body: [
-        ['إجمالي المرضى', stats.totalPatients.toString()],
-        ['مرضى البتر', stats.amputeeCount.toString()],
-        ['مرضى العلاج الطبيعي', stats.physioCount.toString()],
-        ['مرضى الدعم الطبي', stats.medicalSupportCount.toString()],
-        ['إجمالي الإيرادات', `${stats.allTimeRevenue.toLocaleString()} د.ع`],
-        ['المبالغ المحصلة', `${stats.allTimePaid.toLocaleString()} د.ع`],
-        ['المبالغ المتبقية', `${stats.allTimeRemaining.toLocaleString()} د.ع`],
-        ['نسبة التحصيل', `${stats.collectionRate}%`],
-        ['إجمالي الزيارات (في الفترة)', stats.totalVisits.toString()],
+        [reshapeArabic('إجمالي المرضى'), stats.totalPatients.toString()],
+        [reshapeArabic('مرضى البتر'), stats.amputeeCount.toString()],
+        [reshapeArabic('مرضى العلاج الطبيعي'), stats.physioCount.toString()],
+        [reshapeArabic('مرضى الدعم الطبي'), stats.medicalSupportCount.toString()],
+        [reshapeArabic('إجمالي الإيرادات'), `${stats.allTimeRevenue.toLocaleString()} ${reshapeArabic('د.ع')}`],
+        [reshapeArabic('المبالغ المحصلة'), `${stats.allTimePaid.toLocaleString()} ${reshapeArabic('د.ع')}`],
+        [reshapeArabic('المبالغ المتبقية'), `${stats.allTimeRemaining.toLocaleString()} ${reshapeArabic('د.ع')}`],
+        [reshapeArabic('نسبة التحصيل'), `${stats.collectionRate}%`],
+        [reshapeArabic('إجمالي الزيارات (في الفترة)'), stats.totalVisits.toString()],
       ],
-      styles: { font: 'helvetica', halign: 'right' },
+      styles: { font: 'Amiri', halign: 'right' },
       headStyles: { fillColor: [41, 128, 185] },
     });
     
@@ -300,14 +316,14 @@ export default function Statistics() {
     // Age Distribution
     if (stats.ageDistribution.length > 0) {
       doc.setFontSize(14);
-      doc.text("توزيع الأعمار", 190, yPos, { align: 'right' });
+      doc.text(reshapeArabic("توزيع الأعمار"), 190, yPos, { align: 'right' });
       yPos += 10;
       
       autoTable(doc, {
         startY: yPos,
-        head: [['الفئة العمرية', 'العدد']],
+        head: [[reshapeArabic('الفئة العمرية'), reshapeArabic('العدد')]],
         body: stats.ageDistribution.map(item => [item.name, item.count.toString()]),
-        styles: { font: 'helvetica', halign: 'right' },
+        styles: { font: 'Amiri', halign: 'right' },
         headStyles: { fillColor: [52, 152, 219] },
       });
       
@@ -317,20 +333,21 @@ export default function Statistics() {
     // Check if we need a new page
     if (yPos > 250) {
       doc.addPage();
+      doc.setFont('Amiri');
       yPos = 20;
     }
     
     // Condition Distribution
     if (stats.conditionDistribution.length > 0) {
       doc.setFontSize(14);
-      doc.text("توزيع الحالات الطبية", 190, yPos, { align: 'right' });
+      doc.text(reshapeArabic("توزيع الحالات الطبية"), 190, yPos, { align: 'right' });
       yPos += 10;
       
       autoTable(doc, {
         startY: yPos,
-        head: [['الحالة', 'العدد']],
-        body: stats.conditionDistribution.map(item => [item.name, item.value.toString()]),
-        styles: { font: 'helvetica', halign: 'right' },
+        head: [[reshapeArabic('الحالة'), reshapeArabic('العدد')]],
+        body: stats.conditionDistribution.map(item => [reshapeArabic(item.name), item.value.toString()]),
+        styles: { font: 'Amiri', halign: 'right' },
         headStyles: { fillColor: [46, 204, 113] },
       });
       
@@ -341,22 +358,23 @@ export default function Statistics() {
     if (isAdmin && stats.branchDistribution.length > 0) {
       if (yPos > 250) {
         doc.addPage();
+        doc.setFont('Amiri');
         yPos = 20;
       }
       
       doc.setFontSize(14);
-      doc.text("توزيع المرضى حسب الفروع", 190, yPos, { align: 'right' });
+      doc.text(reshapeArabic("توزيع المرضى حسب الفروع"), 190, yPos, { align: 'right' });
       yPos += 10;
       
       autoTable(doc, {
         startY: yPos,
-        head: [['الفرع', 'عدد المرضى', 'الإيرادات']],
+        head: [[reshapeArabic('الفرع'), reshapeArabic('عدد المرضى'), reshapeArabic('الإيرادات')]],
         body: stats.branchDistribution.map(item => [
-          item.name, 
+          reshapeArabic(item.name), 
           item.count.toString(),
-          `${item.revenue.toLocaleString()} د.ع`
+          `${item.revenue.toLocaleString()} ${reshapeArabic('د.ع')}`
         ]),
-        styles: { font: 'helvetica', halign: 'right' },
+        styles: { font: 'Amiri', halign: 'right' },
         headStyles: { fillColor: [155, 89, 182] },
       });
     }
