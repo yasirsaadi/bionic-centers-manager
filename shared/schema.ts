@@ -92,7 +92,9 @@ export const documents = pgTable("documents", {
 export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
 export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true });
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true });
-export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true, date: true });
+export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
+  date: z.string().optional().nullable(),
+});
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 
 export type Branch = typeof branches.$inferSelect;

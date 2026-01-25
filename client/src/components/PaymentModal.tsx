@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { PlusCircle, Loader2 } from "lucide-react";
+import { PlusCircle, Loader2, Calendar } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 
@@ -30,7 +30,17 @@ interface PaymentModalProps {
 
 const formSchema = insertPaymentSchema.extend({
   amount: z.coerce.number().min(1, "المبلغ يجب أن يكون أكبر من 0"),
+  date: z.string().optional().nullable(),
 });
+
+// Get today's date in YYYY-MM-DD format for the date input
+function getTodayDate(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
@@ -43,6 +53,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       branchId: branchId,
       amount: 0,
       notes: "",
+      date: getTodayDate(),
     },
   });
 
@@ -72,12 +83,35 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
             <FormField
               control={form.control}
+              name="date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    تاريخ الدفعة
+                  </FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="date" 
+                      {...field} 
+                      value={field.value || getTodayDate()}
+                      className="text-left"
+                      data-testid="input-payment-date"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="amount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>المبلغ المدفوع</FormLabel>
+                  <FormLabel>المبلغ المدفوع (د.ع)</FormLabel>
                   <FormControl>
-                    <Input type="number" {...field} className="text-left font-mono" placeholder="0.00" />
+                    <Input type="number" {...field} className="text-left font-mono" placeholder="0" data-testid="input-payment-amount" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -91,7 +125,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
                 <FormItem>
                   <FormLabel>ملاحظات (اختياري)</FormLabel>
                   <FormControl>
-                    <Input {...field} placeholder="مثال: دفعة أولى نقداً" />
+                    <Input {...field} value={field.value || ""} placeholder="مثال: دفعة أولى نقداً" data-testid="input-payment-notes" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -107,7 +107,11 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
-    const [payment] = await db.insert(payments).values(insertPayment).returning();
+    const paymentData = {
+      ...insertPayment,
+      date: insertPayment.date ? new Date(insertPayment.date) : new Date(),
+    };
+    const [payment] = await db.insert(payments).values(paymentData).returning();
     return payment;
   }
   async deletePayment(id: number): Promise<void> {
