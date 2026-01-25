@@ -287,6 +287,14 @@ export async function registerRoutes(
     res.status(201).json(visit);
   });
 
+  // Update visit (all users can edit)
+  app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
+    const id = Number(req.params.id);
+    const { details, notes } = req.body;
+    const updated = await storage.updateVisit(id, { details, notes });
+    res.json(updated);
+  });
+
   // Delete visit (admin only)
   app.delete("/api/visits/:id", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;

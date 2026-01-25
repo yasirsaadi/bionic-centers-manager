@@ -287,6 +287,40 @@ export function useAddVisit() {
   });
 }
 
+// PATCH /api/visits/:id (all users can edit)
+export function useUpdateVisit() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ visitId, patientId, details, notes }: { visitId: number; patientId: number; details: string; notes: string }) => {
+      const res = await fetch(`/api/visits/${visitId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ details, notes }),
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("فشل في تحديث الزيارة");
+      return { patientId, visit: await res.json() };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, result.patientId] });
+      toast({
+        title: "تم التحديث",
+        description: "تم تحديث تفاصيل الزيارة بنجاح",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
 // DELETE /api/visits/:id (admin only)
 export function useDeleteVisit() {
   const queryClient = useQueryClient();

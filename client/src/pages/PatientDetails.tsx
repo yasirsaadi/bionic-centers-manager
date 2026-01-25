@@ -1,4 +1,4 @@
-import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument } from "@/hooks/use-patients";
+import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -38,8 +38,9 @@ import {
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
+import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { Branch } from "@shared/schema";
 
 export default function PatientDetails() {
@@ -53,6 +54,7 @@ export default function PatientDetails() {
   const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
+  const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null } | null>(null);
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -365,12 +367,12 @@ export default function PatientDetails() {
                       <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
                       <th className="text-right p-4 font-semibold text-slate-600">التفاصيل</th>
                       <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
-                      {isAdmin && <th className="text-right p-4 font-semibold text-slate-600">إجراءات</th>}
+                      <th className="text-right p-4 font-semibold text-slate-600">إجراءات</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? 4 : 3} className="p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
@@ -380,26 +382,46 @@ export default function PatientDetails() {
                           <td className="p-4 text-slate-500">{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</td>
                           <td className="p-4 text-slate-700">{visit.details || "-"}</td>
                           <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
-                          {isAdmin && (
-                            <td className="p-4">
+                          <td className="p-4">
+                            <div className="flex gap-1">
                               <Button 
                                 variant="ghost" 
                                 size="icon" 
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => deleteVisit({ visitId: visit.id, patientId: patient.id })}
-                                disabled={isDeletingVisit}
-                                data-testid={`button-delete-visit-${visit.id}`}
+                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes })}
+                                data-testid={`button-edit-visit-${visit.id}`}
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Pencil className="w-4 h-4" />
                               </Button>
-                            </td>
-                          )}
+                              {isAdmin && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  onClick={() => deleteVisit({ visitId: visit.id, patientId: patient.id })}
+                                  disabled={isDeletingVisit}
+                                  data-testid={`button-delete-visit-${visit.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
               </Card>
+              
+              {editingVisit && (
+                <EditVisitModal
+                  visit={editingVisit}
+                  patientId={patient.id}
+                  open={!!editingVisit}
+                  onOpenChange={(open) => !open && setEditingVisit(null)}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
