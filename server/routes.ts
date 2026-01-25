@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import type { Patient, Payment } from "@shared/schema";
+import { insertCustomStatSchema } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -640,6 +641,181 @@ export async function registerRoutes(
       physiotherapy: todayPatients.filter(p => p.isPhysiotherapy).length,
       medicalSupport: todayPatients.filter(p => p.isMedicalSupport).length,
       paid: todayPaid
+    });
+  });
+
+  // Custom Stats API endpoints
+  app.get("/api/custom-stats", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const branchId = user?.branchId;
+    const isAdmin = user?.role === "admin";
+    
+    // Admin sees all, staff sees their branch + global
+    const stats = isAdmin 
+      ? await storage.getCustomStats()
+      : await storage.getCustomStats(branchId, true);
+    
+    res.json(stats);
+  });
+
+  app.get("/api/custom-stats/:id", isAuthenticated, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const stat = await storage.getCustomStat(id);
+    if (!stat) {
+      return res.status(404).json({ error: "الحقل الإحصائي غير موجود" });
+    }
+    res.json(stat);
+  });
+
+  app.post("/api/custom-stats", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      const userBranchId = user?.branchId;
+      
+      const data = insertCustomStatSchema.parse({
+        ...req.body,
+        createdBy: user?.id || "unknown"
+      });
+      
+      // Staff can only create stats for their branch
+      if (!isAdmin) {
+        data.branchId = userBranchId;
+        data.isGlobal = false;
+      }
+      
+      // If admin creates a global stat, set isGlobal to true and branchId to null
+      if (isAdmin && data.isGlobal) {
+        data.branchId = null;
+      }
+      
+      const stat = await storage.createCustomStat(data);
+      res.json(stat);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في إنشاء الحقل الإحصائي" });
+    }
+  });
+
+  app.put("/api/custom-stats/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      const userBranchId = user?.branchId;
+      
+      const existingStat = await storage.getCustomStat(id);
+      if (!existingStat) {
+        return res.status(404).json({ error: "الحقل الإحصائي غير موجود" });
+      }
+      
+      // Staff can only edit their branch stats
+      if (!isAdmin && existingStat.branchId !== userBranchId) {
+        return res.status(403).json({ error: "ليس لديك صلاحية لتعديل هذا الحقل" });
+      }
+      
+      const updates = { ...req.body };
+      
+      // Staff cannot make stats global
+      if (!isAdmin) {
+        updates.isGlobal = false;
+        updates.branchId = userBranchId;
+      }
+      
+      const stat = await storage.updateCustomStat(id, updates);
+      res.json(stat);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في تحديث الحقل الإحصائي" });
+    }
+  });
+
+  app.delete("/api/custom-stats/:id", isAuthenticated, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    const userBranchId = user?.branchId;
+    
+    const existingStat = await storage.getCustomStat(id);
+    if (!existingStat) {
+      return res.status(404).json({ error: "الحقل الإحصائي غير موجود" });
+    }
+    
+    // Staff can only delete their branch stats
+    if (!isAdmin && existingStat.branchId !== userBranchId) {
+      return res.status(403).json({ error: "ليس لديك صلاحية لحذف هذا الحقل" });
+    }
+    
+    // Staff cannot delete global stats
+    if (!isAdmin && existingStat.isGlobal) {
+      return res.status(403).json({ error: "لا يمكنك حذف الحقول العامة" });
+    }
+    
+    await storage.deleteCustomStat(id);
+    res.json({ success: true });
+  });
+
+  // Endpoint to calculate custom stat value
+  app.get("/api/custom-stats/:id/calculate", isAuthenticated, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const stat = await storage.getCustomStat(id);
+    if (!stat) {
+      return res.status(404).json({ error: "الحقل الإحصائي غير موجود" });
+    }
+    
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    const userBranchId = user?.branchId;
+    const targetBranchId = stat.isGlobal ? null : (stat.branchId || userBranchId);
+    
+    // Get patients for calculation
+    let patients = await storage.getPatients(targetBranchId || undefined);
+    
+    // Apply filter if specified
+    if (stat.filterField && stat.filterValue) {
+      patients = patients.filter((p: any) => {
+        const fieldValue = p[stat.filterField!];
+        if (typeof fieldValue === "boolean") {
+          return fieldValue === (stat.filterValue === "true");
+        }
+        return fieldValue === stat.filterValue;
+      });
+    }
+    
+    let value = 0;
+    const allPatients = await storage.getPatients(targetBranchId || undefined);
+    
+    switch (stat.statType) {
+      case "count":
+        value = patients.length;
+        break;
+      case "sum":
+        if (stat.category === "payments") {
+          // Sum all payments for filtered patients
+          let totalAmount = 0;
+          for (const patient of patients) {
+            const payments = await storage.getPaymentsByPatientId(patient.id);
+            totalAmount += payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+          }
+          value = totalAmount;
+        } else {
+          value = patients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
+        }
+        break;
+      case "percentage":
+        value = allPatients.length > 0 ? Math.round((patients.length / allPatients.length) * 100) : 0;
+        break;
+      case "average":
+        if (patients.length > 0) {
+          const total = patients.reduce((sum, p) => sum + (p.age || 0), 0);
+          value = Math.round(total / patients.length);
+        }
+        break;
+    }
+    
+    res.json({ 
+      stat,
+      value,
+      count: patients.length,
+      totalCount: allPatients.length
     });
   });
 

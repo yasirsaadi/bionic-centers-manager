@@ -1,13 +1,14 @@
 import { db } from "./db";
 import {
-  patients, payments, documents, visits, branches, users,
+  patients, payments, documents, visits, branches, users, customStats,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
   type Visit, type InsertVisit,
-  type Branch, type InsertBranch
+  type Branch, type InsertBranch,
+  type CustomStat, type InsertCustomStat
 } from "@shared/schema";
-import { eq, desc, and, sum } from "drizzle-orm";
+import { eq, desc, and, sum, or, isNull } from "drizzle-orm";
 
 export interface IStorage {
   // Branches
@@ -37,6 +38,13 @@ export interface IStorage {
   getDocumentsByPatientId(patientId: number): Promise<Document[]>;
   createDocument(document: InsertDocument): Promise<Document>;
   deleteDocument(id: number): Promise<void>;
+
+  // Custom Stats
+  getCustomStats(branchId?: number, includeGlobal?: boolean): Promise<CustomStat[]>;
+  getCustomStat(id: number): Promise<CustomStat | undefined>;
+  createCustomStat(stat: InsertCustomStat): Promise<CustomStat>;
+  updateCustomStat(id: number, stat: Partial<InsertCustomStat>): Promise<CustomStat | undefined>;
+  deleteCustomStat(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -135,6 +143,48 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteDocument(id: number): Promise<void> {
     await db.delete(documents).where(eq(documents.id, id));
+  }
+
+  // Custom Stats
+  async getCustomStats(branchId?: number, includeGlobal: boolean = true): Promise<CustomStat[]> {
+    if (branchId) {
+      // Get branch-specific stats and optionally global stats
+      if (includeGlobal) {
+        return await db.select().from(customStats)
+          .where(or(
+            eq(customStats.branchId, branchId),
+            eq(customStats.isGlobal, true)
+          ))
+          .orderBy(desc(customStats.createdAt));
+      }
+      return await db.select().from(customStats)
+        .where(eq(customStats.branchId, branchId))
+        .orderBy(desc(customStats.createdAt));
+    }
+    // Get all stats (admin view)
+    return await db.select().from(customStats).orderBy(desc(customStats.createdAt));
+  }
+
+  async getCustomStat(id: number): Promise<CustomStat | undefined> {
+    const [stat] = await db.select().from(customStats).where(eq(customStats.id, id));
+    return stat;
+  }
+
+  async createCustomStat(insertStat: InsertCustomStat): Promise<CustomStat> {
+    const [stat] = await db.insert(customStats).values(insertStat).returning();
+    return stat;
+  }
+
+  async updateCustomStat(id: number, updates: Partial<InsertCustomStat>): Promise<CustomStat | undefined> {
+    const [updated] = await db.update(customStats)
+      .set(updates)
+      .where(eq(customStats.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteCustomStat(id: number): Promise<void> {
+    await db.delete(customStats).where(eq(customStats.id, id));
   }
 }
 

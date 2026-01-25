@@ -89,6 +89,21 @@ export const documents = pgTable("documents", {
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
 
+// Custom statistics fields - allows creating custom metrics
+export const customStats = pgTable("custom_stats", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // اسم الحقل الإحصائي
+  description: text("description"), // وصف الحقل
+  statType: text("stat_type").notNull(), // count, sum, percentage, average
+  category: text("category").notNull(), // patients, visits, payments, custom
+  filterField: text("filter_field"), // الحقل المستخدم للتصفية (مثل: medicalCondition, isAmputee)
+  filterValue: text("filter_value"), // القيمة المطلوبة للتصفية
+  branchId: integer("branch_id").references(() => branches.id), // null = global (admin only)
+  isGlobal: boolean("is_global").default(false), // إذا كان عام لجميع الفروع
+  createdBy: text("created_by"), // معرف المستخدم الذي أنشأ الحقل
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
 export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true });
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true });
@@ -96,6 +111,7 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true 
   date: z.string().optional().nullable(),
 });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
+export const insertCustomStatSchema = createInsertSchema(customStats).omit({ id: true, createdAt: true });
 
 export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
@@ -107,3 +123,5 @@ export type Payment = typeof payments.$inferSelect;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type CustomStat = typeof customStats.$inferSelect;
+export type InsertCustomStat = z.infer<typeof insertCustomStatSchema>;

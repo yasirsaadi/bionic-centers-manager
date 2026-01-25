@@ -1,19 +1,34 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { 
   BarChart3, Users, TrendingUp, Building2, Calendar, Banknote, 
-  Activity, UserCheck, Heart, Accessibility, Stethoscope, FileDown, FileSpreadsheet
+  Activity, UserCheck, Heart, Accessibility, Stethoscope, FileDown, FileSpreadsheet,
+  Plus, Pencil, Trash2, ChartBar, Globe, Lock
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { apiRequest } from "@/lib/queryClient";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from "recharts";
-import type { Branch, Patient, Visit, Payment } from "@shared/schema";
+import type { Branch, Patient, Visit, Payment, CustomStat } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -58,6 +73,117 @@ export default function Statistics() {
     queryKey: ["/api/patients"],
   });
 
+  const queryClient = useQueryClient();
+
+  // Custom Stats
+  const [showCustomStatDialog, setShowCustomStatDialog] = useState(false);
+  const [editingCustomStat, setEditingCustomStat] = useState<CustomStat | null>(null);
+  const [customStatForm, setCustomStatForm] = useState({
+    name: "",
+    description: "",
+    statType: "count",
+    category: "patients",
+    filterField: "",
+    filterValue: "",
+    isGlobal: false,
+    branchId: null as number | null,
+  });
+
+  const { data: customStats } = useQuery<CustomStat[]>({
+    queryKey: ["/api/custom-stats"],
+  });
+
+  const createCustomStatMutation = useMutation({
+    mutationFn: async (data: typeof customStatForm) => {
+      return await apiRequest("POST", "/api/custom-stats", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-stats"] });
+      setShowCustomStatDialog(false);
+      resetCustomStatForm();
+    },
+  });
+
+  const updateCustomStatMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: typeof customStatForm }) => {
+      return await apiRequest("PUT", `/api/custom-stats/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-stats"] });
+      setShowCustomStatDialog(false);
+      setEditingCustomStat(null);
+      resetCustomStatForm();
+    },
+  });
+
+  const deleteCustomStatMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return await apiRequest("DELETE", `/api/custom-stats/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-stats"] });
+    },
+  });
+
+  const resetCustomStatForm = () => {
+    setCustomStatForm({
+      name: "",
+      description: "",
+      statType: "count",
+      category: "patients",
+      filterField: "",
+      filterValue: "",
+      isGlobal: false,
+      branchId: null,
+    });
+  };
+
+  const openEditDialog = (stat: CustomStat) => {
+    setEditingCustomStat(stat);
+    setCustomStatForm({
+      name: stat.name,
+      description: stat.description || "",
+      statType: stat.statType,
+      category: stat.category,
+      filterField: stat.filterField || "",
+      filterValue: stat.filterValue || "",
+      isGlobal: stat.isGlobal || false,
+      branchId: stat.branchId,
+    });
+    setShowCustomStatDialog(true);
+  };
+
+  const handleSaveCustomStat = () => {
+    if (editingCustomStat) {
+      updateCustomStatMutation.mutate({ id: editingCustomStat.id, data: customStatForm });
+    } else {
+      createCustomStatMutation.mutate(customStatForm);
+    }
+  };
+
+  const FILTER_FIELDS = [
+    { value: "", label: "بدون تصفية" },
+    { value: "isAmputee", label: "مريض بتر" },
+    { value: "isPhysiotherapy", label: "مريض علاج طبيعي" },
+    { value: "isMedicalSupport", label: "مساند طبية" },
+    { value: "medicalCondition", label: "الحالة الطبية" },
+    { value: "amputationSite", label: "موقع البتر" },
+    { value: "diseaseType", label: "نوع المرض" },
+  ];
+
+  const STAT_TYPES = [
+    { value: "count", label: "عدد" },
+    { value: "sum", label: "مجموع" },
+    { value: "percentage", label: "نسبة مئوية" },
+    { value: "average", label: "متوسط" },
+  ];
+
+  const CATEGORIES = [
+    { value: "patients", label: "المرضى" },
+    { value: "payments", label: "المدفوعات" },
+    { value: "visits", label: "الزيارات" },
+  ];
+
   const getStartDate = (range: string): Date | null => {
     if (range === "all") return null;
     const now = new Date();
@@ -92,6 +218,65 @@ export default function Statistics() {
     
     return patients;
   }, [allPatients, selectedBranch]);
+
+  // Calculate custom stat values - moved after filteredPatients definition
+  const calculateCustomStatValue = useCallback((stat: CustomStat): { value: number; label: string } => {
+    let patients = filteredPatients;
+    
+    // For branch-specific stats, filter by that branch
+    if (stat.branchId && !stat.isGlobal) {
+      patients = allPatients?.filter(p => p.branchId === stat.branchId) || [];
+    }
+    
+    // Apply filter if specified
+    if (stat.filterField && stat.filterValue) {
+      patients = patients.filter((p: any) => {
+        const fieldValue = p[stat.filterField!];
+        if (typeof fieldValue === "boolean") {
+          return fieldValue === (stat.filterValue === "true");
+        }
+        return String(fieldValue) === stat.filterValue;
+      });
+    }
+    
+    let value = 0;
+    let label = "";
+    const totalPatients = filteredPatients.length;
+    
+    switch (stat.statType) {
+      case "count":
+        value = patients.length;
+        label = `${value} مريض`;
+        break;
+      case "sum":
+        if (stat.category === "payments") {
+          value = patients.reduce((sum, p) => {
+            const patientPayments = p.payments?.reduce((pSum, pay) => pSum + (pay.amount || 0), 0) || 0;
+            return sum + patientPayments;
+          }, 0);
+          label = `${value.toLocaleString()} د.ع`;
+        } else {
+          value = patients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
+          label = `${value.toLocaleString()} د.ع`;
+        }
+        break;
+      case "percentage":
+        value = totalPatients > 0 ? Math.round((patients.length / totalPatients) * 100) : 0;
+        label = `${value}%`;
+        break;
+      case "average":
+        if (patients.length > 0) {
+          const total = patients.reduce((sum, p) => sum + (p.age || 0), 0);
+          value = Math.round(total / patients.length);
+          label = `${value} سنة`;
+        } else {
+          label = "غير متوفر";
+        }
+        break;
+    }
+    
+    return { value, label };
+  }, [filteredPatients, allPatients]);
 
   const stats = useMemo(() => {
     if (!filteredPatients.length) return null;
@@ -939,6 +1124,275 @@ export default function Statistics() {
                       <Bar dataKey="revenue" name="الإيرادات" fill="#00C49F" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Custom Statistics Section */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ChartBar className="w-5 h-5 text-primary" />
+                الإحصائيات المخصصة
+              </CardTitle>
+              <Dialog open={showCustomStatDialog} onOpenChange={(open) => {
+                setShowCustomStatDialog(open);
+                if (!open) {
+                  setEditingCustomStat(null);
+                  resetCustomStatForm();
+                }
+              }}>
+                <DialogTrigger asChild>
+                  <Button size="sm" data-testid="button-add-custom-stat">
+                    <Plus className="w-4 h-4 ml-1" />
+                    إضافة حقل إحصائي
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px]">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {editingCustomStat ? "تعديل حقل إحصائي" : "إضافة حقل إحصائي جديد"}
+                    </DialogTitle>
+                    <DialogDescription>
+                      أنشئ حقول إحصائية مخصصة لتتبع مقاييس محددة
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="stat-name">اسم الحقل</Label>
+                      <Input
+                        id="stat-name"
+                        value={customStatForm.name}
+                        onChange={(e) => setCustomStatForm({ ...customStatForm, name: e.target.value })}
+                        placeholder="مثال: عدد مرضى البتر"
+                        data-testid="input-custom-stat-name"
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="stat-description">الوصف (اختياري)</Label>
+                      <Textarea
+                        id="stat-description"
+                        value={customStatForm.description}
+                        onChange={(e) => setCustomStatForm({ ...customStatForm, description: e.target.value })}
+                        placeholder="وصف مختصر للحقل الإحصائي"
+                        data-testid="input-custom-stat-description"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label>نوع الإحصاء</Label>
+                        <Select
+                          value={customStatForm.statType}
+                          onValueChange={(value) => setCustomStatForm({ ...customStatForm, statType: value })}
+                        >
+                          <SelectTrigger data-testid="select-stat-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {STAT_TYPES.map((type) => (
+                              <SelectItem key={type.value} value={type.value}>
+                                {type.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>الفئة</Label>
+                        <Select
+                          value={customStatForm.category}
+                          onValueChange={(value) => setCustomStatForm({ ...customStatForm, category: value })}
+                        >
+                          <SelectTrigger data-testid="select-category">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CATEGORIES.map((cat) => (
+                              <SelectItem key={cat.value} value={cat.value}>
+                                {cat.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>التصفية حسب</Label>
+                      <Select
+                        value={customStatForm.filterField}
+                        onValueChange={(value) => setCustomStatForm({ ...customStatForm, filterField: value })}
+                      >
+                        <SelectTrigger data-testid="select-filter-field">
+                          <SelectValue placeholder="اختر حقل التصفية" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FILTER_FIELDS.map((field) => (
+                            <SelectItem key={field.value} value={field.value || "none"}>
+                              {field.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {customStatForm.filterField && customStatForm.filterField !== "none" && (
+                      <div className="grid gap-2">
+                        <Label>قيمة التصفية</Label>
+                        {["isAmputee", "isPhysiotherapy", "isMedicalSupport"].includes(customStatForm.filterField) ? (
+                          <Select
+                            value={customStatForm.filterValue}
+                            onValueChange={(value) => setCustomStatForm({ ...customStatForm, filterValue: value })}
+                          >
+                            <SelectTrigger data-testid="select-filter-value">
+                              <SelectValue placeholder="اختر القيمة" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="true">نعم</SelectItem>
+                              <SelectItem value="false">لا</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={customStatForm.filterValue}
+                            onChange={(e) => setCustomStatForm({ ...customStatForm, filterValue: e.target.value })}
+                            placeholder="أدخل قيمة التصفية"
+                            data-testid="input-filter-value"
+                          />
+                        )}
+                      </div>
+                    )}
+                    {isAdmin && (
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <Switch
+                          id="is-global"
+                          checked={customStatForm.isGlobal}
+                          onCheckedChange={(checked) => setCustomStatForm({ ...customStatForm, isGlobal: checked })}
+                          data-testid="switch-is-global"
+                        />
+                        <Label htmlFor="is-global" className="flex items-center gap-2 cursor-pointer">
+                          {customStatForm.isGlobal ? (
+                            <>
+                              <Globe className="w-4 h-4 text-blue-500" />
+                              <span>حقل عام (مرئي لجميع الفروع)</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="w-4 h-4 text-orange-500" />
+                              <span>حقل خاص بالفرع</span>
+                            </>
+                          )}
+                        </Label>
+                      </div>
+                    )}
+                    {isAdmin && !customStatForm.isGlobal && (
+                      <div className="grid gap-2">
+                        <Label>الفرع</Label>
+                        <Select
+                          value={customStatForm.branchId?.toString() || ""}
+                          onValueChange={(value) => setCustomStatForm({ ...customStatForm, branchId: value ? Number(value) : null })}
+                        >
+                          <SelectTrigger data-testid="select-branch">
+                            <SelectValue placeholder="اختر الفرع" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {branches?.map((branch) => (
+                              <SelectItem key={branch.id} value={branch.id.toString()}>
+                                {branch.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowCustomStatDialog(false);
+                        setEditingCustomStat(null);
+                        resetCustomStatForm();
+                      }}
+                    >
+                      إلغاء
+                    </Button>
+                    <Button
+                      onClick={handleSaveCustomStat}
+                      disabled={!customStatForm.name || createCustomStatMutation.isPending || updateCustomStatMutation.isPending}
+                      data-testid="button-save-custom-stat"
+                    >
+                      {createCustomStatMutation.isPending || updateCustomStatMutation.isPending ? "جاري الحفظ..." : "حفظ"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </CardHeader>
+            <CardContent>
+              {customStats && customStats.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {customStats.map((stat) => {
+                    const { value, label } = calculateCustomStatValue(stat);
+                    const branchName = branches?.find(b => b.id === stat.branchId)?.name;
+                    return (
+                      <div
+                        key={stat.id}
+                        className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl border border-purple-200 relative group"
+                        data-testid={`custom-stat-${stat.id}`}
+                      >
+                        <div className="absolute top-2 left-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => openEditDialog(stat)}
+                            data-testid={`button-edit-stat-${stat.id}`}
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-red-500 hover:text-red-700"
+                            onClick={() => {
+                              if (confirm("هل أنت متأكد من حذف هذا الحقل الإحصائي؟")) {
+                                deleteCustomStatMutation.mutate(stat.id);
+                              }
+                            }}
+                            data-testid={`button-delete-stat-${stat.id}`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          {stat.isGlobal ? (
+                            <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200">
+                              <Globe className="w-3 h-3 ml-1" />
+                              عام
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs bg-orange-50 border-orange-200">
+                              <Lock className="w-3 h-3 ml-1" />
+                              {branchName || "خاص"}
+                            </Badge>
+                          )}
+                          <Badge variant="secondary" className="text-xs">
+                            {STAT_TYPES.find(t => t.value === stat.statType)?.label}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-purple-600 mb-1">{stat.name}</p>
+                        <p className="text-2xl font-bold text-purple-800">{label}</p>
+                        {stat.description && (
+                          <p className="text-xs text-slate-500 mt-2">{stat.description}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-500">
+                  <ChartBar className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>لا توجد حقول إحصائية مخصصة</p>
+                  <p className="text-sm mt-1">أضف حقولاً لتتبع مقاييس محددة</p>
                 </div>
               )}
             </CardContent>
