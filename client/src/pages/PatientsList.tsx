@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users } from "lucide-react";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users, CalendarIcon } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,11 @@ function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
          date1.getMonth() === date2.getMonth() &&
          date1.getDate() === date2.getDate();
+}
+
+function getTodayDateString(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 }
 
 export default function PatientsList() {
@@ -39,8 +44,9 @@ export default function PatientsList() {
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [viewMode, setViewMode] = useState<"today" | "all">("today");
+  const [viewMode, setViewMode] = useState<"date" | "all">("date");
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
@@ -52,16 +58,16 @@ export default function PatientsList() {
     return patients.filter(p => p.branchId === Number(selectedBranch));
   }, [patients, selectedBranch]);
 
-  const todayPatients = useMemo(() => {
-    const today = new Date();
+  const dateFilteredPatients = useMemo(() => {
+    const filterDate = new Date(selectedDate);
     return branchFilteredPatients.filter(p => {
       const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
       if (!visits || visits.length === 0) return false;
-      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), today));
+      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
     });
-  }, [branchFilteredPatients]);
+  }, [branchFilteredPatients, selectedDate]);
 
-  const basePatients = viewMode === "today" ? todayPatients : branchFilteredPatients;
+  const basePatients = viewMode === "date" ? dateFilteredPatients : branchFilteredPatients;
   
   const filteredPatients = basePatients?.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -84,7 +90,12 @@ export default function PatientsList() {
   };
 
   const handleViewModeChange = (value: string) => {
-    setViewMode(value as "today" | "all");
+    setViewMode(value as "date" | "all");
+    setCurrentPage(1);
+  };
+
+  const handleDateChange = (value: string) => {
+    setSelectedDate(value);
     setCurrentPage(1);
   };
 
@@ -140,10 +151,10 @@ export default function PatientsList() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-2 border-t border-slate-100">
           <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
             <TabsList className="grid grid-cols-2 w-full sm:w-auto">
-              <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
+              <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
                 <Calendar className="w-4 h-4" />
-                <span>مرضى اليوم</span>
-                <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
+                <span>مرضى التاريخ</span>
+                <Badge variant="secondary" className="mr-1 text-xs">{dateFilteredPatients.length}</Badge>
               </TabsTrigger>
               <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
                 <Users className="w-4 h-4" />
@@ -153,10 +164,19 @@ export default function PatientsList() {
             </TabsList>
           </Tabs>
           
-          {viewMode === "today" && (
-            <div className="text-sm text-slate-600 flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-primary" />
-              <span>{new Date().toLocaleDateString('en-GB')}</span>
+          {viewMode === "date" && (
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-primary shrink-0" />
+              <Input 
+                type="date"
+                value={selectedDate}
+                onChange={(e) => handleDateChange(e.target.value)}
+                className="h-9 w-[160px] text-sm"
+                data-testid="input-date-filter"
+              />
+              {selectedDate === getTodayDateString() && (
+                <Badge variant="outline" className="text-xs text-primary border-primary">اليوم</Badge>
+              )}
             </div>
           )}
         </div>
@@ -186,7 +206,7 @@ export default function PatientsList() {
             <div className="md:hidden p-3 space-y-3">
               {paginatedPatients?.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى"}
+                  {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
                 </div>
               ) : (
                 paginatedPatients?.map((patient) => (
@@ -246,7 +266,7 @@ export default function PatientsList() {
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                        {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى"}
+                        {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
                       </TableCell>
                     </TableRow>
                   ) : (
