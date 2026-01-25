@@ -17,6 +17,7 @@ import Reports from "@/pages/Reports";
 import Branches from "@/pages/Branches";
 import BranchDetails from "@/pages/BranchDetails";
 import BranchRevenues from "@/pages/BranchRevenues";
+import Statistics from "@/pages/Statistics";
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
@@ -68,6 +69,7 @@ function Router() {
           <Route path="/revenues" component={BranchRevenues} />
           <Route path="/branches" component={Branches} />
           <Route path="/branches/:id" component={BranchDetails} />
+          <Route path="/statistics" component={Statistics} />
           <Route component={NotFound} />
         </Switch>
       </Layout>

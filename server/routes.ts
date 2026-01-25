@@ -139,15 +139,18 @@ export async function registerRoutes(
     const branchId = ctx.role === 'admin' ? undefined : ctx.branchId;
     const patients = await storage.getPatients(branchId);
     
-    // Include visits for each patient to support "today's patients" filtering
-    const patientsWithVisits = await Promise.all(
+    // Include visits and payments for each patient to support filtering and statistics
+    const patientsWithRelations = await Promise.all(
       patients.map(async (patient) => {
-        const visits = await storage.getVisitsByPatientId(patient.id);
-        return { ...patient, visits };
+        const [visits, payments] = await Promise.all([
+          storage.getVisitsByPatientId(patient.id),
+          storage.getPaymentsByPatientId(patient.id)
+        ]);
+        return { ...patient, visits, payments };
       })
     );
     
-    res.json(patientsWithVisits);
+    res.json(patientsWithRelations);
   });
 
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
