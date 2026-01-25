@@ -7,12 +7,13 @@ import {
   BarChart3, Users, TrendingUp, Building2, Calendar, Banknote, 
   Activity, UserCheck, Heart, Accessibility, Stethoscope
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from "recharts";
 import type { Branch, Patient, Visit, Payment } from "@shared/schema";
+import { useBranchSession } from "@/components/BranchGate";
 
 type PatientWithRelations = Patient & { visits?: Visit[], payments?: Payment[] };
 
@@ -30,8 +31,18 @@ const AGE_GROUPS = [
 ];
 
 export default function Statistics() {
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin ?? false;
+  
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("all");
+
+  // Set branch filter automatically for non-admin users
+  useEffect(() => {
+    if (branchSession && !isAdmin) {
+      setSelectedBranch(String(branchSession.branchId));
+    }
+  }, [branchSession, isAdmin]);
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -245,18 +256,29 @@ export default function Statistics() {
         </div>
         
         <div className="flex flex-wrap gap-3">
-          <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-            <SelectTrigger className="w-[180px]" data-testid="select-branch-filter">
-              <Building2 className="w-4 h-4 ml-2" />
-              <SelectValue placeholder="اختر الفرع" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">جميع الفروع</SelectItem>
-              {branches?.map(branch => (
-                <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Branch filter - only visible to admin users */}
+          {isAdmin && (
+            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+              <SelectTrigger className="w-[180px]" data-testid="select-branch-filter">
+                <Building2 className="w-4 h-4 ml-2" />
+                <SelectValue placeholder="اختر الفرع" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">جميع الفروع</SelectItem>
+                {branches?.map(branch => (
+                  <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          
+          {/* Show current branch name for non-admin users */}
+          {!isAdmin && branchSession && (
+            <Badge variant="outline" className="h-9 px-4 flex items-center gap-2 text-sm">
+              <Building2 className="w-4 h-4" />
+              {branchSession.branchName}
+            </Badge>
+          )}
 
           <Select value={timeRange} onValueChange={setTimeRange}>
             <SelectTrigger className="w-[160px]" data-testid="select-time-range">
@@ -483,27 +505,29 @@ export default function Statistics() {
               </CardContent>
             </Card>
 
-            {/* Branch Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-primary" />
-                  توزيع المرضى حسب الفروع
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={stats.branchDistribution}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip formatter={(value, name) => [value, name === 'count' ? 'عدد المرضى' : 'الإيرادات']} />
-                    <Legend />
-                    <Bar dataKey="count" name="عدد المرضى" fill="#0088FE" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            {/* Branch Distribution - only visible to admin users */}
+            {isAdmin && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    توزيع المرضى حسب الفروع
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={stats.branchDistribution}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(value, name) => [value, name === 'count' ? 'عدد المرضى' : 'الإيرادات']} />
+                      <Legend />
+                      <Bar dataKey="count" name="عدد المرضى" fill="#0088FE" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Monthly Trend */}
@@ -625,8 +649,8 @@ export default function Statistics() {
                 </div>
               </div>
 
-              {/* Revenue by Branch */}
-              {selectedBranch === "all" && stats.branchDistribution.length > 0 && (
+              {/* Revenue by Branch - only visible to admin users */}
+              {isAdmin && selectedBranch === "all" && stats.branchDistribution.length > 0 && (
                 <div className="mt-6">
                   <h4 className="text-sm font-bold text-slate-700 mb-4">الإيرادات حسب الفرع</h4>
                   <ResponsiveContainer width="100%" height={250}>
