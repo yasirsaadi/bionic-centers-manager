@@ -1,16 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, ArrowRight, UserPlus, Users, Banknote, Calendar } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Building2, ArrowRight, UserPlus, Users, Banknote, Calendar, CalendarDays, Search, Eye, ChevronRight, ChevronLeft } from "lucide-react";
 import { AdminGate } from "@/components/AdminGate";
-import type { Branch, Patient } from "@shared/schema";
+import { useState, useMemo } from "react";
+import type { Branch, Patient, Visit } from "@shared/schema";
+
+type PatientWithVisits = Patient & { visits?: Visit[] };
+
+function isSameDay(date1: Date, date2: Date): boolean {
+  return date1.getFullYear() === date2.getFullYear() &&
+         date1.getMonth() === date2.getMonth() &&
+         date1.getDate() === date2.getDate();
+}
 
 export default function BranchDetails() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const branchId = Number(id);
+  const [viewMode, setViewMode] = useState<"today" | "all">("today");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -21,7 +37,7 @@ export default function BranchDetails() {
     },
   });
 
-  const { data: allPatients, isLoading } = useQuery<Patient[]>({
+  const { data: allPatients, isLoading } = useQuery<PatientWithVisits[]>({
     queryKey: ["/api/patients"],
     queryFn: async () => {
       const res = await fetch("/api/patients", { credentials: "include" });
@@ -31,7 +47,42 @@ export default function BranchDetails() {
   });
 
   const branch = branches?.find(b => b.id === branchId);
-  const patients = allPatients?.filter(p => p.branchId === branchId) || [];
+  const branchPatients = allPatients?.filter(p => p.branchId === branchId) || [];
+
+  const todayPatients = useMemo(() => {
+    const today = new Date();
+    return branchPatients.filter(p => {
+      if (!p.visits || p.visits.length === 0) return false;
+      return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), today));
+    });
+  }, [branchPatients]);
+
+  const basePatients = viewMode === "today" ? todayPatients : branchPatients;
+  
+  const filteredPatients = basePatients.filter(p => 
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.medicalCondition.includes(searchTerm)
+  );
+
+  const totalPatients = filteredPatients.length;
+  const totalPages = Math.ceil(totalPatients / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const paginatedPatients = filteredPatients.slice(startIndex, startIndex + pageSize);
+
+  const handleViewModeChange = (value: string) => {
+    setViewMode(value as "today" | "all");
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    setPageSize(Number(value));
+    setCurrentPage(1);
+  };
 
   if (isLoading) {
     return (
@@ -41,9 +92,9 @@ export default function BranchDetails() {
     );
   }
 
-  const totalCost = patients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
-  const amputeeCount = patients.filter(p => p.isAmputee).length;
-  const physioCount = patients.filter(p => p.isPhysiotherapy).length;
+  const totalCost = branchPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+  const amputeeCount = branchPatients.filter(p => p.isAmputee).length;
+  const physioCount = branchPatients.filter(p => p.isPhysiotherapy).length;
 
   return (
     <AdminGate>
@@ -72,7 +123,7 @@ export default function BranchDetails() {
               <Users className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
             </div>
             <div className="min-w-0">
-              <p className="text-lg md:text-2xl font-bold text-slate-800">{patients.length}</p>
+              <p className="text-lg md:text-2xl font-bold text-slate-800">{branchPatients.length}</p>
               <p className="text-xs md:text-sm text-muted-foreground truncate">إجمالي المرضى</p>
             </div>
           </div>
@@ -123,51 +174,185 @@ export default function BranchDetails() {
         </Button>
       </div>
 
-      {patients.length === 0 ? (
-        <Card className="p-12 text-center rounded-2xl">
-          <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-bold text-slate-700 mb-2">لا يوجد مرضى في هذا الفرع</h3>
-          <p className="text-muted-foreground mb-4">ابدأ بإضافة مريض جديد</p>
-          <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)}>
-            <UserPlus className="w-4 h-4 ml-2" />
-            إضافة مريض
-          </Button>
-        </Card>
-      ) : (
-        <div className="grid gap-3">
-          {patients.map((patient) => (
-            <Link key={patient.id} href={`/patients/${patient.id}`}>
-              <Card className="p-4 rounded-xl hover-elevate cursor-pointer transition-all" data-testid={`card-patient-${patient.id}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                      {patient.name.charAt(0)}
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800">{patient.name}</h4>
-                      <p className="text-sm text-muted-foreground">
-                        {patient.age} سنة - {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                      <Calendar className="w-4 h-4" />
-                      <span>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</span>
-                    </div>
-                    <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
-                      {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
-                    </Badge>
-                    <span className="text-sm font-mono text-muted-foreground">
-                      {(patient.totalCost || 0).toLocaleString()} د.ع
-                    </span>
-                  </div>
-                </div>
-              </Card>
-            </Link>
-          ))}
+      {/* View Mode Tabs */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-3 rounded-xl border border-border shadow-sm">
+        <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
+          <TabsList className="grid grid-cols-2 w-full sm:w-auto">
+            <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
+              <Calendar className="w-4 h-4" />
+              <span>مرضى اليوم</span>
+              <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
+              <Users className="w-4 h-4" />
+              <span>جميع المرضى</span>
+              <Badge variant="secondary" className="mr-1 text-xs">{branchPatients.length}</Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        
+        {viewMode === "today" && (
+          <div className="text-sm text-slate-600 flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" />
+            <span>{new Date().toLocaleDateString('en-GB')}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+        <div className="p-3 md:p-4 border-b border-border">
+          <div className="relative">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input 
+              placeholder="بحث باسم المريض أو الحالة..." 
+              className="pr-10 h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base"
+              value={searchTerm}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              data-testid="input-search-branch-patients"
+            />
+          </div>
         </div>
-      )}
+
+        {paginatedPatients.length === 0 ? (
+          <div className="p-12 text-center">
+            <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-bold text-slate-700 mb-2">
+              {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى في هذا الفرع"}
+            </h3>
+            <p className="text-muted-foreground mb-4">
+              {viewMode === "today" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
+            </p>
+            {viewMode === "all" && (
+              <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)}>
+                <UserPlus className="w-4 h-4 ml-2" />
+                إضافة مريض
+              </Button>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Mobile Card View */}
+            <div className="md:hidden p-3 space-y-3">
+              {paginatedPatients.map((patient) => (
+                <Card key={patient.id} className="overflow-hidden">
+                  <CardContent className="p-3">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">
+                          {patient.name.charAt(0)}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-slate-800">{patient.name}</h4>
+                          <p className="text-xs text-muted-foreground">
+                            {patient.age} سنة
+                          </p>
+                        </div>
+                      </div>
+                      <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
+                        {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
+                      <span className="text-xs text-slate-400 font-mono">
+                        {(patient.totalCost || 0).toLocaleString()} د.ع
+                      </span>
+                      <Link href={`/patients/${patient.id}`}>
+                        <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
+                          <Eye className="w-3.5 h-3.5" />
+                          عرض الملف
+                        </Button>
+                      </Link>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {/* Desktop List View */}
+            <div className="hidden md:block">
+              <div className="divide-y">
+                {paginatedPatients.map((patient) => (
+                  <Link key={patient.id} href={`/patients/${patient.id}`}>
+                    <div className="p-4 hover:bg-slate-50/80 cursor-pointer transition-all" data-testid={`card-patient-${patient.id}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                            {patient.name.charAt(0)}
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-800">{patient.name}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {patient.age} سنة - {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                            <Calendar className="w-4 h-4" />
+                            <span>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</span>
+                          </div>
+                          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
+                            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                          </Badge>
+                          <span className="text-sm font-mono text-muted-foreground">
+                            {(patient.totalCost || 0).toLocaleString()} د.ع
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Pagination Controls */}
+        {totalPatients > 0 && (
+          <div className="p-3 md:p-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-4">
+            <div className="flex items-center gap-2 text-xs md:text-sm text-slate-600">
+              <span>عرض</span>
+              <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                <SelectTrigger className="w-16 md:w-20 h-8 md:h-9 text-xs md:text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+              <span>من أصل {totalPatients} سجل</span>
+            </div>
+
+            <div className="flex items-center gap-1 md:gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
+              >
+                <ChevronRight className="w-4 h-4" />
+                <span className="hidden sm:inline">السابق</span>
+              </Button>
+              <span className="text-xs md:text-sm text-slate-600 px-1 md:px-2">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
+              >
+                <span className="hidden sm:inline">التالي</span>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
     </AdminGate>
   );
