@@ -19,14 +19,20 @@ function isSameDay(date1: Date, date2: Date): boolean {
          date1.getDate() === date2.getDate();
 }
 
+function getTodayDateString(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
 export default function BranchDetails() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const branchId = Number(id);
-  const [viewMode, setViewMode] = useState<"today" | "all">("today");
+  const [viewMode, setViewMode] = useState<"date" | "all">("date");
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -49,15 +55,15 @@ export default function BranchDetails() {
   const branch = branches?.find(b => b.id === branchId);
   const branchPatients = allPatients?.filter(p => p.branchId === branchId) || [];
 
-  const todayPatients = useMemo(() => {
-    const today = new Date();
+  const dateFilteredPatients = useMemo(() => {
+    const filterDate = new Date(selectedDate);
     return branchPatients.filter(p => {
       if (!p.visits || p.visits.length === 0) return false;
-      return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), today));
+      return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
     });
-  }, [branchPatients]);
+  }, [branchPatients, selectedDate]);
 
-  const basePatients = viewMode === "today" ? todayPatients : branchPatients;
+  const basePatients = viewMode === "date" ? dateFilteredPatients : branchPatients;
   
   const filteredPatients = basePatients.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -70,7 +76,12 @@ export default function BranchDetails() {
   const paginatedPatients = filteredPatients.slice(startIndex, startIndex + pageSize);
 
   const handleViewModeChange = (value: string) => {
-    setViewMode(value as "today" | "all");
+    setViewMode(value as "date" | "all");
+    setCurrentPage(1);
+  };
+
+  const handleDateChange = (value: string) => {
+    setSelectedDate(value);
     setCurrentPage(1);
   };
 
@@ -178,10 +189,10 @@ export default function BranchDetails() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-3 rounded-xl border border-border shadow-sm">
         <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
           <TabsList className="grid grid-cols-2 w-full sm:w-auto">
-            <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
+            <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
               <Calendar className="w-4 h-4" />
-              <span>مرضى اليوم</span>
-              <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
+              <span>مرضى التاريخ</span>
+              <Badge variant="secondary" className="mr-1 text-xs">{dateFilteredPatients.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
               <Users className="w-4 h-4" />
@@ -191,10 +202,19 @@ export default function BranchDetails() {
           </TabsList>
         </Tabs>
         
-        {viewMode === "today" && (
-          <div className="text-sm text-slate-600 flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-primary" />
-            <span>{new Date().toLocaleDateString('en-GB')}</span>
+        {viewMode === "date" && (
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary shrink-0" />
+            <Input 
+              type="date"
+              value={selectedDate}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="h-9 w-[160px] text-sm"
+              data-testid="input-date-filter"
+            />
+            {selectedDate === getTodayDateString() && (
+              <Badge variant="outline" className="text-xs text-primary border-primary">اليوم</Badge>
+            )}
           </div>
         )}
       </div>
@@ -217,10 +237,10 @@ export default function BranchDetails() {
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-bold text-slate-700 mb-2">
-              {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى في هذا الفرع"}
+              {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى في هذا الفرع"}
             </h3>
             <p className="text-muted-foreground mb-4">
-              {viewMode === "today" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
+              {viewMode === "date" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
             </p>
             {viewMode === "all" && (
               <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)}>
