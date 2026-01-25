@@ -209,20 +209,15 @@ export default function PatientsList() {
                   {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
                 </div>
               ) : (
-                paginatedPatients?.map((patient) => (
+                paginatedPatients?.map((patient, index) => (
                   <Card key={patient.id} className="overflow-hidden">
                     <CardContent className="p-3">
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-slate-400 bg-slate-100 rounded px-1.5 py-0.5 shrink-0">
+                            {startIndex + index + 1}
+                          </span>
                           <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
-                          <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                            <span>{patient.age} سنة</span>
-                            <span className="text-slate-300">|</span>
-                            <div className="flex items-center gap-1">
-                              <Building2 className="w-3 h-3" />
-                              <span>{getBranchName(patient.branchId)}</span>
-                            </div>
-                          </div>
                         </div>
                         <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
                           {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
@@ -253,7 +248,8 @@ export default function PatientsList() {
               <Table>
                 <TableHeader className="bg-slate-50/50">
                   <TableRow>
-                    <TableHead className="text-right font-bold text-slate-700 py-4 first:pr-6">الاسم</TableHead>
+                    <TableHead className="text-center font-bold text-slate-700 py-4 w-12 first:pr-4">#</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">الاسم</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">العمر</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">الفرع</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">الحالة الطبية</TableHead>
@@ -265,14 +261,17 @@ export default function PatientsList() {
                 <TableBody>
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                         {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    paginatedPatients?.map((patient) => (
+                    paginatedPatients?.map((patient, index) => (
                       <TableRow key={patient.id} className="hover:bg-slate-50/80 transition-colors">
-                        <TableCell className="font-medium text-slate-900 pr-6 py-4">
+                        <TableCell className="text-center font-mono text-sm text-slate-500 pr-4 py-4">
+                          {startIndex + index + 1}
+                        </TableCell>
+                        <TableCell className="font-medium text-slate-900 py-4">
                           {patient.name}
                         </TableCell>
                         <TableCell className="text-slate-600">{patient.age}</TableCell>

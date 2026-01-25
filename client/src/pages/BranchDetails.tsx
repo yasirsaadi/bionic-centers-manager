@@ -253,11 +253,14 @@ export default function BranchDetails() {
           <>
             {/* Mobile Card View */}
             <div className="md:hidden p-3 space-y-3">
-              {paginatedPatients.map((patient) => (
+              {paginatedPatients.map((patient, index) => (
                 <Card key={patient.id} className="overflow-hidden">
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-slate-400 bg-slate-100 rounded px-1.5 py-0.5 shrink-0">
+                          {startIndex + index + 1}
+                        </span>
                         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">
                           {patient.name.charAt(0)}
                         </div>
@@ -291,11 +294,14 @@ export default function BranchDetails() {
             {/* Desktop List View */}
             <div className="hidden md:block">
               <div className="divide-y">
-                {paginatedPatients.map((patient) => (
+                {paginatedPatients.map((patient, index) => (
                   <Link key={patient.id} href={`/patients/${patient.id}`}>
                     <div className="p-4 hover:bg-slate-50/80 cursor-pointer transition-all" data-testid={`card-patient-${patient.id}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
+                          <span className="text-sm font-mono text-slate-400 bg-slate-100 rounded px-2 py-1 shrink-0 min-w-[40px] text-center">
+                            {startIndex + index + 1}
+                          </span>
                           <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
                             {patient.name.charAt(0)}
                           </div>
