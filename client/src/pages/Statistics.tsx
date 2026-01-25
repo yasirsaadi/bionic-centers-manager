@@ -441,9 +441,11 @@ export default function Statistics() {
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
     try {
-      return ArabicReshaper.convertArabic(text);
+      const shaped = ArabicReshaper.convertArabic(text);
+      // Reverse the text for proper RTL display in PDF
+      return shaped.split('').reverse().join('');
     } catch {
-      return text;
+      return text.split('').reverse().join('');
     }
   };
 
