@@ -3,17 +3,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { 
   BarChart3, Users, TrendingUp, Building2, Calendar, Banknote, 
-  Activity, UserCheck, Heart, Accessibility, Stethoscope
+  Activity, UserCheck, Heart, Accessibility, Stethoscope, FileDown, FileSpreadsheet
 } from "lucide-react";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from "recharts";
 import type { Branch, Patient, Visit, Payment } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 type PatientWithRelations = Patient & { visits?: Visit[], payments?: Payment[] };
 
@@ -230,6 +234,237 @@ export default function Statistics() {
     };
   }, [filteredPatients, branches]);
 
+  // Get current branch name for reports
+  const currentBranchName = useMemo(() => {
+    if (selectedBranch === "all") return "جميع الفروع";
+    return branches?.find(b => b.id === Number(selectedBranch))?.name || branchSession?.branchName || "";
+  }, [selectedBranch, branches, branchSession]);
+
+  // Get time range label for reports
+  const timeRangeLabel = useMemo(() => {
+    switch (timeRange) {
+      case "week": return "آخر أسبوع";
+      case "month": return "آخر شهر";
+      case "quarter": return "آخر 3 أشهر";
+      case "year": return "آخر سنة";
+      default: return "كل الوقت";
+    }
+  }, [timeRange]);
+
+  // Export to PDF function
+  const exportToPDF = useCallback(() => {
+    if (!stats) return;
+    
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    
+    // Set RTL direction for Arabic text
+    doc.setR2L(true);
+    
+    // Title
+    doc.setFontSize(20);
+    doc.text("تقرير الإحصائيات", 105, 20, { align: 'center' });
+    
+    // Subtitle with branch and date info
+    doc.setFontSize(12);
+    doc.text(`الفرع: ${currentBranchName}`, 105, 30, { align: 'center' });
+    doc.text(`الفترة: ${timeRangeLabel}`, 105, 37, { align: 'center' });
+    doc.text(`تاريخ التقرير: ${new Date().toLocaleDateString('ar-IQ')}`, 105, 44, { align: 'center' });
+    
+    let yPos = 55;
+    
+    // Summary Section
+    doc.setFontSize(14);
+    doc.text("ملخص الإحصائيات", 190, yPos, { align: 'right' });
+    yPos += 10;
+    
+    autoTable(doc, {
+      startY: yPos,
+      head: [['البيان', 'القيمة']],
+      body: [
+        ['إجمالي المرضى', stats.totalPatients.toString()],
+        ['مرضى البتر', stats.amputeeCount.toString()],
+        ['مرضى العلاج الطبيعي', stats.physioCount.toString()],
+        ['مرضى الدعم الطبي', stats.medicalSupportCount.toString()],
+        ['إجمالي الإيرادات', `${stats.allTimeRevenue.toLocaleString()} د.ع`],
+        ['المبالغ المحصلة', `${stats.allTimePaid.toLocaleString()} د.ع`],
+        ['المبالغ المتبقية', `${stats.allTimeRemaining.toLocaleString()} د.ع`],
+        ['نسبة التحصيل', `${stats.collectionRate}%`],
+        ['إجمالي الزيارات (في الفترة)', stats.totalVisits.toString()],
+      ],
+      styles: { font: 'helvetica', halign: 'right' },
+      headStyles: { fillColor: [41, 128, 185] },
+    });
+    
+    yPos = (doc as any).lastAutoTable.finalY + 15;
+    
+    // Age Distribution
+    if (stats.ageDistribution.length > 0) {
+      doc.setFontSize(14);
+      doc.text("توزيع الأعمار", 190, yPos, { align: 'right' });
+      yPos += 10;
+      
+      autoTable(doc, {
+        startY: yPos,
+        head: [['الفئة العمرية', 'العدد']],
+        body: stats.ageDistribution.map(item => [item.name, item.count.toString()]),
+        styles: { font: 'helvetica', halign: 'right' },
+        headStyles: { fillColor: [52, 152, 219] },
+      });
+      
+      yPos = (doc as any).lastAutoTable.finalY + 15;
+    }
+    
+    // Check if we need a new page
+    if (yPos > 250) {
+      doc.addPage();
+      yPos = 20;
+    }
+    
+    // Condition Distribution
+    if (stats.conditionDistribution.length > 0) {
+      doc.setFontSize(14);
+      doc.text("توزيع الحالات الطبية", 190, yPos, { align: 'right' });
+      yPos += 10;
+      
+      autoTable(doc, {
+        startY: yPos,
+        head: [['الحالة', 'العدد']],
+        body: stats.conditionDistribution.map(item => [item.name, item.value.toString()]),
+        styles: { font: 'helvetica', halign: 'right' },
+        headStyles: { fillColor: [46, 204, 113] },
+      });
+      
+      yPos = (doc as any).lastAutoTable.finalY + 15;
+    }
+    
+    // Branch Distribution (admin only)
+    if (isAdmin && stats.branchDistribution.length > 0) {
+      if (yPos > 250) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFontSize(14);
+      doc.text("توزيع المرضى حسب الفروع", 190, yPos, { align: 'right' });
+      yPos += 10;
+      
+      autoTable(doc, {
+        startY: yPos,
+        head: [['الفرع', 'عدد المرضى', 'الإيرادات']],
+        body: stats.branchDistribution.map(item => [
+          item.name, 
+          item.count.toString(),
+          `${item.revenue.toLocaleString()} د.ع`
+        ]),
+        styles: { font: 'helvetica', halign: 'right' },
+        headStyles: { fillColor: [155, 89, 182] },
+      });
+    }
+    
+    // Save the PDF
+    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${new Date().toLocaleDateString('ar-IQ').replace(/\//g, '-')}.pdf`;
+    doc.save(fileName);
+  }, [stats, currentBranchName, timeRangeLabel, isAdmin]);
+
+  // Export to Excel function
+  const exportToExcel = useCallback(() => {
+    if (!stats) return;
+    
+    const workbook = XLSX.utils.book_new();
+    
+    // Summary Sheet
+    const summaryData = [
+      ['تقرير الإحصائيات'],
+      ['الفرع', currentBranchName],
+      ['الفترة', timeRangeLabel],
+      ['تاريخ التقرير', new Date().toLocaleDateString('ar-IQ')],
+      [],
+      ['ملخص الإحصائيات'],
+      ['البيان', 'القيمة'],
+      ['إجمالي المرضى', stats.totalPatients],
+      ['مرضى البتر', stats.amputeeCount],
+      ['مرضى العلاج الطبيعي', stats.physioCount],
+      ['مرضى الدعم الطبي', stats.medicalSupportCount],
+      ['إجمالي الإيرادات (د.ع)', stats.allTimeRevenue],
+      ['المبالغ المحصلة (د.ع)', stats.allTimePaid],
+      ['المبالغ المتبقية (د.ع)', stats.allTimeRemaining],
+      ['نسبة التحصيل (%)', stats.collectionRate],
+      ['إجمالي الزيارات (في الفترة)', stats.totalVisits],
+    ];
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'الملخص');
+    
+    // Age Distribution Sheet
+    if (stats.ageDistribution.length > 0) {
+      const ageData = [
+        ['توزيع الأعمار'],
+        ['الفئة العمرية', 'العدد'],
+        ...stats.ageDistribution.map(item => [item.name, item.count])
+      ];
+      const ageSheet = XLSX.utils.aoa_to_sheet(ageData);
+      XLSX.utils.book_append_sheet(workbook, ageSheet, 'توزيع الأعمار');
+    }
+    
+    // Condition Distribution Sheet
+    if (stats.conditionDistribution.length > 0) {
+      const conditionData = [
+        ['توزيع الحالات الطبية'],
+        ['الحالة', 'العدد'],
+        ...stats.conditionDistribution.map(item => [item.name, item.value])
+      ];
+      const conditionSheet = XLSX.utils.aoa_to_sheet(conditionData);
+      XLSX.utils.book_append_sheet(workbook, conditionSheet, 'الحالات الطبية');
+    }
+    
+    // Amputation Sites Sheet
+    if (stats.amputationSiteData.length > 0) {
+      const amputationData = [
+        ['مواقع البتر'],
+        ['الموقع', 'العدد'],
+        ...stats.amputationSiteData.map(item => [item.name, item.value])
+      ];
+      const amputationSheet = XLSX.utils.aoa_to_sheet(amputationData);
+      XLSX.utils.book_append_sheet(workbook, amputationSheet, 'مواقع البتر');
+    }
+    
+    // Disease Types Sheet
+    if (stats.diseaseTypeData.length > 0) {
+      const diseaseData = [
+        ['أنواع الأمراض'],
+        ['النوع', 'العدد'],
+        ...stats.diseaseTypeData.map(item => [item.name, item.value])
+      ];
+      const diseaseSheet = XLSX.utils.aoa_to_sheet(diseaseData);
+      XLSX.utils.book_append_sheet(workbook, diseaseSheet, 'أنواع الأمراض');
+    }
+    
+    // Branch Distribution Sheet (admin only)
+    if (isAdmin && stats.branchDistribution.length > 0) {
+      const branchData = [
+        ['توزيع المرضى حسب الفروع'],
+        ['الفرع', 'عدد المرضى', 'الإيرادات (د.ع)'],
+        ...stats.branchDistribution.map(item => [item.name, item.count, item.revenue])
+      ];
+      const branchSheet = XLSX.utils.aoa_to_sheet(branchData);
+      XLSX.utils.book_append_sheet(workbook, branchSheet, 'توزيع الفروع');
+    }
+    
+    // Monthly Trend Sheet
+    if (stats.monthlyTrend.length > 0) {
+      const trendData = [
+        ['الاتجاهات الشهرية'],
+        ['الشهر', 'عدد المرضى', 'عدد الزيارات'],
+        ...stats.monthlyTrend.map(item => [item.month, item.patients, item.visits])
+      ];
+      const trendSheet = XLSX.utils.aoa_to_sheet(trendData);
+      XLSX.utils.book_append_sheet(workbook, trendSheet, 'الاتجاهات الشهرية');
+    }
+    
+    // Save the Excel file
+    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${new Date().toLocaleDateString('ar-IQ').replace(/\//g, '-')}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  }, [stats, currentBranchName, timeRangeLabel, isAdmin]);
+
   if (isLoading) {
     return (
       <div className="p-4 md:p-6 space-y-6">
@@ -293,6 +528,30 @@ export default function Statistics() {
               <SelectItem value="year">آخر سنة</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Export Buttons */}
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              onClick={exportToPDF}
+              disabled={!stats}
+              className="gap-2"
+              data-testid="button-export-pdf"
+            >
+              <FileDown className="w-4 h-4" />
+              تصدير PDF
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={exportToExcel}
+              disabled={!stats}
+              className="gap-2"
+              data-testid="button-export-excel"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              تصدير Excel
+            </Button>
+          </div>
         </div>
       </div>
 
