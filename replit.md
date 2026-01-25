@@ -73,3 +73,21 @@ Preferred communication style: Simple, everyday language.
 ### File Storage
 - Local filesystem (`/uploads` directory) for document storage
 - No external cloud storage configured
+
+## Recent Changes
+
+### Statistics System (January 2026)
+- Added comprehensive `/statistics` page with multiple chart types (bar, pie, area)
+- Statistics include: age distribution, medical condition types, payment status, branch distribution, monthly trends
+- Time-range filtering: all time, last week, last month, last 3 months
+- Branch filtering for admin users
+- Financial metrics: all-time revenue, paid amounts, remaining balances, collection rate
+- Time-filtered stats properly use visit dates and payment dates (not just patient registration dates)
+- Monthly trends track patients by registration date, visits by visit date, payments by payment date
+
+### Date-based Patient Filtering
+- BranchDetails page includes date picker to view patients by any selected date
+- Uses Gregorian calendar (en-GB format) with local date boundaries (not UTC)
+
+### Sequential Patient Numbering
+- Patient lists show sequential numbers (#1, #2, #3...) for easy visual counting
