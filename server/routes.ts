@@ -138,7 +138,16 @@ export async function registerRoutes(
     const ctx = getUserContext(req);
     const branchId = ctx.role === 'admin' ? undefined : ctx.branchId;
     const patients = await storage.getPatients(branchId);
-    res.json(patients);
+    
+    // Include visits for each patient to support "today's patients" filtering
+    const patientsWithVisits = await Promise.all(
+      patients.map(async (patient) => {
+        const visits = await storage.getVisitsByPatientId(patient.id);
+        return { ...patient, visits };
+      })
+    );
+    
+    res.json(patientsWithVisits);
   });
 
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {

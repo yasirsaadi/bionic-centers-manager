@@ -11,13 +11,25 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Filter, Building2, ChevronRight, ChevronLeft } from "lucide-react";
+import { Plus, Search, Eye, Filter, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Branch } from "@shared/schema";
+
+function getTodayDateString(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+function isSameDay(date1: Date, date2: Date): boolean {
+  return date1.getFullYear() === date2.getFullYear() &&
+         date1.getMonth() === date2.getMonth() &&
+         date1.getDate() === date2.getDate();
+}
 
 export default function PatientsList() {
   const { data: patients, isLoading } = usePatients();
@@ -32,12 +44,36 @@ export default function PatientsList() {
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [viewMode, setViewMode] = useState<"today" | "all">("today");
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
   };
 
-  const filteredPatients = patients?.filter(p => 
+  const todayPatients = useMemo(() => {
+    if (!patients) return [];
+    const today = new Date();
+    return patients.filter(p => {
+      const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
+      if (!visits || visits.length === 0) return false;
+      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), today));
+    });
+  }, [patients]);
+
+  const dateFilteredPatients = useMemo(() => {
+    if (!patients) return [];
+    const filterDate = new Date(selectedDate);
+    return patients.filter(p => {
+      const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
+      if (!visits || visits.length === 0) return false;
+      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
+    });
+  }, [patients, selectedDate]);
+
+  const basePatients = viewMode === "today" ? todayPatients : patients;
+  
+  const filteredPatients = basePatients?.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.medicalCondition.includes(searchTerm)
   );
@@ -57,6 +93,11 @@ export default function PatientsList() {
     setCurrentPage(1);
   };
 
+  const handleViewModeChange = (value: string) => {
+    setViewMode(value as "today" | "all");
+    setCurrentPage(1);
+  };
+
   return (
     <div className="space-y-4 md:space-y-6 page-transition">
       <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center md:gap-4">
@@ -70,6 +111,31 @@ export default function PatientsList() {
             إضافة مريض جديد
           </Button>
         </Link>
+      </div>
+
+      {/* View Mode Tabs */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-3 rounded-xl border border-border shadow-sm">
+        <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
+          <TabsList className="grid grid-cols-2 w-full sm:w-auto">
+            <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
+              <Calendar className="w-4 h-4" />
+              <span>مرضى اليوم</span>
+              <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
+              <Users className="w-4 h-4" />
+              <span>جميع المرضى</span>
+              <Badge variant="secondary" className="mr-1 text-xs">{patients?.length || 0}</Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        
+        {viewMode === "today" && (
+          <div className="text-sm text-slate-600 flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" />
+            <span>{new Date().toLocaleDateString('en-GB')}</span>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
