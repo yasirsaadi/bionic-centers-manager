@@ -11,19 +11,14 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Filter, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users } from "lucide-react";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Branch } from "@shared/schema";
-
-function getTodayDateString(): string {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-}
 
 function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
@@ -45,33 +40,28 @@ export default function PatientsList() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [viewMode, setViewMode] = useState<"today" | "all">("today");
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
+  const [selectedBranch, setSelectedBranch] = useState<string>("all");
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
   };
 
-  const todayPatients = useMemo(() => {
+  const branchFilteredPatients = useMemo(() => {
     if (!patients) return [];
+    if (selectedBranch === "all") return patients;
+    return patients.filter(p => p.branchId === Number(selectedBranch));
+  }, [patients, selectedBranch]);
+
+  const todayPatients = useMemo(() => {
     const today = new Date();
-    return patients.filter(p => {
+    return branchFilteredPatients.filter(p => {
       const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
       if (!visits || visits.length === 0) return false;
       return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), today));
     });
-  }, [patients]);
+  }, [branchFilteredPatients]);
 
-  const dateFilteredPatients = useMemo(() => {
-    if (!patients) return [];
-    const filterDate = new Date(selectedDate);
-    return patients.filter(p => {
-      const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
-      if (!visits || visits.length === 0) return false;
-      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
-    });
-  }, [patients, selectedDate]);
-
-  const basePatients = viewMode === "today" ? todayPatients : patients;
+  const basePatients = viewMode === "today" ? todayPatients : branchFilteredPatients;
   
   const filteredPatients = basePatients?.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -98,6 +88,11 @@ export default function PatientsList() {
     setCurrentPage(1);
   };
 
+  const handleBranchChange = (value: string) => {
+    setSelectedBranch(value);
+    setCurrentPage(1);
+  };
+
   return (
     <div className="space-y-4 md:space-y-6 page-transition">
       <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center md:gap-4">
@@ -113,34 +108,63 @@ export default function PatientsList() {
         </Link>
       </div>
 
-      {/* View Mode Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-3 rounded-xl border border-border shadow-sm">
-        <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
-          <TabsList className="grid grid-cols-2 w-full sm:w-auto">
-            <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
-              <Calendar className="w-4 h-4" />
-              <span>مرضى اليوم</span>
-              <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
-              <Users className="w-4 h-4" />
-              <span>جميع المرضى</span>
-              <Badge variant="secondary" className="mr-1 text-xs">{patients?.length || 0}</Badge>
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        
-        {viewMode === "today" && (
-          <div className="text-sm text-slate-600 flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-primary" />
-            <span>{new Date().toLocaleDateString('en-GB')}</span>
+      {/* Branch Filter + View Mode Tabs */}
+      <div className="flex flex-col gap-3 bg-white p-3 md:p-4 rounded-xl border border-border shadow-sm">
+        {/* Branch Filter */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
+            <Building2 className="w-4 h-4 text-primary" />
+            <span>اختر الفرع:</span>
           </div>
-        )}
+          <Select value={selectedBranch} onValueChange={handleBranchChange}>
+            <SelectTrigger className="w-full sm:w-[200px] h-10" data-testid="select-branch-filter">
+              <SelectValue placeholder="جميع الفروع" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">جميع الفروع</SelectItem>
+              {branches?.map(branch => (
+                <SelectItem key={branch.id} value={String(branch.id)}>
+                  {branch.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedBranch !== "all" && (
+            <Badge variant="secondary" className="text-xs">
+              {branchFilteredPatients.length} مريض في هذا الفرع
+            </Badge>
+          )}
+        </div>
+
+        {/* View Mode Tabs */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-2 border-t border-slate-100">
+          <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
+            <TabsList className="grid grid-cols-2 w-full sm:w-auto">
+              <TabsTrigger value="today" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-today-patients">
+                <Calendar className="w-4 h-4" />
+                <span>مرضى اليوم</span>
+                <Badge variant="secondary" className="mr-1 text-xs">{todayPatients.length}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
+                <Users className="w-4 h-4" />
+                <span>جميع المرضى</span>
+                <Badge variant="secondary" className="mr-1 text-xs">{branchFilteredPatients.length}</Badge>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          
+          {viewMode === "today" && (
+            <div className="text-sm text-slate-600 flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-primary" />
+              <span>{new Date().toLocaleDateString('en-GB')}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-        <div className="p-3 md:p-4 border-b border-border flex flex-col sm:flex-row gap-3 md:gap-4">
-          <div className="relative flex-1">
+        <div className="p-3 md:p-4 border-b border-border">
+          <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               placeholder="بحث باسم المريض أو الحالة..." 
@@ -150,10 +174,6 @@ export default function PatientsList() {
               data-testid="input-search-patients"
             />
           </div>
-          <Button variant="outline" className="gap-2 h-10 md:h-11 border-slate-200 text-slate-600 hidden sm:flex">
-            <Filter className="w-4 h-4" />
-            تصفية
-          </Button>
         </div>
 
         {isLoading ? (
@@ -166,7 +186,7 @@ export default function PatientsList() {
             <div className="md:hidden p-3 space-y-3">
               {paginatedPatients?.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  لا يوجد نتائج مطابقة
+                  {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى"}
                 </div>
               ) : (
                 paginatedPatients?.map((patient) => (
@@ -226,7 +246,7 @@ export default function PatientsList() {
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                        لا يوجد نتائج مطابقة
+                        {viewMode === "today" ? "لا يوجد مرضى لديهم زيارات اليوم" : "لا يوجد مرضى"}
                       </TableCell>
                     </TableRow>
                   ) : (
