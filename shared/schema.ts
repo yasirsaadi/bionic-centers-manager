@@ -122,6 +122,35 @@ export const installmentPlans = pgTable("installment_plans", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Patient invoices for accounting system
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNumber: text("invoice_number").notNull().unique(), // رقم الفاتورة التلقائي
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  invoiceDate: date("invoice_date").notNull(), // تاريخ الفاتورة
+  dueDate: date("due_date"), // تاريخ الاستحقاق
+  subtotal: integer("subtotal").notNull(), // المبلغ قبل الخصم
+  discount: integer("discount").default(0), // الخصم
+  total: integer("total").notNull(), // المبلغ الإجمالي
+  paidAmount: integer("paid_amount").default(0), // المبلغ المدفوع
+  status: text("status").default("pending"), // pending, partial, paid, cancelled
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Invoice line items
+export const invoiceItems = pgTable("invoice_items", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").references(() => invoices.id).notNull(),
+  description: text("description").notNull(), // وصف الخدمة
+  serviceType: text("service_type"), // نوع الخدمة (طرف صناعي، علاج طبيعي، مسند)
+  quantity: integer("quantity").default(1),
+  unitPrice: integer("unit_price").notNull(), // سعر الوحدة
+  total: integer("total").notNull(), // الإجمالي
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -147,6 +176,8 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({ id: tru
 export const insertCustomStatSchema = createInsertSchema(customStats).omit({ id: true, createdAt: true });
 export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
 export const insertInstallmentPlanSchema = createInsertSchema(installmentPlans).omit({ id: true, createdAt: true });
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
+export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true });
 
 export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
@@ -164,3 +195,7 @@ export type Expense = typeof expenses.$inferSelect;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InstallmentPlan = typeof installmentPlans.$inferSelect;
 export type InsertInstallmentPlan = z.infer<typeof insertInstallmentPlanSchema>;
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;

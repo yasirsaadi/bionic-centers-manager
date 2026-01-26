@@ -94,14 +94,28 @@ Preferred communication style: Simple, everyday language.
 
 ### Comprehensive Accounting System (January 2026)
 - New `/accounting` page (admin-only access)
-- Database tables: `expenses` (with categories: salaries, rent, medical_supplies, maintenance, utilities, other), `installment_plans`
+- Database tables: `expenses`, `installment_plans`, `invoices`, `invoice_items`
 - Financial Dashboard with 6 KPIs: total revenue, payments, remaining, expenses, net profit, collection rate
-- Multiple tabs: Dashboard, Expenses Management, Reports, Analytics, Debtors
-- Expenses CRUD with category-based organization
+- Multiple tabs: Dashboard, Expenses Management, Invoices, Reports, Analytics, Debtors
+
+**Expenses Management:**
+- Full CRUD operations with delete confirmation dialogs
+- 6 categories: salaries, rent, medical_supplies, maintenance, utilities, other
+- Color-coded category cards and charts
+
+**Invoicing System:**
+- Create invoices for patients with multiple line items
+- Auto-generated invoice numbers (INV-YYYYMM-XXXX format)
+- Service types: prosthetic, physiotherapy, medical support, consultation, other
+- Invoice status tracking: pending, partial, paid, cancelled
+- Payment amount tracking and remaining balance display
+
+**Reports & Analytics:**
 - Branch comparison and profitability analysis
 - Monthly financial trends visualization with Area charts
 - Service profitability breakdown (amputee, physiotherapy, medical support)
 - Debtors tracking with outstanding balance monitoring
 - PDF and Excel export with proper Arabic RTL support using arabic-reshaper
+
 - All accounting endpoints are admin-only protected
 - Frontend admin guard prevents non-admin access to /accounting page

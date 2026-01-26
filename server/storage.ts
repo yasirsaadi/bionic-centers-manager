@@ -1,6 +1,6 @@
 import { db } from "./db";
 import {
-  patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans,
+  patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
@@ -8,7 +8,9 @@ import {
   type Branch, type InsertBranch,
   type CustomStat, type InsertCustomStat,
   type Expense, type InsertExpense,
-  type InstallmentPlan, type InsertInstallmentPlan
+  type InstallmentPlan, type InsertInstallmentPlan,
+  type Invoice, type InsertInvoice,
+  type InvoiceItem, type InsertInvoiceItem
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
@@ -75,6 +77,27 @@ export interface IStorage {
   }>;
   getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]>;
   getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]>;
+
+  // Invoices
+  getInvoices(branchId?: number, status?: string, patientId?: number, startDate?: string, endDate?: string): Promise<Invoice[]>;
+  getInvoiceById(id: number): Promise<Invoice | undefined>;
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: number, invoice: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  deleteInvoice(id: number): Promise<void>;
+  getNextInvoiceNumber(): Promise<string>;
+  
+  // Invoice Items
+  getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]>;
+  createInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem>;
+  deleteInvoiceItems(invoiceId: number): Promise<void>;
+  
+  // Invoice Stats
+  getInvoiceStats(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    totalInvoices: number;
+    totalAmount: number;
+    paidAmount: number;
+    pendingAmount: number;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -402,6 +425,104 @@ export class DatabaseStorage implements IStorage {
       return await db.select().from(visits).where(and(...conditions)).orderBy(desc(visits.visitDate));
     }
     return await db.select().from(visits).orderBy(desc(visits.visitDate));
+  }
+
+  // ======================= INVOICE METHODS =======================
+
+  async getInvoices(branchId?: number, status?: string, patientId?: number, startDate?: string, endDate?: string): Promise<Invoice[]> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(invoices.branchId, branchId));
+    if (status) conditions.push(eq(invoices.status, status));
+    if (patientId) conditions.push(eq(invoices.patientId, patientId));
+    if (startDate) conditions.push(gte(invoices.invoiceDate, startDate));
+    if (endDate) conditions.push(lte(invoices.invoiceDate, endDate));
+
+    if (conditions.length > 0) {
+      return await db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
+    }
+    return await db.select().from(invoices).orderBy(desc(invoices.createdAt));
+  }
+
+  async getInvoiceById(id: number): Promise<Invoice | undefined> {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return invoice;
+  }
+
+  async createInvoice(insertInvoice: InsertInvoice): Promise<Invoice> {
+    const [invoice] = await db.insert(invoices).values(insertInvoice).returning();
+    return invoice;
+  }
+
+  async updateInvoice(id: number, invoice: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [updated] = await db.update(invoices).set(invoice).where(eq(invoices.id, id)).returning();
+    return updated;
+  }
+
+  async deleteInvoice(id: number): Promise<void> {
+    await db.delete(invoices).where(eq(invoices.id, id));
+  }
+
+  async getNextInvoiceNumber(): Promise<string> {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    
+    // Get count of invoices this month
+    const startOfMonth = `${year}-${month}-01`;
+    const result = await db.select({ count: sql<number>`COUNT(*)::integer` })
+      .from(invoices)
+      .where(gte(invoices.invoiceDate, startOfMonth));
+    
+    const count = (result[0]?.count || 0) + 1;
+    return `INV-${year}${month}-${String(count).padStart(4, '0')}`;
+  }
+
+  // Invoice Items
+  async getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]> {
+    return await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+  }
+
+  async createInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem> {
+    const [created] = await db.insert(invoiceItems).values(item).returning();
+    return created;
+  }
+
+  async deleteInvoiceItems(invoiceId: number): Promise<void> {
+    await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+  }
+
+  // Invoice Stats
+  async getInvoiceStats(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    totalInvoices: number;
+    totalAmount: number;
+    paidAmount: number;
+    pendingAmount: number;
+  }> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(invoices.branchId, branchId));
+    if (startDate) conditions.push(gte(invoices.invoiceDate, startDate));
+    if (endDate) conditions.push(lte(invoices.invoiceDate, endDate));
+
+    const query = conditions.length > 0
+      ? await db.select({
+          totalInvoices: sql<number>`COUNT(*)::integer`,
+          totalAmount: sql<number>`COALESCE(SUM(${invoices.total}), 0)::integer`,
+          paidAmount: sql<number>`COALESCE(SUM(${invoices.paidAmount}), 0)::integer`
+        }).from(invoices).where(and(...conditions))
+      : await db.select({
+          totalInvoices: sql<number>`COUNT(*)::integer`,
+          totalAmount: sql<number>`COALESCE(SUM(${invoices.total}), 0)::integer`,
+          paidAmount: sql<number>`COALESCE(SUM(${invoices.paidAmount}), 0)::integer`
+        }).from(invoices);
+
+    const result = query[0] || { totalInvoices: 0, totalAmount: 0, paidAmount: 0 };
+    
+    return {
+      totalInvoices: result.totalInvoices,
+      totalAmount: result.totalAmount,
+      paidAmount: result.paidAmount,
+      pendingAmount: result.totalAmount - result.paidAmount
+    };
   }
 }
 

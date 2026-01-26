@@ -166,6 +166,72 @@ interface BranchComparison {
   collectionRate: number;
 }
 
+interface Invoice {
+  id: number;
+  invoiceNumber: string;
+  patientId: number;
+  branchId: number;
+  invoiceDate: string;
+  dueDate: string | null;
+  subtotal: number;
+  discount: number;
+  total: number;
+  paidAmount: number;
+  status: string;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+interface InvoiceItem {
+  id: number;
+  invoiceId: number;
+  description: string;
+  serviceType: string | null;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+interface Patient {
+  id: number;
+  name: string;
+  phone: string | null;
+  branchId: number;
+}
+
+const invoiceFormSchema = z.object({
+  patientId: z.number().min(1, "يرجى اختيار المريض"),
+  branchId: z.number().min(1, "يرجى اختيار الفرع"),
+  invoiceDate: z.string().min(1, "يرجى اختيار التاريخ"),
+  dueDate: z.string().optional(),
+  discount: z.number().min(0).default(0),
+  notes: z.string().optional(),
+  items: z.array(z.object({
+    description: z.string().min(1, "يرجى إدخال الوصف"),
+    serviceType: z.string().optional(),
+    quantity: z.number().min(1).default(1),
+    unitPrice: z.number().min(0, "يرجى إدخال السعر"),
+  })).min(1, "يرجى إضافة عنصر واحد على الأقل")
+});
+
+type InvoiceFormData = z.infer<typeof invoiceFormSchema>;
+
+const INVOICE_STATUS = {
+  pending: { label: "قيد الانتظار", color: "bg-yellow-100 text-yellow-800" },
+  partial: { label: "مدفوع جزئياً", color: "bg-blue-100 text-blue-800" },
+  paid: { label: "مدفوع بالكامل", color: "bg-green-100 text-green-800" },
+  cancelled: { label: "ملغاة", color: "bg-red-100 text-red-800" }
+};
+
+const SERVICE_TYPES = [
+  { value: "prosthetic", label: "طرف صناعي" },
+  { value: "physiotherapy", label: "علاج طبيعي" },
+  { value: "medical_support", label: "مسند طبي" },
+  { value: "consultation", label: "استشارة" },
+  { value: "other", label: "أخرى" }
+];
+
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('ar-IQ').format(amount) + " د.ع";
 }
@@ -187,6 +253,13 @@ export default function Accounting() {
   });
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [invoiceItems, setInvoiceItems] = useState<{description: string; serviceType: string; quantity: number; unitPrice: number}[]>([
+    { description: "", serviceType: "", quantity: 1, unitPrice: 0 }
+  ]);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [deleteType, setDeleteType] = useState<"expense" | "invoice" | null>(null);
 
   // Admin-only access guard - redirect non-admin users
   if (branchSession && !branchSession.isAdmin) {
@@ -256,6 +329,31 @@ export default function Accounting() {
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/expenses/by-category/summary?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch expenses by category");
+      return res.json();
+    }
+  });
+
+  // Fetch invoices
+  const { data: invoicesList = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices", selectedBranch, dateRange.startDate, dateRange.endDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      if (dateRange.startDate) params.append("startDate", dateRange.startDate);
+      if (dateRange.endDate) params.append("endDate", dateRange.endDate);
+      const res = await fetch(`/api/invoices?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch invoices");
+      return res.json();
+    }
+  });
+
+  // Fetch patients for invoice creation
+  const { data: patientsList = [] } = useQuery<Patient[]>({
+    queryKey: ["/api/patients", selectedBranch],
+    queryFn: async () => {
+      const branchId = selectedBranch !== "all" ? selectedBranch : undefined;
+      const res = await fetch(branchId ? `/api/patients?branchId=${branchId}` : "/api/patients", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch patients");
       return res.json();
     }
   });
@@ -401,9 +499,8 @@ export default function Accounting() {
   };
 
   const handleDeleteExpense = (id: number) => {
-    if (confirm("هل أنت متأكد من حذف هذا المصروف؟")) {
-      deleteExpenseMutation.mutate(id);
-    }
+    setDeleteConfirmId(id);
+    setDeleteType("expense");
   };
 
   const openNewExpenseDialog = () => {
@@ -417,6 +514,108 @@ export default function Accounting() {
       notes: ""
     });
     setIsExpenseDialogOpen(true);
+  };
+
+  // Invoice mutations
+  const createInvoiceMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/invoices", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      setIsInvoiceDialogOpen(false);
+      toast({ title: "تم إنشاء الفاتورة بنجاح" });
+    },
+    onError: (error: any) => {
+      toast({ title: "خطأ في إنشاء الفاتورة", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const deleteInvoiceMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/invoices/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      toast({ title: "تم حذف الفاتورة بنجاح" });
+      setDeleteConfirmId(null);
+      setDeleteType(null);
+    },
+    onError: (error: any) => {
+      toast({ title: "خطأ في حذف الفاتورة", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const handleCreateInvoice = () => {
+    const subtotal = invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+    const items = invoiceItems.filter(item => item.description && item.unitPrice > 0).map(item => ({
+      ...item,
+      total: item.quantity * item.unitPrice
+    }));
+    
+    if (items.length === 0) {
+      toast({ title: "يرجى إضافة عنصر واحد على الأقل", variant: "destructive" });
+      return;
+    }
+
+    const selectedPatientId = parseInt((document.getElementById("invoice-patient") as HTMLInputElement)?.value || "0");
+    const invoiceDate = (document.getElementById("invoice-date") as HTMLInputElement)?.value;
+    const discount = parseInt((document.getElementById("invoice-discount") as HTMLInputElement)?.value || "0");
+    const notes = (document.getElementById("invoice-notes") as HTMLTextAreaElement)?.value;
+    
+    if (!selectedPatientId) {
+      toast({ title: "يرجى اختيار المريض", variant: "destructive" });
+      return;
+    }
+
+    const patient = patientsList.find(p => p.id === selectedPatientId);
+    
+    createInvoiceMutation.mutate({
+      patientId: selectedPatientId,
+      branchId: patient?.branchId || parseInt(selectedBranch) || 1,
+      invoiceDate: invoiceDate || new Date().toISOString().split("T")[0],
+      subtotal,
+      discount: discount || 0,
+      total: subtotal - (discount || 0),
+      notes,
+      items
+    });
+  };
+
+  const openNewInvoiceDialog = () => {
+    setEditingInvoice(null);
+    setInvoiceItems([{ description: "", serviceType: "", quantity: 1, unitPrice: 0 }]);
+    setIsInvoiceDialogOpen(true);
+  };
+
+  const addInvoiceItem = () => {
+    setInvoiceItems([...invoiceItems, { description: "", serviceType: "", quantity: 1, unitPrice: 0 }]);
+  };
+
+  const removeInvoiceItem = (index: number) => {
+    if (invoiceItems.length > 1) {
+      setInvoiceItems(invoiceItems.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateInvoiceItem = (index: number, field: string, value: string | number) => {
+    const updated = [...invoiceItems];
+    (updated[index] as any)[field] = value;
+    setInvoiceItems(updated);
+  };
+
+  const handleConfirmDelete = () => {
+    if (deleteConfirmId && deleteType === "expense") {
+      deleteExpenseMutation.mutate(deleteConfirmId);
+      setDeleteConfirmId(null);
+      setDeleteType(null);
+    } else if (deleteConfirmId && deleteType === "invoice") {
+      deleteInvoiceMutation.mutate(deleteConfirmId);
+    }
   };
 
   // Arabic text reshaping for PDF - using arabic-reshaper for proper ligatures
@@ -828,7 +1027,7 @@ export default function Accounting() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 gap-1">
+          <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1">
             <TabsTrigger value="dashboard" className="gap-2" data-testid="tab-dashboard">
               <Calculator className="h-4 w-4" />
               <span className="hidden md:inline">لوحة التحكم</span>
@@ -837,8 +1036,12 @@ export default function Accounting() {
               <Receipt className="h-4 w-4" />
               <span className="hidden md:inline">المصروفات</span>
             </TabsTrigger>
-            <TabsTrigger value="reports" className="gap-2" data-testid="tab-reports">
+            <TabsTrigger value="invoices" className="gap-2" data-testid="tab-invoices">
               <FileText className="h-4 w-4" />
+              <span className="hidden md:inline">الفواتير</span>
+            </TabsTrigger>
+            <TabsTrigger value="reports" className="gap-2" data-testid="tab-reports">
+              <PieChart className="h-4 w-4" />
               <span className="hidden md:inline">التقارير</span>
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
@@ -1176,6 +1379,119 @@ export default function Accounting() {
                   </Card>
                 );
               })}
+            </div>
+          </TabsContent>
+
+          {/* Invoices Tab */}
+          <TabsContent value="invoices" className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold">إدارة الفواتير</h2>
+              <Button onClick={openNewInvoiceDialog} data-testid="button-add-invoice">
+                <Plus className="h-4 w-4 ml-2" />
+                إنشاء فاتورة
+              </Button>
+            </div>
+
+            <Card>
+              <CardContent className="pt-6">
+                {invoicesLoading ? (
+                  <div className="text-center py-8 text-muted-foreground">جاري التحميل...</div>
+                ) : invoicesList.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">لا توجد فواتير</div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>رقم الفاتورة</TableHead>
+                        <TableHead>المريض</TableHead>
+                        <TableHead>التاريخ</TableHead>
+                        <TableHead>المبلغ</TableHead>
+                        <TableHead>المدفوع</TableHead>
+                        <TableHead>المتبقي</TableHead>
+                        <TableHead>الحالة</TableHead>
+                        <TableHead>الإجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {invoicesList.map((invoice) => {
+                        const patient = patientsList.find(p => p.id === invoice.patientId);
+                        const statusInfo = INVOICE_STATUS[invoice.status as keyof typeof INVOICE_STATUS] || INVOICE_STATUS.pending;
+                        const remaining = invoice.total - (invoice.paidAmount || 0);
+                        return (
+                          <TableRow key={invoice.id}>
+                            <TableCell className="font-mono">{invoice.invoiceNumber}</TableCell>
+                            <TableCell>{patient?.name || `مريض #${invoice.patientId}`}</TableCell>
+                            <TableCell>{new Date(invoice.invoiceDate).toLocaleDateString('en-GB')}</TableCell>
+                            <TableCell>{formatCurrency(invoice.total)}</TableCell>
+                            <TableCell className="text-green-600">{formatCurrency(invoice.paidAmount || 0)}</TableCell>
+                            <TableCell className={remaining > 0 ? "text-red-600" : "text-green-600"}>{formatCurrency(remaining)}</TableCell>
+                            <TableCell>
+                              <Badge className={statusInfo.color}>{statusInfo.label}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    setDeleteConfirmId(invoice.id);
+                                    setDeleteType("invoice");
+                                  }}
+                                  data-testid={`button-delete-invoice-${invoice.id}`}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Invoice Summary Cards */}
+            <div className="grid gap-4 md:grid-cols-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">إجمالي الفواتير</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-primary">{invoicesList.length}</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">إجمالي المبالغ</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-blue-600">
+                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + inv.total, 0))}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">المدفوع</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-green-600">
+                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + (inv.paidAmount || 0), 0))}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">المتبقي</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-red-600">
+                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + inv.total - (inv.paidAmount || 0), 0))}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           </TabsContent>
 
@@ -1519,6 +1835,189 @@ export default function Accounting() {
                 </DialogFooter>
               </form>
             </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Create Invoice Dialog */}
+        <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>إنشاء فاتورة جديدة</DialogTitle>
+              <DialogDescription>أدخل تفاصيل الفاتورة والخدمات المقدمة</DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">المريض</label>
+                  <select
+                    id="invoice-patient"
+                    className="w-full p-2 border rounded-md"
+                    data-testid="select-invoice-patient"
+                  >
+                    <option value="">اختر المريض</option>
+                    {patientsList.map((patient) => (
+                      <option key={patient.id} value={patient.id}>
+                        {patient.name} - {patient.phone || "لا يوجد هاتف"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">تاريخ الفاتورة</label>
+                  <Input
+                    id="invoice-date"
+                    type="date"
+                    defaultValue={new Date().toISOString().split("T")[0]}
+                    data-testid="input-invoice-date"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-medium">عناصر الفاتورة</label>
+                  <Button type="button" variant="outline" size="sm" onClick={addInvoiceItem} data-testid="button-add-item">
+                    <Plus className="h-4 w-4 ml-1" />
+                    إضافة عنصر
+                  </Button>
+                </div>
+                
+                <div className="space-y-3">
+                  {invoiceItems.map((item, index) => (
+                    <div key={index} className="grid grid-cols-12 gap-2 items-start border p-2 rounded-md">
+                      <div className="col-span-4">
+                        <label className="text-xs text-muted-foreground">الوصف</label>
+                        <Input
+                          value={item.description}
+                          onChange={(e) => updateInvoiceItem(index, "description", e.target.value)}
+                          placeholder="وصف الخدمة"
+                          data-testid={`input-item-description-${index}`}
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <label className="text-xs text-muted-foreground">نوع الخدمة</label>
+                        <select
+                          value={item.serviceType}
+                          onChange={(e) => updateInvoiceItem(index, "serviceType", e.target.value)}
+                          className="w-full p-2 border rounded-md text-sm"
+                          data-testid={`select-item-service-${index}`}
+                        >
+                          <option value="">اختر النوع</option>
+                          {SERVICE_TYPES.map((type) => (
+                            <option key={type.value} value={type.value}>{type.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-muted-foreground">الكمية</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => updateInvoiceItem(index, "quantity", parseInt(e.target.value) || 1)}
+                          data-testid={`input-item-quantity-${index}`}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-muted-foreground">السعر</label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={item.unitPrice}
+                          onChange={(e) => updateInvoiceItem(index, "unitPrice", parseInt(e.target.value) || 0)}
+                          data-testid={`input-item-price-${index}`}
+                        />
+                      </div>
+                      <div className="col-span-1 pt-5">
+                        {invoiceItems.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeInvoiceItem(index)}
+                            data-testid={`button-remove-item-${index}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الخصم (د.ع)</label>
+                  <Input
+                    id="invoice-discount"
+                    type="number"
+                    min="0"
+                    defaultValue="0"
+                    data-testid="input-invoice-discount"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الإجمالي</label>
+                  <div className="text-2xl font-bold text-primary">
+                    {formatCurrency(invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">ملاحظات</label>
+                <Textarea
+                  id="invoice-notes"
+                  placeholder="ملاحظات إضافية على الفاتورة"
+                  data-testid="input-invoice-notes"
+                />
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsInvoiceDialogOpen(false)}>
+                إلغاء
+              </Button>
+              <Button
+                onClick={handleCreateInvoice}
+                disabled={createInvoiceMutation.isPending}
+                data-testid="button-submit-invoice"
+              >
+                إنشاء الفاتورة
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteConfirmId !== null} onOpenChange={(open) => { if (!open) { setDeleteConfirmId(null); setDeleteType(null); } }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-red-600 flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" />
+                تأكيد الحذف
+              </DialogTitle>
+              <DialogDescription>
+                {deleteType === "expense" ? "هل أنت متأكد من حذف هذا المصروف؟" : "هل أنت متأكد من حذف هذه الفاتورة؟"}
+                <br />
+                <span className="text-red-500 font-medium">لا يمكن التراجع عن هذا الإجراء.</span>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => { setDeleteConfirmId(null); setDeleteType(null); }}>
+                إلغاء
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmDelete}
+                disabled={deleteExpenseMutation.isPending || deleteInvoiceMutation.isPending}
+                data-testid="button-confirm-delete"
+              >
+                حذف
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

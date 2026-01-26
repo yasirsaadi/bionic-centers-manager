@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import type { Patient, Payment } from "@shared/schema";
-import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema } from "@shared/schema";
+import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -1233,6 +1233,188 @@ export async function registerRoutes(
     comparison.sort((a, b) => b.netProfit - a.netProfit);
     
     res.json(comparison);
+  });
+
+  // ======================= INVOICE ENDPOINTS =======================
+
+  // Get all invoices (admin-only or branch-filtered)
+  app.get("/api/invoices", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    const branchSession = req.session.branchSession;
+    
+    const { branchId, status, patientId, startDate, endDate } = req.query;
+    
+    let filterBranchId = branchId ? parseInt(branchId) : undefined;
+    if (!isAdmin && branchSession?.branchId) {
+      filterBranchId = branchSession.branchId;
+    }
+    
+    const invoices = await storage.getInvoices(filterBranchId, status as string, patientId ? parseInt(patientId) : undefined, startDate as string, endDate as string);
+    res.json(invoices);
+  });
+
+  // Get single invoice with items
+  app.get("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const invoice = await storage.getInvoiceById(id);
+    if (!invoice) {
+      return res.status(404).json({ error: "الفاتورة غير موجودة" });
+    }
+    const items = await storage.getInvoiceItems(id);
+    res.json({ ...invoice, items });
+  });
+
+  // Generate next invoice number
+  app.get("/api/invoices/next-number", isAuthenticated, async (req: any, res) => {
+    const nextNumber = await storage.getNextInvoiceNumber();
+    res.json({ invoiceNumber: nextNumber });
+  });
+
+  // Create invoice (admin-only)
+  app.post("/api/invoices", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بإنشاء الفواتير" });
+    }
+    
+    try {
+      const { items, ...invoiceData } = req.body;
+      
+      // Generate invoice number if not provided
+      if (!invoiceData.invoiceNumber) {
+        invoiceData.invoiceNumber = await storage.getNextInvoiceNumber();
+      }
+      
+      invoiceData.createdBy = user?.claims?.sub;
+      
+      const invoice = await storage.createInvoice(invoiceData);
+      
+      // Add invoice items
+      if (items && Array.isArray(items)) {
+        for (const item of items) {
+          await storage.createInvoiceItem({
+            ...item,
+            invoiceId: invoice.id
+          });
+        }
+      }
+      
+      res.json(invoice);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Update invoice (admin-only)
+  app.patch("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بتعديل الفواتير" });
+    }
+    
+    const id = parseInt(req.params.id);
+    try {
+      const { items, ...invoiceData } = req.body;
+      
+      const invoice = await storage.updateInvoice(id, invoiceData);
+      
+      // Update items if provided
+      if (items && Array.isArray(items)) {
+        // Delete existing items and recreate
+        await storage.deleteInvoiceItems(id);
+        for (const item of items) {
+          await storage.createInvoiceItem({
+            ...item,
+            invoiceId: id
+          });
+        }
+      }
+      
+      res.json(invoice);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Delete invoice (admin-only)
+  app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بحذف الفواتير" });
+    }
+    
+    const id = parseInt(req.params.id);
+    try {
+      // Delete items first, then invoice
+      await storage.deleteInvoiceItems(id);
+      await storage.deleteInvoice(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Record payment for invoice (admin-only)
+  app.post("/api/invoices/:id/payment", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بتسجيل المدفوعات" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const { amount } = req.body;
+    
+    try {
+      const invoice = await storage.getInvoiceById(id);
+      if (!invoice) {
+        return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      }
+      
+      const newPaidAmount = (invoice.paidAmount || 0) + amount;
+      let newStatus = 'partial';
+      
+      if (newPaidAmount >= invoice.total) {
+        newStatus = 'paid';
+      } else if (newPaidAmount === 0) {
+        newStatus = 'pending';
+      }
+      
+      const updated = await storage.updateInvoice(id, {
+        paidAmount: newPaidAmount,
+        status: newStatus
+      });
+      
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Get invoice statistics (admin-only)
+  app.get("/api/invoices/stats/summary", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للإحصائيات" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const stats = await storage.getInvoiceStats(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(stats);
   });
 
   // Seed initial branches
