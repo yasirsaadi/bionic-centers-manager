@@ -17,6 +17,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { 
   Settings, 
   Key, 
@@ -292,6 +302,10 @@ export default function AdminSettings() {
       toast({ title: "خطأ", description: "اسم الفرع يجب أن يكون حرفين على الأقل", variant: "destructive" });
       return;
     }
+    if (newBranchPw && newBranchPw.length < 4) {
+      toast({ title: "خطأ", description: "كلمة المرور يجب أن تكون 4 أحرف على الأقل", variant: "destructive" });
+      return;
+    }
     createBranchMutation.mutate({
       name: newBranchName,
       location: newBranchLocation || undefined,
@@ -299,7 +313,10 @@ export default function AdminSettings() {
     });
   };
 
-  const handleToggleSetting = (branchId: number, settingKey: string, currentValue: boolean) => {
+  type SettingKey = "showPatients" | "showVisits" | "showPayments" | "showDocuments" | "showStatistics" | "showAccounting" | "showExpenses";
+
+  const handleToggleSetting = (branchId: number, settingKey: SettingKey, currentValue: boolean) => {
+    if (updateBranchSettingsMutation.isPending) return;
     updateBranchSettingsMutation.mutate({
       branchId,
       [settingKey]: !currentValue
@@ -320,7 +337,7 @@ export default function AdminSettings() {
     );
   }
 
-  const sectionLabels: { key: string; label: string; icon: typeof Users }[] = [
+  const sectionLabels: { key: SettingKey; label: string; icon: typeof Users }[] = [
     { key: "showPatients", label: "المرضى", icon: Users },
     { key: "showVisits", label: "الزيارات", icon: Calendar },
     { key: "showPayments", label: "المدفوعات", icon: DollarSign },
@@ -807,38 +824,34 @@ export default function AdminSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Branch Confirmation Dialog */}
-      <Dialog open={!!branchToDelete} onOpenChange={() => setBranchToDelete(null)}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
+      {/* Delete Branch Confirmation AlertDialog */}
+      <AlertDialog open={!!branchToDelete} onOpenChange={() => setBranchToDelete(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="w-5 h-5" />
               تأكيد حذف الفرع
-            </DialogTitle>
-            <DialogDescription>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
               هل أنت متأكد من حذف فرع "{branchToDelete?.name}"؟ هذا الإجراء لا يمكن التراجع عنه.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => setBranchToDelete(null)}
-            >
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel data-testid="button-cancel-delete-branch">
               إلغاء
-            </Button>
-            <Button
-              variant="destructive"
+            </AlertDialogCancel>
+            <AlertDialogAction
               onClick={() => branchToDelete && deleteBranchMutation.mutate(branchToDelete.id)}
               disabled={deleteBranchMutation.isPending}
-              className="gap-2"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
               data-testid="button-confirm-delete-branch"
             >
               <Trash2 className="w-4 h-4" />
               {deleteBranchMutation.isPending ? "جاري الحذف..." : "حذف الفرع"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
