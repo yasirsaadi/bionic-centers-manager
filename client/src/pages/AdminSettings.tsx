@@ -87,6 +87,7 @@ export default function AdminSettings() {
   const [newBranchLocation, setNewBranchLocation] = useState("");
   const [newBranchPw, setNewBranchPw] = useState("");
   const [showAddBranchDialog, setShowAddBranchDialog] = useState(false);
+  const [showAddConfirmation, setShowAddConfirmation] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState<BranchWithDetails | null>(null);
   const [selectedBranchForSettings, setSelectedBranchForSettings] = useState<number | null>(null);
 
@@ -296,7 +297,7 @@ export default function AdminSettings() {
     updateBackupEmailMutation.mutate(backupEmail);
   };
 
-  const handleCreateBranch = () => {
+  const handleValidateAndConfirmAdd = () => {
     if (!newBranchName || newBranchName.length < 2) {
       toast({ title: "خطأ", description: "اسم الفرع يجب أن يكون حرفين على الأقل", variant: "destructive" });
       return;
@@ -305,11 +306,16 @@ export default function AdminSettings() {
       toast({ title: "خطأ", description: "كلمة المرور يجب أن تكون 4 أحرف على الأقل", variant: "destructive" });
       return;
     }
+    setShowAddConfirmation(true);
+  };
+
+  const handleCreateBranch = () => {
     createBranchMutation.mutate({
       name: newBranchName,
       location: newBranchLocation || undefined,
       password: newBranchPw || undefined,
     });
+    setShowAddConfirmation(false);
   };
 
   type SettingKey = "showDashboard" | "showPatients" | "showPayments" | "showAccounting" | "showStatistics";
@@ -810,16 +816,44 @@ export default function AdminSettings() {
               إلغاء
             </Button>
             <Button
-              onClick={handleCreateBranch}
+              onClick={handleValidateAndConfirmAdd}
               disabled={createBranchMutation.isPending}
               className="gap-2"
               data-testid="button-confirm-add-branch"
             >
-              {createBranchMutation.isPending ? "جاري الإضافة..." : "إضافة الفرع"}
+              إضافة الفرع
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add Branch Confirmation AlertDialog */}
+      <AlertDialog open={showAddConfirmation} onOpenChange={setShowAddConfirmation}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-primary">
+              <Plus className="w-5 h-5" />
+              تأكيد إضافة الفرع
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد من إضافة فرع "{newBranchName}"؟
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel data-testid="button-cancel-add-branch">
+              لا
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCreateBranch}
+              disabled={createBranchMutation.isPending}
+              className="gap-2"
+              data-testid="button-yes-add-branch"
+            >
+              {createBranchMutation.isPending ? "جاري الإضافة..." : "نعم"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Branch Confirmation AlertDialog */}
       <AlertDialog open={!!branchToDelete} onOpenChange={() => setBranchToDelete(null)}>
@@ -835,7 +869,7 @@ export default function AdminSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel data-testid="button-cancel-delete-branch">
-              إلغاء
+              لا
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => branchToDelete && deleteBranchMutation.mutate(branchToDelete.id)}
@@ -843,8 +877,7 @@ export default function AdminSettings() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
               data-testid="button-confirm-delete-branch"
             >
-              <Trash2 className="w-4 h-4" />
-              {deleteBranchMutation.isPending ? "جاري الحذف..." : "حذف الفرع"}
+              {deleteBranchMutation.isPending ? "جاري الحذف..." : "نعم"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
