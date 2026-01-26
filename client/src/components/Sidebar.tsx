@@ -40,17 +40,12 @@ export function Sidebar() {
     { label: "سجل المرضى", icon: Users, href: "/patients" },
     { label: "إضافة مريض", icon: UserPlus, href: "/patients/new" },
     { label: "التقارير المالية", icon: FileBarChart, href: "/reports" },
+    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting" },
     { label: "الفروع", icon: Building2, href: "/branches" },
     { label: "الإحصاءات", icon: BarChart3, href: "/statistics" },
   ];
 
-  const adminMenuItems = [
-    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting" },
-  ];
-
-  const menuItems = branchSession?.isAdmin 
-    ? [...baseMenuItems, ...adminMenuItems]
-    : baseMenuItems;
+  const menuItems = baseMenuItems;
 
   const SidebarContent = () => (
     <>
