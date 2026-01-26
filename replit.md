@@ -117,5 +117,7 @@ Preferred communication style: Simple, everyday language.
 - Debtors tracking with outstanding balance monitoring
 - PDF and Excel export with proper Arabic RTL support using arabic-reshaper
 
-- All accounting endpoints are admin-only protected
-- Frontend admin guard prevents non-admin access to /accounting page
+- All accounting endpoints are admin-only protected for write operations
+- Branch staff can view their own branch's financial reports (read-only)
+- Admin users see all branches with branch selector dropdown
+- Branch staff see only their branch data with branch name badge

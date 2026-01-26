@@ -245,8 +245,14 @@ export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
+  const userBranchId = branchSession?.branchId;
+  
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [selectedBranch, setSelectedBranch] = useState<string>("all");
+  // For branch staff, lock to their branch only
+  const [selectedBranch, setSelectedBranch] = useState<string>(
+    isAdmin ? "all" : (userBranchId?.toString() || "all")
+  );
   const [dateRange, setDateRange] = useState({
     startDate: "",
     endDate: ""
@@ -261,30 +267,8 @@ export default function Accounting() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleteType, setDeleteType] = useState<"expense" | "invoice" | null>(null);
 
-  // Admin-only access guard - redirect non-admin users
-  if (branchSession && !branchSession.isAdmin) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl" data-testid="page-access-denied">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl text-red-600 flex items-center justify-center gap-2" data-testid="text-access-denied">
-              <AlertCircle className="h-6 w-6" />
-              غير مصرح بالوصول
-            </CardTitle>
-            <CardDescription>
-              هذه الصفحة متاحة للمسؤولين فقط
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-center">
-            <Button onClick={() => setLocation("/")} className="gap-2" data-testid="button-go-home">
-              <ArrowLeft className="h-4 w-4" />
-              العودة للرئيسية
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // Determine effective branch filter - branch staff can only see their branch
+  const effectiveBranchFilter = isAdmin ? selectedBranch : (userBranchId?.toString() || "all");
 
   // Fetch branches
   const { data: branches = [] } = useQuery<Branch[]>({
@@ -293,10 +277,10 @@ export default function Accounting() {
 
   // Fetch accounting summary
   const { data: summary, isLoading: summaryLoading } = useQuery<AccountingSummary>({
-    queryKey: ["/api/accounting/summary", selectedBranch, dateRange.startDate, dateRange.endDate],
+    queryKey: ["/api/accounting/summary", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate);
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/accounting/summary?${params}`, { credentials: "include" });
@@ -307,10 +291,10 @@ export default function Accounting() {
 
   // Fetch expenses
   const { data: expenses = [], isLoading: expensesLoading } = useQuery<Expense[]>({
-    queryKey: ["/api/expenses", selectedBranch, dateRange.startDate, dateRange.endDate],
+    queryKey: ["/api/expenses", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate);
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/expenses?${params}`, { credentials: "include" });
@@ -321,10 +305,10 @@ export default function Accounting() {
 
   // Fetch expenses by category
   const { data: expensesByCategory = [] } = useQuery<{category: string, total: number}[]>({
-    queryKey: ["/api/expenses/by-category/summary", selectedBranch, dateRange.startDate, dateRange.endDate],
+    queryKey: ["/api/expenses/by-category/summary", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate);
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/expenses/by-category/summary?${params}`, { credentials: "include" });
@@ -335,10 +319,10 @@ export default function Accounting() {
 
   // Fetch invoices
   const { data: invoicesList = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
-    queryKey: ["/api/invoices", selectedBranch, dateRange.startDate, dateRange.endDate],
+    queryKey: ["/api/invoices", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate);
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/invoices?${params}`, { credentials: "include" });
@@ -397,9 +381,10 @@ export default function Accounting() {
 
   // Fetch branch comparison
   const { data: branchComparison = [] } = useQuery<BranchComparison[]>({
-    queryKey: ["/api/accounting/branch-comparison", dateRange.startDate, dateRange.endDate],
+    queryKey: ["/api/accounting/branch-comparison", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
     queryFn: async () => {
       const params = new URLSearchParams();
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate);
       if (dateRange.endDate) params.append("endDate", dateRange.endDate);
       const res = await fetch(`/api/accounting/branch-comparison?${params}`, { credentials: "include" });
@@ -960,19 +945,26 @@ export default function Accounting() {
           
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-              <SelectTrigger className="w-40" data-testid="select-branch">
-                <SelectValue placeholder="جميع الفروع" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">جميع الفروع</SelectItem>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id.toString()}>
-                    {branch.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {isAdmin ? (
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-40" data-testid="select-branch">
+                  <SelectValue placeholder="جميع الفروع" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">جميع الفروع</SelectItem>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id.toString()}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Badge variant="outline" className="px-3 py-2 text-sm" data-testid="badge-current-branch">
+                <Building2 className="h-4 w-4 ml-2" />
+                {branchSession?.branchName || "الفرع"}
+              </Badge>
+            )}
             
             <Input
               type="date"
@@ -1497,16 +1489,20 @@ export default function Accounting() {
 
           {/* Reports Tab */}
           <TabsContent value="reports" className="space-y-6">
-            <h2 className="text-xl font-semibold">التقارير المالية</h2>
+            <h2 className="text-xl font-semibold">
+              {isAdmin ? "التقارير المالية" : `التقارير المالية - ${branchSession?.branchName || "الفرع"}`}
+            </h2>
             
-            {/* Branch Comparison */}
+            {/* Branch Comparison - Admin Only or Single Branch View */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Building2 className="h-5 w-5" />
-                  مقارنة الفروع
+                  {isAdmin ? "مقارنة الفروع" : "ملخص الأداء المالي"}
                 </CardTitle>
-                <CardDescription>تحليل أداء جميع الفروع</CardDescription>
+                <CardDescription>
+                  {isAdmin ? "تحليل أداء جميع الفروع" : `تحليل أداء فرع ${branchSession?.branchName || ""}`}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
