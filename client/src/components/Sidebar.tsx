@@ -36,16 +36,19 @@ export function Sidebar() {
   }, [location]);
 
   const baseMenuItems = [
-    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/" },
-    { label: "سجل المرضى", icon: Users, href: "/patients" },
-    { label: "إضافة مريض", icon: UserPlus, href: "/patients/new" },
-    { label: "التقارير المالية", icon: FileBarChart, href: "/reports" },
-    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting" },
-    { label: "الفروع", icon: Building2, href: "/branches" },
-    { label: "الإحصاءات", icon: BarChart3, href: "/statistics" },
+    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false },
+    { label: "سجل المرضى", icon: Users, href: "/patients", adminOnly: false },
+    { label: "إضافة مريض", icon: UserPlus, href: "/patients/new", adminOnly: false },
+    { label: "التقارير المالية", icon: FileBarChart, href: "/reports", adminOnly: false },
+    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting", adminOnly: false },
+    { label: "الفروع", icon: Building2, href: "/branches", adminOnly: true },
+    { label: "الإحصاءات", icon: BarChart3, href: "/statistics", adminOnly: false },
   ];
 
-  const menuItems = baseMenuItems;
+  // Filter out admin-only items for non-admin users
+  const menuItems = baseMenuItems.filter(item => 
+    !item.adminOnly || (branchSession?.isAdmin === true)
+  );
 
   const SidebarContent = () => (
     <>
