@@ -89,6 +89,39 @@ export const documents = pgTable("documents", {
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
 
+// Expenses table for accounting system
+export const expenses = pgTable("expenses", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  category: text("category").notNull(), // رواتب، إيجارات، مستلزمات طبية، صيانة، كهرباء ومياه، أخرى
+  subcategory: text("subcategory"), // تصنيف فرعي
+  description: text("description"), // وصف المصروف
+  amount: integer("amount").notNull(), // المبلغ بالدينار العراقي
+  expenseDate: date("expense_date").notNull(), // تاريخ المصروف
+  paymentMethod: text("payment_method"), // طريقة الدفع: نقدي، تحويل، شيك
+  vendor: text("vendor"), // الجهة المستفيدة
+  invoiceNumber: text("invoice_number"), // رقم الفاتورة
+  notes: text("notes"),
+  createdBy: text("created_by"), // معرف المستخدم
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Installment plans for patient debt management
+export const installmentPlans = pgTable("installment_plans", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  totalAmount: integer("total_amount").notNull(), // المبلغ الإجمالي
+  installmentAmount: integer("installment_amount").notNull(), // قيمة القسط
+  numberOfInstallments: integer("number_of_installments").notNull(), // عدد الأقساط
+  startDate: date("start_date").notNull(), // تاريخ البداية
+  intervalDays: integer("interval_days").default(30), // الفترة بين الأقساط بالأيام
+  status: text("status").default("active"), // active, completed, cancelled
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -112,6 +145,8 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true 
 });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertCustomStatSchema = createInsertSchema(customStats).omit({ id: true, createdAt: true });
+export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
+export const insertInstallmentPlanSchema = createInsertSchema(installmentPlans).omit({ id: true, createdAt: true });
 
 export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
@@ -125,3 +160,7 @@ export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type CustomStat = typeof customStats.$inferSelect;
 export type InsertCustomStat = z.infer<typeof insertCustomStatSchema>;
+export type Expense = typeof expenses.$inferSelect;
+export type InsertExpense = z.infer<typeof insertExpenseSchema>;
+export type InstallmentPlan = typeof installmentPlans.$inferSelect;
+export type InsertInstallmentPlan = z.infer<typeof insertInstallmentPlanSchema>;

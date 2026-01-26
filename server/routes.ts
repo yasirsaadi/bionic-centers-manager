@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import type { Patient, Payment } from "@shared/schema";
-import { insertCustomStatSchema } from "@shared/schema";
+import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -817,6 +817,422 @@ export async function registerRoutes(
       count: patients.length,
       totalCount: allPatients.length
     });
+  });
+
+  // ================== ACCOUNTING SYSTEM ROUTES ==================
+
+  // Expenses CRUD - Admin only
+  app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const expenses = await storage.getExpenses(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(expenses);
+  });
+
+  app.get("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const expense = await storage.getExpense(id);
+    if (!expense) {
+      return res.status(404).json({ error: "المصروف غير موجود" });
+    }
+    res.json(expense);
+  });
+
+  app.post("/api/expenses", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "غير مصرح لك بإضافة مصروفات" });
+      }
+      
+      const data = insertExpenseSchema.parse({
+        ...req.body,
+        createdBy: user?.claims?.sub || "unknown"
+      });
+      
+      const expense = await storage.createExpense(data);
+      res.json(expense);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في إنشاء المصروف" });
+    }
+  });
+
+  app.put("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
+      }
+      
+      const id = parseInt(req.params.id);
+      const existingExpense = await storage.getExpense(id);
+      if (!existingExpense) {
+        return res.status(404).json({ error: "المصروف غير موجود" });
+      }
+      
+      const expense = await storage.updateExpense(id, req.body);
+      res.json(expense);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في تحديث المصروف" });
+    }
+  });
+
+  app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const existingExpense = await storage.getExpense(id);
+    if (!existingExpense) {
+      return res.status(404).json({ error: "المصروف غير موجود" });
+    }
+    
+    await storage.deleteExpense(id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/expenses/by-category/summary", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const summary = await storage.getExpensesByCategory(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(summary);
+  });
+
+  // Installment Plans CRUD - Admin only
+  app.get("/api/installment-plans", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول لخطط التقسيط" });
+    }
+    
+    const { branchId } = req.query;
+    const plans = await storage.getInstallmentPlans(branchId ? parseInt(branchId) : undefined);
+    res.json(plans);
+  });
+
+  app.get("/api/installment-plans/patient/:patientId", isAuthenticated, async (req: any, res) => {
+    const patientId = parseInt(req.params.patientId);
+    const plans = await storage.getInstallmentPlansByPatient(patientId);
+    res.json(plans);
+  });
+
+  app.get("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const plan = await storage.getInstallmentPlan(id);
+    if (!plan) {
+      return res.status(404).json({ error: "خطة التقسيط غير موجودة" });
+    }
+    res.json(plan);
+  });
+
+  app.post("/api/installment-plans", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "غير مصرح لك بإنشاء خطط التقسيط" });
+      }
+      
+      const data = insertInstallmentPlanSchema.parse({
+        ...req.body,
+        createdBy: user?.claims?.sub || "unknown"
+      });
+      
+      const plan = await storage.createInstallmentPlan(data);
+      res.json(plan);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في إنشاء خطة التقسيط" });
+    }
+  });
+
+  app.put("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.role === "admin";
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "غير مصرح لك بتعديل خطط التقسيط" });
+      }
+      
+      const id = parseInt(req.params.id);
+      const existingPlan = await storage.getInstallmentPlan(id);
+      if (!existingPlan) {
+        return res.status(404).json({ error: "خطة التقسيط غير موجودة" });
+      }
+      
+      const plan = await storage.updateInstallmentPlan(id, req.body);
+      res.json(plan);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "خطأ في تحديث خطة التقسيط" });
+    }
+  });
+
+  app.delete("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بحذف خطط التقسيط" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const existingPlan = await storage.getInstallmentPlan(id);
+    if (!existingPlan) {
+      return res.status(404).json({ error: "خطة التقسيط غير موجودة" });
+    }
+    
+    await storage.deleteInstallmentPlan(id);
+    res.json({ success: true });
+  });
+
+  // Accounting Summary - Admin only
+  app.get("/api/accounting/summary", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const summary = await storage.getAccountingSummary(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(summary);
+  });
+
+  // Get all payments for accounting
+  app.get("/api/accounting/payments", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const payments = await storage.getAllPayments(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(payments);
+  });
+
+  // Get all visits for accounting
+  app.get("/api/accounting/visits", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { branchId, startDate, endDate } = req.query;
+    const visits = await storage.getAllVisits(
+      branchId ? parseInt(branchId) : undefined,
+      startDate as string,
+      endDate as string
+    );
+    res.json(visits);
+  });
+
+  // Debtors report - patients with outstanding balances
+  app.get("/api/accounting/debtors", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول لتقرير المديونيات" });
+    }
+    
+    const { branchId, minAmount } = req.query;
+    
+    // Get all patients
+    let patients = await storage.getPatients(branchId ? parseInt(branchId) : undefined);
+    
+    // Calculate outstanding balances for each patient
+    const debtors = [];
+    for (const patient of patients) {
+      const payments = await storage.getPaymentsByPatientId(patient.id);
+      const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const remaining = (patient.totalCost || 0) - totalPaid;
+      
+      if (remaining > 0 && (!minAmount || remaining >= parseInt(minAmount as string))) {
+        debtors.push({
+          patient,
+          totalCost: patient.totalCost || 0,
+          totalPaid,
+          remaining,
+          lastPaymentDate: payments.length > 0 ? payments[0].date : null
+        });
+      }
+    }
+    
+    // Sort by remaining amount (descending)
+    debtors.sort((a, b) => b.remaining - a.remaining);
+    
+    res.json(debtors);
+  });
+
+  // Monthly financial trends
+  app.get("/api/accounting/monthly-trends", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { branchId, months = 12 } = req.query;
+    const numMonths = parseInt(months as string);
+    
+    const trends = [];
+    const now = new Date();
+    
+    for (let i = numMonths - 1; i >= 0; i--) {
+      const startDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const endDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+      
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
+      
+      const summary = await storage.getAccountingSummary(
+        branchId ? parseInt(branchId) : undefined,
+        startStr,
+        endStr
+      );
+      
+      trends.push({
+        month: startDate.toLocaleDateString('ar-IQ', { year: 'numeric', month: 'long' }),
+        monthDate: startStr,
+        ...summary
+      });
+    }
+    
+    res.json(trends);
+  });
+
+  // Profitability by service type
+  app.get("/api/accounting/profitability-by-service", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { branchId } = req.query;
+    const patients = await storage.getPatients(branchId ? parseInt(branchId) : undefined);
+    
+    const serviceTypes = [
+      { key: "amputee", name: "مرضى البتر", filter: (p: any) => p.isAmputee },
+      { key: "physiotherapy", name: "العلاج الطبيعي", filter: (p: any) => p.isPhysiotherapy },
+      { key: "medicalSupport", name: "المساند الطبية", filter: (p: any) => p.isMedicalSupport }
+    ];
+    
+    const profitability = [];
+    
+    for (const serviceType of serviceTypes) {
+      const servicePatients = patients.filter(serviceType.filter);
+      let totalRevenue = 0;
+      let totalPaid = 0;
+      
+      for (const patient of servicePatients) {
+        totalRevenue += patient.totalCost || 0;
+        const payments = await storage.getPaymentsByPatientId(patient.id);
+        totalPaid += payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+      }
+      
+      profitability.push({
+        serviceType: serviceType.key,
+        serviceName: serviceType.name,
+        patientCount: servicePatients.length,
+        totalRevenue,
+        totalPaid,
+        remaining: totalRevenue - totalPaid,
+        collectionRate: totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0
+      });
+    }
+    
+    res.json(profitability);
+  });
+
+  // Branch comparison
+  app.get("/api/accounting/branch-comparison", isAuthenticated, async (req: any, res) => {
+    const user = req.user;
+    const isAdmin = user?.role === "admin";
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
+    }
+    
+    const { startDate, endDate } = req.query;
+    const branches = await storage.getBranches();
+    
+    const comparison = [];
+    
+    for (const branch of branches) {
+      const summary = await storage.getAccountingSummary(
+        branch.id,
+        startDate as string,
+        endDate as string
+      );
+      
+      const patients = await storage.getPatients(branch.id);
+      
+      comparison.push({
+        branchId: branch.id,
+        branchName: branch.name,
+        patientCount: patients.length,
+        ...summary
+      });
+    }
+    
+    // Sort by net profit (descending)
+    comparison.sort((a, b) => b.netProfit - a.netProfit);
+    
+    res.json(comparison);
   });
 
   // Seed initial branches

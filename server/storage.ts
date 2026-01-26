@@ -1,14 +1,16 @@
 import { db } from "./db";
 import {
-  patients, payments, documents, visits, branches, users, customStats,
+  patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
   type Visit, type InsertVisit,
   type Branch, type InsertBranch,
-  type CustomStat, type InsertCustomStat
+  type CustomStat, type InsertCustomStat,
+  type Expense, type InsertExpense,
+  type InstallmentPlan, type InsertInstallmentPlan
 } from "@shared/schema";
-import { eq, desc, and, sum, or, isNull } from "drizzle-orm";
+import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Branches
@@ -45,6 +47,34 @@ export interface IStorage {
   createCustomStat(stat: InsertCustomStat): Promise<CustomStat>;
   updateCustomStat(id: number, stat: Partial<InsertCustomStat>): Promise<CustomStat | undefined>;
   deleteCustomStat(id: number): Promise<void>;
+
+  // Expenses
+  getExpenses(branchId?: number, startDate?: string, endDate?: string): Promise<Expense[]>;
+  getExpense(id: number): Promise<Expense | undefined>;
+  createExpense(expense: InsertExpense): Promise<Expense>;
+  updateExpense(id: number, expense: Partial<InsertExpense>): Promise<Expense | undefined>;
+  deleteExpense(id: number): Promise<void>;
+  getExpensesByCategory(branchId?: number, startDate?: string, endDate?: string): Promise<{category: string, total: number}[]>;
+
+  // Installment Plans
+  getInstallmentPlans(branchId?: number): Promise<InstallmentPlan[]>;
+  getInstallmentPlansByPatient(patientId: number): Promise<InstallmentPlan[]>;
+  getInstallmentPlan(id: number): Promise<InstallmentPlan | undefined>;
+  createInstallmentPlan(plan: InsertInstallmentPlan): Promise<InstallmentPlan>;
+  updateInstallmentPlan(id: number, plan: Partial<InsertInstallmentPlan>): Promise<InstallmentPlan | undefined>;
+  deleteInstallmentPlan(id: number): Promise<void>;
+
+  // Accounting
+  getAccountingSummary(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    totalRevenue: number;
+    totalPaid: number;
+    totalRemaining: number;
+    totalExpenses: number;
+    netProfit: number;
+    collectionRate: number;
+  }>;
+  getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]>;
+  getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -185,6 +215,193 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCustomStat(id: number): Promise<void> {
     await db.delete(customStats).where(eq(customStats.id, id));
+  }
+
+  // Expenses
+  async getExpenses(branchId?: number, startDate?: string, endDate?: string): Promise<Expense[]> {
+    let query = db.select().from(expenses);
+    const conditions = [];
+    
+    if (branchId) {
+      conditions.push(eq(expenses.branchId, branchId));
+    }
+    if (startDate) {
+      conditions.push(gte(expenses.expenseDate, startDate));
+    }
+    if (endDate) {
+      conditions.push(lte(expenses.expenseDate, endDate));
+    }
+    
+    if (conditions.length > 0) {
+      return await db.select().from(expenses).where(and(...conditions)).orderBy(desc(expenses.expenseDate));
+    }
+    return await db.select().from(expenses).orderBy(desc(expenses.expenseDate));
+  }
+
+  async getExpense(id: number): Promise<Expense | undefined> {
+    const [expense] = await db.select().from(expenses).where(eq(expenses.id, id));
+    return expense;
+  }
+
+  async createExpense(insertExpense: InsertExpense): Promise<Expense> {
+    const [expense] = await db.insert(expenses).values(insertExpense).returning();
+    return expense;
+  }
+
+  async updateExpense(id: number, updates: Partial<InsertExpense>): Promise<Expense | undefined> {
+    const [updated] = await db.update(expenses)
+      .set(updates)
+      .where(eq(expenses.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteExpense(id: number): Promise<void> {
+    await db.delete(expenses).where(eq(expenses.id, id));
+  }
+
+  async getExpensesByCategory(branchId?: number, startDate?: string, endDate?: string): Promise<{category: string, total: number}[]> {
+    const conditions = [];
+    if (branchId) {
+      conditions.push(eq(expenses.branchId, branchId));
+    }
+    if (startDate) {
+      conditions.push(gte(expenses.expenseDate, startDate));
+    }
+    if (endDate) {
+      conditions.push(lte(expenses.expenseDate, endDate));
+    }
+
+    const query = conditions.length > 0
+      ? db.select({
+          category: expenses.category,
+          total: sql<number>`SUM(${expenses.amount})::integer`
+        }).from(expenses).where(and(...conditions)).groupBy(expenses.category)
+      : db.select({
+          category: expenses.category,
+          total: sql<number>`SUM(${expenses.amount})::integer`
+        }).from(expenses).groupBy(expenses.category);
+    
+    return await query;
+  }
+
+  // Installment Plans
+  async getInstallmentPlans(branchId?: number): Promise<InstallmentPlan[]> {
+    if (branchId) {
+      return await db.select().from(installmentPlans)
+        .where(eq(installmentPlans.branchId, branchId))
+        .orderBy(desc(installmentPlans.createdAt));
+    }
+    return await db.select().from(installmentPlans).orderBy(desc(installmentPlans.createdAt));
+  }
+
+  async getInstallmentPlansByPatient(patientId: number): Promise<InstallmentPlan[]> {
+    return await db.select().from(installmentPlans)
+      .where(eq(installmentPlans.patientId, patientId))
+      .orderBy(desc(installmentPlans.createdAt));
+  }
+
+  async getInstallmentPlan(id: number): Promise<InstallmentPlan | undefined> {
+    const [plan] = await db.select().from(installmentPlans).where(eq(installmentPlans.id, id));
+    return plan;
+  }
+
+  async createInstallmentPlan(insertPlan: InsertInstallmentPlan): Promise<InstallmentPlan> {
+    const [plan] = await db.insert(installmentPlans).values(insertPlan).returning();
+    return plan;
+  }
+
+  async updateInstallmentPlan(id: number, updates: Partial<InsertInstallmentPlan>): Promise<InstallmentPlan | undefined> {
+    const [updated] = await db.update(installmentPlans)
+      .set(updates)
+      .where(eq(installmentPlans.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteInstallmentPlan(id: number): Promise<void> {
+    await db.delete(installmentPlans).where(eq(installmentPlans.id, id));
+  }
+
+  // Accounting
+  async getAccountingSummary(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    totalRevenue: number;
+    totalPaid: number;
+    totalRemaining: number;
+    totalExpenses: number;
+    netProfit: number;
+    collectionRate: number;
+  }> {
+    // Get total revenue (all patient costs)
+    const patientsQuery = branchId
+      ? await db.select({ total: sql<number>`COALESCE(SUM(${patients.totalCost}), 0)::integer` })
+          .from(patients).where(eq(patients.branchId, branchId))
+      : await db.select({ total: sql<number>`COALESCE(SUM(${patients.totalCost}), 0)::integer` })
+          .from(patients);
+    const totalRevenue = patientsQuery[0]?.total || 0;
+
+    // Get total paid (all payments within date range if specified)
+    const paymentConditions = [];
+    if (branchId) paymentConditions.push(eq(payments.branchId, branchId));
+    if (startDate) paymentConditions.push(gte(payments.date, new Date(startDate)));
+    if (endDate) paymentConditions.push(lte(payments.date, new Date(endDate)));
+
+    const paymentsQuery = paymentConditions.length > 0
+      ? await db.select({ total: sql<number>`COALESCE(SUM(${payments.amount}), 0)::integer` })
+          .from(payments).where(and(...paymentConditions))
+      : await db.select({ total: sql<number>`COALESCE(SUM(${payments.amount}), 0)::integer` })
+          .from(payments);
+    const totalPaid = paymentsQuery[0]?.total || 0;
+
+    // Get total expenses
+    const expenseConditions = [];
+    if (branchId) expenseConditions.push(eq(expenses.branchId, branchId));
+    if (startDate) expenseConditions.push(gte(expenses.expenseDate, startDate));
+    if (endDate) expenseConditions.push(lte(expenses.expenseDate, endDate));
+
+    const expensesQuery = expenseConditions.length > 0
+      ? await db.select({ total: sql<number>`COALESCE(SUM(${expenses.amount}), 0)::integer` })
+          .from(expenses).where(and(...expenseConditions))
+      : await db.select({ total: sql<number>`COALESCE(SUM(${expenses.amount}), 0)::integer` })
+          .from(expenses);
+    const totalExpenses = expensesQuery[0]?.total || 0;
+
+    const totalRemaining = totalRevenue - totalPaid;
+    const netProfit = totalPaid - totalExpenses;
+    const collectionRate = totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0;
+
+    return {
+      totalRevenue,
+      totalPaid,
+      totalRemaining,
+      totalExpenses,
+      netProfit,
+      collectionRate
+    };
+  }
+
+  async getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(payments.branchId, branchId));
+    if (startDate) conditions.push(gte(payments.date, new Date(startDate)));
+    if (endDate) conditions.push(lte(payments.date, new Date(endDate)));
+
+    if (conditions.length > 0) {
+      return await db.select().from(payments).where(and(...conditions)).orderBy(desc(payments.date));
+    }
+    return await db.select().from(payments).orderBy(desc(payments.date));
+  }
+
+  async getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(visits.branchId, branchId));
+    if (startDate) conditions.push(gte(visits.visitDate, new Date(startDate)));
+    if (endDate) conditions.push(lte(visits.visitDate, new Date(endDate)));
+
+    if (conditions.length > 0) {
+      return await db.select().from(visits).where(and(...conditions)).orderBy(desc(visits.visitDate));
+    }
+    return await db.select().from(visits).orderBy(desc(visits.visitDate));
   }
 }
 
