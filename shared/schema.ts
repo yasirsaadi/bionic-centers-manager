@@ -216,10 +216,27 @@ export const branchPasswords = pgTable("branch_passwords", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Branch settings for visibility control of sections
+export const branchSettings = pgTable("branch_settings", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull().unique(),
+  showPatients: boolean("show_patients").default(true), // إظهار قسم المرضى
+  showVisits: boolean("show_visits").default(true), // إظهار قسم الزيارات
+  showPayments: boolean("show_payments").default(true), // إظهار قسم المدفوعات
+  showDocuments: boolean("show_documents").default(true), // إظهار قسم المستندات
+  showStatistics: boolean("show_statistics").default(true), // إظهار قسم الإحصائيات
+  showAccounting: boolean("show_accounting").default(true), // إظهار قسم المحاسبة
+  showExpenses: boolean("show_expenses").default(true), // إظهار قسم المصروفات
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit({ id: true, updatedAt: true });
 export const insertBranchPasswordSchema = createInsertSchema(branchPasswords).omit({ id: true, updatedAt: true });
+export const insertBranchSettingsSchema = createInsertSchema(branchSettings).omit({ id: true, updatedAt: true });
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
 export type BranchPassword = typeof branchPasswords.$inferSelect;
 export type InsertBranchPassword = z.infer<typeof insertBranchPasswordSchema>;
+export type BranchSetting = typeof branchSettings.$inferSelect;
+export type InsertBranchSetting = z.infer<typeof insertBranchSettingsSchema>;
