@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -17,6 +17,12 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { AmiriRegular } from "@/lib/amiri-font";
+import ArabicReshaper from "arabic-reshaper";
+import { useBranchSession } from "@/components/BranchGate";
 import { 
   DollarSign, 
   TrendingUp, 
@@ -40,7 +46,9 @@ import {
   Download,
   Filter,
   RefreshCw,
-  ArrowLeft
+  ArrowLeft,
+  FileDown,
+  FileSpreadsheet
 } from "lucide-react";
 import { 
   AreaChart, 
@@ -170,6 +178,7 @@ function getCategoryLabel(category: string): string {
 export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const branchSession = useBranchSession();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [dateRange, setDateRange] = useState({
@@ -178,6 +187,31 @@ export default function Accounting() {
   });
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Admin-only access guard - redirect non-admin users
+  if (branchSession && !branchSession.isAdmin) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl" data-testid="page-access-denied">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl text-red-600 flex items-center justify-center gap-2" data-testid="text-access-denied">
+              <AlertCircle className="h-6 w-6" />
+              غير مصرح بالوصول
+            </CardTitle>
+            <CardDescription>
+              هذه الصفحة متاحة للمسؤولين فقط
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center">
+            <Button onClick={() => setLocation("/")} className="gap-2" data-testid="button-go-home">
+              <ArrowLeft className="h-4 w-4" />
+              العودة للرئيسية
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // Fetch branches
   const { data: branches = [] } = useQuery<Branch[]>({
@@ -385,6 +419,317 @@ export default function Accounting() {
     setIsExpenseDialogOpen(true);
   };
 
+  // Arabic text reshaping for PDF - using arabic-reshaper for proper ligatures
+  const reshapeArabic = useCallback((text: string): string => {
+    try {
+      const shaped = ArabicReshaper.convertArabic(text);
+      // Reverse the text for proper RTL display in PDF
+      return shaped.split('').reverse().join('');
+    } catch {
+      return text.split('').reverse().join('');
+    }
+  }, []);
+
+  const currentBranchName = selectedBranch === "all" 
+    ? "جميع الفروع" 
+    : branches.find(b => b.id.toString() === selectedBranch)?.name || "غير محدد";
+
+  // Export to PDF
+  const exportToPDF = useCallback(() => {
+    if (!summary) return;
+    
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    
+    // Add Amiri Arabic font
+    doc.addFileToVFS('Amiri-Regular.ttf', AmiriRegular);
+    doc.addFont('Amiri-Regular.ttf', 'Amiri', 'normal');
+    doc.setFont('Amiri');
+    doc.setR2L(true);
+    
+    // Title
+    doc.setFontSize(20);
+    doc.text(reshapeArabic("التقرير المحاسبي الشامل"), 105, 20, { align: 'center' });
+    
+    // Subtitle
+    doc.setFontSize(12);
+    doc.text(reshapeArabic(`الفرع: ${currentBranchName}`), 105, 30, { align: 'center' });
+    doc.text(reshapeArabic(`تاريخ التقرير: ${new Date().toLocaleDateString('en-GB')}`), 105, 37, { align: 'center' });
+    
+    let yPos = 50;
+    
+    // Financial Summary Section
+    doc.setFontSize(14);
+    doc.text(reshapeArabic("الملخص المالي"), 195, yPos, { align: 'right' });
+    yPos += 10;
+    
+    // Summary table
+    const summaryTableData = [
+      [reshapeArabic(formatCurrency(summary.totalRevenue)), reshapeArabic("إجمالي الإيرادات")],
+      [reshapeArabic(formatCurrency(summary.totalPaid)), reshapeArabic("المدفوعات")],
+      [reshapeArabic(formatCurrency(summary.totalRemaining)), reshapeArabic("المتبقي")],
+      [reshapeArabic(formatCurrency(summary.totalExpenses)), reshapeArabic("المصروفات")],
+      [reshapeArabic(formatCurrency(summary.netProfit)), reshapeArabic("صافي الربح")],
+      [reshapeArabic(`${summary.collectionRate}%`), reshapeArabic("نسبة التحصيل")]
+    ];
+    
+    (doc as any).autoTable({
+      startY: yPos,
+      head: [[reshapeArabic("القيمة"), reshapeArabic("البيان")]],
+      body: summaryTableData,
+      theme: 'striped',
+      styles: { font: 'Amiri', halign: 'right', fontSize: 10 },
+      headStyles: { fillColor: [30, 64, 175], halign: 'right' },
+      margin: { left: 15, right: 15 }
+    });
+    
+    yPos = (doc as any).lastAutoTable.finalY + 15;
+    
+    // Expenses by Category
+    if (expensesByCategory.length > 0) {
+      doc.setFontSize(14);
+      doc.text(reshapeArabic("المصروفات حسب التصنيف"), 195, yPos, { align: 'right' });
+      yPos += 10;
+      
+      const expenseCategoryData = expensesByCategory.map(e => [
+        reshapeArabic(formatCurrency(e.total)),
+        reshapeArabic(getCategoryLabel(e.category))
+      ]);
+      
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[reshapeArabic("المبلغ"), reshapeArabic("التصنيف")]],
+        body: expenseCategoryData,
+        theme: 'striped',
+        styles: { font: 'Amiri', halign: 'right', fontSize: 10 },
+        headStyles: { fillColor: [220, 38, 38], halign: 'right' },
+        margin: { left: 15, right: 15 }
+      });
+      
+      yPos = (doc as any).lastAutoTable.finalY + 15;
+    }
+    
+    // Branch Comparison (new page if needed)
+    if (branchComparison.length > 0) {
+      if (yPos > 200) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFontSize(14);
+      doc.text(reshapeArabic("مقارنة الفروع"), 195, yPos, { align: 'right' });
+      yPos += 10;
+      
+      const branchData = branchComparison.map(b => [
+        reshapeArabic(`${b.collectionRate}%`),
+        reshapeArabic(formatCurrency(b.netProfit)),
+        reshapeArabic(formatCurrency(b.totalExpenses)),
+        reshapeArabic(formatCurrency(b.totalPaid)),
+        reshapeArabic(String(b.patientCount)),
+        reshapeArabic(b.branchName)
+      ]);
+      
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[
+          reshapeArabic("التحصيل"),
+          reshapeArabic("صافي الربح"),
+          reshapeArabic("المصروفات"),
+          reshapeArabic("المحصل"),
+          reshapeArabic("المرضى"),
+          reshapeArabic("الفرع")
+        ]],
+        body: branchData,
+        theme: 'striped',
+        styles: { font: 'Amiri', halign: 'right', fontSize: 9 },
+        headStyles: { fillColor: [34, 197, 94], halign: 'right' },
+        margin: { left: 15, right: 15 }
+      });
+      
+      yPos = (doc as any).lastAutoTable.finalY + 15;
+    }
+    
+    // Debtors List (new page if needed)
+    if (debtors.length > 0) {
+      if (yPos > 200) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFontSize(14);
+      doc.text(reshapeArabic("قائمة المديونيات"), 195, yPos, { align: 'right' });
+      yPos += 10;
+      
+      const debtorData = debtors.slice(0, 20).map((d, i) => [
+        d.lastPaymentDate ? new Date(d.lastPaymentDate).toLocaleDateString('en-GB') : "-",
+        reshapeArabic(formatCurrency(d.remaining)),
+        reshapeArabic(formatCurrency(d.totalPaid)),
+        reshapeArabic(formatCurrency(d.totalCost)),
+        reshapeArabic(d.patient.name),
+        String(i + 1)
+      ]);
+      
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[
+          reshapeArabic("آخر دفعة"),
+          reshapeArabic("المتبقي"),
+          reshapeArabic("المدفوع"),
+          reshapeArabic("الإجمالي"),
+          reshapeArabic("المريض"),
+          "#"
+        ]],
+        body: debtorData,
+        theme: 'striped',
+        styles: { font: 'Amiri', halign: 'right', fontSize: 9 },
+        headStyles: { fillColor: [239, 68, 68], halign: 'right' },
+        margin: { left: 15, right: 15 }
+      });
+    }
+    
+    // Footer
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.text(
+        reshapeArabic(`صفحة ${i} من ${pageCount}`),
+        105,
+        285,
+        { align: 'center' }
+      );
+    }
+    
+    doc.save(`تقرير_محاسبي_${new Date().toISOString().split('T')[0]}.pdf`);
+    toast({ title: "تم تصدير التقرير بنجاح" });
+  }, [summary, expensesByCategory, branchComparison, debtors, currentBranchName, reshapeArabic, toast]);
+
+  // Export to Excel
+  const exportToExcel = useCallback(() => {
+    if (!summary) return;
+    
+    const workbook = XLSX.utils.book_new();
+    
+    // Financial Summary Sheet
+    const summaryData = [
+      ['التقرير المحاسبي الشامل'],
+      ['الفرع', currentBranchName],
+      ['تاريخ التقرير', new Date().toLocaleDateString('en-GB')],
+      [],
+      ['الملخص المالي'],
+      ['البيان', 'القيمة'],
+      ['إجمالي الإيرادات (د.ع)', summary.totalRevenue],
+      ['المدفوعات (د.ع)', summary.totalPaid],
+      ['المتبقي (د.ع)', summary.totalRemaining],
+      ['المصروفات (د.ع)', summary.totalExpenses],
+      ['صافي الربح (د.ع)', summary.netProfit],
+      ['نسبة التحصيل (%)', summary.collectionRate]
+    ];
+    
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'الملخص المالي');
+    
+    // Expenses Sheet
+    if (expenses.length > 0) {
+      const expenseHeaders = ['#', 'الفرع', 'التصنيف', 'الوصف', 'المبلغ (د.ع)', 'التاريخ', 'ملاحظات'];
+      const expenseRows = expenses.map((e, i) => [
+        i + 1,
+        branches.find(b => b.id === e.branchId)?.name || '-',
+        getCategoryLabel(e.category),
+        e.description || '-',
+        e.amount,
+        new Date(e.expenseDate).toLocaleDateString('en-GB'),
+        e.notes || '-'
+      ]);
+      
+      const expenseSheet = XLSX.utils.aoa_to_sheet([expenseHeaders, ...expenseRows]);
+      expenseSheet['!cols'] = [{ wch: 5 }, { wch: 15 }, { wch: 15 }, { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 25 }];
+      XLSX.utils.book_append_sheet(workbook, expenseSheet, 'المصروفات');
+    }
+    
+    // Expenses by Category Sheet
+    if (expensesByCategory.length > 0) {
+      const catHeaders = ['التصنيف', 'المبلغ (د.ع)'];
+      const catRows = expensesByCategory.map(e => [getCategoryLabel(e.category), e.total]);
+      const catSheet = XLSX.utils.aoa_to_sheet([catHeaders, ...catRows]);
+      catSheet['!cols'] = [{ wch: 20 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(workbook, catSheet, 'المصروفات حسب التصنيف');
+    }
+    
+    // Branch Comparison Sheet
+    if (branchComparison.length > 0) {
+      const branchHeaders = ['الفرع', 'المرضى', 'الإيرادات', 'المحصل', 'المتبقي', 'المصروفات', 'صافي الربح', 'نسبة التحصيل (%)'];
+      const branchRows = branchComparison.map(b => [
+        b.branchName,
+        b.patientCount,
+        b.totalRevenue,
+        b.totalPaid,
+        b.totalRemaining,
+        b.totalExpenses,
+        b.netProfit,
+        b.collectionRate
+      ]);
+      
+      const branchSheet = XLSX.utils.aoa_to_sheet([branchHeaders, ...branchRows]);
+      branchSheet['!cols'] = [{ wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(workbook, branchSheet, 'مقارنة الفروع');
+    }
+    
+    // Debtors Sheet
+    if (debtors.length > 0) {
+      const debtorHeaders = ['#', 'اسم المريض', 'الهاتف', 'إجمالي التكلفة', 'المدفوع', 'المتبقي', 'آخر دفعة'];
+      const debtorRows = debtors.map((d, i) => [
+        i + 1,
+        d.patient.name,
+        d.patient.phone || '-',
+        d.totalCost,
+        d.totalPaid,
+        d.remaining,
+        d.lastPaymentDate ? new Date(d.lastPaymentDate).toLocaleDateString('en-GB') : 'لم يدفع'
+      ]);
+      
+      const debtorSheet = XLSX.utils.aoa_to_sheet([debtorHeaders, ...debtorRows]);
+      debtorSheet['!cols'] = [{ wch: 5 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(workbook, debtorSheet, 'المديونيات');
+    }
+    
+    // Monthly Trends Sheet
+    if (monthlyTrends.length > 0) {
+      const trendHeaders = ['الشهر', 'المحصل', 'المصروفات', 'صافي الربح', 'نسبة التحصيل (%)'];
+      const trendRows = monthlyTrends.map(t => [
+        t.month,
+        t.totalPaid,
+        t.totalExpenses,
+        t.netProfit,
+        t.collectionRate
+      ]);
+      
+      const trendSheet = XLSX.utils.aoa_to_sheet([trendHeaders, ...trendRows]);
+      trendSheet['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(workbook, trendSheet, 'الاتجاهات الشهرية');
+    }
+    
+    // Service Profitability Sheet
+    if (serviceProfitability.length > 0) {
+      const serviceHeaders = ['نوع الخدمة', 'عدد المرضى', 'الإيرادات', 'المحصل', 'المتبقي', 'نسبة التحصيل (%)'];
+      const serviceRows = serviceProfitability.map(s => [
+        s.serviceName,
+        s.patientCount,
+        s.totalRevenue,
+        s.totalPaid,
+        s.remaining,
+        s.collectionRate
+      ]);
+      
+      const serviceSheet = XLSX.utils.aoa_to_sheet([serviceHeaders, ...serviceRows]);
+      serviceSheet['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(workbook, serviceSheet, 'ربحية الخدمات');
+    }
+    
+    XLSX.writeFile(workbook, `تقرير_محاسبي_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast({ title: "تم تصدير التقرير بنجاح" });
+  }, [summary, expenses, expensesByCategory, branchComparison, debtors, monthlyTrends, serviceProfitability, branches, currentBranchName, toast]);
+
   // Prepare chart data
   const expenseChartData = expensesByCategory.map(item => ({
     name: getCategoryLabel(item.category),
@@ -454,6 +799,29 @@ export default function Accounting() {
               data-testid="button-clear-filters"
             >
               <RefreshCw className="h-4 w-4" />
+            </Button>
+            
+            <Separator orientation="vertical" className="h-8 mx-1" />
+            
+            <Button
+              variant="outline"
+              onClick={exportToPDF}
+              disabled={!summary}
+              className="gap-2"
+              data-testid="button-export-pdf"
+            >
+              <FileDown className="h-4 w-4" />
+              <span className="hidden md:inline">PDF</span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={exportToExcel}
+              disabled={!summary}
+              className="gap-2"
+              data-testid="button-export-excel"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span className="hidden md:inline">Excel</span>
             </Button>
           </div>
         </div>

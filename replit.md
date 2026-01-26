@@ -91,3 +91,17 @@ Preferred communication style: Simple, everyday language.
 
 ### Sequential Patient Numbering
 - Patient lists show sequential numbers (#1, #2, #3...) for easy visual counting
+
+### Comprehensive Accounting System (January 2026)
+- New `/accounting` page (admin-only access)
+- Database tables: `expenses` (with categories: salaries, rent, medical_supplies, maintenance, utilities, other), `installment_plans`
+- Financial Dashboard with 6 KPIs: total revenue, payments, remaining, expenses, net profit, collection rate
+- Multiple tabs: Dashboard, Expenses Management, Reports, Analytics, Debtors
+- Expenses CRUD with category-based organization
+- Branch comparison and profitability analysis
+- Monthly financial trends visualization with Area charts
+- Service profitability breakdown (amputee, physiotherapy, medical support)
+- Debtors tracking with outstanding balance monitoring
+- PDF and Excel export with proper Arabic RTL support using arabic-reshaper
+- All accounting endpoints are admin-only protected
+- Frontend admin guard prevents non-admin access to /accounting page
