@@ -26,7 +26,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowRight, Building2 } from "lucide-react";
 import { z } from "zod";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 
 // Form schema with coercion for numbers and optional date
@@ -173,7 +173,15 @@ export default function CreatePatient() {
     }
   }, [conditionType, form]);
 
+  // Ensure branchId is properly set for non-admin users
+  useEffect(() => {
+    if (!isAdmin && userBranchId && userBranchId > 0) {
+      form.setValue("branchId", userBranchId);
+    }
+  }, [isAdmin, userBranchId, form]);
+
   function onSubmit(values: FormValues) {
+    console.log("Submitting patient with branchId:", values.branchId, "all values:", values);
     mutate(values, {
       onSuccess: (data) => {
         setLocation(`/patients/${data.id}`);

@@ -612,9 +612,23 @@ export async function registerRoutes(
 
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
-      const ctx = getUserContext(req);
-      // Always use the form's branchId - allow staff to select branch when creating patients
-      const branchId = req.body.branchId || ctx.branchId || 1;
+      const branchSession = (req.session as any).branchSession;
+      
+      // Determine branchId: form value > branch session > fallback to 1
+      let branchId = req.body.branchId;
+      
+      // If branchId not provided or is falsy (0), use session branch for non-admins
+      if (!branchId && branchSession && !branchSession.isAdmin) {
+        branchId = branchSession.branchId;
+      }
+      
+      // Final fallback for admins who didn't select a branch
+      if (!branchId || branchId === 0) {
+        return res.status(400).json({ message: "يجب اختيار الفرع" });
+      }
+      
+      console.log("Creating patient with branchId:", branchId, "from body:", req.body.branchId, "session:", branchSession?.branchId);
+      
       const input = api.patients.create.input.parse({
         ...req.body,
         branchId
@@ -623,6 +637,7 @@ export async function registerRoutes(
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      console.error("Error creating patient:", err);
       throw err;
     }
   });
