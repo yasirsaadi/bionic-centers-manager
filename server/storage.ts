@@ -26,6 +26,7 @@ export interface IStorage {
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient | undefined>;
   deletePatient(id: number): Promise<void>;
+  transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined>;
 
   // Visits
   getVisitsByPatientId(patientId: number): Promise<Visit[]>;
@@ -145,6 +146,30 @@ export class DatabaseStorage implements IStorage {
     await db.delete(documents).where(eq(documents.patientId, id));
     await db.delete(visits).where(eq(visits.patientId, id));
     await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  async transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined> {
+    // Update patient's branch
+    const [updatedPatient] = await db.update(patients)
+      .set({ branchId: newBranchId })
+      .where(eq(patients.id, patientId))
+      .returning();
+    
+    if (!updatedPatient) return undefined;
+
+    // Update all visits for this patient to the new branch
+    await db.update(visits)
+      .set({ branchId: newBranchId })
+      .where(eq(visits.patientId, patientId));
+
+    // Update all payments for this patient to the new branch
+    await db.update(payments)
+      .set({ branchId: newBranchId })
+      .where(eq(payments.patientId, patientId));
+
+    // Documents don't have branchId, they're linked to patient only
+
+    return updatedPatient;
   }
 
   // Visits

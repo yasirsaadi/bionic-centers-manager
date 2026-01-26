@@ -193,11 +193,16 @@ export async function registerRoutes(
 
   app.post(api.patients.transfer.path, isAuthenticated, async (req, res) => {
     const ctx = getUserContext(req);
-    if (ctx.role !== 'admin') return res.status(403).json({ message: "Admin only" });
+    if (ctx.role !== 'admin') return res.status(403).json({ message: "فقط المدير يمكنه نقل المرضى" });
     
     const id = Number(req.params.id);
     const { branchId } = api.patients.transfer.input.parse(req.body);
-    const patient = await storage.updatePatient(id, { branchId });
+    
+    // Transfer patient with all related records (visits, payments)
+    const patient = await storage.transferPatientToBranch(id, branchId);
+    if (!patient) {
+      return res.status(404).json({ message: "المريض غير موجود" });
+    }
     res.json(patient);
   });
 

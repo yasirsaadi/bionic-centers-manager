@@ -1,6 +1,6 @@
 import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,22 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   ArrowRight, 
   FileText, 
@@ -34,13 +50,15 @@ import {
   Building2,
   Phone,
   MapPin,
-  AlertCircle
+  AlertCircle,
+  ArrowLeftRight
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
 import { useRef, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 import type { Branch } from "@shared/schema";
 
 export default function PatientDetails() {
@@ -55,6 +73,11 @@ export default function PatientDetails() {
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
   const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null } | null>(null);
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -63,6 +86,40 @@ export default function PatientDetails() {
       return res.json();
     },
   });
+  
+  const transferMutation = useMutation({
+    mutationFn: async ({ patientId, branchId }: { patientId: number; branchId: number }) => {
+      const res = await fetch(`/api/patients/${patientId}/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في نقل المريض");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      setTransferDialogOpen(false);
+      setSelectedTransferBranch("");
+      toast({
+        title: "تم النقل بنجاح",
+        description: "تم نقل المريض مع جميع سجلاته إلى الفرع الجديد",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "خطأ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getBranchName = (branchId: number) => {
@@ -134,6 +191,61 @@ export default function PatientDetails() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        
+        {/* Transfer Patient Button - Admin Only */}
+        {isAdmin && (
+          <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2" data-testid="button-transfer-patient">
+                <ArrowLeftRight className="w-4 h-4" />
+                نقل لفرع آخر
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>نقل المريض إلى فرع آخر</DialogTitle>
+                <DialogDescription>
+                  سيتم نقل المريض مع جميع سجلاته (الزيارات والمدفوعات والمستندات) إلى الفرع المحدد.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <label className="text-sm font-medium mb-2 block">اختر الفرع الجديد</label>
+                <Select value={selectedTransferBranch} onValueChange={setSelectedTransferBranch}>
+                  <SelectTrigger data-testid="select-transfer-branch">
+                    <SelectValue placeholder="اختر الفرع" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {branches?.filter(b => b.id !== patient?.branchId).map((branch) => (
+                      <SelectItem key={branch.id} value={String(branch.id)}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
+                  إلغاء
+                </Button>
+                <Button 
+                  onClick={() => {
+                    if (patient && selectedTransferBranch) {
+                      transferMutation.mutate({ 
+                        patientId: patient.id, 
+                        branchId: parseInt(selectedTransferBranch) 
+                      });
+                    }
+                  }}
+                  disabled={!selectedTransferBranch || transferMutation.isPending}
+                  data-testid="button-confirm-transfer"
+                >
+                  {transferMutation.isPending ? "جاري النقل..." : "نقل المريض"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+        
         <Button 
           variant="outline" 
           className="gap-2" 
