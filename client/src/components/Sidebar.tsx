@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -35,7 +35,7 @@ export function Sidebar() {
     setMobileOpen(false);
   }, [location]);
 
-  const menuItems = [
+  const baseMenuItems = [
     { label: "لوحة التحكم", icon: LayoutDashboard, href: "/" },
     { label: "سجل المرضى", icon: Users, href: "/patients" },
     { label: "إضافة مريض", icon: UserPlus, href: "/patients/new" },
@@ -43,6 +43,14 @@ export function Sidebar() {
     { label: "الفروع", icon: Building2, href: "/branches" },
     { label: "الإحصاءات", icon: BarChart3, href: "/statistics" },
   ];
+
+  const adminMenuItems = [
+    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting" },
+  ];
+
+  const menuItems = branchSession?.isAdmin 
+    ? [...baseMenuItems, ...adminMenuItems]
+    : baseMenuItems;
 
   const SidebarContent = () => (
     <>
