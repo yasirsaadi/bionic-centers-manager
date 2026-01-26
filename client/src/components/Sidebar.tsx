@@ -16,13 +16,11 @@ interface BranchSession {
 
 interface BranchSettings {
   branchId: number;
+  showDashboard: boolean;
   showPatients: boolean;
-  showVisits: boolean;
   showPayments: boolean;
-  showDocuments: boolean;
-  showStatistics: boolean;
   showAccounting: boolean;
-  showExpenses: boolean;
+  showStatistics: boolean;
 }
 
 export function Sidebar() {
@@ -54,7 +52,7 @@ export function Sidebar() {
   }, [location]);
 
   const baseMenuItems = [
-    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: null },
+    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const },
     { label: "سجل المرضى", icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const },
     { label: "إضافة مريض", icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const },
     { label: "التقارير المالية", icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const },

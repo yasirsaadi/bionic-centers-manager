@@ -488,27 +488,23 @@ export async function registerRoutes(
     if (branchSession.isAdmin) {
       return res.json({
         branchId: 0,
+        showDashboard: true,
         showPatients: true,
-        showVisits: true,
         showPayments: true,
-        showDocuments: true,
-        showStatistics: true,
         showAccounting: true,
-        showExpenses: true
+        showStatistics: true
       });
     }
     
     const branchId = branchSession.branchId;
     const settings = await storage.getBranchSettings(branchId);
-    res.json(settings || {
+    res.json({
       branchId,
-      showPatients: true,
-      showVisits: true,
-      showPayments: true,
-      showDocuments: true,
-      showStatistics: true,
-      showAccounting: true,
-      showExpenses: true
+      showDashboard: settings?.showDashboard ?? true,
+      showPatients: settings?.showPatients ?? true,
+      showPayments: settings?.showPayments ?? true,
+      showAccounting: settings?.showAccounting ?? true,
+      showStatistics: settings?.showStatistics ?? true
     });
   });
 
@@ -533,14 +529,12 @@ export async function registerRoutes(
           ...branch,
           patientCount,
           hasPassword,
-          settings: settings || {
-            showPatients: true,
-            showVisits: true,
-            showPayments: true,
-            showDocuments: true,
-            showStatistics: true,
-            showAccounting: true,
-            showExpenses: true
+          settings: {
+            showDashboard: settings?.showDashboard ?? true,
+            showPatients: settings?.showPatients ?? true,
+            showPayments: settings?.showPayments ?? true,
+            showAccounting: settings?.showAccounting ?? true,
+            showStatistics: settings?.showStatistics ?? true
           }
         };
       })

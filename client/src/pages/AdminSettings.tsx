@@ -45,6 +45,7 @@ import {
   Plus,
   Trash2,
   MapPin,
+  LayoutDashboard,
   AlertTriangle,
   CheckCircle,
   Layers
@@ -55,13 +56,11 @@ interface BranchWithDetails extends Branch {
   patientCount: number;
   hasPassword: boolean;
   settings: {
+    showDashboard: boolean;
     showPatients: boolean;
-    showVisits: boolean;
     showPayments: boolean;
-    showDocuments: boolean;
-    showStatistics: boolean;
     showAccounting: boolean;
-    showExpenses: boolean;
+    showStatistics: boolean;
   };
 }
 
@@ -313,7 +312,7 @@ export default function AdminSettings() {
     });
   };
 
-  type SettingKey = "showPatients" | "showVisits" | "showPayments" | "showDocuments" | "showStatistics" | "showAccounting" | "showExpenses";
+  type SettingKey = "showDashboard" | "showPatients" | "showPayments" | "showAccounting" | "showStatistics";
 
   const handleToggleSetting = (branchId: number, settingKey: SettingKey, currentValue: boolean) => {
     if (updateBranchSettingsMutation.isPending) return;
@@ -338,13 +337,11 @@ export default function AdminSettings() {
   }
 
   const sectionLabels: { key: SettingKey; label: string; icon: typeof Users }[] = [
-    { key: "showPatients", label: "المرضى", icon: Users },
-    { key: "showVisits", label: "الزيارات", icon: Calendar },
-    { key: "showPayments", label: "المدفوعات", icon: DollarSign },
-    { key: "showDocuments", label: "المستندات", icon: FileText },
-    { key: "showStatistics", label: "الإحصائيات", icon: BarChart3 },
-    { key: "showAccounting", label: "المحاسبة", icon: DollarSign },
-    { key: "showExpenses", label: "المصروفات", icon: DollarSign },
+    { key: "showDashboard", label: "لوحة التحكم", icon: LayoutDashboard },
+    { key: "showPatients", label: "سجل المرضى + إضافة مريض", icon: Users },
+    { key: "showPayments", label: "التقارير المالية", icon: FileText },
+    { key: "showAccounting", label: "النظام المحاسبي", icon: DollarSign },
+    { key: "showStatistics", label: "الإحصاءات", icon: BarChart3 },
   ];
 
   return (

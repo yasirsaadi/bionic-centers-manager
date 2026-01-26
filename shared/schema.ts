@@ -220,13 +220,15 @@ export const branchPasswords = pgTable("branch_passwords", {
 export const branchSettings = pgTable("branch_settings", {
   id: serial("id").primaryKey(),
   branchId: integer("branch_id").references(() => branches.id).notNull().unique(),
-  showPatients: boolean("show_patients").default(true), // إظهار قسم المرضى
-  showVisits: boolean("show_visits").default(true), // إظهار قسم الزيارات
-  showPayments: boolean("show_payments").default(true), // إظهار قسم المدفوعات
-  showDocuments: boolean("show_documents").default(true), // إظهار قسم المستندات
-  showStatistics: boolean("show_statistics").default(true), // إظهار قسم الإحصائيات
-  showAccounting: boolean("show_accounting").default(true), // إظهار قسم المحاسبة
-  showExpenses: boolean("show_expenses").default(true), // إظهار قسم المصروفات
+  showDashboard: boolean("show_dashboard").default(true), // لوحة التحكم
+  showPatients: boolean("show_patients").default(true), // سجل المرضى + إضافة مريض
+  showPayments: boolean("show_payments").default(true), // التقارير المالية
+  showAccounting: boolean("show_accounting").default(true), // النظام المحاسبي
+  showStatistics: boolean("show_statistics").default(true), // الإحصاءات
+  // Legacy columns - kept for backwards compatibility
+  showVisits: boolean("show_visits").default(true),
+  showDocuments: boolean("show_documents").default(true),
+  showExpenses: boolean("show_expenses").default(true),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
