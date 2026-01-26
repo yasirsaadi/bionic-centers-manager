@@ -495,7 +495,7 @@ export default function Statistics() {
         [reshapeArabic('إجمالي الزيارات (في الفترة)'), stats.totalVisits.toString()],
       ],
       styles: { font: 'Amiri', halign: 'right' },
-      headStyles: { fillColor: [41, 128, 185] },
+      headStyles: { fillColor: [41, 128, 185], font: 'Amiri', textColor: [255, 255, 255] },
     });
     
     yPos = (doc as any).lastAutoTable.finalY + 15;
@@ -509,9 +509,9 @@ export default function Statistics() {
       autoTable(doc, {
         startY: yPos,
         head: [[reshapeArabic('الفئة العمرية'), reshapeArabic('العدد')]],
-        body: stats.ageDistribution.map(item => [item.name, item.count.toString()]),
+        body: stats.ageDistribution.map(item => [reshapeArabic(item.name), item.count.toString()]),
         styles: { font: 'Amiri', halign: 'right' },
-        headStyles: { fillColor: [52, 152, 219] },
+        headStyles: { fillColor: [52, 152, 219], font: 'Amiri', textColor: [255, 255, 255] },
       });
       
       yPos = (doc as any).lastAutoTable.finalY + 15;
@@ -535,7 +535,7 @@ export default function Statistics() {
         head: [[reshapeArabic('الحالة'), reshapeArabic('العدد')]],
         body: stats.conditionDistribution.map(item => [reshapeArabic(item.name), item.value.toString()]),
         styles: { font: 'Amiri', halign: 'right' },
-        headStyles: { fillColor: [46, 204, 113] },
+        headStyles: { fillColor: [46, 204, 113], font: 'Amiri', textColor: [255, 255, 255] },
       });
       
       yPos = (doc as any).lastAutoTable.finalY + 15;
@@ -562,7 +562,7 @@ export default function Statistics() {
           `${item.revenue.toLocaleString()} ${reshapeArabic('د.ع')}`
         ]),
         styles: { font: 'Amiri', halign: 'right' },
-        headStyles: { fillColor: [155, 89, 182] },
+        headStyles: { fillColor: [155, 89, 182], font: 'Amiri', textColor: [255, 255, 255] },
       });
     }
     
