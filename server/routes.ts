@@ -192,8 +192,10 @@ export async function registerRoutes(
   });
 
   app.post(api.patients.transfer.path, isAuthenticated, async (req, res) => {
-    const ctx = getUserContext(req);
-    if (ctx.role !== 'admin') return res.status(403).json({ message: "فقط المدير يمكنه نقل المرضى" });
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المدير يمكنه نقل المرضى" });
+    }
     
     const id = Number(req.params.id);
     const { branchId } = api.patients.transfer.input.parse(req.body);
