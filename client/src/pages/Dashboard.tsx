@@ -1,15 +1,41 @@
 import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
-import { Users, Activity, Banknote, Clock, Calendar, HeartPulse } from "lucide-react";
+import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { AdminGate } from "@/components/AdminGate";
+import { useBranchSession } from "@/components/BranchGate";
 import { useLocation } from "wouter";
+import { useState } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import type { Branch } from "@shared/schema";
+import { api } from "@shared/routes";
 
 function DashboardContent() {
   const [, navigate] = useLocation();
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
+  const userBranchId = branchSession?.branchId;
   
-  // Fetch overall stats for all branches
+  const [selectedBranch, setSelectedBranch] = useState<string>(
+    isAdmin ? "all" : (userBranchId?.toString() || "all")
+  );
+  
+  const effectiveBranchFilter = isAdmin ? selectedBranch : (userBranchId?.toString() || "all");
+  
+  // Fetch branches for admin selector
+  const { data: branches } = useQuery<Branch[]>({
+    queryKey: [api.branches.list.path],
+    queryFn: async () => {
+      const res = await fetch(api.branches.list.path, { credentials: "include" });
+      if (!res.ok) throw new Error("فشل في جلب الفروع");
+      return res.json();
+    },
+  });
+  
+  const selectedBranchName = branches?.find(b => b.id === userBranchId)?.name || "الفرع";
+  
+  // Fetch overall stats (with branch filtering)
   const { data: stats, isLoading } = useQuery<{ 
     paid: number; 
     remaining: number; 
@@ -19,15 +45,18 @@ function DashboardContent() {
     physiotherapy: number;
     medicalSupport: number;
   }>({
-    queryKey: ["/api/reports/overall"],
+    queryKey: ["/api/reports/overall", effectiveBranchFilter],
     queryFn: async () => {
-      const res = await fetch("/api/reports/overall", { credentials: "include" });
+      const params = new URLSearchParams();
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      const url = `/api/reports/overall${params.toString() ? `?${params}` : ""}`;
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) return { paid: 0, remaining: 0, sold: 0, totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0 };
       return res.json();
     },
   });
 
-  // Fetch daily stats
+  // Fetch daily stats (with branch filtering)
   const { data: dailyStats, isLoading: isDailyLoading } = useQuery<{ 
     date: string;
     totalPatients: number;
@@ -36,9 +65,12 @@ function DashboardContent() {
     medicalSupport: number;
     paid: number;
   }>({
-    queryKey: ["/api/reports/daily"],
+    queryKey: ["/api/reports/daily", effectiveBranchFilter],
     queryFn: async () => {
-      const res = await fetch("/api/reports/daily", { credentials: "include" });
+      const params = new URLSearchParams();
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      const url = `/api/reports/daily${params.toString() ? `?${params}` : ""}`;
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) return { date: "", totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0, paid: 0 };
       return res.json();
     },
@@ -67,9 +99,40 @@ function DashboardContent() {
   
   return (
     <div className="space-y-6 md:space-y-8 page-transition">
-      <div>
-        <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">نظرة عامة</h2>
-        <p className="text-sm md:text-base text-muted-foreground mt-1">ملخص أداء المركز وإحصائيات المرضى</p>
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">نظرة عامة</h2>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">
+            {isAdmin ? "ملخص أداء المركز وإحصائيات المرضى" : `ملخص أداء فرع ${selectedBranchName}`}
+          </p>
+        </div>
+        
+        {/* Branch selector for admin or badge for branch staff */}
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
+          {isAdmin ? (
+            <>
+              <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
+                  <SelectValue placeholder="اختر الفرع" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">جميع الفروع</SelectItem>
+                  {branches?.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id.toString()}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          ) : (
+            <Badge variant="secondary" className="text-sm px-3 py-1" data-testid="badge-branch">
+              <Building2 className="w-4 h-4 ml-2" />
+              {selectedBranchName}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {/* Overall Stats */}
@@ -208,9 +271,5 @@ function DashboardContent() {
 }
 
 export default function Dashboard() {
-  return (
-    <AdminGate>
-      <DashboardContent />
-    </AdminGate>
-  );
+  return <DashboardContent />;
 }

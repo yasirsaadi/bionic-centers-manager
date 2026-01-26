@@ -8,7 +8,7 @@ import { FileText, Banknote, Clock, Building2, Calendar, Users, ChevronDown, Che
 import { useState, useEffect } from "react";
 import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
-import { AdminGate } from "@/components/AdminGate";
+import { useBranchSession } from "@/components/BranchGate";
 
 interface PaymentDetail {
   id: number;
@@ -231,8 +231,16 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
 }
 
 function ReportsContent() {
-  const [selectedBranch, setSelectedBranch] = useState<string>("1");
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
+  const userBranchId = branchSession?.branchId;
+  
+  const [selectedBranch, setSelectedBranch] = useState<string>(
+    isAdmin ? "1" : (userBranchId?.toString() || "1")
+  );
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  
+  const effectiveBranchFilter = isAdmin ? selectedBranch : (userBranchId?.toString() || "1");
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: [api.branches.list.path],
@@ -244,9 +252,9 @@ function ReportsContent() {
   });
 
   const { data: report, isLoading } = useQuery<DetailedReport>({
-    queryKey: ["/api/reports/detailed", selectedBranch],
+    queryKey: ["/api/reports/detailed", effectiveBranchFilter],
     queryFn: async () => {
-      const res = await fetch(`/api/reports/detailed/${selectedBranch}`, { 
+      const res = await fetch(`/api/reports/detailed/${effectiveBranchFilter}`, { 
         credentials: "include" 
       });
       if (!res.ok) throw new Error("فشل في جلب التقرير");
@@ -254,7 +262,7 @@ function ReportsContent() {
     },
   });
 
-  const selectedBranchName = branches?.find(b => b.id.toString() === selectedBranch)?.name || "الفرع";
+  const selectedBranchName = branches?.find(b => b.id.toString() === effectiveBranchFilter)?.name || "الفرع";
 
   const toggleDay = (date: string) => {
     setExpandedDays(prev => {
@@ -292,19 +300,28 @@ function ReportsContent() {
         </div>
         
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
-          <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
-          <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-            <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
-              <SelectValue placeholder="اختر الفرع" />
-            </SelectTrigger>
-            <SelectContent>
-              {branches?.map((branch) => (
-                <SelectItem key={branch.id} value={branch.id.toString()}>
-                  {branch.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {isAdmin ? (
+            <>
+              <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
+                  <SelectValue placeholder="اختر الفرع" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches?.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id.toString()}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          ) : (
+            <Badge variant="secondary" className="text-sm px-3 py-1" data-testid="badge-branch">
+              <Building2 className="w-4 h-4 ml-2" />
+              {selectedBranchName}
+            </Badge>
+          )}
           <Button variant="outline" className="gap-2 print:hidden h-10 md:h-11 text-sm md:text-base" onClick={() => window.print()} data-testid="button-print-report">
             <FileText className="w-4 h-4" />
             <span className="hidden sm:inline">طباعة</span>
@@ -410,9 +427,5 @@ function ReportsContent() {
 }
 
 export default function Reports() {
-  return (
-    <AdminGate>
-      <ReportsContent />
-    </AdminGate>
-  );
+  return <ReportsContent />;
 }

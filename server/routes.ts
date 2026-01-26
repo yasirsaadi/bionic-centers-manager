@@ -398,30 +398,43 @@ export async function registerRoutes(
     });
   });
 
-  // Overall stats for all branches (for dashboard)
+  // Overall stats for all branches (for dashboard) - supports branchId filter
   app.get("/api/reports/overall", isAuthenticated, async (req, res) => {
+    const branchIdParam = req.query.branchId as string | undefined;
+    const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
+    
     const allPatients = await storage.getPatients();
     const branches = await storage.getBranches();
+    
+    // Filter patients by branch if specified
+    const filteredPatients = filterBranchId 
+      ? allPatients.filter(p => p.branchId === filterBranchId)
+      : allPatients;
     
     let totalSold = 0;
     let totalPaid = 0;
     
-    for (const branch of branches) {
+    // Get branches to check payments
+    const branchesToCheck = filterBranchId 
+      ? branches.filter(b => b.id === filterBranchId)
+      : branches;
+    
+    for (const branch of branchesToCheck) {
       const branchPayments = await storage.getPaymentsByBranch(branch.id);
       totalPaid += branchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
     }
     
-    totalSold = allPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
+    totalSold = filteredPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
     
     res.json({
       revenue: totalPaid,
       sold: totalSold,
       paid: totalPaid,
       remaining: totalSold - totalPaid,
-      totalPatients: allPatients.length,
-      amputees: allPatients.filter(p => p.isAmputee).length,
-      physiotherapy: allPatients.filter(p => p.isPhysiotherapy).length,
-      medicalSupport: allPatients.filter(p => p.isMedicalSupport).length
+      totalPatients: filteredPatients.length,
+      amputees: filteredPatients.filter(p => p.isAmputee).length,
+      physiotherapy: filteredPatients.filter(p => p.isPhysiotherapy).length,
+      medicalSupport: filteredPatients.filter(p => p.isMedicalSupport).length
     });
   });
 
@@ -605,10 +618,18 @@ export async function registerRoutes(
     });
   });
 
-  // Daily statistics endpoint
+  // Daily statistics endpoint - supports branchId filter
   app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
+    const branchIdParam = req.query.branchId as string | undefined;
+    const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
+    
     const allPatients = await storage.getPatients();
     const branches = await storage.getBranches();
+    
+    // Filter patients by branch if specified
+    const filteredPatients = filterBranchId 
+      ? allPatients.filter(p => p.branchId === filterBranchId)
+      : allPatients;
     
     // Get today's date range (start of day to end of day)
     const today = new Date();
@@ -616,15 +637,20 @@ export async function registerRoutes(
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
     
     // Filter patients registered today
-    const todayPatients = allPatients.filter(p => {
+    const todayPatients = filteredPatients.filter(p => {
       if (!p.createdAt) return false;
       const createdAt = new Date(p.createdAt);
       return createdAt >= startOfDay && createdAt < endOfDay;
     });
     
+    // Get branches to check payments
+    const branchesToCheck = filterBranchId 
+      ? branches.filter(b => b.id === filterBranchId)
+      : branches;
+    
     // Get today's payments
     let todayPaid = 0;
-    for (const branch of branches) {
+    for (const branch of branchesToCheck) {
       const branchPayments = await storage.getPaymentsByBranch(branch.id);
       const todayBranchPayments = branchPayments.filter(p => {
         if (!p.date) return false;
