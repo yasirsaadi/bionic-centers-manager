@@ -370,6 +370,171 @@ export async function registerRoutes(
     res.json({ email: email || "" });
   });
 
+  // Branch Management API - Admin only
+  const createBranchSchema = z.object({
+    name: z.string().min(2, "اسم الفرع مطلوب"),
+    location: z.string().optional().nullable(),
+    password: z.string().min(4, "كلمة المرور يجب أن تكون 4 أحرف على الأقل").optional()
+  });
+
+  const updateBranchSettingsSchema = z.object({
+    branchId: z.number(),
+    showPatients: z.boolean().optional(),
+    showVisits: z.boolean().optional(),
+    showPayments: z.boolean().optional(),
+    showDocuments: z.boolean().optional(),
+    showStatistics: z.boolean().optional(),
+    showAccounting: z.boolean().optional(),
+    showExpenses: z.boolean().optional()
+  });
+
+  // Create new branch
+  app.post("/api/admin/branches", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const parsed = createBranchSchema.parse(req.body);
+      const { name, location, password } = parsed;
+      
+      // Create the branch
+      const branch = await storage.createBranch({ name, location });
+      
+      // If password provided, set it (hashed)
+      if (password) {
+        const hashedPassword = await bcrypt.hash(password.trim(), 10);
+        await storage.setBranchPassword(branch.id, hashedPassword);
+      }
+      
+      // Create default settings (all visible)
+      await storage.setBranchSettings(branch.id, {
+        showPatients: true,
+        showVisits: true,
+        showPayments: true,
+        showDocuments: true,
+        showStatistics: true,
+        showAccounting: true,
+        showExpenses: true
+      });
+      
+      res.json({ success: true, branch });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      // Check for unique constraint violation
+      if ((err as any)?.code === '23505') {
+        return res.status(400).json({ message: "اسم الفرع موجود مسبقاً" });
+      }
+      throw err;
+    }
+  });
+
+  // Delete branch
+  app.delete("/api/admin/branches/:id", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    const branchId = Number(req.params.id);
+    if (isNaN(branchId)) {
+      return res.status(400).json({ message: "معرف الفرع غير صالح" });
+    }
+    
+    const result = await storage.deleteBranch(branchId);
+    if (!result.success) {
+      return res.status(400).json({ message: result.error });
+    }
+    
+    res.json({ success: true, message: "تم حذف الفرع بنجاح" });
+  });
+
+  // Get branch settings
+  app.get("/api/admin/branches/:id/settings", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    const branchId = Number(req.params.id);
+    if (isNaN(branchId)) {
+      return res.status(400).json({ message: "معرف الفرع غير صالح" });
+    }
+    
+    const settings = await storage.getBranchSettings(branchId);
+    res.json(settings || {
+      branchId,
+      showPatients: true,
+      showVisits: true,
+      showPayments: true,
+      showDocuments: true,
+      showStatistics: true,
+      showAccounting: true,
+      showExpenses: true
+    });
+  });
+
+  // Get all branches with settings and patient counts
+  app.get("/api/admin/branches/full", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    const allBranches = await storage.getBranches();
+    const allSettings = await storage.getAllBranchSettings();
+    const allPasswords = await storage.getAllBranchPasswords();
+    
+    const branchesWithDetails = await Promise.all(
+      allBranches.map(async (branch) => {
+        const settings = allSettings.find(s => s.branchId === branch.id);
+        const hasPassword = allPasswords.some(p => p.branchId === branch.id);
+        const patientCount = await storage.getBranchPatientCount(branch.id);
+        
+        return {
+          ...branch,
+          patientCount,
+          hasPassword,
+          settings: settings || {
+            showPatients: true,
+            showVisits: true,
+            showPayments: true,
+            showDocuments: true,
+            showStatistics: true,
+            showAccounting: true,
+            showExpenses: true
+          }
+        };
+      })
+    );
+    
+    res.json(branchesWithDetails);
+  });
+
+  // Update branch settings
+  app.post("/api/admin/branches/settings", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const parsed = updateBranchSettingsSchema.parse(req.body);
+      const { branchId, ...settingsUpdate } = parsed;
+      
+      const settings = await storage.setBranchSettings(branchId, settingsUpdate);
+      res.json({ success: true, settings });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
