@@ -23,9 +23,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
-import { Loader2, ArrowRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, ArrowRight, Building2 } from "lucide-react";
 import { z } from "zod";
 import { useEffect, useState } from "react";
+import { useBranchSession } from "@/components/BranchGate";
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
@@ -40,7 +42,12 @@ export default function CreatePatient() {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const searchParams = new URLSearchParams(searchString);
-  const defaultBranchId = Number(searchParams.get("branch")) || 1;
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
+  const userBranchId = branchSession?.branchId;
+  
+  // Non-admin users always use their branch, admin can select
+  const defaultBranchId = !isAdmin && userBranchId ? userBranchId : (Number(searchParams.get("branch")) || 1);
   
   const { mutate, isPending } = useCreatePatient();
   const { data: branches } = useQuery<Branch[]>({
@@ -282,23 +289,32 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>الفرع</FormLabel>
-                    <Select 
-                      onValueChange={(val) => field.onChange(Number(val))} 
-                      defaultValue={String(field.value)}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="bg-slate-50" data-testid="select-branch">
-                          <SelectValue placeholder="اختر الفرع" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {branches?.map((branch) => (
-                          <SelectItem key={branch.id} value={String(branch.id)}>
-                            {branch.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {isAdmin ? (
+                      <Select 
+                        onValueChange={(val) => field.onChange(Number(val))} 
+                        defaultValue={String(field.value)}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="bg-slate-50" data-testid="select-branch">
+                            <SelectValue placeholder="اختر الفرع" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {branches?.map((branch) => (
+                            <SelectItem key={branch.id} value={String(branch.id)}>
+                              {branch.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border border-input rounded-md">
+                        <Building2 className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-medium">
+                          {branchSession?.branchName || branches?.find(b => b.id === userBranchId)?.name}
+                        </span>
+                      </div>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

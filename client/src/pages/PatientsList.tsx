@@ -13,11 +13,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users, CalendarIcon } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useBranchSession } from "@/components/BranchGate";
 import type { Branch } from "@shared/schema";
 
 function isSameDay(date1: Date, date2: Date): boolean {
@@ -33,6 +34,10 @@ function getTodayDateString(): string {
 
 export default function PatientsList() {
   const { data: patients, isLoading } = usePatients();
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
+  const userBranchId = branchSession?.branchId;
+  
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -45,8 +50,19 @@ export default function PatientsList() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [viewMode, setViewMode] = useState<"date" | "all">("date");
-  const [selectedBranch, setSelectedBranch] = useState<string>("all");
+  const [selectedBranch, setSelectedBranch] = useState<string>(() => {
+    // Non-admin users default to their branch
+    if (!isAdmin && userBranchId) return String(userBranchId);
+    return "all";
+  });
   const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
+  
+  // Lock branch filter for non-admin users
+  useEffect(() => {
+    if (!isAdmin && userBranchId) {
+      setSelectedBranch(String(userBranchId));
+    }
+  }, [isAdmin, userBranchId]);
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
@@ -121,25 +137,31 @@ export default function PatientsList() {
 
       {/* Branch Filter + View Mode Tabs */}
       <div className="flex flex-col gap-3 bg-white p-3 md:p-4 rounded-xl border border-border shadow-sm">
-        {/* Branch Filter */}
+        {/* Branch Filter - Admin sees selector, Staff sees their branch badge */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
             <Building2 className="w-4 h-4 text-primary" />
-            <span>اختر الفرع:</span>
+            <span>{isAdmin ? "اختر الفرع:" : "الفرع:"}</span>
           </div>
-          <Select value={selectedBranch} onValueChange={handleBranchChange}>
-            <SelectTrigger className="w-full sm:w-[200px] h-10" data-testid="select-branch-filter">
-              <SelectValue placeholder="جميع الفروع" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">جميع الفروع</SelectItem>
-              {branches?.map(branch => (
-                <SelectItem key={branch.id} value={String(branch.id)}>
-                  {branch.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {isAdmin ? (
+            <Select value={selectedBranch} onValueChange={handleBranchChange}>
+              <SelectTrigger className="w-full sm:w-[200px] h-10" data-testid="select-branch-filter">
+                <SelectValue placeholder="جميع الفروع" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">جميع الفروع</SelectItem>
+                {branches?.map(branch => (
+                  <SelectItem key={branch.id} value={String(branch.id)}>
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Badge variant="outline" className="text-sm px-3 py-1.5 bg-primary/5 border-primary/20">
+              {branchSession?.branchName || getBranchName(userBranchId || 0)}
+            </Badge>
+          )}
           {selectedBranch !== "all" && (
             <Badge variant="secondary" className="text-xs">
               {branchFilteredPatients.length} مريض في هذا الفرع
