@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Settings, 
   Key, 
@@ -22,9 +31,29 @@ import {
   FileText,
   BarChart3,
   Calendar,
-  Lock
+  Lock,
+  Plus,
+  Trash2,
+  MapPin,
+  AlertTriangle,
+  CheckCircle,
+  Layers
 } from "lucide-react";
-import type { Branch } from "@shared/schema";
+import type { Branch, BranchSetting } from "@shared/schema";
+
+interface BranchWithDetails extends Branch {
+  patientCount: number;
+  hasPassword: boolean;
+  settings: {
+    showPatients: boolean;
+    showVisits: boolean;
+    showPayments: boolean;
+    showDocuments: boolean;
+    showStatistics: boolean;
+    showAccounting: boolean;
+    showExpenses: boolean;
+  };
+}
 
 export default function AdminSettings() {
   const branchSession = useBranchSession();
@@ -44,8 +73,26 @@ export default function AdminSettings() {
 
   const [backupEmail, setBackupEmail] = useState("");
 
+  // Branch management states
+  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchLocation, setNewBranchLocation] = useState("");
+  const [newBranchPw, setNewBranchPw] = useState("");
+  const [showAddBranchDialog, setShowAddBranchDialog] = useState(false);
+  const [branchToDelete, setBranchToDelete] = useState<BranchWithDetails | null>(null);
+  const [selectedBranchForSettings, setSelectedBranchForSettings] = useState<number | null>(null);
+
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
+  });
+
+  const { data: branchesWithDetails } = useQuery<BranchWithDetails[]>({
+    queryKey: ["/api/admin/branches/full"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/branches/full", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: isAdmin,
   });
 
   const { data: backupEmailData } = useQuery({
@@ -130,6 +177,80 @@ export default function AdminSettings() {
     },
   });
 
+  const createBranchMutation = useMutation({
+    mutationFn: async (data: { name: string; location?: string; password?: string }) => {
+      const res = await fetch("/api/admin/branches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم إضافة الفرع بنجاح" });
+      setNewBranchName("");
+      setNewBranchLocation("");
+      setNewBranchPw("");
+      setShowAddBranchDialog(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteBranchMutation = useMutation({
+    mutationFn: async (branchId: number) => {
+      const res = await fetch(`/api/admin/branches/${branchId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم حذف الفرع بنجاح" });
+      setBranchToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateBranchSettingsMutation = useMutation({
+    mutationFn: async (data: { branchId: number } & Partial<BranchSetting>) => {
+      const res = await fetch("/api/admin/branches/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم تحديث إعدادات الفرع" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleUpdateAdminPassword = () => {
     if (!currentPassword || !newAdminPassword) {
       toast({ title: "خطأ", description: "يرجى ملء جميع الحقول", variant: "destructive" });
@@ -166,6 +287,27 @@ export default function AdminSettings() {
     updateBackupEmailMutation.mutate(backupEmail);
   };
 
+  const handleCreateBranch = () => {
+    if (!newBranchName || newBranchName.length < 2) {
+      toast({ title: "خطأ", description: "اسم الفرع يجب أن يكون حرفين على الأقل", variant: "destructive" });
+      return;
+    }
+    createBranchMutation.mutate({
+      name: newBranchName,
+      location: newBranchLocation || undefined,
+      password: newBranchPw || undefined,
+    });
+  };
+
+  const handleToggleSetting = (branchId: number, settingKey: string, currentValue: boolean) => {
+    updateBranchSettingsMutation.mutate({
+      branchId,
+      [settingKey]: !currentValue
+    });
+  };
+
+  const selectedBranchDetails = branchesWithDetails?.find(b => b.id === selectedBranchForSettings);
+
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -178,6 +320,16 @@ export default function AdminSettings() {
     );
   }
 
+  const sectionLabels: { key: string; label: string; icon: typeof Users }[] = [
+    { key: "showPatients", label: "المرضى", icon: Users },
+    { key: "showVisits", label: "الزيارات", icon: Calendar },
+    { key: "showPayments", label: "المدفوعات", icon: DollarSign },
+    { key: "showDocuments", label: "المستندات", icon: FileText },
+    { key: "showStatistics", label: "الإحصائيات", icon: BarChart3 },
+    { key: "showAccounting", label: "المحاسبة", icon: DollarSign },
+    { key: "showExpenses", label: "المصروفات", icon: DollarSign },
+  ];
+
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto" dir="rtl">
       <div className="flex items-center gap-3 mb-6">
@@ -186,12 +338,12 @@ export default function AdminSettings() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-slate-800">إعدادات النظام</h1>
-          <p className="text-slate-500">إدارة كلمات المرور وإعدادات النظام</p>
+          <p className="text-slate-500">إدارة كلمات المرور والفروع وإعدادات النظام</p>
         </div>
       </div>
 
       <Tabs defaultValue="passwords" className="w-full">
-        <TabsList className="grid grid-cols-3 w-full max-w-md mb-6">
+        <TabsList className="grid grid-cols-4 w-full max-w-lg mb-6">
           <TabsTrigger value="passwords" className="gap-2">
             <Key className="w-4 h-4" />
             كلمات المرور
@@ -199,6 +351,10 @@ export default function AdminSettings() {
           <TabsTrigger value="branches" className="gap-2">
             <Building2 className="w-4 h-4" />
             الفروع
+          </TabsTrigger>
+          <TabsTrigger value="management" className="gap-2">
+            <Layers className="w-4 h-4" />
+            إدارة الفروع
           </TabsTrigger>
           <TabsTrigger value="backup" className="gap-2">
             <Mail className="w-4 h-4" />
@@ -370,6 +526,123 @@ export default function AdminSettings() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="management" className="space-y-6">
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-primary" />
+                <h2 className="text-lg font-bold text-slate-800">إدارة الفروع</h2>
+              </div>
+              <Button 
+                onClick={() => setShowAddBranchDialog(true)}
+                className="gap-2"
+                data-testid="button-add-branch"
+              >
+                <Plus className="w-4 h-4" />
+                إضافة فرع جديد
+              </Button>
+            </div>
+
+            <div className="grid gap-4">
+              {branchesWithDetails?.map((branch) => (
+                <div 
+                  key={branch.id}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    selectedBranchForSettings === branch.id 
+                      ? "border-primary bg-primary/5" 
+                      : "border-border"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-primary/10 rounded-lg">
+                        <Building2 className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-slate-800">{branch.name}</h3>
+                        <div className="flex items-center gap-2 text-sm text-slate-500">
+                          {branch.location && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {branch.location}
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3 h-3" />
+                            {branch.patientCount} مريض
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {branch.hasPassword ? (
+                        <Badge variant="secondary" className="gap-1">
+                          <CheckCircle className="w-3 h-3" />
+                          كلمة مرور
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
+                          <AlertTriangle className="w-3 h-3" />
+                          بدون كلمة مرور
+                        </Badge>
+                      )}
+                      <Button
+                        variant={selectedBranchForSettings === branch.id ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedBranchForSettings(
+                          selectedBranchForSettings === branch.id ? null : branch.id
+                        )}
+                        data-testid={`button-settings-${branch.id}`}
+                      >
+                        <Settings className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setBranchToDelete(branch)}
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        disabled={branch.patientCount > 0}
+                        data-testid={`button-delete-${branch.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {selectedBranchForSettings === branch.id && (
+                    <div className="border-t pt-4 mt-4">
+                      <h4 className="text-sm font-semibold text-slate-700 mb-3">إعدادات إظهار الأقسام</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {sectionLabels.map(({ key, label, icon: Icon }) => (
+                          <div 
+                            key={key}
+                            className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
+                          >
+                            <div className="flex items-center gap-2">
+                              <Icon className="w-4 h-4 text-slate-600" />
+                              <span className="text-sm text-slate-700">{label}</span>
+                            </div>
+                            <Switch
+                              checked={(branch.settings as any)[key] ?? true}
+                              onCheckedChange={() => handleToggleSetting(
+                                branch.id, 
+                                key, 
+                                (branch.settings as any)[key] ?? true
+                              )}
+                              disabled={updateBranchSettingsMutation.isPending}
+                              data-testid={`switch-${key}-${branch.id}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="backup" className="space-y-6">
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-6">
@@ -466,6 +739,106 @@ export default function AdminSettings() {
           </div>
         </div>
       </Card>
+
+      {/* Add Branch Dialog */}
+      <Dialog open={showAddBranchDialog} onOpenChange={setShowAddBranchDialog}>
+        <DialogContent className="sm:max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5" />
+              إضافة فرع جديد
+            </DialogTitle>
+            <DialogDescription>
+              أدخل معلومات الفرع الجديد
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="newBranchName">اسم الفرع *</Label>
+              <Input
+                id="newBranchName"
+                value={newBranchName}
+                onChange={(e) => setNewBranchName(e.target.value)}
+                placeholder="مثال: فرع النجف"
+                className="mt-1"
+                data-testid="input-new-branch-name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="newBranchLocation">الموقع (اختياري)</Label>
+              <Input
+                id="newBranchLocation"
+                value={newBranchLocation}
+                onChange={(e) => setNewBranchLocation(e.target.value)}
+                placeholder="مثال: شارع الكوفة"
+                className="mt-1"
+                data-testid="input-new-branch-location"
+              />
+            </div>
+            <div>
+              <Label htmlFor="newBranchPw">كلمة المرور (اختياري)</Label>
+              <Input
+                id="newBranchPw"
+                type="password"
+                value={newBranchPw}
+                onChange={(e) => setNewBranchPw(e.target.value)}
+                placeholder="كلمة مرور للدخول للفرع"
+                className="mt-1"
+                data-testid="input-new-branch-password"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setShowAddBranchDialog(false)}
+            >
+              إلغاء
+            </Button>
+            <Button
+              onClick={handleCreateBranch}
+              disabled={createBranchMutation.isPending}
+              className="gap-2"
+              data-testid="button-confirm-add-branch"
+            >
+              {createBranchMutation.isPending ? "جاري الإضافة..." : "إضافة الفرع"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Branch Confirmation Dialog */}
+      <Dialog open={!!branchToDelete} onOpenChange={() => setBranchToDelete(null)}>
+        <DialogContent className="sm:max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              تأكيد حذف الفرع
+            </DialogTitle>
+            <DialogDescription>
+              هل أنت متأكد من حذف فرع "{branchToDelete?.name}"؟ هذا الإجراء لا يمكن التراجع عنه.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setBranchToDelete(null)}
+            >
+              إلغاء
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => branchToDelete && deleteBranchMutation.mutate(branchToDelete.id)}
+              disabled={deleteBranchMutation.isPending}
+              className="gap-2"
+              data-testid="button-confirm-delete-branch"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleteBranchMutation.isPending ? "جاري الحذف..." : "حذف الفرع"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
