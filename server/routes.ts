@@ -452,7 +452,7 @@ export async function registerRoutes(
     res.json({ success: true, message: "تم حذف الفرع بنجاح" });
   });
 
-  // Get branch settings
+  // Get branch settings (admin only)
   app.get("/api/admin/branches/:id/settings", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     if (!branchSession?.isAdmin) {
@@ -464,6 +464,41 @@ export async function registerRoutes(
       return res.status(400).json({ message: "معرف الفرع غير صالح" });
     }
     
+    const settings = await storage.getBranchSettings(branchId);
+    res.json(settings || {
+      branchId,
+      showPatients: true,
+      showVisits: true,
+      showPayments: true,
+      showDocuments: true,
+      showStatistics: true,
+      showAccounting: true,
+      showExpenses: true
+    });
+  });
+
+  // Get current branch settings (for any authenticated user)
+  app.get("/api/branch-settings", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession) {
+      return res.status(401).json({ message: "يرجى تسجيل الدخول أولاً" });
+    }
+    
+    // Admin users get all features enabled by default
+    if (branchSession.isAdmin) {
+      return res.json({
+        branchId: 0,
+        showPatients: true,
+        showVisits: true,
+        showPayments: true,
+        showDocuments: true,
+        showStatistics: true,
+        showAccounting: true,
+        showExpenses: true
+      });
+    }
+    
+    const branchId = branchSession.branchId;
     const settings = await storage.getBranchSettings(branchId);
     res.json(settings || {
       branchId,
