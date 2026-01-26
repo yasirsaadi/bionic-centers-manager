@@ -20,6 +20,7 @@ import BranchDetails from "@/pages/BranchDetails";
 import BranchRevenues from "@/pages/BranchRevenues";
 import Statistics from "@/pages/Statistics";
 import Accounting from "@/pages/Accounting";
+import AdminSettings from "@/pages/AdminSettings";
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
@@ -73,6 +74,7 @@ function Router() {
           <Route path="/branches/:id" component={BranchDetails} />
           <Route path="/statistics" component={Statistics} />
           <Route path="/accounting" component={Accounting} />
+          <Route path="/admin" component={AdminSettings} />
           <Route component={NotFound} />
         </Switch>
       </Layout>

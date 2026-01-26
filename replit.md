@@ -121,3 +121,20 @@ Preferred communication style: Simple, everyday language.
 - Branch staff can view their own branch's financial reports (read-only)
 - Admin users see all branches with branch selector dropdown
 - Branch staff see only their branch data with branch name badge
+
+### Admin Settings System (January 2026)
+- New `/admin` page for system administrators only
+- Database tables: `system_settings`, `branch_passwords` for credential management
+- Tabbed interface: Admin Password, Branch Passwords, Backup Email
+
+**Password Security:**
+- All passwords stored as bcrypt hashes (cost factor 10)
+- Auto-migration: On first successful login with plaintext password, system automatically hashes and stores securely
+- Legacy support: Environment variables (ADMIN_CODE, BRANCH_PASSWORD_X) supported for initial setup, auto-migrated to hashes
+- Zod validation schemas for all auth endpoints
+
+**Admin Features:**
+- Change admin password (requires current password verification)
+- Manage all branch passwords through UI
+- Configure backup email for password recovery
+- Sidebar menu item "إعدادات النظام" visible only to admin users

@@ -1,6 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
+  systemSettings, branchPasswords,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
@@ -10,7 +11,8 @@ import {
   type Expense, type InsertExpense,
   type InstallmentPlan, type InsertInstallmentPlan,
   type Invoice, type InsertInvoice,
-  type InvoiceItem, type InsertInvoiceItem
+  type InvoiceItem, type InsertInvoiceItem,
+  type SystemSetting, type BranchPassword
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
@@ -99,6 +101,16 @@ export interface IStorage {
     paidAmount: number;
     pendingAmount: number;
   }>;
+
+  // System Settings
+  getSystemSetting(key: string): Promise<string | undefined>;
+  setSystemSetting(key: string, value: string): Promise<SystemSetting>;
+  getAllSystemSettings(): Promise<SystemSetting[]>;
+
+  // Branch Passwords
+  getBranchPassword(branchId: number): Promise<string | undefined>;
+  setBranchPassword(branchId: number, password: string): Promise<BranchPassword>;
+  getAllBranchPasswords(): Promise<BranchPassword[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -548,6 +560,60 @@ export class DatabaseStorage implements IStorage {
       paidAmount: result.paidAmount,
       pendingAmount: result.totalAmount - result.paidAmount
     };
+  }
+
+  // System Settings
+  async getSystemSetting(key: string): Promise<string | undefined> {
+    const [setting] = await db.select().from(systemSettings).where(eq(systemSettings.settingKey, key));
+    return setting?.settingValue;
+  }
+
+  async setSystemSetting(key: string, value: string): Promise<SystemSetting> {
+    // Upsert - update if exists, insert if not
+    const existing = await this.getSystemSetting(key);
+    if (existing !== undefined) {
+      const [updated] = await db.update(systemSettings)
+        .set({ settingValue: value, updatedAt: new Date() })
+        .where(eq(systemSettings.settingKey, key))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(systemSettings)
+        .values({ settingKey: key, settingValue: value })
+        .returning();
+      return created;
+    }
+  }
+
+  async getAllSystemSettings(): Promise<SystemSetting[]> {
+    return await db.select().from(systemSettings);
+  }
+
+  // Branch Passwords
+  async getBranchPassword(branchId: number): Promise<string | undefined> {
+    const [record] = await db.select().from(branchPasswords).where(eq(branchPasswords.branchId, branchId));
+    return record?.password;
+  }
+
+  async setBranchPassword(branchId: number, password: string): Promise<BranchPassword> {
+    // Upsert - update if exists, insert if not
+    const existing = await this.getBranchPassword(branchId);
+    if (existing !== undefined) {
+      const [updated] = await db.update(branchPasswords)
+        .set({ password, updatedAt: new Date() })
+        .where(eq(branchPasswords.branchId, branchId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(branchPasswords)
+        .values({ branchId, password })
+        .returning();
+      return created;
+    }
+  }
+
+  async getAllBranchPasswords(): Promise<BranchPassword[]> {
+    return await db.select().from(branchPasswords);
   }
 }
 

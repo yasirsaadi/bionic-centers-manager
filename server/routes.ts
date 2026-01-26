@@ -9,6 +9,31 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import bcrypt from "bcryptjs";
+
+// Validation schemas for admin settings
+const adminPasswordSchema = z.object({
+  currentPassword: z.string().min(1, "كلمة المرور الحالية مطلوبة"),
+  newPassword: z.string().min(4, "كلمة المرور يجب أن تكون 4 أحرف على الأقل"),
+});
+
+const branchPasswordSchema = z.object({
+  branchId: z.number().positive("معرف الفرع مطلوب"),
+  newPassword: z.string().min(4, "كلمة المرور يجب أن تكون 4 أحرف على الأقل"),
+});
+
+const backupEmailSchema = z.object({
+  email: z.string().email("البريد الإلكتروني غير صالح"),
+});
+
+const verifyBranchSchema = z.object({
+  branchId: z.union([z.string(), z.number()]),
+  password: z.string().min(1, "كلمة المرور مطلوبة"),
+});
+
+const verifyAdminSchema = z.object({
+  code: z.string().min(1, "كود المسؤول مطلوب"),
+});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -51,34 +76,91 @@ export async function registerRoutes(
     };
   };
 
-  // Admin code verification
+  // Admin code verification (legacy - uses same logic as branch login with admin branchId)
   app.post("/api/verify-admin", isAuthenticated, async (req, res) => {
-    const { code } = req.body;
-    const adminCode = process.env.ADMIN_CODE;
-    
-    if (!adminCode) {
-      return res.status(500).json({ message: "لم يتم تعيين كود المسؤول" });
-    }
-    
-    if (code === adminCode) {
-      res.json({ success: true });
-    } else {
-      res.status(401).json({ message: "الكود غير صحيح" });
+    try {
+      const parsed = verifyAdminSchema.parse(req.body);
+      const { code } = parsed;
+      const trimmedCode = code.trim();
+      
+      // Check for hashed password first, then plaintext, then env variable
+      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
+      const dbAdminPassword = await storage.getSystemSetting("admin_password");
+      const envAdminCode = process.env.ADMIN_CODE?.trim();
+      
+      let isValidPassword = false;
+      let needsMigration = false;
+      
+      if (dbAdminPasswordHash) {
+        isValidPassword = await bcrypt.compare(trimmedCode, dbAdminPasswordHash);
+      } else if (dbAdminPassword) {
+        isValidPassword = trimmedCode === dbAdminPassword;
+        needsMigration = isValidPassword;
+      } else if (envAdminCode) {
+        isValidPassword = trimmedCode === envAdminCode;
+        needsMigration = isValidPassword;
+      }
+      
+      if (isValidPassword) {
+        // Auto-migrate: hash plaintext password on successful login
+        if (needsMigration) {
+          const hashedPassword = await bcrypt.hash(trimmedCode, 10);
+          await storage.setSystemSetting("admin_password_hash", hashedPassword);
+          await storage.setSystemSetting("admin_password", "");
+        }
+        res.json({ success: true });
+      } else {
+        res.status(401).json({ message: "الكود غير صحيح" });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
     }
   });
 
   // Branch password verification
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
-    const { branchId, password } = req.body;
+    try {
+      const parsed = verifyBranchSchema.parse(req.body);
+      const { branchId, password } = parsed;
+      const trimmedInput = password.trim();
     
     console.log("Branch verification attempt:", { branchId, passwordLength: password?.length });
     
     // Check if admin login
     if (branchId === "admin" || branchId === 0) {
-      const adminCode = process.env.ADMIN_CODE?.trim();
-      const trimmedInput = password?.trim();
-      console.log("Admin code check:", { exists: !!adminCode, storedLen: adminCode?.length, inputLen: trimmedInput?.length, match: trimmedInput === adminCode });
-      if (trimmedInput === adminCode) {
+      // Check for hashed password first, then plaintext, then env variable
+      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
+      const dbAdminPassword = await storage.getSystemSetting("admin_password");
+      const envAdminCode = process.env.ADMIN_CODE?.trim();
+      
+      let isValidPassword = false;
+      let needsMigration = false;
+      
+      if (dbAdminPasswordHash) {
+        // Compare with hashed password
+        isValidPassword = await bcrypt.compare(trimmedInput, dbAdminPasswordHash);
+      } else if (dbAdminPassword) {
+        // Legacy plaintext comparison
+        isValidPassword = trimmedInput === dbAdminPassword;
+        needsMigration = isValidPassword;
+      } else if (envAdminCode) {
+        // Fall back to environment variable
+        isValidPassword = trimmedInput === envAdminCode;
+        needsMigration = isValidPassword;
+      }
+      
+      console.log("Admin code check:", { dbHashExists: !!dbAdminPasswordHash, dbExists: !!dbAdminPassword, envExists: !!envAdminCode, isValid: isValidPassword });
+      
+      if (isValidPassword) {
+        // Auto-migrate: hash plaintext password on successful login
+        if (needsMigration) {
+          const hashedPassword = await bcrypt.hash(trimmedInput, 10);
+          await storage.setSystemSetting("admin_password_hash", hashedPassword);
+          await storage.setSystemSetting("admin_password", "");
+        }
         // Store admin session info
         (req.session as any).branchSession = {
           branchId: 0,
@@ -93,39 +175,199 @@ export async function registerRoutes(
       return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
     }
     
-    // Branch passwords stored as BRANCH_PASSWORD_1, BRANCH_PASSWORD_2, etc.
+    // Check database first for branch password (may be hashed), fall back to environment variable
+    const numericBranchId = Number(branchId);
+    const dbBranchPassword = await storage.getBranchPassword(numericBranchId);
     const envKey = `BRANCH_PASSWORD_${branchId}`;
-    const branchPassword = process.env[envKey]?.trim();
-    const trimmedInput = password?.trim();
+    const envBranchPassword = process.env[envKey]?.trim();
+    
     console.log("Checking branch password:", { 
-      envKey, 
-      exists: !!branchPassword, 
       branchId, 
-      storedLen: branchPassword?.length,
-      inputLen: trimmedInput?.length,
-      match: trimmedInput === branchPassword 
+      dbExists: !!dbBranchPassword,
+      envExists: !!envBranchPassword
     });
     
-    if (!branchPassword) {
+    if (!dbBranchPassword && !envBranchPassword) {
       return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
     }
     
-    if (trimmedInput === branchPassword) {
+    let isValidBranchPassword = false;
+    let needsBranchMigration = false;
+    
+    if (dbBranchPassword) {
+      // Check if it's a bcrypt hash (starts with $2)
+      if (dbBranchPassword.startsWith('$2')) {
+        isValidBranchPassword = await bcrypt.compare(trimmedInput, dbBranchPassword);
+      } else {
+        // Legacy plaintext comparison
+        isValidBranchPassword = trimmedInput === dbBranchPassword;
+        needsBranchMigration = isValidBranchPassword;
+      }
+    } else if (envBranchPassword) {
+      // Fall back to environment variable (plaintext)
+      isValidBranchPassword = trimmedInput === envBranchPassword;
+      needsBranchMigration = isValidBranchPassword;
+    }
+    
+    if (isValidBranchPassword) {
+      // Auto-migrate: hash plaintext password on successful login
+      if (needsBranchMigration) {
+        const hashedPassword = await bcrypt.hash(trimmedInput, 10);
+        await storage.setBranchPassword(numericBranchId, hashedPassword);
+      }
       const branches = await storage.getBranches();
-      const branch = branches.find(b => b.id === Number(branchId));
+      const branch = branches.find(b => b.id === numericBranchId);
       // Store branch session info
       (req.session as any).branchSession = {
-        branchId: Number(branchId),
+        branchId: numericBranchId,
         isAdmin: false
       };
       return res.json({ 
-        branchId: Number(branchId), 
+        branchId: numericBranchId, 
         branchName: branch?.name || "فرع غير معروف",
         isAdmin: false 
       });
     }
     
     res.status(401).json({ message: "كلمة السر غير صحيحة" });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+  
+  // Admin Settings API - Only for admins
+  app.get("/api/admin/settings", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    const settings = await storage.getAllSystemSettings();
+    const branches = await storage.getBranches();
+    const branchPasswords = await storage.getAllBranchPasswords();
+    
+    // Build a map of branch passwords with branch names
+    const branchPasswordsWithNames = branches.map(branch => {
+      const pw = branchPasswords.find(bp => bp.branchId === branch.id);
+      return {
+        branchId: branch.id,
+        branchName: branch.name,
+        hasPassword: !!pw,
+        // Don't send actual password, just indicate if it exists
+      };
+    });
+    
+    res.json({
+      settings: settings.map(s => ({ key: s.settingKey, hasValue: !!s.settingValue })),
+      branches: branchPasswordsWithNames
+    });
+  });
+  
+  // Update admin password
+  app.post("/api/admin/settings/admin-password", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const parsed = adminPasswordSchema.parse(req.body);
+      const { currentPassword, newPassword } = parsed;
+      
+      // Check if password is hashed (starts with $2) or plaintext
+      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
+      const dbAdminPassword = await storage.getSystemSetting("admin_password");
+      const envAdminCode = process.env.ADMIN_CODE?.trim();
+      
+      let isValidPassword = false;
+      
+      if (dbAdminPasswordHash) {
+        // Compare with hashed password
+        isValidPassword = await bcrypt.compare(currentPassword.trim(), dbAdminPasswordHash);
+      } else if (dbAdminPassword) {
+        // Legacy plaintext comparison
+        isValidPassword = currentPassword.trim() === dbAdminPassword;
+      } else if (envAdminCode) {
+        // Fall back to environment variable
+        isValidPassword = currentPassword.trim() === envAdminCode;
+      }
+      
+      if (!isValidPassword) {
+        return res.status(401).json({ message: "كلمة المرور الحالية غير صحيحة" });
+      }
+      
+      // Hash and store new password
+      const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+      await storage.setSystemSetting("admin_password_hash", hashedPassword);
+      // Remove plaintext password if it exists
+      await storage.setSystemSetting("admin_password", "");
+      
+      res.json({ success: true, message: "تم تغيير كلمة مرور المسؤول بنجاح" });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+  
+  // Update branch password
+  app.post("/api/admin/settings/branch-password", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const parsed = branchPasswordSchema.parse(req.body);
+      const { branchId, newPassword } = parsed;
+      
+      // Hash and store new branch password
+      const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+      await storage.setBranchPassword(branchId, hashedPassword);
+      
+      res.json({ success: true, message: "تم تغيير كلمة مرور الفرع بنجاح" });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+  
+  // Update backup email
+  app.post("/api/admin/settings/backup-email", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const parsed = backupEmailSchema.parse(req.body);
+      const { email } = parsed;
+      
+      await storage.setSystemSetting("backup_email", email.trim());
+      res.json({ success: true, message: "تم حفظ البريد الإلكتروني الاحتياطي" });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+  
+  // Get backup email (for display)
+  app.get("/api/admin/settings/backup-email", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    const email = await storage.getSystemSetting("backup_email");
+    res.json({ email: email || "" });
   });
 
   // Branches

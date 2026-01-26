@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -43,6 +43,7 @@ export function Sidebar() {
     { label: "النظام المحاسبي", icon: Calculator, href: "/accounting", adminOnly: false },
     { label: "الفروع", icon: Building2, href: "/branches", adminOnly: true },
     { label: "الإحصاءات", icon: BarChart3, href: "/statistics", adminOnly: false },
+    { label: "إعدادات النظام", icon: Settings, href: "/admin", adminOnly: true },
   ];
 
   // Filter out admin-only items for non-admin users
