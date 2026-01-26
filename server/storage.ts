@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
-  systemSettings, branchPasswords,
+  systemSettings, branchPasswords, branchSettings,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
@@ -12,7 +12,7 @@ import {
   type InstallmentPlan, type InsertInstallmentPlan,
   type Invoice, type InsertInvoice,
   type InvoiceItem, type InsertInvoiceItem,
-  type SystemSetting, type BranchPassword
+  type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
@@ -111,6 +111,15 @@ export interface IStorage {
   getBranchPassword(branchId: number): Promise<string | undefined>;
   setBranchPassword(branchId: number, password: string): Promise<BranchPassword>;
   getAllBranchPasswords(): Promise<BranchPassword[]>;
+
+  // Branch Management
+  deleteBranch(id: number): Promise<{ success: boolean; error?: string }>;
+  getBranchPatientCount(branchId: number): Promise<number>;
+
+  // Branch Settings
+  getBranchSettings(branchId: number): Promise<BranchSetting | undefined>;
+  getAllBranchSettings(): Promise<BranchSetting[]>;
+  setBranchSettings(branchId: number, settings: Partial<InsertBranchSetting>): Promise<BranchSetting>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -614,6 +623,60 @@ export class DatabaseStorage implements IStorage {
 
   async getAllBranchPasswords(): Promise<BranchPassword[]> {
     return await db.select().from(branchPasswords);
+  }
+
+  // Branch Management
+  async deleteBranch(id: number): Promise<{ success: boolean; error?: string }> {
+    // Check if branch has patients
+    const patientCount = await this.getBranchPatientCount(id);
+    if (patientCount > 0) {
+      return { success: false, error: `الفرع يحتوي على ${patientCount} مريض. يرجى نقل أو حذف المرضى أولاً` };
+    }
+
+    // Delete related records first
+    await db.delete(branchPasswords).where(eq(branchPasswords.branchId, id));
+    await db.delete(branchSettings).where(eq(branchSettings.branchId, id));
+    await db.delete(expenses).where(eq(expenses.branchId, id));
+    await db.delete(invoices).where(eq(invoices.branchId, id));
+    await db.delete(installmentPlans).where(eq(installmentPlans.branchId, id));
+    await db.delete(customStats).where(eq(customStats.branchId, id));
+    
+    // Delete the branch
+    await db.delete(branches).where(eq(branches.id, id));
+    return { success: true };
+  }
+
+  async getBranchPatientCount(branchId: number): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
+      .from(patients)
+      .where(eq(patients.branchId, branchId));
+    return Number(result[0]?.count || 0);
+  }
+
+  // Branch Settings
+  async getBranchSettings(branchId: number): Promise<BranchSetting | undefined> {
+    const [settings] = await db.select().from(branchSettings).where(eq(branchSettings.branchId, branchId));
+    return settings;
+  }
+
+  async getAllBranchSettings(): Promise<BranchSetting[]> {
+    return await db.select().from(branchSettings);
+  }
+
+  async setBranchSettings(branchId: number, settings: Partial<InsertBranchSetting>): Promise<BranchSetting> {
+    const existing = await this.getBranchSettings(branchId);
+    if (existing) {
+      const [updated] = await db.update(branchSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(branchSettings.branchId, branchId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(branchSettings)
+        .values({ branchId, ...settings })
+        .returning();
+      return created;
+    }
   }
 }
 
