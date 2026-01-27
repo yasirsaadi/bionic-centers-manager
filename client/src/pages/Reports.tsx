@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Banknote, Clock, Building2, Calendar, Users, ChevronDown, ChevronUp, UserPlus, CreditCard } from "lucide-react";
+import { FileText, Banknote, Clock, Building2, Calendar, Users, ChevronDown, ChevronUp, UserPlus, CreditCard, ClipboardList } from "lucide-react";
 import { useState, useEffect } from "react";
 import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
@@ -30,14 +30,25 @@ interface PatientDetail {
   createdAt: string;
 }
 
+interface VisitDetail {
+  id: number;
+  patientId: number;
+  patientName: string;
+  visitDate: string;
+  details: string | null;
+  notes: string | null;
+}
+
 interface DailySummary {
   date: string;
   payments: PaymentDetail[];
   patients: PatientDetail[];
+  visits: VisitDetail[];
   totalPaid: number;
   totalCosts: number;
   patientCount: number;
   paymentCount: number;
+  visitCount: number;
 }
 
 interface DetailedReport {
@@ -102,6 +113,10 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                 <span className="flex items-center gap-1">
                   <UserPlus className="w-4 h-4" />
                   {summary.patientCount} مريض جديد
+                </span>
+                <span className="flex items-center gap-1">
+                  <ClipboardList className="w-4 h-4" />
+                  {summary.visitCount || 0} زيارة
                 </span>
                 <span className="flex items-center gap-1">
                   <CreditCard className="w-4 h-4" />
@@ -180,6 +195,37 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             </div>
           )}
           
+          {summary.visits && summary.visits.length > 0 && (
+            <div>
+              <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <ClipboardList className="w-5 h-5 text-purple-600" />
+                الزيارات ({summary.visits.length})
+              </h4>
+              <div className="overflow-hidden border rounded-xl bg-white">
+                <table className="w-full">
+                  <thead className="bg-purple-50/80">
+                    <tr>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">سبب الزيارة</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {summary.visits.map((visit, idx) => (
+                      <tr key={visit.id} className="hover:bg-slate-50/50">
+                        <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                        <td className="p-3 font-medium text-slate-800">{visit.patientName}</td>
+                        <td className="p-3 text-sm text-slate-700">{visit.notes || '-'}</td>
+                        <td className="p-3 text-sm text-muted-foreground">{visit.details || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {summary.payments.length > 0 && (
             <div>
               <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -221,7 +267,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             </div>
           )}
           
-          {summary.patients.length === 0 && summary.payments.length === 0 && (
+          {summary.patients.length === 0 && summary.payments.length === 0 && (!summary.visits || summary.visits.length === 0) && (
             <p className="text-center text-muted-foreground py-4">لا توجد عمليات في هذا اليوم</p>
           )}
         </div>

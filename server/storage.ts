@@ -32,6 +32,7 @@ export interface IStorage {
 
   // Visits
   getVisitsByPatientId(patientId: number): Promise<Visit[]>;
+  getVisitsByBranch(branchId: number): Promise<Visit[]>;
   createVisit(visit: InsertVisit): Promise<Visit>;
   deleteVisit(id: number): Promise<void>;
 
@@ -196,6 +197,9 @@ export class DatabaseStorage implements IStorage {
   // Visits
   async getVisitsByPatientId(patientId: number): Promise<Visit[]> {
     return await db.select().from(visits).where(eq(visits.patientId, patientId)).orderBy(desc(visits.visitDate));
+  }
+  async getVisitsByBranch(branchId: number): Promise<Visit[]> {
+    return await db.select().from(visits).where(eq(visits.branchId, branchId)).orderBy(desc(visits.visitDate));
   }
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
     const [visit] = await db.insert(visits).values(insertVisit).returning();
