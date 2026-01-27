@@ -955,7 +955,6 @@ export async function registerRoutes(
     const branchId = parseInt(req.params.branchId);
     const patients = await storage.getPatients(branchId);
     const payments = await storage.getPaymentsByBranch(branchId);
-    const branchVisits = await storage.getVisitsByBranch(branchId);
     
     // Create patient lookup map
     const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
@@ -979,15 +978,7 @@ export async function registerRoutes(
       isPhysiotherapy: boolean;
       isMedicalSupport: boolean;
       createdAt: string;
-    };
-    
-    type VisitDetail = {
-      id: number;
-      patientId: number;
-      patientName: string;
-      visitDate: string;
-      details: string | null;
-      notes: string | null;
+      visitReason: string | null;
     };
     
     // Group payments by date (YYYY-MM-DD)
@@ -995,9 +986,6 @@ export async function registerRoutes(
     
     // Group patients by registration date (for showing new patients)
     const patientsByDate: Record<string, PatientDetail[]> = {};
-    
-    // Group visits by date (YYYY-MM-DD)
-    const visitsByDate: Record<string, VisitDetail[]> = {};
     
     // Helper function to get local date key (YYYY-MM-DD)
     const getLocalDateKey = (date: Date | string | null): string => {
@@ -1037,6 +1025,16 @@ export async function registerRoutes(
         patientsByDate[dateKey] = [];
       }
       
+      // Determine visit reason based on patient type
+      let visitReason: string | null = null;
+      if (patient.isAmputee) {
+        visitReason = patient.injuryCause || patient.amputationSite || null;
+      } else if (patient.isPhysiotherapy) {
+        visitReason = patient.diseaseType || patient.treatmentType || null;
+      } else if (patient.isMedicalSupport) {
+        visitReason = patient.supportType || null;
+      }
+      
       patientsByDate[dateKey].push({
         id: patient.id,
         name: patient.name,
@@ -1044,41 +1042,21 @@ export async function registerRoutes(
         isAmputee: patient.isAmputee || false,
         isPhysiotherapy: patient.isPhysiotherapy || false,
         isMedicalSupport: patient.isMedicalSupport || false,
-        createdAt: patient.createdAt?.toString() || ''
-      });
-    }
-    
-    // Process visits
-    for (const visit of branchVisits) {
-      const patient = patientMap.get(visit.patientId);
-      const dateKey = getLocalDateKey(visit.visitDate);
-      
-      if (!visitsByDate[dateKey]) {
-        visitsByDate[dateKey] = [];
-      }
-      
-      visitsByDate[dateKey].push({
-        id: visit.id,
-        patientId: visit.patientId,
-        patientName: patient?.name || 'غير معروف',
-        visitDate: visit.visitDate?.toString() || '',
-        details: visit.details,
-        notes: visit.notes
+        createdAt: patient.createdAt?.toString() || '',
+        visitReason
       });
     }
     
     // Get all unique dates and sort (newest first)
     const paymentDates = Object.keys(paymentsByDate);
     const patientDates = Object.keys(patientsByDate);
-    const visitDates = Object.keys(visitsByDate);
-    const allDatesSet = new Set([...paymentDates, ...patientDates, ...visitDates]);
+    const allDatesSet = new Set([...paymentDates, ...patientDates]);
     const allDates = Array.from(allDatesSet).filter(d => d !== 'unknown').sort((a, b) => b.localeCompare(a));
     
     // Calculate daily summaries
     const dailySummaries = allDates.map(date => {
       const dayPayments = paymentsByDate[date] || [];
       const dayPatients = patientsByDate[date] || [];
-      const dayVisits = visitsByDate[date] || [];
       
       return {
         date,
@@ -1086,14 +1064,10 @@ export async function registerRoutes(
           new Date(b.date).getTime() - new Date(a.date).getTime()
         ),
         patients: dayPatients,
-        visits: dayVisits.sort((a: VisitDetail, b: VisitDetail) => 
-          new Date(b.visitDate).getTime() - new Date(a.visitDate).getTime()
-        ),
         totalPaid: dayPayments.reduce((acc: number, p: PaymentDetail) => acc + p.amount, 0),
         totalCosts: dayPatients.reduce((acc: number, p: PatientDetail) => acc + p.totalCost, 0),
         patientCount: dayPatients.length,
-        paymentCount: dayPayments.length,
-        visitCount: dayVisits.length
+        paymentCount: dayPayments.length
       };
     });
     
