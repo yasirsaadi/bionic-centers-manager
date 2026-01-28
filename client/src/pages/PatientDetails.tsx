@@ -491,7 +491,10 @@ export default function PatientDetails() {
                     ) : (
                       patient.visits?.map((visit) => (
                         <tr key={visit.id} className="hover:bg-slate-50/50">
-                          <td className="p-4 text-slate-500">{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</td>
+                          <td className="p-4 text-slate-500">
+                            <div>{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</div>
+                            <div className="text-xs text-slate-400">{new Date(visit.visitDate || "").toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
+                          </td>
                           <td className="p-4 text-slate-700">{visit.details || "-"}</td>
                           <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
                           <td className="p-4">
