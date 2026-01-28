@@ -202,11 +202,22 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                   </thead>
                   <tbody className="divide-y">
                     {summary.payments.map((payment, idx) => {
-                      const paymentTime = payment.date ? new Date(payment.date).toLocaleTimeString('ar-IQ', { 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        hour12: true 
-                      }) : '-';
+                      const d = payment.date ? new Date(payment.date) : null;
+                      let paymentTime = '-';
+                      if (d) {
+                        const hours = d.getUTCHours();
+                        const minutes = d.getUTCMinutes();
+                        const seconds = d.getUTCSeconds();
+                        if (hours === 0 && minutes === 0 && seconds === 0) {
+                          paymentTime = 'غير محدد';
+                        } else {
+                          paymentTime = d.toLocaleTimeString('ar-IQ', { 
+                            hour: '2-digit', 
+                            minute: '2-digit',
+                            hour12: true 
+                          });
+                        }
+                      }
                       return (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>

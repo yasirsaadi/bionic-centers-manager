@@ -493,7 +493,18 @@ export default function PatientDetails() {
                         <tr key={visit.id} className="hover:bg-slate-50/50">
                           <td className="p-4 text-slate-500">
                             <div>{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</div>
-                            <div className="text-xs text-slate-400">{new Date(visit.visitDate || "").toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
+                            <div className="text-xs text-slate-400">
+                              {(() => {
+                                const d = new Date(visit.visitDate || "");
+                                const hours = d.getUTCHours();
+                                const minutes = d.getUTCMinutes();
+                                const seconds = d.getUTCSeconds();
+                                if (hours === 0 && minutes === 0 && seconds === 0) {
+                                  return "وقت غير محدد";
+                                }
+                                return d.toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true });
+                              })()}
+                            </div>
                           </td>
                           <td className="p-4 text-slate-700">{visit.details || "-"}</td>
                           <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
@@ -559,7 +570,18 @@ export default function PatientDetails() {
                           <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
                           <td className="p-4 text-slate-500">
                             <div>{new Date(payment.date || "").toLocaleDateString('en-GB')}</div>
-                            <div className="text-xs text-slate-400">{new Date(payment.date || "").toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
+                            <div className="text-xs text-slate-400">
+                              {(() => {
+                                const d = new Date(payment.date || "");
+                                const hours = d.getUTCHours();
+                                const minutes = d.getUTCMinutes();
+                                const seconds = d.getUTCSeconds();
+                                if (hours === 0 && minutes === 0 && seconds === 0) {
+                                  return "وقت غير محدد";
+                                }
+                                return d.toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true });
+                              })()}
+                            </div>
                           </td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
