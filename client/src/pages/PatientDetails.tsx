@@ -554,7 +554,10 @@ export default function PatientDetails() {
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                          <td className="p-4 text-slate-500">{new Date(payment.date || "").toLocaleDateString('en-GB')}</td>
+                          <td className="p-4 text-slate-500">
+                            <div>{new Date(payment.date || "").toLocaleDateString('en-GB')}</div>
+                            <div className="text-xs text-slate-400">{new Date(payment.date || "").toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
+                          </td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
                             <td className="p-4">
