@@ -195,25 +195,37 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                     <tr>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">الوقت</th>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">ملاحظات</th>
                       <th className="text-left p-3 font-semibold text-slate-600 text-sm">المبلغ (د.ع)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {summary.payments.map((payment, idx) => (
-                      <tr key={payment.id} className="hover:bg-slate-50/50">
-                        <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
-                        <td className="p-3 font-medium text-slate-800">{payment.patientName}</td>
-                        <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
-                        <td className="p-3 text-left font-mono font-bold text-emerald-600">
-                          {payment.amount.toLocaleString('ar-IQ')}
-                        </td>
-                      </tr>
-                    ))}
+                    {summary.payments.map((payment, idx) => {
+                      const paymentTime = payment.date ? new Date(payment.date).toLocaleTimeString('ar-IQ', { 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        hour12: true 
+                      }) : '-';
+                      return (
+                        <tr key={payment.id} className="hover:bg-slate-50/50">
+                          <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                          <td className="p-3 font-medium text-slate-800">{payment.patientName}</td>
+                          <td className="p-3 text-sm text-muted-foreground flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {paymentTime}
+                          </td>
+                          <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
+                          <td className="p-3 text-left font-mono font-bold text-emerald-600">
+                            {payment.amount.toLocaleString('ar-IQ')}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot className="bg-emerald-50/80">
                     <tr>
-                      <td colSpan={3} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
+                      <td colSpan={4} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
                       <td className="p-3 text-left font-mono font-bold text-emerald-600">
                         {summary.totalPaid.toLocaleString('ar-IQ')} د.ع
                       </td>
