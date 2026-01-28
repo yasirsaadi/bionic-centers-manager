@@ -1,6 +1,6 @@
 import { usePatients } from "@/hooks/use-patients";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch, useLocation } from "wouter";
 import { 
   Table, 
   TableBody, 
@@ -37,6 +37,8 @@ export default function PatientsList() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
+  const [, setLocation] = useLocation();
+  const searchString = useSearch();
   
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -50,12 +52,26 @@ export default function PatientsList() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [viewMode, setViewMode] = useState<"date" | "all">("date");
+  
+  // Get branch from URL query parameter for admin users
+  const urlParams = new URLSearchParams(searchString);
+  const branchFromUrl = urlParams.get("branch");
+  
   const [selectedBranch, setSelectedBranch] = useState<string>(() => {
     // Non-admin users default to their branch
     if (!isAdmin && userBranchId) return String(userBranchId);
+    // Admin users: check URL first, then default to "all"
+    if (branchFromUrl) return branchFromUrl;
     return "all";
   });
   const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
+  
+  // Sync branch from URL for admin users
+  useEffect(() => {
+    if (isAdmin && branchFromUrl && branchFromUrl !== selectedBranch) {
+      setSelectedBranch(branchFromUrl);
+    }
+  }, [branchFromUrl, isAdmin]);
   
   // Lock branch filter for non-admin users
   useEffect(() => {
@@ -63,6 +79,16 @@ export default function PatientsList() {
       setSelectedBranch(String(userBranchId));
     }
   }, [isAdmin, userBranchId]);
+  
+  // Update URL when branch changes (for admin users only)
+  const handleBranchChange = (value: string) => {
+    setSelectedBranch(value);
+    setCurrentPage(1);
+    if (isAdmin) {
+      const newUrl = value === "all" ? "/patients" : `/patients?branch=${value}`;
+      setLocation(newUrl, { replace: true });
+    }
+  };
 
   const getBranchName = (branchId: number) => {
     return branches?.find(b => b.id === branchId)?.name || "-";
@@ -112,11 +138,6 @@ export default function PatientsList() {
 
   const handleDateChange = (value: string) => {
     setSelectedDate(value);
-    setCurrentPage(1);
-  };
-
-  const handleBranchChange = (value: string) => {
-    setSelectedBranch(value);
     setCurrentPage(1);
   };
 
