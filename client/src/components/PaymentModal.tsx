@@ -58,7 +58,17 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
-    mutate(values, {
+    // Add current time to the date to ensure proper timestamp
+    let submissionDate = values.date;
+    if (submissionDate) {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      submissionDate = `${submissionDate}T${hours}:${minutes}:${seconds}`;
+    }
+    
+    mutate({ ...values, date: submissionDate }, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
