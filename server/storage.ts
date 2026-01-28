@@ -225,9 +225,41 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
+    // Handle date with proper timestamp
+    let paymentDate: Date;
+    
+    if (insertPayment.date) {
+      const inputDate = new Date(insertPayment.date);
+      const now = new Date();
+      
+      // Check if the input date is just a date without time (midnight UTC)
+      // or if the time portion is exactly 00:00:00
+      const isDateOnly = inputDate.getUTCHours() === 0 && 
+                          inputDate.getUTCMinutes() === 0 && 
+                          inputDate.getUTCSeconds() === 0;
+      
+      if (isDateOnly) {
+        // Combine the date from input with current time
+        paymentDate = new Date(
+          inputDate.getFullYear(),
+          inputDate.getMonth(),
+          inputDate.getDate(),
+          now.getHours(),
+          now.getMinutes(),
+          now.getSeconds()
+        );
+      } else {
+        // Date has time component, use it as-is
+        paymentDate = inputDate;
+      }
+    } else {
+      // No date provided, use current timestamp
+      paymentDate = new Date();
+    }
+    
     const paymentData = {
       ...insertPayment,
-      date: insertPayment.date ? new Date(insertPayment.date) : new Date(),
+      date: paymentDate,
     };
     const [payment] = await db.insert(payments).values(paymentData).returning();
     return payment;
