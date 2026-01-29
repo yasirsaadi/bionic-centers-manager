@@ -1142,9 +1142,9 @@ export async function registerRoutes(
 
   // Custom Stats API endpoints
   app.get("/api/custom-stats", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const branchId = user?.branchId;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const branchId = branchSession?.branchId;
+    const isAdmin = branchSession?.isAdmin;
     
     // Admin sees all, staff sees their branch + global
     const stats = isAdmin 
@@ -1165,9 +1165,10 @@ export async function registerRoutes(
 
   app.post("/api/custom-stats", isAuthenticated, async (req: any, res) => {
     try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const userBranchId = branchSession?.branchId;
       const user = req.user;
-      const isAdmin = user?.role === "admin";
-      const userBranchId = user?.branchId;
       
       const data = insertCustomStatSchema.parse({
         ...req.body,
@@ -1195,9 +1196,9 @@ export async function registerRoutes(
   app.put("/api/custom-stats/:id", isAuthenticated, async (req: any, res) => {
     try {
       const id = parseInt(req.params.id);
-      const user = req.user;
-      const isAdmin = user?.role === "admin";
-      const userBranchId = user?.branchId;
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const userBranchId = branchSession?.branchId;
       
       const existingStat = await storage.getCustomStat(id);
       if (!existingStat) {
@@ -1226,9 +1227,9 @@ export async function registerRoutes(
 
   app.delete("/api/custom-stats/:id", isAuthenticated, async (req: any, res) => {
     const id = parseInt(req.params.id);
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
-    const userBranchId = user?.branchId;
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const userBranchId = branchSession?.branchId;
     
     const existingStat = await storage.getCustomStat(id);
     if (!existingStat) {
@@ -1257,9 +1258,9 @@ export async function registerRoutes(
       return res.status(404).json({ error: "الحقل الإحصائي غير موجود" });
     }
     
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
-    const userBranchId = user?.branchId;
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const userBranchId = branchSession?.branchId;
     const targetBranchId = stat.isGlobal ? null : (stat.branchId || userBranchId);
     
     // Get patients for calculation
@@ -1319,8 +1320,8 @@ export async function registerRoutes(
 
   // Expenses CRUD - Admin only
   app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
@@ -1336,8 +1337,8 @@ export async function registerRoutes(
   });
 
   app.get("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
@@ -1353,8 +1354,9 @@ export async function registerRoutes(
 
   app.post("/api/expenses", isAuthenticated, async (req: any, res) => {
     try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
       const user = req.user;
-      const isAdmin = user?.role === "admin";
       
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بإضافة مصروفات" });
@@ -1374,8 +1376,8 @@ export async function registerRoutes(
 
   app.put("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const user = req.user;
-      const isAdmin = user?.role === "admin";
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
       
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
@@ -1395,8 +1397,8 @@ export async function registerRoutes(
   });
 
   app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
@@ -1413,8 +1415,8 @@ export async function registerRoutes(
   });
 
   app.get("/api/expenses/by-category/summary", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
@@ -1431,8 +1433,8 @@ export async function registerRoutes(
 
   // Installment Plans CRUD - Admin only
   app.get("/api/installment-plans", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول لخطط التقسيط" });
@@ -1460,8 +1462,9 @@ export async function registerRoutes(
 
   app.post("/api/installment-plans", isAuthenticated, async (req: any, res) => {
     try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
       const user = req.user;
-      const isAdmin = user?.role === "admin";
       
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بإنشاء خطط التقسيط" });
@@ -1481,8 +1484,8 @@ export async function registerRoutes(
 
   app.put("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const user = req.user;
-      const isAdmin = user?.role === "admin";
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
       
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بتعديل خطط التقسيط" });
@@ -1502,8 +1505,8 @@ export async function registerRoutes(
   });
 
   app.delete("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بحذف خطط التقسيط" });
@@ -1521,8 +1524,8 @@ export async function registerRoutes(
 
   // Accounting Summary - Admin only
   app.get("/api/accounting/summary", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1541,8 +1544,8 @@ export async function registerRoutes(
 
   // Get all payments for accounting
   app.get("/api/accounting/payments", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1559,8 +1562,8 @@ export async function registerRoutes(
 
   // Get all visits for accounting
   app.get("/api/accounting/visits", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1577,8 +1580,8 @@ export async function registerRoutes(
 
   // Debtors report - patients with outstanding balances
   app.get("/api/accounting/debtors", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول لتقرير المديونيات" });
@@ -1615,8 +1618,8 @@ export async function registerRoutes(
 
   // Monthly financial trends
   app.get("/api/accounting/monthly-trends", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1653,8 +1656,8 @@ export async function registerRoutes(
 
   // Profitability by service type
   app.get("/api/accounting/profitability-by-service", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1698,8 +1701,8 @@ export async function registerRoutes(
 
   // Branch comparison
   app.get("/api/accounting/branch-comparison", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
@@ -1737,9 +1740,8 @@ export async function registerRoutes(
 
   // Get all invoices (admin-only or branch-filtered)
   app.get("/api/invoices", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
-    const branchSession = req.session.branchSession;
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     const { branchId, status, patientId, startDate, endDate } = req.query;
     
@@ -1771,8 +1773,9 @@ export async function registerRoutes(
 
   // Create invoice (admin-only)
   app.post("/api/invoices", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     const user = req.user;
-    const isAdmin = user?.role === "admin";
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بإنشاء الفواتير" });
@@ -1808,8 +1811,8 @@ export async function registerRoutes(
 
   // Update invoice (admin-only)
   app.patch("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بتعديل الفواتير" });
@@ -1841,8 +1844,8 @@ export async function registerRoutes(
 
   // Delete invoice (admin-only)
   app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بحذف الفواتير" });
@@ -1861,8 +1864,8 @@ export async function registerRoutes(
 
   // Record payment for invoice (admin-only)
   app.post("/api/invoices/:id/payment", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بتسجيل المدفوعات" });
@@ -1899,8 +1902,8 @@ export async function registerRoutes(
 
   // Get invoice statistics (admin-only)
   app.get("/api/invoices/stats/summary", isAuthenticated, async (req: any, res) => {
-    const user = req.user;
-    const isAdmin = user?.role === "admin";
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
     
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للإحصائيات" });
