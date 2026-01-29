@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
+import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 
 interface PaymentDetail {
   id: number;
@@ -53,9 +54,10 @@ interface DetailedReport {
   };
 }
 
-function formatDate(dateStr: string): string {
+function formatDateLong(dateStr: string): string {
   const date = new Date(dateStr);
-  return date.toLocaleDateString('en-GB', {
+  return date.toLocaleDateString('ar-IQ', {
+    timeZone: 'Asia/Baghdad',
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -64,9 +66,7 @@ function formatDate(dateStr: string): string {
 }
 
 function isToday(dateStr: string): boolean {
-  const today = new Date();
-  const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  return dateStr === todayLocal;
+  return dateStr === getTodayIraq();
 }
 
 function DaySummaryCard({ summary, isExpanded, onToggle }: { 
@@ -91,11 +91,11 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-lg text-slate-800">
-                  {isTodayDate ? 'اليوم' : formatDate(summary.date)}
+                  {isTodayDate ? 'اليوم' : formatDateLong(summary.date)}
                 </h3>
                 {isTodayDate && (
                   <Badge variant="default" className="bg-primary text-white">
-                    {new Date().toLocaleDateString('en-GB')}
+                    {formatDateIraq(new Date())}
                   </Badge>
                 )}
               </div>
@@ -202,22 +202,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                   </thead>
                   <tbody className="divide-y">
                     {summary.payments.map((payment, idx) => {
-                      const d = payment.date ? new Date(payment.date) : null;
-                      let paymentTime = '-';
-                      if (d) {
-                        const hours = d.getUTCHours();
-                        const minutes = d.getUTCMinutes();
-                        const seconds = d.getUTCSeconds();
-                        if (hours === 0 && minutes === 0 && seconds === 0) {
-                          paymentTime = 'غير محدد';
-                        } else {
-                          paymentTime = d.toLocaleTimeString('ar-IQ', { 
-                            hour: '2-digit', 
-                            minute: '2-digit',
-                            hour12: true 
-                          });
-                        }
-                      }
+                      const paymentTime = payment.date ? formatTimeIraq(payment.date) : '-';
                       return (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>

@@ -23,6 +23,7 @@ import * as XLSX from "xlsx";
 import { AmiriRegular } from "@/lib/amiri-font";
 import ArabicReshaper from "arabic-reshaper";
 import { useBranchSession } from "@/components/BranchGate";
+import { formatDateIraq } from "@/lib/utils";
 import { 
   DollarSign, 
   TrendingUp, 
@@ -637,7 +638,7 @@ export default function Accounting() {
     // Subtitle
     doc.setFontSize(12);
     doc.text(reshapeArabic(`الفرع: ${currentBranchName}`), 105, 30, { align: 'center' });
-    doc.text(reshapeArabic(`تاريخ التقرير: ${new Date().toLocaleDateString('en-GB')}`), 105, 37, { align: 'center' });
+    doc.text(reshapeArabic(`تاريخ التقرير: ${formatDateIraq(new Date())}`), 105, 37, { align: 'center' });
     
     let yPos = 50;
     
@@ -744,7 +745,7 @@ export default function Accounting() {
       yPos += 10;
       
       const debtorData = debtors.slice(0, 20).map((d, i) => [
-        d.lastPaymentDate ? new Date(d.lastPaymentDate).toLocaleDateString('en-GB') : "-",
+        d.lastPaymentDate ? formatDateIraq(d.lastPaymentDate) : "-",
         reshapeArabic(formatCurrency(d.remaining)),
         reshapeArabic(formatCurrency(d.totalPaid)),
         reshapeArabic(formatCurrency(d.totalCost)),
@@ -797,7 +798,7 @@ export default function Accounting() {
     const summaryData = [
       ['التقرير المحاسبي الشامل'],
       ['الفرع', currentBranchName],
-      ['تاريخ التقرير', new Date().toLocaleDateString('en-GB')],
+      ['تاريخ التقرير', formatDateIraq(new Date())],
       [],
       ['الملخص المالي'],
       ['البيان', 'القيمة'],
@@ -822,7 +823,7 @@ export default function Accounting() {
         getCategoryLabel(e.category),
         e.description || '-',
         e.amount,
-        new Date(e.expenseDate).toLocaleDateString('en-GB'),
+        formatDateIraq(e.expenseDate),
         e.notes || '-'
       ]);
       
@@ -869,7 +870,7 @@ export default function Accounting() {
         d.totalCost,
         d.totalPaid,
         d.remaining,
-        d.lastPaymentDate ? new Date(d.lastPaymentDate).toLocaleDateString('en-GB') : 'لم يدفع'
+        d.lastPaymentDate ? formatDateIraq(d.lastPaymentDate) : 'لم يدفع'
       ]);
       
       const debtorSheet = XLSX.utils.aoa_to_sheet([debtorHeaders, ...debtorRows]);
@@ -1321,7 +1322,7 @@ export default function Accounting() {
                             {formatCurrency(expense.amount)}
                           </TableCell>
                           <TableCell>
-                            {new Date(expense.expenseDate).toLocaleDateString("en-GB")}
+                            {formatDateIraq(expense.expenseDate)}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -1413,7 +1414,7 @@ export default function Accounting() {
                           <TableRow key={invoice.id}>
                             <TableCell className="font-mono">{invoice.invoiceNumber}</TableCell>
                             <TableCell>{patient?.name || `مريض #${invoice.patientId}`}</TableCell>
-                            <TableCell>{new Date(invoice.invoiceDate).toLocaleDateString('en-GB')}</TableCell>
+                            <TableCell>{formatDateIraq(invoice.invoiceDate)}</TableCell>
                             <TableCell>{formatCurrency(invoice.total)}</TableCell>
                             <TableCell className="text-green-600">{formatCurrency(invoice.paidAmount || 0)}</TableCell>
                             <TableCell className={remaining > 0 ? "text-red-600" : "text-green-600"}>{formatCurrency(remaining)}</TableCell>
@@ -1666,7 +1667,7 @@ export default function Accounting() {
                             {debtor.lastPaymentDate ? (
                               <div className="flex items-center gap-1">
                                 <Clock className="h-4 w-4 text-muted-foreground" />
-                                {new Date(debtor.lastPaymentDate).toLocaleDateString("en-GB")}
+                                {formatDateIraq(debtor.lastPaymentDate)}
                               </div>
                             ) : (
                               <Badge variant="destructive">لم يدفع</Badge>

@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranchSession } from "@/components/BranchGate";
 import type { Branch } from "@shared/schema";
+import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 
 function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
@@ -249,7 +250,7 @@ export default function PatientsList() {
             <div className="md:hidden p-3 space-y-3">
               {paginatedPatients?.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
+                  {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
                 </div>
               ) : (
                 paginatedPatients?.map((patient, index) => (
@@ -271,7 +272,7 @@ export default function PatientsList() {
                       </p>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                         <span className="text-xs text-slate-400 font-mono">
-                          {new Date(patient.createdAt || "").toLocaleDateString('en-GB')}
+                          {formatDateIraq(patient.createdAt)}
                         </span>
                         <Link href={`/patients/${patient.id}`}>
                           <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
@@ -305,7 +306,7 @@ export default function PatientsList() {
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
-                        {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى"}
+                        {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -333,8 +334,8 @@ export default function PatientsList() {
                           {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                         </TableCell>
                         <TableCell className="text-slate-500 font-mono text-sm">
-                          <div>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</div>
-                          <div className="text-xs text-slate-400">{new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
+                          <div>{formatDateIraq(patient.createdAt)}</div>
+                          <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">
                           <Link href={`/patients/${patient.id}`}>

@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { formatDateIraq, formatDateIraqShort } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
@@ -397,7 +398,7 @@ export default function Statistics() {
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-12)
       .map(([month, data]) => ({
-        month: new Date(month + '-01').toLocaleDateString('ar-IQ', { month: 'short', year: 'numeric' }),
+        month: formatDateIraqShort(month + '-01'),
         ...data,
       }));
 
@@ -471,7 +472,7 @@ export default function Statistics() {
     doc.setFontSize(12);
     doc.text(reshapeArabic(`الفرع: ${currentBranchName}`), 105, 30, { align: 'center' });
     doc.text(reshapeArabic(`الفترة: ${timeRangeLabel}`), 105, 37, { align: 'center' });
-    doc.text(reshapeArabic(`تاريخ التقرير: ${new Date().toLocaleDateString('ar-IQ')}`), 105, 44, { align: 'center' });
+    doc.text(reshapeArabic(`تاريخ التقرير: ${formatDateIraq(new Date())}`), 105, 44, { align: 'center' });
     
     let yPos = 55;
     
@@ -567,7 +568,7 @@ export default function Statistics() {
     }
     
     // Save the PDF
-    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${new Date().toLocaleDateString('ar-IQ').replace(/\//g, '-')}.pdf`;
+    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${formatDateIraq(new Date()).replace(/\//g, '-')}.pdf`;
     doc.save(fileName);
   }, [stats, currentBranchName, timeRangeLabel, isAdmin]);
 
@@ -582,7 +583,7 @@ export default function Statistics() {
       ['تقرير الإحصائيات'],
       ['الفرع', currentBranchName],
       ['الفترة', timeRangeLabel],
-      ['تاريخ التقرير', new Date().toLocaleDateString('ar-IQ')],
+      ['تاريخ التقرير', formatDateIraq(new Date())],
       [],
       ['ملخص الإحصائيات'],
       ['البيان', 'القيمة'],
@@ -666,7 +667,7 @@ export default function Statistics() {
     }
     
     // Save the Excel file
-    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${new Date().toLocaleDateString('ar-IQ').replace(/\//g, '-')}.xlsx`;
+    const fileName = `تقرير_الإحصائيات_${currentBranchName}_${formatDateIraq(new Date()).replace(/\//g, '-')}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   }, [stats, currentBranchName, timeRangeLabel, isAdmin]);
 

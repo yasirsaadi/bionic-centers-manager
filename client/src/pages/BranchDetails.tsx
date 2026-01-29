@@ -10,6 +10,7 @@ import { Building2, ArrowRight, UserPlus, Users, Banknote, Calendar, CalendarDay
 import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
+import { formatDateIraq, getTodayIraq } from "@/lib/utils";
 
 type PatientWithVisits = Patient & { visits?: Visit[] };
 
@@ -20,8 +21,7 @@ function isSameDay(date1: Date, date2: Date): boolean {
 }
 
 function getTodayDateString(): string {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return getTodayIraq();
 }
 
 export default function BranchDetails() {
@@ -237,7 +237,7 @@ export default function BranchDetails() {
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-bold text-slate-700 mb-2">
-              {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${new Date(selectedDate).toLocaleDateString('en-GB')}` : "لا يوجد مرضى في هذا الفرع"}
+              {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى في هذا الفرع"}
             </h3>
             <p className="text-muted-foreground mb-4">
               {viewMode === "date" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
@@ -315,7 +315,7 @@ export default function BranchDetails() {
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                             <Calendar className="w-4 h-4" />
-                            <span>{new Date(patient.createdAt || "").toLocaleDateString('en-GB')}</span>
+                            <span>{formatDateIraq(patient.createdAt)}</span>
                           </div>
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
                             {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}

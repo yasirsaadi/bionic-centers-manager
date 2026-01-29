@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
+import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 
 function DashboardContent() {
   const [, navigate] = useLocation();
@@ -95,7 +96,7 @@ function DashboardContent() {
   const medicalSupportCount = stats?.medicalSupport || 0;
 
   // Format today's date
-  const todayFormatted = new Date().toLocaleDateString('en-GB');
+  const todayFormatted = formatDateIraq(new Date());
   
   return (
     <div className="space-y-6 md:space-y-8 page-transition">
@@ -244,7 +245,7 @@ function DashboardContent() {
                   </div>
                 </div>
                 <span className="text-xs font-medium px-2 py-1 rounded-md bg-blue-50 text-blue-600">
-                  {new Date(patient.createdAt || "").toLocaleDateString('en-GB')}
+                  {formatDateIraq(patient.createdAt)}
                 </span>
               </div>
             ))}

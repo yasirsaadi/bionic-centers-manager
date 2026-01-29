@@ -7,6 +7,7 @@ import { useLocation, useSearch } from "wouter";
 import { AdminGate } from "@/components/AdminGate";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
+import { formatDateIraq } from "@/lib/utils";
 
 interface BranchReport {
   revenue: number;
@@ -19,7 +20,7 @@ function BranchRevenuesContent() {
   const [, navigate] = useLocation();
   const searchString = useSearch();
   const isDaily = searchString.includes("daily=true");
-  const todayFormatted = new Date().toLocaleDateString('en-GB');
+  const todayFormatted = formatDateIraq(new Date());
 
   const { data: branches, isLoading: branchesLoading } = useQuery<Branch[]>({
     queryKey: [api.branches.list.path],

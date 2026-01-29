@@ -1,5 +1,6 @@
 import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
+import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -274,7 +275,7 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
-              <span className="hidden md:inline">تاريخ الملف: {new Date(patient.createdAt || "").toLocaleDateString('en-GB')} - {new Date(patient.createdAt || "").toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="hidden md:inline">تاريخ الملف: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
@@ -321,7 +322,7 @@ export default function PatientDetails() {
                       <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
                       <p className="font-semibold text-base flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
-                        {new Date(patient.injuryDate).toLocaleDateString('en-GB')}
+                        {formatDateIraq(patient.injuryDate)}
                       </p>
                     </div>
                   )}
@@ -492,18 +493,9 @@ export default function PatientDetails() {
                       patient.visits?.map((visit) => (
                         <tr key={visit.id} className="hover:bg-slate-50/50">
                           <td className="p-4 text-slate-500">
-                            <div>{new Date(visit.visitDate || "").toLocaleDateString('en-GB')}</div>
+                            <div>{formatDateIraq(visit.visitDate)}</div>
                             <div className="text-xs text-slate-400">
-                              {(() => {
-                                const d = new Date(visit.visitDate || "");
-                                const hours = d.getUTCHours();
-                                const minutes = d.getUTCMinutes();
-                                const seconds = d.getUTCSeconds();
-                                if (hours === 0 && minutes === 0 && seconds === 0) {
-                                  return "وقت غير محدد";
-                                }
-                                return d.toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true });
-                              })()}
+                              {formatTimeIraq(visit.visitDate)}
                             </div>
                           </td>
                           <td className="p-4 text-slate-700">{visit.details || "-"}</td>
@@ -569,18 +561,9 @@ export default function PatientDetails() {
                         <tr key={payment.id} className="hover:bg-slate-50/50">
                           <td className="p-4 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
                           <td className="p-4 text-slate-500">
-                            <div>{new Date(payment.date || "").toLocaleDateString('en-GB')}</div>
+                            <div>{formatDateIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">
-                              {(() => {
-                                const d = new Date(payment.date || "");
-                                const hours = d.getUTCHours();
-                                const minutes = d.getUTCMinutes();
-                                const seconds = d.getUTCSeconds();
-                                if (hours === 0 && minutes === 0 && seconds === 0) {
-                                  return "وقت غير محدد";
-                                }
-                                return d.toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit', hour12: true });
-                              })()}
+                              {formatTimeIraq(payment.date)}
                             </div>
                           </td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
@@ -640,7 +623,7 @@ export default function PatientDetails() {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 break-words" title={doc.fileName}>{doc.fileName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {new Date(doc.uploadedAt || "").toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          {formatDateIraq(doc.uploadedAt)}
                         </p>
                       </div>
                       <Button 
