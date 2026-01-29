@@ -439,11 +439,11 @@ export class DatabaseStorage implements IStorage {
   }> {
     // Get total revenue (all patient costs)
     const patientsQuery = branchId
-      ? await db.select({ total: sql<number>`COALESCE(SUM(${patients.totalCost}), 0)::integer` })
+      ? await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
           .from(patients).where(eq(patients.branchId, branchId))
-      : await db.select({ total: sql<number>`COALESCE(SUM(${patients.totalCost}), 0)::integer` })
+      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
           .from(patients);
-    const totalRevenue = patientsQuery[0]?.total || 0;
+    const totalRevenue = Number(patientsQuery[0]?.total) || 0;
 
     // Get total paid (all payments within date range if specified)
     const paymentConditions = [];
@@ -452,11 +452,11 @@ export class DatabaseStorage implements IStorage {
     if (endDate) paymentConditions.push(lte(payments.date, new Date(endDate)));
 
     const paymentsQuery = paymentConditions.length > 0
-      ? await db.select({ total: sql<number>`COALESCE(SUM(${payments.amount}), 0)::integer` })
+      ? await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
           .from(payments).where(and(...paymentConditions))
-      : await db.select({ total: sql<number>`COALESCE(SUM(${payments.amount}), 0)::integer` })
+      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
           .from(payments);
-    const totalPaid = paymentsQuery[0]?.total || 0;
+    const totalPaid = Number(paymentsQuery[0]?.total) || 0;
 
     // Get total expenses
     const expenseConditions = [];
@@ -465,11 +465,11 @@ export class DatabaseStorage implements IStorage {
     if (endDate) expenseConditions.push(lte(expenses.expenseDate, endDate));
 
     const expensesQuery = expenseConditions.length > 0
-      ? await db.select({ total: sql<number>`COALESCE(SUM(${expenses.amount}), 0)::integer` })
+      ? await db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
           .from(expenses).where(and(...expenseConditions))
-      : await db.select({ total: sql<number>`COALESCE(SUM(${expenses.amount}), 0)::integer` })
+      : await db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
           .from(expenses);
-    const totalExpenses = expensesQuery[0]?.total || 0;
+    const totalExpenses = Number(expensesQuery[0]?.total) || 0;
 
     const totalRemaining = totalRevenue - totalPaid;
     const netProfit = totalPaid - totalExpenses;

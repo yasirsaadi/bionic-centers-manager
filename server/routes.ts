@@ -1529,11 +1529,13 @@ export async function registerRoutes(
     }
     
     const { branchId, startDate, endDate } = req.query;
+    console.log("[DEBUG] Accounting summary request:", { branchId, startDate, endDate });
     const summary = await storage.getAccountingSummary(
       branchId ? parseInt(branchId) : undefined,
       startDate as string,
       endDate as string
     );
+    console.log("[DEBUG] Accounting summary result:", summary);
     res.json(summary);
   });
 
