@@ -955,9 +955,19 @@ export async function registerRoutes(
     const branchId = parseInt(req.params.branchId);
     const patients = await storage.getPatients(branchId);
     const payments = await storage.getPaymentsByBranch(branchId);
+    const visits = await storage.getVisitsByBranch(branchId);
     
     // Create patient lookup map
     const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
+    
+    // Create a map of patient ID to their first/latest visit details
+    const patientVisitMap = new Map<number, string>();
+    for (const visit of visits) {
+      // Get the first visit (earliest) for each patient to show as visit reason
+      if (!patientVisitMap.has(visit.patientId) && visit.details) {
+        patientVisitMap.set(visit.patientId, visit.details);
+      }
+    }
     
     // Define types
     type PaymentDetail = {
@@ -1025,17 +1035,19 @@ export async function registerRoutes(
         patientsByDate[dateKey] = [];
       }
       
-      // Determine visit reason based on patient type
-      // For amputees: show amputation site or prosthetic type (not injury cause)
-      // For physiotherapy: show disease type or treatment type
-      // For medical support: show support type
-      let visitReason: string | null = null;
-      if (patient.isAmputee) {
-        visitReason = patient.amputationSite || patient.prostheticType || null;
-      } else if (patient.isPhysiotherapy) {
-        visitReason = patient.diseaseType || patient.treatmentType || null;
-      } else if (patient.isMedicalSupport) {
-        visitReason = patient.supportType || null;
+      // Get visit reason from the visits table (details field)
+      // Falls back to patient type info if no visit details available
+      let visitReason: string | null = patientVisitMap.get(patient.id) || null;
+      
+      // Fallback to patient type info if no visit details
+      if (!visitReason) {
+        if (patient.isAmputee) {
+          visitReason = patient.amputationSite || patient.prostheticType || null;
+        } else if (patient.isPhysiotherapy) {
+          visitReason = patient.diseaseType || patient.treatmentType || null;
+        } else if (patient.isMedicalSupport) {
+          visitReason = patient.supportType || null;
+        }
       }
       
       patientsByDate[dateKey].push({
