@@ -1026,9 +1026,12 @@ export async function registerRoutes(
       }
       
       // Determine visit reason based on patient type
+      // For amputees: show amputation site or prosthetic type (not injury cause)
+      // For physiotherapy: show disease type or treatment type
+      // For medical support: show support type
       let visitReason: string | null = null;
       if (patient.isAmputee) {
-        visitReason = patient.injuryCause || patient.amputationSite || null;
+        visitReason = patient.amputationSite || patient.prostheticType || null;
       } else if (patient.isPhysiotherapy) {
         visitReason = patient.diseaseType || patient.treatmentType || null;
       } else if (patient.isMedicalSupport) {
