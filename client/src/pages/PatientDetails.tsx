@@ -454,7 +454,7 @@ export default function PatientDetails() {
           <Tabs defaultValue="visits" className="w-full">
             <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm flex-wrap gap-1">
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
-                سجل الزيارات
+                سبب الزيارة
               </TabsTrigger>
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 سجل المدفوعات
