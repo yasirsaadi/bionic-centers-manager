@@ -13,18 +13,20 @@ export function cn(...inputs: ClassValue[]) {
 
 const IRAQ_TIMEZONE = 'Asia/Baghdad';
 
-// Format date for display (day/month/year) - converts to Iraq timezone
+// Format date for display (day/month/year) - converts UTC to Iraq timezone
 export function formatDateIraq(date: Date | string | null | undefined): string {
   if (!date) return '';
-  const d = dayjs(date).tz(IRAQ_TIMEZONE);
+  // Parse the date as UTC first, then convert to Baghdad timezone
+  const d = dayjs.utc(date).tz(IRAQ_TIMEZONE);
   if (!d.isValid()) return '';
   return d.format('DD/MM/YYYY');
 }
 
-// Format time for display (12-hour with AM/PM in Arabic) - converts to Iraq timezone
+// Format time for display (12-hour with AM/PM in Arabic) - converts UTC to Iraq timezone
 export function formatTimeIraq(date: Date | string | null | undefined): string {
   if (!date) return 'وقت غير محدد';
-  const d = dayjs(date).tz(IRAQ_TIMEZONE);
+  // Parse the date as UTC first, then convert to Baghdad timezone
+  const d = dayjs.utc(date).tz(IRAQ_TIMEZONE);
   if (!d.isValid()) return 'وقت غير محدد';
   
   const hours = d.hour();
@@ -34,18 +36,18 @@ export function formatTimeIraq(date: Date | string | null | undefined): string {
   return `${hour12}:${minutes} ${ampm}`;
 }
 
-// Format date and time together - converts to Iraq timezone
+// Format date and time together - converts UTC to Iraq timezone
 export function formatDateTimeIraq(date: Date | string | null | undefined): string {
   if (!date) return '';
-  const d = dayjs(date).tz(IRAQ_TIMEZONE);
+  const d = dayjs.utc(date).tz(IRAQ_TIMEZONE);
   if (!d.isValid()) return '';
   return `${formatDateIraq(date)} - ${formatTimeIraq(date)}`;
 }
 
-// Format date for display with short month format - converts to Iraq timezone
+// Format date for display with short month format - converts UTC to Iraq timezone
 export function formatDateIraqShort(date: Date | string | null | undefined): string {
   if (!date) return '';
-  const d = dayjs(date).tz(IRAQ_TIMEZONE);
+  const d = dayjs.utc(date).tz(IRAQ_TIMEZONE);
   if (!d.isValid()) return '';
   
   const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
