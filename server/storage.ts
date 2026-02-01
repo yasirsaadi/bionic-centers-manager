@@ -15,7 +15,6 @@ import {
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
-import { getNowIraq } from "./timezone";
 
 export interface IStorage {
   // Branches
@@ -152,10 +151,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPatient(insertPatient: InsertPatient): Promise<Patient> {
-    const [patient] = await db.insert(patients).values({
-      ...insertPatient,
-      createdAt: getNowIraq()
-    }).returning();
+    const [patient] = await db.insert(patients).values(insertPatient).returning();
     return patient;
   }
 
@@ -206,10 +202,7 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(visits).where(eq(visits.branchId, branchId)).orderBy(desc(visits.visitDate));
   }
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
-    const [visit] = await db.insert(visits).values({
-      ...insertVisit,
-      visitDate: getNowIraq()
-    }).returning();
+    const [visit] = await db.insert(visits).values(insertVisit).returning();
     return visit;
   }
   async deleteVisit(id: number): Promise<void> {
@@ -232,12 +225,12 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
-    // Handle date with proper Iraq timezone timestamp
+    // Handle date - use current timestamp if not provided
     let paymentDate: Date;
     
     if (insertPayment.date) {
       const inputDate = new Date(insertPayment.date);
-      const now = getNowIraq();
+      const now = new Date();
       
       // Check if the input date is just a date without time (midnight UTC)
       const isDateOnly = inputDate.getUTCHours() === 0 && 
@@ -245,21 +238,21 @@ export class DatabaseStorage implements IStorage {
                           inputDate.getUTCSeconds() === 0;
       
       if (isDateOnly) {
-        // Combine the date from input with current Iraq time
+        // Combine the date from input with current UTC time
         paymentDate = new Date(
           inputDate.getFullYear(),
           inputDate.getMonth(),
           inputDate.getDate(),
-          now.getHours(),
-          now.getMinutes(),
-          now.getSeconds()
+          now.getUTCHours(),
+          now.getUTCMinutes(),
+          now.getUTCSeconds()
         );
       } else {
         paymentDate = inputDate;
       }
     } else {
-      // No date provided, use current Iraq timestamp
-      paymentDate = getNowIraq();
+      // No date provided, use current UTC timestamp
+      paymentDate = new Date();
     }
     
     const paymentData = {
@@ -354,10 +347,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createExpense(insertExpense: InsertExpense): Promise<Expense> {
-    const [expense] = await db.insert(expenses).values({
-      ...insertExpense,
-      createdAt: getNowIraq()
-    }).returning();
+    const [expense] = await db.insert(expenses).values(insertExpense).returning();
     return expense;
   }
 
@@ -420,10 +410,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInstallmentPlan(insertPlan: InsertInstallmentPlan): Promise<InstallmentPlan> {
-    const [plan] = await db.insert(installmentPlans).values({
-      ...insertPlan,
-      createdAt: getNowIraq()
-    }).returning();
+    const [plan] = await db.insert(installmentPlans).values(insertPlan).returning();
     return plan;
   }
 
@@ -542,10 +529,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInvoice(insertInvoice: InsertInvoice): Promise<Invoice> {
-    const [invoice] = await db.insert(invoices).values({
-      ...insertInvoice,
-      createdAt: getNowIraq()
-    }).returning();
+    const [invoice] = await db.insert(invoices).values(insertInvoice).returning();
     return invoice;
   }
 
@@ -559,7 +543,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getNextInvoiceNumber(): Promise<string> {
-    const today = getNowIraq();
+    const today = new Date();
     const year = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, '0');
     
