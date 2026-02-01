@@ -51,7 +51,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
     defaultValues: {
       patientId: patientId,
       branchId: branchId,
-      amount: 0,
+      amount: "" as any,
       notes: "",
       date: getTodayDate(),
     },
