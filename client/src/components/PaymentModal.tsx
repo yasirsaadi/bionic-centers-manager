@@ -121,7 +121,17 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
                 <FormItem>
                   <FormLabel>المبلغ المدفوع (د.ع)</FormLabel>
                   <FormControl>
-                    <Input type="number" {...field} className="text-left font-mono" placeholder="0" data-testid="input-payment-amount" />
+                    <Input 
+                      type="number" 
+                      className="text-left font-mono" 
+                      placeholder="أدخل المبلغ" 
+                      data-testid="input-payment-amount"
+                      value={field.value === 0 ? "" : field.value}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        field.onChange(val === "" ? "" : Number(val));
+                      }}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
