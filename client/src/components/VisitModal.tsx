@@ -17,7 +17,6 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2 } from "lucide-react";
@@ -69,7 +68,7 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
       </DialogTrigger>
       <DialogContent className="sm:max-w-[500px] font-body" dir="rtl">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-blue-600">تسجيل زيارة</DialogTitle>
+          <DialogTitle className="font-display text-xl text-blue-600">سبب الزيارة</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
@@ -79,7 +78,7 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
               name="details"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>تفاصيل الزيارة</FormLabel>
+                  <FormLabel>سبب الزيارة</FormLabel>
                   <FormControl>
                     <Textarea 
                       {...field} 
@@ -87,20 +86,6 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
                       placeholder="ما تم خلال الزيارة: فحص، قياسات، تعديلات..."
                       className="min-h-[100px]"
                     />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ملاحظات إضافية (اختياري)</FormLabel>
-                  <FormControl>
-                    <Input {...field} value={field.value || ""} placeholder="أي ملاحظات أخرى..." />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
