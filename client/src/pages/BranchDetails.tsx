@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, ArrowRight, UserPlus, Users, Banknote, Calendar, CalendarDays, Search, Eye, ChevronRight, ChevronLeft } from "lucide-react";
+import { Building2, ArrowRight, UserPlus, Users, Banknote, CalendarDays, Search, Eye, ChevronRight, ChevronLeft, Calendar } from "lucide-react";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
@@ -204,12 +205,10 @@ export default function BranchDetails() {
         
         {viewMode === "date" && (
           <div className="flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-primary shrink-0" />
-            <Input 
-              type="date"
+            <DatePickerIraq
               value={selectedDate}
-              onChange={(e) => handleDateChange(e.target.value)}
-              className="h-9 w-[160px] text-sm"
+              onChange={handleDateChange}
+              className="h-9"
               data-testid="input-date-filter"
             />
             {selectedDate === getTodayDateString() && (

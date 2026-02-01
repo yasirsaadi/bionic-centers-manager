@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, Calendar, CalendarDays, Users, CalendarIcon } from "lucide-react";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar } from "lucide-react";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -210,12 +211,10 @@ export default function PatientsList() {
           
           {viewMode === "date" && (
             <div className="flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-primary shrink-0" />
-              <Input 
-                type="date"
+              <DatePickerIraq
                 value={selectedDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="h-9 w-[160px] text-sm"
+                onChange={handleDateChange}
+                className="h-9"
                 data-testid="input-date-filter"
               />
               {selectedDate === getTodayDateString() && (
