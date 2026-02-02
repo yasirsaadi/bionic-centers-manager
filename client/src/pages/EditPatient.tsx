@@ -951,6 +951,56 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
+                </>
+              )}
+
+              {conditionType === "medical_support" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="supportType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع المسند</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مسند ظهر، مسند رقبة، مسند يد..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="injurySide"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>جهة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: يمين، يسار، كلا الجانبين..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+
+              <FormField
+                control={form.control}
+                name="injuryDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>تاريخ الإصابة (اختياري)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {conditionType === "physiotherapy" && (
+                <>
                   <FormField
                     control={form.control}
                     name="physioInjuryType"
@@ -1042,51 +1092,6 @@ export default function EditPatient() {
                   />
                 </>
               )}
-
-              {conditionType === "medical_support" && (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="supportType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>نوع المسند</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مسند ظهر، مسند رقبة، مسند يد..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="injurySide"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>جهة الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: يمين، يسار، كلا الجانبين..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
-
-              <FormField
-                control={form.control}
-                name="injuryDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>تاريخ الإصابة (اختياري)</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
 
               <FormField
                 control={form.control}
