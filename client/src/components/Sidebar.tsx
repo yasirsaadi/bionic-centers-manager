@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -14,6 +14,7 @@ interface BranchSession {
   branchName: string;
   isAdmin: boolean;
   role?: string;
+  displayName?: string;
 }
 
 interface BranchSettings {
@@ -135,6 +136,17 @@ export function Sidebar() {
 
       {branchSession && (
         <div className="px-4 md:px-6 py-3 md:py-4 border-t border-border/50 bg-slate-50/50">
+          {branchSession.displayName && (
+            <div className="flex items-center gap-2 text-xs md:text-sm mb-2">
+              <User className="w-4 h-4 text-primary" />
+              <span className="font-medium text-slate-700">{branchSession.displayName}</span>
+              {branchSession.role && (
+                <span className="text-xs text-muted-foreground">
+                  ({branchSession.role === "admin" ? "مسؤول النظام" : branchSession.role === "branch_manager" ? "مدير فرع" : "موظف استقبال"})
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 text-xs md:text-sm">
             {branchSession.isAdmin ? (
               <ShieldCheck className="w-4 h-4 text-primary" />
