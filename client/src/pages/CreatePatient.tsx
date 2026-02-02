@@ -362,9 +362,18 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>الوزن (كجم)</FormLabel>
-                    <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 70" />
-                    </FormControl>
+                    <Select value={field.value || ""} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50">
+                          <SelectValue placeholder="اختر الوزن" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Array.from({ length: 200 }, (_, i) => i + 1).map((num) => (
+                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
