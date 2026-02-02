@@ -2,8 +2,18 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Lock, Loader2, User } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Lock, Loader2, User, ShieldCheck, Building2 } from "lucide-react";
 import logoImage from "@/assets/logo.png";
+
+const userOptions = [
+  { value: "admin", label: "مسؤول النظام", icon: ShieldCheck },
+  { value: "baghdad", label: "بايونك بغداد", icon: Building2 },
+  { value: "karbala", label: "الوارث كربلاء", icon: Building2 },
+  { value: "dhiqar", label: "بايونك ذي قار", icon: Building2 },
+  { value: "mosul", label: "بايونك الموصل", icon: Building2 },
+  { value: "kirkuk", label: "بايونك كركوك", icon: Building2 },
+];
 
 interface BranchSession {
   branchId: number;
@@ -119,19 +129,22 @@ export function BranchGate({ children }: BranchGateProps) {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">اسم المستخدم</label>
-            <div className="relative">
-              <User className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="مثال: admin, baghdad, karbala"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="pr-10 h-12"
-                autoComplete="username"
-                data-testid="input-username"
-              />
-            </div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">اختر الفرع أو أدخل اسم المستخدم</label>
+            <Select value={username} onValueChange={setUsername}>
+              <SelectTrigger className="h-12" data-testid="select-branch-login">
+                <SelectValue placeholder="اختر الفرع" />
+              </SelectTrigger>
+              <SelectContent>
+                {userOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <span className="flex items-center gap-2">
+                      <option.icon className="w-4 h-4 text-primary" />
+                      {option.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div>
