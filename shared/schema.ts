@@ -200,6 +200,31 @@ export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
 
+// System users for internal authentication
+export const systemUsers = pgTable("system_users", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  displayName: text("display_name").notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  role: text("role").notNull().default("reception"), // admin, branch_manager, reception
+  isActive: boolean("is_active").default(true),
+  // Permissions
+  canViewPatients: boolean("can_view_patients").default(true),
+  canAddPatients: boolean("can_add_patients").default(true),
+  canEditPatients: boolean("can_edit_patients").default(false),
+  canDeletePatients: boolean("can_delete_patients").default(false),
+  canViewPayments: boolean("can_view_payments").default(true),
+  canAddPayments: boolean("can_add_payments").default(true),
+  canViewReports: boolean("can_view_reports").default(false),
+  canViewAccounting: boolean("can_view_accounting").default(false),
+  canManageAccounting: boolean("can_manage_accounting").default(false),
+  canViewStatistics: boolean("can_view_statistics").default(false),
+  canManageSettings: boolean("can_manage_settings").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // System settings for admin credentials and configuration
 export const systemSettings = pgTable("system_settings", {
   id: serial("id").primaryKey(),
@@ -235,6 +260,7 @@ export const branchSettings = pgTable("branch_settings", {
 export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit({ id: true, updatedAt: true });
 export const insertBranchPasswordSchema = createInsertSchema(branchPasswords).omit({ id: true, updatedAt: true });
 export const insertBranchSettingsSchema = createInsertSchema(branchSettings).omit({ id: true, updatedAt: true });
+export const insertSystemUserSchema = createInsertSchema(systemUsers).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
@@ -242,3 +268,5 @@ export type BranchPassword = typeof branchPasswords.$inferSelect;
 export type InsertBranchPassword = z.infer<typeof insertBranchPasswordSchema>;
 export type BranchSetting = typeof branchSettings.$inferSelect;
 export type InsertBranchSetting = z.infer<typeof insertBranchSettingsSchema>;
+export type SystemUser = typeof systemUsers.$inferSelect;
+export type InsertSystemUser = z.infer<typeof insertSystemUserSchema>;

@@ -50,7 +50,15 @@ import {
   CheckCircle,
   Layers
 } from "lucide-react";
-import type { Branch, BranchSetting } from "@shared/schema";
+import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Pencil } from "lucide-react";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -63,6 +71,59 @@ interface BranchWithDetails extends Branch {
     showStatistics: boolean;
   };
 }
+
+type UserRole = "admin" | "branch_manager" | "reception";
+
+const roleLabels: Record<UserRole, string> = {
+  admin: "مسؤول النظام",
+  branch_manager: "مدير فرع",
+  reception: "موظف استقبال"
+};
+
+const defaultPermissions: Record<UserRole, Partial<SystemUser>> = {
+  admin: {
+    canViewPatients: true,
+    canAddPatients: true,
+    canEditPatients: true,
+    canDeletePatients: true,
+    canViewPayments: true,
+    canAddPayments: true,
+    canEditPayments: true,
+    canDeletePayments: true,
+    canViewReports: true,
+    canManageAccounting: true,
+    canManageSettings: true,
+    canManageUsers: true,
+  },
+  branch_manager: {
+    canViewPatients: true,
+    canAddPatients: true,
+    canEditPatients: true,
+    canDeletePatients: false,
+    canViewPayments: true,
+    canAddPayments: true,
+    canEditPayments: true,
+    canDeletePayments: false,
+    canViewReports: true,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+  },
+  reception: {
+    canViewPatients: true,
+    canAddPatients: true,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: true,
+    canAddPayments: true,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+  }
+};
 
 export default function AdminSettings() {
   const branchSession = useBranchSession();
@@ -91,6 +152,31 @@ export default function AdminSettings() {
   const [branchToDelete, setBranchToDelete] = useState<BranchWithDetails | null>(null);
   const [selectedBranchForSettings, setSelectedBranchForSettings] = useState<number | null>(null);
 
+  // User management states
+  const [showUserDialog, setShowUserDialog] = useState(false);
+  const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
+  const [userToDelete, setUserToDelete] = useState<SystemUser | null>(null);
+  const [userFormData, setUserFormData] = useState({
+    username: "",
+    displayName: "",
+    password: "",
+    role: "reception" as UserRole,
+    branchId: null as number | null,
+    isActive: true,
+    canViewPatients: true,
+    canAddPatients: true,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: true,
+    canAddPayments: true,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+  });
+
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
   });
@@ -114,6 +200,154 @@ export default function AdminSettings() {
     },
     enabled: isAdmin,
   });
+
+  const { data: systemUsers, isLoading: isLoadingUsers } = useQuery<SystemUser[]>({
+    queryKey: ["/api/admin/users"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/users", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+
+  const createUserMutation = useMutation({
+    mutationFn: async (data: typeof userFormData) => {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم إنشاء المستخدم بنجاح" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setShowUserDialog(false);
+      resetUserForm();
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Partial<typeof userFormData> }) => {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم تحديث المستخدم بنجاح" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setShowUserDialog(false);
+      setEditingUser(null);
+      resetUserForm();
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم حذف المستخدم بنجاح" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setUserToDelete(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const resetUserForm = () => {
+    setUserFormData({
+      username: "",
+      displayName: "",
+      password: "",
+      role: "reception",
+      branchId: null,
+      isActive: true,
+      canViewPatients: true,
+      canAddPatients: true,
+      canEditPatients: false,
+      canDeletePatients: false,
+      canViewPayments: true,
+      canAddPayments: true,
+      canEditPayments: false,
+      canDeletePayments: false,
+      canViewReports: false,
+      canManageAccounting: false,
+      canManageSettings: false,
+      canManageUsers: false,
+    });
+  };
+
+  const handleRoleChange = (role: UserRole) => {
+    const perms = defaultPermissions[role];
+    setUserFormData(prev => ({
+      ...prev,
+      role,
+      ...perms,
+    }));
+  };
+
+  const openEditUserDialog = (user: SystemUser) => {
+    setEditingUser(user);
+    setUserFormData({
+      username: user.username,
+      displayName: user.displayName || "",
+      password: "",
+      role: user.role as UserRole,
+      branchId: user.branchId,
+      isActive: user.isActive,
+      canViewPatients: user.canViewPatients,
+      canAddPatients: user.canAddPatients,
+      canEditPatients: user.canEditPatients,
+      canDeletePatients: user.canDeletePatients,
+      canViewPayments: user.canViewPayments,
+      canAddPayments: user.canAddPayments,
+      canEditPayments: user.canEditPayments,
+      canDeletePayments: user.canDeletePayments,
+      canViewReports: user.canViewReports,
+      canManageAccounting: user.canManageAccounting,
+      canManageSettings: user.canManageSettings,
+      canManageUsers: user.canManageUsers,
+    });
+    setShowUserDialog(true);
+  };
+
+  const handleSaveUser = () => {
+    if (editingUser) {
+      updateUserMutation.mutate({ id: editingUser.id, data: userFormData });
+    } else {
+      createUserMutation.mutate(userFormData);
+    }
+  };
 
   const updateAdminPasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
@@ -362,8 +596,12 @@ export default function AdminSettings() {
         </div>
       </div>
 
-      <Tabs defaultValue="passwords" className="w-full">
-        <TabsList className="grid grid-cols-4 w-full max-w-lg mb-6">
+      <Tabs defaultValue="users" className="w-full">
+        <TabsList className="grid grid-cols-5 w-full max-w-2xl mb-6">
+          <TabsTrigger value="users" className="gap-2">
+            <Users className="w-4 h-4" />
+            المستخدمين
+          </TabsTrigger>
           <TabsTrigger value="passwords" className="gap-2">
             <Key className="w-4 h-4" />
             كلمات المرور
@@ -381,6 +619,93 @@ export default function AdminSettings() {
             الاحتياط
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="users" className="space-y-6">
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                <h2 className="text-lg font-bold text-slate-800">إدارة المستخدمين</h2>
+              </div>
+              <Button
+                onClick={() => {
+                  resetUserForm();
+                  setEditingUser(null);
+                  setShowUserDialog(true);
+                }}
+                data-testid="button-add-user"
+              >
+                <Plus className="w-4 h-4 ml-2" />
+                إضافة مستخدم
+              </Button>
+            </div>
+
+            {isLoadingUsers ? (
+              <div className="text-center py-8 text-muted-foreground">جاري التحميل...</div>
+            ) : systemUsers && systemUsers.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-right py-3 px-4 font-medium">اسم المستخدم</th>
+                      <th className="text-right py-3 px-4 font-medium">الاسم</th>
+                      <th className="text-right py-3 px-4 font-medium">الدور</th>
+                      <th className="text-right py-3 px-4 font-medium">الفرع</th>
+                      <th className="text-right py-3 px-4 font-medium">الحالة</th>
+                      <th className="text-right py-3 px-4 font-medium">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {systemUsers.map((user) => {
+                      const branch = branches?.find(b => b.id === user.branchId);
+                      return (
+                        <tr key={user.id} className="border-b hover-elevate" data-testid={`row-user-${user.id}`}>
+                          <td className="py-3 px-4">{user.username}</td>
+                          <td className="py-3 px-4">{user.displayName || "-"}</td>
+                          <td className="py-3 px-4">
+                            <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                              {roleLabels[user.role as UserRole] || user.role}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4">{branch?.name || (user.role === "admin" ? "جميع الفروع" : "-")}</td>
+                          <td className="py-3 px-4">
+                            <Badge variant={user.isActive ? "default" : "outline"}>
+                              {user.isActive ? "نشط" : "غير نشط"}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => openEditUserDialog(user)}
+                                data-testid={`button-edit-user-${user.id}`}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => setUserToDelete(user)}
+                                data-testid={`button-delete-user-${user.id}`}
+                              >
+                                <Trash2 className="w-4 h-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                لا يوجد مستخدمين. أضف مستخدمين جدد لإدارة النظام.
+              </div>
+            )}
+          </Card>
+        </TabsContent>
 
         <TabsContent value="passwords" className="space-y-6">
           <Card className="p-6">
@@ -878,6 +1203,292 @@ export default function AdminSettings() {
               data-testid="button-confirm-delete-branch"
             >
               {deleteBranchMutation.isPending ? "جاري الحذف..." : "نعم"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* User Management Dialog */}
+      <Dialog open={showUserDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowUserDialog(false);
+          setEditingUser(null);
+          resetUserForm();
+        }
+      }}>
+        <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingUser ? "تعديل المستخدم" : "إضافة مستخدم جديد"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingUser ? "قم بتعديل بيانات المستخدم والصلاحيات" : "أدخل بيانات المستخدم الجديد وحدد الصلاحيات"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="username">اسم المستخدم *</Label>
+                <Input
+                  id="username"
+                  value={userFormData.username}
+                  onChange={(e) => setUserFormData(prev => ({ ...prev, username: e.target.value }))}
+                  placeholder="اسم المستخدم للدخول"
+                  className="mt-1"
+                  data-testid="input-user-username"
+                />
+              </div>
+              <div>
+                <Label htmlFor="displayName">الاسم الظاهر</Label>
+                <Input
+                  id="displayName"
+                  value={userFormData.displayName}
+                  onChange={(e) => setUserFormData(prev => ({ ...prev, displayName: e.target.value }))}
+                  placeholder="الاسم الكامل"
+                  className="mt-1"
+                  data-testid="input-user-displayname"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="password">{editingUser ? "كلمة المرور الجديدة" : "كلمة المرور *"}</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={userFormData.password}
+                  onChange={(e) => setUserFormData(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder={editingUser ? "اترك فارغاً للإبقاء" : "كلمة المرور"}
+                  className="mt-1"
+                  data-testid="input-user-password"
+                />
+              </div>
+              <div>
+                <Label>الدور *</Label>
+                <Select
+                  value={userFormData.role}
+                  onValueChange={(value) => handleRoleChange(value as UserRole)}
+                >
+                  <SelectTrigger className="mt-1" data-testid="select-user-role">
+                    <SelectValue placeholder="اختر الدور" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">مسؤول النظام</SelectItem>
+                    <SelectItem value="branch_manager">مدير فرع</SelectItem>
+                    <SelectItem value="reception">موظف استقبال</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {userFormData.role !== "admin" && (
+              <div>
+                <Label>الفرع *</Label>
+                <Select
+                  value={userFormData.branchId?.toString() || ""}
+                  onValueChange={(value) => setUserFormData(prev => ({ ...prev, branchId: Number(value) }))}
+                >
+                  <SelectTrigger className="mt-1" data-testid="select-user-branch">
+                    <SelectValue placeholder="اختر الفرع" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {branches?.map((branch) => (
+                      <SelectItem key={branch.id} value={branch.id.toString()}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <Switch
+                id="isActive"
+                checked={userFormData.isActive}
+                onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, isActive: checked }))}
+                data-testid="switch-user-active"
+              />
+              <Label htmlFor="isActive">المستخدم نشط</Label>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="font-medium mb-4">الصلاحيات</h3>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground">المرضى</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canViewPatients"
+                        checked={userFormData.canViewPatients}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewPatients: checked }))}
+                      />
+                      <Label htmlFor="canViewPatients" className="text-sm">عرض المرضى</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canAddPatients"
+                        checked={userFormData.canAddPatients}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canAddPatients: checked }))}
+                      />
+                      <Label htmlFor="canAddPatients" className="text-sm">إضافة مرضى</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canEditPatients"
+                        checked={userFormData.canEditPatients}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEditPatients: checked }))}
+                      />
+                      <Label htmlFor="canEditPatients" className="text-sm">تعديل المرضى</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canDeletePatients"
+                        checked={userFormData.canDeletePatients}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canDeletePatients: checked }))}
+                      />
+                      <Label htmlFor="canDeletePatients" className="text-sm">حذف المرضى</Label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground">المدفوعات</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canViewPayments"
+                        checked={userFormData.canViewPayments}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewPayments: checked }))}
+                      />
+                      <Label htmlFor="canViewPayments" className="text-sm">عرض المدفوعات</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canAddPayments"
+                        checked={userFormData.canAddPayments}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canAddPayments: checked }))}
+                      />
+                      <Label htmlFor="canAddPayments" className="text-sm">إضافة مدفوعات</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canEditPayments"
+                        checked={userFormData.canEditPayments}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEditPayments: checked }))}
+                      />
+                      <Label htmlFor="canEditPayments" className="text-sm">تعديل المدفوعات</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canDeletePayments"
+                        checked={userFormData.canDeletePayments}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canDeletePayments: checked }))}
+                      />
+                      <Label htmlFor="canDeletePayments" className="text-sm">حذف المدفوعات</Label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground">التقارير والمحاسبة</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canViewReports"
+                        checked={userFormData.canViewReports}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewReports: checked }))}
+                      />
+                      <Label htmlFor="canViewReports" className="text-sm">عرض التقارير</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageAccounting"
+                        checked={userFormData.canManageAccounting}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageAccounting: checked }))}
+                      />
+                      <Label htmlFor="canManageAccounting" className="text-sm">إدارة المحاسبة</Label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground">النظام</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageSettings"
+                        checked={userFormData.canManageSettings}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageSettings: checked }))}
+                      />
+                      <Label htmlFor="canManageSettings" className="text-sm">إدارة الإعدادات</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageUsers"
+                        checked={userFormData.canManageUsers}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageUsers: checked }))}
+                      />
+                      <Label htmlFor="canManageUsers" className="text-sm">إدارة المستخدمين</Label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowUserDialog(false);
+                setEditingUser(null);
+                resetUserForm();
+              }}
+              data-testid="button-cancel-user"
+            >
+              إلغاء
+            </Button>
+            <Button
+              onClick={handleSaveUser}
+              disabled={createUserMutation.isPending || updateUserMutation.isPending || !userFormData.username || (!editingUser && !userFormData.password) || (userFormData.role !== "admin" && !userFormData.branchId)}
+              data-testid="button-save-user"
+            >
+              {createUserMutation.isPending || updateUserMutation.isPending ? "جاري الحفظ..." : (editingUser ? "تحديث" : "إضافة")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation AlertDialog */}
+      <AlertDialog open={!!userToDelete} onOpenChange={() => setUserToDelete(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              تأكيد حذف المستخدم
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد من حذف المستخدم "{userToDelete?.username}"؟ هذا الإجراء لا يمكن التراجع عنه.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel data-testid="button-cancel-delete-user">
+              لا
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => userToDelete && deleteUserMutation.mutate(userToDelete.id)}
+              disabled={deleteUserMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
+              data-testid="button-confirm-delete-user"
+            >
+              {deleteUserMutation.isPending ? "جاري الحذف..." : "نعم"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

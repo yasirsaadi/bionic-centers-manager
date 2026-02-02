@@ -588,6 +588,134 @@ export async function registerRoutes(
     }
   });
 
+  // ========== System Users Management ==========
+  
+  // Get all system users (admin only)
+  app.get("/api/admin/users", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const users = await storage.getSystemUsers();
+      // Remove password hashes from response
+      const safeUsers = users.map(u => ({ ...u, passwordHash: undefined }));
+      res.json(safeUsers);
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // Create system user (admin only)
+  app.post("/api/admin/users", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const { password, ...userData } = req.body;
+      
+      if (!userData.username || userData.username.length < 1) {
+        return res.status(400).json({ message: "اسم المستخدم مطلوب" });
+      }
+      
+      if (!password || password.length < 4) {
+        return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
+      }
+      
+      if (!userData.role || !["admin", "branch_manager", "reception"].includes(userData.role)) {
+        return res.status(400).json({ message: "الدور غير صالح" });
+      }
+      
+      // Non-admin users require a branch
+      if (userData.role !== "admin" && !userData.branchId) {
+        return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
+      }
+      
+      // Check if username already exists
+      const existing = await storage.getSystemUserByUsername(userData.username);
+      if (existing) {
+        return res.status(400).json({ message: "اسم المستخدم موجود مسبقاً" });
+      }
+      
+      // Hash password
+      const passwordHash = await bcrypt.hash(password, 10);
+      
+      const user = await storage.createSystemUser({
+        ...userData,
+        passwordHash
+      });
+      
+      res.json({ ...user, passwordHash: undefined });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // Update system user (admin only)
+  app.patch("/api/admin/users/:id", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const id = Number(req.params.id);
+      const { password, ...userData } = req.body;
+      
+      // Validate role if provided
+      if (userData.role && !["admin", "branch_manager", "reception"].includes(userData.role)) {
+        return res.status(400).json({ message: "الدور غير صالح" });
+      }
+      
+      // Non-admin users require a branch
+      if (userData.role && userData.role !== "admin" && !userData.branchId) {
+        return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
+      }
+      
+      // If password is being updated, hash it
+      let updateData = { ...userData };
+      if (password && password.length >= 4) {
+        updateData.passwordHash = await bcrypt.hash(password, 10);
+      }
+      
+      // If username is being changed, check if it already exists
+      if (userData.username) {
+        const existing = await storage.getSystemUserByUsername(userData.username);
+        if (existing && existing.id !== id) {
+          return res.status(400).json({ message: "اسم المستخدم موجود مسبقاً" });
+        }
+      }
+      
+      const user = await storage.updateSystemUser(id, updateData);
+      if (!user) {
+        return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
+      
+      res.json({ ...user, passwordHash: undefined });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // Delete system user (admin only)
+  app.delete("/api/admin/users/:id", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const id = Number(req.params.id);
+      await storage.deleteSystemUser(id);
+      res.json({ success: true });
+    } catch (err) {
+      throw err;
+    }
+  });
+
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
