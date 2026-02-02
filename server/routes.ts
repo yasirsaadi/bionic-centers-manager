@@ -27,9 +27,19 @@ const backupEmailSchema = z.object({
 });
 
 const verifyBranchSchema = z.object({
-  branchId: z.union([z.string(), z.number()]),
+  username: z.string().min(1, "اسم المستخدم مطلوب"),
   password: z.string().min(1, "كلمة المرور مطلوبة"),
 });
+
+// Username to branch mapping
+const usernameToBranch: Record<string, { branchId: number | "admin"; branchName: string }> = {
+  "admin": { branchId: "admin", branchName: "مسؤول النظام" },
+  "baghdad": { branchId: 1, branchName: "بايونك بغداد" },
+  "karbala": { branchId: 2, branchName: "الوارث كربلاء" },
+  "dhiqar": { branchId: 3, branchName: "بايونك ذي قار" },
+  "mosul": { branchId: 4, branchName: "بايونك الموصل" },
+  "kirkuk": { branchId: 5, branchName: "بايونك كركوك" },
+};
 
 const verifyAdminSchema = z.object({
   code: z.string().min(1, "كود المسؤول مطلوب"),
@@ -124,13 +134,22 @@ export async function registerRoutes(
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
-      const { branchId, password } = parsed;
+      const { username, password } = parsed;
       const trimmedInput = password.trim();
+      const normalizedUsername = username.toLowerCase().trim();
     
-    console.log("Branch verification attempt:", { branchId, passwordLength: password?.length });
+    console.log("Branch verification attempt:", { username: normalizedUsername, passwordLength: password?.length });
+    
+    // Check if username exists in mapping
+    const userMapping = usernameToBranch[normalizedUsername];
+    if (!userMapping) {
+      return res.status(401).json({ message: "اسم المستخدم غير موجود" });
+    }
+    
+    const { branchId, branchName } = userMapping;
     
     // Check if admin login
-    if (branchId === "admin" || branchId === 0) {
+    if (branchId === "admin") {
       // Check for hashed password first, then plaintext, then env variable
       const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
       const dbAdminPassword = await storage.getSystemSetting("admin_password");
@@ -176,9 +195,9 @@ export async function registerRoutes(
     }
     
     // Check database first for branch password (may be hashed), fall back to environment variable
-    const numericBranchId = Number(branchId);
+    const numericBranchId = branchId as number;
     const dbBranchPassword = await storage.getBranchPassword(numericBranchId);
-    const envKey = `BRANCH_PASSWORD_${branchId}`;
+    const envKey = `BRANCH_PASSWORD_${numericBranchId}`;
     const envBranchPassword = process.env[envKey]?.trim();
     
     console.log("Checking branch password:", { 
@@ -215,8 +234,6 @@ export async function registerRoutes(
         const hashedPassword = await bcrypt.hash(trimmedInput, 10);
         await storage.setBranchPassword(numericBranchId, hashedPassword);
       }
-      const branches = await storage.getBranches();
-      const branch = branches.find(b => b.id === numericBranchId);
       // Store branch session info
       (req.session as any).branchSession = {
         branchId: numericBranchId,
@@ -224,7 +241,7 @@ export async function registerRoutes(
       };
       return res.json({ 
         branchId: numericBranchId, 
-        branchName: branch?.name || "فرع غير معروف",
+        branchName: branchName,
         isAdmin: false 
       });
     }
