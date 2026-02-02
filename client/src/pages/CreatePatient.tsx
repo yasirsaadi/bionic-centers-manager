@@ -41,7 +41,7 @@ function getTodayDateString(): string {
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
-  age: z.coerce.number().min(1, "العمر مطلوب"),
+  age: z.string().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "نوع الجهة المحول منها مطلوب"),
@@ -82,7 +82,7 @@ export default function CreatePatient() {
       address: "",
       referralSource: "",
       referralSourceName: "",
-      age: 0,
+      age: "",
       weight: "",
       height: "",
       medicalCondition: "amputee",
@@ -338,9 +338,19 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>العمر</FormLabel>
-                    <FormControl>
-                      <Input type="number" {...field} className="bg-slate-50" />
-                    </FormControl>
+                    <Select value={field.value || ""} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50">
+                          <SelectValue placeholder="اختر العمر" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="أقل من 1">أقل من 1</SelectItem>
+                        {Array.from({ length: 120 }, (_, i) => i + 1).map((num) => (
+                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
