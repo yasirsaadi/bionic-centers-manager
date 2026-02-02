@@ -44,7 +44,8 @@ const formSchema = insertPatientSchema.extend({
   age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
-  referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
+  referralSource: z.string().min(1, "نوع الجهة المحول منها مطلوب"),
+  referralSourceName: z.string().optional(),
   registrationDate: z.string().min(1, "تاريخ الإضافة مطلوب"),
 });
 
@@ -361,10 +362,39 @@ export default function EditPatient() {
                 control={form.control}
                 name="referralSource"
                 render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>الجهة المحول منها *</FormLabel>
+                  <FormItem>
+                    <FormLabel>نوع الجهة المحول منها *</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50" data-testid="select-referral-source">
+                          <SelectValue placeholder="اختر نوع الجهة" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="طبيب">طبيب</SelectItem>
+                        <SelectItem value="مستشفى">مستشفى</SelectItem>
+                        <SelectItem value="جهة حكومية">جهة حكومية</SelectItem>
+                        <SelectItem value="منظمة انسانية">منظمة انسانية</SelectItem>
+                        <SelectItem value="مركز طبي">مركز طبي</SelectItem>
+                        <SelectItem value="فيسبوك">فيسبوك</SelectItem>
+                        <SelectItem value="انستاغرام">انستاغرام</SelectItem>
+                        <SelectItem value="تيكتوك">تيكتوك</SelectItem>
+                        <SelectItem value="كوكل">كوكل</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="referralSourceName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>اسم الجهة المحولة</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مستشفى / مركز صحي / شخص معين" data-testid="input-referral-source" />
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: د. أحمد / مستشفى الكرامة" data-testid="input-referral-source-name" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
