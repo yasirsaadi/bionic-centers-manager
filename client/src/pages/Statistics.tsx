@@ -357,6 +357,16 @@ export default function Statistics() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
 
+    // Referral source distribution
+    const referralSources: { [key: string]: number } = {};
+    filteredPatients.forEach(p => {
+      const source = p.referralSource || 'غير محدد';
+      referralSources[source] = (referralSources[source] || 0) + 1;
+    });
+    const referralSourceData = Object.entries(referralSources)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
     // Monthly trend: patients by registration date, visits/payments by their own dates
     const monthlyData: { [key: string]: { patients: number; payments: number; visits: number } } = {};
     
@@ -417,6 +427,7 @@ export default function Statistics() {
       branchDistribution,
       amputationSiteData,
       diseaseTypeData,
+      referralSourceData,
       monthlyTrend,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
     };
@@ -994,6 +1005,32 @@ export default function Statistics() {
               </Card>
             )}
           </div>
+
+          {/* Referral Source Distribution */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Globe className="w-5 h-5 text-primary" />
+                الجهات المحول منها
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={350}>
+                <BarChart data={stats.referralSourceData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={100} />
+                  <Tooltip formatter={(value) => [`${value} مريض`, 'العدد']} />
+                  <Legend />
+                  <Bar dataKey="value" name="عدد المرضى" fill="#8884d8" radius={[0, 4, 4, 0]}>
+                    {stats.referralSourceData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
 
           {/* Monthly Trend */}
           {stats.monthlyTrend.length > 1 && (
