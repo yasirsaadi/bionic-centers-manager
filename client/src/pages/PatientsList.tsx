@@ -337,8 +337,7 @@ export default function PatientsList() {
                           {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                         </TableCell>
                         <TableCell className="text-slate-500 font-mono text-sm">
-                          <div>{formatDateIraq(patient.createdAt)}</div>
-                          <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
+                          <div>{patient.registrationDate ? formatDateIraq(patient.registrationDate) : formatDateIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">
                           <Link href={`/patients/${patient.id}`}>
