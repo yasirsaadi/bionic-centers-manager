@@ -543,28 +543,33 @@ export default function CreatePatient() {
                       </div>
                       <div className="space-y-2">
                         <FormLabel>نوع البتر</FormLabel>
-                        {singleLimb === "lower" ? (
-                          <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
-                            <SelectTrigger className="bg-white">
-                              <SelectValue placeholder="اختر نوع البتر" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="جوبارت">جوبارت</SelectItem>
-                              <SelectItem value="سايمز">سايمز</SelectItem>
-                              <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                              <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                              <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                              <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input 
-                            value={singleAmputationDetail} 
-                            onChange={(e) => setSingleAmputationDetail(e.target.value)}
-                            placeholder="مثال: تحت المرفق، فوق المرفق..."
-                            className="bg-white"
-                          />
-                        )}
+                        <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
+                          <SelectTrigger className="bg-white">
+                            <SelectValue placeholder="اختر نوع البتر" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {singleLimb === "lower" ? (
+                              <>
+                                <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                <SelectItem value="سايمز">سايمز</SelectItem>
+                                <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                              </>
+                            ) : (
+                              <>
+                                <SelectItem value="اصبع">اصبع</SelectItem>
+                                <SelectItem value="كف جزئي">كف جزئي</SelectItem>
+                                <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                   )}
@@ -591,53 +596,63 @@ export default function CreatePatient() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <FormLabel>البتر اليمين</FormLabel>
-                            {doubleLimbType === "lower" ? (
-                              <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder="اختر نوع البتر" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Input 
-                                value={doubleRightDetail} 
-                                onChange={(e) => setDoubleRightDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                                className="bg-white"
-                              />
-                            )}
+                            <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
+                              <SelectTrigger className="bg-white">
+                                <SelectValue placeholder="اختر نوع البتر" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {doubleLimbType === "lower" ? (
+                                  <>
+                                    <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                    <SelectItem value="سايمز">سايمز</SelectItem>
+                                    <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                    <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                    <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                    <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                  </>
+                                ) : (
+                                  <>
+                                    <SelectItem value="اصبع">اصبع</SelectItem>
+                                    <SelectItem value="كف جزئي">كف جزئي</SelectItem>
+                                    <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                    <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                    <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                    <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                    <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                  </>
+                                )}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="space-y-2">
                             <FormLabel>البتر اليسار</FormLabel>
-                            {doubleLimbType === "lower" ? (
-                              <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder="اختر نوع البتر" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Input 
-                                value={doubleLeftDetail} 
-                                onChange={(e) => setDoubleLeftDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                                className="bg-white"
-                              />
-                            )}
+                            <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
+                              <SelectTrigger className="bg-white">
+                                <SelectValue placeholder="اختر نوع البتر" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {doubleLimbType === "lower" ? (
+                                  <>
+                                    <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                    <SelectItem value="سايمز">سايمز</SelectItem>
+                                    <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                    <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                    <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                    <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                  </>
+                                ) : (
+                                  <>
+                                    <SelectItem value="اصبع">اصبع</SelectItem>
+                                    <SelectItem value="كف جزئي">كف جزئي</SelectItem>
+                                    <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                    <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                    <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                    <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                    <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                  </>
+                                )}
+                              </SelectContent>
+                            </Select>
                           </div>
                         </div>
                       )}
