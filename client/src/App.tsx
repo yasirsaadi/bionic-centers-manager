@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -21,6 +21,28 @@ import BranchRevenues from "@/pages/BranchRevenues";
 import Statistics from "@/pages/Statistics";
 import Accounting from "@/pages/Accounting";
 import AdminSettings from "@/pages/AdminSettings";
+import { useState, useEffect } from "react";
+
+function DashboardRoute() {
+  const [session, setSession] = useState<{ role?: string } | null>(null);
+  
+  useEffect(() => {
+    const stored = sessionStorage.getItem("branch_session");
+    if (stored) {
+      try {
+        setSession(JSON.parse(stored));
+      } catch {
+        setSession(null);
+      }
+    }
+  }, []);
+  
+  if (session?.role === "reception") {
+    return <Redirect to="/patients" />;
+  }
+  
+  return <Dashboard />;
+}
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
@@ -63,7 +85,7 @@ function Router() {
     <BranchGate>
       <Layout>
         <Switch>
-          <Route path="/" component={Dashboard} />
+          <Route path="/" component={DashboardRoute} />
           <Route path="/patients" component={PatientsList} />
           <Route path="/patients/new" component={CreatePatient} />
           <Route path="/patients/:id/edit" component={EditPatient} />
