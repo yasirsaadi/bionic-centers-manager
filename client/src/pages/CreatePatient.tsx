@@ -385,9 +385,19 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>الطول (سم)</FormLabel>
-                    <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 175" />
-                    </FormControl>
+                    <Select value={field.value || ""} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50">
+                          <SelectValue placeholder="اختر الطول" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="أقل من 1">أقل من 1</SelectItem>
+                        {Array.from({ length: 220 }, (_, i) => i + 1).map((num) => (
+                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
