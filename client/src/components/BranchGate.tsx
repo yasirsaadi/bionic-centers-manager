@@ -51,6 +51,7 @@ export function clearBranchSession() {
 export function BranchGate({ children }: BranchGateProps) {
   const [session, setSession] = useState<BranchSession | null>(null);
   const [isChecking, setIsChecking] = useState(true);
+  const [selectedBranch, setSelectedBranch] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -77,7 +78,11 @@ export function BranchGate({ children }: BranchGateProps) {
       const res = await fetch("/api/verify-branch", { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.toLowerCase().trim(), password }),
+        body: JSON.stringify({ 
+          branchKey: selectedBranch,
+          username: username.toLowerCase().trim(), 
+          password 
+        }),
         credentials: "include",
       });
       
@@ -129,8 +134,8 @@ export function BranchGate({ children }: BranchGateProps) {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">اختر الفرع أو أدخل اسم المستخدم</label>
-            <Select value={username} onValueChange={setUsername}>
+            <label className="block text-sm font-medium text-slate-700 mb-2">الفرع</label>
+            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
               <SelectTrigger className="h-12" data-testid="select-branch-login">
                 <SelectValue placeholder="اختر الفرع" />
               </SelectTrigger>
@@ -145,6 +150,22 @@ export function BranchGate({ children }: BranchGateProps) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">اسم المستخدم</label>
+            <div className="relative">
+              <User className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="أدخل اسم المستخدم"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="pr-10 h-12"
+                autoComplete="username"
+                data-testid="input-username"
+              />
+            </div>
           </div>
 
           <div>
@@ -170,7 +191,7 @@ export function BranchGate({ children }: BranchGateProps) {
           <Button 
             type="submit" 
             className="w-full h-12 text-lg gap-2" 
-            disabled={!username || !password || isSubmitting}
+            disabled={!selectedBranch || !username || !password || isSubmitting}
             data-testid="button-branch-login"
           >
             {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}

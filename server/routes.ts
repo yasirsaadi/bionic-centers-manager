@@ -27,6 +27,7 @@ const backupEmailSchema = z.object({
 });
 
 const verifyBranchSchema = z.object({
+  branchKey: z.string().min(1, "الفرع مطلوب"),
   username: z.string().min(1, "اسم المستخدم مطلوب"),
   password: z.string().min(1, "كلمة المرور مطلوبة"),
 });
@@ -134,19 +135,25 @@ export async function registerRoutes(
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
-      const { username, password } = parsed;
+      const { branchKey, username, password } = parsed;
       const trimmedInput = password.trim();
+      const normalizedBranchKey = branchKey.toLowerCase().trim();
       const normalizedUsername = username.toLowerCase().trim();
     
-    console.log("Branch verification attempt:", { username: normalizedUsername, passwordLength: password?.length });
+    console.log("Branch verification attempt:", { branchKey: normalizedBranchKey, username: normalizedUsername, passwordLength: password?.length });
     
-    // Check if username exists in mapping
-    const userMapping = usernameToBranch[normalizedUsername];
-    if (!userMapping) {
-      return res.status(401).json({ message: "اسم المستخدم غير موجود" });
+    // Check if branch key exists in mapping
+    const branchMapping = usernameToBranch[normalizedBranchKey];
+    if (!branchMapping) {
+      return res.status(401).json({ message: "الفرع المحدد غير موجود" });
     }
     
-    const { branchId, branchName } = userMapping;
+    const { branchId, branchName } = branchMapping;
+    
+    // Verify username matches the branch key
+    if (normalizedUsername !== normalizedBranchKey) {
+      return res.status(401).json({ message: "اسم المستخدم غير صحيح لهذا الفرع" });
+    }
     
     // Check if admin login
     if (branchId === "admin") {
