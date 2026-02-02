@@ -108,8 +108,20 @@ export function DatePickerIraq({ value, onChange, className, "data-testid": test
           {formatDisplayDate(value)}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
+      <PopoverContent className="w-auto p-0 bg-white dark:bg-slate-900 shadow-xl border border-slate-200 dark:border-slate-700" align="start">
         <div className="p-3" dir="rtl">
+          {/* Year selector */}
+          <div className="flex items-center justify-center gap-2 mb-2 pb-2 border-b border-slate-100 dark:border-slate-700">
+            <Button variant="outline" size="sm" onClick={() => setViewYear(viewYear - 1)} className="h-7 px-2" data-testid="btn-prev-year">
+              <span className="text-xs">« السنة السابقة</span>
+            </Button>
+            <span className="font-bold text-primary px-3">{viewYear}</span>
+            <Button variant="outline" size="sm" onClick={() => setViewYear(viewYear + 1)} className="h-7 px-2" data-testid="btn-next-year">
+              <span className="text-xs">السنة التالية »</span>
+            </Button>
+          </div>
+          
+          {/* Month navigation */}
           <div className="flex items-center justify-between mb-3">
             <Button variant="ghost" size="icon" onClick={handleNextMonth} data-testid="btn-next-month">
               <span className="text-lg">›</span>
