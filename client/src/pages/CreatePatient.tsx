@@ -924,9 +924,43 @@ export default function CreatePatient() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>نوع الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: كسر، التواء، شد عضلي..." />
-                        </FormControl>
+                        <Select onValueChange={field.onChange} value={field.value || ""}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-physio-injury-type">
+                              <SelectValue placeholder="اختر نوع الإصابة" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="التهاب اوتار">التهاب اوتار</SelectItem>
+                            <SelectItem value="وثي">وثي</SelectItem>
+                            <SelectItem value="قطع اوتار">قطع اوتار</SelectItem>
+                            <SelectItem value="تشنج عضلي">تشنج عضلي</SelectItem>
+                            <SelectItem value="إصابة عصب محيطي">إصابة عصب محيطي</SelectItem>
+                            <SelectItem value="التهاب اعصاب سكري">التهاب اعصاب سكري</SelectItem>
+                            <SelectItem value="سوفان">سوفان</SelectItem>
+                            <SelectItem value="انزلاق ديسك">انزلاق ديسك</SelectItem>
+                            <SelectItem value="انزلاق فقرات">انزلاق فقرات</SelectItem>
+                            <SelectItem value="جنف">جنف</SelectItem>
+                            <SelectItem value="جلطة دماغية">جلطة دماغية</SelectItem>
+                            <SelectItem value="نزف دماغي">نزف دماغي</SelectItem>
+                            <SelectItem value="التهاب سحايا">التهاب سحايا</SelectItem>
+                            <SelectItem value="تصلب لويحي">تصلب لويحي</SelectItem>
+                            <SelectItem value="باركنسون">باركنسون</SelectItem>
+                            <SelectItem value="غيلان باريه">غيلان باريه</SelectItem>
+                            <SelectItem value="ضمور عضلي">ضمور عضلي</SelectItem>
+                            <SelectItem value="ضمور عصبي">ضمور عصبي</SelectItem>
+                            <SelectItem value="شلل دماغ">شلل دماغ</SelectItem>
+                            <SelectItem value="شلل اطفال">شلل اطفال</SelectItem>
+                            <SelectItem value="تأخر نفسي حركي">تأخر نفسي حركي</SelectItem>
+                            <SelectItem value="اصابة حبل شوكي">اصابة حبل شوكي</SelectItem>
+                            <SelectItem value="التهاب حبل شوكي">التهاب حبل شوكي</SelectItem>
+                            <SelectItem value="شلل العصب الوجهي">شلل العصب الوجهي</SelectItem>
+                            <SelectItem value="إصابة اربطة">إصابة اربطة</SelectItem>
+                            <SelectItem value="قطع جزئي في العضلات">قطع جزئي في العضلات</SelectItem>
+                            <SelectItem value="تبديل مفصل">تبديل مفصل</SelectItem>
+                            <SelectItem value="كسر">كسر</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
