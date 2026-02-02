@@ -13,6 +13,7 @@ interface BranchSession {
   branchId: number;
   branchName: string;
   isAdmin: boolean;
+  role?: string;
 }
 
 interface BranchSettings {
@@ -68,6 +69,11 @@ export function Sidebar() {
   const menuItems = baseMenuItems.filter(item => {
     // Admin-only items are only shown to admin users
     if (item.adminOnly && !branchSession?.isAdmin) {
+      return false;
+    }
+    
+    // Hide dashboard for reception users
+    if (item.href === "/" && branchSession?.role === "reception") {
       return false;
     }
     
