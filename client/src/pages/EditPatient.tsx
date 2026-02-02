@@ -33,6 +33,7 @@ const formSchema = insertPatientSchema.extend({
   age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
+  referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -312,6 +313,20 @@ export default function EditPatient() {
                     <FormLabel>العنوان</FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="المحافظة / المنطقة / الحي" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="referralSource"
+                render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>الجهة المحول منها *</FormLabel>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مستشفى / مركز صحي / شخص معين" data-testid="input-referral-source" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

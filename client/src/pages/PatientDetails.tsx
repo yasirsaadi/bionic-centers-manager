@@ -288,6 +288,11 @@ export default function PatientDetails() {
                 <MapPin className="w-3 h-3 md:w-4 md:h-4" /> {patient.address}
               </div>
             )}
+            {patient.referralSource && (
+              <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
+                <span className="font-medium">الجهة المحول منها:</span> {patient.referralSource}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-2 md:gap-3 items-center">
