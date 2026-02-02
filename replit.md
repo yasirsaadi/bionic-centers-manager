@@ -138,3 +138,30 @@ Preferred communication style: Simple, everyday language.
 - Manage all branch passwords through UI
 - Configure backup email for password recovery
 - Sidebar menu item "إعدادات النظام" visible only to admin users
+
+### User Management & Permissions System (February 2026)
+- Database table: `system_users` for centralized user management
+- Full CRUD operations for managing system users via AdminSettings "المستخدمين" tab
+- Three user roles: admin, branch_manager, reception
+
+**Authentication Flow:**
+- Login checks `system_users` table first (username/password with bcrypt)
+- Falls back to legacy branch-based authentication if no system user found
+- Permissions stored in session (`branchSession.permissions`)
+- Non-admin users require branch assignment
+
+**12 Granular Permissions:**
+- `canViewPatients`, `canAddPatients`, `canEditPatients`, `canDeletePatients`
+- `canViewPayments`, `canAddPayments`, `canEditPayments`, `canDeletePayments`
+- `canViewReports`, `canManageAccounting`, `canManageSettings`, `canManageUsers`
+
+**Permission Enforcement:**
+- Frontend: `usePermissions()` hook in `client/src/hooks/usePermissions.ts`
+- Frontend: UI elements hidden based on permissions (buttons, menu items)
+- Backend: `getPermissions()` helper in `server/routes.ts`
+- Backend: Critical routes enforce permissions server-side (patient delete, payment delete)
+
+**Default Permissions by Role:**
+- Admin: Full permissions (all 12 enabled)
+- Branch Manager: All except delete patients/payments, manage settings/users
+- Reception: View and add only (no edit/delete permissions)

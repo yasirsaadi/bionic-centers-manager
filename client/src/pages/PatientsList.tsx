@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
 import type { Branch } from "@shared/schema";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 
@@ -37,6 +38,7 @@ function getTodayDateString(): string {
 export default function PatientsList() {
   const { data: patients, isLoading } = usePatients();
   const branchSession = useBranchSession();
+  const permissions = usePermissions();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
   const [, setLocation] = useLocation();
@@ -150,12 +152,14 @@ export default function PatientsList() {
           <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">سجل المرضى</h2>
           <p className="text-sm md:text-base text-muted-foreground mt-1">عرض وإدارة ملفات جميع المرضى</p>
         </div>
-        <Link href="/patients/new">
-          <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 h-10 md:h-12 px-4 md:px-6 rounded-xl w-full md:w-auto">
-            <Plus className="w-5 h-5" />
-            إضافة مريض جديد
-          </Button>
-        </Link>
+        {permissions.canAddPatients && (
+          <Link href="/patients/new">
+            <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 h-10 md:h-12 px-4 md:px-6 rounded-xl w-full md:w-auto">
+              <Plus className="w-5 h-5" />
+              إضافة مريض جديد
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Branch Filter + View Mode Tabs */}

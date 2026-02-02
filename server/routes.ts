@@ -87,6 +87,51 @@ export async function registerRoutes(
     };
   };
 
+  // Helper to check permissions from session
+  const getPermissions = (req: any) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    
+    // Default admin permissions
+    const adminPermissions = {
+      canViewPatients: true,
+      canAddPatients: true,
+      canEditPatients: true,
+      canDeletePatients: true,
+      canViewPayments: true,
+      canAddPayments: true,
+      canEditPayments: true,
+      canDeletePayments: true,
+      canViewReports: true,
+      canManageAccounting: true,
+      canManageSettings: true,
+      canManageUsers: true,
+    };
+    
+    // Default branch staff permissions
+    const branchPermissions = {
+      canViewPatients: true,
+      canAddPatients: true,
+      canEditPatients: true,
+      canDeletePatients: false,
+      canViewPayments: true,
+      canAddPayments: true,
+      canEditPayments: true,
+      canDeletePayments: false,
+      canViewReports: true,
+      canManageAccounting: false,
+      canManageSettings: false,
+      canManageUsers: false,
+    };
+    
+    // Return stored permissions if available, else default based on admin status
+    if (branchSession?.permissions) {
+      return branchSession.permissions;
+    }
+    
+    return isAdmin ? adminPermissions : branchPermissions;
+  };
+
   // Admin code verification (legacy - uses same logic as branch login with admin branchId)
   app.post("/api/verify-admin", isAuthenticated, async (req, res) => {
     try {
@@ -131,7 +176,7 @@ export async function registerRoutes(
     }
   });
 
-  // Branch password verification
+  // Branch password verification - supports both system_users and legacy auth
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
@@ -140,120 +185,257 @@ export async function registerRoutes(
       const normalizedBranchKey = branchKey.toLowerCase().trim();
       const normalizedUsername = username.toLowerCase().trim();
     
-    console.log("Branch verification attempt:", { branchKey: normalizedBranchKey, username: normalizedUsername, passwordLength: password?.length });
+      console.log("Branch verification attempt:", { branchKey: normalizedBranchKey, username: normalizedUsername, passwordLength: password?.length });
     
-    // Check if branch key exists in mapping
-    const branchMapping = usernameToBranch[normalizedBranchKey];
-    if (!branchMapping) {
-      return res.status(401).json({ message: "الفرع المحدد غير موجود" });
-    }
-    
-    const { branchId, branchName } = branchMapping;
-    
-    // Verify username matches the branch key
-    if (normalizedUsername !== normalizedBranchKey) {
-      return res.status(401).json({ message: "اسم المستخدم غير صحيح لهذا الفرع" });
-    }
-    
-    // Check if admin login
-    if (branchId === "admin") {
-      // Check for hashed password first, then plaintext, then env variable
-      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
-      const dbAdminPassword = await storage.getSystemSetting("admin_password");
-      const envAdminCode = process.env.ADMIN_CODE?.trim();
+      // ===== NEW: Try system_users table first =====
+      const systemUser = await storage.getSystemUserByUsername(normalizedUsername);
       
-      let isValidPassword = false;
-      let needsMigration = false;
-      
-      if (dbAdminPasswordHash) {
-        // Compare with hashed password
-        isValidPassword = await bcrypt.compare(trimmedInput, dbAdminPasswordHash);
-      } else if (dbAdminPassword) {
-        // Legacy plaintext comparison
-        isValidPassword = trimmedInput === dbAdminPassword;
-        needsMigration = isValidPassword;
-      } else if (envAdminCode) {
-        // Fall back to environment variable
-        isValidPassword = trimmedInput === envAdminCode;
-        needsMigration = isValidPassword;
-      }
-      
-      console.log("Admin code check:", { dbHashExists: !!dbAdminPasswordHash, dbExists: !!dbAdminPassword, envExists: !!envAdminCode, isValid: isValidPassword });
-      
-      if (isValidPassword) {
-        // Auto-migrate: hash plaintext password on successful login
-        if (needsMigration) {
-          const hashedPassword = await bcrypt.hash(trimmedInput, 10);
-          await storage.setSystemSetting("admin_password_hash", hashedPassword);
-          await storage.setSystemSetting("admin_password", "");
+      if (systemUser && systemUser.isActive && systemUser.passwordHash) {
+        // User found in system_users table - verify password
+        const isValidPassword = await bcrypt.compare(trimmedInput, systemUser.passwordHash);
+        
+        if (isValidPassword) {
+          const isAdmin = systemUser.role === "admin";
+          const userBranchId = isAdmin ? 0 : (systemUser.branchId || 0);
+          
+          // For non-admin users, verify the selected branch matches their assigned branch
+          if (!isAdmin && systemUser.branchId) {
+            const branchMapping = usernameToBranch[normalizedBranchKey];
+            if (branchMapping && branchMapping.branchId !== "admin" && branchMapping.branchId !== systemUser.branchId) {
+              return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
+            }
+          }
+          
+          // Get branch name
+          let branchName = "مسؤول النظام";
+          if (!isAdmin && systemUser.branchId) {
+            const branch = await storage.getBranch(systemUser.branchId);
+            branchName = branch?.name || "فرع غير معروف";
+          }
+          
+          // Store session with user permissions
+          (req.session as any).branchSession = {
+            branchId: userBranchId,
+            isAdmin: isAdmin,
+            userId: systemUser.id,
+            role: systemUser.role,
+            displayName: systemUser.displayName,
+            permissions: {
+              canViewPatients: systemUser.canViewPatients,
+              canAddPatients: systemUser.canAddPatients,
+              canEditPatients: systemUser.canEditPatients,
+              canDeletePatients: systemUser.canDeletePatients,
+              canViewPayments: systemUser.canViewPayments,
+              canAddPayments: systemUser.canAddPayments,
+              canEditPayments: systemUser.canEditPayments,
+              canDeletePayments: systemUser.canDeletePayments,
+              canViewReports: systemUser.canViewReports,
+              canManageAccounting: systemUser.canManageAccounting,
+              canManageSettings: systemUser.canManageSettings,
+              canManageUsers: systemUser.canManageUsers,
+            }
+          };
+          
+          console.log("System user authenticated:", { username: normalizedUsername, role: systemUser.role, branchId: userBranchId });
+          
+          return res.json({ 
+            branchId: userBranchId, 
+            branchName: branchName,
+            isAdmin: isAdmin,
+            userId: systemUser.id,
+            displayName: systemUser.displayName,
+            role: systemUser.role,
+            permissions: {
+              canViewPatients: systemUser.canViewPatients,
+              canAddPatients: systemUser.canAddPatients,
+              canEditPatients: systemUser.canEditPatients,
+              canDeletePatients: systemUser.canDeletePatients,
+              canViewPayments: systemUser.canViewPayments,
+              canAddPayments: systemUser.canAddPayments,
+              canEditPayments: systemUser.canEditPayments,
+              canDeletePayments: systemUser.canDeletePayments,
+              canViewReports: systemUser.canViewReports,
+              canManageAccounting: systemUser.canManageAccounting,
+              canManageSettings: systemUser.canManageSettings,
+              canManageUsers: systemUser.canManageUsers,
+            }
+          });
         }
-        // Store admin session info
-        (req.session as any).branchSession = {
-          branchId: 0,
-          isAdmin: true
-        };
-        return res.json({ 
-          branchId: 0, 
-          branchName: "مسؤول النظام",
-          isAdmin: true 
-        });
+        // Password doesn't match for system user - don't fall through to legacy
+        return res.status(401).json({ message: "كلمة السر غير صحيحة" });
       }
-      return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
-    }
-    
-    // Check database first for branch password (may be hashed), fall back to environment variable
-    const numericBranchId = branchId as number;
-    const dbBranchPassword = await storage.getBranchPassword(numericBranchId);
-    const envKey = `BRANCH_PASSWORD_${numericBranchId}`;
-    const envBranchPassword = process.env[envKey]?.trim();
-    
-    console.log("Checking branch password:", { 
-      branchId, 
-      dbExists: !!dbBranchPassword,
-      envExists: !!envBranchPassword
-    });
-    
-    if (!dbBranchPassword && !envBranchPassword) {
-      return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
-    }
-    
-    let isValidBranchPassword = false;
-    let needsBranchMigration = false;
-    
-    if (dbBranchPassword) {
-      // Check if it's a bcrypt hash (starts with $2)
-      if (dbBranchPassword.startsWith('$2')) {
-        isValidBranchPassword = await bcrypt.compare(trimmedInput, dbBranchPassword);
-      } else {
-        // Legacy plaintext comparison
-        isValidBranchPassword = trimmedInput === dbBranchPassword;
+      
+      // ===== LEGACY: Fall back to branch-based authentication =====
+      // Check if branch key exists in mapping
+      const branchMapping = usernameToBranch[normalizedBranchKey];
+      if (!branchMapping) {
+        return res.status(401).json({ message: "الفرع المحدد غير موجود" });
+      }
+      
+      const { branchId, branchName } = branchMapping;
+      
+      // Verify username matches the branch key (legacy behavior)
+      if (normalizedUsername !== normalizedBranchKey) {
+        return res.status(401).json({ message: "اسم المستخدم غير صحيح لهذا الفرع" });
+      }
+      
+      // Check if admin login
+      if (branchId === "admin") {
+        // Check for hashed password first, then plaintext, then env variable
+        const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
+        const dbAdminPassword = await storage.getSystemSetting("admin_password");
+        const envAdminCode = process.env.ADMIN_CODE?.trim();
+        
+        let isValidPassword = false;
+        let needsMigration = false;
+        
+        if (dbAdminPasswordHash) {
+          // Compare with hashed password
+          isValidPassword = await bcrypt.compare(trimmedInput, dbAdminPasswordHash);
+        } else if (dbAdminPassword) {
+          // Legacy plaintext comparison
+          isValidPassword = trimmedInput === dbAdminPassword;
+          needsMigration = isValidPassword;
+        } else if (envAdminCode) {
+          // Fall back to environment variable
+          isValidPassword = trimmedInput === envAdminCode;
+          needsMigration = isValidPassword;
+        }
+        
+        console.log("Admin code check:", { dbHashExists: !!dbAdminPasswordHash, dbExists: !!dbAdminPassword, envExists: !!envAdminCode, isValid: isValidPassword });
+        
+        if (isValidPassword) {
+          // Auto-migrate: hash plaintext password on successful login
+          if (needsMigration) {
+            const hashedPassword = await bcrypt.hash(trimmedInput, 10);
+            await storage.setSystemSetting("admin_password_hash", hashedPassword);
+            await storage.setSystemSetting("admin_password", "");
+          }
+          // Store admin session info (legacy - full permissions)
+          (req.session as any).branchSession = {
+            branchId: 0,
+            isAdmin: true,
+            permissions: {
+              canViewPatients: true,
+              canAddPatients: true,
+              canEditPatients: true,
+              canDeletePatients: true,
+              canViewPayments: true,
+              canAddPayments: true,
+              canEditPayments: true,
+              canDeletePayments: true,
+              canViewReports: true,
+              canManageAccounting: true,
+              canManageSettings: true,
+              canManageUsers: true,
+            }
+          };
+          return res.json({ 
+            branchId: 0, 
+            branchName: "مسؤول النظام",
+            isAdmin: true,
+            role: "admin",
+            permissions: {
+              canViewPatients: true,
+              canAddPatients: true,
+              canEditPatients: true,
+              canDeletePatients: true,
+              canViewPayments: true,
+              canAddPayments: true,
+              canEditPayments: true,
+              canDeletePayments: true,
+              canViewReports: true,
+              canManageAccounting: true,
+              canManageSettings: true,
+              canManageUsers: true,
+            }
+          });
+        }
+        return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
+      }
+      
+      // Check database first for branch password (may be hashed), fall back to environment variable
+      const numericBranchId = branchId as number;
+      const dbBranchPassword = await storage.getBranchPassword(numericBranchId);
+      const envKey = `BRANCH_PASSWORD_${numericBranchId}`;
+      const envBranchPassword = process.env[envKey]?.trim();
+      
+      console.log("Checking branch password:", { 
+        branchId, 
+        dbExists: !!dbBranchPassword,
+        envExists: !!envBranchPassword
+      });
+      
+      if (!dbBranchPassword && !envBranchPassword) {
+        return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
+      }
+      
+      let isValidBranchPassword = false;
+      let needsBranchMigration = false;
+      
+      if (dbBranchPassword) {
+        // Check if it's a bcrypt hash (starts with $2)
+        if (dbBranchPassword.startsWith('$2')) {
+          isValidBranchPassword = await bcrypt.compare(trimmedInput, dbBranchPassword);
+        } else {
+          // Legacy plaintext comparison
+          isValidBranchPassword = trimmedInput === dbBranchPassword;
+          needsBranchMigration = isValidBranchPassword;
+        }
+      } else if (envBranchPassword) {
+        // Fall back to environment variable (plaintext)
+        isValidBranchPassword = trimmedInput === envBranchPassword;
         needsBranchMigration = isValidBranchPassword;
       }
-    } else if (envBranchPassword) {
-      // Fall back to environment variable (plaintext)
-      isValidBranchPassword = trimmedInput === envBranchPassword;
-      needsBranchMigration = isValidBranchPassword;
-    }
-    
-    if (isValidBranchPassword) {
-      // Auto-migrate: hash plaintext password on successful login
-      if (needsBranchMigration) {
-        const hashedPassword = await bcrypt.hash(trimmedInput, 10);
-        await storage.setBranchPassword(numericBranchId, hashedPassword);
+      
+      if (isValidBranchPassword) {
+        // Auto-migrate: hash plaintext password on successful login
+        if (needsBranchMigration) {
+          const hashedPassword = await bcrypt.hash(trimmedInput, 10);
+          await storage.setBranchPassword(numericBranchId, hashedPassword);
+        }
+        // Store branch session info (legacy - limited permissions for branch staff)
+        (req.session as any).branchSession = {
+          branchId: numericBranchId,
+          isAdmin: false,
+          permissions: {
+            canViewPatients: true,
+            canAddPatients: true,
+            canEditPatients: true,
+            canDeletePatients: false,
+            canViewPayments: true,
+            canAddPayments: true,
+            canEditPayments: true,
+            canDeletePayments: false,
+            canViewReports: true,
+            canManageAccounting: false,
+            canManageSettings: false,
+            canManageUsers: false,
+          }
+        };
+        return res.json({ 
+          branchId: numericBranchId, 
+          branchName: branchName,
+          isAdmin: false,
+          role: "branch_staff",
+          permissions: {
+            canViewPatients: true,
+            canAddPatients: true,
+            canEditPatients: true,
+            canDeletePatients: false,
+            canViewPayments: true,
+            canAddPayments: true,
+            canEditPayments: true,
+            canDeletePayments: false,
+            canViewReports: true,
+            canManageAccounting: false,
+            canManageSettings: false,
+            canManageUsers: false,
+          }
+        });
       }
-      // Store branch session info
-      (req.session as any).branchSession = {
-        branchId: numericBranchId,
-        isAdmin: false
-      };
-      return res.json({ 
-        branchId: numericBranchId, 
-        branchName: branchName,
-        isAdmin: false 
-      });
-    }
-    
-    res.status(401).json({ message: "كلمة السر غير صحيحة" });
+      
+      res.status(401).json({ message: "كلمة السر غير صحيحة" });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message });
@@ -837,10 +1019,16 @@ export async function registerRoutes(
   app.delete(api.patients.delete.path, isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
     const ctx = getUserContext(req);
+    const permissions = getPermissions(req);
     const patient = await storage.getPatient(id);
     
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
+    }
+    
+    // Check permission to delete patients
+    if (!permissions.canDeletePatients) {
+      return res.status(403).json({ message: "ليس لديك صلاحية لحذف المرضى" });
     }
     
     const canAccess = ctx.role === 'admin' || !ctx.branchId || patient.branchId === ctx.branchId;
@@ -937,11 +1125,11 @@ export async function registerRoutes(
     res.status(201).json(payment);
   });
 
-  // Delete payment (admin only)
+  // Delete payment
   app.delete("/api/payments/:id", isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف المدفوعات" });
+    const permissions = getPermissions(req);
+    if (!permissions.canDeletePayments) {
+      return res.status(403).json({ message: "ليس لديك صلاحية لحذف المدفوعات" });
     }
     
     const id = Number(req.params.id);

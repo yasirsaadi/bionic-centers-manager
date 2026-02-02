@@ -15,10 +15,29 @@ const userOptions = [
   { value: "kirkuk", label: "بايونك كركوك", icon: Building2 },
 ];
 
+interface UserPermissions {
+  canViewPatients: boolean;
+  canAddPatients: boolean;
+  canEditPatients: boolean;
+  canDeletePatients: boolean;
+  canViewPayments: boolean;
+  canAddPayments: boolean;
+  canEditPayments: boolean;
+  canDeletePayments: boolean;
+  canViewReports: boolean;
+  canManageAccounting: boolean;
+  canManageSettings: boolean;
+  canManageUsers: boolean;
+}
+
 interface BranchSession {
   branchId: number;
   branchName: string;
   isAdmin: boolean;
+  userId?: number;
+  role?: string;
+  displayName?: string;
+  permissions?: UserPermissions;
 }
 
 interface BranchGateProps {
@@ -93,6 +112,10 @@ export function BranchGate({ children }: BranchGateProps) {
           branchId: data.branchId,
           branchName: data.branchName,
           isAdmin: data.isAdmin,
+          userId: data.userId,
+          role: data.role,
+          displayName: data.displayName,
+          permissions: data.permissions,
         };
         sessionStorage.setItem("branch_session", JSON.stringify(branchSession));
         setSession(branchSession);

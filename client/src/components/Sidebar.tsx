@@ -3,6 +3,7 @@ import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, Shie
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -26,6 +27,7 @@ interface BranchSettings {
 export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
+  const permissions = usePermissions();
   const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -52,17 +54,17 @@ export function Sidebar() {
   }, [location]);
 
   const baseMenuItems = [
-    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const },
-    { label: "سجل المرضى", icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const },
-    { label: "إضافة مريض", icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const },
-    { label: "التقارير المالية", icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const },
-    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const },
-    { label: "الفروع", icon: Building2, href: "/branches", adminOnly: true, settingKey: null },
-    { label: "الإحصاءات", icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const },
-    { label: "إعدادات النظام", icon: Settings, href: "/admin", adminOnly: true, settingKey: null },
+    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const, permission: null },
+    { label: "سجل المرضى", icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const },
+    { label: "إضافة مريض", icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const, permission: "canAddPatients" as const },
+    { label: "التقارير المالية", icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
+    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
+    { label: "الفروع", icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
+    { label: "الإحصاءات", icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
+    { label: "إعدادات النظام", icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
   ];
 
-  // Filter menu items based on admin status and branch settings
+  // Filter menu items based on admin status, branch settings, and permissions
   const menuItems = baseMenuItems.filter(item => {
     // Admin-only items are only shown to admin users
     if (item.adminOnly && !branchSession?.isAdmin) {
@@ -75,6 +77,11 @@ export function Sidebar() {
       if (settingValue === false) {
         return false;
       }
+    }
+    
+    // Check permissions
+    if (item.permission && !permissions[item.permission]) {
+      return false;
     }
     
     return true;

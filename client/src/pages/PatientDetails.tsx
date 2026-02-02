@@ -1,5 +1,6 @@
 import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -66,6 +67,7 @@ export default function PatientDetails() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const branchSession = useBranchSession();
+  const permissions = usePermissions();
   const isAdmin = branchSession?.isAdmin || false;
   const { data: patient, isLoading } = usePatient(Number(id));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
@@ -160,38 +162,42 @@ export default function PatientDetails() {
     <div className="space-y-8 page-transition pb-12">
       {/* Action Buttons - Print at top */}
       <div className="flex flex-wrap gap-3 items-center justify-end print:hidden">
-        <Link href={`/patients/${patient.id}/edit`}>
-          <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
-            <Pencil className="w-4 h-4" />
-            تحرير
-          </Button>
-        </Link>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
-              <Trash2 className="w-4 h-4" />
-              حذف
+        {permissions.canEditPatients && (
+          <Link href={`/patients/${patient.id}/edit`}>
+            <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
+              <Pencil className="w-4 h-4" />
+              تحرير
             </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
-              <AlertDialogDescription>
-                سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter className="gap-2">
-              <AlertDialogCancel>إلغاء</AlertDialogCancel>
-              <AlertDialogAction 
-                onClick={handleDelete}
-                className="bg-red-600 hover:bg-red-700"
-                disabled={isDeleting}
-              >
-                {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          </Link>
+        )}
+        {permissions.canDeletePatients && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
+                <Trash2 className="w-4 h-4" />
+                حذف
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
+                <AlertDialogDescription>
+                  سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="gap-2">
+                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogAction 
+                  onClick={handleDelete}
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
         
         {/* Transfer Patient Button - Admin Only */}
         {isAdmin && (
