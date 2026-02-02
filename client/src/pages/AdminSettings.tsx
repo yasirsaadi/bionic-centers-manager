@@ -80,7 +80,22 @@ const roleLabels: Record<UserRole, string> = {
   reception: "موظف استقبال"
 };
 
-const defaultPermissions: Record<UserRole, Partial<SystemUser>> = {
+type PermissionSet = {
+  canViewPatients: boolean;
+  canAddPatients: boolean;
+  canEditPatients: boolean;
+  canDeletePatients: boolean;
+  canViewPayments: boolean;
+  canAddPayments: boolean;
+  canEditPayments: boolean;
+  canDeletePayments: boolean;
+  canViewReports: boolean;
+  canManageAccounting: boolean;
+  canManageSettings: boolean;
+  canManageUsers: boolean;
+};
+
+const defaultPermissions: Record<UserRole, PermissionSet> = {
   admin: {
     canViewPatients: true,
     canAddPatients: true,
@@ -324,19 +339,19 @@ export default function AdminSettings() {
       password: "",
       role: user.role as UserRole,
       branchId: user.branchId,
-      isActive: user.isActive,
-      canViewPatients: user.canViewPatients,
-      canAddPatients: user.canAddPatients,
-      canEditPatients: user.canEditPatients,
-      canDeletePatients: user.canDeletePatients,
-      canViewPayments: user.canViewPayments,
-      canAddPayments: user.canAddPayments,
-      canEditPayments: user.canEditPayments,
-      canDeletePayments: user.canDeletePayments,
-      canViewReports: user.canViewReports,
-      canManageAccounting: user.canManageAccounting,
-      canManageSettings: user.canManageSettings,
-      canManageUsers: user.canManageUsers,
+      isActive: user.isActive ?? true,
+      canViewPatients: user.canViewPatients ?? true,
+      canAddPatients: user.canAddPatients ?? true,
+      canEditPatients: user.canEditPatients ?? false,
+      canDeletePatients: user.canDeletePatients ?? false,
+      canViewPayments: user.canViewPayments ?? true,
+      canAddPayments: user.canAddPayments ?? true,
+      canEditPayments: user.canEditPayments ?? false,
+      canDeletePayments: user.canDeletePayments ?? false,
+      canViewReports: user.canViewReports ?? false,
+      canManageAccounting: user.canManageAccounting ?? false,
+      canManageSettings: user.canManageSettings ?? false,
+      canManageUsers: user.canManageUsers ?? false,
     });
     setShowUserDialog(true);
   };
@@ -1443,7 +1458,14 @@ export default function AdminSettings() {
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="flex flex-row-reverse justify-start gap-2 mt-4">
+            <Button
+              onClick={handleSaveUser}
+              disabled={createUserMutation.isPending || updateUserMutation.isPending || !userFormData.username || (!editingUser && !userFormData.password) || (userFormData.role !== "admin" && !userFormData.branchId)}
+              data-testid="button-save-user"
+            >
+              {createUserMutation.isPending || updateUserMutation.isPending ? "جاري الحفظ..." : (editingUser ? "تحديث" : "إضافة")}
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -1454,13 +1476,6 @@ export default function AdminSettings() {
               data-testid="button-cancel-user"
             >
               إلغاء
-            </Button>
-            <Button
-              onClick={handleSaveUser}
-              disabled={createUserMutation.isPending || updateUserMutation.isPending || !userFormData.username || (!editingUser && !userFormData.password) || (userFormData.role !== "admin" && !userFormData.branchId)}
-              data-testid="button-save-user"
-            >
-              {createUserMutation.isPending || updateUserMutation.isPending ? "جاري الحفظ..." : (editingUser ? "تحديث" : "إضافة")}
             </Button>
           </DialogFooter>
         </DialogContent>

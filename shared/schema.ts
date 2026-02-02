@@ -209,18 +209,22 @@ export const systemUsers = pgTable("system_users", {
   branchId: integer("branch_id").references(() => branches.id),
   role: text("role").notNull().default("reception"), // admin, branch_manager, reception
   isActive: boolean("is_active").default(true),
-  // Permissions
+  // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
   canAddPatients: boolean("can_add_patients").default(true),
   canEditPatients: boolean("can_edit_patients").default(false),
   canDeletePatients: boolean("can_delete_patients").default(false),
+  // Payment Permissions
   canViewPayments: boolean("can_view_payments").default(true),
   canAddPayments: boolean("can_add_payments").default(true),
+  canEditPayments: boolean("can_edit_payments").default(false),
+  canDeletePayments: boolean("can_delete_payments").default(false),
+  // Reports & Accounting Permissions
   canViewReports: boolean("can_view_reports").default(false),
-  canViewAccounting: boolean("can_view_accounting").default(false),
   canManageAccounting: boolean("can_manage_accounting").default(false),
-  canViewStatistics: boolean("can_view_statistics").default(false),
+  // System Permissions
   canManageSettings: boolean("can_manage_settings").default(false),
+  canManageUsers: boolean("can_manage_users").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
