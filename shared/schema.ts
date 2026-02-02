@@ -56,6 +56,8 @@ export const patients = pgTable("patients", {
   isPhysiotherapy: boolean("is_physiotherapy").default(false),
   diseaseType: text("disease_type"),
   treatmentType: text("treatment_type"), // نوع العلاج
+  physioInjuryType: text("physio_injury_type"), // نوع الإصابة للعلاج الطبيعي
+  physioInjuryArea: text("physio_injury_area"), // منطقة الإصابة للعلاج الطبيعي
   
   // For medical support (مساند طبية)
   isMedicalSupport: boolean("is_medical_support").default(false),

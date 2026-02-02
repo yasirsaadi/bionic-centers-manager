@@ -103,6 +103,8 @@ export default function CreatePatient() {
       footSize: "",
       kneeJointType: "",
       treatmentType: "",
+      physioInjuryType: "",
+      physioInjuryArea: "",
       supportType: "",
       injurySide: "",
       branchId: defaultBranchId,
@@ -911,6 +913,32 @@ export default function CreatePatient() {
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} placeholder="مثال: علاج طبيعي، تأهيل حركي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: كسر، التواء، شد عضلي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>منطقة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: الركبة، الكتف، الظهر..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

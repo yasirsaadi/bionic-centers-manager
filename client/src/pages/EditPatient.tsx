@@ -97,6 +97,8 @@ export default function EditPatient() {
       footSize: "",
       kneeJointType: "",
       treatmentType: "",
+      physioInjuryType: "",
+      physioInjuryArea: "",
       supportType: "",
       injurySide: "",
       branchId: 1,
@@ -131,6 +133,8 @@ export default function EditPatient() {
         footSize: patient.footSize || "",
         kneeJointType: patient.kneeJointType || "",
         treatmentType: patient.treatmentType || "",
+        physioInjuryType: patient.physioInjuryType || "",
+        physioInjuryArea: patient.physioInjuryArea || "",
         supportType: patient.supportType || "",
         injurySide: patient.injurySide || "",
         branchId: patient.branchId,
@@ -942,6 +946,32 @@ export default function EditPatient() {
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: جلسات علاج طبيعي" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: كسر، التواء، شد عضلي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>منطقة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الركبة، الكتف، الظهر..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
