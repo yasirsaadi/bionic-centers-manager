@@ -814,9 +814,18 @@ export default function EditPatient() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>حجم السليكون</FormLabel>
-                          <FormControl>
-                            <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: M، L، XL..." />
-                          </FormControl>
+                          <Select value={field.value || ""} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger className="bg-slate-50">
+                                <SelectValue placeholder="اختر الحجم" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {Array.from({ length: 80 }, (_, i) => i + 1).map((num) => (
+                                <SelectItem key={num} value={String(num)}>{num}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}
