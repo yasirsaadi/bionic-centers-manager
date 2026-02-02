@@ -1004,9 +1004,38 @@ export default function EditPatient() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>منطقة الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الركبة، الكتف، الظهر..." />
-                        </FormControl>
+                        <Select onValueChange={field.onChange} value={field.value || ""}>
+                          <FormControl>
+                            <SelectTrigger className="bg-slate-50" data-testid="select-physio-injury-area">
+                              <SelectValue placeholder="اختر منطقة الإصابة" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="الرأس">الرأس</SelectItem>
+                            <SelectItem value="الرقبة">الرقبة</SelectItem>
+                            <SelectItem value="الصدر">الصدر</SelectItem>
+                            <SelectItem value="القطن">القطن</SelectItem>
+                            <SelectItem value="العمود الفقري">العمود الفقري</SelectItem>
+                            <SelectItem value="الكتف">الكتف</SelectItem>
+                            <SelectItem value="منطقة الظهر العلوية">منطقة الظهر العلوية</SelectItem>
+                            <SelectItem value="منطقة الظهر السفلية">منطقة الظهر السفلية</SelectItem>
+                            <SelectItem value="العضد">العضد</SelectItem>
+                            <SelectItem value="المرفق">المرفق</SelectItem>
+                            <SelectItem value="الساعد">الساعد</SelectItem>
+                            <SelectItem value="المعصم">المعصم</SelectItem>
+                            <SelectItem value="الرسغ">الرسغ</SelectItem>
+                            <SelectItem value="اليد">اليد</SelectItem>
+                            <SelectItem value="الاصابع">الاصابع</SelectItem>
+                            <SelectItem value="الحوض">الحوض</SelectItem>
+                            <SelectItem value="الورك">الورك</SelectItem>
+                            <SelectItem value="الفخذ">الفخذ</SelectItem>
+                            <SelectItem value="الركبة">الركبة</SelectItem>
+                            <SelectItem value="الساق">الساق</SelectItem>
+                            <SelectItem value="الكاحل">الكاحل</SelectItem>
+                            <SelectItem value="القدم">القدم</SelectItem>
+                            <SelectItem value="اصابع القدم">اصابع القدم</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
