@@ -43,6 +43,7 @@ export const patients = pgTable("patients", {
   // For amputees
   isAmputee: boolean("is_amputee").default(false),
   amputationSite: text("amputation_site"),
+  amputationType: text("amputation_type"), // نوع البتر للطرف السفلي
   prostheticType: text("prosthetic_type"), // نوع الطرف
   siliconType: text("silicon_type"), // نوع السليكون
   siliconSize: text("silicon_size"), // حجم السليكون
