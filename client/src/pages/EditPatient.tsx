@@ -380,6 +380,7 @@ export default function EditPatient() {
                         <SelectItem value="انستاغرام">انستاغرام</SelectItem>
                         <SelectItem value="تيكتوك">تيكتوك</SelectItem>
                         <SelectItem value="كوكل">كوكل</SelectItem>
+                        <SelectItem value="أخرى">أخرى</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
