@@ -41,7 +41,7 @@ function getTodayDateString(): string {
 }
 
 const formSchema = insertPatientSchema.extend({
-  age: z.coerce.number().min(1, "العمر مطلوب"),
+  age: z.string().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "نوع الجهة المحول منها مطلوب"),
@@ -76,7 +76,7 @@ export default function EditPatient() {
       name: "",
       phone: "",
       address: "",
-      age: 0,
+      age: "",
       weight: "",
       height: "",
       medicalCondition: "amputee",
