@@ -123,6 +123,10 @@ export function useAddPayment() {
     onSuccess: (_, variables) => {
       // Invalidate specific patient query to refresh stats
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/overall"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       toast({
         title: "تم تسجيل الدفعة",
         description: "تم تحديث الرصيد المالي للمريض",
@@ -376,6 +380,10 @@ export function useDeletePayment() {
     },
     onSuccess: (patientId) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/overall"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       toast({
         title: "تم الحذف",
         description: "تم حذف الدفعة بنجاح",
