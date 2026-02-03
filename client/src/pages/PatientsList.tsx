@@ -149,6 +149,11 @@ export default function PatientsList() {
     const XLSX = await import("xlsx");
     const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
     
+    if (dataToExport.length === 0) {
+      alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
+      return;
+    }
+    
     const excelData = dataToExport.map((patient, index) => ({
       "#": index + 1,
       "الاسم": patient.name,
@@ -169,12 +174,17 @@ export default function PatientsList() {
   };
 
   const exportToPDF = async () => {
+    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
+    
+    if (dataToExport.length === 0) {
+      alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
+      return;
+    }
+    
     const jsPDFModule = await import("jspdf");
     const jsPDF = jsPDFModule.default;
     const autoTableModule = await import("jspdf-autotable");
     const autoTable = autoTableModule.default;
-    
-    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
     const doc = new jsPDF({ orientation: "landscape" });
     
     doc.setFont("helvetica");
