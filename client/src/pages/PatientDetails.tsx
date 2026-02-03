@@ -291,7 +291,6 @@ export default function PatientDetails() {
             {patient.referralSource && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
                 <span className="font-medium">الجهة المحول منها:</span> {patient.referralSource}
-                {patient.referralSourceName && ` - ${patient.referralSourceName}`}
               </div>
             )}
           </div>

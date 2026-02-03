@@ -104,24 +104,12 @@ export default function PatientsList() {
     return patients.filter(p => p.branchId === Number(selectedBranch));
   }, [patients, selectedBranch]);
 
-  // Helper function to check if patient was registered on the selected date
-  const isRegisteredOnDate = (patient: any, filterDate: Date): boolean => {
-    if (!patient.registrationDate) return false;
-    return isSameDay(new Date(patient.registrationDate), filterDate);
-  };
-
-  // Helper function to check if patient has visits on the selected date
-  const hasVisitOnDate = (patient: any, filterDate: Date): boolean => {
-    const visits = patient.visits as { visitDate: string | null }[] | undefined;
-    if (!visits || visits.length === 0) return false;
-    return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
-  };
-
   const dateFilteredPatients = useMemo(() => {
     const filterDate = new Date(selectedDate);
     return branchFilteredPatients.filter(p => {
-      // Include patients registered on this date OR having visits on this date
-      return isRegisteredOnDate(p, filterDate) || hasVisitOnDate(p, filterDate);
+      const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
+      if (!visits || visits.length === 0) return false;
+      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
     });
   }, [branchFilteredPatients, selectedDate]);
 
@@ -321,7 +309,7 @@ export default function PatientsList() {
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
-                        {viewMode === "date" ? `لا يوجد مرضى مسجلين أو لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
+                        {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -331,25 +319,7 @@ export default function PatientsList() {
                           {startIndex + index + 1}
                         </TableCell>
                         <TableCell className="font-medium text-slate-900 py-4">
-                          <div className="flex flex-col gap-1">
-                            <span>{patient.name}</span>
-                            {viewMode === "date" && (
-                              <div className="flex flex-wrap gap-1">
-                                {isRegisteredOnDate(patient, new Date(selectedDate)) && (
-                                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                                    <Calendar className="w-3 h-3 ml-1" />
-                                    مسجل
-                                  </Badge>
-                                )}
-                                {hasVisitOnDate(patient, new Date(selectedDate)) && (
-                                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                                    <CalendarDays className="w-3 h-3 ml-1" />
-                                    زيارة
-                                  </Badge>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                          {patient.name}
                         </TableCell>
                         <TableCell className="text-slate-600">{patient.age}</TableCell>
                         <TableCell>
