@@ -898,6 +898,110 @@ export async function registerRoutes(
     }
   });
 
+  // Export all patients to CSV (admin only)
+  app.get("/api/admin/export/patients", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+      
+      const patients = await storage.getPatients();
+      const branches = await storage.getBranches();
+      const branchMap = new Map(branches.map(b => [b.id, b.name]));
+      
+      // CSV header with Arabic column names
+      const headers = [
+        "رقم المريض",
+        "الاسم",
+        "العمر",
+        "رقم الهاتف",
+        "العنوان",
+        "الجهة المحول منها",
+        "الحالة الطبية",
+        "الفرع",
+        "الوزن",
+        "الطول",
+        "سبب الإصابة",
+        "تاريخ الإصابة",
+        "ملاحظات عامة",
+        "حالة بتر",
+        "موقع البتر",
+        "نوع الطرف",
+        "نوع السليكون",
+        "حجم السليكون",
+        "نظام التعليق",
+        "نوع القدم",
+        "حجم القدم",
+        "نوع مفصل الركبة",
+        "حالة علاج طبيعي",
+        "نوع المرض",
+        "نوع العلاج",
+        "مساند طبية",
+        "نوع المسند",
+        "جهة الإصابة",
+        "التكلفة الإجمالية",
+        "تاريخ التسجيل"
+      ];
+      
+      // Build CSV rows
+      const rows = patients.map(p => [
+        p.id,
+        p.name,
+        p.age || "",
+        p.phone || "",
+        p.address || "",
+        p.referralSource || "",
+        p.medicalCondition === "amputee" ? "بتر" : p.medicalCondition === "physiotherapy" ? "علاج طبيعي" : "مساند طبية",
+        branchMap.get(p.branchId) || "",
+        p.weight || "",
+        p.height || "",
+        p.injuryCause || "",
+        p.injuryDate || "",
+        p.generalNotes || "",
+        p.isAmputee ? "نعم" : "لا",
+        p.amputationSite || "",
+        p.prostheticType || "",
+        p.siliconType || "",
+        p.siliconSize || "",
+        p.suspensionSystem || "",
+        p.footType || "",
+        p.footSize || "",
+        p.kneeJointType || "",
+        p.isPhysiotherapy ? "نعم" : "لا",
+        p.diseaseType || "",
+        p.treatmentType || "",
+        p.isMedicalSupport ? "نعم" : "لا",
+        p.supportType || "",
+        p.injurySide || "",
+        p.totalCost || 0,
+        p.createdAt ? new Date(p.createdAt).toLocaleDateString("ar-IQ") : ""
+      ]);
+      
+      // Escape CSV values
+      const escapeCSV = (val: any) => {
+        const str = String(val);
+        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+      
+      // Generate CSV content with BOM for Arabic support
+      const BOM = "\uFEFF";
+      const csvContent = BOM + [
+        headers.join(","),
+        ...rows.map(row => row.map(escapeCSV).join(","))
+      ].join("\n");
+      
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=patients_export.csv");
+      res.send(csvContent);
+    } catch (err) {
+      throw err;
+    }
+  });
+
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
@@ -1657,7 +1761,7 @@ export async function registerRoutes(
         break;
       case "average":
         if (patients.length > 0) {
-          const total = patients.reduce((sum, p) => sum + (p.age || 0), 0);
+          const total = patients.reduce((sum, p) => sum + (parseInt(p.age) || 0), 0);
           value = Math.round(total / patients.length);
         }
         break;

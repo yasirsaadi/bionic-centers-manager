@@ -58,7 +58,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Pencil } from "lucide-react";
+import { Pencil, Download } from "lucide-react";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -579,6 +579,32 @@ export default function AdminSettings() {
 
   const selectedBranchDetails = branchesWithDetails?.find(b => b.id === selectedBranchForSettings);
 
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportPatients = async () => {
+    setIsExporting(true);
+    try {
+      const res = await fetch("/api/admin/export/patients", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to export");
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `patients_backup_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast({ title: "تم تصدير البيانات بنجاح" });
+    } catch (error) {
+      toast({ title: "خطأ", description: "فشل تصدير البيانات", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -1054,6 +1080,27 @@ export default function AdminSettings() {
                 </p>
               </div>
             </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <Download className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-bold text-slate-800">تصدير بيانات المرضى</h2>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-4">
+              قم بتصدير جميع بيانات المرضى إلى ملف CSV للاحتفاظ بنسخة احتياطية على جهازك
+            </p>
+
+            <Button 
+              onClick={handleExportPatients}
+              disabled={isExporting}
+              className="w-full gap-2 max-w-md"
+              data-testid="button-export-patients"
+            >
+              <Download className="w-4 h-4" />
+              {isExporting ? "جاري التصدير..." : "تصدير بيانات المرضى (CSV)"}
+            </Button>
           </Card>
         </TabsContent>
       </Tabs>
