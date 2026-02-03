@@ -504,6 +504,37 @@ export default function CreatePatient() {
                 )}
               />
 
+              {conditionType === "physiotherapy" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: كسر، التواء، شد عضلي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>منطقة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: الركبة، الكتف، الظهر..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+
               <FormField
                 control={form.control}
                 name="injuryCause"
@@ -918,33 +949,7 @@ export default function CreatePatient() {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>نوع الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: كسر، التواء، شد عضلي..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryArea"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>منطقة الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="مثال: الركبة، الكتف، الظهر..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                  </div>
               )}
 
               {conditionType === "medical_support" && (

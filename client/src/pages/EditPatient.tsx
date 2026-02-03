@@ -951,33 +951,7 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>نوع الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: كسر، التواء، شد عضلي..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryArea"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>منطقة الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الركبة، الكتف، الظهر..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
+                  </>
               )}
 
               {conditionType === "medical_support" && (
@@ -1024,6 +998,37 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+
+              {conditionType === "physiotherapy" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: كسر، التواء، شد عضلي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>منطقة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الركبة، الكتف، الظهر..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
 
               <FormField
                 control={form.control}
