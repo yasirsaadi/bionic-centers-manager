@@ -507,12 +507,28 @@ export default function EditPatient() {
                       </div>
                       <div className="space-y-2">
                         <FormLabel>نوع البتر</FormLabel>
-                        <Input 
-                          value={singleAmputationDetail} 
-                          onChange={(e) => setSingleAmputationDetail(e.target.value)}
-                          placeholder="مثال: تحت الركبة، فوق الركبة، تحت المرفق..."
-                          className="bg-white"
-                        />
+                        {singleLimb === "lower" ? (
+                          <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
+                            <SelectTrigger className="bg-white">
+                              <SelectValue placeholder="اختر نوع البتر" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="جوبارت">جوبارت</SelectItem>
+                              <SelectItem value="سايمز">سايمز</SelectItem>
+                              <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                              <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                              <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                              <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input 
+                            value={singleAmputationDetail} 
+                            onChange={(e) => setSingleAmputationDetail(e.target.value)}
+                            placeholder="مثال: تحت المرفق، فوق المرفق..."
+                            className="bg-white"
+                          />
+                        )}
                       </div>
                     </div>
                   )}
