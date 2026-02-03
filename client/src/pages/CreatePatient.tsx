@@ -491,12 +491,20 @@ export default function CreatePatient() {
                             </SelectContent>
                           </Select>
                         ) : (
-                          <Input 
-                            value={singleAmputationDetail} 
-                            onChange={(e) => setSingleAmputationDetail(e.target.value)}
-                            placeholder="مثال: تحت المرفق، فوق المرفق..."
-                            className="bg-white"
-                          />
+                          <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
+                            <SelectTrigger className="bg-white">
+                              <SelectValue placeholder="اختر نوع البتر" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="اصبع">اصبع</SelectItem>
+                              <SelectItem value="خلال الكف">خلال الكف</SelectItem>
+                              <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                              <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                              <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                              <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                              <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                            </SelectContent>
+                          </Select>
                         )}
                       </div>
                     </div>
@@ -539,12 +547,20 @@ export default function CreatePatient() {
                                 </SelectContent>
                               </Select>
                             ) : (
-                              <Input 
-                                value={doubleRightDetail} 
-                                onChange={(e) => setDoubleRightDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                                className="bg-white"
-                              />
+                              <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="اصبع">اصبع</SelectItem>
+                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
+                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                </SelectContent>
+                              </Select>
                             )}
                           </div>
                           <div className="space-y-2">
@@ -564,12 +580,20 @@ export default function CreatePatient() {
                                 </SelectContent>
                               </Select>
                             ) : (
-                              <Input 
-                                value={doubleLeftDetail} 
-                                onChange={(e) => setDoubleLeftDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                                className="bg-white"
-                              />
+                              <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="اصبع">اصبع</SelectItem>
+                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
+                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                </SelectContent>
+                              </Select>
                             )}
                           </div>
                         </div>
@@ -604,11 +628,20 @@ export default function CreatePatient() {
                                 </SelectContent>
                               </Select>
                             ) : (
-                              <Input 
-                                value={bothRightDetail} 
-                                onChange={(e) => setBothRightDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                              />
+                              <Select value={bothRightDetail} onValueChange={setBothRightDetail}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="اصبع">اصبع</SelectItem>
+                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
+                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                </SelectContent>
+                              </Select>
                             )}
                           </div>
                           <div className="space-y-3 p-3 border rounded-lg bg-white">
@@ -637,11 +670,20 @@ export default function CreatePatient() {
                                 </SelectContent>
                               </Select>
                             ) : (
-                              <Input 
-                                value={bothLeftDetail} 
-                                onChange={(e) => setBothLeftDetail(e.target.value)}
-                                placeholder="نوع البتر..."
-                              />
+                              <Select value={bothLeftDetail} onValueChange={setBothLeftDetail}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="اصبع">اصبع</SelectItem>
+                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
+                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
+                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
+                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
+                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
+                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
+                                </SelectContent>
+                              </Select>
                             )}
                           </div>
                         </div>
