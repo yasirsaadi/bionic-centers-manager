@@ -59,8 +59,15 @@ export default function BranchDetails() {
   const dateFilteredPatients = useMemo(() => {
     const filterDate = new Date(selectedDate);
     return branchPatients.filter(p => {
-      if (!p.visits || p.visits.length === 0) return false;
-      return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
+      // Check if patient was registered on this date
+      if (p.createdAt && isSameDay(new Date(p.createdAt), filterDate)) {
+        return true;
+      }
+      // Check if patient has a visit on this date
+      if (p.visits && p.visits.length > 0) {
+        return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
+      }
+      return false;
     });
   }, [branchPatients, selectedDate]);
 
@@ -236,7 +243,7 @@ export default function BranchDetails() {
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-bold text-slate-700 mb-2">
-              {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى في هذا الفرع"}
+              {viewMode === "date" ? `لا يوجد مرضى مسجلين أو لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى في هذا الفرع"}
             </h3>
             <p className="text-muted-foreground mb-4">
               {viewMode === "date" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
