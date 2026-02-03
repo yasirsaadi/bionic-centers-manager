@@ -29,23 +29,12 @@ import { z } from "zod";
 import { useEffect, useState, useCallback } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 
-// Get today's date in YYYY-MM-DD format for Iraq timezone
-function getTodayDateString(): string {
-  const now = new Date();
-  const iraqTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Baghdad" }));
-  const year = iraqTime.getFullYear();
-  const month = String(iraqTime.getMonth() + 1).padStart(2, '0');
-  const day = String(iraqTime.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
-  registrationDate: z.string().min(1, "تاريخ الإضافة مطلوب"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -57,7 +46,6 @@ export default function CreatePatient() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
-  const isReception = branchSession?.role === "reception";
   
   // Non-admin users always use their branch, admin can select
   const defaultBranchId = !isAdmin && userBranchId ? userBranchId : (Number(searchParams.get("branch")) || 1);
@@ -75,7 +63,6 @@ export default function CreatePatient() {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      registrationDate: getTodayDateString(),
       name: "",
       phone: "",
       address: "",
@@ -222,28 +209,6 @@ export default function CreatePatient() {
           <Card className="p-4 md:p-6 rounded-xl md:rounded-2xl shadow-sm border-border/60">
             <h3 className="text-base md:text-lg font-bold text-primary mb-3 md:mb-4 border-b pb-2">البيانات الشخصية</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-              {!isReception && (
-                <FormField
-                  control={form.control}
-                  name="registrationDate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>تاريخ الإضافة *</FormLabel>
-                      <FormControl>
-                        <Input 
-                          type="date" 
-                          {...field} 
-                          className="bg-slate-50" 
-                          max={getTodayDateString()}
-                          data-testid="input-registration-date"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
               <FormField
                 control={form.control}
                 name="name"

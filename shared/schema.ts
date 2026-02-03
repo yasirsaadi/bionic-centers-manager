@@ -23,7 +23,6 @@ export const users = pgTable("users", {
 
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
-  registrationDate: date("registration_date").notNull(), // تاريخ الإضافة
   name: text("name").notNull(),
   phone: text("phone"),
   address: text("address"),

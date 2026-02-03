@@ -281,7 +281,7 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
-              <span className="hidden md:inline">تاريخ الإضافة: {patient.registrationDate ? formatDateIraq(patient.registrationDate) : formatDateIraq(patient.createdAt)}</span>
+              <span className="hidden md:inline">تاريخ الملف: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
