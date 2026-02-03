@@ -169,34 +169,36 @@ export default function PatientsList() {
   };
 
   const exportToPDF = async () => {
-    const { default: jsPDF } = await import("jspdf");
-    await import("jspdf-autotable");
+    const jsPDFModule = await import("jspdf");
+    const jsPDF = jsPDFModule.default;
+    const autoTableModule = await import("jspdf-autotable");
+    const autoTable = autoTableModule.default;
     
     const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
     const doc = new jsPDF({ orientation: "landscape" });
     
     doc.setFont("helvetica");
     doc.setFontSize(16);
-    doc.text("سجل المرضى - مراكز الدكتور ياسر الساعدي", doc.internal.pageSize.width / 2, 15, { align: "center" });
+    doc.text("Patients List - Dr. Yasir Al-Saadi Centers", doc.internal.pageSize.width / 2, 15, { align: "center" });
     
     doc.setFontSize(10);
-    const dateLabel = viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى";
+    const dateLabel = viewMode === "date" ? `Date: ${selectedDate}` : "All Patients";
     doc.text(dateLabel, doc.internal.pageSize.width / 2, 22, { align: "center" });
 
     const tableData = dataToExport.map((patient, index) => [
-      patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
-      (patient.totalCost || 0).toLocaleString(),
-      getBranchName(patient.branchId),
-      patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند",
-      patient.age,
-      patient.phone || "",
-      patient.name,
       index + 1,
+      patient.name,
+      patient.phone || "-",
+      patient.age,
+      patient.isAmputee ? "Amputee" : patient.isPhysiotherapy ? "Physiotherapy" : "Medical Support",
+      getBranchName(patient.branchId),
+      (patient.totalCost || 0).toLocaleString(),
+      patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
     ]);
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: 28,
-      head: [["التاريخ", "التكلفة", "الفرع", "الحالة", "العمر", "الهاتف", "الاسم", "#"]],
+      head: [["#", "Name", "Phone", "Age", "Condition", "Branch", "Cost", "Date"]],
       body: tableData,
       theme: "grid",
       styles: { 
