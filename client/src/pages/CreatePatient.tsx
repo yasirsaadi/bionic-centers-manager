@@ -41,7 +41,7 @@ function getTodayDateString(): string {
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
-  age: z.string().min(1, "العمر مطلوب"),
+  age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "نوع الجهة المحول منها مطلوب"),
@@ -82,7 +82,7 @@ export default function CreatePatient() {
       address: "",
       referralSource: "",
       referralSourceName: "",
-      age: "",
+      age: 0,
       weight: "",
       height: "",
       medicalCondition: "amputee",
