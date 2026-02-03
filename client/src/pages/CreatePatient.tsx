@@ -504,100 +504,6 @@ export default function CreatePatient() {
                 )}
               />
 
-              {conditionType === "physiotherapy" && (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>نوع الإصابة</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ""}>
-                          <FormControl>
-                            <SelectTrigger data-testid="select-physio-injury-type">
-                              <SelectValue placeholder="اختر نوع الإصابة" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="التهاب اوتار">التهاب اوتار</SelectItem>
-                            <SelectItem value="وثي">وثي</SelectItem>
-                            <SelectItem value="قطع اوتار">قطع اوتار</SelectItem>
-                            <SelectItem value="تشنج عضلي">تشنج عضلي</SelectItem>
-                            <SelectItem value="إصابة عصب محيطي">إصابة عصب محيطي</SelectItem>
-                            <SelectItem value="التهاب اعصاب سكري">التهاب اعصاب سكري</SelectItem>
-                            <SelectItem value="سوفان">سوفان</SelectItem>
-                            <SelectItem value="انزلاق ديسك">انزلاق ديسك</SelectItem>
-                            <SelectItem value="انزلاق فقرات">انزلاق فقرات</SelectItem>
-                            <SelectItem value="جنف">جنف</SelectItem>
-                            <SelectItem value="جلطة دماغية">جلطة دماغية</SelectItem>
-                            <SelectItem value="نزف دماغي">نزف دماغي</SelectItem>
-                            <SelectItem value="التهاب سحايا">التهاب سحايا</SelectItem>
-                            <SelectItem value="تصلب لويحي">تصلب لويحي</SelectItem>
-                            <SelectItem value="باركنسون">باركنسون</SelectItem>
-                            <SelectItem value="غيلان باريه">غيلان باريه</SelectItem>
-                            <SelectItem value="ضمور عضلي">ضمور عضلي</SelectItem>
-                            <SelectItem value="ضمور عصبي">ضمور عصبي</SelectItem>
-                            <SelectItem value="شلل دماغ">شلل دماغ</SelectItem>
-                            <SelectItem value="شلل اطفال">شلل اطفال</SelectItem>
-                            <SelectItem value="تأخر نفسي حركي">تأخر نفسي حركي</SelectItem>
-                            <SelectItem value="اصابة حبل شوكي">اصابة حبل شوكي</SelectItem>
-                            <SelectItem value="التهاب حبل شوكي">التهاب حبل شوكي</SelectItem>
-                            <SelectItem value="شلل العصب الوجهي">شلل العصب الوجهي</SelectItem>
-                            <SelectItem value="إصابة اربطة">إصابة اربطة</SelectItem>
-                            <SelectItem value="قطع جزئي في العضلات">قطع جزئي في العضلات</SelectItem>
-                            <SelectItem value="تبديل مفصل">تبديل مفصل</SelectItem>
-                            <SelectItem value="كسر">كسر</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryArea"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>منطقة الإصابة</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ""}>
-                          <FormControl>
-                            <SelectTrigger data-testid="select-physio-injury-area">
-                              <SelectValue placeholder="اختر منطقة الإصابة" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="الرأس">الرأس</SelectItem>
-                            <SelectItem value="الرقبة">الرقبة</SelectItem>
-                            <SelectItem value="الصدر">الصدر</SelectItem>
-                            <SelectItem value="القطن">القطن</SelectItem>
-                            <SelectItem value="العمود الفقري">العمود الفقري</SelectItem>
-                            <SelectItem value="الكتف">الكتف</SelectItem>
-                            <SelectItem value="منطقة الظهر العلوية">منطقة الظهر العلوية</SelectItem>
-                            <SelectItem value="منطقة الظهر السفلية">منطقة الظهر السفلية</SelectItem>
-                            <SelectItem value="العضد">العضد</SelectItem>
-                            <SelectItem value="المرفق">المرفق</SelectItem>
-                            <SelectItem value="الساعد">الساعد</SelectItem>
-                            <SelectItem value="المعصم">المعصم</SelectItem>
-                            <SelectItem value="الرسغ">الرسغ</SelectItem>
-                            <SelectItem value="اليد">اليد</SelectItem>
-                            <SelectItem value="الاصابع">الاصابع</SelectItem>
-                            <SelectItem value="الحوض">الحوض</SelectItem>
-                            <SelectItem value="الورك">الورك</SelectItem>
-                            <SelectItem value="الفخذ">الفخذ</SelectItem>
-                            <SelectItem value="الركبة">الركبة</SelectItem>
-                            <SelectItem value="الساق">الساق</SelectItem>
-                            <SelectItem value="الكاحل">الكاحل</SelectItem>
-                            <SelectItem value="القدم">القدم</SelectItem>
-                            <SelectItem value="اصابع القدم">اصابع القدم</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
-
               <FormField
                 control={form.control}
                 name="injuryCause"
@@ -1007,6 +913,32 @@ export default function CreatePatient() {
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} placeholder="مثال: علاج طبيعي، تأهيل حركي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>نوع الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: كسر، التواء، شد عضلي..." />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="physioInjuryArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>منطقة الإصابة</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ""} placeholder="مثال: الركبة، الكتف، الظهر..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
