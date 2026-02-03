@@ -173,7 +173,7 @@ export default function PatientsList() {
     XLSX.writeFile(wb, `patients_${dateStr}.xlsx`);
   };
 
-  const exportToPDF = async () => {
+  const exportToPDF = () => {
     const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
     
     if (dataToExport.length === 0) {
@@ -181,54 +181,70 @@ export default function PatientsList() {
       return;
     }
     
-    const jsPDFModule = await import("jspdf");
-    const jsPDF = jsPDFModule.default;
-    const autoTableModule = await import("jspdf-autotable");
-    const autoTable = autoTableModule.default;
-    const doc = new jsPDF({ orientation: "landscape" });
+    const dateLabel = viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى";
     
-    doc.setFont("helvetica");
-    doc.setFontSize(16);
-    doc.text("Patients List - Dr. Yasir Al-Saadi Centers", doc.internal.pageSize.width / 2, 15, { align: "center" });
+    const printContent = `
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+      <head>
+        <meta charset="UTF-8">
+        <title>سجل المرضى</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
+          * { font-family: 'Tajawal', Arial, sans-serif; }
+          body { padding: 20px; direction: rtl; }
+          h1 { text-align: center; color: #1e40af; margin-bottom: 5px; }
+          h3 { text-align: center; color: #6b7280; margin-top: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th { background: #3b82f6; color: white; padding: 10px; border: 1px solid #ddd; }
+          td { padding: 8px; border: 1px solid #ddd; text-align: center; }
+          tr:nth-child(even) { background: #f5f7fa; }
+          @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <h1>سجل المرضى - مراكز الدكتور ياسر الساعدي</h1>
+        <h3>${dateLabel}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>الاسم</th>
+              <th>الهاتف</th>
+              <th>العمر</th>
+              <th>الحالة</th>
+              <th>الفرع</th>
+              <th>التكلفة</th>
+              <th>التاريخ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${dataToExport.map((patient, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${patient.name}</td>
+                <td>${patient.phone || "-"}</td>
+                <td>${patient.age}</td>
+                <td>${patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند"}</td>
+                <td>${getBranchName(patient.branchId)}</td>
+                <td>${(patient.totalCost || 0).toLocaleString()}</td>
+                <td>${patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : ""}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
     
-    doc.setFontSize(10);
-    const dateLabel = viewMode === "date" ? `Date: ${selectedDate}` : "All Patients";
-    doc.text(dateLabel, doc.internal.pageSize.width / 2, 22, { align: "center" });
-
-    const tableData = dataToExport.map((patient, index) => [
-      index + 1,
-      patient.name,
-      patient.phone || "-",
-      patient.age,
-      patient.isAmputee ? "Amputee" : patient.isPhysiotherapy ? "Physiotherapy" : "Medical Support",
-      getBranchName(patient.branchId),
-      (patient.totalCost || 0).toLocaleString(),
-      patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
-    ]);
-
-    autoTable(doc, {
-      startY: 28,
-      head: [["#", "Name", "Phone", "Age", "Condition", "Branch", "Cost", "Date"]],
-      body: tableData,
-      theme: "grid",
-      styles: { 
-        font: "helvetica",
-        fontSize: 9,
-        halign: "center",
-        cellPadding: 2,
-      },
-      headStyles: {
-        fillColor: [59, 130, 246],
-        textColor: 255,
-        fontStyle: "bold",
-      },
-      alternateRowStyles: {
-        fillColor: [245, 247, 250],
-      },
-    });
-
-    const dateStr = viewMode === "date" ? selectedDate : "all";
-    doc.save(`patients_${dateStr}.pdf`);
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+      printWindow.onload = () => {
+        printWindow.print();
+      };
+    }
   };
 
   return (
