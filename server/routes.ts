@@ -576,6 +576,27 @@ export async function registerRoutes(
     res.json({ email: email || "" });
   });
 
+  // Send manual backup email
+  app.post("/api/admin/send-backup", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    try {
+      const { sendManualBackup } = await import("./backup");
+      const success = await sendManualBackup();
+      if (success) {
+        res.json({ success: true, message: "تم إرسال النسخة الاحتياطية بنجاح" });
+      } else {
+        res.status(500).json({ success: false, message: "فشل إرسال النسخة الاحتياطية. تأكد من إعداد GMAIL_USER و GMAIL_APP_PASSWORD" });
+      }
+    } catch (error) {
+      console.error("Backup error:", error);
+      res.status(500).json({ success: false, message: "حدث خطأ أثناء إرسال النسخة الاحتياطية" });
+    }
+  });
+
   // Branch Management API - Admin only
   const createBranchSchema = z.object({
     name: z.string().min(2, "اسم الفرع مطلوب"),
