@@ -524,21 +524,53 @@ export default function CreatePatient() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <FormLabel>البتر اليمين</FormLabel>
-                            <Input 
-                              value={doubleRightDetail} 
-                              onChange={(e) => setDoubleRightDetail(e.target.value)}
-                              placeholder="نوع البتر..."
-                              className="bg-white"
-                            />
+                            {doubleLimbType === "lower" ? (
+                              <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                  <SelectItem value="سايمز">سايمز</SelectItem>
+                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input 
+                                value={doubleRightDetail} 
+                                onChange={(e) => setDoubleRightDetail(e.target.value)}
+                                placeholder="نوع البتر..."
+                                className="bg-white"
+                              />
+                            )}
                           </div>
                           <div className="space-y-2">
                             <FormLabel>البتر اليسار</FormLabel>
-                            <Input 
-                              value={doubleLeftDetail} 
-                              onChange={(e) => setDoubleLeftDetail(e.target.value)}
-                              placeholder="نوع البتر..."
-                              className="bg-white"
-                            />
+                            {doubleLimbType === "lower" ? (
+                              <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                  <SelectItem value="سايمز">سايمز</SelectItem>
+                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input 
+                                value={doubleLeftDetail} 
+                                onChange={(e) => setDoubleLeftDetail(e.target.value)}
+                                placeholder="نوع البتر..."
+                                className="bg-white"
+                              />
+                            )}
                           </div>
                         </div>
                       )}
@@ -557,11 +589,27 @@ export default function CreatePatient() {
                                 <SelectItem value="lower">سفلي</SelectItem>
                               </SelectContent>
                             </Select>
-                            <Input 
-                              value={bothRightDetail} 
-                              onChange={(e) => setBothRightDetail(e.target.value)}
-                              placeholder="نوع البتر..."
-                            />
+                            {bothRightLimb === "lower" ? (
+                              <Select value={bothRightDetail} onValueChange={setBothRightDetail}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                  <SelectItem value="سايمز">سايمز</SelectItem>
+                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input 
+                                value={bothRightDetail} 
+                                onChange={(e) => setBothRightDetail(e.target.value)}
+                                placeholder="نوع البتر..."
+                              />
+                            )}
                           </div>
                           <div className="space-y-3 p-3 border rounded-lg bg-white">
                             <FormLabel className="text-primary">اليسار</FormLabel>
@@ -574,11 +622,27 @@ export default function CreatePatient() {
                                 <SelectItem value="lower">سفلي</SelectItem>
                               </SelectContent>
                             </Select>
-                            <Input 
-                              value={bothLeftDetail} 
-                              onChange={(e) => setBothLeftDetail(e.target.value)}
-                              placeholder="نوع البتر..."
-                            />
+                            {bothLeftLimb === "lower" ? (
+                              <Select value={bothLeftDetail} onValueChange={setBothLeftDetail}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="اختر نوع البتر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
+                                  <SelectItem value="سايمز">سايمز</SelectItem>
+                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
+                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
+                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
+                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input 
+                                value={bothLeftDetail} 
+                                onChange={(e) => setBothLeftDetail(e.target.value)}
+                                placeholder="نوع البتر..."
+                              />
+                            )}
                           </div>
                         </div>
                       )}
