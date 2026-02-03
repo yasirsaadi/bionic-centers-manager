@@ -344,30 +344,28 @@ export default function PatientsList() {
                 data-testid="input-search-patients"
               />
             </div>
-            {(isAdmin || branchSession?.role === "branch_manager") && (
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={exportToExcel}
-                  className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
-                  data-testid="button-export-excel"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span className="hidden sm:inline">Excel</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={exportToPDF}
-                  className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
-                  data-testid="button-export-pdf"
-                >
-                  <FileText className="w-4 h-4" />
-                  <span className="hidden sm:inline">PDF</span>
-                </Button>
-              </div>
-            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportToExcel}
+                className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
+                data-testid="button-export-excel"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span className="hidden sm:inline">Excel</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportToPDF}
+                className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
+                data-testid="button-export-pdf"
+              >
+                <FileText className="w-4 h-4" />
+                <span className="hidden sm:inline">PDF</span>
+              </Button>
+            </div>
           </div>
         </div>
 
