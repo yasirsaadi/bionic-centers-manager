@@ -160,7 +160,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPatient(insertPatient: InsertPatient): Promise<Patient> {
-    const [patient] = await db.insert(patients).values(insertPatient).returning();
+    // Extract registrationDate and use it as createdAt if provided
+    const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
+    
+    const valuesToInsert: any = { ...patientData };
+    
+    // If registrationDate is provided, use it as createdAt
+    if (registrationDate) {
+      valuesToInsert.createdAt = new Date(registrationDate);
+    }
+    
+    const [patient] = await db.insert(patients).values(valuesToInsert).returning();
     return patient;
   }
 

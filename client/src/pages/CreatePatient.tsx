@@ -35,6 +35,7 @@ const formSchema = insertPatientSchema.extend({
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
+  registrationDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -79,6 +80,7 @@ export default function CreatePatient() {
       totalCost: 0,
       injuryDate: "",
       injuryCause: "",
+      registrationDate: "",
       generalNotes: "",
       prostheticType: "",
       siliconType: "",
@@ -260,6 +262,27 @@ export default function CreatePatient() {
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مستشفى / مركز صحي / شخص معين" data-testid="input-referral-source" />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="registrationDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>تاريخ التسجيل</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="date" 
+                        {...field} 
+                        value={field.value || ""} 
+                        className="bg-slate-50" 
+                        data-testid="input-registration-date"
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">اتركه فارغاً لاستخدام تاريخ اليوم</p>
                     <FormMessage />
                   </FormItem>
                 )}

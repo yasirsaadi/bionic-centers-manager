@@ -168,7 +168,9 @@ export const customStats = pgTable("custom_stats", {
 });
 
 export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
-export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true });
+export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true }).extend({
+  registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
+});
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true });
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
   date: z.string().optional().nullable(),
