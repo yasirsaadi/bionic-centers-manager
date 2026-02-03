@@ -73,15 +73,19 @@ export default function BranchDetails() {
 
   const basePatients = viewMode === "date" ? dateFilteredPatients : branchPatients;
   
-  const filteredPatients = basePatients.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.medicalCondition.includes(searchTerm)
-  );
+  // When searching, search ALL patients (ignore filters)
+  const searchResults = searchTerm.trim() 
+    ? (allPatients || []).filter(p => 
+        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        p.medicalCondition.includes(searchTerm) ||
+        (p.phone && p.phone.includes(searchTerm))
+      )
+    : basePatients;
 
-  const totalPatients = filteredPatients.length;
+  const totalPatients = searchResults.length;
   const totalPages = Math.ceil(totalPatients / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
-  const paginatedPatients = filteredPatients.slice(startIndex, startIndex + pageSize);
+  const paginatedPatients = searchResults.slice(startIndex, startIndex + pageSize);
 
   const handleViewModeChange = (value: string) => {
     setViewMode(value as "date" | "all");

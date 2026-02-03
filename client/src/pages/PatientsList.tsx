@@ -115,10 +115,14 @@ export default function PatientsList() {
 
   const basePatients = viewMode === "date" ? dateFilteredPatients : branchFilteredPatients;
   
-  const filteredPatients = basePatients?.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.medicalCondition.includes(searchTerm)
-  );
+  // When searching, search ALL patients (ignore filters)
+  const filteredPatients = searchTerm.trim()
+    ? (patients || []).filter(p => 
+        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        p.medicalCondition.includes(searchTerm) ||
+        (p.phone && p.phone.includes(searchTerm))
+      )
+    : basePatients;
 
   const totalPatients = filteredPatients?.length || 0;
   const totalPages = Math.ceil(totalPatients / pageSize);
