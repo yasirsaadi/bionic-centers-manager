@@ -77,3 +77,67 @@
 ::-webkit-scrollbar-thumb {
   @apply bg-primary/20 rounded-full hover:bg-primary/40 transition-colors;
 }
+
+/* Print Styles - Hide sidebar and show only content */
+@media print {
+  /* Hide sidebar and navigation elements */
+  [data-sidebar],
+  aside,
+  nav,
+  .sidebar,
+  [class*="sidebar"],
+  button[data-testid="button-sidebar-toggle"],
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Make main content full width */
+  main,
+  .print-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 15px !important;
+  }
+  
+  /* Reset flex container */
+  body > div,
+  #root > div,
+  .flex {
+    display: block !important;
+    width: 100% !important;
+  }
+  
+  /* Ensure proper page breaks */
+  .page-break {
+    page-break-before: always;
+  }
+  
+  /* Hide action buttons during print */
+  button:not(.print-visible),
+  .actions {
+    display: none !important;
+  }
+  
+  /* Ensure colors print correctly */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Remove shadows and borders for cleaner print */
+  .shadow-xl,
+  .shadow-lg,
+  .shadow-md,
+  .shadow {
+    box-shadow: none !important;
+  }
+  
+  /* Ensure text is readable */
+  body {
+    font-size: 12pt !important;
+    line-height: 1.4 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+}
