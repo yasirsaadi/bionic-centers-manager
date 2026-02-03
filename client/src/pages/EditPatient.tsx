@@ -41,7 +41,7 @@ function getTodayDateString(): string {
 }
 
 const formSchema = insertPatientSchema.extend({
-  age: z.string().min(1, "العمر مطلوب"),
+  age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "نوع الجهة المحول منها مطلوب"),
@@ -76,7 +76,7 @@ export default function EditPatient() {
       name: "",
       phone: "",
       address: "",
-      age: "",
+      age: 0,
       weight: "",
       height: "",
       medicalCondition: "amputee",
@@ -97,8 +97,6 @@ export default function EditPatient() {
       footSize: "",
       kneeJointType: "",
       treatmentType: "",
-      physioInjuryType: "",
-      physioInjuryArea: "",
       supportType: "",
       injurySide: "",
       branchId: 1,
@@ -133,8 +131,6 @@ export default function EditPatient() {
         footSize: patient.footSize || "",
         kneeJointType: patient.kneeJointType || "",
         treatmentType: patient.treatmentType || "",
-        physioInjuryType: patient.physioInjuryType || "",
-        physioInjuryArea: patient.physioInjuryArea || "",
         supportType: patient.supportType || "",
         injurySide: patient.injurySide || "",
         branchId: patient.branchId,
@@ -384,7 +380,6 @@ export default function EditPatient() {
                         <SelectItem value="انستاغرام">انستاغرام</SelectItem>
                         <SelectItem value="تيكتوك">تيكتوك</SelectItem>
                         <SelectItem value="كوكل">كوكل</SelectItem>
-                        <SelectItem value="أخرى">أخرى</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -412,19 +407,9 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>العمر</FormLabel>
-                    <Select value={String(field.value) || ""} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="bg-slate-50">
-                          <SelectValue placeholder="اختر العمر" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="أقل من 1">أقل من 1</SelectItem>
-                        {Array.from({ length: 120 }, (_, i) => i + 1).map((num) => (
-                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Input type="number" {...field} className="bg-slate-50" />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -436,18 +421,9 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>الوزن (كجم)</FormLabel>
-                    <Select value={field.value || ""} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="bg-slate-50">
-                          <SelectValue placeholder="اختر الوزن" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {Array.from({ length: 200 }, (_, i) => i + 1).map((num) => (
-                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 70" />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -459,19 +435,9 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>الطول (سم)</FormLabel>
-                    <Select value={field.value || ""} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="bg-slate-50">
-                          <SelectValue placeholder="اختر الطول" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="أقل من 1">أقل من 1</SelectItem>
-                        {Array.from({ length: 220 }, (_, i) => i + 1).map((num) => (
-                          <SelectItem key={num} value={String(num)}>{num}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: 175" />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -609,33 +575,12 @@ export default function EditPatient() {
                       </div>
                       <div className="space-y-2">
                         <FormLabel>نوع البتر</FormLabel>
-                        <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
-                          <SelectTrigger className="bg-white">
-                            <SelectValue placeholder="اختر نوع البتر" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {singleLimb === "lower" ? (
-                              <>
-                                <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                <SelectItem value="سايمز">سايمز</SelectItem>
-                                <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                              </>
-                            ) : (
-                              <>
-                                <SelectItem value="اصبع">اصبع</SelectItem>
-                                <SelectItem value="كف جزئي">كف جزئي</SelectItem>
-                                <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                              </>
-                            )}
-                          </SelectContent>
-                        </Select>
+                        <Input 
+                          value={singleAmputationDetail} 
+                          onChange={(e) => setSingleAmputationDetail(e.target.value)}
+                          placeholder="مثال: تحت الركبة، فوق الركبة، تحت المرفق..."
+                          className="bg-white"
+                        />
                       </div>
                     </div>
                   )}
@@ -661,63 +606,21 @@ export default function EditPatient() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <FormLabel>البتر اليمين</FormLabel>
-                            <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
-                              <SelectTrigger className="bg-white">
-                                <SelectValue placeholder="اختر نوع البتر" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {doubleLimbType === "lower" ? (
-                                  <>
-                                    <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                    <SelectItem value="سايمز">سايمز</SelectItem>
-                                    <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                    <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                    <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                    <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                  </>
-                                ) : (
-                                  <>
-                                    <SelectItem value="اصبع">اصبع</SelectItem>
-                                    <SelectItem value="كف جزئي">كف جزئي</SelectItem>
-                                    <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                    <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                    <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                    <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                    <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                  </>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            <Input 
+                              value={doubleRightDetail} 
+                              onChange={(e) => setDoubleRightDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                              className="bg-white"
+                            />
                           </div>
                           <div className="space-y-2">
                             <FormLabel>البتر اليسار</FormLabel>
-                            <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
-                              <SelectTrigger className="bg-white">
-                                <SelectValue placeholder="اختر نوع البتر" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {doubleLimbType === "lower" ? (
-                                  <>
-                                    <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                    <SelectItem value="سايمز">سايمز</SelectItem>
-                                    <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                    <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                    <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                    <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                  </>
-                                ) : (
-                                  <>
-                                    <SelectItem value="اصبع">اصبع</SelectItem>
-                                    <SelectItem value="كف جزئي">كف جزئي</SelectItem>
-                                    <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                    <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                    <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                    <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                    <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                  </>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            <Input 
+                              value={doubleLeftDetail} 
+                              onChange={(e) => setDoubleLeftDetail(e.target.value)}
+                              placeholder="نوع البتر..."
+                              className="bg-white"
+                            />
                           </div>
                         </div>
                       )}
@@ -847,18 +750,9 @@ export default function EditPatient() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>حجم السليكون</FormLabel>
-                          <Select value={field.value || ""} onValueChange={field.onChange}>
-                            <FormControl>
-                              <SelectTrigger className="bg-slate-50">
-                                <SelectValue placeholder="اختر الحجم" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {Array.from({ length: 80 }, (_, i) => i + 1).map((num) => (
-                                <SelectItem key={num} value={String(num)}>{num}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: M، L، XL..." />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -946,32 +840,6 @@ export default function EditPatient() {
                         <FormLabel>نوع العلاج</FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: جلسات علاج طبيعي" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>نوع الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: كسر، التواء، شد عضلي..." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="physioInjuryArea"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>منطقة الإصابة</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: الركبة، الكتف، الظهر..." />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
