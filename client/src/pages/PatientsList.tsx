@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar } from "lucide-react";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo, useEffect } from "react";
@@ -145,6 +145,80 @@ export default function PatientsList() {
     setCurrentPage(1);
   };
 
+  const exportToExcel = async () => {
+    const XLSX = await import("xlsx");
+    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
+    
+    const excelData = dataToExport.map((patient, index) => ({
+      "#": index + 1,
+      "الاسم": patient.name,
+      "الهاتف": patient.phone || "",
+      "العمر": patient.age,
+      "الحالة": patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند طبية",
+      "الفرع": getBranchName(patient.branchId),
+      "التكلفة الكلية": patient.totalCost || 0,
+      "تاريخ التسجيل": patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(excelData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "المرضى");
+    
+    const dateStr = viewMode === "date" ? selectedDate : "all";
+    XLSX.writeFile(wb, `patients_${dateStr}.xlsx`);
+  };
+
+  const exportToPDF = async () => {
+    const { default: jsPDF } = await import("jspdf");
+    await import("jspdf-autotable");
+    
+    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
+    const doc = new jsPDF({ orientation: "landscape" });
+    
+    doc.setFont("helvetica");
+    doc.setFontSize(16);
+    doc.text("سجل المرضى - مراكز الدكتور ياسر الساعدي", doc.internal.pageSize.width / 2, 15, { align: "center" });
+    
+    doc.setFontSize(10);
+    const dateLabel = viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى";
+    doc.text(dateLabel, doc.internal.pageSize.width / 2, 22, { align: "center" });
+
+    const tableData = dataToExport.map((patient, index) => [
+      patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
+      (patient.totalCost || 0).toLocaleString(),
+      getBranchName(patient.branchId),
+      patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند",
+      patient.age,
+      patient.phone || "",
+      patient.name,
+      index + 1,
+    ]);
+
+    (doc as any).autoTable({
+      startY: 28,
+      head: [["التاريخ", "التكلفة", "الفرع", "الحالة", "العمر", "الهاتف", "الاسم", "#"]],
+      body: tableData,
+      theme: "grid",
+      styles: { 
+        font: "helvetica",
+        fontSize: 9,
+        halign: "center",
+        cellPadding: 2,
+      },
+      headStyles: {
+        fillColor: [59, 130, 246],
+        textColor: 255,
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [245, 247, 250],
+      },
+    });
+
+    const dateStr = viewMode === "date" ? selectedDate : "all";
+    doc.save(`patients_${dateStr}.pdf`);
+  };
+
   return (
     <div className="space-y-4 md:space-y-6 page-transition">
       <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center md:gap-4">
@@ -231,15 +305,41 @@ export default function PatientsList() {
 
       <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
         <div className="p-3 md:p-4 border-b border-border">
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input 
-              placeholder="بحث باسم المريض أو الحالة..." 
-              className="pr-10 h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base"
-              value={searchTerm}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              data-testid="input-search-patients"
-            />
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input 
+                placeholder="بحث باسم المريض أو الحالة..." 
+                className="pr-10 h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base"
+                value={searchTerm}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                data-testid="input-search-patients"
+              />
+            </div>
+            {(isAdmin || branchSession?.role === "branch_manager") && (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportToExcel}
+                  className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
+                  data-testid="button-export-excel"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span className="hidden sm:inline">Excel</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportToPDF}
+                  className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
+                  data-testid="button-export-pdf"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span className="hidden sm:inline">PDF</span>
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
