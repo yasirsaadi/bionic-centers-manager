@@ -43,6 +43,7 @@ export const patients = pgTable("patients", {
   // For amputees
   isAmputee: boolean("is_amputee").default(false),
   amputationSite: text("amputation_site"),
+  amputationType: text("amputation_type"), // نوع البتر
   prostheticType: text("prosthetic_type"), // نوع الطرف
   siliconType: text("silicon_type"), // نوع السليكون
   siliconSize: text("silicon_size"), // حجم السليكون
@@ -55,6 +56,8 @@ export const patients = pgTable("patients", {
   isPhysiotherapy: boolean("is_physiotherapy").default(false),
   diseaseType: text("disease_type"),
   treatmentType: text("treatment_type"), // نوع العلاج
+  physioInjuryType: text("physio_injury_type"), // نوع إصابة العلاج الطبيعي
+  physioInjuryArea: text("physio_injury_area"), // منطقة إصابة العلاج الطبيعي
   
   // For medical support (مساند طبية)
   isMedicalSupport: boolean("is_medical_support").default(false),
