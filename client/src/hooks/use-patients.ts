@@ -21,7 +21,7 @@ function getBranchSession() {
 export type PatientWithDetails = {
   id: number;
   name: string;
-  age: number;
+  age: string;
   medicalCondition: string;
   totalCost: number;
   payments?: { amount: number }[];
