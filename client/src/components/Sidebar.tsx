@@ -177,7 +177,7 @@ export function Sidebar() {
   return (
     <>
       {/* Mobile Header */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-border shadow-sm">
+      <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-border shadow-sm print:hidden">
         <div className="flex items-center justify-between p-3">
           <Button
             variant="ghost"
@@ -198,14 +198,14 @@ export function Sidebar() {
       {/* Mobile Sidebar Overlay */}
       {mobileOpen && (
         <div 
-          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          className="md:hidden fixed inset-0 bg-black/50 z-40 print:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Mobile Sidebar */}
       <aside className={cn(
-        "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl",
+        "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl print:hidden",
         mobileOpen ? "translate-x-0" : "translate-x-full"
       )}>
         <div className="flex flex-col h-full">
@@ -214,7 +214,7 @@ export function Sidebar() {
       </aside>
 
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
+      <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20 print:hidden">
         <SidebarContent />
       </aside>
     </>
