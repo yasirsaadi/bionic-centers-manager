@@ -31,7 +31,7 @@ import { useBranchSession } from "@/components/BranchGate";
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
-  age: z.string().min(1, "العمر مطلوب"),
+  age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
@@ -67,7 +67,7 @@ export default function CreatePatient() {
       phone: "",
       address: "",
       referralSource: "",
-      age: "",
+      age: 0,
       weight: "",
       height: "",
       medicalCondition: "amputee",

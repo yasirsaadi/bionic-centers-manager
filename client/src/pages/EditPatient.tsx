@@ -30,7 +30,7 @@ import { z } from "zod";
 import { useEffect, useState } from "react";
 
 const formSchema = insertPatientSchema.extend({
-  age: z.string().min(1, "العمر مطلوب"),
+  age: z.coerce.number().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
@@ -60,7 +60,7 @@ export default function EditPatient() {
       name: "",
       phone: "",
       address: "",
-      age: "",
+      age: 0,
       weight: "",
       height: "",
       medicalCondition: "amputee",
