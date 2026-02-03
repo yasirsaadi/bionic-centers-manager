@@ -27,6 +27,7 @@ export const patients = pgTable("patients", {
   phone: text("phone"),
   address: text("address"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
+  referralNotes: text("referral_notes"), // ملاحظات إضافية عن الجهة المحول منها
   age: text("age").notNull(),
   weight: text("weight"),
   height: text("height"),

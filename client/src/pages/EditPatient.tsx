@@ -323,15 +323,45 @@ export default function EditPatient() {
                 control={form.control}
                 name="referralSource"
                 render={({ field }) => (
-                  <FormItem className="md:col-span-2">
+                  <FormItem>
                     <FormLabel>الجهة المحول منها *</FormLabel>
-                    <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: مستشفى / مركز صحي / شخص معين" data-testid="input-referral-source" />
-                    </FormControl>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <FormControl>
+                        <SelectTrigger className="bg-slate-50" data-testid="select-referral-source">
+                          <SelectValue placeholder="اختر الجهة المحول منها" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="طبيب">طبيب</SelectItem>
+                        <SelectItem value="مستشفى">مستشفى</SelectItem>
+                        <SelectItem value="جهة حكومية">جهة حكومية</SelectItem>
+                        <SelectItem value="منظمة انسانية">منظمة انسانية</SelectItem>
+                        <SelectItem value="فيسبوك">فيسبوك</SelectItem>
+                        <SelectItem value="انستاغرام">انستاغرام</SelectItem>
+                        <SelectItem value="تيك توك">تيك توك</SelectItem>
+                        <SelectItem value="كوكل">كوكل</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {form.watch("referralSource") && (
+                <FormField
+                  control={form.control}
+                  name="referralNotes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ملاحظات إضافية</FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder="مثال: اسم الطبيب، اسم المستشفى..." data-testid="input-referral-notes" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               <FormField
                 control={form.control}
