@@ -593,7 +593,7 @@ export async function registerRoutes(
     }
   });
 
-  // Send manual backup email
+  // Send manual backup email with filter options
   app.post("/api/admin/send-backup", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     if (!branchSession?.isAdmin) {
@@ -602,9 +602,17 @@ export async function registerRoutes(
     
     try {
       const { sendManualBackup } = await import("./backup");
-      const success = await sendManualBackup();
-      if (success) {
-        res.json({ success: true, message: "تم إرسال النسخة الاحتياطية بنجاح" });
+      const { filterType = "all", branchId } = req.body;
+      const filter = { 
+        type: filterType as "all" | "today" | "branch", 
+        branchId: branchId ? Number(branchId) : undefined 
+      };
+      const result = await sendManualBackup(filter);
+      if (result.success) {
+        res.json({ 
+          success: true, 
+          message: `تم إرسال النسخة الاحتياطية بنجاح (${result.count} مريض - ${result.filterDescription})` 
+        });
       } else {
         res.status(500).json({ success: false, message: "فشل إرسال النسخة الاحتياطية. تأكد من إعداد GMAIL_USER و GMAIL_APP_PASSWORD" });
       }

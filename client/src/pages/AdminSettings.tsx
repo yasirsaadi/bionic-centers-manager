@@ -144,6 +144,8 @@ function BackupStatusCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSending, setIsSending] = useState(false);
+  const [filterType, setFilterType] = useState<"all" | "today" | "branch">("all");
+  const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
 
   const { data: backupStatus, isLoading } = useQuery<{ lastBackup: string | null; hoursAgo: number | null }>({
     queryKey: ["/api/admin/backup-status"],
@@ -155,18 +157,36 @@ function BackupStatusCard() {
     refetchInterval: 60000,
   });
 
+  const { data: branches } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["/api/branches"],
+  });
+
   const handleSendBackup = async () => {
+    if (filterType === "branch" && !selectedBranchId) {
+      toast({
+        title: "تنبيه",
+        description: "يرجى اختيار الفرع أولاً",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSending(true);
     try {
       const res = await fetch("/api/admin/send-backup", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ 
+          filterType, 
+          branchId: filterType === "branch" ? selectedBranchId : undefined 
+        }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
           title: "تم الإرسال",
-          description: "تم إرسال النسخة الاحتياطية بنجاح",
+          description: data.message || "تم إرسال النسخة الاحتياطية بنجاح",
         });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/backup-status"] });
       } else {
@@ -231,9 +251,60 @@ function BackupStatusCard() {
         </div>
       </div>
 
+      <div className="space-y-3">
+        <Label>اختر نوع البيانات للنسخة الاحتياطية:</Label>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={filterType === "all" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setFilterType("all")}
+            data-testid="button-filter-all"
+          >
+            جميع المرضى
+          </Button>
+          <Button
+            type="button"
+            variant={filterType === "today" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setFilterType("today")}
+            data-testid="button-filter-today"
+          >
+            مرضى اليوم
+          </Button>
+          <Button
+            type="button"
+            variant={filterType === "branch" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setFilterType("branch")}
+            data-testid="button-filter-branch"
+          >
+            فرع معين
+          </Button>
+        </div>
+
+        {filterType === "branch" && (
+          <Select 
+            value={selectedBranchId?.toString() || ""} 
+            onValueChange={(value) => setSelectedBranchId(Number(value))}
+          >
+            <SelectTrigger data-testid="select-branch-filter">
+              <SelectValue placeholder="اختر الفرع" />
+            </SelectTrigger>
+            <SelectContent>
+              {branches?.map((branch) => (
+                <SelectItem key={branch.id} value={branch.id.toString()}>
+                  {branch.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
       <Button
         onClick={handleSendBackup}
-        disabled={isSending}
+        disabled={isSending || (filterType === "branch" && !selectedBranchId)}
         className="w-full gap-2"
         data-testid="button-send-backup"
       >

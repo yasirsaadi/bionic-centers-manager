@@ -63,8 +63,13 @@ function escapeCSV(value: string | number | null | undefined): string {
   return str;
 }
 
-async function generatePatientCSV(): Promise<string> {
-  const allPatients = await db
+export type BackupFilter = {
+  type: "all" | "today" | "branch";
+  branchId?: number;
+};
+
+async function generatePatientCSV(filter: BackupFilter = { type: "all" }): Promise<{ csv: string; count: number; filterDescription: string }> {
+  let allPatients = await db
     .select({
       id: patients.id,
       name: patients.name,
@@ -103,6 +108,28 @@ async function generatePatientCSV(): Promise<string> {
     })
     .from(patients)
     .leftJoin(branches, eq(patients.branchId, branches.id));
+
+  let filterDescription = "جميع المرضى";
+
+  // Apply filters
+  if (filter.type === "today") {
+    const now = new Date();
+    const baghdadOffset = 3 * 60 * 60 * 1000; // UTC+3
+    const baghdadNow = new Date(now.getTime() + baghdadOffset);
+    const todayStart = new Date(baghdadNow.getFullYear(), baghdadNow.getMonth(), baghdadNow.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    
+    allPatients = allPatients.filter(p => {
+      if (!p.createdAt) return false;
+      const patientDate = new Date(p.createdAt);
+      return patientDate >= todayStart && patientDate < todayEnd;
+    });
+    filterDescription = `مرضى اليوم (${new Intl.DateTimeFormat("ar-IQ", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Baghdad" }).format(baghdadNow)})`;
+  } else if (filter.type === "branch" && filter.branchId) {
+    const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
+    allPatients = allPatients.filter(p => p.branchId === filter.branchId);
+    filterDescription = `مرضى فرع: ${branchName}`;
+  }
 
   const headers = [
     "رقم المريض",
@@ -179,20 +206,20 @@ async function generatePatientCSV(): Promise<string> {
   const BOM = "\uFEFF";
   const csvContent = BOM + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
 
-  return csvContent;
+  return { csv: csvContent, count: allPatients.length, filterDescription };
 }
 
-async function sendBackupEmail(): Promise<boolean> {
+async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
   const gmailUser = process.env.GMAIL_USER;
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
 
   if (!gmailUser || !gmailAppPassword) {
     console.error("[Backup] Missing GMAIL_USER or GMAIL_APP_PASSWORD secrets");
-    return false;
+    return { success: false };
   }
 
   try {
-    const csvContent = await generatePatientCSV();
+    const { csv: csvContent, count, filterDescription } = await generatePatientCSV(filter);
     const now = new Date();
     const baghdadDate = new Intl.DateTimeFormat("en-GB", {
       year: "numeric",
@@ -212,11 +239,13 @@ async function sendBackupEmail(): Promise<boolean> {
     const mailOptions = {
       from: gmailUser,
       to: BACKUP_EMAIL,
-      subject: `نسخة احتياطية - بيانات المرضى - ${baghdadDate}`,
+      subject: `نسخة احتياطية - ${filterDescription} - ${baghdadDate}`,
       html: `
         <div dir="rtl" style="font-family: Arial, sans-serif;">
-          <h2>نسخة احتياطية يومية</h2>
-          <p>مرفق ملف CSV يحتوي على بيانات جميع المرضى.</p>
+          <h2>نسخة احتياطية</h2>
+          <p>مرفق ملف CSV يحتوي على بيانات المرضى.</p>
+          <p><strong>الفلتر:</strong> ${filterDescription}</p>
+          <p><strong>عدد المرضى:</strong> ${count}</p>
           <p><strong>تاريخ النسخة:</strong> ${baghdadDate}</p>
           <p><strong>الوقت:</strong> ${new Intl.DateTimeFormat("ar-IQ", {
             hour: "2-digit",
@@ -240,11 +269,11 @@ async function sendBackupEmail(): Promise<boolean> {
 
     await transporter.sendMail(mailOptions);
     saveLastBackupTime();
-    console.log(`[Backup] Email sent successfully to ${BACKUP_EMAIL} at ${formatDate(now)}`);
-    return true;
+    console.log(`[Backup] Email sent successfully to ${BACKUP_EMAIL} at ${formatDate(now)} - ${filterDescription} (${count} patients)`);
+    return { success: true, count, filterDescription };
   } catch (error) {
     console.error("[Backup] Failed to send email:", error);
-    return false;
+    return { success: false };
   }
 }
 
@@ -280,7 +309,7 @@ export async function initBackupScheduler(): Promise<void> {
   }
 }
 
-export async function sendManualBackup(): Promise<boolean> {
-  console.log("[Backup] Sending manual backup...");
-  return await sendBackupEmail();
+export async function sendManualBackup(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
+  console.log(`[Backup] Sending manual backup with filter: ${filter.type}...`);
+  return await sendBackupEmail(filter);
 }
