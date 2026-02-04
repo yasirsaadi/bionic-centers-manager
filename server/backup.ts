@@ -1,10 +1,45 @@
 import nodemailer from "nodemailer";
 import cron from "node-cron";
+import fs from "fs";
+import path from "path";
 import { db } from "./db";
 import { patients, branches, payments, visits } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
+const LAST_BACKUP_FILE = path.join(process.cwd(), ".last_backup_time");
+
+function getLastBackupTime(): Date | null {
+  try {
+    if (fs.existsSync(LAST_BACKUP_FILE)) {
+      const content = fs.readFileSync(LAST_BACKUP_FILE, "utf-8").trim();
+      const timestamp = parseInt(content, 10);
+      if (!isNaN(timestamp)) {
+        return new Date(timestamp);
+      }
+    }
+  } catch (error) {
+    console.error("[Backup] Error reading last backup time:", error);
+  }
+  return null;
+}
+
+function saveLastBackupTime(): void {
+  try {
+    fs.writeFileSync(LAST_BACKUP_FILE, Date.now().toString(), "utf-8");
+  } catch (error) {
+    console.error("[Backup] Error saving last backup time:", error);
+  }
+}
+
+export function getBackupStatus(): { lastBackup: Date | null; hoursAgo: number | null } {
+  const lastBackup = getLastBackupTime();
+  if (!lastBackup) {
+    return { lastBackup: null, hoursAgo: null };
+  }
+  const hoursAgo = Math.round((Date.now() - lastBackup.getTime()) / (1000 * 60 * 60));
+  return { lastBackup, hoursAgo };
+}
 
 function formatDate(date: Date | null): string {
   if (!date) return "";
@@ -204,6 +239,7 @@ async function sendBackupEmail(): Promise<boolean> {
     };
 
     await transporter.sendMail(mailOptions);
+    saveLastBackupTime();
     console.log(`[Backup] Email sent successfully to ${BACKUP_EMAIL} at ${formatDate(now)}`);
     return true;
   } catch (error) {
@@ -212,7 +248,8 @@ async function sendBackupEmail(): Promise<boolean> {
   }
 }
 
-export function initBackupScheduler(): void {
+export async function initBackupScheduler(): Promise<void> {
+  // Schedule daily backup at 23:55 Baghdad time
   cron.schedule(
     "55 20 * * *",
     async () => {
@@ -225,6 +262,22 @@ export function initBackupScheduler(): void {
   );
 
   console.log("[Backup] Scheduler initialized - Daily backup at 23:55 Baghdad time (20:55 UTC)");
+  
+  // Check if backup is needed on startup (if last backup was more than 24 hours ago)
+  const status = getBackupStatus();
+  if (status.hoursAgo === null || status.hoursAgo >= 24) {
+    console.log("[Backup] No backup in last 24 hours - sending startup backup...");
+    setTimeout(async () => {
+      const success = await sendBackupEmail();
+      if (success) {
+        console.log("[Backup] Startup backup sent successfully");
+      } else {
+        console.log("[Backup] Startup backup failed - will retry at scheduled time");
+      }
+    }, 10000); // Wait 10 seconds for server to fully initialize
+  } else {
+    console.log(`[Backup] Last backup was ${status.hoursAgo} hours ago - no startup backup needed`);
+  }
 }
 
 export async function sendManualBackup(): Promise<boolean> {

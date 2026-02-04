@@ -576,6 +576,23 @@ export async function registerRoutes(
     res.json({ email: email || "" });
   });
 
+  // Get backup status
+  app.get("/api/admin/backup-status", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    
+    try {
+      const { getBackupStatus } = await import("./backup");
+      const status = getBackupStatus();
+      res.json(status);
+    } catch (error) {
+      console.error("Backup status error:", error);
+      res.status(500).json({ lastBackup: null, hoursAgo: null });
+    }
+  });
+
   // Send manual backup email
   app.post("/api/admin/send-backup", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;

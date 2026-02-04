@@ -140,6 +140,110 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
   }
 };
 
+function BackupStatusCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isSending, setIsSending] = useState(false);
+
+  const { data: backupStatus, isLoading } = useQuery<{ lastBackup: string | null; hoursAgo: number | null }>({
+    queryKey: ["/api/admin/backup-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/backup-status", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch backup status");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+
+  const handleSendBackup = async () => {
+    setIsSending(true);
+    try {
+      const res = await fetch("/api/admin/send-backup", {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: "تم الإرسال",
+          description: "تم إرسال النسخة الاحتياطية بنجاح",
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/backup-status"] });
+      } else {
+        toast({
+          title: "خطأ",
+          description: data.message || "فشل إرسال النسخة الاحتياطية",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "خطأ",
+        description: "حدث خطأ أثناء إرسال النسخة الاحتياطية",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const formatLastBackup = (dateStr: string | null) => {
+    if (!dateStr) return "لم يتم الإرسال بعد";
+    const date = new Date(dateStr);
+    return new Intl.DateTimeFormat("ar-IQ", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Baghdad",
+    }).format(date);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="p-4 bg-slate-50 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-muted-foreground">آخر نسخة احتياطية:</p>
+            <p className="font-medium">
+              {isLoading ? "جاري التحميل..." : formatLastBackup(backupStatus?.lastBackup || null)}
+            </p>
+            {backupStatus && backupStatus.hoursAgo !== null && (
+              <p className="text-xs text-muted-foreground">
+                (منذ {backupStatus.hoursAgo} ساعة)
+              </p>
+            )}
+          </div>
+          <div>
+            {backupStatus && backupStatus.hoursAgo !== null && backupStatus.hoursAgo < 24 ? (
+              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                <CheckCircle className="w-3 h-3 ml-1" />
+                محدث
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                <AlertTriangle className="w-3 h-3 ml-1" />
+                يحتاج تحديث
+              </Badge>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <Button
+        onClick={handleSendBackup}
+        disabled={isSending}
+        className="w-full gap-2"
+        data-testid="button-send-backup"
+      >
+        <Mail className="w-4 h-4" />
+        {isSending ? "جاري الإرسال..." : "إرسال نسخة احتياطية الآن"}
+      </Button>
+    </div>
+  );
+}
+
 export default function AdminSettings() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
@@ -1080,6 +1184,18 @@ export default function AdminSettings() {
                 </p>
               </div>
             </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Mail className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-bold text-slate-800">إرسال نسخة احتياطية</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              إرسال نسخة احتياطية من بيانات المرضى إلى بريدك الإلكتروني الآن
+            </p>
+
+            <BackupStatusCard />
           </Card>
 
           <Card className="p-6">
