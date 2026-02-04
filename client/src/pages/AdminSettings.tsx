@@ -144,7 +144,7 @@ function BackupStatusCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSending, setIsSending] = useState(false);
-  const [filterType, setFilterType] = useState<"all" | "today" | "branch">("all");
+  const [filterType, setFilterType] = useState<"all" | "today" | "branch" | "branch_today">("all");
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
 
   const { data: backupStatus, isLoading } = useQuery<{ lastBackup: string | null; hoursAgo: number | null }>({
@@ -162,7 +162,7 @@ function BackupStatusCard() {
   });
 
   const handleSendBackup = async () => {
-    if (filterType === "branch" && !selectedBranchId) {
+    if ((filterType === "branch" || filterType === "branch_today") && !selectedBranchId) {
       toast({
         title: "تنبيه",
         description: "يرجى اختيار الفرع أولاً",
@@ -179,7 +179,7 @@ function BackupStatusCard() {
         credentials: "include",
         body: JSON.stringify({ 
           filterType, 
-          branchId: filterType === "branch" ? selectedBranchId : undefined 
+          branchId: (filterType === "branch" || filterType === "branch_today") ? selectedBranchId : undefined 
         }),
       });
       const data = await res.json();
@@ -270,26 +270,23 @@ function BackupStatusCard() {
             onClick={() => setFilterType("today")}
             data-testid="button-filter-today"
           >
-            مرضى اليوم
-          </Button>
-          <Button
-            type="button"
-            variant={filterType === "branch" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setFilterType("branch")}
-            data-testid="button-filter-branch"
-          >
-            فرع معين
+            مرضى اليوم (كل الفروع)
           </Button>
         </div>
 
-        {filterType === "branch" && (
+        <div className="border-t pt-3 mt-2">
+          <Label className="text-sm text-muted-foreground mb-2 block">أو اختر فرع معين:</Label>
           <Select 
             value={selectedBranchId?.toString() || ""} 
-            onValueChange={(value) => setSelectedBranchId(Number(value))}
+            onValueChange={(value) => {
+              setSelectedBranchId(Number(value));
+              if (!value) {
+                setFilterType("all");
+              }
+            }}
           >
             <SelectTrigger data-testid="select-branch-filter">
-              <SelectValue placeholder="اختر الفرع" />
+              <SelectValue placeholder="اختر الفرع (اختياري)" />
             </SelectTrigger>
             <SelectContent>
               {branches?.map((branch) => (
@@ -299,12 +296,47 @@ function BackupStatusCard() {
               ))}
             </SelectContent>
           </Select>
-        )}
+
+          {selectedBranchId && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              <Button
+                type="button"
+                variant={filterType === "branch" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setFilterType("branch")}
+                data-testid="button-filter-branch-all"
+              >
+                جميع مرضى الفرع
+              </Button>
+              <Button
+                type="button"
+                variant={filterType === "branch_today" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setFilterType("branch_today")}
+                data-testid="button-filter-branch-today"
+              >
+                مرضى اليوم فقط للفرع
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedBranchId(null);
+                  setFilterType("all");
+                }}
+                data-testid="button-clear-branch"
+              >
+                إلغاء اختيار الفرع
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       <Button
         onClick={handleSendBackup}
-        disabled={isSending || (filterType === "branch" && !selectedBranchId)}
+        disabled={isSending || ((filterType === "branch" || filterType === "branch_today") && !selectedBranchId)}
         className="w-full gap-2"
         data-testid="button-send-backup"
       >

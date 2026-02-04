@@ -604,7 +604,7 @@ export async function registerRoutes(
       const { sendManualBackup } = await import("./backup");
       const { filterType = "all", branchId } = req.body;
       const filter = { 
-        type: filterType as "all" | "today" | "branch", 
+        type: filterType as "all" | "today" | "branch" | "branch_today", 
         branchId: branchId ? Number(branchId) : undefined 
       };
       const result = await sendManualBackup(filter);

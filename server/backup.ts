@@ -64,7 +64,7 @@ function escapeCSV(value: string | number | null | undefined): string {
 }
 
 export type BackupFilter = {
-  type: "all" | "today" | "branch";
+  type: "all" | "today" | "branch" | "branch_today";
   branchId?: number;
 };
 
@@ -128,7 +128,22 @@ async function generatePatientCSV(filter: BackupFilter = { type: "all" }): Promi
   } else if (filter.type === "branch" && filter.branchId) {
     const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
     allPatients = allPatients.filter(p => p.branchId === filter.branchId);
-    filterDescription = `مرضى فرع: ${branchName}`;
+    filterDescription = `جميع مرضى فرع: ${branchName}`;
+  } else if (filter.type === "branch_today" && filter.branchId) {
+    const now = new Date();
+    const baghdadOffset = 3 * 60 * 60 * 1000; // UTC+3
+    const baghdadNow = new Date(now.getTime() + baghdadOffset);
+    const todayStart = new Date(baghdadNow.getFullYear(), baghdadNow.getMonth(), baghdadNow.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
+    
+    allPatients = allPatients.filter(p => {
+      if (!p.createdAt) return false;
+      if (p.branchId !== filter.branchId) return false;
+      const patientDate = new Date(p.createdAt);
+      return patientDate >= todayStart && patientDate < todayEnd;
+    });
+    filterDescription = `مرضى اليوم لفرع: ${branchName} (${new Intl.DateTimeFormat("ar-IQ", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Baghdad" }).format(baghdadNow)})`;
   }
 
   const headers = [
