@@ -293,11 +293,11 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
 }
 
 export async function initBackupScheduler(): Promise<void> {
-  // Schedule daily backup at 23:55 Baghdad time
+  // Schedule daily backup at 23:55 Baghdad time (20:55 UTC)
   cron.schedule(
     "55 20 * * *",
     async () => {
-      console.log("[Backup] Starting scheduled backup...");
+      console.log("[Backup] Starting scheduled daily backup...");
       await sendBackupEmail();
     },
     {
@@ -307,20 +307,12 @@ export async function initBackupScheduler(): Promise<void> {
 
   console.log("[Backup] Scheduler initialized - Daily backup at 23:55 Baghdad time (20:55 UTC)");
   
-  // Check if backup is needed on startup (if last backup was more than 24 hours ago)
+  // Log backup status on startup (no automatic sending on restart)
   const status = getBackupStatus();
-  if (status.hoursAgo === null || status.hoursAgo >= 24) {
-    console.log("[Backup] No backup in last 24 hours - sending startup backup...");
-    setTimeout(async () => {
-      const success = await sendBackupEmail();
-      if (success) {
-        console.log("[Backup] Startup backup sent successfully");
-      } else {
-        console.log("[Backup] Startup backup failed - will retry at scheduled time");
-      }
-    }, 10000); // Wait 10 seconds for server to fully initialize
+  if (status.hoursAgo === null) {
+    console.log("[Backup] No previous backup found - will send at scheduled time (23:55 Baghdad)");
   } else {
-    console.log(`[Backup] Last backup was ${status.hoursAgo} hours ago - no startup backup needed`);
+    console.log(`[Backup] Last backup was ${status.hoursAgo} hours ago`);
   }
 }
 
