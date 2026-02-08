@@ -41,6 +41,21 @@ export function getBackupStatus(): { lastBackup: Date | null; hoursAgo: number |
   return { lastBackup, hoursAgo };
 }
 
+function wasSentToday(): boolean {
+  const lastBackup = getLastBackupTime();
+  if (!lastBackup) return false;
+  
+  const baghdadOffset = 3 * 60 * 60 * 1000;
+  const nowBaghdad = new Date(Date.now() + baghdadOffset);
+  const lastBaghdad = new Date(lastBackup.getTime() + baghdadOffset);
+  
+  return (
+    nowBaghdad.getUTCFullYear() === lastBaghdad.getUTCFullYear() &&
+    nowBaghdad.getUTCMonth() === lastBaghdad.getUTCMonth() &&
+    nowBaghdad.getUTCDate() === lastBaghdad.getUTCDate()
+  );
+}
+
 function formatDate(date: Date | null): string {
   if (!date) return "";
   const options: Intl.DateTimeFormatOptions = {
@@ -297,6 +312,10 @@ export async function initBackupScheduler(): Promise<void> {
   cron.schedule(
     "55 20 * * *",
     async () => {
+      if (wasSentToday()) {
+        console.log("[Backup] Already sent today - skipping scheduled backup");
+        return;
+      }
       console.log("[Backup] Starting scheduled daily backup...");
       await sendBackupEmail();
     },
@@ -307,12 +326,27 @@ export async function initBackupScheduler(): Promise<void> {
 
   console.log("[Backup] Scheduler initialized - Daily backup at 23:55 Baghdad time (20:55 UTC)");
   
-  // Log backup status on startup (no automatic sending on restart)
+  // On startup: if no backup was sent today (Baghdad date), send one after 15 seconds
   const status = getBackupStatus();
-  if (status.hoursAgo === null) {
-    console.log("[Backup] No previous backup found - will send at scheduled time (23:55 Baghdad)");
+  const alreadySentToday = wasSentToday();
+  
+  if (alreadySentToday) {
+    console.log(`[Backup] Backup already sent today - no startup backup needed (last: ${status.hoursAgo}h ago)`);
   } else {
-    console.log(`[Backup] Last backup was ${status.hoursAgo} hours ago`);
+    const reason = status.hoursAgo === null ? "no previous backup found" : `last backup was ${status.hoursAgo}h ago`;
+    console.log(`[Backup] No backup sent today (${reason}) - will send in 15 seconds...`);
+    setTimeout(async () => {
+      if (wasSentToday()) {
+        console.log("[Backup] Backup was sent while waiting - skipping");
+        return;
+      }
+      const result = await sendBackupEmail();
+      if (result.success) {
+        console.log(`[Backup] Startup backup sent successfully (${result.count} patients)`);
+      } else {
+        console.log("[Backup] Startup backup failed - will retry at 23:55 Baghdad time");
+      }
+    }, 15000);
   }
 }
 
