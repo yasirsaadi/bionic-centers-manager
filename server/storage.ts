@@ -160,14 +160,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPatient(insertPatient: InsertPatient): Promise<Patient> {
-    // Extract registrationDate and use it as createdAt if provided
     const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
     
     const valuesToInsert: any = { ...patientData };
     
-    // If registrationDate is provided, use it as createdAt
     if (registrationDate) {
-      valuesToInsert.createdAt = new Date(registrationDate);
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const nowBaghdad = new Date(Date.now() + baghdadOffset);
+      const todayBaghdad = nowBaghdad.toISOString().split('T')[0];
+      
+      if (registrationDate === todayBaghdad) {
+        // Today's date: let defaultNow() set the actual current timestamp
+      } else {
+        // Backdated: use the selected date with current Baghdad time
+        const currentHours = nowBaghdad.getUTCHours();
+        const currentMinutes = nowBaghdad.getUTCMinutes();
+        const currentSeconds = nowBaghdad.getUTCSeconds();
+        
+        const [year, month, day] = registrationDate.split('-').map(Number);
+        const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
+        // Convert Baghdad time back to UTC for storage
+        valuesToInsert.createdAt = new Date(backdatedBaghdad.getTime() - baghdadOffset);
+      }
     }
     
     const [patient] = await db.insert(patients).values(valuesToInsert).returning();
