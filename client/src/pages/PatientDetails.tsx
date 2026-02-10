@@ -66,6 +66,9 @@ import type { Branch } from "@shared/schema";
 export default function PatientDetails() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
+  const searchString = window.location.search;
+  const fromBranch = new URLSearchParams(searchString).get("branch");
+  const backUrl = fromBranch ? `/patients?branch=${fromBranch}` : "/patients";
   const branchSession = useBranchSession();
   const permissions = usePermissions();
   const isAdmin = branchSession?.isAdmin || false;
@@ -132,7 +135,7 @@ export default function PatientDetails() {
   const handleDelete = () => {
     deletePatient(Number(id), {
       onSuccess: () => {
-        setLocation("/patients");
+        setLocation(backUrl);
       },
     });
   };
@@ -163,7 +166,7 @@ export default function PatientDetails() {
       {/* Action Buttons - Print at top */}
       <div className="flex flex-wrap gap-3 items-center justify-end print:hidden">
         {permissions.canEditPatients && (
-          <Link href={`/patients/${patient.id}/edit`}>
+          <Link href={`/patients/${patient.id}/edit${fromBranch ? `?branch=${fromBranch}` : ""}`}>
             <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
               <Pencil className="w-4 h-4" />
               تحرير
@@ -267,7 +270,7 @@ export default function PatientDetails() {
       {/* Header */}
       <div className="flex flex-col gap-4 md:gap-6">
         <div className="flex items-start gap-3 md:gap-4">
-          <Button variant="ghost" onClick={() => setLocation("/patients")} className="h-9 w-9 md:h-10 md:w-10 p-0 rounded-full border print:hidden shrink-0">
+          <Button variant="ghost" onClick={() => setLocation(backUrl)} className="h-9 w-9 md:h-10 md:w-10 p-0 rounded-full border print:hidden shrink-0">
             <ArrowRight className="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
           </Button>
           <div className="min-w-0 flex-1">

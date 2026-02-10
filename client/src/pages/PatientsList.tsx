@@ -407,7 +407,7 @@ export default function PatientsList() {
                         <span className="text-xs text-slate-400 font-mono">
                           {formatDateIraq(patient.createdAt)}
                         </span>
-                        <Link href={`/patients/${patient.id}`}>
+                        <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                           <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                             <Eye className="w-3.5 h-3.5" />
                             عرض الملف
@@ -471,7 +471,7 @@ export default function PatientsList() {
                           <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">
-                          <Link href={`/patients/${patient.id}`}>
+                          <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                             <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-2">
                               <Eye className="w-4 h-4" />
                               عرض الملف

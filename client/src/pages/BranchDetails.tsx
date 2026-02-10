@@ -289,7 +289,7 @@ export default function BranchDetails() {
                       <span className="text-xs text-slate-400 font-mono">
                         {(patient.totalCost || 0).toLocaleString()} د.ع
                       </span>
-                      <Link href={`/patients/${patient.id}`}>
+                      <Link href={`/patients/${patient.id}?branch=${branchId}`}>
                         <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                           <Eye className="w-3.5 h-3.5" />
                           عرض الملف
@@ -305,7 +305,7 @@ export default function BranchDetails() {
             <div className="hidden md:block">
               <div className="divide-y">
                 {paginatedPatients.map((patient, index) => (
-                  <Link key={patient.id} href={`/patients/${patient.id}`}>
+                  <Link key={patient.id} href={`/patients/${patient.id}?branch=${branchId}`}>
                     <div className="p-4 hover:bg-slate-50/80 cursor-pointer transition-all" data-testid={`card-patient-${patient.id}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">

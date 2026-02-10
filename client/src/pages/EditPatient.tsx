@@ -41,6 +41,9 @@ type FormValues = z.infer<typeof formSchema>;
 export default function EditPatient() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
+  const searchString = window.location.search;
+  const fromBranch = new URLSearchParams(searchString).get("branch");
+  const branchParam = fromBranch ? `?branch=${fromBranch}` : "";
   const patientId = Number(id);
   
   const { data: patient, isLoading: isLoadingPatient } = usePatient(patientId);
@@ -242,7 +245,7 @@ export default function EditPatient() {
   function onSubmit(values: FormValues) {
     mutate({ id: patientId, data: values }, {
       onSuccess: () => {
-        setLocation(`/patients/${patientId}`);
+        setLocation(`/patients/${patientId}${branchParam}`);
       },
     });
   }
@@ -262,7 +265,7 @@ export default function EditPatient() {
   return (
     <div className="max-w-3xl mx-auto space-y-4 md:space-y-6 page-transition py-2 md:py-6">
       <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
-        <Button variant="ghost" onClick={() => setLocation(`/patients/${patientId}`)} className="p-2 shrink-0">
+        <Button variant="ghost" onClick={() => setLocation(`/patients/${patientId}${branchParam}`)} className="p-2 shrink-0">
           <ArrowRight className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
@@ -1126,7 +1129,7 @@ export default function EditPatient() {
               {isPending && <Loader2 className="w-5 h-5 animate-spin" />}
               حفظ التغييرات
             </Button>
-            <Button type="button" variant="outline" onClick={() => setLocation(`/patients/${patientId}`)} className="h-12">
+            <Button type="button" variant="outline" onClick={() => setLocation(`/patients/${patientId}${branchParam}`)} className="h-12">
               إلغاء
             </Button>
           </div>
