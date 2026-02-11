@@ -585,7 +585,7 @@ export async function registerRoutes(
     
     try {
       const { getBackupStatus } = await import("./backup");
-      const status = getBackupStatus();
+      const status = await getBackupStatus();
       res.json(status);
     } catch (error) {
       console.error("Backup status error:", error);

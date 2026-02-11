@@ -1,72 +1,70 @@
 import nodemailer from "nodemailer";
 import cron from "node-cron";
-import fs from "fs";
-import path from "path";
 import { db } from "./db";
-import { patients, branches, payments, visits } from "@shared/schema";
+import { patients, branches, systemSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
-const LAST_BACKUP_FILE = path.join(process.cwd(), ".last_backup_time");
 
-function getLastBackupTime(): Date | null {
+function getBaghdadDateString(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+}
+
+async function getLastDailyBackupDate(): Promise<string | null> {
   try {
-    if (fs.existsSync(LAST_BACKUP_FILE)) {
-      const content = fs.readFileSync(LAST_BACKUP_FILE, "utf-8").trim();
-      const timestamp = parseInt(content, 10);
-      if (!isNaN(timestamp)) {
-        return new Date(timestamp);
-      }
+    const [row] = await db
+      .select()
+      .from(systemSettings)
+      .where(eq(systemSettings.settingKey, "last_daily_backup_date"));
+    return row?.settingValue || null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveLastDailyBackupDate(): Promise<void> {
+  const today = getBaghdadDateString();
+  try {
+    const [existing] = await db
+      .select()
+      .from(systemSettings)
+      .where(eq(systemSettings.settingKey, "last_daily_backup_date"));
+
+    if (existing) {
+      await db
+        .update(systemSettings)
+        .set({ settingValue: today, updatedAt: new Date() })
+        .where(eq(systemSettings.settingKey, "last_daily_backup_date"));
+    } else {
+      await db.insert(systemSettings).values({
+        settingKey: "last_daily_backup_date",
+        settingValue: today,
+      });
     }
   } catch (error) {
-    console.error("[Backup] Error reading last backup time:", error);
-  }
-  return null;
-}
-
-function saveLastBackupTime(): void {
-  try {
-    fs.writeFileSync(LAST_BACKUP_FILE, Date.now().toString(), "utf-8");
-  } catch (error) {
-    console.error("[Backup] Error saving last backup time:", error);
+    console.error("[Backup] Error saving backup date:", error);
   }
 }
 
-export function getBackupStatus(): { lastBackup: Date | null; hoursAgo: number | null } {
-  const lastBackup = getLastBackupTime();
-  if (!lastBackup) {
-    return { lastBackup: null, hoursAgo: null };
-  }
-  const hoursAgo = Math.round((Date.now() - lastBackup.getTime()) / (1000 * 60 * 60));
-  return { lastBackup, hoursAgo };
-}
+export async function getBackupStatus(): Promise<{ lastBackup: string | null; hoursAgo: number | null }> {
+  const lastDate = await getLastDailyBackupDate();
+  if (!lastDate) return { lastBackup: null, hoursAgo: null };
 
-function wasSentToday(): boolean {
-  const lastBackup = getLastBackupTime();
-  if (!lastBackup) return false;
-  
-  const baghdadOffset = 3 * 60 * 60 * 1000;
-  const nowBaghdad = new Date(Date.now() + baghdadOffset);
-  const lastBaghdad = new Date(lastBackup.getTime() + baghdadOffset);
-  
-  return (
-    nowBaghdad.getUTCFullYear() === lastBaghdad.getUTCFullYear() &&
-    nowBaghdad.getUTCMonth() === lastBaghdad.getUTCMonth() &&
-    nowBaghdad.getUTCDate() === lastBaghdad.getUTCDate()
-  );
+  const lastMs = new Date(lastDate + "T20:55:00Z").getTime();
+  const hoursAgo = Math.round((Date.now() - lastMs) / (1000 * 60 * 60));
+  return { lastBackup: lastDate, hoursAgo };
 }
 
 function formatDate(date: Date | null): string {
   if (!date) return "";
-  const options: Intl.DateTimeFormatOptions = {
+  return new Intl.DateTimeFormat("en-GB", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "Asia/Baghdad",
-  };
-  return new Intl.DateTimeFormat("en-GB", options).format(date);
+  }).format(date);
 }
 
 function escapeCSV(value: string | number | null | undefined): string {
@@ -126,116 +124,66 @@ async function generatePatientCSV(filter: BackupFilter = { type: "all" }): Promi
 
   let filterDescription = "جميع المرضى";
 
-  // Apply filters
-  if (filter.type === "today") {
-    const now = new Date();
-    const baghdadOffset = 3 * 60 * 60 * 1000; // UTC+3
-    const baghdadNow = new Date(now.getTime() + baghdadOffset);
-    const todayStart = new Date(baghdadNow.getFullYear(), baghdadNow.getMonth(), baghdadNow.getDate());
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
-    
-    allPatients = allPatients.filter(p => {
-      if (!p.createdAt) return false;
-      const patientDate = new Date(p.createdAt);
-      return patientDate >= todayStart && patientDate < todayEnd;
-    });
-    filterDescription = `مرضى اليوم (${new Intl.DateTimeFormat("ar-IQ", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Baghdad" }).format(baghdadNow)})`;
+  if (filter.type === "today" || filter.type === "branch_today") {
+    const baghdadOffset = 3 * 60 * 60 * 1000;
+    const baghdadNow = new Date(Date.now() + baghdadOffset);
+    const todayStr = baghdadNow.toISOString().split("T")[0];
+    const todayStart = new Date(todayStr + "T00:00:00Z");
+    const todayStartUTC = new Date(todayStart.getTime() - baghdadOffset);
+    const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
+    const dateFormatted = new Intl.DateTimeFormat("ar-IQ", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Baghdad" }).format(baghdadNow);
+
+    if (filter.type === "today") {
+      allPatients = allPatients.filter(p => {
+        if (!p.createdAt) return false;
+        const t = new Date(p.createdAt).getTime();
+        return t >= todayStartUTC.getTime() && t < todayEndUTC.getTime();
+      });
+      filterDescription = `مرضى اليوم (${dateFormatted})`;
+    } else if (filter.branchId) {
+      const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
+      allPatients = allPatients.filter(p => {
+        if (!p.createdAt) return false;
+        if (p.branchId !== filter.branchId) return false;
+        const t = new Date(p.createdAt).getTime();
+        return t >= todayStartUTC.getTime() && t < todayEndUTC.getTime();
+      });
+      filterDescription = `مرضى اليوم لفرع: ${branchName} (${dateFormatted})`;
+    }
   } else if (filter.type === "branch" && filter.branchId) {
     const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
     allPatients = allPatients.filter(p => p.branchId === filter.branchId);
     filterDescription = `جميع مرضى فرع: ${branchName}`;
-  } else if (filter.type === "branch_today" && filter.branchId) {
-    const now = new Date();
-    const baghdadOffset = 3 * 60 * 60 * 1000; // UTC+3
-    const baghdadNow = new Date(now.getTime() + baghdadOffset);
-    const todayStart = new Date(baghdadNow.getFullYear(), baghdadNow.getMonth(), baghdadNow.getDate());
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
-    const branchName = allPatients.find(p => p.branchId === filter.branchId)?.branchName || "فرع غير معروف";
-    
-    allPatients = allPatients.filter(p => {
-      if (!p.createdAt) return false;
-      if (p.branchId !== filter.branchId) return false;
-      const patientDate = new Date(p.createdAt);
-      return patientDate >= todayStart && patientDate < todayEnd;
-    });
-    filterDescription = `مرضى اليوم لفرع: ${branchName} (${new Intl.DateTimeFormat("ar-IQ", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Baghdad" }).format(baghdadNow)})`;
   }
 
   const headers = [
-    "رقم المريض",
-    "الاسم",
-    "الهاتف",
-    "العنوان",
-    "العمر",
-    "الوزن",
-    "الطول",
-    "الجهة المحول منها",
-    "ملاحظات الإحالة",
-    "الحالة الطبية",
-    "سبب الإصابة",
-    "تاريخ الإصابة",
-    "نوع الإصابة",
-    "منطقة الإصابة",
-    "ملاحظات عامة",
-    "الفرع",
-    "حالة بتر",
-    "موقع البتر",
-    "نوع الطرف",
-    "نوع السليكون",
-    "حجم السليكون",
-    "نظام التعليق",
-    "نوع القدم",
-    "حجم القدم",
-    "نوع مفصل الركبة",
-    "علاج طبيعي",
-    "نوع المرض",
-    "نوع العلاج",
-    "مساند طبية",
-    "نوع المسند",
-    "جهة الإصابة",
-    "التكلفة الكلية",
-    "تاريخ التسجيل",
+    "رقم المريض", "الاسم", "الهاتف", "العنوان", "العمر", "الوزن", "الطول",
+    "الجهة المحول منها", "ملاحظات الإحالة", "الحالة الطبية", "سبب الإصابة",
+    "تاريخ الإصابة", "نوع الإصابة", "منطقة الإصابة", "ملاحظات عامة", "الفرع",
+    "حالة بتر", "موقع البتر", "نوع الطرف", "نوع السليكون", "حجم السليكون",
+    "نظام التعليق", "نوع القدم", "حجم القدم", "نوع مفصل الركبة", "علاج طبيعي",
+    "نوع المرض", "نوع العلاج", "مساند طبية", "نوع المسند", "جهة الإصابة",
+    "التكلفة الكلية", "تاريخ التسجيل",
   ];
 
   const rows = allPatients.map((p) => [
-    p.id,
-    escapeCSV(p.name),
-    escapeCSV(p.phone),
-    escapeCSV(p.address),
-    escapeCSV(p.age),
-    escapeCSV(p.weight),
-    escapeCSV(p.height),
-    escapeCSV(p.referralSource),
-    escapeCSV(p.referralNotes),
-    escapeCSV(p.medicalCondition),
-    escapeCSV(p.injuryCause),
-    escapeCSV(p.injuryDate),
-    escapeCSV(p.injuryType),
-    escapeCSV(p.injuryArea),
-    escapeCSV(p.generalNotes),
-    escapeCSV(p.branchName),
-    p.isAmputee ? "نعم" : "لا",
-    escapeCSV(p.amputationSite),
-    escapeCSV(p.prostheticType),
-    escapeCSV(p.siliconType),
-    escapeCSV(p.siliconSize),
-    escapeCSV(p.suspensionSystem),
-    escapeCSV(p.footType),
-    escapeCSV(p.footSize),
-    escapeCSV(p.kneeJointType),
-    p.isPhysiotherapy ? "نعم" : "لا",
-    escapeCSV(p.diseaseType),
-    escapeCSV(p.treatmentType),
-    p.isMedicalSupport ? "نعم" : "لا",
-    escapeCSV(p.supportType),
-    escapeCSV(p.injurySide),
-    p.totalCost || 0,
-    formatDate(p.createdAt),
+    p.id, escapeCSV(p.name), escapeCSV(p.phone), escapeCSV(p.address),
+    escapeCSV(p.age), escapeCSV(p.weight), escapeCSV(p.height),
+    escapeCSV(p.referralSource), escapeCSV(p.referralNotes),
+    escapeCSV(p.medicalCondition), escapeCSV(p.injuryCause),
+    escapeCSV(p.injuryDate), escapeCSV(p.injuryType), escapeCSV(p.injuryArea),
+    escapeCSV(p.generalNotes), escapeCSV(p.branchName),
+    p.isAmputee ? "نعم" : "لا", escapeCSV(p.amputationSite),
+    escapeCSV(p.prostheticType), escapeCSV(p.siliconType), escapeCSV(p.siliconSize),
+    escapeCSV(p.suspensionSystem), escapeCSV(p.footType), escapeCSV(p.footSize),
+    escapeCSV(p.kneeJointType), p.isPhysiotherapy ? "نعم" : "لا",
+    escapeCSV(p.diseaseType), escapeCSV(p.treatmentType),
+    p.isMedicalSupport ? "نعم" : "لا", escapeCSV(p.supportType),
+    escapeCSV(p.injurySide), p.totalCost || 0, formatDate(p.createdAt),
   ]);
 
   const BOM = "\uFEFF";
   const csvContent = BOM + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
-
   return { csv: csvContent, count: allPatients.length, filterDescription };
 }
 
@@ -244,29 +192,21 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
 
   if (!gmailUser || !gmailAppPassword) {
-    console.error("[Backup] Missing GMAIL_USER or GMAIL_APP_PASSWORD secrets");
+    console.error("[Backup] Missing GMAIL_USER or GMAIL_APP_PASSWORD");
     return { success: false };
   }
 
   try {
     const { csv: csvContent, count, filterDescription } = await generatePatientCSV(filter);
     const now = new Date();
-    const baghdadDate = new Intl.DateTimeFormat("en-GB", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      timeZone: "Asia/Baghdad",
-    }).format(now).replace(/\//g, "-");
+    const baghdadDate = getBaghdadDateString();
 
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: {
-        user: gmailUser,
-        pass: gmailAppPassword,
-      },
+      auth: { user: gmailUser, pass: gmailAppPassword },
     });
 
-    const mailOptions = {
+    await transporter.sendMail({
       from: gmailUser,
       to: BACKUP_EMAIL,
       subject: `نسخة احتياطية - ${filterDescription} - ${baghdadDate}`,
@@ -277,29 +217,19 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
           <p><strong>الفلتر:</strong> ${filterDescription}</p>
           <p><strong>عدد المرضى:</strong> ${count}</p>
           <p><strong>تاريخ النسخة:</strong> ${baghdadDate}</p>
-          <p><strong>الوقت:</strong> ${new Intl.DateTimeFormat("ar-IQ", {
-            hour: "2-digit",
-            minute: "2-digit",
-            timeZone: "Asia/Baghdad",
-          }).format(now)}</p>
+          <p><strong>الوقت:</strong> ${new Intl.DateTimeFormat("ar-IQ", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Baghdad" }).format(now)}</p>
           <hr>
-          <p style="color: #666; font-size: 12px;">
-            هذه رسالة تلقائية من نظام إدارة مراكز الدكتور ياسر الساعدي
-          </p>
+          <p style="color: #666; font-size: 12px;">هذه رسالة تلقائية من نظام إدارة مراكز الدكتور ياسر الساعدي</p>
         </div>
       `,
-      attachments: [
-        {
-          filename: `patients_backup_${baghdadDate}.csv`,
-          content: csvContent,
-          contentType: "text/csv; charset=utf-8",
-        },
-      ],
-    };
+      attachments: [{
+        filename: `patients_backup_${baghdadDate}.csv`,
+        content: csvContent,
+        contentType: "text/csv; charset=utf-8",
+      }],
+    });
 
-    await transporter.sendMail(mailOptions);
-    saveLastBackupTime();
-    console.log(`[Backup] Email sent successfully to ${BACKUP_EMAIL} at ${formatDate(now)} - ${filterDescription} (${count} patients)`);
+    console.log(`[Backup] Email sent to ${BACKUP_EMAIL} at ${formatDate(now)} - ${filterDescription} (${count} patients)`);
     return { success: true, count, filterDescription };
   } catch (error) {
     console.error("[Backup] Failed to send email:", error);
@@ -308,49 +238,31 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
 }
 
 export async function initBackupScheduler(): Promise<void> {
-  // Schedule daily backup at 23:55 Baghdad time (20:55 UTC)
   cron.schedule(
     "55 20 * * *",
     async () => {
-      if (wasSentToday()) {
-        console.log("[Backup] Already sent today - skipping scheduled backup");
-        return;
-      }
-      console.log("[Backup] Starting scheduled daily backup...");
-      await sendBackupEmail();
-    },
-    {
-      timezone: "UTC",
-    }
-  );
+      const today = getBaghdadDateString();
+      const lastDate = await getLastDailyBackupDate();
 
-  console.log("[Backup] Scheduler initialized - Daily backup at 23:55 Baghdad time (20:55 UTC)");
-  
-  // On startup: if no backup was sent today (Baghdad date), send one after 15 seconds
-  const status = getBackupStatus();
-  const alreadySentToday = wasSentToday();
-  
-  if (alreadySentToday) {
-    console.log(`[Backup] Backup already sent today - no startup backup needed (last: ${status.hoursAgo}h ago)`);
-  } else {
-    const reason = status.hoursAgo === null ? "no previous backup found" : `last backup was ${status.hoursAgo}h ago`;
-    console.log(`[Backup] No backup sent today (${reason}) - will send in 15 seconds...`);
-    setTimeout(async () => {
-      if (wasSentToday()) {
-        console.log("[Backup] Backup was sent while waiting - skipping");
+      if (lastDate === today) {
+        console.log(`[Backup] Already sent today (${today}) - skipping`);
         return;
       }
+
+      console.log(`[Backup] Sending scheduled daily backup for ${today}...`);
       const result = await sendBackupEmail();
       if (result.success) {
-        console.log(`[Backup] Startup backup sent successfully (${result.count} patients)`);
-      } else {
-        console.log("[Backup] Startup backup failed - will retry at 23:55 Baghdad time");
+        await saveLastDailyBackupDate();
+        console.log(`[Backup] Daily backup completed (${result.count} patients)`);
       }
-    }, 15000);
-  }
+    },
+    { timezone: "UTC" }
+  );
+
+  console.log("[Backup] Scheduler initialized - daily backup at 23:55 Baghdad time only");
 }
 
 export async function sendManualBackup(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
-  console.log(`[Backup] Sending manual backup with filter: ${filter.type}...`);
+  console.log(`[Backup] Sending manual backup (filter: ${filter.type})...`);
   return await sendBackupEmail(filter);
 }
