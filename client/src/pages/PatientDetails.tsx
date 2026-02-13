@@ -441,6 +441,44 @@ export default function PatientDetails() {
             </div>
           </Card>
 
+          {(() => {
+            const sessionsByType: Record<string, number> = {};
+            let totalSessions = 0;
+            patient.payments?.forEach((p) => {
+              if (p.sessionCount && p.sessionCount > 0) {
+                totalSessions += p.sessionCount;
+                const types = p.paymentTreatmentType 
+                  ? p.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
+                  : ["غير محدد"];
+                types.forEach((type: string) => {
+                  sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
+                });
+              }
+            });
+            return totalSessions > 0 ? (
+              <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
+                <h3 className="font-bold text-lg flex items-center gap-2 text-blue-600 mb-6">
+                  <Activity className="w-5 h-5" />
+                  ملخص الجلسات
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <span className="text-muted-foreground">إجمالي الجلسات</span>
+                    <span className="font-bold text-xl text-blue-600">{totalSessions} جلسة</span>
+                  </div>
+                  <div className="space-y-2 pt-2 border-t border-dashed">
+                    {Object.entries(sessionsByType).map(([type, count]) => (
+                      <div key={type} className="flex justify-between items-center">
+                        <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{type}</span>
+                        <span className="font-semibold text-slate-700">{count} جلسة</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            ) : null;
+          })()}
+
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2 text-emerald-600 mb-6">
               <Banknote className="w-5 h-5" />
@@ -484,6 +522,9 @@ export default function PatientDetails() {
             <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm flex-wrap gap-1">
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 سبب الزيارة
+              </TabsTrigger>
+              <TabsTrigger value="sessions" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all" data-testid="tab-sessions">
+                عدد الجلسات
               </TabsTrigger>
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 سجل المدفوعات
@@ -571,6 +612,54 @@ export default function PatientDetails() {
               )}
             </TabsContent>
 
+            <TabsContent value="sessions" className="space-y-4">
+              <Card className="overflow-hidden border-border/60 shadow-sm">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b">
+                    <tr>
+                      <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">نوع العلاج</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">عدد الجلسات</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">المبلغ</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(() => {
+                      const paymentsWithSessions = patient.payments?.filter((p) => p.sessionCount && p.sessionCount > 0) || [];
+                      if (paymentsWithSessions.length === 0) {
+                        return (
+                          <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">
+                            <Activity className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                            لا يوجد جلسات مسجلة
+                          </td></tr>
+                        );
+                      }
+                      return paymentsWithSessions.map((payment) => (
+                        <tr key={payment.id} className="hover:bg-slate-50/50">
+                          <td className="p-4 text-slate-500">
+                            <div>{formatDateIraq(payment.date)}</div>
+                            <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
+                          </td>
+                          <td className="p-4">
+                            {payment.paymentTreatmentType 
+                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
+                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs ml-1 mb-1">{t.trim()}</span>
+                                ))
+                              : <span className="text-slate-400">غير محدد</span>
+                            }
+                          </td>
+                          <td className="p-4 font-bold text-blue-600 font-mono">{payment.sessionCount}</td>
+                          <td className="p-4 text-emerald-600 font-mono">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
+                          <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </Card>
+            </TabsContent>
+
             <TabsContent value="payments" className="space-y-4">
               <Card className="overflow-hidden border-border/60 shadow-sm">
                 <table className="w-full text-sm">
@@ -579,13 +668,14 @@ export default function PatientDetails() {
                       <th className="text-right p-4 font-semibold text-slate-600">المبلغ</th>
                       <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
                       <th className="text-right p-4 font-semibold text-slate-600">نوع العلاج</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">عدد الجلسات</th>
                       <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
                       {isAdmin && <th className="text-right p-4 font-semibold text-slate-600">إجراءات</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {patient.payments?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? 5 : 4} className="p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
+                      <tr><td colSpan={isAdmin ? 6 : 5} className="p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
@@ -603,6 +693,9 @@ export default function PatientDetails() {
                                 ))
                               : <span className="text-slate-400">-</span>
                             }
+                          </td>
+                          <td className="p-4 text-slate-600 font-mono" data-testid={`text-payment-sessions-${payment.id}`}>
+                            {payment.sessionCount ? payment.sessionCount : <span className="text-slate-400">-</span>}
                           </td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
