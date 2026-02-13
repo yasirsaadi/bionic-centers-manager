@@ -71,9 +71,9 @@ function Router() {
 
   if (!user) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 gap-4" dir="rtl">
-        <h1 className="text-3xl font-display font-bold text-primary">مجموعة مراكز الدكتور ياسر الساعدي</h1>
-        <p className="text-slate-600 mb-4">يرجى تسجيل الدخول للمتابعة</p>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 gap-4 px-4 text-center" dir="rtl">
+        <h1 className="text-2xl sm:text-3xl font-display font-bold text-primary text-center w-full">مجموعة مراكز الدكتور ياسر الساعدي</h1>
+        <p className="text-slate-600 mb-4 text-center">يرجى تسجيل الدخول للمتابعة</p>
         <a href="/api/login" className="px-8 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg">
           تسجيل الدخول
         </a>
