@@ -141,6 +141,28 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               )}
             />
 
+            <div className="space-y-3">
+              <FormLabel>نوع العلاج</FormLabel>
+              <div className="space-y-2">
+                {TREATMENT_TYPE_OPTIONS.map((option) => (
+                  <div key={option.value} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`treatment-${option.value}`}
+                      checked={selectedTreatmentTypes.includes(option.value)}
+                      onCheckedChange={(checked) => handleTreatmentTypeToggle(option.value, !!checked)}
+                      data-testid={`checkbox-treatment-${option.value}`}
+                    />
+                    <label
+                      htmlFor={`treatment-${option.value}`}
+                      className="text-sm cursor-pointer"
+                    >
+                      {option.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <FormField
               control={form.control}
               name="amount"
@@ -165,34 +187,12 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               )}
             />
 
-            <div className="space-y-3">
-              <FormLabel>نوع العلاج (اختياري)</FormLabel>
-              <div className="space-y-2">
-                {TREATMENT_TYPE_OPTIONS.map((option) => (
-                  <div key={option.value} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`treatment-${option.value}`}
-                      checked={selectedTreatmentTypes.includes(option.value)}
-                      onCheckedChange={(checked) => handleTreatmentTypeToggle(option.value, !!checked)}
-                      data-testid={`checkbox-treatment-${option.value}`}
-                    />
-                    <label
-                      htmlFor={`treatment-${option.value}`}
-                      className="text-sm cursor-pointer"
-                    >
-                      {option.label}
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <FormField
               control={form.control}
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>ملاحظات (اختياري)</FormLabel>
+                  <FormLabel>ملاحظات</FormLabel>
                   <FormControl>
                     <Input {...field} value={field.value || ""} placeholder="مثال: دفعة أولى نقداً" data-testid="input-payment-notes" />
                   </FormControl>
