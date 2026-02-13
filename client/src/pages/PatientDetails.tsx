@@ -306,6 +306,18 @@ export default function PatientDetails() {
           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
             {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
           </Badge>
+          {(() => {
+            const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
+            if (totalSessions > 0) {
+              return (
+                <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1 bg-blue-50 text-blue-700 border-blue-200">
+                  <Activity className="w-3 h-3" />
+                  {totalSessions} جلسة
+                </Badge>
+              );
+            }
+            return null;
+          })()}
         </div>
       </div>
 
