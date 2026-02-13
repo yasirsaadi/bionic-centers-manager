@@ -17,7 +17,7 @@ export function AdminGate({ children }: AdminGateProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("admin_verified");
+    const stored = localStorage.getItem("admin_verified");
     if (stored === "true") {
       setIsVerified(true);
     }
@@ -32,7 +32,7 @@ export function AdminGate({ children }: AdminGateProps) {
     try {
       const res = await apiRequest("POST", "/api/verify-admin", { code });
       if (res.ok) {
-        sessionStorage.setItem("admin_verified", "true");
+        localStorage.setItem("admin_verified", "true");
         setIsVerified(true);
       } else {
         const data = await res.json();

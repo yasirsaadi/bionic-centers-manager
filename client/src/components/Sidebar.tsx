@@ -34,7 +34,7 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("branch_session");
+    const stored = localStorage.getItem("branch_session");
     if (stored) {
       try {
         setBranchSession(JSON.parse(stored));

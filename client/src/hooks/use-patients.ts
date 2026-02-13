@@ -3,9 +3,8 @@ import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
-// Helper to get branch session from sessionStorage
 function getBranchSession() {
-  const stored = sessionStorage.getItem("branch_session");
+  const stored = localStorage.getItem("branch_session");
   if (stored) {
     try {
       return JSON.parse(stored) as { branchId: number; branchName: string; isAdmin: boolean };

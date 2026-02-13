@@ -48,12 +48,12 @@ export function useBranchSession(): BranchSession | null {
   const [session, setSession] = useState<BranchSession | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("branch_session");
+    const stored = localStorage.getItem("branch_session");
     if (stored) {
       try {
         setSession(JSON.parse(stored));
       } catch {
-        sessionStorage.removeItem("branch_session");
+        localStorage.removeItem("branch_session");
       }
     }
   }, []);
@@ -62,8 +62,8 @@ export function useBranchSession(): BranchSession | null {
 }
 
 export function clearBranchSession() {
-  sessionStorage.removeItem("branch_session");
-  sessionStorage.removeItem("admin_verified");
+  localStorage.removeItem("branch_session");
+  localStorage.removeItem("admin_verified");
   window.location.reload();
 }
 
@@ -77,12 +77,12 @@ export function BranchGate({ children }: BranchGateProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("branch_session");
+    const stored = localStorage.getItem("branch_session");
     if (stored) {
       try {
         setSession(JSON.parse(stored));
       } catch {
-        sessionStorage.removeItem("branch_session");
+        localStorage.removeItem("branch_session");
       }
     }
     setIsChecking(false);
@@ -117,11 +117,11 @@ export function BranchGate({ children }: BranchGateProps) {
           displayName: data.displayName,
           permissions: data.permissions,
         };
-        sessionStorage.setItem("branch_session", JSON.stringify(branchSession));
+        localStorage.setItem("branch_session", JSON.stringify(branchSession));
         setSession(branchSession);
         
         if (data.isAdmin) {
-          sessionStorage.setItem("admin_verified", "true");
+          localStorage.setItem("admin_verified", "true");
         }
       } else {
         setError(data.message || "اسم المستخدم أو كلمة السر غير صحيحة");
