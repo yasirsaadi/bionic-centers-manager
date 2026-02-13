@@ -1194,7 +1194,7 @@ export async function registerRoutes(
   app.post("/api/patients/:id/new-service", isAuthenticated, async (req, res) => {
     try {
       const patientId = Number(req.params.id);
-      const { serviceType, serviceCost, initialPayment, notes, branchId } = req.body;
+      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType } = req.body;
       
       const patient = await storage.getPatient(patientId);
       if (!patient) {
@@ -1231,6 +1231,7 @@ export async function registerRoutes(
           branchId: branchId || patient.branchId,
           amount: initialPayment,
           notes: `دفعة أولية - ${serviceLabel}`,
+          paymentTreatmentType: paymentTreatmentType || null,
         });
       }
       

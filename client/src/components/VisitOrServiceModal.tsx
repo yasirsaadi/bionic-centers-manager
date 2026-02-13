@@ -29,6 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusCircle, Loader2, Activity, RefreshCcw } from "lucide-react";
 import { useState } from "react";
@@ -65,9 +66,16 @@ const serviceFormSchema = z.object({
 type VisitFormValues = z.infer<typeof visitFormSchema>;
 type ServiceFormValues = z.infer<typeof serviceFormSchema>;
 
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "روبوت", label: "روبوت" },
+  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
+  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+];
+
 export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: VisitOrServiceModalProps) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"visit" | "service">("visit");
+  const [selectedTreatmentTypes, setSelectedTreatmentTypes] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { mutate: addVisit, isPending: isAddingVisit } = useAddVisit();
@@ -88,6 +96,7 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
       });
       setOpen(false);
       serviceForm.reset();
+      setSelectedTreatmentTypes([]);
     },
     onError: () => {
       toast({
@@ -117,6 +126,7 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
   });
 
   const serviceCostValue = Number(serviceForm.watch("serviceCost")) || 0;
+  const selectedServiceType = serviceForm.watch("serviceType");
   const newTotal = currentTotalCost + serviceCostValue;
 
   function onVisitSubmit(values: VisitFormValues) {
@@ -146,10 +156,15 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
       return;
     }
     
+    const paymentTreatmentType = selectedTreatmentTypes.length > 0 
+      ? selectedTreatmentTypes.join(",") 
+      : null;
+    
     addService({
       ...values,
       serviceCost,
       initialPayment,
+      paymentTreatmentType,
     } as any);
   }
 
@@ -273,6 +288,34 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                   </FormItem>
                 )}
               />
+
+              {selectedServiceType === "additional_therapy" && (
+                <div className="space-y-3">
+                  <FormLabel>نوع العلاج</FormLabel>
+                  <div className="space-y-2">
+                    {TREATMENT_TYPE_OPTIONS.map((option) => (
+                      <div key={option.value} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`vos-treatment-${option.value}`}
+                          checked={selectedTreatmentTypes.includes(option.value)}
+                          onCheckedChange={(checked) => {
+                            setSelectedTreatmentTypes(prev => 
+                              checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
+                            );
+                          }}
+                          data-testid={`checkbox-vos-treatment-${option.value}`}
+                        />
+                        <label
+                          htmlFor={`vos-treatment-${option.value}`}
+                          className="text-sm cursor-pointer"
+                        >
+                          {option.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <FormField
                 control={serviceForm.control}
