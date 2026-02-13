@@ -1301,6 +1301,22 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  app.patch("/api/payments/:id", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "مسؤول النظام فقط يمكنه تعديل المدفوعات" });
+    }
+    const id = Number(req.params.id);
+    const { amount, notes, sessionCount, paymentTreatmentType } = req.body;
+    const updateData: any = {};
+    if (amount !== undefined) updateData.amount = amount;
+    if (notes !== undefined) updateData.notes = notes || null;
+    if (sessionCount !== undefined) updateData.sessionCount = sessionCount || null;
+    if (paymentTreatmentType !== undefined) updateData.paymentTreatmentType = paymentTreatmentType || null;
+    const updated = await storage.updatePayment(id, updateData);
+    res.json(updated);
+  });
+
   // Documents
   app.post(api.documents.create.path, isAuthenticated, upload.single('file'), async (req, res) => {
     try {

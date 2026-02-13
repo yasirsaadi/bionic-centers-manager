@@ -90,6 +90,11 @@ export default function PatientDetails() {
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
   const [editTreatmentTypes, setEditTreatmentTypes] = useState<string[]>([]);
+  const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
+  const [editPaymentAmount, setEditPaymentAmount] = useState<string>("");
+  const [editPaymentNotes, setEditPaymentNotes] = useState<string>("");
+  const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
+  const [editPaymentTreatmentTypes, setEditPaymentTreatmentTypes] = useState<string[]>([]);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const queryClient = useQueryClient();
@@ -163,6 +168,36 @@ export default function PatientDetails() {
         : []
     );
     setEditingPaymentSession(payment);
+  };
+
+  const updatePaymentFull = useMutation({
+    mutationFn: async (data: {paymentId: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null}) => {
+      const res = await fetch(`/api/payments/${data.paymentId}`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ amount: data.amount, notes: data.notes, sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("فشل التحديث");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      setEditingPayment(null);
+    }
+  });
+
+  const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null }) => {
+    setEditPaymentAmount(String(payment.amount));
+    setEditPaymentNotes(payment.notes || "");
+    setEditPaymentSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
+    setEditPaymentTreatmentTypes(
+      payment.paymentTreatmentType 
+        ? payment.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
+        : []
+    );
+    setEditingPayment(payment);
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -778,8 +813,8 @@ export default function PatientDetails() {
                                   variant="ghost" 
                                   size="icon" 
                                   className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
-                                  data-testid={`button-edit-payment-session-${payment.id}`}
+                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
+                                  data-testid={`button-edit-payment-${payment.id}`}
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </Button>
@@ -929,6 +964,94 @@ export default function PatientDetails() {
               data-testid="button-save-session-edit"
             >
               {updatePaymentSession.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!editingPayment} onOpenChange={(open) => { if (!open) setEditingPayment(null); }}>
+        <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl text-primary">تعديل الدفعة</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 mt-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">المبلغ (د.ع)</label>
+              <Input 
+                type="number" 
+                className="text-left font-mono" 
+                placeholder="أدخل المبلغ"
+                value={editPaymentAmount}
+                onChange={(e) => setEditPaymentAmount(e.target.value)}
+                data-testid="input-edit-payment-amount"
+              />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium">نوع العلاج</label>
+              <div className="space-y-2">
+                {TREATMENT_TYPE_OPTIONS.map((option) => (
+                  <div key={option.value} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`edit-pay-treatment-${option.value}`}
+                      checked={editPaymentTreatmentTypes.includes(option.value)}
+                      onCheckedChange={(checked) => {
+                        setEditPaymentTreatmentTypes(prev => 
+                          checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
+                        );
+                      }}
+                      data-testid={`checkbox-edit-pay-treatment-${option.value}`}
+                    />
+                    <label
+                      htmlFor={`edit-pay-treatment-${option.value}`}
+                      className="text-sm cursor-pointer"
+                    >
+                      {option.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">عدد الجلسات</label>
+              <Input 
+                type="number" 
+                className="text-left font-mono" 
+                placeholder="أدخل عدد الجلسات"
+                value={editPaymentSessionCount}
+                onChange={(e) => setEditPaymentSessionCount(e.target.value)}
+                data-testid="input-edit-payment-session-count"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">ملاحظات</label>
+              <Input 
+                className="text-right" 
+                placeholder="أدخل الملاحظات"
+                value={editPaymentNotes}
+                onChange={(e) => setEditPaymentNotes(e.target.value)}
+                data-testid="input-edit-payment-notes"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => setEditingPayment(null)}>
+              إلغاء
+            </Button>
+            <Button 
+              onClick={() => {
+                if (editingPayment) {
+                  updatePaymentFull.mutate({
+                    paymentId: editingPayment.id,
+                    amount: Number(editPaymentAmount),
+                    notes: editPaymentNotes || null,
+                    sessionCount: editPaymentSessionCount ? Number(editPaymentSessionCount) : null,
+                    paymentTreatmentType: editPaymentTreatmentTypes.length > 0 ? editPaymentTreatmentTypes.join(",") : null,
+                  });
+                }
+              }}
+              disabled={updatePaymentFull.isPending || !editPaymentAmount}
+              data-testid="button-save-payment-edit"
+            >
+              {updatePaymentFull.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
             </Button>
           </DialogFooter>
         </DialogContent>

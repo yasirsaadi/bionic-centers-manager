@@ -43,6 +43,7 @@ export interface IStorage {
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
   updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any>;
+  updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null }): Promise<any>;
 
   // Documents
   getDocumentsByPatientId(patientId: number): Promise<Document[]>;
@@ -277,6 +278,14 @@ export class DatabaseStorage implements IStorage {
   async updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any> {
     const [updated] = await db.update(payments)
       .set({ sessionCount, paymentTreatmentType })
+      .where(eq(payments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null }): Promise<any> {
+    const [updated] = await db.update(payments)
+      .set(data)
       .where(eq(payments.id, id))
       .returning();
     return updated;
