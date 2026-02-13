@@ -543,42 +543,33 @@ export default function PatientDetails() {
                   currentTotalCost={patient.totalCost || 0} 
                 />
               </div>
-              <Card className="overflow-hidden border-border/60 shadow-sm">
-                <div className="overflow-x-auto">
-                <table className="w-full text-sm table-fixed" style={{ minWidth: "500px" }}>
-                  <colgroup>
-                    <col style={{ width: "20%" }} />
-                    <col style={{ width: "35%" }} />
-                    <col style={{ width: "30%" }} />
-                    <col style={{ width: "15%" }} />
-                  </colgroup>
-                  <thead className="bg-slate-50 border-b">
-                    <tr>
-                      <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
-                      <th className="text-right p-3 font-semibold text-slate-600">التفاصيل</th>
-                      <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
-                      <th className="text-right p-3 font-semibold text-slate-600">إجراءات</th>
+              <div className="overflow-x-auto rounded-md border border-slate-300">
+                <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "32%" }}>التفاصيل</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "35%" }}>ملاحظات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>إجراءات</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
+                  <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={4} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
                     ) : (
                       patient.visits?.map((visit) => (
-                        <tr key={visit.id} className="hover:bg-slate-50/50">
-                          <td className="p-4 text-slate-500">
+                        <tr key={visit.id} className="hover:bg-slate-50">
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
                             <div>{formatDateIraq(visit.visitDate)}</div>
-                            <div className="text-xs text-slate-400">
-                              {formatTimeIraq(visit.visitDate)}
-                            </div>
+                            <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
-                          <td className="p-4 text-slate-700">{visit.details || "-"}</td>
-                          <td className="p-4 text-slate-600">{visit.notes || "-"}</td>
-                          <td className="p-4">
-                            <div className="flex gap-1">
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.details || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center">
+                            <div className="flex gap-1 justify-center">
                               <Button 
                                 variant="ghost" 
                                 size="icon" 
@@ -608,7 +599,6 @@ export default function PatientDetails() {
                   </tbody>
                 </table>
               </div>
-              </Card>
               
               {editingVisit && (
                 <EditVisitModal
@@ -621,130 +611,109 @@ export default function PatientDetails() {
             </TabsContent>
 
             <TabsContent value="sessions" className="space-y-4">
-              <Card className="overflow-hidden border-border/60 shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm table-fixed" style={{ minWidth: "600px" }}>
-                    <colgroup>
-                      <col style={{ width: "18%" }} />
-                      <col style={{ width: "20%" }} />
-                      <col style={{ width: "14%" }} />
-                      <col style={{ width: "20%" }} />
-                      <col style={{ width: "28%" }} />
-                    </colgroup>
-                    <thead className="bg-slate-50 border-b">
-                      <tr>
-                        <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">نوع العلاج</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">عدد الجلسات</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">المبلغ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(() => {
-                        const paymentsWithSessions = patient.payments?.filter((p) => p.sessionCount && p.sessionCount > 0) || [];
-                        if (paymentsWithSessions.length === 0) {
-                          return (
-                            <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">
-                              <Activity className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                              لا يوجد جلسات مسجلة
-                            </td></tr>
-                          );
-                        }
-                        return paymentsWithSessions.map((payment) => (
-                          <tr key={payment.id} className="hover:bg-slate-50/50">
-                            <td className="p-3 text-slate-500">
-                              <div>{formatDateIraq(payment.date)}</div>
-                              <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
-                            </td>
-                            <td className="p-3">
-                              {payment.paymentTreatmentType 
-                                ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
-                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs ml-1 mb-1">{t.trim()}</span>
-                                  ))
-                                : <span className="text-slate-400">غير محدد</span>
-                              }
-                            </td>
-                            <td className="p-3 font-bold text-blue-600 font-mono">{payment.sessionCount}</td>
-                            <td className="p-3 text-emerald-600 font-mono">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                            <td className="p-3 text-slate-600">{payment.notes || "-"}</td>
-                          </tr>
-                        ));
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+              <div className="overflow-x-auto rounded-md border border-slate-300">
+                <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>عدد الجلسات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>المبلغ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "30%" }}>ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const paymentsWithSessions = patient.payments?.filter((p) => p.sessionCount && p.sessionCount > 0) || [];
+                      if (paymentsWithSessions.length === 0) {
+                        return (
+                          <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                            <Activity className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                            لا يوجد جلسات مسجلة
+                          </td></tr>
+                        );
+                      }
+                      return paymentsWithSessions.map((payment) => (
+                        <tr key={payment.id} className="hover:bg-slate-50">
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
+                            <div>{formatDateIraq(payment.date)}</div>
+                            <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center">
+                            {payment.paymentTreatmentType 
+                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
+                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
+                                ))
+                              : <span className="text-slate-400">غير محدد</span>
+                            }
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-blue-600">{payment.sessionCount}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-emerald-600 font-mono">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
             </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
-              <Card className="overflow-hidden border-border/60 shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm table-fixed" style={{ minWidth: "700px" }}>
-                    <colgroup>
-                      <col style={{ width: "16%" }} />
-                      <col style={{ width: "16%" }} />
-                      <col style={{ width: "18%" }} />
-                      <col style={{ width: "12%" }} />
-                      <col style={{ width: isAdmin ? "25%" : "38%" }} />
-                      {isAdmin && <col style={{ width: "13%" }} />}
-                    </colgroup>
-                    <thead className="bg-slate-50 border-b">
-                      <tr>
-                        <th className="text-right p-3 font-semibold text-slate-600">المبلغ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">نوع العلاج</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">عدد الجلسات</th>
-                        <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
-                        {isAdmin && <th className="text-right p-3 font-semibold text-slate-600">إجراءات</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {patient.payments?.length === 0 ? (
-                        <tr><td colSpan={isAdmin ? 6 : 5} className="p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
-                      ) : (
-                        patient.payments?.map((payment) => (
-                          <tr key={payment.id} className="hover:bg-slate-50/50">
-                            <td className="p-3 font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                            <td className="p-3 text-slate-500">
-                              <div>{formatDateIraq(payment.date)}</div>
-                              <div className="text-xs text-slate-400">
-                                {formatTimeIraq(payment.date)}
-                              </div>
+              <div className="overflow-x-auto rounded-md border border-slate-300">
+                <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "16%" }}>المبلغ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "14%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>عدد الجلسات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "27%" : "40%" }}>ملاحظات</th>
+                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>إجراءات</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {patient.payments?.length === 0 ? (
+                      <tr><td colSpan={isAdmin ? 6 : 5} className="border border-slate-300 p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
+                    ) : (
+                      patient.payments?.map((payment) => (
+                        <tr key={payment.id} className="hover:bg-slate-50">
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
+                            <div>{formatDateIraq(payment.date)}</div>
+                            <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
+                            {payment.paymentTreatmentType 
+                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
+                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
+                                ))
+                              : <span className="text-slate-400">-</span>
+                            }
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-mono" data-testid={`text-payment-sessions-${payment.id}`}>
+                            {payment.sessionCount ? payment.sessionCount : <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
+                          {isAdmin && (
+                            <td className="border border-slate-300 px-3 py-2 text-center">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
+                                disabled={isDeletingPayment}
+                                data-testid={`button-delete-payment-${payment.id}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
                             </td>
-                            <td className="p-3 text-slate-600" data-testid={`text-payment-treatment-${payment.id}`}>
-                              {payment.paymentTreatmentType 
-                                ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
-                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs ml-1 mb-1">{t.trim()}</span>
-                                  ))
-                                : <span className="text-slate-400">-</span>
-                              }
-                            </td>
-                            <td className="p-3 text-slate-600 font-mono" data-testid={`text-payment-sessions-${payment.id}`}>
-                              {payment.sessionCount ? payment.sessionCount : <span className="text-slate-400">-</span>}
-                            </td>
-                            <td className="p-3 text-slate-600">{payment.notes || "-"}</td>
-                            {isAdmin && (
-                              <td className="p-3">
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
-                                  disabled={isDeletingPayment}
-                                  data-testid={`button-delete-payment-${payment.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </td>
-                            )}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </TabsContent>
 
             <TabsContent value="documents" className="space-y-6">
