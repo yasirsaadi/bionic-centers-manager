@@ -60,7 +60,6 @@ import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Branch } from "@shared/schema";
@@ -89,12 +88,12 @@ export default function PatientDetails() {
   const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null } | null>(null);
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
-  const [editTreatmentTypes, setEditTreatmentTypes] = useState<string[]>([]);
+  const [editTreatmentType, setEditTreatmentType] = useState<string>("");
   const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editPaymentAmount, setEditPaymentAmount] = useState<string>("");
   const [editPaymentNotes, setEditPaymentNotes] = useState<string>("");
   const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
-  const [editPaymentTreatmentTypes, setEditPaymentTreatmentTypes] = useState<string[]>([]);
+  const [editPaymentTreatmentType, setEditPaymentTreatmentType] = useState<string>("");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const queryClient = useQueryClient();
@@ -162,11 +161,7 @@ export default function PatientDetails() {
 
   const openEditPaymentSession = (payment: { id: number, sessionCount: number | null, paymentTreatmentType: string | null }) => {
     setEditSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
-    setEditTreatmentTypes(
-      payment.paymentTreatmentType 
-        ? payment.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
-        : []
-    );
+    setEditTreatmentType(payment.paymentTreatmentType?.split(",")[0]?.trim() || "");
     setEditingPaymentSession(payment);
   };
 
@@ -192,11 +187,7 @@ export default function PatientDetails() {
     setEditPaymentAmount(String(payment.amount));
     setEditPaymentNotes(payment.notes || "");
     setEditPaymentSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
-    setEditPaymentTreatmentTypes(
-      payment.paymentTreatmentType 
-        ? payment.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
-        : []
-    );
+    setEditPaymentTreatmentType(payment.paymentTreatmentType?.split(",")[0]?.trim() || "");
     setEditingPayment(payment);
   };
 
@@ -909,30 +900,20 @@ export default function PatientDetails() {
             <DialogTitle className="font-display text-xl text-primary">تعديل بيانات الجلسة</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
-            <div className="space-y-3">
+            <div className="space-y-2">
               <label className="text-sm font-medium">نوع العلاج</label>
-              <div className="space-y-2">
-                {TREATMENT_TYPE_OPTIONS.map((option) => (
-                  <div key={option.value} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`edit-treatment-${option.value}`}
-                      checked={editTreatmentTypes.includes(option.value)}
-                      onCheckedChange={(checked) => {
-                        setEditTreatmentTypes(prev => 
-                          checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
-                        );
-                      }}
-                      data-testid={`checkbox-edit-treatment-${option.value}`}
-                    />
-                    <label
-                      htmlFor={`edit-treatment-${option.value}`}
-                      className="text-sm cursor-pointer"
-                    >
+              <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
+                <SelectTrigger data-testid="select-edit-treatment-type">
+                  <SelectValue placeholder="اختر نوع العلاج" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TREATMENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
                       {option.label}
-                    </label>
-                  </div>
-                ))}
-              </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">عدد الجلسات</label>
@@ -956,7 +937,7 @@ export default function PatientDetails() {
                   updatePaymentSession.mutate({
                     paymentId: editingPaymentSession.id,
                     sessionCount: editSessionCount ? Number(editSessionCount) : null,
-                    paymentTreatmentType: editTreatmentTypes.length > 0 ? editTreatmentTypes.join(",") : null,
+                    paymentTreatmentType: editTreatmentType || null,
                   });
                 }
               }}
@@ -985,30 +966,20 @@ export default function PatientDetails() {
                 data-testid="input-edit-payment-amount"
               />
             </div>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <label className="text-sm font-medium">نوع العلاج</label>
-              <div className="space-y-2">
-                {TREATMENT_TYPE_OPTIONS.map((option) => (
-                  <div key={option.value} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`edit-pay-treatment-${option.value}`}
-                      checked={editPaymentTreatmentTypes.includes(option.value)}
-                      onCheckedChange={(checked) => {
-                        setEditPaymentTreatmentTypes(prev => 
-                          checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
-                        );
-                      }}
-                      data-testid={`checkbox-edit-pay-treatment-${option.value}`}
-                    />
-                    <label
-                      htmlFor={`edit-pay-treatment-${option.value}`}
-                      className="text-sm cursor-pointer"
-                    >
+              <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
+                <SelectTrigger data-testid="select-edit-pay-treatment-type">
+                  <SelectValue placeholder="اختر نوع العلاج" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TREATMENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
                       {option.label}
-                    </label>
-                  </div>
-                ))}
-              </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">عدد الجلسات</label>
@@ -1044,7 +1015,7 @@ export default function PatientDetails() {
                     amount: Number(editPaymentAmount),
                     notes: editPaymentNotes || null,
                     sessionCount: editPaymentSessionCount ? Number(editPaymentSessionCount) : null,
-                    paymentTreatmentType: editPaymentTreatmentTypes.length > 0 ? editPaymentTreatmentTypes.join(",") : null,
+                    paymentTreatmentType: editPaymentTreatmentType || null,
                   });
                 }
               }}

@@ -19,7 +19,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PlusCircle, Loader2, Calendar } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -51,7 +57,7 @@ const TREATMENT_TYPE_OPTIONS = [
 
 export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
-  const [selectedTreatmentTypes, setSelectedTreatmentTypes] = useState<string[]>([]);
+  const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const { mutate, isPending } = useAddPayment();
   
   const form = useForm<z.infer<typeof formSchema>>({
@@ -67,12 +73,6 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
     },
   });
 
-  const handleTreatmentTypeToggle = (value: string, checked: boolean) => {
-    setSelectedTreatmentTypes(prev => 
-      checked ? [...prev, value] : prev.filter(t => t !== value)
-    );
-  };
-
   function onSubmit(values: z.infer<typeof formSchema>) {
     let submissionDate = values.date;
     if (submissionDate) {
@@ -83,9 +83,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       submissionDate = `${submissionDate}T${hours}:${minutes}:${seconds}`;
     }
     
-    const paymentTreatmentType = selectedTreatmentTypes.length > 0 
-      ? selectedTreatmentTypes.join(",") 
-      : null;
+    const paymentTreatmentType = selectedTreatmentType || null;
     
     const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
     
@@ -93,7 +91,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       onSuccess: () => {
         setOpen(false);
         form.reset();
-        setSelectedTreatmentTypes([]);
+        setSelectedTreatmentType("");
       },
     });
   }
@@ -101,7 +99,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
     if (!isOpen) {
-      setSelectedTreatmentTypes([]);
+      setSelectedTreatmentType("");
       form.reset();
     }
   };
@@ -144,26 +142,20 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               )}
             />
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               <FormLabel>نوع العلاج</FormLabel>
-              <div className="space-y-2">
-                {TREATMENT_TYPE_OPTIONS.map((option) => (
-                  <div key={option.value} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`treatment-${option.value}`}
-                      checked={selectedTreatmentTypes.includes(option.value)}
-                      onCheckedChange={(checked) => handleTreatmentTypeToggle(option.value, !!checked)}
-                      data-testid={`checkbox-treatment-${option.value}`}
-                    />
-                    <label
-                      htmlFor={`treatment-${option.value}`}
-                      className="text-sm cursor-pointer"
-                    >
+              <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
+                <SelectTrigger data-testid="select-treatment-type">
+                  <SelectValue placeholder="اختر نوع العلاج" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TREATMENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} data-testid={`option-treatment-${option.value}`}>
                       {option.label}
-                    </label>
-                  </div>
-                ))}
-              </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <FormField

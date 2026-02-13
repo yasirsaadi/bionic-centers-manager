@@ -28,7 +28,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { RefreshCcw, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -67,7 +66,7 @@ const TREATMENT_TYPE_OPTIONS = [
 
 export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewServiceModalProps) {
   const [open, setOpen] = useState(false);
-  const [selectedTreatmentTypes, setSelectedTreatmentTypes] = useState<string[]>([]);
+  const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
@@ -87,7 +86,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
       });
       setOpen(false);
       form.reset();
-      setSelectedTreatmentTypes([]);
+      setSelectedTreatmentType("");
     },
     onError: () => {
       toast({
@@ -126,9 +125,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
       return;
     }
     
-    const paymentTreatmentType = selectedTreatmentTypes.length > 0 
-      ? selectedTreatmentTypes.join(",") 
-      : null;
+    const paymentTreatmentType = selectedTreatmentType || null;
     
     const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
     
@@ -183,30 +180,20 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
             />
 
             {selectedServiceType === "additional_therapy" && (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <FormLabel>نوع العلاج</FormLabel>
-                <div className="space-y-2">
-                  {TREATMENT_TYPE_OPTIONS.map((option) => (
-                    <div key={option.value} className="flex items-center gap-2">
-                      <Checkbox
-                        id={`service-treatment-${option.value}`}
-                        checked={selectedTreatmentTypes.includes(option.value)}
-                        onCheckedChange={(checked) => {
-                          setSelectedTreatmentTypes(prev => 
-                            checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
-                          );
-                        }}
-                        data-testid={`checkbox-service-treatment-${option.value}`}
-                      />
-                      <label
-                        htmlFor={`service-treatment-${option.value}`}
-                        className="text-sm cursor-pointer"
-                      >
+                <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
+                  <SelectTrigger data-testid="select-service-treatment-type">
+                    <SelectValue placeholder="اختر نوع العلاج" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TREATMENT_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value} data-testid={`option-service-treatment-${option.value}`}>
                         {option.label}
-                      </label>
-                    </div>
-                  ))}
-                </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
