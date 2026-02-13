@@ -24,7 +24,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Loader2, ArrowRight } from "lucide-react";
 import { z } from "zod";
@@ -920,41 +919,6 @@ export default function EditPatient() {
                         <FormMessage />
                       </FormItem>
                     )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="treatmentType"
-                    render={({ field }) => {
-                      const selectedValues = field.value ? field.value.split("، ").filter(Boolean) : [];
-                      const toggleValue = (val: string) => {
-                        const updated = selectedValues.includes(val)
-                          ? selectedValues.filter((v: string) => v !== val)
-                          : [...selectedValues, val];
-                        field.onChange(updated.join("، "));
-                      };
-                      return (
-                        <FormItem>
-                          <FormLabel>نوع العلاج</FormLabel>
-                          <div className="flex flex-col gap-3 pt-1">
-                            {[
-                              { value: "روبوت", label: "روبوت" },
-                              { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
-                              { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
-                            ].map((option) => (
-                              <label key={option.value} className="flex items-center gap-3 cursor-pointer">
-                                <Checkbox
-                                  checked={selectedValues.includes(option.value)}
-                                  onCheckedChange={() => toggleValue(option.value)}
-                                  data-testid={`checkbox-treatment-${option.value}`}
-                                />
-                                <span className="text-sm">{option.label}</span>
-                              </label>
-                            ))}
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      );
-                    }}
                   />
                 </>
               )}

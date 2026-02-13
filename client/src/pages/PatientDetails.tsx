@@ -411,12 +411,27 @@ export default function PatientDetails() {
                   <p className="font-semibold text-base">{patient.kneeJointType}</p>
                 </div>
               )}
-              {patient.isPhysiotherapy && patient.treatmentType && (
-                <div>
-                  <p className="text-muted-foreground mb-1">نوع العلاج</p>
-                  <p className="font-semibold text-base">{patient.treatmentType}</p>
-                </div>
-              )}
+              {(() => {
+                const paymentTreatmentTypes = new Set<string>();
+                patient.payments?.forEach((p) => {
+                  if (p.paymentTreatmentType) {
+                    p.paymentTreatmentType.split(",").forEach((t: string) => {
+                      const trimmed = t.trim();
+                      if (trimmed) paymentTreatmentTypes.add(trimmed);
+                    });
+                  }
+                });
+                return paymentTreatmentTypes.size > 0 ? (
+                  <div>
+                    <p className="text-muted-foreground mb-1">نوع العلاج</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Array.from(paymentTreatmentTypes).map((t, i) => (
+                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               {patient.generalNotes && (
                 <div className="pt-4 border-t border-dashed">
                   <p className="text-muted-foreground mb-1">ملاحظات عامة</p>
