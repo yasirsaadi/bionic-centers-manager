@@ -1289,6 +1289,18 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  // Update payment session info (admin only)
+  app.patch("/api/payments/:id/session-info", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "مسؤول النظام فقط يمكنه تعديل بيانات الجلسات" });
+    }
+    const id = Number(req.params.id);
+    const { sessionCount, paymentTreatmentType } = req.body;
+    const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
+    res.json(updated);
+  });
+
   // Documents
   app.post(api.documents.create.path, isAuthenticated, upload.single('file'), async (req, res) => {
     try {

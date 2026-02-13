@@ -59,9 +59,17 @@ import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Branch } from "@shared/schema";
+
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "روبوت", label: "روبوت" },
+  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
+  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+];
 
 export default function PatientDetails() {
   const { id } = useParams();
@@ -79,6 +87,9 @@ export default function PatientDetails() {
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
   const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null } | null>(null);
+  const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
+  const [editSessionCount, setEditSessionCount] = useState<string>("");
+  const [editTreatmentTypes, setEditTreatmentTypes] = useState<string[]>([]);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const queryClient = useQueryClient();
@@ -126,6 +137,33 @@ export default function PatientDetails() {
     },
   });
   
+  const updatePaymentSession = useMutation({
+    mutationFn: async (data: {paymentId: number, sessionCount: number | null, paymentTreatmentType: string | null}) => {
+      const res = await fetch(`/api/payments/${data.paymentId}/session-info`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("فشل التحديث");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
+      setEditingPaymentSession(null);
+    }
+  });
+
+  const openEditPaymentSession = (payment: { id: number, sessionCount: number | null, paymentTreatmentType: string | null }) => {
+    setEditSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
+    setEditTreatmentTypes(
+      payment.paymentTreatmentType 
+        ? payment.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
+        : []
+    );
+    setEditingPaymentSession(payment);
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getBranchName = (branchId: number) => {
@@ -627,11 +665,12 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>عدد الجلسات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>المبلغ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "30%" }}>ملاحظات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "13%" : "15%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "18%" : "20%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "12%" : "15%" }}>عدد الجلسات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "17%" : "20%" }}>المبلغ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "27%" : "30%" }}>ملاحظات</th>
+                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>تعديل</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -639,7 +678,7 @@ export default function PatientDetails() {
                       const paymentsWithSessions = patient.payments?.filter((p) => p.sessionCount && p.sessionCount > 0) || [];
                       if (paymentsWithSessions.length === 0) {
                         return (
-                          <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                          <tr><td colSpan={isAdmin ? 6 : 5} className="border border-slate-300 p-8 text-center text-muted-foreground">
                             <Activity className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                             لا يوجد جلسات مسجلة
                           </td></tr>
@@ -662,6 +701,19 @@ export default function PatientDetails() {
                           <td className="border border-slate-300 px-3 py-2 text-center font-bold text-blue-600">{payment.sessionCount}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-emerald-600 font-mono">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
+                          {isAdmin && (
+                            <td className="border border-slate-300 px-3 py-2 text-center">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
+                                data-testid={`button-edit-session-${payment.id}`}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                            </td>
+                          )}
                         </tr>
                       ));
                     })()}
@@ -708,16 +760,27 @@ export default function PatientDetails() {
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
-                                disabled={isDeletingPayment}
-                                data-testid={`button-delete-payment-${payment.id}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                              <div className="flex gap-1 justify-center">
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                  onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
+                                  data-testid={`button-edit-payment-session-${payment.id}`}
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
+                                  disabled={isDeletingPayment}
+                                  data-testid={`button-delete-payment-${payment.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -791,6 +854,72 @@ export default function PatientDetails() {
           </Tabs>
         </div>
       </div>
+
+      <Dialog open={!!editingPaymentSession} onOpenChange={(open) => { if (!open) setEditingPaymentSession(null); }}>
+        <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl text-primary">تعديل بيانات الجلسة</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 mt-4">
+            <div className="space-y-3">
+              <label className="text-sm font-medium">نوع العلاج</label>
+              <div className="space-y-2">
+                {TREATMENT_TYPE_OPTIONS.map((option) => (
+                  <div key={option.value} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`edit-treatment-${option.value}`}
+                      checked={editTreatmentTypes.includes(option.value)}
+                      onCheckedChange={(checked) => {
+                        setEditTreatmentTypes(prev => 
+                          checked ? [...prev, option.value] : prev.filter(t => t !== option.value)
+                        );
+                      }}
+                      data-testid={`checkbox-edit-treatment-${option.value}`}
+                    />
+                    <label
+                      htmlFor={`edit-treatment-${option.value}`}
+                      className="text-sm cursor-pointer"
+                    >
+                      {option.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">عدد الجلسات</label>
+              <Input 
+                type="number" 
+                className="text-left font-mono" 
+                placeholder="أدخل عدد الجلسات"
+                value={editSessionCount}
+                onChange={(e) => setEditSessionCount(e.target.value)}
+                data-testid="input-edit-session-count"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => setEditingPaymentSession(null)}>
+              إلغاء
+            </Button>
+            <Button 
+              onClick={() => {
+                if (editingPaymentSession) {
+                  updatePaymentSession.mutate({
+                    paymentId: editingPaymentSession.id,
+                    sessionCount: editSessionCount ? Number(editSessionCount) : null,
+                    paymentTreatmentType: editTreatmentTypes.length > 0 ? editTreatmentTypes.join(",") : null,
+                  });
+                }
+              }}
+              disabled={updatePaymentSession.isPending}
+              data-testid="button-save-session-edit"
+            >
+              {updatePaymentSession.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -42,6 +42,7 @@ export interface IStorage {
   getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
+  updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any>;
 
   // Documents
   getDocumentsByPatientId(patientId: number): Promise<Document[]>;
@@ -271,6 +272,14 @@ export class DatabaseStorage implements IStorage {
   }
   async deletePayment(id: number): Promise<void> {
     await db.delete(payments).where(eq(payments.id, id));
+  }
+
+  async updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any> {
+    const [updated] = await db.update(payments)
+      .set({ sessionCount, paymentTreatmentType })
+      .where(eq(payments.id, id))
+      .returning();
+    return updated;
   }
 
   // Documents
