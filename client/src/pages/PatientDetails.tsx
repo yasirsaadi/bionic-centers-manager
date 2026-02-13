@@ -544,13 +544,20 @@ export default function PatientDetails() {
                 />
               </div>
               <Card className="overflow-hidden border-border/60 shadow-sm">
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm table-fixed" style={{ minWidth: "500px" }}>
+                  <colgroup>
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "35%" }} />
+                    <col style={{ width: "30%" }} />
+                    <col style={{ width: "15%" }} />
+                  </colgroup>
                   <thead className="bg-slate-50 border-b">
                     <tr>
-                      <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
-                      <th className="text-right p-4 font-semibold text-slate-600">التفاصيل</th>
-                      <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
-                      <th className="text-right p-4 font-semibold text-slate-600">إجراءات</th>
+                      <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
+                      <th className="text-right p-3 font-semibold text-slate-600">التفاصيل</th>
+                      <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
+                      <th className="text-right p-3 font-semibold text-slate-600">إجراءات</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -600,6 +607,7 @@ export default function PatientDetails() {
                     )}
                   </tbody>
                 </table>
+              </div>
               </Card>
               
               {editingVisit && (
@@ -615,14 +623,21 @@ export default function PatientDetails() {
             <TabsContent value="sessions" className="space-y-4">
               <Card className="overflow-hidden border-border/60 shadow-sm">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm" style={{ minWidth: "600px" }}>
+                  <table className="w-full text-sm table-fixed" style={{ minWidth: "600px" }}>
+                    <colgroup>
+                      <col style={{ width: "18%" }} />
+                      <col style={{ width: "20%" }} />
+                      <col style={{ width: "14%" }} />
+                      <col style={{ width: "20%" }} />
+                      <col style={{ width: "28%" }} />
+                    </colgroup>
                     <thead className="bg-slate-50 border-b">
                       <tr>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[18%]">التاريخ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[22%]">نوع العلاج</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[15%]">عدد الجلسات</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[20%]">المبلغ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[25%]">ملاحظات</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">نوع العلاج</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">عدد الجلسات</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">المبلغ</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -665,15 +680,23 @@ export default function PatientDetails() {
             <TabsContent value="payments" className="space-y-4">
               <Card className="overflow-hidden border-border/60 shadow-sm">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm" style={{ minWidth: "700px" }}>
+                  <table className="w-full text-sm table-fixed" style={{ minWidth: "700px" }}>
+                    <colgroup>
+                      <col style={{ width: "16%" }} />
+                      <col style={{ width: "16%" }} />
+                      <col style={{ width: "18%" }} />
+                      <col style={{ width: "12%" }} />
+                      <col style={{ width: isAdmin ? "25%" : "38%" }} />
+                      {isAdmin && <col style={{ width: "13%" }} />}
+                    </colgroup>
                     <thead className="bg-slate-50 border-b">
                       <tr>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[16%]">المبلغ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[16%]">التاريخ</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[18%]">نوع العلاج</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[12%]">عدد الجلسات</th>
-                        <th className="text-right p-3 font-semibold text-slate-600 w-[25%]">ملاحظات</th>
-                        {isAdmin && <th className="text-right p-3 font-semibold text-slate-600 w-[10%]">إجراءات</th>}
+                        <th className="text-right p-3 font-semibold text-slate-600">المبلغ</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">التاريخ</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">نوع العلاج</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">عدد الجلسات</th>
+                        <th className="text-right p-3 font-semibold text-slate-600">ملاحظات</th>
+                        {isAdmin && <th className="text-right p-3 font-semibold text-slate-600">إجراءات</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y">
