@@ -147,11 +147,11 @@ export function BranchGate({ children }: BranchGateProps) {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100" dir="rtl">
-      <Card className="p-8 w-full max-w-md rounded-2xl shadow-xl border-0">
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 px-4" dir="rtl">
+      <Card className="p-6 sm:p-8 w-full max-w-md rounded-2xl shadow-xl border-0 mx-auto">
         <div className="text-center mb-8">
-          <img src={logoImage} alt="Bionic Logo" className="w-32 h-32 object-contain mx-auto mb-4" />
-          <h1 className="text-2xl font-display font-bold text-slate-800">مجموعة مراكز الدكتور ياسر الساعدي</h1>
+          <img src={logoImage} alt="Bionic Logo" className="w-28 h-28 sm:w-32 sm:h-32 object-contain mx-auto mb-4" />
+          <h1 className="text-xl sm:text-2xl font-display font-bold text-slate-800 text-center">مجموعة مراكز الدكتور ياسر الساعدي</h1>
           <p className="text-muted-foreground mt-2">أدخل اسم المستخدم وكلمة السر للدخول</p>
         </div>
 
