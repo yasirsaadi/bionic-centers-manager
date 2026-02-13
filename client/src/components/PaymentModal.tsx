@@ -62,6 +62,7 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       amount: "" as any,
       notes: "",
       paymentTreatmentType: "",
+      sessionCount: "" as any,
       date: getTodayDate(),
     },
   });
@@ -86,7 +87,9 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       ? selectedTreatmentTypes.join(",") 
       : null;
     
-    mutate({ ...values, date: submissionDate, paymentTreatmentType }, {
+    const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
+    
+    mutate({ ...values, date: submissionDate, paymentTreatmentType, sessionCount }, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
@@ -176,6 +179,30 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
                       placeholder="أدخل المبلغ" 
                       data-testid="input-payment-amount"
                       value={field.value === 0 ? "" : field.value}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        field.onChange(val === "" ? "" : Number(val));
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="sessionCount"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>عدد الجلسات</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="number" 
+                      className="text-left font-mono" 
+                      placeholder="أدخل عدد الجلسات" 
+                      data-testid="input-session-count"
+                      value={field.value === 0 ? "" : field.value || ""}
                       onChange={(e) => {
                         const val = e.target.value;
                         field.onChange(val === "" ? "" : Number(val));

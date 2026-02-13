@@ -60,6 +60,7 @@ const serviceFormSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
   serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
   initialPayment: z.string().optional(),
+  sessionCount: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -121,6 +122,7 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
       serviceType: "",
       serviceCost: "",
       initialPayment: "",
+      sessionCount: "",
       notes: "",
     },
   });
@@ -160,11 +162,14 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
       ? selectedTreatmentTypes.join(",") 
       : null;
     
+    const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
+    
     addService({
       ...values,
       serviceCost,
       initialPayment,
       paymentTreatmentType,
+      sessionCount,
     } as any);
   }
 
@@ -363,6 +368,27 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                         className="text-left font-mono" 
                         placeholder="0" 
                         data-testid="input-initial-payment"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={serviceForm.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="text"
+                        inputMode="numeric"
+                        {...field}
+                        className="text-left font-mono" 
+                        placeholder="أدخل عدد الجلسات" 
+                        data-testid="input-vos-session-count"
                       />
                     </FormControl>
                     <FormMessage />

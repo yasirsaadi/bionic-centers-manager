@@ -1194,7 +1194,7 @@ export async function registerRoutes(
   app.post("/api/patients/:id/new-service", isAuthenticated, async (req, res) => {
     try {
       const patientId = Number(req.params.id);
-      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType } = req.body;
+      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType, sessionCount } = req.body;
       
       const patient = await storage.getPatient(patientId);
       if (!patient) {
@@ -1221,7 +1221,7 @@ export async function registerRoutes(
       await storage.createVisit({
         patientId,
         branchId: branchId || patient.branchId,
-        notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
+        notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
       });
       
       // Create initial payment if provided
@@ -1232,6 +1232,7 @@ export async function registerRoutes(
           amount: initialPayment,
           notes: `دفعة أولية - ${serviceLabel}`,
           paymentTreatmentType: paymentTreatmentType || null,
+          sessionCount: sessionCount ? Number(sessionCount) : null,
         });
       }
       

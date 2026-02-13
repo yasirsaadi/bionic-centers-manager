@@ -53,6 +53,7 @@ const formSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
   serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
   initialPayment: z.string().optional(),
+  sessionCount: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -71,7 +72,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
   const { toast } = useToast();
   
   const { mutate, isPending } = useMutation({
-    mutationFn: async (data: { serviceType: string; serviceCost: number; initialPayment: number; notes?: string; paymentTreatmentType?: string | null }) => {
+    mutationFn: async (data: { serviceType: string; serviceCost: number; initialPayment: number; notes?: string; paymentTreatmentType?: string | null; sessionCount?: number | null }) => {
       return apiRequest("POST", `/api/patients/${patientId}/new-service`, {
         ...data,
         branchId,
@@ -103,6 +104,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
       serviceType: "",
       serviceCost: "",
       initialPayment: "",
+      sessionCount: "",
       notes: "",
     },
   });
@@ -128,12 +130,15 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
       ? selectedTreatmentTypes.join(",") 
       : null;
     
+    const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
+    
     mutate({
       serviceType: values.serviceType,
       serviceCost,
       initialPayment,
       notes: values.notes,
       paymentTreatmentType,
+      sessionCount,
     });
   }
 
@@ -251,6 +256,27 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
                       className="text-left font-mono" 
                       placeholder="0" 
                       data-testid="input-initial-payment"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="sessionCount"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>عدد الجلسات</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="text"
+                      inputMode="numeric"
+                      {...field}
+                      className="text-left font-mono" 
+                      placeholder="أدخل عدد الجلسات" 
+                      data-testid="input-service-session-count"
                     />
                   </FormControl>
                   <FormMessage />
