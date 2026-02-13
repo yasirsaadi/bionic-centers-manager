@@ -149,7 +149,8 @@ export default function PatientDetails() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       setEditingPaymentSession(null);
     }
   });
