@@ -52,6 +52,91 @@ const AGE_GROUPS = [
   { label: '70+', min: 71, max: 150 },
 ];
 
+interface TreatmentRevenue {
+  treatmentType: string;
+  totalAmount: number;
+  count: number;
+}
+
+const TREATMENT_COLORS: Record<string, string> = {
+  "روبوت": "#0088FE",
+  "تمارين تأهيلية": "#00C49F",
+  "أجهزة علاج طبيعي": "#FFBB28",
+  "غير محدد": "#8884d8",
+};
+
+function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string }) {
+  const { data: revenueByTreatment = [] } = useQuery<TreatmentRevenue[]>({
+    queryKey: ["/api/statistics/revenue-by-treatment", selectedBranch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      const res = await fetch(`/api/statistics/revenue-by-treatment?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
+  if (!revenueByTreatment.length) return null;
+
+  const chartData = revenueByTreatment.map((item) => ({
+    name: item.treatmentType,
+    value: item.totalAmount,
+    count: item.count,
+    color: TREATMENT_COLORS[item.treatmentType] || "#6b7280",
+  }));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2" data-testid="text-revenue-by-treatment-title">
+          <Banknote className="w-5 h-5 text-primary" />
+          الإيرادات حسب نوع العلاج
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={100}
+                fill="#8884d8"
+                paddingAngle={5}
+                dataKey="value"
+                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, '']} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="space-y-3 flex flex-col justify-center">
+            {chartData.map((item) => (
+              <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-revenue-${item.name}`}>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="text-sm font-medium">{item.name}</span>
+                </div>
+                <div className="text-left">
+                  <span className="text-sm font-bold">{item.value.toLocaleString()} د.ع</span>
+                  <span className="text-xs text-muted-foreground mr-2">({item.count} دفعة)</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Statistics() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin ?? false;
@@ -994,6 +1079,9 @@ export default function Statistics() {
               </Card>
             )}
           </div>
+
+          {/* Revenue by Treatment Type */}
+          <RevenueByTreatmentChart selectedBranch={selectedBranch} />
 
           {/* Monthly Trend */}
           {stats.monthlyTrend.length > 1 && (

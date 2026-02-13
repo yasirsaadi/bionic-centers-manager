@@ -563,13 +563,14 @@ export default function PatientDetails() {
                     <tr>
                       <th className="text-right p-4 font-semibold text-slate-600">المبلغ</th>
                       <th className="text-right p-4 font-semibold text-slate-600">التاريخ</th>
+                      <th className="text-right p-4 font-semibold text-slate-600">نوع العلاج</th>
                       <th className="text-right p-4 font-semibold text-slate-600">ملاحظات</th>
                       {isAdmin && <th className="text-right p-4 font-semibold text-slate-600">إجراءات</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {patient.payments?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? 4 : 3} className="p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
+                      <tr><td colSpan={isAdmin ? 5 : 4} className="p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50/50">
@@ -579,6 +580,14 @@ export default function PatientDetails() {
                             <div className="text-xs text-slate-400">
                               {formatTimeIraq(payment.date)}
                             </div>
+                          </td>
+                          <td className="p-4 text-slate-600" data-testid={`text-payment-treatment-${payment.id}`}>
+                            {payment.paymentTreatmentType 
+                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
+                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs ml-1 mb-1">{t.trim()}</span>
+                                ))
+                              : <span className="text-slate-400">-</span>
+                            }
                           </td>
                           <td className="p-4 text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (

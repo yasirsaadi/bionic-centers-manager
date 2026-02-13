@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { PlusCircle, Loader2, Calendar } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -42,8 +43,15 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "روبوت", label: "روبوت" },
+  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
+  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+];
+
 export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
+  const [selectedTreatmentTypes, setSelectedTreatmentTypes] = useState<string[]>([]);
   const { mutate, isPending } = useAddPayment();
   
   const form = useForm<z.infer<typeof formSchema>>({
@@ -53,12 +61,18 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       branchId: branchId,
       amount: "" as any,
       notes: "",
+      paymentTreatmentType: "",
       date: getTodayDate(),
     },
   });
 
+  const handleTreatmentTypeToggle = (value: string, checked: boolean) => {
+    setSelectedTreatmentTypes(prev => 
+      checked ? [...prev, value] : prev.filter(t => t !== value)
+    );
+  };
+
   function onSubmit(values: z.infer<typeof formSchema>) {
-    // Add current time to the date to ensure proper timestamp
     let submissionDate = values.date;
     if (submissionDate) {
       const now = new Date();
@@ -68,16 +82,29 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       submissionDate = `${submissionDate}T${hours}:${minutes}:${seconds}`;
     }
     
-    mutate({ ...values, date: submissionDate }, {
+    const paymentTreatmentType = selectedTreatmentTypes.length > 0 
+      ? selectedTreatmentTypes.join(",") 
+      : null;
+    
+    mutate({ ...values, date: submissionDate, paymentTreatmentType }, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
+        setSelectedTreatmentTypes([]);
       },
     });
   }
 
+  const handleOpenChange = (isOpen: boolean) => {
+    setOpen(isOpen);
+    if (!isOpen) {
+      setSelectedTreatmentTypes([]);
+      form.reset();
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20">
           <PlusCircle className="w-4 h-4" />
@@ -137,6 +164,28 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
                 </FormItem>
               )}
             />
+
+            <div className="space-y-3">
+              <FormLabel>نوع العلاج (اختياري)</FormLabel>
+              <div className="space-y-2">
+                {TREATMENT_TYPE_OPTIONS.map((option) => (
+                  <div key={option.value} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`treatment-${option.value}`}
+                      checked={selectedTreatmentTypes.includes(option.value)}
+                      onCheckedChange={(checked) => handleTreatmentTypeToggle(option.value, !!checked)}
+                      data-testid={`checkbox-treatment-${option.value}`}
+                    />
+                    <label
+                      htmlFor={`treatment-${option.value}`}
+                      className="text-sm cursor-pointer"
+                    >
+                      {option.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <FormField
               control={form.control}

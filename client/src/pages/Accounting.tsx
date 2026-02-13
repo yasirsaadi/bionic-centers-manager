@@ -242,6 +242,92 @@ function getCategoryLabel(category: string): string {
   return cat?.label || category;
 }
 
+interface TreatmentRevenueData {
+  treatmentType: string;
+  totalAmount: number;
+  count: number;
+}
+
+const TREATMENT_TYPE_COLORS: Record<string, string> = {
+  "روبوت": "#0088FE",
+  "تمارين تأهيلية": "#00C49F",
+  "أجهزة علاج طبيعي": "#FFBB28",
+  "غير محدد": "#8884d8",
+};
+
+function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: string }) {
+  const { data: revenueByTreatment = [] } = useQuery<TreatmentRevenueData[]>({
+    queryKey: ["/api/statistics/revenue-by-treatment", selectedBranch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      const res = await fetch(`/api/statistics/revenue-by-treatment?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
+  if (!revenueByTreatment.length) return null;
+
+  const chartData = revenueByTreatment.map((item) => ({
+    name: item.treatmentType,
+    value: item.totalAmount,
+    count: item.count,
+    color: TREATMENT_TYPE_COLORS[item.treatmentType] || "#6b7280",
+  }));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2" data-testid="text-accounting-revenue-by-treatment">
+          <PieChart className="h-5 w-5" />
+          الإيرادات حسب نوع العلاج
+        </CardTitle>
+        <CardDescription>توزيع الإيرادات المحصلة حسب نوع العلاج المقدم</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ResponsiveContainer width="100%" height={300}>
+            <RechartsPieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={100}
+                fill="#8884d8"
+                paddingAngle={5}
+                dataKey="value"
+                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, '']} />
+              <Legend />
+            </RechartsPieChart>
+          </ResponsiveContainer>
+          <div className="space-y-3 flex flex-col justify-center">
+            {chartData.map((item) => (
+              <div key={item.name} className="flex items-center justify-between" data-testid={`text-accounting-treatment-revenue-${item.name}`}>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="text-sm font-medium">{item.name}</span>
+                </div>
+                <div className="text-left">
+                  <span className="text-sm font-bold">{formatCurrency(item.value)}</span>
+                  <span className="text-xs text-muted-foreground mr-2">({item.count} دفعة)</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -1260,6 +1346,9 @@ export default function Accounting() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Revenue by Treatment Type */}
+            <AccountingRevenueByTreatment selectedBranch={effectiveBranchFilter} />
           </TabsContent>
 
           {/* Expenses Tab */}

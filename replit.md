@@ -165,3 +165,12 @@ Preferred communication style: Simple, everyday language.
 - Admin: Full permissions (all 12 enabled)
 - Branch Manager: All except delete patients/payments, manage settings/users
 - Reception: View and add only (no edit/delete permissions)
+
+### Payment Treatment Type Tracking (February 2026)
+- Added `paymentTreatmentType` text column to `payments` table
+- Payment modal includes treatment type checkboxes: روبوت، تمارين تأهيلية، أجهزة علاج طبيعي
+- Multi-select stored as comma-separated string
+- Treatment type displayed in patient payment history table
+- Revenue by treatment type charts in Statistics and Accounting pages
+- API endpoint: GET `/api/statistics/revenue-by-treatment` with optional `branchId` filter
+- Legacy payments without treatment type shown as "غير محدد"

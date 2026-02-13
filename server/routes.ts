@@ -2027,6 +2027,49 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Revenue by Treatment Type
+  app.get("/api/statistics/revenue-by-treatment", isAuthenticated, async (req: any, res) => {
+    try {
+      const { branchId } = req.query;
+      const allPayments = await storage.getAllPayments(
+        branchId ? parseInt(branchId as string) : undefined
+      );
+
+      const treatmentMap: Record<string, { totalAmount: number; count: number }> = {};
+
+      for (const payment of allPayments) {
+        const treatmentType = payment.paymentTreatmentType;
+        if (!treatmentType) {
+          if (!treatmentMap["غير محدد"]) {
+            treatmentMap["غير محدد"] = { totalAmount: 0, count: 0 };
+          }
+          treatmentMap["غير محدد"].totalAmount += payment.amount;
+          treatmentMap["غير محدد"].count += 1;
+        } else {
+          const types = treatmentType.split(",").map((t: string) => t.trim()).filter(Boolean);
+          for (const type of types) {
+            if (!treatmentMap[type]) {
+              treatmentMap[type] = { totalAmount: 0, count: 0 };
+            }
+            treatmentMap[type].totalAmount += payment.amount;
+            treatmentMap[type].count += 1;
+          }
+        }
+      }
+
+      const result = Object.entries(treatmentMap).map(([treatmentType, data]) => ({
+        treatmentType,
+        totalAmount: data.totalAmount,
+        count: data.count,
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching revenue by treatment:", error);
+      res.status(500).json({ error: "خطأ في جلب البيانات" });
+    }
+  });
+
   // Accounting Summary - Admin only
   app.get("/api/accounting/summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;

@@ -81,6 +81,7 @@ export const payments = pgTable("payments", {
   branchId: integer("branch_id").references(() => branches.id).notNull(),
   amount: integer("amount").notNull(),
   notes: text("notes"),
+  paymentTreatmentType: text("payment_treatment_type"),
   date: timestamp("date").defaultNow(),
 });
 
@@ -177,6 +178,7 @@ export const insertPatientSchema = createInsertSchema(patients).omit({ id: true,
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true });
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
   date: z.string().optional().nullable(),
+  paymentTreatmentType: z.string().optional().nullable(),
 });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertCustomStatSchema = createInsertSchema(customStats).omit({ id: true, createdAt: true });
