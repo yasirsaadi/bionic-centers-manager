@@ -670,7 +670,7 @@ export default function PatientDetails() {
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "12%" : "15%" }}>عدد الجلسات</th>
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "17%" : "20%" }}>المبلغ</th>
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "27%" : "30%" }}>ملاحظات</th>
-                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>تعديل</th>}
+                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>إجراءات</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -703,15 +703,27 @@ export default function PatientDetails() {
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
-                                data-testid={`button-edit-session-${payment.id}`}
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </Button>
+                              <div className="flex gap-1 justify-center">
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                  onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
+                                  data-testid={`button-edit-session-${payment.id}`}
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
+                                  disabled={isDeletingPayment}
+                                  data-testid={`button-delete-session-${payment.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
                             </td>
                           )}
                         </tr>
