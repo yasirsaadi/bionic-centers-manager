@@ -260,13 +260,9 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
-    // Always use current UTC timestamp for the payment date
-    // This ensures consistent timezone handling
-    const paymentDate = new Date();
-    
     const paymentData = {
       ...insertPayment,
-      date: paymentDate,
+      date: insertPayment.date ? new Date(insertPayment.date) : new Date(),
     };
     const [payment] = await db.insert(payments).values(paymentData).returning();
     return payment;
