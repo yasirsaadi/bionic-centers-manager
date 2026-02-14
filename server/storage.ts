@@ -199,6 +199,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePatient(id: number): Promise<void> {
+    const patientInvoices = await db.select({ id: invoices.id }).from(invoices).where(eq(invoices.patientId, id));
+    for (const inv of patientInvoices) {
+      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, inv.id));
+    }
+    await db.delete(invoices).where(eq(invoices.patientId, id));
+    await db.delete(installmentPlans).where(eq(installmentPlans.patientId, id));
     await db.delete(payments).where(eq(payments.patientId, id));
     await db.delete(documents).where(eq(documents.patientId, id));
     await db.delete(visits).where(eq(visits.patientId, id));

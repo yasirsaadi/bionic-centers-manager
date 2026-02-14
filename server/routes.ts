@@ -1186,8 +1186,13 @@ export async function registerRoutes(
       return res.status(403).json({ message: "غير مصرح لك بحذف هذا المريض" });
     }
     
-    await storage.deletePatient(id);
-    res.status(204).send();
+    try {
+      await storage.deletePatient(id);
+      res.status(204).send();
+    } catch (err: any) {
+      console.error("Error deleting patient:", err);
+      res.status(500).json({ message: "فشل في حذف المريض. حاول مرة أخرى." });
+    }
   });
 
   // New Service (add service to existing patient)
