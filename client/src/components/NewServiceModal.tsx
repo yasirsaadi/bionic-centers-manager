@@ -37,6 +37,7 @@ interface NewServiceModalProps {
   patientId: number;
   branchId: number;
   currentTotalCost: number;
+  isPhysiotherapy?: boolean;
 }
 
 const serviceTypes = [
@@ -64,7 +65,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
 ];
 
-export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewServiceModalProps) {
+export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const queryClient = useQueryClient();
@@ -125,9 +126,9 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
       return;
     }
     
-    const paymentTreatmentType = selectedTreatmentType || null;
+    const paymentTreatmentType = isPhysiotherapy !== false ? (selectedTreatmentType || null) : null;
     
-    const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
+    const sessionCount = isPhysiotherapy !== false ? (values.sessionCount ? Number(values.sessionCount) : null) : null;
     
     mutate({
       serviceType: values.serviceType,
@@ -179,7 +180,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
               )}
             />
 
-            {selectedServiceType === "additional_therapy" && (
+            {selectedServiceType === "additional_therapy" && isPhysiotherapy !== false && (
               <div className="space-y-2">
                 <FormLabel>نوع العلاج</FormLabel>
                 <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
@@ -250,26 +251,28 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost }: NewSe
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="sessionCount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>عدد الجلسات</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="text"
-                      inputMode="numeric"
-                      {...field}
-                      className="text-left font-mono" 
-                      placeholder="أدخل عدد الجلسات" 
-                      data-testid="input-service-session-count"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isPhysiotherapy !== false && (
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="text"
+                        inputMode="numeric"
+                        {...field}
+                        className="text-left font-mono" 
+                        placeholder="أدخل عدد الجلسات" 
+                        data-testid="input-service-session-count"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}

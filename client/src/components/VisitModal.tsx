@@ -33,6 +33,7 @@ import { z } from "zod";
 interface VisitModalProps {
   patientId: number;
   branchId: number;
+  isPhysiotherapy?: boolean;
 }
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -45,7 +46,7 @@ const formSchema = insertVisitSchema.extend({
   treatmentType: z.string().optional().nullable(),
 });
 
-export function VisitModal({ patientId, branchId }: VisitModalProps) {
+export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
   const [open, setOpen] = useState(false);
   const { mutate, isPending } = useAddVisit();
   
@@ -62,7 +63,7 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
   function onSubmit(values: z.infer<typeof formSchema>) {
     const submitData: any = {
       ...values,
-      treatmentType: values.treatmentType || null,
+      treatmentType: isPhysiotherapy !== false ? (values.treatmentType || null) : null,
     };
     mutate(submitData, {
       onSuccess: () => {
@@ -111,30 +112,32 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="treatmentType"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>نوع العلاج</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || ""}>
-                    <FormControl>
-                      <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">
-                        <SelectValue placeholder="اختر نوع العلاج" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {TREATMENT_TYPE_OPTIONS.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isPhysiotherapy !== false && (
+              <FormField
+                control={form.control}
+                name="treatmentType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>نوع العلاج</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <FormControl>
+                        <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">
+                          <SelectValue placeholder="اختر نوع العلاج" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {TREATMENT_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending}>
               {isPending ? (

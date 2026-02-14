@@ -33,6 +33,7 @@ import { z } from "zod";
 interface PaymentModalProps {
   patientId: number;
   branchId: number;
+  isPhysiotherapy?: boolean;
 }
 
 const formSchema = insertPaymentSchema.extend({
@@ -55,7 +56,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
 ];
 
-export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
+export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const { mutate, isPending } = useAddPayment();
@@ -83,9 +84,9 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
       submissionDate = `${submissionDate}T${hours}:${minutes}:${seconds}`;
     }
     
-    const paymentTreatmentType = selectedTreatmentType || null;
+    const paymentTreatmentType = isPhysiotherapy !== false ? (selectedTreatmentType || null) : null;
     
-    const sessionCount = values.sessionCount ? Number(values.sessionCount) : null;
+    const sessionCount = isPhysiotherapy !== false ? (values.sessionCount ? Number(values.sessionCount) : null) : null;
     
     mutate({ ...values, date: submissionDate, paymentTreatmentType, sessionCount }, {
       onSuccess: () => {
@@ -142,21 +143,23 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               )}
             />
 
-            <div className="space-y-2">
-              <FormLabel>نوع العلاج</FormLabel>
-              <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
-                <SelectTrigger data-testid="select-treatment-type">
-                  <SelectValue placeholder="اختر نوع العلاج" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TREATMENT_TYPE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value} data-testid={`option-treatment-${option.value}`}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {isPhysiotherapy !== false && (
+              <div className="space-y-2">
+                <FormLabel>نوع العلاج</FormLabel>
+                <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
+                  <SelectTrigger data-testid="select-treatment-type">
+                    <SelectValue placeholder="اختر نوع العلاج" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TREATMENT_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value} data-testid={`option-treatment-${option.value}`}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <FormField
               control={form.control}
@@ -182,29 +185,31 @@ export function PaymentModal({ patientId, branchId }: PaymentModalProps) {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="sessionCount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>عدد الجلسات</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="number" 
-                      className="text-left font-mono" 
-                      placeholder="أدخل عدد الجلسات" 
-                      data-testid="input-session-count"
-                      value={field.value === 0 ? "" : field.value || ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? "" : Number(val));
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isPhysiotherapy !== false && (
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="number" 
+                        className="text-left font-mono" 
+                        placeholder="أدخل عدد الجلسات" 
+                        data-testid="input-session-count"
+                        value={field.value === 0 ? "" : field.value || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          field.onChange(val === "" ? "" : Number(val));
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}

@@ -587,7 +587,7 @@ export default function PatientDetails() {
               </div>
 
               <div className="pt-4 border-t border-dashed">
-                <PaymentModal patientId={patient.id} branchId={patient.branchId} />
+                <PaymentModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
               </div>
             </div>
           </Card>
@@ -610,11 +610,12 @@ export default function PatientDetails() {
 
             <TabsContent value="visits" className="space-y-4">
               <div className="flex justify-end gap-2 mb-4">
-                <VisitModal patientId={patient.id} branchId={patient.branchId} />
+                <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
                 <NewServiceModal 
                   patientId={patient.id} 
                   branchId={patient.branchId} 
-                  currentTotalCost={patient.totalCost || 0} 
+                  currentTotalCost={patient.totalCost || 0}
+                  isPhysiotherapy={!!patient.isPhysiotherapy}
                 />
               </div>
 
