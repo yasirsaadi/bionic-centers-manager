@@ -73,9 +73,8 @@ export default function BranchDetails() {
 
   const basePatients = viewMode === "date" ? dateFilteredPatients : branchPatients;
   
-  // When searching, search ALL patients (ignore filters)
   const searchResults = searchTerm.trim() 
-    ? (allPatients || []).filter(p => 
+    ? branchPatients.filter(p => 
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.medicalCondition.includes(searchTerm) ||
         (p.phone && p.phone.includes(searchTerm))
