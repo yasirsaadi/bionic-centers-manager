@@ -617,6 +617,42 @@ export default function PatientDetails() {
                   currentTotalCost={patient.totalCost || 0} 
                 />
               </div>
+
+              {(() => {
+                const sessionsByType: Record<string, number> = {};
+                patient.payments?.forEach((p) => {
+                  const type = p.paymentTreatmentType || "غير محدد";
+                  sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
+                });
+                const visitsByType: Record<string, number> = {};
+                patient.visits?.forEach((v) => {
+                  const type = v.treatmentType || "غير محدد";
+                  visitsByType[type] = (visitsByType[type] || 0) + 1;
+                });
+                const allTypes = new Set([...Object.keys(sessionsByType), ...Object.keys(visitsByType)]);
+                const typesWithData = Array.from(allTypes).filter(t => (sessionsByType[t] || 0) > 0 || (visitsByType[t] || 0) > 0);
+
+                if (typesWithData.length > 0) {
+                  return (
+                    <div className="flex flex-wrap gap-3 mb-4" data-testid="sessions-summary">
+                      {typesWithData.map((type) => {
+                        const paid = sessionsByType[type] || 0;
+                        const used = visitsByType[type] || 0;
+                        const rem = paid - used;
+                        return (
+                          <div key={type} className={`flex items-center gap-2 px-3 py-2 rounded-md border ${rem <= 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`} data-testid={`summary-${type}`}>
+                            <span className="text-sm font-medium text-slate-700">{type}:</span>
+                            <span className={`font-bold text-sm ${rem <= 0 ? "text-red-600" : "text-emerald-600"}`}>{rem}</span>
+                            <span className="text-xs text-slate-400">({paid} مدفوعة - {used} مستخدمة)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               <div className="overflow-x-auto rounded-md border border-slate-300">
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
@@ -636,10 +672,21 @@ export default function PatientDetails() {
                       </td></tr>
                     ) : (
                       (() => {
-                        const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
-                        const totalVisits = patient.visits?.length || 0;
-                        return patient.visits?.map((visit, idx) => {
-                          const remaining = totalSessions - (totalVisits - idx);
+                        const sessionsByType: Record<string, number> = {};
+                        patient.payments?.forEach((p) => {
+                          const type = p.paymentTreatmentType || "غير محدد";
+                          sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
+                        });
+                        const remainingMap: Record<number, number> = {};
+                        const visitCountByType: Record<string, number> = {};
+                        const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
+                        visitsOldestFirst.forEach((v) => {
+                          const type = v.treatmentType || "غير محدد";
+                          visitCountByType[type] = (visitCountByType[type] || 0) + 1;
+                          remainingMap[v.id] = (sessionsByType[type] || 0) - visitCountByType[type];
+                        });
+                        return patient.visits?.map((visit) => {
+                          const remaining = remainingMap[visit.id] ?? 0;
                           return (
                         <tr key={visit.id} className="hover:bg-slate-50">
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
