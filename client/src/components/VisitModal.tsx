@@ -54,7 +54,6 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
     defaultValues: {
       patientId: patientId,
       branchId: branchId,
-      details: "",
       notes: "",
       treatmentType: "",
     },
@@ -71,7 +70,6 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
         form.reset({
           patientId: patientId,
           branchId: branchId,
-          details: "",
           notes: "",
           treatmentType: "",
         });
@@ -96,7 +94,7 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
             <FormField
               control={form.control}
-              name="details"
+              name="notes"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>سبب الزيارة</FormLabel>

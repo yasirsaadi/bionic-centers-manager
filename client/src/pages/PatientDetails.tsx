@@ -621,16 +621,15 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "28%" }}>التفاصيل</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "25%" }}>ملاحظات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "42%" }}>سبب الزيارة</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={4} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
@@ -641,7 +640,6 @@ export default function PatientDetails() {
                             <div>{formatDateIraq(visit.visitDate)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.details || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center">
