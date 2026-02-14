@@ -600,9 +600,6 @@ export default function PatientDetails() {
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 سبب الزيارة
               </TabsTrigger>
-              <TabsTrigger value="sessions" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all" data-testid="tab-sessions">
-                عدد الجلسات
-              </TabsTrigger>
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 سجل المدفوعات
               </TabsTrigger>
@@ -691,80 +688,6 @@ export default function PatientDetails() {
                   onOpenChange={(open) => !open && setEditingVisit(null)}
                 />
               )}
-            </TabsContent>
-
-            <TabsContent value="sessions" className="space-y-4">
-              <div className="overflow-x-auto rounded-md border border-slate-300">
-                <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "13%" : "15%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "18%" : "20%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "12%" : "15%" }}>عدد الجلسات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "17%" : "20%" }}>المبلغ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "27%" : "30%" }}>ملاحظات</th>
-                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>إجراءات</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const paymentsWithSessions = patient.payments?.filter((p) => p.sessionCount && p.sessionCount > 0) || [];
-                      if (paymentsWithSessions.length === 0) {
-                        return (
-                          <tr><td colSpan={isAdmin ? 6 : 5} className="border border-slate-300 p-8 text-center text-muted-foreground">
-                            <Activity className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                            لا يوجد جلسات مسجلة
-                          </td></tr>
-                        );
-                      }
-                      return paymentsWithSessions.map((payment) => (
-                        <tr key={payment.id} className="hover:bg-slate-50">
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
-                            <div>{formatDateIraq(payment.date)}</div>
-                            <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
-                          </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center">
-                            {payment.paymentTreatmentType 
-                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
-                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
-                                ))
-                              : <span className="text-slate-400">غير محدد</span>
-                            }
-                          </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-blue-600">{payment.sessionCount}</td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-emerald-600 font-mono">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
-                          {isAdmin && (
-                            <td className="border border-slate-300 px-3 py-2 text-center">
-                              <div className="flex gap-1 justify-center">
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => openEditPaymentSession({ id: payment.id, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
-                                  data-testid={`button-edit-session-${payment.id}`}
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </Button>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
-                                  disabled={isDeletingPayment}
-                                  data-testid={`button-delete-session-${payment.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      ));
-                    })()}
-                  </tbody>
-                </table>
-              </div>
             </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
