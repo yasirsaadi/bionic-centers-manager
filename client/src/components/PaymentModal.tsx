@@ -39,6 +39,10 @@ interface PaymentModalProps {
 const formSchema = insertPaymentSchema.extend({
   amount: z.coerce.number().min(1, "المبلغ يجب أن يكون أكبر من 0"),
   date: z.string().optional().nullable(),
+  sessionCount: z.preprocess((val) => {
+    if (val === "" || val === null || val === undefined) return null;
+    return Number(val);
+  }, z.number().nullable().optional()),
 });
 
 // Get today's date in YYYY-MM-DD format for the date input
