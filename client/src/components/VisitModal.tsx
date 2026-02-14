@@ -17,8 +17,16 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { PlusCircle, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -28,7 +36,17 @@ interface VisitModalProps {
   branchId: number;
 }
 
-const formSchema = insertVisitSchema;
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "روبوت", label: "روبوت" },
+  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
+  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+];
+
+const formSchema = insertVisitSchema.extend({
+  treatmentType: z.string().optional().nullable(),
+  sessionCount: z.union([z.number(), z.string()]).optional().nullable(),
+  cost: z.union([z.number(), z.string()]).optional().nullable(),
+});
 
 export function VisitModal({ patientId, branchId }: VisitModalProps) {
   const [open, setOpen] = useState(false);
@@ -41,11 +59,20 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
       branchId: branchId,
       details: "",
       notes: "",
+      treatmentType: "",
+      sessionCount: "",
+      cost: "",
     },
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
-    mutate(values, {
+    const submitData: any = {
+      ...values,
+      treatmentType: values.treatmentType || null,
+      sessionCount: values.sessionCount ? Number(values.sessionCount) : null,
+      cost: values.cost ? Number(values.cost) : null,
+    };
+    mutate(submitData, {
       onSuccess: () => {
         setOpen(false);
         form.reset({
@@ -53,6 +80,9 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
           branchId: branchId,
           details: "",
           notes: "",
+          treatmentType: "",
+          sessionCount: "",
+          cost: "",
         });
       },
     });
@@ -91,6 +121,77 @@ export function VisitModal({ patientId, branchId }: VisitModalProps) {
                 </FormItem>
               )}
             />
+
+            <FormField
+              control={form.control}
+              name="treatmentType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>نوع العلاج</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
+                    <FormControl>
+                      <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">
+                        <SelectValue placeholder="اختر نوع العلاج" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {TREATMENT_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="1"
+                        placeholder="عدد الجلسات"
+                        className="border border-slate-300 bg-slate-100"
+                        value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? "" : Number(e.target.value))}
+                        data-testid="input-session-count"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="cost"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>الكلفة</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="0"
+                        placeholder="الكلفة بالدينار"
+                        className="border border-slate-300 bg-slate-100"
+                        value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? "" : Number(e.target.value))}
+                        data-testid="input-cost"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending}>
               {isPending ? (

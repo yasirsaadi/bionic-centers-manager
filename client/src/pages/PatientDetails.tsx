@@ -85,7 +85,7 @@ export default function PatientDetails() {
   const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
-  const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null } | null>(null);
+  const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null; treatmentType: string | null; sessionCount: number | null; cost: number | null } | null>(null);
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
   const [editTreatmentType, setEditTreatmentType] = useState<string>("");
@@ -624,15 +624,18 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "32%" }}>التفاصيل</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "35%" }}>ملاحظات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "22%" }}>التفاصيل</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "10%" }}>عدد الجلسات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>الكلفة</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>ملاحظات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "11%" }}>إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={4} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={7} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
@@ -644,6 +647,9 @@ export default function PatientDetails() {
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.details || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.sessionCount || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.cost ? visit.cost.toLocaleString() + " د.ع" : "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
@@ -651,7 +657,7 @@ export default function PatientDetails() {
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes })}
+                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost })}
                                 data-testid={`button-edit-visit-${visit.id}`}
                               >
                                 <Pencil className="w-4 h-4" />

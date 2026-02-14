@@ -282,6 +282,7 @@ export function useAddVisit() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       toast({
         title: "تم تسجيل الزيارة",
         description: "تمت إضافة الزيارة إلى سجل المريض",
@@ -296,11 +297,11 @@ export function useUpdateVisit() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ visitId, patientId, details, notes }: { visitId: number; patientId: number; details: string; notes: string }) => {
+    mutationFn: async ({ visitId, patientId, details, notes, treatmentType, sessionCount, cost }: { visitId: number; patientId: number; details: string; notes: string; treatmentType: string | null; sessionCount: number | null; cost: number | null }) => {
       const res = await fetch(`/api/visits/${visitId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ details, notes }),
+        body: JSON.stringify({ details, notes, treatmentType, sessionCount, cost }),
         credentials: "include",
       });
 

@@ -73,6 +73,9 @@ export const visits = pgTable("visits", {
   visitDate: timestamp("visit_date").defaultNow(),
   details: text("details"),
   notes: text("notes"),
+  treatmentType: text("treatment_type"),
+  sessionCount: integer("session_count"),
+  cost: integer("cost"),
 });
 
 export const payments = pgTable("payments", {
@@ -176,7 +179,11 @@ export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, 
 export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true }).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });
-export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true });
+export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true }).extend({
+  treatmentType: z.string().optional().nullable(),
+  sessionCount: z.number().optional().nullable(),
+  cost: z.number().optional().nullable(),
+});
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
   date: z.string().optional().nullable(),
   paymentTreatmentType: z.string().optional().nullable(),

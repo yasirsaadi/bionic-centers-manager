@@ -1247,14 +1247,32 @@ export async function registerRoutes(
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     const input = api.visits.create.input.parse(req.body);
     const visit = await storage.createVisit(input);
+    
+    if (input.cost && input.cost > 0) {
+      const patient = await storage.getPatient(input.patientId);
+      if (patient) {
+        const newTotalCost = (patient.totalCost || 0) + input.cost;
+        await storage.updatePatient(patient.id, { totalCost: newTotalCost });
+        
+        await storage.createPayment({
+          patientId: input.patientId,
+          branchId: input.branchId,
+          amount: input.cost,
+          notes: "دفعة زيارة",
+          paymentTreatmentType: input.treatmentType || null,
+          sessionCount: input.sessionCount || null,
+        });
+      }
+    }
+    
     res.status(201).json(visit);
   });
 
   // Update visit (all users can edit)
   app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
-    const { details, notes } = req.body;
-    const updated = await storage.updateVisit(id, { details, notes });
+    const { details, notes, treatmentType, sessionCount, cost } = req.body;
+    const updated = await storage.updateVisit(id, { details, notes, treatmentType, sessionCount, cost });
     res.json(updated);
   });
 
