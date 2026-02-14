@@ -621,20 +621,26 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "42%" }}>سبب الزيارة</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "33%" }}>سبب الزيارة</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>الجلسات المتبقية</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={4} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
                     ) : (
-                      patient.visits?.map((visit) => (
+                      (() => {
+                        const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
+                        const totalVisits = patient.visits?.length || 0;
+                        return patient.visits?.map((visit, idx) => {
+                          const remaining = totalSessions - (totalVisits - idx);
+                          return (
                         <tr key={visit.id} className="hover:bg-slate-50">
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
                             <div>{formatDateIraq(visit.visitDate)}</div>
@@ -642,6 +648,11 @@ export default function PatientDetails() {
                           </td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center">
+                            <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
+                              {remaining}
+                            </span>
+                          </td>
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
                               <Button 
@@ -668,7 +679,9 @@ export default function PatientDetails() {
                             </div>
                           </td>
                         </tr>
-                      ))
+                          );
+                        });
+                      })()
                     )}
                   </tbody>
                 </table>

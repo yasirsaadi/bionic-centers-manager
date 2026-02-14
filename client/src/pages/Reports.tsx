@@ -17,6 +17,7 @@ interface PaymentDetail {
   patientName: string;
   amount: number;
   notes: string | null;
+  paymentTreatmentType: string | null;
   date: string;
   patientTotalCost: number;
 }
