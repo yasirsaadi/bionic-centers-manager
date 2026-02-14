@@ -196,6 +196,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">الوقت</th>
+                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">نوع العلاج</th>
                       <th className="text-right p-3 font-semibold text-slate-600 text-sm">ملاحظات</th>
                       <th className="text-left p-3 font-semibold text-slate-600 text-sm">المبلغ (د.ع)</th>
                     </tr>
@@ -211,6 +212,12 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                             <Clock className="w-3 h-3" />
                             {paymentTime}
                           </td>
+                          <td className="p-3 text-sm">
+                            {payment.paymentTreatmentType 
+                              ? <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs">{payment.paymentTreatmentType}</span>
+                              : <span className="text-muted-foreground">-</span>
+                            }
+                          </td>
                           <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
                           <td className="p-3 text-left font-mono font-bold text-emerald-600">
                             {payment.amount.toLocaleString('ar-IQ')}
@@ -221,7 +228,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                   </tbody>
                   <tfoot className="bg-emerald-50/80">
                     <tr>
-                      <td colSpan={4} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
+                      <td colSpan={5} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
                       <td className="p-3 text-left font-mono font-bold text-emerald-600">
                         {summary.totalPaid.toLocaleString('ar-IQ')} د.ع
                       </td>

@@ -1516,6 +1516,7 @@ export async function registerRoutes(
       notes: string | null;
       date: string;
       patientTotalCost: number;
+      paymentTreatmentType: string | null;
     };
     
     type PatientDetail = {
@@ -1561,7 +1562,8 @@ export async function registerRoutes(
         amount: payment.amount,
         notes: payment.notes,
         date: payment.date?.toString() || '',
-        patientTotalCost: patient?.totalCost || 0
+        patientTotalCost: patient?.totalCost || 0,
+        paymentTreatmentType: payment.paymentTreatmentType || null,
       });
     }
     
