@@ -621,18 +621,16 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "22%" }}>التفاصيل</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "10%" }}>عدد الجلسات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>الكلفة</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "20%" }}>ملاحظات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "11%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "28%" }}>التفاصيل</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "25%" }}>ملاحظات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={7} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
@@ -645,8 +643,6 @@ export default function PatientDetails() {
                           </td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.details || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.sessionCount || "-"}</td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.cost ? visit.cost.toLocaleString() + " د.ع" : "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
