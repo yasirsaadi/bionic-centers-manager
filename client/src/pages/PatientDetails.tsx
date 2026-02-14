@@ -488,7 +488,7 @@ export default function PatientDetails() {
                   <p className="font-semibold text-base">{patient.kneeJointType}</p>
                 </div>
               )}
-              {(() => {
+              {patient.isPhysiotherapy && (() => {
                 const paymentTreatmentTypes = new Set<string>();
                 patient.payments?.forEach((p) => {
                   if (p.paymentTreatmentType) {
@@ -518,7 +518,7 @@ export default function PatientDetails() {
             </div>
           </Card>
 
-          {(() => {
+          {patient.isPhysiotherapy && (() => {
             const sessionsByType: Record<string, number> = {};
             let totalSessions = 0;
             patient.payments?.forEach((p) => {
@@ -619,7 +619,7 @@ export default function PatientDetails() {
                 />
               </div>
 
-              {(() => {
+              {patient.isPhysiotherapy && (() => {
                 const sessionsByType: Record<string, number> = {};
                 patient.payments?.forEach((p) => {
                   const type = p.paymentTreatmentType || "غير محدد";
@@ -658,16 +658,20 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "15%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "33%" }}>سبب الزيارة</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>الجلسات المتبقية</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "15%" : "20%" }}>التاريخ</th>
+                      {patient.isPhysiotherapy && (
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
+                      )}
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "33%" : "50%" }}>سبب الزيارة</th>
+                      {patient.isPhysiotherapy && (
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>الجلسات المتبقية</th>
+                      )}
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "17%" : "30%" }}>إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
-                      <tr><td colSpan={5} className="border border-slate-300 p-8 text-center text-muted-foreground">
+                      <tr><td colSpan={patient.isPhysiotherapy ? 5 : 3} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         لا يوجد زيارات مسجلة
                       </td></tr>
@@ -694,13 +698,17 @@ export default function PatientDetails() {
                             <div>{formatDateIraq(visit.visitDate)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
+                          {patient.isPhysiotherapy && (
+                            <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
+                          )}
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
-                          <td className="border border-slate-300 px-3 py-2 text-center">
-                            <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
-                              {remaining}
-                            </span>
-                          </td>
+                          {patient.isPhysiotherapy && (
+                            <td className="border border-slate-300 px-3 py-2 text-center">
+                              <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
+                                {remaining}
+                              </span>
+                            </td>
+                          )}
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
                               <Button 
@@ -750,17 +758,21 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "16%" }}>المبلغ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "14%" }}>التاريخ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>نوع العلاج</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "12%" }}>عدد الجلسات</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: isAdmin ? "27%" : "40%" }}>ملاحظات</th>
-                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "13%" }}>إجراءات</th>}
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">المبلغ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">التاريخ</th>
+                      {patient.isPhysiotherapy && (
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">نوع العلاج</th>
+                      )}
+                      {patient.isPhysiotherapy && (
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">عدد الجلسات</th>
+                      )}
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">ملاحظات</th>
+                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">إجراءات</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {patient.payments?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? 6 : 5} className="border border-slate-300 p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
+                      <tr><td colSpan={isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3)} className="border border-slate-300 p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
@@ -769,17 +781,21 @@ export default function PatientDetails() {
                             <div>{formatDateIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
                           </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
-                            {payment.paymentTreatmentType 
-                              ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
-                                  <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
-                                ))
-                              : <span className="text-slate-400">-</span>
-                            }
-                          </td>
-                          <td className="border border-slate-300 px-3 py-2 text-center font-mono" data-testid={`text-payment-sessions-${payment.id}`}>
-                            {payment.sessionCount ? payment.sessionCount : <span className="text-slate-400">-</span>}
-                          </td>
+                          {patient.isPhysiotherapy && (
+                            <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
+                              {payment.paymentTreatmentType 
+                                ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
+                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
+                                  ))
+                                : <span className="text-slate-400">-</span>
+                              }
+                            </td>
+                          )}
+                          {patient.isPhysiotherapy && (
+                            <td className="border border-slate-300 px-3 py-2 text-center font-mono" data-testid={`text-payment-sessions-${payment.id}`}>
+                              {payment.sessionCount ? payment.sessionCount : <span className="text-slate-400">-</span>}
+                            </td>
+                          )}
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
                           {isAdmin && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
@@ -884,32 +900,36 @@ export default function PatientDetails() {
             <DialogTitle className="font-display text-xl text-primary">تعديل بيانات الجلسة</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">نوع العلاج</label>
-              <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
-                <SelectTrigger data-testid="select-edit-treatment-type">
-                  <SelectValue placeholder="اختر نوع العلاج" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TREATMENT_TYPE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">عدد الجلسات</label>
-              <Input 
-                type="number" 
-                className="text-left font-mono" 
-                placeholder="أدخل عدد الجلسات"
-                value={editSessionCount}
-                onChange={(e) => setEditSessionCount(e.target.value)}
-                data-testid="input-edit-session-count"
-              />
-            </div>
+            {patient.isPhysiotherapy && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">نوع العلاج</label>
+                <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
+                  <SelectTrigger data-testid="select-edit-treatment-type">
+                    <SelectValue placeholder="اختر نوع العلاج" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TREATMENT_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {patient.isPhysiotherapy && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">عدد الجلسات</label>
+                <Input 
+                  type="number" 
+                  className="text-left font-mono" 
+                  placeholder="أدخل عدد الجلسات"
+                  value={editSessionCount}
+                  onChange={(e) => setEditSessionCount(e.target.value)}
+                  data-testid="input-edit-session-count"
+                />
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2 mt-4">
             <Button variant="outline" onClick={() => setEditingPaymentSession(null)}>
@@ -920,8 +940,8 @@ export default function PatientDetails() {
                 if (editingPaymentSession) {
                   updatePaymentSession.mutate({
                     paymentId: editingPaymentSession.id,
-                    sessionCount: editSessionCount ? Number(editSessionCount) : null,
-                    paymentTreatmentType: editTreatmentType || null,
+                    sessionCount: patient.isPhysiotherapy ? (editSessionCount ? Number(editSessionCount) : null) : null,
+                    paymentTreatmentType: patient.isPhysiotherapy ? (editTreatmentType || null) : null,
                   });
                 }
               }}
@@ -950,32 +970,36 @@ export default function PatientDetails() {
                 data-testid="input-edit-payment-amount"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">نوع العلاج</label>
-              <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
-                <SelectTrigger data-testid="select-edit-pay-treatment-type">
-                  <SelectValue placeholder="اختر نوع العلاج" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TREATMENT_TYPE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">عدد الجلسات</label>
-              <Input 
-                type="number" 
-                className="text-left font-mono" 
-                placeholder="أدخل عدد الجلسات"
-                value={editPaymentSessionCount}
-                onChange={(e) => setEditPaymentSessionCount(e.target.value)}
-                data-testid="input-edit-payment-session-count"
-              />
-            </div>
+            {patient.isPhysiotherapy && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">نوع العلاج</label>
+                <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
+                  <SelectTrigger data-testid="select-edit-pay-treatment-type">
+                    <SelectValue placeholder="اختر نوع العلاج" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TREATMENT_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {patient.isPhysiotherapy && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">عدد الجلسات</label>
+                <Input 
+                  type="number" 
+                  className="text-left font-mono" 
+                  placeholder="أدخل عدد الجلسات"
+                  value={editPaymentSessionCount}
+                  onChange={(e) => setEditPaymentSessionCount(e.target.value)}
+                  data-testid="input-edit-payment-session-count"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">ملاحظات</label>
               <Input 
@@ -998,8 +1022,8 @@ export default function PatientDetails() {
                     paymentId: editingPayment.id,
                     amount: Number(editPaymentAmount),
                     notes: editPaymentNotes || null,
-                    sessionCount: editPaymentSessionCount ? Number(editPaymentSessionCount) : null,
-                    paymentTreatmentType: editPaymentTreatmentType || null,
+                    sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
+                    paymentTreatmentType: patient.isPhysiotherapy ? (editPaymentTreatmentType || null) : null,
                   });
                 }
               }}
