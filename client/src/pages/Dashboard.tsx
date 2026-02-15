@@ -1,6 +1,6 @@
 import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
-import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2 } from "lucide-react";
+import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2, UserPlus, Stethoscope } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useBranchSession } from "@/components/BranchGate";
@@ -64,6 +64,15 @@ function DashboardContent() {
     amputees: number;
     physiotherapy: number;
     medicalSupport: number;
+    newPatients: number;
+    newAmputees: number;
+    newPhysiotherapy: number;
+    newMedicalSupport: number;
+    visitingPatients: number;
+    visitingAmputees: number;
+    visitingPhysiotherapy: number;
+    visitingMedicalSupport: number;
+    totalVisits: number;
     paid: number;
   }>({
     queryKey: ["/api/reports/daily", effectiveBranchFilter],
@@ -191,39 +200,90 @@ function DashboardContent() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-            <StatsCard 
-              title="مرضى اليوم" 
-              value={dailyStats?.totalPatients || 0} 
-              icon={Users} 
-              color="primary"
-            />
-            <StatsCard 
-              title="حالات بتر اليوم" 
-              value={dailyStats?.amputees || 0} 
-              icon={Activity} 
-              color="accent"
-            />
-            <StatsCard 
-              title="علاج طبيعي اليوم" 
-              value={dailyStats?.physiotherapy || 0} 
-              icon={Clock} 
-              color="green"
-            />
-            <StatsCard 
-              title="مساند طبية اليوم" 
-              value={dailyStats?.medicalSupport || 0} 
-              icon={HeartPulse} 
-              color="blue"
-            />
-            <StatsCard 
-              title="إيرادات اليوم" 
-              value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
-              icon={Banknote} 
-              color="primary"
-              onClick={() => navigate("/revenues?daily=true")}
-              data-testid="card-daily-revenue"
-            />
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                <UserPlus className="w-4 h-4" />
+                مرضى جدد مسجلين اليوم
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+                <StatsCard 
+                  title="مرضى جدد" 
+                  value={dailyStats?.newPatients || 0} 
+                  icon={UserPlus} 
+                  color="primary"
+                  data-testid="card-new-patients-today"
+                />
+                <StatsCard 
+                  title="بتر جديد" 
+                  value={dailyStats?.newAmputees || 0} 
+                  icon={Activity} 
+                  color="accent"
+                />
+                <StatsCard 
+                  title="علاج طبيعي جديد" 
+                  value={dailyStats?.newPhysiotherapy || 0} 
+                  icon={Clock} 
+                  color="green"
+                />
+                <StatsCard 
+                  title="مساند طبية جديد" 
+                  value={dailyStats?.newMedicalSupport || 0} 
+                  icon={HeartPulse} 
+                  color="blue"
+                />
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                <Stethoscope className="w-4 h-4" />
+                مرضى راجعوا المركز اليوم (جلسات علاج)
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+                <StatsCard 
+                  title="مرضى راجعوا اليوم" 
+                  value={dailyStats?.visitingPatients || 0} 
+                  icon={Users} 
+                  color="primary"
+                  data-testid="card-visiting-patients-today"
+                />
+                <StatsCard 
+                  title="بتر" 
+                  value={dailyStats?.visitingAmputees || 0} 
+                  icon={Activity} 
+                  color="accent"
+                />
+                <StatsCard 
+                  title="علاج طبيعي" 
+                  value={dailyStats?.visitingPhysiotherapy || 0} 
+                  icon={Clock} 
+                  color="green"
+                />
+                <StatsCard 
+                  title="مساند طبية" 
+                  value={dailyStats?.visitingMedicalSupport || 0} 
+                  icon={HeartPulse} 
+                  color="blue"
+                />
+                <StatsCard 
+                  title="إجمالي الجلسات" 
+                  value={dailyStats?.totalVisits || 0} 
+                  icon={Stethoscope} 
+                  color="green"
+                  data-testid="card-total-visits-today"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+              <StatsCard 
+                title="إيرادات اليوم" 
+                value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+                icon={Banknote} 
+                color="primary"
+                onClick={() => navigate("/revenues?daily=true")}
+                data-testid="card-daily-revenue"
+              />
+            </div>
           </div>
         )}
       </div>

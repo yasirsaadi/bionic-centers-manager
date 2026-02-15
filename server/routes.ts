@@ -1692,12 +1692,29 @@ export async function registerRoutes(
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
     
-    // Filter patients registered today
-    const todayPatients = filteredPatients.filter(p => {
+    // Filter patients registered today (new registrations)
+    const newTodayPatients = filteredPatients.filter(p => {
       if (!p.createdAt) return false;
       const createdAt = new Date(p.createdAt);
       return createdAt >= startOfDay && createdAt < endOfDay;
     });
+    
+    // Find patients who visited today (regardless of registration date)
+    const todayVisitPatientIds = new Set<number>();
+    let todayVisitCount = 0;
+    for (const patient of filteredPatients) {
+      const visits = await storage.getVisitsByPatientId(patient.id);
+      const todayVisits = visits.filter(v => {
+        if (!v.visitDate) return false;
+        const visitDate = new Date(v.visitDate);
+        return visitDate >= startOfDay && visitDate < endOfDay;
+      });
+      if (todayVisits.length > 0) {
+        todayVisitPatientIds.add(patient.id);
+        todayVisitCount += todayVisits.length;
+      }
+    }
+    const visitingPatients = filteredPatients.filter(p => todayVisitPatientIds.has(p.id));
     
     // Get branches to check payments
     const branchesToCheck = filterBranchId 
@@ -1718,10 +1735,19 @@ export async function registerRoutes(
     
     res.json({
       date: startOfDay.toISOString(),
-      totalPatients: todayPatients.length,
-      amputees: todayPatients.filter(p => p.isAmputee).length,
-      physiotherapy: todayPatients.filter(p => p.isPhysiotherapy).length,
-      medicalSupport: todayPatients.filter(p => p.isMedicalSupport).length,
+      totalPatients: newTodayPatients.length,
+      amputees: newTodayPatients.filter(p => p.isAmputee).length,
+      physiotherapy: newTodayPatients.filter(p => p.isPhysiotherapy).length,
+      medicalSupport: newTodayPatients.filter(p => p.isMedicalSupport).length,
+      newPatients: newTodayPatients.length,
+      newAmputees: newTodayPatients.filter(p => p.isAmputee).length,
+      newPhysiotherapy: newTodayPatients.filter(p => p.isPhysiotherapy).length,
+      newMedicalSupport: newTodayPatients.filter(p => p.isMedicalSupport).length,
+      visitingPatients: visitingPatients.length,
+      visitingAmputees: visitingPatients.filter(p => p.isAmputee).length,
+      visitingPhysiotherapy: visitingPatients.filter(p => p.isPhysiotherapy).length,
+      visitingMedicalSupport: visitingPatients.filter(p => p.isMedicalSupport).length,
+      totalVisits: todayVisitCount,
       paid: todayPaid
     });
   });
