@@ -386,21 +386,28 @@ export default function Statistics() {
       return true;
     };
 
-    // Filter patients by registration date for patient-based metrics
+    // Calculate visits filtered by visit date (from all patients in branch)
+    const allVisitsInRange = filteredPatients.flatMap(p => 
+      (p.visits || []).filter(v => !startDate || isInRange(v.visitDate))
+    );
+    const totalVisits = allVisitsInRange.length;
+
+    // For specific date filtering (today/date): include patients who have visits on that date
+    // For range filtering (week/month/etc): filter by registration date
+    const isSpecificDate = timeRange === "today" || timeRange === "date";
     const timeFilteredPatients = startDate 
-      ? filteredPatients.filter(p => isInRange(p.createdAt))
+      ? (isSpecificDate
+          ? filteredPatients.filter(p => 
+              isInRange(p.createdAt) || 
+              (p.visits || []).some(v => isInRange(v.visitDate))
+            )
+          : filteredPatients.filter(p => isInRange(p.createdAt)))
       : filteredPatients;
 
     const totalPatients = timeFilteredPatients.length;
     const amputeeCount = timeFilteredPatients.filter(p => p.isAmputee).length;
     const physioCount = timeFilteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
     const medicalSupportCount = timeFilteredPatients.filter(p => p.isMedicalSupport).length;
-
-    // Calculate visits filtered by visit date (from all patients in branch)
-    const allVisitsInRange = filteredPatients.flatMap(p => 
-      (p.visits || []).filter(v => !startDate || isInRange(v.visitDate))
-    );
-    const totalVisits = allVisitsInRange.length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
     const allPaymentsInRange = filteredPatients.flatMap(p => 
