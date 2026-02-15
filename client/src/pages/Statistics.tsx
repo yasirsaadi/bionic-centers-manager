@@ -442,6 +442,15 @@ export default function Statistics() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
 
+    const referralSources: { [key: string]: number } = {};
+    filteredPatients.forEach(p => {
+      const source = (p.referralSource && p.referralSource.trim()) ? p.referralSource.trim() : 'غير محدد';
+      referralSources[source] = (referralSources[source] || 0) + 1;
+    });
+    const referralSourceData = Object.entries(referralSources)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
     // Monthly trend: patients by registration date, visits/payments by their own dates
     const monthlyData: { [key: string]: { patients: number; payments: number; visits: number } } = {};
     
@@ -502,6 +511,7 @@ export default function Statistics() {
       branchDistribution,
       amputationSiteData,
       diseaseTypeData,
+      referralSourceData,
       monthlyTrend,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
     };
@@ -1082,6 +1092,51 @@ export default function Statistics() {
 
           {/* Revenue by Treatment Type */}
           <RevenueByTreatmentChart selectedBranch={selectedBranch} />
+
+          {/* Referral Source Distribution */}
+          {stats.referralSourceData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-primary" />
+                  الجهات المحول منها
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ResponsiveContainer width="100%" height={350}>
+                    <BarChart data={stats.referralSourceData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" />
+                      <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Bar dataKey="value" name="عدد المرضى" fill="#8884d8" radius={[0, 4, 4, 0]}>
+                        {stats.referralSourceData.map((_: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-2 max-h-[350px] overflow-y-auto">
+                    {stats.referralSourceData.map((item: { name: string; value: number }, index: number) => (
+                      <div key={item.name} className="flex items-center justify-between p-2 rounded-md hover-elevate" data-testid={`referral-source-item-${index}`}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                          <span className="text-sm font-medium">{item.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary">{item.value} مريض</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            ({stats.totalPatients > 0 ? ((item.value / stats.totalPatients) * 100).toFixed(1) : 0}%)
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Monthly Trend */}
           {stats.monthlyTrend.length > 1 && (
