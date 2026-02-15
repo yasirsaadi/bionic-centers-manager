@@ -514,12 +514,10 @@ export default function Statistics() {
       }));
 
     const shiftDistribution = { morning: 0, evening: 0, unknown: 0 };
-    filteredPatients.forEach(p => {
-      (p.visits || []).forEach((v: any) => {
-        if (v.shift === "morning") shiftDistribution.morning++;
-        else if (v.shift === "evening") shiftDistribution.evening++;
-        else shiftDistribution.unknown++;
-      });
+    allVisitsInRange.forEach((v: any) => {
+      if (v.shift === "morning") shiftDistribution.morning++;
+      else if (v.shift === "evening") shiftDistribution.evening++;
+      else shiftDistribution.unknown++;
     });
     const shiftData = [
       { name: 'الشفت الصباحي (٨ ص - ٤ ع)', value: shiftDistribution.morning, color: '#0088FE' },
@@ -1214,7 +1212,7 @@ export default function Statistics() {
                           <Cell key={`shift-cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value) => [value, 'زيارة']} />
+                      <Tooltip formatter={(value) => [value, 'جلسة']} />
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
@@ -1228,7 +1226,7 @@ export default function Statistics() {
                             <span className="text-sm font-medium">{item.name}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{item.value} زيارة</Badge>
+                            <Badge variant="secondary">{item.value} جلسة</Badge>
                             <span className="text-xs text-muted-foreground">
                               ({totalShiftVisits > 0 ? ((item.value / totalShiftVisits) * 100).toFixed(1) : 0}%)
                             </span>
