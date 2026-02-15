@@ -335,7 +335,8 @@ export default function EditPatient() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="طبيب">طبيب</SelectItem>
+                        <SelectItem value="طبيبنا">طبيبنا</SelectItem>
+                        <SelectItem value="طبيب خارجي">طبيب خارجي</SelectItem>
                         <SelectItem value="مستشفى">مستشفى</SelectItem>
                         <SelectItem value="جهة حكومية">جهة حكومية</SelectItem>
                         <SelectItem value="منظمة انسانية">منظمة انسانية</SelectItem>
