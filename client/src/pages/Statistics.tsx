@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
-import { formatDateIraq, formatDateIraqShort } from "@/lib/utils";
+import { formatDateIraq, formatDateIraqShort, getTodayIraq } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
@@ -143,6 +143,7 @@ export default function Statistics() {
   
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("all");
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
 
   // Set branch filter automatically for non-admin users
   useEffect(() => {
@@ -270,8 +271,16 @@ export default function Statistics() {
     { value: "visits", label: "الزيارات" },
   ];
 
-  const getStartDate = (range: string): Date | null => {
-    if (range === "all") return null;
+  const getDateRange = (range: string): { start: Date | null; end: Date | null } => {
+    if (range === "all") return { start: null, end: null };
+    
+    if (range === "today" || range === "date") {
+      const dateStr = range === "today" ? getTodayIraq() : selectedDate;
+      const dayStart = new Date(dateStr + "T00:00:00");
+      const dayEnd = new Date(dateStr + "T23:59:59.999");
+      return { start: dayStart, end: dayEnd };
+    }
+    
     const now = new Date();
     const startDate = new Date();
     
@@ -289,9 +298,9 @@ export default function Statistics() {
         startDate.setFullYear(now.getFullYear() - 1);
         break;
       default:
-        return null;
+        return { start: null, end: null };
     }
-    return startDate;
+    return { start: startDate, end: null };
   };
 
   const filteredPatients = useMemo(() => {
@@ -367,11 +376,19 @@ export default function Statistics() {
   const stats = useMemo(() => {
     if (!filteredPatients.length) return null;
 
-    const startDate = getStartDate(timeRange);
+    const { start: startDate, end: endDate } = getDateRange(timeRange);
+
+    const isInRange = (dateVal: string | Date | null | undefined) => {
+      if (!dateVal) return false;
+      const d = new Date(dateVal);
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    };
 
     // Filter patients by registration date for patient-based metrics
     const timeFilteredPatients = startDate 
-      ? filteredPatients.filter(p => new Date(p.createdAt || "") >= startDate)
+      ? filteredPatients.filter(p => isInRange(p.createdAt))
       : filteredPatients;
 
     const totalPatients = timeFilteredPatients.length;
@@ -381,13 +398,13 @@ export default function Statistics() {
 
     // Calculate visits filtered by visit date (from all patients in branch)
     const allVisitsInRange = filteredPatients.flatMap(p => 
-      (p.visits || []).filter(v => !startDate || new Date(v.visitDate || "") >= startDate)
+      (p.visits || []).filter(v => !startDate || isInRange(v.visitDate))
     );
     const totalVisits = allVisitsInRange.length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
     const allPaymentsInRange = filteredPatients.flatMap(p => 
-      (p.payments || []).filter(pay => !startDate || new Date(pay.date || "") >= startDate)
+      (p.payments || []).filter(pay => !startDate || isInRange(pay.date))
     );
     const totalPaid = allPaymentsInRange.reduce((sum, pay) => sum + (pay.amount || 0), 0);
 
@@ -532,7 +549,7 @@ export default function Statistics() {
       shiftData,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
     };
-  }, [filteredPatients, branches]);
+  }, [filteredPatients, branches, timeRange, selectedDate]);
 
   // Get current branch name for reports
   const currentBranchName = useMemo(() => {
@@ -543,13 +560,15 @@ export default function Statistics() {
   // Get time range label for reports
   const timeRangeLabel = useMemo(() => {
     switch (timeRange) {
+      case "today": return "اليوم";
+      case "date": return formatDateIraq(selectedDate);
       case "week": return "آخر أسبوع";
       case "month": return "آخر شهر";
       case "quarter": return "آخر 3 أشهر";
       case "year": return "آخر سنة";
       default: return "كل الوقت";
     }
-  }, [timeRange]);
+  }, [timeRange, selectedDate]);
 
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
@@ -834,11 +853,13 @@ export default function Statistics() {
           )}
 
           <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="w-[160px]" data-testid="select-time-range">
+            <SelectTrigger className="w-[180px]" data-testid="select-time-range">
               <Calendar className="w-4 h-4 ml-2" />
               <SelectValue placeholder="الفترة الزمنية" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="today">اليوم</SelectItem>
+              <SelectItem value="date">تاريخ محدد</SelectItem>
               <SelectItem value="all">كل الوقت</SelectItem>
               <SelectItem value="week">آخر أسبوع</SelectItem>
               <SelectItem value="month">آخر شهر</SelectItem>
@@ -846,6 +867,16 @@ export default function Statistics() {
               <SelectItem value="year">آخر سنة</SelectItem>
             </SelectContent>
           </Select>
+
+          {timeRange === "date" && (
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="w-[160px]"
+              data-testid="input-specific-date"
+            />
+          )}
 
           {/* Export Buttons */}
           <div className="flex gap-2">
