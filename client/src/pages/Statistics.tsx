@@ -496,6 +496,22 @@ export default function Statistics() {
         ...data,
       }));
 
+    const shiftDistribution = { morning: 0, evening: 0, unknown: 0 };
+    filteredPatients.forEach(p => {
+      (p.visits || []).forEach((v: any) => {
+        if (v.shift === "morning") shiftDistribution.morning++;
+        else if (v.shift === "evening") shiftDistribution.evening++;
+        else shiftDistribution.unknown++;
+      });
+    });
+    const shiftData = [
+      { name: 'الشفت الصباحي (٨ ص - ٤ ع)', value: shiftDistribution.morning, color: '#0088FE' },
+      { name: 'الشفت المسائي (٤ ع - ١٠ م)', value: shiftDistribution.evening, color: '#FF8042' },
+    ];
+    if (shiftDistribution.unknown > 0) {
+      shiftData.push({ name: 'غير محدد', value: shiftDistribution.unknown, color: '#8884d8' });
+    }
+
     return {
       totalPatients,
       amputeeCount,
@@ -504,8 +520,8 @@ export default function Statistics() {
       allTimeRevenue,
       allTimePaid,
       allTimeRemaining,
-      totalPaid, // Time-range filtered payments
-      totalVisits, // Time-range filtered visits
+      totalPaid,
+      totalVisits,
       ageDistribution,
       conditionDistribution,
       branchDistribution,
@@ -513,6 +529,7 @@ export default function Statistics() {
       diseaseTypeData,
       referralSourceData,
       monthlyTrend,
+      shiftData,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
     };
   }, [filteredPatients, branches]);
@@ -1132,6 +1149,62 @@ export default function Statistics() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Shift Distribution */}
+          {stats.shiftData.some(d => d.value > 0) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2" data-testid="text-shift-stats-title">
+                  <Activity className="w-5 h-5 text-primary" />
+                  إحصائيات الشفتات
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={stats.shiftData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        fill="#8884d8"
+                        paddingAngle={5}
+                        dataKey="value"
+                        label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      >
+                        {stats.shiftData.map((entry, index) => (
+                          <Cell key={`shift-cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => [value, 'زيارة']} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-3 flex flex-col justify-center">
+                    {stats.shiftData.map((item, index) => {
+                      const totalShiftVisits = stats.shiftData.reduce((sum, d) => sum + d.value, 0);
+                      return (
+                        <div key={item.name} className="flex items-center justify-between" data-testid={`shift-stat-item-${index}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                            <span className="text-sm font-medium">{item.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary">{item.value} زيارة</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              ({totalShiftVisits > 0 ? ((item.value / totalShiftVisits) * 100).toFixed(1) : 0}%)
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </CardContent>

@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Loader2, User, ShieldCheck, Building2 } from "lucide-react";
+import { Lock, Loader2, User, ShieldCheck, Building2, Clock } from "lucide-react";
 import logoImage from "@/assets/logo.png";
 
 const userOptions = [
@@ -38,6 +38,7 @@ interface BranchSession {
   role?: string;
   displayName?: string;
   permissions?: UserPermissions;
+  shift?: string;
 }
 
 interface BranchGateProps {
@@ -73,6 +74,7 @@ export function BranchGate({ children }: BranchGateProps) {
   const [selectedBranch, setSelectedBranch] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [selectedShift, setSelectedShift] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -100,7 +102,8 @@ export function BranchGate({ children }: BranchGateProps) {
         body: JSON.stringify({ 
           branchKey: selectedBranch,
           username: username.toLowerCase().trim(), 
-          password 
+          password,
+          shift: selectedShift
         }),
         credentials: "include",
       });
@@ -116,6 +119,7 @@ export function BranchGate({ children }: BranchGateProps) {
           role: data.role,
           displayName: data.displayName,
           permissions: data.permissions,
+          shift: data.shift,
         };
         localStorage.setItem("branch_session", JSON.stringify(branchSession));
         setSession(branchSession);
@@ -158,7 +162,7 @@ export function BranchGate({ children }: BranchGateProps) {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">الفرع</label>
-            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+            <Select value={selectedBranch} onValueChange={(val) => { setSelectedBranch(val); if (val !== "admin") setSelectedShift("auto"); else setSelectedShift(""); }}>
               <SelectTrigger className="h-12" data-testid="select-branch-login">
                 <SelectValue placeholder="اختر الفرع" />
               </SelectTrigger>
@@ -206,6 +210,25 @@ export function BranchGate({ children }: BranchGateProps) {
               />
             </div>
           </div>
+
+          {selectedBranch && selectedBranch !== "admin" && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">الشفت</label>
+              <div className="relative">
+                <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground z-10" />
+                <Select value={selectedShift} onValueChange={setSelectedShift}>
+                  <SelectTrigger className="pr-10 h-12" data-testid="select-shift">
+                    <SelectValue placeholder="اختر الشفت" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">تحديد تلقائي حسب الوقت</SelectItem>
+                    <SelectItem value="morning">صباحي (٨ ص - ٤ ع)</SelectItem>
+                    <SelectItem value="evening">مسائي (٤ ع - ١٠ م)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
 
           {error && (
             <p className="text-red-500 text-sm text-center bg-red-50 p-3 rounded-lg">{error}</p>

@@ -30,6 +30,7 @@ const verifyBranchSchema = z.object({
   branchKey: z.string().min(1, "الفرع مطلوب"),
   username: z.string().min(1, "اسم المستخدم مطلوب"),
   password: z.string().min(1, "كلمة المرور مطلوبة"),
+  shift: z.string().optional(),
 });
 
 // Username to branch mapping
@@ -180,7 +181,7 @@ export async function registerRoutes(
   app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
-      const { branchKey, username, password } = parsed;
+      const { branchKey, username, password, shift } = parsed;
       const trimmedInput = password.trim();
       const normalizedBranchKey = branchKey.toLowerCase().trim();
       const normalizedUsername = username.toLowerCase().trim();
@@ -213,6 +214,8 @@ export async function registerRoutes(
             branchName = branch?.name || "فرع غير معروف";
           }
           
+          const userShift = (systemUser.role === "reception") ? (shift || "auto") : "auto";
+          
           // Store session with user permissions
           (req.session as any).branchSession = {
             branchId: userBranchId,
@@ -220,6 +223,7 @@ export async function registerRoutes(
             userId: systemUser.id,
             role: systemUser.role,
             displayName: systemUser.displayName,
+            shift: userShift,
             permissions: {
               canViewPatients: systemUser.canViewPatients,
               canAddPatients: systemUser.canAddPatients,
@@ -245,6 +249,7 @@ export async function registerRoutes(
             userId: systemUser.id,
             displayName: systemUser.displayName,
             role: systemUser.role,
+            shift: userShift,
             permissions: {
               canViewPatients: systemUser.canViewPatients,
               canAddPatients: systemUser.canAddPatients,
@@ -315,6 +320,7 @@ export async function registerRoutes(
           (req.session as any).branchSession = {
             branchId: 0,
             isAdmin: true,
+            shift: "auto",
             permissions: {
               canViewPatients: true,
               canAddPatients: true,
@@ -335,6 +341,7 @@ export async function registerRoutes(
             branchName: "مسؤول النظام",
             isAdmin: true,
             role: "admin",
+            shift: "auto",
             permissions: {
               canViewPatients: true,
               canAddPatients: true,
@@ -394,10 +401,12 @@ export async function registerRoutes(
           const hashedPassword = await bcrypt.hash(trimmedInput, 10);
           await storage.setBranchPassword(numericBranchId, hashedPassword);
         }
+        const legacyShift = shift || "auto";
         // Store branch session info (legacy - limited permissions for branch staff)
         (req.session as any).branchSession = {
           branchId: numericBranchId,
           isAdmin: false,
+          shift: legacyShift,
           permissions: {
             canViewPatients: true,
             canAddPatients: true,
@@ -418,6 +427,7 @@ export async function registerRoutes(
           branchName: branchName,
           isAdmin: false,
           role: "branch_staff",
+          shift: legacyShift,
           permissions: {
             canViewPatients: true,
             canAddPatients: true,
@@ -1251,6 +1261,22 @@ export async function registerRoutes(
   // Visits
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     const input = api.visits.create.input.parse(req.body);
+    
+    const branchSession = (req.session as any).branchSession;
+    let visitShift = branchSession?.shift;
+    if (visitShift !== "morning" && visitShift !== "evening") {
+      const now = new Date();
+      const hour = now.getHours();
+      if (hour >= 8 && hour <= 15) {
+        visitShift = "morning";
+      } else if (hour >= 16 && hour <= 21) {
+        visitShift = "evening";
+      } else {
+        visitShift = "morning";
+      }
+    }
+    input.shift = visitShift;
+    
     const visit = await storage.createVisit(input);
     
     if (input.cost && input.cost > 0) {

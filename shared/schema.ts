@@ -76,6 +76,7 @@ export const visits = pgTable("visits", {
   treatmentType: text("treatment_type"),
   sessionCount: integer("session_count"),
   cost: integer("cost"),
+  shift: text("shift"),
 });
 
 export const payments = pgTable("payments", {
@@ -183,6 +184,7 @@ export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, vis
   treatmentType: z.string().optional().nullable(),
   sessionCount: z.number().optional().nullable(),
   cost: z.number().optional().nullable(),
+  shift: z.string().optional().nullable(),
 });
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
   date: z.string().optional().nullable(),
