@@ -174,3 +174,12 @@ Preferred communication style: Simple, everyday language.
 - Revenue by treatment type charts in Statistics and Accounting pages
 - API endpoint: GET `/api/statistics/revenue-by-treatment` with optional `branchId` filter
 - Legacy payments without treatment type shown as "غير محدد"
+
+### Shift Tracking System (February 2026)
+- Added `shift` text column to `visits` table ("morning" | "evening")
+- Login form includes shift selector for non-admin branch users (صباحي/مسائي/تلقائي)
+- Shift stored in session (`branchSession.shift`)
+- Reception users: use their selected shift for all visits they create
+- Admin/branch managers: shift auto-determined by server time (8-15 = morning, 16-21 = evening)
+- Shift statistics chart added to Statistics page with PieChart and percentage breakdown
+- Referral source statistics (الجهات المحول منها) added to Statistics page - accessible to all users
