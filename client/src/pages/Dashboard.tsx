@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 function DashboardContent() {
   const [, navigate] = useLocation();
@@ -19,6 +20,7 @@ function DashboardContent() {
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
   const { canViewPayments } = usePermissions();
+  const { t } = useTranslation();
   
   const [selectedBranch, setSelectedBranch] = useState<string>(
     isAdmin ? "all" : (userBranchId?.toString() || "all")
@@ -113,9 +115,9 @@ function DashboardContent() {
     <div className="space-y-6 md:space-y-8 page-transition">
       <div className="flex flex-col gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">نظرة عامة</h2>
+          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.dashboard.overview}</h2>
           <p className="text-sm md:text-base text-muted-foreground mt-1">
-            {isAdmin ? "ملخص أداء المركز وإحصائيات المرضى" : `ملخص أداء فرع ${selectedBranchName}`}
+            {isAdmin ? "ملخص أداء المركز وإحصائيات المرضى" : `${t.dashboard.branchPerformance} ${selectedBranchName}`}
           </p>
         </div>
         
@@ -129,7 +131,7 @@ function DashboardContent() {
                   <SelectValue placeholder="اختر الفرع" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">جميع الفروع</SelectItem>
+                  <SelectItem value="all">{t.dashboard.allBranches}</SelectItem>
                   {branches?.map((branch) => (
                     <SelectItem key={branch.id} value={branch.id.toString()}>
                       {branch.name}
@@ -151,36 +153,36 @@ function DashboardContent() {
       <div>
         <h3 className="text-base md:text-lg font-bold text-slate-700 mb-3 md:mb-4 flex items-center gap-2">
           <Users className="w-4 h-4 md:w-5 md:h-5 text-primary" />
-          الإحصائيات الإجمالية
+          {t.dashboard.overallStats}
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
           <StatsCard 
-            title="إجمالي المرضى" 
+            title={t.dashboard.totalPatients} 
             value={totalPatients} 
             icon={Users} 
             color="primary"
           />
           <StatsCard 
-            title="حالات البتر" 
+            title={t.dashboard.amputeeCases} 
             value={amputeesCount} 
             icon={Activity} 
             color="accent"
           />
           <StatsCard 
-            title="العلاج الطبيعي" 
+            title={t.dashboard.physiotherapy} 
             value={physioCount} 
             icon={Clock} 
             color="green"
           />
           <StatsCard 
-            title="مساند طبية" 
+            title={t.dashboard.medicalSupport} 
             value={medicalSupportCount} 
             icon={HeartPulse} 
             color="blue"
           />
           {canViewPayments && (
             <StatsCard 
-              title="الإيرادات" 
+              title={t.dashboard.revenue} 
               value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
               icon={Banknote} 
               color="primary"
@@ -195,7 +197,7 @@ function DashboardContent() {
       <div>
         <h3 className="text-base md:text-lg font-bold text-slate-700 mb-3 md:mb-4 flex items-center gap-2">
           <Calendar className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
-          إحصائيات اليوم ({todayFormatted})
+          {t.dashboard.todayStats} ({todayFormatted})
         </h3>
         {isDailyLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
@@ -208,30 +210,30 @@ function DashboardContent() {
             <div>
               <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
                 <UserPlus className="w-4 h-4" />
-                مرضى جدد مسجلين اليوم
+                {t.dashboard.newPatientsToday}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
-                  title="مرضى جدد" 
+                  title={t.dashboard.newPatients} 
                   value={dailyStats?.newPatients || 0} 
                   icon={UserPlus} 
                   color="primary"
                   data-testid="card-new-patients-today"
                 />
                 <StatsCard 
-                  title="بتر جديد" 
+                  title={t.dashboard.newAmputee} 
                   value={dailyStats?.newAmputees || 0} 
                   icon={Activity} 
                   color="accent"
                 />
                 <StatsCard 
-                  title="علاج طبيعي جديد" 
+                  title={t.dashboard.newPhysiotherapy} 
                   value={dailyStats?.newPhysiotherapy || 0} 
                   icon={Clock} 
                   color="green"
                 />
                 <StatsCard 
-                  title="مساند طبية جديد" 
+                  title={t.dashboard.newMedicalSupport} 
                   value={dailyStats?.newMedicalSupport || 0} 
                   icon={HeartPulse} 
                   color="blue"
@@ -241,36 +243,36 @@ function DashboardContent() {
             <div>
               <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
                 <Stethoscope className="w-4 h-4" />
-                مرضى راجعوا المركز اليوم (جلسات علاج)
+                {t.dashboard.visitingPatientsToday}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
-                  title="مرضى راجعوا اليوم" 
+                  title={t.dashboard.visitingPatients} 
                   value={dailyStats?.visitingPatients || 0} 
                   icon={Users} 
                   color="primary"
                   data-testid="card-visiting-patients-today"
                 />
                 <StatsCard 
-                  title="بتر" 
+                  title={t.dashboard.amputee} 
                   value={dailyStats?.visitingAmputees || 0} 
                   icon={Activity} 
                   color="accent"
                 />
                 <StatsCard 
-                  title="علاج طبيعي" 
+                  title={t.dashboard.physio} 
                   value={dailyStats?.visitingPhysiotherapy || 0} 
                   icon={Clock} 
                   color="green"
                 />
                 <StatsCard 
-                  title="مساند طبية" 
+                  title={t.dashboard.medSupport} 
                   value={dailyStats?.visitingMedicalSupport || 0} 
                   icon={HeartPulse} 
                   color="blue"
                 />
                 <StatsCard 
-                  title="إجمالي الجلسات" 
+                  title={t.dashboard.totalSessions} 
                   value={dailyStats?.totalVisits || 0} 
                   icon={Stethoscope} 
                   color="green"
@@ -281,7 +283,7 @@ function DashboardContent() {
             {canViewPayments && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
-                  title="إيرادات اليوم" 
+                  title={t.dashboard.dailyRevenue} 
                   value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
                   icon={Banknote} 
                   color="primary"
@@ -297,7 +299,7 @@ function DashboardContent() {
       {/* Recent Activity Section could go here */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white p-6 rounded-2xl border border-border/50 shadow-sm">
-          <h3 className="text-xl font-bold mb-4 font-display">آخر المرضى المسجلين</h3>
+          <h3 className="text-xl font-bold mb-4 font-display">{t.dashboard.recentPatients}</h3>
           <div className="space-y-4">
             {patients?.slice(0, 5).map(patient => (
               <div key={patient.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-border/50">
@@ -315,22 +317,22 @@ function DashboardContent() {
                 </span>
               </div>
             ))}
-            {totalPatients === 0 && <p className="text-muted-foreground text-center py-4">لا يوجد مرضى مسجلين</p>}
+            {totalPatients === 0 && <p className="text-muted-foreground text-center py-4">{t.dashboard.noPatientsRegistered}</p>}
           </div>
         </div>
 
         {canViewPayments && (
           <div className="bg-gradient-to-br from-primary to-primary/80 p-6 rounded-2xl text-white shadow-xl shadow-primary/20">
-            <h3 className="text-xl font-bold mb-2 font-display">مرحباً بك في النظام</h3>
+            <h3 className="text-xl font-bold mb-2 font-display">{t.dashboard.welcomeTitle}</h3>
             <p className="text-white/80 mb-6 leading-relaxed">
-              يمكنك من هنا إدارة كافة عمليات المركز بسهولة، بدءاً من تسجيل المرضى ومتابعة حالاتهم، وصولاً إلى الإدارة المالية والأرشفة الإلكترونية.
+              {t.dashboard.welcomeDesc}
             </p>
             <button 
               onClick={() => navigate("/reports")}
               data-testid="button-view-reports"
               className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-6 py-2.5 rounded-xl font-medium transition-all"
             >
-              عرض التقارير
+              {t.dashboard.viewReports}
             </button>
           </div>
         )}

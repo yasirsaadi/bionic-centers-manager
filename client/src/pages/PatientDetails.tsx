@@ -1,4 +1,5 @@
 import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
+import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
@@ -97,6 +98,7 @@ interface TreatmentInjuryEntry {
 }
 
 export default function PatientDetails() {
+  const { t, dir } = useTranslation();
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const searchString = window.location.search;
@@ -459,7 +461,7 @@ export default function PatientDetails() {
           <Link href={`/patients/${patient.id}/edit${fromBranch ? `?branch=${fromBranch}` : ""}`}>
             <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
               <Pencil className="w-4 h-4" />
-              تحرير
+              {t.patientDetails.edit}
             </Button>
           </Link>
         )}
@@ -468,7 +470,7 @@ export default function PatientDetails() {
             <AlertDialogTrigger asChild>
               <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
                 <Trash2 className="w-4 h-4" />
-                حذف
+                {t.patientDetails.delete}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -479,7 +481,7 @@ export default function PatientDetails() {
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter className="gap-2">
-                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogCancel>{t.treatmentPlan.cancel}</AlertDialogCancel>
                 <AlertDialogAction 
                   onClick={handleDelete}
                   className="bg-red-600 hover:bg-red-700"
@@ -566,7 +568,7 @@ export default function PatientDetails() {
           <div className="min-w-0 flex-1">
             <h1 className="text-xl md:text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
             <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
-              <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> العمر: {patient.age}</span>
+              <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> {t.patientDetails.age}: {patient.age}</span>
               {patient.phone && (
                 <>
                   <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
@@ -583,7 +585,7 @@ export default function PatientDetails() {
             )}
             {patient.referralSource && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
-                <span className="font-medium">الجهة المحول منها:</span> {patient.referralSource}
+                <span className="font-medium">{t.patientDetails.referralSource}:</span> {patient.referralSource}
               </div>
             )}
           </div>
@@ -752,8 +754,8 @@ export default function PatientDetails() {
                 const paymentTreatmentTypes = new Set<string>();
                 patient.payments?.forEach((p) => {
                   if (p.paymentTreatmentType) {
-                    p.paymentTreatmentType.split(",").forEach((t: string) => {
-                      const trimmed = t.trim();
+                    p.paymentTreatmentType.split(",").forEach((tt: string) => {
+                      const trimmed = tt.trim();
                       if (trimmed) paymentTreatmentTypes.add(trimmed);
                     });
                   }
@@ -762,8 +764,8 @@ export default function PatientDetails() {
                   <div>
                     <p className="text-muted-foreground mb-1">نوع العلاج</p>
                     <div className="flex flex-wrap gap-1">
-                      {Array.from(paymentTreatmentTypes).map((t, i) => (
-                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{t}</span>
+                      {Array.from(paymentTreatmentTypes).map((tt, i) => (
+                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{tt}</span>
                       ))}
                     </div>
                   </div>
@@ -785,7 +787,7 @@ export default function PatientDetails() {
               if (p.sessionCount && p.sessionCount > 0) {
                 totalSessions += p.sessionCount;
                 const types = p.paymentTreatmentType 
-                  ? p.paymentTreatmentType.split(",").map((t: string) => t.trim()).filter(Boolean)
+                  ? p.paymentTreatmentType.split(",").map((tt: string) => tt.trim()).filter(Boolean)
                   : ["غير محدد"];
                 types.forEach((type: string) => {
                   sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
@@ -824,8 +826,8 @@ export default function PatientDetails() {
             
             <div className="space-y-4">
               <div className="flex justify-between items-end">
-                <span className="text-muted-foreground">التكلفة الكلية</span>
-                <span className="font-bold text-xl">{patient.totalCost?.toLocaleString('ar-IQ')} د.ع</span>
+                <span className="text-muted-foreground">{t.patientDetails.treatmentCost}</span>
+                <span className="font-bold text-xl">{patient.totalCost?.toLocaleString('ar-IQ')} {t.patientDetails.currency}</span>
               </div>
               
               <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
@@ -837,12 +839,12 @@ export default function PatientDetails() {
 
               <div className="flex justify-between text-sm pt-2">
                 <div>
-                  <p className="text-muted-foreground">المدفوع</p>
-                  <p className="font-bold text-emerald-600">{totalPaid.toLocaleString('ar-IQ')} د.ع</p>
+                  <p className="text-muted-foreground">{t.patientDetails.paidAmount}</p>
+                  <p className="font-bold text-emerald-600">{totalPaid.toLocaleString('ar-IQ')} {t.patientDetails.currency}</p>
                 </div>
                 <div className="text-left">
-                  <p className="text-muted-foreground">المتبقي</p>
-                  <p className="font-bold text-red-500">{remaining.toLocaleString('ar-IQ')} د.ع</p>
+                  <p className="text-muted-foreground">{t.patientDetails.remainingAmount}</p>
+                  <p className="font-bold text-red-500">{remaining.toLocaleString('ar-IQ')} {t.patientDetails.currency}</p>
                 </div>
               </div>
 
@@ -860,17 +862,17 @@ export default function PatientDetails() {
           <Tabs defaultValue="visits" className="w-full">
             <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm flex-wrap gap-1">
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
-                سبب الزيارة
+                {t.patientDetails.visitHistory}
               </TabsTrigger>
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
-                سجل المدفوعات
+                {t.patientDetails.paymentHistory}
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
-                المستندات
+                {t.patientDetails.documents}
               </TabsTrigger>
               {patient.isPhysiotherapy && (
                 <TabsTrigger value="treatment-plans" className="flex-1 max-w-[130px] data-[state=active]:bg-green-600 data-[state=active]:text-white rounded-lg transition-all" data-testid="tab-treatment-plans">
-                  الخطط العلاجية
+                  {t.patientDetails.treatmentPlans}
                 </TabsTrigger>
               )}
             </TabsList>
@@ -927,22 +929,22 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "15%" : "20%" }}>التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "15%" : "20%" }}>{t.patientDetails.date}</th>
                       {patient.isPhysiotherapy && (
-                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>نوع العلاج</th>
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>{t.patientDetails.treatmentType}</th>
                       )}
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "33%" : "50%" }}>سبب الزيارة</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "33%" : "50%" }}>{t.patientDetails.visitDetails}</th>
                       {patient.isPhysiotherapy && (
-                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>الجلسات المتبقية</th>
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>{t.patientDetails.remainingSessions}</th>
                       )}
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "17%" : "30%" }}>إجراءات</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "17%" : "30%" }}>{t.common.actions}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {patient.visits?.length === 0 ? (
                       <tr><td colSpan={patient.isPhysiotherapy ? 5 : 3} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                        لا يوجد زيارات مسجلة
+                        {t.patientDetails.noVisits}
                       </td></tr>
                     ) : (
                       (() => {
@@ -1029,25 +1031,25 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">المبلغ</th>
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">التاريخ</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.amount}</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.date}</th>
                       {patient.isPhysiotherapy && (
-                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">نوع العلاج</th>
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.treatmentType}</th>
                       )}
                       {patient.isPhysiotherapy && (
-                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">عدد الجلسات</th>
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.sessionCount}</th>
                       )}
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">ملاحظات</th>
-                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">إجراءات</th>}
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.notes}</th>
+                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.common.actions}</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {patient.payments?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3)} className="border border-slate-300 p-8 text-center text-muted-foreground">لا يوجد دفعات مسجلة</td></tr>
+                      <tr><td colSpan={isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3)} className="border border-slate-300 p-8 text-center text-muted-foreground">{t.patientDetails.noPayments}</td></tr>
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
-                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} د.ع</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} {t.patientDetails.currency}</td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
                             <div>{formatDateIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
@@ -1055,8 +1057,8 @@ export default function PatientDetails() {
                           {patient.isPhysiotherapy && (
                             <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
                               {payment.paymentTreatmentType 
-                                ? payment.paymentTreatmentType.split(",").map((t: string, i: number) => (
-                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{t.trim()}</span>
+                                ? payment.paymentTreatmentType.split(",").map((tt: string, i: number) => (
+                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{tt.trim()}</span>
                                   ))
                                 : <span className="text-slate-400">-</span>
                               }
@@ -1175,7 +1177,7 @@ export default function PatientDetails() {
                       data-testid="button-add-treatment-plan"
                     >
                       <ClipboardList className="w-4 h-4 ml-2" />
-                      إضافة خطة علاجية
+                      {t.patientDetails.addTreatmentPlan}
                     </Button>
                   </div>
                 )}
@@ -1187,7 +1189,7 @@ export default function PatientDetails() {
                   </div>
                 ) : treatmentPlans.length === 0 ? (
                   <Card className="p-8 text-center text-muted-foreground">
-                    لا توجد خطط علاجية مسجلة
+                    {t.patientDetails.noTreatmentPlans}
                   </Card>
                 ) : (
                   <div className="space-y-4">
@@ -1207,7 +1209,7 @@ export default function PatientDetails() {
                             )}
                             {plan.goalType && (
                               <Badge variant={plan.goalType === "short_term" ? "outline" : "default"} data-testid={`badge-goal-type-${plan.id}`}>
-                                {plan.goalType === "short_term" ? "قصير المدى" : "طويل المدى"}
+                                {plan.goalType === "short_term" ? t.treatmentPlan.shortTerm : t.treatmentPlan.longTerm}
                               </Badge>
                             )}
                           </div>
@@ -1236,73 +1238,73 @@ export default function PatientDetails() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                           {plan.diagnosis && (
                             <div>
-                              <span className="font-medium text-muted-foreground">تشخيص الحالة:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.diagnosis}:</span>
                               <p data-testid={`text-diagnosis-${plan.id}`}>{plan.diagnosis}</p>
                             </div>
                           )}
                           {plan.injuryType && (
                             <div>
-                              <span className="font-medium text-muted-foreground">نوع الإصابة:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.injuryType}:</span>
                               <p data-testid={`text-injury-type-${plan.id}`}>{plan.injuryType}</p>
                             </div>
                           )}
                           {plan.injuryLocation && (
                             <div>
-                              <span className="font-medium text-muted-foreground">مكان الإصابة:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.injuryArea}:</span>
                               <p data-testid={`text-injury-location-${plan.id}`}>{plan.injuryLocation}</p>
                             </div>
                           )}
                           {plan.mmtAssessment && (
                             <div>
-                              <span className="font-medium text-muted-foreground">تقييم قوة العضلات MMT:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.mmtAssessment}:</span>
                               <p data-testid={`text-mmt-${plan.id}`}>{plan.mmtAssessment}</p>
                             </div>
                           )}
                           {plan.spasticity && (
                             <div>
-                              <span className="font-medium text-muted-foreground">التشنج Spasticity:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.spasticity}:</span>
                               <p data-testid={`text-spasticity-${plan.id}`}>{plan.spasticity}</p>
                             </div>
                           )}
                           {plan.sensation && (
                             <div>
-                              <span className="font-medium text-muted-foreground">الإحساس Sensation:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.sensation}:</span>
                               <p data-testid={`text-sensation-${plan.id}`}>{plan.sensation}</p>
                             </div>
                           )}
                           {plan.painLevel && (
                             <div>
-                              <span className="font-medium text-muted-foreground">مستوى الألم Pain:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.painLevel}:</span>
                               <p data-testid={`text-pain-level-${plan.id}`}>{plan.painLevel}</p>
                             </div>
                           )}
                           {plan.adl && (
                             <div>
-                              <span className="font-medium text-muted-foreground">أنشطة الحياة اليومية ADL:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.adl}:</span>
                               <p data-testid={`text-adl-${plan.id}`}>{plan.adl}</p>
                             </div>
                           )}
                           {plan.sessionCount && (
                             <div>
-                              <span className="font-medium text-muted-foreground">عدد الجلسات:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.sessionCount}:</span>
                               <p data-testid={`text-session-count-${plan.id}`}>{plan.sessionCount}</p>
                             </div>
                           )}
                           {plan.sessionFrequency && (
                             <div>
-                              <span className="font-medium text-muted-foreground">تواتر الجلسات:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.sessionFrequency}:</span>
                               <p data-testid={`text-session-frequency-${plan.id}`}>{plan.sessionFrequency}</p>
                             </div>
                           )}
                           {plan.deviceType && (
                             <div>
-                              <span className="font-medium text-muted-foreground">نوع الجهاز المستخدم:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.deviceType}:</span>
                               <p data-testid={`text-device-type-${plan.id}`}>{plan.deviceType}</p>
                             </div>
                           )}
                           {plan.notes && (
                             <div className="md:col-span-2">
-                              <span className="font-medium text-muted-foreground">ملاحظات:</span>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.notes}:</span>
                               <p data-testid={`text-notes-${plan.id}`}>{plan.notes}</p>
                             </div>
                           )}
@@ -1325,18 +1327,18 @@ export default function PatientDetails() {
           resetTreatmentPlanForm();
         }
       }}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto font-body" dir="rtl">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto font-body" dir={dir}>
           <DialogHeader>
             <DialogTitle className="font-display text-xl text-primary">
-              {editingTreatmentPlan ? "تعديل الخطة العلاجية" : "إضافة خطة علاجية جديدة"}
+              {editingTreatmentPlan ? t.treatmentPlan.edit : t.treatmentPlan.addNew}
             </DialogTitle>
             <DialogDescription>
-              {editingTreatmentPlan ? "قم بتعديل بيانات الخطة العلاجية" : "أدخل بيانات الخطة العلاجية للمريض"}
+              {editingTreatmentPlan ? t.treatmentPlan.editDesc : t.treatmentPlan.addNewDesc}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label htmlFor="tp-diagnosis">تشخيص الحالة</Label>
+              <Label htmlFor="tp-diagnosis">{t.treatmentPlan.diagnosis}</Label>
               <Textarea
                 id="tp-diagnosis"
                 value={treatmentPlanForm.diagnosis}
@@ -1346,18 +1348,18 @@ export default function PatientDetails() {
             </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <Label className="text-base">الإصابات</Label>
+                <Label className="text-base">{t.treatmentPlan.injuries}</Label>
                 <Button type="button" variant="outline" size="sm"
                   onClick={() => setTpInjuryEntries(prev => [...prev, { type: "", area: "", side: "" }])}
                   data-testid="button-tp-add-injury">
                   <Plus className="w-4 h-4 ml-1" />
-                  إضافة إصابة
+                  {t.treatmentPlan.addInjury}
                 </Button>
               </div>
               {tpInjuryEntries.map((entry, index) => (
                 <div key={index} className="border rounded-lg p-3 bg-slate-50/50 space-y-3" data-testid={`tp-injury-entry-${index}`}>
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-muted-foreground">إصابة {index + 1}</span>
+                    <span className="text-sm font-medium text-muted-foreground">{t.treatmentPlan.injuryNum} {index + 1}</span>
                     {tpInjuryEntries.length > 1 && (
                       <Button type="button" size="icon" variant="ghost"
                         data-testid={`button-tp-remove-injury-${index}`}
@@ -1368,11 +1370,11 @@ export default function PatientDetails() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-xs">نوع الإصابة</Label>
+                      <Label className="text-xs">{t.treatmentPlan.injuryType}</Label>
                       <Select value={entry.type}
                         onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, type: val } : e))}>
                         <SelectTrigger className="bg-white" data-testid={`select-tp-injury-type-${index}`}>
-                          <SelectValue placeholder="اختر نوع الإصابة" />
+                          <SelectValue placeholder={t.treatmentPlan.selectInjuryType} />
                         </SelectTrigger>
                         <SelectContent>
                           {injuryTypeOptions.map((opt) => (
@@ -1382,11 +1384,11 @@ export default function PatientDetails() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">منطقة الإصابة</Label>
+                      <Label className="text-xs">{t.treatmentPlan.injuryArea}</Label>
                       <Select value={entry.area}
                         onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, area: val } : e))}>
                         <SelectTrigger className="bg-white" data-testid={`select-tp-injury-area-${index}`}>
-                          <SelectValue placeholder="اختر منطقة الإصابة" />
+                          <SelectValue placeholder={t.treatmentPlan.selectInjuryArea} />
                         </SelectTrigger>
                         <SelectContent>
                           {injuryAreaOptions.map((opt) => (
@@ -1396,16 +1398,16 @@ export default function PatientDetails() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">جهة الإصابة</Label>
+                      <Label className="text-xs">{t.treatmentPlan.injurySide}</Label>
                       <Select value={entry.side}
                         onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, side: val } : e))}>
                         <SelectTrigger className="bg-white" data-testid={`select-tp-injury-side-${index}`}>
-                          <SelectValue placeholder="اختياري" />
+                          <SelectValue placeholder={t.treatmentPlan.optional} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="يمين">يمين</SelectItem>
-                          <SelectItem value="يسار">يسار</SelectItem>
-                          <SelectItem value="كلاهما">كلاهما</SelectItem>
+                          <SelectItem value="يمين">{t.treatmentPlan.right}</SelectItem>
+                          <SelectItem value="يسار">{t.treatmentPlan.left}</SelectItem>
+                          <SelectItem value="كلاهما">{t.treatmentPlan.both}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1414,7 +1416,7 @@ export default function PatientDetails() {
               ))}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tp-mmtAssessment">تقييم قوة العضلات MMT</Label>
+              <Label htmlFor="tp-mmtAssessment">{t.treatmentPlan.mmtAssessment}</Label>
               <Textarea
                 id="tp-mmtAssessment"
                 value={treatmentPlanForm.mmtAssessment}
@@ -1424,7 +1426,7 @@ export default function PatientDetails() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="tp-spasticity">التشنج Spasticity</Label>
+                <Label htmlFor="tp-spasticity">{t.treatmentPlan.spasticity}</Label>
                 <Input
                   id="tp-spasticity"
                   value={treatmentPlanForm.spasticity}
@@ -1433,7 +1435,7 @@ export default function PatientDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tp-sensation">الإحساس Sensation</Label>
+                <Label htmlFor="tp-sensation">{t.treatmentPlan.sensation}</Label>
                 <Input
                   id="tp-sensation"
                   value={treatmentPlanForm.sensation}
@@ -1442,7 +1444,7 @@ export default function PatientDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tp-painLevel">مستوى الألم Pain</Label>
+                <Label htmlFor="tp-painLevel">{t.treatmentPlan.painLevel}</Label>
                 <Input
                   id="tp-painLevel"
                   value={treatmentPlanForm.painLevel}
@@ -1452,7 +1454,7 @@ export default function PatientDetails() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tp-adl">أنشطة الحياة اليومية ADL</Label>
+              <Label htmlFor="tp-adl">{t.treatmentPlan.adl}</Label>
               <Textarea
                 id="tp-adl"
                 value={treatmentPlanForm.adl}
@@ -1462,7 +1464,7 @@ export default function PatientDetails() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="tp-sessionCount">عدد الجلسات</Label>
+                <Label htmlFor="tp-sessionCount">{t.treatmentPlan.sessionCount}</Label>
                 <Input
                   id="tp-sessionCount"
                   type="number"
@@ -1473,10 +1475,10 @@ export default function PatientDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tp-sessionFrequency">تواتر الجلسات</Label>
+                <Label htmlFor="tp-sessionFrequency">{t.treatmentPlan.sessionFrequency}</Label>
                 <Input
                   id="tp-sessionFrequency"
-                  placeholder="مثال: مرتان يومياً، مرة أسبوعياً"
+                  placeholder={t.treatmentPlan.sessionFrequencyPlaceholder}
                   value={treatmentPlanForm.sessionFrequency}
                   onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, sessionFrequency: e.target.value }))}
                   data-testid="input-tp-sessionFrequency"
@@ -1485,7 +1487,7 @@ export default function PatientDetails() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="tp-deviceType">نوع الجهاز المستخدم</Label>
+                <Label htmlFor="tp-deviceType">{t.treatmentPlan.deviceType}</Label>
                 <Input
                   id="tp-deviceType"
                   value={treatmentPlanForm.deviceType}
@@ -1494,20 +1496,20 @@ export default function PatientDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tp-goalType">نوع الهدف</Label>
+                <Label htmlFor="tp-goalType">{t.treatmentPlan.goalType}</Label>
                 <Select value={treatmentPlanForm.goalType} onValueChange={(value) => setTreatmentPlanForm(prev => ({ ...prev, goalType: value }))}>
                   <SelectTrigger data-testid="select-tp-goalType">
-                    <SelectValue placeholder="اختر نوع الهدف" />
+                    <SelectValue placeholder={t.treatmentPlan.selectGoalType} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="short_term">قصير المدى</SelectItem>
-                    <SelectItem value="long_term">طويل المدى</SelectItem>
+                    <SelectItem value="short_term">{t.treatmentPlan.shortTerm}</SelectItem>
+                    <SelectItem value="long_term">{t.treatmentPlan.longTerm}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tp-notes">ملاحظات</Label>
+              <Label htmlFor="tp-notes">{t.treatmentPlan.notes}</Label>
               <Textarea
                 id="tp-notes"
                 value={treatmentPlanForm.notes}
@@ -1522,7 +1524,7 @@ export default function PatientDetails() {
               setEditingTreatmentPlan(null);
               resetTreatmentPlanForm();
             }} data-testid="button-cancel-treatment-plan">
-              إلغاء
+              {t.treatmentPlan.cancel}
             </Button>
             <Button
               onClick={handleSaveTreatmentPlan}
@@ -1530,8 +1532,8 @@ export default function PatientDetails() {
               data-testid="button-save-treatment-plan"
             >
               {(createTreatmentPlanMutation.isPending || updateTreatmentPlanMutation.isPending)
-                ? "جاري الحفظ..."
-                : (editingTreatmentPlan ? "تحديث" : "حفظ")}
+                ? t.treatmentPlan.saving
+                : t.treatmentPlan.save}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1539,7 +1541,7 @@ export default function PatientDetails() {
 
       {/* Delete Treatment Plan Confirmation */}
       <AlertDialog open={!!deletingTreatmentPlanId} onOpenChange={(open) => { if (!open) setDeletingTreatmentPlanId(null); }}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertCircle className="w-5 h-5" />
@@ -1564,7 +1566,7 @@ export default function PatientDetails() {
       </AlertDialog>
 
       <Dialog open={!!editingPaymentSession} onOpenChange={(open) => { if (!open) setEditingPaymentSession(null); }}>
-        <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+        <DialogContent className="sm:max-w-[425px] font-body" dir={dir}>
           <DialogHeader>
             <DialogTitle className="font-display text-xl text-primary">تعديل بيانات الجلسة</DialogTitle>
           </DialogHeader>
@@ -1623,7 +1625,7 @@ export default function PatientDetails() {
         </DialogContent>
       </Dialog>
       <Dialog open={!!editingPayment} onOpenChange={(open) => { if (!open) setEditingPayment(null); }}>
-        <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+        <DialogContent className="sm:max-w-[425px] font-body" dir={dir}>
           <DialogHeader>
             <DialogTitle className="font-display text-xl text-primary">تعديل الدفعة</DialogTitle>
           </DialogHeader>

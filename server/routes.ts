@@ -226,6 +226,7 @@ export async function registerRoutes(
             role: systemUser.role,
             displayName: systemUser.displayName,
             shift: userShift,
+            language: systemUser.language || "ar",
             permissions: {
               canViewPatients: systemUser.canViewPatients,
               canAddPatients: systemUser.canAddPatients,
@@ -253,6 +254,7 @@ export async function registerRoutes(
             displayName: systemUser.displayName,
             role: systemUser.role,
             shift: userShift,
+            language: systemUser.language || "ar",
             permissions: {
               canViewPatients: systemUser.canViewPatients,
               canAddPatients: systemUser.canAddPatients,

@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 interface BranchSession {
   branchId: number;
@@ -30,6 +31,7 @@ export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
   const permissions = usePermissions();
+  const { t } = useTranslation();
   const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -56,14 +58,14 @@ export function Sidebar() {
   }, [location]);
 
   const baseMenuItems = [
-    { label: "لوحة التحكم", icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const, permission: null },
-    { label: "سجل المرضى", icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const },
-    { label: "إضافة مريض", icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const, permission: "canAddPatients" as const },
-    { label: "التقارير المالية", icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
-    { label: "النظام المحاسبي", icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
-    { label: "الفروع", icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
-    { label: "الإحصاءات", icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
-    { label: "إعدادات النظام", icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
+    { label: t.sidebar.dashboard, icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const, permission: null },
+    { label: t.sidebar.patientRegistry, icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const },
+    { label: t.sidebar.addPatient, icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const, permission: "canAddPatients" as const },
+    { label: t.sidebar.financialReports, icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
+    { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
+    { label: t.sidebar.branches, icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
+    { label: t.sidebar.statistics, icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
+    { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
   ];
 
   // Filter menu items based on admin status, branch settings, and permissions
@@ -99,8 +101,11 @@ export function Sidebar() {
       <div className="p-4 flex items-center gap-3 border-b border-border/50">
         <img src={logoImage} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
         <div>
-          <h1 className="font-display font-bold text-xs md:text-sm text-primary leading-tight">مجموعة مراكز</h1>
-          <p className="text-xs md:text-sm font-bold text-slate-700">د. ياسر الساعدي</p>
+          {t.sidebar.centerName.split('\n').map((line, i) => (
+            i === 0 
+              ? <h1 key={i} className="font-display font-bold text-xs md:text-sm text-primary leading-tight">{line}</h1>
+              : <p key={i} className="text-xs md:text-sm font-bold text-slate-700">{line}</p>
+          ))}
         </div>
         {/* Close button for mobile */}
         <Button 
@@ -168,7 +173,7 @@ export function Sidebar() {
           data-testid="button-logout"
         >
           <LogOut className="w-5 h-5" />
-          <span className="font-medium text-sm md:text-base">تسجيل الخروج</span>
+          <span className="font-medium text-sm md:text-base">{t.sidebar.logout}</span>
         </button>
       </div>
     </>

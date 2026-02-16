@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Lock, Loader2, User, ShieldCheck, Building2, Clock } from "lucide-react";
 import logoImage from "@/assets/logo.png";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 const userOptions = [
   { value: "admin", label: "مسؤول النظام", icon: ShieldCheck },
@@ -39,6 +40,7 @@ interface BranchSession {
   displayName?: string;
   permissions?: UserPermissions;
   shift?: string;
+  language?: string;
 }
 
 interface BranchGateProps {
@@ -69,6 +71,7 @@ export function clearBranchSession() {
 }
 
 export function BranchGate({ children }: BranchGateProps) {
+  const { setLanguage } = useLanguage();
   const [session, setSession] = useState<BranchSession | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -120,8 +123,10 @@ export function BranchGate({ children }: BranchGateProps) {
           displayName: data.displayName,
           permissions: data.permissions,
           shift: data.shift,
+          language: data.language || "ar",
         };
         localStorage.setItem("branch_session", JSON.stringify(branchSession));
+        setLanguage((data.language || "ar") as "ar" | "en");
         setSession(branchSession);
         
         if (data.isAdmin) {

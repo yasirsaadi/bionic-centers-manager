@@ -418,6 +418,7 @@ export default function AdminSettings() {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
+    language: "ar",
   });
 
   const { data: branches } = useQuery<Branch[]>({
@@ -548,6 +549,7 @@ export default function AdminSettings() {
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
+      language: "ar",
     });
   };
 
@@ -582,6 +584,7 @@ export default function AdminSettings() {
       canManageSettings: user.canManageSettings ?? false,
       canManageUsers: user.canManageUsers ?? false,
       canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
+      language: (user as any).language || "ar",
     });
     setShowUserDialog(true);
   };
@@ -1583,6 +1586,21 @@ export default function AdminSettings() {
                     <SelectItem value="branch_manager">مدير فرع</SelectItem>
                     <SelectItem value="reception">موظف استقبال</SelectItem>
                     <SelectItem value="therapist">معالج طبيعي</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>اللغة</Label>
+                <Select
+                  value={userFormData.language}
+                  onValueChange={(value) => setUserFormData(prev => ({ ...prev, language: value }))}
+                >
+                  <SelectTrigger className="mt-1" data-testid="select-user-language">
+                    <SelectValue placeholder="اختر اللغة" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ar">العربية</SelectItem>
+                    <SelectItem value="en">English</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

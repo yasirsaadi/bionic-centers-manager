@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { BranchGate } from "@/components/BranchGate";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
+import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
@@ -46,8 +47,9 @@ function DashboardRoute() {
 
 // Wrapper for protected routes to ensure clean layout
 function Layout({ children }: { children: React.ReactNode }) {
+  const { dir } = useLanguage();
   return (
-    <div className="flex min-h-screen bg-slate-50/50" dir="rtl">
+    <div className="flex min-h-screen bg-slate-50/50" dir={dir}>
       <Sidebar />
       <main className="flex-1 p-4 pt-20 md:pt-6 md:p-8 overflow-y-auto h-screen">
         <div className="max-w-7xl mx-auto">
@@ -107,11 +109,13 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <PWAInstallPrompt />
-        <Router />
-      </TooltipProvider>
+      <LanguageProvider>
+        <TooltipProvider>
+          <Toaster />
+          <PWAInstallPrompt />
+          <Router />
+        </TooltipProvider>
+      </LanguageProvider>
     </QueryClientProvider>
   );
 }

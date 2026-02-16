@@ -12,6 +12,7 @@ import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
 import { formatDateIraq, getTodayIraq } from "@/lib/utils";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 type PatientWithVisits = Patient & { visits?: Visit[] };
 
@@ -28,6 +29,7 @@ function getTodayDateString(): string {
 export default function BranchDetails() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
+  const { t } = useTranslation();
   const branchId = Number(id);
   const [viewMode, setViewMode] = useState<"date" | "all">("date");
   const [searchTerm, setSearchTerm] = useState("");
@@ -59,11 +61,9 @@ export default function BranchDetails() {
   const dateFilteredPatients = useMemo(() => {
     const filterDate = new Date(selectedDate);
     return branchPatients.filter(p => {
-      // Check if patient was registered on this date
       if (p.createdAt && isSameDay(new Date(p.createdAt), filterDate)) {
         return true;
       }
-      // Check if patient has a visit on this date
       if (p.visits && p.visits.length > 0) {
         return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
       }
@@ -131,9 +131,9 @@ export default function BranchDetails() {
           </div>
           <div>
             <h2 className="text-lg md:text-2xl font-display font-bold text-slate-800">
-              فرع {branch?.name || "..."}
+              {t.patients.branch} {branch?.name || "..."}
             </h2>
-            <p className="text-xs md:text-base text-muted-foreground">إدارة مرضى الفرع</p>
+            <p className="text-xs md:text-base text-muted-foreground">{t.patients.branchManagement}</p>
           </div>
         </div>
       </div>
@@ -146,7 +146,7 @@ export default function BranchDetails() {
             </div>
             <div className="min-w-0">
               <p className="text-lg md:text-2xl font-bold text-slate-800">{branchPatients.length}</p>
-              <p className="text-xs md:text-sm text-muted-foreground truncate">إجمالي المرضى</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">{t.patients.totalPatients}</p>
             </div>
           </div>
         </Card>
@@ -158,7 +158,7 @@ export default function BranchDetails() {
             </div>
             <div className="min-w-0">
               <p className="text-lg md:text-2xl font-bold text-slate-800">{amputeeCount}</p>
-              <p className="text-xs md:text-sm text-muted-foreground truncate">حالات بتر</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">{t.patients.amputeeCases}</p>
             </div>
           </div>
         </Card>
@@ -170,7 +170,7 @@ export default function BranchDetails() {
             </div>
             <div className="min-w-0">
               <p className="text-lg md:text-2xl font-bold text-slate-800">{physioCount}</p>
-              <p className="text-xs md:text-sm text-muted-foreground truncate">علاج طبيعي</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">{t.patients.physiotherapy}</p>
             </div>
           </div>
         </Card>
@@ -182,17 +182,17 @@ export default function BranchDetails() {
             </div>
             <div className="min-w-0">
               <p className="text-lg md:text-2xl font-bold text-slate-800 truncate">{totalCost.toLocaleString()}</p>
-              <p className="text-xs md:text-sm text-muted-foreground truncate">التكاليف (د.ع)</p>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">{t.patients.costs} ({t.patientDetails.currency})</p>
             </div>
           </div>
         </Card>
       </div>
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <h3 className="text-base md:text-lg font-bold text-slate-800">مرضى الفرع</h3>
+        <h3 className="text-base md:text-lg font-bold text-slate-800">{t.patients.branchPatients}</h3>
         <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)} className="gap-2 w-full sm:w-auto text-sm md:text-base h-9 md:h-10">
           <UserPlus className="w-4 h-4" />
-          إضافة مريض للفرع
+          {t.patients.addPatientToBranch}
         </Button>
       </div>
 
@@ -202,12 +202,12 @@ export default function BranchDetails() {
           <TabsList className="grid grid-cols-2 w-full sm:w-auto">
             <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
               <Calendar className="w-4 h-4" />
-              <span>مرضى التاريخ</span>
+              <span>{t.patients.datePatients}</span>
               <Badge variant="secondary" className="mr-1 text-xs">{dateFilteredPatients.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
               <Users className="w-4 h-4" />
-              <span>جميع المرضى</span>
+              <span>{t.patients.allPatients}</span>
               <Badge variant="secondary" className="mr-1 text-xs">{branchPatients.length}</Badge>
             </TabsTrigger>
           </TabsList>
@@ -222,7 +222,7 @@ export default function BranchDetails() {
               data-testid="input-date-filter"
             />
             {selectedDate === getTodayDateString() && (
-              <Badge variant="outline" className="text-xs text-primary border-primary">اليوم</Badge>
+              <Badge variant="outline" className="text-xs text-primary border-primary">{t.patients.today}</Badge>
             )}
           </div>
         )}
@@ -233,7 +233,7 @@ export default function BranchDetails() {
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
-              placeholder="بحث باسم المريض أو الحالة..." 
+              placeholder={t.patients.searchByNameOrCondition} 
               className="pr-10 h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base"
               value={searchTerm}
               onChange={(e) => handleSearchChange(e.target.value)}
@@ -246,15 +246,15 @@ export default function BranchDetails() {
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-bold text-slate-700 mb-2">
-              {viewMode === "date" ? `لا يوجد مرضى مسجلين أو لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى في هذا الفرع"}
+              {viewMode === "date" ? `${t.patients.noPatientsOnDate} ${formatDateIraq(selectedDate)}` : t.patients.noPatientsInBranch}
             </h3>
             <p className="text-muted-foreground mb-4">
-              {viewMode === "date" ? "جرب عرض جميع المرضى أو أضف زيارة جديدة" : "ابدأ بإضافة مريض جديد"}
+              {viewMode === "date" ? t.patients.tryViewAllPatients : t.patients.startAddingPatient}
             </p>
             {viewMode === "all" && (
               <Button onClick={() => setLocation(`/patients/new?branch=${branchId}`)}>
                 <UserPlus className="w-4 h-4 ml-2" />
-                إضافة مريض
+                {t.patients.addPatient}
               </Button>
             )}
           </div>
@@ -276,22 +276,22 @@ export default function BranchDetails() {
                         <div>
                           <h4 className="font-bold text-slate-800">{patient.name}</h4>
                           <p className="text-xs text-muted-foreground">
-                            {patient.age} سنة
+                            {patient.age} {t.patients.years}
                           </p>
                         </div>
                       </div>
                       <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
-                        {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                        {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                       </Badge>
                     </div>
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                       <span className="text-xs text-slate-400 font-mono">
-                        {(patient.totalCost || 0).toLocaleString()} د.ع
+                        {(patient.totalCost || 0).toLocaleString()} {t.patientDetails.currency}
                       </span>
                       <Link href={`/patients/${patient.id}?branch=${branchId}`}>
                         <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                           <Eye className="w-3.5 h-3.5" />
-                          عرض الملف
+                          {t.patients.viewFile}
                         </Button>
                       </Link>
                     </div>
@@ -317,7 +317,7 @@ export default function BranchDetails() {
                           <div>
                             <h4 className="font-bold text-slate-800">{patient.name}</h4>
                             <p className="text-sm text-muted-foreground">
-                              {patient.age} سنة - {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                              {patient.age} {t.patients.years} - {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                             </p>
                           </div>
                         </div>
@@ -327,10 +327,10 @@ export default function BranchDetails() {
                             <span>{formatDateIraq(patient.createdAt)}</span>
                           </div>
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
-                            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                           </Badge>
                           <span className="text-sm font-mono text-muted-foreground">
-                            {(patient.totalCost || 0).toLocaleString()} د.ع
+                            {(patient.totalCost || 0).toLocaleString()} {t.patientDetails.currency}
                           </span>
                         </div>
                       </div>
@@ -346,7 +346,7 @@ export default function BranchDetails() {
         {totalPatients > 0 && (
           <div className="p-3 md:p-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-4">
             <div className="flex items-center gap-2 text-xs md:text-sm text-slate-600">
-              <span>عرض</span>
+              <span>{t.patients.show}</span>
               <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
                 <SelectTrigger className="w-16 md:w-20 h-8 md:h-9 text-xs md:text-sm">
                   <SelectValue />
@@ -357,7 +357,7 @@ export default function BranchDetails() {
                   <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
-              <span>من أصل {totalPatients} سجل</span>
+              <span>{t.patients.ofTotalRecords} {totalPatients} {t.patients.record}</span>
             </div>
 
             <div className="flex items-center gap-1 md:gap-2">
@@ -372,7 +372,7 @@ export default function BranchDetails() {
                 className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
               >
                 <ChevronRight className="w-4 h-4" />
-                <span className="hidden sm:inline">السابق</span>
+                <span className="hidden sm:inline">{t.patients.previous}</span>
               </Button>
               <span className="text-xs md:text-sm text-slate-600 px-1 md:px-2">
                 {currentPage} / {totalPages || 1}
@@ -387,7 +387,7 @@ export default function BranchDetails() {
                 disabled={currentPage >= totalPages}
                 className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
               >
-                <span className="hidden sm:inline">التالي</span>
+                <span className="hidden sm:inline">{t.patients.next}</span>
                 <ChevronLeft className="w-4 h-4" />
               </Button>
             </div>

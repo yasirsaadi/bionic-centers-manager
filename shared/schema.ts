@@ -245,6 +245,7 @@ export const systemUsers = pgTable("system_users", {
   canManageSettings: boolean("can_manage_settings").default(false),
   canManageUsers: boolean("can_manage_users").default(false),
   canManageTreatmentPlans: boolean("can_manage_treatment_plans").default(false),
+  language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
