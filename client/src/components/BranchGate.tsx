@@ -3,9 +3,10 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Loader2, User, ShieldCheck, Building2, Clock } from "lucide-react";
+import { Lock, Loader2, User, ShieldCheck, Building2, Clock, Globe } from "lucide-react";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 const userOptions = [
   { value: "admin", label: "مسؤول النظام", icon: ShieldCheck },
@@ -72,6 +73,7 @@ export function clearBranchSession() {
 
 export function BranchGate({ children }: BranchGateProps) {
   const { setLanguage } = useLanguage();
+  const { t, language, dir } = useTranslation();
   const [session, setSession] = useState<BranchSession | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -133,11 +135,11 @@ export function BranchGate({ children }: BranchGateProps) {
           localStorage.setItem("admin_verified", "true");
         }
       } else {
-        setError(data.message || "اسم المستخدم أو كلمة السر غير صحيحة");
+        setError(data.message || t.login.errorInvalid);
       }
     } catch (err) {
       console.error("Branch verification error:", err);
-      setError("حدث خطأ في التحقق");
+      setError(t.login.errorGeneral);
     } finally {
       setIsSubmitting(false);
     }
@@ -155,28 +157,43 @@ export function BranchGate({ children }: BranchGateProps) {
     return <>{children}</>;
   }
 
+  const isRtl = dir === "rtl";
+  const iconPosition = isRtl ? "right-3" : "left-3";
+  const inputPadding = isRtl ? "pr-10" : "pl-10";
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 px-4" dir="rtl">
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 px-4" dir={dir}>
       <Card className="p-6 sm:p-8 w-full max-w-md rounded-2xl shadow-xl border-0 mx-auto">
+        <div className="flex justify-end mb-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setLanguage(language === "ar" ? "en" : "ar")}
+            data-testid="button-login-language-toggle"
+            title={language === "ar" ? "English" : "العربية"}
+          >
+            <Globe className="w-5 h-5" />
+          </Button>
+        </div>
         <div className="text-center mb-8">
           <img src={logoImage} alt="Bionic Logo" className="w-28 h-28 sm:w-32 sm:h-32 object-contain mx-auto mb-4" />
-          <h1 className="text-xl sm:text-2xl font-display font-bold text-slate-800 text-center">مجموعة مراكز الدكتور ياسر الساعدي</h1>
-          <p className="text-muted-foreground mt-2">أدخل اسم المستخدم وكلمة السر للدخول</p>
+          <h1 className="text-xl sm:text-2xl font-display font-bold text-slate-800 text-center">{t.login.title}</h1>
+          <p className="text-muted-foreground mt-2">{t.login.subtitle}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">الفرع</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">{t.login.branch}</label>
             <Select value={selectedBranch} onValueChange={(val) => { setSelectedBranch(val); if (val !== "admin") setSelectedShift("auto"); else setSelectedShift(""); }}>
               <SelectTrigger className="h-12" data-testid="select-branch-login">
-                <SelectValue placeholder="اختر الفرع" />
+                <SelectValue placeholder={t.login.selectBranch} />
               </SelectTrigger>
               <SelectContent>
                 {userOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     <span className="flex items-center gap-2">
                       <option.icon className="w-4 h-4 text-primary" />
-                      {option.label}
+                      {option.value === "admin" ? t.login.systemAdmin : option.label}
                     </span>
                   </SelectItem>
                 ))}
@@ -185,15 +202,15 @@ export function BranchGate({ children }: BranchGateProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">اسم المستخدم</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">{t.login.username}</label>
             <div className="relative">
-              <User className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <User className={`absolute ${iconPosition} top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground`} />
               <Input
                 type="text"
-                placeholder="أدخل اسم المستخدم"
+                placeholder={t.login.usernamePlaceholder}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="pr-10 h-12"
+                className={`${inputPadding} h-12`}
                 autoComplete="username"
                 data-testid="input-username"
               />
@@ -201,15 +218,15 @@ export function BranchGate({ children }: BranchGateProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">كلمة السر</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">{t.login.password}</label>
             <div className="relative">
-              <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <Lock className={`absolute ${iconPosition} top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground`} />
               <Input
                 type="password"
-                placeholder="أدخل كلمة السر"
+                placeholder={t.login.passwordPlaceholder}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="pr-10 h-12"
+                className={`${inputPadding} h-12`}
                 autoComplete="current-password"
                 data-testid="input-branch-password"
               />
@@ -218,17 +235,17 @@ export function BranchGate({ children }: BranchGateProps) {
 
           {selectedBranch && selectedBranch !== "admin" && (
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">الشفت</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">{t.login.shift}</label>
               <div className="relative">
-                <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground z-10" />
+                <Clock className={`absolute ${iconPosition} top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground z-10`} />
                 <Select value={selectedShift} onValueChange={setSelectedShift}>
-                  <SelectTrigger className="pr-10 h-12" data-testid="select-shift">
-                    <SelectValue placeholder="اختر الشفت" />
+                  <SelectTrigger className={`${inputPadding} h-12`} data-testid="select-shift">
+                    <SelectValue placeholder={t.login.selectShift} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="auto">تحديد تلقائي حسب الوقت</SelectItem>
-                    <SelectItem value="morning">صباحي (٨ ص - ٤ ع)</SelectItem>
-                    <SelectItem value="evening">مسائي (٤ ع - ١٠ م)</SelectItem>
+                    <SelectItem value="auto">{t.login.shiftAuto}</SelectItem>
+                    <SelectItem value="morning">{t.login.shiftMorning}</SelectItem>
+                    <SelectItem value="evening">{t.login.shiftEvening}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -246,12 +263,12 @@ export function BranchGate({ children }: BranchGateProps) {
             data-testid="button-branch-login"
           >
             {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
-            دخول
+            {t.login.login}
           </Button>
         </form>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          نظام إدارة المرضى - مجموعة مراكز الدكتور ياسر الساعدي
+          {t.login.footer}
         </p>
       </Card>
     </div>
