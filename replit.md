@@ -162,9 +162,21 @@ Preferred communication style: Simple, everyday language.
 - Backend: Critical routes enforce permissions server-side (patient delete, payment delete)
 
 **Default Permissions by Role:**
-- Admin: Full permissions (all 12 enabled)
-- Branch Manager: All except delete patients/payments, manage settings/users
+- Admin: Full permissions (all 13 enabled)
+- Branch Manager: All except delete patients/payments, manage settings/users, manage treatment plans
 - Reception: View and add only (no edit/delete permissions)
+- Therapist (معالج طبيعي): View patients + manage treatment plans only
+
+### Treatment Plan System (February 2026)
+- Database table: `treatment_plans` for physiotherapy patient treatment plans
+- New user role: `therapist` (معالج طبيعي) - can have multiple therapists per branch
+- New permission: `canManageTreatmentPlans` - only therapists and admins can create/edit/delete plans
+- Treatment plans visible to all users but editable only by therapists
+- Multiple plans per patient (historical records with timestamps)
+- Plan fields: diagnosis, injury type/location, MMT assessment, spasticity, sensation, pain level, ADL, session count, session frequency, device type, goal type (short-term/long-term), notes
+- API endpoints: GET/POST `/api/patients/:patientId/treatment-plans`, PUT/DELETE `/api/treatment-plans/:id`
+- Treatment plan section appears only for physiotherapy patients in PatientDetails page
+- Therapist role supports shift selection (morning/evening) like reception role
 
 ### Payment Treatment Type Tracking (February 2026)
 - Added `paymentTreatmentType` text column to `payments` table
