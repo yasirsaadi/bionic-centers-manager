@@ -230,7 +230,7 @@ const translations = {
   en: {
     dir: "ltr" as const,
     login: {
-      title: "Dr. Yasser Al-Saadi Medical Centers",
+      title: "Dr. Yasir Al-Saadi Medical Centers",
       subtitle: "Enter your username and password to sign in",
       branch: "Branch",
       selectBranch: "Select Branch",
@@ -244,7 +244,7 @@ const translations = {
       shiftMorning: "Morning (8 AM - 4 PM)",
       shiftEvening: "Evening (4 PM - 10 PM)",
       login: "Sign In",
-      footer: "Patient Management System - Dr. Yasser Al-Saadi Medical Centers",
+      footer: "Patient Management System - Dr. Yasir Al-Saadi Medical Centers",
       errorInvalid: "Invalid username or password",
       errorGeneral: "Verification error occurred",
       systemAdmin: "System Admin",
@@ -259,7 +259,7 @@ const translations = {
       statistics: "Statistics",
       systemSettings: "System Settings",
       logout: "Logout",
-      centerName: "Dr. Yasser Al-Saadi\nMedical Centers",
+      centerName: "Dr. Yasir Al-Saadi\nMedical Centers",
     },
     dashboard: {
       overview: "Overview",
