@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n/LanguageContext";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 interface BranchSession {
   branchId: number;
@@ -31,7 +32,8 @@ export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
   const permissions = usePermissions();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const { setLanguage } = useLanguage();
   const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -152,13 +154,36 @@ export function Sidebar() {
               )}
             </div>
           )}
-          <div className="flex items-center gap-2 text-xs md:text-sm">
-            {branchSession.isAdmin ? (
-              <ShieldCheck className="w-4 h-4 text-primary" />
-            ) : (
-              <Building2 className="w-4 h-4 text-muted-foreground" />
-            )}
-            <span className="font-medium text-slate-700">{branchSession.branchName}</span>
+          <div className="flex items-center justify-between gap-2 text-xs md:text-sm">
+            <div className="flex items-center gap-2">
+              {branchSession.isAdmin ? (
+                <ShieldCheck className="w-4 h-4 text-primary" />
+              ) : (
+                <Building2 className="w-4 h-4 text-muted-foreground" />
+              )}
+              <span className="font-medium text-slate-700">{branchSession.branchName}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const newLang = language === "ar" ? "en" : "ar";
+                setLanguage(newLang);
+                const stored = localStorage.getItem("branch_session");
+                if (stored) {
+                  try {
+                    const session = JSON.parse(stored);
+                    session.language = newLang;
+                    localStorage.setItem("branch_session", JSON.stringify(session));
+                  } catch {}
+                }
+              }}
+              className="h-7 w-7"
+              data-testid="button-toggle-language"
+              title={language === "ar" ? "Switch to English" : "التبديل إلى العربية"}
+            >
+              <Globe className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       )}
