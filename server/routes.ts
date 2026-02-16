@@ -871,7 +871,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!userData.role || !["admin", "branch_manager", "reception"].includes(userData.role)) {
+      if (!userData.role || !["admin", "branch_manager", "reception", "therapist"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -912,7 +912,7 @@ export async function registerRoutes(
       const { password, ...userData } = req.body;
       
       // Validate role if provided
-      if (userData.role && !["admin", "branch_manager", "reception"].includes(userData.role)) {
+      if (userData.role && !["admin", "branch_manager", "reception", "therapist"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
