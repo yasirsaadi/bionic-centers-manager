@@ -324,13 +324,15 @@ function DashboardContent() {
           <p className="text-white/80 mb-6 leading-relaxed">
             يمكنك من هنا إدارة كافة عمليات المركز بسهولة، بدءاً من تسجيل المرضى ومتابعة حالاتهم، وصولاً إلى الإدارة المالية والأرشفة الإلكترونية.
           </p>
-          <button 
-            onClick={() => navigate("/reports")}
-            data-testid="button-view-reports"
-            className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-6 py-2.5 rounded-xl font-medium transition-all"
-          >
-            عرض التقارير
-          </button>
+          {canViewPayments && (
+            <button 
+              onClick={() => navigate("/reports")}
+              data-testid="button-view-reports"
+              className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-6 py-2.5 rounded-xl font-medium transition-all"
+            >
+              عرض التقارير
+            </button>
+          )}
         </div>
       </div>
     </div>
