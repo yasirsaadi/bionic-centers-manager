@@ -765,9 +765,11 @@ export default function PatientDetails() {
                 </div>
               </div>
 
+              {permissions.canAddPayments && (
               <div className="pt-4 border-t border-dashed">
                 <PaymentModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
               </div>
+              )}
             </div>
           </Card>
         </div>
@@ -793,6 +795,7 @@ export default function PatientDetails() {
             </TabsList>
 
             <TabsContent value="visits" className="space-y-4">
+              {permissions.canAddPatients && (
               <div className="flex justify-end gap-2 mb-4">
                 <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
                 <NewServiceModal 
@@ -802,6 +805,7 @@ export default function PatientDetails() {
                   isPhysiotherapy={!!patient.isPhysiotherapy}
                 />
               </div>
+              )}
 
               {patient.isPhysiotherapy && (() => {
                 const sessionsByType: Record<string, number> = {};
@@ -895,6 +899,7 @@ export default function PatientDetails() {
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
+                              {permissions.canEditPatients && (
                               <Button 
                                 variant="ghost" 
                                 size="icon" 
@@ -904,6 +909,7 @@ export default function PatientDetails() {
                               >
                                 <Pencil className="w-4 h-4" />
                               </Button>
+                              )}
                               {isAdmin && (
                                 <Button 
                                   variant="ghost" 
