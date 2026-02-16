@@ -319,12 +319,12 @@ function DashboardContent() {
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-primary to-primary/80 p-6 rounded-2xl text-white shadow-xl shadow-primary/20">
-          <h3 className="text-xl font-bold mb-2 font-display">مرحباً بك في النظام</h3>
-          <p className="text-white/80 mb-6 leading-relaxed">
-            يمكنك من هنا إدارة كافة عمليات المركز بسهولة، بدءاً من تسجيل المرضى ومتابعة حالاتهم، وصولاً إلى الإدارة المالية والأرشفة الإلكترونية.
-          </p>
-          {canViewPayments && (
+        {canViewPayments && (
+          <div className="bg-gradient-to-br from-primary to-primary/80 p-6 rounded-2xl text-white shadow-xl shadow-primary/20">
+            <h3 className="text-xl font-bold mb-2 font-display">مرحباً بك في النظام</h3>
+            <p className="text-white/80 mb-6 leading-relaxed">
+              يمكنك من هنا إدارة كافة عمليات المركز بسهولة، بدءاً من تسجيل المرضى ومتابعة حالاتهم، وصولاً إلى الإدارة المالية والأرشفة الإلكترونية.
+            </p>
             <button 
               onClick={() => navigate("/reports")}
               data-testid="button-view-reports"
@@ -332,8 +332,8 @@ function DashboardContent() {
             >
               عرض التقارير
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
