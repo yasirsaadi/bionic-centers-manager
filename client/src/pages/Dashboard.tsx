@@ -4,6 +4,7 @@ import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2, User
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useLocation } from "wouter";
 import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,6 +18,7 @@ function DashboardContent() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
+  const { canViewPayments } = usePermissions();
   
   const [selectedBranch, setSelectedBranch] = useState<string>(
     isAdmin ? "all" : (userBranchId?.toString() || "all")
@@ -176,14 +178,16 @@ function DashboardContent() {
             icon={HeartPulse} 
             color="blue"
           />
-          <StatsCard 
-            title="الإيرادات" 
-            value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
-            icon={Banknote} 
-            color="primary"
-            onClick={() => navigate("/revenues")}
-            data-testid="card-total-revenue"
-          />
+          {canViewPayments && (
+            <StatsCard 
+              title="الإيرادات" 
+              value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+              icon={Banknote} 
+              color="primary"
+              onClick={() => navigate("/revenues")}
+              data-testid="card-total-revenue"
+            />
+          )}
         </div>
       </div>
 
@@ -274,16 +278,18 @@ function DashboardContent() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-              <StatsCard 
-                title="إيرادات اليوم" 
-                value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
-                icon={Banknote} 
-                color="primary"
-                onClick={() => navigate("/revenues?daily=true")}
-                data-testid="card-daily-revenue"
-              />
-            </div>
+            {canViewPayments && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+                <StatsCard 
+                  title="إيرادات اليوم" 
+                  value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+                  icon={Banknote} 
+                  color="primary"
+                  onClick={() => navigate("/revenues?daily=true")}
+                  data-testid="card-daily-revenue"
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
