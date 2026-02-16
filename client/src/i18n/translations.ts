@@ -21,6 +21,19 @@ const translations = {
       errorGeneral: "حدث خطأ في التحقق",
       systemAdmin: "مسؤول النظام",
     },
+    roles: {
+      admin: "مسؤول النظام",
+      branch_manager: "مدير فرع",
+      reception: "موظف استقبال",
+      therapist: "معالج طبيعي",
+    },
+    branches: {
+      "بايونك بغداد": "بايونك بغداد",
+      "الوارث كربلاء": "الوارث كربلاء",
+      "بايونك ذي قار": "بايونك ذي قار",
+      "بايونك الموصل": "بايونك الموصل",
+      "بايونك كركوك": "بايونك كركوك",
+    },
     sidebar: {
       dashboard: "لوحة التحكم",
       patientRegistry: "سجل المرضى",
@@ -248,6 +261,19 @@ const translations = {
       errorInvalid: "Invalid username or password",
       errorGeneral: "Verification error occurred",
       systemAdmin: "System Admin",
+    },
+    roles: {
+      admin: "System Admin",
+      branch_manager: "Branch Manager",
+      reception: "Receptionist",
+      therapist: "Therapist",
+    },
+    branches: {
+      "بايونك بغداد": "Bionic Baghdad",
+      "الوارث كربلاء": "Al-Warith Karbala",
+      "بايونك ذي قار": "Bionic Dhi Qar",
+      "بايونك الموصل": "Bionic Mosul",
+      "بايونك كركوك": "Bionic Kirkuk",
     },
     sidebar: {
       dashboard: "Dashboard",

@@ -149,7 +149,7 @@ export function Sidebar() {
               <span className="font-medium text-slate-700">{branchSession.displayName}</span>
               {branchSession.role && (
                 <span className="text-xs text-muted-foreground">
-                  ({branchSession.role === "admin" ? "مسؤول النظام" : branchSession.role === "branch_manager" ? "مدير فرع" : branchSession.role === "therapist" ? "معالج طبيعي" : "موظف استقبال"})
+                  ({t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role})
                 </span>
               )}
             </div>
@@ -161,7 +161,7 @@ export function Sidebar() {
               ) : (
                 <Building2 className="w-4 h-4 text-muted-foreground" />
               )}
-              <span className="font-medium text-slate-700">{branchSession.branchName}</span>
+              <span className="font-medium text-slate-700">{t.branches[branchSession.branchName as keyof typeof t.branches] || branchSession.branchName}</span>
             </div>
             <Button
               variant="ghost"

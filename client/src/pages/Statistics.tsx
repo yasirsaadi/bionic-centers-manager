@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -138,6 +139,7 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
 }
 
 export default function Statistics() {
+  const { t } = useTranslation();
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin ?? false;
   
@@ -853,7 +855,7 @@ export default function Statistics() {
           {!isAdmin && branchSession && (
             <Badge variant="outline" className="h-9 px-4 flex items-center gap-2 text-sm">
               <Building2 className="w-4 h-4" />
-              {branchSession.branchName}
+              {t.branches[branchSession.branchName as keyof typeof t.branches] || branchSession.branchName}
             </Badge>
           )}
 
