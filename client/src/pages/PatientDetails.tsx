@@ -165,7 +165,7 @@ export default function PatientDetails() {
       });
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في نقل المريض");
+        throw new Error(error.message || t.patientDetails.failedToTransfer);
       }
       return res.json();
     },
@@ -175,13 +175,13 @@ export default function PatientDetails() {
       setTransferDialogOpen(false);
       setSelectedTransferBranch("");
       toast({
-        title: "تم النقل بنجاح",
-        description: "تم نقل المريض مع جميع سجلاته إلى الفرع الجديد",
+        title: t.patientDetails.transferSuccess,
+        description: t.patientDetails.transferSuccessDesc,
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
+        title: t.patientDetails.error,
         description: error.message,
         variant: "destructive",
       });
@@ -208,7 +208,7 @@ export default function PatientDetails() {
       });
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في إنشاء الخطة العلاجية");
+        throw new Error(error.message || t.patientDetails.failedToCreate);
       }
       return res.json();
     },
@@ -218,10 +218,10 @@ export default function PatientDetails() {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
       setShowTreatmentPlanDialog(false);
       resetTreatmentPlanForm();
-      toast({ title: "تم الحفظ", description: "تم إنشاء الخطة العلاجية بنجاح" });
+      toast({ title: t.patientDetails.savedSuccess, description: t.patientDetails.planCreated });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.patientDetails.error, description: error.message, variant: "destructive" });
     },
   });
 
@@ -235,7 +235,7 @@ export default function PatientDetails() {
       });
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في تحديث الخطة العلاجية");
+        throw new Error(error.message || t.patientDetails.failedToUpdate);
       }
       return res.json();
     },
@@ -246,10 +246,10 @@ export default function PatientDetails() {
       setShowTreatmentPlanDialog(false);
       setEditingTreatmentPlan(null);
       resetTreatmentPlanForm();
-      toast({ title: "تم التحديث", description: "تم تحديث الخطة العلاجية بنجاح" });
+      toast({ title: t.patientDetails.updated, description: t.patientDetails.planUpdated });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.patientDetails.error, description: error.message, variant: "destructive" });
     },
   });
 
@@ -261,17 +261,17 @@ export default function PatientDetails() {
       });
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في حذف الخطة العلاجية");
+        throw new Error(error.message || t.patientDetails.failedToDelete);
       }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
       setDeletingTreatmentPlanId(null);
-      toast({ title: "تم الحذف", description: "تم حذف الخطة العلاجية بنجاح" });
+      toast({ title: t.patientDetails.deleted, description: t.patientDetails.planDeleted });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.patientDetails.error, description: error.message, variant: "destructive" });
     },
   });
 
@@ -376,7 +376,7 @@ export default function PatientDetails() {
         body: JSON.stringify({ sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType }),
         credentials: "include",
       });
-      if (!res.ok) throw new Error("فشل التحديث");
+      if (!res.ok) throw new Error(t.patientDetails.failedToUpdateSession);
       return res.json();
     },
     onSuccess: () => {
@@ -400,7 +400,7 @@ export default function PatientDetails() {
         body: JSON.stringify({ amount: data.amount, notes: data.notes, sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType }),
         credentials: "include",
       });
-      if (!res.ok) throw new Error("فشل التحديث");
+      if (!res.ok) throw new Error(t.patientDetails.failedToUpdateSession);
       return res.json();
     },
     onSuccess: () => {
@@ -433,7 +433,7 @@ export default function PatientDetails() {
   };
 
   if (isLoading) return <div className="p-8"><Skeleton className="h-96 w-full rounded-3xl" /></div>;
-  if (!patient) return <div className="p-8 text-center text-muted-foreground">المريض غير موجود</div>;
+  if (!patient) return <div className="p-8 text-center text-muted-foreground">{t.patientDetails.patientNotFound}</div>;
 
   // Calculate totals
   const totalPaid = patient.payments?.reduce((sum, p) => sum + p.amount, 0) || 0;
@@ -475,9 +475,9 @@ export default function PatientDetails() {
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>هل أنت متأكد من حذف هذا المريض؟</AlertDialogTitle>
+                <AlertDialogTitle>{t.patientDetails.deleteConfirmTitle}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  سيتم حذف جميع بيانات المريض بما في ذلك سجل الدفعات والزيارات والمستندات. هذا الإجراء لا يمكن التراجع عنه.
+                  {t.patientDetails.deleteConfirmDesc}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter className="gap-2">
@@ -487,7 +487,7 @@ export default function PatientDetails() {
                   className="bg-red-600 hover:bg-red-700"
                   disabled={isDeleting}
                 >
-                  {isDeleting ? "جاري الحذف..." : "نعم، احذف المريض"}
+                  {isDeleting ? t.patientDetails.deleting : t.patientDetails.yesDeletePatient}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -500,21 +500,21 @@ export default function PatientDetails() {
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2" data-testid="button-transfer-patient">
                 <ArrowLeftRight className="w-4 h-4" />
-                نقل لفرع آخر
+                {t.patientDetails.transferToBranch}
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>نقل المريض إلى فرع آخر</DialogTitle>
+                <DialogTitle>{t.patientDetails.transferTitle}</DialogTitle>
                 <DialogDescription>
-                  سيتم نقل المريض مع جميع سجلاته (الزيارات والمدفوعات والمستندات) إلى الفرع المحدد.
+                  {t.patientDetails.transferDesc}
                 </DialogDescription>
               </DialogHeader>
               <div className="py-4">
-                <label className="text-sm font-medium mb-2 block">اختر الفرع الجديد</label>
+                <label className="text-sm font-medium mb-2 block">{t.patientDetails.selectNewBranch}</label>
                 <Select value={selectedTransferBranch} onValueChange={setSelectedTransferBranch}>
                   <SelectTrigger data-testid="select-transfer-branch">
-                    <SelectValue placeholder="اختر الفرع" />
+                    <SelectValue placeholder={t.patientDetails.selectBranch} />
                   </SelectTrigger>
                   <SelectContent>
                     {branches?.filter(b => b.id !== patient?.branchId).map((branch) => (
@@ -527,7 +527,7 @@ export default function PatientDetails() {
               </div>
               <DialogFooter className="gap-2">
                 <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
-                  إلغاء
+                  {t.common.cancel}
                 </Button>
                 <Button 
                   onClick={() => {
@@ -541,7 +541,7 @@ export default function PatientDetails() {
                   disabled={!selectedTransferBranch || transferMutation.isPending}
                   data-testid="button-confirm-transfer"
                 >
-                  {transferMutation.isPending ? "جاري النقل..." : "نقل المريض"}
+                  {transferMutation.isPending ? t.patientDetails.transferring : t.patientDetails.transferPatient}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -555,7 +555,7 @@ export default function PatientDetails() {
           data-testid="button-export-pdf"
         >
           <FileDown className="w-4 h-4" />
-          تصدير PDF
+          {t.patientDetails.exportPdf}
         </Button>
       </div>
 
@@ -576,7 +576,7 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
-              <span className="hidden md:inline">تاريخ الملف: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
+              <span className="hidden md:inline">{t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
@@ -596,7 +596,7 @@ export default function PatientDetails() {
             {getBranchName(patient.branchId)}
           </Badge>
           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
-            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
           </Badge>
           {(() => {
             const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
@@ -604,7 +604,7 @@ export default function PatientDetails() {
               return (
                 <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1 bg-blue-50 text-blue-700 border-blue-200">
                   <Activity className="w-3 h-3" />
-                  {totalSessions} جلسة
+                  {totalSessions} {t.patientDetails.session}
                 </Badge>
               );
             }
@@ -620,24 +620,24 @@ export default function PatientDetails() {
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 space-y-6">
             <h3 className="font-bold text-lg flex items-center gap-2 text-primary">
               <Activity className="w-5 h-5" />
-              البيانات الطبية
+              {t.patientDetails.medicalData}
             </h3>
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-4 pb-4 border-b border-dashed">
                 <div>
-                  <p className="text-muted-foreground mb-1">الوزن</p>
-                  <p className="font-semibold text-lg">{patient.weight || "--"} كجم</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.weight}</p>
+                  <p className="font-semibold text-lg">{patient.weight || "--"} {t.patientDetails.weightUnit}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground mb-1">الطول</p>
-                  <p className="font-semibold text-lg">{patient.height || "--"} سم</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.height}</p>
+                  <p className="font-semibold text-lg">{patient.height || "--"} {t.patientDetails.heightUnit}</p>
                 </div>
               </div>
               {(patient.injuryDate || patient.injuryCause) && (
                 <div className="grid grid-cols-2 gap-4 pb-4 border-b border-dashed">
                   {patient.injuryDate && (
                     <div>
-                      <p className="text-muted-foreground mb-1">تاريخ الإصابة</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.injuryDate}</p>
                       <p className="font-semibold text-base flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
                         {formatDateIraq(patient.injuryDate)}
@@ -646,7 +646,7 @@ export default function PatientDetails() {
                   )}
                   {patient.injuryCause && (
                     <div>
-                      <p className="text-muted-foreground mb-1">سبب الإصابة</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.injuryCause}</p>
                       <p className="font-semibold text-base flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 text-muted-foreground" />
                         {patient.injuryCause}
@@ -676,7 +676,7 @@ export default function PatientDetails() {
                 if (injuriesList.length === 0) return null;
                 return (
                   <div className="pb-4 border-b border-dashed">
-                    <p className="text-muted-foreground mb-2">الإصابات ({injuriesList.length})</p>
+                    <p className="text-muted-foreground mb-2">{t.patientDetails.injuries} ({injuriesList.length})</p>
                     <div className="space-y-2">
                       {injuriesList.map((injury, i) => (
                         <div key={i} className="flex flex-wrap items-center gap-2" data-testid={`injury-entry-${i}`}>
@@ -691,20 +691,20 @@ export default function PatientDetails() {
                 );
               })()}
               <div>
-                <p className="text-muted-foreground mb-1">التشخيص / الحالة</p>
+                <p className="text-muted-foreground mb-1">{t.patientDetails.diagnosisCondition}</p>
                 <p className="font-semibold text-base">
                   {patient.isAmputee ? patient.amputationSite : patient.isMedicalSupport ? patient.supportType : patient.diseaseType}
                 </p>
               </div>
               {patient.isMedicalSupport && patient.injurySide && (
                 <div>
-                  <p className="text-muted-foreground mb-1">جهة الإصابة</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.injurySide}</p>
                   <p className="font-semibold text-base">{patient.injurySide}</p>
                 </div>
               )}
               {patient.isAmputee && patient.prostheticType && (
                 <div>
-                  <p className="text-muted-foreground mb-1">نوع الطرف الصناعي</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.prostheticType}</p>
                   <p className="font-semibold text-base">{patient.prostheticType}</p>
                 </div>
               )}
@@ -712,19 +712,19 @@ export default function PatientDetails() {
                 <div className="grid grid-cols-3 gap-4">
                   {patient.siliconType && (
                     <div>
-                      <p className="text-muted-foreground mb-1">نوع السليكون</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.siliconType}</p>
                       <p className="font-semibold text-base">{patient.siliconType}</p>
                     </div>
                   )}
                   {patient.siliconSize && (
                     <div>
-                      <p className="text-muted-foreground mb-1">حجم السليكون</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.siliconSize}</p>
                       <p className="font-semibold text-base">{patient.siliconSize}</p>
                     </div>
                   )}
                   {patient.suspensionSystem && (
                     <div>
-                      <p className="text-muted-foreground mb-1">نظام التعليق</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.suspensionSystem}</p>
                       <p className="font-semibold text-base">{patient.suspensionSystem}</p>
                     </div>
                   )}
@@ -733,12 +733,12 @@ export default function PatientDetails() {
               {patient.isAmputee && patient.footType && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-muted-foreground mb-1">نوع القدم</p>
+                    <p className="text-muted-foreground mb-1">{t.patientDetails.footType}</p>
                     <p className="font-semibold text-base">{patient.footType}</p>
                   </div>
                   {patient.footSize && (
                     <div>
-                      <p className="text-muted-foreground mb-1">حجم القدم</p>
+                      <p className="text-muted-foreground mb-1">{t.patientDetails.footSize}</p>
                       <p className="font-semibold text-base">{patient.footSize}</p>
                     </div>
                   )}
@@ -746,7 +746,7 @@ export default function PatientDetails() {
               )}
               {patient.isAmputee && patient.kneeJointType && (
                 <div>
-                  <p className="text-muted-foreground mb-1">نوع مفصل الركبة</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.kneeJointType}</p>
                   <p className="font-semibold text-base">{patient.kneeJointType}</p>
                 </div>
               )}
@@ -762,7 +762,7 @@ export default function PatientDetails() {
                 });
                 return paymentTreatmentTypes.size > 0 ? (
                   <div>
-                    <p className="text-muted-foreground mb-1">نوع العلاج</p>
+                    <p className="text-muted-foreground mb-1">{t.patientDetails.treatmentType}</p>
                     <div className="flex flex-wrap gap-1">
                       {Array.from(paymentTreatmentTypes).map((tt, i) => (
                         <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{tt}</span>
@@ -773,7 +773,7 @@ export default function PatientDetails() {
               })()}
               {patient.generalNotes && (
                 <div className="pt-4 border-t border-dashed">
-                  <p className="text-muted-foreground mb-1">ملاحظات عامة</p>
+                  <p className="text-muted-foreground mb-1">{t.patientDetails.generalNotes}</p>
                   <p className="text-slate-700">{patient.generalNotes}</p>
                 </div>
               )}
@@ -788,7 +788,7 @@ export default function PatientDetails() {
                 totalSessions += p.sessionCount;
                 const types = p.paymentTreatmentType 
                   ? p.paymentTreatmentType.split(",").map((tt: string) => tt.trim()).filter(Boolean)
-                  : ["غير محدد"];
+                  : [t.patientDetails.unspecified];
                 types.forEach((type: string) => {
                   sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
                 });
@@ -798,18 +798,18 @@ export default function PatientDetails() {
               <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
                 <h3 className="font-bold text-lg flex items-center gap-2 text-blue-600 mb-6">
                   <Activity className="w-5 h-5" />
-                  ملخص الجلسات
+                  {t.patientDetails.sessionSummary}
                 </h3>
                 <div className="space-y-4">
                   <div className="flex justify-between items-end">
-                    <span className="text-muted-foreground">إجمالي الجلسات</span>
-                    <span className="font-bold text-xl text-blue-600">{totalSessions} جلسة</span>
+                    <span className="text-muted-foreground">{t.patientDetails.totalSessionsCount}</span>
+                    <span className="font-bold text-xl text-blue-600">{totalSessions} {t.patientDetails.session}</span>
                   </div>
                   <div className="space-y-2 pt-2 border-t border-dashed">
                     {Object.entries(sessionsByType).map(([type, count]) => (
                       <div key={type} className="flex justify-between items-center">
                         <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{type}</span>
-                        <span className="font-semibold text-slate-700">{count} جلسة</span>
+                        <span className="font-semibold text-slate-700">{count} {t.patientDetails.session}</span>
                       </div>
                     ))}
                   </div>
@@ -821,7 +821,7 @@ export default function PatientDetails() {
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2 text-emerald-600 mb-6">
               <Banknote className="w-5 h-5" />
-              الملخص المالي
+              {t.patientDetails.financialSummary}
             </h3>
             
             <div className="space-y-4">
@@ -893,12 +893,12 @@ export default function PatientDetails() {
               {patient.isPhysiotherapy && (() => {
                 const sessionsByType: Record<string, number> = {};
                 patient.payments?.forEach((p) => {
-                  const type = p.paymentTreatmentType || "غير محدد";
+                  const type = p.paymentTreatmentType || t.patientDetails.unspecified;
                   sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
                 });
                 const visitsByType: Record<string, number> = {};
                 patient.visits?.forEach((v) => {
-                  const type = v.treatmentType || "غير محدد";
+                  const type = v.treatmentType || t.patientDetails.unspecified;
                   visitsByType[type] = (visitsByType[type] || 0) + 1;
                 });
                 const allTypes = new Set([...Object.keys(sessionsByType), ...Object.keys(visitsByType)]);
@@ -915,7 +915,7 @@ export default function PatientDetails() {
                           <div key={type} className={`flex items-center gap-2 px-3 py-2 rounded-md border ${rem <= 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`} data-testid={`summary-${type}`}>
                             <span className="text-sm font-medium text-slate-700">{type}:</span>
                             <span className={`font-bold text-sm ${rem <= 0 ? "text-red-600" : "text-emerald-600"}`}>{rem}</span>
-                            <span className="text-xs text-slate-400">({paid} مدفوعة - {used} مستخدمة)</span>
+                            <span className="text-xs text-slate-400">({paid} {t.patientDetails.paidSessions} - {used} {t.patientDetails.usedSessions})</span>
                           </div>
                         );
                       })}
@@ -950,14 +950,14 @@ export default function PatientDetails() {
                       (() => {
                         const sessionsByType: Record<string, number> = {};
                         patient.payments?.forEach((p) => {
-                          const type = p.paymentTreatmentType || "غير محدد";
+                          const type = p.paymentTreatmentType || t.patientDetails.unspecified;
                           sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
                         });
                         const remainingMap: Record<number, number> = {};
                         const visitCountByType: Record<string, number> = {};
                         const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         visitsOldestFirst.forEach((v) => {
-                          const type = v.treatmentType || "غير محدد";
+                          const type = v.treatmentType || t.patientDetails.unspecified;
                           visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           remainingMap[v.id] = (sessionsByType[type] || 0) - visitCountByType[type];
                         });
@@ -1106,12 +1106,12 @@ export default function PatientDetails() {
             <TabsContent value="documents" className="space-y-6">
               <div className="flex justify-between items-center bg-blue-50 p-4 rounded-xl border border-blue-100">
                 <div>
-                  <h4 className="font-bold text-blue-900">رفع مستند جديد</h4>
-                  <p className="text-sm text-blue-700">تقارير طبية، أشعة، هوية، تعهدات</p>
+                  <h4 className="font-bold text-blue-900">{t.patientDetails.uploadNewDoc}</h4>
+                  <p className="text-sm text-blue-700">{t.patientDetails.uploadDocDesc}</p>
                 </div>
                 <Button variant="outline" className="border-blue-200 hover:bg-white text-blue-700 gap-2" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
                   <Upload className="w-4 h-4" />
-                  {isUploading ? "جاري الرفع..." : "اختر ملف"}
+                  {isUploading ? t.patientDetails.uploading : t.patientDetails.chooseFile}
                 </Button>
                 <input 
                   type="file" 
@@ -1126,7 +1126,7 @@ export default function PatientDetails() {
                 {patient.documents?.length === 0 ? (
                   <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
                     <FileText className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                    <p className="text-slate-500">لا يوجد مستندات مرفقة</p>
+                    <p className="text-slate-500">{t.patientDetails.noDocumentsAttached}</p>
                   </div>
                 ) : (
                   patient.documents?.map((doc) => (
@@ -1545,21 +1545,21 @@ export default function PatientDetails() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertCircle className="w-5 h-5" />
-              تأكيد حذف الخطة العلاجية
+              {t.patientDetails.confirmDeletePlan}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من حذف هذه الخطة العلاجية؟ هذا الإجراء لا يمكن التراجع عنه.
+              {t.patientDetails.confirmDeletePlanDesc}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
-            <AlertDialogCancel data-testid="button-cancel-delete-treatment-plan">لا</AlertDialogCancel>
+            <AlertDialogCancel data-testid="button-cancel-delete-treatment-plan">{t.common.no}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deletingTreatmentPlanId && deleteTreatmentPlanMutation.mutate(deletingTreatmentPlanId)}
               disabled={deleteTreatmentPlanMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
               data-testid="button-confirm-delete-treatment-plan"
             >
-              {deleteTreatmentPlanMutation.isPending ? "جاري الحذف..." : "نعم"}
+              {deleteTreatmentPlanMutation.isPending ? t.patientDetails.deleting : t.common.yes}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1568,15 +1568,15 @@ export default function PatientDetails() {
       <Dialog open={!!editingPaymentSession} onOpenChange={(open) => { if (!open) setEditingPaymentSession(null); }}>
         <DialogContent className="sm:max-w-[425px] font-body" dir={dir}>
           <DialogHeader>
-            <DialogTitle className="font-display text-xl text-primary">تعديل بيانات الجلسة</DialogTitle>
+            <DialogTitle className="font-display text-xl text-primary">{t.patientDetails.editSessionData}</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">نوع العلاج</label>
+                <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
                 <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
                   <SelectTrigger data-testid="select-edit-treatment-type">
-                    <SelectValue placeholder="اختر نوع العلاج" />
+                    <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
                   </SelectTrigger>
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
@@ -1590,11 +1590,11 @@ export default function PatientDetails() {
             )}
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">عدد الجلسات</label>
+                <label className="text-sm font-medium">{t.patientDetails.sessionCount}</label>
                 <Input 
                   type="number" 
                   className="text-left font-mono" 
-                  placeholder="أدخل عدد الجلسات"
+                  placeholder={t.patientDetails.enterSessionCount}
                   value={editSessionCount}
                   onChange={(e) => setEditSessionCount(e.target.value)}
                   data-testid="input-edit-session-count"
@@ -1604,7 +1604,7 @@ export default function PatientDetails() {
           </div>
           <DialogFooter className="gap-2 mt-4">
             <Button variant="outline" onClick={() => setEditingPaymentSession(null)}>
-              إلغاء
+              {t.common.cancel}
             </Button>
             <Button 
               onClick={() => {
@@ -1619,7 +1619,7 @@ export default function PatientDetails() {
               disabled={updatePaymentSession.isPending}
               data-testid="button-save-session-edit"
             >
-              {updatePaymentSession.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
+              {updatePaymentSession.isPending ? t.patientDetails.saving : t.patientDetails.saveChanges}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1627,15 +1627,15 @@ export default function PatientDetails() {
       <Dialog open={!!editingPayment} onOpenChange={(open) => { if (!open) setEditingPayment(null); }}>
         <DialogContent className="sm:max-w-[425px] font-body" dir={dir}>
           <DialogHeader>
-            <DialogTitle className="font-display text-xl text-primary">تعديل الدفعة</DialogTitle>
+            <DialogTitle className="font-display text-xl text-primary">{t.patientDetails.editPayment}</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">المبلغ (د.ع)</label>
+              <label className="text-sm font-medium">{t.patientDetails.amountCurrency}</label>
               <Input 
                 type="number" 
                 className="text-left font-mono" 
-                placeholder="أدخل المبلغ"
+                placeholder={t.patientDetails.enterAmount}
                 value={editPaymentAmount}
                 onChange={(e) => setEditPaymentAmount(e.target.value)}
                 data-testid="input-edit-payment-amount"
@@ -1643,10 +1643,10 @@ export default function PatientDetails() {
             </div>
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">نوع العلاج</label>
+                <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
                 <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
                   <SelectTrigger data-testid="select-edit-pay-treatment-type">
-                    <SelectValue placeholder="اختر نوع العلاج" />
+                    <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
                   </SelectTrigger>
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
@@ -1660,11 +1660,11 @@ export default function PatientDetails() {
             )}
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">عدد الجلسات</label>
+                <label className="text-sm font-medium">{t.patientDetails.sessionCount}</label>
                 <Input 
                   type="number" 
                   className="text-left font-mono" 
-                  placeholder="أدخل عدد الجلسات"
+                  placeholder={t.patientDetails.enterSessionCount}
                   value={editPaymentSessionCount}
                   onChange={(e) => setEditPaymentSessionCount(e.target.value)}
                   data-testid="input-edit-payment-session-count"
@@ -1672,10 +1672,10 @@ export default function PatientDetails() {
               </div>
             )}
             <div className="space-y-2">
-              <label className="text-sm font-medium">ملاحظات</label>
+              <label className="text-sm font-medium">{t.patientDetails.notes}</label>
               <Input 
                 className="text-right" 
-                placeholder="أدخل الملاحظات"
+                placeholder={t.patientDetails.enterNotes}
                 value={editPaymentNotes}
                 onChange={(e) => setEditPaymentNotes(e.target.value)}
                 data-testid="input-edit-payment-notes"
@@ -1684,7 +1684,7 @@ export default function PatientDetails() {
           </div>
           <DialogFooter className="gap-2 mt-4">
             <Button variant="outline" onClick={() => setEditingPayment(null)}>
-              إلغاء
+              {t.common.cancel}
             </Button>
             <Button 
               onClick={() => {
@@ -1701,7 +1701,7 @@ export default function PatientDetails() {
               disabled={updatePaymentFull.isPending || !editPaymentAmount}
               data-testid="button-save-payment-edit"
             >
-              {updatePaymentFull.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
+              {updatePaymentFull.isPending ? t.patientDetails.saving : t.patientDetails.saveChanges}
             </Button>
           </DialogFooter>
         </DialogContent>

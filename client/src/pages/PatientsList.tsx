@@ -23,6 +23,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import type { Branch } from "@shared/schema";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
+import { useTranslation, useLanguage } from "@/i18n/LanguageContext";
 
 function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
@@ -38,6 +39,8 @@ function getTodayDateString(): string {
 export default function PatientsList() {
   const { data: patients, isLoading } = usePatients();
   const branchSession = useBranchSession();
+  const { t, dir } = useTranslation();
+  const { language } = useLanguage();
   const permissions = usePermissions();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
@@ -252,17 +255,17 @@ export default function PatientsList() {
   };
 
   return (
-    <div className="space-y-4 md:space-y-6 page-transition">
+    <div className="space-y-4 md:space-y-6 page-transition" dir={dir}>
       <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center md:gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">سجل المرضى</h2>
-          <p className="text-sm md:text-base text-muted-foreground mt-1">عرض وإدارة ملفات جميع المرضى</p>
+          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.patients.title}</h2>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">{t.patients.subtitle}</p>
         </div>
         {permissions.canAddPatients && (
           <Link href="/patients/new">
             <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 h-10 md:h-12 px-4 md:px-6 rounded-xl w-full md:w-auto">
               <Plus className="w-5 h-5" />
-              إضافة مريض جديد
+              {t.patients.addNewPatient}
             </Button>
           </Link>
         )}
@@ -274,30 +277,30 @@ export default function PatientsList() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
             <Building2 className="w-4 h-4 text-primary" />
-            <span>{isAdmin ? "اختر الفرع:" : "الفرع:"}</span>
+            <span>{isAdmin ? t.patients.selectBranchLabel : t.patients.branchLabel}</span>
           </div>
           {isAdmin ? (
             <Select value={selectedBranch} onValueChange={handleBranchChange}>
               <SelectTrigger className="w-full sm:w-[200px] h-10" data-testid="select-branch-filter">
-                <SelectValue placeholder="جميع الفروع" />
+                <SelectValue placeholder={t.dashboard.allBranches} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الفروع</SelectItem>
+                <SelectItem value="all">{t.dashboard.allBranches}</SelectItem>
                 {branches?.map(branch => (
                   <SelectItem key={branch.id} value={String(branch.id)}>
-                    {branch.name}
+                    {t.branches[branch.name as keyof typeof t.branches] || branch.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           ) : (
             <Badge variant="outline" className="text-sm px-3 py-1.5 bg-primary/5 border-primary/20">
-              {branchSession?.branchName || getBranchName(userBranchId || 0)}
+              {(() => { const name = branchSession?.branchName || getBranchName(userBranchId || 0); return t.branches[name as keyof typeof t.branches] || name; })()}
             </Badge>
           )}
           {selectedBranch !== "all" && (
             <Badge variant="secondary" className="text-xs">
-              {branchFilteredPatients.length} مريض في هذا الفرع
+              {branchFilteredPatients.length} {t.patients.patientsInBranch}
             </Badge>
           )}
         </div>
@@ -308,12 +311,12 @@ export default function PatientsList() {
             <TabsList className="grid grid-cols-2 w-full sm:w-auto">
               <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
                 <Calendar className="w-4 h-4" />
-                <span>مرضى التاريخ</span>
+                <span>{t.patients.datePatients}</span>
                 <Badge variant="secondary" className="mr-1 text-xs">{dateFilteredPatients.length}</Badge>
               </TabsTrigger>
               <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
                 <Users className="w-4 h-4" />
-                <span>جميع المرضى</span>
+                <span>{t.patients.allPatients}</span>
                 <Badge variant="secondary" className="mr-1 text-xs">{branchFilteredPatients.length}</Badge>
               </TabsTrigger>
             </TabsList>
@@ -328,7 +331,7 @@ export default function PatientsList() {
                 data-testid="input-date-filter"
               />
               {selectedDate === getTodayDateString() && (
-                <Badge variant="outline" className="text-xs text-primary border-primary">اليوم</Badge>
+                <Badge variant="outline" className="text-xs text-primary border-primary">{t.patients.today}</Badge>
               )}
             </div>
           )}
@@ -339,10 +342,10 @@ export default function PatientsList() {
         <div className="p-3 md:p-4 border-b border-border">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
-              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className={`absolute ${dir === "rtl" ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground`} />
               <Input 
-                placeholder="بحث باسم المريض أو الحالة..." 
-                className="pr-10 h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base"
+                placeholder={t.patients.searchByNameOrCondition}
+                className={`${dir === "rtl" ? "pr-10" : "pl-10"} h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base`}
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 data-testid="input-search-patients"
@@ -383,7 +386,7 @@ export default function PatientsList() {
             <div className="md:hidden p-3 space-y-3">
               {paginatedPatients?.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
+                  {viewMode === "date" ? `${t.patients.noVisitsOnDate} ${formatDateIraq(selectedDate)}` : t.patients.noPatientsFound}
                 </div>
               ) : (
                 paginatedPatients?.map((patient, index) => (
@@ -397,11 +400,11 @@ export default function PatientsList() {
                           <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
                         </div>
                         <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
-                          {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                          {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-1 mb-2">
-                        {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
+                        {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                       </p>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                         <span className="text-xs text-slate-400 font-mono">
@@ -410,7 +413,7 @@ export default function PatientsList() {
                         <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                           <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                             <Eye className="w-3.5 h-3.5" />
-                            عرض الملف
+                            {t.patients.viewFile}
                           </Button>
                         </Link>
                       </div>
@@ -426,20 +429,20 @@ export default function PatientsList() {
                 <TableHeader className="bg-slate-50/50">
                   <TableRow>
                     <TableHead className="text-center font-bold text-slate-700 py-4 w-12 first:pr-4">#</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">الاسم</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">العمر</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">الفرع</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">الحالة الطبية</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">نوع المرض</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">تاريخ التسجيل</TableHead>
-                    <TableHead className="text-left font-bold text-slate-700 last:pl-6">الإجراءات</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patients.name}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.age}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patients.branch}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.condition}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patients.diseaseType}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patients.registrationDate}</TableHead>
+                    <TableHead className="text-left font-bold text-slate-700 last:pl-6">{t.patients.actions}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
-                        {viewMode === "date" ? `لا يوجد مرضى لديهم زيارات في ${formatDateIraq(selectedDate)}` : "لا يوجد مرضى"}
+                        {viewMode === "date" ? `${t.patients.noVisitsOnDate} ${formatDateIraq(selectedDate)}` : t.patients.noPatientsFound}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -455,16 +458,16 @@ export default function PatientsList() {
                         <TableCell>
                           <div className="flex items-center gap-1 text-slate-600">
                             <Building2 className="w-3 h-3" />
-                            <span className="text-sm">{getBranchName(patient.branchId)}</span>
+                            <span className="text-sm">{(() => { const name = getBranchName(patient.branchId); return t.branches[name as keyof typeof t.branches] || name; })()}</span>
                           </div>
                         </TableCell>
                         <TableCell>
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal">
-                            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-slate-600">
-                          {patient.isAmputee ? `بتر: ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
+                          {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                         </TableCell>
                         <TableCell className="text-slate-500 font-mono text-sm">
                           <div>{formatDateIraq(patient.createdAt)}</div>
@@ -474,7 +477,7 @@ export default function PatientsList() {
                           <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                             <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-2">
                               <Eye className="w-4 h-4" />
-                              عرض الملف
+                              {t.patients.viewFile}
                             </Button>
                           </Link>
                         </TableCell>
@@ -490,7 +493,7 @@ export default function PatientsList() {
         {/* Pagination Controls */}
         <div className="p-3 md:p-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 md:gap-4">
           <div className="flex items-center gap-2 text-xs md:text-sm text-slate-600">
-            <span>عرض</span>
+            <span>{t.patients.show}</span>
             <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
               <SelectTrigger className="w-16 md:w-20 h-8 md:h-9 text-xs md:text-sm">
                 <SelectValue />
@@ -501,7 +504,7 @@ export default function PatientsList() {
                 <SelectItem value="100">100</SelectItem>
               </SelectContent>
             </Select>
-            <span>من أصل {totalPatients} سجل</span>
+            <span>{t.patients.ofTotalRecords} {totalPatients} {t.patients.record}</span>
           </div>
 
           <div className="flex items-center gap-1 md:gap-2">
@@ -516,7 +519,7 @@ export default function PatientsList() {
               className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
             >
               <ChevronRight className="w-4 h-4" />
-              <span className="hidden sm:inline">السابق</span>
+              <span className="hidden sm:inline">{t.patients.previous}</span>
             </Button>
             <span className="text-xs md:text-sm text-slate-600 px-1 md:px-2">
               {currentPage} / {totalPages || 1}
@@ -531,7 +534,7 @@ export default function PatientsList() {
               disabled={currentPage >= totalPages}
               className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
             >
-              <span className="hidden sm:inline">التالي</span>
+              <span className="hidden sm:inline">{t.patients.next}</span>
               <ChevronLeft className="w-4 h-4" />
             </Button>
           </div>
