@@ -116,6 +116,7 @@ export function BranchGate({ children }: BranchGateProps) {
       const data = await res.json();
       
       if (res.ok) {
+        const effectiveLanguage = language || data.language || "ar";
         const branchSession: BranchSession = {
           branchId: data.branchId,
           branchName: data.branchName,
@@ -125,10 +126,10 @@ export function BranchGate({ children }: BranchGateProps) {
           displayName: data.displayName,
           permissions: data.permissions,
           shift: data.shift,
-          language: data.language || "ar",
+          language: effectiveLanguage,
         };
         localStorage.setItem("branch_session", JSON.stringify(branchSession));
-        setLanguage((data.language || "ar") as "ar" | "en");
+        setLanguage(effectiveLanguage as "ar" | "en");
         setSession(branchSession);
         
         if (data.isAdmin) {
