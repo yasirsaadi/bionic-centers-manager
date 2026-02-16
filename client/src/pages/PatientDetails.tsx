@@ -53,7 +53,9 @@ import {
   Phone,
   MapPin,
   AlertCircle,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Plus,
+  X
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
@@ -71,6 +73,28 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
 ];
+
+const injuryTypeOptions = [
+  "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
+  "سوفان", "انزلاق ديسك", "انزلاق فقرات", "جنف", "جلطة دماغية", "نزف دماغي",
+  "التهاب سحايا", "تصلب لويحي", "باركنسون", "غيلان باريه", "ضمور عضلي", "ضمور عصبي",
+  "شلل دماغ", "شلل اطفال", "تأخر نفسي حركي", "اصابة حبل شوكي", "التهاب حبل شوكي",
+  "شلل العصب الوجهي", "إصابة اربطة", "قطع جزئي في العضلات", "تبديل مفصل", "كسر",
+  "ورم حميد", "ورم خبيث", "استئصال اورام", "حروق", "أخرى"
+];
+
+const injuryAreaOptions = [
+  "الرأس", "الرقبة", "الصدر", "القطن", "العمود الفقري", "الكتف",
+  "منطقة الظهر العلوية", "منطقة الظهر السفلية", "العضد", "المرفق", "الساعد", "المعصم",
+  "الرسغ", "اليد", "الاصابع", "الحوض", "الورك", "الفخذ",
+  "الركبة", "الساق", "الكاحل", "القدم", "اصابع القدم",
+];
+
+interface TreatmentInjuryEntry {
+  type: string;
+  area: string;
+  side: string;
+}
 
 export default function PatientDetails() {
   const { id } = useParams();
@@ -101,6 +125,7 @@ export default function PatientDetails() {
   const [showTreatmentPlanDialog, setShowTreatmentPlanDialog] = useState(false);
   const [editingTreatmentPlan, setEditingTreatmentPlan] = useState<TreatmentPlan | null>(null);
   const [deletingTreatmentPlanId, setDeletingTreatmentPlanId] = useState<number | null>(null);
+  const [tpInjuryEntries, setTpInjuryEntries] = useState<TreatmentInjuryEntry[]>([{ type: "", area: "", side: "" }]);
   const [treatmentPlanForm, setTreatmentPlanForm] = useState({
     diagnosis: "",
     injuryType: "",
@@ -187,6 +212,8 @@ export default function PatientDetails() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
       setShowTreatmentPlanDialog(false);
       resetTreatmentPlanForm();
       toast({ title: "تم الحفظ", description: "تم إنشاء الخطة العلاجية بنجاح" });
@@ -212,6 +239,8 @@ export default function PatientDetails() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
       setShowTreatmentPlanDialog(false);
       setEditingTreatmentPlan(null);
       resetTreatmentPlanForm();
@@ -251,6 +280,27 @@ export default function PatientDetails() {
       adl: "", sessionCount: "", sessionFrequency: "",
       deviceType: "", goalType: "", notes: "",
     });
+    if (patient?.injuries) {
+      try {
+        const parsed = JSON.parse(patient.injuries);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTpInjuryEntries(parsed.map((e: any) => ({ type: e.type || "", area: e.area || "", side: e.side || "" })));
+          return;
+        }
+      } catch {}
+    }
+    if (patient?.injuryType || patient?.injuryArea) {
+      const types = patient.injuryType?.split(/، |, /).filter(Boolean) || [];
+      const areas = patient.injuryArea?.split(/، |, /).filter(Boolean) || [];
+      const maxLen = Math.max(types.length, areas.length, 1);
+      const entries: TreatmentInjuryEntry[] = [];
+      for (let i = 0; i < maxLen; i++) {
+        entries.push({ type: types[i] || "", area: areas[i] || "", side: "" });
+      }
+      setTpInjuryEntries(entries);
+      return;
+    }
+    setTpInjuryEntries([{ type: "", area: "", side: "" }]);
   };
 
   const openEditTreatmentPlan = (plan: TreatmentPlan) => {
@@ -270,13 +320,41 @@ export default function PatientDetails() {
       goalType: plan.goalType || "",
       notes: plan.notes || "",
     });
+    if (plan.injuryType) {
+      try {
+        const parsed = JSON.parse(plan.injuryType);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTpInjuryEntries(parsed.map((e: any) => ({ type: e.type || "", area: e.area || "", side: e.side || "" })));
+          setShowTreatmentPlanDialog(true);
+          return;
+        }
+      } catch {}
+      setTpInjuryEntries([{ type: plan.injuryType, area: plan.injuryLocation || "", side: "" }]);
+    } else if (patient?.injuries) {
+      try {
+        const parsed = JSON.parse(patient.injuries);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTpInjuryEntries(parsed.map((e: any) => ({ type: e.type || "", area: e.area || "", side: e.side || "" })));
+          setShowTreatmentPlanDialog(true);
+          return;
+        }
+      } catch {}
+      setTpInjuryEntries([{ type: "", area: "", side: "" }]);
+    } else {
+      setTpInjuryEntries([{ type: "", area: "", side: "" }]);
+    }
     setShowTreatmentPlanDialog(true);
   };
 
   const handleSaveTreatmentPlan = () => {
+    const filteredInjuries = tpInjuryEntries.filter(e => e.type || e.area);
+    const injuriesJson = JSON.stringify(filteredInjuries.length > 0 ? filteredInjuries : []);
     const data = {
       ...treatmentPlanForm,
+      injuryType: injuriesJson,
+      injuryLocation: filteredInjuries.map(e => e.area).filter(Boolean).join("، "),
       sessionCount: treatmentPlanForm.sessionCount ? Number(treatmentPlanForm.sessionCount) : null,
+      injuries: injuriesJson,
     };
     if (editingTreatmentPlan) {
       updateTreatmentPlanMutation.mutate({ planId: editingTreatmentPlan.id, data });
@@ -1263,25 +1341,74 @@ export default function PatientDetails() {
                 data-testid="input-tp-diagnosis"
               />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="tp-injuryType">نوع الإصابة</Label>
-                <Input
-                  id="tp-injuryType"
-                  value={treatmentPlanForm.injuryType}
-                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, injuryType: e.target.value }))}
-                  data-testid="input-tp-injuryType"
-                />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <Label className="text-base">الإصابات</Label>
+                <Button type="button" variant="outline" size="sm"
+                  onClick={() => setTpInjuryEntries(prev => [...prev, { type: "", area: "", side: "" }])}
+                  data-testid="button-tp-add-injury">
+                  <Plus className="w-4 h-4 ml-1" />
+                  إضافة إصابة
+                </Button>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="tp-injuryLocation">مكان الإصابة</Label>
-                <Input
-                  id="tp-injuryLocation"
-                  value={treatmentPlanForm.injuryLocation}
-                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, injuryLocation: e.target.value }))}
-                  data-testid="input-tp-injuryLocation"
-                />
-              </div>
+              {tpInjuryEntries.map((entry, index) => (
+                <div key={index} className="border rounded-lg p-3 bg-slate-50/50 space-y-3" data-testid={`tp-injury-entry-${index}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-muted-foreground">إصابة {index + 1}</span>
+                    {tpInjuryEntries.length > 1 && (
+                      <Button type="button" size="icon" variant="ghost"
+                        data-testid={`button-tp-remove-injury-${index}`}
+                        onClick={() => setTpInjuryEntries(prev => prev.filter((_, i) => i !== index))}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">نوع الإصابة</Label>
+                      <Select value={entry.type}
+                        onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, type: val } : e))}>
+                        <SelectTrigger className="bg-white" data-testid={`select-tp-injury-type-${index}`}>
+                          <SelectValue placeholder="اختر نوع الإصابة" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {injuryTypeOptions.map((opt) => (
+                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">منطقة الإصابة</Label>
+                      <Select value={entry.area}
+                        onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, area: val } : e))}>
+                        <SelectTrigger className="bg-white" data-testid={`select-tp-injury-area-${index}`}>
+                          <SelectValue placeholder="اختر منطقة الإصابة" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {injuryAreaOptions.map((opt) => (
+                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">جهة الإصابة</Label>
+                      <Select value={entry.side}
+                        onValueChange={(val) => setTpInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, side: val } : e))}>
+                        <SelectTrigger className="bg-white" data-testid={`select-tp-injury-side-${index}`}>
+                          <SelectValue placeholder="اختياري" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="يمين">يمين</SelectItem>
+                          <SelectItem value="يسار">يسار</SelectItem>
+                          <SelectItem value="كلاهما">كلاهما</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="space-y-2">
               <Label htmlFor="tp-mmtAssessment">تقييم قوة العضلات MMT</Label>

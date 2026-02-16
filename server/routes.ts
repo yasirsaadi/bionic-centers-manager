@@ -2617,6 +2617,25 @@ export async function registerRoutes(
 
       const parsed = insertTreatmentPlanSchema.parse(planData);
       const plan = await storage.createTreatmentPlan(parsed);
+
+      if (req.body.injuries) {
+        const injuriesJson = req.body.injuries;
+        try {
+          const injuriesParsed = JSON.parse(injuriesJson);
+          if (Array.isArray(injuriesParsed)) {
+            const injuryTypeStr = injuriesParsed.map((e: any) => e.type).filter(Boolean).join("، ");
+            const injuryAreaStr = injuriesParsed.map((e: any) => e.area).filter(Boolean).join("، ");
+            await storage.updatePatient(patientId, {
+              injuries: injuriesJson,
+              injuryType: injuryTypeStr,
+              injuryArea: injuryAreaStr,
+            });
+          }
+        } catch (e) {
+          console.error("Failed to sync injuries to patient:", e);
+        }
+      }
+
       res.json(plan);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -2635,6 +2654,25 @@ export async function registerRoutes(
 
       const id = parseInt(req.params.id);
       const plan = await storage.updateTreatmentPlan(id, req.body);
+
+      if (req.body.injuries && plan.patientId) {
+        const injuriesJson = req.body.injuries;
+        try {
+          const injuriesParsed = JSON.parse(injuriesJson);
+          if (Array.isArray(injuriesParsed)) {
+            const injuryTypeStr = injuriesParsed.map((e: any) => e.type).filter(Boolean).join("، ");
+            const injuryAreaStr = injuriesParsed.map((e: any) => e.area).filter(Boolean).join("، ");
+            await storage.updatePatient(plan.patientId, {
+              injuries: injuriesJson,
+              injuryType: injuryTypeStr,
+              injuryArea: injuryAreaStr,
+            });
+          }
+        } catch (e) {
+          console.error("Failed to sync injuries to patient:", e);
+        }
+      }
+
       res.json(plan);
     } catch (err) {
       res.status(500).json({ message: "فشل في تحديث الخطة العلاجية" });
