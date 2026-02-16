@@ -428,30 +428,41 @@ export default function PatientDetails() {
                   )}
                 </div>
               )}
-              {patient.isPhysiotherapy && (patient.injuryType || patient.injuryArea) && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-dashed">
-                  {patient.injuryType && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">نوع الإصابة</p>
-                      <div className="flex flex-wrap gap-1">
-                        {patient.injuryType.split(/، |, /).filter((s: string) => s.trim()).map((type: string, i: number) => (
-                          <Badge key={i} variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{type.trim()}</Badge>
-                        ))}
-                      </div>
+              {patient.isPhysiotherapy && (() => {
+                let injuriesList: { type: string; area: string; side: string }[] = [];
+                if (patient.injuries) {
+                  try {
+                    const parsed = JSON.parse(patient.injuries);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      injuriesList = parsed.filter((e: any) => e.type || e.area);
+                    }
+                  } catch {}
+                }
+                if (injuriesList.length === 0 && (patient.injuryType || patient.injuryArea)) {
+                  const types = patient.injuryType?.split(/، |, /).filter(Boolean) || [];
+                  const areas = patient.injuryArea?.split(/، |, /).filter(Boolean) || [];
+                  const maxLen = Math.max(types.length, areas.length, 1);
+                  for (let i = 0; i < maxLen; i++) {
+                    injuriesList.push({ type: types[i] || "", area: areas[i] || "", side: "" });
+                  }
+                }
+                if (injuriesList.length === 0) return null;
+                return (
+                  <div className="pb-4 border-b border-dashed">
+                    <p className="text-muted-foreground mb-2">الإصابات ({injuriesList.length})</p>
+                    <div className="space-y-2">
+                      {injuriesList.map((injury, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2" data-testid={`injury-entry-${i}`}>
+                          <Badge variant="secondary" className="text-xs">{i + 1}</Badge>
+                          {injury.type && <Badge variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{injury.type}</Badge>}
+                          {injury.area && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{injury.area}</Badge>}
+                          {injury.side && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-side-${i}`}>{injury.side}</Badge>}
+                        </div>
+                      ))}
                     </div>
-                  )}
-                  {patient.injuryArea && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">منطقة الإصابة</p>
-                      <div className="flex flex-wrap gap-1">
-                        {patient.injuryArea.split(/، |, /).filter((s: string) => s.trim()).map((area: string, i: number) => (
-                          <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{area.trim()}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                );
+              })()}
               <div>
                 <p className="text-muted-foreground mb-1">التشخيص / الحالة</p>
                 <p className="font-semibold text-base">

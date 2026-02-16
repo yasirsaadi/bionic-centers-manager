@@ -24,10 +24,9 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, ArrowRight, Building2 } from "lucide-react";
+import { Loader2, ArrowRight, Building2, Plus, X } from "lucide-react";
 import { z } from "zod";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 
 const injuryTypeOptions = [
@@ -55,6 +54,12 @@ const formSchema = insertPatientSchema.extend({
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+interface InjuryEntry {
+  type: string;
+  area: string;
+  side: string;
+}
 
 export default function CreatePatient() {
   const [, setLocation] = useLocation();
@@ -114,6 +119,7 @@ export default function CreatePatient() {
       treatmentType: "",
       supportType: "",
       injurySide: "",
+      injuries: "",
       branchId: defaultBranchId,
     },
   });
@@ -134,8 +140,7 @@ export default function CreatePatient() {
   const [bothRightDetail, setBothRightDetail] = useState("");
   const [bothLeftDetail, setBothLeftDetail] = useState("");
   
-  const [selectedInjuryTypes, setSelectedInjuryTypes] = useState<string[]>([]);
-  const [selectedInjuryAreas, setSelectedInjuryAreas] = useState<string[]>([]);
+  const [injuryEntries, setInjuryEntries] = useState<InjuryEntry[]>([{ type: "", area: "", side: "" }]);
 
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
@@ -201,6 +206,15 @@ export default function CreatePatient() {
       form.setValue("isMedicalSupport", true);
     }
   }, [conditionType, form]);
+
+  // Sync injury entries with form fields
+  useEffect(() => {
+    if (conditionType !== "physiotherapy") return;
+    const filtered = injuryEntries.filter(e => e.type || e.area);
+    form.setValue("injuries", filtered.length > 0 ? JSON.stringify(filtered) : "");
+    form.setValue("injuryType", injuryEntries.map(e => e.type).filter(Boolean).join("، "));
+    form.setValue("injuryArea", injuryEntries.map(e => e.area).filter(Boolean).join("، "));
+  }, [injuryEntries, conditionType, form]);
 
   // Ensure branchId is properly set for non-admin users
   useEffect(() => {
@@ -490,74 +504,99 @@ export default function CreatePatient() {
 
               {conditionType === "physiotherapy" && (
                 <div className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="injuryType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <div className="space-y-2">
-                          <FormLabel>نوع الإصابة (يمكن اختيار أكثر من نوع)</FormLabel>
-                          <input type="hidden" {...field} value={field.value || ""} />
-                          <div className="border rounded-lg p-3 bg-slate-50 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                            {injuryTypeOptions.map((option) => (
-                              <label key={option} className="flex items-center gap-2 text-sm cursor-pointer">
-                                <Checkbox
-                                  data-testid={`checkbox-injury-type-${option}`}
-                                  checked={selectedInjuryTypes.includes(option)}
-                                  onCheckedChange={(checked) => {
-                                    const newSelection = checked
-                                      ? [...selectedInjuryTypes, option]
-                                      : selectedInjuryTypes.filter(t => t !== option);
-                                    setSelectedInjuryTypes(newSelection);
-                                    form.setValue("injuryType", newSelection.join("، "), { shouldValidate: true });
-                                  }}
-                                />
-                                <span>{option}</span>
-                              </label>
-                            ))}
-                          </div>
-                          {selectedInjuryTypes.length > 0 && (
-                            <p className="text-xs text-muted-foreground" data-testid="text-injury-type-count">تم اختيار {selectedInjuryTypes.length} نوع</p>
+                  <FormField control={form.control} name="injuryType" render={({ field }) => (<input type="hidden" {...field} value={field.value || ""} />)} />
+                  <FormField control={form.control} name="injuryArea" render={({ field }) => (<input type="hidden" {...field} value={field.value || ""} />)} />
+                  <FormField control={form.control} name="injuries" render={({ field }) => (<input type="hidden" {...field} value={field.value || ""} />)} />
+
+                  <div className="space-y-3">
+                    <FormLabel className="text-base">الإصابات</FormLabel>
+                    {injuryEntries.map((entry, index) => (
+                      <div key={index} className="border rounded-lg p-3 bg-slate-50/50 space-y-3" data-testid={`injury-entry-${index}`}>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-muted-foreground">إصابة {index + 1}</span>
+                          {injuryEntries.length > 1 && (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              data-testid={`button-remove-injury-${index}`}
+                              onClick={() => {
+                                setInjuryEntries(prev => prev.filter((_, i) => i !== index));
+                              }}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
                           )}
                         </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="injuryArea"
-                    render={({ field }) => (
-                      <FormItem>
-                        <div className="space-y-2">
-                          <FormLabel>منطقة الإصابة (يمكن اختيار أكثر من منطقة)</FormLabel>
-                          <input type="hidden" {...field} value={field.value || ""} />
-                          <div className="border rounded-lg p-3 bg-slate-50 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                            {injuryAreaOptions.map((option) => (
-                              <label key={option} className="flex items-center gap-2 text-sm cursor-pointer">
-                                <Checkbox
-                                  data-testid={`checkbox-injury-area-${option}`}
-                                  checked={selectedInjuryAreas.includes(option)}
-                                  onCheckedChange={(checked) => {
-                                    const newSelection = checked
-                                      ? [...selectedInjuryAreas, option]
-                                      : selectedInjuryAreas.filter(a => a !== option);
-                                    setSelectedInjuryAreas(newSelection);
-                                    form.setValue("injuryArea", newSelection.join("، "), { shouldValidate: true });
-                                  }}
-                                />
-                                <span>{option}</span>
-                              </label>
-                            ))}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <FormLabel className="text-xs">نوع الإصابة</FormLabel>
+                            <Select
+                              value={entry.type}
+                              onValueChange={(val) => {
+                                setInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, type: val } : e));
+                              }}
+                            >
+                              <SelectTrigger className="bg-white" data-testid={`select-injury-type-${index}`}>
+                                <SelectValue placeholder="اختر نوع الإصابة" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {injuryTypeOptions.map((opt) => (
+                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
-                          {selectedInjuryAreas.length > 0 && (
-                            <p className="text-xs text-muted-foreground" data-testid="text-injury-area-count">تم اختيار {selectedInjuryAreas.length} منطقة</p>
-                          )}
+                          <div className="space-y-1">
+                            <FormLabel className="text-xs">منطقة الإصابة</FormLabel>
+                            <Select
+                              value={entry.area}
+                              onValueChange={(val) => {
+                                setInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, area: val } : e));
+                              }}
+                            >
+                              <SelectTrigger className="bg-white" data-testid={`select-injury-area-${index}`}>
+                                <SelectValue placeholder="اختر منطقة الإصابة" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {injuryAreaOptions.map((opt) => (
+                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <FormLabel className="text-xs">جهة الإصابة</FormLabel>
+                            <Select
+                              value={entry.side}
+                              onValueChange={(val) => {
+                                setInjuryEntries(prev => prev.map((e, i) => i === index ? { ...e, side: val } : e));
+                              }}
+                            >
+                              <SelectTrigger className="bg-white" data-testid={`select-injury-side-${index}`}>
+                                <SelectValue placeholder="اختياري" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="يمين">يمين</SelectItem>
+                                <SelectItem value="يسار">يسار</SelectItem>
+                                <SelectItem value="كلاهما">كلاهما</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      data-testid="button-add-injury"
+                      onClick={() => setInjuryEntries(prev => [...prev, { type: "", area: "", side: "" }])}
+                      className="w-full"
+                    >
+                      <Plus className="w-4 h-4 ml-2" />
+                      إضافة إصابة أخرى
+                    </Button>
+                  </div>
                 </div>
               )}
 
