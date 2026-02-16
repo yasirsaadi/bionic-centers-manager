@@ -1,7 +1,7 @@
 import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
-import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
+import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -353,7 +353,10 @@ export default function PatientDetails() {
       ...treatmentPlanForm,
       injuryType: injuriesJson,
       injuryLocation: filteredInjuries.map(e => e.area).filter(Boolean).join("، "),
-      sessionCount: treatmentPlanForm.sessionCount ? Number(treatmentPlanForm.sessionCount) : null,
+      sessionCount: treatmentPlanForm.sessionCount ? Number(toEnglishDigits(treatmentPlanForm.sessionCount)) : null,
+      painLevel: toEnglishDigits(treatmentPlanForm.painLevel),
+      spasticity: toEnglishDigits(treatmentPlanForm.spasticity),
+      sessionFrequency: toEnglishDigits(treatmentPlanForm.sessionFrequency),
       injuries: injuriesJson,
     };
     if (editingTreatmentPlan) {
