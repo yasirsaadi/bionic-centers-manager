@@ -73,8 +73,8 @@ export function Sidebar() {
       return false;
     }
     
-    // Hide dashboard for reception users
-    if (item.href === "/" && branchSession?.role === "reception") {
+    // Hide dashboard for reception and therapist users
+    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist")) {
       return false;
     }
     
@@ -142,7 +142,7 @@ export function Sidebar() {
               <span className="font-medium text-slate-700">{branchSession.displayName}</span>
               {branchSession.role && (
                 <span className="text-xs text-muted-foreground">
-                  ({branchSession.role === "admin" ? "مسؤول النظام" : branchSession.role === "branch_manager" ? "مدير فرع" : "موظف استقبال"})
+                  ({branchSession.role === "admin" ? "مسؤول النظام" : branchSession.role === "branch_manager" ? "مدير فرع" : branchSession.role === "therapist" ? "معالج طبيعي" : "موظف استقبال"})
                 </span>
               )}
             </div>

@@ -13,6 +13,7 @@ interface UserPermissions {
   canManageAccounting: boolean;
   canManageSettings: boolean;
   canManageUsers: boolean;
+  canManageTreatmentPlans: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -28,6 +29,7 @@ const defaultAdminPermissions: UserPermissions = {
   canManageAccounting: true,
   canManageSettings: true,
   canManageUsers: true,
+  canManageTreatmentPlans: true,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -43,6 +45,7 @@ const defaultBranchPermissions: UserPermissions = {
   canManageAccounting: false,
   canManageSettings: false,
   canManageUsers: false,
+  canManageTreatmentPlans: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -62,6 +65,7 @@ export function usePermissions(): UserPermissions {
       canManageAccounting: false,
       canManageSettings: false,
       canManageUsers: false,
+      canManageTreatmentPlans: false,
     };
   }
   
@@ -122,4 +126,8 @@ export function useCanManageSettings(): boolean {
 
 export function useCanManageUsers(): boolean {
   return usePermissions().canManageUsers;
+}
+
+export function useCanManageTreatmentPlans(): boolean {
+  return usePermissions().canManageTreatmentPlans;
 }

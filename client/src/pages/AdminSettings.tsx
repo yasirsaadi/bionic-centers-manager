@@ -72,12 +72,13 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "reception";
+type UserRole = "admin" | "branch_manager" | "reception" | "therapist";
 
 const roleLabels: Record<UserRole, string> = {
   admin: "مسؤول النظام",
   branch_manager: "مدير فرع",
-  reception: "موظف استقبال"
+  reception: "موظف استقبال",
+  therapist: "معالج طبيعي"
 };
 
 type PermissionSet = {
@@ -93,6 +94,7 @@ type PermissionSet = {
   canManageAccounting: boolean;
   canManageSettings: boolean;
   canManageUsers: boolean;
+  canManageTreatmentPlans: boolean;
 };
 
 const defaultPermissions: Record<UserRole, PermissionSet> = {
@@ -109,6 +111,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageAccounting: true,
     canManageSettings: true,
     canManageUsers: true,
+    canManageTreatmentPlans: true,
   },
   branch_manager: {
     canViewPatients: true,
@@ -123,6 +126,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageAccounting: false,
     canManageSettings: false,
     canManageUsers: false,
+    canManageTreatmentPlans: false,
   },
   reception: {
     canViewPatients: true,
@@ -137,6 +141,22 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageAccounting: false,
     canManageSettings: false,
     canManageUsers: false,
+    canManageTreatmentPlans: false,
+  },
+  therapist: {
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+    canManageTreatmentPlans: true,
   }
 };
 
@@ -397,6 +417,7 @@ export default function AdminSettings() {
     canManageAccounting: false,
     canManageSettings: false,
     canManageUsers: false,
+    canManageTreatmentPlans: false,
   });
 
   const { data: branches } = useQuery<Branch[]>({
@@ -526,6 +547,7 @@ export default function AdminSettings() {
       canManageAccounting: false,
       canManageSettings: false,
       canManageUsers: false,
+      canManageTreatmentPlans: false,
     });
   };
 
@@ -559,6 +581,7 @@ export default function AdminSettings() {
       canManageAccounting: user.canManageAccounting ?? false,
       canManageSettings: user.canManageSettings ?? false,
       canManageUsers: user.canManageUsers ?? false,
+      canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
     });
     setShowUserDialog(true);
   };
@@ -1559,6 +1582,7 @@ export default function AdminSettings() {
                     <SelectItem value="admin">مسؤول النظام</SelectItem>
                     <SelectItem value="branch_manager">مدير فرع</SelectItem>
                     <SelectItem value="reception">موظف استقبال</SelectItem>
+                    <SelectItem value="therapist">معالج طبيعي</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1717,6 +1741,15 @@ export default function AdminSettings() {
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageUsers: checked }))}
                       />
                       <Label htmlFor="canManageUsers" className="text-sm">إدارة المستخدمين</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageTreatmentPlans"
+                        checked={userFormData.canManageTreatmentPlans}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageTreatmentPlans: checked }))}
+                        data-testid="switch-canManageTreatmentPlans"
+                      />
+                      <Label htmlFor="canManageTreatmentPlans" className="text-sm">إدارة الخطط العلاجية</Label>
                     </div>
                   </div>
                 </div>

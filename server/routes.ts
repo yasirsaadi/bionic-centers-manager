@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import type { Patient, Payment } from "@shared/schema";
-import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema } from "@shared/schema";
+import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -107,6 +107,7 @@ export async function registerRoutes(
       canManageAccounting: true,
       canManageSettings: true,
       canManageUsers: true,
+      canManageTreatmentPlans: true,
     };
     
     // Default branch staff permissions
@@ -123,6 +124,7 @@ export async function registerRoutes(
       canManageAccounting: false,
       canManageSettings: false,
       canManageUsers: false,
+      canManageTreatmentPlans: false,
     };
     
     // Return stored permissions if available, else default based on admin status
@@ -214,7 +216,7 @@ export async function registerRoutes(
             branchName = branch?.name || "فرع غير معروف";
           }
           
-          const userShift = (systemUser.role === "reception") ? (shift || "auto") : "auto";
+          const userShift = (systemUser.role === "reception" || systemUser.role === "therapist") ? (shift || "auto") : "auto";
           
           // Store session with user permissions
           (req.session as any).branchSession = {
@@ -237,6 +239,7 @@ export async function registerRoutes(
               canManageAccounting: systemUser.canManageAccounting,
               canManageSettings: systemUser.canManageSettings,
               canManageUsers: systemUser.canManageUsers,
+              canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
             }
           };
           
@@ -263,6 +266,7 @@ export async function registerRoutes(
               canManageAccounting: systemUser.canManageAccounting,
               canManageSettings: systemUser.canManageSettings,
               canManageUsers: systemUser.canManageUsers,
+              canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
             }
           });
         }
@@ -334,6 +338,7 @@ export async function registerRoutes(
               canManageAccounting: true,
               canManageSettings: true,
               canManageUsers: true,
+              canManageTreatmentPlans: true,
             }
           };
           return res.json({ 
@@ -355,6 +360,7 @@ export async function registerRoutes(
               canManageAccounting: true,
               canManageSettings: true,
               canManageUsers: true,
+              canManageTreatmentPlans: true,
             }
           });
         }
@@ -420,6 +426,7 @@ export async function registerRoutes(
             canManageAccounting: false,
             canManageSettings: false,
             canManageUsers: false,
+            canManageTreatmentPlans: false,
           }
         };
         return res.json({ 
@@ -441,6 +448,7 @@ export async function registerRoutes(
             canManageAccounting: false,
             canManageSettings: false,
             canManageUsers: false,
+            canManageTreatmentPlans: false,
           }
         });
       }
@@ -2571,6 +2579,81 @@ export async function registerRoutes(
       endDate as string
     );
     res.json(stats);
+  });
+
+  // ======================= TREATMENT PLAN ROUTES =======================
+
+  app.get("/api/patients/:patientId/treatment-plans", isAuthenticated, async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId);
+      const plans = await storage.getTreatmentPlans(patientId);
+      res.json(plans);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب الخطط العلاجية" });
+    }
+  });
+
+  app.post("/api/patients/:patientId/treatment-plans", isAuthenticated, async (req, res) => {
+    try {
+      const permissions = getPermissions(req);
+      if (!permissions.canManageTreatmentPlans) {
+        return res.status(403).json({ message: "غير مصرح لك بإدارة الخطط العلاجية" });
+      }
+
+      const patientId = parseInt(req.params.patientId);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: "المريض غير موجود" });
+      }
+
+      const branchSession = (req.session as any).branchSession;
+      const planData = {
+        ...req.body,
+        patientId,
+        branchId: patient.branchId,
+        therapistId: branchSession?.userId || null,
+        therapistName: branchSession?.displayName || null,
+      };
+
+      const parsed = insertTreatmentPlanSchema.parse(planData);
+      const plan = await storage.createTreatmentPlan(parsed);
+      res.json(plan);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      res.status(500).json({ message: "فشل في إنشاء الخطة العلاجية" });
+    }
+  });
+
+  app.put("/api/treatment-plans/:id", isAuthenticated, async (req, res) => {
+    try {
+      const permissions = getPermissions(req);
+      if (!permissions.canManageTreatmentPlans) {
+        return res.status(403).json({ message: "غير مصرح لك بإدارة الخطط العلاجية" });
+      }
+
+      const id = parseInt(req.params.id);
+      const plan = await storage.updateTreatmentPlan(id, req.body);
+      res.json(plan);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في تحديث الخطة العلاجية" });
+    }
+  });
+
+  app.delete("/api/treatment-plans/:id", isAuthenticated, async (req, res) => {
+    try {
+      const permissions = getPermissions(req);
+      if (!permissions.canManageTreatmentPlans) {
+        return res.status(403).json({ message: "غير مصرح لك بإدارة الخطط العلاجية" });
+      }
+
+      const id = parseInt(req.params.id);
+      await storage.deleteTreatmentPlan(id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "فشل في حذف الخطة العلاجية" });
+    }
   });
 
   // Seed initial branches

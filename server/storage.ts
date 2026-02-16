@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
-  systemSettings, branchPasswords, branchSettings, systemUsers,
+  systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
@@ -13,7 +13,8 @@ import {
   type Invoice, type InsertInvoice,
   type InvoiceItem, type InsertInvoiceItem,
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting,
-  type SystemUser, type InsertSystemUser
+  type SystemUser, type InsertSystemUser,
+  type TreatmentPlan, type InsertTreatmentPlan
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
@@ -132,6 +133,12 @@ export interface IStorage {
   createSystemUser(user: InsertSystemUser): Promise<SystemUser>;
   updateSystemUser(id: number, user: Partial<InsertSystemUser>): Promise<SystemUser | undefined>;
   deleteSystemUser(id: number): Promise<void>;
+
+  // Treatment Plans
+  getTreatmentPlans(patientId: number): Promise<TreatmentPlan[]>;
+  createTreatmentPlan(plan: InsertTreatmentPlan): Promise<TreatmentPlan>;
+  updateTreatmentPlan(id: number, plan: Partial<InsertTreatmentPlan>): Promise<TreatmentPlan>;
+  deleteTreatmentPlan(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -777,6 +784,29 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSystemUser(id: number): Promise<void> {
     await db.delete(systemUsers).where(eq(systemUsers.id, id));
+  }
+
+  async getTreatmentPlans(patientId: number): Promise<TreatmentPlan[]> {
+    return await db.select().from(treatmentPlans)
+      .where(eq(treatmentPlans.patientId, patientId))
+      .orderBy(desc(treatmentPlans.createdAt));
+  }
+
+  async createTreatmentPlan(plan: InsertTreatmentPlan): Promise<TreatmentPlan> {
+    const [created] = await db.insert(treatmentPlans).values(plan).returning();
+    return created;
+  }
+
+  async updateTreatmentPlan(id: number, plan: Partial<InsertTreatmentPlan>): Promise<TreatmentPlan> {
+    const [updated] = await db.update(treatmentPlans)
+      .set({ ...plan, updatedAt: new Date() })
+      .where(eq(treatmentPlans.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTreatmentPlan(id: number): Promise<void> {
+    await db.delete(treatmentPlans).where(eq(treatmentPlans.id, id));
   }
 }
 

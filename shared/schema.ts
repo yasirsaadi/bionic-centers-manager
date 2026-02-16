@@ -226,7 +226,7 @@ export const systemUsers = pgTable("system_users", {
   passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
   branchId: integer("branch_id").references(() => branches.id),
-  role: text("role").notNull().default("reception"), // admin, branch_manager, reception
+  role: text("role").notNull().default("reception"), // admin, branch_manager, reception, therapist
   isActive: boolean("is_active").default(true),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
@@ -244,6 +244,7 @@ export const systemUsers = pgTable("system_users", {
   // System Permissions
   canManageSettings: boolean("can_manage_settings").default(false),
   canManageUsers: boolean("can_manage_users").default(false),
+  canManageTreatmentPlans: boolean("can_manage_treatment_plans").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -293,3 +294,30 @@ export type BranchSetting = typeof branchSettings.$inferSelect;
 export type InsertBranchSetting = z.infer<typeof insertBranchSettingsSchema>;
 export type SystemUser = typeof systemUsers.$inferSelect;
 export type InsertSystemUser = z.infer<typeof insertSystemUserSchema>;
+
+export const treatmentPlans = pgTable("treatment_plans", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  therapistId: integer("therapist_id").references(() => systemUsers.id),
+  therapistName: text("therapist_name"),
+  diagnosis: text("diagnosis"),
+  injuryType: text("injury_type"),
+  injuryLocation: text("injury_location"),
+  mmtAssessment: text("mmt_assessment"),
+  spasticity: text("spasticity"),
+  sensation: text("sensation"),
+  painLevel: text("pain_level"),
+  adl: text("adl"),
+  sessionCount: integer("session_count"),
+  sessionFrequency: text("session_frequency"),
+  deviceType: text("device_type"),
+  goalType: text("goal_type"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTreatmentPlanSchema = createInsertSchema(treatmentPlans).omit({ id: true, createdAt: true, updatedAt: true });
+export type TreatmentPlan = typeof treatmentPlans.$inferSelect;
+export type InsertTreatmentPlan = z.infer<typeof insertTreatmentPlanSchema>;

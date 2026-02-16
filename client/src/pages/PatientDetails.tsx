@@ -62,7 +62,9 @@ import { NewServiceModal } from "@/components/NewServiceModal";
 import { Input } from "@/components/ui/input";
 import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
-import type { Branch } from "@shared/schema";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import type { Branch, TreatmentPlan } from "@shared/schema";
 
 const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", label: "روبوت" },
@@ -96,6 +98,24 @@ export default function PatientDetails() {
   const [editPaymentTreatmentType, setEditPaymentTreatmentType] = useState<string>("");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
+  const [showTreatmentPlanDialog, setShowTreatmentPlanDialog] = useState(false);
+  const [editingTreatmentPlan, setEditingTreatmentPlan] = useState<TreatmentPlan | null>(null);
+  const [deletingTreatmentPlanId, setDeletingTreatmentPlanId] = useState<number | null>(null);
+  const [treatmentPlanForm, setTreatmentPlanForm] = useState({
+    diagnosis: "",
+    injuryType: "",
+    injuryLocation: "",
+    mmtAssessment: "",
+    spasticity: "",
+    sensation: "",
+    painLevel: "",
+    adl: "",
+    sessionCount: "",
+    sessionFrequency: "",
+    deviceType: "",
+    goalType: "",
+    notes: "",
+  });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
@@ -141,6 +161,130 @@ export default function PatientDetails() {
     },
   });
   
+  const { data: treatmentPlans = [], isLoading: isLoadingTreatmentPlans } = useQuery<TreatmentPlan[]>({
+    queryKey: ["/api/patients", Number(id), "treatment-plans"],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${id}/treatment-plans`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch treatment plans");
+      return res.json();
+    },
+    enabled: !!patient?.isPhysiotherapy,
+  });
+
+  const createTreatmentPlanMutation = useMutation({
+    mutationFn: async (data: Record<string, any>) => {
+      const res = await fetch(`/api/patients/${id}/treatment-plans`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في إنشاء الخطة العلاجية");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
+      setShowTreatmentPlanDialog(false);
+      resetTreatmentPlanForm();
+      toast({ title: "تم الحفظ", description: "تم إنشاء الخطة العلاجية بنجاح" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateTreatmentPlanMutation = useMutation({
+    mutationFn: async ({ planId, data }: { planId: number; data: Record<string, any> }) => {
+      const res = await fetch(`/api/treatment-plans/${planId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في تحديث الخطة العلاجية");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
+      setShowTreatmentPlanDialog(false);
+      setEditingTreatmentPlan(null);
+      resetTreatmentPlanForm();
+      toast({ title: "تم التحديث", description: "تم تحديث الخطة العلاجية بنجاح" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteTreatmentPlanMutation = useMutation({
+    mutationFn: async (planId: number) => {
+      const res = await fetch(`/api/treatment-plans/${planId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في حذف الخطة العلاجية");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
+      setDeletingTreatmentPlanId(null);
+      toast({ title: "تم الحذف", description: "تم حذف الخطة العلاجية بنجاح" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const resetTreatmentPlanForm = () => {
+    setTreatmentPlanForm({
+      diagnosis: "", injuryType: "", injuryLocation: "",
+      mmtAssessment: "", spasticity: "", sensation: "", painLevel: "",
+      adl: "", sessionCount: "", sessionFrequency: "",
+      deviceType: "", goalType: "", notes: "",
+    });
+  };
+
+  const openEditTreatmentPlan = (plan: TreatmentPlan) => {
+    setEditingTreatmentPlan(plan);
+    setTreatmentPlanForm({
+      diagnosis: plan.diagnosis || "",
+      injuryType: plan.injuryType || "",
+      injuryLocation: plan.injuryLocation || "",
+      mmtAssessment: plan.mmtAssessment || "",
+      spasticity: plan.spasticity || "",
+      sensation: plan.sensation || "",
+      painLevel: plan.painLevel || "",
+      adl: plan.adl || "",
+      sessionCount: plan.sessionCount ? String(plan.sessionCount) : "",
+      sessionFrequency: plan.sessionFrequency || "",
+      deviceType: plan.deviceType || "",
+      goalType: plan.goalType || "",
+      notes: plan.notes || "",
+    });
+    setShowTreatmentPlanDialog(true);
+  };
+
+  const handleSaveTreatmentPlan = () => {
+    const data = {
+      ...treatmentPlanForm,
+      sessionCount: treatmentPlanForm.sessionCount ? Number(treatmentPlanForm.sessionCount) : null,
+    };
+    if (editingTreatmentPlan) {
+      updateTreatmentPlanMutation.mutate({ planId: editingTreatmentPlan.id, data });
+    } else {
+      createTreatmentPlanMutation.mutate(data);
+    }
+  };
+
   const updatePaymentSession = useMutation({
     mutationFn: async (data: {paymentId: number, sessionCount: number | null, paymentTreatmentType: string | null}) => {
       const res = await fetch(`/api/payments/${data.paymentId}/session-info`, {
@@ -641,6 +785,11 @@ export default function PatientDetails() {
               <TabsTrigger value="documents" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 المستندات
               </TabsTrigger>
+              {patient.isPhysiotherapy && (
+                <TabsTrigger value="treatment-plans" className="flex-1 max-w-[130px] data-[state=active]:bg-green-600 data-[state=active]:text-white rounded-lg transition-all" data-testid="tab-treatment-plans">
+                  الخطط العلاجية
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="visits" className="space-y-4">
@@ -925,9 +1074,358 @@ export default function PatientDetails() {
                 )}
               </div>
             </TabsContent>
+
+            {patient.isPhysiotherapy && (
+              <TabsContent value="treatment-plans" className="space-y-4">
+                {permissions.canManageTreatmentPlans && (
+                  <div className="flex justify-end mb-4">
+                    <Button
+                      onClick={() => {
+                        resetTreatmentPlanForm();
+                        setEditingTreatmentPlan(null);
+                        setShowTreatmentPlanDialog(true);
+                      }}
+                      data-testid="button-add-treatment-plan"
+                    >
+                      <ClipboardList className="w-4 h-4 ml-2" />
+                      إضافة خطة علاجية
+                    </Button>
+                  </div>
+                )}
+
+                {isLoadingTreatmentPlans ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-32 w-full" />
+                  </div>
+                ) : treatmentPlans.length === 0 ? (
+                  <Card className="p-8 text-center text-muted-foreground">
+                    لا توجد خطط علاجية مسجلة
+                  </Card>
+                ) : (
+                  <div className="space-y-4">
+                    {treatmentPlans.map((plan) => (
+                      <Card key={plan.id} className="p-4 space-y-3" data-testid={`card-treatment-plan-${plan.id}`}>
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {plan.therapistName && (
+                              <Badge variant="secondary" data-testid={`text-therapist-${plan.id}`}>
+                                {plan.therapistName}
+                              </Badge>
+                            )}
+                            {plan.createdAt && (
+                              <span className="text-xs text-muted-foreground" data-testid={`text-plan-date-${plan.id}`}>
+                                {formatDateIraq(plan.createdAt)}
+                              </span>
+                            )}
+                            {plan.goalType && (
+                              <Badge variant={plan.goalType === "short_term" ? "outline" : "default"} data-testid={`badge-goal-type-${plan.id}`}>
+                                {plan.goalType === "short_term" ? "قصير المدى" : "طويل المدى"}
+                              </Badge>
+                            )}
+                          </div>
+                          {permissions.canManageTreatmentPlans && (
+                            <div className="flex items-center gap-1" style={{ visibility: "visible" }}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openEditTreatmentPlan(plan)}
+                                data-testid={`button-edit-treatment-plan-${plan.id}`}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setDeletingTreatmentPlanId(plan.id)}
+                                data-testid={`button-delete-treatment-plan-${plan.id}`}
+                              >
+                                <Trash2 className="w-4 h-4 text-destructive" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          {plan.diagnosis && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">تشخيص الحالة:</span>
+                              <p data-testid={`text-diagnosis-${plan.id}`}>{plan.diagnosis}</p>
+                            </div>
+                          )}
+                          {plan.injuryType && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">نوع الإصابة:</span>
+                              <p data-testid={`text-injury-type-${plan.id}`}>{plan.injuryType}</p>
+                            </div>
+                          )}
+                          {plan.injuryLocation && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">مكان الإصابة:</span>
+                              <p data-testid={`text-injury-location-${plan.id}`}>{plan.injuryLocation}</p>
+                            </div>
+                          )}
+                          {plan.mmtAssessment && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">تقييم قوة العضلات MMT:</span>
+                              <p data-testid={`text-mmt-${plan.id}`}>{plan.mmtAssessment}</p>
+                            </div>
+                          )}
+                          {plan.spasticity && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">التشنج Spasticity:</span>
+                              <p data-testid={`text-spasticity-${plan.id}`}>{plan.spasticity}</p>
+                            </div>
+                          )}
+                          {plan.sensation && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">الإحساس Sensation:</span>
+                              <p data-testid={`text-sensation-${plan.id}`}>{plan.sensation}</p>
+                            </div>
+                          )}
+                          {plan.painLevel && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">مستوى الألم Pain:</span>
+                              <p data-testid={`text-pain-level-${plan.id}`}>{plan.painLevel}</p>
+                            </div>
+                          )}
+                          {plan.adl && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">أنشطة الحياة اليومية ADL:</span>
+                              <p data-testid={`text-adl-${plan.id}`}>{plan.adl}</p>
+                            </div>
+                          )}
+                          {plan.sessionCount && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">عدد الجلسات:</span>
+                              <p data-testid={`text-session-count-${plan.id}`}>{plan.sessionCount}</p>
+                            </div>
+                          )}
+                          {plan.sessionFrequency && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">تواتر الجلسات:</span>
+                              <p data-testid={`text-session-frequency-${plan.id}`}>{plan.sessionFrequency}</p>
+                            </div>
+                          )}
+                          {plan.deviceType && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">نوع الجهاز المستخدم:</span>
+                              <p data-testid={`text-device-type-${plan.id}`}>{plan.deviceType}</p>
+                            </div>
+                          )}
+                          {plan.notes && (
+                            <div className="md:col-span-2">
+                              <span className="font-medium text-muted-foreground">ملاحظات:</span>
+                              <p data-testid={`text-notes-${plan.id}`}>{plan.notes}</p>
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>
+
+      {/* Treatment Plan Dialog */}
+      <Dialog open={showTreatmentPlanDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowTreatmentPlanDialog(false);
+          setEditingTreatmentPlan(null);
+          resetTreatmentPlanForm();
+        }
+      }}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto font-body" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl text-primary">
+              {editingTreatmentPlan ? "تعديل الخطة العلاجية" : "إضافة خطة علاجية جديدة"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingTreatmentPlan ? "قم بتعديل بيانات الخطة العلاجية" : "أدخل بيانات الخطة العلاجية للمريض"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="tp-diagnosis">تشخيص الحالة</Label>
+              <Textarea
+                id="tp-diagnosis"
+                value={treatmentPlanForm.diagnosis}
+                onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, diagnosis: e.target.value }))}
+                data-testid="input-tp-diagnosis"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="tp-injuryType">نوع الإصابة</Label>
+                <Input
+                  id="tp-injuryType"
+                  value={treatmentPlanForm.injuryType}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, injuryType: e.target.value }))}
+                  data-testid="input-tp-injuryType"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tp-injuryLocation">مكان الإصابة</Label>
+                <Input
+                  id="tp-injuryLocation"
+                  value={treatmentPlanForm.injuryLocation}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, injuryLocation: e.target.value }))}
+                  data-testid="input-tp-injuryLocation"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tp-mmtAssessment">تقييم قوة العضلات MMT</Label>
+              <Textarea
+                id="tp-mmtAssessment"
+                value={treatmentPlanForm.mmtAssessment}
+                onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, mmtAssessment: e.target.value }))}
+                data-testid="input-tp-mmtAssessment"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="tp-spasticity">التشنج Spasticity</Label>
+                <Input
+                  id="tp-spasticity"
+                  value={treatmentPlanForm.spasticity}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, spasticity: e.target.value }))}
+                  data-testid="input-tp-spasticity"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tp-sensation">الإحساس Sensation</Label>
+                <Input
+                  id="tp-sensation"
+                  value={treatmentPlanForm.sensation}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, sensation: e.target.value }))}
+                  data-testid="input-tp-sensation"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tp-painLevel">مستوى الألم Pain</Label>
+                <Input
+                  id="tp-painLevel"
+                  value={treatmentPlanForm.painLevel}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, painLevel: e.target.value }))}
+                  data-testid="input-tp-painLevel"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tp-adl">أنشطة الحياة اليومية ADL</Label>
+              <Textarea
+                id="tp-adl"
+                value={treatmentPlanForm.adl}
+                onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, adl: e.target.value }))}
+                data-testid="input-tp-adl"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="tp-sessionCount">عدد الجلسات</Label>
+                <Input
+                  id="tp-sessionCount"
+                  type="number"
+                  className="text-left font-mono"
+                  value={treatmentPlanForm.sessionCount}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, sessionCount: e.target.value }))}
+                  data-testid="input-tp-sessionCount"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tp-sessionFrequency">تواتر الجلسات</Label>
+                <Input
+                  id="tp-sessionFrequency"
+                  placeholder="مثال: مرتان يومياً، مرة أسبوعياً"
+                  value={treatmentPlanForm.sessionFrequency}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, sessionFrequency: e.target.value }))}
+                  data-testid="input-tp-sessionFrequency"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="tp-deviceType">نوع الجهاز المستخدم</Label>
+                <Input
+                  id="tp-deviceType"
+                  value={treatmentPlanForm.deviceType}
+                  onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, deviceType: e.target.value }))}
+                  data-testid="input-tp-deviceType"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tp-goalType">نوع الهدف</Label>
+                <Select value={treatmentPlanForm.goalType} onValueChange={(value) => setTreatmentPlanForm(prev => ({ ...prev, goalType: value }))}>
+                  <SelectTrigger data-testid="select-tp-goalType">
+                    <SelectValue placeholder="اختر نوع الهدف" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="short_term">قصير المدى</SelectItem>
+                    <SelectItem value="long_term">طويل المدى</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tp-notes">ملاحظات</Label>
+              <Textarea
+                id="tp-notes"
+                value={treatmentPlanForm.notes}
+                onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, notes: e.target.value }))}
+                data-testid="input-tp-notes"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => {
+              setShowTreatmentPlanDialog(false);
+              setEditingTreatmentPlan(null);
+              resetTreatmentPlanForm();
+            }} data-testid="button-cancel-treatment-plan">
+              إلغاء
+            </Button>
+            <Button
+              onClick={handleSaveTreatmentPlan}
+              disabled={createTreatmentPlanMutation.isPending || updateTreatmentPlanMutation.isPending}
+              data-testid="button-save-treatment-plan"
+            >
+              {(createTreatmentPlanMutation.isPending || updateTreatmentPlanMutation.isPending)
+                ? "جاري الحفظ..."
+                : (editingTreatmentPlan ? "تحديث" : "حفظ")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Treatment Plan Confirmation */}
+      <AlertDialog open={!!deletingTreatmentPlanId} onOpenChange={(open) => { if (!open) setDeletingTreatmentPlanId(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="w-5 h-5" />
+              تأكيد حذف الخطة العلاجية
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد من حذف هذه الخطة العلاجية؟ هذا الإجراء لا يمكن التراجع عنه.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel data-testid="button-cancel-delete-treatment-plan">لا</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deletingTreatmentPlanId && deleteTreatmentPlanMutation.mutate(deletingTreatmentPlanId)}
+              disabled={deleteTreatmentPlanMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
+              data-testid="button-confirm-delete-treatment-plan"
+            >
+              {deleteTreatmentPlanMutation.isPending ? "جاري الحذف..." : "نعم"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!editingPaymentSession} onOpenChange={(open) => { if (!open) setEditingPaymentSession(null); }}>
         <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
