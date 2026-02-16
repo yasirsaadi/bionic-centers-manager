@@ -24,10 +24,26 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, ArrowRight, Building2 } from "lucide-react";
 import { z } from "zod";
 import { useEffect, useState, useCallback } from "react";
 import { useBranchSession } from "@/components/BranchGate";
+
+const injuryTypeOptions = [
+  "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
+  "سوفان", "انزلاق ديسك", "انزلاق فقرات", "جنف", "جلطة دماغية", "نزف دماغي",
+  "التهاب سحايا", "تصلب لويحي", "باركنسون", "غيلان باريه", "ضمور عضلي", "ضمور عصبي",
+  "شلل دماغ", "شلل اطفال", "تأخر نفسي حركي", "اصابة حبل شوكي", "التهاب حبل شوكي",
+  "شلل العصب الوجهي", "إصابة اربطة", "قطع جزئي في العضلات", "تبديل مفصل", "كسر",
+];
+
+const injuryAreaOptions = [
+  "الرأس", "الرقبة", "الصدر", "القطن", "العمود الفقري", "الكتف",
+  "منطقة الظهر العلوية", "منطقة الظهر السفلية", "العضد", "المرفق", "الساعد", "المعصم",
+  "الرسغ", "اليد", "الاصابع", "الحوض", "الورك", "الفخذ",
+  "الركبة", "الساق", "الكاحل", "القدم", "اصابع القدم",
+];
 
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
@@ -118,6 +134,9 @@ export default function CreatePatient() {
   const [bothRightDetail, setBothRightDetail] = useState("");
   const [bothLeftDetail, setBothLeftDetail] = useState("");
   
+  const [selectedInjuryTypes, setSelectedInjuryTypes] = useState<string[]>([]);
+  const [selectedInjuryAreas, setSelectedInjuryAreas] = useState<string[]>([]);
+
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
   const [siliconeSide, setSiliconeSide] = useState<"right" | "left" | "both">("right");
@@ -470,50 +489,37 @@ export default function CreatePatient() {
               />
 
               {conditionType === "physiotherapy" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <FormField
                     control={form.control}
                     name="injuryType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>نوع الإصابة</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ""}>
-                          <FormControl>
-                            <SelectTrigger className="bg-slate-50" data-testid="select-injury-type">
-                              <SelectValue placeholder="اختر نوع الإصابة" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="التهاب اوتار">التهاب اوتار</SelectItem>
-                            <SelectItem value="وثي">وثي</SelectItem>
-                            <SelectItem value="قطع اوتار">قطع اوتار</SelectItem>
-                            <SelectItem value="تشنج عضلي">تشنج عضلي</SelectItem>
-                            <SelectItem value="إصابة عصب محيطي">إصابة عصب محيطي</SelectItem>
-                            <SelectItem value="التهاب اعصاب سكري">التهاب اعصاب سكري</SelectItem>
-                            <SelectItem value="سوفان">سوفان</SelectItem>
-                            <SelectItem value="انزلاق ديسك">انزلاق ديسك</SelectItem>
-                            <SelectItem value="انزلاق فقرات">انزلاق فقرات</SelectItem>
-                            <SelectItem value="جنف">جنف</SelectItem>
-                            <SelectItem value="جلطة دماغية">جلطة دماغية</SelectItem>
-                            <SelectItem value="نزف دماغي">نزف دماغي</SelectItem>
-                            <SelectItem value="التهاب سحايا">التهاب سحايا</SelectItem>
-                            <SelectItem value="تصلب لويحي">تصلب لويحي</SelectItem>
-                            <SelectItem value="باركنسون">باركنسون</SelectItem>
-                            <SelectItem value="غيلان باريه">غيلان باريه</SelectItem>
-                            <SelectItem value="ضمور عضلي">ضمور عضلي</SelectItem>
-                            <SelectItem value="ضمور عصبي">ضمور عصبي</SelectItem>
-                            <SelectItem value="شلل دماغ">شلل دماغ</SelectItem>
-                            <SelectItem value="شلل اطفال">شلل اطفال</SelectItem>
-                            <SelectItem value="تأخر نفسي حركي">تأخر نفسي حركي</SelectItem>
-                            <SelectItem value="اصابة حبل شوكي">اصابة حبل شوكي</SelectItem>
-                            <SelectItem value="التهاب حبل شوكي">التهاب حبل شوكي</SelectItem>
-                            <SelectItem value="شلل العصب الوجهي">شلل العصب الوجهي</SelectItem>
-                            <SelectItem value="إصابة اربطة">إصابة اربطة</SelectItem>
-                            <SelectItem value="قطع جزئي في العضلات">قطع جزئي في العضلات</SelectItem>
-                            <SelectItem value="تبديل مفصل">تبديل مفصل</SelectItem>
-                            <SelectItem value="كسر">كسر</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <div className="space-y-2">
+                          <FormLabel>نوع الإصابة (يمكن اختيار أكثر من نوع)</FormLabel>
+                          <input type="hidden" {...field} value={field.value || ""} />
+                          <div className="border rounded-lg p-3 bg-slate-50 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {injuryTypeOptions.map((option) => (
+                              <label key={option} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox
+                                  data-testid={`checkbox-injury-type-${option}`}
+                                  checked={selectedInjuryTypes.includes(option)}
+                                  onCheckedChange={(checked) => {
+                                    const newSelection = checked
+                                      ? [...selectedInjuryTypes, option]
+                                      : selectedInjuryTypes.filter(t => t !== option);
+                                    setSelectedInjuryTypes(newSelection);
+                                    form.setValue("injuryType", newSelection.join("، "), { shouldValidate: true });
+                                  }}
+                                />
+                                <span>{option}</span>
+                              </label>
+                            ))}
+                          </div>
+                          {selectedInjuryTypes.length > 0 && (
+                            <p className="text-xs text-muted-foreground" data-testid="text-injury-type-count">تم اختيار {selectedInjuryTypes.length} نوع</p>
+                          )}
+                        </div>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -523,39 +529,31 @@ export default function CreatePatient() {
                     name="injuryArea"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>منطقة الإصابة</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ""}>
-                          <FormControl>
-                            <SelectTrigger className="bg-slate-50" data-testid="select-injury-area">
-                              <SelectValue placeholder="اختر منطقة الإصابة" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="الرأس">الرأس</SelectItem>
-                            <SelectItem value="الرقبة">الرقبة</SelectItem>
-                            <SelectItem value="الصدر">الصدر</SelectItem>
-                            <SelectItem value="القطن">القطن</SelectItem>
-                            <SelectItem value="العمود الفقري">العمود الفقري</SelectItem>
-                            <SelectItem value="الكتف">الكتف</SelectItem>
-                            <SelectItem value="منطقة الظهر العلوية">منطقة الظهر العلوية</SelectItem>
-                            <SelectItem value="منطقة الظهر السفلية">منطقة الظهر السفلية</SelectItem>
-                            <SelectItem value="العضد">العضد</SelectItem>
-                            <SelectItem value="المرفق">المرفق</SelectItem>
-                            <SelectItem value="الساعد">الساعد</SelectItem>
-                            <SelectItem value="المعصم">المعصم</SelectItem>
-                            <SelectItem value="الرسغ">الرسغ</SelectItem>
-                            <SelectItem value="اليد">اليد</SelectItem>
-                            <SelectItem value="الاصابع">الاصابع</SelectItem>
-                            <SelectItem value="الحوض">الحوض</SelectItem>
-                            <SelectItem value="الورك">الورك</SelectItem>
-                            <SelectItem value="الفخذ">الفخذ</SelectItem>
-                            <SelectItem value="الركبة">الركبة</SelectItem>
-                            <SelectItem value="الساق">الساق</SelectItem>
-                            <SelectItem value="الكاحل">الكاحل</SelectItem>
-                            <SelectItem value="القدم">القدم</SelectItem>
-                            <SelectItem value="اصابع القدم">اصابع القدم</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <div className="space-y-2">
+                          <FormLabel>منطقة الإصابة (يمكن اختيار أكثر من منطقة)</FormLabel>
+                          <input type="hidden" {...field} value={field.value || ""} />
+                          <div className="border rounded-lg p-3 bg-slate-50 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {injuryAreaOptions.map((option) => (
+                              <label key={option} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox
+                                  data-testid={`checkbox-injury-area-${option}`}
+                                  checked={selectedInjuryAreas.includes(option)}
+                                  onCheckedChange={(checked) => {
+                                    const newSelection = checked
+                                      ? [...selectedInjuryAreas, option]
+                                      : selectedInjuryAreas.filter(a => a !== option);
+                                    setSelectedInjuryAreas(newSelection);
+                                    form.setValue("injuryArea", newSelection.join("، "), { shouldValidate: true });
+                                  }}
+                                />
+                                <span>{option}</span>
+                              </label>
+                            ))}
+                          </div>
+                          {selectedInjuryAreas.length > 0 && (
+                            <p className="text-xs text-muted-foreground" data-testid="text-injury-area-count">تم اختيار {selectedInjuryAreas.length} منطقة</p>
+                          )}
+                        </div>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -428,6 +428,30 @@ export default function PatientDetails() {
                   )}
                 </div>
               )}
+              {patient.isPhysiotherapy && (patient.injuryType || patient.injuryArea) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-dashed">
+                  {patient.injuryType && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">نوع الإصابة</p>
+                      <div className="flex flex-wrap gap-1">
+                        {patient.injuryType.split(/، |, /).filter((s: string) => s.trim()).map((type: string, i: number) => (
+                          <Badge key={i} variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{type.trim()}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {patient.injuryArea && (
+                    <div>
+                      <p className="text-muted-foreground mb-1">منطقة الإصابة</p>
+                      <div className="flex flex-wrap gap-1">
+                        {patient.injuryArea.split(/، |, /).filter((s: string) => s.trim()).map((area: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{area.trim()}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <div>
                 <p className="text-muted-foreground mb-1">التشخيص / الحالة</p>
                 <p className="font-semibold text-base">
