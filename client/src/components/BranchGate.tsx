@@ -9,12 +9,12 @@ import { useLanguage } from "@/i18n/LanguageContext";
 import { useTranslation } from "@/i18n/LanguageContext";
 
 const userOptions = [
-  { value: "admin", label: "مسؤول النظام", icon: ShieldCheck },
-  { value: "baghdad", label: "بايونك بغداد", icon: Building2 },
-  { value: "karbala", label: "الوارث كربلاء", icon: Building2 },
-  { value: "dhiqar", label: "بايونك ذي قار", icon: Building2 },
-  { value: "mosul", label: "بايونك الموصل", icon: Building2 },
-  { value: "kirkuk", label: "بايونك كركوك", icon: Building2 },
+  { value: "admin", label: "مسؤول النظام", labelEn: "System Admin", icon: ShieldCheck },
+  { value: "baghdad", label: "بايونك بغداد", labelEn: "Bionic Baghdad", icon: Building2 },
+  { value: "karbala", label: "الوارث كربلاء", labelEn: "Al-Warith Karbala", icon: Building2 },
+  { value: "dhiqar", label: "بايونك ذي قار", labelEn: "Bionic Dhi Qar", icon: Building2 },
+  { value: "mosul", label: "بايونك الموصل", labelEn: "Bionic Mosul", icon: Building2 },
+  { value: "kirkuk", label: "بايونك كركوك", labelEn: "Bionic Kirkuk", icon: Building2 },
 ];
 
 interface UserPermissions {
@@ -193,7 +193,7 @@ export function BranchGate({ children }: BranchGateProps) {
                   <SelectItem key={option.value} value={option.value}>
                     <span className="flex items-center gap-2">
                       <option.icon className="w-4 h-4 text-primary" />
-                      {option.value === "admin" ? t.login.systemAdmin : option.label}
+                      {language === "en" ? option.labelEn : option.label}
                     </span>
                   </SelectItem>
                 ))}
