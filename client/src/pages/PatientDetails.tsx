@@ -996,7 +996,12 @@ export default function PatientDetails() {
                           {patient.isPhysiotherapy && (
                             <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{translateTreatmentType(visit.treatmentType)}</td>
                           )}
-                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
+                            {visit.details || visit.notes || "-"}
+                            {visit.details && visit.notes && (
+                              <div className="text-xs text-slate-400 mt-1">{visit.notes}</div>
+                            )}
+                          </td>
                           {patient.isPhysiotherapy && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
                               <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
