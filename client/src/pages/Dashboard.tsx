@@ -14,6 +14,21 @@ import { api } from "@shared/routes";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 
+function translateCondition(condition: string | null | undefined, t: any): string {
+  if (!condition) return "";
+  const conditionMap: Record<string, string> = {
+    "amputee": t.dashboard.conditionAmputee,
+    "بتر": t.dashboard.conditionAmputee,
+    "بتر تحت الركبة": t.dashboard.conditionAmputee,
+    "physiotherapy": t.dashboard.conditionPhysiotherapy,
+    "علاج طبيعي": t.dashboard.conditionPhysiotherapy,
+    "medical_support": t.dashboard.conditionMedicalSupport,
+    "إسناد طبي": t.dashboard.conditionMedicalSupport,
+    "مساند طبية": t.dashboard.conditionMedicalSupport,
+  };
+  return conditionMap[condition] || condition;
+}
+
 function DashboardContent() {
   const [, navigate] = useLocation();
   const branchSession = useBranchSession();
@@ -33,12 +48,13 @@ function DashboardContent() {
     queryKey: [api.branches.list.path],
     queryFn: async () => {
       const res = await fetch(api.branches.list.path, { credentials: "include" });
-      if (!res.ok) throw new Error("فشل في جلب الفروع");
+      if (!res.ok) throw new Error("Failed to fetch branches");
       return res.json();
     },
   });
   
-  const selectedBranchName = branches?.find(b => b.id === userBranchId)?.name || "الفرع";
+  const rawBranchName = branches?.find(b => b.id === userBranchId)?.name || "";
+  const selectedBranchName = rawBranchName ? ((t.branches as Record<string, string>)[rawBranchName] || rawBranchName) : t.dashboard.branch;
   
   // Fetch overall stats (with branch filtering)
   const { data: stats, isLoading } = useQuery<{ 
@@ -117,7 +133,7 @@ function DashboardContent() {
         <div>
           <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.dashboard.overview}</h2>
           <p className="text-sm md:text-base text-muted-foreground mt-1">
-            {isAdmin ? "ملخص أداء المركز وإحصائيات المرضى" : `${t.dashboard.branchPerformance} ${selectedBranchName}`}
+            {isAdmin ? t.dashboard.adminSummary : `${t.dashboard.branchPerformance} ${selectedBranchName}`}
           </p>
         </div>
         
@@ -128,7 +144,7 @@ function DashboardContent() {
               <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
               <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                 <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
-                  <SelectValue placeholder="اختر الفرع" />
+                  <SelectValue placeholder={t.dashboard.selectBranch} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t.dashboard.allBranches}</SelectItem>
@@ -183,7 +199,7 @@ function DashboardContent() {
           {canViewPayments && (
             <StatsCard 
               title={t.dashboard.revenue} 
-              value={`${(stats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+              value={`${(stats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
               icon={Banknote} 
               color="primary"
               onClick={() => navigate("/revenues")}
@@ -284,7 +300,7 @@ function DashboardContent() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
                   title={t.dashboard.dailyRevenue} 
-                  value={`${(dailyStats?.paid || 0).toLocaleString('ar-IQ')} د.ع`} 
+                  value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
                   icon={Banknote} 
                   color="primary"
                   onClick={() => navigate("/revenues?daily=true")}
@@ -309,7 +325,7 @@ function DashboardContent() {
                   </div>
                   <div>
                     <p className="font-bold text-slate-800">{patient.name}</p>
-                    <p className="text-xs text-muted-foreground">{patient.medicalCondition}</p>
+                    <p className="text-xs text-muted-foreground">{translateCondition(patient.medicalCondition, t)}</p>
                   </div>
                 </div>
                 <span className="text-xs font-medium px-2 py-1 rounded-md bg-blue-50 text-blue-600">
