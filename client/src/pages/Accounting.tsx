@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -256,6 +257,7 @@ const TREATMENT_TYPE_COLORS: Record<string, string> = {
 };
 
 function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: string }) {
+  const { t } = useTranslation();
   const { data: revenueByTreatment = [] } = useQuery<TreatmentRevenueData[]>({
     queryKey: ["/api/statistics/revenue-by-treatment", selectedBranch],
     queryFn: async () => {
@@ -281,9 +283,9 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
       <CardHeader>
         <CardTitle className="flex items-center gap-2" data-testid="text-accounting-revenue-by-treatment">
           <PieChart className="h-5 w-5" />
-          الإيرادات حسب نوع العلاج
+          {t.accounting.revenueByTreatment}
         </CardTitle>
-        <CardDescription>توزيع الإيرادات المحصلة حسب نوع العلاج المقدم</CardDescription>
+        <CardDescription>{t.accounting.revenueByTreatmentDesc}</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -304,7 +306,7 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, '']} />
+              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.accounting.currency}`, '']} />
               <Legend />
             </RechartsPieChart>
           </ResponsiveContainer>
@@ -317,7 +319,7 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
                 </div>
                 <div className="text-left">
                   <span className="text-sm font-bold">{formatCurrency(item.value)}</span>
-                  <span className="text-xs text-muted-foreground mr-2">({item.count} دفعة)</span>
+                  <span className="text-xs text-muted-foreground mr-2">({item.count} {t.accounting.paymentUnit})</span>
                 </div>
               </div>
             ))}
@@ -331,6 +333,7 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
 export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
@@ -505,10 +508,10 @@ export default function Accounting() {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/by-category/summary"] });
       setIsExpenseDialogOpen(false);
       form.reset();
-      toast({ title: "تم إضافة المصروف بنجاح" });
+      toast({ title: t.accounting.expenseAddedSuccess });
     },
     onError: (error: any) => {
-      toast({ title: "خطأ في إضافة المصروف", description: error.message, variant: "destructive" });
+      toast({ title: t.accounting.expenseAddError, description: error.message, variant: "destructive" });
     }
   });
 
@@ -525,10 +528,10 @@ export default function Accounting() {
       setIsExpenseDialogOpen(false);
       setEditingExpense(null);
       form.reset();
-      toast({ title: "تم تحديث المصروف بنجاح" });
+      toast({ title: t.accounting.expenseUpdatedSuccess });
     },
     onError: (error: any) => {
-      toast({ title: "خطأ في تحديث المصروف", description: error.message, variant: "destructive" });
+      toast({ title: t.accounting.expenseUpdateError, description: error.message, variant: "destructive" });
     }
   });
 
@@ -542,10 +545,10 @@ export default function Accounting() {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/by-category/summary"] });
-      toast({ title: "تم حذف المصروف بنجاح" });
+      toast({ title: t.accounting.expenseDeletedSuccess });
     },
     onError: (error: any) => {
-      toast({ title: "خطأ في حذف المصروف", description: error.message, variant: "destructive" });
+      toast({ title: t.accounting.expenseDeleteError, description: error.message, variant: "destructive" });
     }
   });
 
@@ -598,10 +601,10 @@ export default function Accounting() {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       setIsInvoiceDialogOpen(false);
-      toast({ title: "تم إنشاء الفاتورة بنجاح" });
+      toast({ title: t.accounting.invoiceCreatedSuccess });
     },
     onError: (error: any) => {
-      toast({ title: "خطأ في إنشاء الفاتورة", description: error.message, variant: "destructive" });
+      toast({ title: t.accounting.invoiceCreateError, description: error.message, variant: "destructive" });
     }
   });
 
@@ -613,12 +616,12 @@ export default function Accounting() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
-      toast({ title: "تم حذف الفاتورة بنجاح" });
+      toast({ title: t.accounting.invoiceDeletedSuccess });
       setDeleteConfirmId(null);
       setDeleteType(null);
     },
     onError: (error: any) => {
-      toast({ title: "خطأ في حذف الفاتورة", description: error.message, variant: "destructive" });
+      toast({ title: t.accounting.invoiceDeleteError, description: error.message, variant: "destructive" });
     }
   });
 
@@ -630,7 +633,7 @@ export default function Accounting() {
     }));
     
     if (items.length === 0) {
-      toast({ title: "يرجى إضافة عنصر واحد على الأقل", variant: "destructive" });
+      toast({ title: t.accounting.addItemRequired, variant: "destructive" });
       return;
     }
 
@@ -640,7 +643,7 @@ export default function Accounting() {
     const notes = (document.getElementById("invoice-notes") as HTMLTextAreaElement)?.value;
     
     if (!selectedPatientId) {
-      toast({ title: "يرجى اختيار المريض", variant: "destructive" });
+      toast({ title: t.accounting.selectPatientRequired, variant: "destructive" });
       return;
     }
 
@@ -702,8 +705,49 @@ export default function Accounting() {
   }, []);
 
   const currentBranchName = selectedBranch === "all" 
+    ? t.accounting.allBranches 
+    : branches.find(b => b.id.toString() === selectedBranch)?.name || t.accounting.unspecified;
+
+  const currentBranchNameArabic = selectedBranch === "all" 
     ? "جميع الفروع" 
     : branches.find(b => b.id.toString() === selectedBranch)?.name || "غير محدد";
+
+  const getCategoryLabelTranslated = (category: string): string => {
+    const categoryMap: Record<string, string> = {
+      salaries: t.accounting.catSalaries,
+      rent: t.accounting.catRent,
+      medical_supplies: t.accounting.catMedicalSupplies,
+      maintenance: t.accounting.catMaintenance,
+      utilities: t.accounting.catUtilities,
+      other: t.accounting.catOther,
+    };
+    return categoryMap[category] || category;
+  };
+
+  const getStatusLabel = (status: string): string => {
+    const statusMap: Record<string, string> = {
+      pending: t.accounting.statusPending,
+      partial: t.accounting.statusPartial,
+      paid: t.accounting.statusPaid,
+      cancelled: t.accounting.statusCancelled,
+    };
+    return statusMap[status] || status;
+  };
+
+  const getServiceTypeLabel = (value: string): string => {
+    const serviceMap: Record<string, string> = {
+      prosthetic: t.accounting.svcProsthetic,
+      physiotherapy: t.accounting.svcPhysiotherapy,
+      medical_support: t.accounting.svcMedicalSupport,
+      consultation: t.accounting.svcConsultation,
+      other: t.accounting.svcOther,
+    };
+    return serviceMap[value] || value;
+  };
+
+  const displayCurrency = (amount: number): string => {
+    return new Intl.NumberFormat(t.dir === 'rtl' ? 'ar-IQ' : 'en-US').format(amount) + " " + t.accounting.currency;
+  };
 
   // Export to PDF
   const exportToPDF = useCallback(() => {
@@ -723,7 +767,7 @@ export default function Accounting() {
     
     // Subtitle
     doc.setFontSize(12);
-    doc.text(reshapeArabic(`الفرع: ${currentBranchName}`), 105, 30, { align: 'center' });
+    doc.text(reshapeArabic(`الفرع: ${currentBranchNameArabic}`), 105, 30, { align: 'center' });
     doc.text(reshapeArabic(`تاريخ التقرير: ${formatDateIraq(new Date())}`), 105, 37, { align: 'center' });
     
     let yPos = 50;
@@ -871,8 +915,8 @@ export default function Accounting() {
     }
     
     doc.save(`تقرير_محاسبي_${new Date().toISOString().split('T')[0]}.pdf`);
-    toast({ title: "تم تصدير التقرير بنجاح" });
-  }, [summary, expensesByCategory, branchComparison, debtors, currentBranchName, reshapeArabic, toast]);
+    toast({ title: t.accounting.exportSuccess });
+  }, [summary, expensesByCategory, branchComparison, debtors, currentBranchNameArabic, reshapeArabic, toast]);
 
   // Export to Excel
   const exportToExcel = useCallback(() => {
@@ -883,7 +927,7 @@ export default function Accounting() {
     // Financial Summary Sheet
     const summaryData = [
       ['التقرير المحاسبي الشامل'],
-      ['الفرع', currentBranchName],
+      ['الفرع', currentBranchNameArabic],
       ['تاريخ التقرير', formatDateIraq(new Date())],
       [],
       ['الملخص المالي'],
@@ -998,21 +1042,25 @@ export default function Accounting() {
     }
     
     XLSX.writeFile(workbook, `تقرير_محاسبي_${new Date().toISOString().split('T')[0]}.xlsx`);
-    toast({ title: "تم تصدير التقرير بنجاح" });
-  }, [summary, expenses, expensesByCategory, branchComparison, debtors, monthlyTrends, serviceProfitability, branches, currentBranchName, toast]);
+    toast({ title: t.accounting.exportSuccess });
+  }, [summary, expenses, expensesByCategory, branchComparison, debtors, monthlyTrends, serviceProfitability, branches, currentBranchNameArabic, toast]);
 
   // Prepare chart data
   const expenseChartData = expensesByCategory.map(item => ({
-    name: getCategoryLabel(item.category),
+    name: getCategoryLabelTranslated(item.category),
     value: item.total,
     color: CATEGORY_COLORS[item.category as keyof typeof CATEGORY_COLORS] || "#6b7280"
   }));
 
+  const revenueKey = t.accounting.chartRevenue;
+  const expensesKey = t.accounting.chartExpenses;
+  const profitKey = t.accounting.chartProfit;
+
   const trendChartData = monthlyTrends.map(item => ({
     month: item.month,
-    إيرادات: item.totalPaid,
-    مصروفات: item.totalExpenses,
-    أرباح: item.netProfit
+    [revenueKey]: item.totalPaid,
+    [expensesKey]: item.totalExpenses,
+    [profitKey]: item.netProfit
   }));
 
   return (
@@ -1025,8 +1073,8 @@ export default function Accounting() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold">النظام المحاسبي</h1>
-              <p className="text-muted-foreground">إدارة شاملة للمصروفات والإيرادات والتقارير المالية</p>
+              <h1 className="text-2xl md:text-3xl font-bold">{t.accounting.pageTitle}</h1>
+              <p className="text-muted-foreground">{t.accounting.pageSubtitle}</p>
             </div>
           </div>
           
@@ -1035,10 +1083,10 @@ export default function Accounting() {
             {isAdmin ? (
               <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                 <SelectTrigger className="w-40" data-testid="select-branch">
-                  <SelectValue placeholder="جميع الفروع" />
+                  <SelectValue placeholder={t.accounting.allBranches} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">جميع الفروع</SelectItem>
+                  <SelectItem value="all">{t.accounting.allBranches}</SelectItem>
                   {branches.map((branch) => (
                     <SelectItem key={branch.id} value={branch.id.toString()}>
                       {branch.name}
@@ -1049,7 +1097,7 @@ export default function Accounting() {
             ) : (
               <Badge variant="outline" className="px-3 py-2 text-sm" data-testid="badge-current-branch">
                 <Building2 className="h-4 w-4 ml-2" />
-                {branchSession?.branchName || "الفرع"}
+                {branchSession?.branchName || t.accounting.branch}
               </Badge>
             )}
             
@@ -1058,7 +1106,7 @@ export default function Accounting() {
               value={dateRange.startDate}
               onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
               className="w-36"
-              placeholder="من تاريخ"
+              placeholder={t.accounting.fromDate}
               data-testid="input-start-date"
             />
             <Input
@@ -1066,7 +1114,7 @@ export default function Accounting() {
               value={dateRange.endDate}
               onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
               className="w-36"
-              placeholder="إلى تاريخ"
+              placeholder={t.accounting.toDate}
               data-testid="input-end-date"
             />
             
@@ -1109,27 +1157,27 @@ export default function Accounting() {
           <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1">
             <TabsTrigger value="dashboard" className="gap-2" data-testid="tab-dashboard">
               <Calculator className="h-4 w-4" />
-              <span className="hidden md:inline">لوحة التحكم</span>
+              <span className="hidden md:inline">{t.accounting.tabDashboard}</span>
             </TabsTrigger>
             <TabsTrigger value="expenses" className="gap-2" data-testid="tab-expenses">
               <Receipt className="h-4 w-4" />
-              <span className="hidden md:inline">المصروفات</span>
+              <span className="hidden md:inline">{t.accounting.tabExpenses}</span>
             </TabsTrigger>
             <TabsTrigger value="invoices" className="gap-2" data-testid="tab-invoices">
               <FileText className="h-4 w-4" />
-              <span className="hidden md:inline">الفواتير</span>
+              <span className="hidden md:inline">{t.accounting.tabInvoices}</span>
             </TabsTrigger>
             <TabsTrigger value="reports" className="gap-2" data-testid="tab-reports">
               <PieChart className="h-4 w-4" />
-              <span className="hidden md:inline">التقارير</span>
+              <span className="hidden md:inline">{t.accounting.tabReports}</span>
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
               <BarChart3 className="h-4 w-4" />
-              <span className="hidden md:inline">التحليلات</span>
+              <span className="hidden md:inline">{t.accounting.tabAnalytics}</span>
             </TabsTrigger>
             <TabsTrigger value="debtors" className="gap-2" data-testid="tab-debtors">
               <AlertCircle className="h-4 w-4" />
-              <span className="hidden md:inline">المديونيات</span>
+              <span className="hidden md:inline">{t.accounting.tabDebtors}</span>
             </TabsTrigger>
           </TabsList>
 
@@ -1139,79 +1187,79 @@ export default function Accounting() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">إجمالي الإيرادات</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.totalRevenue}</CardTitle>
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold text-primary" data-testid="text-total-revenue">
-                    {summaryLoading ? "..." : formatCurrency(summary?.totalRevenue || 0)}
+                    {summaryLoading ? "..." : displayCurrency(summary?.totalRevenue || 0)}
                   </div>
-                  <p className="text-xs text-muted-foreground">التكاليف المستحقة</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.dueAmounts}</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">المدفوعات</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.payments}</CardTitle>
                   <CreditCard className="h-4 w-4 text-green-500" />
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold text-green-600" data-testid="text-total-paid">
-                    {summaryLoading ? "..." : formatCurrency(summary?.totalPaid || 0)}
+                    {summaryLoading ? "..." : displayCurrency(summary?.totalPaid || 0)}
                   </div>
-                  <p className="text-xs text-muted-foreground">المبالغ المستلمة</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.receivedAmounts}</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">المتبقي</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.remaining}</CardTitle>
                   <Wallet className="h-4 w-4 text-yellow-500" />
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold text-yellow-600" data-testid="text-total-remaining">
-                    {summaryLoading ? "..." : formatCurrency(summary?.totalRemaining || 0)}
+                    {summaryLoading ? "..." : displayCurrency(summary?.totalRemaining || 0)}
                   </div>
-                  <p className="text-xs text-muted-foreground">المبالغ المستحقة</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">المصروفات</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.expenses}</CardTitle>
                   <TrendingDown className="h-4 w-4 text-red-500" />
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold text-red-600" data-testid="text-total-expenses">
-                    {summaryLoading ? "..." : formatCurrency(summary?.totalExpenses || 0)}
+                    {summaryLoading ? "..." : displayCurrency(summary?.totalExpenses || 0)}
                   </div>
-                  <p className="text-xs text-muted-foreground">إجمالي المصروفات</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.totalExpenses}</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">صافي الربح</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.netProfit}</CardTitle>
                   <TrendingUp className="h-4 w-4 text-primary" />
                 </CardHeader>
                 <CardContent>
                   <div className={`text-xl font-bold ${(summary?.netProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`} data-testid="text-net-profit">
-                    {summaryLoading ? "..." : formatCurrency(summary?.netProfit || 0)}
+                    {summaryLoading ? "..." : displayCurrency(summary?.netProfit || 0)}
                   </div>
-                  <p className="text-xs text-muted-foreground">الإيرادات - المصروفات</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.revenueMinusExpenses}</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">نسبة التحصيل</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.collectionRate}</CardTitle>
                   <PieChart className="h-4 w-4 text-blue-500" />
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold text-blue-600" data-testid="text-collection-rate">
                     {summaryLoading ? "..." : `${summary?.collectionRate || 0}%`}
                   </div>
-                  <p className="text-xs text-muted-foreground">المدفوع / المستحق</p>
+                  <p className="text-xs text-muted-foreground">{t.accounting.paidVsDue}</p>
                 </CardContent>
               </Card>
             </div>
@@ -1223,9 +1271,9 @@ export default function Accounting() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <BarChart3 className="h-5 w-5" />
-                    الاتجاهات الشهرية
+                    {t.accounting.monthlyTrends}
                   </CardTitle>
-                  <CardDescription>مقارنة الإيرادات والمصروفات والأرباح</CardDescription>
+                  <CardDescription>{t.accounting.monthlyTrendsDesc}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="h-[300px]">
@@ -1241,7 +1289,7 @@ export default function Accounting() {
                         <Legend />
                         <Area 
                           type="monotone" 
-                          dataKey="إيرادات" 
+                          dataKey={revenueKey} 
                           stackId="1"
                           stroke="#10b981" 
                           fill="#10b981" 
@@ -1249,7 +1297,7 @@ export default function Accounting() {
                         />
                         <Area 
                           type="monotone" 
-                          dataKey="مصروفات" 
+                          dataKey={expensesKey} 
                           stackId="2"
                           stroke="#ef4444" 
                           fill="#ef4444" 
@@ -1257,7 +1305,7 @@ export default function Accounting() {
                         />
                         <Area 
                           type="monotone" 
-                          dataKey="أرباح" 
+                          dataKey={profitKey} 
                           stackId="3"
                           stroke="#3b82f6" 
                           fill="#3b82f6" 
@@ -1274,9 +1322,9 @@ export default function Accounting() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <PieChart className="h-5 w-5" />
-                    توزيع المصروفات
+                    {t.accounting.expenseDistribution}
                   </CardTitle>
-                  <CardDescription>المصروفات حسب التصنيف</CardDescription>
+                  <CardDescription>{t.accounting.expensesByCategory}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="h-[300px]">
@@ -1308,9 +1356,9 @@ export default function Accounting() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <TrendingUp className="h-5 w-5" />
-                  ربحية الخدمات
+                  {t.accounting.serviceProfitability}
                 </CardTitle>
-                <CardDescription>تحليل الأداء المالي حسب نوع الخدمة</CardDescription>
+                <CardDescription>{t.accounting.serviceProfitabilityDesc}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-4 md:grid-cols-3">
@@ -1318,24 +1366,24 @@ export default function Accounting() {
                     <Card key={service.serviceType} className="bg-muted/30">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base">{service.serviceName}</CardTitle>
-                        <CardDescription>{service.patientCount} مريض</CardDescription>
+                        <CardDescription>{service.patientCount} {t.accounting.patientCount}</CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">الإيرادات:</span>
-                          <span className="font-medium">{formatCurrency(service.totalRevenue)}</span>
+                          <span className="text-muted-foreground">{t.accounting.revenueLabel}</span>
+                          <span className="font-medium">{displayCurrency(service.totalRevenue)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">المحصل:</span>
-                          <span className="font-medium text-green-600">{formatCurrency(service.totalPaid)}</span>
+                          <span className="text-muted-foreground">{t.accounting.collectedLabel}</span>
+                          <span className="font-medium text-green-600">{displayCurrency(service.totalPaid)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">المتبقي:</span>
-                          <span className="font-medium text-yellow-600">{formatCurrency(service.remaining)}</span>
+                          <span className="text-muted-foreground">{t.accounting.remainingLabel}</span>
+                          <span className="font-medium text-yellow-600">{displayCurrency(service.remaining)}</span>
                         </div>
                         <Separator />
                         <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">نسبة التحصيل:</span>
+                          <span className="text-sm text-muted-foreground">{t.accounting.collectionRateLabel}</span>
                           <Badge variant={service.collectionRate >= 70 ? "default" : service.collectionRate >= 50 ? "secondary" : "destructive"}>
                             {service.collectionRate}%
                           </Badge>
@@ -1354,10 +1402,10 @@ export default function Accounting() {
           {/* Expenses Tab */}
           <TabsContent value="expenses" className="space-y-6">
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">إدارة المصروفات</h2>
+              <h2 className="text-xl font-semibold">{t.accounting.expenseManagement}</h2>
               <Button onClick={openNewExpenseDialog} data-testid="button-add-expense">
                 <Plus className="h-4 w-4 ml-2" />
-                إضافة مصروف
+                {t.accounting.addExpense}
               </Button>
             </div>
 
@@ -1367,25 +1415,25 @@ export default function Accounting() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-right">#</TableHead>
-                      <TableHead className="text-right">الفرع</TableHead>
-                      <TableHead className="text-right">التصنيف</TableHead>
-                      <TableHead className="text-right">الوصف</TableHead>
-                      <TableHead className="text-right">المبلغ</TableHead>
-                      <TableHead className="text-right">التاريخ</TableHead>
-                      <TableHead className="text-right">إجراءات</TableHead>
+                      <TableHead className="text-right">{t.accounting.branchCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.categoryCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.descriptionCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.amountCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.dateCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.actionsCol}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {expensesLoading ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8">
-                          جارٍ التحميل...
+                          {t.accounting.loading}
                         </TableCell>
                       </TableRow>
                     ) : expenses.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          لا توجد مصروفات مسجلة
+                          {t.accounting.noExpenses}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -1403,12 +1451,12 @@ export default function Accounting() {
                                 borderColor: CATEGORY_COLORS[expense.category as keyof typeof CATEGORY_COLORS] || "#6b7280"
                               }}
                             >
-                              {getCategoryLabel(expense.category)}
+                              {getCategoryLabelTranslated(expense.category)}
                             </Badge>
                           </TableCell>
                           <TableCell>{expense.description || "-"}</TableCell>
                           <TableCell className="font-medium text-red-600">
-                            {formatCurrency(expense.amount)}
+                            {displayCurrency(expense.amount)}
                           </TableCell>
                           <TableCell>
                             {formatDateIraq(expense.expenseDate)}
@@ -1448,14 +1496,14 @@ export default function Accounting() {
                 return (
                   <Card key={cat.value}>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium">{cat.label}</CardTitle>
+                      <CardTitle className="text-sm font-medium">{getCategoryLabelTranslated(cat.value)}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div 
                         className="text-lg font-bold"
                         style={{ color: CATEGORY_COLORS[cat.value as keyof typeof CATEGORY_COLORS] }}
                       >
-                        {formatCurrency(categoryTotal)}
+                        {displayCurrency(categoryTotal)}
                       </div>
                     </CardContent>
                   </Card>
@@ -1467,31 +1515,31 @@ export default function Accounting() {
           {/* Invoices Tab */}
           <TabsContent value="invoices" className="space-y-6">
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">إدارة الفواتير</h2>
+              <h2 className="text-xl font-semibold">{t.accounting.invoiceManagement}</h2>
               <Button onClick={openNewInvoiceDialog} data-testid="button-add-invoice">
                 <Plus className="h-4 w-4 ml-2" />
-                إنشاء فاتورة
+                {t.accounting.createInvoice}
               </Button>
             </div>
 
             <Card>
               <CardContent className="pt-6">
                 {invoicesLoading ? (
-                  <div className="text-center py-8 text-muted-foreground">جاري التحميل...</div>
+                  <div className="text-center py-8 text-muted-foreground">{t.accounting.loading}</div>
                 ) : invoicesList.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">لا توجد فواتير</div>
+                  <div className="text-center py-8 text-muted-foreground">{t.accounting.noInvoices}</div>
                 ) : (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>رقم الفاتورة</TableHead>
-                        <TableHead>المريض</TableHead>
-                        <TableHead>التاريخ</TableHead>
-                        <TableHead>المبلغ</TableHead>
-                        <TableHead>المدفوع</TableHead>
-                        <TableHead>المتبقي</TableHead>
-                        <TableHead>الحالة</TableHead>
-                        <TableHead>الإجراءات</TableHead>
+                        <TableHead>{t.accounting.invoiceNumber}</TableHead>
+                        <TableHead>{t.accounting.patientCol}</TableHead>
+                        <TableHead>{t.accounting.dateCol}</TableHead>
+                        <TableHead>{t.accounting.amountCol}</TableHead>
+                        <TableHead>{t.accounting.paidCol}</TableHead>
+                        <TableHead>{t.accounting.remainingCol}</TableHead>
+                        <TableHead>{t.accounting.statusCol}</TableHead>
+                        <TableHead>{t.accounting.actionsCol}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1502,13 +1550,13 @@ export default function Accounting() {
                         return (
                           <TableRow key={invoice.id}>
                             <TableCell className="font-mono">{invoice.invoiceNumber}</TableCell>
-                            <TableCell>{patient?.name || `مريض #${invoice.patientId}`}</TableCell>
+                            <TableCell>{patient?.name || `${t.accounting.patientHash}${invoice.patientId}`}</TableCell>
                             <TableCell>{formatDateIraq(invoice.invoiceDate)}</TableCell>
-                            <TableCell>{formatCurrency(invoice.total)}</TableCell>
-                            <TableCell className="text-green-600">{formatCurrency(invoice.paidAmount || 0)}</TableCell>
-                            <TableCell className={remaining > 0 ? "text-red-600" : "text-green-600"}>{formatCurrency(remaining)}</TableCell>
+                            <TableCell>{displayCurrency(invoice.total)}</TableCell>
+                            <TableCell className="text-green-600">{displayCurrency(invoice.paidAmount || 0)}</TableCell>
+                            <TableCell className={remaining > 0 ? "text-red-600" : "text-green-600"}>{displayCurrency(remaining)}</TableCell>
                             <TableCell>
-                              <Badge className={statusInfo.color}>{statusInfo.label}</Badge>
+                              <Badge className={statusInfo.color}>{getStatusLabel(invoice.status)}</Badge>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
@@ -1538,7 +1586,7 @@ export default function Accounting() {
             <div className="grid gap-4 md:grid-cols-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">إجمالي الفواتير</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.totalInvoices}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-primary">{invoicesList.length}</div>
@@ -1546,31 +1594,31 @@ export default function Accounting() {
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">إجمالي المبالغ</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.totalAmounts}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-blue-600">
-                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + inv.total, 0))}
+                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + inv.total, 0))}
                   </div>
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">المدفوع</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.paid}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-green-600">
-                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + (inv.paidAmount || 0), 0))}
+                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + (inv.paidAmount || 0), 0))}
                   </div>
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">المتبقي</CardTitle>
+                  <CardTitle className="text-sm font-medium">{t.accounting.remaining}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-red-600">
-                    {formatCurrency(invoicesList.reduce((sum, inv) => sum + inv.total - (inv.paidAmount || 0), 0))}
+                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + inv.total - (inv.paidAmount || 0), 0))}
                   </div>
                 </CardContent>
               </Card>
@@ -1580,7 +1628,7 @@ export default function Accounting() {
           {/* Reports Tab */}
           <TabsContent value="reports" className="space-y-6">
             <h2 className="text-xl font-semibold">
-              {isAdmin ? "التقارير المالية" : `التقارير المالية - ${branchSession?.branchName || "الفرع"}`}
+              {isAdmin ? t.accounting.financialReports : `${t.accounting.financialReports} - ${branchSession?.branchName || t.accounting.branch}`}
             </h2>
             
             {/* Branch Comparison - Admin Only or Single Branch View */}
@@ -1588,24 +1636,24 @@ export default function Accounting() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Building2 className="h-5 w-5" />
-                  {isAdmin ? "مقارنة الفروع" : "ملخص الأداء المالي"}
+                  {isAdmin ? t.accounting.branchComparison : t.accounting.financialSummary}
                 </CardTitle>
                 <CardDescription>
-                  {isAdmin ? "تحليل أداء جميع الفروع" : `تحليل أداء فرع ${branchSession?.branchName || ""}`}
+                  {isAdmin ? t.accounting.analyzeAllBranches : `${t.accounting.analyzeBranch} ${branchSession?.branchName || ""}`}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-right">الفرع</TableHead>
-                      <TableHead className="text-right">المرضى</TableHead>
-                      <TableHead className="text-right">الإيرادات</TableHead>
-                      <TableHead className="text-right">المحصل</TableHead>
-                      <TableHead className="text-right">المتبقي</TableHead>
-                      <TableHead className="text-right">المصروفات</TableHead>
-                      <TableHead className="text-right">صافي الربح</TableHead>
-                      <TableHead className="text-right">التحصيل</TableHead>
+                      <TableHead className="text-right">{t.accounting.branchCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.patientsCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.revenueCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.collectedCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.remainingCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.expensesCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.netProfitCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.collectionCol}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1613,17 +1661,17 @@ export default function Accounting() {
                       <TableRow key={branch.branchId}>
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-2">
-                            {index === 0 && <Badge variant="default">الأفضل</Badge>}
+                            {index === 0 && <Badge variant="default">{t.accounting.bestBranch}</Badge>}
                             {branch.branchName}
                           </div>
                         </TableCell>
                         <TableCell>{branch.patientCount}</TableCell>
-                        <TableCell>{formatCurrency(branch.totalRevenue)}</TableCell>
-                        <TableCell className="text-green-600">{formatCurrency(branch.totalPaid)}</TableCell>
-                        <TableCell className="text-yellow-600">{formatCurrency(branch.totalRemaining)}</TableCell>
-                        <TableCell className="text-red-600">{formatCurrency(branch.totalExpenses)}</TableCell>
+                        <TableCell>{displayCurrency(branch.totalRevenue)}</TableCell>
+                        <TableCell className="text-green-600">{displayCurrency(branch.totalPaid)}</TableCell>
+                        <TableCell className="text-yellow-600">{displayCurrency(branch.totalRemaining)}</TableCell>
+                        <TableCell className="text-red-600">{displayCurrency(branch.totalExpenses)}</TableCell>
                         <TableCell className={branch.netProfit >= 0 ? "text-green-600" : "text-red-600"}>
-                          {formatCurrency(branch.netProfit)}
+                          {displayCurrency(branch.netProfit)}
                         </TableCell>
                         <TableCell>
                           <Badge variant={branch.collectionRate >= 70 ? "default" : branch.collectionRate >= 50 ? "secondary" : "destructive"}>
@@ -1640,7 +1688,7 @@ export default function Accounting() {
             {/* Branch Comparison Chart */}
             <Card>
               <CardHeader>
-                <CardTitle>مقارنة بيانية للفروع</CardTitle>
+                <CardTitle>{t.accounting.branchChartComparison}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[400px]">
@@ -1651,9 +1699,9 @@ export default function Accounting() {
                       <YAxis type="category" dataKey="branchName" width={80} />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} />
                       <Legend />
-                      <Bar dataKey="totalPaid" name="المحصل" fill="#10b981" />
-                      <Bar dataKey="totalExpenses" name="المصروفات" fill="#ef4444" />
-                      <Bar dataKey="netProfit" name="صافي الربح" fill="#3b82f6" />
+                      <Bar dataKey="totalPaid" name={t.accounting.collectedCol} fill="#10b981" />
+                      <Bar dataKey="totalExpenses" name={t.accounting.expensesCol} fill="#ef4444" />
+                      <Bar dataKey="netProfit" name={t.accounting.netProfitCol} fill="#3b82f6" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1663,35 +1711,35 @@ export default function Accounting() {
 
           {/* Analytics Tab */}
           <TabsContent value="analytics" className="space-y-6">
-            <h2 className="text-xl font-semibold">التحليلات المتقدمة</h2>
+            <h2 className="text-xl font-semibold">{t.accounting.advancedAnalytics}</h2>
 
             {/* Monthly Trends Detail */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Calendar className="h-5 w-5" />
-                  تفاصيل الأداء الشهري
+                  {t.accounting.monthlyPerformance}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-right">الشهر</TableHead>
-                      <TableHead className="text-right">المحصل</TableHead>
-                      <TableHead className="text-right">المصروفات</TableHead>
-                      <TableHead className="text-right">صافي الربح</TableHead>
-                      <TableHead className="text-right">نسبة التحصيل</TableHead>
+                      <TableHead className="text-right">{t.accounting.monthCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.collectedCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.expensesCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.netProfitCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.collectionRate}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {monthlyTrends.slice().reverse().map((month) => (
                       <TableRow key={month.monthDate}>
                         <TableCell className="font-medium">{month.month}</TableCell>
-                        <TableCell className="text-green-600">{formatCurrency(month.totalPaid)}</TableCell>
-                        <TableCell className="text-red-600">{formatCurrency(month.totalExpenses)}</TableCell>
+                        <TableCell className="text-green-600">{displayCurrency(month.totalPaid)}</TableCell>
+                        <TableCell className="text-red-600">{displayCurrency(month.totalExpenses)}</TableCell>
                         <TableCell className={month.netProfit >= 0 ? "text-green-600" : "text-red-600"}>
-                          {formatCurrency(month.netProfit)}
+                          {displayCurrency(month.netProfit)}
                         </TableCell>
                         <TableCell>
                           <Badge variant={month.collectionRate >= 70 ? "default" : month.collectionRate >= 50 ? "secondary" : "destructive"}>
@@ -1709,9 +1757,9 @@ export default function Accounting() {
           {/* Debtors Tab */}
           <TabsContent value="debtors" className="space-y-6">
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">متابعة المديونيات</h2>
+              <h2 className="text-xl font-semibold">{t.accounting.debtorTracking}</h2>
               <Badge variant="destructive" className="text-lg px-4 py-1">
-                {debtors.length} مريض مدين
+                {debtors.length} {t.accounting.debtorPatient}
               </Badge>
             </div>
 
@@ -1721,26 +1769,26 @@ export default function Accounting() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-right">#</TableHead>
-                      <TableHead className="text-right">اسم المريض</TableHead>
-                      <TableHead className="text-right">الهاتف</TableHead>
-                      <TableHead className="text-right">إجمالي التكلفة</TableHead>
-                      <TableHead className="text-right">المدفوع</TableHead>
-                      <TableHead className="text-right">المتبقي</TableHead>
-                      <TableHead className="text-right">آخر دفعة</TableHead>
+                      <TableHead className="text-right">{t.accounting.patientName}</TableHead>
+                      <TableHead className="text-right">{t.accounting.phoneCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.totalCostCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.paidCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.remainingCol}</TableHead>
+                      <TableHead className="text-right">{t.accounting.lastPayment}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {debtorsLoading ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8">
-                          جارٍ التحميل...
+                          {t.accounting.loading}
                         </TableCell>
                       </TableRow>
                     ) : debtors.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           <CheckCircle2 className="h-12 w-12 mx-auto mb-2 text-green-500" />
-                          لا توجد مديونيات مستحقة
+                          {t.accounting.noDebts}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -1749,9 +1797,9 @@ export default function Accounting() {
                           <TableCell>{index + 1}</TableCell>
                           <TableCell className="font-medium">{debtor.patient.name}</TableCell>
                           <TableCell>{debtor.patient.phone || "-"}</TableCell>
-                          <TableCell>{formatCurrency(debtor.totalCost)}</TableCell>
-                          <TableCell className="text-green-600">{formatCurrency(debtor.totalPaid)}</TableCell>
-                          <TableCell className="text-red-600 font-bold">{formatCurrency(debtor.remaining)}</TableCell>
+                          <TableCell>{displayCurrency(debtor.totalCost)}</TableCell>
+                          <TableCell className="text-green-600">{displayCurrency(debtor.totalPaid)}</TableCell>
+                          <TableCell className="text-red-600 font-bold">{displayCurrency(debtor.remaining)}</TableCell>
                           <TableCell>
                             {debtor.lastPaymentDate ? (
                               <div className="flex items-center gap-1">
@@ -1759,7 +1807,7 @@ export default function Accounting() {
                                 {formatDateIraq(debtor.lastPaymentDate)}
                               </div>
                             ) : (
-                              <Badge variant="destructive">لم يدفع</Badge>
+                              <Badge variant="destructive">{t.accounting.neverPaid}</Badge>
                             )}
                           </TableCell>
                         </TableRow>
@@ -1771,7 +1819,7 @@ export default function Accounting() {
               {debtors.length > 0 && (
                 <CardFooter className="justify-between border-t pt-4">
                   <div className="text-sm text-muted-foreground">
-                    إجمالي المديونيات: <span className="font-bold text-red-600">{formatCurrency(debtors.reduce((sum, d) => sum + d.remaining, 0))}</span>
+                    {t.accounting.totalDebts} <span className="font-bold text-red-600">{displayCurrency(debtors.reduce((sum, d) => sum + d.remaining, 0))}</span>
                   </div>
                 </CardFooter>
               )}
@@ -1784,10 +1832,10 @@ export default function Accounting() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>
-                {editingExpense ? "تعديل مصروف" : "إضافة مصروف جديد"}
+                {editingExpense ? t.accounting.editExpense : t.accounting.addNewExpense}
               </DialogTitle>
               <DialogDescription>
-                أدخل تفاصيل المصروف
+                {t.accounting.expenseDetails}
               </DialogDescription>
             </DialogHeader>
             
@@ -1798,14 +1846,14 @@ export default function Accounting() {
                   name="branchId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الفرع</FormLabel>
+                      <FormLabel>{t.accounting.branchCol}</FormLabel>
                       <Select
                         value={field.value?.toString()}
                         onValueChange={(v) => field.onChange(parseInt(v))}
                       >
                         <FormControl>
                           <SelectTrigger data-testid="select-expense-branch">
-                            <SelectValue placeholder="اختر الفرع" />
+                            <SelectValue placeholder={t.accounting.selectBranch} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -1826,17 +1874,17 @@ export default function Accounting() {
                   name="category"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>التصنيف</FormLabel>
+                      <FormLabel>{t.accounting.categoryCol}</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger data-testid="select-expense-category">
-                            <SelectValue placeholder="اختر التصنيف" />
+                            <SelectValue placeholder={t.accounting.selectCategory} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
                           {EXPENSE_CATEGORIES.map((cat) => (
                             <SelectItem key={cat.value} value={cat.value}>
-                              {cat.label}
+                              {getCategoryLabelTranslated(cat.value)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1851,7 +1899,7 @@ export default function Accounting() {
                   name="amount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>المبلغ (د.ع)</FormLabel>
+                      <FormLabel>{t.accounting.amountCurrency}</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
@@ -1870,7 +1918,7 @@ export default function Accounting() {
                   name="expenseDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>التاريخ</FormLabel>
+                      <FormLabel>{t.accounting.date}</FormLabel>
                       <FormControl>
                         <Input type="date" {...field} data-testid="input-expense-date" />
                       </FormControl>
@@ -1884,9 +1932,9 @@ export default function Accounting() {
                   name="description"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الوصف</FormLabel>
+                      <FormLabel>{t.accounting.description}</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="وصف مختصر للمصروف" data-testid="input-expense-description" />
+                        <Input {...field} placeholder={t.accounting.descriptionPlaceholder} data-testid="input-expense-description" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1898,9 +1946,9 @@ export default function Accounting() {
                   name="notes"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>ملاحظات</FormLabel>
+                      <FormLabel>{t.accounting.notes}</FormLabel>
                       <FormControl>
-                        <Textarea {...field} placeholder="ملاحظات إضافية" data-testid="input-expense-notes" />
+                        <Textarea {...field} placeholder={t.accounting.notesPlaceholder} data-testid="input-expense-notes" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1909,14 +1957,14 @@ export default function Accounting() {
 
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsExpenseDialogOpen(false)}>
-                    إلغاء
+                    {t.accounting.cancel}
                   </Button>
                   <Button 
                     type="submit" 
                     disabled={createExpenseMutation.isPending || updateExpenseMutation.isPending}
                     data-testid="button-submit-expense"
                   >
-                    {editingExpense ? "تحديث" : "إضافة"}
+                    {editingExpense ? t.accounting.update : t.accounting.add}
                   </Button>
                 </DialogFooter>
               </form>
@@ -1928,29 +1976,29 @@ export default function Accounting() {
         <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>إنشاء فاتورة جديدة</DialogTitle>
-              <DialogDescription>أدخل تفاصيل الفاتورة والخدمات المقدمة</DialogDescription>
+              <DialogTitle>{t.accounting.createNewInvoice}</DialogTitle>
+              <DialogDescription>{t.accounting.invoiceDetailsDesc}</DialogDescription>
             </DialogHeader>
             
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">المريض</label>
+                  <label className="text-sm font-medium">{t.accounting.patient}</label>
                   <select
                     id="invoice-patient"
                     className="w-full p-2 border rounded-md"
                     data-testid="select-invoice-patient"
                   >
-                    <option value="">اختر المريض</option>
+                    <option value="">{t.accounting.selectPatient}</option>
                     {patientsList.map((patient) => (
                       <option key={patient.id} value={patient.id}>
-                        {patient.name} - {patient.phone || "لا يوجد هاتف"}
+                        {patient.name} - {patient.phone || t.accounting.noPhone}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">تاريخ الفاتورة</label>
+                  <label className="text-sm font-medium">{t.accounting.invoiceDate}</label>
                   <Input
                     id="invoice-date"
                     type="date"
@@ -1962,10 +2010,10 @@ export default function Accounting() {
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-sm font-medium">عناصر الفاتورة</label>
+                  <label className="text-sm font-medium">{t.accounting.invoiceItems}</label>
                   <Button type="button" variant="outline" size="sm" onClick={addInvoiceItem} data-testid="button-add-item">
                     <Plus className="h-4 w-4 ml-1" />
-                    إضافة عنصر
+                    {t.accounting.addItem}
                   </Button>
                 </div>
                 
@@ -1973,30 +2021,30 @@ export default function Accounting() {
                   {invoiceItems.map((item, index) => (
                     <div key={index} className="grid grid-cols-12 gap-2 items-start border p-2 rounded-md">
                       <div className="col-span-4">
-                        <label className="text-xs text-muted-foreground">الوصف</label>
+                        <label className="text-xs text-muted-foreground">{t.accounting.description}</label>
                         <Input
                           value={item.description}
                           onChange={(e) => updateInvoiceItem(index, "description", e.target.value)}
-                          placeholder="وصف الخدمة"
+                          placeholder={t.accounting.serviceDescription}
                           data-testid={`input-item-description-${index}`}
                         />
                       </div>
                       <div className="col-span-3">
-                        <label className="text-xs text-muted-foreground">نوع الخدمة</label>
+                        <label className="text-xs text-muted-foreground">{t.accounting.serviceType}</label>
                         <select
                           value={item.serviceType}
                           onChange={(e) => updateInvoiceItem(index, "serviceType", e.target.value)}
                           className="w-full p-2 border rounded-md text-sm"
                           data-testid={`select-item-service-${index}`}
                         >
-                          <option value="">اختر النوع</option>
+                          <option value="">{t.accounting.selectType}</option>
                           {SERVICE_TYPES.map((type) => (
-                            <option key={type.value} value={type.value}>{type.label}</option>
+                            <option key={type.value} value={type.value}>{getServiceTypeLabel(type.value)}</option>
                           ))}
                         </select>
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs text-muted-foreground">الكمية</label>
+                        <label className="text-xs text-muted-foreground">{t.accounting.quantity}</label>
                         <Input
                           type="number"
                           min="1"
@@ -2006,7 +2054,7 @@ export default function Accounting() {
                         />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs text-muted-foreground">السعر</label>
+                        <label className="text-xs text-muted-foreground">{t.accounting.price}</label>
                         <Input
                           type="number"
                           min="0"
@@ -2035,7 +2083,7 @@ export default function Accounting() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">الخصم (د.ع)</label>
+                  <label className="text-sm font-medium">{t.accounting.discountCurrency}</label>
                   <Input
                     id="invoice-discount"
                     type="number"
@@ -2045,18 +2093,18 @@ export default function Accounting() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">الإجمالي</label>
+                  <label className="text-sm font-medium">{t.accounting.total}</label>
                   <div className="text-2xl font-bold text-primary">
-                    {formatCurrency(invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0))}
+                    {displayCurrency(invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0))}
                   </div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">ملاحظات</label>
+                <label className="text-sm font-medium">{t.accounting.notes}</label>
                 <Textarea
                   id="invoice-notes"
-                  placeholder="ملاحظات إضافية على الفاتورة"
+                  placeholder={t.accounting.invoiceNotesPlaceholder}
                   data-testid="input-invoice-notes"
                 />
               </div>
@@ -2064,14 +2112,14 @@ export default function Accounting() {
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsInvoiceDialogOpen(false)}>
-                إلغاء
+                {t.accounting.cancel}
               </Button>
               <Button
                 onClick={handleCreateInvoice}
                 disabled={createInvoiceMutation.isPending}
                 data-testid="button-submit-invoice"
               >
-                إنشاء الفاتورة
+                {t.accounting.submitInvoice}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -2083,17 +2131,17 @@ export default function Accounting() {
             <DialogHeader>
               <DialogTitle className="text-red-600 flex items-center gap-2">
                 <AlertCircle className="h-5 w-5" />
-                تأكيد الحذف
+                {t.accounting.confirmDelete}
               </DialogTitle>
               <DialogDescription>
-                {deleteType === "expense" ? "هل أنت متأكد من حذف هذا المصروف؟" : "هل أنت متأكد من حذف هذه الفاتورة؟"}
+                {deleteType === "expense" ? t.accounting.confirmDeleteExpense : t.accounting.confirmDeleteInvoice}
                 <br />
-                <span className="text-red-500 font-medium">لا يمكن التراجع عن هذا الإجراء.</span>
+                <span className="text-red-500 font-medium">{t.accounting.cannotUndo}</span>
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => { setDeleteConfirmId(null); setDeleteType(null); }}>
-                إلغاء
+                {t.accounting.cancel}
               </Button>
               <Button
                 variant="destructive"
@@ -2101,7 +2149,7 @@ export default function Accounting() {
                 disabled={deleteExpenseMutation.isPending || deleteInvoiceMutation.isPending}
                 data-testid="button-confirm-delete"
               >
-                حذف
+                {t.accounting.delete}
               </Button>
             </DialogFooter>
           </DialogContent>

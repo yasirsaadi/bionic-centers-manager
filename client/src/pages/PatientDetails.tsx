@@ -421,7 +421,19 @@ export default function PatientDetails() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getBranchName = (branchId: number) => {
-    return branches?.find(b => b.id === branchId)?.name || "-";
+    const name = branches?.find(b => b.id === branchId)?.name || "-";
+    return (t.branches as Record<string, string>)[name] || name;
+  };
+
+  const translateTreatmentType = (type: string | null | undefined): string => {
+    if (!type) return "-";
+    const map: Record<string, string> = {
+      "روبوت": t.patientDetails.treatmentTypeRobot,
+      "تمارين تأهيلية": t.patientDetails.treatmentTypeRehab,
+      "أجهزة علاج طبيعي": t.patientDetails.treatmentTypePhysioDevices,
+      "جهاز علاج طبيعي": t.patientDetails.treatmentTypePhysioDevices,
+    };
+    return map[type] || type;
   };
 
   const handleDelete = () => {
@@ -765,7 +777,7 @@ export default function PatientDetails() {
                     <p className="text-muted-foreground mb-1">{t.patientDetails.treatmentType}</p>
                     <div className="flex flex-wrap gap-1">
                       {Array.from(paymentTreatmentTypes).map((tt, i) => (
-                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{tt}</span>
+                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{translateTreatmentType(tt)}</span>
                       ))}
                     </div>
                   </div>
@@ -808,7 +820,7 @@ export default function PatientDetails() {
                   <div className="space-y-2 pt-2 border-t border-dashed">
                     {Object.entries(sessionsByType).map(([type, count]) => (
                       <div key={type} className="flex justify-between items-center">
-                        <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{type}</span>
+                        <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{translateTreatmentType(type)}</span>
                         <span className="font-semibold text-slate-700">{count} {t.patientDetails.session}</span>
                       </div>
                     ))}
@@ -913,7 +925,7 @@ export default function PatientDetails() {
                         const rem = paid - used;
                         return (
                           <div key={type} className={`flex items-center gap-2 px-3 py-2 rounded-md border ${rem <= 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`} data-testid={`summary-${type}`}>
-                            <span className="text-sm font-medium text-slate-700">{type}:</span>
+                            <span className="text-sm font-medium text-slate-700">{translateTreatmentType(type)}:</span>
                             <span className={`font-bold text-sm ${rem <= 0 ? "text-red-600" : "text-emerald-600"}`}>{rem}</span>
                             <span className="text-xs text-slate-400">({paid} {t.patientDetails.paidSessions} - {used} {t.patientDetails.usedSessions})</span>
                           </div>
@@ -970,7 +982,7 @@ export default function PatientDetails() {
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
                           {patient.isPhysiotherapy && (
-                            <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{visit.treatmentType || "-"}</td>
+                            <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{translateTreatmentType(visit.treatmentType)}</td>
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{visit.notes || "-"}</td>
                           {patient.isPhysiotherapy && (
@@ -1058,7 +1070,7 @@ export default function PatientDetails() {
                             <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
                               {payment.paymentTreatmentType 
                                 ? payment.paymentTreatmentType.split(",").map((tt: string, i: number) => (
-                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{tt.trim()}</span>
+                                    <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs mx-0.5 mb-0.5">{translateTreatmentType(tt.trim())}</span>
                                   ))
                                 : <span className="text-slate-400">-</span>
                               }
@@ -1581,7 +1593,7 @@ export default function PatientDetails() {
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
-                        {option.label}
+                        {translateTreatmentType(option.value)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1651,7 +1663,7 @@ export default function PatientDetails() {
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
-                        {option.label}
+                        {translateTreatmentType(option.value)}
                       </SelectItem>
                     ))}
                   </SelectContent>

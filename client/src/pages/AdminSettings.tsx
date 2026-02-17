@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
+import { useTranslation } from "@/i18n/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -74,12 +75,14 @@ interface BranchWithDetails extends Branch {
 
 type UserRole = "admin" | "branch_manager" | "reception" | "therapist";
 
-const roleLabels: Record<UserRole, string> = {
-  admin: "مسؤول النظام",
-  branch_manager: "مدير فرع",
-  reception: "موظف استقبال",
-  therapist: "معالج طبيعي"
-};
+function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
+  return {
+    admin: t.roles.admin,
+    branch_manager: t.roles.branch_manager,
+    reception: t.roles.reception,
+    therapist: t.roles.therapist,
+  };
+}
 
 type PermissionSet = {
   canViewPatients: boolean;
@@ -161,6 +164,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
 };
 
 function BackupStatusCard() {
+  const { t } = useTranslation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSending, setIsSending] = useState(false);
@@ -184,8 +188,8 @@ function BackupStatusCard() {
   const handleSendBackup = async () => {
     if ((filterType === "branch" || filterType === "branch_today") && !selectedBranchId) {
       toast({
-        title: "تنبيه",
-        description: "يرجى اختيار الفرع أولاً",
+        title: t.adminSettings.toastAlert,
+        description: t.adminSettings.toastSelectBranchFirst,
         variant: "destructive",
       });
       return;
@@ -205,21 +209,21 @@ function BackupStatusCard() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: "تم الإرسال",
-          description: data.message || "تم إرسال النسخة الاحتياطية بنجاح",
+          title: t.adminSettings.toastSent,
+          description: data.message || t.adminSettings.toastBackupSuccess,
         });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/backup-status"] });
       } else {
         toast({
-          title: "خطأ",
-          description: data.message || "فشل إرسال النسخة الاحتياطية",
+          title: t.adminSettings.toastError,
+          description: data.message || t.adminSettings.toastBackupFailed,
           variant: "destructive",
         });
       }
     } catch (error) {
       toast({
-        title: "خطأ",
-        description: "حدث خطأ أثناء إرسال النسخة الاحتياطية",
+        title: t.adminSettings.toastError,
+        description: t.adminSettings.toastBackupError,
         variant: "destructive",
       });
     } finally {
@@ -228,9 +232,10 @@ function BackupStatusCard() {
   };
 
   const formatLastBackup = (dateStr: string | null) => {
-    if (!dateStr) return "لم يتم الإرسال بعد";
+    if (!dateStr) return t.adminSettings.neverSent;
     const date = new Date(dateStr);
-    return new Intl.DateTimeFormat("ar-IQ", {
+    const locale = t.dir === "rtl" ? "ar-IQ" : "en-US";
+    return new Intl.DateTimeFormat(locale, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -245,13 +250,13 @@ function BackupStatusCard() {
       <div className="p-4 bg-slate-50 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-muted-foreground">آخر نسخة احتياطية:</p>
+            <p className="text-sm text-muted-foreground">{t.adminSettings.lastBackup}</p>
             <p className="font-medium">
-              {isLoading ? "جاري التحميل..." : formatLastBackup(backupStatus?.lastBackup || null)}
+              {isLoading ? t.adminSettings.loading : formatLastBackup(backupStatus?.lastBackup || null)}
             </p>
             {backupStatus && backupStatus.hoursAgo !== null && (
               <p className="text-xs text-muted-foreground">
-                (منذ {backupStatus.hoursAgo} ساعة)
+                ({t.adminSettings.since} {backupStatus.hoursAgo} {t.adminSettings.hoursAgo})
               </p>
             )}
           </div>
@@ -259,12 +264,12 @@ function BackupStatusCard() {
             {backupStatus && backupStatus.hoursAgo !== null && backupStatus.hoursAgo < 24 ? (
               <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
                 <CheckCircle className="w-3 h-3 ml-1" />
-                محدث
+                {t.adminSettings.upToDate}
               </Badge>
             ) : (
               <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
                 <AlertTriangle className="w-3 h-3 ml-1" />
-                يحتاج تحديث
+                {t.adminSettings.needsUpdate}
               </Badge>
             )}
           </div>
@@ -272,7 +277,7 @@ function BackupStatusCard() {
       </div>
 
       <div className="space-y-3">
-        <Label>اختر نوع البيانات للنسخة الاحتياطية:</Label>
+        <Label>{t.adminSettings.selectBackupType}</Label>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -281,7 +286,7 @@ function BackupStatusCard() {
             onClick={() => setFilterType("all")}
             data-testid="button-filter-all"
           >
-            جميع المرضى
+            {t.adminSettings.allPatients}
           </Button>
           <Button
             type="button"
@@ -290,12 +295,12 @@ function BackupStatusCard() {
             onClick={() => setFilterType("today")}
             data-testid="button-filter-today"
           >
-            مرضى اليوم (كل الفروع)
+            {t.adminSettings.todayPatientsAllBranches}
           </Button>
         </div>
 
         <div className="border-t pt-3 mt-2">
-          <Label className="text-sm text-muted-foreground mb-2 block">أو اختر فرع معين:</Label>
+          <Label className="text-sm text-muted-foreground mb-2 block">{t.adminSettings.orSelectBranch}</Label>
           <Select 
             value={selectedBranchId?.toString() || ""} 
             onValueChange={(value) => {
@@ -306,7 +311,7 @@ function BackupStatusCard() {
             }}
           >
             <SelectTrigger data-testid="select-branch-filter">
-              <SelectValue placeholder="اختر الفرع (اختياري)" />
+              <SelectValue placeholder={t.adminSettings.selectBranchOptional} />
             </SelectTrigger>
             <SelectContent>
               {branches?.map((branch) => (
@@ -326,7 +331,7 @@ function BackupStatusCard() {
                 onClick={() => setFilterType("branch")}
                 data-testid="button-filter-branch-all"
               >
-                جميع مرضى الفرع
+                {t.adminSettings.allBranchPatients}
               </Button>
               <Button
                 type="button"
@@ -335,7 +340,7 @@ function BackupStatusCard() {
                 onClick={() => setFilterType("branch_today")}
                 data-testid="button-filter-branch-today"
               >
-                مرضى اليوم فقط للفرع
+                {t.adminSettings.todayBranchPatients}
               </Button>
               <Button
                 type="button"
@@ -347,7 +352,7 @@ function BackupStatusCard() {
                 }}
                 data-testid="button-clear-branch"
               >
-                إلغاء اختيار الفرع
+                {t.adminSettings.clearBranchSelection}
               </Button>
             </div>
           )}
@@ -361,17 +366,20 @@ function BackupStatusCard() {
         data-testid="button-send-backup"
       >
         <Mail className="w-4 h-4" />
-        {isSending ? "جاري الإرسال..." : "إرسال نسخة احتياطية الآن"}
+        {isSending ? t.adminSettings.sending : t.adminSettings.sendBackupNow}
       </Button>
     </div>
   );
 }
 
 export default function AdminSettings() {
+  const { t } = useTranslation();
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const roleLabels = getRoleLabels(t);
+  const dir = t.dir;
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
@@ -470,13 +478,13 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم إنشاء المستخدم بنجاح" });
+      toast({ title: t.adminSettings.toastUserCreated });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       setShowUserDialog(false);
       resetUserForm();
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -495,14 +503,14 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم تحديث المستخدم بنجاح" });
+      toast({ title: t.adminSettings.toastUserUpdated });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       setShowUserDialog(false);
       setEditingUser(null);
       resetUserForm();
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -519,12 +527,12 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم حذف المستخدم بنجاح" });
+      toast({ title: t.adminSettings.toastUserDeleted });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       setUserToDelete(null);
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -612,13 +620,13 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم تغيير كلمة مرور المسؤول بنجاح" });
+      toast({ title: t.adminSettings.toastAdminPasswordChanged });
       setCurrentPassword("");
       setNewAdminPassword("");
       setConfirmAdminPassword("");
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -637,12 +645,12 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم تغيير كلمة مرور الفرع بنجاح" });
+      toast({ title: t.adminSettings.toastBranchPasswordChanged });
       setNewBranchPassword("");
       setSelectedBranch(null);
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -661,11 +669,11 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم حفظ البريد الإلكتروني الاحتياطي بنجاح" });
+      toast({ title: t.adminSettings.toastBackupEmailSaved });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/backup-email"] });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -684,7 +692,7 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم إضافة الفرع بنجاح" });
+      toast({ title: t.adminSettings.toastBranchAdded });
       setNewBranchName("");
       setNewBranchLocation("");
       setNewBranchPw("");
@@ -693,7 +701,7 @@ export default function AdminSettings() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -710,13 +718,13 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم حذف الفرع بنجاح" });
+      toast({ title: t.adminSettings.toastBranchDeleted });
       setBranchToDelete(null);
       queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
@@ -735,25 +743,25 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم تحديث إعدادات الفرع" });
+      toast({ title: t.adminSettings.toastBranchSettingsUpdated });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
     },
     onError: (error: Error) => {
-      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
     },
   });
 
   const handleUpdateAdminPassword = () => {
     if (!currentPassword || !newAdminPassword) {
-      toast({ title: "خطأ", description: "يرجى ملء جميع الحقول", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastFillAllFields, variant: "destructive" });
       return;
     }
     if (newAdminPassword !== confirmAdminPassword) {
-      toast({ title: "خطأ", description: "كلمتا المرور غير متطابقتين", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordsNotMatch, variant: "destructive" });
       return;
     }
     if (newAdminPassword.length < 4) {
-      toast({ title: "خطأ", description: "كلمة المرور يجب أن تكون 4 أحرف على الأقل", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordMinLength, variant: "destructive" });
       return;
     }
     updateAdminPasswordMutation.mutate({ currentPassword, newPassword: newAdminPassword });
@@ -761,11 +769,11 @@ export default function AdminSettings() {
 
   const handleUpdateBranchPassword = () => {
     if (!selectedBranch || !newBranchPassword) {
-      toast({ title: "خطأ", description: "يرجى اختيار الفرع وإدخال كلمة المرور الجديدة", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastSelectBranchAndPassword, variant: "destructive" });
       return;
     }
     if (newBranchPassword.length < 4) {
-      toast({ title: "خطأ", description: "كلمة المرور يجب أن تكون 4 أحرف على الأقل", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordMinLength, variant: "destructive" });
       return;
     }
     updateBranchPasswordMutation.mutate({ branchId: selectedBranch, newPassword: newBranchPassword });
@@ -773,7 +781,7 @@ export default function AdminSettings() {
 
   const handleUpdateBackupEmail = () => {
     if (!backupEmail) {
-      toast({ title: "خطأ", description: "يرجى إدخال البريد الإلكتروني", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastEnterEmail, variant: "destructive" });
       return;
     }
     updateBackupEmailMutation.mutate(backupEmail);
@@ -781,11 +789,11 @@ export default function AdminSettings() {
 
   const handleValidateAndConfirmAdd = () => {
     if (!newBranchName || newBranchName.length < 2) {
-      toast({ title: "خطأ", description: "اسم الفرع يجب أن يكون حرفين على الأقل", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastBranchNameMinLength, variant: "destructive" });
       return;
     }
     if (newBranchPw && newBranchPw.length < 4) {
-      toast({ title: "خطأ", description: "كلمة المرور يجب أن تكون 4 أحرف على الأقل", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordMinLength, variant: "destructive" });
       return;
     }
     setShowAddConfirmation(true);
@@ -830,9 +838,9 @@ export default function AdminSettings() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
       
-      toast({ title: "تم تصدير البيانات بنجاح" });
+      toast({ title: t.adminSettings.toastExportSuccess });
     } catch (error) {
-      toast({ title: "خطأ", description: "فشل تصدير البيانات", variant: "destructive" });
+      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastExportFailed, variant: "destructive" });
     } finally {
       setIsExporting(false);
     }
@@ -843,30 +851,30 @@ export default function AdminSettings() {
       <div className="flex items-center justify-center h-full">
         <Card className="p-8 text-center">
           <Shield className="w-16 h-16 mx-auto text-red-500 mb-4" />
-          <h2 className="text-xl font-bold text-slate-800 mb-2">غير مصرح</h2>
-          <p className="text-slate-600">هذه الصفحة متاحة فقط لمسؤول النظام</p>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">{t.adminSettings.unauthorized}</h2>
+          <p className="text-slate-600">{t.adminSettings.unauthorizedDesc}</p>
         </Card>
       </div>
     );
   }
 
   const sectionLabels: { key: SettingKey; label: string; icon: typeof Users }[] = [
-    { key: "showDashboard", label: "لوحة التحكم", icon: LayoutDashboard },
-    { key: "showPatients", label: "سجل المرضى + إضافة مريض", icon: Users },
-    { key: "showPayments", label: "التقارير المالية", icon: FileText },
-    { key: "showAccounting", label: "النظام المحاسبي", icon: DollarSign },
-    { key: "showStatistics", label: "الإحصاءات", icon: BarChart3 },
+    { key: "showDashboard", label: t.adminSettings.showDashboard, icon: LayoutDashboard },
+    { key: "showPatients", label: t.adminSettings.showPatients, icon: Users },
+    { key: "showPayments", label: t.adminSettings.showPayments, icon: FileText },
+    { key: "showAccounting", label: t.adminSettings.showAccounting, icon: DollarSign },
+    { key: "showStatistics", label: t.adminSettings.showStatistics, icon: BarChart3 },
   ];
 
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto" dir="rtl">
+    <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto" dir={dir}>
       <div className="flex items-center gap-3 mb-6">
         <div className="p-3 bg-primary/10 rounded-xl">
           <Settings className="w-8 h-8 text-primary" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">إعدادات النظام</h1>
-          <p className="text-slate-500">إدارة كلمات المرور والفروع وإعدادات النظام</p>
+          <h1 className="text-2xl font-bold text-slate-800">{t.adminSettings.pageTitle}</h1>
+          <p className="text-slate-500">{t.adminSettings.pageSubtitle}</p>
         </div>
       </div>
 
@@ -874,23 +882,23 @@ export default function AdminSettings() {
         <TabsList className="grid grid-cols-5 w-full max-w-2xl mb-6">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
-            المستخدمين
+            {t.adminSettings.tabUsers}
           </TabsTrigger>
           <TabsTrigger value="passwords" className="gap-2">
             <Key className="w-4 h-4" />
-            كلمات المرور
+            {t.adminSettings.tabPasswords}
           </TabsTrigger>
           <TabsTrigger value="branches" className="gap-2">
             <Building2 className="w-4 h-4" />
-            الفروع
+            {t.adminSettings.tabBranches}
           </TabsTrigger>
           <TabsTrigger value="management" className="gap-2">
             <Layers className="w-4 h-4" />
-            إدارة الفروع
+            {t.adminSettings.tabManagement}
           </TabsTrigger>
           <TabsTrigger value="backup" className="gap-2">
             <Mail className="w-4 h-4" />
-            الاحتياط
+            {t.adminSettings.tabBackup}
           </TabsTrigger>
         </TabsList>
 
@@ -899,7 +907,7 @@ export default function AdminSettings() {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-bold text-slate-800">إدارة المستخدمين</h2>
+                <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.userManagement}</h2>
               </div>
               <Button
                 onClick={() => {
@@ -910,23 +918,23 @@ export default function AdminSettings() {
                 data-testid="button-add-user"
               >
                 <Plus className="w-4 h-4 ml-2" />
-                إضافة مستخدم
+                {t.adminSettings.addUser}
               </Button>
             </div>
 
             {isLoadingUsers ? (
-              <div className="text-center py-8 text-muted-foreground">جاري التحميل...</div>
+              <div className="text-center py-8 text-muted-foreground">{t.adminSettings.loading}</div>
             ) : systemUsers && systemUsers.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-right py-3 px-4 font-medium">اسم المستخدم</th>
-                      <th className="text-right py-3 px-4 font-medium">الاسم</th>
-                      <th className="text-right py-3 px-4 font-medium">الدور</th>
-                      <th className="text-right py-3 px-4 font-medium">الفرع</th>
-                      <th className="text-right py-3 px-4 font-medium">الحالة</th>
-                      <th className="text-right py-3 px-4 font-medium">الإجراءات</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableUsername}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableName}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableRole}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableBranch}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableStatus}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableActions}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -941,10 +949,10 @@ export default function AdminSettings() {
                               {roleLabels[user.role as UserRole] || user.role}
                             </Badge>
                           </td>
-                          <td className="py-3 px-4">{branch?.name || (user.role === "admin" ? "جميع الفروع" : "-")}</td>
+                          <td className="py-3 px-4">{branch?.name || (user.role === "admin" ? t.adminSettings.allBranches : "-")}</td>
                           <td className="py-3 px-4">
                             <Badge variant={user.isActive ? "default" : "outline"}>
-                              {user.isActive ? "نشط" : "غير نشط"}
+                              {user.isActive ? t.adminSettings.active : t.adminSettings.inactive}
                             </Badge>
                           </td>
                           <td className="py-3 px-4">
@@ -975,7 +983,7 @@ export default function AdminSettings() {
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
-                لا يوجد مستخدمين. أضف مستخدمين جدد لإدارة النظام.
+                {t.adminSettings.noUsers}
               </div>
             )}
           </Card>
@@ -985,19 +993,19 @@ export default function AdminSettings() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-6">
               <Shield className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">تغيير كلمة مرور المسؤول</h2>
+              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.changeAdminPassword}</h2>
             </div>
 
             <div className="space-y-4 max-w-md">
               <div>
-                <Label htmlFor="currentPassword">كلمة المرور الحالية</Label>
+                <Label htmlFor="currentPassword">{t.adminSettings.currentPassword}</Label>
                 <div className="relative mt-1">
                   <Input
                     id="currentPassword"
                     type={showCurrentPassword ? "text" : "password"}
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
-                    placeholder="أدخل كلمة المرور الحالية"
+                    placeholder={t.adminSettings.currentPasswordPlaceholder}
                     className="pl-10"
                     data-testid="input-current-password"
                   />
@@ -1014,14 +1022,14 @@ export default function AdminSettings() {
               </div>
 
               <div>
-                <Label htmlFor="newAdminPassword">كلمة المرور الجديدة</Label>
+                <Label htmlFor="newAdminPassword">{t.adminSettings.newPassword}</Label>
                 <div className="relative mt-1">
                   <Input
                     id="newAdminPassword"
                     type={showNewPassword ? "text" : "password"}
                     value={newAdminPassword}
                     onChange={(e) => setNewAdminPassword(e.target.value)}
-                    placeholder="أدخل كلمة المرور الجديدة"
+                    placeholder={t.adminSettings.newPasswordPlaceholder}
                     className="pl-10"
                     data-testid="input-new-password"
                   />
@@ -1038,13 +1046,13 @@ export default function AdminSettings() {
               </div>
 
               <div>
-                <Label htmlFor="confirmAdminPassword">تأكيد كلمة المرور الجديدة</Label>
+                <Label htmlFor="confirmAdminPassword">{t.adminSettings.confirmNewPassword}</Label>
                 <Input
                   id="confirmAdminPassword"
                   type="password"
                   value={confirmAdminPassword}
                   onChange={(e) => setConfirmAdminPassword(e.target.value)}
-                  placeholder="أعد إدخال كلمة المرور الجديدة"
+                  placeholder={t.adminSettings.confirmNewPasswordPlaceholder}
                   className="mt-1"
                   data-testid="input-confirm-password"
                 />
@@ -1057,7 +1065,7 @@ export default function AdminSettings() {
                 data-testid="button-save-admin-password"
               >
                 <Save className="w-4 h-4" />
-                {updateAdminPasswordMutation.isPending ? "جاري الحفظ..." : "حفظ كلمة المرور"}
+                {updateAdminPasswordMutation.isPending ? t.adminSettings.saving : t.adminSettings.savePassword}
               </Button>
             </div>
           </Card>
@@ -1067,7 +1075,7 @@ export default function AdminSettings() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-6">
               <Building2 className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">كلمات مرور الفروع</h2>
+              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.branchPasswords}</h2>
             </div>
 
             <div className="grid gap-4 mb-6">
@@ -1093,7 +1101,7 @@ export default function AdminSettings() {
                       </div>
                     </div>
                     {selectedBranch === branch.id && (
-                      <Badge variant="default">محدد</Badge>
+                      <Badge variant="default">{t.adminSettings.selected}</Badge>
                     )}
                   </div>
                 </div>
@@ -1104,18 +1112,18 @@ export default function AdminSettings() {
               <div className="space-y-4 max-w-md border-t pt-6">
                 <div className="flex items-center gap-2 text-sm text-slate-600 mb-4">
                   <Lock className="w-4 h-4" />
-                  <span>تغيير كلمة مرور: {branches?.find(b => b.id === selectedBranch)?.name}</span>
+                  <span>{t.adminSettings.changePasswordFor} {branches?.find(b => b.id === selectedBranch)?.name}</span>
                 </div>
 
                 <div>
-                  <Label htmlFor="newBranchPassword">كلمة المرور الجديدة للفرع</Label>
+                  <Label htmlFor="newBranchPassword">{t.adminSettings.newBranchPassword}</Label>
                   <div className="relative mt-1">
                     <Input
                       id="newBranchPassword"
                       type={showBranchPassword ? "text" : "password"}
                       value={newBranchPassword}
                       onChange={(e) => setNewBranchPassword(e.target.value)}
-                      placeholder="أدخل كلمة المرور الجديدة"
+                      placeholder={t.adminSettings.newPasswordPlaceholder}
                       className="pl-10"
                       data-testid="input-branch-password"
                     />
@@ -1138,7 +1146,7 @@ export default function AdminSettings() {
                   data-testid="button-save-branch-password"
                 >
                   <Save className="w-4 h-4" />
-                  {updateBranchPasswordMutation.isPending ? "جاري الحفظ..." : "حفظ كلمة مرور الفرع"}
+                  {updateBranchPasswordMutation.isPending ? t.adminSettings.saving : t.adminSettings.saveBranchPassword}
                 </Button>
               </div>
             )}
@@ -1150,7 +1158,7 @@ export default function AdminSettings() {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <Layers className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-bold text-slate-800">إدارة الفروع</h2>
+                <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.branchManagement}</h2>
               </div>
               <Button 
                 onClick={() => setShowAddBranchDialog(true)}
@@ -1158,7 +1166,7 @@ export default function AdminSettings() {
                 data-testid="button-add-branch"
               >
                 <Plus className="w-4 h-4" />
-                إضافة فرع جديد
+                {t.adminSettings.addNewBranch}
               </Button>
             </div>
 
@@ -1188,7 +1196,7 @@ export default function AdminSettings() {
                           )}
                           <span className="flex items-center gap-1">
                             <Users className="w-3 h-3" />
-                            {branch.patientCount} مريض
+                            {branch.patientCount} {t.adminSettings.patient}
                           </span>
                         </div>
                       </div>
@@ -1197,12 +1205,12 @@ export default function AdminSettings() {
                       {branch.hasPassword ? (
                         <Badge variant="secondary" className="gap-1">
                           <CheckCircle className="w-3 h-3" />
-                          كلمة مرور
+                          {t.adminSettings.hasPassword}
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
                           <AlertTriangle className="w-3 h-3" />
-                          بدون كلمة مرور
+                          {t.adminSettings.noPassword}
                         </Badge>
                       )}
                       <Button
@@ -1230,7 +1238,7 @@ export default function AdminSettings() {
 
                   {selectedBranchForSettings === branch.id && (
                     <div className="border-t pt-4 mt-4">
-                      <h4 className="text-sm font-semibold text-slate-700 mb-3">إعدادات إظهار الأقسام</h4>
+                      <h4 className="text-sm font-semibold text-slate-700 mb-3">{t.adminSettings.sectionSettings}</h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {sectionLabels.map(({ key, label, icon: Icon }) => (
                           <div 
@@ -1266,16 +1274,16 @@ export default function AdminSettings() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-6">
               <Mail className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">البريد الإلكتروني الاحتياطي</h2>
+              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.backupEmail}</h2>
             </div>
 
             <p className="text-sm text-slate-600 mb-4">
-              يُستخدم هذا البريد لاستعادة كلمة المرور في حال نسيانها
+              {t.adminSettings.backupEmailDesc}
             </p>
 
             <div className="space-y-4 max-w-md">
               <div>
-                <Label htmlFor="backupEmail">البريد الإلكتروني</Label>
+                <Label htmlFor="backupEmail">{t.adminSettings.emailLabel}</Label>
                 <Input
                   id="backupEmail"
                   type="email"
@@ -1295,7 +1303,7 @@ export default function AdminSettings() {
                 data-testid="button-save-backup-email"
               >
                 <Save className="w-4 h-4" />
-                {updateBackupEmailMutation.isPending ? "جاري الحفظ..." : "حفظ البريد الإلكتروني"}
+                {updateBackupEmailMutation.isPending ? t.adminSettings.saving : t.adminSettings.saveEmail}
               </Button>
             </div>
           </Card>
@@ -1306,10 +1314,9 @@ export default function AdminSettings() {
                 <Shield className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-amber-800 mb-1">ملاحظة أمنية</h3>
+                <h3 className="font-semibold text-amber-800 mb-1">{t.adminSettings.securityNote}</h3>
                 <p className="text-sm text-amber-700">
-                  تأكد من استخدام بريد إلكتروني موثوق وآمن. سيتم استخدام هذا البريد 
-                  للتواصل معك في حال نسيان كلمة المرور أو لأي إشعارات أمنية.
+                  {t.adminSettings.securityNoteDesc}
                 </p>
               </div>
             </div>
@@ -1318,10 +1325,10 @@ export default function AdminSettings() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-4">
               <Mail className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">إرسال نسخة احتياطية</h2>
+              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.sendBackup}</h2>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
-              إرسال نسخة احتياطية من بيانات المرضى إلى بريدك الإلكتروني الآن
+              {t.adminSettings.sendBackupDesc}
             </p>
 
             <BackupStatusCard />
@@ -1330,11 +1337,11 @@ export default function AdminSettings() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-6">
               <Download className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">تصدير بيانات المرضى</h2>
+              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.exportPatientData}</h2>
             </div>
 
             <p className="text-sm text-slate-600 mb-4">
-              قم بتصدير جميع بيانات المرضى إلى ملف CSV للاحتفاظ بنسخة احتياطية على جهازك
+              {t.adminSettings.exportPatientDataDesc}
             </p>
 
             <Button 
@@ -1344,7 +1351,7 @@ export default function AdminSettings() {
               data-testid="button-export-patients"
             >
               <Download className="w-4 h-4" />
-              {isExporting ? "جاري التصدير..." : "تصدير بيانات المرضى (CSV)"}
+              {isExporting ? t.adminSettings.exporting : t.adminSettings.exportPatientsCsv}
             </Button>
           </Card>
         </TabsContent>
@@ -1353,88 +1360,88 @@ export default function AdminSettings() {
       <Card className="p-6 mt-8">
         <div className="flex items-center gap-2 mb-4">
           <BarChart3 className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-bold text-slate-800">صلاحيات المسؤول</h2>
+          <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.adminPermissions}</h2>
         </div>
         
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <Users className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">إدارة المرضى</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permPatientManagement}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <DollarSign className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">إدارة الأموال</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permFinanceManagement}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <FileText className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">التقارير</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permReports}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <Calendar className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">الزيارات</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permVisits}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <Building2 className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">جميع الفروع</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permAllBranches}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <BarChart3 className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">الإحصائيات</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permStatistics}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <Key className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">كلمات المرور</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permPasswords}</span>
           </div>
           <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
             <Settings className="w-5 h-5 text-green-600" />
-            <span className="text-sm text-green-800">الإعدادات</span>
+            <span className="text-sm text-green-800">{t.adminSettings.permSettings}</span>
           </div>
         </div>
       </Card>
 
       {/* Add Branch Dialog */}
       <Dialog open={showAddBranchDialog} onOpenChange={setShowAddBranchDialog}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
+        <DialogContent className="sm:max-w-md" dir={dir}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Plus className="w-5 h-5" />
-              إضافة فرع جديد
+              {t.adminSettings.addBranchDialogTitle}
             </DialogTitle>
             <DialogDescription>
-              أدخل معلومات الفرع الجديد
+              {t.adminSettings.addBranchDialogDesc}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="newBranchName">اسم الفرع *</Label>
+              <Label htmlFor="newBranchName">{t.adminSettings.branchNameLabel}</Label>
               <Input
                 id="newBranchName"
                 value={newBranchName}
                 onChange={(e) => setNewBranchName(e.target.value)}
-                placeholder="مثال: فرع النجف"
+                placeholder={t.adminSettings.branchNamePlaceholder}
                 className="mt-1"
                 data-testid="input-new-branch-name"
               />
             </div>
             <div>
-              <Label htmlFor="newBranchLocation">الموقع (اختياري)</Label>
+              <Label htmlFor="newBranchLocation">{t.adminSettings.locationLabel}</Label>
               <Input
                 id="newBranchLocation"
                 value={newBranchLocation}
                 onChange={(e) => setNewBranchLocation(e.target.value)}
-                placeholder="مثال: شارع الكوفة"
+                placeholder={t.adminSettings.locationPlaceholder}
                 className="mt-1"
                 data-testid="input-new-branch-location"
               />
             </div>
             <div>
-              <Label htmlFor="newBranchPw">كلمة المرور (اختياري)</Label>
+              <Label htmlFor="newBranchPw">{t.adminSettings.passwordOptional}</Label>
               <Input
                 id="newBranchPw"
                 type="password"
                 value={newBranchPw}
                 onChange={(e) => setNewBranchPw(e.target.value)}
-                placeholder="كلمة مرور للدخول للفرع"
+                placeholder={t.adminSettings.passwordPlaceholder}
                 className="mt-1"
                 data-testid="input-new-branch-password"
               />
@@ -1445,7 +1452,7 @@ export default function AdminSettings() {
               variant="outline"
               onClick={() => setShowAddBranchDialog(false)}
             >
-              إلغاء
+              {t.adminSettings.cancel}
             </Button>
             <Button
               onClick={handleValidateAndConfirmAdd}
@@ -1453,7 +1460,7 @@ export default function AdminSettings() {
               className="gap-2"
               data-testid="button-confirm-add-branch"
             >
-              إضافة الفرع
+              {t.adminSettings.addBranch}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1461,19 +1468,19 @@ export default function AdminSettings() {
 
       {/* Add Branch Confirmation AlertDialog */}
       <AlertDialog open={showAddConfirmation} onOpenChange={setShowAddConfirmation}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-primary">
               <Plus className="w-5 h-5" />
-              تأكيد إضافة الفرع
+              {t.adminSettings.confirmAddBranch}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من إضافة فرع "{newBranchName}"؟
+              {t.adminSettings.confirmAddBranchDesc} "{newBranchName}"؟
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel data-testid="button-cancel-add-branch">
-              لا
+              {t.adminSettings.no}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleCreateBranch}
@@ -1481,7 +1488,7 @@ export default function AdminSettings() {
               className="gap-2"
               data-testid="button-yes-add-branch"
             >
-              {createBranchMutation.isPending ? "جاري الإضافة..." : "نعم"}
+              {createBranchMutation.isPending ? t.adminSettings.adding : t.adminSettings.yes}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1489,19 +1496,19 @@ export default function AdminSettings() {
 
       {/* Delete Branch Confirmation AlertDialog */}
       <AlertDialog open={!!branchToDelete} onOpenChange={() => setBranchToDelete(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="w-5 h-5" />
-              تأكيد حذف الفرع
+              {t.adminSettings.confirmDeleteBranch}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من حذف فرع "{branchToDelete?.name}"؟ هذا الإجراء لا يمكن التراجع عنه.
+              {t.adminSettings.confirmDeleteBranchDesc} "{branchToDelete?.name}"؟ {t.adminSettings.cannotUndoAction}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel data-testid="button-cancel-delete-branch">
-              لا
+              {t.adminSettings.no}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => branchToDelete && deleteBranchMutation.mutate(branchToDelete.id)}
@@ -1509,7 +1516,7 @@ export default function AdminSettings() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
               data-testid="button-confirm-delete-branch"
             >
-              {deleteBranchMutation.isPending ? "جاري الحذف..." : "نعم"}
+              {deleteBranchMutation.isPending ? t.adminSettings.deleting : t.adminSettings.yes}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1523,36 +1530,36 @@ export default function AdminSettings() {
           resetUserForm();
         }
       }}>
-        <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent dir={dir} className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingUser ? "تعديل المستخدم" : "إضافة مستخدم جديد"}
+              {editingUser ? t.adminSettings.editUser : t.adminSettings.addNewUser}
             </DialogTitle>
             <DialogDescription>
-              {editingUser ? "قم بتعديل بيانات المستخدم والصلاحيات" : "أدخل بيانات المستخدم الجديد وحدد الصلاحيات"}
+              {editingUser ? t.adminSettings.editUserDesc : t.adminSettings.addNewUserDesc}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="username">اسم المستخدم *</Label>
+                <Label htmlFor="username">{t.adminSettings.usernameLabel}</Label>
                 <Input
                   id="username"
                   value={userFormData.username}
                   onChange={(e) => setUserFormData(prev => ({ ...prev, username: e.target.value }))}
-                  placeholder="اسم المستخدم للدخول"
+                  placeholder={t.adminSettings.usernamePlaceholder}
                   className="mt-1"
                   data-testid="input-user-username"
                 />
               </div>
               <div>
-                <Label htmlFor="displayName">الاسم الظاهر</Label>
+                <Label htmlFor="displayName">{t.adminSettings.displayNameLabel}</Label>
                 <Input
                   id="displayName"
                   value={userFormData.displayName}
                   onChange={(e) => setUserFormData(prev => ({ ...prev, displayName: e.target.value }))}
-                  placeholder="الاسم الكامل"
+                  placeholder={t.adminSettings.displayNamePlaceholder}
                   className="mt-1"
                   data-testid="input-user-displayname"
                 />
@@ -1561,45 +1568,45 @@ export default function AdminSettings() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="password">{editingUser ? "كلمة المرور الجديدة" : "كلمة المرور *"}</Label>
+                <Label htmlFor="password">{editingUser ? t.adminSettings.newPasswordLabel : t.adminSettings.passwordRequired}</Label>
                 <Input
                   id="password"
                   type="password"
                   value={userFormData.password}
                   onChange={(e) => setUserFormData(prev => ({ ...prev, password: e.target.value }))}
-                  placeholder={editingUser ? "اترك فارغاً للإبقاء" : "كلمة المرور"}
+                  placeholder={editingUser ? t.adminSettings.leaveBlankToKeep : t.adminSettings.passwordLabel}
                   className="mt-1"
                   data-testid="input-user-password"
                 />
               </div>
               <div>
-                <Label>الدور *</Label>
+                <Label>{t.adminSettings.roleLabel}</Label>
                 <Select
                   value={userFormData.role}
                   onValueChange={(value) => handleRoleChange(value as UserRole)}
                 >
                   <SelectTrigger className="mt-1" data-testid="select-user-role">
-                    <SelectValue placeholder="اختر الدور" />
+                    <SelectValue placeholder={t.adminSettings.selectRole} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">مسؤول النظام</SelectItem>
-                    <SelectItem value="branch_manager">مدير فرع</SelectItem>
-                    <SelectItem value="reception">موظف استقبال</SelectItem>
-                    <SelectItem value="therapist">معالج طبيعي</SelectItem>
+                    <SelectItem value="admin">{t.roles.admin}</SelectItem>
+                    <SelectItem value="branch_manager">{t.roles.branch_manager}</SelectItem>
+                    <SelectItem value="reception">{t.roles.reception}</SelectItem>
+                    <SelectItem value="therapist">{t.roles.therapist}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>اللغة</Label>
+                <Label>{t.adminSettings.languageLabel}</Label>
                 <Select
                   value={userFormData.language}
                   onValueChange={(value) => setUserFormData(prev => ({ ...prev, language: value }))}
                 >
                   <SelectTrigger className="mt-1" data-testid="select-user-language">
-                    <SelectValue placeholder="اختر اللغة" />
+                    <SelectValue placeholder={t.adminSettings.selectLanguage} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ar">العربية</SelectItem>
+                    <SelectItem value="ar">{t.adminSettings.arabic}</SelectItem>
                     <SelectItem value="en">English</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1608,13 +1615,13 @@ export default function AdminSettings() {
 
             {userFormData.role !== "admin" && (
               <div>
-                <Label>الفرع *</Label>
+                <Label>{t.adminSettings.branchLabel}</Label>
                 <Select
                   value={userFormData.branchId?.toString() || ""}
                   onValueChange={(value) => setUserFormData(prev => ({ ...prev, branchId: Number(value) }))}
                 >
                   <SelectTrigger className="mt-1" data-testid="select-user-branch">
-                    <SelectValue placeholder="اختر الفرع" />
+                    <SelectValue placeholder={t.adminSettings.selectBranch} />
                   </SelectTrigger>
                   <SelectContent>
                     {branches?.map((branch) => (
@@ -1634,15 +1641,15 @@ export default function AdminSettings() {
                 onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, isActive: checked }))}
                 data-testid="switch-user-active"
               />
-              <Label htmlFor="isActive">المستخدم نشط</Label>
+              <Label htmlFor="isActive">{t.adminSettings.userActive}</Label>
             </div>
 
             <div className="border-t pt-4">
-              <h3 className="font-medium mb-4">الصلاحيات</h3>
+              <h3 className="font-medium mb-4">{t.adminSettings.permissions}</h3>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-muted-foreground">المرضى</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground">{t.adminSettings.permCatPatients}</h4>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1650,7 +1657,7 @@ export default function AdminSettings() {
                         checked={userFormData.canViewPatients}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewPatients: checked }))}
                       />
-                      <Label htmlFor="canViewPatients" className="text-sm">عرض المرضى</Label>
+                      <Label htmlFor="canViewPatients" className="text-sm">{t.adminSettings.canViewPatients}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1658,7 +1665,7 @@ export default function AdminSettings() {
                         checked={userFormData.canAddPatients}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canAddPatients: checked }))}
                       />
-                      <Label htmlFor="canAddPatients" className="text-sm">إضافة مرضى</Label>
+                      <Label htmlFor="canAddPatients" className="text-sm">{t.adminSettings.canAddPatients}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1666,7 +1673,7 @@ export default function AdminSettings() {
                         checked={userFormData.canEditPatients}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEditPatients: checked }))}
                       />
-                      <Label htmlFor="canEditPatients" className="text-sm">تعديل المرضى</Label>
+                      <Label htmlFor="canEditPatients" className="text-sm">{t.adminSettings.canEditPatients}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1674,13 +1681,13 @@ export default function AdminSettings() {
                         checked={userFormData.canDeletePatients}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canDeletePatients: checked }))}
                       />
-                      <Label htmlFor="canDeletePatients" className="text-sm">حذف المرضى</Label>
+                      <Label htmlFor="canDeletePatients" className="text-sm">{t.adminSettings.canDeletePatients}</Label>
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-muted-foreground">المدفوعات</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground">{t.adminSettings.permCatPayments}</h4>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1688,7 +1695,7 @@ export default function AdminSettings() {
                         checked={userFormData.canViewPayments}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewPayments: checked }))}
                       />
-                      <Label htmlFor="canViewPayments" className="text-sm">عرض المدفوعات</Label>
+                      <Label htmlFor="canViewPayments" className="text-sm">{t.adminSettings.canViewPayments}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1696,7 +1703,7 @@ export default function AdminSettings() {
                         checked={userFormData.canAddPayments}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canAddPayments: checked }))}
                       />
-                      <Label htmlFor="canAddPayments" className="text-sm">إضافة مدفوعات</Label>
+                      <Label htmlFor="canAddPayments" className="text-sm">{t.adminSettings.canAddPayments}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1704,7 +1711,7 @@ export default function AdminSettings() {
                         checked={userFormData.canEditPayments}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEditPayments: checked }))}
                       />
-                      <Label htmlFor="canEditPayments" className="text-sm">تعديل المدفوعات</Label>
+                      <Label htmlFor="canEditPayments" className="text-sm">{t.adminSettings.canEditPayments}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1712,7 +1719,7 @@ export default function AdminSettings() {
                         checked={userFormData.canDeletePayments}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canDeletePayments: checked }))}
                       />
-                      <Label htmlFor="canDeletePayments" className="text-sm">حذف المدفوعات</Label>
+                      <Label htmlFor="canDeletePayments" className="text-sm">{t.adminSettings.canDeletePayments}</Label>
                     </div>
                   </div>
                 </div>
@@ -1720,7 +1727,7 @@ export default function AdminSettings() {
 
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-muted-foreground">التقارير والمحاسبة</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground">{t.adminSettings.permCatReportsAccounting}</h4>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1728,7 +1735,7 @@ export default function AdminSettings() {
                         checked={userFormData.canViewReports}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewReports: checked }))}
                       />
-                      <Label htmlFor="canViewReports" className="text-sm">عرض التقارير</Label>
+                      <Label htmlFor="canViewReports" className="text-sm">{t.adminSettings.canViewReports}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1736,13 +1743,13 @@ export default function AdminSettings() {
                         checked={userFormData.canManageAccounting}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageAccounting: checked }))}
                       />
-                      <Label htmlFor="canManageAccounting" className="text-sm">إدارة المحاسبة</Label>
+                      <Label htmlFor="canManageAccounting" className="text-sm">{t.adminSettings.canManageAccounting}</Label>
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-muted-foreground">النظام</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground">{t.adminSettings.permCatSystem}</h4>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1750,7 +1757,7 @@ export default function AdminSettings() {
                         checked={userFormData.canManageSettings}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageSettings: checked }))}
                       />
-                      <Label htmlFor="canManageSettings" className="text-sm">إدارة الإعدادات</Label>
+                      <Label htmlFor="canManageSettings" className="text-sm">{t.adminSettings.canManageSettings}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1758,7 +1765,7 @@ export default function AdminSettings() {
                         checked={userFormData.canManageUsers}
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageUsers: checked }))}
                       />
-                      <Label htmlFor="canManageUsers" className="text-sm">إدارة المستخدمين</Label>
+                      <Label htmlFor="canManageUsers" className="text-sm">{t.adminSettings.canManageUsers}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch
@@ -1767,7 +1774,7 @@ export default function AdminSettings() {
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageTreatmentPlans: checked }))}
                         data-testid="switch-canManageTreatmentPlans"
                       />
-                      <Label htmlFor="canManageTreatmentPlans" className="text-sm">إدارة الخطط العلاجية</Label>
+                      <Label htmlFor="canManageTreatmentPlans" className="text-sm">{t.adminSettings.canManageTreatmentPlans}</Label>
                     </div>
                   </div>
                 </div>
@@ -1781,7 +1788,7 @@ export default function AdminSettings() {
               disabled={createUserMutation.isPending || updateUserMutation.isPending || !userFormData.username || (!editingUser && !userFormData.password) || (userFormData.role !== "admin" && !userFormData.branchId)}
               data-testid="button-save-user"
             >
-              {createUserMutation.isPending || updateUserMutation.isPending ? "جاري الحفظ..." : (editingUser ? "تحديث" : "إضافة")}
+              {createUserMutation.isPending || updateUserMutation.isPending ? t.adminSettings.saving : (editingUser ? t.adminSettings.update : t.adminSettings.add)}
             </Button>
             <Button
               variant="outline"
@@ -1792,7 +1799,7 @@ export default function AdminSettings() {
               }}
               data-testid="button-cancel-user"
             >
-              إلغاء
+              {t.adminSettings.cancel}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1800,19 +1807,19 @@ export default function AdminSettings() {
 
       {/* Delete User Confirmation AlertDialog */}
       <AlertDialog open={!!userToDelete} onOpenChange={() => setUserToDelete(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="w-5 h-5" />
-              تأكيد حذف المستخدم
+              {t.adminSettings.confirmDeleteUser}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من حذف المستخدم "{userToDelete?.username}"؟ هذا الإجراء لا يمكن التراجع عنه.
+              {t.adminSettings.confirmDeleteUserDesc} "{userToDelete?.username}"؟ {t.adminSettings.cannotUndoAction}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel data-testid="button-cancel-delete-user">
-              لا
+              {t.adminSettings.no}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => userToDelete && deleteUserMutation.mutate(userToDelete.id)}
@@ -1820,7 +1827,7 @@ export default function AdminSettings() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
               data-testid="button-confirm-delete-user"
             >
-              {deleteUserMutation.isPending ? "جاري الحذف..." : "نعم"}
+              {deleteUserMutation.isPending ? t.adminSettings.deleting : t.adminSettings.yes}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

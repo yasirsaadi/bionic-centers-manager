@@ -30,6 +30,7 @@ export default function BranchDetails() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { t } = useTranslation();
+  const dir = t.dir;
   const branchId = Number(id);
   const [viewMode, setViewMode] = useState<"date" | "all">("date");
   const [searchTerm, setSearchTerm] = useState("");
@@ -131,7 +132,7 @@ export default function BranchDetails() {
           </div>
           <div>
             <h2 className="text-lg md:text-2xl font-display font-bold text-slate-800">
-              {t.patients.branch} {branch?.name || "..."}
+              {t.patients.branch} {branch?.name ? (t.branches[branch.name] || branch.name) : "..."}
             </h2>
             <p className="text-xs md:text-base text-muted-foreground">{t.patients.branchManagement}</p>
           </div>

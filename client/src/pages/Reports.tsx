@@ -10,6 +10,7 @@ import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 interface PaymentDetail {
   id: number;
@@ -55,17 +56,6 @@ interface DetailedReport {
   };
 }
 
-function formatDateLong(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('ar-IQ', {
-    timeZone: 'Asia/Baghdad',
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-}
-
 function isToday(dateStr: string): boolean {
   return dateStr === getTodayIraq();
 }
@@ -75,7 +65,22 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
+  const dir = t.dir;
+  const locale = dir === "rtl" ? "ar-IQ" : "en-US";
+  const dateLocale = dir === "rtl" ? "ar-IQ" : "en-GB";
   const isTodayDate = isToday(summary.date);
+
+  function formatDateLong(dateStr: string): string {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString(dateLocale, {
+      timeZone: 'Asia/Baghdad',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  }
   
   return (
     <Card className={`rounded-2xl overflow-hidden border-border/60 ${isTodayDate ? 'border-2 border-primary/50 shadow-lg' : ''}`}>
@@ -92,7 +97,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-lg text-slate-800">
-                  {isTodayDate ? 'اليوم' : formatDateLong(summary.date)}
+                  {isTodayDate ? t.reports.today : formatDateLong(summary.date)}
                 </h3>
                 {isTodayDate && (
                   <Badge variant="default" className="bg-primary text-white">
@@ -103,32 +108,32 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
               <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
                 <span className="flex items-center gap-1">
                   <UserPlus className="w-4 h-4" />
-                  {summary.patientCount} مريض جديد
+                  {summary.patientCount} {t.reports.newPatient}
                 </span>
                 <span className="flex items-center gap-1">
                   <CreditCard className="w-4 h-4" />
-                  {summary.paymentCount} عملية دفع
+                  {summary.paymentCount} {t.reports.paymentOp}
                 </span>
               </div>
             </div>
           </div>
           
           <div className="flex items-center gap-6">
-            <div className="text-left">
-              <p className="text-xs text-muted-foreground">التكاليف</p>
-              <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString('ar-IQ')} د.ع</p>
+            <div className={dir === "rtl" ? "text-left" : "text-right"}>
+              <p className="text-xs text-muted-foreground">{t.reports.costs}</p>
+              <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString(locale)} {t.reports.currency}</p>
             </div>
-            <div className="text-left">
-              <p className="text-xs text-muted-foreground">المدفوع</p>
-              <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString('ar-IQ')} د.ع</p>
+            <div className={dir === "rtl" ? "text-left" : "text-right"}>
+              <p className="text-xs text-muted-foreground">{t.reports.paid}</p>
+              <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString(locale)} {t.reports.currency}</p>
             </div>
-            <div className="text-left">
-              <p className="text-xs text-muted-foreground">المتبقي</p>
+            <div className={dir === "rtl" ? "text-left" : "text-right"}>
+              <p className="text-xs text-muted-foreground">{t.reports.remaining}</p>
               <p className="font-bold font-mono text-red-600">
-                {(summary.totalCosts - summary.totalPaid).toLocaleString('ar-IQ')} د.ع
+                {(summary.totalCosts - summary.totalPaid).toLocaleString(locale)} {t.reports.currency}
               </p>
             </div>
-            <Button variant="ghost" size="icon" className="mr-2">
+            <Button variant="ghost" size="icon" className={dir === "rtl" ? "mr-2" : "ml-2"}>
               {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
             </Button>
           </div>
@@ -141,17 +146,17 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             <div>
               <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
                 <Users className="w-5 h-5 text-blue-600" />
-                المرضى المسجلين ({summary.patients.length})
+                {t.reports.registeredPatients} ({summary.patients.length})
               </h4>
               <div className="overflow-hidden border rounded-xl bg-white">
                 <table className="w-full">
                   <thead className="bg-blue-50/80">
                     <tr>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">نوع الحالة</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">سبب الزيارة</th>
-                      <th className="text-left p-3 font-semibold text-slate-600 text-sm">التكلفة (د.ع)</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.conditionType}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.visitReason}</th>
+                      <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.costCurrency}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -161,21 +166,21 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                         <td className="p-3 font-medium text-slate-800">{patient.name}</td>
                         <td className="p-3">
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
-                            {patient.isAmputee ? "بتر" : patient.isMedicalSupport ? "مساند طبية" : "علاج طبيعي"}
+                            {patient.isAmputee ? t.reports.amputee : patient.isMedicalSupport ? t.reports.medicalSupport : t.reports.physiotherapy}
                           </Badge>
                         </td>
                         <td className="p-3 text-sm text-slate-700">{patient.visitReason || '-'}</td>
-                        <td className="p-3 text-left font-mono font-bold text-slate-800">
-                          {patient.totalCost.toLocaleString('ar-IQ')}
+                        <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>
+                          {patient.totalCost.toLocaleString(locale)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot className="bg-blue-50/80">
                     <tr>
-                      <td colSpan={4} className="p-3 font-bold text-slate-700">إجمالي تكاليف اليوم</td>
-                      <td className="p-3 text-left font-mono font-bold text-slate-800">
-                        {summary.totalCosts.toLocaleString('ar-IQ')} د.ع
+                      <td colSpan={4} className="p-3 font-bold text-slate-700">{t.reports.dayCostTotal}</td>
+                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>
+                        {summary.totalCosts.toLocaleString(locale)} {t.reports.currency}
                       </td>
                     </tr>
                   </tfoot>
@@ -188,18 +193,18 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             <div>
               <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-emerald-600" />
-                المدفوعات ({summary.payments.length})
+                {t.reports.payments} ({summary.payments.length})
               </h4>
               <div className="overflow-hidden border rounded-xl bg-white">
                 <table className="w-full">
                   <thead className="bg-emerald-50/80">
                     <tr>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">#</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">اسم المريض</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">الوقت</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">نوع العلاج</th>
-                      <th className="text-right p-3 font-semibold text-slate-600 text-sm">ملاحظات</th>
-                      <th className="text-left p-3 font-semibold text-slate-600 text-sm">المبلغ (د.ع)</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.time}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.treatmentType}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.notes}</th>
+                      <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.amountCurrency}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -220,8 +225,8 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                             }
                           </td>
                           <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
-                          <td className="p-3 text-left font-mono font-bold text-emerald-600">
-                            {payment.amount.toLocaleString('ar-IQ')}
+                          <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
+                            {payment.amount.toLocaleString(locale)}
                           </td>
                         </tr>
                       );
@@ -229,9 +234,9 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                   </tbody>
                   <tfoot className="bg-emerald-50/80">
                     <tr>
-                      <td colSpan={5} className="p-3 font-bold text-slate-700">إجمالي المدفوعات</td>
-                      <td className="p-3 text-left font-mono font-bold text-emerald-600">
-                        {summary.totalPaid.toLocaleString('ar-IQ')} د.ع
+                      <td colSpan={5} className="p-3 font-bold text-slate-700">{t.reports.paymentsTotal}</td>
+                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
+                        {summary.totalPaid.toLocaleString(locale)} {t.reports.currency}
                       </td>
                     </tr>
                   </tfoot>
@@ -241,7 +246,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
           )}
           
           {summary.patients.length === 0 && summary.payments.length === 0 && (
-            <p className="text-center text-muted-foreground py-4">لا توجد عمليات في هذا اليوم</p>
+            <p className="text-center text-muted-foreground py-4">{t.reports.noOpsToday}</p>
           )}
         </div>
       )}
@@ -253,6 +258,9 @@ function ReportsContent() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
+  const { t } = useTranslation();
+  const dir = t.dir;
+  const locale = dir === "rtl" ? "ar-IQ" : "en-US";
   
   const [selectedBranch, setSelectedBranch] = useState<string>(
     isAdmin ? "1" : (userBranchId?.toString() || "1")
@@ -265,7 +273,7 @@ function ReportsContent() {
     queryKey: [api.branches.list.path],
     queryFn: async () => {
       const res = await fetch(api.branches.list.path, { credentials: "include" });
-      if (!res.ok) throw new Error("فشل في جلب الفروع");
+      if (!res.ok) throw new Error(t.reports.fetchBranchesError);
       return res.json();
     },
   });
@@ -276,12 +284,15 @@ function ReportsContent() {
       const res = await fetch(`/api/reports/detailed/${effectiveBranchFilter}`, { 
         credentials: "include" 
       });
-      if (!res.ok) throw new Error("فشل في جلب التقرير");
+      if (!res.ok) throw new Error(t.reports.fetchReportError);
       return res.json();
     },
   });
 
-  const selectedBranchName = branches?.find(b => b.id.toString() === effectiveBranchFilter)?.name || "الفرع";
+  const rawBranchName = branches?.find(b => b.id.toString() === effectiveBranchFilter)?.name || "";
+  const selectedBranchName = rawBranchName 
+    ? ((t.branches as Record<string, string>)[rawBranchName] || rawBranchName) 
+    : t.reports.branchFallback;
 
   const toggleDay = (date: string) => {
     setExpandedDays(prev => {
@@ -295,7 +306,6 @@ function ReportsContent() {
     });
   };
 
-  // Auto-expand today when report data loads
   useEffect(() => {
     if (report?.dailySummaries) {
       const todaySummary = report.dailySummaries.find(s => isToday(s.date));
@@ -314,8 +324,8 @@ function ReportsContent() {
     <div className="space-y-6 md:space-y-8 page-transition">
       <div className="flex flex-col gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">التقارير المالية</h2>
-          <p className="text-sm md:text-base text-muted-foreground mt-1">تقرير مالي تفصيلي لفرع {selectedBranchName}</p>
+          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.reports.title}</h2>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">{t.reports.subtitle} {selectedBranchName}</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
@@ -324,12 +334,12 @@ function ReportsContent() {
               <Building2 className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
               <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                 <SelectTrigger className="w-36 md:w-48 h-10 md:h-11 text-sm md:text-base" data-testid="select-branch">
-                  <SelectValue placeholder="اختر الفرع" />
+                  <SelectValue placeholder={t.reports.selectBranch} />
                 </SelectTrigger>
                 <SelectContent>
                   {branches?.map((branch) => (
                     <SelectItem key={branch.id} value={branch.id.toString()}>
-                      {branch.name}
+                      {(t.branches as Record<string, string>)[branch.name] || branch.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -337,13 +347,13 @@ function ReportsContent() {
             </>
           ) : (
             <Badge variant="secondary" className="text-sm px-3 py-1" data-testid="badge-branch">
-              <Building2 className="w-4 h-4 ml-2" />
+              <Building2 className={`w-4 h-4 ${dir === "rtl" ? "ml-2" : "mr-2"}`} />
               {selectedBranchName}
             </Badge>
           )}
           <Button variant="outline" className="gap-2 print:hidden h-10 md:h-11 text-sm md:text-base" onClick={() => window.print()} data-testid="button-print-report">
             <FileText className="w-4 h-4" />
-            <span className="hidden sm:inline">طباعة</span>
+            <span className="hidden sm:inline">{t.reports.print}</span>
           </Button>
         </div>
       </div>
@@ -363,9 +373,9 @@ function ReportsContent() {
                   <Banknote className="w-5 h-5 md:w-6 md:h-6 text-blue-600" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm text-muted-foreground">إجمالي التكاليف</p>
+                  <p className="text-sm text-muted-foreground">{t.reports.totalCosts}</p>
                   <p className="text-xl font-bold text-slate-900" data-testid="text-total-cost">
-                    {(report?.overall?.totalCost || 0).toLocaleString('ar-IQ')} د.ع
+                    {(report?.overall?.totalCost || 0).toLocaleString(locale)} {t.reports.currency}
                   </p>
                 </div>
               </div>
@@ -377,9 +387,9 @@ function ReportsContent() {
                   <Banknote className="w-6 h-6 text-emerald-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">المبلغ المدفوع</p>
+                  <p className="text-sm text-muted-foreground">{t.reports.paidAmount}</p>
                   <p className="text-xl font-bold text-emerald-600" data-testid="text-total-paid">
-                    {(report?.overall?.totalPaid || 0).toLocaleString('ar-IQ')} د.ع
+                    {(report?.overall?.totalPaid || 0).toLocaleString(locale)} {t.reports.currency}
                   </p>
                 </div>
               </div>
@@ -391,9 +401,9 @@ function ReportsContent() {
                   <Clock className="w-6 h-6 text-red-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">المبلغ المتبقي</p>
+                  <p className="text-sm text-muted-foreground">{t.reports.remainingAmount}</p>
                   <p className="text-xl font-bold text-red-600" data-testid="text-remaining">
-                    {(report?.overall?.remaining || 0).toLocaleString('ar-IQ')} د.ع
+                    {(report?.overall?.remaining || 0).toLocaleString(locale)} {t.reports.currency}
                   </p>
                 </div>
               </div>
@@ -405,7 +415,7 @@ function ReportsContent() {
                   <Users className="w-6 h-6 text-purple-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">عدد المرضى</p>
+                  <p className="text-sm text-muted-foreground">{t.reports.patientCount}</p>
                   <p className="text-xl font-bold text-slate-900" data-testid="text-patients">
                     {report?.overall?.totalPatients || 0}
                   </p>
@@ -417,7 +427,7 @@ function ReportsContent() {
           <div className="space-y-4">
             <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
               <Calendar className="w-5 h-5 text-primary" />
-              السجل المالي اليومي
+              {t.reports.dailyLog}
             </h3>
             
             {report?.dailySummaries && report.dailySummaries.length > 0 ? (
@@ -434,8 +444,8 @@ function ReportsContent() {
             ) : (
               <Card className="p-12 text-center rounded-2xl">
                 <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-bold text-slate-700 mb-2">لا توجد عمليات مالية</h3>
-                <p className="text-muted-foreground">لم يتم تسجيل أي عمليات في هذا الفرع</p>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">{t.reports.noFinancialOps}</h3>
+                <p className="text-muted-foreground">{t.reports.noOpsInBranch}</p>
               </Card>
             )}
           </div>

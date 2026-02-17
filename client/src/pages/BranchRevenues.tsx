@@ -2,12 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Building2, Banknote, TrendingUp, Clock, Calendar } from "lucide-react";
+import { ArrowRight, ArrowLeft, Building2, Banknote, TrendingUp, Clock, Calendar } from "lucide-react";
 import { useLocation, useSearch } from "wouter";
 import { AdminGate } from "@/components/AdminGate";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
 import { formatDateIraq } from "@/lib/utils";
+import { useTranslation } from "@/i18n/LanguageContext";
 
 interface BranchReport {
   revenue: number;
@@ -21,12 +22,16 @@ function BranchRevenuesContent() {
   const searchString = useSearch();
   const isDaily = searchString.includes("daily=true");
   const todayFormatted = formatDateIraq(new Date());
+  const { t } = useTranslation();
+  const dir = t.dir;
+  const BackArrow = dir === "rtl" ? ArrowRight : ArrowLeft;
+  const locale = dir === "rtl" ? "ar-IQ" : "en-US";
 
   const { data: branches, isLoading: branchesLoading } = useQuery<Branch[]>({
     queryKey: [api.branches.list.path],
     queryFn: async () => {
       const res = await fetch(api.branches.list.path, { credentials: "include" });
-      if (!res.ok) throw new Error("فشل في جلب الفروع");
+      if (!res.ok) throw new Error(t.branchRevenues.fetchBranchesError);
       return res.json();
     },
   });
@@ -36,7 +41,7 @@ function BranchRevenuesContent() {
     queryFn: async () => {
       const url = isDaily ? "/api/reports/all-branches?daily=true" : "/api/reports/all-branches";
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("فشل في جلب التقارير");
+      if (!res.ok) throw new Error(t.branchRevenues.fetchReportsError);
       return res.json();
     },
     enabled: !!branches,
@@ -61,15 +66,15 @@ function BranchRevenuesContent() {
           className="h-10 w-10 p-0 rounded-full border"
           data-testid="button-back"
         >
-          <ArrowRight className="w-5 h-5 text-slate-500" />
+          <BackArrow className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
           <h2 className="text-xl md:text-3xl font-display font-bold text-slate-800 flex items-center gap-2 md:gap-3">
             {isDaily && <Calendar className="w-5 h-5 md:w-7 md:h-7 text-green-600" />}
-            {isDaily ? `إيرادات اليوم (${todayFormatted})` : "إجمالي إيرادات الفروع"}
+            {isDaily ? `${t.branchRevenues.dailyRevenueTitle} (${todayFormatted})` : t.branchRevenues.totalRevenueTitle}
           </h2>
           <p className="text-xs md:text-base text-muted-foreground mt-1">
-            {isDaily ? "تفاصيل إيرادات اليوم لكل فرع" : "تفاصيل إجمالي الإيرادات لكل فرع"}
+            {isDaily ? t.branchRevenues.dailySubtitle : t.branchRevenues.totalSubtitle}
           </p>
         </div>
       </div>
@@ -85,6 +90,7 @@ function BranchRevenuesContent() {
           {branches?.map((branch, index) => {
             const report = branchReports?.[branch.id] || { revenue: 0, sold: 0, paid: 0, remaining: 0 };
             const colorScheme = branchColors[index % branchColors.length];
+            const displayName = (t.branches as Record<string, string>)[branch.name] || branch.name;
             
             return (
               <Card 
@@ -95,37 +101,37 @@ function BranchRevenuesContent() {
                   <div className={`w-12 h-12 rounded-xl bg-white flex items-center justify-center shadow-sm`}>
                     <Building2 className={`w-6 h-6 ${colorScheme.icon}`} />
                   </div>
-                  <h3 className="text-xl font-bold text-slate-800">{branch.name}</h3>
+                  <h3 className="text-xl font-bold text-slate-800">{displayName}</h3>
                 </div>
 
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 bg-white rounded-xl">
                     <div className="flex items-center gap-2">
                       <TrendingUp className="w-4 h-4 text-blue-600" />
-                      <span className="text-sm text-slate-600">إجمالي التكاليف</span>
+                      <span className="text-sm text-slate-600">{t.branchRevenues.totalCosts}</span>
                     </div>
                     <span className="font-bold text-slate-800" data-testid={`text-sold-${branch.id}`}>
-                      {report.sold.toLocaleString('ar-IQ')} د.ع
+                      {report.sold.toLocaleString(locale)} {t.branchRevenues.currency}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between p-3 bg-white rounded-xl">
                     <div className="flex items-center gap-2">
                       <Banknote className="w-4 h-4 text-emerald-600" />
-                      <span className="text-sm text-slate-600">المدفوع</span>
+                      <span className="text-sm text-slate-600">{t.branchRevenues.paid}</span>
                     </div>
                     <span className="font-bold text-emerald-600" data-testid={`text-paid-${branch.id}`}>
-                      {report.paid.toLocaleString('ar-IQ')} د.ع
+                      {report.paid.toLocaleString(locale)} {t.branchRevenues.currency}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between p-3 bg-white rounded-xl">
                     <div className="flex items-center gap-2">
                       <Clock className="w-4 h-4 text-red-600" />
-                      <span className="text-sm text-slate-600">المتبقي</span>
+                      <span className="text-sm text-slate-600">{t.branchRevenues.remaining}</span>
                     </div>
                     <span className="font-bold text-red-600" data-testid={`text-remaining-${branch.id}`}>
-                      {report.remaining.toLocaleString('ar-IQ')} د.ع
+                      {report.remaining.toLocaleString(locale)} {t.branchRevenues.currency}
                     </span>
                   </div>
                 </div>

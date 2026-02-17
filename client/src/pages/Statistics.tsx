@@ -67,6 +67,7 @@ const TREATMENT_COLORS: Record<string, string> = {
 };
 
 function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string }) {
+  const { t } = useTranslation();
   const { data: revenueByTreatment = [] } = useQuery<TreatmentRevenue[]>({
     queryKey: ["/api/statistics/revenue-by-treatment", selectedBranch],
     queryFn: async () => {
@@ -92,7 +93,7 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
       <CardHeader>
         <CardTitle className="text-lg flex items-center gap-2" data-testid="text-revenue-by-treatment-title">
           <Banknote className="w-5 h-5 text-primary" />
-          الإيرادات حسب نوع العلاج
+          {t.statistics.revenueByTreatment}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -114,7 +115,7 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, '']} />
+              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, '']} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
@@ -126,8 +127,8 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
                   <span className="text-sm font-medium">{item.name}</span>
                 </div>
                 <div className="text-left">
-                  <span className="text-sm font-bold">{item.value.toLocaleString()} د.ع</span>
-                  <span className="text-xs text-muted-foreground mr-2">({item.count} دفعة)</span>
+                  <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
+                  <span className="text-xs text-muted-foreground mr-2">({item.count} {t.statistics.payment})</span>
                 </div>
               </div>
             ))}
@@ -251,26 +252,26 @@ export default function Statistics() {
   };
 
   const FILTER_FIELDS = [
-    { value: "", label: "بدون تصفية" },
-    { value: "isAmputee", label: "مريض بتر" },
-    { value: "isPhysiotherapy", label: "مريض علاج طبيعي" },
-    { value: "isMedicalSupport", label: "مساند طبية" },
-    { value: "medicalCondition", label: "الحالة الطبية" },
-    { value: "amputationSite", label: "موقع البتر" },
-    { value: "diseaseType", label: "نوع المرض" },
+    { value: "", label: t.statistics.noFilter },
+    { value: "isAmputee", label: t.statistics.filterAmputee },
+    { value: "isPhysiotherapy", label: t.statistics.filterPhysio },
+    { value: "isMedicalSupport", label: t.statistics.filterMedSupport },
+    { value: "medicalCondition", label: t.statistics.filterCondition },
+    { value: "amputationSite", label: t.statistics.filterAmputationSite },
+    { value: "diseaseType", label: t.statistics.filterDiseaseType },
   ];
 
   const STAT_TYPES = [
-    { value: "count", label: "عدد" },
-    { value: "sum", label: "مجموع" },
-    { value: "percentage", label: "نسبة مئوية" },
-    { value: "average", label: "متوسط" },
+    { value: "count", label: t.statistics.typeCount },
+    { value: "sum", label: t.statistics.typeSum },
+    { value: "percentage", label: t.statistics.typePercentage },
+    { value: "average", label: t.statistics.typeAverage },
   ];
 
   const CATEGORIES = [
-    { value: "patients", label: "المرضى" },
-    { value: "payments", label: "المدفوعات" },
-    { value: "visits", label: "الزيارات" },
+    { value: "patients", label: t.statistics.catPatients },
+    { value: "payments", label: t.statistics.catPayments },
+    { value: "visits", label: t.statistics.catVisits },
   ];
 
   const getDateRange = (range: string): { start: Date | null; end: Date | null } => {
@@ -343,7 +344,7 @@ export default function Statistics() {
     switch (stat.statType) {
       case "count":
         value = patients.length;
-        label = `${value} مريض`;
+        label = `${value} ${t.statistics.patientUnit}`;
         break;
       case "sum":
         if (stat.category === "payments") {
@@ -351,10 +352,10 @@ export default function Statistics() {
             const patientPayments = p.payments?.reduce((pSum, pay) => pSum + (pay.amount || 0), 0) || 0;
             return sum + patientPayments;
           }, 0);
-          label = `${value.toLocaleString()} د.ع`;
+          label = `${value.toLocaleString()} ${t.statistics.currency}`;
         } else {
           value = patients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
-          label = `${value.toLocaleString()} د.ع`;
+          label = `${value.toLocaleString()} ${t.statistics.currency}`;
         }
         break;
       case "percentage":
@@ -365,9 +366,9 @@ export default function Statistics() {
         if (patients.length > 0) {
           const total = patients.reduce((sum, p) => sum + (p.age || 0), 0);
           value = Math.round(total / patients.length);
-          label = `${value} سنة`;
+          label = `${value} ${t.statistics.yearUnit}`;
         } else {
-          label = "غير متوفر";
+          label = t.statistics.notAvailable;
         }
         break;
     }
@@ -435,9 +436,9 @@ export default function Statistics() {
     }));
 
     const conditionDistribution = [
-      { name: 'بتر', value: amputeeCount, color: '#0088FE' },
-      { name: 'علاج طبيعي', value: physioCount, color: '#00C49F' },
-      { name: 'مساند طبية', value: medicalSupportCount, color: '#FFBB28' },
+      { name: t.statistics.condAmputee, value: amputeeCount, color: '#0088FE' },
+      { name: t.statistics.condPhysiotherapy, value: physioCount, color: '#00C49F' },
+      { name: t.statistics.condMedicalSupport, value: medicalSupportCount, color: '#FFBB28' },
     ];
 
     const branchDistribution = branches?.map(branch => ({
@@ -450,7 +451,7 @@ export default function Statistics() {
 
     const amputationSites: { [key: string]: number } = {};
     filteredPatients.filter(p => p.isAmputee && p.amputationSite).forEach(p => {
-      const site = p.amputationSite || 'غير محدد';
+      const site = p.amputationSite || t.statistics.unspecified;
       amputationSites[site] = (amputationSites[site] || 0) + 1;
     });
     const amputationSiteData = Object.entries(amputationSites)
@@ -460,7 +461,7 @@ export default function Statistics() {
 
     const diseaseTypes: { [key: string]: number } = {};
     filteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport && p.diseaseType).forEach(p => {
-      const type = p.diseaseType || 'غير محدد';
+      const type = p.diseaseType || t.statistics.unspecified;
       diseaseTypes[type] = (diseaseTypes[type] || 0) + 1;
     });
     const diseaseTypeData = Object.entries(diseaseTypes)
@@ -470,7 +471,7 @@ export default function Statistics() {
 
     const referralSources: { [key: string]: number } = {};
     filteredPatients.forEach(p => {
-      const source = (p.referralSource && p.referralSource.trim()) ? p.referralSource.trim() : 'غير محدد';
+      const source = (p.referralSource && p.referralSource.trim()) ? p.referralSource.trim() : t.statistics.unspecified;
       referralSources[source] = (referralSources[source] || 0) + 1;
     });
     const referralSourceData = Object.entries(referralSources)
@@ -529,11 +530,11 @@ export default function Statistics() {
       else shiftDistribution.unknown++;
     });
     const shiftData = [
-      { name: 'الشفت الصباحي (٨ ص - ٤ ع)', value: shiftDistribution.morning, color: '#0088FE' },
-      { name: 'الشفت المسائي (٤ ع - ١٠ م)', value: shiftDistribution.evening, color: '#FF8042' },
+      { name: t.statistics.morningShift, value: shiftDistribution.morning, color: '#0088FE' },
+      { name: t.statistics.eveningShift, value: shiftDistribution.evening, color: '#FF8042' },
     ];
     if (shiftDistribution.unknown > 0) {
-      shiftData.push({ name: 'غير محدد', value: shiftDistribution.unknown, color: '#8884d8' });
+      shiftData.push({ name: t.statistics.unspecified, value: shiftDistribution.unknown, color: '#8884d8' });
     }
 
     return {
@@ -560,22 +561,23 @@ export default function Statistics() {
 
   // Get current branch name for reports
   const currentBranchName = useMemo(() => {
-    if (selectedBranch === "all") return "جميع الفروع";
-    return branches?.find(b => b.id === Number(selectedBranch))?.name || branchSession?.branchName || "";
-  }, [selectedBranch, branches, branchSession]);
+    if (selectedBranch === "all") return t.statistics.allBranches;
+    const branchName = branches?.find(b => b.id === Number(selectedBranch))?.name || branchSession?.branchName || "";
+    return t.branches[branchName as keyof typeof t.branches] || branchName;
+  }, [selectedBranch, branches, branchSession, t]);
 
   // Get time range label for reports
   const timeRangeLabel = useMemo(() => {
     switch (timeRange) {
-      case "today": return "اليوم";
+      case "today": return t.statistics.timeToday;
       case "date": return formatDateIraq(selectedDate);
-      case "week": return "آخر أسبوع";
-      case "month": return "آخر شهر";
-      case "quarter": return "آخر 3 أشهر";
-      case "year": return "آخر سنة";
-      default: return "كل الوقت";
+      case "week": return t.statistics.timeLastWeek;
+      case "month": return t.statistics.timeLastMonth;
+      case "quarter": return t.statistics.timeLast3Months;
+      case "year": return t.statistics.timeLastYear;
+      default: return t.statistics.timeAllTime;
     }
-  }, [timeRange, selectedDate]);
+  }, [timeRange, selectedDate, t]);
 
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
@@ -829,9 +831,9 @@ export default function Statistics() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-3">
             <BarChart3 className="w-7 h-7 text-primary" />
-            النظام الإحصائي
+            {t.statistics.title}
           </h1>
-          <p className="text-muted-foreground mt-1">تحليل شامل لبيانات المرضى والفروع</p>
+          <p className="text-muted-foreground mt-1">{t.statistics.subtitle}</p>
         </div>
         
         <div className="flex flex-wrap gap-3">
@@ -840,10 +842,10 @@ export default function Statistics() {
             <Select value={selectedBranch} onValueChange={setSelectedBranch}>
               <SelectTrigger className="w-[180px]" data-testid="select-branch-filter">
                 <Building2 className="w-4 h-4 ml-2" />
-                <SelectValue placeholder="اختر الفرع" />
+                <SelectValue placeholder={t.statistics.selectBranch} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الفروع</SelectItem>
+                <SelectItem value="all">{t.statistics.allBranches}</SelectItem>
                 {branches?.map(branch => (
                   <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
                 ))}
@@ -862,16 +864,16 @@ export default function Statistics() {
           <Select value={timeRange} onValueChange={setTimeRange}>
             <SelectTrigger className="w-[180px]" data-testid="select-time-range">
               <Calendar className="w-4 h-4 ml-2" />
-              <SelectValue placeholder="الفترة الزمنية" />
+              <SelectValue placeholder={t.statistics.timePeriod} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="today">اليوم</SelectItem>
-              <SelectItem value="date">تاريخ محدد</SelectItem>
-              <SelectItem value="all">كل الوقت</SelectItem>
-              <SelectItem value="week">آخر أسبوع</SelectItem>
-              <SelectItem value="month">آخر شهر</SelectItem>
-              <SelectItem value="quarter">آخر 3 أشهر</SelectItem>
-              <SelectItem value="year">آخر سنة</SelectItem>
+              <SelectItem value="today">{t.statistics.today}</SelectItem>
+              <SelectItem value="date">{t.statistics.specificDate}</SelectItem>
+              <SelectItem value="all">{t.statistics.allTime}</SelectItem>
+              <SelectItem value="week">{t.statistics.lastWeek}</SelectItem>
+              <SelectItem value="month">{t.statistics.lastMonth}</SelectItem>
+              <SelectItem value="quarter">{t.statistics.lastQuarter}</SelectItem>
+              <SelectItem value="year">{t.statistics.lastYear}</SelectItem>
             </SelectContent>
           </Select>
 
@@ -895,7 +897,7 @@ export default function Statistics() {
               data-testid="button-export-pdf"
             >
               <FileDown className="w-4 h-4" />
-              تصدير PDF
+              {t.statistics.exportPdf}
             </Button>
             <Button 
               variant="outline" 
@@ -905,7 +907,7 @@ export default function Statistics() {
               data-testid="button-export-excel"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              تصدير Excel
+              {t.statistics.exportExcel}
             </Button>
           </div>
         </div>
@@ -915,8 +917,8 @@ export default function Statistics() {
         <Card>
           <CardContent className="p-12 text-center">
             <BarChart3 className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-bold text-slate-700 mb-2">لا توجد بيانات</h3>
-            <p className="text-muted-foreground">لا توجد بيانات متاحة للفترة والفرع المحددين</p>
+            <h3 className="text-lg font-bold text-slate-700 mb-2">{t.statistics.noData}</h3>
+            <p className="text-muted-foreground">{t.statistics.noDataDesc}</p>
           </CardContent>
         </Card>
       ) : (
@@ -927,7 +929,7 @@ export default function Statistics() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-blue-600 font-medium">إجمالي المرضى</p>
+                    <p className="text-sm text-blue-600 font-medium">{t.statistics.totalPatients}</p>
                     <p className="text-2xl md:text-3xl font-bold text-blue-700">{stats.totalPatients}</p>
                   </div>
                   <Users className="w-10 h-10 text-blue-500 opacity-80" />
@@ -939,9 +941,9 @@ export default function Statistics() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-green-600 font-medium">إجمالي الإيرادات</p>
+                    <p className="text-sm text-green-600 font-medium">{t.statistics.totalRevenue}</p>
                     <p className="text-xl md:text-2xl font-bold text-green-700">{stats.allTimeRevenue.toLocaleString()}</p>
-                    <p className="text-xs text-green-600">د.ع</p>
+                    <p className="text-xs text-green-600">{t.statistics.currency}</p>
                   </div>
                   <Banknote className="w-10 h-10 text-green-500 opacity-80" />
                 </div>
@@ -952,7 +954,7 @@ export default function Statistics() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-purple-600 font-medium">نسبة التحصيل</p>
+                    <p className="text-sm text-purple-600 font-medium">{t.statistics.collectionRate}</p>
                     <p className="text-2xl md:text-3xl font-bold text-purple-700">{stats.collectionRate}%</p>
                   </div>
                   <TrendingUp className="w-10 h-10 text-purple-500 opacity-80" />
@@ -964,7 +966,7 @@ export default function Statistics() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-orange-600 font-medium">إجمالي الزيارات</p>
+                    <p className="text-sm text-orange-600 font-medium">{t.statistics.totalVisits}</p>
                     <p className="text-2xl md:text-3xl font-bold text-orange-700">{stats.totalVisits}</p>
                   </div>
                   <Activity className="w-10 h-10 text-orange-500 opacity-80" />
@@ -982,10 +984,10 @@ export default function Statistics() {
                     <Accessibility className="w-6 h-6 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">حالات البتر</p>
+                    <p className="text-sm text-muted-foreground">{t.statistics.amputeeCases}</p>
                     <p className="text-2xl font-bold">{stats.amputeeCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.amputeeCount / stats.totalPatients) * 100).toFixed(1)}% من الإجمالي
+                      {((stats.amputeeCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>
@@ -999,10 +1001,10 @@ export default function Statistics() {
                     <Stethoscope className="w-6 h-6 text-green-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">علاج طبيعي</p>
+                    <p className="text-sm text-muted-foreground">{t.statistics.physiotherapy}</p>
                     <p className="text-2xl font-bold">{stats.physioCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.physioCount / stats.totalPatients) * 100).toFixed(1)}% من الإجمالي
+                      {((stats.physioCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>
@@ -1016,10 +1018,10 @@ export default function Statistics() {
                     <Heart className="w-6 h-6 text-yellow-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">مساند طبية</p>
+                    <p className="text-sm text-muted-foreground">{t.statistics.medicalSupport}</p>
                     <p className="text-2xl font-bold">{stats.medicalSupportCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.medicalSupportCount / stats.totalPatients) * 100).toFixed(1)}% من الإجمالي
+                      {((stats.medicalSupportCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>
@@ -1034,7 +1036,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Users className="w-5 h-5 text-primary" />
-                  التوزيع العمري للمرضى
+                  {t.statistics.ageDistribution}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1043,7 +1045,7 @@ export default function Statistics() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis type="number" />
                     <YAxis dataKey="name" type="category" width={50} />
-                    <Tooltip formatter={(value) => [value, 'عدد المرضى']} />
+                    <Tooltip formatter={(value) => [value, t.statistics.patientCount]} />
                     <Bar dataKey="count" fill="#0088FE" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1055,7 +1057,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Activity className="w-5 h-5 text-primary" />
-                  توزيع الحالات الطبية
+                  {t.statistics.conditionDistribution}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1075,7 +1077,7 @@ export default function Statistics() {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => [value, 'عدد المرضى']} />
+                    <Tooltip formatter={(value) => [value, t.statistics.patientCount]} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1090,7 +1092,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Banknote className="w-5 h-5 text-primary" />
-                  حالة المدفوعات
+                  {t.statistics.paymentStatus}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1098,8 +1100,8 @@ export default function Statistics() {
                   <PieChart>
                     <Pie
                       data={[
-                        { name: 'المحصّل', value: stats.allTimePaid, color: '#00C49F' },
-                        { name: 'المتبقي', value: stats.allTimeRemaining, color: '#FF8042' },
+                        { name: t.statistics.collected, value: stats.allTimePaid, color: '#00C49F' },
+                        { name: t.statistics.remaining, value: stats.allTimeRemaining, color: '#FF8042' },
                       ]}
                       cx="50%"
                       cy="50%"
@@ -1113,7 +1115,7 @@ export default function Statistics() {
                       <Cell fill="#00C49F" />
                       <Cell fill="#FF8042" />
                     </Pie>
-                    <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, '']} />
+                    <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, '']} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1126,7 +1128,7 @@ export default function Statistics() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Building2 className="w-5 h-5 text-primary" />
-                    توزيع المرضى حسب الفروع
+                    {t.statistics.branchDistribution}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1135,9 +1137,9 @@ export default function Statistics() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" />
                       <YAxis />
-                      <Tooltip formatter={(value, name) => [value, name === 'count' ? 'عدد المرضى' : 'الإيرادات']} />
+                      <Tooltip formatter={(value, name) => [value, name === 'count' ? t.statistics.patientCount : t.statistics.revenue]} />
                       <Legend />
-                      <Bar dataKey="count" name="عدد المرضى" fill="#0088FE" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="count" name={t.statistics.patientCount} fill="#0088FE" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -1154,7 +1156,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Globe className="w-5 h-5 text-primary" />
-                  الجهات المحول منها
+                  {t.statistics.referralSources}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1165,7 +1167,7 @@ export default function Statistics() {
                       <XAxis type="number" />
                       <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 12 }} />
                       <Tooltip />
-                      <Bar dataKey="value" name="عدد المرضى" fill="#8884d8" radius={[0, 4, 4, 0]}>
+                      <Bar dataKey="value" name={t.statistics.patientCount} fill="#8884d8" radius={[0, 4, 4, 0]}>
                         {stats.referralSourceData.map((_: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
@@ -1180,7 +1182,7 @@ export default function Statistics() {
                           <span className="text-sm font-medium">{item.name}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant="secondary">{item.value} مريض</Badge>
+                          <Badge variant="secondary">{item.value} {t.statistics.patient}</Badge>
                           <span className="text-xs text-muted-foreground">
                             ({stats.totalPatients > 0 ? ((item.value / stats.totalPatients) * 100).toFixed(1) : 0}%)
                           </span>
@@ -1199,7 +1201,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2" data-testid="text-shift-stats-title">
                   <Activity className="w-5 h-5 text-primary" />
-                  إحصائيات الشفتات
+                  {t.statistics.shiftStats}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1221,7 +1223,7 @@ export default function Statistics() {
                           <Cell key={`shift-cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value) => [value, 'جلسة']} />
+                      <Tooltip formatter={(value) => [value, t.statistics.session]} />
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
@@ -1235,7 +1237,7 @@ export default function Statistics() {
                             <span className="text-sm font-medium">{item.name}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{item.value} جلسة</Badge>
+                            <Badge variant="secondary">{item.value} {t.statistics.session}</Badge>
                             <span className="text-xs text-muted-foreground">
                               ({totalShiftVisits > 0 ? ((item.value / totalShiftVisits) * 100).toFixed(1) : 0}%)
                             </span>
@@ -1255,7 +1257,7 @@ export default function Statistics() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-primary" />
-                  اتجاه التسجيل الشهري
+                  {t.statistics.monthlyTrend}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1267,8 +1269,8 @@ export default function Statistics() {
                     <YAxis yAxisId="right" orientation="right" />
                     <Tooltip />
                     <Legend />
-                    <Area yAxisId="left" type="monotone" dataKey="patients" name="المرضى الجدد" stroke="#0088FE" fill="#0088FE" fillOpacity={0.3} />
-                    <Area yAxisId="left" type="monotone" dataKey="visits" name="الزيارات" stroke="#00C49F" fill="#00C49F" fillOpacity={0.3} />
+                    <Area yAxisId="left" type="monotone" dataKey="patients" name={t.statistics.newPatients} stroke="#0088FE" fill="#0088FE" fillOpacity={0.3} />
+                    <Area yAxisId="left" type="monotone" dataKey="visits" name={t.statistics.visits} stroke="#00C49F" fill="#00C49F" fillOpacity={0.3} />
                   </AreaChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1283,7 +1285,7 @@ export default function Statistics() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Accessibility className="w-5 h-5 text-primary" />
-                    أنواع البتر الأكثر شيوعاً
+                    {t.statistics.amputationTypes}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1316,7 +1318,7 @@ export default function Statistics() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Stethoscope className="w-5 h-5 text-primary" />
-                    أنواع الأمراض الأكثر شيوعاً
+                    {t.statistics.diseaseTypes}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1349,36 +1351,36 @@ export default function Statistics() {
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Banknote className="w-5 h-5 text-primary" />
-                الملخص المالي
+                {t.statistics.financialSummary}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="p-4 bg-green-50 rounded-xl border border-green-200">
-                  <p className="text-sm text-green-600 mb-1">إجمالي الإيرادات</p>
-                  <p className="text-2xl font-bold text-green-700">{stats.allTimeRevenue.toLocaleString()} د.ع</p>
+                  <p className="text-sm text-green-600 mb-1">{t.statistics.totalCosts}</p>
+                  <p className="text-2xl font-bold text-green-700">{stats.allTimeRevenue.toLocaleString()} {t.statistics.currency}</p>
                 </div>
                 <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                  <p className="text-sm text-blue-600 mb-1">المبالغ المحصلة</p>
-                  <p className="text-2xl font-bold text-blue-700">{stats.allTimePaid.toLocaleString()} د.ع</p>
+                  <p className="text-sm text-blue-600 mb-1">{t.statistics.amountsCollected}</p>
+                  <p className="text-2xl font-bold text-blue-700">{stats.allTimePaid.toLocaleString()} {t.statistics.currency}</p>
                 </div>
                 <div className="p-4 bg-orange-50 rounded-xl border border-orange-200">
-                  <p className="text-sm text-orange-600 mb-1">المبالغ المتبقية</p>
-                  <p className="text-2xl font-bold text-orange-700">{stats.allTimeRemaining.toLocaleString()} د.ع</p>
+                  <p className="text-sm text-orange-600 mb-1">{t.statistics.amountsRemaining}</p>
+                  <p className="text-2xl font-bold text-orange-700">{stats.allTimeRemaining.toLocaleString()} {t.statistics.currency}</p>
                 </div>
               </div>
 
               {/* Revenue by Branch - only visible to admin users */}
               {isAdmin && selectedBranch === "all" && stats.branchDistribution.length > 0 && (
                 <div className="mt-6">
-                  <h4 className="text-sm font-bold text-slate-700 mb-4">الإيرادات حسب الفرع</h4>
+                  <h4 className="text-sm font-bold text-slate-700 mb-4">{t.statistics.revenueByBranch}</h4>
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={stats.branchDistribution}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" />
                       <YAxis />
-                      <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} د.ع`, 'الإيرادات']} />
-                      <Bar dataKey="revenue" name="الإيرادات" fill="#00C49F" radius={[4, 4, 0, 0]} />
+                      <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, t.statistics.revenue]} />
+                      <Bar dataKey="revenue" name={t.statistics.revenue} fill="#00C49F" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1391,7 +1393,7 @@ export default function Statistics() {
             <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
               <CardTitle className="text-lg flex items-center gap-2">
                 <ChartBar className="w-5 h-5 text-primary" />
-                الإحصائيات المخصصة
+                {t.statistics.customStats}
               </CardTitle>
               <Dialog open={showCustomStatDialog} onOpenChange={(open) => {
                 setShowCustomStatDialog(open);
@@ -1403,42 +1405,42 @@ export default function Statistics() {
                 <DialogTrigger asChild>
                   <Button size="sm" data-testid="button-add-custom-stat">
                     <Plus className="w-4 h-4 ml-1" />
-                    إضافة حقل إحصائي
+                    {t.statistics.addCustomField}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-[500px]">
                   <DialogHeader>
                     <DialogTitle>
-                      {editingCustomStat ? "تعديل حقل إحصائي" : "إضافة حقل إحصائي جديد"}
+                      {editingCustomStat ? t.statistics.editCustomField : t.statistics.addCustomFieldNew}
                     </DialogTitle>
                     <DialogDescription>
-                      أنشئ حقول إحصائية مخصصة لتتبع مقاييس محددة
+                      {t.statistics.customStatDesc}
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="stat-name">اسم الحقل</Label>
+                      <Label htmlFor="stat-name">{t.statistics.fieldName}</Label>
                       <Input
                         id="stat-name"
                         value={customStatForm.name}
                         onChange={(e) => setCustomStatForm({ ...customStatForm, name: e.target.value })}
-                        placeholder="مثال: عدد مرضى البتر"
+                        placeholder={t.statistics.fieldNamePlaceholder}
                         data-testid="input-custom-stat-name"
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="stat-description">الوصف (اختياري)</Label>
+                      <Label htmlFor="stat-description">{t.statistics.descriptionOptional}</Label>
                       <Textarea
                         id="stat-description"
                         value={customStatForm.description}
                         onChange={(e) => setCustomStatForm({ ...customStatForm, description: e.target.value })}
-                        placeholder="وصف مختصر للحقل الإحصائي"
+                        placeholder={t.statistics.descPlaceholder}
                         data-testid="input-custom-stat-description"
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
-                        <Label>نوع الإحصاء</Label>
+                        <Label>{t.statistics.statType}</Label>
                         <Select
                           value={customStatForm.statType}
                           onValueChange={(value) => setCustomStatForm({ ...customStatForm, statType: value })}
@@ -1456,7 +1458,7 @@ export default function Statistics() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label>الفئة</Label>
+                        <Label>{t.statistics.category}</Label>
                         <Select
                           value={customStatForm.category}
                           onValueChange={(value) => setCustomStatForm({ ...customStatForm, category: value })}
@@ -1475,13 +1477,13 @@ export default function Statistics() {
                       </div>
                     </div>
                     <div className="grid gap-2">
-                      <Label>التصفية حسب</Label>
+                      <Label>{t.statistics.filterBy}</Label>
                       <Select
                         value={customStatForm.filterField}
                         onValueChange={(value) => setCustomStatForm({ ...customStatForm, filterField: value })}
                       >
                         <SelectTrigger data-testid="select-filter-field">
-                          <SelectValue placeholder="اختر حقل التصفية" />
+                          <SelectValue placeholder={t.statistics.selectFilterField} />
                         </SelectTrigger>
                         <SelectContent>
                           {FILTER_FIELDS.map((field) => (
@@ -1494,25 +1496,25 @@ export default function Statistics() {
                     </div>
                     {customStatForm.filterField && customStatForm.filterField !== "none" && (
                       <div className="grid gap-2">
-                        <Label>قيمة التصفية</Label>
+                        <Label>{t.statistics.filterValue}</Label>
                         {["isAmputee", "isPhysiotherapy", "isMedicalSupport"].includes(customStatForm.filterField) ? (
                           <Select
                             value={customStatForm.filterValue}
                             onValueChange={(value) => setCustomStatForm({ ...customStatForm, filterValue: value })}
                           >
                             <SelectTrigger data-testid="select-filter-value">
-                              <SelectValue placeholder="اختر القيمة" />
+                              <SelectValue placeholder={t.statistics.selectValue} />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="true">نعم</SelectItem>
-                              <SelectItem value="false">لا</SelectItem>
+                              <SelectItem value="true">{t.statistics.yes}</SelectItem>
+                              <SelectItem value="false">{t.statistics.no}</SelectItem>
                             </SelectContent>
                           </Select>
                         ) : (
                           <Input
                             value={customStatForm.filterValue}
                             onChange={(e) => setCustomStatForm({ ...customStatForm, filterValue: e.target.value })}
-                            placeholder="أدخل قيمة التصفية"
+                            placeholder={t.statistics.enterFilterValue}
                             data-testid="input-filter-value"
                           />
                         )}
@@ -1530,12 +1532,12 @@ export default function Statistics() {
                           {customStatForm.isGlobal ? (
                             <>
                               <Globe className="w-4 h-4 text-blue-500" />
-                              <span>حقل عام (مرئي لجميع الفروع)</span>
+                              <span>{t.statistics.globalField}</span>
                             </>
                           ) : (
                             <>
                               <Lock className="w-4 h-4 text-orange-500" />
-                              <span>حقل خاص بالفرع</span>
+                              <span>{t.statistics.branchSpecific}</span>
                             </>
                           )}
                         </Label>
@@ -1543,18 +1545,18 @@ export default function Statistics() {
                     )}
                     {isAdmin && !customStatForm.isGlobal && (
                       <div className="grid gap-2">
-                        <Label>الفرع</Label>
+                        <Label>{t.statistics.branch}</Label>
                         <Select
                           value={customStatForm.branchId?.toString() || ""}
                           onValueChange={(value) => setCustomStatForm({ ...customStatForm, branchId: value ? Number(value) : null })}
                         >
                           <SelectTrigger data-testid="select-branch">
-                            <SelectValue placeholder="اختر الفرع" />
+                            <SelectValue placeholder={t.statistics.selectBranch} />
                           </SelectTrigger>
                           <SelectContent>
                             {branches?.map((branch) => (
                               <SelectItem key={branch.id} value={branch.id.toString()}>
-                                {branch.name}
+                                {t.branches[branch.name as keyof typeof t.branches] || branch.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1571,14 +1573,14 @@ export default function Statistics() {
                         resetCustomStatForm();
                       }}
                     >
-                      إلغاء
+                      {t.statistics.cancel}
                     </Button>
                     <Button
                       onClick={handleSaveCustomStat}
                       disabled={!customStatForm.name || createCustomStatMutation.isPending || updateCustomStatMutation.isPending}
                       data-testid="button-save-custom-stat"
                     >
-                      {createCustomStatMutation.isPending || updateCustomStatMutation.isPending ? "جاري الحفظ..." : "حفظ"}
+                      {createCustomStatMutation.isPending || updateCustomStatMutation.isPending ? t.statistics.saving : t.statistics.save}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -1611,7 +1613,7 @@ export default function Statistics() {
                             variant="ghost"
                             className="h-7 w-7 text-red-500 hover:text-red-700"
                             onClick={() => {
-                              if (confirm("هل أنت متأكد من حذف هذا الحقل الإحصائي؟")) {
+                              if (confirm(t.statistics.deleteConfirm)) {
                                 deleteCustomStatMutation.mutate(stat.id);
                               }
                             }}
@@ -1624,16 +1626,16 @@ export default function Statistics() {
                           {stat.isGlobal ? (
                             <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200">
                               <Globe className="w-3 h-3 ml-1" />
-                              عام
+                              {t.statistics.global}
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-xs bg-orange-50 border-orange-200">
                               <Lock className="w-3 h-3 ml-1" />
-                              {branchName || "خاص"}
+                              {branchName ? (t.branches[branchName as keyof typeof t.branches] || branchName) : t.statistics.private}
                             </Badge>
                           )}
                           <Badge variant="secondary" className="text-xs">
-                            {STAT_TYPES.find(t => t.value === stat.statType)?.label}
+                            {STAT_TYPES.find(st => st.value === stat.statType)?.label}
                           </Badge>
                         </div>
                         <p className="text-sm text-purple-600 mb-1">{stat.name}</p>
@@ -1648,8 +1650,8 @@ export default function Statistics() {
               ) : (
                 <div className="text-center py-8 text-slate-500">
                   <ChartBar className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>لا توجد حقول إحصائية مخصصة</p>
-                  <p className="text-sm mt-1">أضف حقولاً لتتبع مقاييس محددة</p>
+                  <p>{t.statistics.noCustomStats}</p>
+                  <p className="text-sm mt-1">{t.statistics.addFieldsPrompt}</p>
                 </div>
               )}
             </CardContent>
