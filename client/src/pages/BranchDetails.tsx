@@ -13,13 +13,21 @@ import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
 import { formatDateIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const IRAQ_TZ = "Asia/Baghdad";
 
 type PatientWithVisits = Patient & { visits?: Visit[] };
 
-function isSameDay(date1: Date, date2: Date): boolean {
-  return date1.getFullYear() === date2.getFullYear() &&
-         date1.getMonth() === date2.getMonth() &&
-         date1.getDate() === date2.getDate();
+function isSameDayIraq(dateStr1: string | Date | null | undefined, dateStr2: string): boolean {
+  if (!dateStr1) return false;
+  const d1 = dayjs.utc(dateStr1).tz(IRAQ_TZ).format("YYYY-MM-DD");
+  return d1 === dateStr2;
 }
 
 function getTodayDateString(): string {
@@ -60,13 +68,12 @@ export default function BranchDetails() {
   const branchPatients = allPatients?.filter(p => p.branchId === branchId) || [];
 
   const dateFilteredPatients = useMemo(() => {
-    const filterDate = new Date(selectedDate);
     return branchPatients.filter(p => {
-      if (p.createdAt && isSameDay(new Date(p.createdAt), filterDate)) {
+      if (isSameDayIraq(p.createdAt, selectedDate)) {
         return true;
       }
       if (p.visits && p.visits.length > 0) {
-        return p.visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
+        return p.visits.some(v => isSameDayIraq(v.visitDate, selectedDate));
       }
       return false;
     });
