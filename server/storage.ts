@@ -44,7 +44,7 @@ export interface IStorage {
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
   updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any>;
-  updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null }): Promise<any>;
+  updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null }): Promise<any>;
 
   // Documents
   getDocumentsByPatientId(patientId: number): Promise<Document[]>;
@@ -276,7 +276,7 @@ export class DatabaseStorage implements IStorage {
   async deleteVisit(id: number): Promise<void> {
     await db.delete(visits).where(eq(visits.id, id));
   }
-  async updateVisit(id: number, updates: { details?: string | null; notes?: string | null; treatmentType?: string | null; sessionCount?: number | null; cost?: number | null }): Promise<Visit> {
+  async updateVisit(id: number, updates: { details?: string | null; notes?: string | null; treatmentType?: string | null; sessionCount?: number | null; cost?: number | null; visitDate?: Date | null }): Promise<Visit> {
     const [updated] = await db.update(visits)
       .set(updates)
       .where(eq(visits.id, id))
@@ -312,7 +312,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null }): Promise<any> {
+  async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null }): Promise<any> {
     const [updated] = await db.update(payments)
       .set(data)
       .where(eq(payments.id, id))

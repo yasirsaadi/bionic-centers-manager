@@ -1,6 +1,9 @@
 import { useForm } from "react-hook-form";
 import { useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
 import {
   Dialog,
   DialogContent,
@@ -25,10 +28,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Loader2, Calendar } from "lucide-react";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 interface EditVisitModalProps {
   visit: {
@@ -38,10 +44,12 @@ interface EditVisitModalProps {
     treatmentType: string | null;
     sessionCount: number | null;
     cost: number | null;
+    visitDate: string | null;
   };
   patientId: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  isAdmin?: boolean;
 }
 
 const formSchema = z.object({
@@ -50,6 +58,7 @@ const formSchema = z.object({
   treatmentType: z.string().optional(),
   sessionCount: z.number().nullable().optional(),
   cost: z.number().nullable().optional(),
+  customDate: z.string().optional(),
 });
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -58,10 +67,17 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
-export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVisitModalProps) {
+export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }: EditVisitModalProps) {
   const { mutate, isPending } = useUpdateVisit();
   const { t } = useTranslation();
   const dir = t.dir;
+
+  const getVisitDateFormatted = () => {
+    if (visit.visitDate) {
+      return dayjs.utc(visit.visitDate).tz('Asia/Baghdad').format('YYYY-MM-DD');
+    }
+    return "";
+  };
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -71,6 +87,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
       treatmentType: visit.treatmentType || "",
       sessionCount: visit.sessionCount || undefined,
       cost: visit.cost || undefined,
+      customDate: getVisitDateFormatted(),
     },
   });
 
@@ -82,6 +99,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
         treatmentType: visit.treatmentType || "",
         sessionCount: visit.sessionCount || undefined,
         cost: visit.cost || undefined,
+        customDate: getVisitDateFormatted(),
       });
     }
   }, [open, visit, form]);
@@ -95,6 +113,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
       treatmentType: values.treatmentType || null,
       sessionCount: values.sessionCount || null,
       cost: values.cost || null,
+      customDate: values.customDate || undefined,
     }, {
       onSuccess: () => {
         onOpenChange(false);
@@ -111,6 +130,30 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+            {isAdmin && (
+              <FormField
+                control={form.control}
+                name="customDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4" />
+                      {t.modals.visitDate}
+                    </FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="date" 
+                        {...field} 
+                        value={field.value || ""}
+                        data-testid="input-edit-visit-date"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <FormField
               control={form.control}
               name="details"

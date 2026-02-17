@@ -113,11 +113,12 @@ export default function PatientDetails() {
   const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
-  const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null; treatmentType: string | null; sessionCount: number | null; cost: number | null } | null>(null);
+  const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null; treatmentType: string | null; sessionCount: number | null; cost: number | null; visitDate: string | null } | null>(null);
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
   const [editTreatmentType, setEditTreatmentType] = useState<string>("");
-  const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
+  const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null} | null>(null);
+  const [editPaymentDate, setEditPaymentDate] = useState<string>("");
   const [editPaymentAmount, setEditPaymentAmount] = useState<string>("");
   const [editPaymentNotes, setEditPaymentNotes] = useState<string>("");
   const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
@@ -393,11 +394,11 @@ export default function PatientDetails() {
   };
 
   const updatePaymentFull = useMutation({
-    mutationFn: async (data: {paymentId: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null}) => {
+    mutationFn: async (data: {paymentId: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, customDate?: string}) => {
       const res = await fetch(`/api/payments/${data.paymentId}`, {
         method: "PATCH",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ amount: data.amount, notes: data.notes, sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType }),
+        body: JSON.stringify({ amount: data.amount, notes: data.notes, sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType, customDate: data.customDate }),
         credentials: "include",
       });
       if (!res.ok) throw new Error(t.patientDetails.failedToUpdateSession);
@@ -410,11 +411,19 @@ export default function PatientDetails() {
     }
   });
 
-  const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null }) => {
+  const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null }) => {
     setEditPaymentAmount(String(payment.amount));
     setEditPaymentNotes(payment.notes || "");
     setEditPaymentSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
     setEditPaymentTreatmentType(payment.paymentTreatmentType?.split(",")[0]?.trim() || "");
+    if (payment.date) {
+      const d = new Date(payment.date);
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const baghdadDate = new Date(d.getTime() + baghdadOffset);
+      setEditPaymentDate(baghdadDate.toISOString().split('T')[0]);
+    } else {
+      setEditPaymentDate("");
+    }
     setEditingPayment(payment);
   };
 
@@ -1016,7 +1025,7 @@ export default function PatientDetails() {
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost })}
+                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost, visitDate: visit.visitDate })}
                                 data-testid={`button-edit-visit-${visit.id}`}
                               >
                                 <Pencil className="w-4 h-4" />
@@ -1051,6 +1060,7 @@ export default function PatientDetails() {
                   patientId={patient.id}
                   open={!!editingVisit}
                   onOpenChange={(open) => !open && setEditingVisit(null)}
+                  isAdmin={isAdmin}
                 />
               )}
             </TabsContent>
@@ -1106,7 +1116,7 @@ export default function PatientDetails() {
                                   variant="ghost" 
                                   size="icon" 
                                   className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType })}
+                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType, date: payment.date })}
                                   data-testid={`button-edit-payment-${payment.id}`}
                                 >
                                   <Pencil className="w-4 h-4" />
@@ -1659,6 +1669,20 @@ export default function PatientDetails() {
             <DialogTitle className="font-display text-xl text-primary">{t.patientDetails.editPayment}</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
+            {isAdmin && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  {t.modals.paymentDate}
+                </label>
+                <Input 
+                  type="date" 
+                  value={editPaymentDate}
+                  onChange={(e) => setEditPaymentDate(e.target.value)}
+                  data-testid="input-edit-payment-date"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.patientDetails.amountCurrency}</label>
               <Input 
@@ -1724,6 +1748,7 @@ export default function PatientDetails() {
                     notes: editPaymentNotes || null,
                     sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
                     paymentTreatmentType: patient.isPhysiotherapy ? (editPaymentTreatmentType || null) : null,
+                    customDate: editPaymentDate || undefined,
                   });
                 }
               }}

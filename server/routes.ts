@@ -1312,8 +1312,24 @@ export async function registerRoutes(
   // Update visit (all users can edit)
   app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
-    const { details, notes, treatmentType, sessionCount, cost } = req.body;
-    const updated = await storage.updateVisit(id, { details, notes, treatmentType, sessionCount, cost });
+    const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
+    const updateData: any = { details, notes, treatmentType, sessionCount, cost };
+    
+    if (customDate !== undefined) {
+      const branchSession = (req.session as any).branchSession;
+      if (branchSession?.isAdmin) {
+        const baghdadOffset = 3 * 60 * 60 * 1000;
+        const nowBaghdad = new Date(Date.now() + baghdadOffset);
+        const currentHours = nowBaghdad.getUTCHours();
+        const currentMinutes = nowBaghdad.getUTCMinutes();
+        const currentSeconds = nowBaghdad.getUTCSeconds();
+        const [year, month, day] = customDate.split('-').map(Number);
+        const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
+        updateData.visitDate = new Date(backdatedBaghdad.getTime() - baghdadOffset);
+      }
+    }
+    
+    const updated = await storage.updateVisit(id, updateData);
     res.json(updated);
   });
 
@@ -1366,12 +1382,22 @@ export async function registerRoutes(
       return res.status(403).json({ message: "مسؤول النظام فقط يمكنه تعديل المدفوعات" });
     }
     const id = Number(req.params.id);
-    const { amount, notes, sessionCount, paymentTreatmentType } = req.body;
+    const { amount, notes, sessionCount, paymentTreatmentType, customDate } = req.body;
     const updateData: any = {};
     if (amount !== undefined) updateData.amount = amount;
     if (notes !== undefined) updateData.notes = notes || null;
     if (sessionCount !== undefined) updateData.sessionCount = sessionCount || null;
     if (paymentTreatmentType !== undefined) updateData.paymentTreatmentType = paymentTreatmentType || null;
+    if (customDate !== undefined) {
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const nowBaghdad = new Date(Date.now() + baghdadOffset);
+      const currentHours = nowBaghdad.getUTCHours();
+      const currentMinutes = nowBaghdad.getUTCMinutes();
+      const currentSeconds = nowBaghdad.getUTCSeconds();
+      const [year, month, day] = customDate.split('-').map(Number);
+      const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
+      updateData.date = new Date(backdatedBaghdad.getTime() - baghdadOffset);
+    }
     const updated = await storage.updatePayment(id, updateData);
     res.json(updated);
   });
