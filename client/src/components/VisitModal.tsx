@@ -26,8 +26,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { PlusCircle, Loader2 } from "lucide-react";
+import { PlusCircle, Loader2, Calendar } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 
@@ -45,6 +46,7 @@ const TREATMENT_TYPE_OPTIONS = [
 
 const formSchema = insertVisitSchema.extend({
   treatmentType: z.string().optional().nullable(),
+  customDate: z.string().optional().nullable(),
 });
 
 export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
@@ -60,6 +62,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
       branchId: branchId,
       notes: "",
       treatmentType: "",
+      customDate: "",
     },
   });
 
@@ -67,6 +70,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
     const submitData: any = {
       ...values,
       treatmentType: isPhysiotherapy !== false ? (values.treatmentType || null) : null,
+      customDate: values.customDate || null,
     };
     mutate(submitData, {
       onSuccess: () => {
@@ -76,6 +80,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
           branchId: branchId,
           notes: "",
           treatmentType: "",
+          customDate: "",
         });
       },
     });
@@ -96,6 +101,29 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+            <FormField
+              control={form.control}
+              name="customDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    {t.modals.visitDate}
+                  </FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="date" 
+                      {...field} 
+                      value={field.value || ""}
+                      data-testid="input-visit-date"
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">{t.modals.visitDateNote}</p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="notes"

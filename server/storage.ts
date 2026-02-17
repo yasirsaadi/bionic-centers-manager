@@ -250,7 +250,27 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(visits).where(eq(visits.branchId, branchId)).orderBy(desc(visits.visitDate));
   }
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
-    const [visit] = await db.insert(visits).values(insertVisit).returning();
+    const { customDate, ...visitData } = insertVisit as InsertVisit & { customDate?: string | null };
+    
+    const valuesToInsert: any = { ...visitData };
+    
+    if (customDate) {
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const nowBaghdad = new Date(Date.now() + baghdadOffset);
+      const todayBaghdad = nowBaghdad.toISOString().split('T')[0];
+      
+      if (customDate !== todayBaghdad) {
+        const currentHours = nowBaghdad.getUTCHours();
+        const currentMinutes = nowBaghdad.getUTCMinutes();
+        const currentSeconds = nowBaghdad.getUTCSeconds();
+        
+        const [year, month, day] = customDate.split('-').map(Number);
+        const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
+        valuesToInsert.visitDate = new Date(backdatedBaghdad.getTime() - baghdadOffset);
+      }
+    }
+    
+    const [visit] = await db.insert(visits).values(valuesToInsert).returning();
     return visit;
   }
   async deleteVisit(id: number): Promise<void> {

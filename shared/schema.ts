@@ -186,6 +186,7 @@ export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, vis
   sessionCount: z.number().optional().nullable(),
   cost: z.number().optional().nullable(),
   shift: z.string().optional().nullable(),
+  customDate: z.string().optional().nullable(),
 });
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true }).extend({
   date: z.string().optional().nullable(),
