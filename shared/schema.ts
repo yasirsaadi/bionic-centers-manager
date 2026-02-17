@@ -306,6 +306,7 @@ export const treatmentPlans = pgTable("treatment_plans", {
   diagnosis: text("diagnosis"),
   injuryType: text("injury_type"),
   injuryLocation: text("injury_location"),
+  diseaseHistory: text("disease_history"),
   mmtAssessment: text("mmt_assessment"),
   spasticity: text("spasticity"),
   sensation: text("sensation"),

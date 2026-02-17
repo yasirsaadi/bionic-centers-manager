@@ -133,6 +133,7 @@ export default function PatientDetails() {
     diagnosis: "",
     injuryType: "",
     injuryLocation: "",
+    diseaseHistory: "",
     mmtAssessment: "",
     spasticity: "",
     sensation: "",
@@ -312,6 +313,7 @@ export default function PatientDetails() {
       diagnosis: plan.diagnosis || "",
       injuryType: plan.injuryType || "",
       injuryLocation: plan.injuryLocation || "",
+      diseaseHistory: plan.diseaseHistory || "",
       mmtAssessment: plan.mmtAssessment || "",
       spasticity: plan.spasticity || "",
       sensation: plan.sensation || "",
@@ -1293,6 +1295,12 @@ export default function PatientDetails() {
                               <p data-testid={`text-injury-location-${plan.id}`}>{plan.injuryLocation}</p>
                             </div>
                           )}
+                          {plan.diseaseHistory && (
+                            <div>
+                              <span className="font-medium text-muted-foreground">{t.treatmentPlan.diseaseHistory}:</span>
+                              <p data-testid={`text-disease-history-${plan.id}`}>{plan.diseaseHistory}</p>
+                            </div>
+                          )}
                           {plan.mmtAssessment && (
                             <div>
                               <span className="font-medium text-muted-foreground">{t.treatmentPlan.mmtAssessment}:</span>
@@ -1453,6 +1461,15 @@ export default function PatientDetails() {
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tp-diseaseHistory">{t.treatmentPlan.diseaseHistory}</Label>
+              <Input
+                id="tp-diseaseHistory"
+                value={treatmentPlanForm.diseaseHistory}
+                onChange={(e) => setTreatmentPlanForm(prev => ({ ...prev, diseaseHistory: e.target.value }))}
+                data-testid="input-tp-diseaseHistory"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="tp-mmtAssessment">{t.treatmentPlan.mmtAssessment}</Label>
