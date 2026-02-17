@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPaymentSchema, InsertPayment } from "@shared/schema";
 import { useAddPayment } from "@/hooks/use-patients";
+import { useTranslation } from "@/i18n/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -45,7 +46,6 @@ const formSchema = insertPaymentSchema.extend({
   }, z.number().nullable().optional()),
 });
 
-// Get today's date in YYYY-MM-DD format for the date input
 function getTodayDate(): string {
   const today = new Date();
   const year = today.getFullYear();
@@ -55,15 +55,17 @@ function getTodayDate(): string {
 }
 
 const TREATMENT_TYPE_OPTIONS = [
-  { value: "روبوت", label: "روبوت" },
-  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
-  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+  { value: "روبوت", labelKey: "robot" as const },
+  { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
+  { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
 export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const { mutate, isPending } = useAddPayment();
+  const { t } = useTranslation();
+  const dir = t.dir;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -114,12 +116,12 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       <DialogTrigger asChild>
         <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20">
           <PlusCircle className="w-4 h-4" />
-          تسجيل دفعة جديدة
+          {t.modals.registerNewPayment}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px] font-body" dir="rtl">
+      <DialogContent className="sm:max-w-[425px] font-body" dir={dir}>
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-primary">تسجيل دفعة مالية</DialogTitle>
+          <DialogTitle className="font-display text-xl text-primary">{t.modals.registerPayment}</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
@@ -131,7 +133,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                 <FormItem>
                   <FormLabel className="flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
-                    تاريخ الدفعة
+                    {t.modals.paymentDate}
                   </FormLabel>
                   <FormControl>
                     <Input 
@@ -149,15 +151,15 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
 
             {isPhysiotherapy !== false && (
               <div className="space-y-2">
-                <FormLabel>نوع العلاج</FormLabel>
+                <FormLabel>{t.modals.treatmentType}</FormLabel>
                 <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
                   <SelectTrigger data-testid="select-treatment-type">
-                    <SelectValue placeholder="اختر نوع العلاج" />
+                    <SelectValue placeholder={t.modals.selectTreatmentType} />
                   </SelectTrigger>
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value} data-testid={`option-treatment-${option.value}`}>
-                        {option.label}
+                        {t.modals[option.labelKey]}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -170,12 +172,12 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               name="amount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>المبلغ المدفوع (د.ع)</FormLabel>
+                  <FormLabel>{t.modals.paidAmount}</FormLabel>
                   <FormControl>
                     <Input 
                       type="number" 
                       className="text-left font-mono" 
-                      placeholder="أدخل المبلغ" 
+                      placeholder={t.modals.enterAmount}
                       data-testid="input-payment-amount"
                       value={field.value === 0 ? "" : field.value}
                       onChange={(e) => {
@@ -195,12 +197,12 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                 name="sessionCount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormLabel>{t.modals.sessionCount}</FormLabel>
                     <FormControl>
                       <Input 
                         type="number" 
                         className="text-left font-mono" 
-                        placeholder="أدخل عدد الجلسات" 
+                        placeholder={t.modals.enterSessionCount}
                         data-testid="input-session-count"
                         value={field.value === 0 ? "" : field.value || ""}
                         onChange={(e) => {
@@ -220,9 +222,9 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>ملاحظات</FormLabel>
+                  <FormLabel>{t.modals.notes}</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} placeholder="مثال: دفعة أولى نقداً" data-testid="input-payment-notes" />
+                    <Input {...field} value={field.value || ""} placeholder={t.modals.notesPlaceholder} data-testid="input-payment-notes" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -233,10 +235,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               {isPending ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                  جاري التسجيل...
+                  {t.modals.saving}
                 </>
               ) : (
-                "حفظ الدفعة"
+                t.modals.savePayment
               )}
             </Button>
           </form>

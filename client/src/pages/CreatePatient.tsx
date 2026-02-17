@@ -546,7 +546,7 @@ export default function CreatePatient() {
                               </SelectTrigger>
                               <SelectContent>
                                 {injuryTypeOptions.map((opt) => (
-                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  <SelectItem key={opt} value={opt}>{(t.injuryTypes as Record<string,string>)[opt] || opt}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -564,7 +564,7 @@ export default function CreatePatient() {
                               </SelectTrigger>
                               <SelectContent>
                                 {injuryAreaOptions.map((opt) => (
-                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  <SelectItem key={opt} value={opt}>{(t.injuryAreas as Record<string,string>)[opt] || opt}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -581,9 +581,9 @@ export default function CreatePatient() {
                                 <SelectValue placeholder={t.patientForm.optional} />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="يمين">{t.patientForm.right}</SelectItem>
-                                <SelectItem value="يسار">{t.patientForm.left}</SelectItem>
-                                <SelectItem value="كلاهما">{t.patientForm.bothOption}</SelectItem>
+                                <SelectItem value="يمين">{(t.injurySides as Record<string,string>)["يمين"] || "يمين"}</SelectItem>
+                                <SelectItem value="يسار">{(t.injurySides as Record<string,string>)["يسار"] || "يسار"}</SelectItem>
+                                <SelectItem value="كلاهما">{(t.injurySides as Record<string,string>)["كلاهما"] || "كلاهما"}</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>

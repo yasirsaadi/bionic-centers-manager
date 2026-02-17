@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertVisitSchema, InsertVisit } from "@shared/schema";
 import { useAddVisit } from "@/hooks/use-patients";
+import { useTranslation } from "@/i18n/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -37,9 +38,9 @@ interface VisitModalProps {
 }
 
 const TREATMENT_TYPE_OPTIONS = [
-  { value: "روبوت", label: "روبوت" },
-  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
-  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+  { value: "روبوت", labelKey: "robot" as const },
+  { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
+  { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
 const formSchema = insertVisitSchema.extend({
@@ -49,6 +50,8 @@ const formSchema = insertVisitSchema.extend({
 export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
   const [open, setOpen] = useState(false);
   const { mutate, isPending } = useAddVisit();
+  const { t } = useTranslation();
+  const dir = t.dir;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -83,12 +86,12 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
       <DialogTrigger asChild>
         <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20" data-testid="button-add-visit">
           <PlusCircle className="w-4 h-4" />
-          تسجيل زيارة جديدة
+          {t.modals.registerNewVisit}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px] font-body" dir="rtl">
+      <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-blue-600">سبب الزيارة</DialogTitle>
+          <DialogTitle className="font-display text-xl text-blue-600">{t.modals.visitReason}</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
@@ -98,12 +101,12 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>سبب الزيارة</FormLabel>
+                  <FormLabel>{t.modals.visitReason}</FormLabel>
                   <FormControl>
                     <Textarea 
                       {...field} 
                       value={field.value || ""}
-                      placeholder="ما تم خلال الزيارة: فحص، قياسات، تعديلات..."
+                      placeholder={t.modals.visitReasonPlaceholder}
                       className="min-h-[100px]"
                     />
                   </FormControl>
@@ -118,17 +121,17 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
                 name="treatmentType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>نوع العلاج</FormLabel>
+                    <FormLabel>{t.modals.treatmentType}</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">
-                          <SelectValue placeholder="اختر نوع العلاج" />
+                          <SelectValue placeholder={t.modals.selectTreatmentType} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
                         {TREATMENT_TYPE_OPTIONS.map((opt) => (
                           <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
+                            {t.modals[opt.labelKey]}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -143,10 +146,10 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
               {isPending ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                  جاري التسجيل...
+                  {t.modals.savingVisit}
                 </>
               ) : (
-                "حفظ الزيارة"
+                t.modals.saveVisit
               )}
             </Button>
           </form>

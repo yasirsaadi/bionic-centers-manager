@@ -425,6 +425,18 @@ export default function PatientDetails() {
     return (t.branches as Record<string, string>)[name] || name;
   };
 
+  const translateInjuryType = (type: string): string => {
+    return (t.injuryTypes as Record<string, string>)[type] || type;
+  };
+
+  const translateInjuryArea = (area: string): string => {
+    return (t.injuryAreas as Record<string, string>)[area] || area;
+  };
+
+  const translateInjurySide = (side: string): string => {
+    return (t.injurySides as Record<string, string>)[side] || side;
+  };
+
   const translateTreatmentType = (type: string | null | undefined): string => {
     if (!type) return "-";
     const map: Record<string, string> = {
@@ -693,9 +705,9 @@ export default function PatientDetails() {
                       {injuriesList.map((injury, i) => (
                         <div key={i} className="flex flex-wrap items-center gap-2" data-testid={`injury-entry-${i}`}>
                           <Badge variant="secondary" className="text-xs">{i + 1}</Badge>
-                          {injury.type && <Badge variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{injury.type}</Badge>}
-                          {injury.area && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{injury.area}</Badge>}
-                          {injury.side && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-side-${i}`}>{injury.side}</Badge>}
+                          {injury.type && <Badge variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{translateInjuryType(injury.type)}</Badge>}
+                          {injury.area && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{translateInjuryArea(injury.area)}</Badge>}
+                          {injury.side && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-side-${i}`}>{translateInjurySide(injury.side)}</Badge>}
                         </div>
                       ))}
                     </div>
@@ -1390,7 +1402,7 @@ export default function PatientDetails() {
                         </SelectTrigger>
                         <SelectContent>
                           {injuryTypeOptions.map((opt) => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            <SelectItem key={opt} value={opt}>{translateInjuryType(opt)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1404,7 +1416,7 @@ export default function PatientDetails() {
                         </SelectTrigger>
                         <SelectContent>
                           {injuryAreaOptions.map((opt) => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            <SelectItem key={opt} value={opt}>{translateInjuryArea(opt)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

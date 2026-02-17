@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { api } from "@shared/routes";
+import { useTranslation } from "@/i18n/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -40,15 +41,6 @@ interface NewServiceModalProps {
   isPhysiotherapy?: boolean;
 }
 
-const serviceTypes = [
-  { value: "maintenance", label: "صيانة الطرف الصناعي" },
-  { value: "additional_therapy", label: "جلسات علاج إضافية" },
-  { value: "new_prosthetic", label: "طرف صناعي جديد" },
-  { value: "adjustment", label: "تعديل أو ضبط" },
-  { value: "consultation", label: "استشارة طبية" },
-  { value: "other", label: "خدمة أخرى" },
-];
-
 const formSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
   serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
@@ -60,9 +52,9 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 const TREATMENT_TYPE_OPTIONS = [
-  { value: "روبوت", label: "روبوت" },
-  { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
-  { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+  { value: "روبوت", labelKey: "robot" as const },
+  { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
+  { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
 export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
@@ -70,6 +62,17 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { t } = useTranslation();
+  const dir = t.dir;
+
+  const serviceTypes = [
+    { value: "maintenance", labelKey: "maintenanceLabel" as const },
+    { value: "additional_therapy", labelKey: "additionalTherapyLabel" as const },
+    { value: "new_prosthetic", labelKey: "newProstheticLabel" as const },
+    { value: "adjustment", labelKey: "adjustmentLabel" as const },
+    { value: "consultation", labelKey: "consultationLabel" as const },
+    { value: "other", labelKey: "otherServiceLabel" as const },
+  ];
   
   const { mutate, isPending } = useMutation({
     mutationFn: async (data: { serviceType: string; serviceCost: number; initialPayment: number; notes?: string; paymentTreatmentType?: string | null; sessionCount?: number | null }) => {
@@ -82,8 +85,8 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       toast({
-        title: "تمت إضافة الخدمة بنجاح",
-        description: "تم تحديث التكلفة الإجمالية وإضافة الزيارة والدفعة",
+        title: t.modals.serviceAddedSuccess,
+        description: t.modals.serviceAddedDesc,
       });
       setOpen(false);
       form.reset();
@@ -91,8 +94,8 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     },
     onError: () => {
       toast({
-        title: "حدث خطأ",
-        description: "فشل في إضافة الخدمة الجديدة",
+        title: t.modals.serviceAddError,
+        description: t.modals.serviceAddErrorDesc,
         variant: "destructive",
       });
     },
@@ -119,8 +122,8 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     
     if (serviceCost <= 0) {
       toast({
-        title: "خطأ",
-        description: "تكلفة الخدمة يجب أن تكون أكبر من 0",
+        title: t.modals.costError,
+        description: t.modals.costErrorDesc,
         variant: "destructive",
       });
       return;
@@ -145,12 +148,12 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       <DialogTrigger asChild>
         <Button variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" data-testid="button-new-service">
           <RefreshCcw className="w-4 h-4" />
-          إضافة خدمة جديدة
+          {t.modals.addNewService}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px] font-body" dir="rtl">
+      <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-primary">إضافة خدمة جديدة للمريض</DialogTitle>
+          <DialogTitle className="font-display text-xl text-primary">{t.modals.addNewServiceForPatient}</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
@@ -160,17 +163,17 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               name="serviceType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>نوع الخدمة</FormLabel>
+                  <FormLabel>{t.modals.serviceType}</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-service-type">
-                        <SelectValue placeholder="اختر نوع الخدمة" />
+                        <SelectValue placeholder={t.modals.selectServiceType} />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
                       {serviceTypes.map((type) => (
                         <SelectItem key={type.value} value={type.value}>
-                          {type.label}
+                          {t.modals[type.labelKey]}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -182,15 +185,15 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
             {selectedServiceType === "additional_therapy" && isPhysiotherapy !== false && (
               <div className="space-y-2">
-                <FormLabel>نوع العلاج</FormLabel>
+                <FormLabel>{t.modals.treatmentType}</FormLabel>
                 <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
                   <SelectTrigger data-testid="select-service-treatment-type">
-                    <SelectValue placeholder="اختر نوع العلاج" />
+                    <SelectValue placeholder={t.modals.selectTreatmentType} />
                   </SelectTrigger>
                   <SelectContent>
                     {TREATMENT_TYPE_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value} data-testid={`option-service-treatment-${option.value}`}>
-                        {option.label}
+                        {t.modals[option.labelKey]}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -203,14 +206,14 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               name="serviceCost"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>تكلفة الخدمة الجديدة (د.ع)</FormLabel>
+                  <FormLabel>{t.modals.serviceCost}</FormLabel>
                   <FormControl>
                     <Input 
                       type="text"
                       inputMode="numeric"
                       {...field} 
                       className="text-left font-mono" 
-                      placeholder="أدخل التكلفة" 
+                      placeholder={t.modals.enterCost}
                       data-testid="input-service-cost"
                     />
                   </FormControl>
@@ -220,13 +223,13 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
             />
 
             <div className="bg-slate-50 p-3 rounded-lg text-sm">
-              <div className="flex justify-between text-muted-foreground">
-                <span>التكلفة الإجمالية الحالية:</span>
-                <span className="font-mono">{currentTotalCost.toLocaleString()} د.ع</span>
+              <div className="flex justify-between gap-2 text-muted-foreground">
+                <span>{t.modals.currentTotalCost}</span>
+                <span className="font-mono">{currentTotalCost.toLocaleString()} {t.patientDetails.currency}</span>
               </div>
-              <div className="flex justify-between font-semibold text-primary mt-1">
-                <span>التكلفة الإجمالية الجديدة:</span>
-                <span className="font-mono">{newTotal.toLocaleString()} د.ع</span>
+              <div className="flex justify-between gap-2 font-semibold text-primary mt-1">
+                <span>{t.modals.newTotalCost}</span>
+                <span className="font-mono">{newTotal.toLocaleString()} {t.patientDetails.currency}</span>
               </div>
             </div>
 
@@ -235,7 +238,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               name="initialPayment"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>الدفعة الأولية (اختياري)</FormLabel>
+                  <FormLabel>{t.modals.initialPayment}</FormLabel>
                   <FormControl>
                     <Input 
                       type="text"
@@ -257,14 +260,14 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                 name="sessionCount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>عدد الجلسات</FormLabel>
+                    <FormLabel>{t.modals.sessionCount}</FormLabel>
                     <FormControl>
                       <Input 
                         type="text"
                         inputMode="numeric"
                         {...field}
                         className="text-left font-mono" 
-                        placeholder="أدخل عدد الجلسات" 
+                        placeholder={t.modals.enterSessionCount}
                         data-testid="input-service-session-count"
                       />
                     </FormControl>
@@ -279,11 +282,11 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>ملاحظات إضافية (اختياري)</FormLabel>
+                  <FormLabel>{t.modals.additionalNotesOptional}</FormLabel>
                   <FormControl>
                     <Textarea 
                       {...field} 
-                      placeholder="مثال: صيانة دورية للطرف الأيمن..." 
+                      placeholder={t.modals.additionalNotesServicePlaceholder}
                       className="resize-none"
                       data-testid="input-service-notes"
                     />
@@ -302,10 +305,10 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               {isPending ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                  جاري الإضافة...
+                  {t.modals.adding}
                 </>
               ) : (
-                "إضافة الخدمة"
+                t.modals.addService
               )}
             </Button>
           </form>

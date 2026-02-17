@@ -1,5 +1,6 @@
 import { useForm } from "react-hook-form";
 import { useUpdateVisit } from "@/hooks/use-patients";
+import { useTranslation } from "@/i18n/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -51,8 +52,16 @@ const formSchema = z.object({
   cost: z.number().nullable().optional(),
 });
 
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "روبوت", labelKey: "robot" as const },
+  { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
+  { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+];
+
 export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVisitModalProps) {
   const { mutate, isPending } = useUpdateVisit();
+  const { t } = useTranslation();
+  const dir = t.dir;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -95,9 +104,9 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] font-body" dir="rtl">
+      <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
-          <DialogTitle className="font-display text-xl text-blue-600">تحرير الزيارة</DialogTitle>
+          <DialogTitle className="font-display text-xl text-blue-600">{t.modals.editVisit}</DialogTitle>
         </DialogHeader>
         
         <Form {...form}>
@@ -107,12 +116,12 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
               name="details"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>تفاصيل الزيارة</FormLabel>
+                  <FormLabel>{t.modals.visitDetails}</FormLabel>
                   <FormControl>
                     <Textarea 
                       {...field} 
                       value={field.value || ""}
-                      placeholder="ما تم خلال الزيارة: فحص، قياسات، تعديلات..."
+                      placeholder={t.modals.visitDetailsPlaceholder}
                       className="min-h-[100px]"
                       data-testid="input-edit-visit-details"
                     />
@@ -127,9 +136,9 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>ملاحظات إضافية (اختياري)</FormLabel>
+                  <FormLabel>{t.modals.additionalNotes}</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} placeholder="أي ملاحظات أخرى..." data-testid="input-edit-visit-notes" />
+                    <Input {...field} value={field.value || ""} placeholder={t.modals.additionalNotesPlaceholder} data-testid="input-edit-visit-notes" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -141,17 +150,19 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
               name="treatmentType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>نوع العلاج (اختياري)</FormLabel>
+                  <FormLabel>{t.modals.treatmentTypeOptional}</FormLabel>
                   <Select value={field.value || ""} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger data-testid="select-edit-visit-treatment-type">
-                        <SelectValue placeholder="اختر نوع العلاج" />
+                        <SelectValue placeholder={t.modals.selectTreatmentType} />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="روبوت">روبوت</SelectItem>
-                      <SelectItem value="تمارين تأهيلية">تمارين تأهيلية</SelectItem>
-                      <SelectItem value="أجهزة علاج طبيعي">أجهزة علاج طبيعي</SelectItem>
+                      {TREATMENT_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {t.modals[opt.labelKey]}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -164,12 +175,12 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
               name="sessionCount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>عدد الجلسات (اختياري)</FormLabel>
+                  <FormLabel>{t.modals.sessionCountOptional}</FormLabel>
                   <FormControl>
                     <Input 
                       {...field}
                       type="number" 
-                      placeholder="عدد الجلسات" 
+                      placeholder={t.modals.sessionCountPlaceholder}
                       value={field.value === null || field.value === undefined ? "" : field.value}
                       onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
                       data-testid="input-edit-visit-session-count"
@@ -182,7 +193,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
 
             {visit.cost ? (
               <FormItem>
-                <FormLabel>الكلفة</FormLabel>
+                <FormLabel>{t.modals.cost}</FormLabel>
                 <Input 
                   type="number" 
                   value={visit.cost}
@@ -190,7 +201,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
                   className="bg-slate-100"
                   data-testid="input-edit-visit-cost"
                 />
-                <p className="text-xs text-muted-foreground">لا يمكن تعديل الكلفة بعد التسجيل</p>
+                <p className="text-xs text-muted-foreground">{t.modals.costNotEditable}</p>
               </FormItem>
             ) : null}
 
@@ -198,10 +209,10 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange }: EditVis
               {isPending ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                  جاري الحفظ...
+                  {t.modals.savingChanges}
                 </>
               ) : (
-                "حفظ التعديلات"
+                t.modals.saveChanges
               )}
             </Button>
           </form>
