@@ -183,7 +183,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               )}
             />
 
-            {selectedServiceType === "additional_therapy" && isPhysiotherapy !== false && (
+            {isPhysiotherapy !== false && (
               <div className="space-y-2">
                 <FormLabel>{t.modals.treatmentType}</FormLabel>
                 <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
