@@ -145,6 +145,8 @@ export default function EditPatient() {
         injurySide: patient.injurySide || "",
         injuries: patient.injuries || "",
         branchId: patient.branchId,
+        referralSource: patient.referralSource || "",
+        referralNotes: patient.referralNotes || "",
       });
     }
   }, [patient, form]);
