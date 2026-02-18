@@ -342,6 +342,7 @@ export default function CreatePatient() {
                         <SelectItem value="تيك توك">{t.patientForm.refTikTok}</SelectItem>
                         <SelectItem value="كوكل">{t.patientForm.refGoogle}</SelectItem>
                         <SelectItem value="من شخص آخر">{t.patientForm.refOtherPerson}</SelectItem>
+                        <SelectItem value="دكتور بيرم">{t.patientForm.refDrBiram}</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
