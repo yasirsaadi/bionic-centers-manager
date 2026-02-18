@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
@@ -1029,9 +1030,10 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.injuryDateOptional}</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
-                    </FormControl>
+                    <DatePickerIraq 
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
                     <FormMessage />
                   </FormItem>
                 )}

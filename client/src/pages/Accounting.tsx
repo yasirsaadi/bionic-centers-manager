@@ -5,6 +5,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -638,7 +639,7 @@ export default function Accounting() {
     }
 
     const selectedPatientId = parseInt((document.getElementById("invoice-patient") as HTMLInputElement)?.value || "0");
-    const invoiceDate = (document.getElementById("invoice-date") as HTMLInputElement)?.value;
+    const invoiceDate = (document.getElementById("invoice-date-value") as HTMLInputElement)?.value;
     const discount = parseInt((document.getElementById("invoice-discount") as HTMLInputElement)?.value || "0");
     const notes = (document.getElementById("invoice-notes") as HTMLTextAreaElement)?.value;
     
@@ -1101,20 +1102,16 @@ export default function Accounting() {
               </Badge>
             )}
             
-            <Input
-              type="date"
+            <DatePickerIraq
               value={dateRange.startDate}
-              onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+              onChange={(val) => setDateRange(prev => ({ ...prev, startDate: val }))}
               className="w-36"
-              placeholder={t.accounting.fromDate}
               data-testid="input-start-date"
             />
-            <Input
-              type="date"
+            <DatePickerIraq
               value={dateRange.endDate}
-              onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+              onChange={(val) => setDateRange(prev => ({ ...prev, endDate: val }))}
               className="w-36"
-              placeholder={t.accounting.toDate}
               data-testid="input-end-date"
             />
             
@@ -1919,9 +1916,11 @@ export default function Accounting() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t.accounting.date}</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} data-testid="input-expense-date" />
-                      </FormControl>
+                      <DatePickerIraq 
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        data-testid="input-expense-date"
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1999,12 +1998,15 @@ export default function Accounting() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">{t.accounting.invoiceDate}</label>
-                  <Input
-                    id="invoice-date"
-                    type="date"
-                    defaultValue={new Date().toISOString().split("T")[0]}
+                  <DatePickerIraq
+                    value={new Date().toISOString().split("T")[0]}
+                    onChange={(val) => {
+                      const el = document.getElementById("invoice-date-value") as HTMLInputElement;
+                      if (el) el.value = val;
+                    }}
                     data-testid="input-invoice-date"
                   />
+                  <input type="hidden" id="invoice-date-value" defaultValue={new Date().toISOString().split("T")[0]} />
                 </div>
               </div>
 

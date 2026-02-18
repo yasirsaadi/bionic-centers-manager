@@ -63,6 +63,7 @@ import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
 import { Input } from "@/components/ui/input";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
@@ -279,7 +280,7 @@ export default function PatientDetails() {
 
   const resetTreatmentPlanForm = () => {
     setTreatmentPlanForm({
-      diagnosis: "", injuryType: "", injuryLocation: "",
+      diagnosis: "", injuryType: "", injuryLocation: "", diseaseHistory: "",
       mmtAssessment: "", spasticity: "", sensation: "", painLevel: "",
       adl: "", sessionCount: "", sessionFrequency: "",
       deviceType: "", goalType: "", notes: "",
@@ -1027,7 +1028,7 @@ export default function PatientDetails() {
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost, visitDate: visit.visitDate })}
+                                onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost, visitDate: visit.visitDate ? String(visit.visitDate) : null })}
                                 data-testid={`button-edit-visit-${visit.id}`}
                               >
                                 <Pencil className="w-4 h-4" />
@@ -1118,7 +1119,7 @@ export default function PatientDetails() {
                                   variant="ghost" 
                                   size="icon" 
                                   className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType, date: payment.date })}
+                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType, date: payment.date ? String(payment.date) : null })}
                                   data-testid={`button-edit-payment-${payment.id}`}
                                 >
                                   <Pencil className="w-4 h-4" />
@@ -1692,10 +1693,9 @@ export default function PatientDetails() {
                   <Calendar className="w-4 h-4" />
                   {t.modals.paymentDate}
                 </label>
-                <Input 
-                  type="date" 
+                <DatePickerIraq 
                   value={editPaymentDate}
-                  onChange={(e) => setEditPaymentDate(e.target.value)}
+                  onChange={(val) => setEditPaymentDate(val)}
                   data-testid="input-edit-payment-date"
                 />
               </div>

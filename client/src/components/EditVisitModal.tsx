@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -140,14 +141,11 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }
                       <Calendar className="w-4 h-4" />
                       {t.modals.visitDate}
                     </FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="date" 
-                        {...field} 
-                        value={field.value || ""}
-                        data-testid="input-edit-visit-date"
-                      />
-                    </FormControl>
+                    <DatePickerIraq 
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      data-testid="input-edit-visit-date"
+                    />
                     <FormMessage />
                   </FormItem>
                 )}

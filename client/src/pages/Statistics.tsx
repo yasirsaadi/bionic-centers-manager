@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -878,10 +879,9 @@ export default function Statistics() {
           </Select>
 
           {timeRange === "date" && (
-            <Input
-              type="date"
+            <DatePickerIraq
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+              onChange={(val) => setSelectedDate(val)}
               className="w-[160px]"
               data-testid="input-specific-date"
             />

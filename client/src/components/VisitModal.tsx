@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2, Calendar } from "lucide-react";
 import { useState } from "react";
@@ -110,14 +111,11 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
                     <Calendar className="w-4 h-4" />
                     {t.modals.visitDate}
                   </FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="date" 
-                      {...field} 
-                      value={field.value || ""}
-                      data-testid="input-visit-date"
-                    />
-                  </FormControl>
+                  <DatePickerIraq 
+                    value={field.value || ""}
+                    onChange={field.onChange}
+                    data-testid="input-visit-date"
+                  />
                   <p className="text-xs text-muted-foreground">{t.modals.visitDateNote}</p>
                   <FormMessage />
                 </FormItem>

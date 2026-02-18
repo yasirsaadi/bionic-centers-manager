@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -261,15 +262,11 @@ export default function CreatePatient() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t.patientForm.registrationDate}</FormLabel>
-                      <FormControl>
-                        <Input 
-                          type="date" 
-                          {...field} 
-                          value={field.value || ""} 
-                          className="bg-slate-50" 
-                          data-testid="input-registration-date"
-                        />
-                      </FormControl>
+                      <DatePickerIraq 
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        data-testid="input-registration-date"
+                      />
                       <p className="text-xs text-muted-foreground">{t.patientForm.registrationDateNote}</p>
                       <FormMessage />
                     </FormItem>
@@ -499,9 +496,10 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.injuryDate}</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} value={field.value || ""} className="bg-slate-50" />
-                    </FormControl>
+                    <DatePickerIraq 
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
                     <FormMessage />
                   </FormItem>
                 )}

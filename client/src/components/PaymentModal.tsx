@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 import {
   Select,
   SelectContent,
@@ -135,15 +136,11 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                     <Calendar className="w-4 h-4" />
                     {t.modals.paymentDate}
                   </FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="date" 
-                      {...field} 
-                      value={field.value || getTodayDate()}
-                      className="text-left"
-                      data-testid="input-payment-date"
-                    />
-                  </FormControl>
+                  <DatePickerIraq 
+                    value={field.value || getTodayDate()}
+                    onChange={field.onChange}
+                    data-testid="input-payment-date"
+                  />
                   <FormMessage />
                 </FormItem>
               )}
