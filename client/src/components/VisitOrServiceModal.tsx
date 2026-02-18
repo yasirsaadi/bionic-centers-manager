@@ -68,6 +68,7 @@ type VisitFormValues = z.infer<typeof visitFormSchema>;
 type ServiceFormValues = z.infer<typeof serviceFormSchema>;
 
 const TREATMENT_TYPE_OPTIONS = [
+  { value: "استشارة طبية", label: "استشارة طبية" },
   { value: "روبوت", label: "روبوت" },
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },

@@ -71,6 +71,7 @@ import { Label } from "@/components/ui/label";
 import type { Branch, TreatmentPlan } from "@shared/schema";
 
 const TREATMENT_TYPE_OPTIONS = [
+  { value: "استشارة طبية", label: "استشارة طبية" },
   { value: "روبوت", label: "روبوت" },
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
@@ -452,6 +453,7 @@ export default function PatientDetails() {
   const translateTreatmentType = (type: string | null | undefined): string => {
     if (!type) return "-";
     const map: Record<string, string> = {
+      "استشارة طبية": t.patientDetails.treatmentTypeMedicalConsultation,
       "روبوت": t.patientDetails.treatmentTypeRobot,
       "تمارين تأهيلية": t.patientDetails.treatmentTypeRehab,
       "أجهزة علاج طبيعي": t.patientDetails.treatmentTypePhysioDevices,

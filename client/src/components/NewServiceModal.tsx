@@ -52,6 +52,7 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 const TREATMENT_TYPE_OPTIONS = [
+  { value: "استشارة طبية", labelKey: "medicalConsultation" as const },
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
