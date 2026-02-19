@@ -1249,13 +1249,13 @@ export async function registerRoutes(
         notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
       });
       
-      // Create initial payment if provided
-      if (initialPayment > 0) {
+      // Create payment record for the service cost
+      if (serviceCost > 0) {
         await storage.createPayment({
           patientId,
           branchId: branchId || patient.branchId,
-          amount: initialPayment,
-          notes: `دفعة أولية - ${serviceLabel}`,
+          amount: serviceCost,
+          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}`,
           paymentTreatmentType: paymentTreatmentType || null,
           sessionCount: sessionCount ? Number(sessionCount) : null,
         });
