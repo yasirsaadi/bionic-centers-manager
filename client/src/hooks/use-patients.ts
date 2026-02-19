@@ -116,11 +116,13 @@ export function useAddPayment() {
         credentials: "include",
       });
 
-      if (!res.ok) throw new Error("فشل في تسجيل الدفعة");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.message || "فشل في تسجيل الدفعة");
+      }
       return api.payments.create.responses[201].parse(await res.json());
     },
     onSuccess: (_, variables) => {
-      // Invalidate specific patient query to refresh stats
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });
@@ -129,6 +131,13 @@ export function useAddPayment() {
       toast({
         title: "تم تسجيل الدفعة",
         description: "تم تحديث الرصيد المالي للمريض",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "تعذر تسجيل الدفعة",
+        description: error.message,
+        variant: "destructive",
       });
     },
   });

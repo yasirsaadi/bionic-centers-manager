@@ -1349,12 +1349,14 @@ export async function registerRoutes(
   app.post(api.payments.create.path, isAuthenticated, async (req, res) => {
     const input = api.payments.create.input.parse(req.body);
     
-    // If payment has treatment type and amount, also increase totalCost
-    if (input.amount && input.amount > 0 && input.paymentTreatmentType) {
-      const patient = await storage.getPatient(input.patientId);
-      if (patient) {
-        const newTotalCost = (patient.totalCost || 0) + input.amount;
-        await storage.updatePatient(input.patientId, { totalCost: newTotalCost });
+    // Check if patient has remaining balance before accepting payment
+    const patient = await storage.getPatient(input.patientId);
+    if (patient) {
+      const payments = await storage.getPaymentsByPatientId(input.patientId);
+      const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+      const remaining = (patient.totalCost || 0) - totalPaid;
+      if (remaining <= 0) {
+        return res.status(400).json({ message: "لا يمكن تسجيل دفعة جديدة لعدم وجود مبلغ متبقي. الرجاء إضافة خدمة جديدة أولاً." });
       }
     }
     
