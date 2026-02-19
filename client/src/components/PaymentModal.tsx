@@ -199,6 +199,32 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               </div>
             )}
 
+            {isPhysiotherapy !== false && selectedTreatmentType && selectedTreatmentType !== "استشارة طبية" && (
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t.modals.sessionCount}</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="number" 
+                        className="text-left font-mono" 
+                        placeholder={t.modals.enterSessionCount}
+                        data-testid="input-session-count"
+                        value={field.value === 0 ? "" : field.value || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          field.onChange(val === "" ? "" : Number(val));
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <FormField
               control={form.control}
               name="amount"
@@ -226,32 +252,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                 </FormItem>
               )}
             />
-
-            {isPhysiotherapy !== false && selectedTreatmentType !== "استشارة طبية" && (
-              <FormField
-                control={form.control}
-                name="sessionCount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t.modals.sessionCount}</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="number" 
-                        className="text-left font-mono" 
-                        placeholder={t.modals.enterSessionCount}
-                        data-testid="input-session-count"
-                        value={field.value === 0 ? "" : field.value || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          field.onChange(val === "" ? "" : Number(val));
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
 
             <FormField
               control={form.control}
