@@ -45,7 +45,6 @@ interface NewServiceModalProps {
 const formSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
   serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
-  initialPayment: z.string().optional(),
   sessionCount: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -119,7 +118,6 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     defaultValues: {
       serviceType: "",
       serviceCost: "",
-      initialPayment: "",
       sessionCount: "",
       notes: "",
     },
@@ -151,7 +149,6 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
   function onSubmit(values: FormValues) {
     const serviceCost = Number(values.serviceCost) || 0;
-    const initialPayment = Number(values.initialPayment) || 0;
     
     const isMedicalConsultation = isPhysiotherapy !== false && selectedTreatmentType === "استشارة طبية";
     if (!isMedicalConsultation && serviceCost <= 0) {
@@ -170,7 +167,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     mutate({
       serviceType: values.serviceType,
       serviceCost,
-      initialPayment,
+      initialPayment: 0,
       notes: values.notes,
       paymentTreatmentType,
       sessionCount,
@@ -294,27 +291,6 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                 <span className="font-mono">{newTotal.toLocaleString()} {t.patientDetails.currency}</span>
               </div>
             </div>
-
-            <FormField
-              control={form.control}
-              name="initialPayment"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t.modals.initialPayment}</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="text"
-                      inputMode="numeric"
-                      {...field} 
-                      className="text-left font-mono" 
-                      placeholder="0" 
-                      data-testid="input-initial-payment"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
             <FormField
               control={form.control}
