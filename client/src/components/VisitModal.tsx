@@ -30,7 +30,8 @@ import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2, Calendar } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 
 interface VisitModalProps {
@@ -46,9 +47,21 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
+const TREATMENT_PRICES: Record<string, number> = {
+  "استشارة طبية": 0,
+  "روبوت": 50000,
+  "تمارين تأهيلية": 25000,
+  "أجهزة علاج طبيعي": 25000,
+};
+
 const formSchema = insertVisitSchema.extend({
   treatmentType: z.string().optional().nullable(),
   customDate: z.string().optional().nullable(),
+  sessionCount: z.preprocess((val) => {
+    if (val === "" || val === null || val === undefined) return null;
+    return Number(val);
+  }, z.number().nullable().optional()),
+  visitCost: z.coerce.number().optional().nullable(),
 });
 
 function getTodayDate(): string {
@@ -63,9 +76,12 @@ function getTodayDate(): string {
 
 export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
   const [open, setOpen] = useState(false);
+  const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddVisit();
   const { t } = useTranslation();
   const dir = t.dir;
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -75,24 +91,51 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
       notes: "",
       treatmentType: "",
       customDate: getTodayDate(),
+      sessionCount: "" as any,
+      visitCost: 0,
     },
   });
+
+  const watchTreatmentType = form.watch("treatmentType");
+  const watchSessionCount = form.watch("sessionCount");
+
+  useEffect(() => {
+    setManualCostOverride(false);
+  }, [watchTreatmentType]);
+
+  useEffect(() => {
+    if (!watchTreatmentType) return;
+    if (manualCostOverride) return;
+    if (watchTreatmentType === "استشارة طبية") {
+      form.setValue("sessionCount", 1);
+      form.setValue("visitCost", 0);
+    } else {
+      const price = TREATMENT_PRICES[watchTreatmentType] || 0;
+      const count = typeof watchSessionCount === "number" ? watchSessionCount : 0;
+      form.setValue("visitCost", price * count);
+    }
+  }, [watchTreatmentType, watchSessionCount, form, manualCostOverride]);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     const submitData: any = {
       ...values,
       treatmentType: isPhysiotherapy !== false ? (values.treatmentType || null) : null,
       customDate: values.customDate || null,
+      sessionCount: values.sessionCount || null,
     };
+    delete submitData.visitCost;
     mutate(submitData, {
       onSuccess: () => {
         setOpen(false);
+        setManualCostOverride(false);
         form.reset({
           patientId: patientId,
           branchId: branchId,
           notes: "",
           treatmentType: "",
           customDate: getTodayDate(),
+          sessionCount: "" as any,
+          visitCost: 0,
         });
       },
     });
@@ -173,6 +216,55 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {isPhysiotherapy !== false && watchTreatmentType && watchTreatmentType !== "استشارة طبية" && watchTreatmentType !== "" && (
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t.modals.sessionCount}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder={t.modals.enterSessionCount}
+                        value={field.value === null || field.value === undefined ? "" : field.value}
+                        onChange={(e) => field.onChange(e.target.value === "" ? "" : Number(e.target.value))}
+                        data-testid="input-session-count"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {isPhysiotherapy !== false && watchTreatmentType && (
+              <FormField
+                control={form.control}
+                name="visitCost"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t.patientForm.estimatedCost}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        readOnly={!isAdmin}
+                        className={!isAdmin ? "bg-muted" : ""}
+                        value={field.value ?? 0}
+                        onChange={(e) => {
+                          field.onChange(Number(e.target.value) || 0);
+                          if (isAdmin) setManualCostOverride(true);
+                        }}
+                        data-testid="input-visit-cost"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

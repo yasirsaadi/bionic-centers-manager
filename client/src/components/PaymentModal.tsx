@@ -29,7 +29,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PlusCircle, Loader2, Calendar } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 
 interface PaymentModalProps {
@@ -39,7 +40,7 @@ interface PaymentModalProps {
 }
 
 const formSchema = insertPaymentSchema.extend({
-  amount: z.coerce.number().min(1, "المبلغ يجب أن يكون أكبر من 0"),
+  amount: z.coerce.number().min(0, "المبلغ يجب أن يكون 0 أو أكبر"),
   date: z.string().optional().nullable(),
   sessionCount: z.preprocess((val) => {
     if (val === "" || val === null || val === undefined) return null;
@@ -62,12 +63,22 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
+const TREATMENT_PRICES: Record<string, number> = {
+  "استشارة طبية": 0,
+  "روبوت": 50000,
+  "تمارين تأهيلية": 25000,
+  "أجهزة علاج طبيعي": 25000,
+};
+
 export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
+  const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddPayment();
   const { t } = useTranslation();
   const dir = t.dir;
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -81,6 +92,28 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       date: getTodayDate(),
     },
   });
+
+  const watchedSessionCount = form.watch("sessionCount");
+
+  useEffect(() => {
+    setManualCostOverride(false);
+  }, [selectedTreatmentType]);
+
+  useEffect(() => {
+    if (!selectedTreatmentType) return;
+
+    if (selectedTreatmentType === "استشارة طبية") {
+      form.setValue("amount", 0);
+      form.setValue("sessionCount", 1 as any);
+      return;
+    }
+
+    if (!manualCostOverride) {
+      const pricePerSession = TREATMENT_PRICES[selectedTreatmentType] || 0;
+      const count = typeof watchedSessionCount === "number" && watchedSessionCount > 0 ? watchedSessionCount : 0;
+      form.setValue("amount", pricePerSession * count);
+    }
+  }, [selectedTreatmentType, watchedSessionCount, manualCostOverride]);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     let submissionDate = values.date;
@@ -109,6 +142,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
     setOpen(isOpen);
     if (!isOpen) {
       setSelectedTreatmentType("");
+      setManualCostOverride(false);
       form.reset();
     }
   };
@@ -174,13 +208,17 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                   <FormControl>
                     <Input 
                       type="number" 
-                      className="text-left font-mono" 
+                      className={`text-left font-mono ${!isAdmin && isPhysiotherapy === true ? "bg-muted" : ""}`}
                       placeholder={t.modals.enterAmount}
                       data-testid="input-payment-amount"
+                      readOnly={!isAdmin && isPhysiotherapy === true}
                       value={field.value === 0 ? "" : field.value}
                       onChange={(e) => {
                         const val = e.target.value;
                         field.onChange(val === "" ? "" : Number(val));
+                        if (isAdmin) {
+                          setManualCostOverride(true);
+                        }
                       }}
                     />
                   </FormControl>
@@ -189,7 +227,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               )}
             />
 
-            {isPhysiotherapy !== false && (
+            {isPhysiotherapy !== false && selectedTreatmentType !== "استشارة طبية" && (
               <FormField
                 control={form.control}
                 name="sessionCount"

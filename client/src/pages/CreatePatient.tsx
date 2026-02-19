@@ -39,6 +39,20 @@ const injuryTypeOptions = [
   "شلل العصب الوجهي", "إصابة اربطة", "قطع جزئي في العضلات", "تبديل مفصل", "كسر",
 ];
 
+const TREATMENT_TYPE_OPTIONS = [
+  { value: "استشارة طبية", labelKey: "medicalConsultation" as const },
+  { value: "روبوت", labelKey: "robot" as const },
+  { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
+  { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+];
+
+const TREATMENT_PRICES: Record<string, number> = {
+  "استشارة طبية": 0,
+  "روبوت": 50000,
+  "تمارين تأهيلية": 25000,
+  "أجهزة علاج طبيعي": 25000,
+};
+
 const injuryAreaOptions = [
   "الرأس", "الرقبة", "الصدر", "القطن", "العمود الفقري", "الكتف",
   "منطقة الظهر العلوية", "منطقة الظهر السفلية", "العضد", "المرفق", "الساعد", "المعصم",
@@ -50,6 +64,7 @@ const injuryAreaOptions = [
 const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
+  sessionCount: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
   registrationDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
@@ -108,6 +123,7 @@ export default function CreatePatient() {
       amputationSite: "",
       diseaseType: "",
       totalCost: 0,
+      sessionCount: 0,
       injuryDate: "",
       injuryCause: "",
       registrationDate: new Date().toISOString().split('T')[0], // تاريخ اليوم افتراضياً
@@ -144,6 +160,7 @@ export default function CreatePatient() {
   const [bothLeftDetail, setBothLeftDetail] = useState("");
   
   const [injuryEntries, setInjuryEntries] = useState<InjuryEntry[]>([{ type: "", area: "", side: "" }]);
+  const [manualCostOverride, setManualCostOverride] = useState(false);
 
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
@@ -225,6 +242,29 @@ export default function CreatePatient() {
       form.setValue("branchId", userBranchId);
     }
   }, [isAdmin, userBranchId, form]);
+
+  // Auto-calculate totalCost based on treatmentType and sessionCount
+  const watchedTreatmentType = form.watch("treatmentType");
+  const watchedSessionCount = form.watch("sessionCount");
+  useEffect(() => {
+    setManualCostOverride(false);
+  }, [watchedTreatmentType]);
+
+  useEffect(() => {
+    if (conditionType !== "physiotherapy") return;
+    if (!watchedTreatmentType) return;
+    const price = TREATMENT_PRICES[watchedTreatmentType];
+    if (price === undefined) return;
+    if (watchedTreatmentType === "استشارة طبية") {
+      form.setValue("sessionCount", 1);
+      form.setValue("totalCost", 0);
+    } else {
+      if (!manualCostOverride) {
+        const sessions = watchedSessionCount || 0;
+        form.setValue("totalCost", price * sessions);
+      }
+    }
+  }, [watchedTreatmentType, watchedSessionCount, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
     console.log("Submitting patient with branchId:", values.branchId, "all values:", values);
@@ -1102,6 +1142,49 @@ export default function CreatePatient() {
                 )}
               />
               
+              {conditionType === "physiotherapy" && (
+                <FormField
+                  control={form.control}
+                  name="treatmentType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.modals.treatmentType}</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                        <FormControl>
+                          <SelectTrigger className="bg-slate-50" data-testid="select-treatment-type">
+                            <SelectValue placeholder={t.modals.selectTreatmentType} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {TREATMENT_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {t.modals[opt.labelKey]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {conditionType === "physiotherapy" && watchedTreatmentType && watchedTreatmentType !== "استشارة طبية" && (
+                <FormField
+                  control={form.control}
+                  name="sessionCount"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.modals.sessionCount}</FormLabel>
+                      <FormControl>
+                        <Input type="number" {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.modals.enterSessionCount} data-testid="input-session-count" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
               <FormField
                 control={form.control}
                 name="totalCost"
@@ -1109,7 +1192,20 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.estimatedCost}</FormLabel>
                     <FormControl>
-                      <Input type="number" {...field} className="font-mono text-left" placeholder="0.00" />
+                      <Input
+                        type="number"
+                        {...field}
+                        readOnly={!isAdmin && conditionType === "physiotherapy"}
+                        className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : ""}`}
+                        placeholder="0.00"
+                        data-testid="input-total-cost"
+                        onChange={(e) => {
+                          field.onChange(e);
+                          if (isAdmin) {
+                            setManualCostOverride(true);
+                          }
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

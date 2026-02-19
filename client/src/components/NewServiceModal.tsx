@@ -30,7 +30,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { RefreshCcw, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 
@@ -58,13 +59,23 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
 ];
 
+const TREATMENT_PRICES: Record<string, number> = {
+  "استشارة طبية": 0,
+  "روبوت": 50000,
+  "تمارين تأهيلية": 25000,
+  "أجهزة علاج طبيعي": 25000,
+};
+
 export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
+  const [manualCostOverride, setManualCostOverride] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { t } = useTranslation();
   const dir = t.dir;
+  const branchSession = useBranchSession();
+  const isAdmin = branchSession?.isAdmin || false;
 
   const serviceTypes = [
     { value: "maintenance", labelKey: "maintenanceLabel" as const },
@@ -92,6 +103,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       setOpen(false);
       form.reset();
       setSelectedTreatmentType("");
+      setManualCostOverride(false);
     },
     onError: () => {
       toast({
@@ -113,6 +125,26 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     },
   });
 
+  const sessionCount = form.watch("sessionCount");
+
+  useEffect(() => {
+    setManualCostOverride(false);
+  }, [selectedTreatmentType]);
+
+  useEffect(() => {
+    if (!selectedTreatmentType || !(selectedTreatmentType in TREATMENT_PRICES)) return;
+    if (manualCostOverride) return;
+
+    if (selectedTreatmentType === "استشارة طبية") {
+      form.setValue("serviceCost", "0");
+      form.setValue("sessionCount", "1");
+    } else {
+      const pricePerSession = TREATMENT_PRICES[selectedTreatmentType];
+      const sessions = Number(sessionCount) || 0;
+      form.setValue("serviceCost", String(pricePerSession * sessions));
+    }
+  }, [selectedTreatmentType, sessionCount, manualCostOverride]);
+
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
   const selectedServiceType = form.watch("serviceType");
   const newTotal = currentTotalCost + serviceCostValue;
@@ -121,7 +153,8 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     const serviceCost = Number(values.serviceCost) || 0;
     const initialPayment = Number(values.initialPayment) || 0;
     
-    if (serviceCost <= 0) {
+    const isMedicalConsultation = isPhysiotherapy !== false && selectedTreatmentType === "استشارة طبية";
+    if (!isMedicalConsultation && serviceCost <= 0) {
       toast({
         title: t.modals.costError,
         description: t.modals.costErrorDesc,
@@ -213,9 +246,14 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                       type="text"
                       inputMode="numeric"
                       {...field} 
-                      className="text-left font-mono" 
+                      readOnly={!isAdmin}
+                      className={`text-left font-mono ${!isAdmin ? "bg-muted" : ""}`}
                       placeholder={t.modals.enterCost}
                       data-testid="input-service-cost"
+                      onChange={(e) => {
+                        field.onChange(e);
+                        if (isAdmin) setManualCostOverride(true);
+                      }}
                     />
                   </FormControl>
                   <FormMessage />
@@ -255,7 +293,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               )}
             />
 
-            {isPhysiotherapy !== false && (
+            {isPhysiotherapy !== false && selectedTreatmentType && selectedTreatmentType !== "استشارة طبية" && (
               <FormField
                 control={form.control}
                 name="sessionCount"
