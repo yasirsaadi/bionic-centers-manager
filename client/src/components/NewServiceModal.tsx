@@ -235,6 +235,29 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               </div>
             )}
 
+            {isPhysiotherapy !== false && selectedTreatmentType && selectedTreatmentType !== "استشارة طبية" && (
+              <FormField
+                control={form.control}
+                name="sessionCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t.modals.sessionCount}</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="text"
+                        inputMode="numeric"
+                        {...field}
+                        className="text-left font-mono" 
+                        placeholder={t.modals.enterSessionCount}
+                        data-testid="input-service-session-count"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <FormField
               control={form.control}
               name="serviceCost"
@@ -292,29 +315,6 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                 </FormItem>
               )}
             />
-
-            {isPhysiotherapy !== false && selectedTreatmentType && selectedTreatmentType !== "استشارة طبية" && (
-              <FormField
-                control={form.control}
-                name="sessionCount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t.modals.sessionCount}</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="text"
-                        inputMode="numeric"
-                        {...field}
-                        className="text-left font-mono" 
-                        placeholder={t.modals.enterSessionCount}
-                        data-testid="input-service-session-count"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
 
             <FormField
               control={form.control}
