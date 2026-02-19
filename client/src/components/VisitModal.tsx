@@ -51,6 +51,16 @@ const formSchema = insertVisitSchema.extend({
   customDate: z.string().optional().nullable(),
 });
 
+function getTodayDate(): string {
+  const today = new Date();
+  const baghdadOffset = 3 * 60 * 60 * 1000;
+  const baghdadNow = new Date(today.getTime() + baghdadOffset);
+  const year = baghdadNow.getUTCFullYear();
+  const month = String(baghdadNow.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(baghdadNow.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
   const [open, setOpen] = useState(false);
   const { mutate, isPending } = useAddVisit();
@@ -64,7 +74,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
       branchId: branchId,
       notes: "",
       treatmentType: "",
-      customDate: "",
+      customDate: getTodayDate(),
     },
   });
 
@@ -82,7 +92,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
           branchId: branchId,
           notes: "",
           treatmentType: "",
-          customDate: "",
+          customDate: getTodayDate(),
         });
       },
     });
