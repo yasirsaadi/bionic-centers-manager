@@ -92,8 +92,8 @@ export default function CreatePatient() {
   // Non-admin users always use their branch, admin can select
   const defaultBranchId = !isAdmin && userBranchId ? userBranchId : (Number(searchParams.get("branch")) || 1);
   
-  // ذي قار (branch 3) defaults to physiotherapy since most of their patients are physiotherapy
-  const isDhiQarBranch = defaultBranchId === 3;
+  // بغداد (branch 1) وذي قار (branch 3) defaults to physiotherapy since most of their patients are physiotherapy
+  const isDhiQarBranch = defaultBranchId === 3 || defaultBranchId === 1;
   
   const { mutate, isPending } = useCreatePatient();
   const { data: branches } = useQuery<Branch[]>({
