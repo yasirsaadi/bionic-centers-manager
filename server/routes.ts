@@ -1348,6 +1348,16 @@ export async function registerRoutes(
   // Payments
   app.post(api.payments.create.path, isAuthenticated, async (req, res) => {
     const input = api.payments.create.input.parse(req.body);
+    
+    // If payment has treatment type and amount, also increase totalCost
+    if (input.amount && input.amount > 0 && input.paymentTreatmentType) {
+      const patient = await storage.getPatient(input.patientId);
+      if (patient) {
+        const newTotalCost = (patient.totalCost || 0) + input.amount;
+        await storage.updatePatient(input.patientId, { totalCost: newTotalCost });
+      }
+    }
+    
     const payment = await storage.createPayment(input);
     res.status(201).json(payment);
   });
