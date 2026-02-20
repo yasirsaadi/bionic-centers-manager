@@ -64,7 +64,7 @@ const TREATMENT_PRICES: Record<string, number> = {
   "روبوت": 50000,
   "تمارين تأهيلية": 25000,
   "أجهزة علاج طبيعي": 25000,
-  "أبر صينية": 20000,
+  "أبر صينية": 25000,
 };
 
 export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
