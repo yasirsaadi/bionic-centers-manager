@@ -2184,6 +2184,40 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Visits by Treatment Type
+  app.get("/api/statistics/visits-by-treatment", isAuthenticated, async (req: any, res) => {
+    try {
+      const { branchId } = req.query;
+      const allVisits = await storage.getAllVisits(
+        branchId ? parseInt(branchId as string) : undefined
+      );
+
+      const treatmentMap: Record<string, number> = {};
+
+      for (const visit of allVisits) {
+        const treatmentType = (visit as any).treatmentType;
+        if (!treatmentType) {
+          treatmentMap["غير محدد"] = (treatmentMap["غير محدد"] || 0) + 1;
+        } else {
+          const types = treatmentType.split(",").map((t: string) => t.trim()).filter(Boolean);
+          for (const type of types) {
+            treatmentMap[type] = (treatmentMap[type] || 0) + 1;
+          }
+        }
+      }
+
+      const result = Object.entries(treatmentMap).map(([treatmentType, count]) => ({
+        treatmentType,
+        count,
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching visits by treatment:", error);
+      res.status(500).json({ error: "خطأ في جلب البيانات" });
+    }
+  });
+
   // Revenue by Treatment Type
   app.get("/api/statistics/revenue-by-treatment", isAuthenticated, async (req: any, res) => {
     try {

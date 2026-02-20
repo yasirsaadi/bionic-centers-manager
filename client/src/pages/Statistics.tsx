@@ -64,6 +64,8 @@ const TREATMENT_COLORS: Record<string, string> = {
   "روبوت": "#0088FE",
   "تمارين تأهيلية": "#00C49F",
   "أجهزة علاج طبيعي": "#FFBB28",
+  "أبر صينية": "#FF8042",
+  "استشارة طبية": "#82ca9d",
   "غير محدد": "#8884d8",
 };
 
@@ -130,6 +132,87 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
                 <div className="text-left">
                   <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
                   <span className="text-xs text-muted-foreground mr-2">({item.count} {t.statistics.payment})</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface TreatmentVisitCount {
+  treatmentType: string;
+  count: number;
+}
+
+function VisitsByTreatmentChart({ selectedBranch }: { selectedBranch: string }) {
+  const { t } = useTranslation();
+  const { data: visitsByTreatment = [] } = useQuery<TreatmentVisitCount[]>({
+    queryKey: ["/api/statistics/visits-by-treatment", selectedBranch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
+      const res = await fetch(`/api/statistics/visits-by-treatment?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
+  if (!visitsByTreatment.length) return null;
+
+  const chartData = visitsByTreatment
+    .sort((a, b) => b.count - a.count)
+    .map((item) => ({
+      name: item.treatmentType,
+      value: item.count,
+      color: TREATMENT_COLORS[item.treatmentType] || "#6b7280",
+    }));
+
+  const total = chartData.reduce((sum, item) => sum + item.value, 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2" data-testid="text-visits-by-treatment-title">
+          <Activity className="w-5 h-5 text-primary" />
+          {t.statistics.visitsByTreatment}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={100}
+                fill="#8884d8"
+                paddingAngle={5}
+                dataKey="value"
+                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.visits}`, '']} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="space-y-3 flex flex-col justify-center">
+            {chartData.map((item) => (
+              <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-visits-${item.name}`}>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="text-sm font-medium">{item.name}</span>
+                </div>
+                <div className="text-left">
+                  <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.visits}</span>
+                  <span className="text-xs text-muted-foreground mr-2">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
                 </div>
               </div>
             ))}
@@ -1146,6 +1229,9 @@ export default function Statistics() {
               </Card>
             )}
           </div>
+
+          {/* Visits by Treatment Type */}
+          <VisitsByTreatmentChart selectedBranch={selectedBranch} />
 
           {/* Revenue by Treatment Type */}
           <RevenueByTreatmentChart selectedBranch={selectedBranch} />
