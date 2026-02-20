@@ -140,7 +140,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       const price = TREATMENT_PRICES[entry.treatmentType];
       if (price === undefined) return entry;
       if (entry.treatmentType === "استشارة طبية") {
-        return { ...entry, sessionCount: 1, cost: 0 };
+        return { ...entry, sessionCount: 0, cost: 0 };
       }
       return { ...entry, cost: price * (entry.sessionCount || 0) };
     });
@@ -236,7 +236,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                           value={entry.treatmentType}
                           onValueChange={(val) => {
                             const updated = [...treatmentEntries];
-                            updated[index] = { ...updated[index], treatmentType: val, sessionCount: val === "استشارة طبية" ? 1 : updated[index].sessionCount, cost: 0 };
+                            updated[index] = { ...updated[index], treatmentType: val, sessionCount: val === "استشارة طبية" ? 0 : updated[index].sessionCount, cost: 0 };
                             setTreatmentEntries(updated);
                             setManualCostOverride(false);
                           }}
