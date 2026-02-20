@@ -67,6 +67,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
 export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }: EditVisitModalProps) {

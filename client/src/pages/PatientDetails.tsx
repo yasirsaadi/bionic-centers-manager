@@ -75,6 +75,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", label: "روبوت" },
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+  { value: "أبر صينية", label: "أبر صينية" },
 ];
 
 const injuryTypeOptions = [

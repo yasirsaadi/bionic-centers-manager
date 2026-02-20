@@ -44,6 +44,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
 const TREATMENT_PRICES: Record<string, number> = {
@@ -51,6 +52,7 @@ const TREATMENT_PRICES: Record<string, number> = {
   "روبوت": 50000,
   "تمارين تأهيلية": 25000,
   "أجهزة علاج طبيعي": 25000,
+  "أبر صينية": 20000,
 };
 
 const injuryAreaOptions = [

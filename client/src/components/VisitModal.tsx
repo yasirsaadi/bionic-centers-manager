@@ -43,6 +43,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
 const formSchema = insertVisitSchema.extend({
