@@ -1139,21 +1139,6 @@ export async function registerRoutes(
       });
       const patient = await storage.createPatient(input);
 
-      if (req.body.treatmentEntries && Array.isArray(req.body.treatmentEntries)) {
-        for (const entry of req.body.treatmentEntries) {
-          if (entry.cost > 0) {
-            await storage.createPayment({
-              patientId: patient.id,
-              branchId,
-              amount: entry.cost,
-              notes: `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
-              paymentTreatmentType: entry.treatmentType,
-              sessionCount: entry.sessionCount,
-            });
-          }
-        }
-      }
-
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
