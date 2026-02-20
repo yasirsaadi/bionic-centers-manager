@@ -88,8 +88,10 @@ export function DatePickerIraq({ value, onChange, className, "data-testid": test
   
   const isToday = (day: number) => {
     if (!day) return false;
-    const today = new Date();
-    return today.getDate() === day && today.getMonth() === viewMonth && today.getFullYear() === viewYear;
+    const now = new Date();
+    const baghdadOffset = 3 * 60 * 60 * 1000;
+    const baghdadNow = new Date(now.getTime() + baghdadOffset);
+    return baghdadNow.getUTCDate() === day && baghdadNow.getUTCMonth() === viewMonth && baghdadNow.getUTCFullYear() === viewYear;
   };
   
   return (

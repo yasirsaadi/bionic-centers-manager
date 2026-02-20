@@ -1276,7 +1276,9 @@ export async function registerRoutes(
     let visitShift = branchSession?.shift;
     if (visitShift !== "morning" && visitShift !== "evening") {
       const now = new Date();
-      const hour = now.getHours();
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const baghdadNow = new Date(now.getTime() + baghdadOffset);
+      const hour = baghdadNow.getUTCHours();
       if (hour >= 8 && hour <= 15) {
         visitShift = "morning";
       } else if (hour >= 16 && hour <= 21) {

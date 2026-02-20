@@ -126,7 +126,7 @@ export default function CreatePatient() {
       sessionCount: 0,
       injuryDate: "",
       injuryCause: "",
-      registrationDate: new Date().toISOString().split('T')[0], // تاريخ اليوم افتراضياً
+      registrationDate: (() => { const now = new Date(); const baghdadOffset = 3 * 60 * 60 * 1000; const baghdadNow = new Date(now.getTime() + baghdadOffset); return `${baghdadNow.getUTCFullYear()}-${String(baghdadNow.getUTCMonth() + 1).padStart(2, '0')}-${String(baghdadNow.getUTCDate()).padStart(2, '0')}`; })(),
       generalNotes: "",
       prostheticType: "",
       siliconType: "",

@@ -50,9 +50,11 @@ const formSchema = insertPaymentSchema.extend({
 
 function getTodayDate(): string {
   const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
+  const baghdadOffset = 3 * 60 * 60 * 1000;
+  const baghdadNow = new Date(today.getTime() + baghdadOffset);
+  const year = baghdadNow.getUTCFullYear();
+  const month = String(baghdadNow.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(baghdadNow.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
@@ -119,9 +121,11 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
     let submissionDate = values.date;
     if (submissionDate) {
       const now = new Date();
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const baghdadNow = new Date(now.getTime() + baghdadOffset);
+      const hours = String(baghdadNow.getUTCHours()).padStart(2, '0');
+      const minutes = String(baghdadNow.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(baghdadNow.getUTCSeconds()).padStart(2, '0');
       submissionDate = `${submissionDate}T${hours}:${minutes}:${seconds}`;
     }
     

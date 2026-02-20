@@ -293,9 +293,22 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
+    let dateValue: Date;
+    if (insertPayment.date) {
+      const dateStr = String(insertPayment.date);
+      if (dateStr.includes('T')) {
+        const baghdadOffset = 3 * 60 * 60 * 1000;
+        const parsed = new Date(dateStr + 'Z');
+        dateValue = new Date(parsed.getTime() - baghdadOffset);
+      } else {
+        dateValue = new Date(dateStr);
+      }
+    } else {
+      dateValue = new Date();
+    }
     const paymentData = {
       ...insertPayment,
-      date: insertPayment.date ? new Date(insertPayment.date) : new Date(),
+      date: dateValue,
     };
     const [payment] = await db.insert(payments).values(paymentData).returning();
     return payment;
