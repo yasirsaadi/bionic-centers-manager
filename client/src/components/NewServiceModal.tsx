@@ -29,7 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { RefreshCcw, Loader2 } from "lucide-react";
+import { RefreshCcw, Loader2, Plus, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
@@ -40,6 +40,12 @@ interface NewServiceModalProps {
   branchId: number;
   currentTotalCost: number;
   isPhysiotherapy?: boolean;
+}
+
+interface TreatmentEntry {
+  treatmentType: string;
+  sessionCount: number;
+  cost: number;
 }
 
 const formSchema = z.object({
@@ -69,7 +75,7 @@ const TREATMENT_PRICES: Record<string, number> = {
 
 export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
   const [open, setOpen] = useState(false);
-  const [selectedTreatmentType, setSelectedTreatmentType] = useState<string>("");
+  const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -88,7 +94,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   ];
   
   const { mutate, isPending } = useMutation({
-    mutationFn: async (data: { serviceType: string; serviceCost: number; initialPayment: number; notes?: string; paymentTreatmentType?: string | null; sessionCount?: number | null }) => {
+    mutationFn: async (data: any) => {
       return apiRequest("POST", `/api/patients/${patientId}/new-service`, {
         ...data,
         branchId,
@@ -103,7 +109,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       });
       setOpen(false);
       form.reset();
-      setSelectedTreatmentType("");
+      setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
     },
     onError: () => {
@@ -125,35 +131,41 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     },
   });
 
-  const sessionCount = form.watch("sessionCount");
-
   useEffect(() => {
-    setManualCostOverride(false);
-  }, [selectedTreatmentType]);
-
-  useEffect(() => {
-    if (!selectedTreatmentType || !(selectedTreatmentType in TREATMENT_PRICES)) return;
+    if (!isPhysiotherapy) return;
     if (manualCostOverride) return;
 
-    if (selectedTreatmentType === "استشارة طبية") {
-      form.setValue("serviceCost", "0");
-      form.setValue("sessionCount", "1");
-    } else {
-      const pricePerSession = TREATMENT_PRICES[selectedTreatmentType];
-      const sessions = Number(sessionCount) || 0;
-      form.setValue("serviceCost", String(pricePerSession * sessions));
+    const updatedEntries = treatmentEntries.map(entry => {
+      if (!entry.treatmentType) return { ...entry, cost: 0 };
+      const price = TREATMENT_PRICES[entry.treatmentType];
+      if (price === undefined) return entry;
+      if (entry.treatmentType === "استشارة طبية") {
+        return { ...entry, sessionCount: 1, cost: 0 };
+      }
+      return { ...entry, cost: price * (entry.sessionCount || 0) };
+    });
+
+    const hasChanged = updatedEntries.some((e, i) => e.cost !== treatmentEntries[i].cost || e.sessionCount !== treatmentEntries[i].sessionCount);
+    if (hasChanged) {
+      setTreatmentEntries(updatedEntries);
     }
-  }, [selectedTreatmentType, sessionCount, manualCostOverride]);
+
+    const totalCost = updatedEntries.reduce((sum, e) => sum + e.cost, 0);
+    form.setValue("serviceCost", String(totalCost));
+
+    const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
+    form.setValue("sessionCount", String(totalSessions));
+  }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride]);
 
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
-  const selectedServiceType = form.watch("serviceType");
   const newTotal = currentTotalCost + serviceCostValue;
 
   function onSubmit(values: FormValues) {
     const serviceCost = Number(values.serviceCost) || 0;
     
-    const isMedicalConsultation = isPhysiotherapy !== false && selectedTreatmentType === "استشارة طبية";
-    if (!isMedicalConsultation && serviceCost <= 0) {
+    const validEntries = treatmentEntries.filter(e => e.treatmentType);
+    const hasMedicalConsultationOnly = isPhysiotherapy !== false && validEntries.length === 1 && validEntries[0].treatmentType === "استشارة طبية";
+    if (!hasMedicalConsultationOnly && serviceCost <= 0) {
       toast({
         title: t.modals.costError,
         description: t.modals.costErrorDesc,
@@ -162,17 +174,14 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       return;
     }
     
-    const paymentTreatmentType = isPhysiotherapy !== false ? (selectedTreatmentType || null) : null;
-    
-    const sessionCount = isPhysiotherapy !== false ? (values.sessionCount ? Number(values.sessionCount) : null) : null;
-    
     mutate({
       serviceType: values.serviceType,
       serviceCost,
       initialPayment: 0,
       notes: values.notes,
-      paymentTreatmentType,
-      sessionCount,
+      treatmentEntries: isPhysiotherapy !== false ? validEntries : undefined,
+      paymentTreatmentType: isPhysiotherapy !== false ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") : null,
+      sessionCount: isPhysiotherapy !== false ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) : null,
     });
   }
 
@@ -217,44 +226,84 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
             />
 
             {isPhysiotherapy !== false && (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <FormLabel>{t.modals.treatmentType}</FormLabel>
-                <Select value={selectedTreatmentType} onValueChange={setSelectedTreatmentType}>
-                  <SelectTrigger data-testid="select-service-treatment-type">
-                    <SelectValue placeholder={t.modals.selectTreatmentType} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TREATMENT_TYPE_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value} data-testid={`option-service-treatment-${option.value}`}>
-                        {t.modals[option.labelKey]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+                {treatmentEntries.map((entry, index) => (
+                  <div key={index} className="border border-border/60 rounded-lg p-3 space-y-3 bg-slate-50/50" data-testid={`service-treatment-entry-${index}`}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex-1 min-w-[160px]">
+                        <Select
+                          value={entry.treatmentType}
+                          onValueChange={(val) => {
+                            const updated = [...treatmentEntries];
+                            updated[index] = { ...updated[index], treatmentType: val, sessionCount: val === "استشارة طبية" ? 1 : updated[index].sessionCount, cost: 0 };
+                            setTreatmentEntries(updated);
+                            setManualCostOverride(false);
+                          }}
+                        >
+                          <SelectTrigger data-testid={`select-service-treatment-type-${index}`}>
+                            <SelectValue placeholder={t.modals.selectTreatmentType} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TREATMENT_TYPE_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {t.modals[option.labelKey]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-            {isPhysiotherapy !== false && selectedTreatmentType && selectedTreatmentType !== "استشارة طبية" && (
-              <FormField
-                control={form.control}
-                name="sessionCount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t.modals.sessionCount}</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="text"
-                        inputMode="numeric"
-                        {...field}
-                        className="text-left font-mono" 
-                        placeholder={t.modals.enterSessionCount}
-                        data-testid="input-service-session-count"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      {entry.treatmentType && entry.treatmentType !== "استشارة طبية" && (
+                        <div className="w-[90px]">
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            value={entry.sessionCount || ""}
+                            onChange={(e) => {
+                              const updated = [...treatmentEntries];
+                              updated[index] = { ...updated[index], sessionCount: Number(e.target.value) || 0 };
+                              setTreatmentEntries(updated);
+                            }}
+                            className="text-left font-mono"
+                            placeholder={t.modals.sessionCount}
+                            data-testid={`input-service-session-count-${index}`}
+                          />
+                        </div>
+                      )}
+
+                      <div className="text-sm font-mono text-muted-foreground">
+                        {entry.cost.toLocaleString()}
+                      </div>
+
+                      {treatmentEntries.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setTreatmentEntries(treatmentEntries.filter((_, i) => i !== index));
+                            setManualCostOverride(false);
+                          }}
+                          data-testid={`button-remove-service-treatment-${index}`}
+                        >
+                          <X className="w-4 h-4 text-destructive" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0 }])}
+                  className="gap-2"
+                  data-testid="button-add-service-treatment-entry"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.modals.addTreatmentType}
+                </Button>
+              </div>
             )}
 
             <FormField

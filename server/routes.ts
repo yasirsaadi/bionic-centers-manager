@@ -1138,6 +1138,22 @@ export async function registerRoutes(
         branchId
       });
       const patient = await storage.createPatient(input);
+
+      if (req.body.treatmentEntries && Array.isArray(req.body.treatmentEntries)) {
+        for (const entry of req.body.treatmentEntries) {
+          if (entry.cost > 0) {
+            await storage.createPayment({
+              patientId: patient.id,
+              branchId,
+              amount: entry.cost,
+              notes: `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+              paymentTreatmentType: entry.treatmentType,
+              sessionCount: entry.sessionCount,
+            });
+          }
+        }
+      }
+
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -1219,7 +1235,7 @@ export async function registerRoutes(
   app.post("/api/patients/:id/new-service", isAuthenticated, async (req, res) => {
     try {
       const patientId = Number(req.params.id);
-      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType, sessionCount } = req.body;
+      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType, sessionCount, treatmentEntries } = req.body;
       
       const patient = await storage.getPatient(patientId);
       if (!patient) {
@@ -1249,8 +1265,21 @@ export async function registerRoutes(
         notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
       });
       
-      // Create payment record for the service cost
-      if (serviceCost > 0) {
+      // Create payment records - either from treatmentEntries or single entry
+      if (treatmentEntries && Array.isArray(treatmentEntries)) {
+        for (const entry of treatmentEntries) {
+          if (entry.cost > 0) {
+            await storage.createPayment({
+              patientId,
+              branchId: branchId || patient.branchId,
+              amount: entry.cost,
+              notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+              paymentTreatmentType: entry.treatmentType,
+              sessionCount: entry.sessionCount,
+            });
+          }
+        }
+      } else if (serviceCost > 0) {
         await storage.createPayment({
           patientId,
           branchId: branchId || patient.branchId,
@@ -1349,7 +1378,8 @@ export async function registerRoutes(
 
   // Payments
   app.post(api.payments.create.path, isAuthenticated, async (req, res) => {
-    const input = api.payments.create.input.parse(req.body);
+    const { treatmentEntries, ...bodyWithoutEntries } = req.body;
+    const input = api.payments.create.input.parse(bodyWithoutEntries);
     
     // Check if patient has remaining balance before accepting payment
     const patient = await storage.getPatient(input.patientId);
@@ -1362,8 +1392,25 @@ export async function registerRoutes(
       }
     }
     
-    const payment = await storage.createPayment(input);
-    res.status(201).json(payment);
+    if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
+      const results = [];
+      for (const entry of treatmentEntries) {
+        if (entry.cost > 0) {
+          const payment = await storage.createPayment({
+            ...input,
+            amount: entry.cost,
+            notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+            paymentTreatmentType: entry.treatmentType,
+            sessionCount: entry.sessionCount,
+          });
+          results.push(payment);
+        }
+      }
+      res.status(201).json(results[0] || { message: "No payments created" });
+    } else {
+      const payment = await storage.createPayment(input);
+      res.status(201).json(payment);
+    }
   });
 
   // Delete payment

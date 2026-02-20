@@ -1073,6 +1073,10 @@ const translations = {
       adjustmentLabel: "تعديل أو ضبط",
       consultationLabel: "استشارة طبية",
       otherServiceLabel: "خدمة أخرى",
+      addTreatmentType: "إضافة نوع علاج",
+      removeTreatmentType: "إزالة",
+      treatmentCost: "التكلفة",
+      totalForAllTreatments: "إجمالي جميع العلاجات",
     },
   },
   en: {
@@ -2149,6 +2153,10 @@ const translations = {
       adjustmentLabel: "Adjustment or calibration",
       consultationLabel: "Medical consultation",
       otherServiceLabel: "Other service",
+      addTreatmentType: "Add Treatment Type",
+      removeTreatmentType: "Remove",
+      treatmentCost: "Cost",
+      totalForAllTreatments: "Total for All Treatments",
     },
   },
 };
