@@ -244,9 +244,11 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-payment-session-count-${index}`}
                             value={entry.sessionCount || ""}
+                            min={0}
                             onChange={(e) => {
+                              const val = Math.max(0, Number(e.target.value) || 0);
                               const updated = [...treatmentEntries];
-                              updated[index] = { ...updated[index], sessionCount: Number(e.target.value) || 0 };
+                              updated[index] = { ...updated[index], sessionCount: val };
                               setTreatmentEntries(updated);
                             }}
                           />
@@ -257,7 +259,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                         {entry.cost.toLocaleString()}
                       </div>
 
-                      {treatmentEntries.length > 1 && (
+                      {treatmentEntries.length > 1 && isAdmin && (
                         <Button
                           type="button"
                           variant="ghost"

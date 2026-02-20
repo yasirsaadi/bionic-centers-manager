@@ -261,10 +261,12 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                             inputMode="numeric"
                             value={entry.sessionCount || ""}
                             onChange={(e) => {
+                              const val = Math.max(0, Number(e.target.value) || 0);
                               const updated = [...treatmentEntries];
-                              updated[index] = { ...updated[index], sessionCount: Number(e.target.value) || 0 };
+                              updated[index] = { ...updated[index], sessionCount: val };
                               setTreatmentEntries(updated);
                             }}
+                            min={0}
                             className="text-left font-mono"
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-service-session-count-${index}`}
@@ -276,7 +278,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                         {entry.cost.toLocaleString()}
                       </div>
 
-                      {treatmentEntries.length > 1 && (
+                      {treatmentEntries.length > 1 && isAdmin && (
                         <Button
                           type="button"
                           variant="ghost"
