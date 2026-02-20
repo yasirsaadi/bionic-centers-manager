@@ -342,7 +342,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.fullName}</FormLabel>
                     <FormControl>
-                      <Input {...field} className="bg-slate-50" placeholder={t.patientForm.fullNamePlaceholder} />
+                      <Input {...field} className="bg-white" placeholder={t.patientForm.fullNamePlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -356,7 +356,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.phone}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.phonePlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.phonePlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -370,7 +370,7 @@ export default function CreatePatient() {
                   <FormItem className="md:col-span-2">
                     <FormLabel>{t.patientForm.address}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.addressPlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.addressPlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -385,7 +385,7 @@ export default function CreatePatient() {
                     <FormLabel>{t.patientForm.referralSource}</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
-                        <SelectTrigger className="bg-slate-50" data-testid="select-referral-source">
+                        <SelectTrigger className="bg-white" data-testid="select-referral-source">
                           <SelectValue placeholder={t.patientForm.selectReferralSource} />
                         </SelectTrigger>
                       </FormControl>
@@ -416,7 +416,7 @@ export default function CreatePatient() {
                     <FormItem>
                       <FormLabel>{t.patientForm.additionalNotes}</FormLabel>
                       <FormControl>
-                        <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.referralNotesPlaceholder} data-testid="input-referral-notes" />
+                        <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.referralNotesPlaceholder} data-testid="input-referral-notes" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -431,7 +431,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.age}</FormLabel>
                     <FormControl>
-                      <Input type="number" {...field} className="bg-slate-50" />
+                      <Input type="number" {...field} className="bg-white" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -445,7 +445,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.weightKg}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.weightPlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.weightPlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -459,7 +459,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.heightCm}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.heightPlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.heightPlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -478,7 +478,7 @@ export default function CreatePatient() {
                         defaultValue={String(field.value)}
                       >
                         <FormControl>
-                          <SelectTrigger className="bg-slate-50" data-testid="select-branch">
+                          <SelectTrigger className="bg-white" data-testid="select-branch">
                             <SelectValue placeholder={t.patientForm.selectBranch} />
                           </SelectTrigger>
                         </FormControl>
@@ -491,7 +491,7 @@ export default function CreatePatient() {
                         </SelectContent>
                       </Select>
                     ) : (
-                      <div className="flex items-center gap-2 h-10 px-3 bg-slate-50 border border-input rounded-md">
+                      <div className="flex items-center gap-2 h-10 px-3 bg-white border border-input rounded-md">
                         <Building2 className="w-4 h-4 text-primary" />
                         <span className="text-sm font-medium">
                           {branchSession?.branchName || branches?.find(b => b.id === userBranchId)?.name}
@@ -671,7 +671,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.injuryCause}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} placeholder={t.patientForm.injuryCausePlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.injuryCausePlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1007,7 +1007,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.prostheticType}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.prostheticTypePlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.prostheticTypePlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1021,7 +1021,7 @@ export default function CreatePatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.siliconType}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} placeholder={t.patientForm.siliconTypePlaceholder} />
+                            <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.siliconTypePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1034,7 +1034,7 @@ export default function CreatePatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.siliconSize}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} placeholder={t.patientForm.siliconSizePlaceholder} />
+                            <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.siliconSizePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1048,7 +1048,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.suspensionSystem}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.suspensionPlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.suspensionPlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1062,7 +1062,7 @@ export default function CreatePatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.footType}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} placeholder={t.patientForm.footTypePlaceholder} />
+                            <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.footTypePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1075,7 +1075,7 @@ export default function CreatePatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.footSize}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} placeholder={t.patientForm.footSizePlaceholder} />
+                            <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.footSizePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1089,7 +1089,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.kneeJointType}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.kneeJointPlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.kneeJointPlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1109,7 +1109,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.diagnosisType}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.diagnosisPlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.diagnosisPlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1127,7 +1127,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.supportType}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.supportTypePlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.supportTypePlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1140,7 +1140,7 @@ export default function CreatePatient() {
                       <FormItem>
                         <FormLabel>{t.patientForm.injurySide}</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder={t.patientForm.injurySidePlaceholder} />
+                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.injurySidePlaceholder} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1156,7 +1156,7 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.generalNotesLabel}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} placeholder={t.patientForm.generalNotesExpandedPlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.generalNotesExpandedPlaceholder} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1277,7 +1277,7 @@ export default function CreatePatient() {
                         type="number"
                         {...field}
                         readOnly={!isAdmin && conditionType === "physiotherapy"}
-                        className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : ""}`}
+                        className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
                         placeholder="0.00"
                         data-testid="input-total-cost"
                         onChange={(e) => {
