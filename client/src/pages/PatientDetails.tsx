@@ -997,11 +997,12 @@ export default function PatientDetails() {
                         const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         visitsOldestFirst.forEach((v) => {
                           const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
+                          const isConsultation = v.treatmentType === "استشارة طبية";
                           const type = v.treatmentType || t.patientDetails.unspecified;
-                          if (!isServiceVisit) {
+                          if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          remainingMap[v.id] = isServiceVisit ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
+                          remainingMap[v.id] = (isServiceVisit || isConsultation) ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
                         });
                         return patient.visits?.map((visit) => {
                           const remaining = remainingMap[visit.id] ?? 0;
