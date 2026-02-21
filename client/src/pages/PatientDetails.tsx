@@ -1002,7 +1002,7 @@ export default function PatientDetails() {
                           if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          remainingMap[v.id] = (isServiceVisit || isConsultation) ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
+                          remainingMap[v.id] = isConsultation ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
                         });
                         return patient.visits?.map((visit) => {
                           const remaining = remainingMap[visit.id] ?? 0;
