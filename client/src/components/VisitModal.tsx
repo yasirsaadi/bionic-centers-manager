@@ -47,7 +47,7 @@ const TREATMENT_TYPE_OPTIONS = [
 ];
 
 const formSchema = insertVisitSchema.extend({
-  treatmentType: z.string().optional().nullable(),
+  treatmentType: z.string().min(1, "يجب اختيار نوع العلاج").optional().nullable(),
   customDate: z.string().optional().nullable(),
 });
 
@@ -79,6 +79,10 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
+    if (isPhysiotherapy !== false && !values.treatmentType) {
+      form.setError("treatmentType", { message: t.modals.treatmentTypeRequired || "يجب اختيار نوع العلاج" });
+      return;
+    }
     const submitData: any = {
       ...values,
       treatmentType: isPhysiotherapy !== false ? (values.treatmentType || null) : null,
@@ -158,7 +162,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
                 name="treatmentType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.modals.treatmentType}</FormLabel>
+                    <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">

@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPaymentSchema } from "@shared/schema";
 import { useAddPayment } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -85,6 +86,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddPayment();
+  const { toast } = useToast();
   const { t } = useTranslation();
   const dir = t.dir;
   const branchSession = useBranchSession();
@@ -133,6 +135,17 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
   }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride]);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
+    if (isPhysiotherapy !== false) {
+      const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
+      if (hasEmptyType) {
+        toast({
+          title: t.modals.treatmentTypeRequired,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    
     let submissionDate = values.date;
     if (submissionDate) {
       const now = new Date();
@@ -209,7 +222,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
 
             {isPhysiotherapy !== false && (
               <div className="space-y-3">
-                <FormLabel>{t.modals.treatmentType}</FormLabel>
+                <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                 {treatmentEntries.map((entry, index) => (
                   <div key={index} className="border border-border/60 rounded-lg p-3 space-y-3 bg-slate-50/50" data-testid={`payment-treatment-entry-${index}`}>
                     <div className="flex items-center gap-2 flex-wrap">

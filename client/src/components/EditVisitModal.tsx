@@ -51,12 +51,13 @@ interface EditVisitModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isAdmin?: boolean;
+  isPhysiotherapy?: boolean;
 }
 
 const formSchema = z.object({
   details: z.string().optional(),
   notes: z.string().optional(),
-  treatmentType: z.string().optional(),
+  treatmentType: z.string().min(1, "يجب اختيار نوع العلاج").optional(),
   sessionCount: z.number().nullable().optional(),
   cost: z.number().nullable().optional(),
   customDate: z.string().optional(),
@@ -70,7 +71,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
-export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }: EditVisitModalProps) {
+export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, isPhysiotherapy }: EditVisitModalProps) {
   const { mutate, isPending } = useUpdateVisit();
   const { t } = useTranslation();
   const dir = t.dir;
@@ -108,6 +109,10 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }
   }, [open, visit, form]);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
+    if (isPhysiotherapy && !values.treatmentType) {
+      form.setError("treatmentType", { message: t.modals.treatmentTypeRequired || "يجب اختيار نوع العلاج" });
+      return;
+    }
     mutate({
       visitId: visit.id,
       patientId: patientId,
@@ -193,7 +198,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin }
               name="treatmentType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.treatmentTypeOptional}</FormLabel>
+                  <FormLabel>{t.modals.treatmentType} {isPhysiotherapy && <span className="text-red-500">*</span>}</FormLabel>
                   <Select value={field.value || ""} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger data-testid="select-edit-visit-treatment-type">

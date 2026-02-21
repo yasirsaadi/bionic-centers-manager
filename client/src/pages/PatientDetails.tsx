@@ -1075,6 +1075,7 @@ export default function PatientDetails() {
                   open={!!editingVisit}
                   onOpenChange={(open) => !open && setEditingVisit(null)}
                   isAdmin={isAdmin}
+                  isPhysiotherapy={patient.isPhysiotherapy || false}
                 />
               )}
             </TabsContent>

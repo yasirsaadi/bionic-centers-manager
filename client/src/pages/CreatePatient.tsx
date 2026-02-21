@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
 import { useCreatePatient } from "@/hooks/use-patients";
+import { useToast } from "@/hooks/use-toast";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -104,6 +105,7 @@ export default function CreatePatient() {
   const isDhiQarBranch = defaultBranchId === 3 || defaultBranchId === 1;
   
   const { mutate, isPending } = useCreatePatient();
+  const { toast } = useToast();
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -283,6 +285,16 @@ export default function CreatePatient() {
   }, [treatmentEntries, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
+    if (conditionType === "physiotherapy") {
+      const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
+      if (hasEmptyType) {
+        toast({
+          title: t.modals.treatmentTypeRequired,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
     const submitData = {
       ...values,
@@ -1165,7 +1177,7 @@ export default function CreatePatient() {
               
               {conditionType === "physiotherapy" && (
                 <div className="space-y-3">
-                  <FormLabel>{t.modals.treatmentType}</FormLabel>
+                  <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                   {treatmentEntries.map((entry, index) => (
                     <div key={index} className="border border-border/60 rounded-lg p-3 space-y-3 bg-slate-50/50" data-testid={`treatment-entry-${index}`}>
                       <div className="flex items-center gap-2 flex-wrap">

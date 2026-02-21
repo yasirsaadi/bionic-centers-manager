@@ -163,6 +163,17 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   function onSubmit(values: FormValues) {
     const serviceCost = Number(values.serviceCost) || 0;
     
+    if (isPhysiotherapy !== false) {
+      const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
+      if (hasEmptyType) {
+        toast({
+          title: t.modals.treatmentTypeRequired,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
     const hasMedicalConsultationOnly = isPhysiotherapy !== false && validEntries.length === 1 && validEntries[0].treatmentType === "استشارة طبية";
     if (!hasMedicalConsultationOnly && serviceCost <= 0) {
@@ -227,7 +238,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
             {isPhysiotherapy !== false && (
               <div className="space-y-3">
-                <FormLabel>{t.modals.treatmentType}</FormLabel>
+                <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                 {treatmentEntries.map((entry, index) => (
                   <div key={index} className="border border-border/60 rounded-lg p-3 space-y-3 bg-slate-50/50" data-testid={`service-treatment-entry-${index}`}>
                     <div className="flex items-center gap-2 flex-wrap">
