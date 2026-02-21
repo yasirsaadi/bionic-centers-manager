@@ -1258,7 +1258,7 @@ export async function registerRoutes(
               patientId,
               branchId: branchId || patient.branchId,
               amount: entry.cost,
-              notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+              notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
               paymentTreatmentType: entry.treatmentType,
               sessionCount: entry.sessionCount,
             });
@@ -1269,7 +1269,7 @@ export async function registerRoutes(
           patientId,
           branchId: branchId || patient.branchId,
           amount: serviceCost,
-          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}`,
+          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
           paymentTreatmentType: paymentTreatmentType || null,
           sessionCount: sessionCount ? Number(sessionCount) : null,
         });
