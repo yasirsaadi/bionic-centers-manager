@@ -937,6 +937,9 @@ export default function PatientDetails() {
                 });
                 const visitsByType: Record<string, number> = {};
                 patient.visits?.forEach((v) => {
+                  const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
+                  const isConsultation = v.treatmentType === "استشارة طبية";
+                  if (isServiceVisit || isConsultation) return;
                   const type = v.treatmentType || t.patientDetails.unspecified;
                   visitsByType[type] = (visitsByType[type] || 0) + 1;
                 });
