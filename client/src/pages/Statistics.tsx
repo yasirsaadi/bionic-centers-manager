@@ -231,6 +231,8 @@ export default function Statistics() {
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("all");
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
+  const [dateFrom, setDateFrom] = useState<string>(getTodayIraq());
+  const [dateTo, setDateTo] = useState<string>(getTodayIraq());
 
   // Set branch filter automatically for non-admin users
   useEffect(() => {
@@ -366,6 +368,12 @@ export default function Statistics() {
       const dayStart = new Date(dateStr + "T00:00:00");
       const dayEnd = new Date(dateStr + "T23:59:59.999");
       return { start: dayStart, end: dayEnd };
+    }
+
+    if (range === "range") {
+      const start = new Date(dateFrom + "T00:00:00");
+      const end = new Date(dateTo + "T23:59:59.999");
+      return { start, end };
     }
     
     const now = new Date();
@@ -641,7 +649,7 @@ export default function Statistics() {
       shiftData,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
     };
-  }, [filteredPatients, branches, timeRange, selectedDate]);
+  }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo]);
 
   // Get current branch name for reports
   const currentBranchName = useMemo(() => {
@@ -655,13 +663,14 @@ export default function Statistics() {
     switch (timeRange) {
       case "today": return t.statistics.timeToday;
       case "date": return formatDateIraq(selectedDate);
+      case "range": return `${formatDateIraq(dateFrom)} - ${formatDateIraq(dateTo)}`;
       case "week": return t.statistics.timeLastWeek;
       case "month": return t.statistics.timeLastMonth;
       case "quarter": return t.statistics.timeLast3Months;
       case "year": return t.statistics.timeLastYear;
       default: return t.statistics.timeAllTime;
     }
-  }, [timeRange, selectedDate, t]);
+  }, [timeRange, selectedDate, dateFrom, dateTo, t]);
 
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
@@ -957,6 +966,7 @@ export default function Statistics() {
               <SelectItem value="week">{t.statistics.lastWeek}</SelectItem>
               <SelectItem value="month">{t.statistics.lastMonth}</SelectItem>
               <SelectItem value="quarter">{t.statistics.lastQuarter}</SelectItem>
+              <SelectItem value="range">{t.statistics.dateRange}</SelectItem>
               <SelectItem value="year">{t.statistics.lastYear}</SelectItem>
             </SelectContent>
           </Select>
@@ -968,6 +978,29 @@ export default function Statistics() {
               className="w-[160px]"
               data-testid="input-specific-date"
             />
+          )}
+
+          {timeRange === "range" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">{t.statistics.fromDate}:</span>
+                <DatePickerIraq
+                  value={dateFrom}
+                  onChange={(val) => setDateFrom(val)}
+                  className="w-[150px]"
+                  data-testid="input-date-from"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">{t.statistics.toDate}:</span>
+                <DatePickerIraq
+                  value={dateTo}
+                  onChange={(val) => setDateTo(val)}
+                  className="w-[150px]"
+                  data-testid="input-date-to"
+                />
+              </div>
+            </div>
           )}
 
           {/* Export Buttons */}
