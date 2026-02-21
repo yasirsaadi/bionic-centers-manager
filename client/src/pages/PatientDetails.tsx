@@ -996,9 +996,12 @@ export default function PatientDetails() {
                         const visitCountByType: Record<string, number> = {};
                         const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         visitsOldestFirst.forEach((v) => {
+                          const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
                           const type = v.treatmentType || t.patientDetails.unspecified;
-                          visitCountByType[type] = (visitCountByType[type] || 0) + 1;
-                          remainingMap[v.id] = (sessionsByType[type] || 0) - visitCountByType[type];
+                          if (!isServiceVisit) {
+                            visitCountByType[type] = (visitCountByType[type] || 0) + 1;
+                          }
+                          remainingMap[v.id] = isServiceVisit ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
                         });
                         return patient.visits?.map((visit) => {
                           const remaining = remainingMap[visit.id] ?? 0;
@@ -1019,9 +1022,13 @@ export default function PatientDetails() {
                           </td>
                           {patient.isPhysiotherapy && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
-                              <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
-                                {remaining}
-                              </span>
+                              {remaining === -999 ? (
+                                <span className="text-xs text-muted-foreground">-</span>
+                              ) : (
+                                <span className={`font-bold ${remaining <= 0 ? "text-red-600" : "text-emerald-600"}`}>
+                                  {remaining}
+                                </span>
+                              )}
                             </td>
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center">

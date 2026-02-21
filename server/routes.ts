@@ -1242,21 +1242,23 @@ export async function registerRoutes(
       };
       
       const serviceLabel = serviceLabels[serviceType] || serviceType;
+      const effectiveBranchId = branchId || patient.branchId;
       
-      // Create a visit record
-      await storage.createVisit({
-        patientId,
-        branchId: branchId || patient.branchId,
-        notes: `خدمة جديدة: ${serviceLabel}${notes ? ` - ${notes}` : ""}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)`,
-      });
-      
-      // Create payment records - either from treatmentEntries or single entry
+      // Create payment records and visit records - either from treatmentEntries or single entry
       if (treatmentEntries && Array.isArray(treatmentEntries)) {
         for (const entry of treatmentEntries) {
+          await storage.createVisit({
+            patientId,
+            branchId: effectiveBranchId,
+            treatmentType: entry.treatmentType || null,
+            details: "خدمة جديدة",
+            notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة) (تكلفة: ${entry.cost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
+          });
+
           if (entry.cost > 0) {
             await storage.createPayment({
               patientId,
-              branchId: branchId || patient.branchId,
+              branchId: effectiveBranchId,
               amount: entry.cost,
               notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
               paymentTreatmentType: entry.treatmentType,
@@ -1264,15 +1266,25 @@ export async function registerRoutes(
             });
           }
         }
-      } else if (serviceCost > 0) {
-        await storage.createPayment({
+      } else {
+        await storage.createVisit({
           patientId,
-          branchId: branchId || patient.branchId,
-          amount: serviceCost,
-          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
-          paymentTreatmentType: paymentTreatmentType || null,
-          sessionCount: sessionCount ? Number(sessionCount) : null,
+          branchId: effectiveBranchId,
+          treatmentType: paymentTreatmentType || null,
+          details: "خدمة جديدة",
+          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
         });
+
+        if (serviceCost > 0) {
+          await storage.createPayment({
+            patientId,
+            branchId: effectiveBranchId,
+            amount: serviceCost,
+            notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
+            paymentTreatmentType: paymentTreatmentType || null,
+            sessionCount: sessionCount ? Number(sessionCount) : null,
+          });
+        }
       }
       
       res.json({ success: true, newTotalCost });
