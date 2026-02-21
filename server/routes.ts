@@ -1623,12 +1623,13 @@ export async function registerRoutes(
     // Create patient lookup map
     const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
     
-    // Create a map of patient ID to their first/latest visit details
     const patientVisitMap = new Map<number, string>();
     for (const visit of visits) {
-      // Get the first visit (earliest) for each patient to show as visit reason
-      if (!patientVisitMap.has(visit.patientId) && visit.details) {
-        patientVisitMap.set(visit.patientId, visit.details);
+      if (!patientVisitMap.has(visit.patientId)) {
+        const visitDetail = visit.details || visit.notes || null;
+        if (visitDetail) {
+          patientVisitMap.set(visit.patientId, visitDetail);
+        }
       }
     }
     
