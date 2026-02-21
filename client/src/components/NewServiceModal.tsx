@@ -319,13 +319,12 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                       type="text"
                       inputMode="numeric"
                       {...field} 
-                      readOnly={!isAdmin}
-                      className={`text-left font-mono ${!isAdmin ? "bg-muted" : ""}`}
+                      className="text-left font-mono bg-white"
                       placeholder={t.modals.enterCost}
                       data-testid="input-service-cost"
                       onChange={(e) => {
                         field.onChange(e);
-                        if (isAdmin) setManualCostOverride(true);
+                        setManualCostOverride(true);
                       }}
                     />
                   </FormControl>
