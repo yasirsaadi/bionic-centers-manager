@@ -345,6 +345,7 @@ export async function registerRoutes(
               canManageSettings: true,
               canManageUsers: true,
               canManageTreatmentPlans: true,
+              canManageSurveys: true,
             }
           };
           return res.json({ 
@@ -367,6 +368,7 @@ export async function registerRoutes(
               canManageSettings: true,
               canManageUsers: true,
               canManageTreatmentPlans: true,
+              canManageSurveys: true,
             }
           });
         }
