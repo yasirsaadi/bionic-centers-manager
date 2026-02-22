@@ -54,12 +54,6 @@ const AGE_GROUPS = [
   { label: '70+', min: 71, max: 150 },
 ];
 
-interface TreatmentRevenue {
-  treatmentType: string;
-  totalAmount: number;
-  count: number;
-}
-
 const TREATMENT_COLORS: Record<string, string> = {
   "روبوت": "#0088FE",
   "تمارين تأهيلية": "#00C49F",
@@ -68,156 +62,6 @@ const TREATMENT_COLORS: Record<string, string> = {
   "استشارة طبية": "#82ca9d",
   "غير محدد": "#8884d8",
 };
-
-function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string }) {
-  const { t } = useTranslation();
-  const { data: revenueByTreatment = [] } = useQuery<TreatmentRevenue[]>({
-    queryKey: ["/api/statistics/revenue-by-treatment", selectedBranch],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
-      const res = await fetch(`/api/statistics/revenue-by-treatment?${params}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-
-  const chartData = revenueByTreatment.map((item) => ({
-    name: item.treatmentType,
-    value: item.totalAmount,
-    count: item.count,
-    color: TREATMENT_COLORS[item.treatmentType] || "#6b7280",
-  }));
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2" data-testid="text-revenue-by-treatment-title">
-          <Banknote className="w-5 h-5 text-primary" />
-          {t.statistics.revenueByTreatment}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={chartData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                fill="#8884d8"
-                paddingAngle={5}
-                dataKey="value"
-                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, '']} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-3 flex flex-col justify-center">
-            {chartData.map((item) => (
-              <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-revenue-${item.name}`}>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-sm font-medium">{item.name}</span>
-                </div>
-                <div className="text-left">
-                  <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
-                  <span className="text-xs text-muted-foreground mr-2">({item.count} {t.statistics.payment})</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-interface TreatmentVisitCount {
-  treatmentType: string;
-  count: number;
-}
-
-function VisitsByTreatmentChart({ selectedBranch }: { selectedBranch: string }) {
-  const { t } = useTranslation();
-  const { data: visitsByTreatment = [] } = useQuery<TreatmentVisitCount[]>({
-    queryKey: ["/api/statistics/visits-by-treatment", selectedBranch],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedBranch !== "all") params.append("branchId", selectedBranch);
-      const res = await fetch(`/api/statistics/visits-by-treatment?${params}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-
-  const chartData = visitsByTreatment
-    .sort((a, b) => b.count - a.count)
-    .map((item) => ({
-      name: item.treatmentType,
-      value: item.count,
-      color: TREATMENT_COLORS[item.treatmentType] || "#6b7280",
-    }));
-
-  const total = chartData.reduce((sum, item) => sum + item.value, 0);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2" data-testid="text-visits-by-treatment-title">
-          <Activity className="w-5 h-5 text-primary" />
-          {t.statistics.visitsByTreatment}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={chartData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                fill="#8884d8"
-                paddingAngle={5}
-                dataKey="value"
-                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.visits}`, '']} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-3 flex flex-col justify-center">
-            {chartData.map((item) => (
-              <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-visits-${item.name}`}>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-sm font-medium">{item.name}</span>
-                </div>
-                <div className="text-left">
-                  <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.visits}</span>
-                  <span className="text-xs text-muted-foreground mr-2">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 export default function Statistics() {
   const { t } = useTranslation();
@@ -452,7 +296,7 @@ export default function Statistics() {
         break;
       case "average":
         if (patients.length > 0) {
-          const total = patients.reduce((sum, p) => sum + (p.age || 0), 0);
+          const total = patients.reduce((sum, p) => sum + Number(p.age || 0), 0);
           value = Math.round(total / patients.length);
           label = `${value} ${t.statistics.yearUnit}`;
         } else {
@@ -520,7 +364,7 @@ export default function Statistics() {
 
     const ageDistribution = AGE_GROUPS.map(group => ({
       name: group.label,
-      count: timeFilteredPatients.filter(p => p.age >= group.min && p.age <= group.max).length,
+      count: timeFilteredPatients.filter(p => Number(p.age || 0) >= group.min && Number(p.age || 0) <= group.max).length,
     }));
 
     const conditionDistribution = [
@@ -531,14 +375,14 @@ export default function Statistics() {
 
     const branchDistribution = branches?.map(branch => ({
       name: branch.name,
-      count: filteredPatients.filter(p => p.branchId === branch.id).length,
-      revenue: filteredPatients
+      count: timeFilteredPatients.filter(p => p.branchId === branch.id).length,
+      revenue: timeFilteredPatients
         .filter(p => p.branchId === branch.id)
         .reduce((sum, p) => sum + (p.totalCost || 0), 0),
     })) || [];
 
     const amputationSites: { [key: string]: number } = {};
-    filteredPatients.filter(p => p.isAmputee && p.amputationSite).forEach(p => {
+    timeFilteredPatients.filter(p => p.isAmputee && p.amputationSite).forEach(p => {
       const site = p.amputationSite || t.statistics.unspecified;
       amputationSites[site] = (amputationSites[site] || 0) + 1;
     });
@@ -548,7 +392,7 @@ export default function Statistics() {
       .slice(0, 10);
 
     const diseaseTypes: { [key: string]: number } = {};
-    filteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport && p.diseaseType).forEach(p => {
+    timeFilteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport && p.diseaseType).forEach(p => {
       const type = p.diseaseType || t.statistics.unspecified;
       diseaseTypes[type] = (diseaseTypes[type] || 0) + 1;
     });
@@ -558,7 +402,7 @@ export default function Statistics() {
       .slice(0, 10);
 
     const referralSources: { [key: string]: number } = {};
-    filteredPatients.forEach(p => {
+    timeFilteredPatients.forEach(p => {
       const source = (p.referralSource && p.referralSource.trim()) ? p.referralSource.trim() : t.statistics.unspecified;
       referralSources[source] = (referralSources[source] || 0) + 1;
     });
@@ -566,11 +410,30 @@ export default function Statistics() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Monthly trend: patients by registration date, visits/payments by their own dates
+    const visitsByTreatmentMap: Record<string, number> = {};
+    allVisitsInRange.forEach((v: any) => {
+      const type = v.treatmentType || 'غير محدد';
+      visitsByTreatmentMap[type] = (visitsByTreatmentMap[type] || 0) + 1;
+    });
+    const visitsByTreatmentData = Object.entries(visitsByTreatmentMap)
+      .map(([name, value]) => ({ name, value, color: TREATMENT_COLORS[name] || '#6b7280' }))
+      .sort((a, b) => b.value - a.value);
+
+    const revenueByTreatmentMap: Record<string, { amount: number; count: number }> = {};
+    allPaymentsInRange.forEach((pay: any) => {
+      const type = pay.paymentTreatmentType || 'غير محدد';
+      if (!revenueByTreatmentMap[type]) revenueByTreatmentMap[type] = { amount: 0, count: 0 };
+      revenueByTreatmentMap[type].amount += (pay.amount || 0);
+      revenueByTreatmentMap[type].count += 1;
+    });
+    const revenueByTreatmentData = Object.entries(revenueByTreatmentMap)
+      .map(([name, data]) => ({ name, value: data.amount, count: data.count, color: TREATMENT_COLORS[name] || '#6b7280' }))
+      .sort((a, b) => b.value - a.value);
+
+    // Monthly trend: using time-filtered data
     const monthlyData: { [key: string]: { patients: number; payments: number; visits: number } } = {};
     
-    // Count patients by registration month
-    filteredPatients.forEach(p => {
+    timeFilteredPatients.forEach(p => {
       const date = new Date(p.createdAt || "");
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       if (!monthlyData[monthKey]) {
@@ -579,28 +442,22 @@ export default function Statistics() {
       monthlyData[monthKey].patients += 1;
     });
     
-    // Count visits by actual visit date
-    filteredPatients.forEach(p => {
-      (p.visits || []).forEach(v => {
-        const date = new Date(v.visitDate || "");
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        if (!monthlyData[monthKey]) {
-          monthlyData[monthKey] = { patients: 0, payments: 0, visits: 0 };
-        }
-        monthlyData[monthKey].visits += 1;
-      });
+    allVisitsInRange.forEach((v: any) => {
+      const date = new Date(v.visitDate || "");
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { patients: 0, payments: 0, visits: 0 };
+      }
+      monthlyData[monthKey].visits += 1;
     });
     
-    // Count payments by actual payment date
-    filteredPatients.forEach(p => {
-      (p.payments || []).forEach(pay => {
-        const date = new Date(pay.date || "");
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        if (!monthlyData[monthKey]) {
-          monthlyData[monthKey] = { patients: 0, payments: 0, visits: 0 };
-        }
-        monthlyData[monthKey].payments += (pay.amount || 0);
-      });
+    allPaymentsInRange.forEach((pay: any) => {
+      const date = new Date(pay.date || "");
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { patients: 0, payments: 0, visits: 0 };
+      }
+      monthlyData[monthKey].payments += (pay.amount || 0);
     });
     
     const monthlyTrend = Object.entries(monthlyData)
@@ -641,6 +498,8 @@ export default function Statistics() {
       amputationSiteData,
       diseaseTypeData,
       referralSourceData,
+      visitsByTreatmentData,
+      revenueByTreatmentData,
       monthlyTrend,
       shiftData,
       collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
@@ -1260,10 +1119,105 @@ export default function Statistics() {
           </div>
 
           {/* Visits by Treatment Type */}
-          <VisitsByTreatmentChart selectedBranch={selectedBranch} />
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2" data-testid="text-visits-by-treatment-title">
+                <Activity className="w-5 h-5 text-primary" />
+                {t.statistics.visitsByTreatment}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={stats.visitsByTreatmentData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      paddingAngle={5}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    >
+                      {stats.visitsByTreatmentData.map((entry: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.visits}`, '']} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3 flex flex-col justify-center">
+                  {stats.visitsByTreatmentData.map((item: any) => {
+                    const total = stats.visitsByTreatmentData.reduce((sum: number, d: any) => sum + d.value, 0);
+                    return (
+                      <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-visits-${item.name}`}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-sm font-medium">{item.name}</span>
+                        </div>
+                        <div className="text-left">
+                          <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.visits}</span>
+                          <span className="text-xs text-muted-foreground mr-2">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Revenue by Treatment Type */}
-          <RevenueByTreatmentChart selectedBranch={selectedBranch} />
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2" data-testid="text-revenue-by-treatment-title">
+                <Banknote className="w-5 h-5 text-primary" />
+                {t.statistics.revenueByTreatment}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={stats.revenueByTreatmentData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      paddingAngle={5}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    >
+                      {stats.revenueByTreatmentData.map((entry: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, '']} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3 flex flex-col justify-center">
+                  {stats.revenueByTreatmentData.map((item: any) => (
+                    <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-revenue-${item.name}`}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-sm font-medium">{item.name}</span>
+                      </div>
+                      <div className="text-left">
+                        <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
+                        <span className="text-xs text-muted-foreground mr-2">({item.count} {t.statistics.payment})</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Referral Source Distribution */}
           <Card>
