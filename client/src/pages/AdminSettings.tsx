@@ -133,7 +133,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
-    canManageSurveys: false,
+    canManageSurveys: true,
   },
   reception: {
     canViewPatients: true,

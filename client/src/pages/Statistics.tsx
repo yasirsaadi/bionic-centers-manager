@@ -22,7 +22,7 @@ import {
 import { 
   BarChart3, Users, TrendingUp, Building2, Calendar, Banknote, 
   Activity, UserCheck, Heart, Accessibility, Stethoscope, FileDown, FileSpreadsheet,
-  Plus, Pencil, Trash2, ChartBar, Globe, Lock
+  Plus, Pencil, Trash2, ChartBar, Globe, Lock, ClipboardCheck
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -31,7 +31,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from "recharts";
-import type { Branch, Patient, Visit, Payment, CustomStat } from "@shared/schema";
+import type { Branch, Patient, Visit, Payment, CustomStat, SurveyResponse, SurveyTemplate } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -87,6 +87,20 @@ export default function Statistics() {
 
   const { data: allPatients, isLoading } = useQuery<PatientWithRelations[]>({
     queryKey: ["/api/patients"],
+  });
+
+  const { data: surveyResponses } = useQuery<SurveyResponse[]>({
+    queryKey: ["/api/survey-responses", selectedBranch],
+    queryFn: async () => {
+      const branchParam = selectedBranch !== "all" ? `?branchId=${selectedBranch}` : "";
+      const res = await fetch(`/api/survey-responses${branchParam}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  const { data: surveyTemplates } = useQuery<SurveyTemplate[]>({
+    queryKey: ["/api/survey-templates"],
   });
 
   const queryClient = useQueryClient();
@@ -507,6 +521,37 @@ export default function Statistics() {
       collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
     };
   }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo]);
+
+  const surveyStats = useMemo(() => {
+    if (!surveyResponses || surveyResponses.length === 0) return null;
+    
+    const total = surveyResponses.length;
+    const avgSatisfaction = Math.round(surveyResponses.reduce((sum, r) => sum + (r.percentage || 0), 0) / total);
+    
+    const now = new Date();
+    const thisMonth = surveyResponses.filter(r => {
+      const d = new Date(r.completedAt || "");
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
+
+    const byBranch = branches?.map(branch => {
+      const branchResponses = surveyResponses.filter(r => r.branchId === branch.id);
+      const avg = branchResponses.length > 0
+        ? Math.round(branchResponses.reduce((s, r) => s + (r.percentage || 0), 0) / branchResponses.length)
+        : 0;
+      return { name: branch.name, value: avg, count: branchResponses.length };
+    }).filter(b => b.count > 0) || [];
+
+    const byTemplate = surveyTemplates?.map((tmpl, i) => {
+      const tmplResponses = surveyResponses.filter(r => r.templateId === tmpl.id);
+      const avg = tmplResponses.length > 0
+        ? Math.round(tmplResponses.reduce((s, r) => s + (r.percentage || 0), 0) / tmplResponses.length)
+        : 0;
+      return { name: tmpl.name, value: avg, count: tmplResponses.length };
+    }).filter(d => d.count > 0) || [];
+
+    return { total, avgSatisfaction, thisMonth, byBranch, byTemplate };
+  }, [surveyResponses, branches, surveyTemplates]);
 
   // Get current branch name for reports
   const currentBranchName = useMemo(() => {
@@ -1448,6 +1493,81 @@ export default function Statistics() {
               )}
             </CardContent>
           </Card>
+
+          {/* Patient Satisfaction Survey Section */}
+          {surveyStats && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <ClipboardCheck className="w-5 h-5 text-primary" />
+                  {t.statistics.surveySatisfaction || "رضا المرضى"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-gradient-to-br from-teal-50 to-teal-100 rounded-xl border border-teal-200">
+                    <p className="text-sm text-teal-600 mb-1">{t.statistics.surveyTotal || "إجمالي الاستبيانات"}</p>
+                    <p className="text-2xl font-bold text-teal-700" data-testid="text-survey-total">{surveyStats.total}</p>
+                  </div>
+                  <div className="p-4 bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl border border-cyan-200">
+                    <p className="text-sm text-cyan-600 mb-1">{t.statistics.surveyAvg || "متوسط الرضا"}</p>
+                    <p className="text-2xl font-bold text-cyan-700" data-testid="text-survey-avg">{surveyStats.avgSatisfaction}%</p>
+                  </div>
+                  <div className="p-4 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl border border-indigo-200">
+                    <p className="text-sm text-indigo-600 mb-1">{t.statistics.surveyThisMonth || "استبيانات هذا الشهر"}</p>
+                    <p className="text-2xl font-bold text-indigo-700" data-testid="text-survey-month">{surveyStats.thisMonth}</p>
+                  </div>
+                </div>
+
+                {surveyStats.byBranch.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4">{t.statistics.surveyByBranch || "رضا المرضى حسب الفرع"}</h4>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={surveyStats.byBranch}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                        <YAxis domain={[0, 100]} />
+                        <Tooltip formatter={(value: number) => [`${value}%`, t.statistics.surveyAvg || "متوسط الرضا"]} />
+                        <Bar dataKey="value" fill="#0d9488" radius={[4, 4, 0, 0]}>
+                          {surveyStats.byBranch.map((_, index) => (
+                            <Cell key={`survey-branch-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {surveyStats.byTemplate.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4">{t.statistics.surveyByDept || "رضا المرضى حسب القسم"}</h4>
+                    <div className="space-y-3">
+                      {surveyStats.byTemplate.map((item, index) => (
+                        <div key={item.name} className="flex items-center justify-between" data-testid={`survey-dept-${index}`}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                            <span className="text-sm font-medium">{item.name}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="w-32 h-3 bg-slate-100 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full rounded-full transition-all"
+                                style={{ width: `${item.value}%`, backgroundColor: COLORS[index % COLORS.length] }}
+                              />
+                            </div>
+                            <Badge variant={item.value >= 80 ? "default" : item.value >= 60 ? "secondary" : "destructive"}>
+                              {item.value}%
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">({item.count})</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Custom Statistics Section */}
           <Card>

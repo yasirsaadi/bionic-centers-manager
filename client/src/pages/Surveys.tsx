@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ClipboardCheck, Star, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar } from "lucide-react";
+import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar } from "lucide-react";
 import { useState, useMemo } from "react";
 import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,28 +44,39 @@ const CATEGORY_MAP: Record<string, string> = {
   facilities: "facilities",
 };
 
-function StarRating({ value, onChange, readonly = false }: { value: number; onChange?: (v: number) => void; readonly?: boolean }) {
-  const { t } = useTranslation();
-  const labels = [t.surveys.rating1, t.surveys.rating2, t.surveys.rating3, t.surveys.rating4, t.surveys.rating5];
+function NumberRating({ value, onChange, readonly = false }: { value: number; onChange?: (v: number) => void; readonly?: boolean }) {
+  const getColor = (num: number) => {
+    if (num <= 3) return "bg-red-100 text-red-700 border-red-300";
+    if (num <= 5) return "bg-orange-100 text-orange-700 border-orange-300";
+    if (num <= 7) return "bg-yellow-100 text-yellow-700 border-yellow-300";
+    if (num <= 9) return "bg-green-100 text-green-700 border-green-300";
+    return "bg-emerald-100 text-emerald-700 border-emerald-300";
+  };
 
   return (
-    <div className="flex items-center gap-1">
-      {[1, 2, 3, 4, 5].map((star) => (
+    <div className="flex items-center gap-1 flex-wrap">
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
         <button
-          key={star}
+          key={num}
           type="button"
           disabled={readonly}
-          onClick={() => onChange?.(star)}
-          className={`transition-colors ${readonly ? "cursor-default" : "cursor-pointer"}`}
-          data-testid={`star-rating-${star}`}
+          onClick={() => onChange?.(num)}
+          className={`w-8 h-8 rounded-md border text-sm font-bold transition-all ${
+            readonly ? "cursor-default" : "cursor-pointer hover:scale-110"
+          } ${
+            num === value
+              ? `${getColor(num)} ring-2 ring-offset-1 ring-primary`
+              : num <= value && value > 0
+              ? getColor(num)
+              : "bg-muted/30 text-muted-foreground border-muted"
+          }`}
+          data-testid={`number-rating-${num}`}
         >
-          <Star
-            className={`w-6 h-6 ${star <= value ? "fill-amber-400 text-amber-400" : "text-muted-foreground/30"}`}
-          />
+          {num}
         </button>
       ))}
       {value > 0 && (
-        <span className="text-xs text-muted-foreground mr-2">{labels[value - 1]}</span>
+        <span className="text-xs text-muted-foreground mr-2 font-medium">{value}/10</span>
       )}
     </div>
   );
@@ -299,7 +310,7 @@ function AddSurveyTab() {
                       <p className="text-xs text-muted-foreground">{q.questionTextEn}</p>
                     )}
                     {q.questionType === "rating" && (
-                      <StarRating
+                      <NumberRating
                         value={answers[q.id] || 0}
                         onChange={(v) => setAnswers(prev => ({ ...prev, [q.id]: v }))}
                       />
@@ -635,7 +646,7 @@ function ResultsTab() {
                       <div key={q.id} className="space-y-1">
                         <p className="text-sm font-medium">{q.questionText}</p>
                         {q.questionType === "rating" && answer && (
-                          <StarRating value={answer.ratingValue || 0} readonly />
+                          <NumberRating value={answer.ratingValue || 0} readonly />
                         )}
                       </div>
                     );

@@ -126,7 +126,7 @@ export async function registerRoutes(
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
-      canManageSurveys: false,
+      canManageSurveys: true,
     };
     
     // Return stored permissions if available, else default based on admin status
@@ -2878,7 +2878,7 @@ export async function registerRoutes(
 
       for (const q of questions) {
         if (q.questionType === "rating") {
-          maxScore += 5;
+          maxScore += 10;
           const answer = answers?.find((a: any) => a.questionId === q.id);
           if (answer?.ratingValue) {
             totalScore += answer.ratingValue;
