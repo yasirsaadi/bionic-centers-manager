@@ -327,16 +327,13 @@ export default function Statistics() {
     );
     const totalVisits = allVisitsInRange.length;
 
-    // For specific date filtering (today/date): include patients who have visits on that date
-    // For range filtering (week/month/etc): filter by registration date
-    const isSpecificDate = timeRange === "today" || timeRange === "date";
+    // For all date-based filtering: include patients who were registered, had visits, or had payments within the range
     const timeFilteredPatients = startDate 
-      ? (isSpecificDate
-          ? filteredPatients.filter(p => 
-              isInRange(p.createdAt) || 
-              (p.visits || []).some(v => isInRange(v.visitDate))
-            )
-          : filteredPatients.filter(p => isInRange(p.createdAt)))
+      ? filteredPatients.filter(p => 
+          isInRange(p.createdAt) || 
+          (p.visits || []).some(v => isInRange(v.visitDate)) ||
+          (p.payments || []).some(pay => isInRange(pay.date))
+        )
       : filteredPatients;
 
     const totalPatients = timeFilteredPatients.length;
