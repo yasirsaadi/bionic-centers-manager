@@ -195,3 +195,17 @@ Preferred communication style: Simple, everyday language.
 - Admin/branch managers: shift auto-determined by server time (8-15 = morning, 16-21 = evening)
 - Shift statistics chart added to Statistics page with PieChart and percentage breakdown
 - Referral source statistics (الجهات المحول منها) added to Statistics page - accessible to all users
+
+### Patient Satisfaction Survey System (February 2026)
+- Database tables: `survey_templates`, `survey_questions`, `survey_responses`, `survey_answers`
+- New user role: `surveyor` (موظف استبيان) with `canManageSurveys` permission
+- 3 predefined survey templates auto-seeded on startup:
+  - Prosthetics Assessment (10 questions: comfort, function, appearance, durability, service, pain, overall)
+  - Physiotherapy Assessment (10 questions: treatment, therapist, communication, equipment, environment, scheduling, results, overall)
+  - General Branch Assessment (5 questions: reception, waiting, cleanliness, facilities, overall)
+- All questions bilingual (Arabic/English), rating type 1-5 scale
+- Auto-template selection based on patient type (isAmputee→prosthetics, isPhysiotherapy→physiotherapy, isMedicalSupport→general)
+- Survey page `/surveys` with two tabs: Add Survey (patient search, star ratings, submit) and Results (summary cards, branch/department comparison charts, recent surveys table, detail dialog)
+- API endpoints: GET `/api/survey-templates`, GET `/api/survey-templates/:id/questions`, GET/POST `/api/survey-responses`, GET `/api/survey-results`
+- Responses auto-calculate totalScore, maxScore, percentage
+- Surveyor role redirects to /surveys on login, sees only survey functionality
