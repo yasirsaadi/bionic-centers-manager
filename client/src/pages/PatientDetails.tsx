@@ -730,7 +730,9 @@ export default function PatientDetails() {
                 );
               })()}
               <div>
-                <p className="text-muted-foreground mb-1">{t.patientDetails.diagnosisCondition}</p>
+                <p className="text-muted-foreground mb-1">
+                  {patient.isAmputee ? t.patientDetails.diagnosisCondition : patient.isMedicalSupport ? (t.patientForm?.supportType || "نوع التقويمي") : t.patientDetails.diagnosisCondition}
+                </p>
                 <p className="font-semibold text-base">
                   {patient.isAmputee ? patient.amputationSite : patient.isMedicalSupport ? patient.supportType : patient.diseaseType}
                 </p>
