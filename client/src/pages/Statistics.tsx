@@ -347,6 +347,10 @@ export default function Statistics() {
     );
     const totalPaid = allPaymentsInRange.reduce((sum, pay) => sum + (pay.amount || 0), 0);
 
+    // Time-filtered financial totals
+    const timeFilteredRevenue = timeFilteredPatients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
+    const timeFilteredPaidFromPayments = allPaymentsInRange.reduce((sum, pay) => sum + (pay.amount || 0), 0);
+    
     // All-time financial totals (branch-filtered only, no time filter)
     const allTimeRevenue = filteredPatients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
     const allTimePaid = filteredPatients.reduce((sum, p) => {
@@ -354,10 +358,7 @@ export default function Statistics() {
       return sum + patientPayments;
     }, 0);
     const allTimeRemaining = allTimeRevenue - allTimePaid;
-    
-    // Time-filtered financial totals (for time-range specific stats)
-    const timeFilteredRevenue = timeFilteredPatients.reduce((sum, p) => sum + (p.totalCost || 0), 0);
-    const totalRemaining = allTimeRevenue - allTimePaid;
+    const timeFilteredRemaining = timeFilteredRevenue - timeFilteredPaidFromPayments;
 
     const ageDistribution = AGE_GROUPS.map(group => ({
       name: group.label,
@@ -479,14 +480,18 @@ export default function Statistics() {
       shiftData.push({ name: t.statistics.unspecified, value: shiftDistribution.unknown, color: '#8884d8' });
     }
 
+    const displayRevenue = startDate ? timeFilteredRevenue : allTimeRevenue;
+    const displayPaid = startDate ? totalPaid : allTimePaid;
+    const displayRemaining = startDate ? timeFilteredRemaining : allTimeRemaining;
+
     return {
       totalPatients,
       amputeeCount,
       physioCount,
       medicalSupportCount,
-      allTimeRevenue,
-      allTimePaid,
-      allTimeRemaining,
+      allTimeRevenue: displayRevenue,
+      allTimePaid: displayPaid,
+      allTimeRemaining: displayRemaining,
       totalPaid,
       totalVisits,
       ageDistribution,
@@ -499,7 +504,7 @@ export default function Statistics() {
       revenueByTreatmentData,
       monthlyTrend,
       shiftData,
-      collectionRate: allTimeRevenue > 0 ? ((allTimePaid / allTimeRevenue) * 100).toFixed(1) : '0',
+      collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
     };
   }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo]);
 
