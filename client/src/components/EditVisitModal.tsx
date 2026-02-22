@@ -57,7 +57,7 @@ interface EditVisitModalProps {
 const formSchema = z.object({
   details: z.string().optional(),
   notes: z.string().optional(),
-  treatmentType: z.string().min(1, "يجب اختيار نوع العلاج").optional(),
+  treatmentType: z.string().optional(),
   sessionCount: z.number().nullable().optional(),
   cost: z.number().nullable().optional(),
   customDate: z.string().optional(),

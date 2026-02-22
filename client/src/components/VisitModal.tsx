@@ -47,7 +47,7 @@ const TREATMENT_TYPE_OPTIONS = [
 ];
 
 const formSchema = insertVisitSchema.extend({
-  treatmentType: z.string().min(1, "يجب اختيار نوع العلاج").optional().nullable(),
+  treatmentType: z.string().optional().nullable(),
   customDate: z.string().optional().nullable(),
 });
 
