@@ -161,16 +161,21 @@ export default function PatientsList() {
       return;
     }
     
-    const excelData = dataToExport.map((patient, index) => ({
-      "#": index + 1,
-      "الاسم": patient.name,
-      "الهاتف": patient.phone || "",
-      "العمر": patient.age,
-      "الحالة": patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند طبية",
-      "الفرع": getBranchName(patient.branchId),
-      "التكلفة الكلية": patient.totalCost || 0,
-      "تاريخ التسجيل": patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
-    }));
+    const excelData = dataToExport.map((patient, index) => {
+      const totalPaid = ((patient as any).payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+      const remaining = (patient.totalCost || 0) - totalPaid;
+      return {
+        "#": index + 1,
+        "الاسم": patient.name,
+        "الهاتف": patient.phone || "",
+        "العمر": patient.age,
+        "الحالة": patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند طبية",
+        "الفرع": getBranchName(patient.branchId),
+        "التكلفة الكلية": patient.totalCost || 0,
+        "المبلغ المتبقي": remaining > 0 ? remaining : 0,
+        "تاريخ التسجيل": patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(excelData);
     const wb = XLSX.utils.book_new();
@@ -222,11 +227,15 @@ export default function PatientsList() {
               <th>الحالة</th>
               <th>الفرع</th>
               <th>التكلفة</th>
+              <th>المتبقي</th>
               <th>التاريخ</th>
             </tr>
           </thead>
           <tbody>
-            ${dataToExport.map((patient, index) => `
+            ${dataToExport.map((patient, index) => {
+              const totalPaid = ((patient as any).payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+              const remaining = Math.max(0, (patient.totalCost || 0) - totalPaid);
+              return `
               <tr>
                 <td>${index + 1}</td>
                 <td>${patient.name}</td>
@@ -235,9 +244,10 @@ export default function PatientsList() {
                 <td>${patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
                 <td>${(patient.totalCost || 0).toLocaleString()}</td>
+                <td style="color: ${remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${remaining.toLocaleString()}</td>
                 <td>${patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : ""}</td>
-              </tr>
-            `).join("")}
+              </tr>`;
+            }).join("")}
           </tbody>
         </table>
       </body>
