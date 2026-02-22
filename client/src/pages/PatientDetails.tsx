@@ -825,12 +825,8 @@ export default function PatientDetails() {
             patient.payments?.forEach((p) => {
               if (p.sessionCount && p.sessionCount > 0) {
                 totalSessions += p.sessionCount;
-                const types = p.paymentTreatmentType 
-                  ? p.paymentTreatmentType.split(",").map((tt: string) => tt.trim()).filter(Boolean)
-                  : [t.patientDetails.unspecified];
-                types.forEach((type: string) => {
-                  sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
-                });
+                const type = p.paymentTreatmentType || t.patientDetails.unspecified;
+                sessionsByType[type] = (sessionsByType[type] || 0) + p.sessionCount;
               }
             });
             return totalSessions > 0 ? (
