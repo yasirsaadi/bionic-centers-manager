@@ -22,6 +22,7 @@ import BranchRevenues from "@/pages/BranchRevenues";
 import Statistics from "@/pages/Statistics";
 import Accounting from "@/pages/Accounting";
 import AdminSettings from "@/pages/AdminSettings";
+import Surveys from "@/pages/Surveys";
 import { useState, useEffect } from "react";
 
 function DashboardRoute() {
@@ -40,6 +41,10 @@ function DashboardRoute() {
   
   if (session?.role === "reception") {
     return <Redirect to="/patients" />;
+  }
+  
+  if (session?.role === "surveyor") {
+    return <Redirect to="/surveys" />;
   }
   
   return <Dashboard />;
@@ -98,6 +103,7 @@ function Router() {
           <Route path="/branches/:id" component={BranchDetails} />
           <Route path="/statistics" component={Statistics} />
           <Route path="/accounting" component={Accounting} />
+          <Route path="/surveys" component={Surveys} />
           <Route path="/admin" component={AdminSettings} />
           <Route component={NotFound} />
         </Switch>

@@ -108,6 +108,7 @@ export async function registerRoutes(
       canManageSettings: true,
       canManageUsers: true,
       canManageTreatmentPlans: true,
+      canManageSurveys: true,
     };
     
     // Default branch staff permissions
@@ -125,6 +126,7 @@ export async function registerRoutes(
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
+      canManageSurveys: false,
     };
     
     // Return stored permissions if available, else default based on admin status
@@ -241,6 +243,7 @@ export async function registerRoutes(
               canManageSettings: systemUser.canManageSettings,
               canManageUsers: systemUser.canManageUsers,
               canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
+              canManageSurveys: systemUser.canManageSurveys,
             }
           };
           
@@ -269,6 +272,7 @@ export async function registerRoutes(
               canManageSettings: systemUser.canManageSettings,
               canManageUsers: systemUser.canManageUsers,
               canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
+              canManageSurveys: systemUser.canManageSurveys,
             }
           });
         }
@@ -873,7 +877,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!userData.role || !["admin", "branch_manager", "reception", "therapist"].includes(userData.role)) {
+      if (!userData.role || !["admin", "branch_manager", "reception", "therapist", "surveyor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -914,7 +918,7 @@ export async function registerRoutes(
       const { password, ...userData } = req.body;
       
       // Validate role if provided
-      if (userData.role && !["admin", "branch_manager", "reception", "therapist"].includes(userData.role)) {
+      if (userData.role && !["admin", "branch_manager", "reception", "therapist", "surveyor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -2815,6 +2819,146 @@ export async function registerRoutes(
     }
   });
 
+  // ======================= SURVEY ROUTES =======================
+
+  app.get("/api/survey-templates", isAuthenticated, async (req, res) => {
+    try {
+      const templates = await storage.getSurveyTemplates();
+      res.json(templates);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب قوالب الاستبيانات" });
+    }
+  });
+
+  app.get("/api/survey-templates/:id/questions", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const questions = await storage.getSurveyQuestions(id);
+      res.json(questions);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب الأسئلة" });
+    }
+  });
+
+  app.get("/api/survey-responses", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+      const filterBranch = branchSession?.isAdmin ? branchId : branchSession?.branchId;
+      const responses = await storage.getSurveyResponses(filterBranch);
+      res.json(responses);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب الاستبيانات" });
+    }
+  });
+
+  app.get("/api/survey-responses/patient/:patientId", isAuthenticated, async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId);
+      const responses = await storage.getSurveyResponsesByPatient(patientId);
+      res.json(responses);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب استبيانات المريض" });
+    }
+  });
+
+  app.post("/api/survey-responses", isAuthenticated, async (req, res) => {
+    try {
+      const permissions = getPermissions(req);
+      const branchSession = (req.session as any).branchSession;
+      if (!permissions.canManageSurveys && !branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح لك بإدارة الاستبيانات" });
+      }
+
+      const { templateId, patientId, branchId, answers, notes } = req.body;
+
+      const questions = await storage.getSurveyQuestions(templateId);
+      let totalScore = 0;
+      let maxScore = 0;
+
+      for (const q of questions) {
+        if (q.questionType === "rating") {
+          maxScore += 5;
+          const answer = answers?.find((a: any) => a.questionId === q.id);
+          if (answer?.ratingValue) {
+            totalScore += answer.ratingValue;
+          }
+        }
+      }
+
+      const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+
+      const response = await storage.createSurveyResponse({
+        templateId,
+        patientId,
+        branchId,
+        surveyorId: branchSession?.userId || null,
+        surveyorName: branchSession?.displayName || null,
+        totalScore,
+        maxScore,
+        percentage,
+        notes: notes || null,
+      });
+
+      if (answers && Array.isArray(answers)) {
+        for (const answer of answers) {
+          await storage.createSurveyAnswer({
+            responseId: response.id,
+            questionId: answer.questionId,
+            ratingValue: answer.ratingValue || null,
+            textValue: answer.textValue || null,
+            boolValue: answer.boolValue ?? null,
+          });
+        }
+      }
+
+      res.json(response);
+    } catch (err) {
+      console.error("Survey submission error:", err);
+      res.status(500).json({ message: "فشل في حفظ الاستبيان" });
+    }
+  });
+
+  app.get("/api/survey-responses/:id/answers", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const answers = await storage.getSurveyAnswers(id);
+      res.json(answers);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب الإجابات" });
+    }
+  });
+
+  app.get("/api/survey-results", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+      const filterBranch = branchSession?.isAdmin ? branchId : branchSession?.branchId;
+      const responses = await storage.getSurveyResponses(filterBranch);
+      const templates = await storage.getSurveyTemplates();
+
+      const results = templates.map(template => {
+        const templateResponses = responses.filter(r => r.templateId === template.id);
+        const avgPercentage = templateResponses.length > 0
+          ? Math.round(templateResponses.reduce((sum, r) => sum + (r.percentage || 0), 0) / templateResponses.length)
+          : 0;
+        return {
+          templateId: template.id,
+          templateName: template.name,
+          targetType: template.targetType,
+          count: templateResponses.length,
+          avgPercentage,
+        };
+      });
+
+      res.json(results);
+    } catch (err) {
+      res.status(500).json({ message: "فشل في جلب النتائج" });
+    }
+  });
+
+  // ======================= SEED DATA =======================
+
   // Seed initial branches
   const branchesList = await storage.getBranches();
   if (branchesList.length === 0) {
@@ -2822,6 +2966,73 @@ export async function registerRoutes(
     for (const name of bNames) {
       await storage.createBranch({ name, location: name });
     }
+  }
+
+  // Seed survey templates
+  const existingTemplates = await storage.getSurveyTemplates();
+  if (existingTemplates.length === 0) {
+    const t1 = await storage.createSurveyTemplate({
+      name: "تقييم خدمات الأطراف الصناعية",
+      description: "Prosthetics Services Assessment",
+      targetType: "prosthetics",
+      isActive: true,
+    });
+    const prosthQ = [
+      { order: 1, cat: "comfort", ar: "ما مدى راحتك عند استخدام الطرف الصناعي؟", en: "How comfortable is the prosthetic device?" },
+      { order: 2, cat: "comfort", ar: "هل يناسب الطرف الصناعي حجم ووزن جسمك؟", en: "Does the prosthetic fit your body size and weight?" },
+      { order: 3, cat: "function", ar: "ما مدى سهولة المشي أو الحركة بالطرف الصناعي؟", en: "How easy is walking/movement with the prosthetic?" },
+      { order: 4, cat: "function", ar: "هل يساعدك الطرف الصناعي على أداء أنشطتك اليومية؟", en: "Does the prosthetic help with daily activities?" },
+      { order: 5, cat: "appearance", ar: "ما مدى رضاك عن مظهر الطرف الصناعي؟", en: "How satisfied are you with the prosthetic appearance?" },
+      { order: 6, cat: "durability", ar: "ما مدى متانة وجودة الطرف الصناعي؟", en: "How durable and high-quality is the prosthetic?" },
+      { order: 7, cat: "service", ar: "ما مدى رضاك عن خدمة الفريق الطبي أثناء القياس والتركيب؟", en: "How satisfied are you with the medical team during fitting?" },
+      { order: 8, cat: "service", ar: "هل تلقيت تعليمات كافية لاستخدام الطرف الصناعي؟", en: "Did you receive sufficient instructions for prosthetic use?" },
+      { order: 9, cat: "pain", ar: "هل قل مستوى الألم بعد استخدام الطرف الصناعي؟", en: "Has pain decreased after using the prosthetic?" },
+      { order: 10, cat: "overall", ar: "بشكل عام، ما مدى رضاك عن الخدمة المقدمة؟", en: "Overall, how satisfied are you with the service?" },
+    ];
+    for (const q of prosthQ) {
+      await storage.createSurveyQuestion({ templateId: t1.id, questionText: q.ar, questionTextEn: q.en, questionOrder: q.order, questionType: "rating", category: q.cat });
+    }
+
+    const t2 = await storage.createSurveyTemplate({
+      name: "تقييم خدمات العلاج الطبيعي",
+      description: "Physiotherapy Services Assessment",
+      targetType: "physiotherapy",
+      isActive: true,
+    });
+    const physioQ = [
+      { order: 1, cat: "treatment", ar: "ما مدى فعالية جلسات العلاج الطبيعي في تحسين حالتك؟", en: "How effective were physiotherapy sessions in improving your condition?" },
+      { order: 2, cat: "treatment", ar: "هل شعرت بتحسن ملموس بعد الجلسات؟", en: "Did you feel noticeable improvement after sessions?" },
+      { order: 3, cat: "therapist", ar: "ما مدى كفاءة المعالج الطبيعي؟", en: "How competent was the physiotherapist?" },
+      { order: 4, cat: "therapist", ar: "هل أوضح لك المعالج خطة العلاج وأهدافها؟", en: "Did the therapist explain the treatment plan and goals?" },
+      { order: 5, cat: "communication", ar: "ما مدى تواصل الفريق الطبي معك أثناء العلاج؟", en: "How well did the medical team communicate during treatment?" },
+      { order: 6, cat: "equipment", ar: "ما مدى رضاك عن الأجهزة والمعدات المستخدمة؟", en: "How satisfied are you with the equipment used?" },
+      { order: 7, cat: "environment", ar: "ما مدى نظافة وتنظيم قاعة العلاج؟", en: "How clean and organized was the treatment room?" },
+      { order: 8, cat: "scheduling", ar: "ما مدى ملاءمة مواعيد الجلسات لجدولك؟", en: "How suitable were session timings for your schedule?" },
+      { order: 9, cat: "results", ar: "هل تحققت أهداف العلاج المتوقعة؟", en: "Were expected treatment goals achieved?" },
+      { order: 10, cat: "overall", ar: "بشكل عام، ما مدى رضاك عن خدمة العلاج الطبيعي؟", en: "Overall, how satisfied are you with the physiotherapy service?" },
+    ];
+    for (const q of physioQ) {
+      await storage.createSurveyQuestion({ templateId: t2.id, questionText: q.ar, questionTextEn: q.en, questionOrder: q.order, questionType: "rating", category: q.cat });
+    }
+
+    const t3 = await storage.createSurveyTemplate({
+      name: "تقييم عام للفرع",
+      description: "General Branch Assessment",
+      targetType: "general",
+      isActive: true,
+    });
+    const generalQ = [
+      { order: 1, cat: "reception", ar: "ما مدى رضاك عن استقبال الموظفين؟", en: "How satisfied are you with staff reception?" },
+      { order: 2, cat: "waiting", ar: "هل كان وقت الانتظار مناسباً؟", en: "Was the waiting time reasonable?" },
+      { order: 3, cat: "cleanliness", ar: "ما مدى نظافة المركز؟", en: "How clean was the center?" },
+      { order: 4, cat: "facilities", ar: "ما مدى جودة المرافق والتجهيزات؟", en: "How good were the facilities and equipment?" },
+      { order: 5, cat: "overall", ar: "هل تنصح الآخرين بمراجعة هذا المركز؟", en: "Would you recommend this center to others?" },
+    ];
+    for (const q of generalQ) {
+      await storage.createSurveyQuestion({ templateId: t3.id, questionText: q.ar, questionTextEn: q.en, questionOrder: q.order, questionType: "rating", category: q.cat });
+    }
+
+    console.log("Survey templates seeded successfully");
   }
 
   return httpServer;

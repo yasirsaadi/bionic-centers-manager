@@ -73,7 +73,7 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "reception" | "therapist";
+type UserRole = "admin" | "branch_manager" | "reception" | "therapist" | "surveyor";
 
 function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
   return {
@@ -81,6 +81,7 @@ function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRo
     branch_manager: t.roles.branch_manager,
     reception: t.roles.reception,
     therapist: t.roles.therapist,
+    surveyor: t.roles.surveyor,
   };
 }
 
@@ -98,6 +99,7 @@ type PermissionSet = {
   canManageSettings: boolean;
   canManageUsers: boolean;
   canManageTreatmentPlans: boolean;
+  canManageSurveys: boolean;
 };
 
 const defaultPermissions: Record<UserRole, PermissionSet> = {
@@ -115,6 +117,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: true,
     canManageUsers: true,
     canManageTreatmentPlans: true,
+    canManageSurveys: true,
   },
   branch_manager: {
     canViewPatients: true,
@@ -130,6 +133,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
+    canManageSurveys: false,
   },
   reception: {
     canViewPatients: true,
@@ -145,6 +149,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
+    canManageSurveys: false,
   },
   therapist: {
     canViewPatients: true,
@@ -160,6 +165,23 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: true,
+    canManageSurveys: false,
+  },
+  surveyor: {
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+    canManageTreatmentPlans: false,
+    canManageSurveys: true,
   }
 };
 
@@ -1593,6 +1615,7 @@ export default function AdminSettings() {
                     <SelectItem value="branch_manager">{t.roles.branch_manager}</SelectItem>
                     <SelectItem value="reception">{t.roles.reception}</SelectItem>
                     <SelectItem value="therapist">{t.roles.therapist}</SelectItem>
+                    <SelectItem value="surveyor">{t.roles.surveyor}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

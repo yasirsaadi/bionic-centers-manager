@@ -2,6 +2,7 @@ import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
+  surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
@@ -14,7 +15,11 @@ import {
   type InvoiceItem, type InsertInvoiceItem,
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting,
   type SystemUser, type InsertSystemUser,
-  type TreatmentPlan, type InsertTreatmentPlan
+  type TreatmentPlan, type InsertTreatmentPlan,
+  type SurveyTemplate, type InsertSurveyTemplate,
+  type SurveyQuestion, type InsertSurveyQuestion,
+  type SurveyResponse, type InsertSurveyResponse,
+  type SurveyAnswer, type InsertSurveyAnswer
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
 
@@ -139,6 +144,18 @@ export interface IStorage {
   createTreatmentPlan(plan: InsertTreatmentPlan): Promise<TreatmentPlan>;
   updateTreatmentPlan(id: number, plan: Partial<InsertTreatmentPlan>): Promise<TreatmentPlan>;
   deleteTreatmentPlan(id: number): Promise<void>;
+
+  // Surveys
+  getSurveyTemplates(): Promise<SurveyTemplate[]>;
+  getSurveyTemplate(id: number): Promise<SurveyTemplate | undefined>;
+  createSurveyTemplate(template: InsertSurveyTemplate): Promise<SurveyTemplate>;
+  getSurveyQuestions(templateId: number): Promise<SurveyQuestion[]>;
+  createSurveyQuestion(question: InsertSurveyQuestion): Promise<SurveyQuestion>;
+  getSurveyResponses(branchId?: number): Promise<SurveyResponse[]>;
+  getSurveyResponsesByPatient(patientId: number): Promise<SurveyResponse[]>;
+  createSurveyResponse(response: InsertSurveyResponse): Promise<SurveyResponse>;
+  getSurveyAnswers(responseId: number): Promise<SurveyAnswer[]>;
+  createSurveyAnswer(answer: InsertSurveyAnswer): Promise<SurveyAnswer>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -840,6 +857,61 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTreatmentPlan(id: number): Promise<void> {
     await db.delete(treatmentPlans).where(eq(treatmentPlans.id, id));
+  }
+
+  // Surveys
+  async getSurveyTemplates(): Promise<SurveyTemplate[]> {
+    return await db.select().from(surveyTemplates).where(eq(surveyTemplates.isActive, true));
+  }
+
+  async getSurveyTemplate(id: number): Promise<SurveyTemplate | undefined> {
+    const [template] = await db.select().from(surveyTemplates).where(eq(surveyTemplates.id, id));
+    return template;
+  }
+
+  async createSurveyTemplate(template: InsertSurveyTemplate): Promise<SurveyTemplate> {
+    const [created] = await db.insert(surveyTemplates).values(template).returning();
+    return created;
+  }
+
+  async getSurveyQuestions(templateId: number): Promise<SurveyQuestion[]> {
+    return await db.select().from(surveyQuestions)
+      .where(eq(surveyQuestions.templateId, templateId))
+      .orderBy(surveyQuestions.questionOrder);
+  }
+
+  async createSurveyQuestion(question: InsertSurveyQuestion): Promise<SurveyQuestion> {
+    const [created] = await db.insert(surveyQuestions).values(question).returning();
+    return created;
+  }
+
+  async getSurveyResponses(branchId?: number): Promise<SurveyResponse[]> {
+    if (branchId) {
+      return await db.select().from(surveyResponses)
+        .where(eq(surveyResponses.branchId, branchId))
+        .orderBy(desc(surveyResponses.completedAt));
+    }
+    return await db.select().from(surveyResponses).orderBy(desc(surveyResponses.completedAt));
+  }
+
+  async getSurveyResponsesByPatient(patientId: number): Promise<SurveyResponse[]> {
+    return await db.select().from(surveyResponses)
+      .where(eq(surveyResponses.patientId, patientId))
+      .orderBy(desc(surveyResponses.completedAt));
+  }
+
+  async createSurveyResponse(response: InsertSurveyResponse): Promise<SurveyResponse> {
+    const [created] = await db.insert(surveyResponses).values(response).returning();
+    return created;
+  }
+
+  async getSurveyAnswers(responseId: number): Promise<SurveyAnswer[]> {
+    return await db.select().from(surveyAnswers).where(eq(surveyAnswers.responseId, responseId));
+  }
+
+  async createSurveyAnswer(answer: InsertSurveyAnswer): Promise<SurveyAnswer> {
+    const [created] = await db.insert(surveyAnswers).values(answer).returning();
+    return created;
   }
 }
 

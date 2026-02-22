@@ -246,6 +246,7 @@ export const systemUsers = pgTable("system_users", {
   canManageSettings: boolean("can_manage_settings").default(false),
   canManageUsers: boolean("can_manage_users").default(false),
   canManageTreatmentPlans: boolean("can_manage_treatment_plans").default(false),
+  canManageSurveys: boolean("can_manage_surveys").default(false),
   language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -324,3 +325,59 @@ export const treatmentPlans = pgTable("treatment_plans", {
 export const insertTreatmentPlanSchema = createInsertSchema(treatmentPlans).omit({ id: true, createdAt: true, updatedAt: true });
 export type TreatmentPlan = typeof treatmentPlans.$inferSelect;
 export type InsertTreatmentPlan = z.infer<typeof insertTreatmentPlanSchema>;
+
+export const surveyTemplates = pgTable("survey_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  targetType: text("target_type").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const surveyQuestions = pgTable("survey_questions", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id").references(() => surveyTemplates.id).notNull(),
+  questionText: text("question_text").notNull(),
+  questionTextEn: text("question_text_en"),
+  questionOrder: integer("question_order").notNull(),
+  questionType: text("question_type").notNull(),
+  category: text("category"),
+});
+
+export const surveyResponses = pgTable("survey_responses", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id").references(() => surveyTemplates.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  surveyorId: integer("surveyor_id").references(() => systemUsers.id),
+  surveyorName: text("surveyor_name"),
+  totalScore: integer("total_score"),
+  maxScore: integer("max_score"),
+  percentage: integer("percentage"),
+  notes: text("notes"),
+  completedAt: timestamp("completed_at").defaultNow(),
+});
+
+export const surveyAnswers = pgTable("survey_answers", {
+  id: serial("id").primaryKey(),
+  responseId: integer("response_id").references(() => surveyResponses.id).notNull(),
+  questionId: integer("question_id").references(() => surveyQuestions.id).notNull(),
+  ratingValue: integer("rating_value"),
+  textValue: text("text_value"),
+  boolValue: boolean("bool_value"),
+});
+
+export const insertSurveyTemplateSchema = createInsertSchema(surveyTemplates).omit({ id: true, createdAt: true });
+export const insertSurveyQuestionSchema = createInsertSchema(surveyQuestions).omit({ id: true });
+export const insertSurveyResponseSchema = createInsertSchema(surveyResponses).omit({ id: true, completedAt: true });
+export const insertSurveyAnswerSchema = createInsertSchema(surveyAnswers).omit({ id: true });
+
+export type SurveyTemplate = typeof surveyTemplates.$inferSelect;
+export type InsertSurveyTemplate = z.infer<typeof insertSurveyTemplateSchema>;
+export type SurveyQuestion = typeof surveyQuestions.$inferSelect;
+export type InsertSurveyQuestion = z.infer<typeof insertSurveyQuestionSchema>;
+export type SurveyResponse = typeof surveyResponses.$inferSelect;
+export type InsertSurveyResponse = z.infer<typeof insertSurveyResponseSchema>;
+export type SurveyAnswer = typeof surveyAnswers.$inferSelect;
+export type InsertSurveyAnswer = z.infer<typeof insertSurveyAnswerSchema>;

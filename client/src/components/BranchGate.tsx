@@ -30,6 +30,7 @@ interface UserPermissions {
   canManageAccounting: boolean;
   canManageSettings: boolean;
   canManageUsers: boolean;
+  canManageSurveys: boolean;
 }
 
 interface BranchSession {
