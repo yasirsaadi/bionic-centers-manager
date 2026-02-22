@@ -110,7 +110,7 @@ export function DatePickerIraq({ value, onChange, className, "data-testid": test
           {formatDisplayDate(value)}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
+      <PopoverContent className="w-auto p-0 bg-white dark:bg-slate-900 border shadow-lg z-[9999]" align="start">
         <div className="p-3" dir="rtl">
           <div className="flex items-center justify-between mb-3">
             <Button variant="ghost" size="icon" onClick={handleNextMonth} data-testid="btn-next-month">
