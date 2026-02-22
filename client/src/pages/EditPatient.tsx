@@ -50,7 +50,7 @@ const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
-  referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
+  referralSource: z.string().optional().default(""),
 });
 
 type FormValues = z.infer<typeof formSchema>;
