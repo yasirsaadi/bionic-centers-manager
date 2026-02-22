@@ -993,15 +993,33 @@ export default function PatientDetails() {
                         });
                         const remainingMap: Record<number, number> = {};
                         const visitCountByType: Record<string, number> = {};
+                        const paidByType: Record<string, number> = {};
                         const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
+                        const paymentsSorted = [...(patient.payments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
+                        let paymentIdx = 0;
                         visitsOldestFirst.forEach((v) => {
                           const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
                           const isConsultation = v.treatmentType === "استشارة طبية";
                           const type = v.treatmentType || t.patientDetails.unspecified;
+                          const visitTime = new Date(v.visitDate || 0).getTime();
+                          while (paymentIdx < paymentsSorted.length) {
+                            const pTime = new Date(paymentsSorted[paymentIdx].date || 0).getTime();
+                            if (pTime <= visitTime) {
+                              const pType = paymentsSorted[paymentIdx].paymentTreatmentType || t.patientDetails.unspecified;
+                              paidByType[pType] = (paidByType[pType] || 0) + (paymentsSorted[paymentIdx].sessionCount || 0);
+                              paymentIdx++;
+                            } else {
+                              break;
+                            }
+                          }
                           if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          remainingMap[v.id] = isConsultation ? -999 : (sessionsByType[type] || 0) - visitCountByType[type];
+                          if (isConsultation || isServiceVisit) {
+                            remainingMap[v.id] = -999;
+                          } else {
+                            remainingMap[v.id] = (paidByType[type] || sessionsByType[type] || 0) - (visitCountByType[type] || 0);
+                          }
                         });
                         return patient.visits?.map((visit) => {
                           const remaining = remainingMap[visit.id] ?? 0;
