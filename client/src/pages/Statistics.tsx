@@ -82,8 +82,6 @@ function RevenueByTreatmentChart({ selectedBranch }: { selectedBranch: string })
     },
   });
 
-  if (!revenueByTreatment.length) return null;
-
   const chartData = revenueByTreatment.map((item) => ({
     name: item.treatmentType,
     value: item.totalAmount,
@@ -159,8 +157,6 @@ function VisitsByTreatmentChart({ selectedBranch }: { selectedBranch: string }) 
       return res.json();
     },
   });
-
-  if (!visitsByTreatment.length) return null;
 
   const chartData = visitsByTreatment
     .sort((a, b) => b.count - a.count)
@@ -1270,199 +1266,189 @@ export default function Statistics() {
           <RevenueByTreatmentChart selectedBranch={selectedBranch} />
 
           {/* Referral Source Distribution */}
-          {stats.referralSourceData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Globe className="w-5 h-5 text-primary" />
-                  {t.statistics.referralSources}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <ResponsiveContainer width="100%" height={350}>
-                    <BarChart data={stats.referralSourceData} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" />
-                      <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 12 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" name={t.statistics.patientCount} fill="#8884d8" radius={[0, 4, 4, 0]}>
-                        {stats.referralSourceData.map((_: any, index: number) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-2 max-h-[350px] overflow-y-auto">
-                    {stats.referralSourceData.map((item: { name: string; value: number }, index: number) => (
-                      <div key={item.name} className="flex items-center justify-between p-2 rounded-md hover-elevate" data-testid={`referral-source-item-${index}`}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Globe className="w-5 h-5 text-primary" />
+                {t.statistics.referralSources}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={stats.referralSourceData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" />
+                    <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="value" name={t.statistics.patientCount} fill="#8884d8" radius={[0, 4, 4, 0]}>
+                      {stats.referralSourceData.map((_: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="space-y-2 max-h-[350px] overflow-y-auto">
+                  {stats.referralSourceData.map((item: { name: string; value: number }, index: number) => (
+                    <div key={item.name} className="flex items-center justify-between p-2 rounded-md hover-elevate" data-testid={`referral-source-item-${index}`}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                        <span className="text-sm font-medium">{item.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">{item.value} {t.statistics.patient}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          ({stats.totalPatients > 0 ? ((item.value / stats.totalPatients) * 100).toFixed(1) : 0}%)
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Shift Distribution */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2" data-testid="text-shift-stats-title">
+                <Activity className="w-5 h-5 text-primary" />
+                {t.statistics.shiftStats}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={stats.shiftData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      paddingAngle={5}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    >
+                      {stats.shiftData.map((entry, index) => (
+                        <Cell key={`shift-cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [value, t.statistics.session]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3 flex flex-col justify-center">
+                  {stats.shiftData.map((item, index) => {
+                    const totalShiftVisits = stats.shiftData.reduce((sum, d) => sum + d.value, 0);
+                    return (
+                      <div key={item.name} className="flex items-center justify-between" data-testid={`shift-stat-item-${index}`}>
                         <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
                           <span className="text-sm font-medium">{item.name}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant="secondary">{item.value} {t.statistics.patient}</Badge>
+                          <Badge variant="secondary">{item.value} {t.statistics.session}</Badge>
                           <span className="text-xs text-muted-foreground">
-                            ({stats.totalPatients > 0 ? ((item.value / stats.totalPatients) * 100).toFixed(1) : 0}%)
+                            ({totalShiftVisits > 0 ? ((item.value / totalShiftVisits) * 100).toFixed(1) : 0}%)
                           </span>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Shift Distribution */}
-          {stats.shiftData.some(d => d.value > 0) && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2" data-testid="text-shift-stats-title">
-                  <Activity className="w-5 h-5 text-primary" />
-                  {t.statistics.shiftStats}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie
-                        data={stats.shiftData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        fill="#8884d8"
-                        paddingAngle={5}
-                        dataKey="value"
-                        label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                      >
-                        {stats.shiftData.map((entry, index) => (
-                          <Cell key={`shift-cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [value, t.statistics.session]} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-3 flex flex-col justify-center">
-                    {stats.shiftData.map((item, index) => {
-                      const totalShiftVisits = stats.shiftData.reduce((sum, d) => sum + d.value, 0);
-                      return (
-                        <div key={item.name} className="flex items-center justify-between" data-testid={`shift-stat-item-${index}`}>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                            <span className="text-sm font-medium">{item.name}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{item.value} {t.statistics.session}</Badge>
-                            <span className="text-xs text-muted-foreground">
-                              ({totalShiftVisits > 0 ? ((item.value / totalShiftVisits) * 100).toFixed(1) : 0}%)
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Monthly Trend */}
-          {stats.monthlyTrend.length > 1 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-primary" />
-                  {t.statistics.monthlyTrend}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={350}>
-                  <AreaChart data={stats.monthlyTrend}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis yAxisId="left" />
-                    <YAxis yAxisId="right" orientation="right" />
-                    <Tooltip />
-                    <Legend />
-                    <Area yAxisId="left" type="monotone" dataKey="patients" name={t.statistics.newPatients} stroke="#0088FE" fill="#0088FE" fillOpacity={0.3} />
-                    <Area yAxisId="left" type="monotone" dataKey="visits" name={t.statistics.visits} stroke="#00C49F" fill="#00C49F" fillOpacity={0.3} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                {t.statistics.monthlyTrend}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={350}>
+                <AreaChart data={stats.monthlyTrend}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis yAxisId="left" />
+                  <YAxis yAxisId="right" orientation="right" />
+                  <Tooltip />
+                  <Legend />
+                  <Area yAxisId="left" type="monotone" dataKey="patients" name={t.statistics.newPatients} stroke="#0088FE" fill="#0088FE" fillOpacity={0.3} />
+                  <Area yAxisId="left" type="monotone" dataKey="visits" name={t.statistics.visits} stroke="#00C49F" fill="#00C49F" fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
 
           {/* Detailed Statistics */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Amputation Sites */}
-            {stats.amputationSiteData.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Accessibility className="w-5 h-5 text-primary" />
-                    {t.statistics.amputationTypes}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {stats.amputationSiteData.map((item, index) => (
-                      <div key={item.name} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-mono text-slate-400 w-6">{index + 1}.</span>
-                          <span className="text-sm font-medium">{item.name}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full bg-blue-500 rounded-full"
-                              style={{ width: `${(item.value / stats.amputationSiteData[0].value) * 100}%` }}
-                            />
-                          </div>
-                          <Badge variant="secondary">{item.value}</Badge>
-                        </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Accessibility className="w-5 h-5 text-primary" />
+                  {t.statistics.amputationTypes}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {stats.amputationSiteData.map((item, index) => (
+                    <div key={item.name} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-mono text-slate-400 w-6">{index + 1}.</span>
+                        <span className="text-sm font-medium">{item.name}</span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-blue-500 rounded-full"
+                            style={{ width: `${(item.value / stats.amputationSiteData[0].value) * 100}%` }}
+                          />
+                        </div>
+                        <Badge variant="secondary">{item.value}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Disease Types */}
-            {stats.diseaseTypeData.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Stethoscope className="w-5 h-5 text-primary" />
-                    {t.statistics.diseaseTypes}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {stats.diseaseTypeData.map((item, index) => (
-                      <div key={item.name} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-mono text-slate-400 w-6">{index + 1}.</span>
-                          <span className="text-sm font-medium">{item.name}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full bg-green-500 rounded-full"
-                              style={{ width: `${(item.value / stats.diseaseTypeData[0].value) * 100}%` }}
-                            />
-                          </div>
-                          <Badge variant="secondary">{item.value}</Badge>
-                        </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Stethoscope className="w-5 h-5 text-primary" />
+                  {t.statistics.diseaseTypes}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {stats.diseaseTypeData.map((item, index) => (
+                    <div key={item.name} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-mono text-slate-400 w-6">{index + 1}.</span>
+                        <span className="text-sm font-medium">{item.name}</span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-green-500 rounded-full"
+                            style={{ width: `${(item.value / stats.diseaseTypeData[0].value) * 100}%` }}
+                          />
+                        </div>
+                        <Badge variant="secondary">{item.value}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Financial Summary */}
