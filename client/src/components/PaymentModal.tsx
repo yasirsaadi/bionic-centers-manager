@@ -29,8 +29,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { PlusCircle, Loader2, Calendar, Plus, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useBranchSession } from "@/components/BranchGate";
@@ -46,6 +44,7 @@ interface TreatmentEntry {
   treatmentType: string;
   sessionCount: number;
   cost: number;
+  isFree?: boolean;
 }
 
 const formSchema = insertPaymentSchema.extend({
@@ -87,7 +86,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
   const [open, setOpen] = useState(false);
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
-  const [isFreeSessions, setIsFreeSessions] = useState(false);
   const { mutate, isPending } = useAddPayment();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -120,7 +118,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       if (entry.treatmentType === "استشارة طبية") {
         return { ...entry, sessionCount: 0, cost: 0 };
       }
-      return { ...entry, cost: isFreeSessions ? 0 : price * (entry.sessionCount || 0) };
+      if (entry.isFree) {
+        return { ...entry, cost: 0 };
+      }
+      return { ...entry, cost: price * (entry.sessionCount || 0) };
     });
 
     const hasChanged = updatedEntries.some((e, i) => e.cost !== treatmentEntries[i].cost || e.sessionCount !== treatmentEntries[i].sessionCount);
@@ -128,7 +129,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       setTreatmentEntries(updatedEntries);
     }
 
-    const totalCost = isFreeSessions ? 0 : updatedEntries.reduce((sum, e) => sum + e.cost, 0);
+    const totalCost = updatedEntries.filter(e => !e.isFree).reduce((sum, e) => sum + e.cost, 0);
     form.setValue("amount", totalCost);
 
     const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
@@ -136,7 +137,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
 
     const allTypes = updatedEntries.map(e => e.treatmentType).filter(Boolean).join("، ");
     form.setValue("paymentTreatmentType", allTypes);
-  }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride, isFreeSessions]);
+  }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride]);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     if (isPhysiotherapy !== false) {
@@ -170,7 +171,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       date: submissionDate,
       paymentTreatmentType,
       sessionCount,
-      isFreeSessions: isFreeSessions || undefined,
       treatmentEntries: isPhysiotherapy !== false ? validEntries : undefined,
     } as any, {
       onSuccess: () => {
@@ -178,7 +178,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
         form.reset();
         setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
         setManualCostOverride(false);
-        setIsFreeSessions(false);
       },
     });
   }
@@ -188,7 +187,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
     if (!isOpen) {
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
-      setIsFreeSessions(false);
       form.reset();
     }
   };
@@ -227,28 +225,6 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
               )}
             />
 
-            {isPhysiotherapy !== false && canEnterZeroSessions && (
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
-                <Checkbox 
-                  id="freeSessions"
-                  checked={isFreeSessions}
-                  onCheckedChange={(checked) => {
-                    setIsFreeSessions(!!checked);
-                    if (checked) {
-                      setManualCostOverride(true);
-                      form.setValue("amount", 0);
-                    } else {
-                      setManualCostOverride(false);
-                    }
-                  }}
-                  data-testid="checkbox-free-sessions"
-                />
-                <Label htmlFor="freeSessions" className="text-sm font-medium cursor-pointer">
-                  {t.modals.freeSessions}
-                </Label>
-              </div>
-            )}
-
             {isPhysiotherapy !== false && (
               <div className="space-y-3">
                 <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
@@ -278,6 +254,12 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                         </Select>
                       </div>
 
+                      {entry.isFree && (
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                          {t.modals.freeSessions}
+                        </span>
+                      )}
+
                       {entry.treatmentType && entry.treatmentType !== "استشارة طبية" && (
                         <div className="w-[80px]">
                           <Input 
@@ -286,9 +268,9 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-payment-session-count-${index}`}
                             value={entry.sessionCount === 0 ? "0" : entry.sessionCount || ""}
-                            min={isFreeSessions || canEnterZeroSessions ? 0 : 1}
+                            min={entry.isFree || canEnterZeroSessions ? 0 : 1}
                             onChange={(e) => {
-                              const minVal = isFreeSessions || canEnterZeroSessions ? 0 : 1;
+                              const minVal = entry.isFree || canEnterZeroSessions ? 0 : 1;
                               const val = Math.max(minVal, Number(e.target.value) || 0);
                               const updated = [...treatmentEntries];
                               updated[index] = { ...updated[index], sessionCount: val };
@@ -298,13 +280,13 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                         </div>
                       )}
 
-                      {!isFreeSessions && (
+                      {!entry.isFree && (
                         <div className="text-sm font-mono text-muted-foreground">
                           {entry.cost.toLocaleString()}
                         </div>
                       )}
 
-                      {treatmentEntries.length > 1 && isAdmin && (
+                      {treatmentEntries.length > 1 && (isAdmin || entry.isFree) && (
                         <Button
                           type="button"
                           variant="ghost"
@@ -321,16 +303,30 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                     </div>
                   </div>
                 ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0 }])}
-                  className="gap-2"
-                  data-testid="button-add-payment-treatment-entry"
-                >
-                  <Plus className="w-4 h-4" />
-                  {t.modals.addTreatmentType}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0 }])}
+                    className="gap-2"
+                    data-testid="button-add-payment-treatment-entry"
+                  >
+                    <Plus className="w-4 h-4" />
+                    {t.modals.addTreatmentType}
+                  </Button>
+                  {canEnterZeroSessions && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0, isFree: true }])}
+                      className="gap-2 border-green-300 text-green-700 hover:bg-green-50"
+                      data-testid="button-add-free-treatment-entry"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t.modals.addFreeSessions}
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
 
