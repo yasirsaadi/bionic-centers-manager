@@ -256,7 +256,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                             className="text-left font-mono" 
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-payment-session-count-${index}`}
-                            value={entry.sessionCount || ""}
+                            value={entry.sessionCount === 0 ? "0" : entry.sessionCount || ""}
                             min={0}
                             onChange={(e) => {
                               const val = Math.max(0, Number(e.target.value) || 0);
