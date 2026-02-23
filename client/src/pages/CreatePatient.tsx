@@ -27,6 +27,8 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Loader2, ArrowRight, ArrowLeft, Building2, Plus, X } from "lucide-react";
 import { z } from "zod";
 import { useEffect, useState } from "react";
@@ -171,6 +173,8 @@ export default function CreatePatient() {
   
   const [injuryEntries, setInjuryEntries] = useState<InjuryEntry[]>([{ type: "", area: "", side: "" }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
+  const [isFreeSessions, setIsFreeSessions] = useState(false);
+  const canEnterZeroSessions = isAdmin || userRole === "branch_manager";
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
 
   // Silicone prosthetics state
@@ -266,7 +270,7 @@ export default function CreatePatient() {
       if (entry.treatmentType === "استشارة طبية") {
         return { ...entry, sessionCount: 0, cost: 0 };
       }
-      return { ...entry, cost: price * (entry.sessionCount || 0) };
+      return { ...entry, cost: isFreeSessions ? 0 : price * (entry.sessionCount || 0) };
     });
 
     const hasChanged = updatedEntries.some((e, i) => e.cost !== treatmentEntries[i].cost || e.sessionCount !== treatmentEntries[i].sessionCount);
@@ -274,7 +278,7 @@ export default function CreatePatient() {
       setTreatmentEntries(updatedEntries);
     }
 
-    const totalCost = updatedEntries.reduce((sum, e) => sum + e.cost, 0);
+    const totalCost = isFreeSessions ? 0 : updatedEntries.reduce((sum, e) => sum + e.cost, 0);
     form.setValue("totalCost", totalCost);
 
     const allTypes = updatedEntries.map(e => e.treatmentType).filter(Boolean).join("، ");
@@ -282,7 +286,7 @@ export default function CreatePatient() {
 
     const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
     form.setValue("sessionCount", totalSessions);
-  }, [treatmentEntries, conditionType, form, manualCostOverride]);
+  }, [treatmentEntries, conditionType, form, manualCostOverride, isFreeSessions]);
 
   function onSubmit(values: FormValues) {
     if (conditionType === "physiotherapy") {
@@ -1175,6 +1179,28 @@ export default function CreatePatient() {
                 )}
               />
               
+              {conditionType === "physiotherapy" && canEnterZeroSessions && (
+                <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
+                  <Checkbox 
+                    id="freeSessionsCreate"
+                    checked={isFreeSessions}
+                    onCheckedChange={(checked) => {
+                      setIsFreeSessions(!!checked);
+                      if (checked) {
+                        setManualCostOverride(true);
+                        form.setValue("totalCost", 0);
+                      } else {
+                        setManualCostOverride(false);
+                      }
+                    }}
+                    data-testid="checkbox-free-sessions-create"
+                  />
+                  <Label htmlFor="freeSessionsCreate" className="text-sm font-medium cursor-pointer">
+                    {t.modals.freeSessions}
+                  </Label>
+                </div>
+              )}
+
               {conditionType === "physiotherapy" && (
                 <div className="space-y-3">
                   <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
@@ -1223,10 +1249,12 @@ export default function CreatePatient() {
                           </div>
                         )}
 
+                        {!isFreeSessions && (
                         <div className="w-[120px] text-sm font-mono text-muted-foreground flex items-center gap-1">
                           <span>{t.modals.treatmentCost}:</span>
                           <span>{entry.cost.toLocaleString()}</span>
                         </div>
+                        )}
 
                         {treatmentEntries.length > 1 && isAdmin && (
                           <Button
@@ -1258,12 +1286,22 @@ export default function CreatePatient() {
                     {t.modals.addTreatmentType}
                   </Button>
 
+                  {!isFreeSessions && (
                   <div className="bg-slate-100 p-3 rounded-lg">
                     <div className="flex justify-between gap-2 items-center font-semibold text-primary">
                       <span>{t.modals.totalForAllTreatments}</span>
                       <span className="font-mono">{treatmentEntries.reduce((sum, e) => sum + e.cost, 0).toLocaleString()} {t.patientDetails.currency}</span>
                     </div>
                   </div>
+                  )}
+                  {isFreeSessions && (
+                  <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                    <div className="flex justify-between gap-2 items-center font-semibold text-green-700">
+                      <span>{t.modals.freeSessions}</span>
+                      <span className="font-mono">0 {t.patientDetails.currency}</span>
+                    </div>
+                  </div>
+                  )}
                 </div>
               )}
 
@@ -1288,8 +1326,8 @@ export default function CreatePatient() {
                       <Input
                         type="number"
                         {...field}
-                        readOnly={!isAdmin && conditionType === "physiotherapy"}
-                        className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
+                        readOnly={isFreeSessions || (!isAdmin && conditionType === "physiotherapy")}
+                        className={`font-mono text-left ${isFreeSessions || (!isAdmin && conditionType === "physiotherapy") ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
                         placeholder="0.00"
                         data-testid="input-total-cost"
                         onChange={(e) => {
