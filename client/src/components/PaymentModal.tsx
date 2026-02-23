@@ -91,6 +91,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
   const dir = t.dir;
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
+  const canEnterZeroSessions = isAdmin || branchSession?.role === "branch_manager";
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -257,9 +258,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-payment-session-count-${index}`}
                             value={entry.sessionCount === 0 ? "0" : entry.sessionCount || ""}
-                            min={0}
+                            min={canEnterZeroSessions ? 0 : 1}
                             onChange={(e) => {
-                              const val = Math.max(0, Number(e.target.value) || 0);
+                              const minVal = canEnterZeroSessions ? 0 : 1;
+                              const val = Math.max(minVal, Number(e.target.value) || 0);
                               const updated = [...treatmentEntries];
                               updated[index] = { ...updated[index], sessionCount: val };
                               setTreatmentEntries(updated);
