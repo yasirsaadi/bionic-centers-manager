@@ -68,6 +68,7 @@ import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch, TreatmentPlan } from "@shared/schema";
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -126,6 +127,7 @@ export default function PatientDetails() {
   const [editPaymentNotes, setEditPaymentNotes] = useState<string>("");
   const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
   const [editPaymentTreatmentType, setEditPaymentTreatmentType] = useState<string>("");
+  const [editPaymentFreeSessions, setEditPaymentFreeSessions] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const [showTreatmentPlanDialog, setShowTreatmentPlanDialog] = useState(false);
@@ -416,11 +418,12 @@ export default function PatientDetails() {
     }
   });
 
-  const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null }) => {
+  const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null, isFreeSessions?: boolean | null }) => {
     setEditPaymentAmount(String(payment.amount));
     setEditPaymentNotes(payment.notes || "");
     setEditPaymentSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
     setEditPaymentTreatmentType(payment.paymentTreatmentType?.split(",")[0]?.trim() || "");
+    setEditPaymentFreeSessions(!!payment.isFreeSessions);
     if (payment.date) {
       const d = new Date(payment.date);
       const baghdadOffset = 3 * 60 * 60 * 1000;
@@ -1122,7 +1125,12 @@ export default function PatientDetails() {
                     ) : (
                       patient.payments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
-                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">{payment.amount.toLocaleString('ar-IQ')} {t.patientDetails.currency}</td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">
+                            {payment.amount.toLocaleString('ar-IQ')} {t.patientDetails.currency}
+                            {(payment as any).isFreeSessions && (
+                              <Badge variant="secondary" className="mr-1 text-xs" data-testid={`badge-free-session-${payment.id}`}>{t.modals.freeSessions}</Badge>
+                            )}
+                          </td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
                             <div>{formatDateIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
@@ -1150,7 +1158,7 @@ export default function PatientDetails() {
                                   variant="ghost" 
                                   size="icon" 
                                   className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType, date: payment.date ? String(payment.date) : null })}
+                                  onClick={() => openEditPayment({ id: payment.id, amount: payment.amount, notes: payment.notes, sessionCount: payment.sessionCount, paymentTreatmentType: payment.paymentTreatmentType, date: payment.date ? String(payment.date) : null, isFreeSessions: (payment as any).isFreeSessions })}
                                   data-testid={`button-edit-payment-${payment.id}`}
                                 >
                                   <Pencil className="w-4 h-4" />
@@ -1731,6 +1739,24 @@ export default function PatientDetails() {
                 />
               </div>
             )}
+            {(isAdmin || branchSession?.role === "branch_manager") && patient.isPhysiotherapy && (
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
+                <Checkbox 
+                  id="editFreeSessions"
+                  checked={editPaymentFreeSessions}
+                  onCheckedChange={(checked) => {
+                    setEditPaymentFreeSessions(!!checked);
+                    if (checked) {
+                      setEditPaymentAmount("0");
+                    }
+                  }}
+                  data-testid="checkbox-edit-free-sessions"
+                />
+                <Label htmlFor="editFreeSessions" className="text-sm font-medium cursor-pointer">
+                  {t.modals.freeSessions}
+                </Label>
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.patientDetails.amountCurrency}</label>
               <Input 
@@ -1739,6 +1765,7 @@ export default function PatientDetails() {
                 placeholder={t.patientDetails.enterAmount}
                 value={editPaymentAmount}
                 onChange={(e) => setEditPaymentAmount(e.target.value)}
+                readOnly={editPaymentFreeSessions}
                 data-testid="input-edit-payment-amount"
               />
             </div>
@@ -1792,12 +1819,13 @@ export default function PatientDetails() {
                 if (editingPayment) {
                   updatePaymentFull.mutate({
                     paymentId: editingPayment.id,
-                    amount: Number(editPaymentAmount),
+                    amount: editPaymentFreeSessions ? 0 : Number(editPaymentAmount),
                     notes: editPaymentNotes || null,
                     sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
                     paymentTreatmentType: patient.isPhysiotherapy ? (editPaymentTreatmentType || null) : null,
                     customDate: editPaymentDate || undefined,
-                  });
+                    isFreeSessions: editPaymentFreeSessions || undefined,
+                  } as any);
                 }
               }}
               disabled={updatePaymentFull.isPending || !editPaymentAmount}

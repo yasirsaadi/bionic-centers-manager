@@ -88,6 +88,7 @@ export const payments = pgTable("payments", {
   notes: text("notes"),
   paymentTreatmentType: text("payment_treatment_type"),
   sessionCount: integer("session_count"),
+  isFreeSessions: boolean("is_free_sessions").default(false),
   date: timestamp("date").defaultNow(),
 });
 

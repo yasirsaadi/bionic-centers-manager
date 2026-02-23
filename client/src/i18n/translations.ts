@@ -1090,6 +1090,8 @@ const translations = {
       removeTreatmentType: "إزالة",
       treatmentCost: "التكلفة",
       totalForAllTreatments: "إجمالي جميع العلاجات",
+      freeSessions: "جلسات مجانية",
+      freeSessionsNote: "الجلسات المجانية لا تؤثر على الحساب المالي",
     },
     surveys: {
       title: "نظام الاستبيانات",
@@ -2244,6 +2246,8 @@ const translations = {
       removeTreatmentType: "Remove",
       treatmentCost: "Cost",
       totalForAllTreatments: "Total for All Treatments",
+      freeSessions: "Free Sessions",
+      freeSessionsNote: "Free sessions do not affect the financial account",
     },
     surveys: {
       title: "Survey System",

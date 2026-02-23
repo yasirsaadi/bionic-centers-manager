@@ -1384,27 +1384,36 @@ export async function registerRoutes(
     const { treatmentEntries, ...bodyWithoutEntries } = req.body;
     const input = api.payments.create.input.parse(bodyWithoutEntries);
     
-    // Check if patient has remaining balance before accepting payment
-    const patient = await storage.getPatient(input.patientId);
-    if (patient) {
-      const payments = await storage.getPaymentsByPatientId(input.patientId);
-      const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-      const remaining = (patient.totalCost || 0) - totalPaid;
-      if (remaining <= 0) {
-        return res.status(400).json({ message: "لا يمكن تسجيل دفعة جديدة لعدم وجود مبلغ متبقي. الرجاء إضافة خدمة جديدة أولاً." });
+    // Authorization: Only admin or branch_manager can set isFreeSessions to true
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const isBranchManager = branchSession?.role === "branch_manager";
+    const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
+    
+    // Check if patient has remaining balance before accepting payment (skip for free sessions)
+    if (!isFreeSessions) {
+      const patient = await storage.getPatient(input.patientId);
+      if (patient) {
+        const payments = await storage.getPaymentsByPatientId(input.patientId);
+        const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+        const remaining = (patient.totalCost || 0) - totalPaid;
+        if (remaining <= 0) {
+          return res.status(400).json({ message: "لا يمكن تسجيل دفعة جديدة لعدم وجود مبلغ متبقي. الرجاء إضافة خدمة جديدة أولاً." });
+        }
       }
     }
     
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
       const results = [];
       for (const entry of treatmentEntries) {
-        if (entry.cost > 0) {
+        if (entry.cost > 0 || isFreeSessions) {
           const payment = await storage.createPayment({
             ...input,
-            amount: entry.cost,
+            amount: isFreeSessions ? 0 : entry.cost,
             notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
             paymentTreatmentType: entry.treatmentType,
             sessionCount: entry.sessionCount,
+            isFreeSessions: isFreeSessions,
           });
           results.push(payment);
         }
@@ -1442,16 +1451,25 @@ export async function registerRoutes(
 
   app.patch("/api/payments/:id", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "مسؤول النظام فقط يمكنه تعديل المدفوعات" });
+    const isAdmin = branchSession?.isAdmin;
+    const isBranchManager = branchSession?.role === "branch_manager";
+    
+    // Only admin or branch_manager can edit payments
+    if (!isAdmin && !isBranchManager) {
+      return res.status(403).json({ message: "ليس لديك صلاحية لتعديل المدفوعات" });
     }
+    
     const id = Number(req.params.id);
-    const { amount, notes, sessionCount, paymentTreatmentType, customDate } = req.body;
+    const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions } = req.body;
     const updateData: any = {};
     if (amount !== undefined) updateData.amount = amount;
     if (notes !== undefined) updateData.notes = notes || null;
     if (sessionCount !== undefined) updateData.sessionCount = sessionCount || null;
     if (paymentTreatmentType !== undefined) updateData.paymentTreatmentType = paymentTreatmentType || null;
+    // Only admin or branch_manager can set isFreeSessions
+    if (isFreeSessions !== undefined) {
+      updateData.isFreeSessions = (isAdmin || isBranchManager) ? !!isFreeSessions : false;
+    }
     if (customDate !== undefined) {
       const baghdadOffset = 3 * 60 * 60 * 1000;
       const nowBaghdad = new Date(Date.now() + baghdadOffset);
