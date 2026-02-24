@@ -1450,14 +1450,15 @@ export async function registerRoutes(
   });
 
   app.patch("/api/payments/:id", isAuthenticated, async (req, res) => {
+    const permissions = getPermissions(req);
+    
+    if (!permissions.canEditPayments) {
+      return res.status(403).json({ message: "ليس لديك صلاحية لتعديل المدفوعات" });
+    }
+    
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const isBranchManager = branchSession?.role === "branch_manager";
-    
-    // Only admin or branch_manager can edit payments
-    if (!isAdmin && !isBranchManager) {
-      return res.status(403).json({ message: "ليس لديك صلاحية لتعديل المدفوعات" });
-    }
     
     const id = Number(req.params.id);
     const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions } = req.body;
