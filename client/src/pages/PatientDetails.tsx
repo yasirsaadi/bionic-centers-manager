@@ -1116,7 +1116,7 @@ export default function PatientDetails() {
                         <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.sessionCount}</th>
                       )}
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.notes}</th>
-                      {isAdmin && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.common.actions}</th>}
+                      {(permissions.canEditPayments || permissions.canDeletePayments) && <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.common.actions}</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1151,9 +1151,10 @@ export default function PatientDetails() {
                             </td>
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{payment.notes || "-"}</td>
-                          {isAdmin && (
+                          {(permissions.canEditPayments || permissions.canDeletePayments) && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
                               <div className="flex gap-1 justify-center">
+                                {permissions.canEditPayments && (
                                 <Button 
                                   variant="ghost" 
                                   size="icon" 
@@ -1163,6 +1164,8 @@ export default function PatientDetails() {
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </Button>
+                                )}
+                                {permissions.canDeletePayments && (
                                 <Button 
                                   variant="ghost" 
                                   size="icon" 
@@ -1173,6 +1176,7 @@ export default function PatientDetails() {
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
+                                )}
                               </div>
                             </td>
                           )}
@@ -1726,7 +1730,7 @@ export default function PatientDetails() {
             <DialogTitle className="font-display text-xl text-primary">{t.patientDetails.editPayment}</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
-            {isAdmin && (
+            {permissions.canEditPayments && (
               <div className="space-y-2">
                 <label className="text-sm font-medium flex items-center gap-2">
                   <Calendar className="w-4 h-4" />
