@@ -1,13 +1,15 @@
 import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
-import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2, UserPlus, Stethoscope } from "lucide-react";
+import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2, UserPlus, Stethoscope, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
@@ -37,9 +39,15 @@ function DashboardContent() {
   const { canViewPayments } = usePermissions();
   const { t } = useTranslation();
   
+  const todayISO = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+  
   const [selectedBranch, setSelectedBranch] = useState<string>(
     isAdmin ? "all" : (userBranchId?.toString() || "all")
   );
+  const [selectedDate, setSelectedDate] = useState<string>(todayISO);
   
   const effectiveBranchFilter = isAdmin ? selectedBranch : (userBranchId?.toString() || "all");
   
@@ -95,10 +103,11 @@ function DashboardContent() {
     totalVisits: number;
     paid: number;
   }>({
-    queryKey: ["/api/reports/daily", effectiveBranchFilter],
+    queryKey: ["/api/reports/daily", effectiveBranchFilter, selectedDate],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      if (selectedDate) params.append("date", selectedDate);
       const url = `/api/reports/daily${params.toString() ? `?${params}` : ""}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) return { date: "", totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0, paid: 0 };
@@ -124,8 +133,8 @@ function DashboardContent() {
   const physioCount = stats?.physiotherapy || 0;
   const medicalSupportCount = stats?.medicalSupport || 0;
 
-  // Format today's date
-  const todayFormatted = formatDateIraq(new Date());
+  const isToday = selectedDate === todayISO;
+  const selectedDateFormatted = formatDateIraq(new Date(selectedDate + "T00:00:00"));
   
   return (
     <div className="space-y-6 md:space-y-8 page-transition">
@@ -211,10 +220,33 @@ function DashboardContent() {
 
       {/* Daily Stats */}
       <div>
-        <h3 className="text-base md:text-lg font-bold text-slate-700 mb-3 md:mb-4 flex items-center gap-2">
-          <Calendar className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
-          {t.dashboard.todayStats} ({todayFormatted})
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 md:mb-4">
+          <h3 className="text-base md:text-lg font-bold text-slate-700 flex items-center gap-2">
+            <Calendar className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
+            {isToday ? t.dashboard.todayStats : `${t.dashboard.dateStats}`} ({selectedDateFormatted})
+          </h3>
+          <div className="flex items-center gap-2">
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value || todayISO)}
+              className="w-40 h-9 text-sm"
+              data-testid="input-daily-date"
+            />
+            {!isToday && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedDate(todayISO)}
+                className="text-xs h-9 gap-1"
+                data-testid="button-reset-to-today"
+              >
+                <RotateCcw className="w-3 h-3" />
+                {t.dashboard.today}
+              </Button>
+            )}
+          </div>
+        </div>
         {isDailyLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
             {[1, 2, 3, 4, 5].map((i) => (
@@ -226,7 +258,7 @@ function DashboardContent() {
             <div>
               <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
                 <UserPlus className="w-4 h-4" />
-                {t.dashboard.newPatientsToday}
+                {isToday ? t.dashboard.newPatientsToday : t.dashboard.newPatientsOnDate}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
@@ -259,7 +291,7 @@ function DashboardContent() {
             <div>
               <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
                 <Stethoscope className="w-4 h-4" />
-                {t.dashboard.visitingPatientsToday}
+                {isToday ? t.dashboard.visitingPatientsToday : t.dashboard.visitingPatientsOnDate}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
@@ -299,7 +331,7 @@ function DashboardContent() {
             {canViewPayments && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
-                  title={t.dashboard.dailyRevenue} 
+                  title={isToday ? t.dashboard.dailyRevenue : t.dashboard.dateRevenue} 
                   value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
                   icon={Banknote} 
                   color="primary"

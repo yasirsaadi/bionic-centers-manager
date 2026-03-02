@@ -1794,9 +1794,10 @@ export async function registerRoutes(
     });
   });
 
-  // Daily statistics endpoint - supports branchId filter
+  // Daily statistics endpoint - supports branchId and date filter
   app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
     const branchIdParam = req.query.branchId as string | undefined;
+    const dateParam = req.query.date as string | undefined;
     const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
     
     const allPatients = await storage.getPatients();
@@ -1807,10 +1808,18 @@ export async function registerRoutes(
       ? allPatients.filter(p => p.branchId === filterBranchId)
       : allPatients;
     
-    // Get today's date range (start of day to end of day)
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    // Get date range (use provided date or today) - parse YYYY-MM-DD as local date to avoid timezone issues
+    let startOfDay: Date;
+    let endOfDay: Date;
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      const [year, month, day] = dateParam.split('-').map(Number);
+      startOfDay = new Date(year, month - 1, day);
+      endOfDay = new Date(year, month - 1, day + 1);
+    } else {
+      const today = new Date();
+      startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    }
     
     // Filter patients registered today (new registrations)
     const newTodayPatients = filteredPatients.filter(p => {
