@@ -31,7 +31,7 @@ export function StatsCard({ title, value, icon: Icon, trend, color = "primary", 
       <div className="flex justify-between items-start gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-xs md:text-sm text-muted-foreground font-medium mb-0.5 md:mb-1 truncate">{title}</p>
-          <h3 className="text-lg md:text-3xl font-bold font-display text-slate-800 tracking-tight truncate">{value}</h3>
+          <h3 className="text-base md:text-2xl font-bold font-display text-slate-800 tracking-tight break-words leading-tight">{value}</h3>
           {trend && (
             <p className="text-xs text-emerald-600 font-medium mt-1 md:mt-2 flex items-center gap-1">
               {trend}
