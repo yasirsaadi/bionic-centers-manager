@@ -224,6 +224,8 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                         value={field.value || ""}
                         placeholder="ما تم خلال الزيارة: فحص، قياسات، تعديلات..."
                         className="min-h-[100px]"
+                        dir="auto"
+                        style={{ unicodeBidi: "plaintext" }}
                         data-testid="input-visit-details"
                       />
                     </FormControl>
@@ -409,6 +411,8 @@ export function VisitOrServiceModal({ patientId, branchId, currentTotalCost }: V
                         {...field} 
                         placeholder="مثال: صيانة دورية للطرف الأيمن..." 
                         className="resize-none"
+                        dir="auto"
+                        style={{ unicodeBidi: "plaintext" }}
                         data-testid="input-service-notes"
                       />
                     </FormControl>

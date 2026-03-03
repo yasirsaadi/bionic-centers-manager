@@ -365,7 +365,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                 <FormItem>
                   <FormLabel>{t.modals.notes}</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} placeholder={t.modals.notesPlaceholder} data-testid="input-payment-notes" />
+                    <Input {...field} value={field.value || ""} placeholder={t.modals.notesPlaceholder} dir="auto" style={{ unicodeBidi: "plaintext" }} data-testid="input-payment-notes" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

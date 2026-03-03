@@ -171,6 +171,8 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
                       value={field.value || ""}
                       placeholder={t.modals.visitDetailsPlaceholder}
                       className="min-h-[100px]"
+                      dir="auto"
+                      style={{ unicodeBidi: "plaintext" }}
                       data-testid="input-edit-visit-details"
                     />
                   </FormControl>
@@ -186,7 +188,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
                 <FormItem>
                   <FormLabel>{t.modals.additionalNotes}</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} placeholder={t.modals.additionalNotesPlaceholder} data-testid="input-edit-visit-notes" />
+                    <Input {...field} value={field.value || ""} placeholder={t.modals.additionalNotesPlaceholder} dir="auto" style={{ unicodeBidi: "plaintext" }} data-testid="input-edit-visit-notes" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

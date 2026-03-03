@@ -149,6 +149,8 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
                       value={field.value || ""}
                       placeholder={t.modals.visitReasonPlaceholder}
                       className="min-h-[100px]"
+                      dir="auto"
+                      style={{ unicodeBidi: "plaintext" }}
                     />
                   </FormControl>
                   <FormMessage />
