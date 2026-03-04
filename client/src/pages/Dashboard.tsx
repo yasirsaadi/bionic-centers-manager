@@ -344,7 +344,7 @@ function DashboardContent() {
                     onClick={() => navigate("/revenues?daily=true")}
                     data-testid="card-daily-revenue"
                   />
-                  {dailyStats?.branchRevenues?.filter(br => br.paid > 0 || effectiveBranchFilter !== "all").map(br => (
+                  {dailyStats?.branchRevenues?.map(br => (
                     <StatsCard 
                       key={br.branchId}
                       title={(t.branches as Record<string, string>)[br.branchName] || br.branchName} 
