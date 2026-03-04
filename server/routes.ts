@@ -1850,8 +1850,9 @@ export async function registerRoutes(
       ? branches.filter(b => b.id === filterBranchId)
       : branches;
     
-    // Get today's payments
+    // Get today's payments with per-branch breakdown
     let todayPaid = 0;
+    const branchRevenues: { branchId: number; branchName: string; paid: number }[] = [];
     for (const branch of branchesToCheck) {
       const branchPayments = await storage.getPaymentsByBranch(branch.id);
       const todayBranchPayments = branchPayments.filter(p => {
@@ -1859,7 +1860,9 @@ export async function registerRoutes(
         const paymentDate = new Date(p.date);
         return paymentDate >= startOfDay && paymentDate < endOfDay;
       });
-      todayPaid += todayBranchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+      const branchPaid = todayBranchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+      todayPaid += branchPaid;
+      branchRevenues.push({ branchId: branch.id, branchName: branch.name, paid: branchPaid });
     }
     
     res.json({
@@ -1877,7 +1880,8 @@ export async function registerRoutes(
       visitingPhysiotherapy: visitingPatients.filter(p => p.isPhysiotherapy).length,
       visitingMedicalSupport: visitingPatients.filter(p => p.isMedicalSupport).length,
       totalVisits: todayVisitCount,
-      paid: todayPaid
+      paid: todayPaid,
+      branchRevenues
     });
   });
 

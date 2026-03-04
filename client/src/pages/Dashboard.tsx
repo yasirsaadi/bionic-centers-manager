@@ -102,6 +102,7 @@ function DashboardContent() {
     visitingMedicalSupport: number;
     totalVisits: number;
     paid: number;
+    branchRevenues?: { branchId: number; branchName: string; paid: number }[];
   }>({
     queryKey: ["/api/reports/daily", effectiveBranchFilter, selectedDate],
     queryFn: async () => {
@@ -110,7 +111,7 @@ function DashboardContent() {
       if (selectedDate) params.append("date", selectedDate);
       const url = `/api/reports/daily${params.toString() ? `?${params}` : ""}`;
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) return { date: "", totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0, paid: 0 };
+      if (!res.ok) return { date: "", totalPatients: 0, amputees: 0, physiotherapy: 0, medicalSupport: 0, paid: 0, branchRevenues: [] };
       return res.json();
     },
   });
@@ -329,15 +330,31 @@ function DashboardContent() {
               </div>
             </div>
             {canViewPayments && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-                <StatsCard 
-                  title={isToday ? t.dashboard.dailyRevenue : t.dashboard.dateRevenue} 
-                  value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
-                  icon={Banknote} 
-                  color="primary"
-                  onClick={() => navigate("/revenues?daily=true")}
-                  data-testid="card-daily-revenue"
-                />
+              <div>
+                <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                  <Banknote className="w-4 h-4" />
+                  {isToday ? t.dashboard.dailyRevenue : t.dashboard.dateRevenue}
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+                  <StatsCard 
+                    title={t.dashboard.totalRevenue} 
+                    value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
+                    icon={Banknote} 
+                    color="primary"
+                    onClick={() => navigate("/revenues?daily=true")}
+                    data-testid="card-daily-revenue"
+                  />
+                  {dailyStats?.branchRevenues?.filter(br => br.paid > 0 || effectiveBranchFilter !== "all").map(br => (
+                    <StatsCard 
+                      key={br.branchId}
+                      title={(t.branches as Record<string, string>)[br.branchName] || br.branchName} 
+                      value={`${br.paid.toLocaleString()} ${t.dashboard.currencyIQD}`} 
+                      icon={Building2} 
+                      color={br.paid > 0 ? "green" : "blue"}
+                      data-testid={`card-branch-revenue-${br.branchId}`}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
