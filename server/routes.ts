@@ -1808,17 +1808,22 @@ export async function registerRoutes(
       ? allPatients.filter(p => p.branchId === filterBranchId)
       : allPatients;
     
-    // Get date range (use provided date or today) - parse YYYY-MM-DD as local date to avoid timezone issues
+    // Get date range in Baghdad timezone (UTC+3) to match user's local date
+    const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
     let startOfDay: Date;
     let endOfDay: Date;
     if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
       const [year, month, day] = dateParam.split('-').map(Number);
-      startOfDay = new Date(year, month - 1, day);
-      endOfDay = new Date(year, month - 1, day + 1);
+      startOfDay = new Date(Date.UTC(year, month - 1, day) - BAGHDAD_OFFSET_MS);
+      endOfDay = new Date(Date.UTC(year, month - 1, day + 1) - BAGHDAD_OFFSET_MS);
     } else {
-      const today = new Date();
-      startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+      const nowUtc = Date.now();
+      const baghdadNow = new Date(nowUtc + BAGHDAD_OFFSET_MS);
+      const year = baghdadNow.getUTCFullYear();
+      const month = baghdadNow.getUTCMonth();
+      const day = baghdadNow.getUTCDate();
+      startOfDay = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
+      endOfDay = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
     }
     
     // Filter patients registered today (new registrations)
