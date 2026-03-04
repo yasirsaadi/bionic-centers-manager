@@ -209,3 +209,11 @@ Preferred communication style: Simple, everyday language.
 - API endpoints: GET `/api/survey-templates`, GET `/api/survey-templates/:id/questions`, GET/POST `/api/survey-responses`, GET `/api/survey-results`
 - Responses auto-calculate totalScore, maxScore, percentage
 - Surveyor role redirects to /surveys on login, sees only survey functionality
+
+### Daily Stats Performance Optimization (March 2026)
+- `/api/reports/daily` endpoint rewritten to use 4 direct parameterized SQL queries instead of N+1 queries (was 554+ individual queries for each patient's visits)
+- Uses drizzle-orm `sql` tagged template literals for parameterized queries (no SQL injection risk)
+- Baghdad timezone (UTC+3) date boundaries computed correctly for `timestamp without time zone` columns
+- Dates converted to plain timestamp strings (no `Z` suffix) with explicit `::timestamp` casts for correct comparison
+- Branch filter validated (returns 400 for invalid branchId)
+- Error handling with try/catch and Arabic error message

@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import type { Patient, Payment } from "@shared/schema";
@@ -1795,99 +1797,148 @@ export async function registerRoutes(
   });
 
   // Daily statistics endpoint - supports branchId and date filter
+  // Optimized: uses direct SQL queries instead of loading all data into memory
   app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
-    const branchIdParam = req.query.branchId as string | undefined;
-    const dateParam = req.query.date as string | undefined;
-    const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
-    
-    const allPatients = await storage.getPatients();
-    const branches = await storage.getBranches();
-    
-    // Filter patients by branch if specified
-    const filteredPatients = filterBranchId 
-      ? allPatients.filter(p => p.branchId === filterBranchId)
-      : allPatients;
-    
-    // Get date range in Baghdad timezone (UTC+3) to match user's local date
-    const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
-    let startOfDay: Date;
-    let endOfDay: Date;
-    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-      const [year, month, day] = dateParam.split('-').map(Number);
-      startOfDay = new Date(Date.UTC(year, month - 1, day) - BAGHDAD_OFFSET_MS);
-      endOfDay = new Date(Date.UTC(year, month - 1, day + 1) - BAGHDAD_OFFSET_MS);
-    } else {
-      const nowUtc = Date.now();
-      const baghdadNow = new Date(nowUtc + BAGHDAD_OFFSET_MS);
-      const year = baghdadNow.getUTCFullYear();
-      const month = baghdadNow.getUTCMonth();
-      const day = baghdadNow.getUTCDate();
-      startOfDay = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
-      endOfDay = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
-    }
-    
-    // Filter patients registered today (new registrations)
-    const newTodayPatients = filteredPatients.filter(p => {
-      if (!p.createdAt) return false;
-      const createdAt = new Date(p.createdAt);
-      return createdAt >= startOfDay && createdAt < endOfDay;
-    });
-    
-    // Find patients who visited today (regardless of registration date)
-    const todayVisitPatientIds = new Set<number>();
-    let todayVisitCount = 0;
-    for (const patient of filteredPatients) {
-      const visits = await storage.getVisitsByPatientId(patient.id);
-      const todayVisits = visits.filter(v => {
-        if (!v.visitDate) return false;
-        const visitDate = new Date(v.visitDate);
-        return visitDate >= startOfDay && visitDate < endOfDay;
-      });
-      if (todayVisits.length > 0) {
-        todayVisitPatientIds.add(patient.id);
-        todayVisitCount += todayVisits.length;
+    try {
+      const branchIdParam = req.query.branchId as string | undefined;
+      const dateParam = req.query.date as string | undefined;
+      const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
+      
+      if (filterBranchId !== null && isNaN(filterBranchId)) {
+        return res.status(400).json({ message: "معرف الفرع غير صالح" });
       }
-    }
-    const visitingPatients = filteredPatients.filter(p => todayVisitPatientIds.has(p.id));
-    
-    // Get branches to check payments
-    const branchesToCheck = filterBranchId 
-      ? branches.filter(b => b.id === filterBranchId)
-      : branches;
-    
-    // Get today's payments with per-branch breakdown
-    let todayPaid = 0;
-    const branchRevenues: { branchId: number; branchName: string; paid: number }[] = [];
-    for (const branch of branchesToCheck) {
-      const branchPayments = await storage.getPaymentsByBranch(branch.id);
-      const todayBranchPayments = branchPayments.filter(p => {
-        if (!p.date) return false;
-        const paymentDate = new Date(p.date);
-        return paymentDate >= startOfDay && paymentDate < endOfDay;
+      
+      const branches = await storage.getBranches();
+      
+      const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
+      let startOfDayUTC: Date;
+      let endOfDayUTC: Date;
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const [year, month, day] = dateParam.split('-').map(Number);
+        startOfDayUTC = new Date(Date.UTC(year, month - 1, day) - BAGHDAD_OFFSET_MS);
+        endOfDayUTC = new Date(Date.UTC(year, month - 1, day + 1) - BAGHDAD_OFFSET_MS);
+      } else {
+        const baghdadNow = new Date(Date.now() + BAGHDAD_OFFSET_MS);
+        const year = baghdadNow.getUTCFullYear();
+        const month = baghdadNow.getUTCMonth();
+        const day = baghdadNow.getUTCDate();
+        startOfDayUTC = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
+        endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
+      }
+      
+      const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
+      const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
+      
+      const newPatientsResult = filterBranchId
+        ? await db.execute(sql`
+            SELECT 
+              COUNT(*) as total,
+              COUNT(*) FILTER (WHERE is_amputee = true) as amputees,
+              COUNT(*) FILTER (WHERE is_physiotherapy = true) as physiotherapy,
+              COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
+            FROM patients 
+            WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+          `)
+        : await db.execute(sql`
+            SELECT 
+              COUNT(*) as total,
+              COUNT(*) FILTER (WHERE is_amputee = true) as amputees,
+              COUNT(*) FILTER (WHERE is_physiotherapy = true) as physiotherapy,
+              COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
+            FROM patients 
+            WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp
+          `);
+      const newStats = newPatientsResult.rows[0] || { total: 0, amputees: 0, physiotherapy: 0, medical_support: 0 };
+      
+      const visitsResult = filterBranchId
+        ? await db.execute(sql`
+            SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
+            FROM visits 
+            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+          `)
+        : await db.execute(sql`
+            SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
+            FROM visits 
+            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp
+          `);
+      const visitStats = visitsResult.rows[0] || { total_visits: 0, unique_patients: 0 };
+      
+      const visitingBreakdownResult = filterBranchId
+        ? await db.execute(sql`
+            SELECT 
+              COUNT(DISTINCT v.patient_id) as visiting_patients,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_amputee = true) as visiting_amputees,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_physiotherapy = true) as visiting_physiotherapy,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
+            FROM visits v
+            JOIN patients p ON v.patient_id = p.id
+            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.branch_id = ${filterBranchId}
+          `)
+        : await db.execute(sql`
+            SELECT 
+              COUNT(DISTINCT v.patient_id) as visiting_patients,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_amputee = true) as visiting_amputees,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_physiotherapy = true) as visiting_physiotherapy,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
+            FROM visits v
+            JOIN patients p ON v.patient_id = p.id
+            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp
+          `);
+      const visitingStats = visitingBreakdownResult.rows[0] || { visiting_patients: 0, visiting_amputees: 0, visiting_physiotherapy: 0, visiting_medical_support: 0 };
+      
+      const branchesToCheck = filterBranchId 
+        ? branches.filter(b => b.id === filterBranchId)
+        : branches;
+      
+      const paymentsResult = filterBranchId
+        ? await db.execute(sql`
+            SELECT branch_id, COALESCE(SUM(amount), 0) as paid
+            FROM payments 
+            WHERE date >= ${startTs}::timestamp AND date < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+            GROUP BY branch_id
+          `)
+        : await db.execute(sql`
+            SELECT branch_id, COALESCE(SUM(amount), 0) as paid
+            FROM payments 
+            WHERE date >= ${startTs}::timestamp AND date < ${endTs}::timestamp
+            GROUP BY branch_id
+          `);
+      
+      const paymentsByBranch = new Map<number, number>();
+      for (const row of paymentsResult.rows) {
+        paymentsByBranch.set(Number(row.branch_id), Number(row.paid));
+      }
+      
+      let todayPaid = 0;
+      const branchRevenues: { branchId: number; branchName: string; paid: number }[] = [];
+      for (const branch of branchesToCheck) {
+        const branchPaid = paymentsByBranch.get(branch.id) || 0;
+        todayPaid += branchPaid;
+        branchRevenues.push({ branchId: branch.id, branchName: branch.name, paid: branchPaid });
+      }
+      
+      res.json({
+        date: startOfDayUTC.toISOString(),
+        totalPatients: Number(newStats.total) || 0,
+        amputees: Number(newStats.amputees) || 0,
+        physiotherapy: Number(newStats.physiotherapy) || 0,
+        medicalSupport: Number(newStats.medical_support) || 0,
+        newPatients: Number(newStats.total) || 0,
+        newAmputees: Number(newStats.amputees) || 0,
+        newPhysiotherapy: Number(newStats.physiotherapy) || 0,
+        newMedicalSupport: Number(newStats.medical_support) || 0,
+        visitingPatients: Number(visitingStats.visiting_patients) || 0,
+        visitingAmputees: Number(visitingStats.visiting_amputees) || 0,
+        visitingPhysiotherapy: Number(visitingStats.visiting_physiotherapy) || 0,
+        visitingMedicalSupport: Number(visitingStats.visiting_medical_support) || 0,
+        totalVisits: Number(visitStats.total_visits) || 0,
+        paid: todayPaid,
+        branchRevenues
       });
-      const branchPaid = todayBranchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
-      todayPaid += branchPaid;
-      branchRevenues.push({ branchId: branch.id, branchName: branch.name, paid: branchPaid });
+    } catch (error) {
+      console.error("Daily stats error:", error);
+      res.status(500).json({ message: "خطأ في جلب الإحصائيات اليومية" });
     }
-    
-    res.json({
-      date: startOfDay.toISOString(),
-      totalPatients: newTodayPatients.length,
-      amputees: newTodayPatients.filter(p => p.isAmputee).length,
-      physiotherapy: newTodayPatients.filter(p => p.isPhysiotherapy).length,
-      medicalSupport: newTodayPatients.filter(p => p.isMedicalSupport).length,
-      newPatients: newTodayPatients.length,
-      newAmputees: newTodayPatients.filter(p => p.isAmputee).length,
-      newPhysiotherapy: newTodayPatients.filter(p => p.isPhysiotherapy).length,
-      newMedicalSupport: newTodayPatients.filter(p => p.isMedicalSupport).length,
-      visitingPatients: visitingPatients.length,
-      visitingAmputees: visitingPatients.filter(p => p.isAmputee).length,
-      visitingPhysiotherapy: visitingPatients.filter(p => p.isPhysiotherapy).length,
-      visitingMedicalSupport: visitingPatients.filter(p => p.isMedicalSupport).length,
-      totalVisits: todayVisitCount,
-      paid: todayPaid,
-      branchRevenues
-    });
   });
 
   // Custom Stats API endpoints
