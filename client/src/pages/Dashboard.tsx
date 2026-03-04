@@ -40,8 +40,13 @@ function DashboardContent() {
   const { t } = useTranslation();
   
   const todayISO = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const baghdadMs = now.getTime() + 3 * 60 * 60 * 1000;
+    const baghdadDate = new Date(baghdadMs);
+    if (baghdadDate.getUTCHours() < 6) {
+      baghdadDate.setUTCDate(baghdadDate.getUTCDate() - 1);
+    }
+    return `${baghdadDate.getUTCFullYear()}-${String(baghdadDate.getUTCMonth() + 1).padStart(2, '0')}-${String(baghdadDate.getUTCDate()).padStart(2, '0')}`;
   }, []);
   
   const [selectedBranch, setSelectedBranch] = useState<string>(

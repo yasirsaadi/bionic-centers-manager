@@ -1804,6 +1804,8 @@ export async function registerRoutes(
       const dateParam = req.query.date as string | undefined;
       const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
       
+      console.log(`[Daily Stats] dateParam=${dateParam}, branchId=${branchIdParam}, url=${req.url}`);
+      
       if (filterBranchId !== null && isNaN(filterBranchId)) {
         return res.status(400).json({ message: "معرف الفرع غير صالح" });
       }
@@ -1826,6 +1828,7 @@ export async function registerRoutes(
         endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
       }
       
+      console.log(`[Daily Stats] range: ${startOfDayUTC.toISOString()} to ${endOfDayUTC.toISOString()}`);
       const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       
