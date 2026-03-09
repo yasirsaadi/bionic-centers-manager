@@ -231,3 +231,7 @@ Preferred communication style: Simple, everyday language.
 - Two options: "new" (مريض جديد) and "past" (مريض قديم)
 - Field appears before "General Notes" in the form
 - Classification displayed in PatientDetails page for Baghdad and Karbala branch patients
+- Classification column added to PatientsList desktop table, Excel export, and PDF export
+- Classification distribution pie chart added to Statistics page (new/past/not specified)
+- Classification counts included in Statistics PDF and Excel export summaries
+- Classification badge shown in BranchDetails patient cards (mobile + desktop)

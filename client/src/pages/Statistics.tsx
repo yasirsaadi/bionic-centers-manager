@@ -397,6 +397,15 @@ export default function Statistics() {
       { name: t.statistics.condMedicalSupport, value: medicalSupportCount, color: '#FFBB28' },
     ];
 
+    const classificationNewCount = timeFilteredPatients.filter(p => p.patientClassification === "new").length;
+    const classificationPastCount = timeFilteredPatients.filter(p => p.patientClassification === "past").length;
+    const classificationUnsetCount = timeFilteredPatients.filter(p => !p.patientClassification).length;
+    const classificationDistribution = [
+      { name: t.patientForm.newPatient, value: classificationNewCount, color: '#10b981' },
+      { name: t.patientForm.pastPatient, value: classificationPastCount, color: '#f59e0b' },
+      { name: t.statistics.notSpecified, value: classificationUnsetCount, color: '#94a3b8' },
+    ].filter(item => item.value > 0);
+
     const branchDistribution = branches?.map(branch => ({
       name: branch.name,
       count: timeFilteredPatients.filter(p => p.branchId === branch.id).length,
@@ -533,6 +542,7 @@ export default function Statistics() {
       referralSourceData,
       visitsByTreatmentData,
       revenueByTreatmentData,
+      classificationDistribution,
       monthlyTrend,
       shiftData,
       collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
@@ -646,6 +656,8 @@ export default function Statistics() {
         [reshapeArabic('المبالغ المتبقية'), `${stats.allTimeRemaining.toLocaleString()} ${reshapeArabic('د.ع')}`],
         [reshapeArabic('نسبة التحصيل'), `${stats.collectionRate}%`],
         [reshapeArabic('إجمالي الزيارات (في الفترة)'), stats.totalVisits.toString()],
+        [reshapeArabic('مرضى جدد (تصنيف)'), stats.classificationDistribution.find(d => d.name === t.patientForm.newPatient)?.value?.toString() || '0'],
+        [reshapeArabic('مرضى قدامى (تصنيف)'), stats.classificationDistribution.find(d => d.name === t.patientForm.pastPatient)?.value?.toString() || '0'],
       ],
       styles: { font: 'Amiri', halign: 'right' },
       headStyles: { fillColor: [41, 128, 185], font: 'Amiri', textColor: [255, 255, 255] },
@@ -748,6 +760,8 @@ export default function Statistics() {
       ['المبالغ المتبقية (د.ع)', stats.allTimeRemaining],
       ['نسبة التحصيل (%)', stats.collectionRate],
       ['إجمالي الزيارات (في الفترة)', stats.totalVisits],
+      ['مرضى جدد (تصنيف)', stats.classificationDistribution.find(d => d.name === t.patientForm.newPatient)?.value || 0],
+      ['مرضى قدامى (تصنيف)', stats.classificationDistribution.find(d => d.name === t.patientForm.pastPatient)?.value || 0],
     ];
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'الملخص');
@@ -1146,6 +1160,40 @@ export default function Statistics() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Patient Classification Distribution */}
+          {stats.classificationDistribution.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <ClipboardCheck className="w-5 h-5 text-primary" />
+                  {t.statistics.classificationDistribution}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={stats.classificationDistribution}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {stats.classificationDistribution.map((entry, index) => (
+                        <Cell key={`cell-class-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [value, t.statistics.patientCount]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Charts Row 2 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -292,6 +292,11 @@ export default function BranchDetails() {
                         {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                       </Badge>
                     </div>
+                    {patient.patientClassification && (
+                      <Badge variant="outline" className="text-xs mt-1 self-start">
+                        {patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient}
+                      </Badge>
+                    )}
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                       <span className="text-xs text-slate-400 font-mono">
                         {(patient.totalCost || 0).toLocaleString()} {t.patientDetails.currency}
@@ -326,6 +331,7 @@ export default function BranchDetails() {
                             <h4 className="font-bold text-slate-800">{patient.name}</h4>
                             <p className="text-sm text-muted-foreground">
                               {patient.age} {t.patients.years} - {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
+                              {patient.patientClassification && ` (${patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient})`}
                             </p>
                           </div>
                         </div>

@@ -170,6 +170,7 @@ export default function PatientsList() {
         "الهاتف": patient.phone || "",
         "العمر": patient.age,
         "الحالة": patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند طبية",
+        "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
         "التكلفة الكلية": patient.totalCost || 0,
         "المبلغ المتبقي": remaining > 0 ? remaining : 0,
@@ -225,6 +226,7 @@ export default function PatientsList() {
               <th>الهاتف</th>
               <th>العمر</th>
               <th>الحالة</th>
+              <th>التصنيف</th>
               <th>الفرع</th>
               <th>التكلفة</th>
               <th>المتبقي</th>
@@ -242,6 +244,7 @@ export default function PatientsList() {
                 <td>${patient.phone || "-"}</td>
                 <td>${patient.age}</td>
                 <td>${patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند"}</td>
+                <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
                 <td>${(patient.totalCost || 0).toLocaleString()}</td>
                 <td style="color: ${remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${remaining.toLocaleString()}</td>
@@ -444,6 +447,7 @@ export default function PatientsList() {
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.branch}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.condition}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.diseaseType}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700">{t.patientForm.patientClassification}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.registrationDate}</TableHead>
                     <TableHead className="text-left font-bold text-slate-700 last:pl-6">{t.patients.actions}</TableHead>
                   </TableRow>
@@ -451,7 +455,7 @@ export default function PatientsList() {
                 <TableBody>
                   {paginatedPatients?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                         {viewMode === "date" ? `${t.patients.noVisitsOnDate} ${formatDateIraq(selectedDate)}` : t.patients.noPatientsFound}
                       </TableCell>
                     </TableRow>
@@ -478,6 +482,9 @@ export default function PatientsList() {
                         </TableCell>
                         <TableCell className="text-slate-600">
                           {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
+                        </TableCell>
+                        <TableCell className="text-slate-600 text-sm">
+                          {patient.patientClassification === "new" ? t.patientForm.newPatient : patient.patientClassification === "past" ? t.patientForm.pastPatient : "-"}
                         </TableCell>
                         <TableCell className="text-slate-500 font-mono text-sm">
                           <div>{formatDateIraq(patient.createdAt)}</div>
