@@ -815,7 +815,7 @@ export default function PatientDetails() {
                   </div>
                 ) : null;
               })()}
-              {patient.patientClassification && patient.branchId === 2 && (
+              {patient.patientClassification && (patient.branchId === 1 || patient.branchId === 2) && (
                 <div className="pt-4 border-t border-dashed">
                   <p className="text-muted-foreground mb-1">{t.patientForm.patientClassification}</p>
                   <p className="text-slate-700">{patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient}</p>

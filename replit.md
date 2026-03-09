@@ -227,7 +227,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Patient Classification Field (March 2026)
 - Added `patient_classification` text column to `patients` table
-- Dropdown field visible only for Karbala branch (branchId=2) in CreatePatient and EditPatient forms
+- Dropdown field visible for Baghdad (branchId=1) and Karbala (branchId=2) branches in CreatePatient and EditPatient forms
 - Two options: "new" (مريض جديد) and "past" (مريض قديم)
 - Field appears before "General Notes" in the form
-- Classification displayed in PatientDetails page for Karbala branch patients
+- Classification displayed in PatientDetails page for Baghdad and Karbala branch patients
