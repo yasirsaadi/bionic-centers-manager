@@ -20,7 +20,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { 
-  BarChart3, Users, TrendingUp, Building2, Calendar, Banknote, 
+  BarChart3, Users, UserPlus, TrendingUp, Building2, Calendar, Banknote, 
   Activity, UserCheck, Heart, Accessibility, Stethoscope, FileDown, FileSpreadsheet,
   Plus, Pencil, Trash2, ChartBar, Globe, Lock, ClipboardCheck
 } from "lucide-react";
@@ -341,7 +341,10 @@ export default function Statistics() {
     );
     const totalVisits = allVisitsInRange.length;
 
-    // For all date-based filtering: include patients who were registered, had visits, or had payments within the range
+    const newRegisteredPatients = startDate
+      ? filteredPatients.filter(p => isInRange(p.createdAt))
+      : filteredPatients;
+
     const timeFilteredPatients = startDate 
       ? filteredPatients.filter(p => 
           isInRange(p.createdAt) || 
@@ -350,10 +353,18 @@ export default function Statistics() {
         )
       : filteredPatients;
 
+    const newPaidPatients = newRegisteredPatients.filter(p =>
+      (p.payments || []).length > 0
+    ).length;
+
     const totalPatients = timeFilteredPatients.length;
+    const totalNewPatients = newRegisteredPatients.length;
     const amputeeCount = timeFilteredPatients.filter(p => p.isAmputee).length;
     const physioCount = timeFilteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
     const medicalSupportCount = timeFilteredPatients.filter(p => p.isMedicalSupport).length;
+    const newAmputeeCount = newRegisteredPatients.filter(p => p.isAmputee).length;
+    const newPhysioCount = newRegisteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
+    const newMedicalSupportCount = newRegisteredPatients.filter(p => p.isMedicalSupport).length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
     const allPaymentsInRange = filteredPatients.flatMap(p => 
@@ -500,6 +511,11 @@ export default function Statistics() {
 
     return {
       totalPatients,
+      totalNewPatients,
+      newPaidPatients,
+      newAmputeeCount,
+      newPhysioCount,
+      newMedicalSupportCount,
       amputeeCount,
       physioCount,
       medicalSupportCount,
@@ -942,7 +958,7 @@ export default function Statistics() {
       ) : (
         <>
           {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
@@ -951,6 +967,33 @@ export default function Statistics() {
                     <p className="text-2xl md:text-3xl font-bold text-blue-700">{stats.totalPatients}</p>
                   </div>
                   <Users className="w-10 h-10 text-blue-500 opacity-80" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-cyan-50 to-cyan-100 border-cyan-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-cyan-600 font-medium">{t.statistics.newRegistered}</p>
+                    <p className="text-2xl md:text-3xl font-bold text-cyan-700">{stats.totalNewPatients}</p>
+                  </div>
+                  <UserPlus className="w-10 h-10 text-cyan-500 opacity-80" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-indigo-50 to-indigo-100 border-indigo-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-indigo-600 font-medium">{t.statistics.newPaidPatients}</p>
+                    <p className="text-2xl md:text-3xl font-bold text-indigo-700">{stats.newPaidPatients}</p>
+                    {stats.totalNewPatients > 0 && (
+                      <p className="text-xs text-indigo-500">{((stats.newPaidPatients / stats.totalNewPatients) * 100).toFixed(0)}% {t.statistics.ofNewPatients}</p>
+                    )}
+                  </div>
+                  <Banknote className="w-10 h-10 text-indigo-500 opacity-80" />
                 </div>
               </CardContent>
             </Card>
@@ -1005,7 +1048,7 @@ export default function Statistics() {
                     <p className="text-sm text-muted-foreground">{t.statistics.amputeeCases}</p>
                     <p className="text-2xl font-bold">{stats.amputeeCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.amputeeCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
+                      {t.statistics.newRegistered}: {stats.newAmputeeCount} | {((stats.amputeeCount / (stats.totalPatients || 1)) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>
@@ -1022,7 +1065,7 @@ export default function Statistics() {
                     <p className="text-sm text-muted-foreground">{t.statistics.physiotherapy}</p>
                     <p className="text-2xl font-bold">{stats.physioCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.physioCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
+                      {t.statistics.newRegistered}: {stats.newPhysioCount} | {((stats.physioCount / (stats.totalPatients || 1)) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>
@@ -1039,7 +1082,7 @@ export default function Statistics() {
                     <p className="text-sm text-muted-foreground">{t.statistics.medicalSupport}</p>
                     <p className="text-2xl font-bold">{stats.medicalSupportCount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((stats.medicalSupportCount / stats.totalPatients) * 100).toFixed(1)}% {t.statistics.ofTotal}
+                      {t.statistics.newRegistered}: {stats.newMedicalSupportCount} | {((stats.medicalSupportCount / (stats.totalPatients || 1)) * 100).toFixed(1)}% {t.statistics.ofTotal}
                     </p>
                   </div>
                 </div>

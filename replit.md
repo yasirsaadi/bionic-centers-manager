@@ -217,3 +217,10 @@ Preferred communication style: Simple, everyday language.
 - Dates converted to plain timestamp strings (no `Z` suffix) with explicit `::timestamp` casts for correct comparison
 - Branch filter validated (returns 400 for invalid branchId)
 - Error handling with try/catch and Arabic error message
+
+### Statistics New vs Returning Patient Split (March 2026)
+- Statistics page now distinguishes between "new registered" patients (registered in selected time period) vs "total active" patients (registered OR visited OR paid in period)
+- New summary cards: "مسجلون جدد" (new registered), "دافعون من الجدد" (new patients who have any payment record)
+- Per-type breakdown (amputee, physiotherapy, medical support) now shows new registered count alongside total
+- `newPaidPatients` counts new patients who have ANY payment (not limited to payments within the time range)
+- When no time filter is active, new registered = all patients (all are "new" since inception)
