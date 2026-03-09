@@ -138,6 +138,7 @@ export default function CreatePatient() {
       injuryDate: "",
       injuryCause: "",
       registrationDate: (() => { const now = new Date(); const baghdadOffset = 3 * 60 * 60 * 1000; const baghdadNow = new Date(now.getTime() + baghdadOffset); return `${baghdadNow.getUTCFullYear()}-${String(baghdadNow.getUTCMonth() + 1).padStart(2, '0')}-${String(baghdadNow.getUTCDate()).padStart(2, '0')}`; })(),
+      patientClassification: "",
       generalNotes: "",
       prostheticType: "",
       siliconType: "",
@@ -1164,6 +1165,30 @@ export default function CreatePatient() {
                     )}
                   />
                 </div>
+              )}
+
+              {defaultBranchId === 2 && (
+                <FormField
+                  control={form.control}
+                  name="patientClassification"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.patientClassification}</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                        <FormControl>
+                          <SelectTrigger className="bg-white" data-testid="select-patient-classification">
+                            <SelectValue placeholder={t.patientForm.selectClassification} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="new">{t.patientForm.newPatient}</SelectItem>
+                          <SelectItem value="past">{t.patientForm.pastPatient}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               )}
 
               <FormField

@@ -224,3 +224,10 @@ Preferred communication style: Simple, everyday language.
 - Per-type breakdown (amputee, physiotherapy, medical support) now shows new registered count alongside total
 - `newPaidPatients` counts new patients who have ANY payment (not limited to payments within the time range)
 - When no time filter is active, new registered = all patients (all are "new" since inception)
+
+### Patient Classification Field (March 2026)
+- Added `patient_classification` text column to `patients` table
+- Dropdown field visible only for Karbala branch (branchId=2) in CreatePatient and EditPatient forms
+- Two options: "new" (مريض جديد) and "past" (مريض قديم)
+- Field appears before "General Notes" in the form
+- Classification displayed in PatientDetails page for Karbala branch patients

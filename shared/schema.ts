@@ -34,6 +34,7 @@ export const patients = pgTable("patients", {
   medicalCondition: text("medical_condition").notNull(),
   injuryCause: text("injury_cause"),
   injuryDate: date("injury_date"),
+  patientClassification: text("patient_classification"),
   generalNotes: text("general_notes"),
   
   // Branch tracking

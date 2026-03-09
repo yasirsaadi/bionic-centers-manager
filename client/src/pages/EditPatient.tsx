@@ -99,6 +99,7 @@ export default function EditPatient() {
       totalCost: 0,
       injuryDate: "",
       injuryCause: "",
+      patientClassification: "",
       generalNotes: "",
       prostheticType: "",
       siliconType: "",
@@ -133,6 +134,7 @@ export default function EditPatient() {
         totalCost: patient.totalCost || 0,
         injuryDate: patient.injuryDate || "",
         injuryCause: patient.injuryCause || "",
+        patientClassification: patient.patientClassification || "",
         generalNotes: patient.generalNotes || "",
         prostheticType: patient.prostheticType || "",
         siliconType: patient.siliconType || "",
@@ -1169,6 +1171,30 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+
+              {patient?.branchId === 2 && (
+                <FormField
+                  control={form.control}
+                  name="patientClassification"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.patientClassification}</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                        <FormControl>
+                          <SelectTrigger className="bg-white" data-testid="select-patient-classification-edit">
+                            <SelectValue placeholder={t.patientForm.selectClassification} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="new">{t.patientForm.newPatient}</SelectItem>
+                          <SelectItem value="past">{t.patientForm.pastPatient}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               <FormField
                 control={form.control}
