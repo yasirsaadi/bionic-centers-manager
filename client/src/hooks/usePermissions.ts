@@ -74,7 +74,23 @@ export function usePermissions(): UserPermissions {
   }
   
   if (session.permissions) {
-    return session.permissions;
+    const perms = session.permissions as unknown as Record<string, boolean>;
+    return {
+      canViewPatients: perms.canViewPatients ?? false,
+      canAddPatients: perms.canAddPatients ?? false,
+      canEditPatients: perms.canEditPatients ?? false,
+      canDeletePatients: perms.canDeletePatients ?? false,
+      canViewPayments: perms.canViewPayments ?? false,
+      canAddPayments: perms.canAddPayments ?? false,
+      canEditPayments: perms.canEditPayments ?? false,
+      canDeletePayments: perms.canDeletePayments ?? false,
+      canViewReports: perms.canViewReports ?? false,
+      canManageAccounting: perms.canManageAccounting ?? false,
+      canManageSettings: perms.canManageSettings ?? false,
+      canManageUsers: perms.canManageUsers ?? false,
+      canManageTreatmentPlans: perms.canManageTreatmentPlans ?? false,
+      canManageSurveys: perms.canManageSurveys ?? false,
+    };
   }
   
   if (session.isAdmin) {

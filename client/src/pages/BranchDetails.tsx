@@ -139,7 +139,7 @@ export default function BranchDetails() {
           </div>
           <div>
             <h2 className="text-lg md:text-2xl font-display font-bold text-slate-800">
-              {t.patients.branch} {branch?.name ? (t.branches[branch.name] || branch.name) : "..."}
+              {t.patients.branch} {branch?.name ? ((t.branches as Record<string, string>)[branch.name] || branch.name) : "..."}
             </h2>
             <p className="text-xs md:text-base text-muted-foreground">{t.patients.branchManagement}</p>
           </div>
@@ -331,7 +331,6 @@ export default function BranchDetails() {
                             <h4 className="font-bold text-slate-800">{patient.name}</h4>
                             <p className="text-sm text-muted-foreground">
                               {patient.age} {t.patients.years} - {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-                              {patient.patientClassification && ` (${patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient})`}
                             </p>
                           </div>
                         </div>
@@ -343,6 +342,11 @@ export default function BranchDetails() {
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
                             {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
                           </Badge>
+                          {patient.patientClassification && (
+                            <Badge variant="outline" className="text-xs">
+                              {patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient}
+                            </Badge>
+                          )}
                           <span className="text-sm font-mono text-muted-foreground">
                             {(patient.totalCost || 0).toLocaleString()} {t.patientDetails.currency}
                           </span>

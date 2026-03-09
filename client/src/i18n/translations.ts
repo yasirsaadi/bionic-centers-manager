@@ -88,6 +88,7 @@ const translations = {
       conditionAmputee: "بتر",
       conditionPhysiotherapy: "علاج طبيعي",
       conditionMedicalSupport: "إسناد طبي",
+      today: "اليوم",
     },
     patients: {
       title: "سجل المرضى",
@@ -1259,6 +1260,7 @@ const translations = {
       conditionAmputee: "Amputee",
       conditionPhysiotherapy: "Physiotherapy",
       conditionMedicalSupport: "Medical Support",
+      today: "Today",
     },
     patients: {
       title: "Patient Registry",
