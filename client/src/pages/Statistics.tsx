@@ -249,6 +249,7 @@ export default function Statistics() {
       default:
         return { start: null, end: null };
     }
+    startDate.setHours(0, 0, 0, 0);
     return { start: startDate, end: null };
   };
 
