@@ -3128,5 +3128,67 @@ export async function registerRoutes(
     console.log("Survey templates seeded successfully");
   }
 
+  // Temporary data fix endpoint - admin only
+  app.post("/api/admin/data-fix-branch-conflict", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المسؤول" });
+    }
+
+    try {
+      const results: string[] = [];
+
+      // 1. Delete wrong Baghdad visits for Dhi Qar patients (32, 135, 139)
+      const wrongVisits = await db.execute(sql`
+        SELECT v.id, v.patient_id, p.name 
+        FROM visits v JOIN patients p ON p.id = v.patient_id
+        WHERE v.patient_id IN (32, 135, 139) AND v.branch_id = 1 AND p.branch_id = 3
+      `);
+      for (const v of wrongVisits.rows) {
+        await db.execute(sql`DELETE FROM visits WHERE id = ${(v as any).id}`);
+        results.push(`Deleted visit ${(v as any).id} for patient ${(v as any).name}`);
+      }
+
+      // 2. Transfer patient 67 (Baghdad duplicate) data to patient 123 (Dhi Qar)
+      // Move visits from patient 67 to patient 123
+      const movedVisits = await db.execute(sql`
+        UPDATE visits SET patient_id = 123 WHERE patient_id = 67
+      `);
+      results.push(`Moved ${movedVisits.rowCount} visits from patient 67 to 123`);
+
+      // Move payments from patient 67 to patient 123
+      const movedPayments = await db.execute(sql`
+        UPDATE payments SET patient_id = 123 WHERE patient_id = 67
+      `);
+      results.push(`Moved ${movedPayments.rowCount} payments from patient 67 to 123`);
+
+      // Update patient 123 total_cost (add patient 67's cost)
+      const p67 = await db.execute(sql`SELECT total_cost FROM patients WHERE id = 67`);
+      const cost67 = (p67.rows[0] as any)?.total_cost || 0;
+      if (cost67 > 0) {
+        await db.execute(sql`UPDATE patients SET total_cost = total_cost + ${cost67} WHERE id = 123`);
+        results.push(`Added ${cost67} to patient 123 total_cost`);
+      }
+
+      // Move treatment plans if any
+      await db.execute(sql`UPDATE treatment_plans SET patient_id = 123 WHERE patient_id = 67`);
+
+      // Move documents if any
+      await db.execute(sql`UPDATE documents SET patient_id = 123 WHERE patient_id = 67`);
+
+      // Move survey responses if any
+      await db.execute(sql`UPDATE survey_responses SET patient_id = 123 WHERE patient_id = 67`);
+
+      // Delete patient 67
+      await db.execute(sql`DELETE FROM patients WHERE id = 67`);
+      results.push("Deleted duplicate patient 67 (Baghdad محمد قاسم محل عوده)");
+
+      res.json({ success: true, results });
+    } catch (error: any) {
+      console.error("Data fix error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   return httpServer;
 }
