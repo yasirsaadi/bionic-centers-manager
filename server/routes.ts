@@ -3138,53 +3138,51 @@ export async function registerRoutes(
     try {
       const results: string[] = [];
 
-      // 1. Move wrong Baghdad visits for Dhi Qar patients (32, 135, 139) to branch 3
-      const fixedVisits = await db.execute(sql`
-        UPDATE visits SET branch_id = 3 
+      // First check what exists
+      const checkVisits = await db.execute(sql`
+        SELECT id, patient_id, branch_id FROM visits 
         WHERE patient_id IN (32, 135, 139) AND branch_id = 1
       `);
-      results.push(`Moved ${fixedVisits.rowCount} visits from Baghdad to Dhi Qar for patients 32, 135, 139`);
+      results.push(`Found ${checkVisits.rows.length} Baghdad visits: ${JSON.stringify(checkVisits.rows)}`);
 
-      // 1b. Move wrong Baghdad payments for Dhi Qar patients to branch 3
-      const fixedPayments = await db.execute(sql`
-        UPDATE payments SET branch_id = 3 
-        WHERE patient_id IN (32, 135, 139) AND branch_id = 1
-      `);
-      results.push(`Moved ${fixedPayments.rowCount} payments from Baghdad to Dhi Qar for patients 32, 135, 139`);
-
-      // 2. Transfer patient 67 (Baghdad duplicate) data to patient 123 (Dhi Qar)
-      // Move visits from patient 67 to patient 123
-      const movedVisits = await db.execute(sql`
-        UPDATE visits SET patient_id = 123 WHERE patient_id = 67
-      `);
-      results.push(`Moved ${movedVisits.rowCount} visits from patient 67 to 123`);
-
-      // Move payments from patient 67 to patient 123
-      const movedPayments = await db.execute(sql`
-        UPDATE payments SET patient_id = 123 WHERE patient_id = 67
-      `);
-      results.push(`Moved ${movedPayments.rowCount} payments from patient 67 to 123`);
-
-      // Update patient 123 total_cost (add patient 67's cost)
-      const p67 = await db.execute(sql`SELECT total_cost FROM patients WHERE id = 67`);
-      const cost67 = (p67.rows[0] as any)?.total_cost || 0;
-      if (cost67 > 0) {
-        await db.execute(sql`UPDATE patients SET total_cost = total_cost + ${cost67} WHERE id = 123`);
-        results.push(`Added ${cost67} to patient 123 total_cost`);
+      // Fix each visit individually by ID
+      for (const row of checkVisits.rows) {
+        const vid = (row as any).id;
+        const r = await db.execute(sql`UPDATE visits SET branch_id = 3 WHERE id = ${vid}`);
+        results.push(`Updated visit ${vid}: rowCount=${r.rowCount}`);
       }
 
-      // Move treatment plans if any
-      await db.execute(sql`UPDATE treatment_plans SET patient_id = 123 WHERE patient_id = 67`);
+      // Fix payments
+      const checkPayments = await db.execute(sql`
+        SELECT id, patient_id, branch_id FROM payments 
+        WHERE patient_id IN (32, 135, 139) AND branch_id = 1
+      `);
+      results.push(`Found ${checkPayments.rows.length} Baghdad payments: ${JSON.stringify(checkPayments.rows)}`);
 
-      // Move documents if any
-      await db.execute(sql`UPDATE documents SET patient_id = 123 WHERE patient_id = 67`);
+      for (const row of checkPayments.rows) {
+        const pid = (row as any).id;
+        const r = await db.execute(sql`UPDATE payments SET branch_id = 3 WHERE id = ${pid}`);
+        results.push(`Updated payment ${pid}: rowCount=${r.rowCount}`);
+      }
 
-      // Move survey responses if any
-      await db.execute(sql`UPDATE survey_responses SET patient_id = 123 WHERE patient_id = 67`);
-
-      // Delete patient 67
-      await db.execute(sql`DELETE FROM patients WHERE id = 67`);
-      results.push("Deleted duplicate patient 67 (Baghdad محمد قاسم محل عوده)");
+      // Check if patient 67 still exists
+      const p67check = await db.execute(sql`SELECT id, name FROM patients WHERE id = 67`);
+      if (p67check.rows.length > 0) {
+        await db.execute(sql`UPDATE visits SET patient_id = 123 WHERE patient_id = 67`);
+        await db.execute(sql`UPDATE payments SET patient_id = 123 WHERE patient_id = 67`);
+        const p67 = await db.execute(sql`SELECT total_cost FROM patients WHERE id = 67`);
+        const cost67 = (p67.rows[0] as any)?.total_cost || 0;
+        if (cost67 > 0) {
+          await db.execute(sql`UPDATE patients SET total_cost = total_cost + ${cost67} WHERE id = 123`);
+        }
+        await db.execute(sql`UPDATE treatment_plans SET patient_id = 123 WHERE patient_id = 67`);
+        await db.execute(sql`UPDATE documents SET patient_id = 123 WHERE patient_id = 67`);
+        await db.execute(sql`UPDATE survey_responses SET patient_id = 123 WHERE patient_id = 67`);
+        await db.execute(sql`DELETE FROM patients WHERE id = 67`);
+        results.push("Merged and deleted patient 67");
+      } else {
+        results.push("Patient 67 already deleted");
+      }
 
       res.json({ success: true, results });
     } catch (error: any) {
