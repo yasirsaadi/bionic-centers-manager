@@ -1661,6 +1661,9 @@ export default function Statistics() {
             </Card>
           )}
 
+          {/* Monthly New Patients Report */}
+          <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
+
           {/* Custom Statistics Section */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
@@ -1932,5 +1935,156 @@ export default function Statistics() {
         </>
       )}
     </div>
+  );
+}
+
+const ARABIC_MONTHS: Record<string, string> = {
+  '01': 'يناير', '02': 'فبراير', '03': 'مارس', '04': 'أبريل',
+  '05': 'مايو', '06': 'يونيو', '07': 'يوليو', '08': 'أغسطس',
+  '09': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر',
+};
+
+function formatMonthLabel(month: string): string {
+  const [year, m] = month.split('-');
+  return `${ARABIC_MONTHS[m] || m} ${year}`;
+}
+
+function MonthlyNewPatientsReport({ branchId, t }: { branchId: string; t: any }) {
+  const { data, isLoading } = useQuery<Array<{
+    month: string;
+    totalNew: number;
+    paidCount: number;
+    unpaidCount: number;
+  }>>({
+    queryKey: ['/api/statistics/monthly-new-patients', branchId],
+    queryFn: async () => {
+      const url = branchId && branchId !== "all"
+        ? `/api/statistics/monthly-new-patients?branchId=${branchId}`
+        : '/api/statistics/monthly-new-patients';
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    },
+  });
+
+  if (isLoading) {
+    return <Skeleton className="h-96 rounded-2xl w-full" />;
+  }
+
+  if (!data || data.length === 0) return null;
+
+  const totals = data.reduce((acc, row) => ({
+    totalNew: acc.totalNew + row.totalNew,
+    paidCount: acc.paidCount + row.paidCount,
+    unpaidCount: acc.unpaidCount + row.unpaidCount,
+  }), { totalNew: 0, paidCount: 0, unpaidCount: 0 });
+
+  const overallRate = totals.totalNew > 0 ? ((totals.paidCount / totals.totalNew) * 100).toFixed(1) : '0';
+
+  const chartData = data.map(row => ({
+    ...row,
+    label: formatMonthLabel(row.month),
+    rate: row.totalNew > 0 ? Math.round((row.paidCount / row.totalNew) * 100) : 0,
+  }));
+
+  return (
+    <Card data-testid="card-monthly-new-patients">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-primary" />
+          {t.statistics.monthlyNewPatients}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{t.statistics.monthlyNewPatientsDesc}</p>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-blue-50 rounded-xl p-3 text-center">
+            <p className="text-2xl font-bold text-blue-700">{totals.totalNew}</p>
+            <p className="text-xs text-blue-600">{t.statistics.totalNewPatients}</p>
+          </div>
+          <div className="bg-green-50 rounded-xl p-3 text-center">
+            <p className="text-2xl font-bold text-green-700">{totals.paidCount}</p>
+            <p className="text-xs text-green-600">{t.statistics.paidPatients}</p>
+          </div>
+          <div className="bg-orange-50 rounded-xl p-3 text-center">
+            <p className="text-2xl font-bold text-orange-700">{totals.unpaidCount}</p>
+            <p className="text-xs text-orange-600">{t.statistics.unpaidPatients}</p>
+          </div>
+          <div className="bg-purple-50 rounded-xl p-3 text-center">
+            <p className="text-2xl font-bold text-purple-700">{overallRate}%</p>
+            <p className="text-xs text-purple-600">{t.statistics.purchaseRate}</p>
+          </div>
+        </div>
+
+        <ResponsiveContainer width="100%" height={350}>
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis />
+            <Tooltip
+              formatter={(value: number, name: string) => {
+                const labels: Record<string, string> = {
+                  paidCount: t.statistics.paidPatients,
+                  unpaidCount: t.statistics.unpaidPatients,
+                };
+                return [value, labels[name] || name];
+              }}
+              labelFormatter={(label) => label}
+            />
+            <Legend
+              formatter={(value) => {
+                const labels: Record<string, string> = {
+                  paidCount: t.statistics.paidPatients,
+                  unpaidCount: t.statistics.unpaidPatients,
+                };
+                return labels[value] || value;
+              }}
+            />
+            <Bar dataKey="paidCount" stackId="a" fill="#00C49F" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="unpaidCount" stackId="a" fill="#FF8042" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse" data-testid="table-monthly-new-patients">
+            <thead>
+              <tr className="border-b-2 border-slate-200">
+                <th className="text-right py-2 px-3 font-semibold text-slate-700">{t.statistics.month}</th>
+                <th className="text-center py-2 px-3 font-semibold text-blue-700">{t.statistics.totalNewPatients}</th>
+                <th className="text-center py-2 px-3 font-semibold text-green-700">{t.statistics.paidPatients}</th>
+                <th className="text-center py-2 px-3 font-semibold text-orange-700">{t.statistics.unpaidPatients}</th>
+                <th className="text-center py-2 px-3 font-semibold text-purple-700">{t.statistics.purchaseRate}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chartData.map((row) => (
+                <tr key={row.month} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-2 px-3 font-medium">{row.label}</td>
+                  <td className="text-center py-2 px-3">{row.totalNew}</td>
+                  <td className="text-center py-2 px-3 text-green-700 font-medium">{row.paidCount}</td>
+                  <td className="text-center py-2 px-3 text-orange-700 font-medium">{row.unpaidCount}</td>
+                  <td className="text-center py-2 px-3">
+                    <Badge variant={row.rate >= 50 ? "default" : "secondary"} className="text-xs">
+                      {row.rate}%
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                <td className="py-2 px-3">{t.statistics.total}</td>
+                <td className="text-center py-2 px-3 text-blue-700">{totals.totalNew}</td>
+                <td className="text-center py-2 px-3 text-green-700">{totals.paidCount}</td>
+                <td className="text-center py-2 px-3 text-orange-700">{totals.unpaidCount}</td>
+                <td className="text-center py-2 px-3">
+                  <Badge variant="default" className="text-xs">{overallRate}%</Badge>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -1804,7 +1804,6 @@ export async function registerRoutes(
       const dateParam = req.query.date as string | undefined;
       const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
       
-      console.log(`[Daily Stats] dateParam=${dateParam}, branchId=${branchIdParam}, url=${req.url}`);
       
       if (filterBranchId !== null && isNaN(filterBranchId)) {
         return res.status(400).json({ message: "معرف الفرع غير صالح" });
@@ -1828,7 +1827,6 @@ export async function registerRoutes(
         endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
       }
       
-      console.log(`[Daily Stats] range: ${startOfDayUTC.toISOString()} to ${endOfDayUTC.toISOString()}`);
       const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       
@@ -2399,6 +2397,49 @@ export async function registerRoutes(
       res.json(result);
     } catch (error) {
       console.error("Error fetching revenue by treatment:", error);
+      res.status(500).json({ error: "خطأ في جلب البيانات" });
+    }
+  });
+
+  // Monthly new patients report (per branch)
+  app.get("/api/statistics/monthly-new-patients", isAuthenticated, async (req: any, res) => {
+    try {
+      const { branchId } = req.query;
+      const filterBranchId = branchId ? parseInt(branchId as string) : null;
+
+      const result = filterBranchId
+        ? await db.execute(sql`
+            SELECT 
+              TO_CHAR(p.created_at, 'YYYY-MM') as month,
+              COUNT(p.id) as total_new,
+              COUNT(DISTINCT pm.patient_id) as paid_count
+            FROM patients p
+            LEFT JOIN payments pm ON pm.patient_id = p.id
+            WHERE p.branch_id = ${filterBranchId}
+            GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
+            ORDER BY month ASC
+          `)
+        : await db.execute(sql`
+            SELECT 
+              TO_CHAR(p.created_at, 'YYYY-MM') as month,
+              COUNT(p.id) as total_new,
+              COUNT(DISTINCT pm.patient_id) as paid_count
+            FROM patients p
+            LEFT JOIN payments pm ON pm.patient_id = p.id
+            GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
+            ORDER BY month ASC
+          `);
+
+      const data = result.rows.map((row: any) => ({
+        month: row.month,
+        totalNew: Number(row.total_new),
+        paidCount: Number(row.paid_count),
+        unpaidCount: Number(row.total_new) - Number(row.paid_count),
+      }));
+
+      res.json(data);
+    } catch (error) {
+      console.error("Error fetching monthly new patients:", error);
       res.status(500).json({ error: "خطأ في جلب البيانات" });
     }
   });
@@ -3127,69 +3168,6 @@ export async function registerRoutes(
 
     console.log("Survey templates seeded successfully");
   }
-
-  // Temporary data fix endpoint - secured by secret key
-  app.post("/api/admin/data-fix-branch-conflict", async (req, res) => {
-    const key = req.headers["x-fix-key"] || req.query.key;
-    if (key !== process.env.SESSION_SECRET) {
-      return res.status(403).json({ message: "unauthorized" });
-    }
-
-    try {
-      const results: string[] = [];
-
-      // First check what exists
-      const checkVisits = await db.execute(sql`
-        SELECT id, patient_id, branch_id FROM visits 
-        WHERE patient_id IN (32, 135, 139) AND branch_id = 1
-      `);
-      results.push(`Found ${checkVisits.rows.length} Baghdad visits: ${JSON.stringify(checkVisits.rows)}`);
-
-      // Fix each visit individually by ID
-      for (const row of checkVisits.rows) {
-        const vid = (row as any).id;
-        const r = await db.execute(sql`UPDATE visits SET branch_id = 3 WHERE id = ${vid}`);
-        results.push(`Updated visit ${vid}: rowCount=${r.rowCount}`);
-      }
-
-      // Fix payments
-      const checkPayments = await db.execute(sql`
-        SELECT id, patient_id, branch_id FROM payments 
-        WHERE patient_id IN (32, 135, 139) AND branch_id = 1
-      `);
-      results.push(`Found ${checkPayments.rows.length} Baghdad payments: ${JSON.stringify(checkPayments.rows)}`);
-
-      for (const row of checkPayments.rows) {
-        const pid = (row as any).id;
-        const r = await db.execute(sql`UPDATE payments SET branch_id = 3 WHERE id = ${pid}`);
-        results.push(`Updated payment ${pid}: rowCount=${r.rowCount}`);
-      }
-
-      // Check if patient 67 still exists
-      const p67check = await db.execute(sql`SELECT id, name FROM patients WHERE id = 67`);
-      if (p67check.rows.length > 0) {
-        await db.execute(sql`UPDATE visits SET patient_id = 123 WHERE patient_id = 67`);
-        await db.execute(sql`UPDATE payments SET patient_id = 123 WHERE patient_id = 67`);
-        const p67 = await db.execute(sql`SELECT total_cost FROM patients WHERE id = 67`);
-        const cost67 = (p67.rows[0] as any)?.total_cost || 0;
-        if (cost67 > 0) {
-          await db.execute(sql`UPDATE patients SET total_cost = total_cost + ${cost67} WHERE id = 123`);
-        }
-        await db.execute(sql`UPDATE treatment_plans SET patient_id = 123 WHERE patient_id = 67`);
-        await db.execute(sql`UPDATE documents SET patient_id = 123 WHERE patient_id = 67`);
-        await db.execute(sql`UPDATE survey_responses SET patient_id = 123 WHERE patient_id = 67`);
-        await db.execute(sql`DELETE FROM patients WHERE id = 67`);
-        results.push("Merged and deleted patient 67");
-      } else {
-        results.push("Patient 67 already deleted");
-      }
-
-      res.json({ success: true, results });
-    } catch (error: any) {
-      console.error("Data fix error:", error);
-      res.status(500).json({ message: error.message });
-    }
-  });
 
   return httpServer;
 }
