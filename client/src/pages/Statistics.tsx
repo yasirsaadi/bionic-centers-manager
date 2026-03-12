@@ -972,6 +972,9 @@ export default function Statistics() {
         </Card>
       ) : (
         <>
+          {/* Monthly New Visitors Report - First Section */}
+          <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
+
           {/* Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
@@ -1104,9 +1107,6 @@ export default function Statistics() {
               </CardContent>
             </Card>
           </div>
-
-          {/* Monthly New Visitors Report - First Section */}
-          <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
 
           {/* Charts Row 1 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
