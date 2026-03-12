@@ -2416,6 +2416,7 @@ export async function registerRoutes(
             FROM patients p
             LEFT JOIN payments pm ON pm.patient_id = p.id
             WHERE p.branch_id = ${filterBranchId}
+              AND p.patient_classification = 'new'
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
             ORDER BY month ASC
           `)
@@ -2426,6 +2427,7 @@ export async function registerRoutes(
               COUNT(DISTINCT pm.patient_id) as paid_count
             FROM patients p
             LEFT JOIN payments pm ON pm.patient_id = p.id
+            WHERE p.patient_classification = 'new'
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
             ORDER BY month ASC
           `);
