@@ -1105,6 +1105,9 @@ export default function Statistics() {
             </Card>
           </div>
 
+          {/* Monthly New Visitors Report - First Section */}
+          <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
+
           {/* Charts Row 1 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Age Distribution */}
@@ -1660,9 +1663,6 @@ export default function Statistics() {
               </CardContent>
             </Card>
           )}
-
-          {/* Monthly New Patients Report */}
-          <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
 
           {/* Custom Statistics Section */}
           <Card>
