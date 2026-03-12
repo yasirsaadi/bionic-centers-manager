@@ -77,6 +77,24 @@ export default function Statistics() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [selectedWeek, setSelectedWeek] = useState<string>(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.setDate(diff));
+    return `${monday.getFullYear()}-W${String(Math.ceil((((monday.getTime() - new Date(monday.getFullYear(), 0, 1).getTime()) / 86400000) + new Date(monday.getFullYear(), 0, 1).getDay() + 1) / 7)).padStart(2, '0')}`;
+  });
+  const [selectedYear, setSelectedYear] = useState<string>(() => String(new Date().getFullYear()));
+  const [selectedQuarter, setSelectedQuarter] = useState<string>(() => {
+    const now = new Date();
+    const q = Math.ceil((now.getMonth() + 1) / 3);
+    return `${now.getFullYear()}-Q${q}`;
+  });
+  const [selectedHalf, setSelectedHalf] = useState<string>(() => {
+    const now = new Date();
+    const h = now.getMonth() < 6 ? 1 : 2;
+    return `${now.getFullYear()}-H${h}`;
+  });
 
   // Set branch filter automatically for non-admin users
   useEffect(() => {
@@ -240,28 +258,60 @@ export default function Statistics() {
       const end = new Date(year, month, 0, 23, 59, 59, 999);
       return { start, end };
     }
-    
-    const now = new Date();
-    const startDate = new Date();
-    
-    switch (range) {
-      case "week":
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case "month":
-        startDate.setMonth(now.getMonth() - 1);
-        break;
-      case "quarter":
-        startDate.setMonth(now.getMonth() - 3);
-        break;
-      case "year":
-        startDate.setFullYear(now.getFullYear() - 1);
-        break;
-      default:
-        return { start: null, end: null };
+
+    if (range === "specificWeek") {
+      const match = selectedWeek.match(/^(\d{4})-W(\d{2})$/);
+      if (match) {
+        const year = parseInt(match[1]);
+        const week = parseInt(match[2]);
+        const jan1 = new Date(year, 0, 1);
+        const days = (week - 1) * 7;
+        const dayOfWeek = jan1.getDay();
+        const offset = dayOfWeek <= 4 ? 1 - dayOfWeek : 8 - dayOfWeek;
+        const monday = new Date(year, 0, 1 + offset + days);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        monday.setHours(0, 0, 0, 0);
+        sunday.setHours(23, 59, 59, 999);
+        return { start: monday, end: sunday };
+      }
+      return { start: null, end: null };
     }
-    startDate.setHours(0, 0, 0, 0);
-    return { start: startDate, end: null };
+
+    if (range === "specificYear") {
+      const year = parseInt(selectedYear);
+      const start = new Date(year, 0, 1, 0, 0, 0, 0);
+      const end = new Date(year, 11, 31, 23, 59, 59, 999);
+      return { start, end };
+    }
+
+    if (range === "quarterYear") {
+      const match = selectedQuarter.match(/^(\d{4})-Q(\d)$/);
+      if (match) {
+        const year = parseInt(match[1]);
+        const q = parseInt(match[2]);
+        const startMonth = (q - 1) * 3;
+        const start = new Date(year, startMonth, 1, 0, 0, 0, 0);
+        const end = new Date(year, startMonth + 3, 0, 23, 59, 59, 999);
+        return { start, end };
+      }
+      return { start: null, end: null };
+    }
+
+    if (range === "halfYear") {
+      const match = selectedHalf.match(/^(\d{4})-H(\d)$/);
+      if (match) {
+        const year = parseInt(match[1]);
+        const h = parseInt(match[2]);
+        const startMonth = (h - 1) * 6;
+        const start = new Date(year, startMonth, 1, 0, 0, 0, 0);
+        const end = new Date(year, startMonth + 6, 0, 23, 59, 59, 999);
+        return { start, end };
+      }
+      return { start: null, end: null };
+    }
+
+    return { start: null, end: null };
   };
 
   const filteredPatients = useMemo(() => {
@@ -558,7 +608,7 @@ export default function Statistics() {
       shiftData,
       collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
     };
-  }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo, selectedMonth]);
+  }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo, selectedMonth, selectedWeek, selectedYear, selectedQuarter, selectedHalf]);
 
   const surveyStats = useMemo(() => {
     if (!surveyResponses || surveyResponses.length === 0) return null;
@@ -608,23 +658,41 @@ export default function Statistics() {
     "July", "August", "September", "October", "November", "December"
   ];
 
+  const quarterLabels = ["الربع الأول", "الربع الثاني", "الربع الثالث", "الربع الرابع"];
+  const halfLabels = ["النصف الأول", "النصف الثاني"];
+
   const timeRangeLabel = useMemo(() => {
     switch (timeRange) {
       case "today": return t.statistics.timeToday;
       case "date": return formatDateIraq(selectedDate);
       case "range": return `${formatDateIraq(dateFrom)} - ${formatDateIraq(dateTo)}`;
-      case "week": return t.statistics.timeLastWeek;
-      case "month": return t.statistics.timeLastMonth;
-      case "quarter": return t.statistics.timeLast3Months;
-      case "year": return t.statistics.timeLastYear;
       case "specificMonth": {
         const [year, month] = selectedMonth.split("-").map(Number);
-        const monthNames = t.statistics.specificMonth ? arabicMonthNames : englishMonthNames;
         return `${arabicMonthNames[month - 1]} ${year}`;
+      }
+      case "specificWeek": {
+        const match = selectedWeek.match(/^(\d{4})-W(\d{2})$/);
+        if (match) {
+          const year = parseInt(match[1]);
+          const week = parseInt(match[2]);
+          return `${t.statistics.specificWeek} ${week} - ${year}`;
+        }
+        return selectedWeek;
+      }
+      case "specificYear": return selectedYear;
+      case "quarterYear": {
+        const match = selectedQuarter.match(/^(\d{4})-Q(\d)$/);
+        if (match) return `${quarterLabels[parseInt(match[2]) - 1]} ${match[1]}`;
+        return selectedQuarter;
+      }
+      case "halfYear": {
+        const match = selectedHalf.match(/^(\d{4})-H(\d)$/);
+        if (match) return `${halfLabels[parseInt(match[2]) - 1]} ${match[1]}`;
+        return selectedHalf;
       }
       default: return t.statistics.timeAllTime;
     }
-  }, [timeRange, selectedDate, dateFrom, dateTo, selectedMonth, t]);
+  }, [timeRange, selectedDate, dateFrom, dateTo, selectedMonth, selectedWeek, selectedYear, selectedQuarter, selectedHalf, t]);
 
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
@@ -920,38 +988,15 @@ export default function Statistics() {
             <SelectContent>
               <SelectItem value="today">{t.statistics.today}</SelectItem>
               <SelectItem value="date">{t.statistics.specificDate}</SelectItem>
-              <SelectItem value="all">{t.statistics.allTime}</SelectItem>
-              <SelectItem value="week">{t.statistics.lastWeek}</SelectItem>
-              <SelectItem value="month">{t.statistics.lastMonth}</SelectItem>
-              <SelectItem value="quarter">{t.statistics.lastQuarter}</SelectItem>
+              <SelectItem value="specificWeek">{t.statistics.specificWeek}</SelectItem>
               <SelectItem value="specificMonth">{t.statistics.specificMonth}</SelectItem>
+              <SelectItem value="specificYear">{t.statistics.specificYear}</SelectItem>
+              <SelectItem value="quarterYear">{t.statistics.quarterYear}</SelectItem>
+              <SelectItem value="halfYear">{t.statistics.halfYear}</SelectItem>
               <SelectItem value="range">{t.statistics.dateRange}</SelectItem>
-              <SelectItem value="year">{t.statistics.lastYear}</SelectItem>
+              <SelectItem value="all">{t.statistics.allTime}</SelectItem>
             </SelectContent>
           </Select>
-
-          {timeRange === "specificMonth" && (
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-                data-testid="select-specific-month"
-              >
-                {(() => {
-                  const now = new Date();
-                  const options = [];
-                  for (let i = 0; i < 24; i++) {
-                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                    const label = `${arabicMonthNames[d.getMonth()]} ${d.getFullYear()}`;
-                    options.push(<option key={val} value={val}>{label}</option>);
-                  }
-                  return options;
-                })()}
-              </select>
-            </div>
-          )}
 
           {timeRange === "date" && (
             <DatePickerIraq
@@ -960,6 +1005,102 @@ export default function Statistics() {
               className="w-[160px]"
               data-testid="input-specific-date"
             />
+          )}
+
+          {timeRange === "specificWeek" && (
+            <input
+              type="week"
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="input-specific-week"
+            />
+          )}
+
+          {timeRange === "specificMonth" && (
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="select-specific-month"
+            >
+              {(() => {
+                const now = new Date();
+                const options = [];
+                for (let i = 0; i < 24; i++) {
+                  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                  const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                  const label = `${arabicMonthNames[d.getMonth()]} ${d.getFullYear()}`;
+                  options.push(<option key={val} value={val}>{label}</option>);
+                }
+                return options;
+              })()}
+            </select>
+          )}
+
+          {timeRange === "specificYear" && (
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="select-specific-year"
+            >
+              {(() => {
+                const now = new Date();
+                const options = [];
+                for (let i = 0; i < 5; i++) {
+                  const y = now.getFullYear() - i;
+                  options.push(<option key={y} value={String(y)}>{y}</option>);
+                }
+                return options;
+              })()}
+            </select>
+          )}
+
+          {timeRange === "quarterYear" && (
+            <select
+              value={selectedQuarter}
+              onChange={(e) => setSelectedQuarter(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="select-quarter"
+            >
+              {(() => {
+                const now = new Date();
+                const options = [];
+                for (let y = now.getFullYear(); y >= now.getFullYear() - 2; y--) {
+                  for (let q = 4; q >= 1; q--) {
+                    if (y === now.getFullYear() && q > Math.ceil((now.getMonth() + 1) / 3)) continue;
+                    const val = `${y}-Q${q}`;
+                    const label = `${quarterLabels[q - 1]} ${y}`;
+                    options.push(<option key={val} value={val}>{label}</option>);
+                  }
+                }
+                return options;
+              })()}
+            </select>
+          )}
+
+          {timeRange === "halfYear" && (
+            <select
+              value={selectedHalf}
+              onChange={(e) => setSelectedHalf(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="select-half"
+            >
+              {(() => {
+                const now = new Date();
+                const options = [];
+                for (let y = now.getFullYear(); y >= now.getFullYear() - 2; y--) {
+                  for (let h = 2; h >= 1; h--) {
+                    if (y === now.getFullYear() && h === 2 && now.getMonth() < 6) continue;
+                    const val = `${y}-H${h}`;
+                    const label = `${halfLabels[h - 1]} ${y}`;
+                    options.push(<option key={val} value={val}>{label}</option>);
+                  }
+                }
+                return options;
+              })()}
+            </select>
           )}
 
           {timeRange === "range" && (
