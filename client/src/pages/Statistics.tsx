@@ -73,6 +73,10 @@ export default function Statistics() {
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
   const [dateFrom, setDateFrom] = useState<string>(getTodayIraq());
   const [dateTo, setDateTo] = useState<string>(getTodayIraq());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   // Set branch filter automatically for non-admin users
   useEffect(() => {
@@ -227,6 +231,13 @@ export default function Statistics() {
     if (range === "range") {
       const start = new Date(dateFrom + "T00:00:00");
       const end = new Date(dateTo + "T23:59:59.999");
+      return { start, end };
+    }
+
+    if (range === "specificMonth") {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      const end = new Date(year, month, 0, 23, 59, 59, 999);
       return { start, end };
     }
     
@@ -547,7 +558,7 @@ export default function Statistics() {
       shiftData,
       collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
     };
-  }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo]);
+  }, [filteredPatients, branches, timeRange, selectedDate, dateFrom, dateTo, selectedMonth]);
 
   const surveyStats = useMemo(() => {
     if (!surveyResponses || surveyResponses.length === 0) return null;
@@ -588,6 +599,15 @@ export default function Statistics() {
   }, [selectedBranch, branches, branchSession, t]);
 
   // Get time range label for reports
+  const arabicMonthNames = [
+    "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+    "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+  ];
+  const englishMonthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
   const timeRangeLabel = useMemo(() => {
     switch (timeRange) {
       case "today": return t.statistics.timeToday;
@@ -597,9 +617,14 @@ export default function Statistics() {
       case "month": return t.statistics.timeLastMonth;
       case "quarter": return t.statistics.timeLast3Months;
       case "year": return t.statistics.timeLastYear;
+      case "specificMonth": {
+        const [year, month] = selectedMonth.split("-").map(Number);
+        const monthNames = t.statistics.specificMonth ? arabicMonthNames : englishMonthNames;
+        return `${arabicMonthNames[month - 1]} ${year}`;
+      }
       default: return t.statistics.timeAllTime;
     }
-  }, [timeRange, selectedDate, dateFrom, dateTo, t]);
+  }, [timeRange, selectedDate, dateFrom, dateTo, selectedMonth, t]);
 
   // Helper function to reshape Arabic text for PDF
   const reshapeArabic = (text: string): string => {
@@ -899,10 +924,34 @@ export default function Statistics() {
               <SelectItem value="week">{t.statistics.lastWeek}</SelectItem>
               <SelectItem value="month">{t.statistics.lastMonth}</SelectItem>
               <SelectItem value="quarter">{t.statistics.lastQuarter}</SelectItem>
+              <SelectItem value="specificMonth">{t.statistics.specificMonth}</SelectItem>
               <SelectItem value="range">{t.statistics.dateRange}</SelectItem>
               <SelectItem value="year">{t.statistics.lastYear}</SelectItem>
             </SelectContent>
           </Select>
+
+          {timeRange === "specificMonth" && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                data-testid="select-specific-month"
+              >
+                {(() => {
+                  const now = new Date();
+                  const options = [];
+                  for (let i = 0; i < 24; i++) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    const label = `${arabicMonthNames[d.getMonth()]} ${d.getFullYear()}`;
+                    options.push(<option key={val} value={val}>{label}</option>);
+                  }
+                  return options;
+                })()}
+              </select>
+            </div>
+          )}
 
           {timeRange === "date" && (
             <DatePickerIraq
