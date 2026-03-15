@@ -40,8 +40,6 @@ interface DailySummary {
   patients: PatientDetail[];
   totalPaid: number;
   totalCosts: number;
-  dayPayingPatientsCosts: number;
-  dayPayingPatientsRemaining: number;
   patientCount: number;
   paymentCount: number;
 }
@@ -121,24 +119,20 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
           </div>
           
           <div className="flex items-center gap-6">
-            {summary.totalCosts > 0 && (
-              <div className={dir === "rtl" ? "text-left" : "text-right"}>
-                <p className="text-xs text-muted-foreground">{t.reports.costs}</p>
-                <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString(locale)} {t.reports.currency}</p>
-              </div>
-            )}
+            <div className={dir === "rtl" ? "text-left" : "text-right"}>
+              <p className="text-xs text-muted-foreground">{t.reports.costs}</p>
+              <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString(locale)} {t.reports.currency}</p>
+            </div>
             <div className={dir === "rtl" ? "text-left" : "text-right"}>
               <p className="text-xs text-muted-foreground">{t.reports.paid}</p>
               <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString(locale)} {t.reports.currency}</p>
             </div>
-            {summary.dayPayingPatientsRemaining > 0 && (
-              <div className={dir === "rtl" ? "text-left" : "text-right"}>
-                <p className="text-xs text-muted-foreground">{t.reports.remaining}</p>
-                <p className="font-bold font-mono text-red-600">
-                  {summary.dayPayingPatientsRemaining.toLocaleString(locale)} {t.reports.currency}
-                </p>
-              </div>
-            )}
+            <div className={dir === "rtl" ? "text-left" : "text-right"}>
+              <p className="text-xs text-muted-foreground">{t.reports.remaining}</p>
+              <p className="font-bold font-mono text-red-600">
+                {(summary.totalCosts - summary.totalPaid).toLocaleString(locale)} {t.reports.currency}
+              </p>
+            </div>
             <Button variant="ghost" size="icon" className={dir === "rtl" ? "mr-2" : "ml-2"}>
               {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
             </Button>
