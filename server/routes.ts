@@ -1761,11 +1761,27 @@ export async function registerRoutes(
     const allDatesSet = new Set([...paymentDates, ...patientDates]);
     const allDates = Array.from(allDatesSet).filter(d => d !== 'unknown').sort((a, b) => b.localeCompare(a));
     
+    // Pre-compute total paid per patient (all time) for accurate remaining calculation
+    const patientTotalPaidMap = new Map<number, number>();
+    for (const payment of payments) {
+      const current = patientTotalPaidMap.get(payment.patientId) || 0;
+      patientTotalPaidMap.set(payment.patientId, current + payment.amount);
+    }
+
     // Calculate daily summaries
     const dailySummaries = allDates.map(date => {
       const dayPayments = paymentsByDate[date] || [];
       const dayPatients = patientsByDate[date] || [];
       
+      const uniquePayingPatientIds = [...new Set(dayPayments.map(p => p.patientId))];
+      const dayPayingPatientsCosts = uniquePayingPatientIds.reduce((acc, pid) => {
+        const patient = patientMap.get(pid);
+        return acc + (patient?.totalCost || 0);
+      }, 0);
+      const dayPayingPatientsTotalPaidAllTime = uniquePayingPatientIds.reduce((acc, pid) => {
+        return acc + (patientTotalPaidMap.get(pid) || 0);
+      }, 0);
+
       return {
         date,
         payments: dayPayments.sort((a: PaymentDetail, b: PaymentDetail) => 
@@ -1774,6 +1790,8 @@ export async function registerRoutes(
         patients: dayPatients,
         totalPaid: dayPayments.reduce((acc: number, p: PaymentDetail) => acc + p.amount, 0),
         totalCosts: dayPatients.reduce((acc: number, p: PatientDetail) => acc + p.totalCost, 0),
+        dayPayingPatientsCosts,
+        dayPayingPatientsRemaining: dayPayingPatientsCosts - dayPayingPatientsTotalPaidAllTime,
         patientCount: dayPatients.length,
         paymentCount: dayPayments.length
       };
