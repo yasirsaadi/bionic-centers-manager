@@ -626,6 +626,25 @@ export default function PatientDetails() {
 
         {isAdmin && (
           <Dialog open={editCreatedAtOpen} onOpenChange={setEditCreatedAtOpen}>
+            <DialogTrigger asChild>
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => {
+                  if (patient?.createdAt) {
+                    const d = new Date(patient.createdAt);
+                    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                    setNewCreatedAtDate(dateStr);
+                    setNewCreatedAtTime(timeStr);
+                  }
+                }}
+                data-testid="button-edit-created-at"
+              >
+                <Calendar className="w-4 h-4" />
+                {t.patientDetails.changeFileDate}
+              </Button>
+            </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>{t.patientDetails.changeFileDate}</DialogTitle>
@@ -704,27 +723,7 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
-              <span className="hidden md:inline">
-                {t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}
-                {isAdmin && (
-                  <button
-                    onClick={() => {
-                      if (patient.createdAt) {
-                        const d = new Date(patient.createdAt);
-                        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                        const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-                        setNewCreatedAtDate(dateStr);
-                        setNewCreatedAtTime(timeStr);
-                      }
-                      setEditCreatedAtOpen(true);
-                    }}
-                    className="inline-flex items-center mr-1 text-primary hover:text-primary/80"
-                    data-testid="button-edit-created-at"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                )}
-              </span>
+              <span className="hidden md:inline">{t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
