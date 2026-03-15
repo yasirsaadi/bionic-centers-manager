@@ -2,11 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
+import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
-import { insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -1170,6 +1170,29 @@ export async function registerRoutes(
       return res.status(404).json({ message: "المريض غير موجود" });
     }
     res.json(patient);
+  });
+
+  app.put("/api/patients/:id/created-at", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المدير يمكنه تعديل تاريخ الإضافة" });
+    }
+
+    const id = Number(req.params.id);
+    const { createdAt } = req.body;
+    if (!createdAt) {
+      return res.status(400).json({ message: "التاريخ مطلوب" });
+    }
+
+    const [updated] = await db.update(patients)
+      .set({ createdAt: new Date(createdAt) })
+      .where(eq(patients.id, id))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ message: "المريض غير موجود" });
+    }
+    res.json(updated);
   });
 
   app.put(api.patients.update.path, isAuthenticated, async (req, res) => {

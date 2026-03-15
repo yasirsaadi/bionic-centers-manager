@@ -130,6 +130,9 @@ export default function PatientDetails() {
   const [editPaymentFreeSessions, setEditPaymentFreeSessions] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
+  const [editCreatedAtOpen, setEditCreatedAtOpen] = useState(false);
+  const [newCreatedAtDate, setNewCreatedAtDate] = useState<string>("");
+  const [newCreatedAtTime, setNewCreatedAtTime] = useState<string>("");
   const [showTreatmentPlanDialog, setShowTreatmentPlanDialog] = useState(false);
   const [editingTreatmentPlan, setEditingTreatmentPlan] = useState<TreatmentPlan | null>(null);
   const [deletingTreatmentPlanId, setDeletingTreatmentPlanId] = useState<number | null>(null);
@@ -195,6 +198,37 @@ export default function PatientDetails() {
     },
   });
   
+  const updateCreatedAtMutation = useMutation({
+    mutationFn: async ({ patientId, createdAt }: { patientId: number; createdAt: string }) => {
+      const res = await fetch(`/api/patients/${patientId}/created-at`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ createdAt }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في تعديل التاريخ");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      setEditCreatedAtOpen(false);
+      toast({
+        title: t.patientDetails.changeFileDateSuccess,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: t.patientDetails.error,
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const { data: treatmentPlans = [], isLoading: isLoadingTreatmentPlans } = useQuery<TreatmentPlan[]>({
     queryKey: ["/api/patients", Number(id), "treatment-plans"],
     queryFn: async () => {
@@ -589,6 +623,58 @@ export default function PatientDetails() {
             </DialogContent>
           </Dialog>
         )}
+
+        {isAdmin && (
+          <Dialog open={editCreatedAtOpen} onOpenChange={setEditCreatedAtOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>{t.patientDetails.changeFileDate}</DialogTitle>
+                <DialogDescription>
+                  {t.patientDetails.changeFileDateDesc}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4 space-y-4">
+                <div>
+                  <Label className="mb-2 block">{t.patientDetails.newDate}</Label>
+                  <DatePickerIraq
+                    value={newCreatedAtDate}
+                    onChange={(val) => setNewCreatedAtDate(val)}
+                    className="w-full"
+                    data-testid="input-new-created-at-date"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-2 block">{t.patientDetails.newTime}</Label>
+                  <Input
+                    type="time"
+                    value={newCreatedAtTime}
+                    onChange={(e) => setNewCreatedAtTime(e.target.value)}
+                    className="w-full"
+                    data-testid="input-new-created-at-time"
+                  />
+                </div>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setEditCreatedAtOpen(false)}>
+                  {t.common.cancel}
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (patient && newCreatedAtDate) {
+                      const time = newCreatedAtTime || "00:00";
+                      const createdAt = `${newCreatedAtDate}T${time}:00`;
+                      updateCreatedAtMutation.mutate({ patientId: patient.id, createdAt });
+                    }
+                  }}
+                  disabled={!newCreatedAtDate || updateCreatedAtMutation.isPending}
+                  data-testid="button-confirm-change-date"
+                >
+                  {updateCreatedAtMutation.isPending ? "..." : t.common.save}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
         
         <Button 
           variant="outline" 
@@ -618,7 +704,27 @@ export default function PatientDetails() {
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
-              <span className="hidden md:inline">{t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
+              <span className="hidden md:inline">
+                {t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}
+                {isAdmin && (
+                  <button
+                    onClick={() => {
+                      if (patient.createdAt) {
+                        const d = new Date(patient.createdAt);
+                        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                        const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                        setNewCreatedAtDate(dateStr);
+                        setNewCreatedAtTime(timeStr);
+                      }
+                      setEditCreatedAtOpen(true);
+                    }}
+                    className="inline-flex items-center mr-1 text-primary hover:text-primary/80"
+                    data-testid="button-edit-created-at"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
             </div>
             {patient.address && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
