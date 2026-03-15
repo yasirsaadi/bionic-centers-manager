@@ -403,9 +403,9 @@ export default function Statistics() {
     );
     const totalVisits = allVisitsInRange.length;
 
-    const newRegisteredPatients = startDate
-      ? filteredPatients.filter(p => isInRange(p.createdAt))
-      : filteredPatients;
+    const newClassifiedPatients = filteredPatients.filter(p => 
+      p.patientClassification === 'new' && (!startDate || isInRange(p.createdAt))
+    );
 
     const timeFilteredPatients = startDate 
       ? filteredPatients.filter(p => 
@@ -415,18 +415,18 @@ export default function Statistics() {
         )
       : filteredPatients;
 
-    const newPaidPatients = newRegisteredPatients.filter(p =>
+    const newPaidPatients = newClassifiedPatients.filter(p =>
       (p.payments || []).length > 0
     ).length;
 
     const totalPatients = timeFilteredPatients.length;
-    const totalNewPatients = newRegisteredPatients.length;
+    const totalNewPatients = newClassifiedPatients.length;
     const amputeeCount = timeFilteredPatients.filter(p => p.isAmputee).length;
     const physioCount = timeFilteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
     const medicalSupportCount = timeFilteredPatients.filter(p => p.isMedicalSupport).length;
-    const newAmputeeCount = newRegisteredPatients.filter(p => p.isAmputee).length;
-    const newPhysioCount = newRegisteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
-    const newMedicalSupportCount = newRegisteredPatients.filter(p => p.isMedicalSupport).length;
+    const newAmputeeCount = newClassifiedPatients.filter(p => p.isAmputee).length;
+    const newPhysioCount = newClassifiedPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
+    const newMedicalSupportCount = newClassifiedPatients.filter(p => p.isMedicalSupport).length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
     const allPaymentsInRange = filteredPatients.flatMap(p => 
