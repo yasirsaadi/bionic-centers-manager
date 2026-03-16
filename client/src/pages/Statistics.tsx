@@ -1220,6 +1220,44 @@ export default function Statistics() {
           {/* Monthly New Visitors Report - First Section */}
           <MonthlyNewPatientsReport branchId={selectedBranch} t={t} />
 
+          {/* Payment Status - Monthly Bar Chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Banknote className="w-5 h-5 text-primary" />
+                {t.statistics.paymentStatus}
+              </CardTitle>
+              <div className="flex flex-wrap gap-4 mt-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: '#0088FE' }} />
+                  <span>{t.statistics.collected}: <strong>{stats.allTimePaid.toLocaleString()}</strong> {t.statistics.currency}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: '#FF8042' }} />
+                  <span>{t.statistics.remaining}: <strong>{stats.allTimeRemaining.toLocaleString()}</strong> {t.statistics.currency}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: '#00C49F' }} />
+                  <span>المجموع الكلي: <strong>{(stats.allTimePaid + stats.allTimeRemaining).toLocaleString()}</strong> {t.statistics.currency}</span>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={350}>
+                <BarChart data={stats.monthlyPaymentTrend}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip formatter={(value: number) => [`${value.toLocaleString()} ${t.statistics.currency}`, '']} />
+                  <Legend />
+                  <Bar dataKey="collected" name={t.statistics.collected} fill="#0088FE" radius={[4, 4, 0, 0]} stackId="a" />
+                  <Bar dataKey="remaining" name={t.statistics.remaining} fill="#FF8042" radius={[4, 4, 0, 0]} stackId="a" />
+                  <Bar dataKey="total" name="المجموع الكلي" fill="#00C49F" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
           {/* Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
@@ -1445,44 +1483,6 @@ export default function Statistics() {
 
           {/* Charts Row 2 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Payment Status - Monthly Bar Chart */}
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Banknote className="w-5 h-5 text-primary" />
-                  {t.statistics.paymentStatus}
-                </CardTitle>
-                <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#0088FE' }} />
-                    <span>{t.statistics.collected}: <strong>{stats.allTimePaid.toLocaleString()}</strong> {t.statistics.currency}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#FF8042' }} />
-                    <span>{t.statistics.remaining}: <strong>{stats.allTimeRemaining.toLocaleString()}</strong> {t.statistics.currency}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#00C49F' }} />
-                    <span>المجموع الكلي: <strong>{(stats.allTimePaid + stats.allTimeRemaining).toLocaleString()}</strong> {t.statistics.currency}</span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={stats.monthlyPaymentTrend}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip formatter={(value: number) => [`${value.toLocaleString()} ${t.statistics.currency}`, '']} />
-                    <Legend />
-                    <Bar dataKey="collected" name={t.statistics.collected} fill="#0088FE" radius={[4, 4, 0, 0]} stackId="a" />
-                    <Bar dataKey="remaining" name={t.statistics.remaining} fill="#FF8042" radius={[4, 4, 0, 0]} stackId="a" />
-                    <Bar dataKey="total" name="المجموع الكلي" fill="#00C49F" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
             {/* Branch Distribution - only visible to admin users */}
             {isAdmin && (
               <Card>
