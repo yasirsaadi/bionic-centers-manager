@@ -2435,9 +2435,8 @@ export async function registerRoutes(
             SELECT 
               TO_CHAR(p.created_at, 'YYYY-MM') as month,
               COUNT(p.id) as total_new,
-              COUNT(DISTINCT pm.patient_id) as paid_count
+              COUNT(CASE WHEN COALESCE(p.total_cost, 0) > 0 THEN 1 END) as paid_count
             FROM patients p
-            LEFT JOIN payments pm ON pm.patient_id = p.id
             WHERE p.branch_id = ${filterBranchId}
               AND p.patient_classification = 'new'
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
@@ -2447,9 +2446,8 @@ export async function registerRoutes(
             SELECT 
               TO_CHAR(p.created_at, 'YYYY-MM') as month,
               COUNT(p.id) as total_new,
-              COUNT(DISTINCT pm.patient_id) as paid_count
+              COUNT(CASE WHEN COALESCE(p.total_cost, 0) > 0 THEN 1 END) as paid_count
             FROM patients p
-            LEFT JOIN payments pm ON pm.patient_id = p.id
             WHERE p.patient_classification = 'new'
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
             ORDER BY month ASC

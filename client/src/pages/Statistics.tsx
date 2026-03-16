@@ -416,7 +416,7 @@ export default function Statistics() {
       : filteredPatients;
 
     const newPaidPatients = newClassifiedPatients.filter(p =>
-      (p.payments || []).length > 0
+      (p.totalCost || 0) > 0
     ).length;
 
     const totalPatients = timeFilteredPatients.length;
