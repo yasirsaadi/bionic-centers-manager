@@ -562,6 +562,60 @@ export default function Statistics() {
         ...data,
       }));
 
+    const monthlyPaymentData: { [key: string]: { collected: number; totalCost: number } } = {};
+    filteredPatients.forEach(p => {
+      const payments = p.payments || [];
+      const patientCost = p.totalCost || 0;
+      
+      if (startDate) {
+        const paymentsInRange = payments.filter(pay => isInRange(pay.date));
+        paymentsInRange.forEach(pay => {
+          const date = new Date(pay.date || "");
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          if (!monthlyPaymentData[monthKey]) {
+            monthlyPaymentData[monthKey] = { collected: 0, totalCost: 0 };
+          }
+          monthlyPaymentData[monthKey].collected += (pay.amount || 0);
+        });
+        if (patientCost > 0) {
+          const pDate = new Date(p.createdAt || "");
+          if (isInRange(p.createdAt)) {
+            const mk = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+            if (!monthlyPaymentData[mk]) {
+              monthlyPaymentData[mk] = { collected: 0, totalCost: 0 };
+            }
+            monthlyPaymentData[mk].totalCost += patientCost;
+          }
+        }
+      } else {
+        payments.forEach(pay => {
+          const date = new Date(pay.date || "");
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          if (!monthlyPaymentData[monthKey]) {
+            monthlyPaymentData[monthKey] = { collected: 0, totalCost: 0 };
+          }
+          monthlyPaymentData[monthKey].collected += (pay.amount || 0);
+        });
+        if (patientCost > 0) {
+          const pDate = new Date(p.createdAt || "");
+          const mk = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+          if (!monthlyPaymentData[mk]) {
+            monthlyPaymentData[mk] = { collected: 0, totalCost: 0 };
+          }
+          monthlyPaymentData[mk].totalCost += patientCost;
+        }
+      }
+    });
+    const monthlyPaymentTrend = Object.entries(monthlyPaymentData)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-12)
+      .map(([month, data]) => ({
+        month: formatDateIraqShort(month + '-01'),
+        collected: data.collected,
+        remaining: Math.max(0, data.totalCost - data.collected),
+        total: data.totalCost,
+      }));
+
     const shiftDistribution = { morning: 0, evening: 0, unknown: 0 };
     allVisitsInRange.forEach((v: any) => {
       if (v.shift === "morning") shiftDistribution.morning++;
@@ -605,6 +659,7 @@ export default function Statistics() {
       revenueByTreatmentData,
       classificationDistribution,
       monthlyTrend,
+      monthlyPaymentTrend,
       shiftData,
       collectionRate: displayRevenue > 0 ? ((displayPaid / displayRevenue) * 100).toFixed(1) : '0',
     };
@@ -1390,37 +1445,40 @@ export default function Statistics() {
 
           {/* Charts Row 2 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Payment Status */}
-            <Card>
+            {/* Payment Status - Monthly Bar Chart */}
+            <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Banknote className="w-5 h-5 text-primary" />
                   {t.statistics.paymentStatus}
                 </CardTitle>
+                <div className="flex flex-wrap gap-4 mt-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#0088FE' }} />
+                    <span>{t.statistics.collected}: <strong>{stats.allTimePaid.toLocaleString()}</strong> {t.statistics.currency}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#FF8042' }} />
+                    <span>{t.statistics.remaining}: <strong>{stats.allTimeRemaining.toLocaleString()}</strong> {t.statistics.currency}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded" style={{ backgroundColor: '#00C49F' }} />
+                    <span>المجموع الكلي: <strong>{(stats.allTimePaid + stats.allTimeRemaining).toLocaleString()}</strong> {t.statistics.currency}</span>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: t.statistics.collected, value: stats.allTimePaid, color: '#00C49F' },
-                        { name: t.statistics.remaining, value: stats.allTimeRemaining, color: '#FF8042' },
-                      ]}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      fill="#8884d8"
-                      paddingAngle={5}
-                      dataKey="value"
-                      label={({ name, value }) => `${name}: ${value.toLocaleString()}`}
-                    >
-                      <Cell fill="#00C49F" />
-                      <Cell fill="#FF8042" />
-                    </Pie>
-                    <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} ${t.statistics.currency}`, '']} />
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={stats.monthlyPaymentTrend}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="month" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => [`${value.toLocaleString()} ${t.statistics.currency}`, '']} />
                     <Legend />
-                  </PieChart>
+                    <Bar dataKey="collected" name={t.statistics.collected} fill="#0088FE" radius={[4, 4, 0, 0]} stackId="a" />
+                    <Bar dataKey="remaining" name={t.statistics.remaining} fill="#FF8042" radius={[4, 4, 0, 0]} stackId="a" />
+                    <Bar dataKey="total" name="المجموع الكلي" fill="#00C49F" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
