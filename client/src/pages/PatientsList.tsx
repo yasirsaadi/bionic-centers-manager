@@ -56,22 +56,42 @@ export default function PatientsList() {
     },
   });
   const [searchTerm, setSearchTerm] = useState("");
-  const [pageSize, setPageSize] = useState<number>(10);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [viewMode, setViewMode] = useState<"date" | "all">("date");
+  const [pageSize, setPageSize] = useState<number>(() => {
+    const saved = sessionStorage.getItem("patients_pageSize");
+    return saved ? Number(saved) : 10;
+  });
+  const [currentPage, setCurrentPage] = useState<number>(() => {
+    const saved = sessionStorage.getItem("patients_currentPage");
+    return saved ? Number(saved) : 1;
+  });
+  const [viewMode, setViewMode] = useState<"date" | "all">(() => {
+    const saved = sessionStorage.getItem("patients_viewMode");
+    return (saved === "date" || saved === "all") ? saved : "date";
+  });
   
   // Get branch from URL query parameter for admin users
   const urlParams = new URLSearchParams(searchString);
   const branchFromUrl = urlParams.get("branch");
   
   const [selectedBranch, setSelectedBranch] = useState<string>(() => {
-    // Non-admin users default to their branch
     if (!isAdmin && userBranchId) return String(userBranchId);
-    // Admin users: check URL first, then default to "all"
     if (branchFromUrl) return branchFromUrl;
+    const saved = sessionStorage.getItem("patients_selectedBranch");
+    if (saved) return saved;
     return "all";
   });
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const saved = sessionStorage.getItem("patients_selectedDate");
+    return saved || getTodayDateString();
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("patients_pageSize", String(pageSize));
+    sessionStorage.setItem("patients_currentPage", String(currentPage));
+    sessionStorage.setItem("patients_viewMode", viewMode);
+    sessionStorage.setItem("patients_selectedBranch", selectedBranch);
+    sessionStorage.setItem("patients_selectedDate", selectedDate);
+  }, [pageSize, currentPage, viewMode, selectedBranch, selectedDate]);
   
   // Sync branch from URL for admin users
   useEffect(() => {
@@ -129,6 +149,13 @@ export default function PatientsList() {
 
   const totalPatients = filteredPatients?.length || 0;
   const totalPages = Math.ceil(totalPatients / pageSize);
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedPatients = filteredPatients?.slice(startIndex, startIndex + pageSize);
 
