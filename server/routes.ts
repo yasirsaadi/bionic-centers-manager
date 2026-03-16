@@ -483,14 +483,15 @@ export async function registerRoutes(
     const branches = await storage.getBranches();
     const branchPasswords = await storage.getAllBranchPasswords();
     
-    // Build a map of branch passwords with branch names
     const branchPasswordsWithNames = branches.map(branch => {
       const pw = branchPasswords.find(bp => bp.branchId === branch.id);
+      const envKey = `BRANCH_PASSWORD_${branch.id}`;
+      const envPassword = process.env[envKey]?.trim() || null;
       return {
         branchId: branch.id,
         branchName: branch.name,
-        hasPassword: !!pw,
-        // Don't send actual password, just indicate if it exists
+        hasPassword: !!pw || !!envPassword,
+        currentPassword: envPassword,
       };
     });
     
@@ -802,13 +803,16 @@ export async function registerRoutes(
     const branchesWithDetails = await Promise.all(
       allBranches.map(async (branch) => {
         const settings = allSettings.find(s => s.branchId === branch.id);
-        const hasPassword = allPasswords.some(p => p.branchId === branch.id);
+        const envKey = `BRANCH_PASSWORD_${branch.id}`;
+        const envPassword = process.env[envKey]?.trim() || null;
+        const hasPassword = allPasswords.some(p => p.branchId === branch.id) || !!envPassword;
         const patientCount = await storage.getBranchPatientCount(branch.id);
         
         return {
           ...branch,
           patientCount,
           hasPassword,
+          currentPassword: envPassword,
           settings: {
             showDashboard: settings?.showDashboard ?? true,
             showPatients: settings?.showPatients ?? true,

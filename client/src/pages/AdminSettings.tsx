@@ -64,6 +64,7 @@ import { Pencil, Download } from "lucide-react";
 interface BranchWithDetails extends Branch {
   patientCount: number;
   hasPassword: boolean;
+  currentPassword: string | null;
   settings: {
     showDashboard: boolean;
     showPatients: boolean;
@@ -203,8 +204,18 @@ function BackupStatusCard() {
     refetchInterval: 60000,
   });
 
-  const { data: branches } = useQuery<{ id: number; name: string }[]>({
-    queryKey: ["/api/branches"],
+  const { data: branches } = useQuery<{ id: number; name: string; currentPassword?: string }[]>({
+    queryKey: ["/api/admin/settings/branches"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/settings", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      const data = await res.json();
+      return data.branches.map((b: any) => ({
+        id: b.branchId,
+        name: b.branchName,
+        currentPassword: b.currentPassword,
+      }));
+    },
   });
 
   const handleSendBackup = async () => {
@@ -1119,7 +1130,9 @@ export default function AdminSettings() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-slate-800">{branch.name}</h3>
-                        <p className="text-sm text-slate-500">{branch.location}</p>
+                        {branch.currentPassword && (
+                          <p className="text-sm font-mono text-primary mt-1">كلمة المرور: {branch.currentPassword}</p>
+                        )}
                       </div>
                     </div>
                     {selectedBranch === branch.id && (
@@ -1224,7 +1237,12 @@ export default function AdminSettings() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {branch.hasPassword ? (
+                      {branch.currentPassword ? (
+                        <Badge variant="secondary" className="gap-1 font-mono text-xs">
+                          <Lock className="w-3 h-3" />
+                          {branch.currentPassword}
+                        </Badge>
+                      ) : branch.hasPassword ? (
                         <Badge variant="secondary" className="gap-1">
                           <CheckCircle className="w-3 h-3" />
                           {t.adminSettings.hasPassword}
