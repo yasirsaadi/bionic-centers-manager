@@ -1172,7 +1172,7 @@ export default function EditPatient() {
                 )}
               />
 
-              {(patient?.branchId === 1 || patient?.branchId === 2) && (
+              {patient?.branchId && (
                 <FormField
                   control={form.control}
                   name="patientClassification"

@@ -1167,7 +1167,7 @@ export default function CreatePatient() {
                 </div>
               )}
 
-              {(defaultBranchId === 1 || defaultBranchId === 2) && (
+              {defaultBranchId && (
                 <FormField
                   control={form.control}
                   name="patientClassification"
