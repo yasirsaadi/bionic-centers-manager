@@ -1365,7 +1365,13 @@ export async function registerRoutes(
       }
     }
     input.shift = visitShift;
-    
+
+    // Track which system user created this visit (if logged in via system user)
+    const sessionUserId = branchSession?.userId;
+    if (sessionUserId && typeof sessionUserId === 'number') {
+      (input as any).createdBy = sessionUserId;
+    }
+
     const visit = await storage.createVisit(input);
     
     if (input.cost && input.cost > 0) {
@@ -2054,14 +2060,17 @@ export async function registerRoutes(
           v.notes AS "notes",
           v.treatment_type AS "treatment",
           b.id AS "branchId",
-          b.name AS "branchName"
+          b.name AS "branchName",
+          u.id AS "employeeId",
+          u.display_name AS "employeeName"
         FROM visits v
         INNER JOIN patients p ON p.id = v.patient_id
-        LEFT JOIN branches b ON b.id = v.branch_id
+        LEFT  JOIN branches b ON b.id = v.branch_id
+        LEFT  JOIN system_users u ON u.id = v.created_by
         WHERE v.visit_date >= ${startTs}::timestamp
           AND v.visit_date <  ${endTs}::timestamp
           AND (${effectiveBranchId}::int IS NULL OR v.branch_id = ${effectiveBranchId}::int)
-          AND (${employeeFilterId}::int IS NULL OR FALSE)
+          AND (${employeeFilterId}::int IS NULL OR v.created_by = ${employeeFilterId}::int)
         ORDER BY v.visit_date ASC
       `);
 
@@ -2091,8 +2100,8 @@ export async function registerRoutes(
           notes: r.notes,
           branchId: r.branchId ?? null,
           branchName: r.branchName ?? null,
-          employeeId: null,
-          employeeName: null,
+          employeeId: r.employeeId ?? null,
+          employeeName: r.employeeName ?? null,
         };
       });
 

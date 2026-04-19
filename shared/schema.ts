@@ -79,6 +79,7 @@ export const visits = pgTable("visits", {
   sessionCount: integer("session_count"),
   cost: integer("cost"),
   shift: text("shift"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
 });
 
 export const payments = pgTable("payments", {
