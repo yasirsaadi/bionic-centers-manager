@@ -1995,12 +1995,21 @@ export async function registerRoutes(
   app.get("/api/reports/daily-patient-report", isAuthenticated, async (req, res) => {
     try {
       const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
-      const baghdadNow = new Date(Date.now() + BAGHDAD_OFFSET_MS);
-      const year = baghdadNow.getUTCFullYear();
-      const month = baghdadNow.getUTCMonth();
-      const day = baghdadNow.getUTCDate();
-      const startOfDayUTC = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
-      const endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
+      const dateParam = req.query.date as string | undefined;
+      let startOfDayUTC: Date;
+      let endOfDayUTC: Date;
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const [year, month, day] = dateParam.split('-').map(Number);
+        startOfDayUTC = new Date(Date.UTC(year, month - 1, day) - BAGHDAD_OFFSET_MS);
+        endOfDayUTC = new Date(Date.UTC(year, month - 1, day + 1) - BAGHDAD_OFFSET_MS);
+      } else {
+        const baghdadNow = new Date(Date.now() + BAGHDAD_OFFSET_MS);
+        const year = baghdadNow.getUTCFullYear();
+        const month = baghdadNow.getUTCMonth();
+        const day = baghdadNow.getUTCDate();
+        startOfDayUTC = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
+        endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
+      }
       const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
 

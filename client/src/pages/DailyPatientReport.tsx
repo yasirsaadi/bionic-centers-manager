@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FileBarChart } from "lucide-react";
-import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
+import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
 
 interface DailyPatientRow {
   visitId: number;
@@ -17,6 +19,9 @@ interface DailyPatientRow {
   actionToday: string | null;
   treatment: string | null;
   notes: string | null;
+  branchId: number | null;
+  branchName: string | null;
+  employeeId: number | null;
   employeeName: string | null;
 }
 
@@ -24,8 +29,19 @@ export default function DailyPatientReport() {
   const { language } = useTranslation();
   const isAr = language === "ar";
 
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
+
+  const queryString = `?date=${encodeURIComponent(selectedDate)}`;
+
   const { data, isLoading, isError } = useQuery<DailyPatientRow[]>({
-    queryKey: ["/api/reports/daily-patient-report"],
+    queryKey: ["/api/reports/daily-patient-report", { date: selectedDate }],
+    queryFn: async () => {
+      const res = await fetch(`/api/reports/daily-patient-report${queryString}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
   });
 
   const rows = (data ?? []).slice().sort((a, b) => {
@@ -37,7 +53,7 @@ export default function DailyPatientReport() {
   const labels = isAr
     ? {
         title: "التقرير اليومي للمرضى",
-        subtitle: "جميع زيارات اليوم مرتبة حسب الوقت",
+        subtitle: "زيارات اليوم المختار مرتبة حسب الوقت",
         patientName: "اسم المريض",
         age: "العمر",
         phone: "الهاتف",
@@ -46,13 +62,13 @@ export default function DailyPatientReport() {
         treatment: "العلاج",
         notes: "ملاحظات",
         date: "التاريخ",
-        empty: "لا توجد زيارات اليوم",
+        empty: "لا توجد زيارات في هذا اليوم",
         error: "تعذّر تحميل التقرير",
         rowsCount: (n: number) => `إجمالي الزيارات: ${n}`,
       }
     : {
         title: "Daily Patient Report",
-        subtitle: "All of today's visits sorted by time",
+        subtitle: "Visits for the selected day sorted by time",
         patientName: "Patient Name",
         age: "Age",
         phone: "Phone",
@@ -61,7 +77,7 @@ export default function DailyPatientReport() {
         treatment: "Treatment",
         notes: "Notes",
         date: "Date",
-        empty: "No visits today",
+        empty: "No visits on this day",
         error: "Failed to load report",
         rowsCount: (n: number) => `Total visits: ${n}`,
       };
@@ -81,6 +97,19 @@ export default function DailyPatientReport() {
       </div>
 
       <Card className="p-4 md:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-4" data-testid="filters-bar">
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-slate-700" htmlFor="date-filter">
+              {labels.date}
+            </label>
+            <DatePickerIraq
+              value={selectedDate}
+              onChange={setSelectedDate}
+              data-testid="input-report-date"
+            />
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="space-y-3" data-testid="state-loading">
             <Skeleton className="h-10 w-full" />
