@@ -1998,6 +1998,44 @@ export async function registerRoutes(
       const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
 
+      // Resolve branch filter: non-admin is locked to their branch; admin may pass ?branchId
+      const ctx = getUserContext(req);
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = ctx.role === 'admin' || branchSession?.isAdmin;
+      const userBranchId = ctx.branchId ?? branchSession?.branchId;
+
+      let effectiveBranchId: number | null = null;
+      if (isAdmin) {
+        const qb = req.query.branchId as string | undefined;
+        if (qb !== undefined && qb !== '') {
+          const parsed = parseInt(qb, 10);
+          if (isNaN(parsed)) {
+            return res.status(400).json({ message: "معرف الفرع غير صالح" });
+          }
+          effectiveBranchId = parsed;
+        }
+      } else {
+        if (!userBranchId) {
+          return res.status(403).json({ message: "لا يوجد فرع مرتبط بالمستخدم" });
+        }
+        effectiveBranchId = Number(userBranchId);
+      }
+
+      // Optional employee filter (admin only). NOTE: visits table has no employee
+      // column in the current schema, so this filter is accepted but matches
+      // nothing — employeeId / employeeName remain null in the response.
+      let employeeFilterId: number | null = null;
+      if (isAdmin) {
+        const qe = req.query.employeeId as string | undefined;
+        if (qe !== undefined && qe !== '') {
+          const parsed = parseInt(qe, 10);
+          if (isNaN(parsed)) {
+            return res.status(400).json({ message: "معرف الموظف غير صالح" });
+          }
+          employeeFilterId = parsed;
+        }
+      }
+
       const result = await db.execute(sql`
         SELECT
           v.id AS "visitId",
@@ -2014,10 +2052,16 @@ export async function registerRoutes(
           p.injury_area AS "injuryArea",
           v.details AS "details",
           v.notes AS "notes",
-          v.treatment_type AS "treatment"
+          v.treatment_type AS "treatment",
+          b.id AS "branchId",
+          b.name AS "branchName"
         FROM visits v
         INNER JOIN patients p ON p.id = v.patient_id
-        WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp
+        LEFT JOIN branches b ON b.id = v.branch_id
+        WHERE v.visit_date >= ${startTs}::timestamp
+          AND v.visit_date <  ${endTs}::timestamp
+          AND (${effectiveBranchId}::int IS NULL OR v.branch_id = ${effectiveBranchId}::int)
+          AND (${employeeFilterId}::int IS NULL OR FALSE)
         ORDER BY v.visit_date ASC
       `);
 
@@ -2045,6 +2089,9 @@ export async function registerRoutes(
           actionToday,
           treatment: r.treatment,
           notes: r.notes,
+          branchId: r.branchId ?? null,
+          branchName: r.branchName ?? null,
+          employeeId: null,
           employeeName: null,
         };
       });
