@@ -1091,18 +1091,34 @@ export async function registerRoutes(
     const ctx = getUserContext(req);
     const branchId = ctx.role === 'admin' ? undefined : ctx.branchId;
     const patients = await storage.getPatients(branchId);
-    
-    // Include visits and payments for each patient to support filtering and statistics
-    const patientsWithRelations = await Promise.all(
-      patients.map(async (patient) => {
-        const [visits, payments] = await Promise.all([
-          storage.getVisitsByPatientId(patient.id),
-          storage.getPaymentsByPatientId(patient.id)
-        ]);
-        return { ...patient, visits, payments };
-      })
-    );
-    
+    const patientIds = patients.map(p => p.id);
+
+    // Batch-fetch visits and payments to avoid N+1 queries
+    const [allVisits, allPayments] = await Promise.all([
+      storage.getVisitsByPatientIds(patientIds),
+      storage.getPaymentsByPatientIds(patientIds),
+    ]);
+
+    const visitsByPatient = new Map<number, typeof allVisits>();
+    for (const v of allVisits) {
+      const arr = visitsByPatient.get(v.patientId);
+      if (arr) arr.push(v);
+      else visitsByPatient.set(v.patientId, [v]);
+    }
+
+    const paymentsByPatient = new Map<number, typeof allPayments>();
+    for (const p of allPayments) {
+      const arr = paymentsByPatient.get(p.patientId);
+      if (arr) arr.push(p);
+      else paymentsByPatient.set(p.patientId, [p]);
+    }
+
+    const patientsWithRelations = patients.map(patient => ({
+      ...patient,
+      visits: visitsByPatient.get(patient.id) || [],
+      payments: paymentsByPatient.get(patient.id) || [],
+    }));
+
     res.json(patientsWithRelations);
   });
 

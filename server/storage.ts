@@ -21,7 +21,7 @@ import {
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer
 } from "@shared/schema";
-import { eq, desc, and, sum, or, isNull, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Branches
@@ -39,12 +39,14 @@ export interface IStorage {
 
   // Visits
   getVisitsByPatientId(patientId: number): Promise<Visit[]>;
+  getVisitsByPatientIds(patientIds: number[]): Promise<Visit[]>;
   getVisitsByBranch(branchId: number): Promise<Visit[]>;
   createVisit(visit: InsertVisit): Promise<Visit>;
   deleteVisit(id: number): Promise<void>;
 
   // Payments
   getPaymentsByPatientId(patientId: number): Promise<Payment[]>;
+  getPaymentsByPatientIds(patientIds: number[]): Promise<Payment[]>;
   getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
@@ -263,6 +265,10 @@ export class DatabaseStorage implements IStorage {
   async getVisitsByPatientId(patientId: number): Promise<Visit[]> {
     return await db.select().from(visits).where(eq(visits.patientId, patientId)).orderBy(desc(visits.visitDate));
   }
+  async getVisitsByPatientIds(patientIds: number[]): Promise<Visit[]> {
+    if (patientIds.length === 0) return [];
+    return await db.select().from(visits).where(inArray(visits.patientId, patientIds)).orderBy(desc(visits.visitDate));
+  }
   async getVisitsByBranch(branchId: number): Promise<Visit[]> {
     return await db.select().from(visits).where(eq(visits.branchId, branchId)).orderBy(desc(visits.visitDate));
   }
@@ -304,6 +310,10 @@ export class DatabaseStorage implements IStorage {
   // Payments
   async getPaymentsByPatientId(patientId: number): Promise<Payment[]> {
     return await db.select().from(payments).where(eq(payments.patientId, patientId)).orderBy(desc(payments.date));
+  }
+  async getPaymentsByPatientIds(patientIds: number[]): Promise<Payment[]> {
+    if (patientIds.length === 0) return [];
+    return await db.select().from(payments).where(inArray(payments.patientId, patientIds)).orderBy(desc(payments.date));
   }
   async getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]> {
     // Simplified date filtering for report
