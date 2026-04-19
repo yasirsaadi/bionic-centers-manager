@@ -1985,6 +1985,77 @@ export async function registerRoutes(
     }
   });
 
+  // Daily patient report (today's visits joined with patients) - Baghdad timezone
+  app.get("/api/reports/daily-patient-report", isAuthenticated, async (req, res) => {
+    try {
+      const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
+      const baghdadNow = new Date(Date.now() + BAGHDAD_OFFSET_MS);
+      const year = baghdadNow.getUTCFullYear();
+      const month = baghdadNow.getUTCMonth();
+      const day = baghdadNow.getUTCDate();
+      const startOfDayUTC = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
+      const endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
+      const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
+      const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
+
+      const result = await db.execute(sql`
+        SELECT
+          v.id AS "visitId",
+          p.id AS "patientId",
+          v.visit_date AS "date",
+          p.name AS "patientName",
+          p.age AS "age",
+          p.phone AS "phone",
+          p.medical_condition AS "medicalCondition",
+          p.amputation_site AS "amputationSite",
+          p.disease_type AS "diseaseType",
+          p.support_type AS "supportType",
+          p.injury_type AS "injuryType",
+          p.injury_area AS "injuryArea",
+          v.details AS "details",
+          v.notes AS "notes",
+          v.treatment_type AS "treatment"
+        FROM visits v
+        INNER JOIN patients p ON p.id = v.patient_id
+        WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp
+        ORDER BY v.visit_date ASC
+      `);
+
+      const rows = (result.rows || []).map((r: any) => {
+        const problem =
+          (r.medicalCondition && String(r.medicalCondition).trim()) ||
+          (r.amputationSite && String(r.amputationSite).trim()) ||
+          (r.diseaseType && String(r.diseaseType).trim()) ||
+          (r.supportType && String(r.supportType).trim()) ||
+          (r.injuryType && String(r.injuryType).trim()) ||
+          (r.injuryArea && String(r.injuryArea).trim()) ||
+          null;
+        const actionToday =
+          (r.details && String(r.details).trim()) ||
+          (r.notes && String(r.notes).trim()) ||
+          null;
+        return {
+          visitId: r.visitId,
+          patientId: r.patientId,
+          date: r.date,
+          patientName: r.patientName,
+          age: r.age,
+          phone: r.phone,
+          problem,
+          actionToday,
+          treatment: r.treatment,
+          notes: r.notes,
+          employeeName: null,
+        };
+      });
+
+      res.json(rows);
+    } catch (error) {
+      console.error("Daily patient report error:", error);
+      res.status(500).json({ message: "خطأ في جلب تقرير المرضى اليومي" });
+    }
+  });
+
   // Custom Stats API endpoints
   app.get("/api/custom-stats", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
