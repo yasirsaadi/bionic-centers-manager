@@ -3,10 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileBarChart } from "lucide-react";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
+import { useBranchSession } from "@/components/BranchGate";
+import type { Branch } from "@shared/schema";
 
 interface DailyPatientRow {
   visitId: number;
@@ -30,11 +33,28 @@ export default function DailyPatientReport() {
   const isAr = language === "ar";
 
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
+  const branchSession = useBranchSession();
+  const isAdmin = !!branchSession?.isAdmin;
+  const userBranchId = branchSession?.branchId;
+  const userBranchName = branchSession?.branchName;
 
-  const queryString = `?date=${encodeURIComponent(selectedDate)}`;
+  // For admin: branch selector (empty = all). For non-admin: locked to their branch.
+  const [adminBranchId, setAdminBranchId] = useState<string>("");
+  const effectiveBranchId = isAdmin
+    ? (adminBranchId || null)
+    : (userBranchId ? String(userBranchId) : null);
+
+  const { data: branches } = useQuery<Branch[]>({
+    queryKey: ["/api/branches"],
+    enabled: isAdmin,
+  });
+
+  const params = new URLSearchParams({ date: selectedDate });
+  if (effectiveBranchId) params.set("branchId", effectiveBranchId);
+  const queryString = `?${params.toString()}`;
 
   const { data, isLoading, isError } = useQuery<DailyPatientRow[]>({
-    queryKey: ["/api/reports/daily-patient-report", { date: selectedDate }],
+    queryKey: ["/api/reports/daily-patient-report", { date: selectedDate, branchId: effectiveBranchId }],
     queryFn: async () => {
       const res = await fetch(`/api/reports/daily-patient-report${queryString}`, {
         credentials: "include",
@@ -62,6 +82,9 @@ export default function DailyPatientReport() {
         treatment: "العلاج",
         notes: "ملاحظات",
         date: "التاريخ",
+        branch: "الفرع",
+        allBranches: "كل الفروع",
+        assignedBranch: "الفرع المعتمد",
         empty: "لا توجد زيارات في هذا اليوم",
         error: "تعذّر تحميل التقرير",
         rowsCount: (n: number) => `إجمالي الزيارات: ${n}`,
@@ -77,6 +100,9 @@ export default function DailyPatientReport() {
         treatment: "Treatment",
         notes: "Notes",
         date: "Date",
+        branch: "Branch",
+        allBranches: "All branches",
+        assignedBranch: "Assigned branch",
         empty: "No visits on this day",
         error: "Failed to load report",
         rowsCount: (n: number) => `Total visits: ${n}`,
@@ -99,14 +125,40 @@ export default function DailyPatientReport() {
       <Card className="p-4 md:p-6">
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-4" data-testid="filters-bar">
           <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-slate-700" htmlFor="date-filter">
-              {labels.date}
-            </label>
+            <label className="text-sm font-medium text-slate-700">{labels.date}</label>
             <DatePickerIraq
               value={selectedDate}
               onChange={setSelectedDate}
               data-testid="input-report-date"
             />
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-[200px]">
+            <label className="text-sm font-medium text-slate-700">
+              {isAdmin ? labels.branch : labels.assignedBranch}
+            </label>
+            {isAdmin ? (
+              <Select value={adminBranchId || "all"} onValueChange={(v) => setAdminBranchId(v === "all" ? "" : v)}>
+                <SelectTrigger data-testid="select-report-branch">
+                  <SelectValue placeholder={labels.allBranches} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="option-branch-all">{labels.allBranches}</SelectItem>
+                  {(branches ?? []).map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)} data-testid={`option-branch-${b.id}`}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div
+                className="h-10 px-3 flex items-center rounded-md border border-input bg-slate-50 text-sm text-slate-700"
+                data-testid="text-assigned-branch"
+              >
+                {userBranchName || "-"}
+              </div>
+            )}
           </div>
         </div>
 
