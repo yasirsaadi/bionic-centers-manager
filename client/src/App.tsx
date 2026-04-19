@@ -16,6 +16,7 @@ import CreatePatient from "@/pages/CreatePatient";
 import PatientDetails from "@/pages/PatientDetails";
 import EditPatient from "@/pages/EditPatient";
 import Reports from "@/pages/Reports";
+import DailyPatientReport from "@/pages/DailyPatientReport";
 import Branches from "@/pages/Branches";
 import BranchDetails from "@/pages/BranchDetails";
 import BranchRevenues from "@/pages/BranchRevenues";
@@ -98,6 +99,7 @@ function Router() {
           <Route path="/patients/:id/edit" component={EditPatient} />
           <Route path="/patients/:id" component={PatientDetails} />
           <Route path="/reports" component={Reports} />
+          <Route path="/reports/daily-patients" component={DailyPatientReport} />
           <Route path="/revenues" component={BranchRevenues} />
           <Route path="/branches" component={Branches} />
           <Route path="/branches/:id" component={BranchDetails} />
