@@ -2031,15 +2031,10 @@ export async function registerRoutes(
       // column in the current schema, so this filter is accepted but matches
       // nothing — employeeId / employeeName remain null in the response.
       let employeeFilterId: number | null = null;
-      if (isAdmin) {
-        const qe = req.query.employeeId as string | undefined;
-        if (qe !== undefined && qe !== '') {
-          const parsed = parseInt(qe, 10);
-          if (isNaN(parsed)) {
-            return res.status(400).json({ message: "معرف الموظف غير صالح" });
-          }
-          employeeFilterId = parsed;
-        }
+      if (isAdmin && req.query.employeeId && !isNaN(Number(req.query.employeeId))) {
+        employeeFilterId = Number(req.query.employeeId);
+      } else {
+        employeeFilterId = null;
       }
 
       const result = await db.execute(sql`
