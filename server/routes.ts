@@ -82,11 +82,11 @@ export async function registerRoutes(
 
   // Helper to get user branch
   const getUserContext = (req: any) => {
-    const user = req.user as any;
+    const branchSession = (req.session as any)?.branchSession;
     return {
-      userId: user?.claims?.sub,
-      role: user?.role || 'staff',
-      branchId: user?.branchId
+      userId: branchSession?.userId,
+      role: branchSession?.role || (branchSession?.isAdmin ? 'admin' : 'staff'),
+      branchId: branchSession?.branchId
     };
   };
 
@@ -184,7 +184,7 @@ export async function registerRoutes(
   });
 
   // Branch password verification - supports both system_users and legacy auth
-  app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
+  app.post("/api/verify-branch", async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
       const { branchKey, username, password, shift } = parsed;
