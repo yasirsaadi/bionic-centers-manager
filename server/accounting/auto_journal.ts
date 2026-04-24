@@ -1,8 +1,9 @@
 import { db } from "../db";
 import { chartOfAccounts } from "@shared/schema";
-import type { Payment, Expense } from "@shared/schema";
+import type { Payment, Expense, Invoice, InvoiceItem } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { createJournalEntry, logAudit } from "./ledger";
+import type { JournalLineInput } from "./ledger";
 
 /**
  * Auto Journal
@@ -197,10 +198,181 @@ export async function createJournalForExpense(expense: Expense, createdBy?: numb
 }
 
 /**
+ * يُنشئ قيداً محاسبياً عند إصدار فاتورة مريض (بيع آجل).
+ * مدين: الذمم المدينة (1130) — إجمالي الفاتورة (المبلغ المستحق).
+ * مدين: الخصومات الممنوحة (4990) — إن وُجد خصم (contra-revenue).
+ * دائن: الإيرادات (4100/4200/4300/4400/4900) — موزّعة حسب نوع الخدمة.
+ */
+export async function createJournalForInvoice(
+  invoice: Invoice,
+  items: InvoiceItem[] | undefined,
+  createdBy?: number | null
+): Promise<void> {
+  try {
+    const total = invoice.total ?? 0;
+    if (total <= 0) return;
+
+    const arAccountId = await getAccountIdByCode("1130");
+    if (!arAccountId) {
+      console.warn(`[auto-journal] AR account 1130 not found for invoice ${invoice.id}`);
+      return;
+    }
+
+    const discount = invoice.discount ?? 0;
+    const subtotal = invoice.subtotal ?? total + discount;
+    const lines: JournalLineInput[] = [];
+
+    lines.push({
+      accountId: arAccountId,
+      debit: total,
+      description: `ذمم مدينة - فاتورة ${invoice.invoiceNumber}`,
+      branchId: invoice.branchId,
+      patientId: invoice.patientId,
+    });
+
+    if (discount > 0) {
+      const discountAccountId = await getAccountIdByCode("4990");
+      if (discountAccountId) {
+        lines.push({
+          accountId: discountAccountId,
+          debit: discount,
+          description: `خصم ممنوح - فاتورة ${invoice.invoiceNumber}`,
+          branchId: invoice.branchId,
+          patientId: invoice.patientId,
+        });
+      }
+    }
+
+    // Group line items by service type → revenue account code
+    let itemsSum = 0;
+    if (items && items.length > 0) {
+      const byCode = new Map<string, number>();
+      for (const it of items) {
+        const code = revenueTypeToAccountCode(it.serviceType ?? null);
+        const amount = it.total ?? 0;
+        if (amount <= 0) continue;
+        byCode.set(code, (byCode.get(code) ?? 0) + amount);
+        itemsSum += amount;
+      }
+
+      for (const [code, amount] of byCode) {
+        const revenueAccountId = await getAccountIdByCode(code);
+        if (!revenueAccountId) {
+          console.warn(`[auto-journal] revenue account ${code} not found (invoice ${invoice.id})`);
+          return;
+        }
+        lines.push({
+          accountId: revenueAccountId,
+          credit: amount,
+          description: `إيراد - فاتورة ${invoice.invoiceNumber}`,
+          branchId: invoice.branchId,
+          patientId: invoice.patientId,
+        });
+      }
+    }
+
+    // If no items or items don't sum to subtotal, put remainder in default revenue (4900)
+    const remainder = subtotal - itemsSum;
+    if (remainder > 0) {
+      const defaultRevenueId = await getAccountIdByCode("4900");
+      if (!defaultRevenueId) {
+        console.warn(`[auto-journal] default revenue 4900 not found (invoice ${invoice.id})`);
+        return;
+      }
+      lines.push({
+        accountId: defaultRevenueId,
+        credit: remainder,
+        description: `إيراد غير محدد - فاتورة ${invoice.invoiceNumber}`,
+        branchId: invoice.branchId,
+        patientId: invoice.patientId,
+      });
+    }
+
+    // Sanity: entry must balance. Expected: Dr total + Dr discount == Cr subtotal.
+    const totalDebit = lines.reduce((s, l) => s + (l.debit ?? 0), 0);
+    const totalCredit = lines.reduce((s, l) => s + (l.credit ?? 0), 0);
+    if (totalDebit !== totalCredit) {
+      console.error(
+        `[auto-journal] invoice ${invoice.id} unbalanced: Dr ${totalDebit} vs Cr ${totalCredit}. Skipping to prevent broken books.`
+      );
+      return;
+    }
+
+    await createJournalEntry({
+      entryDate: dateToISO(invoice.invoiceDate),
+      branchId: invoice.branchId,
+      description: `فاتورة مريض ${invoice.invoiceNumber}`,
+      reference: invoice.invoiceNumber,
+      sourceType: "invoice",
+      sourceId: invoice.id,
+      createdBy: createdBy ?? null,
+      lines,
+    });
+  } catch (err) {
+    console.error(`[auto-journal] failed to create journal for invoice ${invoice.id}:`, err);
+  }
+}
+
+/**
+ * يُنشئ قيداً عند استلام دفعة على فاتورة سابقة.
+ * مدين: الصندوق النقدي للفرع.
+ * دائن: الذمم المدينة (1130).
+ */
+export async function createJournalForInvoicePayment(
+  invoice: Invoice,
+  paymentAmount: number,
+  createdBy?: number | null
+): Promise<void> {
+  try {
+    if (!paymentAmount || paymentAmount <= 0) return;
+
+    const cashAccountId = await getCashAccountForBranch(invoice.branchId);
+    if (!cashAccountId) {
+      console.warn(`[auto-journal] no cash account for branch ${invoice.branchId} (invoice payment ${invoice.id})`);
+      return;
+    }
+
+    const arAccountId = await getAccountIdByCode("1130");
+    if (!arAccountId) {
+      console.warn(`[auto-journal] AR account 1130 not found (invoice payment ${invoice.id})`);
+      return;
+    }
+
+    await createJournalEntry({
+      entryDate: new Date().toISOString().split("T")[0],
+      branchId: invoice.branchId,
+      description: `استلام دفعة على فاتورة ${invoice.invoiceNumber}`,
+      reference: invoice.invoiceNumber,
+      sourceType: "invoice_payment",
+      sourceId: invoice.id,
+      createdBy: createdBy ?? null,
+      lines: [
+        {
+          accountId: cashAccountId,
+          debit: paymentAmount,
+          description: `دفعة نقدية على فاتورة ${invoice.invoiceNumber}`,
+          branchId: invoice.branchId,
+          patientId: invoice.patientId,
+        },
+        {
+          accountId: arAccountId,
+          credit: paymentAmount,
+          description: `تسوية ذمم - فاتورة ${invoice.invoiceNumber}`,
+          branchId: invoice.branchId,
+          patientId: invoice.patientId,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error(`[auto-journal] failed to create journal for invoice payment ${invoice.id}:`, err);
+  }
+}
+
+/**
  * يعكس القيد المرتبط بالدفعة/المصروف عند حذفها.
  */
 export async function reverseJournalForSource(
-  sourceType: "payment" | "expense" | "invoice",
+  sourceType: "payment" | "expense" | "invoice" | "invoice_payment",
   sourceId: number,
   reversedBy: number | null,
   reason: string
