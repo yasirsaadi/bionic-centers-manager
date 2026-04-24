@@ -242,6 +242,13 @@ function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('ar-IQ').format(amount) + " د.ع";
 }
 
+// Returns the number portion only (no currency suffix), formatted with
+// thousand separators for the Iraqi Arabic locale. Use this when the
+// currency label is rendered as a separate styled span.
+function formatNumberOnly(amount: number): string {
+  return new Intl.NumberFormat('ar-IQ').format(amount);
+}
+
 function getCategoryLabel(category: string): string {
   const cat = EXPENSE_CATEGORIES.find(c => c.value === category);
   return cat?.label || category;
@@ -332,6 +339,23 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
       </CardContent>
     </Card>
   );
+}
+
+// Formats an ISO date (YYYY-MM-DD) as Arabic: "10 شباط 2025".
+// Uses Iraqi Arabic month names which are more natural than Latin months
+// or hyphenated ISO for end users.
+const ARABIC_MONTHS_IQ = [
+  "كانون الثاني", "شباط", "آذار", "نيسان", "أيار", "حزيران",
+  "تموز", "آب", "أيلول", "تشرين الأول", "تشرين الثاني", "كانون الأول",
+];
+function formatArabicDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!match) return iso;
+  const [, y, m, d] = match;
+  const monthIdx = Number(m) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return iso;
+  return `${Number(d)} ${ARABIC_MONTHS_IQ[monthIdx]} ${y}`;
 }
 
 export default function Accounting() {
@@ -1105,18 +1129,24 @@ export default function Accounting() {
               </Badge>
             )}
             
-            <DatePickerIraq
-              value={dateRange.startDate}
-              onChange={(val) => setDateRange(prev => ({ ...prev, startDate: val }))}
-              className="w-36"
-              data-testid="input-start-date"
-            />
-            <DatePickerIraq
-              value={dateRange.endDate}
-              onChange={(val) => setDateRange(prev => ({ ...prev, endDate: val }))}
-              className="w-36"
-              data-testid="input-end-date"
-            />
+            <div className="flex items-center gap-1">
+              <label className="text-sm font-medium text-muted-foreground">من</label>
+              <DatePickerIraq
+                value={dateRange.startDate}
+                onChange={(val) => setDateRange(prev => ({ ...prev, startDate: val }))}
+                className="w-36"
+                data-testid="input-start-date"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-sm font-medium text-muted-foreground">إلى</label>
+              <DatePickerIraq
+                value={dateRange.endDate}
+                onChange={(val) => setDateRange(prev => ({ ...prev, endDate: val }))}
+                className="w-36"
+                data-testid="input-end-date"
+              />
+            </div>
             
             <Button
               variant="outline"
@@ -1186,23 +1216,21 @@ export default function Accounting() {
             {/* Date range banner: shows effective period covered by the totals */}
             {summary?.effectiveStartDate && (
               <div
-                className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
+                className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
                 data-testid="text-summary-date-range"
               >
-                <span>النتائج الظاهرة أدناه تغطّي الفترة من</span>
-                <span className="font-semibold text-foreground" dir="ltr">
-                  {summary.effectiveStartDate}
+                <span>النتائج أدناه تغطّي الفترة</span>
+                <span className="font-medium">من</span>
+                <span className="font-semibold text-foreground">
+                  {formatArabicDate(summary.effectiveStartDate)}
                 </span>
-                <span>إلى</span>
-                <span className="font-semibold text-foreground" dir="ltr">
-                  {summary.effectiveEndDate}
+                <span className="font-medium">إلى</span>
+                <span className="font-semibold text-foreground">
+                  {formatArabicDate(summary.effectiveEndDate)}
                 </span>
-                <span className="mx-1">·</span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="rounded-full bg-primary/15 px-2 py-0.5 font-bold text-primary">
-                    {summary.daysInRange}
-                  </span>
-                  <span>يوماً</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-0.5">
+                  <span className="font-bold text-primary">{summary.daysInRange}</span>
+                  <span className="text-xs text-primary/80">يوماً</span>
                 </span>
               </div>
             )}
@@ -1215,10 +1243,13 @@ export default function Accounting() {
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-xl font-bold text-primary" data-testid="text-total-revenue">
-                    {summaryLoading ? "..." : displayCurrency(summary?.totalRevenue || 0)}
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-revenue">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-primary truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRevenue || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.accounting.dueAmounts}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueAmounts}</p>
                 </CardContent>
               </Card>
 
@@ -1228,10 +1259,13 @@ export default function Accounting() {
                   <CreditCard className="h-4 w-4 text-green-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-xl font-bold text-green-600" data-testid="text-total-paid">
-                    {summaryLoading ? "..." : displayCurrency(summary?.totalPaid || 0)}
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-paid">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-green-600 truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalPaid || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.accounting.receivedAmounts}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.receivedAmounts}</p>
                 </CardContent>
               </Card>
 
@@ -1241,10 +1275,13 @@ export default function Accounting() {
                   <Wallet className="h-4 w-4 text-yellow-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-xl font-bold text-yellow-600" data-testid="text-total-remaining">
-                    {summaryLoading ? "..." : displayCurrency(summary?.totalRemaining || 0)}
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-remaining">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-yellow-600 truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRemaining || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
                 </CardContent>
               </Card>
 
@@ -1254,10 +1291,13 @@ export default function Accounting() {
                   <TrendingDown className="h-4 w-4 text-red-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-xl font-bold text-red-600" data-testid="text-total-expenses">
-                    {summaryLoading ? "..." : displayCurrency(summary?.totalExpenses || 0)}
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-expenses">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-red-600 truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalExpenses || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.accounting.totalExpenses}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.totalExpenses}</p>
                 </CardContent>
               </Card>
 
@@ -1267,10 +1307,13 @@ export default function Accounting() {
                   <TrendingUp className="h-4 w-4 text-primary" />
                 </CardHeader>
                 <CardContent>
-                  <div className={`text-xl font-bold ${(summary?.netProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`} data-testid="text-net-profit">
-                    {summaryLoading ? "..." : displayCurrency(summary?.netProfit || 0)}
+                  <div className="flex items-baseline gap-1.5" data-testid="text-net-profit">
+                    <span className={`text-lg md:text-xl font-bold tabular-nums truncate ${(summary?.netProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.netProfit || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.accounting.revenueMinusExpenses}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.revenueMinusExpenses}</p>
                 </CardContent>
               </Card>
 
@@ -1280,7 +1323,7 @@ export default function Accounting() {
                   <PieChart className="h-4 w-4 text-blue-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-xl font-bold text-blue-600" data-testid="text-collection-rate">
+                  <div className="text-lg md:text-xl font-bold tabular-nums text-blue-600" data-testid="text-collection-rate">
                     {summaryLoading ? "..." : `${summary?.collectionRate || 0}%`}
                   </div>
                   <p className="text-xs text-muted-foreground">{t.accounting.paidVsDue}</p>
@@ -1613,7 +1656,7 @@ export default function Accounting() {
                   <CardTitle className="text-sm font-medium">{t.accounting.totalInvoices}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-primary">{invoicesList.length}</div>
+                  <div className="text-xl font-bold tabular-nums text-primary">{invoicesList.length}</div>
                 </CardContent>
               </Card>
               <Card>
@@ -1621,8 +1664,11 @@ export default function Accounting() {
                   <CardTitle className="text-sm font-medium">{t.accounting.totalAmounts}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-blue-600">
-                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + inv.total, 0))}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-blue-600 truncate">
+                      {formatNumberOnly(invoicesList.reduce((sum, inv) => sum + inv.total, 0))}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                 </CardContent>
               </Card>
@@ -1631,8 +1677,11 @@ export default function Accounting() {
                   <CardTitle className="text-sm font-medium">{t.accounting.paid}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-green-600">
-                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + (inv.paidAmount || 0), 0))}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-green-600 truncate">
+                      {formatNumberOnly(invoicesList.reduce((sum, inv) => sum + (inv.paidAmount || 0), 0))}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                 </CardContent>
               </Card>
@@ -1641,8 +1690,11 @@ export default function Accounting() {
                   <CardTitle className="text-sm font-medium">{t.accounting.remaining}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-red-600">
-                    {displayCurrency(invoicesList.reduce((sum, inv) => sum + inv.total - (inv.paidAmount || 0), 0))}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-red-600 truncate">
+                      {formatNumberOnly(invoicesList.reduce((sum, inv) => sum + inv.total - (inv.paidAmount || 0), 0))}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                 </CardContent>
               </Card>
@@ -2123,8 +2175,11 @@ export default function Accounting() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">{t.accounting.total}</label>
-                  <div className="text-2xl font-bold text-primary">
-                    {displayCurrency(invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0))}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-primary truncate">
+                      {formatNumberOnly(invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0))}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                 </div>
               </div>
