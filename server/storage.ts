@@ -89,6 +89,9 @@ export interface IStorage {
     totalExpenses: number;
     netProfit: number;
     collectionRate: number;
+    effectiveStartDate: string | null;
+    effectiveEndDate: string;
+    daysInRange: number;
   }>;
   getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]>;
   getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]>;
@@ -528,6 +531,9 @@ export class DatabaseStorage implements IStorage {
     totalExpenses: number;
     netProfit: number;
     collectionRate: number;
+    effectiveStartDate: string | null;
+    effectiveEndDate: string;
+    daysInRange: number;
   }> {
     // Get total revenue (all patient costs)
     const patientsQuery = branchId
@@ -563,6 +569,43 @@ export class DatabaseStorage implements IStorage {
           .from(expenses);
     const totalExpenses = Number(expensesQuery[0]?.total) || 0;
 
+    // Compute effective date range. If user did not specify startDate, use
+    // the earliest financial record date across payments and expenses
+    // (filtered by branch) so the UI can show "from X to today, Y days".
+    let effectiveStartDate: string | null = startDate ?? null;
+    if (!effectiveStartDate) {
+      const earliestPaymentCond = branchId ? [eq(payments.branchId, branchId)] : [];
+      const earliestExpenseCond = branchId ? [eq(expenses.branchId, branchId)] : [];
+      const earliestPaymentQ = earliestPaymentCond.length > 0
+        ? await db.select({ min: sql<string>`MIN(${payments.date})` })
+            .from(payments).where(and(...earliestPaymentCond))
+        : await db.select({ min: sql<string>`MIN(${payments.date})` }).from(payments);
+      const earliestExpenseQ = earliestExpenseCond.length > 0
+        ? await db.select({ min: sql<string>`MIN(${expenses.expenseDate})` })
+            .from(expenses).where(and(...earliestExpenseCond))
+        : await db.select({ min: sql<string>`MIN(${expenses.expenseDate})` }).from(expenses);
+
+      const candidates: string[] = [];
+      const pMin = earliestPaymentQ[0]?.min;
+      const eMin = earliestExpenseQ[0]?.min;
+      if (pMin) candidates.push(new Date(pMin).toISOString().split("T")[0]);
+      if (eMin) candidates.push(new Date(eMin).toISOString().split("T")[0]);
+      if (candidates.length > 0) {
+        candidates.sort();
+        effectiveStartDate = candidates[0];
+      }
+    }
+
+    const effectiveEndDate = endDate ?? new Date().toISOString().split("T")[0];
+
+    let daysInRange = 0;
+    if (effectiveStartDate) {
+      const start = new Date(effectiveStartDate);
+      const end = new Date(effectiveEndDate);
+      const msPerDay = 24 * 60 * 60 * 1000;
+      daysInRange = Math.max(1, Math.floor((end.getTime() - start.getTime()) / msPerDay) + 1);
+    }
+
     const totalRemaining = totalRevenue - totalPaid;
     const netProfit = totalPaid - totalExpenses;
     const collectionRate = totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0;
@@ -573,7 +616,10 @@ export class DatabaseStorage implements IStorage {
       totalRemaining,
       totalExpenses,
       netProfit,
-      collectionRate
+      collectionRate,
+      effectiveStartDate,
+      effectiveEndDate,
+      daysInRange,
     };
   }
 
