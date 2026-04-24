@@ -122,15 +122,17 @@ export async function registerRoutes(
       canManageSurveys: true,
     };
     
-    // Default branch staff permissions
+    // Default branch staff permissions — matches schema defaults in system_users:
+    // add-only access, edit/delete reserved for admin per policy. Stored
+    // per-user permissions from the database override this fallback.
     const branchPermissions = {
       canViewPatients: true,
       canAddPatients: true,
-      canEditPatients: true,
+      canEditPatients: false,
       canDeletePatients: false,
       canViewPayments: true,
       canAddPayments: true,
-      canEditPayments: true,
+      canEditPayments: false,
       canDeletePayments: false,
       canViewReports: true,
       canManageAccounting: false,
@@ -1403,26 +1405,29 @@ export async function registerRoutes(
     res.status(201).json(visit);
   });
 
-  // Update visit (all users can edit)
+  // Update visit (admin only — visits are financial records that trigger
+  // revenue journal entries, so editing must be restricted)
   app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "فقط المسؤول يمكنه تعديل الزيارات" });
+    }
+
     const id = Number(req.params.id);
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
     const updateData: any = { details, notes, treatmentType, sessionCount, cost };
-    
+
     if (customDate !== undefined) {
-      const branchSession = (req.session as any).branchSession;
-      if (branchSession?.isAdmin) {
-        const baghdadOffset = 3 * 60 * 60 * 1000;
-        const nowBaghdad = new Date(Date.now() + baghdadOffset);
-        const currentHours = nowBaghdad.getUTCHours();
-        const currentMinutes = nowBaghdad.getUTCMinutes();
-        const currentSeconds = nowBaghdad.getUTCSeconds();
-        const [year, month, day] = customDate.split('-').map(Number);
-        const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
-        updateData.visitDate = new Date(backdatedBaghdad.getTime() - baghdadOffset);
-      }
+      const baghdadOffset = 3 * 60 * 60 * 1000;
+      const nowBaghdad = new Date(Date.now() + baghdadOffset);
+      const currentHours = nowBaghdad.getUTCHours();
+      const currentMinutes = nowBaghdad.getUTCMinutes();
+      const currentSeconds = nowBaghdad.getUTCSeconds();
+      const [year, month, day] = customDate.split('-').map(Number);
+      const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
+      updateData.visitDate = new Date(backdatedBaghdad.getTime() - baghdadOffset);
     }
-    
+
     const updated = await storage.updateVisit(id, updateData);
     res.json(updated);
   });

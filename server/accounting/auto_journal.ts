@@ -16,54 +16,180 @@ import type { JournalLineInput } from "./ledger";
  * roll back the primary record (legacy path must remain intact).
  */
 
-// خريطة فئات المصاريف → رموز حسابات المصروفات
+// خريطة فئات المصاريف → رموز حسابات المصروفات.
+// المفاتيح مُطبَّعة: حروف صغيرة، بدون تشكيل، همزات موحَّدة.
 const EXPENSE_CATEGORY_MAP: Record<string, string> = {
   "رواتب": "5100",
-  "إيجارات": "5200",
-  "إيجار": "5200",
+  "راتب": "5100",
+  "اجور": "5100",
+  "اجر": "5100",
+  "مرتبات": "5100",
+  "مرتب": "5100",
+  "salary": "5100",
+  "salaries": "5100",
+  "wages": "5100",
+  "ايجارات": "5200",
+  "ايجار": "5200",
+  "كراء": "5200",
+  "استئجار": "5200",
+  "rent": "5200",
   "مستلزمات طبية": "5300",
   "مستلزمات": "5300",
+  "ادوات طبية": "5300",
+  "مواد طبية": "5300",
+  "ادوية": "5300",
+  "مستهلكات": "5300",
+  "medical supplies": "5300",
+  "supplies": "5300",
   "صيانة": "5400",
+  "اصلاح": "5400",
+  "تصليح": "5400",
+  "maintenance": "5400",
+  "repair": "5400",
   "كهرباء ومياه": "5500",
   "كهرباء": "5500",
   "ماء": "5500",
+  "مياه": "5500",
+  "فاتورة كهرباء": "5500",
+  "فاتورة ماء": "5500",
+  "utilities": "5500",
+  "electricity": "5500",
+  "water": "5500",
   "اتصالات": "5600",
-  "إنترنت": "5600",
+  "انترنت": "5600",
+  "هاتف": "5600",
+  "تلفون": "5600",
+  "موبايل": "5600",
+  "internet": "5600",
+  "phone": "5600",
   "تسويق": "5700",
+  "اعلان": "5700",
+  "اعلانات": "5700",
+  "دعاية": "5700",
+  "marketing": "5700",
+  "advertising": "5700",
   "نقل": "5800",
   "مواصلات": "5800",
+  "اجرة": "5800",
+  "بنزين": "5800",
+  "وقود": "5800",
+  "transport": "5800",
+  "fuel": "5800",
   "ضيافة": "5810",
+  "طعام": "5810",
+  "وجبات": "5810",
+  "قهوة": "5810",
+  "شاي": "5810",
+  "meals": "5810",
+  "hospitality": "5810",
   "قرطاسية": "5820",
+  "ورق": "5820",
+  "اقلام": "5820",
+  "دفاتر": "5820",
+  "stationery": "5820",
+  "office supplies": "5820",
   "رسوم بنكية": "5900",
-  "أخرى": "5990",
+  "عمولة بنك": "5900",
+  "bank fees": "5900",
+  "اخرى": "5990",
+  "متفرقات": "5990",
+  "other": "5990",
+  "misc": "5990",
 };
 
+// خريطة أنواع العلاج → رموز حسابات الإيرادات.
+// المفاتيح مُطبَّعة: حروف صغيرة، بدون تشكيل، همزات موحَّدة.
 const REVENUE_TYPE_MAP: Record<string, string> = {
+  // علاج طبيعي → 4100
   "علاج طبيعي": "4100",
+  "علاج فيزيائي": "4100",
+  "فيزيائي": "4100",
+  "تاهيل": "4100",
+  "تاهيلي": "4100",
+  "اعادة تاهيل": "4100",
+  "علاج": "4100",
   "physiotherapy": "4100",
+  "physical therapy": "4100",
+  "physio": "4100",
+  "pt": "4100",
+  "rehab": "4100",
+  // أطراف صناعية → 4200
   "طرف صناعي": "4200",
-  "أطراف صناعية": "4200",
+  "طرف اصطناعي": "4200",
+  "اطراف صناعية": "4200",
+  "اطراف اصطناعية": "4200",
+  "طرف": "4200",
+  "اطراف": "4200",
+  "صناعي": "4200",
+  "اصطناعي": "4200",
   "prosthetic": "4200",
+  "prosthetics": "4200",
+  "prosthesis": "4200",
+  "prostheses": "4200",
+  // مساند طبية → 4300
   "مسند": "4300",
+  "مساند": "4300",
+  "مسند طبي": "4300",
   "مساند طبية": "4300",
-  "medical_support": "4300",
-  "خدمات إضافية": "4400",
+  "حزام طبي": "4300",
+  "دعامة": "4300",
+  "support": "4300",
+  "supports": "4300",
+  "medical support": "4300",
+  "brace": "4300",
+  // خدمات إضافية → 4400
+  "خدمات اضافية": "4400",
+  "خدمة اضافية": "4400",
+  "اضافية": "4400",
+  "اضافي": "4400",
+  "additional": "4400",
+  "extra": "4400",
 };
+
+/**
+ * تطبيع النص العربي والإنجليزي لمقارنة مرنة:
+ * - حروف صغيرة
+ * - إزالة التشكيل
+ * - توحيد الهمزات (أ/إ/آ → ا)
+ * - توحيد التاء المربوطة (ة → ه) والألف المقصورة (ى → ي)
+ * - تنظيف المسافات المتكرّرة
+ */
+function normalizeText(input: string | null | undefined): string {
+  if (!input) return "";
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[ً-ٰٟ]/g, "") // تشكيل
+    .replace(/[آأإ]/g, "ا") // آ/أ/إ → ا
+    .replace(/ة/g, "ه") // ة → ه
+    .replace(/ى/g, "ي") // ى → ي
+    .replace(/\s+/g, " ");
+}
 
 function expenseCategoryToAccountCode(category: string): string {
-  const key = (category || "").trim();
+  const key = normalizeText(category);
+  if (!key) return "5990";
   if (EXPENSE_CATEGORY_MAP[key]) return EXPENSE_CATEGORY_MAP[key];
-  for (const [k, v] of Object.entries(EXPENSE_CATEGORY_MAP)) {
+  // مطابقة جزئية: أطول المفاتيح أولاً لتجنّب مطابقات خاطئة
+  const sorted = Object.entries(EXPENSE_CATEGORY_MAP).sort(
+    ([a], [b]) => b.length - a.length
+  );
+  for (const [k, v] of sorted) {
     if (key.includes(k) || k.includes(key)) return v;
   }
   return "5990";
 }
 
 function revenueTypeToAccountCode(treatmentType: string | null | undefined): string {
-  if (!treatmentType) return "4900";
-  const key = treatmentType.trim().toLowerCase();
-  for (const [k, v] of Object.entries(REVENUE_TYPE_MAP)) {
-    if (key.includes(k.toLowerCase()) || k.toLowerCase().includes(key)) return v;
+  const key = normalizeText(treatmentType);
+  if (!key) return "4900";
+  if (REVENUE_TYPE_MAP[key]) return REVENUE_TYPE_MAP[key];
+  // مطابقة جزئية: أطول المفاتيح أولاً لتجنّب مطابقات خاطئة
+  const sorted = Object.entries(REVENUE_TYPE_MAP).sort(
+    ([a], [b]) => b.length - a.length
+  );
+  for (const [k, v] of sorted) {
+    if (key.includes(k) || k.includes(key)) return v;
   }
   return "4900";
 }

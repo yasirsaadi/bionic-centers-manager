@@ -122,6 +122,9 @@ interface AccountingSummary {
   totalExpenses: number;
   netProfit: number;
   collectionRate: number;
+  effectiveStartDate: string | null;
+  effectiveEndDate: string;
+  daysInRange: number;
 }
 
 interface Debtor {
@@ -1180,6 +1183,30 @@ export default function Accounting() {
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
+            {/* Date range banner: shows effective period covered by the totals */}
+            {summary?.effectiveStartDate && (
+              <div
+                className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
+                data-testid="text-summary-date-range"
+              >
+                <span>النتائج الظاهرة أدناه تغطّي الفترة من</span>
+                <span className="font-semibold text-foreground" dir="ltr">
+                  {summary.effectiveStartDate}
+                </span>
+                <span>إلى</span>
+                <span className="font-semibold text-foreground" dir="ltr">
+                  {summary.effectiveEndDate}
+                </span>
+                <span className="mx-1">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 font-bold text-primary">
+                    {summary.daysInRange}
+                  </span>
+                  <span>يوماً</span>
+                </span>
+              </div>
+            )}
+
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <Card>
