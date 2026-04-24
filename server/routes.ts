@@ -16,6 +16,8 @@ import { registerAccountingV2Routes } from "./accounting/routes";
 import {
   createJournalForPayment,
   createJournalForExpense,
+  createJournalForInvoice,
+  createJournalForInvoicePayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
 import { logAudit } from "./accounting/ledger";
@@ -2974,33 +2976,39 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const user = req.user;
-    
+    const userId = branchSession?.userId ?? null;
+
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بإنشاء الفواتير" });
     }
-    
+
     try {
       const { items, ...invoiceData } = req.body;
-      
+
       // Generate invoice number if not provided
       if (!invoiceData.invoiceNumber) {
         invoiceData.invoiceNumber = await storage.getNextInvoiceNumber();
       }
-      
+
       invoiceData.createdBy = user?.claims?.sub;
-      
+
       const invoice = await storage.createInvoice(invoiceData);
-      
+
       // Add invoice items
+      const createdItems = [];
       if (items && Array.isArray(items)) {
         for (const item of items) {
-          await storage.createInvoiceItem({
+          const created = await storage.createInvoiceItem({
             ...item,
-            invoiceId: invoice.id
+            invoiceId: invoice.id,
           });
+          createdItems.push(created);
         }
       }
-      
+
+      // Auto-journal: Dr AR / Cr Revenue (safe to fail, logged)
+      await createJournalForInvoice(invoice, createdItems, userId);
+
       res.json(invoice);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3011,29 +3019,39 @@ export async function registerRoutes(
   app.patch("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
+    const userId = branchSession?.userId ?? null;
+
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بتعديل الفواتير" });
     }
-    
+
     const id = parseInt(req.params.id);
     try {
       const { items, ...invoiceData } = req.body;
-      
+
       const invoice = await storage.updateInvoice(id, invoiceData);
-      
+
       // Update items if provided
+      const newItems = [];
       if (items && Array.isArray(items)) {
         // Delete existing items and recreate
         await storage.deleteInvoiceItems(id);
         for (const item of items) {
-          await storage.createInvoiceItem({
+          const created = await storage.createInvoiceItem({
             ...item,
-            invoiceId: id
+            invoiceId: id,
           });
+          newItems.push(created);
         }
       }
-      
+
+      // Auto-journal: reverse old issuance entry, create new (safe to fail)
+      await reverseJournalForSource("invoice", id, userId, "تعديل الفاتورة");
+      if (invoice) {
+        const itemsForJournal = items && Array.isArray(items) ? newItems : await storage.getInvoiceItems(id);
+        await createJournalForInvoice(invoice, itemsForJournal, userId);
+      }
+
       res.json(invoice);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3044,13 +3062,18 @@ export async function registerRoutes(
   app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
+    const userId = branchSession?.userId ?? null;
+
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بحذف الفواتير" });
     }
-    
+
     const id = parseInt(req.params.id);
     try {
+      // Reverse related journal entries first (safe to fail, logged)
+      await reverseJournalForSource("invoice", id, userId, "حذف الفاتورة");
+      await reverseJournalForSource("invoice_payment", id, userId, "حذف الفاتورة");
+
       // Delete items first, then invoice
       await storage.deleteInvoiceItems(id);
       await storage.deleteInvoice(id);
@@ -3064,34 +3087,43 @@ export async function registerRoutes(
   app.post("/api/invoices/:id/payment", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
+    const userId = branchSession?.userId ?? null;
+
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بتسجيل المدفوعات" });
     }
-    
+
     const id = parseInt(req.params.id);
     const { amount } = req.body;
-    
+
     try {
       const invoice = await storage.getInvoiceById(id);
       if (!invoice) {
         return res.status(404).json({ error: "الفاتورة غير موجودة" });
       }
-      
-      const newPaidAmount = (invoice.paidAmount || 0) + amount;
+
+      const paymentAmount = Number(amount) || 0;
+      if (paymentAmount <= 0) {
+        return res.status(400).json({ error: "مبلغ الدفعة يجب أن يكون أكبر من صفر" });
+      }
+
+      const newPaidAmount = (invoice.paidAmount || 0) + paymentAmount;
       let newStatus = 'partial';
-      
+
       if (newPaidAmount >= invoice.total) {
         newStatus = 'paid';
       } else if (newPaidAmount === 0) {
         newStatus = 'pending';
       }
-      
+
       const updated = await storage.updateInvoice(id, {
         paidAmount: newPaidAmount,
         status: newStatus
       });
-      
+
+      // Auto-journal: Dr Cash / Cr AR (safe to fail, logged)
+      await createJournalForInvoicePayment(invoice, paymentAmount, userId);
+
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
