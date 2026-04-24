@@ -1,16 +1,11 @@
--- ============================================================
--- Migration 001: Accounting Foundation
--- Adds: chart_of_accounts, journal_entries, journal_lines,
---       accounting_periods, audit_log
---
--- SAFETY NOTES:
--- - All DDL uses "IF NOT EXISTS" to be fully idempotent
--- - No existing tables or columns are modified or dropped
--- - No data is deleted
--- - Safe to run multiple times
--- ============================================================
+// Migration 001: Accounting Foundation
+// All DDL uses IF NOT EXISTS and is fully idempotent.
+// Exported as a string so esbuild bundles it into dist/index.cjs —
+// no filesystem reads at runtime, works in both ESM (tsx) and CJS (prod).
 
--- شجرة الحسابات
+export const name = "001_accounting_foundation";
+
+export const sql = `
 CREATE TABLE IF NOT EXISTS chart_of_accounts (
   id SERIAL PRIMARY KEY,
   account_code TEXT NOT NULL UNIQUE,
@@ -32,7 +27,6 @@ CREATE INDEX IF NOT EXISTS idx_coa_type ON chart_of_accounts(account_type);
 CREATE INDEX IF NOT EXISTS idx_coa_parent ON chart_of_accounts(parent_id);
 CREATE INDEX IF NOT EXISTS idx_coa_branch ON chart_of_accounts(branch_id);
 
--- الفترات المحاسبية
 CREATE TABLE IF NOT EXISTS accounting_periods (
   id SERIAL PRIMARY KEY,
   period_name TEXT NOT NULL,
@@ -48,7 +42,6 @@ CREATE TABLE IF NOT EXISTS accounting_periods (
 CREATE INDEX IF NOT EXISTS idx_periods_status ON accounting_periods(status);
 CREATE INDEX IF NOT EXISTS idx_periods_dates ON accounting_periods(start_date, end_date);
 
--- القيود اليومية
 CREATE TABLE IF NOT EXISTS journal_entries (
   id SERIAL PRIMARY KEY,
   entry_number TEXT NOT NULL UNIQUE,
@@ -74,7 +67,6 @@ CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source_type, source_
 CREATE INDEX IF NOT EXISTS idx_je_status ON journal_entries(status);
 CREATE INDEX IF NOT EXISTS idx_je_period ON journal_entries(period_id);
 
--- سطور القيود
 CREATE TABLE IF NOT EXISTS journal_lines (
   id SERIAL PRIMARY KEY,
   entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
@@ -93,7 +85,6 @@ CREATE INDEX IF NOT EXISTS idx_jl_account ON journal_lines(account_id);
 CREATE INDEX IF NOT EXISTS idx_jl_branch ON journal_lines(branch_id);
 CREATE INDEX IF NOT EXISTS idx_jl_patient ON journal_lines(patient_id);
 
--- سجل التدقيق
 CREATE TABLE IF NOT EXISTS audit_log (
   id SERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL,
@@ -115,9 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_branch ON audit_log(branch_id);
 
--- جدول لتتبع الـ migrations المطبقة
 CREATE TABLE IF NOT EXISTS _migrations (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   applied_at TIMESTAMP DEFAULT NOW()
 );
+`;
