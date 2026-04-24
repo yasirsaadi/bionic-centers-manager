@@ -202,6 +202,113 @@ export const insertInstallmentPlanSchema = createInsertSchema(installmentPlans).
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true });
 
+// ============================================================
+// نظام المحاسبة الاحترافي - Professional Accounting Tables
+// ============================================================
+
+// شجرة الحسابات - Chart of Accounts
+export const chartOfAccounts = pgTable("chart_of_accounts", {
+  id: serial("id").primaryKey(),
+  accountCode: text("account_code").notNull().unique(), // رمز الحساب مثل 1101
+  accountNameAr: text("account_name_ar").notNull(), // الاسم بالعربية
+  accountNameEn: text("account_name_en"), // الاسم بالإنجليزية
+  accountType: text("account_type").notNull(), // asset, liability, equity, revenue, expense
+  accountSubtype: text("account_subtype"), // current_asset, fixed_asset, current_liability, etc
+  parentId: integer("parent_id"), // self-reference for hierarchy
+  branchId: integer("branch_id").references(() => branches.id), // null = مشترك بين كل الفروع
+  isActive: boolean("is_active").default(true),
+  isSystem: boolean("is_system").default(false), // حسابات النظام لا تُحذف
+  normalBalance: text("normal_balance").notNull(), // debit أو credit
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// الفترات المحاسبية - Accounting Periods (لإغلاق الفترات)
+export const accountingPeriods = pgTable("accounting_periods", {
+  id: serial("id").primaryKey(),
+  periodName: text("period_name").notNull(), // مثل: 2026-04 أو Q1-2026
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  status: text("status").default("open"), // open, closed, locked
+  closedAt: timestamp("closed_at"),
+  closedBy: integer("closed_by").references(() => systemUsers.id),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// القيود اليومية (الرؤوس) - Journal Entries
+export const journalEntries = pgTable("journal_entries", {
+  id: serial("id").primaryKey(),
+  entryNumber: text("entry_number").notNull().unique(), // JE-202604-0001
+  entryDate: date("entry_date").notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  periodId: integer("period_id").references(() => accountingPeriods.id),
+  description: text("description").notNull(), // وصف القيد
+  reference: text("reference"), // مرجع خارجي (رقم فاتورة، إلخ)
+  // ربط بالمصدر الأصلي للتتبع
+  sourceType: text("source_type"), // payment, expense, invoice, manual, adjustment, opening
+  sourceId: integer("source_id"), // ID في الجدول المصدر
+  // المبلغ الإجمالي (مدين = دائن دائماً في قيد متوازن)
+  totalAmount: integer("total_amount").notNull(),
+  status: text("status").default("posted"), // draft, posted, reversed
+  reversedBy: integer("reversed_by"), // إذا تم عكسه، ID القيد العاكس
+  reversalOf: integer("reversal_of"), // إذا كان قيد عكسي، ID القيد الأصلي
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  postedAt: timestamp("posted_at"),
+});
+
+// سطور القيود - Journal Lines (كل قيد له عدة سطور، مدين أو دائن)
+export const journalLines = pgTable("journal_lines", {
+  id: serial("id").primaryKey(),
+  entryId: integer("entry_id").references(() => journalEntries.id, { onDelete: "cascade" }).notNull(),
+  accountId: integer("account_id").references(() => chartOfAccounts.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id), // لتقارير حسب الفرع
+  debit: integer("debit").default(0), // مدين
+  credit: integer("credit").default(0), // دائن
+  description: text("description"), // شرح السطر
+  lineOrder: integer("line_order").default(0),
+  // إشارات إضافية للتتبع والتقارير
+  patientId: integer("patient_id").references(() => patients.id),
+  vendorId: integer("vendor_id"), // مستقبلاً عند إضافة جدول الموردين
+});
+
+// سجل التدقيق - Audit Log (تتبع كل التغييرات المالية)
+export const auditLog = pgTable("audit_log", {
+  id: serial("id").primaryKey(),
+  entityType: text("entity_type").notNull(), // payment, expense, invoice, journal_entry, account
+  entityId: integer("entity_id").notNull(),
+  action: text("action").notNull(), // create, update, delete, post, reverse, approve
+  userId: integer("user_id").references(() => systemUsers.id),
+  userName: text("user_name"), // نسخة من اسم المستخدم وقت التسجيل
+  branchId: integer("branch_id").references(() => branches.id),
+  oldValues: text("old_values"), // JSON - القيم قبل التعديل
+  newValues: text("new_values"), // JSON - القيم بعد التعديل
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Schemas & Types
+export const insertChartOfAccountSchema = createInsertSchema(chartOfAccounts).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertAccountingPeriodSchema = createInsertSchema(accountingPeriods).omit({ id: true, createdAt: true });
+export const insertJournalEntrySchema = createInsertSchema(journalEntries).omit({ id: true, createdAt: true, postedAt: true });
+export const insertJournalLineSchema = createInsertSchema(journalLines).omit({ id: true });
+export const insertAuditLogSchema = createInsertSchema(auditLog).omit({ id: true, createdAt: true });
+
+export type ChartOfAccount = typeof chartOfAccounts.$inferSelect;
+export type InsertChartOfAccount = z.infer<typeof insertChartOfAccountSchema>;
+export type AccountingPeriod = typeof accountingPeriods.$inferSelect;
+export type InsertAccountingPeriod = z.infer<typeof insertAccountingPeriodSchema>;
+export type JournalEntry = typeof journalEntries.$inferSelect;
+export type InsertJournalEntry = z.infer<typeof insertJournalEntrySchema>;
+export type JournalLine = typeof journalLines.$inferSelect;
+export type InsertJournalLine = z.infer<typeof insertJournalLineSchema>;
+export type AuditLogEntry = typeof auditLog.$inferSelect;
+export type InsertAuditLogEntry = z.infer<typeof insertAuditLogSchema>;
+
 export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
 export type Patient = typeof patients.$inferSelect;

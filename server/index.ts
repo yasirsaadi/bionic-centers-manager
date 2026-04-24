@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
+import { runMigrations } from "./migrations/runner";
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,6 +62,10 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Run database migrations before registering routes.
+  // Safe: idempotent, additive-only, tracks applied migrations.
+  await runMigrations();
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
