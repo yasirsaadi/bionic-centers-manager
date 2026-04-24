@@ -77,17 +77,29 @@ function Router() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 gap-4 px-4 text-center" dir="rtl">
-        <h1 className="text-2xl sm:text-3xl font-display font-bold text-primary text-center w-full">مجموعة مراكز الدكتور ياسر الساعدي</h1>
-        <p className="text-slate-600 mb-4 text-center">يرجى تسجيل الدخول للمتابعة</p>
-        <a href="/api/login" className="px-8 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg">
-          تسجيل الدخول
-        </a>
-      </div>
-    );
-  }
+  return (
+    <BranchGate>
+      <Layout>
+        <Switch>
+          <Route path="/" component={DashboardRoute} />
+          <Route path="/patients" component={PatientsList} />
+          <Route path="/patients/new" component={CreatePatient} />
+          <Route path="/patients/:id/edit" component={EditPatient} />
+          <Route path="/patients/:id" component={PatientDetails} />
+          <Route path="/reports" component={Reports} />
+          <Route path="/reports/daily-patients" component={DailyPatientReport} />
+          <Route path="/revenues" component={BranchRevenues} />
+          <Route path="/branches" component={Branches} />
+          <Route path="/branches/:id" component={BranchDetails} />
+          <Route path="/statistics" component={Statistics} />
+          <Route path="/accounting" component={Accounting} />
+          <Route path="/surveys" component={Surveys} />
+          <Route path="/admin" component={AdminSettings} />
+          <Route component={NotFound} />
+        </Switch>
+      </Layout>
+    </BranchGate>
+  );
 
   return (
     <BranchGate>

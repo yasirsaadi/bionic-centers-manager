@@ -12,6 +12,13 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+import { registerAccountingV2Routes } from "./accounting/routes";
+import {
+  createJournalForPayment,
+  createJournalForExpense,
+  reverseJournalForSource,
+} from "./accounting/auto_journal";
+import { logAudit } from "./accounting/ledger";
 
 // Validation schemas for admin settings
 const adminPasswordSchema = z.object({
@@ -82,11 +89,11 @@ export async function registerRoutes(
 
   // Helper to get user branch
   const getUserContext = (req: any) => {
-    const user = req.user as any;
+    const branchSession = (req.session as any)?.branchSession;
     return {
-      userId: user?.claims?.sub,
-      role: user?.role || 'staff',
-      branchId: user?.branchId
+      userId: branchSession?.userId,
+      role: branchSession?.role || (branchSession?.isAdmin ? 'admin' : 'staff'),
+      branchId: branchSession?.branchId
     };
   };
 
@@ -184,7 +191,7 @@ export async function registerRoutes(
   });
 
   // Branch password verification - supports both system_users and legacy auth
-  app.post("/api/verify-branch", isAuthenticated, async (req, res) => {
+  app.post("/api/verify-branch", async (req, res) => {
     try {
       const parsed = verifyBranchSchema.parse(req.body);
       const { branchKey, username, password, shift } = parsed;
@@ -1454,6 +1461,10 @@ export async function registerRoutes(
       }
     }
     
+    const sessionInfo = (req.session as any).branchSession;
+    const userId = sessionInfo?.userId ?? null;
+    const userName = sessionInfo?.displayName ?? null;
+
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
       const results = [];
       for (const entry of treatmentEntries) {
@@ -1467,11 +1478,38 @@ export async function registerRoutes(
             isFreeSessions: isFreeSessions,
           });
           results.push(payment);
+          // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
+          if (!isFreeSessions && payment.amount > 0) {
+            await createJournalForPayment(payment, userId);
+          }
+          await logAudit({
+            entityType: "payment",
+            entityId: payment.id,
+            action: "create",
+            userId, userName,
+            branchId: payment.branchId,
+            newValues: payment,
+            ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
+          });
         }
       }
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
       const payment = await storage.createPayment(input);
+      if (!isFreeSessions && payment.amount > 0) {
+        await createJournalForPayment(payment, userId);
+      }
+      await logAudit({
+        entityType: "payment",
+        entityId: payment.id,
+        action: "create",
+        userId, userName,
+        branchId: payment.branchId,
+        newValues: payment,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+      });
       res.status(201).json(payment);
     }
   });
@@ -1482,8 +1520,22 @@ export async function registerRoutes(
     if (!permissions.canDeletePayments) {
       return res.status(403).json({ message: "ليس لديك صلاحية لحذف المدفوعات" });
     }
-    
+
     const id = Number(req.params.id);
+    const sessionInfo = (req.session as any).branchSession;
+    const userId = sessionInfo?.userId ?? null;
+    const userName = sessionInfo?.displayName ?? null;
+
+    // عكس القيد المحاسبي قبل حذف الدفعة
+    await reverseJournalForSource("payment", id, userId, "حذف الدفعة");
+    await logAudit({
+      entityType: "payment",
+      entityId: id,
+      action: "delete",
+      userId, userName,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
     await storage.deletePayment(id);
     res.status(204).send();
   });
@@ -2333,17 +2385,33 @@ export async function registerRoutes(
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
       const user = req.user;
-      
+      const userId = branchSession?.userId ?? null;
+      const userName = branchSession?.displayName ?? null;
+
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بإضافة مصروفات" });
       }
-      
+
       const data = insertExpenseSchema.parse({
         ...req.body,
         createdBy: user?.claims?.sub || "unknown"
       });
-      
+
       const expense = await storage.createExpense(data);
+
+      // تلقائي: إنشاء قيد محاسبي مزدوج للمصروف
+      await createJournalForExpense(expense, userId);
+      await logAudit({
+        entityType: "expense",
+        entityId: expense.id,
+        action: "create",
+        userId, userName,
+        branchId: expense.branchId,
+        newValues: expense,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+      });
+
       res.json(expense);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "خطأ في إنشاء المصروف" });
@@ -2354,18 +2422,38 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      
+      const userId = branchSession?.userId ?? null;
+      const userName = branchSession?.displayName ?? null;
+
       if (!isAdmin) {
         return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
       }
-      
+
       const id = parseInt(req.params.id);
       const existingExpense = await storage.getExpense(id);
       if (!existingExpense) {
         return res.status(404).json({ error: "المصروف غير موجود" });
       }
-      
+
       const expense = await storage.updateExpense(id, req.body);
+
+      // عكس القيد القديم وإنشاء قيد جديد (لحماية سلامة الدفاتر)
+      if (expense) {
+        await reverseJournalForSource("expense", id, userId, "تعديل المصروف");
+        await createJournalForExpense(expense, userId);
+      }
+      await logAudit({
+        entityType: "expense",
+        entityId: id,
+        action: "update",
+        userId, userName,
+        branchId: existingExpense.branchId,
+        oldValues: existingExpense,
+        newValues: expense,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+      });
+
       res.json(expense);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "خطأ في تحديث المصروف" });
@@ -2375,17 +2463,31 @@ export async function registerRoutes(
   app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
+    const userId = branchSession?.userId ?? null;
+    const userName = branchSession?.displayName ?? null;
+
     if (!isAdmin) {
       return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
     }
-    
+
     const id = parseInt(req.params.id);
     const existingExpense = await storage.getExpense(id);
     if (!existingExpense) {
       return res.status(404).json({ error: "المصروف غير موجود" });
     }
-    
+
+    // عكس القيد قبل الحذف
+    await reverseJournalForSource("expense", id, userId, "حذف المصروف");
+    await logAudit({
+      entityType: "expense",
+      entityId: id,
+      action: "delete",
+      userId, userName,
+      branchId: existingExpense.branchId,
+      oldValues: existingExpense,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
     await storage.deleteExpense(id);
     res.json({ success: true });
   });
@@ -3342,6 +3444,9 @@ export async function registerRoutes(
 
     console.log("Survey templates seeded successfully");
   }
+
+  // Register accounting v2 routes (chart of accounts, journal, reports, audit)
+  registerAccountingV2Routes(app, isAuthenticated);
 
   return httpServer;
 }
