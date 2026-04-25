@@ -1226,10 +1226,13 @@ export default function Accounting() {
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
-            {/* Date range banner: shows effective period covered by the totals */}
+            {/* Date range banner: shows effective period covered by the totals.
+                flex-row-reverse keeps the descriptive sentence on the visual
+                LEFT and the day-count badge on the visual RIGHT (per user's
+                preferred reading flow for this strip). */}
             {summary?.effectiveStartDate && (
               <div
-                className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
+                className="flex flex-row-reverse flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
                 data-testid="text-summary-date-range"
               >
                 <span>النتائج أدناه تغطّي الفترة</span>
