@@ -74,12 +74,13 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "reception" | "therapist" | "surveyor";
+type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor";
 
 function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
   return {
     admin: t.roles.admin,
     branch_manager: t.roles.branch_manager,
+    accountant: t.roles.accountant,
     reception: t.roles.reception,
     therapist: t.roles.therapist,
     surveyor: t.roles.surveyor,
@@ -135,6 +136,25 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: true,
+  },
+  accountant: {
+    // المحاسب: يرى كل البيانات المالية ويُدخِلها، لكنه لا يعدّل ولا يحذف.
+    // يرى المرضى للقراءة فقط (لمعرفة لمن الفاتورة أو الدفعة).
+    // لا يدير الإعدادات ولا المستخدمين.
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: true,
+    canAddPayments: true,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: true,
+    canManageAccounting: true,
+    canManageSettings: false,
+    canManageUsers: false,
+    canManageTreatmentPlans: false,
+    canManageSurveys: false,
   },
   reception: {
     canViewPatients: true,
@@ -1631,6 +1651,7 @@ export default function AdminSettings() {
                   <SelectContent>
                     <SelectItem value="admin">{t.roles.admin}</SelectItem>
                     <SelectItem value="branch_manager">{t.roles.branch_manager}</SelectItem>
+                    <SelectItem value="accountant">{t.roles.accountant}</SelectItem>
                     <SelectItem value="reception">{t.roles.reception}</SelectItem>
                     <SelectItem value="therapist">{t.roles.therapist}</SelectItem>
                     <SelectItem value="surveyor">{t.roles.surveyor}</SelectItem>

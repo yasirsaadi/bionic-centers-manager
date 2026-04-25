@@ -337,7 +337,7 @@ export const systemUsers = pgTable("system_users", {
   passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
   branchId: integer("branch_id").references(() => branches.id),
-  role: text("role").notNull().default("reception"), // admin, branch_manager, reception, therapist
+  role: text("role").notNull().default("reception"), // admin, branch_manager, accountant, reception, therapist, surveyor
   isActive: boolean("is_active").default(true),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
