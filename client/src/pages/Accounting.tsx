@@ -341,13 +341,26 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
   );
 }
 
-// Formats an ISO date (YYYY-MM-DD) as Arabic: "10 شباط 2025".
-// Uses Iraqi Arabic month names which are more natural than Latin months
-// or hyphenated ISO for end users.
+// Formats an ISO date (YYYY-MM-DD) as Arabic: "١١ كانون الثاني ٢٠٢٦".
+// Uses Iraqi Arabic month names AND Eastern Arabic-Indic numerals so the
+// entire string is RTL-native. This matters because Western digits (0-9)
+// are LTR runs that get mis-ordered by the BiDi algorithm when surrounded
+// by Arabic text — using ٠-٩ keeps everything in pure RTL flow and the
+// date reads day → month → year right-to-left as expected.
 const ARABIC_MONTHS_IQ = [
   "كانون الثاني", "شباط", "آذار", "نيسان", "أيار", "حزيران",
   "تموز", "آب", "أيلول", "تشرين الأول", "تشرين الثاني", "كانون الأول",
 ];
+const ARABIC_INDIC_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+function toArabicIndicDigits(value: number | string): string {
+  return String(value)
+    .split("")
+    .map((ch) => {
+      const code = ch.charCodeAt(0) - 48;
+      return code >= 0 && code <= 9 ? ARABIC_INDIC_DIGITS[code] : ch;
+    })
+    .join("");
+}
 function formatArabicDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -355,7 +368,7 @@ function formatArabicDate(iso: string | null | undefined): string {
   const [, y, m, d] = match;
   const monthIdx = Number(m) - 1;
   if (monthIdx < 0 || monthIdx > 11) return iso;
-  return `${Number(d)} ${ARABIC_MONTHS_IQ[monthIdx]} ${y}`;
+  return `${toArabicIndicDigits(Number(d))} ${ARABIC_MONTHS_IQ[monthIdx]} ${toArabicIndicDigits(y)}`;
 }
 
 export default function Accounting() {
@@ -1229,7 +1242,7 @@ export default function Accounting() {
                   {formatArabicDate(summary.effectiveEndDate)}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-0.5">
-                  <span className="font-bold text-primary">{summary.daysInRange}</span>
+                  <span className="font-bold text-primary">{toArabicIndicDigits(summary.daysInRange)}</span>
                   <span className="text-xs text-primary/80">يوماً</span>
                 </span>
               </div>
