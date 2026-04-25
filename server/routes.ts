@@ -2353,15 +2353,16 @@ export async function registerRoutes(
 
   // ================== ACCOUNTING SYSTEM ROUTES ==================
 
-  // Expenses CRUD - Admin only
+  // Expenses CRUD - admins manage; users with canManageAccounting can view + add
   app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
     }
-    
+
     const { branchId, startDate, endDate } = req.query;
     const expenses = await storage.getExpenses(
       branchId ? parseInt(branchId) : undefined,
@@ -2374,11 +2375,12 @@ export async function registerRoutes(
   app.get("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
     }
-    
+
     const id = parseInt(req.params.id);
     const expense = await storage.getExpense(id);
     if (!expense) {
@@ -2391,11 +2393,12 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
+      const canAdd = isAdmin || branchSession?.permissions?.canManageAccounting;
       const user = req.user;
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
 
-      if (!isAdmin) {
+      if (!canAdd) {
         return res.status(403).json({ error: "غير مصرح لك بإضافة مصروفات" });
       }
 
@@ -2502,11 +2505,12 @@ export async function registerRoutes(
   app.get("/api/expenses/by-category/summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
     }
-    
+
     const { branchId, startDate, endDate } = req.query;
     const summary = await storage.getExpensesByCategory(
       branchId ? parseInt(branchId) : undefined,
@@ -2727,15 +2731,16 @@ export async function registerRoutes(
     }
   });
 
-  // Accounting Summary - Admin only
+  // Accounting Summary - admin OR users with canManageAccounting permission
   app.get("/api/accounting/summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { branchId, startDate, endDate } = req.query;
     console.log("[DEBUG] Accounting summary request:", { branchId, startDate, endDate });
     const summary = await storage.getAccountingSummary(
@@ -2751,11 +2756,12 @@ export async function registerRoutes(
   app.get("/api/accounting/payments", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { branchId, startDate, endDate } = req.query;
     const payments = await storage.getAllPayments(
       branchId ? parseInt(branchId) : undefined,
@@ -2769,11 +2775,12 @@ export async function registerRoutes(
   app.get("/api/accounting/visits", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { branchId, startDate, endDate } = req.query;
     const visits = await storage.getAllVisits(
       branchId ? parseInt(branchId) : undefined,
@@ -2787,11 +2794,12 @@ export async function registerRoutes(
   app.get("/api/accounting/debtors", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول لتقرير المديونيات" });
     }
-    
+
     const { branchId, minAmount } = req.query;
     
     // Get all patients
@@ -2825,11 +2833,12 @@ export async function registerRoutes(
   app.get("/api/accounting/monthly-trends", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { branchId, months = 12 } = req.query;
     const numMonths = parseInt(months as string);
     
@@ -2863,11 +2872,12 @@ export async function registerRoutes(
   app.get("/api/accounting/profitability-by-service", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { branchId } = req.query;
     const patients = await storage.getPatients(branchId ? parseInt(branchId) : undefined);
     
@@ -2908,11 +2918,12 @@ export async function registerRoutes(
   app.get("/api/accounting/branch-comparison", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    
-    if (!isAdmin) {
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
-    
+
     const { startDate, endDate } = req.query;
     const branches = await storage.getBranches();
     
@@ -2976,14 +2987,15 @@ export async function registerRoutes(
     res.json({ invoiceNumber: nextNumber });
   });
 
-  // Create invoice (admin-only)
+  // Create invoice — admin or accountant (canManageAccounting)
   app.post("/api/invoices", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
+    const canCreate = isAdmin || branchSession?.permissions?.canManageAccounting;
     const user = req.user;
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin) {
+    if (!canCreate) {
       return res.status(403).json({ error: "غير مصرح لك بإنشاء الفواتير" });
     }
 
@@ -3088,13 +3100,14 @@ export async function registerRoutes(
     }
   });
 
-  // Record payment for invoice (admin-only)
+  // Record payment for invoice — admin or accountant (canManageAccounting)
   app.post("/api/invoices/:id/payment", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
+    const canRecord = isAdmin || branchSession?.permissions?.canManageAccounting;
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin) {
+    if (!canRecord) {
       return res.status(403).json({ error: "غير مصرح لك بتسجيل المدفوعات" });
     }
 
