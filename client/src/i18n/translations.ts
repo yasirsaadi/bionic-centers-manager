@@ -24,6 +24,7 @@ const translations = {
     roles: {
       admin: "مسؤول النظام",
       branch_manager: "مدير فرع",
+      accountant: "محاسب",
       reception: "موظف استقبال",
       therapist: "معالج طبيعي",
       surveyor: "موظف استبيان",
@@ -1210,6 +1211,7 @@ const translations = {
     roles: {
       admin: "System Admin",
       branch_manager: "Branch Manager",
+      accountant: "Accountant",
       reception: "Receptionist",
       therapist: "Therapist",
       surveyor: "Surveyor",
