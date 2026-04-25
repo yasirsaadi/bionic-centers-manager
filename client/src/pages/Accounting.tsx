@@ -397,6 +397,11 @@ export default function Accounting() {
   ]);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleteType, setDeleteType] = useState<"expense" | "invoice" | null>(null);
+  const [isDailyDialogOpen, setIsDailyDialogOpen] = useState(false);
+  const [dailySummaryDate, setDailySummaryDate] = useState<string>(
+    () => new Date().toISOString().split("T")[0]
+  );
+  const [dailySummaryLoading, setDailySummaryLoading] = useState(false);
 
   // Determine effective branch filter - branch staff can only see their branch
   const effectiveBranchFilter = isAdmin ? selectedBranch : (userBranchId?.toString() || "all");
@@ -959,6 +964,165 @@ export default function Accounting() {
     toast({ title: t.accounting.exportSuccess });
   }, [summary, expensesByCategory, branchComparison, debtors, currentBranchNameArabic, reshapeArabic, toast]);
 
+  // Daily cash summary PDF for the accountant.
+  // Pulls /api/accounting/daily-summary for the chosen date and renders a
+  // single-page report: revenue by service, expenses by category, today's
+  // net, yesterday's running cash, today's closing cash. Includes signature
+  // lines for accountant and manager.
+  const generateDailySummaryPDF = useCallback(async () => {
+    setDailySummaryLoading(true);
+    try {
+      const params = new URLSearchParams({ date: dailySummaryDate });
+      if (effectiveBranchFilter !== "all") {
+        params.append("branchId", effectiveBranchFilter);
+      }
+      const res = await fetch(`/api/accounting/daily-summary?${params}`, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "تعذّر جلب الملخص اليومي");
+      }
+      const data: {
+        date: string;
+        branchName: string | null;
+        todayRevenue: number;
+        todayExpenses: number;
+        todayNet: number;
+        yesterdayClosing: number;
+        todayClosing: number;
+        revenueByService: { type: string; amount: number }[];
+        expensesByCategory: { category: string; amount: number }[];
+      } = await res.json();
+
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      doc.addFileToVFS("Amiri-Regular.ttf", AmiriRegular);
+      doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
+      doc.setFont("Amiri");
+      doc.setR2L(true);
+
+      // Header
+      doc.setFontSize(18);
+      doc.text(reshapeArabic("الملخص اليومي للقاصة"), 105, 20, { align: "center" });
+      doc.setFontSize(11);
+      doc.text(reshapeArabic("مجموعة مراكز د. ياسر الساعدي"), 105, 28, { align: "center" });
+
+      // Meta line
+      doc.setFontSize(11);
+      const branchLabel = data.branchName ? `الفرع: ${data.branchName}` : "كل الفروع";
+      doc.text(reshapeArabic(branchLabel), 195, 40, { align: "right" });
+      doc.text(reshapeArabic(`التاريخ: ${formatArabicDate(data.date)}`), 15, 40, { align: "left" });
+
+      let yPos = 50;
+
+      // Revenue by service
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("وارد اليوم — موزّع حسب نوع الخدمة"), 195, yPos, { align: "right" });
+      yPos += 6;
+
+      const revenueRows = data.revenueByService.length > 0
+        ? data.revenueByService.map((r) => [
+            reshapeArabic(formatCurrency(r.amount)),
+            reshapeArabic(r.type || "غير محدد"),
+          ])
+        : [[reshapeArabic("—"), reshapeArabic("لا يوجد وارد اليوم")]];
+      revenueRows.push([
+        reshapeArabic(formatCurrency(data.todayRevenue)),
+        reshapeArabic("الإجمالي"),
+      ]);
+
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[reshapeArabic("المبلغ"), reshapeArabic("نوع الخدمة")]],
+        body: revenueRows,
+        theme: "striped",
+        styles: { font: "Amiri", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [22, 163, 74], halign: "right" },
+        margin: { left: 15, right: 15 },
+        didParseCell: (cellData: any) => {
+          if (cellData.row.index === revenueRows.length - 1) {
+            cellData.cell.styles.fontStyle = "bold";
+            cellData.cell.styles.fillColor = [220, 252, 231];
+          }
+        },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Expenses by category
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("مصاريف اليوم — موزّعة حسب الفئة"), 195, yPos, { align: "right" });
+      yPos += 6;
+
+      const expenseRows = data.expensesByCategory.length > 0
+        ? data.expensesByCategory.map((e) => [
+            reshapeArabic(formatCurrency(e.amount)),
+            reshapeArabic(e.category || "أخرى"),
+          ])
+        : [[reshapeArabic("—"), reshapeArabic("لا توجد مصاريف اليوم")]];
+      expenseRows.push([
+        reshapeArabic(formatCurrency(data.todayExpenses)),
+        reshapeArabic("الإجمالي"),
+      ]);
+
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[reshapeArabic("المبلغ"), reshapeArabic("الفئة")]],
+        body: expenseRows,
+        theme: "striped",
+        styles: { font: "Amiri", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [220, 38, 38], halign: "right" },
+        margin: { left: 15, right: 15 },
+        didParseCell: (cellData: any) => {
+          if (cellData.row.index === expenseRows.length - 1) {
+            cellData.cell.styles.fontStyle = "bold";
+            cellData.cell.styles.fillColor = [254, 226, 226];
+          }
+        },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Cash summary block
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("ملخّص القاصة"), 195, yPos, { align: "right" });
+      yPos += 6;
+
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [[reshapeArabic("المبلغ"), reshapeArabic("البيان")]],
+        body: [
+          [reshapeArabic(formatCurrency(data.todayRevenue)), reshapeArabic("وارد اليوم")],
+          [reshapeArabic(formatCurrency(data.todayExpenses)), reshapeArabic("مصاريف اليوم")],
+          [reshapeArabic(formatCurrency(data.todayNet)), reshapeArabic("صافي اليوم (وارد − مصاريف)")],
+          [reshapeArabic(formatCurrency(data.yesterdayClosing)), reshapeArabic("رصيد القاصة من أمس")],
+          [reshapeArabic(formatCurrency(data.todayClosing)), reshapeArabic("رصيد القاصة في نهاية اليوم")],
+        ],
+        theme: "grid",
+        styles: { font: "Amiri", halign: "right", fontSize: 11 },
+        headStyles: { fillColor: [30, 64, 175], halign: "right" },
+        margin: { left: 15, right: 15 },
+        didParseCell: (cellData: any) => {
+          if (cellData.row.index === 4) {
+            cellData.cell.styles.fontStyle = "bold";
+            cellData.cell.styles.fillColor = [219, 234, 254];
+            cellData.cell.styles.fontSize = 12;
+          }
+        },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 25;
+
+      // Signatures
+      doc.setFontSize(11);
+      doc.text(reshapeArabic("توقيع المحاسب: ____________________"), 195, yPos, { align: "right" });
+      doc.text(reshapeArabic("توقيع المسؤول: ____________________"), 15, yPos, { align: "left" });
+
+      doc.save(`ملخص_يومي_${data.date}.pdf`);
+      toast({ title: t.accounting.exportSuccess });
+      setIsDailyDialogOpen(false);
+    } catch (err: any) {
+      toast({ title: err.message || "خطأ في توليد الملخص", variant: "destructive" });
+    } finally {
+      setDailySummaryLoading(false);
+    }
+  }, [dailySummaryDate, effectiveBranchFilter, reshapeArabic, toast, t.accounting.exportSuccess]);
+
   // Export to Excel
   const exportToExcel = useCallback(() => {
     if (!summary) return;
@@ -1171,7 +1335,20 @@ export default function Accounting() {
             </Button>
             
             <Separator orientation="vertical" className="h-8 mx-1" />
-            
+
+            <Button
+              variant="default"
+              onClick={() => {
+                setDailySummaryDate(new Date().toISOString().split("T")[0]);
+                setIsDailyDialogOpen(true);
+              }}
+              className="gap-2"
+              data-testid="button-daily-summary"
+            >
+              <Calendar className="h-4 w-4" />
+              <span className="hidden md:inline">ملخص يومي</span>
+            </Button>
+
             <Button
               variant="outline"
               onClick={exportToPDF}
@@ -2250,6 +2427,49 @@ export default function Accounting() {
                 data-testid="button-confirm-delete"
               >
                 {t.accounting.delete}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Daily cash summary date picker */}
+        <Dialog open={isDailyDialogOpen} onOpenChange={setIsDailyDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>الملخص اليومي للقاصة</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <p className="text-sm text-muted-foreground">
+                اختر اليوم المطلوب لتوليد ملف PDF يحتوي على وارد ومصاريف ذلك اليوم،
+                صافيه، ورصيد القاصة محسوباً تلقائياً من الأيام السابقة.
+              </p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">التاريخ</label>
+                <DatePickerIraq
+                  value={dailySummaryDate}
+                  onChange={(val) => setDailySummaryDate(val)}
+                  className="w-full"
+                  data-testid="input-daily-summary-date"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setIsDailyDialogOpen(false)}
+                disabled={dailySummaryLoading}
+                data-testid="button-daily-cancel"
+              >
+                إلغاء
+              </Button>
+              <Button
+                onClick={generateDailySummaryPDF}
+                disabled={!dailySummaryDate || dailySummaryLoading}
+                className="gap-2"
+                data-testid="button-daily-generate"
+              >
+                <FileDown className="h-4 w-4" />
+                {dailySummaryLoading ? "جارٍ التوليد..." : "تصدير PDF"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -2731,6 +2731,43 @@ export async function registerRoutes(
     }
   });
 
+  // Daily cash summary — accountant's PDF source.
+  // Returns today's revenue/expenses, yesterday's running cash, and today's closing.
+  app.get("/api/accounting/daily-summary", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للملخص اليومي" });
+    }
+
+    const dateParam = (req.query.date as string) || new Date().toISOString().split("T")[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      return res.status(400).json({ error: "صيغة التاريخ غير صحيحة، يجب أن تكون YYYY-MM-DD" });
+    }
+
+    // Non-admins are forced to their own branch regardless of what the
+    // client sends — defensive in case the UI sends a different branchId.
+    let branchId: number | undefined;
+    if (isAdmin) {
+      branchId = req.query.branchId ? parseInt(req.query.branchId as string) : undefined;
+    } else {
+      branchId = branchSession?.branchId ?? undefined;
+    }
+
+    const summary = await storage.getDailyCashSummary(dateParam, branchId);
+
+    // Attach branch name for the PDF header
+    let branchName: string | null = null;
+    if (branchId) {
+      const branch = await storage.getBranch(branchId);
+      branchName = branch?.name ?? null;
+    }
+
+    res.json({ ...summary, branchName });
+  });
+
   // Accounting Summary - admin OR users with canManageAccounting permission
   app.get("/api/accounting/summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;

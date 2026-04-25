@@ -93,6 +93,17 @@ export interface IStorage {
     effectiveEndDate: string;
     daysInRange: number;
   }>;
+  getDailyCashSummary(date: string, branchId?: number): Promise<{
+    date: string;
+    branchId: number | null;
+    todayRevenue: number;
+    todayExpenses: number;
+    todayNet: number;
+    yesterdayClosing: number;
+    todayClosing: number;
+    revenueByService: { type: string; amount: number }[];
+    expensesByCategory: { category: string; amount: number }[];
+  }>;
   getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]>;
   getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]>;
 
@@ -620,6 +631,98 @@ export class DatabaseStorage implements IStorage {
       effectiveStartDate,
       effectiveEndDate,
       daysInRange,
+    };
+  }
+
+  // Daily cash summary for the accountant's PDF export.
+  // Computes today's revenue, expenses, net, plus a recursive carry-forward
+  // of the cash position from prior days (yesterday's closing = sum of all
+  // prior payments minus sum of all prior expenses for the branch).
+  async getDailyCashSummary(date: string, branchId?: number): Promise<{
+    date: string;
+    branchId: number | null;
+    todayRevenue: number;
+    todayExpenses: number;
+    todayNet: number;
+    yesterdayClosing: number;
+    todayClosing: number;
+    revenueByService: { type: string; amount: number }[];
+    expensesByCategory: { category: string; amount: number }[];
+  }> {
+    // Date boundaries: payments use timestamp, expenses use date column.
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const nextDay = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const branchFilter = branchId ? eq(payments.branchId, branchId) : sql`TRUE`;
+    const expBranchFilter = branchId ? eq(expenses.branchId, branchId) : sql`TRUE`;
+
+    // Today's total payments
+    const todayPaymentsQ = await db
+      .select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, new Date(nextDay.getTime() - 1))));
+    const todayRevenue = Number(todayPaymentsQ[0]?.total) || 0;
+
+    // Today's total expenses (compare on text date column)
+    const todayExpensesQ = await db
+      .select({ total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
+      .from(expenses)
+      .where(and(expBranchFilter, eq(expenses.expenseDate, date)));
+    const todayExpenses = Number(todayExpensesQ[0]?.total) || 0;
+
+    // Sum of all payments BEFORE today (carry-forward base)
+    const priorPaymentsQ = await db
+      .select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(branchFilter, sql`${payments.date} < ${dayStart}`));
+    const priorRevenue = Number(priorPaymentsQ[0]?.total) || 0;
+
+    // Sum of all expenses BEFORE today
+    const priorExpensesQ = await db
+      .select({ total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
+      .from(expenses)
+      .where(and(expBranchFilter, sql`${expenses.expenseDate} < ${date}`));
+    const priorExpenses = Number(priorExpensesQ[0]?.total) || 0;
+
+    const yesterdayClosing = priorRevenue - priorExpenses;
+    const todayNet = todayRevenue - todayExpenses;
+    const todayClosing = yesterdayClosing + todayNet;
+
+    // Today's revenue grouped by treatment type
+    const revenueByServiceQ = await db
+      .select({
+        type: sql<string>`COALESCE(${payments.paymentTreatmentType}, 'غير محدد')`,
+        amount: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+      })
+      .from(payments)
+      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, new Date(nextDay.getTime() - 1))))
+      .groupBy(payments.paymentTreatmentType);
+    const revenueByService = revenueByServiceQ
+      .map((r) => ({ type: r.type, amount: Number(r.amount) || 0 }))
+      .filter((r) => r.amount > 0);
+
+    // Today's expenses grouped by category
+    const expensesByCategoryQ = await db
+      .select({
+        category: sql<string>`COALESCE(${expenses.category}, 'أخرى')`,
+        amount: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
+      })
+      .from(expenses)
+      .where(and(expBranchFilter, eq(expenses.expenseDate, date)))
+      .groupBy(expenses.category);
+    const expensesByCategory = expensesByCategoryQ
+      .map((r) => ({ category: r.category, amount: Number(r.amount) || 0 }))
+      .filter((r) => r.amount > 0);
+
+    return {
+      date,
+      branchId: branchId ?? null,
+      todayRevenue,
+      todayExpenses,
+      todayNet,
+      yesterdayClosing,
+      todayClosing,
+      revenueByService,
+      expensesByCategory,
     };
   }
 
