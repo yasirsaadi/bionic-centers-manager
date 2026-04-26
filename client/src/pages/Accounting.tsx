@@ -20,7 +20,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { AmiriRegular } from "@/lib/amiri-font";
 import ArabicReshaper from "arabic-reshaper";
@@ -833,7 +833,7 @@ export default function Accounting() {
       [reshapeArabic(`${summary.collectionRate}%`), reshapeArabic("نسبة التحصيل")]
     ];
     
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: yPos,
       head: [[reshapeArabic("القيمة"), reshapeArabic("البيان")]],
       body: summaryTableData,
@@ -856,7 +856,7 @@ export default function Accounting() {
         reshapeArabic(getCategoryLabel(e.category))
       ]);
       
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[reshapeArabic("المبلغ"), reshapeArabic("التصنيف")]],
         body: expenseCategoryData,
@@ -889,7 +889,7 @@ export default function Accounting() {
         reshapeArabic(b.branchName)
       ]);
       
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[
           reshapeArabic("التحصيل"),
@@ -929,7 +929,7 @@ export default function Accounting() {
         String(i + 1)
       ]);
       
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[
           reshapeArabic("آخر دفعة"),
@@ -1029,7 +1029,7 @@ export default function Accounting() {
         reshapeArabic("الإجمالي"),
       ]);
 
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[reshapeArabic("المبلغ"), reshapeArabic("نوع الخدمة")]],
         body: revenueRows,
@@ -1062,7 +1062,7 @@ export default function Accounting() {
         reshapeArabic("الإجمالي"),
       ]);
 
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[reshapeArabic("المبلغ"), reshapeArabic("الفئة")]],
         body: expenseRows,
@@ -1084,7 +1084,7 @@ export default function Accounting() {
       doc.text(reshapeArabic("ملخّص القاصة"), 195, yPos, { align: "right" });
       yPos += 6;
 
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [[reshapeArabic("المبلغ"), reshapeArabic("البيان")]],
         body: [
