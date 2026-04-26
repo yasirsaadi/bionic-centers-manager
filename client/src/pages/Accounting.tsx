@@ -239,14 +239,21 @@ const SERVICE_TYPES = [
 ];
 
 function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('ar-IQ').format(amount) + " د.ع";
+  // Use Western thousand separator (comma at baseline) then convert digits
+  // to Arabic-Indic. The default `ar-IQ` locale yields the high-positioned
+  // Arabic thousands separator (٬, U+066C) which looks like a stray
+  // apostrophe in PDF rendering and confuses readers.
+  const western = new Intl.NumberFormat("en-US").format(amount);
+  const arabicized = western.replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+  return arabicized + " د.ع";
 }
 
 // Returns the number portion only (no currency suffix), formatted with
 // thousand separators for the Iraqi Arabic locale. Use this when the
 // currency label is rendered as a separate styled span.
 function formatNumberOnly(amount: number): string {
-  return new Intl.NumberFormat('ar-IQ').format(amount);
+  const western = new Intl.NumberFormat("en-US").format(amount);
+  return western.replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 }
 
 function getCategoryLabel(category: string): string {

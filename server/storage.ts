@@ -649,9 +649,13 @@ export class DatabaseStorage implements IStorage {
     revenueByService: { type: string; amount: number }[];
     expensesByCategory: { category: string; amount: number }[];
   }> {
-    // Date boundaries: payments use timestamp, expenses use date column.
-    const dayStart = new Date(`${date}T00:00:00.000Z`);
-    const nextDay = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    // Day boundaries in BAGHDAD time (+03:00). The payments table stores a
+    // timestamp; using UTC midnight here would skip the first 3 hours of
+    // each Baghdad-local day (00:00–03:00 Baghdad = 21:00–00:00 UTC the day
+    // before) and double-count the last 3 hours of yesterday. By anchoring
+    // to Baghdad we get exactly the calendar day the user typed.
+    const dayStart = new Date(`${date}T00:00:00+03:00`);
+    const dayEnd = new Date(`${date}T23:59:59.999+03:00`);
     const branchFilter = branchId ? eq(payments.branchId, branchId) : sql`TRUE`;
     const expBranchFilter = branchId ? eq(expenses.branchId, branchId) : sql`TRUE`;
 
@@ -659,7 +663,7 @@ export class DatabaseStorage implements IStorage {
     const todayPaymentsQ = await db
       .select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
       .from(payments)
-      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, new Date(nextDay.getTime() - 1))));
+      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, dayEnd)));
     const todayRevenue = Number(todayPaymentsQ[0]?.total) || 0;
 
     // Today's total expenses (compare on text date column)
@@ -694,7 +698,7 @@ export class DatabaseStorage implements IStorage {
         amount: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
       })
       .from(payments)
-      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, new Date(nextDay.getTime() - 1))))
+      .where(and(branchFilter, gte(payments.date, dayStart), lte(payments.date, dayEnd)))
       .groupBy(payments.paymentTreatmentType);
     const revenueByService = revenueByServiceQ
       .map((r) => ({ type: r.type, amount: Number(r.amount) || 0 }))
