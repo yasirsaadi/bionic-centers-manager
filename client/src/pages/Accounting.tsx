@@ -838,8 +838,8 @@ export default function Accounting() {
       head: [[reshapeArabic("القيمة"), reshapeArabic("البيان")]],
       body: summaryTableData,
       theme: 'striped',
-      styles: { font: 'Amiri', halign: 'right', fontSize: 10 },
-      headStyles: { fillColor: [30, 64, 175], halign: 'right' },
+      styles: { font: 'Amiri', fontStyle: 'normal', halign: 'right', fontSize: 10 },
+      headStyles: { fillColor: [30, 64, 175], font: 'Amiri', fontStyle: 'normal', halign: 'right', textColor: [255, 255, 255] },
       margin: { left: 15, right: 15 }
     });
     
@@ -861,8 +861,8 @@ export default function Accounting() {
         head: [[reshapeArabic("المبلغ"), reshapeArabic("التصنيف")]],
         body: expenseCategoryData,
         theme: 'striped',
-        styles: { font: 'Amiri', halign: 'right', fontSize: 10 },
-        headStyles: { fillColor: [220, 38, 38], halign: 'right' },
+        styles: { font: 'Amiri', fontStyle: 'normal', halign: 'right', fontSize: 10 },
+        headStyles: { fillColor: [220, 38, 38], font: 'Amiri', fontStyle: 'normal', halign: 'right', textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 }
       });
       
@@ -901,8 +901,8 @@ export default function Accounting() {
         ]],
         body: branchData,
         theme: 'striped',
-        styles: { font: 'Amiri', halign: 'right', fontSize: 9 },
-        headStyles: { fillColor: [34, 197, 94], halign: 'right' },
+        styles: { font: 'Amiri', fontStyle: 'normal', halign: 'right', fontSize: 9 },
+        headStyles: { fillColor: [34, 197, 94], font: 'Amiri', fontStyle: 'normal', halign: 'right', textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 }
       });
       
@@ -941,8 +941,8 @@ export default function Accounting() {
         ]],
         body: debtorData,
         theme: 'striped',
-        styles: { font: 'Amiri', halign: 'right', fontSize: 9 },
-        headStyles: { fillColor: [239, 68, 68], halign: 'right' },
+        styles: { font: 'Amiri', fontStyle: 'normal', halign: 'right', fontSize: 9 },
+        headStyles: { fillColor: [239, 68, 68], font: 'Amiri', fontStyle: 'normal', halign: 'right', textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 }
       });
     }
@@ -1034,13 +1034,14 @@ export default function Accounting() {
         head: [[reshapeArabic("المبلغ"), reshapeArabic("نوع الخدمة")]],
         body: revenueRows,
         theme: "striped",
-        styles: { font: "Amiri", halign: "right", fontSize: 10 },
-        headStyles: { fillColor: [22, 163, 74], halign: "right" },
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [22, 163, 74], font: "Amiri", fontStyle: "normal", halign: "right", textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 },
         didParseCell: (cellData: any) => {
-          if (cellData.row.index === revenueRows.length - 1) {
-            cellData.cell.styles.fontStyle = "bold";
+          if (cellData.section === "body" && cellData.row.index === revenueRows.length - 1) {
             cellData.cell.styles.fillColor = [220, 252, 231];
+            cellData.cell.styles.textColor = [22, 101, 52];
+            cellData.cell.styles.fontSize = 11;
           }
         },
       });
@@ -1067,13 +1068,14 @@ export default function Accounting() {
         head: [[reshapeArabic("المبلغ"), reshapeArabic("الفئة")]],
         body: expenseRows,
         theme: "striped",
-        styles: { font: "Amiri", halign: "right", fontSize: 10 },
-        headStyles: { fillColor: [220, 38, 38], halign: "right" },
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [220, 38, 38], font: "Amiri", fontStyle: "normal", halign: "right", textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 },
         didParseCell: (cellData: any) => {
-          if (cellData.row.index === expenseRows.length - 1) {
-            cellData.cell.styles.fontStyle = "bold";
+          if (cellData.section === "body" && cellData.row.index === expenseRows.length - 1) {
             cellData.cell.styles.fillColor = [254, 226, 226];
+            cellData.cell.styles.textColor = [127, 29, 29];
+            cellData.cell.styles.fontSize = 11;
           }
         },
       });
@@ -1095,13 +1097,13 @@ export default function Accounting() {
           [reshapeArabic(formatCurrency(data.todayClosing)), reshapeArabic("رصيد القاصة في نهاية اليوم")],
         ],
         theme: "grid",
-        styles: { font: "Amiri", halign: "right", fontSize: 11 },
-        headStyles: { fillColor: [30, 64, 175], halign: "right" },
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 11 },
+        headStyles: { fillColor: [30, 64, 175], font: "Amiri", fontStyle: "normal", halign: "right", textColor: [255, 255, 255] },
         margin: { left: 15, right: 15 },
         didParseCell: (cellData: any) => {
-          if (cellData.row.index === 4) {
-            cellData.cell.styles.fontStyle = "bold";
+          if (cellData.section === "body" && cellData.row.index === 4) {
             cellData.cell.styles.fillColor = [219, 234, 254];
+            cellData.cell.styles.textColor = [30, 58, 138];
             cellData.cell.styles.fontSize = 12;
           }
         },
