@@ -74,6 +74,7 @@ export interface IStorage {
   updateExpense(id: number, expense: Partial<InsertExpense>): Promise<Expense | undefined>;
   deleteExpense(id: number): Promise<void>;
   getExpensesByCategory(branchId?: number, startDate?: string, endDate?: string): Promise<{category: string, total: number}[]>;
+  getExpenseSubcategories(category: string, branchId?: number): Promise<string[]>;
 
   // Installment Plans
   getInstallmentPlans(branchId?: number): Promise<InstallmentPlan[]>;
@@ -105,6 +106,7 @@ export interface IStorage {
     todayClosing: number;
     revenueByService: { type: string; amount: number }[];
     expensesByCategory: { category: string; amount: number }[];
+    otherSubcategoryBreakdown: { subcategory: string; amount: number }[];
   }>;
   getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]>;
   getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]>;
@@ -515,8 +517,23 @@ export class DatabaseStorage implements IStorage {
           category: expenses.category,
           total: sql<number>`SUM(${expenses.amount})::integer`
         }).from(expenses).groupBy(expenses.category);
-    
+
     return await query;
+  }
+
+  // Returns the distinct, non-empty subcategories that have been used for the
+  // given category, sorted by recent-first usage so the most-likely match
+  // surfaces first in the autocomplete dropdown. Optionally branch-scoped.
+  async getExpenseSubcategories(category: string, branchId?: number): Promise<string[]> {
+    const conditions = [eq(expenses.category, category), sql`${expenses.subcategory} IS NOT NULL AND ${expenses.subcategory} <> ''`];
+    if (branchId) conditions.push(eq(expenses.branchId, branchId));
+    const rows = await db
+      .select({ sub: expenses.subcategory, last: sql<string>`MAX(${expenses.createdAt})` })
+      .from(expenses)
+      .where(and(...conditions))
+      .groupBy(expenses.subcategory)
+      .orderBy(sql`MAX(${expenses.createdAt}) DESC`);
+    return rows.map((r) => r.sub).filter((s): s is string => !!s);
   }
 
   // Installment Plans
@@ -671,6 +688,7 @@ export class DatabaseStorage implements IStorage {
     todayClosing: number;
     revenueByService: { type: string; amount: number }[];
     expensesByCategory: { category: string; amount: number }[];
+    otherSubcategoryBreakdown: { subcategory: string; amount: number }[];
   }> {
     // Day boundaries in BAGHDAD time (+03:00). The payments table stores a
     // timestamp; using UTC midnight here would skip the first 3 hours of
@@ -727,18 +745,41 @@ export class DatabaseStorage implements IStorage {
       .map((r) => ({ type: r.type, amount: Number(r.amount) || 0 }))
       .filter((r) => r.amount > 0);
 
-    // Today's expenses grouped by category
+    // Today's expenses grouped by category + subcategory.
+    // The PDF / dashboard collapses to category total but expands the
+    // "other" bucket into a per-subcategory breakdown so accountants don't
+    // lose visibility on what "أخرى" actually covered.
     const expensesByCategoryQ = await db
       .select({
-        category: sql<string>`COALESCE(${expenses.category}, 'أخرى')`,
+        category: sql<string>`COALESCE(${expenses.category}, 'other')`,
+        subcategory: expenses.subcategory,
         amount: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
       })
       .from(expenses)
       .where(and(expBranchFilter, eq(expenses.expenseDate, date)))
-      .groupBy(expenses.category);
-    const expensesByCategory = expensesByCategoryQ
-      .map((r) => ({ category: r.category, amount: Number(r.amount) || 0 }))
-      .filter((r) => r.amount > 0);
+      .groupBy(expenses.category, expenses.subcategory);
+
+    // Aggregate to one row per category for the totals display.
+    const categoryTotals = new Map<string, number>();
+    // And a separate sub-breakdown ONLY for "other" so the PDF can expand it.
+    const otherBreakdown: { subcategory: string; amount: number }[] = [];
+    for (const r of expensesByCategoryQ) {
+      const amt = Number(r.amount) || 0;
+      if (amt <= 0) continue;
+      categoryTotals.set(r.category, (categoryTotals.get(r.category) ?? 0) + amt);
+      if (r.category === "other") {
+        otherBreakdown.push({
+          subcategory: (r.subcategory ?? "غير مُصنَّف").trim() || "غير مُصنَّف",
+          amount: amt,
+        });
+      }
+    }
+    const expensesByCategory = Array.from(categoryTotals.entries()).map(
+      ([category, amount]) => ({ category, amount })
+    );
+    // Sort subcategories within "other" by amount descending so the largest
+    // mystery expenses bubble to the top.
+    otherBreakdown.sort((a, b) => b.amount - a.amount);
 
     return {
       date,
@@ -750,6 +791,7 @@ export class DatabaseStorage implements IStorage {
       todayClosing,
       revenueByService,
       expensesByCategory,
+      otherSubcategoryBreakdown: otherBreakdown,
     };
   }
 

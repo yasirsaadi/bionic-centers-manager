@@ -105,11 +105,18 @@ const CATEGORY_COLORS: Record<string, string> = {
 const expenseFormSchema = z.object({
   branchId: z.number(),
   category: z.string().min(1, "يرجى اختيار التصنيف"),
+  subcategory: z.string().optional(),
   amount: z.number().min(1, "المبلغ يجب أن يكون أكبر من صفر"),
   description: z.string().optional(),
   expenseDate: z.string().min(1, "يرجى اختيار التاريخ"),
   notes: z.string().optional()
-});
+}).refine(
+  (data) => data.category !== "other" || (data.subcategory && data.subcategory.trim().length > 0),
+  {
+    path: ["subcategory"],
+    message: "عند اختيار 'أخرى'، يجب كتابة تصنيف فرعي يوضّح طبيعة المصروف",
+  }
+);
 
 type ExpenseFormData = z.infer<typeof expenseFormSchema>;
 
@@ -122,6 +129,7 @@ interface Expense {
   id: number;
   branchId: number;
   category: string;
+  subcategory: string | null;
   amount: number;
   description: string | null;
   expenseDate: string;
@@ -647,11 +655,34 @@ export default function Accounting() {
     defaultValues: {
       branchId: 1,
       category: "",
+      subcategory: "",
       amount: 0,
       description: "",
       expenseDate: new Date().toISOString().split("T")[0],
       notes: ""
     }
+  });
+
+  // Watch category so the subcategory autocomplete loads suggestions for the
+  // currently-selected category, and so we can highlight the field as required
+  // when the user picks "أخرى".
+  const watchedCategory = form.watch("category");
+  const subcategoryRequired = watchedCategory === "other";
+
+  // Pull previously-used subcategories for this category in the user's branch.
+  // Used to populate the <datalist> the subcategory input is bound to so
+  // accountants build a self-organising taxonomy instead of typo-fragmenting.
+  const { data: subcategorySuggestions = [] } = useQuery<string[]>({
+    queryKey: ["/api/expenses/subcategories", watchedCategory],
+    queryFn: async () => {
+      if (!watchedCategory) return [];
+      const params = new URLSearchParams({ category: watchedCategory });
+      const res = await fetch(`/api/expenses/subcategories?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!watchedCategory && isExpenseDialogOpen,
+    staleTime: 30 * 1000,
   });
 
   // Asks the server's AI helper to map a free-form expense description to one
@@ -767,6 +798,7 @@ export default function Accounting() {
     form.reset({
       branchId: expense.branchId,
       category: expense.category,
+      subcategory: expense.subcategory || "",
       amount: expense.amount,
       description: expense.description || "",
       expenseDate: expense.expenseDate,
@@ -785,6 +817,7 @@ export default function Accounting() {
     form.reset({
       branchId: selectedBranch !== "all" ? parseInt(selectedBranch) : 1,
       category: "",
+      subcategory: "",
       amount: 0,
       description: "",
       expenseDate: new Date().toISOString().split("T")[0],
@@ -1243,6 +1276,7 @@ export default function Accounting() {
         todayClosing: number;
         revenueByService: { type: string; amount: number }[];
         expensesByCategory: { category: string; amount: number }[];
+        otherSubcategoryBreakdown: { subcategory: string; amount: number }[];
       } = await res.json();
 
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -1304,12 +1338,34 @@ export default function Accounting() {
       doc.text(reshapeArabic("مصاريف اليوم — موزّعة حسب الفئة"), 195, yPos, { align: "right" });
       yPos += 6;
 
-      const expenseRows = data.expensesByCategory.length > 0
-        ? data.expensesByCategory.map((e) => [
-            reshapeArabic(formatCurrency(e.amount)),
-            reshapeArabic(e.category || "أخرى"),
-          ])
-        : [[reshapeArabic("—"), reshapeArabic("لا توجد مصاريف اليوم")]];
+      // Translate the category value (stored as "salaries", "other", …) to the
+      // Arabic label, and for the "other" bucket expand each subcategory into
+      // its own row so accountants don't lose visibility on what fell under
+      // أخرى. Subcategories come pre-sorted by amount desc from the server.
+      const labelOf = (categoryValue: string): string =>
+        EXPENSE_CATEGORIES.find((c) => c.value === categoryValue)?.label ?? categoryValue ?? "أخرى";
+
+      const expenseRows: string[][] = [];
+      if (data.expensesByCategory.length === 0) {
+        expenseRows.push([reshapeArabic("—"), reshapeArabic("لا توجد مصاريف اليوم")]);
+      } else {
+        for (const e of data.expensesByCategory) {
+          if (e.category === "other" && data.otherSubcategoryBreakdown.length > 0) {
+            // Expand: one row per subcategory, then a small "other" total row.
+            for (const sub of data.otherSubcategoryBreakdown) {
+              expenseRows.push([
+                reshapeArabic(formatCurrency(sub.amount)),
+                reshapeArabic(`أخرى — ${sub.subcategory}`),
+              ]);
+            }
+          } else {
+            expenseRows.push([
+              reshapeArabic(formatCurrency(e.amount)),
+              reshapeArabic(labelOf(e.category)),
+            ]);
+          }
+        }
+      }
       expenseRows.push([
         reshapeArabic(formatCurrency(data.todayExpenses)),
         reshapeArabic("الإجمالي"),
@@ -1996,15 +2052,22 @@ export default function Accounting() {
                             {branches.find(b => b.id === expense.branchId)?.name || "-"}
                           </TableCell>
                           <TableCell>
-                            <Badge 
-                              variant="outline"
-                              style={{ 
-                                backgroundColor: `${CATEGORY_COLORS[expense.category as keyof typeof CATEGORY_COLORS] || "#6b7280"}20`,
-                                borderColor: CATEGORY_COLORS[expense.category as keyof typeof CATEGORY_COLORS] || "#6b7280"
-                              }}
-                            >
-                              {getCategoryLabelTranslated(expense.category)}
-                            </Badge>
+                            <div className="flex flex-col gap-0.5">
+                              <Badge
+                                variant="outline"
+                                style={{
+                                  backgroundColor: `${CATEGORY_COLORS[expense.category as keyof typeof CATEGORY_COLORS] || "#6b7280"}20`,
+                                  borderColor: CATEGORY_COLORS[expense.category as keyof typeof CATEGORY_COLORS] || "#6b7280"
+                                }}
+                              >
+                                {getCategoryLabelTranslated(expense.category)}
+                              </Badge>
+                              {expense.subcategory ? (
+                                <span className="text-xs text-muted-foreground" title="تصنيف فرعي">
+                                  {expense.subcategory}
+                                </span>
+                              ) : null}
+                            </div>
                           </TableCell>
                           <TableCell>{expense.description || "-"}</TableCell>
                           <TableCell className="font-medium text-red-600">
@@ -2683,6 +2746,51 @@ export default function Accounting() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Sub-category field — required when category is "أخرى",
+                    optional otherwise. Backed by a datalist of previously
+                    used subcategories for the same category in this branch
+                    so the system self-organises instead of accumulating
+                    near-duplicate free-text entries. */}
+                <FormField
+                  control={form.control}
+                  name="subcategory"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        تصنيف فرعي {subcategoryRequired && <span className="text-destructive">*</span>}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          value={field.value ?? ""}
+                          list="expense-subcategory-suggestions"
+                          placeholder={
+                            subcategoryRequired
+                              ? "مثال: تبرعات للجمعيات، مكافآت موسمية، تصليح طارئ"
+                              : "اختياري — تفصيل أكثر للمصروف"
+                          }
+                          data-testid="input-expense-subcategory"
+                        />
+                      </FormControl>
+                      <datalist id="expense-subcategory-suggestions">
+                        {subcategorySuggestions.map((s) => (
+                          <option key={s} value={s} />
+                        ))}
+                      </datalist>
+                      {subcategoryRequired && !field.value?.trim() ? (
+                        <p className="text-xs text-muted-foreground">
+                          عند اختيار "أخرى" يجب توضيح طبيعة المصروف لتظهر بشكل واضح في التقارير.
+                        </p>
+                      ) : subcategorySuggestions.length > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          اقتراحات سابقة: {subcategorySuggestions.slice(0, 3).join(" • ")}
+                        </p>
+                      ) : null}
                       <FormMessage />
                     </FormItem>
                   )}
