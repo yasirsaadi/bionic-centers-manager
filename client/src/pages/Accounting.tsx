@@ -40,6 +40,7 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Sparkles,
   FileText,
   PieChart,
   BarChart3,
@@ -69,21 +70,35 @@ import {
   Legend
 } from "recharts";
 
+// Labels match the categories returned by the AI categorize endpoint exactly,
+// so the AI suggestion can be matched on either `label` or `value`.
 const EXPENSE_CATEGORIES = [
   { value: "salaries", label: "رواتب" },
-  { value: "rent", label: "إيجار" },
+  { value: "rent", label: "إيجارات" },
   { value: "medical_supplies", label: "مستلزمات طبية" },
   { value: "maintenance", label: "صيانة" },
-  { value: "utilities", label: "خدمات (كهرباء/ماء)" },
+  { value: "utilities", label: "كهرباء ومياه" },
+  { value: "communications", label: "اتصالات" },
+  { value: "marketing", label: "تسويق" },
+  { value: "transport", label: "نقل" },
+  { value: "hospitality", label: "ضيافة" },
+  { value: "stationery", label: "قرطاسية" },
+  { value: "bank_fees", label: "رسوم بنكية" },
   { value: "other", label: "أخرى" }
 ];
 
-const CATEGORY_COLORS = {
+const CATEGORY_COLORS: Record<string, string> = {
   salaries: "#3b82f6",
   rent: "#f59e0b",
   medical_supplies: "#10b981",
   maintenance: "#8b5cf6",
   utilities: "#ec4899",
+  communications: "#06b6d4",
+  marketing: "#ef4444",
+  transport: "#14b8a6",
+  hospitality: "#f97316",
+  stationery: "#a855f7",
+  bank_fees: "#64748b",
   other: "#6b7280"
 };
 
@@ -453,6 +468,20 @@ export default function Accounting() {
     queryKey: ["/api/branches"]
   });
 
+  // Probe whether AI features are available (i.e. ANTHROPIC_API_KEY is set
+  // server-side). Used to gracefully hide AI buttons when they wouldn't work.
+  const { data: aiStatus } = useQuery<{ enabled: boolean }>({
+    queryKey: ["/api/ai/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/ai/status", { credentials: "include" });
+      if (!res.ok) return { enabled: false };
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const aiEnabled = aiStatus?.enabled ?? false;
+  const [aiCategorySuggesting, setAiCategorySuggesting] = useState(false);
+
   // Fetch today's cash summary (today's revenue + closing balance)
   // for the two extra KPI cards on the dashboard.
   const todayISO = new Date().toISOString().split("T")[0];
@@ -624,6 +653,50 @@ export default function Accounting() {
       notes: ""
     }
   });
+
+  // Asks the server's AI helper to map a free-form expense description to one
+  // of the 12 fixed categories, then writes the suggestion into the form.
+  const suggestCategoryFromAi = async () => {
+    const description = form.getValues("description")?.trim();
+    if (!description) {
+      toast({
+        title: "اكتب وصف المصروف أولاً",
+        description: "نحتاج وصفاً مختصراً (مثل: شراء أوراق طباعة) لاقتراح الفئة",
+        variant: "destructive",
+      });
+      return;
+    }
+    setAiCategorySuggesting(true);
+    try {
+      const res = await fetch("/api/ai/categorize-expense", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ description }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: data.error || "تعذّر الاقتراح", variant: "destructive" });
+        return;
+      }
+      // The API returns the Arabic category name; the EXPENSE_CATEGORIES
+      // dropdown stores its value in English (e.g. "salaries"). Translate.
+      const category = data.category as string;
+      const matched = EXPENSE_CATEGORIES.find(
+        (c) => c.label === category || c.value === category
+      );
+      if (!matched) {
+        toast({ title: `تعذّر مطابقة الفئة: ${category}`, variant: "destructive" });
+        return;
+      }
+      form.setValue("category", matched.value, { shouldValidate: true, shouldDirty: true });
+      toast({ title: `الفئة المقترحة: ${matched.label}` });
+    } catch (err: any) {
+      toast({ title: "خطأ في الاتصال", description: err.message, variant: "destructive" });
+    } finally {
+      setAiCategorySuggesting(false);
+    }
+  };
 
   // Create expense mutation
   const createExpenseMutation = useMutation({
@@ -2578,7 +2651,24 @@ export default function Accounting() {
                   name="category"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t.accounting.categoryCol}</FormLabel>
+                      <div className="flex items-center justify-between">
+                        <FormLabel>{t.accounting.categoryCol}</FormLabel>
+                        {aiEnabled && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1.5 text-xs text-primary hover:text-primary"
+                            onClick={suggestCategoryFromAi}
+                            disabled={aiCategorySuggesting}
+                            data-testid="button-ai-suggest-category"
+                            title="اقتراح الفئة من وصف المصروف بالذكاء الاصطناعي"
+                          >
+                            <Sparkles className="h-3.5 w-3.5" />
+                            {aiCategorySuggesting ? "جارٍ الاقتراح..." : "اقتراح بالذكاء"}
+                          </Button>
+                        )}
+                      </div>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger data-testid="select-expense-category">

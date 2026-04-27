@@ -22,6 +22,8 @@ import {
   createJournalForVendorPayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
+import { isAiEnabled } from "./ai/provider";
+import { suggestExpenseCategory } from "./ai/categorize";
 import { logAudit } from "./accounting/ledger";
 
 // Validation schemas for admin settings
@@ -3426,6 +3428,35 @@ export async function registerRoutes(
       endDate
     );
     res.json(summary);
+  });
+
+  // ======================= AI ASSIST ROUTES =======================
+
+  // Tells the client whether AI features are available.
+  // Lets the UI hide AI buttons gracefully when ANTHROPIC_API_KEY isn't set.
+  app.get("/api/ai/status", isAuthenticated, (_req, res) => {
+    res.json({ enabled: isAiEnabled() });
+  });
+
+  // Suggests an expense category from a free-form Arabic description.
+  // Admin or accountant only — same gate as the rest of accounting.
+  app.post("/api/ai/categorize-expense", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك باستخدام الذكاء الاصطناعي" });
+    }
+    const { description } = req.body ?? {};
+    if (typeof description !== "string" || !description.trim()) {
+      return res.status(400).json({ error: "الوصف مطلوب" });
+    }
+    const result = await suggestExpenseCategory(description);
+    if (!result.ok) {
+      const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
+      return res.status(status).json({ error: result.message, reason: result.reason });
+    }
+    res.json({ category: result.value });
   });
 
   // ======================= TREATMENT PLAN ROUTES =======================
