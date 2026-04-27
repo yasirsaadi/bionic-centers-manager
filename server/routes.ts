@@ -103,6 +103,28 @@ export async function registerRoutes(
     };
   };
 
+  // Returns the branch ID that should be used to filter list/aggregate
+  // results for the current user. Non-admins are ALWAYS pinned to their
+  // own branch — the client cannot escape this by sending a different
+  // branchId in the query string. Admins may pass any branchId or omit
+  // it (= all branches).
+  //
+  // Use this everywhere that exposes data by branch: accounting summaries,
+  // expenses, invoices, purchases, statistics, debtors, daily summaries.
+  const enforceBranchAccess = (req: any): number | undefined => {
+    const branchSession = (req.session as any)?.branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    if (!isAdmin) {
+      return branchSession?.branchId ?? undefined;
+    }
+    const requested = req.query?.branchId;
+    if (requested === undefined || requested === null || requested === '' || requested === 'all') {
+      return undefined;
+    }
+    const id = parseInt(String(requested));
+    return Number.isNaN(id) ? undefined : id;
+  };
+
   // Helper to check permissions from session
   const getPermissions = (req: any) => {
     const branchSession = (req.session as any).branchSession;
@@ -1641,9 +1663,14 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  // Daily Report for specific branch
+  // Daily Report for specific branch.
+  // Non-admins can only request their own branch.
   app.get(api.reports.daily.path, isAuthenticated, async (req, res) => {
     const branchId = Number(req.params.branchId);
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
+      return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
+    }
     const branchPatients = await storage.getPatients(branchId);
     const branchPayments = await storage.getPaymentsByBranch(branchId);
     
@@ -1660,11 +1687,14 @@ export async function registerRoutes(
 
   // Overall stats for all branches (for dashboard) - supports branchId filter
   app.get("/api/reports/overall", isAuthenticated, async (req, res) => {
-    const branchIdParam = req.query.branchId as string | undefined;
-    const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
-    
-    const allPatients = await storage.getPatients();
-    const branches = await storage.getBranches();
+    // Non-admins are pinned to their own branch; admin honours the query param
+    // or omits it for cross-branch totals.
+    const enforced = enforceBranchAccess(req);
+    const filterBranchId = enforced ?? null;
+
+    const allPatients = await storage.getPatients(enforced);
+    const allBranches = await storage.getBranches();
+    const branches = enforced !== undefined ? allBranches.filter((b) => b.id === enforced) : allBranches;
     
     // Filter patients by branch if specified
     const filteredPatients = filterBranchId 
@@ -1698,10 +1728,16 @@ export async function registerRoutes(
     });
   });
 
-  // All branches revenues endpoint (supports daily filter)
+  // All branches revenues endpoint (supports daily filter).
+  // Non-admins only see their own branch in the response (a single-row map);
+  // admins see every branch.
   app.get("/api/reports/all-branches", isAuthenticated, async (req, res) => {
-    const branches = await storage.getBranches();
-    const allPatients = await storage.getPatients();
+    const allowedBranchId = enforceBranchAccess(req);
+    const allBranches = await storage.getBranches();
+    const branches = allowedBranchId !== undefined
+      ? allBranches.filter((b) => b.id === allowedBranchId)
+      : allBranches;
+    const allPatients = await storage.getPatients(allowedBranchId);
     const daily = req.query.daily === "true";
     
     // Get today's date range if daily filter is enabled
@@ -1752,9 +1788,14 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  // Detailed financial report by branch with transactions grouped by date
+  // Detailed financial report by branch with transactions grouped by date.
+  // Non-admins can only request their own branch.
   app.get("/api/reports/detailed/:branchId", isAuthenticated, async (req, res) => {
     const branchId = parseInt(req.params.branchId);
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
+      return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
+    }
     const patients = await storage.getPatients(branchId);
     const payments = await storage.getPaymentsByBranch(branchId);
     const visits = await storage.getVisitsByBranch(branchId);
@@ -1912,11 +1953,10 @@ export async function registerRoutes(
   // Optimized: uses direct SQL queries instead of loading all data into memory
   app.get("/api/reports/daily", isAuthenticated, async (req, res) => {
     try {
-      const branchIdParam = req.query.branchId as string | undefined;
       const dateParam = req.query.date as string | undefined;
-      const filterBranchId = branchIdParam ? parseInt(branchIdParam) : null;
-      
-      
+      // Non-admins always see only their own branch's daily report.
+      const filterBranchId = enforceBranchAccess(req) ?? null;
+
       if (filterBranchId !== null && isNaN(filterBranchId)) {
         return res.status(400).json({ message: "معرف الفرع غير صالح" });
       }
@@ -2367,9 +2407,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
     }
 
-    const { branchId, startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
+    const branchId = enforceBranchAccess(req);
     const expenses = await storage.getExpenses(
-      branchId ? parseInt(branchId) : undefined,
+      branchId,
       startDate as string,
       endDate as string
     );
@@ -2515,9 +2556,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
     }
 
-    const { branchId, startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
+    const branchId = enforceBranchAccess(req);
     const summary = await storage.getExpensesByCategory(
-      branchId ? parseInt(branchId) : undefined,
+      branchId,
       startDate as string,
       endDate as string
     );
@@ -2618,10 +2660,8 @@ export async function registerRoutes(
   // Visits by Treatment Type
   app.get("/api/statistics/visits-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
-      const { branchId } = req.query;
-      const allVisits = await storage.getAllVisits(
-        branchId ? parseInt(branchId as string) : undefined
-      );
+      const branchId = enforceBranchAccess(req);
+      const allVisits = await storage.getAllVisits(branchId);
 
       const treatmentMap: Record<string, number> = {};
 
@@ -2652,10 +2692,8 @@ export async function registerRoutes(
   // Revenue by Treatment Type
   app.get("/api/statistics/revenue-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
-      const { branchId } = req.query;
-      const allPayments = await storage.getAllPayments(
-        branchId ? parseInt(branchId as string) : undefined
-      );
+      const branchId = enforceBranchAccess(req);
+      const allPayments = await storage.getAllPayments(branchId);
 
       const treatmentMap: Record<string, { totalAmount: number; count: number }> = {};
 
@@ -2695,8 +2733,7 @@ export async function registerRoutes(
   // Monthly new patients report (per branch)
   app.get("/api/statistics/monthly-new-patients", isAuthenticated, async (req: any, res) => {
     try {
-      const { branchId } = req.query;
-      const filterBranchId = branchId ? parseInt(branchId as string) : null;
+      const filterBranchId = enforceBranchAccess(req) ?? null;
 
       const result = filterBranchId
         ? await db.execute(sql`
@@ -2782,14 +2819,13 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
 
-    const { branchId, startDate, endDate } = req.query;
-    console.log("[DEBUG] Accounting summary request:", { branchId, startDate, endDate });
+    const { startDate, endDate } = req.query;
+    const branchId = enforceBranchAccess(req);
     const summary = await storage.getAccountingSummary(
-      branchId ? parseInt(branchId) : undefined,
+      branchId,
       startDate as string,
       endDate as string
     );
-    console.log("[DEBUG] Accounting summary result:", summary);
     res.json(summary);
   });
 
@@ -2803,9 +2839,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
 
-    const { branchId, startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
+    const branchId = enforceBranchAccess(req);
     const payments = await storage.getAllPayments(
-      branchId ? parseInt(branchId) : undefined,
+      branchId,
       startDate as string,
       endDate as string
     );
@@ -2822,9 +2859,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
 
-    const { branchId, startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
+    const branchId = enforceBranchAccess(req);
     const visits = await storage.getAllVisits(
-      branchId ? parseInt(branchId) : undefined,
+      branchId,
       startDate as string,
       endDate as string
     );
@@ -2841,10 +2879,11 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول لتقرير المديونيات" });
     }
 
-    const { branchId, minAmount } = req.query;
-    
+    const { minAmount } = req.query;
+    const branchId = enforceBranchAccess(req);
+
     // Get all patients
-    let patients = await storage.getPatients(branchId ? parseInt(branchId) : undefined);
+    let patients = await storage.getPatients(branchId);
     
     // Calculate outstanding balances for each patient
     const debtors = [];
@@ -2880,21 +2919,22 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
 
-    const { branchId, months = 12 } = req.query;
+    const { months = 12 } = req.query;
     const numMonths = parseInt(months as string);
-    
+    const branchId = enforceBranchAccess(req);
+
     const trends = [];
     const now = new Date();
-    
+
     for (let i = numMonths - 1; i >= 0; i--) {
       const startDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const endDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
-      
+
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
-      
+
       const summary = await storage.getAccountingSummary(
-        branchId ? parseInt(branchId) : undefined,
+        branchId,
         startStr,
         endStr
       );
@@ -2919,9 +2959,9 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بالوصول للتقارير المحاسبية" });
     }
 
-    const { branchId } = req.query;
-    const patients = await storage.getPatients(branchId ? parseInt(branchId) : undefined);
-    
+    const branchId = enforceBranchAccess(req);
+    const patients = await storage.getPatients(branchId);
+
     const serviceTypes = [
       { key: "amputee", name: "مرضى البتر", filter: (p: any) => p.isAmputee },
       { key: "physiotherapy", name: "العلاج الطبيعي", filter: (p: any) => p.isPhysiotherapy },
@@ -2966,19 +3006,24 @@ export async function registerRoutes(
     }
 
     const { startDate, endDate } = req.query;
-    const branches = await storage.getBranches();
-    
+    // Non-admins only see their own branch in the comparison; admins see all.
+    const allowedBranchId = enforceBranchAccess(req);
+    const allBranches = await storage.getBranches();
+    const branches = allowedBranchId !== undefined
+      ? allBranches.filter((b) => b.id === allowedBranchId)
+      : allBranches;
+
     const comparison = [];
-    
+
     for (const branch of branches) {
       const summary = await storage.getAccountingSummary(
         branch.id,
         startDate as string,
         endDate as string
       );
-      
+
       const patients = await storage.getPatients(branch.id);
-      
+
       comparison.push({
         branchId: branch.id,
         branchName: branch.name,
@@ -3000,13 +3045,9 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     
-    const { branchId, status, patientId, startDate, endDate } = req.query;
-    
-    let filterBranchId = branchId ? parseInt(branchId) : undefined;
-    if (!isAdmin && branchSession?.branchId) {
-      filterBranchId = branchSession.branchId;
-    }
-    
+    const { status, patientId, startDate, endDate } = req.query;
+    const filterBranchId = enforceBranchAccess(req);
+
     const invoices = await storage.getInvoices(filterBranchId, status as string, patientId ? parseInt(patientId) : undefined, startDate as string, endDate as string);
     res.json(invoices);
   });
