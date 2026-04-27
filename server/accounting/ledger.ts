@@ -32,6 +32,7 @@ export type JournalLineInput = {
   description?: string;
   branchId?: number | null;
   patientId?: number | null;
+  vendorId?: number | null;
 };
 
 export type CreateJournalEntryInput = {
@@ -177,8 +178,8 @@ export async function createJournalEntry(input: CreateJournalEntryInput): Promis
       const line = input.lines[i];
       await client.query(
         `INSERT INTO journal_lines
-          (entry_id, account_id, branch_id, debit, credit, description, line_order, patient_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          (entry_id, account_id, branch_id, debit, credit, description, line_order, patient_id, vendor_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           entry.id,
           line.accountId,
@@ -188,6 +189,7 @@ export async function createJournalEntry(input: CreateJournalEntryInput): Promis
           line.description || null,
           i + 1,
           line.patientId ?? null,
+          line.vendorId ?? null,
         ]
       );
     }

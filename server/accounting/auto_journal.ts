@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { chartOfAccounts } from "@shared/schema";
-import type { Payment, Expense, Invoice, InvoiceItem } from "@shared/schema";
+import type { Payment, Expense, Invoice, InvoiceItem, Purchase } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { createJournalEntry, logAudit } from "./ledger";
 import type { JournalLineInput } from "./ledger";
@@ -495,10 +495,135 @@ export async function createJournalForInvoicePayment(
 }
 
 /**
+ * يُنشئ قيداً عند تسجيل شراء من مورد.
+ * - شراء آجل: مدين المصروف، دائن الذمم الدائنة (2110)
+ * - شراء نقدي فوري: مدين المصروف، دائن الصندوق
+ */
+export async function createJournalForPurchase(
+  purchase: Purchase,
+  createdBy?: number | null
+): Promise<void> {
+  try {
+    const amount = purchase.totalAmount ?? 0;
+    if (amount <= 0) return;
+
+    const expenseCode = expenseCategoryToAccountCode(purchase.category);
+    const expenseAccountId = await getAccountIdByCode(expenseCode);
+    if (!expenseAccountId) {
+      console.warn(`[auto-journal] expense account ${expenseCode} not found (purchase ${purchase.id})`);
+      return;
+    }
+
+    const isCredit = (purchase.paymentMethod ?? "credit") === "credit";
+
+    let creditAccountId: number | null;
+    let creditDescription: string;
+    if (isCredit) {
+      creditAccountId = await getAccountIdByCode("2110");
+      creditDescription = `ذمم دائنة - مورد (شراء ${purchase.purchaseNumber})`;
+      if (!creditAccountId) {
+        console.warn(`[auto-journal] AP account 2110 not found (purchase ${purchase.id})`);
+        return;
+      }
+    } else {
+      creditAccountId = await getCashAccountForBranch(purchase.branchId);
+      creditDescription = `دفع شراء نقدي ${purchase.purchaseNumber}`;
+      if (!creditAccountId) {
+        console.warn(`[auto-journal] no cash account for branch ${purchase.branchId} (purchase ${purchase.id})`);
+        return;
+      }
+    }
+
+    await createJournalEntry({
+      entryDate: dateToISO(purchase.purchaseDate),
+      branchId: purchase.branchId,
+      description: `شراء من مورد - ${purchase.purchaseNumber}${purchase.description ? ` (${purchase.description.slice(0, 80)})` : ""}`,
+      reference: purchase.vendorInvoiceNumber || purchase.purchaseNumber,
+      sourceType: "purchase",
+      sourceId: purchase.id,
+      createdBy: createdBy ?? null,
+      lines: [
+        {
+          accountId: expenseAccountId,
+          debit: amount,
+          description: purchase.description || purchase.category,
+          branchId: purchase.branchId,
+          vendorId: purchase.vendorId,
+        },
+        {
+          accountId: creditAccountId,
+          credit: amount,
+          description: creditDescription,
+          branchId: purchase.branchId,
+          vendorId: purchase.vendorId,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error(`[auto-journal] failed to create journal for purchase ${purchase.id}:`, err);
+  }
+}
+
+/**
+ * يُنشئ قيداً عند دفع مبلغ لمورد على حساب شراء آجل سابق.
+ * مدين: ذمم دائنة (2110) - تخفيض الدين
+ * دائن: الصندوق - خروج نقدية
+ */
+export async function createJournalForVendorPayment(
+  purchase: Purchase,
+  paymentAmount: number,
+  createdBy?: number | null
+): Promise<void> {
+  try {
+    if (!paymentAmount || paymentAmount <= 0) return;
+
+    const cashAccountId = await getCashAccountForBranch(purchase.branchId);
+    if (!cashAccountId) {
+      console.warn(`[auto-journal] no cash account for branch ${purchase.branchId} (vendor payment ${purchase.id})`);
+      return;
+    }
+
+    const apAccountId = await getAccountIdByCode("2110");
+    if (!apAccountId) {
+      console.warn(`[auto-journal] AP account 2110 not found (vendor payment ${purchase.id})`);
+      return;
+    }
+
+    await createJournalEntry({
+      entryDate: new Date().toISOString().split("T")[0],
+      branchId: purchase.branchId,
+      description: `دفعة لمورد على شراء ${purchase.purchaseNumber}`,
+      reference: purchase.vendorInvoiceNumber || purchase.purchaseNumber,
+      sourceType: "vendor_payment",
+      sourceId: purchase.id,
+      createdBy: createdBy ?? null,
+      lines: [
+        {
+          accountId: apAccountId,
+          debit: paymentAmount,
+          description: `تسوية ذمم مورد - ${purchase.purchaseNumber}`,
+          branchId: purchase.branchId,
+          vendorId: purchase.vendorId,
+        },
+        {
+          accountId: cashAccountId,
+          credit: paymentAmount,
+          description: `دفعة نقدية لمورد - ${purchase.purchaseNumber}`,
+          branchId: purchase.branchId,
+          vendorId: purchase.vendorId,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error(`[auto-journal] failed to create journal for vendor payment ${purchase.id}:`, err);
+  }
+}
+
+/**
  * يعكس القيد المرتبط بالدفعة/المصروف عند حذفها.
  */
 export async function reverseJournalForSource(
-  sourceType: "payment" | "expense" | "invoice" | "invoice_payment",
+  sourceType: "payment" | "expense" | "invoice" | "invoice_payment" | "purchase" | "vendor_payment",
   sourceId: number,
   reversedBy: number | null,
   reason: string

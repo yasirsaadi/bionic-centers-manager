@@ -5,7 +5,7 @@ import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema } from "@shared/schema";
+import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -18,6 +18,8 @@ import {
   createJournalForExpense,
   createJournalForInvoice,
   createJournalForInvoicePayment,
+  createJournalForPurchase,
+  createJournalForVendorPayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
 import { logAudit } from "./accounting/ledger";
@@ -3201,6 +3203,229 @@ export async function registerRoutes(
       endDate as string
     );
     res.json(stats);
+  });
+
+  // ======================= VENDOR & PURCHASE ROUTES =======================
+
+  // List vendors — anyone with accounting access (read-only for accountant role)
+  app.get("/api/vendors", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للموردين" });
+    }
+    const includeInactive = req.query.includeInactive === "true";
+    const list = await storage.getVendors(!includeInactive);
+    res.json(list);
+  });
+
+  app.get("/api/vendors/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const id = parseInt(req.params.id);
+    const vendor = await storage.getVendorById(id);
+    if (!vendor) return res.status(404).json({ error: "المورد غير موجود" });
+    res.json(vendor);
+  });
+
+  // Create vendor — admin or accountant
+  app.post("/api/vendors", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAdd = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAdd) {
+      return res.status(403).json({ error: "غير مصرح لك بإضافة مورد" });
+    }
+    try {
+      const data = insertVendorSchema.parse(req.body);
+      const vendor = await storage.createVendor(data);
+      res.json(vendor);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Update vendor — admin only (per the edit policy)
+  app.patch("/api/vendors/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه تعديل الموردين" });
+    }
+    const id = parseInt(req.params.id);
+    try {
+      const data = insertVendorSchema.partial().parse(req.body);
+      const vendor = await storage.updateVendor(id, data);
+      res.json(vendor);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Soft-delete vendor (deactivate) — admin only
+  app.delete("/api/vendors/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه حذف الموردين" });
+    }
+    const id = parseInt(req.params.id);
+    await storage.deactivateVendor(id);
+    res.json({ success: true });
+  });
+
+  // List purchases
+  app.get("/api/purchases", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للمشتريات" });
+    }
+    let { branchId, vendorId, status, startDate, endDate } = req.query as any;
+    // Non-admins are forced to their own branch
+    if (!isAdmin) {
+      branchId = branchSession?.branchId;
+    }
+    const list = await storage.getPurchases(
+      branchId ? parseInt(branchId) : undefined,
+      vendorId ? parseInt(vendorId) : undefined,
+      status,
+      startDate,
+      endDate
+    );
+    res.json(list);
+  });
+
+  app.get("/api/purchases/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) return res.status(403).json({ error: "غير مصرح لك" });
+    const id = parseInt(req.params.id);
+    const purchase = await storage.getPurchaseById(id);
+    if (!purchase) return res.status(404).json({ error: "الشراء غير موجود" });
+    res.json(purchase);
+  });
+
+  // Create purchase — admin or accountant. Auto-journals based on payment_method.
+  app.post("/api/purchases", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAdd = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const userId = branchSession?.userId ?? null;
+    const user = req.user;
+    if (!canAdd) {
+      return res.status(403).json({ error: "غير مصرح لك بإضافة شراء" });
+    }
+    try {
+      const data = insertPurchaseSchema.parse(req.body);
+      const purchase = await storage.createPurchase({
+        ...data,
+        createdBy: user?.claims?.sub || branchSession?.displayName || "unknown",
+      });
+      // Auto-journal: Dr Expense / Cr AP (credit) or Cr Cash (cash)
+      await createJournalForPurchase(purchase, userId);
+      res.json(purchase);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Update purchase — admin only
+  app.patch("/api/purchases/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه تعديل المشتريات" });
+    }
+    const id = parseInt(req.params.id);
+    const userId = branchSession?.userId ?? null;
+    try {
+      const existing = await storage.getPurchaseById(id);
+      if (!existing) return res.status(404).json({ error: "الشراء غير موجود" });
+
+      const data = insertPurchaseSchema.partial().parse(req.body);
+      const updated = await storage.updatePurchase(id, data);
+      // Reverse old journal and post a new one to keep books accurate
+      await reverseJournalForSource("purchase", id, userId, "تعديل الشراء");
+      if (updated) {
+        await createJournalForPurchase(updated, userId);
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Delete purchase — admin only
+  app.delete("/api/purchases/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه حذف المشتريات" });
+    }
+    const id = parseInt(req.params.id);
+    const userId = branchSession?.userId ?? null;
+    // Reverse all related journals first (purchase + any vendor payments)
+    await reverseJournalForSource("purchase", id, userId, "حذف الشراء");
+    await reverseJournalForSource("vendor_payment", id, userId, "حذف الشراء");
+    await storage.deletePurchase(id);
+    res.json({ success: true });
+  });
+
+  // Record a payment to a vendor for an existing purchase
+  app.post("/api/purchases/:id/payment", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canRecord = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const userId = branchSession?.userId ?? null;
+    if (!canRecord) {
+      return res.status(403).json({ error: "غير مصرح لك بتسجيل دفعات الموردين" });
+    }
+    const id = parseInt(req.params.id);
+    const { amount } = req.body;
+    try {
+      const purchase = await storage.getPurchaseById(id);
+      if (!purchase) return res.status(404).json({ error: "الشراء غير موجود" });
+
+      const paymentAmount = Number(amount) || 0;
+      if (paymentAmount <= 0) {
+        return res.status(400).json({ error: "مبلغ الدفعة يجب أن يكون أكبر من صفر" });
+      }
+
+      const newPaidAmount = (purchase.paidAmount || 0) + paymentAmount;
+      let newStatus = "partial";
+      if (newPaidAmount >= purchase.totalAmount) newStatus = "paid";
+      else if (newPaidAmount === 0) newStatus = "pending";
+
+      const updated = await storage.updatePurchase(id, {
+        paidAmount: newPaidAmount,
+        status: newStatus,
+      } as any);
+      // Auto-journal: Dr AP / Cr Cash
+      await createJournalForVendorPayment(purchase, paymentAmount, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Purchase summary — admin or accountant
+  app.get("/api/purchases/stats/summary", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) return res.status(403).json({ error: "غير مصرح لك" });
+    let { branchId, startDate, endDate } = req.query as any;
+    if (!isAdmin) branchId = branchSession?.branchId;
+    const summary = await storage.getPurchasesSummary(
+      branchId ? parseInt(branchId) : undefined,
+      startDate,
+      endDate
+    );
+    res.json(summary);
   });
 
   // ======================= TREATMENT PLAN ROUTES =======================
