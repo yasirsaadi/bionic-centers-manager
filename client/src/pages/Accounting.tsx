@@ -622,6 +622,61 @@ export default function Accounting() {
     }
   });
 
+  // Anomaly alerts — surfaces flagged expenses, duplicates, overdue
+  // invoices, and patients with no payments. Server enforces branch
+  // isolation, so the accountant only ever sees their own branch.
+  type Anomaly = {
+    id: string;
+    type: "expense_amount_outlier" | "expense_duplicate" | "invoice_overdue" | "patient_no_payment";
+    severity: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    date: string;
+    branchId: number;
+    branchName?: string;
+    source: { type: "expense" | "invoice" | "patient"; id: number; name?: string };
+    amount?: number;
+    context?: Record<string, unknown>;
+  };
+  const { data: anomalies = [] } = useQuery<Anomaly[]>({
+    queryKey: ["/api/anomalies", effectiveBranchFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      const res = await fetch(`/api/anomalies?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  // Cache of AI explanations keyed by anomaly id so that re-clicking the
+  // explain button doesn't fire a second LLM call. Re-set when the user
+  // clicks "اشرح بالذكاء" the first time.
+  const [anomalyExplanations, setAnomalyExplanations] = useState<Record<string, string>>({});
+  const [anomalyExplaining, setAnomalyExplaining] = useState<string | null>(null);
+
+  const explainAnomalyAi = async (anomaly: Anomaly) => {
+    if (anomalyExplanations[anomaly.id]) return; // already cached
+    setAnomalyExplaining(anomaly.id);
+    try {
+      const res = await fetch("/api/ai/explain-anomaly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ anomaly }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: data.error || "تعذّر الشرح", variant: "destructive" });
+        return;
+      }
+      setAnomalyExplanations((prev) => ({ ...prev, [anomaly.id]: data.explanation as string }));
+    } catch (err: any) {
+      toast({ title: "خطأ في الاتصال", description: err.message, variant: "destructive" });
+    } finally {
+      setAnomalyExplaining(null);
+    }
+  };
+
   // Fetch debtors
   const { data: debtors = [], isLoading: debtorsLoading } = useQuery<Debtor[]>({
     queryKey: ["/api/accounting/debtors", selectedBranch],
@@ -1768,7 +1823,7 @@ export default function Accounting() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 md:grid-cols-7 gap-1">
+          <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 gap-1">
             <TabsTrigger value="dashboard" className="gap-2" data-testid="tab-dashboard">
               <Calculator className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabDashboard}</span>
@@ -1796,6 +1851,18 @@ export default function Accounting() {
             <TabsTrigger value="vendors" className="gap-2" data-testid="tab-vendors">
               <Building2 className="h-4 w-4" />
               <span className="hidden md:inline">الموردون</span>
+            </TabsTrigger>
+            <TabsTrigger value="anomalies" className="gap-2" data-testid="tab-anomalies">
+              <AlertCircle className="h-4 w-4" />
+              <span className="hidden md:inline">تنبيهات</span>
+              {anomalies.length > 0 && (
+                <Badge
+                  variant={anomalies.some((a) => a.severity === "high") ? "destructive" : "secondary"}
+                  className="h-5 min-w-[20px] px-1.5 tabular-nums"
+                >
+                  {toArabicIndicDigits(anomalies.length)}
+                </Badge>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -2758,6 +2825,102 @@ export default function Accounting() {
                       })}
                     </TableBody>
                   </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Anomalies Tab — surfaces flagged records with optional AI
+              explanation per item. Items grouped visually by severity:
+              red (high), amber (medium), blue (low). */}
+          <TabsContent value="anomalies" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-500" />
+                  تنبيهات المراجعة
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  مصاريف وفواتير ومرضى يستحقّون نظرة ثانية بسبب نمط غير معتاد. اضغط "اشرح بالذكاء" لشرح أكثر تفصيلاً.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {anomalies.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <CheckCircle2 className="h-12 w-12 mx-auto mb-2 text-green-500" />
+                    <p className="text-muted-foreground">لا توجد تنبيهات حالياً. كل شيء يبدو طبيعياً.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {anomalies.map((a) => {
+                      const severityStyles = {
+                        high: "border-red-500/40 bg-red-500/5",
+                        medium: "border-amber-500/40 bg-amber-500/5",
+                        low: "border-blue-500/40 bg-blue-500/5",
+                      } as const;
+                      const severityLabels = {
+                        high: { text: "عالية", color: "destructive" as const },
+                        medium: { text: "متوسطة", color: "secondary" as const },
+                        low: { text: "منخفضة", color: "outline" as const },
+                      };
+                      const sev = severityLabels[a.severity];
+                      const explanation = anomalyExplanations[a.id];
+                      return (
+                        <div
+                          key={a.id}
+                          className={`rounded-md border p-4 ${severityStyles[a.severity]}`}
+                          data-testid={`anomaly-${a.id}`}
+                        >
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="font-semibold">{a.title}</h4>
+                                <Badge variant={sev.color}>{sev.text}</Badge>
+                                {a.branchName && (
+                                  <Badge variant="outline" className="font-normal">
+                                    {a.branchName}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">{a.description}</p>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1">
+                                <span>{formatArabicDate(a.date)}</span>
+                                {a.amount !== undefined && a.amount > 0 && (
+                                  <span className="tabular-nums">
+                                    {formatNumberOnly(a.amount)} د.ع
+                                  </span>
+                                )}
+                                {a.source.name && <span>{a.source.name}</span>}
+                              </div>
+                            </div>
+                            {aiEnabled && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 text-xs shrink-0"
+                                onClick={() => explainAnomalyAi(a)}
+                                disabled={anomalyExplaining === a.id || !!explanation}
+                                data-testid={`button-explain-${a.id}`}
+                              >
+                                <Sparkles className="h-3.5 w-3.5" />
+                                {anomalyExplaining === a.id
+                                  ? "جارٍ..."
+                                  : explanation
+                                  ? "تم الشرح"
+                                  : "اشرح بالذكاء"}
+                              </Button>
+                            )}
+                          </div>
+                          {explanation && (
+                            <div className="mt-3 rounded-md bg-background/60 p-3 text-sm border-l-4 border-primary">
+                              <p className="text-xs text-primary font-medium mb-1">شرح بالذكاء الاصطناعي:</p>
+                              <p className="text-foreground/90">{explanation}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </CardContent>
             </Card>
