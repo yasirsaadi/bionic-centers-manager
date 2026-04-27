@@ -2447,10 +2447,15 @@ export async function registerRoutes(
         return res.status(403).json({ error: "غير مصرح لك بإضافة مصروفات" });
       }
 
-      const data = insertExpenseSchema.parse({
-        ...req.body,
-        createdBy: user?.claims?.sub || "unknown"
-      });
+      // Non-admins cannot file an expense against any branch other than
+      // their own — even if the client sends a different branchId in the
+      // body. Pin it server-side BEFORE the schema parse so the validator
+      // sees the corrected value.
+      const enforcedBody = { ...req.body, createdBy: user?.claims?.sub || "unknown" };
+      if (!isAdmin && branchSession?.branchId) {
+        enforcedBody.branchId = branchSession.branchId;
+      }
+      const data = insertExpenseSchema.parse(enforcedBody);
 
       // Subcategory is required when category is "other" — otherwise an
       // accountant could file an expense as "أخرى" with no further detail
@@ -3123,6 +3128,12 @@ export async function registerRoutes(
     try {
       const { items, ...invoiceData } = req.body;
 
+      // Non-admins can only file invoices for their own branch — pin
+      // server-side regardless of what the client sends.
+      if (!isAdmin && branchSession?.branchId) {
+        invoiceData.branchId = branchSession.branchId;
+      }
+
       // Generate invoice number if not provided
       if (!invoiceData.invoiceNumber) {
         invoiceData.invoiceNumber = await storage.getNextInvoiceNumber();
@@ -3404,7 +3415,13 @@ export async function registerRoutes(
       return res.status(403).json({ error: "غير مصرح لك بإضافة شراء" });
     }
     try {
-      const data = insertPurchaseSchema.parse(req.body);
+      // Non-admins cannot file a purchase against any branch other than
+      // their own. Pin server-side regardless of what the client sends.
+      const body = { ...req.body };
+      if (!isAdmin && branchSession?.branchId) {
+        body.branchId = branchSession.branchId;
+      }
+      const data = insertPurchaseSchema.parse(body);
       const purchase = await storage.createPurchase({
         ...data,
         createdBy: user?.claims?.sub || branchSession?.displayName || "unknown",

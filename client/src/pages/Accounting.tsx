@@ -480,6 +480,16 @@ export default function Accounting() {
     queryKey: ["/api/branches"]
   });
 
+  // Branches the current user is allowed to operate on. Admins see every
+  // branch; non-admins (accountant, branch staff, …) see only their own.
+  // This is what every form-side branch picker must use — the unfiltered
+  // `branches` is fine for read-only labels (e.g. "show me which branch
+  // this expense is in") but never for selection, otherwise a non-admin
+  // could file an expense / purchase / invoice against another branch.
+  const allowedBranches = isAdmin
+    ? branches
+    : branches.filter((b) => b.id === userBranchId);
+
   // Probe whether AI features are available (i.e. ANTHROPIC_API_KEY is set
   // server-side). Used to gracefully hide AI buttons when they wouldn't work.
   const { data: aiStatus } = useQuery<{ enabled: boolean }>({
@@ -1092,6 +1102,7 @@ export default function Accounting() {
     : branches.find(b => b.id.toString() === selectedBranch)?.name || "غير محدد";
 
   const getCategoryLabelTranslated = (category: string): string => {
+    // Original categories have explicit translations from the i18n bundle.
     const categoryMap: Record<string, string> = {
       salaries: t.accounting.catSalaries,
       rent: t.accounting.catRent,
@@ -1100,7 +1111,13 @@ export default function Accounting() {
       utilities: t.accounting.catUtilities,
       other: t.accounting.catOther,
     };
-    return categoryMap[category] || category;
+    if (categoryMap[category]) return categoryMap[category];
+    // Fallback for the categories added later (communications, marketing,
+    // transport, hospitality, stationery, bank_fees) — use the Arabic
+    // label defined alongside the value in EXPENSE_CATEGORIES so the
+    // dropdown never leaks an English value to an Arabic user.
+    const fromList = EXPENSE_CATEGORIES.find((c) => c.value === category);
+    return fromList?.label || category;
   };
 
   const getStatusLabel = (status: string): string => {
@@ -2751,6 +2768,7 @@ export default function Accounting() {
                       <Select
                         value={field.value?.toString()}
                         onValueChange={(v) => field.onChange(parseInt(v))}
+                        disabled={!isAdmin}
                       >
                         <FormControl>
                           <SelectTrigger data-testid="select-expense-branch">
@@ -2758,7 +2776,7 @@ export default function Accounting() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {branches.map((branch) => (
+                          {allowedBranches.map((branch) => (
                             <SelectItem key={branch.id} value={branch.id.toString()}>
                               {branch.name}
                             </SelectItem>
@@ -3493,11 +3511,12 @@ export default function Accounting() {
                     name="branchId"
                     defaultValue={editingPurchase?.branchId || (effectiveBranchFilter !== "all" ? effectiveBranchFilter : "")}
                     required
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    disabled={!isAdmin}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-70"
                     data-testid="select-purchase-branch"
                   >
                     <option value="">اختر فرعاً</option>
-                    {branches.map((b) => (
+                    {allowedBranches.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>
