@@ -165,6 +165,43 @@ export const invoiceItems = pgTable("invoice_items", {
   total: integer("total").notNull(), // الإجمالي
 });
 
+// Vendors / suppliers — used for credit purchases tracking
+export const vendors = pgTable("vendors", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  contactPerson: text("contact_person"),
+  phone: text("phone"),
+  email: text("email"),
+  address: text("address"),
+  currency: text("currency").default("IQD"),
+  notes: text("notes"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Purchases from vendors (credit or cash). Each purchase posts a journal
+// entry: Dr Expense (5xxx) / Cr Accounts Payable 2110 (credit) or Cr Cash
+// 1111XX (cash). Vendor payments later post Dr AP / Cr Cash.
+export const purchases = pgTable("purchases", {
+  id: serial("id").primaryKey(),
+  purchaseNumber: text("purchase_number").notNull().unique(),
+  vendorId: integer("vendor_id").references(() => vendors.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  purchaseDate: date("purchase_date").notNull(),
+  dueDate: date("due_date"),
+  category: text("category").notNull(),
+  description: text("description"),
+  vendorInvoiceNumber: text("vendor_invoice_number"),
+  totalAmount: integer("total_amount").notNull(),
+  paidAmount: integer("paid_amount").default(0),
+  status: text("status").default("pending"), // pending, partial, paid, cancelled
+  paymentMethod: text("payment_method").default("credit"), // cash, credit
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -201,6 +238,8 @@ export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true,
 export const insertInstallmentPlanSchema = createInsertSchema(installmentPlans).omit({ id: true, createdAt: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true });
+export const insertVendorSchema = createInsertSchema(vendors).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPurchaseSchema = createInsertSchema(purchases).omit({ id: true, createdAt: true, purchaseNumber: true, paidAmount: true, status: true });
 
 // ============================================================
 // نظام المحاسبة الاحترافي - Professional Accounting Tables
@@ -329,6 +368,10 @@ export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
+export type Vendor = typeof vendors.$inferSelect;
+export type InsertVendor = z.infer<typeof insertVendorSchema>;
+export type Purchase = typeof purchases.$inferSelect;
+export type InsertPurchase = z.infer<typeof insertPurchaseSchema>;
 
 // System users for internal authentication
 export const systemUsers = pgTable("system_users", {

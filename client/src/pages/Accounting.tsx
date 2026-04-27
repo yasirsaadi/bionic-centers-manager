@@ -199,6 +199,35 @@ interface InvoiceItem {
   total: number;
 }
 
+interface Vendor {
+  id: number;
+  name: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  currency: string | null;
+  notes: string | null;
+  isActive: boolean | null;
+}
+
+interface Purchase {
+  id: number;
+  purchaseNumber: string;
+  vendorId: number;
+  branchId: number;
+  purchaseDate: string;
+  dueDate: string | null;
+  category: string;
+  description: string | null;
+  vendorInvoiceNumber: string | null;
+  totalAmount: number;
+  paidAmount: number | null;
+  status: string;
+  paymentMethod: string;
+  notes: string | null;
+}
+
 interface Patient {
   id: number;
   name: string;
@@ -403,7 +432,13 @@ export default function Accounting() {
     { description: "", serviceType: "", quantity: 1, unitPrice: 0 }
   ]);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-  const [deleteType, setDeleteType] = useState<"expense" | "invoice" | null>(null);
+  const [deleteType, setDeleteType] = useState<"expense" | "invoice" | "vendor" | "purchase" | null>(null);
+  const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
+  const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
+  const [isPurchaseDialogOpen, setIsPurchaseDialogOpen] = useState(false);
+  const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
+  const [vendorPaymentTarget, setVendorPaymentTarget] = useState<Purchase | null>(null);
+  const [vendorPaymentAmount, setVendorPaymentAmount] = useState<string>("");
   const [isDailyDialogOpen, setIsDailyDialogOpen] = useState(false);
   const [dailySummaryDate, setDailySummaryDate] = useState<string>(
     () => new Date().toISOString().split("T")[0]
@@ -489,6 +524,30 @@ export default function Accounting() {
       if (!res.ok) throw new Error("Failed to fetch invoices");
       return res.json();
     }
+  });
+
+  // Fetch vendors (active only)
+  const { data: vendorsList = [] } = useQuery<Vendor[]>({
+    queryKey: ["/api/vendors"],
+    queryFn: async () => {
+      const res = await fetch(`/api/vendors`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch vendors");
+      return res.json();
+    },
+  });
+
+  // Fetch purchases for the active branch + date filter
+  const { data: purchasesList = [] } = useQuery<Purchase[]>({
+    queryKey: ["/api/purchases", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      if (dateRange.startDate) params.append("startDate", dateRange.startDate);
+      if (dateRange.endDate) params.append("endDate", dateRange.endDate);
+      const res = await fetch(`/api/purchases?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch purchases");
+      return res.json();
+    },
   });
 
   // Fetch patients for invoice creation
@@ -695,6 +754,97 @@ export default function Accounting() {
     }
   });
 
+  // ==================== Vendor + Purchase mutations ====================
+
+  const saveVendorMutation = useMutation({
+    mutationFn: async (data: Partial<Vendor>) => {
+      const isEdit = editingVendor?.id;
+      const url = isEdit ? `/api/vendors/${editingVendor.id}` : `/api/vendors`;
+      const method = isEdit ? "PATCH" : "POST";
+      const res = await apiRequest(method, url, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
+      toast({ title: editingVendor ? "تم تعديل المورد" : "تم إضافة المورد" });
+      setIsVendorDialogOpen(false);
+      setEditingVendor(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deactivateVendorMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/vendors/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
+      toast({ title: "تم إلغاء تفعيل المورد" });
+      setDeleteConfirmId(null);
+      setDeleteType(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const savePurchaseMutation = useMutation({
+    mutationFn: async (data: Partial<Purchase>) => {
+      const isEdit = editingPurchase?.id;
+      const url = isEdit ? `/api/purchases/${editingPurchase.id}` : `/api/purchases`;
+      const method = isEdit ? "PATCH" : "POST";
+      const res = await apiRequest(method, url, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      toast({ title: editingPurchase ? "تم تعديل الشراء" : "تم إضافة الشراء" });
+      setIsPurchaseDialogOpen(false);
+      setEditingPurchase(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deletePurchaseMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/purchases/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      toast({ title: "تم حذف الشراء" });
+      setDeleteConfirmId(null);
+      setDeleteType(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const recordVendorPaymentMutation = useMutation({
+    mutationFn: async ({ id, amount }: { id: number; amount: number }) => {
+      const res = await apiRequest("POST", `/api/purchases/${id}/payment`, { amount });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      toast({ title: "تم تسجيل الدفعة" });
+      setVendorPaymentTarget(null);
+      setVendorPaymentAmount("");
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
   const handleCreateInvoice = () => {
     const subtotal = invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
     const items = invoiceItems.filter(item => item.description && item.unitPrice > 0).map(item => ({
@@ -754,12 +904,17 @@ export default function Accounting() {
   };
 
   const handleConfirmDelete = () => {
-    if (deleteConfirmId && deleteType === "expense") {
+    if (!deleteConfirmId) return;
+    if (deleteType === "expense") {
       deleteExpenseMutation.mutate(deleteConfirmId);
       setDeleteConfirmId(null);
       setDeleteType(null);
-    } else if (deleteConfirmId && deleteType === "invoice") {
+    } else if (deleteType === "invoice") {
       deleteInvoiceMutation.mutate(deleteConfirmId);
+    } else if (deleteType === "vendor") {
+      deactivateVendorMutation.mutate(deleteConfirmId);
+    } else if (deleteType === "purchase") {
+      deletePurchaseMutation.mutate(deleteConfirmId);
     }
   };
 
@@ -1400,7 +1555,7 @@ export default function Accounting() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1">
+          <TabsList className="grid w-full grid-cols-3 md:grid-cols-7 gap-1">
             <TabsTrigger value="dashboard" className="gap-2" data-testid="tab-dashboard">
               <Calculator className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabDashboard}</span>
@@ -1424,6 +1579,10 @@ export default function Accounting() {
             <TabsTrigger value="debtors" className="gap-2" data-testid="tab-debtors">
               <AlertCircle className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabDebtors}</span>
+            </TabsTrigger>
+            <TabsTrigger value="vendors" className="gap-2" data-testid="tab-vendors">
+              <Building2 className="h-4 w-4" />
+              <span className="hidden md:inline">الموردون</span>
             </TabsTrigger>
           </TabsList>
 
@@ -2154,6 +2313,222 @@ export default function Accounting() {
               )}
             </Card>
           </TabsContent>
+
+          {/* Vendors & Purchases Tab */}
+          <TabsContent value="vendors" className="space-y-6">
+            {/* Vendors panel */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>قائمة الموردين</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    الموردون الذين تتعامل معهم — أضف مورداً قبل تسجيل أي شراء.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => {
+                    setEditingVendor(null);
+                    setIsVendorDialogOpen(true);
+                  }}
+                  className="gap-2"
+                  data-testid="button-add-vendor"
+                >
+                  <Plus className="h-4 w-4" />
+                  إضافة مورد
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {vendorsList.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">لا يوجد موردون بعد. ابدأ بإضافة الأول.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-right">الاسم</TableHead>
+                        <TableHead className="text-right">المسؤول</TableHead>
+                        <TableHead className="text-right">الهاتف</TableHead>
+                        <TableHead className="text-right">العنوان</TableHead>
+                        {isAdmin && <TableHead className="text-right">إجراءات</TableHead>}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {vendorsList.map((v) => (
+                        <TableRow key={v.id} data-testid={`vendor-row-${v.id}`}>
+                          <TableCell className="font-medium">{v.name}</TableCell>
+                          <TableCell>{v.contactPerson || "—"}</TableCell>
+                          <TableCell dir="ltr" className="text-right">{v.phone || "—"}</TableCell>
+                          <TableCell>{v.address || "—"}</TableCell>
+                          {isAdmin && (
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setEditingVendor(v);
+                                    setIsVendorDialogOpen(true);
+                                  }}
+                                  data-testid={`button-edit-vendor-${v.id}`}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-destructive"
+                                  onClick={() => {
+                                    setDeleteConfirmId(v.id);
+                                    setDeleteType("vendor");
+                                  }}
+                                  data-testid={`button-delete-vendor-${v.id}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Purchases panel */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>المشتريات</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    شراء آجل يُسجَّل قيد ذمم دائنة. شراء نقدي يخصم من الصندوق مباشرة.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => {
+                    if (vendorsList.length === 0) {
+                      toast({ title: "أضف مورداً أولاً", variant: "destructive" });
+                      return;
+                    }
+                    setEditingPurchase(null);
+                    setIsPurchaseDialogOpen(true);
+                  }}
+                  className="gap-2"
+                  data-testid="button-add-purchase"
+                >
+                  <Plus className="h-4 w-4" />
+                  إضافة شراء
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {purchasesList.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">لا يوجد مشتريات بعد.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-right">رقم</TableHead>
+                        <TableHead className="text-right">التاريخ</TableHead>
+                        <TableHead className="text-right">المورد</TableHead>
+                        <TableHead className="text-right">الفئة</TableHead>
+                        <TableHead className="text-right">طريقة الدفع</TableHead>
+                        <TableHead className="text-right">الإجمالي</TableHead>
+                        <TableHead className="text-right">المدفوع</TableHead>
+                        <TableHead className="text-right">المتبقي</TableHead>
+                        <TableHead className="text-right">الحالة</TableHead>
+                        <TableHead className="text-right">إجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {purchasesList.map((p) => {
+                        const vendor = vendorsList.find((v) => v.id === p.vendorId);
+                        const remaining = p.totalAmount - (p.paidAmount || 0);
+                        return (
+                          <TableRow key={p.id} data-testid={`purchase-row-${p.id}`}>
+                            <TableCell className="font-mono text-xs">{p.purchaseNumber}</TableCell>
+                            <TableCell>{formatArabicDate(p.purchaseDate)}</TableCell>
+                            <TableCell>{vendor?.name || "—"}</TableCell>
+                            <TableCell>{p.category}</TableCell>
+                            <TableCell>
+                              <Badge variant={p.paymentMethod === "credit" ? "secondary" : "outline"}>
+                                {p.paymentMethod === "credit" ? "آجل" : "نقدي"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="tabular-nums">{formatNumberOnly(p.totalAmount)}</TableCell>
+                            <TableCell className="tabular-nums text-green-600">{formatNumberOnly(p.paidAmount || 0)}</TableCell>
+                            <TableCell className="tabular-nums text-red-600">{formatNumberOnly(remaining)}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  p.status === "paid"
+                                    ? "default"
+                                    : p.status === "partial"
+                                    ? "secondary"
+                                    : "outline"
+                                }
+                              >
+                                {p.status === "paid"
+                                  ? "مدفوع"
+                                  : p.status === "partial"
+                                  ? "جزئي"
+                                  : p.status === "cancelled"
+                                  ? "ملغي"
+                                  : "معلق"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                {p.status !== "paid" && p.status !== "cancelled" && (
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    onClick={() => {
+                                      setVendorPaymentTarget(p);
+                                      setVendorPaymentAmount(String(remaining));
+                                    }}
+                                    data-testid={`button-pay-purchase-${p.id}`}
+                                  >
+                                    دفع
+                                  </Button>
+                                )}
+                                {isAdmin && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setEditingPurchase(p);
+                                        setIsPurchaseDialogOpen(true);
+                                      }}
+                                      data-testid={`button-edit-purchase-${p.id}`}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="text-destructive"
+                                      onClick={() => {
+                                        setDeleteConfirmId(p.id);
+                                        setDeleteType("purchase");
+                                      }}
+                                      data-testid={`button-delete-purchase-${p.id}`}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
 
         {/* Add/Edit Expense Dialog */}
@@ -2471,7 +2846,13 @@ export default function Accounting() {
                 {t.accounting.confirmDelete}
               </DialogTitle>
               <DialogDescription>
-                {deleteType === "expense" ? t.accounting.confirmDeleteExpense : t.accounting.confirmDeleteInvoice}
+                {deleteType === "expense"
+                  ? t.accounting.confirmDeleteExpense
+                  : deleteType === "invoice"
+                  ? t.accounting.confirmDeleteInvoice
+                  : deleteType === "vendor"
+                  ? "هل تريد إلغاء تفعيل هذا المورد؟ لن يظهر في القوائم لكن لن تُحذف مشترياته السابقة."
+                  : "هل تريد حذف هذا الشراء؟ سيُعكس قيده المحاسبي تلقائياً."}
                 <br />
                 <span className="text-red-500 font-medium">{t.accounting.cannotUndo}</span>
               </DialogDescription>
@@ -2483,7 +2864,12 @@ export default function Accounting() {
               <Button
                 variant="destructive"
                 onClick={handleConfirmDelete}
-                disabled={deleteExpenseMutation.isPending || deleteInvoiceMutation.isPending}
+                disabled={
+                  deleteExpenseMutation.isPending ||
+                  deleteInvoiceMutation.isPending ||
+                  deactivateVendorMutation.isPending ||
+                  deletePurchaseMutation.isPending
+                }
                 data-testid="button-confirm-delete"
               >
                 {t.accounting.delete}
@@ -2530,6 +2916,269 @@ export default function Accounting() {
               >
                 <FileDown className="h-4 w-4" />
                 {dailySummaryLoading ? "جارٍ التوليد..." : "تصدير PDF"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add/Edit Vendor Dialog */}
+        <Dialog open={isVendorDialogOpen} onOpenChange={setIsVendorDialogOpen}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>{editingVendor ? "تعديل مورد" : "إضافة مورد جديد"}</DialogTitle>
+            </DialogHeader>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                const data = {
+                  name: String(fd.get("name") || "").trim(),
+                  contactPerson: String(fd.get("contactPerson") || "").trim() || null,
+                  phone: String(fd.get("phone") || "").trim() || null,
+                  email: String(fd.get("email") || "").trim() || null,
+                  address: String(fd.get("address") || "").trim() || null,
+                  currency: String(fd.get("currency") || "IQD"),
+                  notes: String(fd.get("notes") || "").trim() || null,
+                };
+                if (!data.name) {
+                  toast({ title: "اسم المورد مطلوب", variant: "destructive" });
+                  return;
+                }
+                saveVendorMutation.mutate(data);
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2 space-y-2">
+                  <label className="text-sm font-medium">اسم المورد *</label>
+                  <Input name="name" defaultValue={editingVendor?.name || ""} required data-testid="input-vendor-name" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الشخص المسؤول</label>
+                  <Input name="contactPerson" defaultValue={editingVendor?.contactPerson || ""} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الهاتف</label>
+                  <Input name="phone" defaultValue={editingVendor?.phone || ""} dir="ltr" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">البريد الإلكتروني</label>
+                  <Input name="email" type="email" defaultValue={editingVendor?.email || ""} dir="ltr" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">العملة</label>
+                  <Input name="currency" defaultValue={editingVendor?.currency || "IQD"} dir="ltr" />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <label className="text-sm font-medium">العنوان</label>
+                  <Input name="address" defaultValue={editingVendor?.address || ""} />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <label className="text-sm font-medium">ملاحظات</label>
+                  <Textarea name="notes" defaultValue={editingVendor?.notes || ""} rows={2} />
+                </div>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setIsVendorDialogOpen(false)}>
+                  إلغاء
+                </Button>
+                <Button type="submit" disabled={saveVendorMutation.isPending} data-testid="button-save-vendor">
+                  {saveVendorMutation.isPending ? "جارٍ الحفظ..." : editingVendor ? "حفظ التعديل" : "إضافة"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add/Edit Purchase Dialog */}
+        <Dialog open={isPurchaseDialogOpen} onOpenChange={setIsPurchaseDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{editingPurchase ? "تعديل شراء" : "إضافة شراء جديد"}</DialogTitle>
+            </DialogHeader>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                const data = {
+                  vendorId: parseInt(String(fd.get("vendorId") || "0")),
+                  branchId: parseInt(String(fd.get("branchId") || effectiveBranchFilter)) || null,
+                  purchaseDate: String(fd.get("purchaseDate") || new Date().toISOString().split("T")[0]),
+                  dueDate: String(fd.get("dueDate") || "") || null,
+                  category: String(fd.get("category") || "").trim(),
+                  description: String(fd.get("description") || "").trim() || null,
+                  vendorInvoiceNumber: String(fd.get("vendorInvoiceNumber") || "").trim() || null,
+                  totalAmount: parseInt(String(fd.get("totalAmount") || "0")) || 0,
+                  paymentMethod: String(fd.get("paymentMethod") || "credit"),
+                  notes: String(fd.get("notes") || "").trim() || null,
+                };
+                if (!data.vendorId || !data.branchId || !data.category || data.totalAmount <= 0) {
+                  toast({ title: "اكتب الحقول الإلزامية: مورد، فرع، فئة، مبلغ > 0", variant: "destructive" });
+                  return;
+                }
+                savePurchaseMutation.mutate(data as any);
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">المورد *</label>
+                  <select
+                    name="vendorId"
+                    defaultValue={editingPurchase?.vendorId || ""}
+                    required
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    data-testid="select-purchase-vendor"
+                  >
+                    <option value="">اختر مورداً</option>
+                    {vendorsList.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الفرع *</label>
+                  <select
+                    name="branchId"
+                    defaultValue={editingPurchase?.branchId || (effectiveBranchFilter !== "all" ? effectiveBranchFilter : "")}
+                    required
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    data-testid="select-purchase-branch"
+                  >
+                    <option value="">اختر فرعاً</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">تاريخ الشراء *</label>
+                  <Input
+                    name="purchaseDate"
+                    type="date"
+                    defaultValue={editingPurchase?.purchaseDate || new Date().toISOString().split("T")[0]}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">طريقة الدفع *</label>
+                  <select
+                    name="paymentMethod"
+                    defaultValue={editingPurchase?.paymentMethod || "credit"}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    data-testid="select-purchase-payment-method"
+                  >
+                    <option value="credit">آجل (ذمم دائنة)</option>
+                    <option value="cash">نقدي فوري</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">تاريخ الاستحقاق (للآجل)</label>
+                  <Input name="dueDate" type="date" defaultValue={editingPurchase?.dueDate || ""} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">رقم فاتورة المورد</label>
+                  <Input name="vendorInvoiceNumber" defaultValue={editingPurchase?.vendorInvoiceNumber || ""} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الفئة *</label>
+                  <Input
+                    name="category"
+                    defaultValue={editingPurchase?.category || ""}
+                    placeholder="مستلزمات طبية، صيانة، إلخ"
+                    required
+                    data-testid="input-purchase-category"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">المبلغ الإجمالي *</label>
+                  <Input
+                    name="totalAmount"
+                    type="number"
+                    min="1"
+                    defaultValue={editingPurchase?.totalAmount || ""}
+                    required
+                    data-testid="input-purchase-amount"
+                  />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <label className="text-sm font-medium">الوصف</label>
+                  <Input name="description" defaultValue={editingPurchase?.description || ""} />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <label className="text-sm font-medium">ملاحظات</label>
+                  <Textarea name="notes" defaultValue={editingPurchase?.notes || ""} rows={2} />
+                </div>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setIsPurchaseDialogOpen(false)}>
+                  إلغاء
+                </Button>
+                <Button type="submit" disabled={savePurchaseMutation.isPending} data-testid="button-save-purchase">
+                  {savePurchaseMutation.isPending ? "جارٍ الحفظ..." : editingPurchase ? "حفظ التعديل" : "إضافة"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Vendor Payment Dialog */}
+        <Dialog open={vendorPaymentTarget !== null} onOpenChange={(open) => { if (!open) { setVendorPaymentTarget(null); setVendorPaymentAmount(""); } }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>تسجيل دفعة لمورد</DialogTitle>
+            </DialogHeader>
+            {vendorPaymentTarget && (
+              <div className="space-y-4">
+                <div className="rounded-md bg-muted/40 p-3 text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">رقم الشراء:</span>
+                    <span className="font-mono">{vendorPaymentTarget.purchaseNumber}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">الإجمالي:</span>
+                    <span className="tabular-nums">{formatCurrency(vendorPaymentTarget.totalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">المدفوع سابقاً:</span>
+                    <span className="tabular-nums text-green-600">{formatCurrency(vendorPaymentTarget.paidAmount || 0)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>المتبقي:</span>
+                    <span className="tabular-nums text-red-600">
+                      {formatCurrency(vendorPaymentTarget.totalAmount - (vendorPaymentTarget.paidAmount || 0))}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">مبلغ الدفعة</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={vendorPaymentAmount}
+                    onChange={(e) => setVendorPaymentAmount(e.target.value)}
+                    data-testid="input-vendor-payment-amount"
+                  />
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => { setVendorPaymentTarget(null); setVendorPaymentAmount(""); }}>
+                إلغاء
+              </Button>
+              <Button
+                onClick={() => {
+                  const amt = parseInt(vendorPaymentAmount);
+                  if (!vendorPaymentTarget || !amt || amt <= 0) {
+                    toast({ title: "أدخل مبلغاً صحيحاً", variant: "destructive" });
+                    return;
+                  }
+                  recordVendorPaymentMutation.mutate({ id: vendorPaymentTarget.id, amount: amt });
+                }}
+                disabled={recordVendorPaymentMutation.isPending}
+                data-testid="button-confirm-vendor-payment"
+              >
+                {recordVendorPaymentMutation.isPending ? "جارٍ التسجيل..." : "تسجيل الدفعة"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -1,6 +1,6 @@
 import { db } from "./db";
 import {
-  patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems,
+  patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -13,6 +13,8 @@ import {
   type InstallmentPlan, type InsertInstallmentPlan,
   type Invoice, type InsertInvoice,
   type InvoiceItem, type InsertInvoiceItem,
+  type Vendor, type InsertVendor,
+  type Purchase, type InsertPurchase,
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting,
   type SystemUser, type InsertSystemUser,
   type TreatmentPlan, type InsertTreatmentPlan,
@@ -114,6 +116,27 @@ export interface IStorage {
   updateInvoice(id: number, invoice: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<void>;
   getNextInvoiceNumber(): Promise<string>;
+
+  // Vendors / Suppliers
+  getVendors(activeOnly?: boolean): Promise<Vendor[]>;
+  getVendorById(id: number): Promise<Vendor | undefined>;
+  createVendor(vendor: InsertVendor): Promise<Vendor>;
+  updateVendor(id: number, vendor: Partial<InsertVendor>): Promise<Vendor | undefined>;
+  deactivateVendor(id: number): Promise<void>;
+
+  // Purchases
+  getPurchases(branchId?: number, vendorId?: number, status?: string, startDate?: string, endDate?: string): Promise<Purchase[]>;
+  getPurchaseById(id: number): Promise<Purchase | undefined>;
+  createPurchase(purchase: InsertPurchase & { purchaseNumber?: string; createdBy?: string | null }): Promise<Purchase>;
+  updatePurchase(id: number, purchase: Partial<InsertPurchase>): Promise<Purchase | undefined>;
+  deletePurchase(id: number): Promise<void>;
+  getNextPurchaseNumber(): Promise<string>;
+  getPurchasesSummary(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    totalPurchases: number;
+    totalPaid: number;
+    totalOutstanding: number;
+    purchaseCount: number;
+  }>;
   
   // Invoice Items
   getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]>;
@@ -1075,6 +1098,145 @@ export class DatabaseStorage implements IStorage {
   async createSurveyAnswer(answer: InsertSurveyAnswer): Promise<SurveyAnswer> {
     const [created] = await db.insert(surveyAnswers).values(answer).returning();
     return created;
+  }
+
+  // ==================== Vendors / Suppliers ====================
+
+  async getVendors(activeOnly: boolean = true): Promise<Vendor[]> {
+    if (activeOnly) {
+      return await db.select().from(vendors).where(eq(vendors.isActive, true)).orderBy(vendors.name);
+    }
+    return await db.select().from(vendors).orderBy(vendors.name);
+  }
+
+  async getVendorById(id: number): Promise<Vendor | undefined> {
+    const [vendor] = await db.select().from(vendors).where(eq(vendors.id, id));
+    return vendor;
+  }
+
+  async createVendor(vendor: InsertVendor): Promise<Vendor> {
+    const [created] = await db.insert(vendors).values(vendor).returning();
+    return created;
+  }
+
+  async updateVendor(id: number, vendor: Partial<InsertVendor>): Promise<Vendor | undefined> {
+    const [updated] = await db
+      .update(vendors)
+      .set({ ...vendor, updatedAt: new Date() })
+      .where(eq(vendors.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deactivateVendor(id: number): Promise<void> {
+    // Soft-delete: never hard-delete vendors that have purchases tied to them.
+    await db.update(vendors).set({ isActive: false, updatedAt: new Date() }).where(eq(vendors.id, id));
+  }
+
+  // ==================== Purchases ====================
+
+  async getPurchases(
+    branchId?: number,
+    vendorId?: number,
+    status?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Purchase[]> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(purchases.branchId, branchId));
+    if (vendorId) conditions.push(eq(purchases.vendorId, vendorId));
+    if (status) conditions.push(eq(purchases.status, status));
+    if (startDate) conditions.push(gte(purchases.purchaseDate, startDate));
+    if (endDate) conditions.push(lte(purchases.purchaseDate, endDate));
+
+    if (conditions.length > 0) {
+      return await db.select().from(purchases).where(and(...conditions)).orderBy(desc(purchases.purchaseDate));
+    }
+    return await db.select().from(purchases).orderBy(desc(purchases.purchaseDate));
+  }
+
+  async getPurchaseById(id: number): Promise<Purchase | undefined> {
+    const [p] = await db.select().from(purchases).where(eq(purchases.id, id));
+    return p;
+  }
+
+  async createPurchase(
+    purchase: InsertPurchase & { purchaseNumber?: string; createdBy?: string | null }
+  ): Promise<Purchase> {
+    const purchaseNumber = purchase.purchaseNumber || (await this.getNextPurchaseNumber());
+    // For cash purchases the paid amount equals total; for credit it starts at 0.
+    const isCredit = (purchase.paymentMethod ?? "credit") === "credit";
+    const initialPaid = isCredit ? 0 : purchase.totalAmount;
+    const initialStatus = isCredit ? "pending" : "paid";
+
+    const [created] = await db
+      .insert(purchases)
+      .values({
+        ...purchase,
+        purchaseNumber,
+        paidAmount: initialPaid,
+        status: initialStatus,
+      })
+      .returning();
+    return created;
+  }
+
+  async updatePurchase(id: number, purchase: Partial<InsertPurchase>): Promise<Purchase | undefined> {
+    const [updated] = await db.update(purchases).set(purchase).where(eq(purchases.id, id)).returning();
+    return updated;
+  }
+
+  async deletePurchase(id: number): Promise<void> {
+    await db.delete(purchases).where(eq(purchases.id, id));
+  }
+
+  async getNextPurchaseNumber(): Promise<string> {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const result = await db.execute(sql`
+      SELECT COUNT(*)::int AS cnt FROM purchases
+      WHERE purchase_number LIKE ${`PUR-${year}${month}-%`}
+    `);
+    const cnt = (result.rows?.[0] as any)?.cnt ?? 0;
+    return `PUR-${year}${month}-${String(cnt + 1).padStart(4, "0")}`;
+  }
+
+  async getPurchasesSummary(
+    branchId?: number,
+    startDate?: string,
+    endDate?: string
+  ): Promise<{
+    totalPurchases: number;
+    totalPaid: number;
+    totalOutstanding: number;
+    purchaseCount: number;
+  }> {
+    const conditions = [];
+    if (branchId) conditions.push(eq(purchases.branchId, branchId));
+    if (startDate) conditions.push(gte(purchases.purchaseDate, startDate));
+    if (endDate) conditions.push(lte(purchases.purchaseDate, endDate));
+
+    const baseQuery = db
+      .select({
+        totalPurchases: sql<string>`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+        totalPaid: sql<string>`COALESCE(SUM(${purchases.paidAmount}), 0)`,
+        purchaseCount: sql<string>`COUNT(*)`,
+      })
+      .from(purchases);
+
+    const result = conditions.length > 0
+      ? await baseQuery.where(and(...conditions))
+      : await baseQuery;
+    const row = result[0];
+    const totalPurchases = Number(row?.totalPurchases) || 0;
+    const totalPaid = Number(row?.totalPaid) || 0;
+    return {
+      totalPurchases,
+      totalPaid,
+      totalOutstanding: totalPurchases - totalPaid,
+      purchaseCount: Number(row?.purchaseCount) || 0,
+    };
   }
 }
 
