@@ -2452,6 +2452,15 @@ export async function registerRoutes(
         createdBy: user?.claims?.sub || "unknown"
       });
 
+      // Subcategory is required when category is "other" — otherwise an
+      // accountant could file an expense as "أخرى" with no further detail
+      // and lose visibility on what it actually was.
+      if (data.category === "other" && !data.subcategory?.trim()) {
+        return res.status(400).json({
+          error: "عند اختيار فئة 'أخرى'، يجب كتابة تصنيف فرعي يوضّح طبيعة المصروف",
+        });
+      }
+
       const expense = await storage.createExpense(data);
 
       // تلقائي: إنشاء قيد محاسبي مزدوج للمصروف
@@ -2488,6 +2497,15 @@ export async function registerRoutes(
       const existingExpense = await storage.getExpense(id);
       if (!existingExpense) {
         return res.status(404).json({ error: "المصروف غير موجود" });
+      }
+
+      // Same "other → subcategory required" rule as on create.
+      const effectiveCategory = req.body.category ?? existingExpense.category;
+      const effectiveSubcategory = (req.body.subcategory ?? existingExpense.subcategory)?.trim();
+      if (effectiveCategory === "other" && !effectiveSubcategory) {
+        return res.status(400).json({
+          error: "عند اختيار فئة 'أخرى'، يجب كتابة تصنيف فرعي يوضّح طبيعة المصروف",
+        });
       }
 
       const expense = await storage.updateExpense(id, req.body);
@@ -2545,6 +2563,27 @@ export async function registerRoutes(
     });
     await storage.deleteExpense(id);
     res.json({ success: true });
+  });
+
+  // Returns the distinct subcategories that have already been used for a given
+  // category in the current user's accessible branch(es). Powers the
+  // autocomplete on the expense form so accountants build a self-organising
+  // taxonomy under "أخرى" (and any other category) instead of typos that
+  // fragment the same intent across many almost-identical labels.
+  app.get("/api/expenses/subcategories", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const category = (req.query.category as string | undefined)?.trim();
+    if (!category) {
+      return res.status(400).json({ error: "يجب تحديد الفئة" });
+    }
+    const branchId = enforceBranchAccess(req);
+    const list = await storage.getExpenseSubcategories(category, branchId);
+    res.json(list);
   });
 
   app.get("/api/expenses/by-category/summary", isAuthenticated, async (req: any, res) => {
