@@ -462,6 +462,10 @@ export default function Accounting() {
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
   const [vendorPaymentTarget, setVendorPaymentTarget] = useState<Purchase | null>(null);
   const [vendorPaymentAmount, setVendorPaymentAmount] = useState<string>("");
+  // Read-only patient record viewer for the debtors tab — accountants can
+  // open it to understand who a debtor is and what services they received,
+  // but cannot edit or add anything from this surface.
+  const [viewingPatientId, setViewingPatientId] = useState<number | null>(null);
   const [isDailyDialogOpen, setIsDailyDialogOpen] = useState(false);
   const [dailySummaryDate, setDailySummaryDate] = useState<string>(
     () => new Date().toISOString().split("T")[0]
@@ -608,6 +612,50 @@ export default function Accounting() {
       if (!res.ok) throw new Error("Failed to fetch debtors");
       return res.json();
     }
+  });
+
+  // Patient details for the read-only debtor record viewer.
+  // Server enforces branch access, so the accountant only ever gets back
+  // patients from their own branch.
+  const { data: patientRecord, isLoading: patientRecordLoading } = useQuery<{
+    id: number;
+    name: string;
+    age?: string | null;
+    phone?: string | null;
+    branchId: number;
+    medicalCondition?: string | null;
+    treatmentType?: string | null;
+    isAmputee?: boolean | null;
+    isPhysiotherapy?: boolean | null;
+    isMedicalSupport?: boolean | null;
+    totalCost: number;
+    classification?: string | null;
+    createdAt?: string | null;
+    visits?: Array<{
+      id: number;
+      visitDate: string;
+      treatmentType?: string | null;
+      sessionCount?: number | null;
+      cost?: number | null;
+      notes?: string | null;
+      details?: string | null;
+    }>;
+    payments?: Array<{
+      id: number;
+      date: string;
+      amount: number;
+      paymentTreatmentType?: string | null;
+      sessionCount?: number | null;
+      notes?: string | null;
+    }>;
+  }>({
+    queryKey: ["/api/patients", viewingPatientId],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${viewingPatientId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("تعذّر جلب سجل المريض");
+      return res.json();
+    },
+    enabled: viewingPatientId !== null,
   });
 
   // Fetch monthly trends
@@ -2399,18 +2447,19 @@ export default function Accounting() {
                       <TableHead className="text-right">{t.accounting.paidCol}</TableHead>
                       <TableHead className="text-right">{t.accounting.remainingCol}</TableHead>
                       <TableHead className="text-right">{t.accounting.lastPayment}</TableHead>
+                      <TableHead className="text-right">معاينة</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {debtorsLoading ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           {t.accounting.loading}
                         </TableCell>
                       </TableRow>
                     ) : debtors.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                           <CheckCircle2 className="h-12 w-12 mx-auto mb-2 text-green-500" />
                           {t.accounting.noDebts}
                         </TableCell>
@@ -2433,6 +2482,18 @@ export default function Accounting() {
                             ) : (
                               <Badge variant="destructive">{t.accounting.neverPaid}</Badge>
                             )}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              onClick={() => setViewingPatientId(debtor.patient.id)}
+                              data-testid={`button-view-debtor-${debtor.patient.id}`}
+                            >
+                              <Users className="h-3.5 w-3.5" />
+                              معاينة السجل
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -3071,6 +3132,198 @@ export default function Accounting() {
                 data-testid="button-confirm-delete"
               >
                 {t.accounting.delete}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Read-only patient record viewer for the debtors tab.
+            Surfaces the patient's basic info, every visit, and every payment
+            so the accountant can understand who they owe and what they were
+            charged for — without any way to edit or add. */}
+        <Dialog
+          open={viewingPatientId !== null}
+          onOpenChange={(open) => { if (!open) setViewingPatientId(null); }}
+        >
+          <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-primary" />
+                سجل المريض
+                <Badge variant="outline" className="font-normal text-xs ms-2">
+                  للمعاينة فقط
+                </Badge>
+              </DialogTitle>
+            </DialogHeader>
+
+            {patientRecordLoading ? (
+              <div className="py-12 text-center text-muted-foreground">جارٍ تحميل السجل...</div>
+            ) : !patientRecord ? (
+              <div className="py-12 text-center text-muted-foreground">لا يمكن عرض هذا السجل</div>
+            ) : (
+              <div className="space-y-5">
+                {/* Basic patient info */}
+                <div className="rounded-md border bg-muted/30 p-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">الاسم: </span>
+                      <span className="font-medium">{patientRecord.name}</span>
+                    </div>
+                    {patientRecord.age && (
+                      <div>
+                        <span className="text-muted-foreground">العمر: </span>
+                        <span>{patientRecord.age}</span>
+                      </div>
+                    )}
+                    {patientRecord.phone && (
+                      <div>
+                        <span className="text-muted-foreground">الهاتف: </span>
+                        <span dir="ltr">{patientRecord.phone}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-muted-foreground">الفرع: </span>
+                      <span>{branches.find((b) => b.id === patientRecord.branchId)?.name || "—"}</span>
+                    </div>
+                    {patientRecord.medicalCondition && (
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">الحالة الطبية: </span>
+                        <span>{patientRecord.medicalCondition}</span>
+                      </div>
+                    )}
+                    {patientRecord.classification && (
+                      <div>
+                        <span className="text-muted-foreground">التصنيف: </span>
+                        <span>{patientRecord.classification}</span>
+                      </div>
+                    )}
+                    {patientRecord.createdAt && (
+                      <div>
+                        <span className="text-muted-foreground">تاريخ التسجيل: </span>
+                        <span>{formatArabicDate(patientRecord.createdAt.split("T")[0])}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {patientRecord.isAmputee && <Badge variant="secondary">طرف صناعي</Badge>}
+                    {patientRecord.isPhysiotherapy && <Badge variant="secondary">علاج طبيعي</Badge>}
+                    {patientRecord.isMedicalSupport && <Badge variant="secondary">مساند طبية</Badge>}
+                  </div>
+                </div>
+
+                {/* Financial summary */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">إجمالي التكلفة</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums">
+                      {formatNumberOnly(patientRecord.totalCost || 0)}
+                      <span className="ms-1 text-xs font-medium text-muted-foreground">د.ع</span>
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">المدفوع</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-green-600">
+                      {formatNumberOnly((patientRecord.payments ?? []).reduce((s, p) => s + (p.amount || 0), 0))}
+                      <span className="ms-1 text-xs font-medium text-muted-foreground">د.ع</span>
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">المتبقي</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-red-600">
+                      {formatNumberOnly(
+                        (patientRecord.totalCost || 0) -
+                          (patientRecord.payments ?? []).reduce((s, p) => s + (p.amount || 0), 0)
+                      )}
+                      <span className="ms-1 text-xs font-medium text-muted-foreground">د.ع</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Visits history */}
+                <div>
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    الزيارات ({patientRecord.visits?.length ?? 0})
+                  </h4>
+                  {!patientRecord.visits || patientRecord.visits.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">لا توجد زيارات مسجَّلة.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-right">التاريخ</TableHead>
+                          <TableHead className="text-right">نوع العلاج</TableHead>
+                          <TableHead className="text-right">عدد الجلسات</TableHead>
+                          <TableHead className="text-right">التكلفة</TableHead>
+                          <TableHead className="text-right">ملاحظات</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {patientRecord.visits.map((v) => (
+                          <TableRow key={v.id}>
+                            <TableCell>{formatArabicDate(v.visitDate.split("T")[0])}</TableCell>
+                            <TableCell>{v.treatmentType || "—"}</TableCell>
+                            <TableCell>{v.sessionCount ?? "—"}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {v.cost ? formatCurrency(v.cost) : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {v.details || v.notes || "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+
+                {/* Payments history */}
+                <div>
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <CreditCard className="h-4 w-4 text-green-600" />
+                    الدفعات ({patientRecord.payments?.length ?? 0})
+                  </h4>
+                  {!patientRecord.payments || patientRecord.payments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">لا توجد دفعات مسجَّلة.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-right">التاريخ</TableHead>
+                          <TableHead className="text-right">نوع الخدمة</TableHead>
+                          <TableHead className="text-right">عدد الجلسات</TableHead>
+                          <TableHead className="text-right">المبلغ</TableHead>
+                          <TableHead className="text-right">ملاحظات</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {patientRecord.payments.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell>{formatArabicDate(p.date.split("T")[0])}</TableCell>
+                            <TableCell>{p.paymentTreatmentType || "—"}</TableCell>
+                            <TableCell>{p.sessionCount ?? "—"}</TableCell>
+                            <TableCell className="tabular-nums text-green-600">
+                              {formatCurrency(p.amount)}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {p.notes || "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+
+                <p className="text-xs text-muted-foreground italic text-center pt-2">
+                  هذه الواجهة للمعاينة فقط. لتعديل أو إضافة زيارات أو دفعات، تواصل مع المدير.
+                </p>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setViewingPatientId(null)}>
+                إغلاق
               </Button>
             </DialogFooter>
           </DialogContent>
