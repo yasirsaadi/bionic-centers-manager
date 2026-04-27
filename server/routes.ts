@@ -24,6 +24,8 @@ import {
 } from "./accounting/auto_journal";
 import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
+import { explainAnomaly } from "./ai/explain_anomaly";
+import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { logAudit } from "./accounting/ledger";
 
 // Validation schemas for admin settings
@@ -3554,6 +3556,49 @@ export async function registerRoutes(
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
     res.json({ category: result.value });
+  });
+
+  // ======================= ANOMALY DETECTION ROUTES =======================
+
+  // Lists anomalies for the user's accessible branch(es). Pure rule-based,
+  // no LLM call — cheap to refresh on every dashboard load.
+  app.get("/api/anomalies", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتنبيهات" });
+    }
+    const branchId = enforceBranchAccess(req);
+    const anomalies = await detectAnomalies(branchId);
+    res.json(anomalies);
+  });
+
+  // Generates an Arabic AI explanation for a single anomaly. Hit on demand
+  // when the user clicks "اشرح بالذكاء" so the cost is one Haiku call per
+  // explicit request, not per page load.
+  app.post("/api/ai/explain-anomaly", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const anomaly = req.body?.anomaly as Anomaly | undefined;
+    if (!anomaly || !anomaly.id || !anomaly.type) {
+      return res.status(400).json({ error: "بيانات التنبيه ناقصة" });
+    }
+    // Defence in depth: a non-admin can't ask for an explanation of an
+    // anomaly belonging to a different branch.
+    if (!isAdmin && branchSession?.branchId && anomaly.branchId !== branchSession.branchId) {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+    const result = await explainAnomaly(anomaly);
+    if (!result.ok) {
+      const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
+      return res.status(status).json({ error: result.message, reason: result.reason });
+    }
+    res.json({ explanation: result.value });
   });
 
   // ======================= TREATMENT PLAN ROUTES =======================
