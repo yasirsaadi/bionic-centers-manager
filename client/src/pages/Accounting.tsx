@@ -308,6 +308,16 @@ function formatNumberOnly(amount: number): string {
   return western.replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 }
 
+// Converts Arabic-Indic digits (٠-٩) to Western (0-9) so amount fields
+// accept either keyboard. Also strips anything that isn't a digit or a
+// decimal point — protects against accidental letter input. Critical for
+// accounting inputs where a typo can corrupt totals.
+function arabicDigitsToWestern(input: string): string {
+  return input
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[^\d.]/g, "");
+}
+
 function getCategoryLabel(category: string): string {
   const cat = EXPENSE_CATEGORIES.find(c => c.value === category);
   return cat?.label || category;
@@ -2891,10 +2901,27 @@ export default function Accounting() {
                     <FormItem>
                       <FormLabel>{t.accounting.amountCurrency}</FormLabel>
                       <FormControl>
+                        {/* type="text" + inputMode="decimal" so:
+                            (1) the field starts empty when value is 0 instead
+                                of showing "0" that gets prepended to user
+                                input — accounting risk eliminated.
+                            (2) Arabic-Indic numerals (١٠٠) are accepted and
+                                converted to Western (100) on the fly, no need
+                                to switch keyboard layouts. */}
                         <Input
-                          type="number"
-                          {...field}
-                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                          type="text"
+                          inputMode="decimal"
+                          dir="ltr"
+                          name={field.name}
+                          ref={field.ref}
+                          onBlur={field.onBlur}
+                          value={field.value === 0 || field.value == null ? "" : field.value}
+                          onChange={(e) => {
+                            const cleaned = arabicDigitsToWestern(e.target.value);
+                            const num = parseFloat(cleaned);
+                            field.onChange(isNaN(num) ? 0 : num);
+                          }}
+                          placeholder="0"
                           data-testid="input-expense-amount"
                         />
                       </FormControl>
@@ -3041,20 +3068,32 @@ export default function Accounting() {
                       <div className="col-span-2">
                         <label className="text-xs text-muted-foreground">{t.accounting.quantity}</label>
                         <Input
-                          type="number"
-                          min="1"
-                          value={item.quantity}
-                          onChange={(e) => updateInvoiceItem(index, "quantity", parseInt(e.target.value) || 1)}
+                          type="text"
+                          inputMode="numeric"
+                          dir="ltr"
+                          value={item.quantity || ""}
+                          onChange={(e) => {
+                            const cleaned = arabicDigitsToWestern(e.target.value);
+                            const num = parseInt(cleaned);
+                            updateInvoiceItem(index, "quantity", isNaN(num) ? 1 : num);
+                          }}
+                          placeholder="1"
                           data-testid={`input-item-quantity-${index}`}
                         />
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-muted-foreground">{t.accounting.price}</label>
                         <Input
-                          type="number"
-                          min="0"
-                          value={item.unitPrice}
-                          onChange={(e) => updateInvoiceItem(index, "unitPrice", parseInt(e.target.value) || 0)}
+                          type="text"
+                          inputMode="decimal"
+                          dir="ltr"
+                          value={item.unitPrice === 0 ? "" : item.unitPrice}
+                          onChange={(e) => {
+                            const cleaned = arabicDigitsToWestern(e.target.value);
+                            const num = parseInt(cleaned);
+                            updateInvoiceItem(index, "unitPrice", isNaN(num) ? 0 : num);
+                          }}
+                          placeholder="0"
                           data-testid={`input-item-price-${index}`}
                         />
                       </div>
@@ -3081,9 +3120,14 @@ export default function Accounting() {
                   <label className="text-sm font-medium">{t.accounting.discountCurrency}</label>
                   <Input
                     id="invoice-discount"
-                    type="number"
-                    min="0"
-                    defaultValue="0"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
+                    defaultValue=""
+                    placeholder="0"
+                    onChange={(e) => {
+                      e.target.value = arabicDigitsToWestern(e.target.value);
+                    }}
                     data-testid="input-invoice-discount"
                   />
                 </div>
@@ -3573,10 +3617,15 @@ export default function Accounting() {
                   <label className="text-sm font-medium">المبلغ الإجمالي *</label>
                   <Input
                     name="totalAmount"
-                    type="number"
-                    min="1"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
                     defaultValue={editingPurchase?.totalAmount || ""}
                     required
+                    placeholder="0"
+                    onChange={(e) => {
+                      e.target.value = arabicDigitsToWestern(e.target.value);
+                    }}
                     data-testid="input-purchase-amount"
                   />
                 </div>
@@ -3632,10 +3681,12 @@ export default function Accounting() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">مبلغ الدفعة</label>
                   <Input
-                    type="number"
-                    min="1"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
                     value={vendorPaymentAmount}
-                    onChange={(e) => setVendorPaymentAmount(e.target.value)}
+                    onChange={(e) => setVendorPaymentAmount(arabicDigitsToWestern(e.target.value))}
+                    placeholder="0"
                     data-testid="input-vendor-payment-amount"
                   />
                 </div>
