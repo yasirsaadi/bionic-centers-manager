@@ -418,6 +418,23 @@ export default function Accounting() {
     queryKey: ["/api/branches"]
   });
 
+  // Fetch today's cash summary (today's revenue + closing balance)
+  // for the two extra KPI cards on the dashboard.
+  const todayISO = new Date().toISOString().split("T")[0];
+  const { data: todaySummary } = useQuery<{
+    todayRevenue: number;
+    todayClosing: number;
+  }>({
+    queryKey: ["/api/accounting/daily-summary", effectiveBranchFilter, todayISO],
+    queryFn: async () => {
+      const params = new URLSearchParams({ date: todayISO });
+      if (effectiveBranchFilter !== "all") params.append("branchId", effectiveBranchFilter);
+      const res = await fetch(`/api/accounting/daily-summary?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch today summary");
+      return res.json();
+    },
+  });
+
   // Fetch accounting summary
   const { data: summary, isLoading: summaryLoading } = useQuery<AccountingSummary>({
     queryKey: ["/api/accounting/summary", effectiveBranchFilter, dateRange.startDate, dateRange.endDate],
@@ -1438,7 +1455,7 @@ export default function Accounting() {
             )}
 
             {/* KPI Cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                   <CardTitle className="text-sm font-medium">{t.accounting.totalRevenue}</CardTitle>
@@ -1529,6 +1546,40 @@ export default function Accounting() {
                     {summaryLoading ? "..." : `${summary?.collectionRate || 0}%`}
                   </div>
                   <p className="text-xs text-muted-foreground">{t.accounting.paidVsDue}</p>
+                </CardContent>
+              </Card>
+
+              {/* Today's revenue — pulled from /api/accounting/daily-summary */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                  <CardTitle className="text-sm font-medium">وارد اليوم</CardTitle>
+                  <Calendar className="h-4 w-4 text-emerald-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-1.5" data-testid="text-today-revenue">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-emerald-600 truncate">
+                      {todaySummary ? formatNumberOnly(todaySummary.todayRevenue) : "..."}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">دفعات سُجِّلت اليوم</p>
+                </CardContent>
+              </Card>
+
+              {/* Cash on hand — yesterday's closing + today's net revenue */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                  <CardTitle className="text-sm font-medium">المتبقي بالقاصة</CardTitle>
+                  <Wallet className="h-4 w-4 text-indigo-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-1.5" data-testid="text-cash-on-hand">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-indigo-600 truncate">
+                      {todaySummary ? formatNumberOnly(todaySummary.todayClosing) : "..."}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">الرصيد النقدي حتى الآن</p>
                 </CardContent>
               </Card>
             </div>
