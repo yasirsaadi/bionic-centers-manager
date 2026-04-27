@@ -872,8 +872,17 @@ export default function Accounting() {
 
   const openNewExpenseDialog = () => {
     setEditingExpense(null);
+    // For non-admins: always default to their session branch so the disabled
+    // Select renders the branch name instead of looking empty. For admins:
+    // honour whatever branch they've filtered to in the dashboard, falling
+    // back to the first branch in the list (more useful than a hard-coded 1).
+    const defaultBranchId = !isAdmin && userBranchId
+      ? userBranchId
+      : selectedBranch !== "all"
+      ? parseInt(selectedBranch)
+      : (allowedBranches[0]?.id ?? 1);
     form.reset({
-      branchId: selectedBranch !== "all" ? parseInt(selectedBranch) : 1,
+      branchId: defaultBranchId,
       category: "",
       subcategory: "",
       amount: 0,
