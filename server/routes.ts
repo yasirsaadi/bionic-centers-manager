@@ -2741,51 +2741,79 @@ export async function registerRoutes(
       const branchId = enforceBranchAccess(req);
       const allPayments = await storage.getAllPayments(branchId);
 
-      // Display-time inference: many older payments have an empty
-      // paymentTreatmentType because the field wasn't required at the
-      // time. To stop the chart from drowning in "غير محدد", we look up
-      // the payment's patient and infer the type from their treatment
-      // flags. The database is NOT modified — this is purely how we
-      // present the data.
+      // Display-time inference + canonicalisation. Each payment carries
+      // either an explicit treatment string (sometimes a sub-type like
+      // "روبوت" or "أبر صينية") or nothing at all. We:
+      //   1. Infer from the patient's clinical flags when missing.
+      //   2. Canonicalise sub-types into one of three top-level buckets
+      //      (طرف صناعي / علاج طبيعي / مساند طبية) so the pie chart
+      //      shows clinical categories, not a flat mix of categories
+      //      and sub-types of physiotherapy.
+      // Sub-type detail still surfaces via the "subBreakdown" field on
+      // the parent — useful if the UI wants to drill down later.
       const patientIds = Array.from(new Set(allPayments.map((p) => p.patientId).filter(Boolean)));
       const patientList = patientIds.length > 0
         ? await storage.getPatientsByIds(patientIds as number[])
         : [];
       const patientById = new Map(patientList.map((p) => [p.id, p]));
 
-      const inferTreatmentType = (payment: typeof allPayments[number]): string | null => {
-        if (payment.paymentTreatmentType) return payment.paymentTreatmentType;
-        const patient = payment.patientId ? patientById.get(payment.patientId) : undefined;
-        if (!patient) return null;
-        // Order matches user's clinical priority — most patients fall
-        // cleanly into one bucket because flags are largely exclusive in
-        // practice. If a patient is flagged for multiple, prefer
-        // amputation since it's the costliest service.
-        if (patient.isAmputee) return "طرف صناعي";
-        if (patient.isPhysiotherapy) return "علاج طبيعي";
-        if (patient.isMedicalSupport) return "مساند طبية";
+      // Maps any treatment string to one of the three clinical categories.
+      // Returns null if it can't classify — caller falls back to patient-flag
+      // inference. Tolerant of Iraqi-Arabic spelling variants.
+      const canonicalise = (raw: string | null | undefined): "طرف صناعي" | "علاج طبيعي" | "مساند طبية" | null => {
+        if (!raw) return null;
+        const s = raw.trim().toLowerCase()
+          .replace(/[آأإ]/g, "ا")
+          .replace(/ة/g, "ه")
+          .replace(/ى/g, "ي");
+        if (/طرف|اطراف|بتر|prosth/.test(s)) return "طرف صناعي";
+        if (/مسند|مساند|حزام|دعامه|brace|support/.test(s)) return "مساند طبية";
+        // Everything below is a physiotherapy sub-type — they all roll up
+        // into "علاج طبيعي" at the top level.
+        if (/علاج طبيعي|فيزيائي|physio|تاهيل|تمرين|تمارين|روبوت|robot|اجهز|جهاز|ابره|ابر صيني|injection/.test(s)) {
+          return "علاج طبيعي";
+        }
         return null;
       };
 
-      const treatmentMap: Record<string, { totalAmount: number; count: number }> = {};
+      const resolveCategory = (payment: typeof allPayments[number]): {
+        category: "طرف صناعي" | "علاج طبيعي" | "مساند طبية" | "غير محدد";
+        subType: string | null;
+      } => {
+        // Try the payment's own string first; then fall back to the
+        // patient's clinical flags.
+        const explicit = payment.paymentTreatmentType;
+        const fromExplicit = canonicalise(explicit);
+        if (fromExplicit) {
+          return { category: fromExplicit, subType: explicit?.trim() ?? null };
+        }
+        const patient = payment.patientId ? patientById.get(payment.patientId) : undefined;
+        if (patient?.isAmputee) return { category: "طرف صناعي", subType: null };
+        if (patient?.isPhysiotherapy) return { category: "علاج طبيعي", subType: null };
+        if (patient?.isMedicalSupport) return { category: "مساند طبية", subType: null };
+        return { category: "غير محدد", subType: null };
+      };
+
+      type Bucket = {
+        totalAmount: number;
+        count: number;
+        subBreakdown: Record<string, { totalAmount: number; count: number }>;
+      };
+      const treatmentMap: Record<string, Bucket> = {};
 
       for (const payment of allPayments) {
-        const treatmentType = inferTreatmentType(payment);
-        if (!treatmentType) {
-          if (!treatmentMap["غير محدد"]) {
-            treatmentMap["غير محدد"] = { totalAmount: 0, count: 0 };
+        const { category, subType } = resolveCategory(payment);
+        if (!treatmentMap[category]) {
+          treatmentMap[category] = { totalAmount: 0, count: 0, subBreakdown: {} };
+        }
+        treatmentMap[category].totalAmount += payment.amount;
+        treatmentMap[category].count += 1;
+        if (subType) {
+          if (!treatmentMap[category].subBreakdown[subType]) {
+            treatmentMap[category].subBreakdown[subType] = { totalAmount: 0, count: 0 };
           }
-          treatmentMap["غير محدد"].totalAmount += payment.amount;
-          treatmentMap["غير محدد"].count += 1;
-        } else {
-          const types = treatmentType.split(",").map((t: string) => t.trim()).filter(Boolean);
-          for (const type of types) {
-            if (!treatmentMap[type]) {
-              treatmentMap[type] = { totalAmount: 0, count: 0 };
-            }
-            treatmentMap[type].totalAmount += payment.amount;
-            treatmentMap[type].count += 1;
-          }
+          treatmentMap[category].subBreakdown[subType].totalAmount += payment.amount;
+          treatmentMap[category].subBreakdown[subType].count += 1;
         }
       }
 
@@ -2793,6 +2821,11 @@ export async function registerRoutes(
         treatmentType,
         totalAmount: data.totalAmount,
         count: data.count,
+        subBreakdown: Object.entries(data.subBreakdown).map(([name, d]) => ({
+          name,
+          totalAmount: d.totalAmount,
+          count: d.count,
+        })),
       }));
 
       res.json(result);
