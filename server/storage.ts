@@ -176,6 +176,25 @@ export interface IStorage {
   getAllBranchSettings(): Promise<BranchSetting[]>;
   setBranchSettings(branchId: number, settings: Partial<InsertBranchSetting>): Promise<BranchSetting>;
 
+  // Employee accuracy
+  getEmployeeAccuracy(params: {
+    branchId?: number;
+    startDate: string;
+    endDate: string;
+  }): Promise<{
+    createdBy: string;
+    displayName: string;
+    role: string | null;
+    branchId: number | null;
+    expenseCount: number;
+    expenseTotal: number;
+    invoiceCount: number;
+    invoiceTotal: number;
+    purchaseCount: number;
+    purchaseTotal: number;
+    anomalyDecisionsCount: number;
+  }[]>;
+
   // System Users
   getSystemUsers(): Promise<SystemUser[]>;
   getSystemUser(id: number): Promise<SystemUser | undefined>;
@@ -1292,6 +1311,122 @@ export class DatabaseStorage implements IStorage {
           )
         )
       );
+  }
+
+  // ==================== Employee accuracy ====================
+
+  // Aggregates per-user activity over a window. The createdBy column is
+  // text (carries either system_users.id as string or "unknown" for old
+  // rows); we group on it and join to systemUsers to surface display
+  // names. Anonymous/unknown rows aggregate together.
+  async getEmployeeAccuracy(params: {
+    branchId?: number;
+    startDate: string;
+    endDate: string;
+  }): Promise<{
+    createdBy: string;
+    displayName: string;
+    role: string | null;
+    branchId: number | null;
+    expenseCount: number;
+    expenseTotal: number;
+    invoiceCount: number;
+    invoiceTotal: number;
+    purchaseCount: number;
+    purchaseTotal: number;
+    anomalyDecisionsCount: number;
+  }[]> {
+    const { branchId, startDate, endDate } = params;
+
+    const expenseRows = await this.getExpenses(branchId, startDate, endDate);
+    const invoiceRows = await this.getInvoices(branchId, undefined, undefined, startDate, endDate);
+    const purchaseRows = await this.getPurchases(branchId, undefined, undefined, startDate, endDate);
+    const anomalyDecisionRows = await db
+      .select()
+      .from(anomalyDecisions)
+      .where(
+        and(
+          branchId ? eq(anomalyDecisions.branchId, branchId) : sql`TRUE`,
+          gte(anomalyDecisions.createdAt, new Date(startDate)),
+          lte(anomalyDecisions.createdAt, new Date(`${endDate}T23:59:59.999Z`))
+        )
+      );
+
+    // Bucket by createdBy text key.
+    const buckets = new Map<
+      string,
+      {
+        expenseCount: number;
+        expenseTotal: number;
+        invoiceCount: number;
+        invoiceTotal: number;
+        purchaseCount: number;
+        purchaseTotal: number;
+        anomalyDecisionsCount: number;
+      }
+    >();
+    const get = (key: string) => {
+      let b = buckets.get(key);
+      if (!b) {
+        b = {
+          expenseCount: 0,
+          expenseTotal: 0,
+          invoiceCount: 0,
+          invoiceTotal: 0,
+          purchaseCount: 0,
+          purchaseTotal: 0,
+          anomalyDecisionsCount: 0,
+        };
+        buckets.set(key, b);
+      }
+      return b;
+    };
+
+    for (const e of expenseRows) {
+      const b = get(e.createdBy ?? "unknown");
+      b.expenseCount += 1;
+      b.expenseTotal += e.amount;
+    }
+    for (const i of invoiceRows) {
+      const b = get(i.createdBy ?? "unknown");
+      b.invoiceCount += 1;
+      b.invoiceTotal += i.total;
+    }
+    for (const p of purchaseRows) {
+      const b = get(p.createdBy ?? "unknown");
+      b.purchaseCount += 1;
+      b.purchaseTotal += p.totalAmount;
+    }
+    for (const d of anomalyDecisionRows) {
+      // anomaly_decisions doesn't carry the offender's createdBy
+      // directly — we attribute to whoever made the decision (the
+      // accountant clearing the anomaly). It's still useful as a
+      // workload signal even if not "errors caused by user X".
+      const b = get(String(d.userId ?? "unknown"));
+      b.anomalyDecisionsCount += 1;
+    }
+
+    // Resolve display names. createdBy stores systemUsers.id as text
+    // for new rows; older rows are "unknown" and get a generic label.
+    const numericIds = Array.from(buckets.keys())
+      .map((k) => Number(k))
+      .filter((n) => Number.isFinite(n));
+    const sysUsers = numericIds.length
+      ? await db.select().from(systemUsers).where(inArray(systemUsers.id, numericIds))
+      : [];
+    const userById = new Map(sysUsers.map((u) => [u.id, u]));
+
+    return Array.from(buckets.entries()).map(([createdBy, agg]) => {
+      const numId = Number(createdBy);
+      const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
+      return {
+        createdBy,
+        displayName: sysUser?.displayName ?? (createdBy === "unknown" ? "غير معروف" : `#${createdBy}`),
+        role: sysUser?.role ?? null,
+        branchId: sysUser?.branchId ?? null,
+        ...agg,
+      };
+    });
   }
 
   // ==================== AI memory notes ====================

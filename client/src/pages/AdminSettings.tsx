@@ -52,6 +52,7 @@ import {
   CheckCircle,
   Layers,
   Sparkles,
+  Activity,
   Plus,
   Trash2
 } from "lucide-react";
@@ -448,6 +449,132 @@ interface BranchOption {
 // stored here get fed to the AI explainer when it's asked about an
 // anomaly, so the system effectively "learns" the business context the
 // admin types in. No edit history — current note is what the AI sees.
+// ============================================================
+// Employee accuracy tab — admin-only.
+// Shows aggregate activity per employee over a window. The intent
+// is to help the admin spot who carries the load and who might
+// benefit from training. We don't compute a single "accuracy score"
+// number — that's misleading without an audit log of edits/deletes.
+// Instead the admin sees raw counts and totals, plus the number of
+// anomaly decisions each user resolved (a workload signal).
+interface AccuracyRow {
+  createdBy: string;
+  displayName: string;
+  role: string | null;
+  branchId: number | null;
+  expenseCount: number;
+  expenseTotal: number;
+  invoiceCount: number;
+  invoiceTotal: number;
+  purchaseCount: number;
+  purchaseTotal: number;
+  anomalyDecisionsCount: number;
+  totalEntries: number;
+}
+
+function formatIQD(amount: number): string {
+  return new Intl.NumberFormat("en-US").format(amount);
+}
+
+function EmployeeAccuracyTab() {
+  const [days, setDays] = useState(30);
+  const { data, isLoading } = useQuery<{ days: number; rows: AccuracyRow[] }>({
+    queryKey: ["/api/admin/employee-accuracy", days],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/employee-accuracy?days=${days}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+  });
+
+  const rows = data?.rows ?? [];
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-primary" />
+            دقّة وحركة الموظفين
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            ملخّص تفصيلي لكل موظّف عن النشاط المالي الذي أنشأه خلال الفترة المحدّدة.
+          </p>
+        </div>
+        <select
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="p-2 border rounded-md text-sm bg-background"
+          data-testid="select-accuracy-window"
+        >
+          <option value={7}>آخر 7 أيام</option>
+          <option value={30}>آخر 30 يوماً</option>
+          <option value={60}>آخر 60 يوماً</option>
+          <option value={90}>آخر 90 يوماً</option>
+          <option value={180}>آخر 180 يوماً</option>
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-8 text-muted-foreground text-sm">جارٍ التحميل…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground text-sm">
+          لا توجد بيانات في الفترة المحدّدة.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-muted-foreground border-b">
+              <tr>
+                <th className="text-right py-2 px-2">الموظّف</th>
+                <th className="text-right py-2 px-2">الدور</th>
+                <th className="text-right py-2 px-2">المصاريف</th>
+                <th className="text-right py-2 px-2">الفواتير</th>
+                <th className="text-right py-2 px-2">المشتريات</th>
+                <th className="text-right py-2 px-2">قرارات تنبيه</th>
+                <th className="text-right py-2 px-2">إجمالي الإدخالات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.createdBy} className="border-b last:border-0 hover:bg-accent/40">
+                  <td className="py-2 px-2 font-medium">{r.displayName}</td>
+                  <td className="py-2 px-2 text-muted-foreground">{r.role ?? "—"}</td>
+                  <td className="py-2 px-2 tabular-nums">
+                    {r.expenseCount}
+                    {r.expenseTotal > 0 && (
+                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.expenseTotal)})</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-2 tabular-nums">
+                    {r.invoiceCount}
+                    {r.invoiceTotal > 0 && (
+                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.invoiceTotal)})</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-2 tabular-nums">
+                    {r.purchaseCount}
+                    {r.purchaseTotal > 0 && (
+                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.purchaseTotal)})</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-2 tabular-nums">{r.anomalyDecisionsCount}</td>
+                  <td className="py-2 px-2 tabular-nums font-semibold">{r.totalEntries}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-muted-foreground mt-3">
+            ملاحظة: الإدخالات المُنشأة قبل هذا التحديث تظهر تحت "غير معروف" لأنّ نظام تتبّع المُنشئ كان غير مكتمل قبلها.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function AiMemoryTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1190,7 +1317,7 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-3 md:grid-cols-6 w-full max-w-3xl mb-6">
+        <TabsList className="grid grid-cols-4 md:grid-cols-7 w-full max-w-3xl mb-6">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
             {t.adminSettings.tabUsers}
@@ -1214,6 +1341,10 @@ export default function AdminSettings() {
           <TabsTrigger value="ai-memory" className="gap-2">
             <Sparkles className="w-4 h-4" />
             ذاكرة الذكاء
+          </TabsTrigger>
+          <TabsTrigger value="accuracy" className="gap-2">
+            <Activity className="w-4 h-4" />
+            دقّة الموظفين
           </TabsTrigger>
         </TabsList>
 
@@ -1680,6 +1811,10 @@ export default function AdminSettings() {
 
         <TabsContent value="ai-memory" className="space-y-6">
           <AiMemoryTab />
+        </TabsContent>
+
+        <TabsContent value="accuracy" className="space-y-6">
+          <EmployeeAccuracyTab />
         </TabsContent>
       </Tabs>
 
