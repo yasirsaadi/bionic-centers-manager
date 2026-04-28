@@ -400,6 +400,188 @@ function PatientFinancialChip({ patientId }: { patientId: number | null }) {
   );
 }
 
+interface MonthlyNarrativeResponse {
+  narrative: string;
+  generatedAt: string;
+  snapshot: {
+    branchName: string | null;
+    month: string;
+    current: { revenue: { total: number }; expenses: { total: number }; newPatients: number };
+    delta: { revenuePct: number | null; expensesPct: number | null; netPct: number | null };
+  };
+}
+
+// Renders the markdown-ish narrative the model returns.
+// We don't parse full markdown — just bold the H2 headings and break
+// paragraphs / bullets. Keeps the bundle small (no extra dep) and
+// works for the predictable structure we ask the model to use.
+function NarrativeBody({ text }: { text: string }) {
+  const blocks = text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  return (
+    <div className="space-y-3 text-sm leading-relaxed">
+      {blocks.map((block, idx) => {
+        if (block.startsWith("## ")) {
+          return (
+            <h3 key={idx} className="text-base font-bold text-primary mt-2">
+              {block.replace(/^##\s*/, "")}
+            </h3>
+          );
+        }
+        if (/^\s*-\s/.test(block)) {
+          const items = block
+            .split(/\n/)
+            .filter((l) => l.trim())
+            .map((l) => l.replace(/^\s*-\s*/, ""));
+          return (
+            <ul key={idx} className="list-disc pr-5 space-y-1">
+              {items.map((it, i) => (
+                <li key={i}>{it}</li>
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={idx} className="whitespace-pre-wrap">
+            {block}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function MonthlyNarrativeCard({
+  isAdmin,
+  allowedBranches,
+  defaultBranchId,
+}: {
+  isAdmin: boolean;
+  allowedBranches: { id: number; name: string }[];
+  defaultBranchId: number | null;
+}) {
+  const { toast } = useToast();
+  // Default month = previous month (most useful: the just-closed period).
+  const today = new Date();
+  const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const defaultMonth = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  const [month, setMonth] = useState(defaultMonth);
+  const [branchId, setBranchId] = useState<number | null>(defaultBranchId);
+  const [report, setReport] = useState<MonthlyNarrativeResponse | null>(null);
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/monthly-report", {
+        month,
+        branchId: isAdmin ? branchId : undefined,
+      });
+      return res.json() as Promise<MonthlyNarrativeResponse>;
+    },
+    onSuccess: (data) => {
+      setReport(data);
+    },
+    onError: (err: any) => {
+      toast({
+        title: "تعذّر توليد التقرير",
+        description: err?.message ?? "حاول لاحقاً",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-primary" />
+          تقرير سردي شهري ذكي
+        </CardTitle>
+        <CardDescription>
+          ملخّص تنفيذي بالعربية مبني على البيانات الحقيقية للشهر المختار، مع مقارنة بالشهر السابق وتوصيات.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">الشهر</label>
+            <Input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              data-testid="input-monthly-report-month"
+            />
+          </div>
+          {isAdmin && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">الفرع</label>
+              <select
+                className="w-full p-2 border rounded-md text-sm bg-background"
+                value={branchId ?? ""}
+                onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : null)}
+                data-testid="select-monthly-report-branch"
+              >
+                <option value="">كل الفروع</option>
+                {allowedBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex items-end">
+            <Button
+              type="button"
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              className="w-full"
+              data-testid="button-generate-monthly-report"
+            >
+              {generateMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 ml-2 animate-spin" />
+                  جارٍ التوليد…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 ml-2" />
+                  توليد التقرير
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {report && (
+          <div className="border rounded-lg p-4 bg-muted/30">
+            <div className="flex items-center justify-between mb-3 pb-3 border-b">
+              <div className="text-sm">
+                <div className="font-semibold">
+                  {report.snapshot.branchName ?? "كل الفروع"} — {report.snapshot.month}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  وُلِّد في {new Date(report.generatedAt).toLocaleString("ar-IQ")}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(report.narrative);
+                  toast({ title: "نُسخ التقرير" });
+                }}
+              >
+                نسخ
+              </Button>
+            </div>
+            <NarrativeBody text={report.narrative} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 interface ExpenseHint {
   severity: "info" | "warning";
   message: string;
@@ -2646,7 +2828,13 @@ export default function Accounting() {
             <h2 className="text-xl font-semibold">
               {isAdmin ? t.accounting.financialReports : `${t.accounting.financialReports} - ${branchSession?.branchName || t.accounting.branch}`}
             </h2>
-            
+
+            <MonthlyNarrativeCard
+              isAdmin={isAdmin}
+              allowedBranches={allowedBranches}
+              defaultBranchId={isAdmin ? null : (userBranchId ?? null)}
+            />
+
             {/* Branch Comparison - Admin Only or Single Branch View */}
             <Card>
               <CardHeader>
