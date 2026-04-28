@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar } from "lucide-react";
+import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar, Sparkles, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
 import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -352,6 +354,27 @@ function ResultsTab() {
   const isAdmin = branchSession?.isAdmin ?? false;
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [viewResponseId, setViewResponseId] = useState<number | null>(null);
+  const [draftReply, setDraftReply] = useState<string>("");
+  const [draftSummary, setDraftSummary] = useState<string>("");
+  const { toast } = useToast();
+
+  const replyMutation = useMutation({
+    mutationFn: async (responseId: number) => {
+      const res = await apiRequest("POST", "/api/ai/survey-reply", { responseId });
+      return res.json() as Promise<{ draftReply: string; summary: string }>;
+    },
+    onSuccess: (data) => {
+      setDraftReply(data.draftReply);
+      setDraftSummary(data.summary);
+    },
+    onError: (err: any) => {
+      toast({
+        title: "تعذّر توليد المسوّدة",
+        description: err?.message ?? "حاول لاحقاً",
+        variant: "destructive",
+      });
+    },
+  });
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -607,7 +630,16 @@ function ResultsTab() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!viewResponseId} onOpenChange={() => setViewResponseId(null)}>
+      <Dialog
+        open={!!viewResponseId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewResponseId(null);
+            setDraftReply("");
+            setDraftSummary("");
+          }
+        }}
+      >
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t.surveys.surveyDetails}</DialogTitle>
@@ -653,6 +685,68 @@ function ResultsTab() {
                   })}
                 </div>
               )}
+
+              <div className="border-t pt-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      مسوّدة ردّ ذكيّة
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      للمراجعة والتعديل قبل الإرسال — المساعد لا يرسل أيّ شيء تلقائياً.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => viewResponseId && replyMutation.mutate(viewResponseId)}
+                    disabled={replyMutation.isPending}
+                    data-testid="button-generate-survey-reply"
+                  >
+                    {replyMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 ml-1.5 animate-spin" />
+                        جارٍ الصياغة…
+                      </>
+                    ) : draftReply ? (
+                      "أعد التوليد"
+                    ) : (
+                      "اقترح ردّاً"
+                    )}
+                  </Button>
+                </div>
+                {draftSummary && (
+                  <div className="text-xs rounded-md border-r-4 border-r-blue-500 bg-blue-50 text-blue-900 px-3 py-2">
+                    <span className="font-semibold">خلاصة ملاحظات المريض: </span>
+                    {draftSummary}
+                  </div>
+                )}
+                {draftReply && (
+                  <>
+                    <Textarea
+                      value={draftReply}
+                      onChange={(e) => setDraftReply(e.target.value)}
+                      rows={8}
+                      className="text-sm"
+                      data-testid="textarea-survey-reply-draft"
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(draftReply);
+                          toast({ title: "نُسخت المسوّدة" });
+                        }}
+                      >
+                        نسخ المسوّدة
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
