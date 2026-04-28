@@ -2509,7 +2509,13 @@ export async function registerRoutes(
       // their own — even if the client sends a different branchId in the
       // body. Pin it server-side BEFORE the schema parse so the validator
       // sees the corrected value.
-      const enforcedBody = { ...req.body, createdBy: user?.claims?.sub || "unknown" };
+      // createdBy: prefer branchSession.userId (system_users.id, stable
+      // and joinable) over user.claims.sub (OIDC subject, often absent
+      // in this app). Fall back to "unknown" so older rows still parse.
+      const createdByValue = branchSession?.userId
+        ? String(branchSession.userId)
+        : user?.claims?.sub || "unknown";
+      const enforcedBody = { ...req.body, createdBy: createdByValue };
       if (!isAdmin && branchSession?.branchId) {
         enforcedBody.branchId = branchSession.branchId;
       }
@@ -3256,7 +3262,9 @@ export async function registerRoutes(
         invoiceData.invoiceNumber = await storage.getNextInvoiceNumber();
       }
 
-      invoiceData.createdBy = user?.claims?.sub;
+      invoiceData.createdBy = branchSession?.userId
+        ? String(branchSession.userId)
+        : user?.claims?.sub || "unknown";
 
       const invoice = await storage.createInvoice(invoiceData);
 
@@ -3541,7 +3549,9 @@ export async function registerRoutes(
       const data = insertPurchaseSchema.parse(body);
       const purchase = await storage.createPurchase({
         ...data,
-        createdBy: user?.claims?.sub || branchSession?.displayName || "unknown",
+        createdBy: branchSession?.userId
+          ? String(branchSession.userId)
+          : user?.claims?.sub || "unknown",
       });
       // Auto-journal: Dr Expense / Cr AP (credit) or Cr Cash (cash)
       await createJournalForPurchase(purchase, userId);
@@ -3755,6 +3765,40 @@ export async function registerRoutes(
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
     res.json(result.value);
+  });
+
+  // Per-employee activity & accuracy aggregates over a window. Admin
+  // only — surfaces who creates how many records, totals by type, and
+  // anomaly-decision workload. Used by the admin dashboard to spot
+  // employees who might need training (high anomaly involvement) or
+  // employees doing the heavy lifting.
+  app.get("/api/admin/employee-accuracy", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "غير مصرح — مسؤول النظام فقط" });
+    }
+    const days = Math.max(7, Math.min(180, Number(req.query.days) || 30));
+    const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+
+    const today = new Date();
+    const start = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().split("T")[0];
+
+    const rows = await storage.getEmployeeAccuracy({
+      branchId,
+      startDate: iso(start),
+      endDate: iso(today),
+    });
+
+    // Sort by total activity descending — busiest employees first.
+    const sorted = rows
+      .map((r) => ({
+        ...r,
+        totalEntries: r.expenseCount + r.invoiceCount + r.purchaseCount,
+      }))
+      .sort((a, b) => b.totalEntries - a.totalEntries);
+
+    res.json({ days, rows: sorted });
   });
 
   // Smart accounting audit — periodic deep review across a 30/60/90-day
