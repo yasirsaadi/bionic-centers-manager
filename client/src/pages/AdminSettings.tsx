@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,7 +50,10 @@ import {
   LayoutDashboard,
   AlertTriangle,
   CheckCircle,
-  Layers
+  Layers,
+  Sparkles,
+  Plus,
+  Trash2
 } from "lucide-react";
 import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
 import {
@@ -422,6 +426,260 @@ function BackupStatusCard() {
         {isSending ? t.adminSettings.sending : t.adminSettings.sendBackupNow}
       </Button>
     </div>
+  );
+}
+
+interface AiMemoryNote {
+  id: number;
+  branchId: number | null;
+  scope: string;
+  category: string | null;
+  title: string;
+  note: string;
+  isActive: boolean | null;
+}
+
+interface BranchOption {
+  id: number;
+  name: string;
+}
+
+// Read/write surface for the manager-curated AI knowledge base. Notes
+// stored here get fed to the AI explainer when it's asked about an
+// anomaly, so the system effectively "learns" the business context the
+// admin types in. No edit history — current note is what the AI sees.
+function AiMemoryTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState<AiMemoryNote | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const { data: notes = [], isLoading } = useQuery<AiMemoryNote[]>({
+    queryKey: ["/api/ai-notes"],
+    queryFn: async () => {
+      const res = await fetch("/api/ai-notes", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const { data: branches = [] } = useQuery<BranchOption[]>({
+    queryKey: ["/api/branches"],
+  });
+
+  const saveNote = useMutation({
+    mutationFn: async (data: Partial<AiMemoryNote>) => {
+      const url = editing?.id ? `/api/ai-notes/${editing.id}` : "/api/ai-notes";
+      const method = editing?.id ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "تعذّر الحفظ");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ai-notes"] });
+      toast({ title: editing ? "تم تعديل الملاحظة" : "تمت إضافة الملاحظة" });
+      setIsOpen(false);
+      setEditing(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteNote = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/ai-notes/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("تعذّر الحذف");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ai-notes"] });
+      toast({ title: "تم حذف الملاحظة" });
+    },
+  });
+
+  const scopeLabel = (s: string) =>
+    ({ general: "عامّة", expense: "مصاريف", invoice: "فواتير", patient: "مرضى" } as Record<string, string>)[s] || s;
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              ذاكرة الذكاء الاصطناعي
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+              اكتب هنا أيّ سياق يساعد الذكاء على فهم طبيعة عملك. عند توليد شرح لأيّ تنبيه، يقرأ هذه الملاحظات
+              ويأخذها بعين الاعتبار. مثلاً: "في رمضان نتوقع زيادة في الضيافة"، أو "هذا المورد يأتينا كل شهرين بمبلغ كبير".
+            </p>
+          </div>
+          <Button
+            onClick={() => { setEditing(null); setIsOpen(true); }}
+            className="gap-2 shrink-0"
+            data-testid="button-add-ai-note"
+          >
+            <Plus className="h-4 w-4" />
+            إضافة ملاحظة
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-center text-muted-foreground py-8">جارٍ التحميل...</p>
+          ) : notes.length === 0 ? (
+            <div className="text-center py-12">
+              <Sparkles className="h-12 w-12 mx-auto mb-3 text-muted-foreground/50" />
+              <p className="text-muted-foreground">لا توجد ملاحظات بعد. أضف أوّل ملاحظة لتبدأ تعليم النظام.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {notes.map((n) => (
+                <div key={n.id} className="rounded-md border p-4 space-y-2" data-testid={`note-${n.id}`}>
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-semibold">{n.title}</h4>
+                        <Badge variant="outline" className="font-normal">{scopeLabel(n.scope)}</Badge>
+                        {n.category && <Badge variant="secondary" className="font-normal">{n.category}</Badge>}
+                        {n.branchId === null ? (
+                          <Badge variant="secondary" className="font-normal">كل الفروع</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="font-normal">
+                            {branches.find((b) => b.id === n.branchId)?.name ?? `فرع ${n.branchId}`}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.note}</p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setEditing(n); setIsOpen(true); }}
+                        data-testid={`button-edit-note-${n.id}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive"
+                        onClick={() => deleteNote.mutate(n.id)}
+                        data-testid={`button-delete-note-${n.id}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editing ? "تعديل ملاحظة" : "إضافة ملاحظة جديدة"}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const data: Partial<AiMemoryNote> = {
+                scope: String(fd.get("scope") || "general"),
+                category: String(fd.get("category") || "").trim() || null,
+                title: String(fd.get("title") || "").trim(),
+                note: String(fd.get("note") || "").trim(),
+                branchId: fd.get("branchId") ? parseInt(String(fd.get("branchId"))) : null,
+              };
+              if (!data.title || !data.note) {
+                toast({ title: "العنوان والنص مطلوبان", variant: "destructive" });
+                return;
+              }
+              saveNote.mutate(data);
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">النطاق *</label>
+                <select
+                  name="scope"
+                  defaultValue={editing?.scope || "general"}
+                  required
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="general">عامّة (تنطبق على كل شيء)</option>
+                  <option value="expense">مصاريف فقط</option>
+                  <option value="invoice">فواتير فقط</option>
+                  <option value="patient">مرضى فقط</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">الفرع</label>
+                <select
+                  name="branchId"
+                  defaultValue={editing?.branchId ?? ""}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">كل الفروع</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">الفئة (اختياري)</label>
+                <Input
+                  name="category"
+                  defaultValue={editing?.category || ""}
+                  placeholder="مثال: salaries, hospitality, maintenance"
+                />
+                <p className="text-xs text-muted-foreground">
+                  اتركها فارغة لتنطبق على كل الفئات. اكتب اسم الفئة بالإنجليزي للربط الدقيق.
+                </p>
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">العنوان *</label>
+                <Input
+                  name="title"
+                  defaultValue={editing?.title || ""}
+                  placeholder="مثال: مورد المستلزمات الخاصة يأتي شهرياً"
+                  required
+                />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">الملاحظة *</label>
+                <Textarea
+                  name="note"
+                  defaultValue={editing?.note || ""}
+                  rows={4}
+                  placeholder="اشرح بتفصيل لكي يفهم الذكاء السياق. مثلاً: 'مورد المستلزمات الطبية الخاصة (محمد علي) يزوّدنا مرة كل شهرين بمبلغ 5-8 ملايين دينار. هذا طبيعي ولا يستحق تنبيه.'"
+                  required
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>إلغاء</Button>
+              <Button type="submit" disabled={saveNote.isPending}>
+                {saveNote.isPending ? "جارٍ الحفظ..." : editing ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -932,7 +1190,7 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl mb-6">
+        <TabsList className="grid grid-cols-3 md:grid-cols-6 w-full max-w-3xl mb-6">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
             {t.adminSettings.tabUsers}
@@ -952,6 +1210,10 @@ export default function AdminSettings() {
           <TabsTrigger value="backup" className="gap-2">
             <Mail className="w-4 h-4" />
             {t.adminSettings.tabBackup}
+          </TabsTrigger>
+          <TabsTrigger value="ai-memory" className="gap-2">
+            <Sparkles className="w-4 h-4" />
+            ذاكرة الذكاء
           </TabsTrigger>
         </TabsList>
 
@@ -1414,6 +1676,10 @@ export default function AdminSettings() {
               {isExporting ? t.adminSettings.exporting : t.adminSettings.exportPatientsCsv}
             </Button>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="ai-memory" className="space-y-6">
+          <AiMemoryTab />
         </TabsContent>
       </Tabs>
 

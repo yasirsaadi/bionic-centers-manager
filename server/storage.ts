@@ -1,6 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
+  anomalyDecisions, aiMemoryNotes,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -15,6 +16,8 @@ import {
   type InvoiceItem, type InsertInvoiceItem,
   type Vendor, type InsertVendor,
   type Purchase, type InsertPurchase,
+  type AnomalyDecision, type InsertAnomalyDecision,
+  type AiMemoryNote, type InsertAiMemoryNote,
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting,
   type SystemUser, type InsertSystemUser,
   type TreatmentPlan, type InsertTreatmentPlan,
@@ -1242,6 +1245,117 @@ export class DatabaseStorage implements IStorage {
     `);
     const cnt = (result.rows?.[0] as any)?.cnt ?? 0;
     return `PUR-${year}${month}-${String(cnt + 1).padStart(4, "0")}`;
+  }
+
+  // ==================== Anomaly decisions ====================
+
+  // Records a decision (reviewed | not_error) on a specific anomaly source.
+  // 'reviewed' soft-acknowledges and auto-expires after 30 days.
+  // 'not_error' is a permanent suppression for that source record.
+  async recordAnomalyDecision(decision: InsertAnomalyDecision): Promise<AnomalyDecision> {
+    const expiresAt = decision.decision === "reviewed"
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      : null;
+    const [created] = await db
+      .insert(anomalyDecisions)
+      .values({ ...decision, expiresAt })
+      .returning();
+    return created;
+  }
+
+  // Returns the set of anomaly source IDs that should be suppressed for the
+  // current user's branch. Excludes 'reviewed' decisions whose 30-day expiry
+  // has lapsed.
+  async getActiveAnomalyDecisions(branchId?: number): Promise<AnomalyDecision[]> {
+    const now = new Date();
+    const branchClause = branchId ? eq(anomalyDecisions.branchId, branchId) : sql`TRUE`;
+    return await db
+      .select()
+      .from(anomalyDecisions)
+      .where(
+        and(
+          branchClause,
+          // Either the decision never expires (not_error → expiresAt IS NULL)
+          // OR it's still within its expiry window.
+          or(
+            sql`${anomalyDecisions.expiresAt} IS NULL`,
+            sql`${anomalyDecisions.expiresAt} > ${now}`
+          )
+        )
+      );
+  }
+
+  // ==================== AI memory notes ====================
+
+  async getAiMemoryNotes(branchId?: number, activeOnly = true): Promise<AiMemoryNote[]> {
+    const conditions = [];
+    if (activeOnly) conditions.push(eq(aiMemoryNotes.isActive, true));
+    if (branchId !== undefined) {
+      // Notes scoped to this branch OR global notes.
+      conditions.push(or(
+        eq(aiMemoryNotes.branchId, branchId),
+        sql`${aiMemoryNotes.branchId} IS NULL`
+      ));
+    }
+    if (conditions.length === 0) {
+      return await db.select().from(aiMemoryNotes).orderBy(desc(aiMemoryNotes.updatedAt));
+    }
+    return await db.select().from(aiMemoryNotes).where(and(...conditions)).orderBy(desc(aiMemoryNotes.updatedAt));
+  }
+
+  async createAiMemoryNote(note: InsertAiMemoryNote): Promise<AiMemoryNote> {
+    const [created] = await db.insert(aiMemoryNotes).values(note).returning();
+    return created;
+  }
+
+  async updateAiMemoryNote(id: number, updates: Partial<InsertAiMemoryNote>): Promise<AiMemoryNote | undefined> {
+    const [updated] = await db
+      .update(aiMemoryNotes)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(aiMemoryNotes.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteAiMemoryNote(id: number): Promise<void> {
+    // Soft-delete via isActive so any historical decisions referencing the
+    // note remain queryable.
+    await db.update(aiMemoryNotes).set({ isActive: false, updatedAt: new Date() }).where(eq(aiMemoryNotes.id, id));
+  }
+
+  // Returns notes relevant to a given anomaly. Filters by scope so a
+  // patient-related anomaly doesn't load expense-only notes, and by
+  // branch so global notes always show but other-branch notes never do.
+  async getRelevantAiNotesForAnomaly(params: {
+    sourceType: "expense" | "invoice" | "patient";
+    branchId: number;
+    category?: string;
+  }): Promise<AiMemoryNote[]> {
+    const conditions = [
+      eq(aiMemoryNotes.isActive, true),
+      or(
+        eq(aiMemoryNotes.scope, "general"),
+        eq(aiMemoryNotes.scope, params.sourceType)
+      ),
+      or(
+        sql`${aiMemoryNotes.branchId} IS NULL`,
+        eq(aiMemoryNotes.branchId, params.branchId)
+      ),
+    ];
+    if (params.category) {
+      conditions.push(or(
+        sql`${aiMemoryNotes.category} IS NULL`,
+        eq(aiMemoryNotes.category, params.category)
+      ));
+    } else {
+      conditions.push(sql`${aiMemoryNotes.category} IS NULL`);
+    }
+    return await db
+      .select()
+      .from(aiMemoryNotes)
+      .where(and(...conditions))
+      .orderBy(desc(aiMemoryNotes.updatedAt))
+      .limit(8);
   }
 
   async getPurchasesSummary(

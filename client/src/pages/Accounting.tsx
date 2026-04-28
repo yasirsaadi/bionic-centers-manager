@@ -653,6 +653,47 @@ export default function Accounting() {
   // clicks "اشرح بالذكاء" the first time.
   const [anomalyExplanations, setAnomalyExplanations] = useState<Record<string, string>>({});
   const [anomalyExplaining, setAnomalyExplaining] = useState<string | null>(null);
+  // For the "ليس خطأ" decision dialog — captures the optional reason
+  // before submitting so it gets stored alongside the suppression.
+  const [notErrorTarget, setNotErrorTarget] = useState<Anomaly | null>(null);
+  const [notErrorReason, setNotErrorReason] = useState<string>("");
+
+  const recordAnomalyDecision = async (
+    anomaly: Anomaly,
+    decision: "reviewed" | "not_error",
+    reason?: string
+  ) => {
+    try {
+      const res = await fetch("/api/anomalies/decisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          anomalyType: anomaly.type,
+          sourceType: anomaly.source.type,
+          sourceId: anomaly.source.id,
+          decision,
+          reason: reason || null,
+          branchId: anomaly.branchId,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast({ title: data.error || "تعذّر حفظ القرار", variant: "destructive" });
+        return;
+      }
+      toast({
+        title: decision === "reviewed"
+          ? "تم وضع علامة مراجَع — يختفي هذا التنبيه لمدة 30 يوماً"
+          : "تم تسجيل أن هذا ليس خطأ — لن يظهر مجدداً",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/anomalies"] });
+      setNotErrorTarget(null);
+      setNotErrorReason("");
+    } catch (err: any) {
+      toast({ title: "خطأ في الاتصال", description: err.message, variant: "destructive" });
+    }
+  };
 
   const explainAnomalyAi = async (anomaly: Anomaly) => {
     if (anomalyExplanations[anomaly.id]) return; // already cached
@@ -2893,23 +2934,49 @@ export default function Accounting() {
                                 {a.source.name && <span>{a.source.name}</span>}
                               </div>
                             </div>
-                            {aiEnabled && (
+                            <div className="flex flex-wrap gap-2 shrink-0">
+                              {aiEnabled && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5 text-xs"
+                                  onClick={() => explainAnomalyAi(a)}
+                                  disabled={anomalyExplaining === a.id || !!explanation}
+                                  data-testid={`button-explain-${a.id}`}
+                                >
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                  {anomalyExplaining === a.id
+                                    ? "جارٍ..."
+                                    : explanation
+                                    ? "تم الشرح"
+                                    : "اشرح بالذكاء"}
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="gap-1.5 text-xs shrink-0"
-                                onClick={() => explainAnomalyAi(a)}
-                                disabled={anomalyExplaining === a.id || !!explanation}
-                                data-testid={`button-explain-${a.id}`}
+                                className="gap-1.5 text-xs"
+                                onClick={() => recordAnomalyDecision(a, "reviewed")}
+                                data-testid={`button-reviewed-${a.id}`}
+                                title="إخفاء التنبيه لمدة 30 يوماً"
                               >
-                                <Sparkles className="h-3.5 w-3.5" />
-                                {anomalyExplaining === a.id
-                                  ? "جارٍ..."
-                                  : explanation
-                                  ? "تم الشرح"
-                                  : "اشرح بالذكاء"}
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                مراجَع
                               </Button>
-                            )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 text-xs text-muted-foreground"
+                                onClick={() => {
+                                  setNotErrorTarget(a);
+                                  setNotErrorReason("");
+                                }}
+                                data-testid={`button-not-error-${a.id}`}
+                                title="هذا ليس خطأ — لا تنبّهني عنه مجدداً"
+                              >
+                                ليس خطأ
+                              </Button>
+                            </div>
                           </div>
                           {explanation && (
                             <div className="mt-3 rounded-md bg-background/60 p-3 text-sm border-l-4 border-primary">
@@ -3558,6 +3625,58 @@ export default function Accounting() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setViewingPatientId(null)}>
                 إغلاق
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* "Not an error" decision dialog — lets the accountant explain
+            why this anomaly is actually fine. The optional reason gets
+            stored alongside the suppression and surfaces in audit if needed. */}
+        <Dialog
+          open={notErrorTarget !== null}
+          onOpenChange={(open) => { if (!open) { setNotErrorTarget(null); setNotErrorReason(""); } }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>تأكيد: ليس خطأ</DialogTitle>
+            </DialogHeader>
+            {notErrorTarget && (
+              <div className="space-y-3">
+                <div className="rounded-md bg-muted/40 p-3 text-sm">
+                  <p className="font-medium">{notErrorTarget.title}</p>
+                  <p className="text-muted-foreground mt-1">{notErrorTarget.description}</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">السبب (اختياري)</label>
+                  <Textarea
+                    value={notErrorReason}
+                    onChange={(e) => setNotErrorReason(e.target.value)}
+                    placeholder="مثال: هذا المورد يأتينا مرة كل شهرين بمبلغ كبير، أو هذا مريض VIP فواتيره طبيعية..."
+                    rows={3}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    سيُحفَظ السبب لتفسير الذكاء الاصطناعي مستقبلاً، ولن يظهر هذا التنبيه مجدداً لنفس السجلّ.
+                  </p>
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => { setNotErrorTarget(null); setNotErrorReason(""); }}
+              >
+                إلغاء
+              </Button>
+              <Button
+                onClick={() => {
+                  if (notErrorTarget) {
+                    recordAnomalyDecision(notErrorTarget, "not_error", notErrorReason.trim() || undefined);
+                  }
+                }}
+                data-testid="button-confirm-not-error"
+              >
+                تأكيد
               </Button>
             </DialogFooter>
           </DialogContent>

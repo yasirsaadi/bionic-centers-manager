@@ -3,6 +3,7 @@ import { seedChartOfAccounts, ensureCurrentPeriod } from "./seed_chart_of_accoun
 import * as migration001 from "./001_accounting_foundation";
 import * as migration002 from "./002_invoices";
 import * as migration003 from "./003_vendors_purchases";
+import * as migration004 from "./004_ai_memory";
 
 /**
  * Migration Runner
@@ -26,7 +27,7 @@ interface Migration {
 }
 
 // Ordered list of migrations. Add new ones at the end.
-const migrations: Migration[] = [migration001, migration002, migration003];
+const migrations: Migration[] = [migration001, migration002, migration003, migration004];
 
 async function runSqlMigration(migration: Migration): Promise<void> {
   const client = await pool.connect();
