@@ -28,6 +28,7 @@ import { explainAnomaly } from "./ai/explain_anomaly";
 import { aiChat, type ChatMessage } from "./ai/chat";
 import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
+import { getOrGenerateSmartAudit } from "./ai/smart_audit";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { logAudit } from "./accounting/ledger";
 
@@ -3749,6 +3750,39 @@ export async function registerRoutes(
     }
 
     const result = await getOrGenerateMonthlyReport({ branchId, branchName, month });
+    if (!result.ok) {
+      const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
+      return res.status(status).json({ error: result.message, reason: result.reason });
+    }
+    res.json(result.value);
+  });
+
+  // Smart accounting audit — periodic deep review across a 30/60/90-day
+  // window. Distinct from /api/anomalies (which is per-transaction and
+  // rule-based): this surfaces patterns Sonnet sees in distributions,
+  // concentration, and timing. Cached 6h server-side so reopening the
+  // page doesn't re-bill.
+  app.post("/api/ai/smart-audit", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+    const { windowDays: requestedWindow, branchId: requestedBranchId } = req.body ?? {};
+    const windowDays = Math.max(7, Math.min(90, Number(requestedWindow) || 30));
+    let branchId: number | null;
+    if (isAdmin) {
+      branchId = typeof requestedBranchId === "number" ? requestedBranchId : null;
+    } else {
+      branchId = branchSession?.branchId ?? null;
+    }
+    let branchName: string | null = null;
+    if (branchId) {
+      const branches = await storage.getBranches();
+      branchName = branches.find((b) => b.id === branchId)?.name ?? null;
+    }
+    const result = await getOrGenerateSmartAudit({ branchId, branchName, windowDays });
     if (!result.ok) {
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
       return res.status(status).json({ error: result.message, reason: result.reason });

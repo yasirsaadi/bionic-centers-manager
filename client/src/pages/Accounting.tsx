@@ -582,6 +582,186 @@ function MonthlyNarrativeCard({
   );
 }
 
+interface AuditFinding {
+  severity: "low" | "medium" | "high";
+  category: string;
+  title: string;
+  description: string;
+  suggestedAction: string;
+}
+
+interface SmartAuditResponse {
+  findings: AuditFinding[];
+  summary: string;
+  generatedAt: string;
+  snapshot: { branchName: string | null; windowDays: number };
+}
+
+const SEVERITY_STYLES: Record<AuditFinding["severity"], { badge: string; border: string }> = {
+  high: {
+    badge: "bg-red-100 text-red-800 border-red-200",
+    border: "border-r-red-500 bg-red-50",
+  },
+  medium: {
+    badge: "bg-amber-100 text-amber-800 border-amber-200",
+    border: "border-r-amber-500 bg-amber-50",
+  },
+  low: {
+    badge: "bg-blue-100 text-blue-800 border-blue-200",
+    border: "border-r-blue-500 bg-blue-50",
+  },
+};
+
+const SEVERITY_LABEL: Record<AuditFinding["severity"], string> = {
+  high: "عالية",
+  medium: "متوسطة",
+  low: "منخفضة",
+};
+
+function SmartAuditCard({
+  isAdmin,
+  allowedBranches,
+  defaultBranchId,
+}: {
+  isAdmin: boolean;
+  allowedBranches: { id: number; name: string }[];
+  defaultBranchId: number | null;
+}) {
+  const { toast } = useToast();
+  const [windowDays, setWindowDays] = useState(30);
+  const [branchId, setBranchId] = useState<number | null>(defaultBranchId);
+  const [audit, setAudit] = useState<SmartAuditResponse | null>(null);
+
+  const auditMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/smart-audit", {
+        windowDays,
+        branchId: isAdmin ? branchId : undefined,
+      });
+      return res.json() as Promise<SmartAuditResponse>;
+    },
+    onSuccess: (data) => setAudit(data),
+    onError: (err: any) =>
+      toast({
+        title: "تعذّر تشغيل التدقيق",
+        description: err?.message ?? "حاول لاحقاً",
+        variant: "destructive",
+      }),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-primary" />
+          تدقيق محاسبي ذكي
+        </CardTitle>
+        <CardDescription>
+          مراجعة دوريّة معمّقة عبر آخر 30/60/90 يوماً. يلتقط أنماطاً يصعب على القواعد الفوريّة كشفها — تركّز موردين، توزيع توقيت الدفعات، شيخوخة الذمم، ومعدّلات الخصم.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">نطاق التدقيق</label>
+            <select
+              value={windowDays}
+              onChange={(e) => setWindowDays(Number(e.target.value))}
+              className="w-full p-2 border rounded-md text-sm bg-background"
+              data-testid="select-audit-window"
+            >
+              <option value={7}>آخر 7 أيام</option>
+              <option value={30}>آخر 30 يوماً</option>
+              <option value={60}>آخر 60 يوماً</option>
+              <option value={90}>آخر 90 يوماً</option>
+            </select>
+          </div>
+          {isAdmin && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">الفرع</label>
+              <select
+                className="w-full p-2 border rounded-md text-sm bg-background"
+                value={branchId ?? ""}
+                onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : null)}
+                data-testid="select-audit-branch"
+              >
+                <option value="">كل الفروع</option>
+                {allowedBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex items-end">
+            <Button
+              type="button"
+              onClick={() => auditMutation.mutate()}
+              disabled={auditMutation.isPending}
+              className="w-full"
+              data-testid="button-run-smart-audit"
+            >
+              {auditMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 ml-2 animate-spin" />
+                  جارٍ التدقيق…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 ml-2" />
+                  تشغيل التدقيق
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {audit && (
+          <div className="space-y-3">
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-2">
+                وُلِّد في {new Date(audit.generatedAt).toLocaleString("ar-IQ")} —
+                {" "}{audit.snapshot.branchName ?? "كل الفروع"} —
+                آخر {audit.snapshot.windowDays} يوماً
+              </div>
+              <p className="text-sm leading-relaxed">{audit.summary}</p>
+            </div>
+
+            {audit.findings.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-6 border rounded-lg">
+                لا توجد ملاحظات تستوجب الانتباه. الوضع المحاسبي طبيعي.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {audit.findings.map((f, i) => {
+                  const styles = SEVERITY_STYLES[f.severity];
+                  return (
+                    <div key={i} className={`border-r-4 rounded-md p-3 ${styles.border}`}>
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="font-semibold text-sm">{f.title}</div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full border ${styles.badge} shrink-0`}>
+                          {SEVERITY_LABEL[f.severity]}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-1">{f.category}</div>
+                      <p className="text-sm leading-relaxed mb-2">{f.description}</p>
+                      <div className="text-xs bg-background/60 rounded px-2 py-1.5 border">
+                        <span className="font-semibold">إجراء مقترح: </span>
+                        {f.suggestedAction}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 interface ExpenseHint {
   severity: "info" | "warning";
   message: string;
@@ -2916,6 +3096,12 @@ export default function Accounting() {
           {/* Analytics Tab */}
           <TabsContent value="analytics" className="space-y-6">
             <h2 className="text-xl font-semibold">{t.accounting.advancedAnalytics}</h2>
+
+            <SmartAuditCard
+              isAdmin={isAdmin}
+              allowedBranches={allowedBranches}
+              defaultBranchId={isAdmin ? null : (userBranchId ?? null)}
+            />
 
             {/* Monthly Trends Detail */}
             <Card>
