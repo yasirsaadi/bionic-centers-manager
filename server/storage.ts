@@ -36,6 +36,7 @@ export interface IStorage {
 
   // Patients
   getPatients(branchId?: number): Promise<Patient[]>;
+  getPatientsByIds(ids: number[]): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient | undefined>;
@@ -222,6 +223,14 @@ export class DatabaseStorage implements IStorage {
       return await db.select().from(patients).where(eq(patients.branchId, branchId)).orderBy(desc(patients.createdAt));
     }
     return await db.select().from(patients).orderBy(desc(patients.createdAt));
+  }
+
+  // Batch-fetch by ID set — used by display-time inference paths that
+  // need patient flags (isAmputee / isPhysiotherapy / isMedicalSupport)
+  // for a known list of payments to avoid an N+1 lookup.
+  async getPatientsByIds(ids: number[]): Promise<Patient[]> {
+    if (ids.length === 0) return [];
+    return await db.select().from(patients).where(inArray(patients.id, ids));
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {

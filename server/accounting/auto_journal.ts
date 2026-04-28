@@ -238,7 +238,28 @@ export async function createJournalForPayment(
       return;
     }
 
-    const revenueCode = revenueTypeToAccountCode(payment.paymentTreatmentType);
+    // If the payment didn't carry an explicit treatment type, infer it
+    // from the patient's clinical flags so the revenue lands in the
+    // right account (4100/4200/4300) instead of the catch-all 4900.
+    let effectiveType: string | null = payment.paymentTreatmentType ?? null;
+    if (!effectiveType && payment.patientId) {
+      try {
+        const patientRes = await db.execute(sql`
+          SELECT is_amputee, is_physiotherapy, is_medical_support
+          FROM patients WHERE id = ${payment.patientId}
+        `);
+        const row = patientRes.rows?.[0] as any;
+        if (row) {
+          if (row.is_amputee) effectiveType = "طرف صناعي";
+          else if (row.is_physiotherapy) effectiveType = "علاج طبيعي";
+          else if (row.is_medical_support) effectiveType = "مساند طبية";
+        }
+      } catch (err) {
+        // non-fatal: fall back to "other revenue" code below
+      }
+    }
+
+    const revenueCode = revenueTypeToAccountCode(effectiveType);
     const revenueAccountId = await getAccountIdByCode(revenueCode);
     if (!revenueAccountId) {
       console.warn(`[auto-journal] revenue account ${revenueCode} not found for payment ${payment.id}`);
