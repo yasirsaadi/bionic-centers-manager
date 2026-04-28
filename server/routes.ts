@@ -247,8 +247,9 @@ export async function registerRoutes(
         
         if (isValidPassword) {
           const isAdmin = systemUser.role === "admin";
+          const isBranchManager = systemUser.role === "branch_manager";
           const userBranchId = isAdmin ? 0 : (systemUser.branchId || 0);
-          
+
           // For non-admin users, verify the selected branch matches their assigned branch
           if (!isAdmin && systemUser.branchId) {
             const branchMapping = usernameToBranch[normalizedBranchKey];
@@ -256,16 +257,41 @@ export async function registerRoutes(
               return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
             }
           }
-          
+
           // Get branch name
           let branchName = "مسؤول النظام";
           if (!isAdmin && systemUser.branchId) {
             const branch = await storage.getBranch(systemUser.branchId);
             branchName = branch?.name || "فرع غير معروف";
           }
-          
+
           const userShift = (systemUser.role === "reception" || systemUser.role === "therapist") ? (shift || "auto") : "auto";
-          
+
+          // Branch-manager role acts as a full admin within their assigned
+          // branch — every functional permission is auto-granted regardless
+          // of what's stored on the row, so the admin doesn't have to flip
+          // a dozen toggles every time a branch manager is created. We do
+          // NOT set isAdmin=true: cross-branch routes (every-branch
+          // reports, system settings, branch creation, etc.) stay locked
+          // to the system admin only.
+          const grantAll = isBranchManager;
+          const permissions = {
+            canViewPatients: grantAll || systemUser.canViewPatients,
+            canAddPatients: grantAll || systemUser.canAddPatients,
+            canEditPatients: grantAll || systemUser.canEditPatients,
+            canDeletePatients: grantAll || systemUser.canDeletePatients,
+            canViewPayments: grantAll || systemUser.canViewPayments,
+            canAddPayments: grantAll || systemUser.canAddPayments,
+            canEditPayments: grantAll || systemUser.canEditPayments,
+            canDeletePayments: grantAll || systemUser.canDeletePayments,
+            canViewReports: grantAll || systemUser.canViewReports,
+            canManageAccounting: grantAll || systemUser.canManageAccounting,
+            canManageSettings: grantAll || systemUser.canManageSettings,
+            canManageUsers: grantAll || systemUser.canManageUsers,
+            canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
+            canManageSurveys: grantAll || systemUser.canManageSurveys,
+          };
+
           // Store session with user permissions
           (req.session as any).branchSession = {
             branchId: userBranchId,
@@ -275,28 +301,13 @@ export async function registerRoutes(
             displayName: systemUser.displayName,
             shift: userShift,
             language: systemUser.language || "ar",
-            permissions: {
-              canViewPatients: systemUser.canViewPatients,
-              canAddPatients: systemUser.canAddPatients,
-              canEditPatients: systemUser.canEditPatients,
-              canDeletePatients: systemUser.canDeletePatients,
-              canViewPayments: systemUser.canViewPayments,
-              canAddPayments: systemUser.canAddPayments,
-              canEditPayments: systemUser.canEditPayments,
-              canDeletePayments: systemUser.canDeletePayments,
-              canViewReports: systemUser.canViewReports,
-              canManageAccounting: systemUser.canManageAccounting,
-              canManageSettings: systemUser.canManageSettings,
-              canManageUsers: systemUser.canManageUsers,
-              canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
-              canManageSurveys: systemUser.canManageSurveys,
-            }
+            permissions,
           };
-          
+
           console.log("System user authenticated:", { username: normalizedUsername, role: systemUser.role, branchId: userBranchId });
-          
-          return res.json({ 
-            branchId: userBranchId, 
+
+          return res.json({
+            branchId: userBranchId,
             branchName: branchName,
             isAdmin: isAdmin,
             userId: systemUser.id,
@@ -304,22 +315,7 @@ export async function registerRoutes(
             role: systemUser.role,
             shift: userShift,
             language: systemUser.language || "ar",
-            permissions: {
-              canViewPatients: systemUser.canViewPatients,
-              canAddPatients: systemUser.canAddPatients,
-              canEditPatients: systemUser.canEditPatients,
-              canDeletePatients: systemUser.canDeletePatients,
-              canViewPayments: systemUser.canViewPayments,
-              canAddPayments: systemUser.canAddPayments,
-              canEditPayments: systemUser.canEditPayments,
-              canDeletePayments: systemUser.canDeletePayments,
-              canViewReports: systemUser.canViewReports,
-              canManageAccounting: systemUser.canManageAccounting,
-              canManageSettings: systemUser.canManageSettings,
-              canManageUsers: systemUser.canManageUsers,
-              canManageTreatmentPlans: systemUser.canManageTreatmentPlans,
-              canManageSurveys: systemUser.canManageSurveys,
-            }
+            permissions,
           });
         }
         // Password doesn't match for system user - don't fall through to legacy

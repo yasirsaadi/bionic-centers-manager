@@ -232,12 +232,18 @@ const AUDIT_SYSTEM_PROMPT = `أنت مدقّق محاسبي عراقي محتر�
   ]
 }
 
-قواعد:
+قواعد صارمة:
 - لا تخترع أرقاماً غير موجودة.
 - لا تتجاوز 8 مكتشفات.
 - إن لم تجد أيّ شيء جدير بالملاحظة، أعد findings فارغة وملخّصاً يقول "لا توجد ملاحظات".
 - استخدم العربية الفصحى البسيطة.
-- لا تكتب أيّ شيء خارج كائن JSON.`;
+
+تنسيق الإخراج (إلزامي):
+- ابدأ ردّك بالحرف "{" مباشرة بدون أيّ مقدّمة.
+- انتهِ بالحرف "}" بدون أيّ تعليق ختامي.
+- لا تكتب "إليك" أو "بناءً على البيانات" أو أيّ نصّ خارج JSON.
+- لا تستخدم \`\`\` ولا code blocks.
+- يجب أن يكون JSON صالحاً لـ JSON.parse مباشرة.`;
 
 export async function generateSmartAudit(
   input: SmartAuditInput
@@ -258,19 +264,39 @@ ${JSON.stringify(snapshot, null, 2)}
 
   if (!result.ok) return result;
 
-  // Parse defensively — model may add stray text or fences despite the
-  // system prompt's instructions. Strip and JSON.parse; bail with empty
-  // findings if it's unparseable.
+  // Parse defensively. The model occasionally wraps JSON in code fences
+  // or prefixes a sentence even after we tell it not to. Strategy:
+  //   1. Strip code fences.
+  //   2. Slice from the first `{` to the matching last `}`.
+  //   3. Try JSON.parse on that substring.
+  //   4. If it still fails, fall back to an empty findings list with a
+  //      note in the summary so the UI doesn't blow up — the user sees
+  //      "no findings" instead of a hard error.
   let parsed: { summary?: string; findings?: AuditFinding[] };
-  try {
-    const cleaned = result.value.replace(/```json|```/g, "").trim();
-    parsed = JSON.parse(cleaned);
-  } catch {
-    return {
-      ok: false,
-      reason: "unknown",
-      message: "تعذّر تحليل ردّ النموذج",
+  const tryParse = (raw: string): typeof parsed | null => {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+  const cleaned = result.value.replace(/```json|```/g, "").trim();
+  let parsedResult = tryParse(cleaned);
+  if (!parsedResult) {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      parsedResult = tryParse(cleaned.slice(firstBrace, lastBrace + 1));
+    }
+  }
+  if (!parsedResult) {
+    console.warn("[smart_audit] could not parse model output:", cleaned.slice(0, 200));
+    parsed = {
+      summary: "تعذّر استخراج ملاحظات منظّمة من النموذج هذه المرّة. حاول مرّة أخرى أو غيّر النطاق الزمني.",
+      findings: [],
     };
+  } else {
+    parsed = parsedResult;
   }
 
   const findings: AuditFinding[] = Array.isArray(parsed.findings)

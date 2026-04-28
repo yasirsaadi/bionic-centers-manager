@@ -127,19 +127,23 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSurveys: true,
   },
   branch_manager: {
+    // مدير الفرع: صلاحيات كاملة على فرعه فقط، تُعامَل كمسؤول النظام
+    // داخل الفرع. الخادم يفرض هذه الصلاحيات تلقائياً عند تسجيل الدخول
+    // حتى لو غُيّرت من الواجهة، لكن نضع كل القيم true هنا لتعكس
+    // النموذج بدقّة عند الإنشاء/التعديل.
     canViewPatients: true,
     canAddPatients: true,
     canEditPatients: true,
-    canDeletePatients: false,
+    canDeletePatients: true,
     canViewPayments: true,
     canAddPayments: true,
     canEditPayments: true,
-    canDeletePayments: false,
+    canDeletePayments: true,
     canViewReports: true,
-    canManageAccounting: false,
-    canManageSettings: false,
-    canManageUsers: false,
-    canManageTreatmentPlans: false,
+    canManageAccounting: true,
+    canManageSettings: true,
+    canManageUsers: true,
+    canManageTreatmentPlans: true,
     canManageSurveys: true,
   },
   accountant: {
