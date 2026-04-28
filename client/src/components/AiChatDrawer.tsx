@@ -107,7 +107,7 @@ export function AiChatDrawer() {
             onClick={() => setOpen(false)}
             aria-hidden
           />
-          <Card className="relative ml-0 mr-0 sm:ml-auto sm:mr-0 sm:my-0 w-full sm:w-[440px] sm:max-w-[440px] sm:h-screen sm:rounded-none rounded-t-2xl sm:rounded-tl-none flex flex-col shadow-2xl">
+          <Card className="relative ml-0 mr-0 sm:ml-auto sm:mr-0 sm:my-0 w-full sm:w-[440px] sm:max-w-[440px] sm:h-screen sm:rounded-none rounded-t-2xl sm:rounded-tl-none flex flex-col shadow-2xl !bg-white">
             <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">

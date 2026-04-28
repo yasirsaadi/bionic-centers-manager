@@ -1404,14 +1404,31 @@ export default function Accounting() {
         credentials: "include",
         body: JSON.stringify({ description }),
       });
-      const data = await res.json();
+      // Some failure modes (502 / HTML error pages) return non-JSON;
+      // read text first and try to parse, falling back to a usable
+      // status message instead of throwing a generic "connection error".
+      const rawText = await res.text();
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
       if (!res.ok) {
-        toast({ title: data.error || "تعذّر الاقتراح", variant: "destructive" });
+        let title = data?.error || "تعذّر الاقتراح";
+        if (data?.reason === "disabled") {
+          title = "خدمة الذكاء الاصطناعي غير مفعّلة على الخادم";
+        } else if (data?.reason === "rate_limit") {
+          title = "تجاوز حدّ الطلبات. حاول بعد قليل.";
+        } else if (res.status === 502 || res.status === 503) {
+          title = "خدمة الذكاء غير متاحة الآن. حاول لاحقاً.";
+        }
+        toast({ title, variant: "destructive" });
         return;
       }
       // The API returns the Arabic category name; the EXPENSE_CATEGORIES
       // dropdown stores its value in English (e.g. "salaries"). Translate.
-      const category = data.category as string;
+      const category = data?.category as string;
       const matched = EXPENSE_CATEGORIES.find(
         (c) => c.label === category || c.value === category
       );
@@ -1422,7 +1439,11 @@ export default function Accounting() {
       form.setValue("category", matched.value, { shouldValidate: true, shouldDirty: true });
       toast({ title: `الفئة المقترحة: ${matched.label}` });
     } catch (err: any) {
-      toast({ title: "خطأ في الاتصال", description: err.message, variant: "destructive" });
+      toast({
+        title: "تعذّر الاتصال بالخادم",
+        description: err?.message ?? "تأكّد من اتصال الإنترنت ثم حاول مرّة أخرى.",
+        variant: "destructive",
+      });
     } finally {
       setAiCategorySuggesting(false);
     }
@@ -3810,40 +3831,90 @@ export default function Accounting() {
             </DialogHeader>
             
             <div className="space-y-4">
+              {invoicePatientId !== null ? (
+                (() => {
+                  const selected = patientsList.find((p) => p.id === invoicePatientId);
+                  const branchName = branches.find((b) => b.id === selected?.branchId)?.name;
+                  // Build the treatment type chip from patient flags so the
+                  // accountant sees what kind of services this patient was
+                  // registered for. Mirrors the same inference the chart uses.
+                  const treatmentTags: string[] = [];
+                  if (selected?.isAmputee) treatmentTags.push("طرف صناعي");
+                  if (selected?.isPhysiotherapy) treatmentTags.push("علاج طبيعي");
+                  if (selected?.isMedicalSupport) treatmentTags.push("مساند طبية");
+                  return (
+                    <>
+                      <div className="border-2 border-primary/20 rounded-lg p-4 bg-primary/5 space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Users className="h-3.5 w-3.5" />
+                              <span>بطاقة المريض — تُسحب من سجلّ المريض المسجَّل، غير قابلة للتعديل في الفاتورة</span>
+                            </div>
+                            <div className="flex items-baseline gap-2 flex-wrap">
+                              <span className="text-base font-bold">{selected?.name || `#${invoicePatientId}`}</span>
+                              <span className="text-xs text-muted-foreground tabular-nums">رقم #{invoicePatientId}</span>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
+                              <div>
+                                <span className="text-muted-foreground">الهاتف: </span>
+                                <span className="font-medium tabular-nums">{selected?.phone || "—"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">العمر: </span>
+                                <span className="font-medium">{selected?.age || "—"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">الفرع: </span>
+                                <span className="font-medium">{branchName || "—"}</span>
+                              </div>
+                              {selected?.address && (
+                                <div className="col-span-2 md:col-span-3">
+                                  <span className="text-muted-foreground">العنوان: </span>
+                                  <span className="font-medium">{selected.address}</span>
+                                </div>
+                              )}
+                            </div>
+                            {treatmentTags.length > 0 && (
+                              <div className="flex gap-1.5 flex-wrap">
+                                {treatmentTags.map((t) => (
+                                  <Badge key={t} variant="secondary" className="text-xs">
+                                    {t}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => {
+                              setInvoicePatientId(null);
+                              setInvoicePatientSearch("");
+                              setIsInvoicePatientListOpen(true);
+                            }}
+                            data-testid="button-clear-invoice-patient"
+                            title="تغيير المريض"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <PatientFinancialChip patientId={invoicePatientId} />
+                    </>
+                  );
+                })()
+              ) : null}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2 relative">
                   <label className="text-sm font-medium">{t.accounting.patient}</label>
                   {invoicePatientId !== null ? (
-                    (() => {
-                      const selected = patientsList.find((p) => p.id === invoicePatientId);
-                      return (
-                        <>
-                          <div className="flex items-center justify-between gap-2 border rounded-md px-3 py-2 bg-muted/30">
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-medium truncate">{selected?.name || `#${invoicePatientId}`}</div>
-                              <div className="text-xs text-muted-foreground truncate">
-                                {selected?.phone || t.accounting.noPhone}
-                              </div>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 shrink-0"
-                              onClick={() => {
-                                setInvoicePatientId(null);
-                                setInvoicePatientSearch("");
-                                setIsInvoicePatientListOpen(true);
-                              }}
-                              data-testid="button-clear-invoice-patient"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <PatientFinancialChip patientId={invoicePatientId} />
-                        </>
-                      );
-                    })()
+                    <div className="text-xs text-muted-foreground italic px-3 py-2 border rounded-md bg-muted/30">
+                      تمّ اختيار المريض في الأعلى. اضغط × لتغييره.
+                    </div>
                   ) : (
                     <>
                       <div className="relative">
@@ -3873,7 +3944,7 @@ export default function Accounting() {
                             : patientsList
                           ).slice(0, 50);
                           return (
-                            <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto border rounded-md bg-popover shadow-md">
+                            <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto border rounded-md bg-white shadow-lg">
                               {filtered.length === 0 ? (
                                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">
                                   لا توجد نتائج مطابقة

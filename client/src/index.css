@@ -31,6 +31,20 @@
   --input: 214 32% 91%;
   --ring: 180 75% 35%;
 
+  /* Surface tokens — without these, bg-card / bg-popover resolve to
+     hsl( / 1) which is invalid and renders fully transparent. That
+     was breaking every floating Card (AI chat drawer, patient picker
+     dropdown) by letting the page bleed through. Card surfaces are
+     pure white; popovers slightly tinted so they read as a layer above
+     a Card behind them. */
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --card-border: 214 32% 91%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --popover-border: 214 32% 91%;
+
   --radius: 0.75rem;
 }
 
