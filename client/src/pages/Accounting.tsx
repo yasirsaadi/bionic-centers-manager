@@ -52,7 +52,9 @@ import {
   RefreshCw,
   ArrowLeft,
   FileDown,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Search,
+  X
 } from "lucide-react";
 import { 
   AreaChart, 
@@ -520,6 +522,9 @@ export default function Accounting() {
   const [invoiceItems, setInvoiceItems] = useState<{description: string; serviceType: string; quantity: number; unitPrice: number}[]>([
     { description: "", serviceType: "", quantity: 1, unitPrice: 0 }
   ]);
+  const [invoicePatientId, setInvoicePatientId] = useState<number | null>(null);
+  const [invoicePatientSearch, setInvoicePatientSearch] = useState("");
+  const [isInvoicePatientListOpen, setIsInvoicePatientListOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleteType, setDeleteType] = useState<"expense" | "invoice" | "vendor" | "purchase" | null>(null);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
@@ -1058,8 +1063,17 @@ export default function Accounting() {
   // Invoice mutations
   const createInvoiceMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/invoices", data);
-      return res.json();
+      // Strip the client-only "paidNow" hint before sending — the server
+      // doesn't accept it on the invoice schema. We replay it as a
+      // proper payment call after the invoice is created so the AR/Cash
+      // journal entries land correctly.
+      const { paidNow, ...invoicePayload } = data;
+      const res = await apiRequest("POST", "/api/invoices", invoicePayload);
+      const invoice = await res.json();
+      if (paidNow && paidNow > 0 && invoice?.id) {
+        await apiRequest("POST", `/api/invoices/${invoice.id}/payment`, { amount: paidNow });
+      }
+      return invoice;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
@@ -1192,33 +1206,51 @@ export default function Accounting() {
       return;
     }
 
-    const selectedPatientId = parseInt((document.getElementById("invoice-patient") as HTMLInputElement)?.value || "0");
+    const selectedPatientId = invoicePatientId;
     const invoiceDate = (document.getElementById("invoice-date-value") as HTMLInputElement)?.value;
     const discount = parseInt((document.getElementById("invoice-discount") as HTMLInputElement)?.value || "0");
+    const paidNow = parseInt(
+      arabicDigitsToWestern((document.getElementById("invoice-paid-now") as HTMLInputElement)?.value || "0")
+    );
     const notes = (document.getElementById("invoice-notes") as HTMLTextAreaElement)?.value;
-    
+
     if (!selectedPatientId) {
       toast({ title: t.accounting.selectPatientRequired, variant: "destructive" });
       return;
     }
 
+    const total = subtotal - (discount || 0);
+    if (paidNow > total) {
+      toast({ title: "المبلغ المدفوع أكبر من إجمالي الفاتورة", variant: "destructive" });
+      return;
+    }
+
     const patient = patientsList.find(p => p.id === selectedPatientId);
-    
-    createInvoiceMutation.mutate({
-      patientId: selectedPatientId,
-      branchId: patient?.branchId || parseInt(selectedBranch) || 1,
-      invoiceDate: invoiceDate || new Date().toISOString().split("T")[0],
-      subtotal,
-      discount: discount || 0,
-      total: subtotal - (discount || 0),
-      notes,
-      items
-    });
+
+    createInvoiceMutation.mutate(
+      {
+        patientId: selectedPatientId,
+        branchId: patient?.branchId || parseInt(selectedBranch) || 1,
+        invoiceDate: invoiceDate || new Date().toISOString().split("T")[0],
+        subtotal,
+        discount: discount || 0,
+        total,
+        notes,
+        items,
+        // Carry the up-front payment so the server can record it as a
+        // proper payment (separate journal entry) right after invoice
+        // creation. Sent as a hint; the post-create handler picks it up.
+        paidNow: paidNow > 0 ? paidNow : undefined,
+      } as any,
+    );
   };
 
   const openNewInvoiceDialog = () => {
     setEditingInvoice(null);
     setInvoiceItems([{ description: "", serviceType: "", quantity: 1, unitPrice: 0 }]);
+    setInvoicePatientId(null);
+    setInvoicePatientSearch("");
+    setIsInvoicePatientListOpen(false);
     setIsInvoiceDialogOpen(true);
   };
 
@@ -3287,20 +3319,101 @@ export default function Accounting() {
             
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
+                <div className="space-y-2 relative">
                   <label className="text-sm font-medium">{t.accounting.patient}</label>
-                  <select
-                    id="invoice-patient"
-                    className="w-full p-2 border rounded-md"
-                    data-testid="select-invoice-patient"
-                  >
-                    <option value="">{t.accounting.selectPatient}</option>
-                    {patientsList.map((patient) => (
-                      <option key={patient.id} value={patient.id}>
-                        {patient.name} - {patient.phone || t.accounting.noPhone}
-                      </option>
-                    ))}
-                  </select>
+                  {invoicePatientId !== null ? (
+                    (() => {
+                      const selected = patientsList.find((p) => p.id === invoicePatientId);
+                      return (
+                        <div className="flex items-center justify-between gap-2 border rounded-md px-3 py-2 bg-muted/30">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium truncate">{selected?.name || `#${invoicePatientId}`}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {selected?.phone || t.accounting.noPhone}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            onClick={() => {
+                              setInvoicePatientId(null);
+                              setInvoicePatientSearch("");
+                              setIsInvoicePatientListOpen(true);
+                            }}
+                            data-testid="button-clear-invoice-patient"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                          type="text"
+                          placeholder="ابحث باسم المريض أو رقم الهاتف…"
+                          value={invoicePatientSearch}
+                          onChange={(e) => {
+                            setInvoicePatientSearch(e.target.value);
+                            setIsInvoicePatientListOpen(true);
+                          }}
+                          onFocus={() => setIsInvoicePatientListOpen(true)}
+                          className="pr-8"
+                          data-testid="input-invoice-patient-search"
+                        />
+                      </div>
+                      {isInvoicePatientListOpen && (
+                        (() => {
+                          const q = invoicePatientSearch.trim().toLowerCase();
+                          const filtered = (q
+                            ? patientsList.filter((p) => {
+                                const name = (p.name || "").toLowerCase();
+                                const phone = (p.phone || "").toLowerCase();
+                                return name.includes(q) || phone.includes(q);
+                              })
+                            : patientsList
+                          ).slice(0, 50);
+                          return (
+                            <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto border rounded-md bg-popover shadow-md">
+                              {filtered.length === 0 ? (
+                                <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                                  لا توجد نتائج مطابقة
+                                </div>
+                              ) : (
+                                filtered.map((patient) => (
+                                  <button
+                                    key={patient.id}
+                                    type="button"
+                                    className="w-full text-right px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none border-b last:border-b-0"
+                                    onClick={() => {
+                                      setInvoicePatientId(patient.id);
+                                      setInvoicePatientSearch("");
+                                      setIsInvoicePatientListOpen(false);
+                                    }}
+                                    data-testid={`option-invoice-patient-${patient.id}`}
+                                  >
+                                    <div className="text-sm font-medium truncate">{patient.name}</div>
+                                    <div className="text-xs text-muted-foreground truncate">
+                                      {patient.phone || t.accounting.noPhone}
+                                    </div>
+                                  </button>
+                                ))
+                              )}
+                              {patientsList.length > filtered.length && (
+                                <div className="px-3 py-2 text-xs text-muted-foreground text-center border-t bg-muted/30">
+                                  يُعرض أول ٥٠ نتيجة — أكمل البحث لتضييق النتائج
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
+                      )}
+                    </>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">{t.accounting.invoiceDate}</label>
@@ -3401,7 +3514,7 @@ export default function Accounting() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">{t.accounting.discountCurrency}</label>
                   <Input
@@ -3416,6 +3529,24 @@ export default function Accounting() {
                     }}
                     data-testid="input-invoice-discount"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">المدفوع الآن</label>
+                  <Input
+                    id="invoice-paid-now"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
+                    defaultValue=""
+                    placeholder="0"
+                    onChange={(e) => {
+                      e.target.value = arabicDigitsToWestern(e.target.value);
+                    }}
+                    data-testid="input-invoice-paid-now"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    أدخل المبلغ الذي دفعه المريض الآن (إن وُجد).
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">{t.accounting.total}</label>
