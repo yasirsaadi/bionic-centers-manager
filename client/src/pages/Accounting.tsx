@@ -972,6 +972,26 @@ function formatArabicDate(iso: string | null | undefined): string {
   return `${toArabicIndicDigits(Number(d))} ${ARABIC_MONTHS_IQ[monthIdx]} ${toArabicIndicDigits(y)}`;
 }
 
+// Friendly Arabic labels for the anomaly_decisions row metadata.
+function anomalyTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    expense_amount_outlier: "مصروف بمبلغ غير معتاد",
+    expense_duplicate: "مصاريف مكرَّرة",
+    invoice_overdue: "فاتورة متأخّرة",
+    patient_no_payment: "مريض بدون دفعات",
+  };
+  return map[type] ?? type;
+}
+
+function sourceTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    expense: "مصروف",
+    invoice: "فاتورة",
+    patient: "مريض",
+  };
+  return map[type] ?? type;
+}
+
 export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -1183,6 +1203,41 @@ export default function Accounting() {
       return res.json();
     },
   });
+  // Anomalies the user has dismissed in the current session — used for
+  // optimistic UI so a click on "صحيح" / "ليس خطأ" hides the row
+  // instantly while the server catches up.
+  const [optimisticallyDismissed, setOptimisticallyDismissed] = useState<Set<string>>(new Set());
+
+  // Visible anomalies = server-returned minus the ones the user just
+  // dismissed in this session. Computed before any render so the badge
+  // count and the list both update together.
+  const visibleAnomalies = anomalies.filter((a) => !optimisticallyDismissed.has(a.id));
+
+  // Decisions log fetched alongside anomalies so the "قرارات سابقة"
+  // section under the anomalies tab can render with names and undo
+  // buttons.
+  interface AnomalyDecisionRow {
+    id: number;
+    anomalyType: string;
+    sourceType: string;
+    sourceId: number;
+    decision: "reviewed" | "not_error";
+    reason: string | null;
+    branchId: number | null;
+    userId: number | null;
+    userName: string | null;
+    expiresAt: string | null;
+    createdAt: string;
+  }
+  const { data: anomalyDecisionsList = [] } = useQuery<AnomalyDecisionRow[]>({
+    queryKey: ["/api/anomalies/decisions"],
+    queryFn: async () => {
+      const res = await fetch("/api/anomalies/decisions", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
   // Cache of AI explanations keyed by anomaly id so that re-clicking the
   // explain button doesn't fire a second LLM call. Re-set when the user
   // clicks "اشرح بالذكاء" the first time.
@@ -1198,6 +1253,13 @@ export default function Accounting() {
     decision: "reviewed" | "not_error",
     reason?: string
   ) => {
+    // Optimistic: hide the anomaly card immediately. If the save fails
+    // we reverse this and show an error.
+    setOptimisticallyDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(anomaly.id);
+      return next;
+    });
     try {
       const res = await fetch("/api/anomalies/decisions", {
         method: "POST",
@@ -1213,20 +1275,54 @@ export default function Accounting() {
         }),
       });
       if (!res.ok) {
+        // Roll back optimistic hide on failure.
+        setOptimisticallyDismissed((prev) => {
+          const next = new Set(prev);
+          next.delete(anomaly.id);
+          return next;
+        });
         const data = await res.json().catch(() => ({}));
         toast({ title: data.error || "تعذّر حفظ القرار", variant: "destructive" });
         return;
       }
       toast({
-        title: decision === "reviewed"
-          ? "تم وضع علامة مراجَع — يختفي هذا التنبيه لمدة 30 يوماً"
-          : "تم تسجيل أن هذا ليس خطأ — لن يظهر مجدداً",
+        title:
+          decision === "reviewed"
+            ? "تمّ تأكيد صحّة هذا التنبيه. سيختفي لمدّة شهر."
+            : "تمّ تسجيل أنّ هذا ليس خطأ. لن يظهر مجدّداً.",
       });
+      // Refresh both the anomalies list and the decisions log so the
+      // accountant sees the moved item in "قرارات سابقة".
       queryClient.invalidateQueries({ queryKey: ["/api/anomalies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/anomalies/decisions"] });
       setNotErrorTarget(null);
       setNotErrorReason("");
     } catch (err: any) {
-      toast({ title: "خطأ في الاتصال", description: err.message, variant: "destructive" });
+      setOptimisticallyDismissed((prev) => {
+        const next = new Set(prev);
+        next.delete(anomaly.id);
+        return next;
+      });
+      toast({ title: "تعذّر الاتصال بالخادم", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const undoAnomalyDecision = async (decisionId: number) => {
+    try {
+      const res = await fetch(`/api/anomalies/decisions/${decisionId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast({ title: data.error || "تعذّر التراجع", variant: "destructive" });
+        return;
+      }
+      toast({ title: "تمّ التراجع. سيظهر التنبيه مجدّداً." });
+      queryClient.invalidateQueries({ queryKey: ["/api/anomalies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/anomalies/decisions"] });
+    } catch (err: any) {
+      toast({ title: "تعذّر الاتصال بالخادم", description: err.message, variant: "destructive" });
     }
   };
 
@@ -2479,12 +2575,12 @@ export default function Accounting() {
             <TabsTrigger value="anomalies" className="gap-2" data-testid="tab-anomalies">
               <AlertCircle className="h-4 w-4" />
               <span className="hidden md:inline">تنبيهات</span>
-              {anomalies.length > 0 && (
+              {visibleAnomalies.length > 0 && (
                 <Badge
-                  variant={anomalies.some((a) => a.severity === "high") ? "destructive" : "secondary"}
+                  variant={visibleAnomalies.some((a) => a.severity === "high") ? "destructive" : "secondary"}
                   className="h-5 min-w-[20px] px-1.5 tabular-nums"
                 >
-                  {toArabicIndicDigits(anomalies.length)}
+                  {toArabicIndicDigits(visibleAnomalies.length)}
                 </Badge>
               )}
             </TabsTrigger>
@@ -3481,14 +3577,14 @@ export default function Accounting() {
                 </p>
               </CardHeader>
               <CardContent>
-                {anomalies.length === 0 ? (
+                {visibleAnomalies.length === 0 ? (
                   <div className="py-12 text-center">
                     <CheckCircle2 className="h-12 w-12 mx-auto mb-2 text-green-500" />
                     <p className="text-muted-foreground">لا توجد تنبيهات حالياً. كل شيء يبدو طبيعياً.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {anomalies.map((a) => {
+                    {visibleAnomalies.map((a) => {
                       const severityStyles = {
                         high: "border-red-500/40 bg-red-500/5",
                         medium: "border-amber-500/40 bg-amber-500/5",
@@ -3550,26 +3646,27 @@ export default function Accounting() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="gap-1.5 text-xs"
+                                className="gap-1.5 text-xs border-green-500/40 hover:bg-green-500/10"
                                 onClick={() => recordAnomalyDecision(a, "reviewed")}
                                 data-testid={`button-reviewed-${a.id}`}
-                                title="إخفاء التنبيه لمدة 30 يوماً"
+                                title="هذا التنبيه صحيح، أخفه لمدّة شهر ثمّ أعد فحصه"
                               >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                مراجَع
+                                <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                                صحيح، أخفه شهراً
                               </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="gap-1.5 text-xs text-muted-foreground"
+                                className="gap-1.5 text-xs"
                                 onClick={() => {
                                   setNotErrorTarget(a);
                                   setNotErrorReason("");
                                 }}
                                 data-testid={`button-not-error-${a.id}`}
-                                title="هذا ليس خطأ — لا تنبّهني عنه مجدداً"
+                                title="هذا ليس خطأ أصلاً — لا تنبّهني عنه نهائياً"
                               >
-                                ليس خطأ
+                                <X className="h-3.5 w-3.5" />
+                                ليس خطأ، أخفه نهائياً
                               </Button>
                             </div>
                           </div>
@@ -3583,6 +3680,59 @@ export default function Accounting() {
                       );
                     })}
                   </div>
+                )}
+
+                {anomalyDecisionsList.length > 0 && (
+                  <details className="mt-6 border-t pt-4 group">
+                    <summary className="text-sm font-medium cursor-pointer flex items-center gap-2 hover:text-primary transition-colors list-none">
+                      <span className="inline-block transition-transform group-open:rotate-90">›</span>
+                      قرارات سابقة على التنبيهات ({toArabicIndicDigits(anomalyDecisionsList.length)})
+                    </summary>
+                    <p className="text-xs text-muted-foreground mt-2 mb-3">
+                      تنبيهات تمّ تأكيدها أو حذفها سابقاً. تستطيع التراجع عن أيّ قرار فيظهر التنبيه مجدّداً.
+                    </p>
+                    <div className="space-y-2">
+                      {anomalyDecisionsList.map((d) => {
+                        const isReviewed = d.decision === "reviewed";
+                        const expiresLabel = d.expiresAt
+                          ? `حتى ${formatArabicDate(d.expiresAt.toString().split("T")[0])}`
+                          : "نهائي";
+                        return (
+                          <div
+                            key={d.id}
+                            className="flex items-start gap-2 p-2.5 rounded-md border bg-muted/30 text-sm"
+                          >
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant={isReviewed ? "secondary" : "outline"} className="text-xs">
+                                  {isReviewed ? "صحيح، مخفيّ" : "ليس خطأ، نهائي"}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">{expiresLabel}</span>
+                                {d.userName && (
+                                  <span className="text-xs text-muted-foreground">— {d.userName}</span>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {anomalyTypeLabel(d.anomalyType)} · {sourceTypeLabel(d.sourceType)} #{d.sourceId}
+                              </div>
+                              {d.reason && (
+                                <div className="text-xs italic">"{d.reason}"</div>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-xs h-7"
+                              onClick={() => undoAnomalyDecision(d.id)}
+                              data-testid={`button-undo-decision-${d.id}`}
+                            >
+                              تراجع
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
                 )}
               </CardContent>
             </Card>

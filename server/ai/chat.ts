@@ -52,7 +52,7 @@ interface FinancialSnapshot {
   outstandingInvoices: {
     count: number;
     totalDue: number;
-    sample: { invoiceNumber: string; patientName: string | null; total: number; paid: number; due: number; ageDays: number }[];
+    sample: { invoiceNumber: string; patientName: string | null; branchName: string | null; total: number; paid: number; due: number; ageDays: number }[];
   };
   todayCash: {
     revenue: number;
@@ -78,6 +78,7 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
     outstandingInvoices,
     cashToday,
     patients,
+    allBranches,
   ] = await Promise.all([
     storage.getInvoiceStats(branchId, isoDate(last30), todayStr),
     storage.getExpensesByCategory(branchId, isoDate(last30), todayStr),
@@ -85,14 +86,19 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
     storage.getInvoices(branchId, "pending"),
     storage.getDailyCashSummary(todayStr, branchId),
     storage.getPatients(branchId),
+    storage.getBranches(),
   ]);
 
   const partialInvoices = await storage.getInvoices(branchId, "partial");
   const allOutstanding = [...outstandingInvoices, ...partialInvoices];
   const patientById = new Map(patients.map((p) => [p.id, p]));
+  const branchById = new Map(allBranches.map((b) => [b.id, b]));
 
   // Limit outstanding sample to the 8 oldest ones — that's what
   // managers ask about anyway, and it keeps the prompt compact.
+  // Each entry carries its branchName so the model can answer
+  // "which branch is this patient at?" without us having to
+  // re-query.
   const sortedOutstanding = allOutstanding
     .map((inv) => {
       const ageDays = Math.floor(
@@ -101,6 +107,7 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
       return {
         invoiceNumber: inv.invoiceNumber,
         patientName: patientById.get(inv.patientId)?.name ?? null,
+        branchName: branchById.get(inv.branchId)?.name ?? null,
         total: inv.total,
         paid: inv.paidAmount || 0,
         due: inv.total - (inv.paidAmount || 0),
@@ -163,6 +170,7 @@ const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدار
 - إن سُئلت عن "هذا الشهر" أو "آخر شهر"، استخدم نطاق last30Days من الـ snapshot.
 - إن سُئلت عن "هذا اليوم"، استخدم todayCash من الـ snapshot.
 - إن طُلب اسم مريض، اعرضه فقط إن وُجد في القائمة المعطاة.
+- إن سُئلت "في أيّ فرع" عن مريض أو فاتورة، انظر إلى الحقل branchName داخل سجلّ الفاتورة في outstandingInvoices.sample. كلّ سجلّ يحوي اسم الفرع صراحةً.
 - لا تذكر أسماء حقول الـ snapshot التقنية في إجاباتك للمستخدم.
 
 الـ snapshot الذي تعمل عليه يُحدَّث كل دقائق، وهو محصور بالفرع الذي يطّلع عليه المستخدم.`;
