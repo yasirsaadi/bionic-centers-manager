@@ -25,6 +25,7 @@ import {
 import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
+import { aiChat, type ChatMessage } from "./ai/chat";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { logAudit } from "./accounting/ledger";
 
@@ -3615,6 +3616,46 @@ export async function registerRoutes(
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
     res.json({ category: result.value });
+  });
+
+  // Conversational assistant. Takes the user's message history and returns
+  // an Arabic answer grounded in a fresh financial snapshot of the
+  // requester's branch (or all branches when admin). Snapshot is built
+  // server-side — clients never see raw financial data unless it surfaces
+  // through the assistant's reply.
+  app.post("/api/ai/chat", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك باستخدام المساعد الذكي" });
+    }
+
+    const { messages } = req.body ?? {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "messages مطلوبة" });
+    }
+    // Trim history to the last 10 turns — keeps prompt size bounded and
+    // matches what users actually need (recent context only).
+    const history: ChatMessage[] = messages.slice(-10).map((m: any) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content ?? "").slice(0, 2000),
+    }));
+
+    // Branch isolation: non-admins are pinned to their own branch.
+    const branchId = enforceBranchAccess(req);
+    let branchName: string | null = null;
+    if (branchId) {
+      const branches = await storage.getBranches();
+      branchName = branches.find((b) => b.id === branchId)?.name ?? null;
+    }
+
+    const result = await aiChat({ branchId: branchId ?? null, branchName }, history);
+    if (!result.ok) {
+      const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
+      return res.status(status).json({ error: result.message, reason: result.reason });
+    }
+    res.json(result.value);
   });
 
   // ======================= ANOMALY DETECTION ROUTES =======================
