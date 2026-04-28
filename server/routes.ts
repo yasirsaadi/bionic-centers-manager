@@ -29,6 +29,7 @@ import { aiChat, type ChatMessage } from "./ai/chat";
 import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
+import { generateSurveyReply } from "./ai/survey_reply";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { logAudit } from "./accounting/ledger";
 
@@ -3760,6 +3761,43 @@ export async function registerRoutes(
     }
 
     const result = await getOrGenerateMonthlyReport({ branchId, branchName, month });
+    if (!result.ok) {
+      const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
+      return res.status(status).json({ error: result.message, reason: result.reason });
+    }
+    res.json(result.value);
+  });
+
+  // Generates an Arabic draft reply to a patient survey response.
+  // Output is for review only — the manager reads, edits, and sends
+  // through whichever channel they prefer; we never auto-send.
+  app.post("/api/ai/survey-reply", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess =
+      isAdmin ||
+      branchSession?.permissions?.canManageSurveys ||
+      branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+    const { responseId } = req.body ?? {};
+    const id = Number(responseId);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "responseId غير صالح" });
+    }
+
+    // Branch isolation: a non-admin must only generate replies for
+    // surveys in their branch — otherwise they could read raw PII
+    // from other branches via the AI's prompt input.
+    if (!isAdmin && branchSession?.branchId) {
+      const all = await storage.getSurveyResponses(branchSession.branchId);
+      if (!all.some((r) => r.id === id)) {
+        return res.status(403).json({ error: "هذا الاستبيان خارج نطاق فرعك" });
+      }
+    }
+
+    const result = await generateSurveyReply({ responseId: id });
     if (!result.ok) {
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
       return res.status(status).json({ error: result.message, reason: result.reason });
