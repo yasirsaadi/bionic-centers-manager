@@ -327,14 +327,25 @@ interface TreatmentRevenueData {
   treatmentType: string;
   totalAmount: number;
   count: number;
+  subBreakdown?: { name: string; totalAmount: number; count: number }[];
 }
 
+// Top-level clinical category palette. Each of the three buckets gets a
+// distinct, semantically-loaded colour:
+//   - Prosthetics  → indigo (the highest-revenue category, deserves visual weight)
+//   - Physiotherapy → teal-green (the broadest, mixed-modality category)
+//   - Medical supports → amber
+//   - Unknown → muted grey (should be empty in practice; signals data quality)
 const TREATMENT_TYPE_COLORS: Record<string, string> = {
-  "روبوت": "#0088FE",
-  "تمارين تأهيلية": "#00C49F",
-  "أجهزة علاج طبيعي": "#FFBB28",
-  "غير محدد": "#8884d8",
+  "طرف صناعي": "#4F46E5",
+  "علاج طبيعي": "#10B981",
+  "مساند طبية": "#F59E0B",
+  "غير محدد": "#9CA3AF",
 };
+
+// Sub-types within physiotherapy get their own palette so the inner
+// breakdown legend is colour-coded too.
+const PT_SUBTYPE_COLORS = ["#10B981", "#06B6D4", "#3B82F6", "#8B5CF6", "#EC4899"];
 
 function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: string }) {
   const { t } = useTranslation();
@@ -351,12 +362,30 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
 
   if (!revenueByTreatment.length) return null;
 
-  const chartData = revenueByTreatment.map((item) => ({
+  // Sort with prosthetics first, then physio, then supports, so the
+  // legend always reads in a stable clinical order regardless of which
+  // bucket happens to be biggest.
+  const order = ["طرف صناعي", "علاج طبيعي", "مساند طبية", "غير محدد"];
+  const sortedRevenue = [...revenueByTreatment].sort(
+    (a, b) => order.indexOf(a.treatmentType) - order.indexOf(b.treatmentType)
+  );
+
+  const chartData = sortedRevenue.map((item) => ({
     name: item.treatmentType,
     value: item.totalAmount,
     count: item.count,
     color: TREATMENT_TYPE_COLORS[item.treatmentType] || "#6b7280",
+    subBreakdown: item.subBreakdown ?? [],
   }));
+
+  // Find the physiotherapy bucket so we can show its sub-types as a
+  // small breakdown alongside the main pie. This is the user's request:
+  // "علاج طبيعي" is one bucket, but they still want visibility into
+  // which sub-modalities (روبوت / أجهزة / تمارين / أبر صينية) drove it.
+  const physioBucket = chartData.find((c) => c.name === "علاج طبيعي");
+  const physioSubtypes = (physioBucket?.subBreakdown ?? [])
+    .filter((s) => s.totalAmount > 0)
+    .sort((a, b) => b.totalAmount - a.totalAmount);
 
   return (
     <Card>
@@ -405,6 +434,33 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
             ))}
           </div>
         </div>
+        {physioSubtypes.length > 0 && (
+          <div className="mt-6 pt-4 border-t">
+            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: TREATMENT_TYPE_COLORS["علاج طبيعي"] }} />
+              تفاصيل العلاج الطبيعي
+            </h4>
+            <p className="text-xs text-muted-foreground mb-3">
+              توزيع داخلي لإيرادات العلاج الطبيعي حسب نوع الجلسة المُقدَّمة.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {physioSubtypes.map((s, i) => (
+                <div key={s.name} className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: PT_SUBTYPE_COLORS[i % PT_SUBTYPE_COLORS.length] }}
+                    />
+                    <span className="text-xs truncate">{s.name}</span>
+                  </div>
+                  <span className="text-xs font-medium tabular-nums shrink-0">
+                    {formatCurrency(s.totalAmount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
