@@ -253,18 +253,38 @@ async function detectPatientsWithoutPayments(branchId?: number): Promise<Anomaly
     .from(patients)
     .where(and(...conditions));
 
+  if (candidates.length === 0) return [];
+
+  // Two aggregate queries instead of N×2 per-patient queries. With 200
+  // candidate patients this used to be 400 sequential round-trips —
+  // dominant cause of the dashboard being slow. Now it's 2 queries
+  // total regardless of patient count.
+  const candidateIds = candidates.map((p) => p.id);
+  const paidRows = await db
+    .select({
+      patientId: payments.patientId,
+      paid: sql<number>`COALESCE(SUM(${payments.amount}), 0)::int`,
+    })
+    .from(payments)
+    .where(sql`${payments.patientId} IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})`)
+    .groupBy(payments.patientId);
+  const paidByPatient = new Map(paidRows.map((r) => [r.patientId, Number(r.paid)]));
+
+  const visitRows = await db
+    .select({
+      patientId: visits.patientId,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(visits)
+    .where(sql`${visits.patientId} IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})`)
+    .groupBy(visits.patientId);
+  const visitsByPatient = new Map(visitRows.map((r) => [r.patientId, Number(r.count)]));
+
   const anomalies: Anomaly[] = [];
   for (const p of candidates) {
-    const [{ paid } = { paid: 0 }] = await db
-      .select({ paid: sql<number>`COALESCE(SUM(${payments.amount}), 0)::int` })
-      .from(payments)
-      .where(eq(payments.patientId, p.id));
-    if (Number(paid) > 0) continue;
-    const visitCount = await db
-      .select({ c: sql<number>`COUNT(*)::int` })
-      .from(visits)
-      .where(eq(visits.patientId, p.id));
-    if ((visitCount[0]?.c ?? 0) === 0) continue;
+    if ((paidByPatient.get(p.id) ?? 0) > 0) continue;
+    const visitCount = visitsByPatient.get(p.id) ?? 0;
+    if (visitCount === 0) continue;
     anomalies.push({
       id: `patient-no-payment-${p.id}`,
       type: "patient_no_payment",
@@ -275,7 +295,7 @@ async function detectPatientsWithoutPayments(branchId?: number): Promise<Anomaly
       branchId: p.branchId,
       source: { type: "patient", id: p.id, name: p.name },
       amount: p.totalCost ?? 0,
-      context: { totalCost: p.totalCost, visitCount: visitCount[0]?.c ?? 0 },
+      context: { totalCost: p.totalCost, visitCount },
     });
   }
   return anomalies;

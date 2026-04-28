@@ -306,6 +306,20 @@ export async function registerRoutes(
 
           console.log("System user authenticated:", { username: normalizedUsername, role: systemUser.role, branchId: userBranchId });
 
+          // Login event into the existing audit_log so it shows up
+          // alongside create/update/delete on the employee accuracy
+          // panel. Fire-and-forget — never block the auth response.
+          logAudit({
+            entityType: "session",
+            entityId: systemUser.id,
+            action: "login",
+            userId: systemUser.id,
+            userName: systemUser.displayName,
+            branchId: systemUser.branchId ?? null,
+            ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
+          }).catch(() => { /* logged inside */ });
+
           return res.json({
             branchId: userBranchId,
             branchName: branchName,
@@ -3280,6 +3294,17 @@ export async function registerRoutes(
       // Auto-journal: Dr AR / Cr Revenue (safe to fail, logged)
       await createJournalForInvoice(invoice, createdItems, userId);
 
+      // Audit log on invoice create.
+      await logAudit({
+        entityType: "invoice",
+        entityId: invoice.id,
+        action: "create",
+        userId,
+        userName: branchSession?.displayName ?? null,
+        branchId: invoice.branchId,
+        newValues: { total: invoice.total, patientId: invoice.patientId, itemCount: createdItems.length },
+      });
+
       res.json(invoice);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3323,6 +3348,18 @@ export async function registerRoutes(
         await createJournalForInvoice(invoice, itemsForJournal, userId);
       }
 
+      if (invoice) {
+        await logAudit({
+          entityType: "invoice",
+          entityId: id,
+          action: "update",
+          userId,
+          userName: branchSession?.displayName ?? null,
+          branchId: invoice.branchId,
+          newValues: { total: invoice.total },
+        });
+      }
+
       res.json(invoice);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3341,6 +3378,7 @@ export async function registerRoutes(
 
     const id = parseInt(req.params.id);
     try {
+      const existing = await storage.getInvoiceById(id);
       // Reverse related journal entries first (safe to fail, logged)
       await reverseJournalForSource("invoice", id, userId, "حذف الفاتورة");
       await reverseJournalForSource("invoice_payment", id, userId, "حذف الفاتورة");
@@ -3348,6 +3386,15 @@ export async function registerRoutes(
       // Delete items first, then invoice
       await storage.deleteInvoiceItems(id);
       await storage.deleteInvoice(id);
+      await logAudit({
+        entityType: "invoice",
+        entityId: id,
+        action: "delete",
+        userId,
+        userName: branchSession?.displayName ?? null,
+        branchId: existing?.branchId ?? null,
+        oldValues: existing ? { total: existing.total } : null,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3824,13 +3871,13 @@ export async function registerRoutes(
       endDate: iso(today),
     });
 
-    // Sort by total activity descending — busiest employees first.
+    // Sort by score descending — highest performers first.
     const sorted = rows
       .map((r) => ({
         ...r,
         totalEntries: r.expenseCount + r.invoiceCount + r.purchaseCount,
       }))
-      .sort((a, b) => b.totalEntries - a.totalEntries);
+      .sort((a, b) => b.score - a.score);
 
     res.json({ days, rows: sorted });
   });

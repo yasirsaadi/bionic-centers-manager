@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
-  anomalyDecisions, aiMemoryNotes,
+  anomalyDecisions, aiMemoryNotes, auditLog,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -27,6 +27,41 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
+
+// One row of the employee-accuracy panel. Numbers come from a mix of
+// row-level createdBy attribution and the audit_log table.
+export interface EmployeeAccuracyRow {
+  createdBy: string;
+  displayName: string;
+  role: string | null;
+  branchId: number | null;
+  expenseCount: number;
+  expenseTotal: number;
+  invoiceCount: number;
+  invoiceTotal: number;
+  purchaseCount: number;
+  purchaseTotal: number;
+  anomalyDecisionsCount: number;
+  editCount: number;
+  deleteCount: number;
+  loginCount: number;
+  lastActivityAt: string | null;
+  score: number;
+}
+
+interface EmployeeAccuracyAccum {
+  expenseCount: number;
+  expenseTotal: number;
+  invoiceCount: number;
+  invoiceTotal: number;
+  purchaseCount: number;
+  purchaseTotal: number;
+  anomalyDecisionsCount: number;
+  editCount: number;
+  deleteCount: number;
+  loginCount: number;
+  lastActivityAt: Date | null;
+}
 
 export interface IStorage {
   // Branches
@@ -181,19 +216,7 @@ export interface IStorage {
     branchId?: number;
     startDate: string;
     endDate: string;
-  }): Promise<{
-    createdBy: string;
-    displayName: string;
-    role: string | null;
-    branchId: number | null;
-    expenseCount: number;
-    expenseTotal: number;
-    invoiceCount: number;
-    invoiceTotal: number;
-    purchaseCount: number;
-    purchaseTotal: number;
-    anomalyDecisionsCount: number;
-  }[]>;
+  }): Promise<EmployeeAccuracyRow[]>;
 
   // System Users
   getSystemUsers(): Promise<SystemUser[]>;
@@ -1357,67 +1380,74 @@ export class DatabaseStorage implements IStorage {
 
   // ==================== Employee accuracy ====================
 
-  // Aggregates per-user activity over a window. The createdBy column is
-  // text (carries either system_users.id as string or "unknown" for old
-  // rows); we group on it and join to systemUsers to surface display
-  // names. Anonymous/unknown rows aggregate together.
+  // Aggregates per-user activity over a window. Combines two data
+  // sources: the createdBy text on entity rows (gives raw counts +
+  // money totals) and audit_log (gives edits, deletes, login activity,
+  // and anomaly involvement). Returns one row per known system user
+  // plus an aggregate "غير معروف" bucket for legacy data.
   async getEmployeeAccuracy(params: {
     branchId?: number;
     startDate: string;
     endDate: string;
-  }): Promise<{
-    createdBy: string;
-    displayName: string;
-    role: string | null;
-    branchId: number | null;
-    expenseCount: number;
-    expenseTotal: number;
-    invoiceCount: number;
-    invoiceTotal: number;
-    purchaseCount: number;
-    purchaseTotal: number;
-    anomalyDecisionsCount: number;
-  }[]> {
+  }): Promise<EmployeeAccuracyRow[]> {
     const { branchId, startDate, endDate } = params;
+    const startTs = new Date(`${startDate}T00:00:00+03:00`);
+    const endTs = new Date(`${endDate}T23:59:59.999+03:00`);
 
-    const expenseRows = await this.getExpenses(branchId, startDate, endDate);
-    const invoiceRows = await this.getInvoices(branchId, undefined, undefined, startDate, endDate);
-    const purchaseRows = await this.getPurchases(branchId, undefined, undefined, startDate, endDate);
-    const anomalyDecisionRows = await db
-      .select()
-      .from(anomalyDecisions)
-      .where(
-        and(
-          branchId ? eq(anomalyDecisions.branchId, branchId) : sql`TRUE`,
-          gte(anomalyDecisions.createdAt, new Date(startDate)),
-          lte(anomalyDecisions.createdAt, new Date(`${endDate}T23:59:59.999Z`))
-        )
-      );
+    const [
+      expenseRows,
+      invoiceRows,
+      purchaseRows,
+      anomalyDecisionRows,
+      auditRows,
+    ] = await Promise.all([
+      this.getExpenses(branchId, startDate, endDate),
+      this.getInvoices(branchId, undefined, undefined, startDate, endDate),
+      this.getPurchases(branchId, undefined, undefined, startDate, endDate),
+      db
+        .select()
+        .from(anomalyDecisions)
+        .where(
+          and(
+            branchId ? eq(anomalyDecisions.branchId, branchId) : sql`TRUE`,
+            gte(anomalyDecisions.createdAt, startTs),
+            lte(anomalyDecisions.createdAt, endTs)
+          )
+        ),
+      // Audit rows over the same window. The existing audit_log
+      // schema uses entityType (not resourceType) and tracks every
+      // accounting mutation already; we just consume it.
+      db
+        .select({
+          userId: auditLog.userId,
+          action: auditLog.action,
+          entityType: auditLog.entityType,
+          createdAt: auditLog.createdAt,
+        })
+        .from(auditLog)
+        .where(
+          and(
+            branchId ? eq(auditLog.branchId, branchId) : sql`TRUE`,
+            gte(auditLog.createdAt, startTs),
+            lte(auditLog.createdAt, endTs)
+          )
+        ),
+    ]);
 
-    // Bucket by createdBy text key.
-    const buckets = new Map<
-      string,
-      {
-        expenseCount: number;
-        expenseTotal: number;
-        invoiceCount: number;
-        invoiceTotal: number;
-        purchaseCount: number;
-        purchaseTotal: number;
-        anomalyDecisionsCount: number;
-      }
-    >();
+    // Bucket by createdBy text key. The new createdBy convention is
+    // stringified system_users.id; legacy "unknown" rows aggregate
+    // together so they don't pollute the per-employee view.
+    const buckets = new Map<string, EmployeeAccuracyAccum>();
     const get = (key: string) => {
       let b = buckets.get(key);
       if (!b) {
         b = {
-          expenseCount: 0,
-          expenseTotal: 0,
-          invoiceCount: 0,
-          invoiceTotal: 0,
-          purchaseCount: 0,
-          purchaseTotal: 0,
+          expenseCount: 0, expenseTotal: 0,
+          invoiceCount: 0, invoiceTotal: 0,
+          purchaseCount: 0, purchaseTotal: 0,
           anomalyDecisionsCount: 0,
+          editCount: 0, deleteCount: 0,
+          loginCount: 0, lastActivityAt: null,
         };
         buckets.set(key, b);
       }
@@ -1440,12 +1470,19 @@ export class DatabaseStorage implements IStorage {
       b.purchaseTotal += p.totalAmount;
     }
     for (const d of anomalyDecisionRows) {
-      // anomaly_decisions doesn't carry the offender's createdBy
-      // directly — we attribute to whoever made the decision (the
-      // accountant clearing the anomaly). It's still useful as a
-      // workload signal even if not "errors caused by user X".
       const b = get(String(d.userId ?? "unknown"));
       b.anomalyDecisionsCount += 1;
+    }
+    for (const a of auditRows) {
+      const key = String(a.userId ?? "unknown");
+      const b = get(key);
+      if (a.action === "update") b.editCount += 1;
+      else if (a.action === "delete") b.deleteCount += 1;
+      else if (a.action === "login") b.loginCount += 1;
+      const ts = a.createdAt ? new Date(a.createdAt) : null;
+      if (ts && (!b.lastActivityAt || ts > b.lastActivityAt)) {
+        b.lastActivityAt = ts;
+      }
     }
 
     // Resolve display names. createdBy stores systemUsers.id as text
@@ -1461,12 +1498,40 @@ export class DatabaseStorage implements IStorage {
     return Array.from(buckets.entries()).map(([createdBy, agg]) => {
       const numId = Number(createdBy);
       const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
+      const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount;
+      const totalActions = totalEntries + agg.editCount + agg.deleteCount;
+      // Heuristic score (0–100). Three signals:
+      //   activity = log10(total entries + 1) × 30, capped at 60.
+      //   quality  = 30 × (1 - errorRate), where errorRate is
+      //              (deletes + anomaly decisions) / totalActions.
+      //   engagement = up to 10 if they've logged in this window.
+      // The formula is intentionally simple — admins should treat the
+      // score as a hint, not a verdict.
+      const activity = Math.min(60, Math.log10(totalEntries + 1) * 30);
+      const errorRate = totalActions > 0
+        ? (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions
+        : 0;
+      const quality = Math.max(0, 30 * (1 - errorRate));
+      const engagement = Math.min(10, agg.loginCount * 2);
+      const score = Math.round(activity + quality + engagement);
+
       return {
         createdBy,
         displayName: sysUser?.displayName ?? (createdBy === "unknown" ? "غير معروف" : `#${createdBy}`),
         role: sysUser?.role ?? null,
         branchId: sysUser?.branchId ?? null,
-        ...agg,
+        expenseCount: agg.expenseCount,
+        expenseTotal: agg.expenseTotal,
+        invoiceCount: agg.invoiceCount,
+        invoiceTotal: agg.invoiceTotal,
+        purchaseCount: agg.purchaseCount,
+        purchaseTotal: agg.purchaseTotal,
+        anomalyDecisionsCount: agg.anomalyDecisionsCount,
+        editCount: agg.editCount,
+        deleteCount: agg.deleteCount,
+        loginCount: agg.loginCount,
+        lastActivityAt: agg.lastActivityAt ? agg.lastActivityAt.toISOString() : null,
+        score,
       };
     });
   }
