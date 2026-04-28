@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -348,6 +348,118 @@ const TREATMENT_TYPE_COLORS: Record<string, string> = {
 // Sub-types within physiotherapy get their own palette so the inner
 // breakdown legend is colour-coded too.
 const PT_SUBTYPE_COLORS = ["#10B981", "#06B6D4", "#3B82F6", "#8B5CF6", "#EC4899"];
+
+interface PatientFinancialSummary {
+  patientId: number;
+  unpaidCount: number;
+  totalDue: number;
+  overdueCount: number;
+  oldestUnpaidDate: string | null;
+}
+
+// Small contextual card shown after a patient is selected in the
+// invoice form. Renders nothing when the patient has no unpaid balance,
+// so it never distracts from the happy path. When there are unpaid
+// invoices it surfaces the count + total due so the accountant can
+// decide whether to record a payment instead of creating a new invoice.
+function PatientFinancialChip({ patientId }: { patientId: number | null }) {
+  const { data } = useQuery<PatientFinancialSummary>({
+    queryKey: ["/api/patients", patientId, "financial-summary"],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/financial-summary`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    enabled: patientId !== null,
+    staleTime: 30 * 1000,
+  });
+  if (!data || data.unpaidCount === 0) return null;
+  const isSevere = data.overdueCount > 0;
+  return (
+    <div
+      className={`mt-2 rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${
+        isSevere
+          ? "border-r-amber-500 bg-amber-50 text-amber-900"
+          : "border-r-blue-500 bg-blue-50 text-blue-900"
+      }`}
+      data-testid="patient-financial-chip"
+    >
+      <div className="font-semibold flex items-center gap-1.5">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+        {isSevere
+          ? `هذا المريض عليه ${data.overdueCount} فاتورة متأخّرة`
+          : `هذا المريض لديه ${data.unpaidCount} فاتورة غير مدفوعة`}
+      </div>
+      <div>المتبقي عليه: {formatCurrency(data.totalDue)}</div>
+      <div className="opacity-80">
+        فكّر بتسجيل الدفعة على الفاتورة القديمة بدل إنشاء فاتورة جديدة.
+      </div>
+    </div>
+  );
+}
+
+interface ExpenseHint {
+  severity: "info" | "warning";
+  message: string;
+}
+
+// Real-time guidance for the expense form. Watches description / amount /
+// category, debounces 350ms, and pings the server for rule-based hints
+// (free — no AI calls). Renders a small stack of cards under the form.
+// Stays empty when there's nothing to say so it doesn't clutter the
+// happy path.
+function ExpenseHintsPanel({
+  description,
+  amount,
+  category,
+}: {
+  description: string;
+  amount: number;
+  category: string;
+}) {
+  const [debounced, setDebounced] = useState({ description, amount, category });
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced({ description, amount, category }), 350);
+    return () => clearTimeout(t);
+  }, [description, amount, category]);
+
+  const { data } = useQuery<{ hints: ExpenseHint[]; source: string }>({
+    queryKey: ["/api/guidance/expense", debounced],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/guidance/expense", debounced);
+      return res.json();
+    },
+    enabled:
+      (debounced.description?.trim().length ?? 0) > 0 ||
+      debounced.amount > 0 ||
+      !debounced.category,
+    staleTime: 30 * 1000,
+  });
+
+  const hints = data?.hints ?? [];
+  if (hints.length === 0) return null;
+
+  return (
+    <div className="space-y-1.5" data-testid="expense-hints">
+      {hints.map((h, i) => (
+        <div
+          key={i}
+          className={`rounded-md border-r-4 px-3 py-2 text-xs flex items-start gap-2 ${
+            h.severity === "warning"
+              ? "border-r-amber-500 bg-amber-50 text-amber-900"
+              : "border-r-blue-500 bg-blue-50 text-blue-900"
+          }`}
+        >
+          <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span className="leading-relaxed">{h.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: string }) {
   const { t } = useTranslation();
@@ -3278,6 +3390,12 @@ export default function Accounting() {
                   )}
                 />
 
+                <ExpenseHintsPanel
+                  description={form.watch("description") || ""}
+                  amount={Number(form.watch("amount")) || 0}
+                  category={form.watch("category") || ""}
+                />
+
                 <FormField
                   control={form.control}
                   name="notes"
@@ -3325,28 +3443,31 @@ export default function Accounting() {
                     (() => {
                       const selected = patientsList.find((p) => p.id === invoicePatientId);
                       return (
-                        <div className="flex items-center justify-between gap-2 border rounded-md px-3 py-2 bg-muted/30">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium truncate">{selected?.name || `#${invoicePatientId}`}</div>
-                            <div className="text-xs text-muted-foreground truncate">
-                              {selected?.phone || t.accounting.noPhone}
+                        <>
+                          <div className="flex items-center justify-between gap-2 border rounded-md px-3 py-2 bg-muted/30">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium truncate">{selected?.name || `#${invoicePatientId}`}</div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {selected?.phone || t.accounting.noPhone}
+                              </div>
                             </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0"
+                              onClick={() => {
+                                setInvoicePatientId(null);
+                                setInvoicePatientSearch("");
+                                setIsInvoicePatientListOpen(true);
+                              }}
+                              data-testid="button-clear-invoice-patient"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
                           </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 shrink-0"
-                            onClick={() => {
-                              setInvoicePatientId(null);
-                              setInvoicePatientSearch("");
-                              setIsInvoicePatientListOpen(true);
-                            }}
-                            data-testid="button-clear-invoice-patient"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
+                          <PatientFinancialChip patientId={invoicePatientId} />
+                        </>
                       );
                     })()
                   ) : (

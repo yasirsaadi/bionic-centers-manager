@@ -26,6 +26,7 @@ import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
 import { aiChat, type ChatMessage } from "./ai/chat";
+import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { logAudit } from "./accounting/ledger";
 
@@ -1305,6 +1306,58 @@ export async function registerRoutes(
       console.error("Error deleting patient:", err);
       res.status(500).json({ message: "فشل في حذف المريض. حاول مرة أخرى." });
     }
+  });
+
+  // Financial summary for a single patient — fast read used by inline
+  // guidance hints (e.g. "this patient has 2 overdue invoices, are you
+  // sure you want to create a new one?"). Returns only aggregate
+  // counts; the caller can drill into specific invoices via existing
+  // endpoints if needed.
+  app.get("/api/patients/:id/financial-summary", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "معرّف غير صالح" });
+    }
+
+    const patient = await storage.getPatient(id);
+    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+
+    // Branch isolation: a non-admin must not learn about patients
+    // outside their branch — even just their financial summary.
+    if (!isAdmin && branchSession?.branchId && patient.branchId !== branchSession.branchId) {
+      return res.status(403).json({ error: "لا يمكنك الوصول لهذا المريض" });
+    }
+
+    const allInvoices = await storage.getInvoices(undefined, undefined, id);
+    const now = new Date();
+    let unpaidCount = 0;
+    let totalDue = 0;
+    let overdueCount = 0; // > 30 days old and still owed
+    let oldestUnpaidDate: string | null = null;
+
+    for (const inv of allInvoices) {
+      const due = inv.total - (inv.paidAmount || 0);
+      if (due <= 0) continue;
+      unpaidCount += 1;
+      totalDue += due;
+      const ageDays = Math.floor(
+        (now.getTime() - new Date(inv.invoiceDate).getTime()) / (24 * 60 * 60 * 1000)
+      );
+      if (ageDays > 30) overdueCount += 1;
+      if (!oldestUnpaidDate || inv.invoiceDate < oldestUnpaidDate) {
+        oldestUnpaidDate = inv.invoiceDate;
+      }
+    }
+
+    res.json({
+      patientId: id,
+      unpaidCount,
+      totalDue,
+      overdueCount,
+      oldestUnpaidDate,
+    });
   });
 
   // New Service (add service to existing patient)
@@ -3656,6 +3709,35 @@ export async function registerRoutes(
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
     res.json(result.value);
+  });
+
+  // Inline guidance for an in-progress expense. Cheap and synchronous —
+  // mostly rule-based; the AI escalation path is opt-in per request via
+  // `useAi: true` so the default cost is zero. Used by the expense form
+  // to display contextual hints under the description field.
+  app.post("/api/guidance/expense", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+    const { description, amount, category, useAi } = req.body ?? {};
+    const input = {
+      description: typeof description === "string" ? description : "",
+      amount: Number(amount) || 0,
+      category: typeof category === "string" ? category : null,
+    };
+    const ruleHints = getRuleBasedHints(input);
+    if (!useAi) {
+      return res.json({ hints: ruleHints, source: "rules" });
+    }
+    const aiResult = await getAiHints(input);
+    if (!aiResult.ok) {
+      return res.json({ hints: ruleHints, source: "rules", aiError: aiResult.reason });
+    }
+    // Merge — rules first (deterministic, more important), then AI.
+    res.json({ hints: [...ruleHints, ...aiResult.value], source: "rules+ai" });
   });
 
   // ======================= ANOMALY DETECTION ROUTES =======================
