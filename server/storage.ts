@@ -1291,6 +1291,48 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  // Returns active decisions enriched with the user display name (for
+  // the "قرارات سابقة" list under anomalies) so the UI doesn't have to
+  // do an N+1 lookup just to render the row author.
+  async getActiveAnomalyDecisionsWithDetails(branchId?: number): Promise<
+    (AnomalyDecision & { userName: string | null })[]
+  > {
+    const now = new Date();
+    const branchClause = branchId ? eq(anomalyDecisions.branchId, branchId) : sql`TRUE`;
+    const rows = await db
+      .select()
+      .from(anomalyDecisions)
+      .where(
+        and(
+          branchClause,
+          or(
+            sql`${anomalyDecisions.expiresAt} IS NULL`,
+            sql`${anomalyDecisions.expiresAt} > ${now}`
+          )
+        )
+      )
+      .orderBy(desc(anomalyDecisions.createdAt));
+    if (rows.length === 0) return [];
+    const userIds = Array.from(new Set(rows.map((r) => r.userId).filter((x): x is number => !!x)));
+    const userRows = userIds.length
+      ? await db.select().from(systemUsers).where(inArray(systemUsers.id, userIds))
+      : [];
+    const userById = new Map(userRows.map((u) => [u.id, u.displayName]));
+    return rows.map((r) => ({ ...r, userName: r.userId ? userById.get(r.userId) ?? null : null }));
+  }
+
+  // Removes a decision so the underlying anomaly resurfaces on next
+  // detection. Branch-scoped: a non-admin can't delete a decision from
+  // another branch (enforcedBranchId === null means admin, no scope).
+  async deleteAnomalyDecision(id: number, enforcedBranchId: number | null): Promise<boolean> {
+    const conditions = [eq(anomalyDecisions.id, id)];
+    if (enforcedBranchId !== null) {
+      conditions.push(eq(anomalyDecisions.branchId, enforcedBranchId));
+    }
+    const result = await db.delete(anomalyDecisions).where(and(...conditions)).returning();
+    return result.length > 0;
+  }
+
   // Returns the set of anomaly source IDs that should be suppressed for the
   // current user's branch. Excludes 'reviewed' decisions whose 30-day expiry
   // has lapsed.

@@ -45,6 +45,11 @@ export interface AiCompleteParams {
   // Output budget. Keep tight for classification / extraction (≤ 100); generous
   // for long-form narrative reports.
   maxTokens?: number;
+  // Prefills the assistant's reply with this string. Useful for forcing
+  // structured output: setting `prefillAssistant: "{"` makes the model
+  // emit JSON directly without preamble. The prefilled prefix is
+  // automatically prepended to the returned text.
+  prefillAssistant?: string;
 }
 
 /**
@@ -69,6 +74,17 @@ export async function aiComplete(params: AiCompleteParams): Promise<string> {
   // prompt grows past the model's cache minimum (4096 tokens for Haiku 4.5)
   // subsequent calls with the same system text become ~10x cheaper. Below
   // the minimum the marker is silently a no-op — no error, just no cache hit.
+  // If prefillAssistant is set, we add an assistant turn with the prefix —
+  // the model continues from that prefix verbatim (Anthropic docs:
+  // "Prefilling Claude's response"). On output we re-attach the prefix so
+  // the caller sees the full string.
+  const messages: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: params.user },
+  ];
+  if (params.prefillAssistant) {
+    messages.push({ role: "assistant", content: params.prefillAssistant });
+  }
+
   const response = await client.messages.create({
     model: modelId,
     max_tokens: params.maxTokens ?? 1024,
@@ -79,12 +95,19 @@ export async function aiComplete(params: AiCompleteParams): Promise<string> {
         cache_control: { type: "ephemeral" },
       },
     ],
-    messages: [{ role: "user", content: params.user }],
+    messages,
   });
 
   const textBlock = response.content.find((b) => b.type === "text");
   if (!textBlock || textBlock.type !== "text") return "";
-  return textBlock.text.trim();
+  const reply = textBlock.text.trim();
+  // Re-attach the prefilled prefix so the caller works with the full text
+  // it expected to see. We only add it back if the model didn't already
+  // include it (it usually doesn't in an assistant prefill, but be safe).
+  if (params.prefillAssistant && !reply.startsWith(params.prefillAssistant.trim())) {
+    return params.prefillAssistant + reply;
+  }
+  return reply;
 }
 
 export class AiUnavailableError extends Error {

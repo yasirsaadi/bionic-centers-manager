@@ -3971,6 +3971,44 @@ export async function registerRoutes(
     res.json(created);
   });
 
+  // Lists active (non-expired) anomaly decisions for the requester's
+  // scope. Used by the "قرارات سابقة" section under anomalies so the
+  // accountant can see what they've already cleared and undo if needed.
+  app.get("/api/anomalies/decisions", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const branchId = isAdmin ? undefined : branchSession?.branchId ?? undefined;
+    const list = await storage.getActiveAnomalyDecisionsWithDetails(branchId);
+    res.json(list);
+  });
+
+  // Undoes a previously-recorded decision so the anomaly resurfaces on
+  // the next refresh. Branch-isolated.
+  app.delete("/api/anomalies/decisions/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "معرّف غير صالح" });
+    }
+    const ok = await storage.deleteAnomalyDecision(
+      id,
+      isAdmin ? null : branchSession?.branchId ?? null
+    );
+    if (!ok) {
+      return res.status(404).json({ error: "القرار غير موجود أو خارج نطاقك" });
+    }
+    res.json({ ok: true });
+  });
+
   // ======================= AI MEMORY NOTES ROUTES =======================
   // Manager-curated context that the AI explainer uses to ground its
   // explanations. The accountant can READ these (so they understand which

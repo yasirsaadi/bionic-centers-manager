@@ -258,8 +258,14 @@ ${JSON.stringify(snapshot, null, 2)}
   const result = await safeAiComplete({
     system: AUDIT_SYSTEM_PROMPT,
     user: userPrompt,
-    model: "sonnet",
-    maxTokens: 1500,
+    // Haiku 4.5 is more deterministic for structured-JSON output and
+    // also cheaper. Sonnet was over-explaining and breaking JSON.
+    model: "haiku",
+    maxTokens: 2000,
+    // Force the response to start as JSON. The prefill makes the model
+    // continue from "{" instead of preambling — cleanest known way to
+    // get strict JSON out of Claude without tool use.
+    prefillAssistant: "{",
   });
 
   if (!result.ok) return result;
@@ -267,11 +273,10 @@ ${JSON.stringify(snapshot, null, 2)}
   // Parse defensively. The model occasionally wraps JSON in code fences
   // or prefixes a sentence even after we tell it not to. Strategy:
   //   1. Strip code fences.
-  //   2. Slice from the first `{` to the matching last `}`.
-  //   3. Try JSON.parse on that substring.
-  //   4. If it still fails, fall back to an empty findings list with a
-  //      note in the summary so the UI doesn't blow up — the user sees
-  //      "no findings" instead of a hard error.
+  //   2. Try whole-text parse.
+  //   3. Slice from the first `{` to the matching last `}` and try.
+  //   4. If it still fails, log the raw output and fall back to an empty
+  //      findings list with a friendly summary so the UI keeps working.
   let parsed: { summary?: string; findings?: AuditFinding[] };
   const tryParse = (raw: string): typeof parsed | null => {
     try {
@@ -290,9 +295,14 @@ ${JSON.stringify(snapshot, null, 2)}
     }
   }
   if (!parsedResult) {
-    console.warn("[smart_audit] could not parse model output:", cleaned.slice(0, 200));
+    // Log the full raw output so we can diagnose recurring failures
+    // from Render logs. Truncated to 1000 chars to avoid log spam.
+    console.warn(
+      "[smart_audit] JSON parse failed. Raw output (first 1000 chars):",
+      cleaned.slice(0, 1000)
+    );
     parsed = {
-      summary: "تعذّر استخراج ملاحظات منظّمة من النموذج هذه المرّة. حاول مرّة أخرى أو غيّر النطاق الزمني.",
+      summary: "النموذج لم يُعِد بياناً منظّماً هذه المرّة. حاول إعادة التشغيل بعد قليل.",
       findings: [],
     };
   } else {
