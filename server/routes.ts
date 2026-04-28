@@ -2741,10 +2741,36 @@ export async function registerRoutes(
       const branchId = enforceBranchAccess(req);
       const allPayments = await storage.getAllPayments(branchId);
 
+      // Display-time inference: many older payments have an empty
+      // paymentTreatmentType because the field wasn't required at the
+      // time. To stop the chart from drowning in "غير محدد", we look up
+      // the payment's patient and infer the type from their treatment
+      // flags. The database is NOT modified — this is purely how we
+      // present the data.
+      const patientIds = Array.from(new Set(allPayments.map((p) => p.patientId).filter(Boolean)));
+      const patientList = patientIds.length > 0
+        ? await storage.getPatientsByIds(patientIds as number[])
+        : [];
+      const patientById = new Map(patientList.map((p) => [p.id, p]));
+
+      const inferTreatmentType = (payment: typeof allPayments[number]): string | null => {
+        if (payment.paymentTreatmentType) return payment.paymentTreatmentType;
+        const patient = payment.patientId ? patientById.get(payment.patientId) : undefined;
+        if (!patient) return null;
+        // Order matches user's clinical priority — most patients fall
+        // cleanly into one bucket because flags are largely exclusive in
+        // practice. If a patient is flagged for multiple, prefer
+        // amputation since it's the costliest service.
+        if (patient.isAmputee) return "طرف صناعي";
+        if (patient.isPhysiotherapy) return "علاج طبيعي";
+        if (patient.isMedicalSupport) return "مساند طبية";
+        return null;
+      };
+
       const treatmentMap: Record<string, { totalAmount: number; count: number }> = {};
 
       for (const payment of allPayments) {
-        const treatmentType = payment.paymentTreatmentType;
+        const treatmentType = inferTreatmentType(payment);
         if (!treatmentType) {
           if (!treatmentMap["غير محدد"]) {
             treatmentMap["غير محدد"] = { totalAmount: 0, count: 0 };
