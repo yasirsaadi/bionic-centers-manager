@@ -47,7 +47,12 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      // Was Infinity which made every query a one-shot for the session.
+      // 60s gives a good balance: same query within a minute uses cache
+      // (no flicker, no re-fetch on tab switch) but stale data doesn't
+      // linger across true workflow changes.
+      staleTime: 60_000,
+      // gcTime defaults to 5 minutes which is fine for our memory budget.
       retry: false,
     },
     mutations: {

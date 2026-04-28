@@ -21,11 +21,16 @@ import DailyPatientReport from "@/pages/DailyPatientReport";
 import Branches from "@/pages/Branches";
 import BranchDetails from "@/pages/BranchDetails";
 import BranchRevenues from "@/pages/BranchRevenues";
-import Statistics from "@/pages/Statistics";
-import Accounting from "@/pages/Accounting";
-import AdminSettings from "@/pages/AdminSettings";
-import Surveys from "@/pages/Surveys";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
+
+// Heavy pages — code-split so the main bundle stays small. Each
+// chunk only loads when the user navigates to that route, which
+// noticeably speeds up the initial paint of Dashboard and Patients
+// (the screens most users open first).
+const Accounting = lazy(() => import("@/pages/Accounting"));
+const Statistics = lazy(() => import("@/pages/Statistics"));
+const Surveys = lazy(() => import("@/pages/Surveys"));
+const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
 
 function DashboardRoute() {
   const [session, setSession] = useState<{ role?: string } | null>(null);
@@ -81,23 +86,31 @@ function Router() {
   return (
     <BranchGate>
       <Layout>
-        <Switch>
-          <Route path="/" component={DashboardRoute} />
-          <Route path="/patients" component={PatientsList} />
-          <Route path="/patients/new" component={CreatePatient} />
-          <Route path="/patients/:id/edit" component={EditPatient} />
-          <Route path="/patients/:id" component={PatientDetails} />
-          <Route path="/reports" component={Reports} />
-          <Route path="/reports/daily-patients" component={DailyPatientReport} />
-          <Route path="/revenues" component={BranchRevenues} />
-          <Route path="/branches" component={Branches} />
-          <Route path="/branches/:id" component={BranchDetails} />
-          <Route path="/statistics" component={Statistics} />
-          <Route path="/accounting" component={Accounting} />
-          <Route path="/surveys" component={Surveys} />
-          <Route path="/admin" component={AdminSettings} />
-          <Route component={NotFound} />
-        </Switch>
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            </div>
+          }
+        >
+          <Switch>
+            <Route path="/" component={DashboardRoute} />
+            <Route path="/patients" component={PatientsList} />
+            <Route path="/patients/new" component={CreatePatient} />
+            <Route path="/patients/:id/edit" component={EditPatient} />
+            <Route path="/patients/:id" component={PatientDetails} />
+            <Route path="/reports" component={Reports} />
+            <Route path="/reports/daily-patients" component={DailyPatientReport} />
+            <Route path="/revenues" component={BranchRevenues} />
+            <Route path="/branches" component={Branches} />
+            <Route path="/branches/:id" component={BranchDetails} />
+            <Route path="/statistics" component={Statistics} />
+            <Route path="/accounting" component={Accounting} />
+            <Route path="/surveys" component={Surveys} />
+            <Route path="/admin" component={AdminSettings} />
+            <Route component={NotFound} />
+          </Switch>
+        </Suspense>
       </Layout>
       <AiChatDrawer />
     </BranchGate>

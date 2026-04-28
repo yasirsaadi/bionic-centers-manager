@@ -473,11 +473,52 @@ interface AccuracyRow {
   purchaseCount: number;
   purchaseTotal: number;
   anomalyDecisionsCount: number;
+  editCount: number;
+  deleteCount: number;
+  loginCount: number;
+  lastActivityAt: string | null;
+  score: number;
   totalEntries: number;
 }
 
 function formatIQD(amount: number): string {
   return new Intl.NumberFormat("en-US").format(amount);
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "مسؤول النظام",
+  branch_manager: "مدير فرع",
+  accountant: "محاسب",
+  reception: "استقبال",
+  therapist: "أخصّائي علاج",
+  surveyor: "مسؤول استبيانات",
+};
+
+function scoreColor(score: number): string {
+  if (score >= 75) return "bg-green-100 text-green-800 border-green-200";
+  if (score >= 50) return "bg-blue-100 text-blue-800 border-blue-200";
+  if (score >= 25) return "bg-amber-100 text-amber-800 border-amber-200";
+  return "bg-red-100 text-red-800 border-red-200";
+}
+
+function scoreLabel(score: number): string {
+  if (score >= 75) return "ممتاز";
+  if (score >= 50) return "جيّد";
+  if (score >= 25) return "مقبول";
+  return "يحتاج متابعة";
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "الآن";
+  if (minutes < 60) return `قبل ${minutes} دقيقة`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `قبل ${hours} ساعة`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `قبل ${days} يوماً`;
+  return new Date(iso).toLocaleDateString("ar-IQ");
 }
 
 function EmployeeAccuracyTab() {
@@ -494,88 +535,165 @@ function EmployeeAccuracyTab() {
   });
 
   const rows = data?.rows ?? [];
+  // Hide the legacy "unknown" bucket from the main grid — show it
+  // separately at the bottom as a one-line note for transparency.
+  const knownRows = rows.filter((r) => r.createdBy !== "unknown");
+  const unknownRow = rows.find((r) => r.createdBy === "unknown");
 
   return (
-    <Card className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-primary" />
-            دقّة وحركة الموظفين
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            ملخّص تفصيلي لكل موظّف عن النشاط المالي الذي أنشأه خلال الفترة المحدّدة.
-          </p>
+    <div className="space-y-4">
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" />
+              دقّة وحركة الموظفين
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              تقييم أداء كل موظّف بناءً على نشاطه الفعليّ في النظام: الإدخالات، التعديلات، الحذف، التنبيهات، تسجيلات الدخول.
+            </p>
+          </div>
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="p-2 border rounded-md text-sm bg-background"
+            data-testid="select-accuracy-window"
+          >
+            <option value={7}>آخر 7 أيام</option>
+            <option value={30}>آخر 30 يوماً</option>
+            <option value={60}>آخر 60 يوماً</option>
+            <option value={90}>آخر 90 يوماً</option>
+            <option value={180}>آخر 180 يوماً</option>
+          </select>
         </div>
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          className="p-2 border rounded-md text-sm bg-background"
-          data-testid="select-accuracy-window"
-        >
-          <option value={7}>آخر 7 أيام</option>
-          <option value={30}>آخر 30 يوماً</option>
-          <option value={60}>آخر 60 يوماً</option>
-          <option value={90}>آخر 90 يوماً</option>
-          <option value={180}>آخر 180 يوماً</option>
-        </select>
-      </div>
 
-      {isLoading ? (
-        <div className="text-center py-8 text-muted-foreground text-sm">جارٍ التحميل…</div>
-      ) : rows.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground text-sm">
-          لا توجد بيانات في الفترة المحدّدة.
+        {/* Score legend / explainer */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-xs">
+          <div className="rounded-md border bg-green-50 px-3 py-2">
+            <div className="font-semibold text-green-800">ممتاز ≥ 75</div>
+            <div className="text-green-700/70">نشاط مرتفع وأخطاء قليلة</div>
+          </div>
+          <div className="rounded-md border bg-blue-50 px-3 py-2">
+            <div className="font-semibold text-blue-800">جيّد 50-74</div>
+            <div className="text-blue-700/70">أداء طبيعي</div>
+          </div>
+          <div className="rounded-md border bg-amber-50 px-3 py-2">
+            <div className="font-semibold text-amber-800">مقبول 25-49</div>
+            <div className="text-amber-700/70">يحتاج تحسين بسيط</div>
+          </div>
+          <div className="rounded-md border bg-red-50 px-3 py-2">
+            <div className="font-semibold text-red-800">يحتاج متابعة &lt; 25</div>
+            <div className="text-red-700/70">نشاط قليل أو أخطاء كثيرة</div>
+          </div>
         </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground border-b">
-              <tr>
-                <th className="text-right py-2 px-2">الموظّف</th>
-                <th className="text-right py-2 px-2">الدور</th>
-                <th className="text-right py-2 px-2">المصاريف</th>
-                <th className="text-right py-2 px-2">الفواتير</th>
-                <th className="text-right py-2 px-2">المشتريات</th>
-                <th className="text-right py-2 px-2">قرارات تنبيه</th>
-                <th className="text-right py-2 px-2">إجمالي الإدخالات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.createdBy} className="border-b last:border-0 hover:bg-accent/40">
-                  <td className="py-2 px-2 font-medium">{r.displayName}</td>
-                  <td className="py-2 px-2 text-muted-foreground">{r.role ?? "—"}</td>
-                  <td className="py-2 px-2 tabular-nums">
-                    {r.expenseCount}
-                    {r.expenseTotal > 0 && (
-                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.expenseTotal)})</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 tabular-nums">
-                    {r.invoiceCount}
-                    {r.invoiceTotal > 0 && (
-                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.invoiceTotal)})</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 tabular-nums">
-                    {r.purchaseCount}
-                    {r.purchaseTotal > 0 && (
-                      <span className="text-xs text-muted-foreground"> ({formatIQD(r.purchaseTotal)})</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 tabular-nums">{r.anomalyDecisionsCount}</td>
-                  <td className="py-2 px-2 tabular-nums font-semibold">{r.totalEntries}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="text-xs text-muted-foreground mt-3">
-            ملاحظة: الإدخالات المُنشأة قبل هذا التحديث تظهر تحت "غير معروف" لأنّ نظام تتبّع المُنشئ كان غير مكتمل قبلها.
-          </p>
+
+        {isLoading ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">جارٍ التحميل…</div>
+        ) : knownRows.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            لا توجد بيانات في الفترة المحدّدة.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {knownRows.map((r) => (
+              <div
+                key={r.createdBy}
+                className="border rounded-lg p-4 hover:shadow-sm transition-shadow"
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-base">{r.displayName}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {r.role ? ROLE_LABELS[r.role] ?? r.role : "—"}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      آخر نشاط: {relativeTime(r.lastActivityAt)}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className={`inline-flex items-center justify-center min-w-[72px] px-3 py-1.5 rounded-full border text-sm font-bold ${scoreColor(r.score)}`}>
+                      {r.score} / 100
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">{scoreLabel(r.score)}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <MetricBox label="مصاريف" count={r.expenseCount} amount={r.expenseTotal} />
+                  <MetricBox label="فواتير" count={r.invoiceCount} amount={r.invoiceTotal} />
+                  <MetricBox label="مشتريات" count={r.purchaseCount} amount={r.purchaseTotal} />
+                  <MetricBox label="إجمالي الإدخالات" count={r.totalEntries} highlight />
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-2">
+                  <MetricBox label="تعديلات" count={r.editCount} tone="amber" />
+                  <MetricBox label="عمليّات حذف" count={r.deleteCount} tone={r.deleteCount > 5 ? "red" : "default"} />
+                  <MetricBox label="قرارات تنبيهات" count={r.anomalyDecisionsCount} />
+                  <MetricBox label="تسجيلات دخول" count={r.loginCount} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {unknownRow && unknownRow.totalEntries > 0 && (
+          <div className="mt-4 text-xs text-muted-foreground border-t pt-3">
+            ملاحظة: يوجد {unknownRow.totalEntries.toLocaleString("ar-IQ")} إدخالاً قديماً قبل تفعيل تتبّع المُنشِئ، ولا يمكن نسبتها لموظّف محدّد.
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <h3 className="text-sm font-bold mb-2 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
+          كيف تُحسَب النقاط؟
+        </h3>
+        <ul className="text-xs text-muted-foreground space-y-1 list-disc pr-5">
+          <li><span className="font-semibold text-foreground">النشاط (60 نقطة كحدّ أقصى)</span> — مقياس لوغاريتمي على عدد الإدخالات. مزيد من الإدخالات يرفع النقاط لكن العائد يقلّ تدريجياً.</li>
+          <li><span className="font-semibold text-foreground">الجودة (30 نقطة)</span> — تنخفض كلّما زادت نسبة الحذف والتنبيهات بالنسبة للنشاط الكلّي.</li>
+          <li><span className="font-semibold text-foreground">الانضباط (10 نقاط)</span> — تسجيلات الدخول النشطة في الفترة.</li>
+          <li>النقاط مؤشّر استرشادي للمسؤول، وليست تقييماً نهائيّاً. تعديل واحد على مصروف خاطئ ليس خطأ — قد يكون تصحيحاً.</li>
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function MetricBox({
+  label,
+  count,
+  amount,
+  highlight,
+  tone = "default",
+}: {
+  label: string;
+  count: number;
+  amount?: number;
+  highlight?: boolean;
+  tone?: "default" | "amber" | "red";
+}) {
+  const toneClass =
+    tone === "amber"
+      ? "bg-amber-50 border-amber-200"
+      : tone === "red"
+      ? "bg-red-50 border-red-200"
+      : highlight
+      ? "bg-primary/5 border-primary/20"
+      : "bg-muted/30";
+  return (
+    <div className={`rounded-md border px-3 py-2 ${toneClass}`}>
+      <div className="text-muted-foreground text-[11px]">{label}</div>
+      <div className="font-bold tabular-nums text-sm">
+        {count.toLocaleString("ar-IQ")}
+      </div>
+      {amount !== undefined && amount > 0 && (
+        <div className="text-[10px] text-muted-foreground tabular-nums">
+          {formatIQD(amount)} د.ع
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
