@@ -5,7 +5,7 @@ import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema } from "@shared/schema";
+import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -3599,6 +3599,97 @@ export async function registerRoutes(
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
     res.json({ explanation: result.value });
+  });
+
+  // Records the accountant's decision on a specific anomaly. The detector
+  // consults these decisions on its next run and skips matching anomalies,
+  // so the accountant doesn't keep seeing alerts they've already handled.
+  app.post("/api/anomalies/decisions", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const { anomalyType, sourceType, sourceId, decision, reason, branchId: bodyBranchId } = req.body ?? {};
+    if (!anomalyType || !sourceType || !sourceId || !decision) {
+      return res.status(400).json({ error: "بيانات القرار ناقصة" });
+    }
+    if (!["reviewed", "not_error"].includes(decision)) {
+      return res.status(400).json({ error: "نوع القرار غير صالح" });
+    }
+    // Non-admins can only record decisions for their own branch.
+    const enforcedBranch = isAdmin ? (bodyBranchId ?? null) : branchSession?.branchId ?? null;
+    const created = await storage.recordAnomalyDecision({
+      anomalyType,
+      sourceType,
+      sourceId: parseInt(sourceId),
+      decision,
+      reason: reason ?? null,
+      branchId: enforcedBranch,
+      userId: branchSession?.userId ?? null,
+    });
+    res.json(created);
+  });
+
+  // ======================= AI MEMORY NOTES ROUTES =======================
+  // Manager-curated context that the AI explainer uses to ground its
+  // explanations. The accountant can READ these (so they understand which
+  // notes shaped a given explanation), but only admin can write.
+
+  app.get("/api/ai-notes", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const branchId = enforceBranchAccess(req);
+    const includeInactive = req.query.includeInactive === "true";
+    const list = await storage.getAiMemoryNotes(branchId, !includeInactive);
+    res.json(list);
+  });
+
+  app.post("/api/ai-notes", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه إضافة ملاحظات للذاكرة" });
+    }
+    try {
+      const data = insertAiMemoryNoteSchema.parse({
+        ...req.body,
+        createdBy: branchSession?.userId ?? null,
+      });
+      const created = await storage.createAiMemoryNote(data);
+      res.json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/ai-notes/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه تعديل الملاحظات" });
+    }
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertAiMemoryNoteSchema.partial().parse(req.body);
+      const updated = await storage.updateAiMemoryNote(id, data);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/ai-notes/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "فقط المسؤول يمكنه حذف الملاحظات" });
+    }
+    const id = parseInt(req.params.id);
+    await storage.deleteAiMemoryNote(id);
+    res.json({ success: true });
   });
 
   // ======================= TREATMENT PLAN ROUTES =======================

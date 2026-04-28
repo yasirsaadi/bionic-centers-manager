@@ -8,14 +8,25 @@
 
 import { safeAiComplete, type AiResult } from "./provider";
 import type { Anomaly } from "../anomalies/detector";
+import { storage } from "../storage";
 
 const EXPLAIN_SYSTEM_PROMPT = `
 أنت مدقّق محاسبي خبير في مراكز طبية عراقية. مهمتك إعطاء تفسير عربي واضح
 لتنبيهات مالية تلقائية بأسلوب بسيط مفهوم لمحاسب غير متخصّص في التحليل.
 
+سيُرفَق مع كل تنبيه (إن وُجدت) ملاحظات سياقية كتبها مدير المركز عن
+طبيعة العمل (موسمية، موردون منتظمون، مرضى دائمون، إلخ). استخدم هذه
+الملاحظات في حكمك:
+
+- إذا كانت الملاحظات تُفسّر التنبيه بأنه طبيعي → قُل ذلك صراحة وأعطِ
+  المحاسب طمأنينة بدلاً من اقتراح تحقيق.
+- إذا كانت الملاحظات لا تُفسّره → اعتبره فعلاً يستحق المراجعة وأعطِ
+  خطوة عملية محدّدة.
+
 لكل تنبيه:
-- اشرح في جملة أو جملتين سبب التنبيه ولماذا يستحق المراجعة.
-- اقترح خطوة عملية واحدة محدّدة (مثل: "تحقّق من فاتورة المورد"، "اتصل بالمريض").
+- اشرح في جملة أو جملتين سبب التنبيه ولماذا يستحق (أو لا يستحق) المراجعة.
+- اقترح خطوة عملية واحدة محدّدة، أو قُل صراحة "لا حاجة لإجراء" عندما
+  يكون السياق يُفسّر الأمر.
 - استعمل العربية الفصحى، بلا تعابير إنجليزية.
 
 لا تستخدم تنسيقات ماركداون مزخرفة، لا قوائم نقطية، لا عناوين عريضة.
@@ -23,16 +34,27 @@ const EXPLAIN_SYSTEM_PROMPT = `
 `.trim();
 
 export async function explainAnomaly(anomaly: Anomaly): Promise<AiResult<string>> {
-  const userMessage = buildUserMessage(anomaly);
+  // Pull manager-provided context notes that match this anomaly's scope
+  // and branch (or are global). Limited to ~8 most-recent in storage.ts.
+  const notes = await storage.getRelevantAiNotesForAnomaly({
+    sourceType: anomaly.source.type,
+    branchId: anomaly.branchId,
+    category: typeof anomaly.context?.category === "string" ? anomaly.context.category : undefined,
+  });
+
+  const userMessage = buildUserMessage(anomaly, notes);
   return await safeAiComplete({
     system: EXPLAIN_SYSTEM_PROMPT,
     user: userMessage,
     model: "haiku",
-    maxTokens: 256,
+    maxTokens: 320,
   });
 }
 
-function buildUserMessage(anomaly: Anomaly): string {
+function buildUserMessage(
+  anomaly: Anomaly,
+  notes: { title: string; note: string }[]
+): string {
   const lines = [
     `نوع التنبيه: ${anomaly.type}`,
     `الخطورة: ${anomaly.severity}`,
@@ -47,7 +69,14 @@ function buildUserMessage(anomaly: Anomaly): string {
   if (anomaly.context && Object.keys(anomaly.context).length > 0) {
     lines.push(`بيانات إضافية: ${JSON.stringify(anomaly.context)}`);
   }
+  if (notes.length > 0) {
+    lines.push("");
+    lines.push("ملاحظات سياقية كتبها مدير المركز:");
+    for (const n of notes) {
+      lines.push(`- ${n.title}: ${n.note}`);
+    }
+  }
   lines.push("");
-  lines.push("اشرح للمحاسب لماذا يستحق هذا الانتباه واقترح خطوة عملية واحدة.");
+  lines.push("اشرح للمحاسب لماذا يستحق هذا الانتباه (أو لماذا لا يستحقه إن كان السياق يُفسّره)، واقترح خطوة عملية واحدة.");
   return lines.join("\n");
 }

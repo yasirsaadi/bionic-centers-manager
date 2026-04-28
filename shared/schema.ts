@@ -202,6 +202,40 @@ export const purchases = pgTable("purchases", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Records the accountant's decisions on detected anomalies so the rule
+// engine doesn't keep flagging the same record after a human reviewed it.
+// `decision = 'reviewed'` is a soft acknowledge with an expiry; `decision
+// = 'not_error'` is permanent ("yes we know about this — stop nagging").
+export const anomalyDecisions = pgTable("anomaly_decisions", {
+  id: serial("id").primaryKey(),
+  anomalyType: text("anomaly_type").notNull(), // expense_amount_outlier | expense_duplicate | invoice_overdue | patient_no_payment
+  sourceType: text("source_type").notNull(), // expense | invoice | patient
+  sourceId: integer("source_id").notNull(),
+  decision: text("decision").notNull(), // 'reviewed' | 'not_error'
+  reason: text("reason"),
+  branchId: integer("branch_id").references(() => branches.id),
+  userId: integer("user_id").references(() => systemUsers.id),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// AI memory notes — manager-written context that the AI explainer reads
+// when generating anomaly explanations. Lets the system "learn" the
+// business without any actual ML: e.g. seasonal patterns, regular vendors,
+// VIP patients, normal large expenses.
+export const aiMemoryNotes = pgTable("ai_memory_notes", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id), // null = applies to all branches
+  scope: text("scope").notNull(), // 'general' | 'expense' | 'invoice' | 'patient'
+  category: text("category"), // optional refinement, e.g. 'hospitality' for ramadan note
+  title: text("title").notNull(),
+  note: text("note").notNull(),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -240,6 +274,8 @@ export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true,
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true });
 export const insertVendorSchema = createInsertSchema(vendors).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPurchaseSchema = createInsertSchema(purchases).omit({ id: true, createdAt: true, purchaseNumber: true, paidAmount: true, status: true });
+export const insertAnomalyDecisionSchema = createInsertSchema(anomalyDecisions).omit({ id: true, createdAt: true });
+export const insertAiMemoryNoteSchema = createInsertSchema(aiMemoryNotes).omit({ id: true, createdAt: true, updatedAt: true });
 
 // ============================================================
 // نظام المحاسبة الاحترافي - Professional Accounting Tables
@@ -372,6 +408,10 @@ export type Vendor = typeof vendors.$inferSelect;
 export type InsertVendor = z.infer<typeof insertVendorSchema>;
 export type Purchase = typeof purchases.$inferSelect;
 export type InsertPurchase = z.infer<typeof insertPurchaseSchema>;
+export type AnomalyDecision = typeof anomalyDecisions.$inferSelect;
+export type InsertAnomalyDecision = z.infer<typeof insertAnomalyDecisionSchema>;
+export type AiMemoryNote = typeof aiMemoryNotes.$inferSelect;
+export type InsertAiMemoryNote = z.infer<typeof insertAiMemoryNoteSchema>;
 
 // System users for internal authentication
 export const systemUsers = pgTable("system_users", {

@@ -7,8 +7,8 @@
 // anomaly via /api/ai/explain-anomaly.
 
 import { db } from "../db";
-import { expenses, invoices, patients, payments, visits, branches } from "@shared/schema";
-import { and, eq, gte, lte, sql, desc } from "drizzle-orm";
+import { expenses, invoices, patients, payments, visits, branches, anomalyDecisions } from "@shared/schema";
+import { and, eq, gte, lte, sql, desc, or } from "drizzle-orm";
 
 export type AnomalySeverity = "high" | "medium" | "low";
 
@@ -59,9 +59,29 @@ export async function detectAnomalies(branchId?: number): Promise<Anomaly[]> {
   const nameByBranch = new Map(branchList.map((b) => [b.id, b.name]));
 
   const all = [...outliers, ...duplicates, ...overdue, ...noPayments];
+
+  // Suppress anomalies that the accountant has already decided on. A
+  // 'reviewed' decision suppresses for 30 days; a 'not_error' decision is
+  // permanent until the manager re-opens it. Uses the (sourceType, sourceId,
+  // anomalyType) triple as the matching key.
+  const now = new Date();
+  const decisions = await db
+    .select()
+    .from(anomalyDecisions)
+    .where(
+      or(
+        sql`${anomalyDecisions.expiresAt} IS NULL`,
+        sql`${anomalyDecisions.expiresAt} > ${now}`
+      )!
+    );
+  const decidedKeys = new Set(
+    decisions.map((d) => `${d.sourceType}|${d.sourceId}|${d.anomalyType}`)
+  );
+
   const severityOrder: Record<AnomalySeverity, number> = { high: 0, medium: 1, low: 2 };
 
   return all
+    .filter((a) => !decidedKeys.has(`${a.source.type}|${a.source.id}|${a.type}`))
     .map((a) => ({ ...a, branchName: nameByBranch.get(a.branchId) }))
     .sort((a, b) => {
       const s = severityOrder[a.severity] - severityOrder[b.severity];
