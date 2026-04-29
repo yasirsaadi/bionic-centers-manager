@@ -1288,8 +1288,8 @@ export default function Accounting() {
       toast({
         title:
           decision === "reviewed"
-            ? "تمّ تأكيد صحّة هذا التنبيه. سيختفي لمدّة شهر."
-            : "تمّ تسجيل أنّ هذا ليس خطأ. لن يظهر مجدّداً.",
+            ? "تمّ. سيختفي التنبيه لمدّة شهر، ثمّ يعود تذكيراً إن لم يُحَلّ."
+            : "تمّ. هذا التنبيه لن يظهر مجدّداً.",
       });
       // Refresh both the anomalies list and the decisions log so the
       // accountant sees the moved item in "قرارات سابقة".
@@ -3573,8 +3573,26 @@ export default function Accounting() {
                   تنبيهات المراجعة
                 </CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  مصاريف وفواتير ومرضى يستحقّون نظرة ثانية بسبب نمط غير معتاد. اضغط "اشرح بالذكاء" لشرح أكثر تفصيلاً.
+                  مصاريف وفواتير ومرضى يستحقّون نظرة ثانية بسبب نمط غير معتاد.
                 </p>
+                <div className="text-xs text-muted-foreground mt-2 rounded-md border bg-muted/40 px-3 py-2 space-y-1">
+                  <div className="flex items-start gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0 mt-0.5" />
+                    <span>
+                      <span className="font-semibold text-foreground">"تابعتُه، ذكّرني بعد شهر"</span> —
+                      حين تكون التنبيه حقيقياً (مثلاً ذمّة متأخّرة) وقد تابعتَ الأمر مع المريض، يخفى الإشعار شهراً
+                      كي لا يزعجك يوميّاً، ويعود لاحقاً للتذكير إن لم تُحَلّ المشكلة.
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <X className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      <span className="font-semibold text-foreground">"ليس خطأ، أخفه نهائياً"</span> —
+                      حين يُخطئ النظام في رصد هذه الحالة بالذات (مصروف كبير لكنّه طبيعي عندكم مثلاً)،
+                      تُخفيه نهائياً ولا يعود.
+                    </span>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 {visibleAnomalies.length === 0 ? (
@@ -3649,10 +3667,10 @@ export default function Accounting() {
                                 className="gap-1.5 text-xs border-green-500/40 hover:bg-green-500/10"
                                 onClick={() => recordAnomalyDecision(a, "reviewed")}
                                 data-testid={`button-reviewed-${a.id}`}
-                                title="هذا التنبيه صحيح، أخفه لمدّة شهر ثمّ أعد فحصه"
+                                title="تابعت الأمر — لا تنبّهني عنه إلاّ بعد شهر إن لم يُحَلّ"
                               >
                                 <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-                                صحيح، أخفه شهراً
+                                تابعتُه، ذكّرني بعد شهر
                               </Button>
                               <Button
                                 size="sm"
@@ -3663,7 +3681,7 @@ export default function Accounting() {
                                   setNotErrorReason("");
                                 }}
                                 data-testid={`button-not-error-${a.id}`}
-                                title="هذا ليس خطأ أصلاً — لا تنبّهني عنه نهائياً"
+                                title="هذا التنبيه نفسه خاطئ — لا تنبّهني عنه نهائياً"
                               >
                                 <X className="h-3.5 w-3.5" />
                                 ليس خطأ، أخفه نهائياً
@@ -3705,7 +3723,7 @@ export default function Accounting() {
                             <div className="flex-1 min-w-0 space-y-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <Badge variant={isReviewed ? "secondary" : "outline"} className="text-xs">
-                                  {isReviewed ? "صحيح، مخفيّ" : "ليس خطأ، نهائي"}
+                                  {isReviewed ? "تابعتُه، مخفيّ شهراً" : "ليس خطأ، نهائي"}
                                 </Badge>
                                 <span className="text-xs text-muted-foreground">{expiresLabel}</span>
                                 {d.userName && (
