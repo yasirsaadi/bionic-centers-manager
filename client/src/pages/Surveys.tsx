@@ -9,12 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar, Sparkles, Loader2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar, Sparkles, Loader2, FileDown } from "lucide-react";
 import { useState, useMemo } from "react";
 import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { AmiriRegular } from "@/lib/amiri-font";
+import ArabicReshaper from "arabic-reshaper";
 import { useBranchSession } from "@/components/BranchGate";
 import { formatDateIraq } from "@/lib/utils";
 import {
@@ -467,6 +469,185 @@ function ResultsTab() {
     return templates?.find(t => t.id === templateId)?.name || "";
   };
 
+  const reshapeArabic = (text: string): string => {
+    try {
+      const shaped = ArabicReshaper.convertArabic(text);
+      // Reverse for proper RTL ordering in jsPDF (it lays text out LTR).
+      return shaped.split("").reverse().join("");
+    } catch {
+      return text.split("").reverse().join("");
+    }
+  };
+
+  // Builds a printable PDF with a high-level satisfaction summary
+  // (overall + per branch + per template) and a detail table of every
+  // response. The accountant or admin sends this to ownership at the
+  // end of each period.
+  const exportSurveysPdf = () => {
+    if (!responses || responses.length === 0) {
+      toast({
+        title: "لا توجد بيانات",
+        description: "لا توجد استبيانات لتصديرها في النطاق الحالي.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+    doc.addFileToVFS("Amiri-Regular.ttf", AmiriRegular);
+    doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
+    doc.setFont("Amiri", "normal");
+
+    // Header
+    doc.setFontSize(18);
+    doc.text(reshapeArabic("تقرير رضا المرضى"), 105, 20, { align: "center" });
+
+    doc.setFontSize(11);
+    doc.text(
+      reshapeArabic(
+        selectedBranch === "all"
+          ? "نطاق: جميع الفروع"
+          : `نطاق الفرع: ${branches?.find((b) => b.id.toString() === selectedBranch)?.name ?? ""}`
+      ),
+      105,
+      28,
+      { align: "center" }
+    );
+    doc.text(
+      reshapeArabic(`تاريخ التقرير: ${formatDateIraq(new Date())}`),
+      105,
+      34,
+      { align: "center" }
+    );
+
+    let yPos = 46;
+
+    // Overall summary
+    doc.setFontSize(13);
+    doc.text(reshapeArabic("الملخّص العام"), 195, yPos, { align: "right" });
+    yPos += 4;
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [[
+        reshapeArabic("القيمة"),
+        reshapeArabic("المؤشّر"),
+      ]],
+      body: [
+        [reshapeArabic(`${stats.total}`), reshapeArabic("إجمالي الاستبيانات")],
+        [reshapeArabic(`${stats.avgSatisfaction}%`), reshapeArabic("متوسّط الرضا")],
+        [reshapeArabic(`${stats.thisMonth}`), reshapeArabic("استبيانات هذا الشهر")],
+      ],
+      theme: "grid",
+      styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+      headStyles: { fillColor: [16, 142, 130], textColor: 255, halign: "right" },
+      margin: { left: 14, right: 14 },
+    });
+
+    yPos = (doc as any).lastAutoTable.finalY + 8;
+
+    // Per branch
+    if (branchChartData.length > 0) {
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("توزيع الرضا حسب الفرع"), 195, yPos, { align: "right" });
+      yPos += 4;
+      autoTable(doc, {
+        startY: yPos,
+        head: [[
+          reshapeArabic("متوسّط الرضا"),
+          reshapeArabic("عدد الاستبيانات"),
+          reshapeArabic("الفرع"),
+        ]],
+        body: branchChartData.map((b) => [
+          reshapeArabic(`${b.value}%`),
+          reshapeArabic(`${b.count}`),
+          reshapeArabic(b.name),
+        ]),
+        theme: "grid",
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [16, 142, 130], textColor: 255, halign: "right" },
+        margin: { left: 14, right: 14 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Per template
+    if (deptChartData.length > 0) {
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("توزيع الرضا حسب القسم"), 195, yPos, { align: "right" });
+      yPos += 4;
+      autoTable(doc, {
+        startY: yPos,
+        head: [[
+          reshapeArabic("متوسّط الرضا"),
+          reshapeArabic("عدد الاستبيانات"),
+          reshapeArabic("القسم"),
+        ]],
+        body: deptChartData.map((d) => [
+          reshapeArabic(`${d.value}%`),
+          reshapeArabic(`${d.count}`),
+          reshapeArabic(d.name),
+        ]),
+        theme: "grid",
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [16, 142, 130], textColor: 255, halign: "right" },
+        margin: { left: 14, right: 14 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Detail table
+    doc.setFontSize(13);
+    if (yPos > 240) {
+      doc.addPage();
+      yPos = 20;
+    }
+    doc.text(reshapeArabic("تفاصيل الاستبيانات"), 195, yPos, { align: "right" });
+    yPos += 4;
+
+    const detailRows = responses.map((r) => [
+      reshapeArabic(`${r.percentage ?? 0}%`),
+      reshapeArabic(`${r.totalScore ?? 0}/${r.maxScore ?? 0}`),
+      reshapeArabic(getTemplateName(r.templateId)),
+      reshapeArabic(branches?.find((b) => b.id === r.branchId)?.name ?? ""),
+      reshapeArabic(getPatientName(r.patientId)),
+      reshapeArabic(formatDateIraq(r.completedAt as any) ?? ""),
+    ]);
+    autoTable(doc, {
+      startY: yPos,
+      head: [[
+        reshapeArabic("النسبة"),
+        reshapeArabic("الدرجة"),
+        reshapeArabic("القسم"),
+        reshapeArabic("الفرع"),
+        reshapeArabic("المريض"),
+        reshapeArabic("التاريخ"),
+      ]],
+      body: detailRows,
+      theme: "grid",
+      styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 9 },
+      headStyles: { fillColor: [16, 142, 130], textColor: 255, halign: "right" },
+      margin: { left: 14, right: 14 },
+    });
+
+    // Footer note — overall verdict
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    if (finalY < 280) {
+      doc.setFontSize(11);
+      const verdict =
+        stats.avgSatisfaction >= 80
+          ? "النتيجة العامّة: رضا مرتفع. واصلوا على نفس المستوى."
+          : stats.avgSatisfaction >= 60
+          ? "النتيجة العامّة: رضا جيّد. يوجد مجال للتحسين."
+          : "النتيجة العامّة: رضا منخفض. تستحقّ النتائج مراجعة جادّة من الإدارة.";
+      doc.text(reshapeArabic(verdict), 195, finalY + 5, { align: "right" });
+    }
+
+    const filename = `survey-report-${new Date().toISOString().split("T")[0]}.pdf`;
+    doc.save(filename);
+    toast({ title: "تمّ تصدير التقرير" });
+  };
+
   const getBranchName = (branchId: number) => {
     const name = branches?.find(b => b.id === branchId)?.name || "";
     return (t.branches as any)[name] || name;
@@ -482,8 +663,8 @@ function ResultsTab() {
 
   return (
     <div className="space-y-6" dir={dir}>
-      {isAdmin && (
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
+        {isAdmin && (
           <Select value={selectedBranch} onValueChange={setSelectedBranch}>
             <SelectTrigger className="w-48" data-testid="select-branch-filter">
               <SelectValue placeholder={t.surveys.filterByBranch} />
@@ -497,8 +678,19 @@ function ResultsTab() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-      )}
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={exportSurveysPdf}
+          className="gap-2"
+          data-testid="button-export-surveys-pdf"
+        >
+          <FileDown className="w-4 h-4" />
+          تصدير التقرير PDF
+        </Button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>

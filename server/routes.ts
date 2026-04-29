@@ -274,7 +274,11 @@ export async function registerRoutes(
           // NOT set isAdmin=true: cross-branch routes (every-branch
           // reports, system settings, branch creation, etc.) stay locked
           // to the system admin only.
+          // Reception staff are the ones running the post-visit patient
+          // satisfaction surveys, so they always get canManageSurveys
+          // regardless of the row value.
           const grantAll = isBranchManager;
+          const isReception = systemUser.role === "reception";
           const permissions = {
             canViewPatients: grantAll || systemUser.canViewPatients,
             canAddPatients: grantAll || systemUser.canAddPatients,
@@ -289,7 +293,7 @@ export async function registerRoutes(
             canManageSettings: grantAll || systemUser.canManageSettings,
             canManageUsers: grantAll || systemUser.canManageUsers,
             canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
-            canManageSurveys: grantAll || systemUser.canManageSurveys,
+            canManageSurveys: grantAll || isReception || systemUser.canManageSurveys,
           };
 
           // Store session with user permissions
