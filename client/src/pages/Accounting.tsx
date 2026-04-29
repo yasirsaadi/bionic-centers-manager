@@ -4196,6 +4196,11 @@ export default function Accounting() {
                               setInvoicePatientId(null);
                               setInvoicePatientSearch("");
                               setIsInvoicePatientListOpen(true);
+                              // Reset invoice items so a fresh patient
+                              // gets a clean auto-fill.
+                              setInvoiceItems([
+                                { description: "", serviceType: "", quantity: 1, unitPrice: 0 },
+                              ]);
                             }}
                             data-testid="button-clear-invoice-patient"
                             title="تغيير المريض"
@@ -4261,6 +4266,38 @@ export default function Accounting() {
                                       setInvoicePatientId(patient.id);
                                       setInvoicePatientSearch("");
                                       setIsInvoicePatientListOpen(false);
+
+                                      // Auto-fill invoice items from the patient's
+                                      // record. The first item gets:
+                                      //   description = patient's medical condition
+                                      //   serviceType = inferred from clinical flags
+                                      //   quantity = 1
+                                      //   unitPrice = patient.totalCost
+                                      // The accountant can still add or edit lines,
+                                      // but they don't have to type the obvious
+                                      // bits the system already knows.
+                                      const inferredType = patient.isAmputee
+                                        ? "prosthetic"
+                                        : patient.isPhysiotherapy
+                                        ? "physiotherapy"
+                                        : patient.isMedicalSupport
+                                        ? "medical_support"
+                                        : "";
+                                      const description =
+                                        patient.medicalCondition?.trim() ||
+                                        (patient.isAmputee ? "خدمة طرف صناعي" :
+                                         patient.isPhysiotherapy ? "علاج طبيعي" :
+                                         patient.isMedicalSupport ? "مساند طبية" :
+                                         "خدمة طبية");
+                                      const unitPrice = Number(patient.totalCost) || 0;
+                                      setInvoiceItems([
+                                        {
+                                          description,
+                                          serviceType: inferredType,
+                                          quantity: 1,
+                                          unitPrice,
+                                        },
+                                      ]);
                                     }}
                                     data-testid={`option-invoice-patient-${patient.id}`}
                                   >
@@ -4305,6 +4342,11 @@ export default function Accounting() {
                     {t.accounting.addItem}
                   </Button>
                 </div>
+                {invoicePatientId !== null && (
+                  <p className="text-xs text-muted-foreground">
+                    تمّ ملء البنود تلقائياً من سجلّ المريض. عدّلها لو احتجت، أو أضف بنوداً إضافيّة.
+                  </p>
+                )}
                 
                 <div className="space-y-3">
                   {invoiceItems.map((item, index) => (
