@@ -41,6 +41,11 @@ export interface EmployeeAccuracyRow {
   invoiceTotal: number;
   purchaseCount: number;
   purchaseTotal: number;
+  // Reception-side activity counted from audit_log (the patients,
+  // visits, and payments tables don't carry a createdBy column).
+  patientCreateCount: number;
+  visitCreateCount: number;
+  paymentCreateCount: number;
   anomalyDecisionsCount: number;
   editCount: number;
   deleteCount: number;
@@ -56,6 +61,9 @@ interface EmployeeAccuracyAccum {
   invoiceTotal: number;
   purchaseCount: number;
   purchaseTotal: number;
+  patientCreateCount: number;
+  visitCreateCount: number;
+  paymentCreateCount: number;
   anomalyDecisionsCount: number;
   editCount: number;
   deleteCount: number;
@@ -1457,6 +1465,9 @@ export class DatabaseStorage implements IStorage {
           expenseCount: 0, expenseTotal: 0,
           invoiceCount: 0, invoiceTotal: 0,
           purchaseCount: 0, purchaseTotal: 0,
+          patientCreateCount: 0,
+          visitCreateCount: 0,
+          paymentCreateCount: 0,
           anomalyDecisionsCount: 0,
           editCount: 0, deleteCount: 0,
           loginCount: 0, lastActivityAt: null,
@@ -1491,6 +1502,18 @@ export class DatabaseStorage implements IStorage {
       if (a.action === "update") b.editCount += 1;
       else if (a.action === "delete") b.deleteCount += 1;
       else if (a.action === "login") b.loginCount += 1;
+      else if (a.action === "create") {
+        // Per-table counts (expense / invoice / purchase) come from
+        // the createdBy text columns above. Patients, visits, and
+        // payments have no createdBy column on their table, so we
+        // count their create events from audit_log instead. This is
+        // what makes reception staff (who create patients + visits
+        // but don't touch finances) actually appear with non-zero
+        // entries on the accuracy panel.
+        if (a.entityType === "patient") b.patientCreateCount += 1;
+        else if (a.entityType === "visit") b.visitCreateCount += 1;
+        else if (a.entityType === "payment") b.paymentCreateCount += 1;
+      }
       const ts = a.createdAt ? new Date(a.createdAt) : null;
       if (ts && (!b.lastActivityAt || ts > b.lastActivityAt)) {
         b.lastActivityAt = ts;
@@ -1553,7 +1576,8 @@ export class DatabaseStorage implements IStorage {
     const allEntries: { key: string; agg: AggShape; totalEntries: number; totalActions: number }[] = [];
     for (const key of allKeys) {
       const agg = buckets.get(key) ?? aggBlank;
-      const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount;
+      const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount
+        + agg.patientCreateCount + agg.visitCreateCount + agg.paymentCreateCount;
       const totalActions = totalEntries + agg.editCount + agg.deleteCount;
       allEntries.push({ key, agg, totalEntries, totalActions });
     }
@@ -1606,6 +1630,9 @@ export class DatabaseStorage implements IStorage {
         invoiceTotal: agg.invoiceTotal,
         purchaseCount: agg.purchaseCount,
         purchaseTotal: agg.purchaseTotal,
+        patientCreateCount: agg.patientCreateCount,
+        visitCreateCount: agg.visitCreateCount,
+        paymentCreateCount: agg.paymentCreateCount,
         anomalyDecisionsCount: agg.anomalyDecisionsCount,
         editCount: agg.editCount,
         deleteCount: agg.deleteCount,
