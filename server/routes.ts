@@ -5,7 +5,7 @@ import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { patients, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
+import { patients, visits, payments, documents, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -130,6 +130,28 @@ export async function registerRoutes(
     }
     const id = parseInt(String(requested));
     return Number.isNaN(id) ? undefined : id;
+  };
+
+  // Returns true when the requester is the system admin OR a
+  // branch_manager. Used to gate "admin-style" branch-scoped operations
+  // (delete a visit, edit a payment's session info, etc.) that the
+  // user explicitly wants branch managers to perform within their own
+  // branches. Branch isolation is checked separately at each call site.
+  const isAdminOrManager = (req: any): boolean => {
+    const branchSession = (req.session as any).branchSession;
+    return Boolean(branchSession?.isAdmin) || branchSession?.role === "branch_manager";
+  };
+
+  // Branches the requester can act on. Admin returns null (=
+  // "everywhere"); non-admin returns the union of accessibleBranches
+  // (multi-branch) and branchId (legacy single). Used by the
+  // branch-isolation checks on the admin-style endpoints below.
+  const accessibleBranchesFor = (req: any): number[] | null => {
+    const branchSession = (req.session as any).branchSession;
+    if (branchSession?.isAdmin) return null;
+    const list = Array.isArray(branchSession?.accessibleBranches) ? branchSession.accessibleBranches : [];
+    if (list.length > 0) return list;
+    return branchSession?.branchId ? [branchSession.branchId] : [];
   };
 
   // Helper to check permissions from session
@@ -1307,13 +1329,26 @@ export async function registerRoutes(
   });
 
   app.post(api.patients.transfer.path, isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
+    if (!isAdminOrManager(req)) {
       return res.status(403).json({ message: "فقط المدير يمكنه نقل المرضى" });
     }
-    
+
     const id = Number(req.params.id);
     const { branchId } = api.patients.transfer.input.parse(req.body);
+
+    // Branch isolation: branch_manager can transfer ONLY between
+    // branches they manage. Admin has no constraint.
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      const patient = await storage.getPatient(id);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!allowed.includes(patient.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك نقل مريض من فرع لا تديره" });
+      }
+      if (!allowed.includes(branchId)) {
+        return res.status(403).json({ message: "لا يمكنك النقل إلى فرع لا تديره" });
+      }
+    }
     
     // Transfer patient with all related records (visits, payments)
     const patient = await storage.transferPatientToBranch(id, branchId);
@@ -1324,12 +1359,19 @@ export async function registerRoutes(
   });
 
   app.put("/api/patients/:id/created-at", isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
+    if (!isAdminOrManager(req)) {
       return res.status(403).json({ message: "فقط المدير يمكنه تعديل تاريخ الإضافة" });
     }
 
     const id = Number(req.params.id);
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      const patient = await storage.getPatient(id);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!allowed.includes(patient.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك تعديل مريض من فرع آخر" });
+      }
+    }
     const { createdAt } = req.body;
     if (!createdAt) {
       return res.status(400).json({ message: "التاريخ مطلوب" });
@@ -1630,12 +1672,21 @@ export async function registerRoutes(
   // Update visit (admin only — visits are financial records that trigger
   // revenue journal entries, so editing must be restricted)
   app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "فقط المسؤول يمكنه تعديل الزيارات" });
+    if (!isAdminOrManager(req)) {
+      return res.status(403).json({ message: "فقط المدير يمكنه تعديل الزيارات" });
     }
 
     const id = Number(req.params.id);
+    // Branch isolation for branch_manager: load the visit, ensure it
+    // belongs to one of their accessible branches.
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+      if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
+      if (!allowed.includes(existing.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
+      }
+    }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
     const updateData: any = { details, notes, treatmentType, sessionCount, cost };
 
@@ -1654,14 +1705,21 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // Delete visit (admin only)
+  // Delete visit — admin or branch_manager (within their branch)
   app.delete("/api/visits/:id", isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف الزيارات" });
+    if (!isAdminOrManager(req)) {
+      return res.status(403).json({ message: "فقط المدير يمكنه حذف الزيارات" });
     }
-    
+
     const id = Number(req.params.id);
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+      if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
+      if (!allowed.includes(existing.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك حذف زيارة من فرع آخر" });
+      }
+    }
     await storage.deleteVisit(id);
     res.status(204).send();
   });
@@ -1769,13 +1827,20 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  // Update payment session info (admin only)
+  // Update payment session info — admin or branch_manager (within branch)
   app.patch("/api/payments/:id/session-info", isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "مسؤول النظام فقط يمكنه تعديل بيانات الجلسات" });
+    if (!isAdminOrManager(req)) {
+      return res.status(403).json({ message: "فقط المدير يمكنه تعديل بيانات الجلسات" });
     }
     const id = Number(req.params.id);
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      const [existing] = await db.select().from(payments).where(eq(payments.id, id));
+      if (!existing) return res.status(404).json({ message: "الدفعة غير موجودة" });
+      if (!allowed.includes(existing.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
+      }
+    }
     const { sessionCount, paymentTreatmentType } = req.body;
     const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
     res.json(updated);
@@ -1847,14 +1912,24 @@ export async function registerRoutes(
     }
   });
 
-  // Delete document (admin only)
+  // Delete document — admin or branch_manager (within branch)
   app.delete(api.documents.delete.path, isAuthenticated, async (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) {
-      return res.status(403).json({ message: "فقط المسؤول يمكنه حذف المستندات" });
+    if (!isAdminOrManager(req)) {
+      return res.status(403).json({ message: "فقط المدير يمكنه حذف المستندات" });
     }
-    
+
     const id = Number(req.params.id);
+    const allowed = accessibleBranchesFor(req);
+    if (allowed !== null) {
+      // Documents are tied to a patient; verify the owning patient is
+      // within the requester's accessible branches.
+      const [doc] = await db.select().from(documents).where(eq(documents.id, id));
+      if (!doc) return res.status(404).json({ message: "المستند غير موجود" });
+      const patient = await storage.getPatient(doc.patientId);
+      if (!patient || !allowed.includes(patient.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك حذف مستند خارج نطاقك" });
+      }
+    }
     await storage.deleteDocument(id);
     res.status(204).send();
   });
