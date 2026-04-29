@@ -2237,6 +2237,140 @@ export default function Accounting() {
     toast({ title: t.accounting.exportSuccess });
   }, [summary, expensesByCategory, branchComparison, debtors, currentBranchNameArabic, reshapeArabic, toast]);
 
+  // Per-invoice PDF — what the accountant sends to insurance, an
+  // employer, or anyone else who needs the official receipt for one
+  // specific invoice. Pulls patient, branch, items, totals, and adds
+  // a signature block at the bottom.
+  const printInvoicePdf = useCallback(async (invoiceId: number) => {
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("failed to load invoice");
+      // Server returns the invoice fields flat with `items` appended.
+      const data = await res.json() as Invoice & {
+        items?: { id: number; description: string; serviceType: string; quantity: number; unitPrice: number; total: number }[];
+      };
+      const invoice: Invoice = data;
+      const items = data.items ?? [];
+      const patient = patientsList.find((p) => p.id === invoice.patientId);
+      const branch = branches.find((b) => b.id === invoice.branchId);
+
+      const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+      doc.addFileToVFS("Amiri-Regular.ttf", AmiriRegular);
+      doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
+      doc.setFont("Amiri");
+      doc.setR2L(true);
+
+      // Header
+      doc.setFontSize(20);
+      doc.text(reshapeArabic("فاتورة"), 105, 20, { align: "center" });
+      doc.setFontSize(11);
+      doc.text(reshapeArabic(`رقم الفاتورة: ${invoice.invoiceNumber}`), 105, 28, { align: "center" });
+      if (branch?.name) {
+        doc.text(reshapeArabic(`الفرع: ${branch.name}`), 105, 34, { align: "center" });
+      }
+      doc.text(reshapeArabic(`تاريخ الفاتورة: ${formatDateIraq(invoice.invoiceDate)}`), 105, 40, { align: "center" });
+
+      // Patient block
+      let yPos = 52;
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("بيانات المريض"), 195, yPos, { align: "right" });
+      yPos += 4;
+      autoTable(doc, {
+        startY: yPos,
+        body: [
+          [reshapeArabic(patient?.name || `#${invoice.patientId}`), reshapeArabic("الاسم")],
+          [reshapeArabic(patient?.phone || "—"), reshapeArabic("الهاتف")],
+          [reshapeArabic(patient?.address || "—"), reshapeArabic("العنوان")],
+          [reshapeArabic(patient?.age || "—"), reshapeArabic("العمر")],
+        ],
+        theme: "plain",
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        margin: { left: 15, right: 15 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 6;
+
+      // Items
+      doc.setFontSize(13);
+      doc.text(reshapeArabic("تفاصيل الخدمات"), 195, yPos, { align: "right" });
+      yPos += 4;
+      const itemRows = items.length > 0 ? items.map((it) => [
+        reshapeArabic(formatNumberOnly(it.total)),
+        reshapeArabic(formatNumberOnly(it.unitPrice)),
+        reshapeArabic(String(it.quantity)),
+        reshapeArabic(getServiceTypeLabel(it.serviceType) || "—"),
+        reshapeArabic(it.description || "—"),
+      ]) : [[
+        reshapeArabic(formatNumberOnly(invoice.total)),
+        reshapeArabic(formatNumberOnly(invoice.total)),
+        reshapeArabic("١"),
+        reshapeArabic("—"),
+        reshapeArabic("الخدمة المقدّمة"),
+      ]];
+      autoTable(doc, {
+        startY: yPos,
+        head: [[
+          reshapeArabic("الإجمالي"),
+          reshapeArabic("السعر"),
+          reshapeArabic("الكمية"),
+          reshapeArabic("النوع"),
+          reshapeArabic("الوصف"),
+        ]],
+        body: itemRows,
+        theme: "grid",
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 10 },
+        headStyles: { fillColor: [16, 142, 130], textColor: 255, halign: "right", font: "Amiri", fontStyle: "normal" },
+        margin: { left: 15, right: 15 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 6;
+
+      // Totals
+      const remaining = invoice.total - (invoice.paidAmount || 0);
+      autoTable(doc, {
+        startY: yPos,
+        body: [
+          [reshapeArabic(`${formatNumberOnly(invoice.subtotal ?? invoice.total)} د.ع`), reshapeArabic("المجموع الفرعي")],
+          ...(invoice.discount && invoice.discount > 0
+            ? [[reshapeArabic(`${formatNumberOnly(invoice.discount)} د.ع`), reshapeArabic("الخصم")]]
+            : []),
+          [reshapeArabic(`${formatNumberOnly(invoice.total)} د.ع`), reshapeArabic("الإجمالي")],
+          [reshapeArabic(`${formatNumberOnly(invoice.paidAmount || 0)} د.ع`), reshapeArabic("المدفوع")],
+          [reshapeArabic(`${formatNumberOnly(remaining)} د.ع`), reshapeArabic("المتبقّي")],
+        ],
+        theme: "grid",
+        styles: { font: "Amiri", fontStyle: "normal", halign: "right", fontSize: 11 },
+        margin: { left: 80, right: 15 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Notes (if any)
+      if (invoice.notes && invoice.notes.trim()) {
+        doc.setFontSize(11);
+        doc.text(reshapeArabic("ملاحظات:"), 195, yPos, { align: "right" });
+        yPos += 5;
+        doc.setFontSize(10);
+        const noteLines = doc.splitTextToSize(reshapeArabic(invoice.notes), 180);
+        doc.text(noteLines, 195, yPos, { align: "right" });
+        yPos += noteLines.length * 5 + 5;
+      }
+
+      // Signature block at the bottom of the page so it always lands
+      // on the official paperwork.
+      const sigY = Math.max(yPos + 15, 245);
+      doc.setFontSize(10);
+      doc.text(reshapeArabic("توقيع المحاسب: ____________"), 75, sigY);
+      doc.text(reshapeArabic("توقيع المريض / الجهة: ____________"), 195, sigY, { align: "right" });
+
+      doc.save(`invoice-${invoice.invoiceNumber}.pdf`);
+      toast({ title: "تمّ تصدير الفاتورة" });
+    } catch (err: any) {
+      toast({
+        title: "تعذّر تصدير الفاتورة",
+        description: err?.message ?? "حاول مرّة أخرى",
+        variant: "destructive",
+      });
+    }
+  }, [patientsList, branches, reshapeArabic, toast]);
+
   // Daily cash summary PDF for the accountant.
   // Pulls /api/accounting/daily-summary for the chosen date and renders a
   // single-page report: revenue by service, expenses by category, today's
@@ -2653,9 +2787,11 @@ export default function Accounting() {
               disabled={!summary}
               className="gap-2"
               data-testid="button-export-pdf"
+              title="تصدير التقرير المحاسبي الشامل بصيغة PDF — يشمل الإيرادات والمصاريف والملخّص حسب الفرع"
             >
               <FileDown className="h-4 w-4" />
-              <span className="hidden md:inline">PDF</span>
+              <span className="hidden md:inline">تقرير PDF</span>
+              <span className="md:hidden">PDF</span>
             </Button>
             <Button
               variant="outline"
@@ -2663,9 +2799,11 @@ export default function Accounting() {
               disabled={!summary}
               className="gap-2"
               data-testid="button-export-excel"
+              title="تصدير التقرير المحاسبي الشامل بصيغة Excel — للمراجعة أو إرسال للمحاسب الخارجي"
             >
               <FileSpreadsheet className="h-4 w-4" />
-              <span className="hidden md:inline">Excel</span>
+              <span className="hidden md:inline">تقرير Excel</span>
+              <span className="md:hidden">Excel</span>
             </Button>
           </div>
         </div>
@@ -3183,11 +3321,21 @@ export default function Accounting() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
+                                  onClick={() => printInvoicePdf(invoice.id)}
+                                  data-testid={`button-print-invoice-${invoice.id}`}
+                                  title="طباعة الفاتورة بصيغة PDF — لإرسالها لجهة خارجيّة"
+                                >
+                                  <FileDown className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   onClick={() => {
                                     setDeleteConfirmId(invoice.id);
                                     setDeleteType("invoice");
                                   }}
                                   data-testid={`button-delete-invoice-${invoice.id}`}
+                                  title="حذف الفاتورة"
                                 >
                                   <Trash2 className="h-4 w-4 text-red-500" />
                                 </Button>
