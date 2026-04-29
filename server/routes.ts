@@ -3352,7 +3352,14 @@ export async function registerRoutes(
     }
 
     try {
-      const { items, ...invoiceData } = req.body;
+      // applyPriorCredit is a client-only flag controlling whether we
+      // auto-apply unallocated patient session payments to this new
+      // invoice. Defaults to true to preserve the previous behaviour
+      // for any existing client; new code passes false explicitly when
+      // the invoice is for a specific service rather than the full
+      // patient account.
+      const { items, applyPriorCredit, ...invoiceData } = req.body;
+      const shouldApplyCredit = applyPriorCredit !== false;
 
       // Non-admins can only file invoices for their own branch — pin
       // server-side regardless of what the client sends.
@@ -3401,7 +3408,7 @@ export async function registerRoutes(
       // refactor of the accounting model. We mirror the existing
       // user practice of writing both session payments and invoices.
       let creditApplied = 0;
-      if (invoice.patientId) {
+      if (shouldApplyCredit && invoice.patientId) {
         const [allPayments, allInvoicesForPatient] = await Promise.all([
           storage.getPaymentsByPatientId(invoice.patientId),
           storage.getInvoices(undefined, undefined, invoice.patientId),
