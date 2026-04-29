@@ -653,10 +653,22 @@ function EmployeeAccuracyTab() {
           كيف تُحسَب النقاط؟
         </h3>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc pr-5">
-          <li><span className="font-semibold text-foreground">النشاط (60 نقطة كحدّ أقصى)</span> — مقياس لوغاريتمي على عدد الإدخالات. مزيد من الإدخالات يرفع النقاط لكن العائد يقلّ تدريجياً.</li>
-          <li><span className="font-semibold text-foreground">الجودة (30 نقطة)</span> — تنخفض كلّما زادت نسبة الحذف والتنبيهات بالنسبة للنشاط الكلّي.</li>
-          <li><span className="font-semibold text-foreground">الانضباط (10 نقاط)</span> — تسجيلات الدخول النشطة في الفترة.</li>
-          <li>النقاط مؤشّر استرشادي للمسؤول، وليست تقييماً نهائيّاً. تعديل واحد على مصروف خاطئ ليس خطأ — قد يكون تصحيحاً.</li>
+          <li>
+            <span className="font-semibold text-foreground">النشاط (٦٠ نقطة)</span> — يقاس نسبةً إلى صاحب أكثر إدخالات في الفريق.
+            من له أكثر إدخالات يأخذ الـ ٦٠ كاملةً، والباقون يأخذون نسبتهم منها.
+            (مثلاً: إن كان الأعلى ٥٠ إدخالاً وأنت أدخلت ٢٥ → تحصل على ٣٠ نقطة).
+          </li>
+          <li>
+            <span className="font-semibold text-foreground">الجودة (٣٠ نقطة)</span> — تنخفض كلّما زادت نسبة الحذف وقرارات التنبيهات
+            مقارنةً بإجمالي عملك. الموظّف الذي يُدخِل بدون أخطاء يأخذها كاملة.
+          </li>
+          <li>
+            <span className="font-semibold text-foreground">الانضباط (١٠ نقاط)</span> — تسجيلات الدخول نسبةً إلى صاحب أكثر تسجيلات.
+          </li>
+          <li>
+            <span className="font-semibold text-foreground">الترتيب يتبع الحجم</span>: إن كان موظّف "أ" أدخل أكثر من "ب"،
+            فترتيبه دائماً أعلى — إلاّ إذا كانت أخطاؤه كثيرة بشكل واضح. النقاط مؤشّر استرشادي، وتعديل واحد ليس بالضرورة خطأ.
+          </li>
         </ul>
       </Card>
     </div>
