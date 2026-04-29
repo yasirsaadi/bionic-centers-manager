@@ -1347,7 +1347,11 @@ export async function registerRoutes(
       return res.status(403).json({ error: "لا يمكنك الوصول لهذا المريض" });
     }
 
-    const allInvoices = await storage.getInvoices(undefined, undefined, id);
+    const [allInvoices, allPayments] = await Promise.all([
+      storage.getInvoices(undefined, undefined, id),
+      storage.getPaymentsByPatientId(id),
+    ]);
+
     const now = new Date();
     let unpaidCount = 0;
     let totalDue = 0;
@@ -1368,12 +1372,29 @@ export async function registerRoutes(
       }
     }
 
+    // Lifetime totals from the patient's general payment history.
+    // The clinic books visits and per-session payments BEFORE any
+    // invoice exists, so a patient often has paid quite a bit
+    // outside the invoice flow. The accountant needs that context
+    // when issuing a new invoice.
+    const totalPaidLifetime = allPayments.reduce((s, p) => s + p.amount, 0);
+    const lastPaymentDate = allPayments.length > 0
+      ? allPayments
+          .map((p) => new Date(p.date).toISOString())
+          .sort()
+          .reverse()[0]
+      : null;
+
     res.json({
       patientId: id,
       unpaidCount,
       totalDue,
       overdueCount,
       oldestUnpaidDate,
+      totalPaidLifetime,
+      paymentCountLifetime: allPayments.length,
+      lastPaymentDate,
+      totalCost: patient.totalCost ?? 0,
     });
   });
 
@@ -2570,10 +2591,11 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
+      const isBranchManager = branchSession?.role === "branch_manager";
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
 
-      if (!isAdmin) {
+      if (!isAdmin && !isBranchManager) {
         return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
       }
 
@@ -2581,6 +2603,11 @@ export async function registerRoutes(
       const existingExpense = await storage.getExpense(id);
       if (!existingExpense) {
         return res.status(404).json({ error: "المصروف غير موجود" });
+      }
+
+      // Branch isolation for branch_manager.
+      if (!isAdmin && branchSession?.branchId && existingExpense.branchId !== branchSession.branchId) {
+        return res.status(403).json({ error: "لا يمكنك تعديل مصروف من فرع آخر" });
       }
 
       // Same "other → subcategory required" rule as on create.
@@ -2620,10 +2647,11 @@ export async function registerRoutes(
   app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
+    const isBranchManager = branchSession?.role === "branch_manager";
     const userId = branchSession?.userId ?? null;
     const userName = branchSession?.displayName ?? null;
 
-    if (!isAdmin) {
+    if (!isAdmin && !isBranchManager) {
       return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
     }
 
@@ -2631,6 +2659,11 @@ export async function registerRoutes(
     const existingExpense = await storage.getExpense(id);
     if (!existingExpense) {
       return res.status(404).json({ error: "المصروف غير موجود" });
+    }
+
+    // Branch isolation for branch_manager.
+    if (!isAdmin && branchSession?.branchId && existingExpense.branchId !== branchSession.branchId) {
+      return res.status(403).json({ error: "لا يمكنك حذف مصروف من فرع آخر" });
     }
 
     // عكس القيد قبل الحذف
@@ -3234,6 +3267,27 @@ export async function registerRoutes(
     res.json(invoices);
   });
 
+  // Bulk-fetch items for multiple invoices in one query — used by the
+  // invoice list to render a "service summary" cell without an N+1
+  // storm. Branch isolation is enforced via the invoice list call,
+  // not here, so we accept arbitrary IDs (the list query already
+  // filtered them by branch). Returns a flat array — caller groups by
+  // invoiceId.
+  app.get("/api/invoice-items/bulk", isAuthenticated, async (req: any, res) => {
+    const raw = String(req.query.invoiceIds ?? "");
+    if (!raw) return res.json([]);
+    const ids = raw
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length === 0) return res.json([]);
+    if (ids.length > 500) {
+      return res.status(400).json({ error: "تم طلب عدد كبير جداً من الفواتير" });
+    }
+    const items = await storage.getInvoiceItemsForInvoices(ids);
+    res.json(items);
+  });
+
   // Get single invoice with items
   app.get("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const id = parseInt(req.params.id);
@@ -3315,18 +3369,33 @@ export async function registerRoutes(
     }
   });
 
-  // Update invoice (admin-only)
+  // Update invoice — admin or branch_manager (within their branch).
+  // Accountants without the manager role can record payments but not
+  // edit the invoice header itself.
   app.patch("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
+    const isBranchManager = branchSession?.role === "branch_manager";
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin) {
+    if (!isAdmin && !isBranchManager) {
       return res.status(403).json({ error: "غير مصرح لك بتعديل الفواتير" });
     }
 
     const id = parseInt(req.params.id);
     try {
+      // Branch isolation for branch_manager: they can only edit
+      // invoices that belong to their own branch.
+      if (!isAdmin && branchSession?.branchId) {
+        const existing = await storage.getInvoiceById(id);
+        if (!existing) {
+          return res.status(404).json({ error: "الفاتورة غير موجودة" });
+        }
+        if (existing.branchId !== branchSession.branchId) {
+          return res.status(403).json({ error: "لا يمكنك تعديل فاتورة من فرع آخر" });
+        }
+      }
+
       const { items, ...invoiceData } = req.body;
 
       const invoice = await storage.updateInvoice(id, invoiceData);
@@ -3370,19 +3439,24 @@ export async function registerRoutes(
     }
   });
 
-  // Delete invoice (admin-only)
+  // Delete invoice — admin or branch_manager (within their branch).
   app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
+    const isBranchManager = branchSession?.role === "branch_manager";
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin) {
+    if (!isAdmin && !isBranchManager) {
       return res.status(403).json({ error: "غير مصرح لك بحذف الفواتير" });
     }
 
     const id = parseInt(req.params.id);
     try {
       const existing = await storage.getInvoiceById(id);
+      // Branch isolation for branch_manager.
+      if (!isAdmin && branchSession?.branchId && existing && existing.branchId !== branchSession.branchId) {
+        return res.status(403).json({ error: "لا يمكنك حذف فاتورة من فرع آخر" });
+      }
       // Reverse related journal entries first (safe to fail, logged)
       await reverseJournalForSource("invoice", id, userId, "حذف الفاتورة");
       await reverseJournalForSource("invoice_payment", id, userId, "حذف الفاتورة");
