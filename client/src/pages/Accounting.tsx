@@ -1089,6 +1089,10 @@ export default function Accounting() {
   const { t } = useTranslation();
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
+  // Branch managers get admin-equivalent power inside their branch.
+  // Use this for action gates (edit / delete) — for cross-branch UI
+  // toggles like "all-branches view", continue using `isAdmin` alone.
+  const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
   const userBranchId = branchSession?.branchId;
   
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -3700,7 +3704,7 @@ export default function Accounting() {
                           <TableCell>{v.contactPerson || "—"}</TableCell>
                           <TableCell dir="ltr" className="text-right">{v.phone || "—"}</TableCell>
                           <TableCell>{v.address || "—"}</TableCell>
-                          {isAdmin && (
+                          {isAdminOrManager && (
                             <TableCell>
                               <div className="flex gap-2">
                                 <Button
@@ -3833,7 +3837,7 @@ export default function Accounting() {
                                     دفع
                                   </Button>
                                 )}
-                                {isAdmin && (
+                                {isAdminOrManager && (
                                   <>
                                     <Button
                                       size="sm"

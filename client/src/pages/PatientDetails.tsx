@@ -111,6 +111,11 @@ export default function PatientDetails() {
   const branchSession = useBranchSession();
   const permissions = usePermissions();
   const isAdmin = branchSession?.isAdmin || false;
+  // Branch managers should be able to perform "admin-style" actions
+  // within their own branch (delete visit, edit visit, etc.). The
+  // server already enforces branch isolation; the UI just needs to
+  // expose the buttons.
+  const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
   const { data: patient, isLoading } = usePatient(Number(id));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
   const { mutate: deleteDocument } = useDeleteDocument();
@@ -570,8 +575,8 @@ export default function PatientDetails() {
           </AlertDialog>
         )}
         
-        {/* Transfer Patient Button - Admin Only */}
-        {isAdmin && (
+        {/* Transfer Patient Button — admin or branch manager */}
+        {isAdminOrManager && (
           <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2" data-testid="button-transfer-patient">
@@ -624,7 +629,7 @@ export default function PatientDetails() {
           </Dialog>
         )}
 
-        {isAdmin && (
+        {isAdminOrManager && (
           <Dialog open={editCreatedAtOpen} onOpenChange={setEditCreatedAtOpen}>
             <DialogTrigger asChild>
               <Button
@@ -1178,10 +1183,10 @@ export default function PatientDetails() {
                                 <Pencil className="w-4 h-4" />
                               </Button>
                               )}
-                              {isAdmin && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
+                              {isAdminOrManager && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   className="text-red-500 hover:text-red-700 hover:bg-red-50"
                                   onClick={() => deleteVisit({ visitId: visit.id, patientId: patient.id })}
                                   disabled={isDeletingVisit}
@@ -1207,7 +1212,7 @@ export default function PatientDetails() {
                   patientId={patient.id}
                   open={!!editingVisit}
                   onOpenChange={(open) => !open && setEditingVisit(null)}
-                  isAdmin={isAdmin}
+                  isAdmin={isAdminOrManager}
                   isPhysiotherapy={patient.isPhysiotherapy || false}
                 />
               )}
