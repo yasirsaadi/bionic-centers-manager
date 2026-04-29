@@ -1533,34 +1533,65 @@ export class DatabaseStorage implements IStorage {
       : [];
     const userById = new Map(sysUsers.map((u) => [u.id, u]));
 
-    return Array.from(allKeys).map((createdBy) => {
-      const numId = Number(createdBy);
-      const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
-      const agg = buckets.get(createdBy) ?? {
-        expenseCount: 0, expenseTotal: 0,
-        invoiceCount: 0, invoiceTotal: 0,
-        purchaseCount: 0, purchaseTotal: 0,
-        anomalyDecisionsCount: 0,
-        editCount: 0, deleteCount: 0,
-        loginCount: 0, lastActivityAt: null,
-      };
+    // First pass: compute aggregates so we can find the team-wide
+    // maxima used to scale the activity and engagement components.
+    // Without this, two users with very different entry counts could
+    // end up with similar scores because the previous log10 scaling
+    // dampened the difference too much. Now whoever has the most
+    // entries gets the full activity points; everyone else is
+    // proportional, so the relative ranking always tracks the
+    // raw volume.
+    type AggShape = typeof aggBlank;
+    const aggBlank = {
+      expenseCount: 0, expenseTotal: 0,
+      invoiceCount: 0, invoiceTotal: 0,
+      purchaseCount: 0, purchaseTotal: 0,
+      anomalyDecisionsCount: 0,
+      editCount: 0, deleteCount: 0,
+      loginCount: 0, lastActivityAt: null as Date | null,
+    };
+    const allEntries: { key: string; agg: AggShape; totalEntries: number; totalActions: number }[] = [];
+    for (const key of allKeys) {
+      const agg = buckets.get(key) ?? aggBlank;
       const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount;
       const totalActions = totalEntries + agg.editCount + agg.deleteCount;
-      // Score (0–100). Three components, but a user with NO activity
-      // at all should get 0 — not the 30 free quality points the old
-      // formula gave them just for being absent.
+      allEntries.push({ key, agg, totalEntries, totalActions });
+    }
+    const maxEntries = allEntries.reduce((m, x) => Math.max(m, x.totalEntries), 0);
+    const maxLogins = allEntries.reduce((m, x) => Math.max(m, x.agg.loginCount), 0);
+
+    return allEntries.map(({ key: createdBy, agg, totalEntries, totalActions }) => {
+      const numId = Number(createdBy);
+      const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
+
+      // Score (0-100), team-relative. Three components:
+      //
+      //   activity (60 pts): linear share of the team's leader. The
+      //     person with the most entries this period gets 60; everyone
+      //     else proportional. This is the dominant signal — the user
+      //     made it crystal clear that "more entries = higher score"
+      //     is the basic expectation and the previous log10 scaling
+      //     muted that too much.
+      //
+      //   quality (30 pts): inverse of error rate. errorRate is
+      //     (deletes + anomaly decisions) / totalActions. A clean
+      //     worker keeps the full 30; lots of deletes/anomalies eats
+      //     into it.
+      //
+      //   engagement (10 pts): logins relative to the team's most-
+      //     active logger. Tiebreaker mainly.
       let score: number;
       if (totalActions === 0 && agg.loginCount === 0) {
-        // Truly inactive in this window.
+        // Truly inactive in this window — no work, no logins.
         score = 0;
       } else if (totalEntries === 0) {
-        // Some logins but no creation work — give engagement only.
-        score = Math.min(10, agg.loginCount * 2);
+        // Logged in but didn't create anything. Engagement-only.
+        score = maxLogins > 0 ? Math.round((agg.loginCount / maxLogins) * 10) : 0;
       } else {
-        const activity = Math.min(60, Math.log10(totalEntries + 1) * 30);
-        const errorRate = (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions;
+        const activity = maxEntries > 0 ? (totalEntries / maxEntries) * 60 : 0;
+        const errorRate = totalActions > 0 ? (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions : 0;
         const quality = Math.max(0, 30 * (1 - errorRate));
-        const engagement = Math.min(10, agg.loginCount * 2);
+        const engagement = maxLogins > 0 ? (agg.loginCount / maxLogins) * 10 : 0;
         score = Math.round(activity + quality + engagement);
       }
 
