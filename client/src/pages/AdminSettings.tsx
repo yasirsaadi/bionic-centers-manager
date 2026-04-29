@@ -474,6 +474,9 @@ interface AccuracyRow {
   invoiceTotal: number;
   purchaseCount: number;
   purchaseTotal: number;
+  patientCreateCount: number;
+  visitCreateCount: number;
+  paymentCreateCount: number;
   anomalyDecisionsCount: number;
   editCount: number;
   deleteCount: number;
@@ -623,17 +626,23 @@ function EmployeeAccuracyTab() {
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <MetricBox label="مصاريف" count={r.expenseCount} amount={r.expenseTotal} />
-                  <MetricBox label="فواتير" count={r.invoiceCount} amount={r.invoiceTotal} />
-                  <MetricBox label="مشتريات" count={r.purchaseCount} amount={r.purchaseTotal} />
+                  <MetricBox label="مرضى جدد" count={r.patientCreateCount} />
+                  <MetricBox label="زيارات" count={r.visitCreateCount} />
+                  <MetricBox label="دفعات" count={r.paymentCreateCount} />
                   <MetricBox label="إجمالي الإدخالات" count={r.totalEntries} highlight />
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-2">
+                  <MetricBox label="مصاريف" count={r.expenseCount} amount={r.expenseTotal} />
+                  <MetricBox label="فواتير" count={r.invoiceCount} amount={r.invoiceTotal} />
+                  <MetricBox label="مشتريات" count={r.purchaseCount} amount={r.purchaseTotal} />
+                  <MetricBox label="تسجيلات دخول" count={r.loginCount} />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-xs mt-2">
                   <MetricBox label="تعديلات" count={r.editCount} tone="amber" />
                   <MetricBox label="عمليّات حذف" count={r.deleteCount} tone={r.deleteCount > 5 ? "red" : "default"} />
                   <MetricBox label="قرارات تنبيهات" count={r.anomalyDecisionsCount} />
-                  <MetricBox label="تسجيلات دخول" count={r.loginCount} />
                 </div>
               </div>
             ))}

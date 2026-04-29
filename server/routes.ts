@@ -1320,6 +1320,20 @@ export async function registerRoutes(
       });
       const patient = await storage.createPatient(input);
 
+      // Log to audit_log so this counts toward the receptionist's
+      // employee-accuracy stats. Without this, reception staff who
+      // create lots of patients show as zero entries on the panel.
+      await logAudit({
+        entityType: "patient",
+        entityId: patient.id,
+        action: "create",
+        userId: branchSession?.userId ?? null,
+        userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+      });
+
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -1648,7 +1662,20 @@ export async function registerRoutes(
     }
 
     const visit = await storage.createVisit(input);
-    
+
+    // Audit log so visit creation counts on the employee accuracy
+    // panel — receptionists do most of these.
+    await logAudit({
+      entityType: "visit",
+      entityId: visit.id,
+      action: "create",
+      userId: sessionUserId ?? null,
+      userName: branchSession?.displayName ?? null,
+      branchId: visit.branchId,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
     if (input.cost && input.cost > 0) {
       const patient = await storage.getPatient(input.patientId);
       if (patient) {
