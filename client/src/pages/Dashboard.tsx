@@ -15,6 +15,7 @@ import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
+import { WeeklyReviewBanner } from "@/components/WeeklyReviewBanner";
 
 function translateCondition(condition: string | null | undefined, t: any): string {
   if (!condition) return "";
@@ -144,6 +145,7 @@ function DashboardContent() {
   
   return (
     <div className="space-y-6 md:space-y-8 page-transition">
+      <WeeklyReviewBanner isAdmin={isAdmin} />
       <div className="flex flex-col gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.dashboard.overview}</h2>
