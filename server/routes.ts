@@ -2591,11 +2591,14 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const isBranchManager = branchSession?.role === "branch_manager";
+      // Anyone with accounting management permission can edit. That
+      // covers admin (always), branch_manager (auto-granted at login),
+      // and any custom user the admin explicitly toggled on.
+      const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
 
-      if (!isAdmin && !isBranchManager) {
+      if (!canManage) {
         return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
       }
 
@@ -2605,7 +2608,9 @@ export async function registerRoutes(
         return res.status(404).json({ error: "المصروف غير موجود" });
       }
 
-      // Branch isolation for branch_manager.
+      // Branch isolation: anyone non-admin can only edit records in
+      // their own branch. Even with the right permission flag, the
+      // server enforces scope.
       if (!isAdmin && branchSession?.branchId && existingExpense.branchId !== branchSession.branchId) {
         return res.status(403).json({ error: "لا يمكنك تعديل مصروف من فرع آخر" });
       }
@@ -2647,11 +2652,11 @@ export async function registerRoutes(
   app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const isBranchManager = branchSession?.role === "branch_manager";
+    const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
     const userId = branchSession?.userId ?? null;
     const userName = branchSession?.displayName ?? null;
 
-    if (!isAdmin && !isBranchManager) {
+    if (!canManage) {
       return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
     }
 
@@ -3369,16 +3374,15 @@ export async function registerRoutes(
     }
   });
 
-  // Update invoice — admin or branch_manager (within their branch).
-  // Accountants without the manager role can record payments but not
-  // edit the invoice header itself.
+  // Update invoice — admin or any user with canManageAccounting (e.g.
+  // branch_manager). Branch isolation enforced for non-admins.
   app.patch("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const isBranchManager = branchSession?.role === "branch_manager";
+    const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin && !isBranchManager) {
+    if (!canManage) {
       return res.status(403).json({ error: "غير مصرح لك بتعديل الفواتير" });
     }
 
@@ -3439,14 +3443,14 @@ export async function registerRoutes(
     }
   });
 
-  // Delete invoice — admin or branch_manager (within their branch).
+  // Delete invoice — admin or any user with canManageAccounting.
   app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const isBranchManager = branchSession?.role === "branch_manager";
+    const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
     const userId = branchSession?.userId ?? null;
 
-    if (!isAdmin && !isBranchManager) {
+    if (!canManage) {
       return res.status(403).json({ error: "غير مصرح لك بحذف الفواتير" });
     }
 
