@@ -1490,30 +1490,67 @@ export class DatabaseStorage implements IStorage {
     const numericIds = Array.from(buckets.keys())
       .map((k) => Number(k))
       .filter((n) => Number.isFinite(n));
-    const sysUsers = numericIds.length
-      ? await db.select().from(systemUsers).where(inArray(systemUsers.id, numericIds))
+    // Fetch ALL active system users so we can list employees who have
+    // zero activity in the window too — without this an inactive
+    // accountant just disappears, which is the opposite of what an
+    // admin needs (they specifically want to see who's not pulling
+    // their weight). When admin scope is requested (no branchId)
+    // we list everyone; otherwise pin to the requested branch.
+    const allActiveUsers = await db
+      .select()
+      .from(systemUsers)
+      .where(
+        branchId
+          ? and(eq(systemUsers.isActive, true), eq(systemUsers.branchId, branchId))
+          : eq(systemUsers.isActive, true)
+      );
+
+    // Combine: union of (active users) ∪ (numeric IDs that appeared
+    // in the activity data but might no longer be active). Each user
+    // gets one bucket; missing ones default to all-zero.
+    const allKeys = new Set<string>([
+      ...allActiveUsers.map((u) => String(u.id)),
+      ...buckets.keys(),
+    ]);
+
+    const numericIdsAll = Array.from(allKeys)
+      .map((k) => Number(k))
+      .filter((n) => Number.isFinite(n));
+    const sysUsers = numericIdsAll.length
+      ? await db.select().from(systemUsers).where(inArray(systemUsers.id, numericIdsAll))
       : [];
     const userById = new Map(sysUsers.map((u) => [u.id, u]));
 
-    return Array.from(buckets.entries()).map(([createdBy, agg]) => {
+    return Array.from(allKeys).map((createdBy) => {
       const numId = Number(createdBy);
       const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
+      const agg = buckets.get(createdBy) ?? {
+        expenseCount: 0, expenseTotal: 0,
+        invoiceCount: 0, invoiceTotal: 0,
+        purchaseCount: 0, purchaseTotal: 0,
+        anomalyDecisionsCount: 0,
+        editCount: 0, deleteCount: 0,
+        loginCount: 0, lastActivityAt: null,
+      };
       const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount;
       const totalActions = totalEntries + agg.editCount + agg.deleteCount;
-      // Heuristic score (0–100). Three signals:
-      //   activity = log10(total entries + 1) × 30, capped at 60.
-      //   quality  = 30 × (1 - errorRate), where errorRate is
-      //              (deletes + anomaly decisions) / totalActions.
-      //   engagement = up to 10 if they've logged in this window.
-      // The formula is intentionally simple — admins should treat the
-      // score as a hint, not a verdict.
-      const activity = Math.min(60, Math.log10(totalEntries + 1) * 30);
-      const errorRate = totalActions > 0
-        ? (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions
-        : 0;
-      const quality = Math.max(0, 30 * (1 - errorRate));
-      const engagement = Math.min(10, agg.loginCount * 2);
-      const score = Math.round(activity + quality + engagement);
+      // Score (0–100). Three components, but a user with NO activity
+      // at all should get 0 — not the 30 free quality points the old
+      // formula gave them just for being absent.
+      let score: number;
+      if (totalActions === 0 && agg.loginCount === 0) {
+        // Truly inactive in this window.
+        score = 0;
+      } else if (totalEntries === 0) {
+        // Some logins but no creation work — give engagement only.
+        score = Math.min(10, agg.loginCount * 2);
+      } else {
+        const activity = Math.min(60, Math.log10(totalEntries + 1) * 30);
+        const errorRate = (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions;
+        const quality = Math.max(0, 30 * (1 - errorRate));
+        const engagement = Math.min(10, agg.loginCount * 2);
+        score = Math.round(activity + quality + engagement);
+      }
 
       return {
         createdBy,
