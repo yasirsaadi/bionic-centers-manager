@@ -356,17 +356,22 @@ interface PatientFinancialSummary {
   overdueCount: number;
   oldestUnpaidDate: string | null;
   totalPaidLifetime: number;
+  sessionPaid: number;
+  invoicePaid: number;
+  totalInvoiced: number;
   paymentCountLifetime: number;
   lastPaymentDate: string | null;
   totalCost: number;
 }
 
 // Contextual card shown after a patient is selected in the invoice
-// form. Always renders when a patient is selected — the lifetime
-// payment summary is useful even when there's no outstanding balance,
-// and the overdue warning is critical when there is.
+// form. Always renders something so the accountant knows the system
+// did consult the patient's history — even when there's nothing to
+// report. Two information blocks:
+//   1. Lifetime payment summary (always visible, color-coded by amount).
+//   2. Outstanding-invoice warning (only when the patient owes money).
 function PatientFinancialChip({ patientId }: { patientId: number | null }) {
-  const { data } = useQuery<PatientFinancialSummary>({
+  const { data, isLoading } = useQuery<PatientFinancialSummary>({
     queryKey: ["/api/patients", patientId, "financial-summary"],
     queryFn: async () => {
       const res = await fetch(`/api/patients/${patientId}/financial-summary`, {
@@ -378,42 +383,66 @@ function PatientFinancialChip({ patientId }: { patientId: number | null }) {
     enabled: patientId !== null,
     staleTime: 30 * 1000,
   });
-  if (!data) return null;
 
-  // Two distinct concerns rendered as two thin rows when relevant.
-  // Lifetime payment history first (always interesting context),
-  // then the overdue warning only if the patient owes something.
-  const hasLifetimePayments = data.paymentCountLifetime > 0;
+  if (patientId === null) return null;
+  if (isLoading || !data) {
+    return (
+      <div className="mt-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        جارٍ جلب سجلّ المريض المالي…
+      </div>
+    );
+  }
+
+  const hasLifetime = data.paymentCountLifetime > 0;
   const hasUnpaid = data.unpaidCount > 0;
-  if (!hasLifetimePayments && !hasUnpaid) return null;
   const isSevere = data.overdueCount > 0;
 
   return (
     <div className="mt-2 space-y-1.5" data-testid="patient-financial-chip">
-      {hasLifetimePayments && (
-        <div className="rounded-md border-r-4 border-r-emerald-500 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs space-y-0.5">
-          <div className="font-semibold flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-            سجلّ الدفعات السابقة
-          </div>
-          <div>
-            دفع المريض سابقاً:{" "}
-            <span className="font-semibold tabular-nums">{formatCurrency(data.totalPaidLifetime)}</span>
-            {" "}
-            عبر {data.paymentCountLifetime} دفعة
-          </div>
-          {data.lastPaymentDate && (
-            <div className="opacity-80">
-              آخر دفعة: {new Date(data.lastPaymentDate).toLocaleDateString("ar-IQ")}
-            </div>
-          )}
-          {data.totalCost > 0 && (
-            <div className="opacity-80">
-              إجمالي الكلفة المسجَّلة على ملفّه: {formatCurrency(data.totalCost)}
-            </div>
-          )}
+      <div
+        className={`rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${
+          hasLifetime
+            ? "border-r-emerald-500 bg-emerald-50 text-emerald-900"
+            : "border-r-slate-300 bg-muted/40 text-muted-foreground"
+        }`}
+      >
+        <div className="font-semibold flex items-center gap-1.5">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          سجلّ الدفعات السابقة
         </div>
-      )}
+        {hasLifetime ? (
+          <>
+            <div>
+              إجمالي ما دفعه المريض سابقاً:{" "}
+              <span className="font-bold tabular-nums">{formatCurrency(data.totalPaidLifetime)}</span>
+              {" "}
+              عبر {data.paymentCountLifetime} دفعة
+            </div>
+            {data.sessionPaid > 0 && (
+              <div className="opacity-80">
+                — منها {formatCurrency(data.sessionPaid)} دفعات جلسات/زيارات
+              </div>
+            )}
+            {data.invoicePaid > 0 && (
+              <div className="opacity-80">
+                — منها {formatCurrency(data.invoicePaid)} على فواتير سابقة
+              </div>
+            )}
+            {data.lastPaymentDate && (
+              <div className="opacity-80">
+                آخر دفعة: {new Date(data.lastPaymentDate).toLocaleDateString("ar-IQ")}
+              </div>
+            )}
+          </>
+        ) : (
+          <div>لا توجد دفعات سابقة لهذا المريض في النظام.</div>
+        )}
+        {data.totalCost > 0 && (
+          <div className="opacity-80">
+            إجمالي الكلفة المسجَّلة على ملفّه: {formatCurrency(data.totalCost)}
+          </div>
+        )}
+      </div>
       {hasUnpaid && (
         <div
           className={`rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${

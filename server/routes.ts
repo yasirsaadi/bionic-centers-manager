@@ -1357,8 +1357,12 @@ export async function registerRoutes(
     let totalDue = 0;
     let overdueCount = 0; // > 30 days old and still owed
     let oldestUnpaidDate: string | null = null;
+    let totalInvoicePaid = 0; // sum of all invoice.paidAmount
+    let totalInvoiced = 0; // sum of all invoice.total
 
     for (const inv of allInvoices) {
+      totalInvoicePaid += inv.paidAmount || 0;
+      totalInvoiced += inv.total;
       const due = inv.total - (inv.paidAmount || 0);
       if (due <= 0) continue;
       unpaidCount += 1;
@@ -1372,18 +1376,30 @@ export async function registerRoutes(
       }
     }
 
-    // Lifetime totals from the patient's general payment history.
-    // The clinic books visits and per-session payments BEFORE any
-    // invoice exists, so a patient often has paid quite a bit
-    // outside the invoice flow. The accountant needs that context
-    // when issuing a new invoice.
-    const totalPaidLifetime = allPayments.reduce((s, p) => s + p.amount, 0);
-    const lastPaymentDate = allPayments.length > 0
+    // Lifetime totals from BOTH payment streams. Many clinics record
+    // session/visit payments in the `payments` table directly (no
+    // invoice issued yet), so summing only invoice.paidAmount would
+    // miss most of what a returning patient has actually paid.
+    const sessionPaid = allPayments.reduce((s, p) => s + p.amount, 0);
+    const totalPaidLifetime = sessionPaid + totalInvoicePaid;
+    const totalPaymentEvents = allPayments.length + allInvoices.filter((i) => (i.paidAmount || 0) > 0).length;
+
+    // Last activity date — newest of the two streams.
+    const lastSessionDate = allPayments.length > 0
       ? allPayments
           .map((p) => new Date(p.date).toISOString())
           .sort()
           .reverse()[0]
       : null;
+    const lastInvoicePaymentDate = allInvoices
+      .filter((i) => (i.paidAmount || 0) > 0)
+      .map((i) => i.invoiceDate)
+      .sort()
+      .reverse()[0] ?? null;
+    const lastPaymentDate =
+      lastSessionDate && lastInvoicePaymentDate
+        ? lastSessionDate > lastInvoicePaymentDate ? lastSessionDate : lastInvoicePaymentDate
+        : lastSessionDate ?? lastInvoicePaymentDate ?? null;
 
     res.json({
       patientId: id,
@@ -1391,8 +1407,12 @@ export async function registerRoutes(
       totalDue,
       overdueCount,
       oldestUnpaidDate,
+      // Lifetime totals across the two payment streams.
       totalPaidLifetime,
-      paymentCountLifetime: allPayments.length,
+      sessionPaid,
+      invoicePaid: totalInvoicePaid,
+      totalInvoiced,
+      paymentCountLifetime: totalPaymentEvents,
       lastPaymentDate,
       totalCost: patient.totalCost ?? 0,
     });
