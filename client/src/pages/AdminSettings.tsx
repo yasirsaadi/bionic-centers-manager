@@ -1515,7 +1515,14 @@ export default function AdminSettings() {
                   </thead>
                   <tbody>
                     {systemUsers.map((user) => {
-                      const branch = branches?.find(b => b.id === user.branchId);
+                      // Multi-branch users have branchIds populated; single-
+                      // branch users fall back to the legacy branchId field.
+                      const userBranchIds: number[] = Array.isArray((user as any).branchIds) && (user as any).branchIds.length > 0
+                        ? (user as any).branchIds as number[]
+                        : (user.branchId ? [user.branchId] : []);
+                      const userBranchNames = userBranchIds
+                        .map((id) => branches?.find((b) => b.id === id)?.name)
+                        .filter(Boolean) as string[];
                       return (
                         <tr key={user.id} className="border-b hover-elevate" data-testid={`row-user-${user.id}`}>
                           <td className="py-3 px-4">{user.username}</td>
@@ -1525,7 +1532,23 @@ export default function AdminSettings() {
                               {roleLabels[user.role as UserRole] || user.role}
                             </Badge>
                           </td>
-                          <td className="py-3 px-4">{branch?.name || (user.role === "admin" ? t.adminSettings.allBranches : "-")}</td>
+                          <td className="py-3 px-4">
+                            {user.role === "admin" ? (
+                              t.adminSettings.allBranches
+                            ) : userBranchNames.length === 0 ? (
+                              "-"
+                            ) : userBranchNames.length === 1 ? (
+                              userBranchNames[0]
+                            ) : (
+                              <div className="flex flex-wrap gap-1" title={userBranchNames.join("، ")}>
+                                {userBranchNames.map((n) => (
+                                  <Badge key={n} variant="outline" className="text-xs">
+                                    {n}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
                             <Badge variant={user.isActive ? "default" : "outline"}>
                               {user.isActive ? t.adminSettings.active : t.adminSettings.inactive}
