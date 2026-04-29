@@ -179,7 +179,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
-    canManageSurveys: false,
+    // الاستقبال هم من يجرون الاستبيان مع المريض بعد انتهاء جلسته،
+    // فيلزمهم وصول كامل لتعبئة الاستبيانات وقراءة النتائج.
+    canManageSurveys: true,
   },
   therapist: {
     canViewPatients: true,
