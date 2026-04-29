@@ -692,11 +692,15 @@ function MetricBox({
   tone = "default",
 }: {
   label: string;
-  count: number;
+  count: number | undefined | null;
   amount?: number;
   highlight?: boolean;
   tone?: "default" | "amber" | "red";
 }) {
+  // Defensive: server payloads may briefly miss new fields right after
+  // a deploy or cache invalidation. Coerce to 0 instead of crashing
+  // the whole page (toLocaleString on undefined throws).
+  const safeCount = typeof count === "number" && Number.isFinite(count) ? count : 0;
   const toneClass =
     tone === "amber"
       ? "bg-amber-50 border-amber-200"
@@ -709,7 +713,7 @@ function MetricBox({
     <div className={`rounded-md border px-3 py-2 ${toneClass}`}>
       <div className="text-muted-foreground text-[11px]">{label}</div>
       <div className="font-bold tabular-nums text-sm">
-        {count.toLocaleString("ar-IQ")}
+        {safeCount.toLocaleString("ar-IQ")}
       </div>
       {amount !== undefined && amount > 0 && (
         <div className="text-[10px] text-muted-foreground tabular-nums">
