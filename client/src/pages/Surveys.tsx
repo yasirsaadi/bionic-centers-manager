@@ -496,7 +496,12 @@ function ResultsTab() {
     const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
     doc.addFileToVFS("Amiri-Regular.ttf", AmiriRegular);
     doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
-    doc.setFont("Amiri", "normal");
+    doc.setFont("Amiri");
+    // Critical: enable RTL mode AFTER setFont. Without it, jsPDF lays
+    // each character LTR and our reshaped+reversed string ends up as
+    // disconnected mirror-image Arabic. With it, the reshaped string
+    // renders cleanly. The accounting PDF does this same step.
+    doc.setR2L(true);
 
     // Header
     doc.setFontSize(18);
