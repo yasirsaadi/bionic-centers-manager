@@ -974,6 +974,10 @@ export default function AdminSettings() {
     password: "",
     role: "reception" as UserRole,
     branchId: null as number | null,
+    // Multi-branch — only relevant for branch_manager role. When set,
+    // the user can switch between any of these branches in the UI.
+    // Empty array means single-branch (use branchId).
+    branchIds: [] as number[],
     isActive: true,
     canViewPatients: true,
     canAddPatients: true,
@@ -1105,6 +1109,7 @@ export default function AdminSettings() {
       password: "",
       role: "reception",
       branchId: null,
+      branchIds: [],
       isActive: true,
       canViewPatients: true,
       canAddPatients: true,
@@ -1140,6 +1145,7 @@ export default function AdminSettings() {
       password: "",
       role: user.role as UserRole,
       branchId: user.branchId,
+      branchIds: Array.isArray((user as any).branchIds) ? ((user as any).branchIds as number[]) : [],
       isActive: user.isActive ?? true,
       canViewPatients: user.canViewPatients ?? true,
       canAddPatients: user.canAddPatients ?? true,
@@ -2200,12 +2206,12 @@ export default function AdminSettings() {
               </div>
             </div>
 
-            {userFormData.role !== "admin" && (
+            {userFormData.role !== "admin" && userFormData.role !== "branch_manager" && (
               <div>
                 <Label>{t.adminSettings.branchLabel}</Label>
                 <Select
                   value={userFormData.branchId?.toString() || ""}
-                  onValueChange={(value) => setUserFormData(prev => ({ ...prev, branchId: Number(value) }))}
+                  onValueChange={(value) => setUserFormData(prev => ({ ...prev, branchId: Number(value), branchIds: [] }))}
                 >
                   <SelectTrigger className="mt-1" data-testid="select-user-branch">
                     <SelectValue placeholder={t.adminSettings.selectBranch} />
@@ -2218,6 +2224,61 @@ export default function AdminSettings() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {/* Branch managers can be assigned to multiple branches.
+                The list of selected branches doubles as accessibleBranches
+                at runtime — they'll switch between them with a dropdown
+                in the header. */}
+            {userFormData.role === "branch_manager" && (
+              <div>
+                <Label className="flex items-center gap-2">
+                  الفروع التي يديرها
+                  <span className="text-xs font-normal text-muted-foreground">
+                    (يمكن اختيار أكثر من فرع — سيستطيع التبديل بينها)
+                  </span>
+                </Label>
+                <div className="mt-2 grid grid-cols-2 gap-2 border rounded-md p-3">
+                  {branches?.map((branch) => {
+                    const checked = (userFormData.branchIds ?? []).includes(branch.id);
+                    return (
+                      <label
+                        key={branch.id}
+                        className="flex items-center gap-2 cursor-pointer text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setUserFormData((prev) => {
+                              const current = new Set(prev.branchIds ?? []);
+                              if (e.target.checked) current.add(branch.id);
+                              else current.delete(branch.id);
+                              const next = Array.from(current);
+                              return {
+                                ...prev,
+                                branchIds: next,
+                                // Keep the legacy branchId synced to the
+                                // first selection so older queries that
+                                // still read branchId directly stay
+                                // sensible.
+                                branchId: next[0] ?? null,
+                              };
+                            });
+                          }}
+                          data-testid={`checkbox-branch-${branch.id}`}
+                        />
+                        <span>{branch.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {(userFormData.branchIds ?? []).length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    اختر فرعاً واحداً على الأقلّ.
+                  </p>
+                )}
               </div>
             )}
 
@@ -2372,7 +2433,15 @@ export default function AdminSettings() {
           <DialogFooter className="flex flex-row-reverse justify-start gap-2 mt-4">
             <Button
               onClick={handleSaveUser}
-              disabled={createUserMutation.isPending || updateUserMutation.isPending || !userFormData.username || (!editingUser && !userFormData.password) || (userFormData.role !== "admin" && !userFormData.branchId)}
+              disabled={
+                createUserMutation.isPending || updateUserMutation.isPending ||
+                !userFormData.username ||
+                (!editingUser && !userFormData.password) ||
+                (userFormData.role !== "admin" &&
+                  userFormData.role !== "branch_manager" &&
+                  !userFormData.branchId) ||
+                (userFormData.role === "branch_manager" && (userFormData.branchIds ?? []).length === 0)
+              }
               data-testid="button-save-user"
             >
               {createUserMutation.isPending || updateUserMutation.isPending ? t.adminSettings.saving : (editingUser ? t.adminSettings.update : t.adminSettings.add)}

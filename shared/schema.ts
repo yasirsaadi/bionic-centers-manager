@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, date } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -420,6 +420,12 @@ export const systemUsers = pgTable("system_users", {
   passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
   branchId: integer("branch_id").references(() => branches.id),
+  // Multi-branch access. When non-empty, this user can act on every
+  // branch in the array (and switch between them in the UI). The
+  // legacy `branchId` is the default/primary branch for compatibility.
+  // For single-branch users this stays empty and the system falls
+  // back to `branchId`.
+  branchIds: jsonb("branch_ids").$type<number[]>().default([]),
   role: text("role").notNull().default("reception"), // admin, branch_manager, accountant, reception, therapist, surveyor
   isActive: boolean("is_active").default(true),
   // Patient Permissions

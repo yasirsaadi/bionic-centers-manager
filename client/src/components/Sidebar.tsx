@@ -3,6 +3,7 @@ import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, Shie
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
+import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ interface BranchSession {
   isAdmin: boolean;
   role?: string;
   displayName?: string;
+  accessibleBranches?: number[];
 }
 
 interface BranchSettings {
@@ -154,6 +156,12 @@ export function Sidebar() {
                   ({t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role})
                 </span>
               )}
+            </div>
+          )}
+          {Array.isArray((branchSession as any).accessibleBranches) &&
+           (branchSession as any).accessibleBranches.length > 1 && (
+            <div className="mb-2">
+              <BranchSwitcher />
             </div>
           )}
           <div className="flex items-center justify-between gap-2 text-xs md:text-sm">

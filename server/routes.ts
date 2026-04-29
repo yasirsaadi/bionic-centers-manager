@@ -248,20 +248,33 @@ export async function registerRoutes(
         if (isValidPassword) {
           const isAdmin = systemUser.role === "admin";
           const isBranchManager = systemUser.role === "branch_manager";
-          const userBranchId = isAdmin ? 0 : (systemUser.branchId || 0);
 
-          // For non-admin users, verify the selected branch matches their assigned branch
-          if (!isAdmin && systemUser.branchId) {
+          // Multi-branch resolution. accessibleBranches is the full
+          // list this user can act on. For legacy single-branch users
+          // it's just [branchId]. The active branchId starts as the
+          // first entry; the user can switch via /api/auth/switch-branch.
+          const branchIdsRaw: number[] = Array.isArray(systemUser.branchIds) ? systemUser.branchIds as number[] : [];
+          const accessibleBranches: number[] = branchIdsRaw.length > 0
+            ? branchIdsRaw
+            : (systemUser.branchId ? [systemUser.branchId] : []);
+          const userBranchId = isAdmin ? 0 : (accessibleBranches[0] ?? 0);
+
+          // For non-admin users, verify the selected branch matches one
+          // of their assigned branches. Multi-branch users can pick any
+          // of their branches at login time and we'll respect it.
+          if (!isAdmin && accessibleBranches.length > 0) {
             const branchMapping = usernameToBranch[normalizedBranchKey];
-            if (branchMapping && branchMapping.branchId !== "admin" && branchMapping.branchId !== systemUser.branchId) {
-              return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
+            if (branchMapping && branchMapping.branchId !== "admin" && typeof branchMapping.branchId === "number") {
+              if (!accessibleBranches.includes(branchMapping.branchId)) {
+                return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
+              }
             }
           }
 
-          // Get branch name
+          // Get branch name for the active branch.
           let branchName = "مسؤول النظام";
-          if (!isAdmin && systemUser.branchId) {
-            const branch = await storage.getBranch(systemUser.branchId);
+          if (!isAdmin && userBranchId) {
+            const branch = await storage.getBranch(userBranchId);
             branchName = branch?.name || "فرع غير معروف";
           }
 
@@ -299,6 +312,9 @@ export async function registerRoutes(
           // Store session with user permissions
           (req.session as any).branchSession = {
             branchId: userBranchId,
+            // Full set of branches this user can switch between. Used
+            // by the branch-switcher in the header.
+            accessibleBranches,
             isAdmin: isAdmin,
             userId: systemUser.id,
             role: systemUser.role,
@@ -327,6 +343,7 @@ export async function registerRoutes(
           return res.json({
             branchId: userBranchId,
             branchName: branchName,
+            accessibleBranches,
             isAdmin: isAdmin,
             userId: systemUser.id,
             displayName: systemUser.displayName,
@@ -529,7 +546,33 @@ export async function registerRoutes(
       throw err;
     }
   });
-  
+
+  // Switches the active branch for a multi-branch user. The new
+  // branchId must be in the user's accessibleBranches list — admins
+  // are not constrained because their branchId is 0 (cross-branch).
+  // Updates session.branchId; subsequent requests will use the new
+  // branch for all isolation checks.
+  app.post("/api/auth/switch-branch", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const { branchId } = req.body ?? {};
+    const targetBranchId = Number(branchId);
+    if (!Number.isFinite(targetBranchId) || targetBranchId <= 0) {
+      return res.status(400).json({ message: "معرّف الفرع غير صالح" });
+    }
+    const accessible: number[] = Array.isArray(branchSession?.accessibleBranches)
+      ? branchSession.accessibleBranches
+      : [];
+    if (!branchSession?.isAdmin && !accessible.includes(targetBranchId)) {
+      return res.status(403).json({ message: "هذا الفرع ليس ضمن صلاحيّاتك" });
+    }
+    const branch = await storage.getBranch(targetBranchId);
+    if (!branch) return res.status(404).json({ message: "الفرع غير موجود" });
+
+    (req.session as any).branchSession.branchId = targetBranchId;
+    res.json({ branchId: targetBranchId, branchName: branch.name });
+  });
+
+
   // Admin Settings API - Only for admins
   app.get("/api/admin/settings", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
@@ -947,20 +990,36 @@ export async function registerRoutes(
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
+      // Normalise branchIds: accept either a JSON array or an
+      // empty/undefined value. Branch managers may belong to several
+      // branches; everyone else has at most one.
+      const incomingBranchIds = Array.isArray(userData.branchIds)
+        ? (userData.branchIds as unknown[])
+            .map((x) => Number(x))
+            .filter((x) => Number.isFinite(x) && x > 0)
+        : [];
+      // If multi-branch is provided, the primary branchId defaults to
+      // the first one for back-compat with older queries that read
+      // branchId directly.
+      if (incomingBranchIds.length > 0 && !userData.branchId) {
+        userData.branchId = incomingBranchIds[0];
+      }
+      userData.branchIds = incomingBranchIds;
+
       // Non-admin users require a branch
-      if (userData.role !== "admin" && !userData.branchId) {
+      if (userData.role !== "admin" && !userData.branchId && incomingBranchIds.length === 0) {
         return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
       }
-      
+
       // Check if username already exists
       const existing = await storage.getSystemUserByUsername(userData.username);
       if (existing) {
         return res.status(400).json({ message: "اسم المستخدم موجود مسبقاً" });
       }
-      
+
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
-      
+
       const user = await storage.createSystemUser({
         ...userData,
         passwordHash
@@ -988,11 +1047,25 @@ export async function registerRoutes(
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
-      // Non-admin users require a branch
-      if (userData.role && userData.role !== "admin" && !userData.branchId) {
+      // Multi-branch normalisation, same shape as the create handler.
+      if (userData.branchIds !== undefined) {
+        const incoming = Array.isArray(userData.branchIds)
+          ? (userData.branchIds as unknown[])
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x > 0)
+          : [];
+        userData.branchIds = incoming;
+        if (incoming.length > 0 && !userData.branchId) {
+          userData.branchId = incoming[0];
+        }
+      }
+
+      // Non-admin users require a branch (single or multi)
+      if (userData.role && userData.role !== "admin" && !userData.branchId &&
+          (!Array.isArray(userData.branchIds) || userData.branchIds.length === 0)) {
         return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
       }
-      
+
       // If password is being updated, hash it
       let updateData = { ...userData };
       if (password && password.length >= 4) {
