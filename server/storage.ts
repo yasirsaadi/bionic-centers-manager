@@ -181,6 +181,7 @@ export interface IStorage {
   
   // Invoice Items
   getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]>;
+  getInvoiceItemsForInvoices(invoiceIds: number[]): Promise<InvoiceItem[]>;
   createInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem>;
   deleteInvoiceItems(invoiceId: number): Promise<void>;
   
@@ -926,6 +927,17 @@ export class DatabaseStorage implements IStorage {
   // Invoice Items
   async getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]> {
     return await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+  }
+
+  // Bulk variant — fetches every item for the given set of invoices in
+  // one query, used by the invoice list to display a service summary
+  // per row without an N+1 storm.
+  async getInvoiceItemsForInvoices(invoiceIds: number[]): Promise<InvoiceItem[]> {
+    if (invoiceIds.length === 0) return [];
+    return await db
+      .select()
+      .from(invoiceItems)
+      .where(inArray(invoiceItems.invoiceId, invoiceIds));
   }
 
   async createInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem> {

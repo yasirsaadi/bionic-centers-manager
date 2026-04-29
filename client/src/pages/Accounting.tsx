@@ -355,13 +355,16 @@ interface PatientFinancialSummary {
   totalDue: number;
   overdueCount: number;
   oldestUnpaidDate: string | null;
+  totalPaidLifetime: number;
+  paymentCountLifetime: number;
+  lastPaymentDate: string | null;
+  totalCost: number;
 }
 
-// Small contextual card shown after a patient is selected in the
-// invoice form. Renders nothing when the patient has no unpaid balance,
-// so it never distracts from the happy path. When there are unpaid
-// invoices it surfaces the count + total due so the accountant can
-// decide whether to record a payment instead of creating a new invoice.
+// Contextual card shown after a patient is selected in the invoice
+// form. Always renders when a patient is selected — the lifetime
+// payment summary is useful even when there's no outstanding balance,
+// and the overdue warning is critical when there is.
 function PatientFinancialChip({ patientId }: { patientId: number | null }) {
   const { data } = useQuery<PatientFinancialSummary>({
     queryKey: ["/api/patients", patientId, "financial-summary"],
@@ -375,27 +378,62 @@ function PatientFinancialChip({ patientId }: { patientId: number | null }) {
     enabled: patientId !== null,
     staleTime: 30 * 1000,
   });
-  if (!data || data.unpaidCount === 0) return null;
+  if (!data) return null;
+
+  // Two distinct concerns rendered as two thin rows when relevant.
+  // Lifetime payment history first (always interesting context),
+  // then the overdue warning only if the patient owes something.
+  const hasLifetimePayments = data.paymentCountLifetime > 0;
+  const hasUnpaid = data.unpaidCount > 0;
+  if (!hasLifetimePayments && !hasUnpaid) return null;
   const isSevere = data.overdueCount > 0;
+
   return (
-    <div
-      className={`mt-2 rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${
-        isSevere
-          ? "border-r-amber-500 bg-amber-50 text-amber-900"
-          : "border-r-blue-500 bg-blue-50 text-blue-900"
-      }`}
-      data-testid="patient-financial-chip"
-    >
-      <div className="font-semibold flex items-center gap-1.5">
-        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-        {isSevere
-          ? `هذا المريض عليه ${data.overdueCount} فاتورة متأخّرة`
-          : `هذا المريض لديه ${data.unpaidCount} فاتورة غير مدفوعة`}
-      </div>
-      <div>المتبقي عليه: {formatCurrency(data.totalDue)}</div>
-      <div className="opacity-80">
-        فكّر بتسجيل الدفعة على الفاتورة القديمة بدل إنشاء فاتورة جديدة.
-      </div>
+    <div className="mt-2 space-y-1.5" data-testid="patient-financial-chip">
+      {hasLifetimePayments && (
+        <div className="rounded-md border-r-4 border-r-emerald-500 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs space-y-0.5">
+          <div className="font-semibold flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+            سجلّ الدفعات السابقة
+          </div>
+          <div>
+            دفع المريض سابقاً:{" "}
+            <span className="font-semibold tabular-nums">{formatCurrency(data.totalPaidLifetime)}</span>
+            {" "}
+            عبر {data.paymentCountLifetime} دفعة
+          </div>
+          {data.lastPaymentDate && (
+            <div className="opacity-80">
+              آخر دفعة: {new Date(data.lastPaymentDate).toLocaleDateString("ar-IQ")}
+            </div>
+          )}
+          {data.totalCost > 0 && (
+            <div className="opacity-80">
+              إجمالي الكلفة المسجَّلة على ملفّه: {formatCurrency(data.totalCost)}
+            </div>
+          )}
+        </div>
+      )}
+      {hasUnpaid && (
+        <div
+          className={`rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${
+            isSevere
+              ? "border-r-amber-500 bg-amber-50 text-amber-900"
+              : "border-r-blue-500 bg-blue-50 text-blue-900"
+          }`}
+        >
+          <div className="font-semibold flex items-center gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {isSevere
+              ? `هذا المريض عليه ${data.overdueCount} فاتورة متأخّرة`
+              : `هذا المريض لديه ${data.unpaidCount} فاتورة غير مدفوعة`}
+          </div>
+          <div>المتبقّي عليه: {formatCurrency(data.totalDue)}</div>
+          <div className="opacity-80">
+            فكّر بتسجيل الدفعة على الفاتورة القديمة بدل إنشاء فاتورة جديدة.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1141,6 +1179,41 @@ export default function Accounting() {
       return res.json();
     }
   });
+
+  // Bulk-fetch items for the visible invoices so the table can show
+  // a service description per row. One round-trip total instead of
+  // one per invoice.
+  const invoiceIds = invoicesList.map((i) => i.id).join(",");
+  const { data: invoiceItemsForList = [] } = useQuery<{
+    id: number; invoiceId: number; description: string; serviceType: string; quantity: number; unitPrice: number; total: number;
+  }[]>({
+    queryKey: ["/api/invoice-items/bulk", invoiceIds],
+    queryFn: async () => {
+      if (!invoiceIds) return [];
+      const res = await fetch(`/api/invoice-items/bulk?invoiceIds=${invoiceIds}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: invoiceIds.length > 0,
+  });
+
+  // Build a map: invoiceId → readable summary string of its items.
+  // First two descriptions joined; falls back to "—" if no items.
+  const itemsByInvoiceId = new Map<number, string>();
+  {
+    const grouped = new Map<number, string[]>();
+    for (const it of invoiceItemsForList) {
+      const arr = grouped.get(it.invoiceId) ?? [];
+      if (it.description) arr.push(it.description);
+      grouped.set(it.invoiceId, arr);
+    }
+    for (const [id, descs] of grouped) {
+      if (descs.length === 0) continue;
+      const head = descs.slice(0, 2).join("، ");
+      const more = descs.length > 2 ? ` (+${descs.length - 2})` : "";
+      itemsByInvoiceId.set(id, head + more);
+    }
+  }
 
   // Fetch vendors (active only)
   const { data: vendorsList = [] } = useQuery<Vendor[]>({
@@ -3020,6 +3093,7 @@ export default function Accounting() {
                       <TableRow>
                         <TableHead>{t.accounting.invoiceNumber}</TableHead>
                         <TableHead>{t.accounting.patientCol}</TableHead>
+                        <TableHead>وصف الخدمة</TableHead>
                         <TableHead>{t.accounting.dateCol}</TableHead>
                         <TableHead>{t.accounting.amountCol}</TableHead>
                         <TableHead>{t.accounting.paidCol}</TableHead>
@@ -3033,10 +3107,14 @@ export default function Accounting() {
                         const patient = patientsList.find(p => p.id === invoice.patientId);
                         const statusInfo = INVOICE_STATUS[invoice.status as keyof typeof INVOICE_STATUS] || INVOICE_STATUS.pending;
                         const remaining = invoice.total - (invoice.paidAmount || 0);
+                        const serviceDescription = itemsByInvoiceId.get(invoice.id) ?? "—";
                         return (
                           <TableRow key={invoice.id}>
                             <TableCell className="font-mono">{invoice.invoiceNumber}</TableCell>
                             <TableCell>{patient?.name || `${t.accounting.patientHash}${invoice.patientId}`}</TableCell>
+                            <TableCell className="max-w-[260px] truncate text-sm" title={serviceDescription}>
+                              {serviceDescription}
+                            </TableCell>
                             <TableCell>{formatDateIraq(invoice.invoiceDate)}</TableCell>
                             <TableCell>{displayCurrency(invoice.total)}</TableCell>
                             <TableCell className="text-green-600">{displayCurrency(invoice.paidAmount || 0)}</TableCell>
