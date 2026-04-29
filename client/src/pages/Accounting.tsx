@@ -371,7 +371,13 @@ interface PatientFinancialSummary {
 // report. Two information blocks:
 //   1. Lifetime payment summary (always visible, color-coded by amount).
 //   2. Outstanding-invoice warning (only when the patient owes money).
-function PatientFinancialChip({ patientId }: { patientId: number | null }) {
+function PatientFinancialChip({
+  patientId,
+  willApplyCredit = false,
+}: {
+  patientId: number | null;
+  willApplyCredit?: boolean;
+}) {
   const { data, isLoading } = useQuery<PatientFinancialSummary>({
     queryKey: ["/api/patients", patientId, "financial-summary"],
     queryFn: async () => {
@@ -448,13 +454,16 @@ function PatientFinancialChip({ patientId }: { patientId: number | null }) {
         <div className="rounded-md border-r-4 border-r-primary bg-primary/10 text-primary-foreground px-3 py-2 text-xs space-y-0.5">
           <div className="font-semibold flex items-center gap-1.5 text-foreground">
             <Sparkles className="h-3.5 w-3.5 shrink-0" />
-            رصيد متاح للتطبيق التلقائي
+            رصيد متاح للمريض
           </div>
           <div className="text-foreground/90">
             دفعات سابقة بقيمة{" "}
             <span className="font-bold tabular-nums">{formatCurrency(data.availableCredit)}</span>
             {" "}
-            لم تُربط بأيّ فاتورة بعد. سيُطبَّق منها تلقائياً على هذه الفاتورة عند الحفظ.
+            لم تُربط بأيّ فاتورة بعد.
+            {willApplyCredit
+              ? " سيُطبَّق منها تلقائياً على هذه الفاتورة عند الحفظ."
+              : " لن يُطبَّق على هذه الفاتورة (وضع: خدمة محدّدة). للتطبيق، اختر \"إجمالي الكلفة\" في الأعلى."}
           </div>
         </div>
       )}
@@ -1101,6 +1110,19 @@ export default function Accounting() {
   const [invoicePatientId, setInvoicePatientId] = useState<number | null>(null);
   const [invoicePatientSearch, setInvoicePatientSearch] = useState("");
   const [isInvoicePatientListOpen, setIsInvoicePatientListOpen] = useState(false);
+  // Invoice creation mode:
+  //   "specific" (default): the invoice covers ONE specific transaction
+  //                         the accountant types out — silicone, a single
+  //                         session, etc. Price entered manually, prior
+  //                         patient credit is NOT auto-applied.
+  //   "full":               the invoice represents the patient's whole
+  //                         registered account; price defaults to
+  //                         patient.totalCost and any unallocated prior
+  //                         payments auto-apply.
+  // Method 1 + Method 3 of the user's requested design — start in
+  // "specific" so we don't surprise the accountant, but keep "full" one
+  // click away.
+  const [invoiceMode, setInvoiceMode] = useState<"specific" | "full">("specific");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleteType, setDeleteType] = useState<"expense" | "invoice" | "vendor" | "purchase" | null>(null);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
@@ -1961,6 +1983,11 @@ export default function Accounting() {
         // proper payment (separate journal entry) right after invoice
         // creation. Sent as a hint; the post-create handler picks it up.
         paidNow: paidNow > 0 ? paidNow : undefined,
+        // Whether to auto-apply the patient's unallocated session
+        // payments to this invoice. ON for "full account" invoices,
+        // OFF for "specific service" invoices — the user's mode
+        // toggle controls this.
+        applyPriorCredit: invoiceMode === "full",
       } as any,
     );
   };
@@ -1971,6 +1998,7 @@ export default function Accounting() {
     setInvoicePatientId(null);
     setInvoicePatientSearch("");
     setIsInvoicePatientListOpen(false);
+    setInvoiceMode("specific");
     setIsInvoiceDialogOpen(true);
   };
 
@@ -4357,11 +4385,81 @@ export default function Accounting() {
                           </Button>
                         </div>
                       </div>
-                      <PatientFinancialChip patientId={invoicePatientId} />
+                      <PatientFinancialChip
+                        patientId={invoicePatientId}
+                        willApplyCredit={invoiceMode === "full"}
+                      />
                     </>
                   );
                 })()
               ) : null}
+
+              {/* Invoice mode toggle. Only relevant once a patient is
+                  picked, since both buttons depend on the selected
+                  patient's totalCost. */}
+              {invoicePatientId !== null && (() => {
+                const selectedPatient = patientsList.find((p) => p.id === invoicePatientId);
+                const fullCost = Number(selectedPatient?.totalCost ?? 0);
+                return (
+                  <div className="rounded-lg border p-3 space-y-2 bg-muted/20">
+                    <div className="text-sm font-medium">نوع الفاتورة</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant={invoiceMode === "specific" ? "default" : "outline"}
+                        size="sm"
+                        className="justify-start text-right h-auto py-2.5 whitespace-normal"
+                        onClick={() => {
+                          setInvoiceMode("specific");
+                          // Clear the price but keep the auto-filled
+                          // description / serviceType so the accountant
+                          // doesn't lose context.
+                          setInvoiceItems((prev) => prev.map((it) => ({ ...it, unitPrice: 0 })));
+                        }}
+                        data-testid="button-invoice-mode-specific"
+                      >
+                        <div className="flex flex-col items-start gap-0.5 w-full">
+                          <span className="text-xs font-bold">فاتورة لخدمة محدّدة</span>
+                          <span className="text-[11px] opacity-80 leading-tight">
+                            تكتب أنت السعر. لا يُطبَّق رصيد سابق تلقائياً.
+                          </span>
+                        </div>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={invoiceMode === "full" ? "default" : "outline"}
+                        size="sm"
+                        className="justify-start text-right h-auto py-2.5 whitespace-normal"
+                        onClick={() => {
+                          setInvoiceMode("full");
+                          // Fill the first line's price with the
+                          // patient's full registered cost. Keep any
+                          // additional lines the user added untouched.
+                          setInvoiceItems((prev) => {
+                            if (prev.length === 0) {
+                              return [{ description: "", serviceType: "", quantity: 1, unitPrice: fullCost }];
+                            }
+                            return prev.map((it, idx) =>
+                              idx === 0 ? { ...it, unitPrice: fullCost } : it
+                            );
+                          });
+                        }}
+                        disabled={fullCost === 0}
+                        data-testid="button-invoice-mode-full"
+                      >
+                        <div className="flex flex-col items-start gap-0.5 w-full">
+                          <span className="text-xs font-bold">
+                            فاتورة بإجمالي الكلفة ({formatCurrency(fullCost)})
+                          </span>
+                          <span className="text-[11px] opacity-80 leading-tight">
+                            يملأ السعر بإجمالي الحساب ويطبّق الرصيد السابق تلقائياً.
+                          </span>
+                        </div>
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2 relative">
@@ -4415,15 +4513,15 @@ export default function Accounting() {
                                       setInvoicePatientSearch("");
                                       setIsInvoicePatientListOpen(false);
 
-                                      // Auto-fill invoice items from the patient's
-                                      // record. The first item gets:
-                                      //   description = patient's medical condition
-                                      //   serviceType = inferred from clinical flags
-                                      //   quantity = 1
-                                      //   unitPrice = patient.totalCost
-                                      // The accountant can still add or edit lines,
-                                      // but they don't have to type the obvious
-                                      // bits the system already knows.
+                                      // Auto-fill the description + service type
+                                      // from the patient's clinical record. We
+                                      // intentionally do NOT pre-fill unitPrice
+                                      // anymore: an invoice represents one
+                                      // specific transaction, not the patient's
+                                      // full cumulative account. If the
+                                      // accountant wants the full-account fill
+                                      // they click the "إجمالي الكلفة" toggle
+                                      // above the form.
                                       const inferredType = patient.isAmputee
                                         ? "prosthetic"
                                         : patient.isPhysiotherapy
@@ -4437,7 +4535,7 @@ export default function Accounting() {
                                          patient.isPhysiotherapy ? "علاج طبيعي" :
                                          patient.isMedicalSupport ? "مساند طبية" :
                                          "خدمة طبية");
-                                      const unitPrice = Number(patient.totalCost) || 0;
+                                      const unitPrice = 0;
                                       setInvoiceItems([
                                         {
                                           description,
