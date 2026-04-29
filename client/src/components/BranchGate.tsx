@@ -43,6 +43,11 @@ interface BranchSession {
   permissions?: UserPermissions;
   shift?: string;
   language?: string;
+  // Set on multi-branch users (branch_manager assigned to several
+  // branches). The user can switch between any of these via a header
+  // dropdown; switching updates branchId / branchName here and on
+  // the server session.
+  accessibleBranches?: number[];
 }
 
 interface BranchGateProps {
@@ -128,6 +133,7 @@ export function BranchGate({ children }: BranchGateProps) {
           permissions: data.permissions,
           shift: data.shift,
           language: effectiveLanguage,
+          accessibleBranches: Array.isArray(data.accessibleBranches) ? data.accessibleBranches : undefined,
         };
         localStorage.setItem("branch_session", JSON.stringify(branchSession));
         setLanguage(effectiveLanguage as "ar" | "en");
