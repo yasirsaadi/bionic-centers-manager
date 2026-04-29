@@ -362,6 +362,7 @@ interface PatientFinancialSummary {
   paymentCountLifetime: number;
   lastPaymentDate: string | null;
   totalCost: number;
+  availableCredit: number;
 }
 
 // Contextual card shown after a patient is selected in the invoice
@@ -443,6 +444,20 @@ function PatientFinancialChip({ patientId }: { patientId: number | null }) {
           </div>
         )}
       </div>
+      {data.availableCredit > 0 && (
+        <div className="rounded-md border-r-4 border-r-primary bg-primary/10 text-primary-foreground px-3 py-2 text-xs space-y-0.5">
+          <div className="font-semibold flex items-center gap-1.5 text-foreground">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            رصيد متاح للتطبيق التلقائي
+          </div>
+          <div className="text-foreground/90">
+            دفعات سابقة بقيمة{" "}
+            <span className="font-bold tabular-nums">{formatCurrency(data.availableCredit)}</span>
+            {" "}
+            لم تُربط بأيّ فاتورة بعد. سيُطبَّق منها تلقائياً على هذه الفاتورة عند الحفظ.
+          </div>
+        </div>
+      )}
       {hasUnpaid && (
         <div
           className={`rounded-md border-r-4 px-3 py-2 text-xs space-y-0.5 ${
@@ -1768,11 +1783,23 @@ export default function Accounting() {
       }
       return invoice;
     },
-    onSuccess: () => {
+    onSuccess: (invoice: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       setIsInvoiceDialogOpen(false);
-      toast({ title: t.accounting.invoiceCreatedSuccess });
+      // If the server auto-applied prior session payments, surface
+      // that explicitly so the accountant doesn't wonder why the
+      // invoice already shows a paid balance.
+      const credit = Number(invoice?.creditApplied) || 0;
+      if (credit > 0) {
+        toast({
+          title: t.accounting.invoiceCreatedSuccess,
+          description: `تمّ تطبيق ${formatCurrency(credit)} من دفعات المريض السابقة على هذه الفاتورة تلقائياً.`,
+        });
+      } else {
+        toast({ title: t.accounting.invoiceCreatedSuccess });
+      }
     },
     onError: (error: any) => {
       toast({ title: t.accounting.invoiceCreateError, description: error.message, variant: "destructive" });

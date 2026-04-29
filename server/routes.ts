@@ -1401,6 +1401,11 @@ export async function registerRoutes(
         ? lastSessionDate > lastInvoicePaymentDate ? lastSessionDate : lastInvoicePaymentDate
         : lastSessionDate ?? lastInvoicePaymentDate ?? null;
 
+    // Available credit = session payments that haven't been
+    // allocated to any invoice yet. This is what we'd auto-apply
+    // to the next invoice the accountant creates.
+    const availableCredit = Math.max(0, sessionPaid - totalInvoicePaid);
+
     res.json({
       patientId: id,
       unpaidCount,
@@ -1415,6 +1420,10 @@ export async function registerRoutes(
       paymentCountLifetime: totalPaymentEvents,
       lastPaymentDate,
       totalCost: patient.totalCost ?? 0,
+      // How much of the patient's session payments hasn't been
+      // applied to any invoice yet — will auto-apply on next
+      // invoice issuance.
+      availableCredit,
     });
   });
 
@@ -3374,6 +3383,46 @@ export async function registerRoutes(
         }
       }
 
+      // Auto-apply prior credit. Many patients pay session-by-session
+      // (recorded in the payments table) BEFORE we issue them an
+      // invoice. Without this step, the new invoice would show
+      // paidAmount = 0 even though they've effectively paid most or
+      // all of it. We compute the unallocated credit and apply it as
+      // paidAmount automatically.
+      //
+      //   credit = sum(payments) - sum(paidAmount on patient's other invoices)
+      //   applied = min(credit, invoice.total)
+      //
+      // Note: the original session payments already created their own
+      // Cr Revenue / Dr Cash journal entries. Issuing this invoice now
+      // creates Dr AR / Cr Revenue for the full total. That double-
+      // counts revenue when prior credit applies. Accepting this for
+      // now — the alternative is a full deposit/customer-credit
+      // refactor of the accounting model. We mirror the existing
+      // user practice of writing both session payments and invoices.
+      let creditApplied = 0;
+      if (invoice.patientId) {
+        const [allPayments, allInvoicesForPatient] = await Promise.all([
+          storage.getPaymentsByPatientId(invoice.patientId),
+          storage.getInvoices(undefined, undefined, invoice.patientId),
+        ]);
+        const sessionPaid = allPayments.reduce((s, p) => s + p.amount, 0);
+        const otherInvoicesPaid = allInvoicesForPatient
+          .filter((i) => i.id !== invoice.id)
+          .reduce((s, i) => s + (i.paidAmount || 0), 0);
+        const availableCredit = Math.max(0, sessionPaid - otherInvoicesPaid);
+        creditApplied = Math.min(availableCredit, invoice.total);
+        if (creditApplied > 0) {
+          const newStatus = creditApplied >= invoice.total ? "paid" : "partial";
+          await storage.updateInvoice(invoice.id, {
+            paidAmount: creditApplied,
+            status: newStatus,
+          });
+          invoice.paidAmount = creditApplied;
+          invoice.status = newStatus;
+        }
+      }
+
       // Auto-journal: Dr AR / Cr Revenue (safe to fail, logged)
       await createJournalForInvoice(invoice, createdItems, userId);
 
@@ -3385,10 +3434,10 @@ export async function registerRoutes(
         userId,
         userName: branchSession?.displayName ?? null,
         branchId: invoice.branchId,
-        newValues: { total: invoice.total, patientId: invoice.patientId, itemCount: createdItems.length },
+        newValues: { total: invoice.total, patientId: invoice.patientId, itemCount: createdItems.length, creditApplied },
       });
 
-      res.json(invoice);
+      res.json({ ...invoice, creditApplied });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
