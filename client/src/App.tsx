@@ -63,7 +63,12 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-slate-50/50" dir={dir}>
       <Sidebar />
-      <main className="flex-1 p-4 pt-20 md:pt-6 md:p-8 overflow-y-auto h-screen">
+      <main
+        // Mobile: reserve space for the fixed header AND the iOS notch
+        // via env(safe-area-inset-top). Desktop overrides with md:pt-6
+        // because the desktop sidebar is sticky, not fixed.
+        className="flex-1 p-4 pt-[calc(env(safe-area-inset-top)+5rem)] md:pt-6 md:p-8 overflow-y-auto h-screen"
+      >
         <div className="max-w-7xl mx-auto">
           {children}
         </div>

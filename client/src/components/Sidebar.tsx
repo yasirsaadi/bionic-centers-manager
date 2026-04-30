@@ -216,8 +216,14 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Mobile Header */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-border shadow-sm">
+      {/* Mobile Header — fixed to viewport top. We pad-top via the
+          inline style so the iOS notch / status bar doesn't sit on
+          the hamburger and logo. body padding wouldn't help here
+          because position: fixed is relative to the viewport. */}
+      <div
+        className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-border shadow-sm"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
         <div className="flex items-center justify-between p-3">
           <Button
             variant="ghost"
@@ -244,10 +250,16 @@ export function Sidebar() {
       )}
 
       {/* Mobile Sidebar */}
-      <aside className={cn(
-        "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl",
-        mobileOpen ? "translate-x-0" : "translate-x-full"
-      )}>
+      <aside
+        className={cn(
+          "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl",
+          mobileOpen ? "translate-x-0" : "translate-x-full"
+        )}
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+      >
         <div className="flex flex-col h-full">
           <SidebarContent />
         </div>
