@@ -39,9 +39,39 @@ document.addEventListener('input', (e) => {
   }
 }, true);
 
+// Register the service worker. Used for offline fallback and the
+// stale-while-revalidate cache. We listen for `updatefound` so the UI
+// can show an "update available" banner — see PWAInstallPrompt for
+// the corresponding listener and refresh handler.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => {
+        // When a new SW finishes installing while the page is open,
+        // fire a custom event the React tree can react to.
+        registration.addEventListener("updatefound", () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener("statechange", () => {
+            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+              window.dispatchEvent(new CustomEvent("pwa-update-ready"));
+            }
+          });
+        });
+      })
+      .catch(() => {
+        /* swallow — failing to register the SW shouldn't break the app */
+      });
+
+    // After the new SW activates (either via skipWaiting or naturally),
+    // reload once so all clients pick up the new asset URLs together.
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
   });
 }
 

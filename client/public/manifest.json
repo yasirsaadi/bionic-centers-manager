@@ -1,26 +1,73 @@
 {
+  "id": "/",
   "name": "مجموعة مراكز د. ياسر الساعدي",
   "short_name": "مراكز د. ياسر",
-  "description": "نظام إدارة المرضى لمجموعة مراكز الدكتور ياسر الساعدي",
+  "description": "نظام إدارة شامل للمرضى، المحاسبة، والتقارير لمجموعة مراكز الدكتور ياسر الساعدي للأطراف الصناعية والعلاج الطبيعي",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1e40af",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
   "orientation": "any",
   "lang": "ar",
   "dir": "rtl",
+  "categories": ["medical", "business", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "إضافة مريض جديد",
+      "short_name": "مريض جديد",
+      "description": "تسجيل مريض جديد في النظام مباشرة",
+      "url": "/patients/new",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "النظام المحاسبي",
+      "short_name": "المحاسبة",
+      "description": "إدارة المصاريف والفواتير والتقارير",
+      "url": "/accounting",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "سجل المرضى",
+      "short_name": "المرضى",
+      "description": "البحث في قائمة المرضى وإدارة ملفّاتهم",
+      "url": "/patients",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "التقرير اليومي",
+      "short_name": "اليوميّ",
+      "description": "متابعة مرضى اليوم والإيرادات",
+      "url": "/reports/daily-patients",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

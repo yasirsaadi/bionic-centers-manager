@@ -2,15 +2,36 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
     <title>مجموعة مراكز د. ياسر الساعدي</title>
     <meta name="description" content="نظام إدارة المرضى لمجموعة مراكز الدكتور ياسر الساعدي" />
-    <meta name="theme-color" content="#1e40af" />
+
+    <!-- Theme + status-bar colour. Matches the teal primary so the
+         OS chrome (Android status bar, iOS standalone notch fill)
+         blends with the app instead of clashing. -->
+    <meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: dark)" />
+
+    <!-- iOS standalone app integration. black-translucent makes the
+         status bar overlay the content (we add safe-area padding via
+         CSS). Required for the "feels like a real app" experience
+         once the user installs from Safari. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="مراكز د. ياسر" />
+    <meta name="format-detection" content="telephone=no" />
+
     <link rel="icon" type="image/png" href="/favicon.png" />
+
+    <!-- Apple-touch-icon variants. iOS picks the largest one it can
+         find for the home-screen icon. 180x180 is the canonical size
+         on modern iPhones; we ship 192 which iOS happily downscales. -->
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
+
     <link rel="manifest" href="/manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
