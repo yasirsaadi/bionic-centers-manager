@@ -473,94 +473,25 @@ export async function registerRoutes(
         }
         return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
       }
-      
-      // Check database first for branch password (may be hashed), fall back to environment variable
-      const numericBranchId = branchId as number;
-      const dbBranchPassword = await storage.getBranchPassword(numericBranchId);
-      const envKey = `BRANCH_PASSWORD_${numericBranchId}`;
-      const envBranchPassword = process.env[envKey]?.trim();
-      
-      console.log("Checking branch password:", { 
-        branchId, 
-        dbExists: !!dbBranchPassword,
-        envExists: !!envBranchPassword
+
+      // ===== LEGACY BRANCH-SHARED LOGIN — DISABLED =====
+      // Previously every branch had a single shared password that any
+      // staff member could use. That meant a person who knew the
+      // shared key could log in without ever appearing in the
+      // system_users table — invisible to the admin and impossible
+      // to revoke individually. We've migrated every employee to a
+      // proper system_users account, so this fallback is gone.
+      //
+      // The "admin" branch key above stays as the last-resort
+      // recovery path for the system owner. Everything else now
+      // requires a real account.
+      console.warn(
+        "[auth] Rejected legacy branch-shared login attempt:",
+        { branchKey: normalizedBranchKey, username: normalizedUsername }
+      );
+      return res.status(401).json({
+        message: "اسم المستخدم غير موجود أو كلمة السر غير صحيحة. تواصل مع مسؤول النظام لإنشاء حساب باسمك.",
       });
-      
-      if (!dbBranchPassword && !envBranchPassword) {
-        return res.status(500).json({ message: "لم يتم تعيين كلمة سر لهذا الفرع" });
-      }
-      
-      let isValidBranchPassword = false;
-      let needsBranchMigration = false;
-      
-      if (dbBranchPassword) {
-        // Check if it's a bcrypt hash (starts with $2)
-        if (dbBranchPassword.startsWith('$2')) {
-          isValidBranchPassword = await bcrypt.compare(trimmedInput, dbBranchPassword);
-        } else {
-          // Legacy plaintext comparison
-          isValidBranchPassword = trimmedInput === dbBranchPassword;
-          needsBranchMigration = isValidBranchPassword;
-        }
-      } else if (envBranchPassword) {
-        // Fall back to environment variable (plaintext)
-        isValidBranchPassword = trimmedInput === envBranchPassword;
-        needsBranchMigration = isValidBranchPassword;
-      }
-      
-      if (isValidBranchPassword) {
-        // Auto-migrate: hash plaintext password on successful login
-        if (needsBranchMigration) {
-          const hashedPassword = await bcrypt.hash(trimmedInput, 10);
-          await storage.setBranchPassword(numericBranchId, hashedPassword);
-        }
-        const legacyShift = shift || "auto";
-        // Store branch session info (legacy - limited permissions for branch staff)
-        (req.session as any).branchSession = {
-          branchId: numericBranchId,
-          isAdmin: false,
-          shift: legacyShift,
-          permissions: {
-            canViewPatients: true,
-            canAddPatients: true,
-            canEditPatients: true,
-            canDeletePatients: false,
-            canViewPayments: true,
-            canAddPayments: true,
-            canEditPayments: true,
-            canDeletePayments: false,
-            canViewReports: true,
-            canManageAccounting: false,
-            canManageSettings: false,
-            canManageUsers: false,
-            canManageTreatmentPlans: false,
-          }
-        };
-        return res.json({ 
-          branchId: numericBranchId, 
-          branchName: branchName,
-          isAdmin: false,
-          role: "branch_staff",
-          shift: legacyShift,
-          permissions: {
-            canViewPatients: true,
-            canAddPatients: true,
-            canEditPatients: true,
-            canDeletePatients: false,
-            canViewPayments: true,
-            canAddPayments: true,
-            canEditPayments: true,
-            canDeletePayments: false,
-            canViewReports: true,
-            canManageAccounting: false,
-            canManageSettings: false,
-            canManageUsers: false,
-            canManageTreatmentPlans: false,
-          }
-        });
-      }
-      
-      res.status(401).json({ message: "كلمة السر غير صحيحة" });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message });
