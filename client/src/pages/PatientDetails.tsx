@@ -1172,10 +1172,10 @@ export default function PatientDetails() {
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
-                              {permissions.canEditPatients && (
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
+                              {(permissions.canEditVisits || isAdminOrManager) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
                                 onClick={() => setEditingVisit({ id: visit.id, details: visit.details, notes: visit.notes, treatmentType: visit.treatmentType, sessionCount: visit.sessionCount, cost: visit.cost, visitDate: visit.visitDate ? String(visit.visitDate) : null })}
                                 data-testid={`button-edit-visit-${visit.id}`}
@@ -1183,7 +1183,7 @@ export default function PatientDetails() {
                                 <Pencil className="w-4 h-4" />
                               </Button>
                               )}
-                              {isAdminOrManager && (
+                              {(permissions.canDeleteVisits || isAdminOrManager) && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1212,7 +1212,11 @@ export default function PatientDetails() {
                   patientId={patient.id}
                   open={!!editingVisit}
                   onOpenChange={(open) => !open && setEditingVisit(null)}
-                  isAdmin={isAdminOrManager}
+                  // The "isAdmin" prop in the modal gates the date
+                  // editor specifically. Treat anyone with the new
+                  // canEditVisits permission as having that power
+                  // too — that's the whole point of the new flag.
+                  isAdmin={isAdminOrManager || permissions.canEditVisits}
                   isPhysiotherapy={patient.isPhysiotherapy || false}
                 />
               )}

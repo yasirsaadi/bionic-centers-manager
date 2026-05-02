@@ -15,6 +15,8 @@ interface UserPermissions {
   canManageUsers: boolean;
   canManageTreatmentPlans: boolean;
   canManageSurveys: boolean;
+  canEditVisits: boolean;
+  canDeleteVisits: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -32,6 +34,8 @@ const defaultAdminPermissions: UserPermissions = {
   canManageUsers: true,
   canManageTreatmentPlans: true,
   canManageSurveys: true,
+  canEditVisits: true,
+  canDeleteVisits: true,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -49,6 +53,8 @@ const defaultBranchPermissions: UserPermissions = {
   canManageUsers: false,
   canManageTreatmentPlans: false,
   canManageSurveys: false,
+  canEditVisits: false,
+  canDeleteVisits: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -70,9 +76,11 @@ export function usePermissions(): UserPermissions {
       canManageUsers: false,
       canManageTreatmentPlans: false,
       canManageSurveys: false,
+      canEditVisits: false,
+      canDeleteVisits: false,
     };
   }
-  
+
   if (session.permissions) {
     const perms = session.permissions as unknown as Record<string, boolean>;
     return {
@@ -90,6 +98,8 @@ export function usePermissions(): UserPermissions {
       canManageUsers: perms.canManageUsers ?? false,
       canManageTreatmentPlans: perms.canManageTreatmentPlans ?? false,
       canManageSurveys: perms.canManageSurveys ?? false,
+      canEditVisits: perms.canEditVisits ?? false,
+      canDeleteVisits: perms.canDeleteVisits ?? false,
     };
   }
   

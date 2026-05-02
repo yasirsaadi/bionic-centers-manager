@@ -329,6 +329,10 @@ export async function registerRoutes(
             canManageUsers: grantAll || systemUser.canManageUsers,
             canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
             canManageSurveys: grantAll || isReception || systemUser.canManageSurveys,
+            // Visit permissions: branch_manager always gets both; everyone
+            // else uses whatever the admin toggled on their row.
+            canEditVisits: grantAll || systemUser.canEditVisits,
+            canDeleteVisits: grantAll || systemUser.canDeleteVisits,
           };
 
           // Store session with user permissions
@@ -1630,8 +1634,12 @@ export async function registerRoutes(
   // Update visit (admin only — visits are financial records that trigger
   // revenue journal entries, so editing must be restricted)
   app.patch("/api/visits/:id", isAuthenticated, async (req, res) => {
-    if (!isAdminOrManager(req)) {
-      return res.status(403).json({ message: "فقط المدير يمكنه تعديل الزيارات" });
+    const branchSession = (req.session as any).branchSession;
+    const canEdit =
+      branchSession?.isAdmin ||
+      Boolean(branchSession?.permissions?.canEditVisits);
+    if (!canEdit) {
+      return res.status(403).json({ message: "ليس لديك صلاحية تعديل الزيارات" });
     }
 
     const id = Number(req.params.id);
@@ -1663,10 +1671,15 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // Delete visit — admin or branch_manager (within their branch)
+  // Delete visit — admin, branch_manager, or any user the admin
+  // explicitly granted canDeleteVisits.
   app.delete("/api/visits/:id", isAuthenticated, async (req, res) => {
-    if (!isAdminOrManager(req)) {
-      return res.status(403).json({ message: "فقط المدير يمكنه حذف الزيارات" });
+    const branchSession = (req.session as any).branchSession;
+    const canDelete =
+      branchSession?.isAdmin ||
+      Boolean(branchSession?.permissions?.canDeleteVisits);
+    if (!canDelete) {
+      return res.status(403).json({ message: "ليس لديك صلاحية حذف الزيارات" });
     }
 
     const id = Number(req.params.id);

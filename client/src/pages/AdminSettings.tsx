@@ -107,6 +107,11 @@ type PermissionSet = {
   canManageUsers: boolean;
   canManageTreatmentPlans: boolean;
   canManageSurveys: boolean;
+  // Per-user visit permissions. Toggle on for any employee the
+  // admin trusts to fix or remove visit records (e.g. a senior
+  // receptionist) without elevating them to branch_manager.
+  canEditVisits: boolean;
+  canDeleteVisits: boolean;
 };
 
 const defaultPermissions: Record<UserRole, PermissionSet> = {
@@ -125,6 +130,8 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: true,
     canManageTreatmentPlans: true,
     canManageSurveys: true,
+    canEditVisits: true,
+    canDeleteVisits: true,
   },
   branch_manager: {
     // مدير الفرع: صلاحيات كاملة على فرعه فقط، تُعامَل كمسؤول النظام
@@ -145,6 +152,8 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: true,
     canManageTreatmentPlans: true,
     canManageSurveys: true,
+    canEditVisits: true,
+    canDeleteVisits: true,
   },
   accountant: {
     // المحاسب: يرى كل البيانات المالية ويُدخِلها، لكنه لا يعدّل ولا يحذف.
@@ -164,6 +173,8 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: false,
+    canEditVisits: false,
+    canDeleteVisits: false,
   },
   reception: {
     canViewPatients: true,
@@ -182,6 +193,10 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     // الاستقبال هم من يجرون الاستبيان مع المريض بعد انتهاء جلسته،
     // فيلزمهم وصول كامل لتعبئة الاستبيانات وقراءة النتائج.
     canManageSurveys: true,
+    // الافتراضي إيقاف لتعديل/حذف الزيارات؛ المسؤول يفعّلها يدوياً
+    // للموظفين الذين يثق بهم.
+    canEditVisits: false,
+    canDeleteVisits: false,
   },
   therapist: {
     canViewPatients: true,
@@ -198,6 +213,10 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: false,
     canManageTreatmentPlans: true,
     canManageSurveys: false,
+    // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
+    // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
+    canEditVisits: true,
+    canDeleteVisits: false,
   },
   surveyor: {
     canViewPatients: true,
@@ -214,6 +233,8 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: true,
+    canEditVisits: false,
+    canDeleteVisits: false,
   }
 };
 
@@ -1017,6 +1038,8 @@ export default function AdminSettings() {
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
+    canEditVisits: false,
+    canDeleteVisits: false,
     language: "ar",
   });
 
@@ -1149,6 +1172,8 @@ export default function AdminSettings() {
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
+      canEditVisits: false,
+      canDeleteVisits: false,
       language: "ar",
     });
   };
@@ -1185,6 +1210,8 @@ export default function AdminSettings() {
       canManageSettings: user.canManageSettings ?? false,
       canManageUsers: user.canManageUsers ?? false,
       canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
+      canEditVisits: (user as any).canEditVisits ?? false,
+      canDeleteVisits: (user as any).canDeleteVisits ?? false,
       language: (user as any).language || "ar",
     });
     setShowUserDialog(true);
@@ -2471,6 +2498,27 @@ export default function AdminSettings() {
                         data-testid="switch-canManageTreatmentPlans"
                       />
                       <Label htmlFor="canManageTreatmentPlans" className="text-sm">{t.adminSettings.canManageTreatmentPlans}</Label>
+                    </div>
+                    {/* Per-user visit permissions. Off by default;
+                        admin flips them on for trusted staff who
+                        shouldn't be branch managers. */}
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canEditVisits"
+                        checked={userFormData.canEditVisits}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEditVisits: checked }))}
+                        data-testid="switch-canEditVisits"
+                      />
+                      <Label htmlFor="canEditVisits" className="text-sm">تعديل زيارات المرضى</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canDeleteVisits"
+                        checked={userFormData.canDeleteVisits}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canDeleteVisits: checked }))}
+                        data-testid="switch-canDeleteVisits"
+                      />
+                      <Label htmlFor="canDeleteVisits" className="text-sm">حذف زيارات المرضى</Label>
                     </div>
                   </div>
                 </div>
