@@ -446,6 +446,11 @@ export const systemUsers = pgTable("system_users", {
   canManageUsers: boolean("can_manage_users").default(false),
   canManageTreatmentPlans: boolean("can_manage_treatment_plans").default(false),
   canManageSurveys: boolean("can_manage_surveys").default(false),
+  // Per-user visit permissions. Admin and branch_manager get these
+  // auto-granted at login; everyone else defaults to false until the
+  // admin toggles them on individually.
+  canEditVisits: boolean("can_edit_visits").default(false),
+  canDeleteVisits: boolean("can_delete_visits").default(false),
   language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
