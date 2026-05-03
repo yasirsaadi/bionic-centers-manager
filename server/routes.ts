@@ -13,6 +13,7 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 import { registerAccountingV2Routes } from "./accounting/routes";
+import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import {
   createJournalForPayment,
   createJournalForExpense,
@@ -175,8 +176,11 @@ export async function registerRoutes(
       canManageUsers: true,
       canManageTreatmentPlans: true,
       canManageSurveys: true,
+      canEnterSessions: true,
+      canManageSessionTargets: true,
+      canViewSessionsReport: true,
     };
-    
+
     // Default branch staff permissions — matches schema defaults in system_users:
     // add-only access, edit/delete reserved for admin per policy. Stored
     // per-user permissions from the database override this fallback.
@@ -195,6 +199,9 @@ export async function registerRoutes(
       canManageUsers: false,
       canManageTreatmentPlans: false,
       canManageSurveys: true,
+      canEnterSessions: false,
+      canManageSessionTargets: false,
+      canViewSessionsReport: false,
     };
     
     // Return stored permissions if available, else default based on admin status
@@ -333,6 +340,12 @@ export async function registerRoutes(
             // else uses whatever the admin toggled on their row.
             canEditVisits: grantAll || systemUser.canEditVisits,
             canDeleteVisits: grantAll || systemUser.canDeleteVisits,
+            // Sessions module (migration 009): reception auto-grants entry,
+            // branch_manager auto-grants all three. Anyone else uses the
+            // toggles set on their row.
+            canEnterSessions: grantAll || isReception || systemUser.canEnterSessions,
+            canManageSessionTargets: grantAll || systemUser.canManageSessionTargets,
+            canViewSessionsReport: grantAll || systemUser.canViewSessionsReport,
           };
 
           // Store session with user permissions
@@ -4724,6 +4737,9 @@ export async function registerRoutes(
 
   // Register accounting v2 routes (chart of accounts, journal, reports, audit)
   registerAccountingV2Routes(app, isAuthenticated);
+
+  // Register session tracking routes (daily device counts + monthly targets)
+  registerSessionTrackingRoutes(app, isAuthenticated);
 
   return httpServer;
 }

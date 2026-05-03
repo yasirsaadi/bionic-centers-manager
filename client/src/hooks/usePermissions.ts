@@ -17,6 +17,9 @@ interface UserPermissions {
   canManageSurveys: boolean;
   canEditVisits: boolean;
   canDeleteVisits: boolean;
+  canEnterSessions: boolean;
+  canManageSessionTargets: boolean;
+  canViewSessionsReport: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -36,6 +39,9 @@ const defaultAdminPermissions: UserPermissions = {
   canManageSurveys: true,
   canEditVisits: true,
   canDeleteVisits: true,
+  canEnterSessions: true,
+  canManageSessionTargets: true,
+  canViewSessionsReport: true,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -55,6 +61,9 @@ const defaultBranchPermissions: UserPermissions = {
   canManageSurveys: false,
   canEditVisits: false,
   canDeleteVisits: false,
+  canEnterSessions: false,
+  canManageSessionTargets: false,
+  canViewSessionsReport: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -78,6 +87,9 @@ export function usePermissions(): UserPermissions {
       canManageSurveys: false,
       canEditVisits: false,
       canDeleteVisits: false,
+      canEnterSessions: false,
+      canManageSessionTargets: false,
+      canViewSessionsReport: false,
     };
   }
 
@@ -100,6 +112,9 @@ export function usePermissions(): UserPermissions {
       canManageSurveys: perms.canManageSurveys ?? false,
       canEditVisits: perms.canEditVisits ?? false,
       canDeleteVisits: perms.canDeleteVisits ?? false,
+      canEnterSessions: perms.canEnterSessions ?? false,
+      canManageSessionTargets: perms.canManageSessionTargets ?? false,
+      canViewSessionsReport: perms.canViewSessionsReport ?? false,
     };
   }
   

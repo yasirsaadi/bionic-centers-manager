@@ -48,6 +48,9 @@ const translations = {
       systemSettings: "إعدادات النظام",
       logout: "تسجيل الخروج",
       centerName: "مجموعة مراكز\nد. ياسر الساعدي",
+      sessionEntry: "إدخال الجلسات",
+      sessionTargets: "أهداف الجلسات",
+      sessionsList: "تقرير الجلسات",
     },
     dashboard: {
       overview: "نظرة عامة",
@@ -1235,6 +1238,9 @@ const translations = {
       systemSettings: "System Settings",
       logout: "Logout",
       centerName: "Dr. Yasir Al-Saadi\nMedical Centers",
+      sessionEntry: "Session Entry",
+      sessionTargets: "Session Targets",
+      sessionsList: "Sessions Report",
     },
     dashboard: {
       overview: "Overview",
