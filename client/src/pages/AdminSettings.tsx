@@ -112,6 +112,10 @@ type PermissionSet = {
   // receptionist) without elevating them to branch_manager.
   canEditVisits: boolean;
   canDeleteVisits: boolean;
+  // Session-tracking module permissions (migration 009).
+  canEnterSessions: boolean;
+  canManageSessionTargets: boolean;
+  canViewSessionsReport: boolean;
 };
 
 const defaultPermissions: Record<UserRole, PermissionSet> = {
@@ -132,6 +136,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSurveys: true,
     canEditVisits: true,
     canDeleteVisits: true,
+    canEnterSessions: true,
+    canManageSessionTargets: true,
+    canViewSessionsReport: true,
   },
   branch_manager: {
     // مدير الفرع: صلاحيات كاملة على فرعه فقط، تُعامَل كمسؤول النظام
@@ -154,6 +161,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSurveys: true,
     canEditVisits: true,
     canDeleteVisits: true,
+    canEnterSessions: true,
+    canManageSessionTargets: true,
+    canViewSessionsReport: true,
   },
   accountant: {
     // المحاسب: يرى كل البيانات المالية ويُدخِلها، لكنه لا يعدّل ولا يحذف.
@@ -175,6 +185,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSurveys: false,
     canEditVisits: false,
     canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: true,
   },
   reception: {
     canViewPatients: true,
@@ -197,6 +210,10 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     // للموظفين الذين يثق بهم.
     canEditVisits: false,
     canDeleteVisits: false,
+    // الاستقبال هم من يدخلون الجلسات اليومية؛ تفعيل الإدخال افتراضياً.
+    canEnterSessions: true,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
   },
   therapist: {
     canViewPatients: true,
@@ -217,6 +234,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
     canEditVisits: true,
     canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
   },
   surveyor: {
     canViewPatients: true,
@@ -235,6 +255,9 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageSurveys: true,
     canEditVisits: false,
     canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
   }
 };
 
@@ -1040,6 +1063,9 @@ export default function AdminSettings() {
     canManageTreatmentPlans: false,
     canEditVisits: false,
     canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
     language: "ar",
   });
 
@@ -1174,6 +1200,9 @@ export default function AdminSettings() {
       canManageTreatmentPlans: false,
       canEditVisits: false,
       canDeleteVisits: false,
+      canEnterSessions: false,
+      canManageSessionTargets: false,
+      canViewSessionsReport: false,
       language: "ar",
     });
   };
@@ -1212,6 +1241,9 @@ export default function AdminSettings() {
       canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
       canEditVisits: (user as any).canEditVisits ?? false,
       canDeleteVisits: (user as any).canDeleteVisits ?? false,
+      canEnterSessions: (user as any).canEnterSessions ?? false,
+      canManageSessionTargets: (user as any).canManageSessionTargets ?? false,
+      canViewSessionsReport: (user as any).canViewSessionsReport ?? false,
       language: (user as any).language || "ar",
     });
     setShowUserDialog(true);
@@ -2519,6 +2551,36 @@ export default function AdminSettings() {
                         data-testid="switch-canDeleteVisits"
                       />
                       <Label htmlFor="canDeleteVisits" className="text-sm">حذف زيارات المرضى</Label>
+                    </div>
+                    {/* Session-tracking module permissions (migration 009).
+                        Reception gets entry by default; managers get all
+                        three; admin grants per user as needed. */}
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canEnterSessions"
+                        checked={userFormData.canEnterSessions}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canEnterSessions: checked }))}
+                        data-testid="switch-canEnterSessions"
+                      />
+                      <Label htmlFor="canEnterSessions" className="text-sm">إدخال الجلسات اليومية</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageSessionTargets"
+                        checked={userFormData.canManageSessionTargets}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageSessionTargets: checked }))}
+                        data-testid="switch-canManageSessionTargets"
+                      />
+                      <Label htmlFor="canManageSessionTargets" className="text-sm">إدارة أهداف الجلسات</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canViewSessionsReport"
+                        checked={userFormData.canViewSessionsReport}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewSessionsReport: checked }))}
+                        data-testid="switch-canViewSessionsReport"
+                      />
+                      <Label htmlFor="canViewSessionsReport" className="text-sm">عرض تقرير الجلسات</Label>
                     </div>
                   </div>
                 </div>
