@@ -340,12 +340,12 @@ export async function registerRoutes(
             // else uses whatever the admin toggled on their row.
             canEditVisits: grantAll || systemUser.canEditVisits,
             canDeleteVisits: grantAll || systemUser.canDeleteVisits,
-            // Sessions module (migration 009): reception auto-grants entry,
-            // branch_manager auto-grants all three. Anyone else uses the
+            // Sessions module (migration 009): admin and branch_manager
+            // get all three; reception gets entry; anyone else uses the
             // toggles set on their row.
-            canEnterSessions: grantAll || isReception || systemUser.canEnterSessions,
-            canManageSessionTargets: grantAll || systemUser.canManageSessionTargets,
-            canViewSessionsReport: grantAll || systemUser.canViewSessionsReport,
+            canEnterSessions: isAdmin || grantAll || isReception || systemUser.canEnterSessions,
+            canManageSessionTargets: isAdmin || grantAll || systemUser.canManageSessionTargets,
+            canViewSessionsReport: isAdmin || grantAll || systemUser.canViewSessionsReport,
           };
 
           // Store session with user permissions
