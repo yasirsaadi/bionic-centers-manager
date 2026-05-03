@@ -31,6 +31,9 @@ const Accounting = lazy(() => import("@/pages/Accounting"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
+const SessionEntry = lazy(() => import("@/pages/SessionEntry"));
+const SessionTargets = lazy(() => import("@/pages/SessionTargets"));
+const SessionsList = lazy(() => import("@/pages/SessionsList"));
 
 function DashboardRoute() {
   const [session, setSession] = useState<{ role?: string } | null>(null);
@@ -112,6 +115,9 @@ function Router() {
             <Route path="/statistics" component={Statistics} />
             <Route path="/accounting" component={Accounting} />
             <Route path="/surveys" component={Surveys} />
+            <Route path="/session-tracking/entry" component={SessionEntry} />
+            <Route path="/session-tracking/targets" component={SessionTargets} />
+            <Route path="/session-tracking/list" component={SessionsList} />
             <Route path="/admin" component={AdminSettings} />
             <Route component={NotFound} />
           </Switch>

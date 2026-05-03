@@ -451,6 +451,11 @@ export const systemUsers = pgTable("system_users", {
   // admin toggles them on individually.
   canEditVisits: boolean("can_edit_visits").default(false),
   canDeleteVisits: boolean("can_delete_visits").default(false),
+  // Sessions module (migration 009). Reception auto-grants enter, branch
+  // manager auto-grants all three at login.
+  canEnterSessions: boolean("can_enter_sessions").default(false),
+  canManageSessionTargets: boolean("can_manage_session_targets").default(false),
+  canViewSessionsReport: boolean("can_view_sessions_report").default(false),
   language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -585,3 +590,61 @@ export type SurveyResponse = typeof surveyResponses.$inferSelect;
 export type InsertSurveyResponse = z.infer<typeof insertSurveyResponseSchema>;
 export type SurveyAnswer = typeof surveyAnswers.$inferSelect;
 export type InsertSurveyAnswer = z.infer<typeof insertSurveyAnswerSchema>;
+
+// ===========================================================================
+// Session tracking module (migration 009)
+// Per-branch / per-day / per-shift counts for 15 physiotherapy devices,
+// plus monthly targets per branch+device.
+// ===========================================================================
+
+export const devices = pgTable("devices", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const dailySessions = pgTable("daily_sessions", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  sessionDate: date("session_date").notNull(),
+  shift: text("shift").notNull(), // 'morning' | 'evening'
+  createdBy: integer("created_by").references(() => systemUsers.id).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sessionCounts = pgTable("session_counts", {
+  id: serial("id").primaryKey(),
+  dailySessionId: integer("daily_session_id").references(() => dailySessions.id, { onDelete: "cascade" }).notNull(),
+  deviceId: integer("device_id").references(() => devices.id).notNull(),
+  count: integer("count").notNull().default(0),
+});
+
+export const monthlyTargets = pgTable("monthly_targets", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  deviceId: integer("device_id").references(() => devices.id).notNull(),
+  year: integer("year").notNull(),
+  month: integer("month").notNull(),
+  targetCount: integer("target_count").notNull().default(0),
+  setBy: integer("set_by").references(() => systemUsers.id).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertDeviceSchema = createInsertSchema(devices).omit({ id: true, createdAt: true });
+export const insertDailySessionSchema = createInsertSchema(dailySessions).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertSessionCountSchema = createInsertSchema(sessionCounts).omit({ id: true });
+export const insertMonthlyTargetSchema = createInsertSchema(monthlyTargets).omit({ id: true, updatedAt: true });
+
+export type Device = typeof devices.$inferSelect;
+export type InsertDevice = z.infer<typeof insertDeviceSchema>;
+export type DailySession = typeof dailySessions.$inferSelect;
+export type InsertDailySession = z.infer<typeof insertDailySessionSchema>;
+export type SessionCount = typeof sessionCounts.$inferSelect;
+export type InsertSessionCount = z.infer<typeof insertSessionCountSchema>;
+export type MonthlyTarget = typeof monthlyTargets.$inferSelect;
+export type InsertMonthlyTarget = z.infer<typeof insertMonthlyTargetSchema>;
