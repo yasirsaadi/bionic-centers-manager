@@ -443,49 +443,40 @@ export async function registerRoutes(
             await storage.setSystemSetting("admin_password", "");
           }
           // Store admin session info (legacy - full permissions)
+          const legacyAdminPermissions = {
+            canViewPatients: true,
+            canAddPatients: true,
+            canEditPatients: true,
+            canDeletePatients: true,
+            canViewPayments: true,
+            canAddPayments: true,
+            canEditPayments: true,
+            canDeletePayments: true,
+            canViewReports: true,
+            canManageAccounting: true,
+            canManageSettings: true,
+            canManageUsers: true,
+            canManageTreatmentPlans: true,
+            canManageSurveys: true,
+            canEditVisits: true,
+            canDeleteVisits: true,
+            canEnterSessions: true,
+            canManageSessionTargets: true,
+            canViewSessionsReport: true,
+          };
           (req.session as any).branchSession = {
             branchId: 0,
             isAdmin: true,
             shift: "auto",
-            permissions: {
-              canViewPatients: true,
-              canAddPatients: true,
-              canEditPatients: true,
-              canDeletePatients: true,
-              canViewPayments: true,
-              canAddPayments: true,
-              canEditPayments: true,
-              canDeletePayments: true,
-              canViewReports: true,
-              canManageAccounting: true,
-              canManageSettings: true,
-              canManageUsers: true,
-              canManageTreatmentPlans: true,
-              canManageSurveys: true,
-            }
+            permissions: legacyAdminPermissions,
           };
-          return res.json({ 
-            branchId: 0, 
+          return res.json({
+            branchId: 0,
             branchName: "مسؤول النظام",
             isAdmin: true,
             role: "admin",
             shift: "auto",
-            permissions: {
-              canViewPatients: true,
-              canAddPatients: true,
-              canEditPatients: true,
-              canDeletePatients: true,
-              canViewPayments: true,
-              canAddPayments: true,
-              canEditPayments: true,
-              canDeletePayments: true,
-              canViewReports: true,
-              canManageAccounting: true,
-              canManageSettings: true,
-              canManageUsers: true,
-              canManageTreatmentPlans: true,
-              canManageSurveys: true,
-            }
+            permissions: legacyAdminPermissions,
           });
         }
         return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
