@@ -51,6 +51,7 @@ const translations = {
       sessionEntry: "إدخال الجلسات",
       sessionTargets: "أهداف الجلسات",
       sessionsList: "تقرير الجلسات",
+      sessionAnalytics: "تحليلات الجلسات",
     },
     dashboard: {
       overview: "نظرة عامة",
@@ -1241,6 +1242,7 @@ const translations = {
       sessionEntry: "Session Entry",
       sessionTargets: "Session Targets",
       sessionsList: "Sessions Report",
+      sessionAnalytics: "Session Analytics",
     },
     dashboard: {
       overview: "Overview",

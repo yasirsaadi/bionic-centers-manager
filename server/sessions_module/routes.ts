@@ -12,6 +12,7 @@ import {
 import { logAudit } from "../accounting/ledger";
 import { getTodayIraq } from "../timezone";
 import {
+  getSession,
   getUserContext,
   accessibleBranchesFor,
   canAccessBranch,
@@ -617,6 +618,127 @@ export function registerSessionTrackingRoutes(
       } catch (err) {
         console.error("[session-tracking] /list error", err);
         res.status(500).json({ message: "تعذّر جلب التقرير" });
+      }
+    },
+  );
+
+  // ==================== تحليلات معمّقة ====================
+
+  // Returns four pre-aggregated views over a date range. Designed for
+  // chart rendering on the analytics page. Server-side aggregation
+  // keeps the payload small and works for arbitrarily long ranges.
+  app.get(
+    "/api/session-tracking/analytics",
+    isAuthenticated,
+    async (req: Request, res: Response) => {
+      if (!requirePerm(req, res, canViewSessionsReport)) return;
+      try {
+        const branchId = resolveBranchId(req, req.query.branchId);
+        if (branchId === undefined) {
+          return res.status(400).json({ message: "branchId غير صحيح" });
+        }
+        const from = String(req.query.from ?? "");
+        const to = String(req.query.to ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          return res.status(400).json({ message: "from / to تاريخ غير صحيح" });
+        }
+
+        const branchFilter = branchId === null ? sql`TRUE` : sql`${dailySessions.branchId} = ${branchId}`;
+
+        // Total count per device, ordered by display_order
+        const byDevice = await db
+          .select({
+            deviceId: devices.id,
+            deviceCode: devices.code,
+            nameAr: devices.nameAr,
+            nameEn: devices.nameEn,
+            total: sql<number>`COALESCE(SUM(${sessionCounts.count}), 0)::int`,
+            displayOrder: devices.displayOrder,
+          })
+          .from(devices)
+          .leftJoin(sessionCounts, eq(sessionCounts.deviceId, devices.id))
+          .leftJoin(
+            dailySessions,
+            and(
+              eq(sessionCounts.dailySessionId, dailySessions.id),
+              gte(dailySessions.sessionDate, from),
+              lte(dailySessions.sessionDate, to),
+              branchFilter,
+            ),
+          )
+          .where(eq(devices.isActive, true))
+          .groupBy(devices.id, devices.code, devices.nameAr, devices.nameEn, devices.displayOrder)
+          .orderBy(asc(devices.displayOrder));
+
+        // Per-day totals across all devices
+        const byDay = await db
+          .select({
+            date: dailySessions.sessionDate,
+            total: sql<number>`COALESCE(SUM(${sessionCounts.count}), 0)::int`,
+          })
+          .from(dailySessions)
+          .leftJoin(sessionCounts, eq(sessionCounts.dailySessionId, dailySessions.id))
+          .where(
+            and(
+              gte(dailySessions.sessionDate, from),
+              lte(dailySessions.sessionDate, to),
+              branchFilter,
+            ),
+          )
+          .groupBy(dailySessions.sessionDate)
+          .orderBy(asc(dailySessions.sessionDate));
+
+        // Per-shift totals
+        const byShiftRows = await db
+          .select({
+            shift: dailySessions.shift,
+            total: sql<number>`COALESCE(SUM(${sessionCounts.count}), 0)::int`,
+          })
+          .from(dailySessions)
+          .leftJoin(sessionCounts, eq(sessionCounts.dailySessionId, dailySessions.id))
+          .where(
+            and(
+              gte(dailySessions.sessionDate, from),
+              lte(dailySessions.sessionDate, to),
+              branchFilter,
+            ),
+          )
+          .groupBy(dailySessions.shift);
+
+        const byShift = {
+          morning: byShiftRows.find((r) => r.shift === "morning")?.total ?? 0,
+          evening: byShiftRows.find((r) => r.shift === "evening")?.total ?? 0,
+        };
+
+        // Per-branch totals — admins see all branches; others see only
+        // the resolved branch
+        let byBranch: { branchId: number; name: string; total: number }[] = [];
+        const isAdminReq = !!getSession(req)?.isAdmin;
+        if (isAdminReq) {
+          byBranch = await db
+            .select({
+              branchId: branches.id,
+              name: branches.name,
+              total: sql<number>`COALESCE(SUM(${sessionCounts.count}), 0)::int`,
+            })
+            .from(branches)
+            .leftJoin(dailySessions, eq(dailySessions.branchId, branches.id))
+            .leftJoin(
+              sessionCounts,
+              and(
+                eq(sessionCounts.dailySessionId, dailySessions.id),
+                gte(dailySessions.sessionDate, from),
+                lte(dailySessions.sessionDate, to),
+              ),
+            )
+            .groupBy(branches.id, branches.name)
+            .orderBy(asc(branches.name));
+        }
+
+        res.json({ byDevice, byDay, byShift, byBranch });
+      } catch (err) {
+        console.error("[session-tracking] /analytics error", err);
+        res.status(500).json({ message: "تعذّر جلب التحليلات" });
       }
     },
   );

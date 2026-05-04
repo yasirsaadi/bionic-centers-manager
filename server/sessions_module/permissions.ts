@@ -84,7 +84,9 @@ export function requirePerm(
 // Resolve which branch the request targets, enforcing isolation for
 // non-admins. Returns:
 //   - admin: the requested branchId (number) or null when omitted (= all).
-//   - non-admin: their pinned branchId, ignoring any client-supplied value.
+//   - non-admin with multi-branch: the requested branchId if it's in
+//     their accessibleBranches, else falls back to their primary branchId.
+//   - non-admin single-branch: their pinned branchId, regardless of input.
 // Returns undefined when the resolved branchId is invalid, allowing the
 // caller to 400.
 export function resolveBranchId(
@@ -93,14 +95,23 @@ export function resolveBranchId(
 ): number | null | undefined {
   const s = getSession(req);
   if (!s) return undefined;
-  if (!s.isAdmin) {
-    return s.branchId ?? undefined;
+  if (s.isAdmin) {
+    if (raw === undefined || raw === null || raw === "" || raw === "all") {
+      return null;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
   }
-  if (raw === undefined || raw === null || raw === "" || raw === "all") {
-    return null;
+  // Non-admin: honor the supplied value when it's one of the user's
+  // accessible branches; otherwise fall back to their primary branchId.
+  const list = accessibleBranchesFor(req);
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && list && list.includes(n)) {
+      return n;
+    }
   }
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : undefined;
+  return s.branchId ?? undefined;
 }
 
 // For mutations that target a specific branch, ensure the caller is

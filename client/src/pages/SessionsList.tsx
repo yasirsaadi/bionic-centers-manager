@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBranchSession } from "@/components/BranchGate";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { getTodayIraq } from "@/lib/utils";
+import * as XLSX from "xlsx";
 
 type Branch = { id: number; name: string };
 type Device = { id: number; nameAr: string; nameEn: string; displayOrder: number };
@@ -77,36 +78,34 @@ export default function SessionsList() {
     return { rows, colTotals, grandTotal, devices: data.devices };
   }, [listQ.data]);
 
-  function exportCsv(): void {
-    if (!pivot) return;
-    const headerLabels = [
+  function buildExportRows(): { headers: string[]; rows: (string | number)[][]; totals: (string | number)[] } | null {
+    if (!pivot) return null;
+    const headers = [
       lang === "ar" ? "التاريخ" : "Date",
       lang === "ar" ? "الفرع" : "Branch",
       lang === "ar" ? "الوردية" : "Shift",
       ...pivot.devices.map((d) => (lang === "ar" ? d.nameAr : d.nameEn)),
       lang === "ar" ? "المجموع" : "Total",
     ];
-    const lines = [headerLabels.join(",")];
-    for (const r of pivot.rows) {
-      lines.push(
-        [
-          r.session.sessionDate,
-          escapeCsv(branchName(r.session.branchId)),
-          r.session.shift,
-          ...r.cells.map(String),
-          String(r.total),
-        ].join(","),
-      );
-    }
-    lines.push(
-      [
-        lang === "ar" ? "المجموع" : "Total",
-        "",
-        "",
-        ...pivot.colTotals.map(String),
-        String(pivot.grandTotal),
-      ].join(","),
-    );
+    const rows = pivot.rows.map((r) => [
+      r.session.sessionDate,
+      branchName(r.session.branchId),
+      r.session.shift === "morning"
+        ? (lang === "ar" ? "صباحية" : "Morning")
+        : (lang === "ar" ? "مسائية" : "Evening"),
+      ...r.cells,
+      r.total,
+    ]);
+    const totals = [lang === "ar" ? "المجموع" : "Total", "", "", ...pivot.colTotals, pivot.grandTotal];
+    return { headers, rows, totals };
+  }
+
+  function exportCsv(): void {
+    const data = buildExportRows();
+    if (!data) return;
+    const lines = [data.headers.map(escapeCsv).join(",")];
+    for (const r of data.rows) lines.push(r.map((c) => escapeCsv(String(c))).join(","));
+    lines.push(data.totals.map((c) => escapeCsv(String(c))).join(","));
     const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -114,6 +113,17 @@ export default function SessionsList() {
     a.download = `sessions-${from}-to-${to}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function exportExcel(): void {
+    const data = buildExportRows();
+    if (!data) return;
+    const sheet = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows, data.totals]);
+    // Set RTL on the sheet so Arabic flows correctly when opened in Excel
+    sheet["!view"] = [{ RTL: lang === "ar" }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, lang === "ar" ? "الجلسات" : "Sessions");
+    XLSX.writeFile(wb, `sessions-${from}-to-${to}.xlsx`);
   }
 
   if (!session) return null;
@@ -131,9 +141,14 @@ export default function SessionsList() {
               : "Browse daily sessions broken down per device for a date range."}
           </p>
         </div>
-        <Button onClick={exportCsv} disabled={!pivot || pivot.rows.length === 0}>
-          {lang === "ar" ? "تصدير CSV" : "Export CSV"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={exportCsv} disabled={!pivot || pivot.rows.length === 0}>
+            {lang === "ar" ? "تصدير CSV" : "Export CSV"}
+          </Button>
+          <Button onClick={exportExcel} disabled={!pivot || pivot.rows.length === 0}>
+            {lang === "ar" ? "تصدير Excel" : "Export Excel"}
+          </Button>
+        </div>
       </div>
 
       <Card className="p-4">
