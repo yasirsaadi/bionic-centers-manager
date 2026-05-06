@@ -1,8 +1,8 @@
 import nodemailer from "nodemailer";
 import cron from "node-cron";
 import { db } from "./db";
-import { patients, branches, systemSettings } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { patients, branches, payments, expenses, systemSettings } from "@shared/schema";
+import { eq, sql } from "drizzle-orm";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
 
@@ -237,6 +237,151 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
   }
 }
 
+const BRANCH_ORDER = ["كربلاء", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat("ar-IQ").format(amount) + " د.ع";
+}
+
+async function generateNightlyReportHTML(): Promise<string> {
+  const baghdadDate = getBaghdadDateString();
+  const now = new Date();
+
+  const allBranches = await db.select().from(branches);
+  const sortedBranches = [...allBranches].sort((a, b) => {
+    const ai = BRANCH_ORDER.indexOf(a.name);
+    const bi = BRANCH_ORDER.indexOf(b.name);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+
+  const patientStats = await db
+    .select({
+      branchId: patients.branchId,
+      totalCost: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)`,
+      amputeeCount: sql<string>`COUNT(CASE WHEN ${patients.isAmputee} = true THEN 1 END)`,
+      physioCount: sql<string>`COUNT(CASE WHEN ${patients.isPhysiotherapy} = true THEN 1 END)`,
+    })
+    .from(patients)
+    .groupBy(patients.branchId);
+
+  const paymentStats = await db
+    .select({
+      branchId: payments.branchId,
+      totalPaid: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+    })
+    .from(payments)
+    .groupBy(payments.branchId);
+
+  const expenseStats = await db
+    .select({
+      branchId: expenses.branchId,
+      totalExpenses: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
+    })
+    .from(expenses)
+    .groupBy(expenses.branchId);
+
+  const patientMap = new Map(patientStats.map(r => [r.branchId, r]));
+  const paymentMap = new Map(paymentStats.map(r => [r.branchId, r]));
+  const expenseMap = new Map(expenseStats.map(r => [r.branchId, r]));
+
+  let totalWorked = 0, totalSpent = 0, totalRemaining = 0;
+  let totalAmputee = 0, totalPhysio = 0;
+
+  const rows = sortedBranches.map(branch => {
+    const ps = patientMap.get(branch.id);
+    const py = paymentMap.get(branch.id);
+    const ex = expenseMap.get(branch.id);
+
+    const worked = Number(py?.totalPaid ?? 0);
+    const spent = Number(ex?.totalExpenses ?? 0);
+    const cost = Number(ps?.totalCost ?? 0);
+    const remaining = cost - worked;
+    const amputee = Number(ps?.amputeeCount ?? 0);
+    const physio = Number(ps?.physioCount ?? 0);
+
+    totalWorked += worked;
+    totalSpent += spent;
+    totalRemaining += remaining;
+    totalAmputee += amputee;
+    totalPhysio += physio;
+
+    return `
+      <tr>
+        <td style="padding:8px 12px;border:1px solid #ddd;font-weight:bold">${branch.name}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(worked)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(spent)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(remaining)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${amputee}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${physio}</td>
+      </tr>`;
+  }).join("");
+
+  const timeStr = new Intl.DateTimeFormat("ar-IQ", {
+    hour: "2-digit", minute: "2-digit", timeZone: "Asia/Baghdad",
+  }).format(now);
+
+  return `
+    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto">
+      <h2 style="color:#2c3e50">التقرير الليلي - مراكز الأطراف الاصطناعية</h2>
+      <p><strong>التاريخ:</strong> ${baghdadDate} &nbsp;&nbsp; <strong>الوقت:</strong> ${timeStr}</p>
+      <table style="width:100%;border-collapse:collapse;margin-top:16px">
+        <thead>
+          <tr style="background:#2c3e50;color:#fff">
+            <th style="padding:10px 12px;border:1px solid #ddd;text-align:right">الفرع</th>
+            <th style="padding:10px 12px;border:1px solid #ddd">المحصّل</th>
+            <th style="padding:10px 12px;border:1px solid #ddd">المصروف</th>
+            <th style="padding:10px 12px;border:1px solid #ddd">المتبقي</th>
+            <th style="padding:10px 12px;border:1px solid #ddd">أطراف اصطناعية</th>
+            <th style="padding:10px 12px;border:1px solid #ddd">علاج طبيعي</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr style="background:#ecf0f1;font-weight:bold">
+            <td style="padding:8px 12px;border:1px solid #ddd">الإجمالي</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(totalWorked)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(totalSpent)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(totalRemaining)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${totalAmputee}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${totalPhysio}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:16px;color:#666;font-size:12px">هذه رسالة تلقائية من نظام إدارة مراكز الدكتور ياسر الساعدي</p>
+    </div>`;
+}
+
+async function sendNightlyReport(): Promise<void> {
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+
+  if (!gmailUser || !gmailAppPassword) {
+    console.error("[Report] Missing GMAIL_USER or GMAIL_APP_PASSWORD");
+    return;
+  }
+
+  try {
+    const html = await generateNightlyReportHTML();
+    const baghdadDate = getBaghdadDateString();
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: gmailUser, pass: gmailAppPassword },
+    });
+
+    await transporter.sendMail({
+      from: gmailUser,
+      to: BACKUP_EMAIL,
+      subject: `التقرير الليلي - ${baghdadDate}`,
+      html,
+    });
+
+    console.log(`[Report] Nightly report sent for ${baghdadDate}`);
+  } catch (error) {
+    console.error("[Report] Failed to send nightly report:", error);
+  }
+}
+
 export async function initBackupScheduler(): Promise<void> {
   cron.schedule(
     "55 20 * * *",
@@ -259,7 +404,18 @@ export async function initBackupScheduler(): Promise<void> {
     { timezone: "UTC" }
   );
 
-  console.log("[Backup] Scheduler initialized - daily backup at 23:55 Baghdad time only");
+  // Nightly report: 23:57 Baghdad time = 20:57 UTC
+  cron.schedule(
+    "57 20 * * *",
+    async () => {
+      const today = getBaghdadDateString();
+      console.log(`[Report] Sending nightly report for ${today}...`);
+      await sendNightlyReport();
+    },
+    { timezone: "UTC" }
+  );
+
+  console.log("[Backup] Scheduler initialized - daily backup at 23:55 and nightly report at 23:57 Baghdad time");
 }
 
 export async function sendManualBackup(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
