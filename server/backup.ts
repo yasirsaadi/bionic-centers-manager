@@ -239,14 +239,22 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
 
 const BRANCH_ORDER = ["كربلاء", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("ar-IQ").format(amount) + " د.ع";
+export interface NightlyBranchRow {
+  name: string;
+  worked: number;
+  spent: number;
+  remaining: number;
+  prosthetics: number;
+  physiotherapy: number;
 }
 
-async function generateNightlyReportHTML(): Promise<string> {
-  const baghdadDate = getBaghdadDateString();
-  const now = new Date();
+export interface NightlyReportData {
+  date: string;
+  branches: NightlyBranchRow[];
+  totals: Omit<NightlyBranchRow, "name">;
+}
 
+export async function getNightlyReportData(): Promise<NightlyReportData> {
   const allBranches = await db.select().from(branches);
   const sortedBranches = [...allBranches].sort((a, b) => {
     const ai = BRANCH_ORDER.indexOf(a.name);
@@ -285,9 +293,9 @@ async function generateNightlyReportHTML(): Promise<string> {
   const expenseMap = new Map(expenseStats.map(r => [r.branchId, r]));
 
   let totalWorked = 0, totalSpent = 0, totalRemaining = 0;
-  let totalAmputee = 0, totalPhysio = 0;
+  let totalProsthetics = 0, totalPhysiotherapy = 0;
 
-  const rows = sortedBranches.map(branch => {
+  const branchRows: NightlyBranchRow[] = sortedBranches.map(branch => {
     const ps = patientMap.get(branch.id);
     const py = paymentMap.get(branch.id);
     const ex = expenseMap.get(branch.id);
@@ -296,25 +304,48 @@ async function generateNightlyReportHTML(): Promise<string> {
     const spent = Number(ex?.totalExpenses ?? 0);
     const cost = Number(ps?.totalCost ?? 0);
     const remaining = cost - worked;
-    const amputee = Number(ps?.amputeeCount ?? 0);
-    const physio = Number(ps?.physioCount ?? 0);
+    const prosthetics = Number(ps?.amputeeCount ?? 0);
+    const physiotherapy = Number(ps?.physioCount ?? 0);
 
     totalWorked += worked;
     totalSpent += spent;
     totalRemaining += remaining;
-    totalAmputee += amputee;
-    totalPhysio += physio;
+    totalProsthetics += prosthetics;
+    totalPhysiotherapy += physiotherapy;
 
-    return `
+    return { name: branch.name, worked, spent, remaining, prosthetics, physiotherapy };
+  });
+
+  return {
+    date: getBaghdadDateString(),
+    branches: branchRows,
+    totals: {
+      worked: totalWorked,
+      spent: totalSpent,
+      remaining: totalRemaining,
+      prosthetics: totalProsthetics,
+      physiotherapy: totalPhysiotherapy,
+    },
+  };
+}
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat("ar-IQ").format(amount) + " د.ع";
+}
+
+async function generateNightlyReportHTML(): Promise<string> {
+  const now = new Date();
+  const data = await getNightlyReportData();
+
+  const rows = data.branches.map(b => `
       <tr>
-        <td style="padding:8px 12px;border:1px solid #ddd;font-weight:bold">${branch.name}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(worked)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(spent)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(remaining)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${amputee}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${physio}</td>
-      </tr>`;
-  }).join("");
+        <td style="padding:8px 12px;border:1px solid #ddd;font-weight:bold">${b.name}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(b.worked)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(b.spent)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(b.remaining)}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${b.prosthetics}</td>
+        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${b.physiotherapy}</td>
+      </tr>`).join("");
 
   const timeStr = new Intl.DateTimeFormat("ar-IQ", {
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Baghdad",
@@ -323,7 +354,7 @@ async function generateNightlyReportHTML(): Promise<string> {
   return `
     <div dir="rtl" style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto">
       <h2 style="color:#2c3e50">التقرير الليلي - مراكز الأطراف الاصطناعية</h2>
-      <p><strong>التاريخ:</strong> ${baghdadDate} &nbsp;&nbsp; <strong>الوقت:</strong> ${timeStr}</p>
+      <p><strong>التاريخ:</strong> ${data.date} &nbsp;&nbsp; <strong>الوقت:</strong> ${timeStr}</p>
       <table style="width:100%;border-collapse:collapse;margin-top:16px">
         <thead>
           <tr style="background:#2c3e50;color:#fff">
@@ -339,11 +370,11 @@ async function generateNightlyReportHTML(): Promise<string> {
           ${rows}
           <tr style="background:#ecf0f1;font-weight:bold">
             <td style="padding:8px 12px;border:1px solid #ddd">الإجمالي</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(totalWorked)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(totalSpent)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(totalRemaining)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${totalAmputee}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${totalPhysio}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(data.totals.worked)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(data.totals.spent)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(data.totals.remaining)}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${data.totals.prosthetics}</td>
+            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${data.totals.physiotherapy}</td>
           </tr>
         </tbody>
       </table>
