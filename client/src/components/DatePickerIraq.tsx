@@ -18,6 +18,9 @@ const months = [
 
 const daysOfWeek = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: CURRENT_YEAR - 1900 + 1 }, (_, i) => CURRENT_YEAR - i);
+
 export function DatePickerIraq({ value, onChange, className, "data-testid": testId }: DatePickerIraqProps) {
   const [open, setOpen] = useState(false);
   
@@ -112,15 +115,34 @@ export function DatePickerIraq({ value, onChange, className, "data-testid": test
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0 bg-white dark:bg-slate-900 border shadow-lg z-[9999]" align="start">
         <div className="p-3" dir="rtl">
-          <div className="flex items-center justify-between mb-3">
-            <Button variant="ghost" size="icon" onClick={handleNextMonth} data-testid="btn-next-month">
-              <span className="text-lg">›</span>
-            </Button>
-            <div className="font-medium">
-              {months[viewMonth]} {viewYear}
-            </div>
+          <div className="flex items-center justify-between mb-3 gap-2">
             <Button variant="ghost" size="icon" onClick={handlePrevMonth} data-testid="btn-prev-month">
               <span className="text-lg">‹</span>
+            </Button>
+            <div className="flex items-center gap-2 flex-1 justify-center">
+              <select
+                value={viewMonth}
+                onChange={(e) => setViewMonth(Number(e.target.value))}
+                className="bg-transparent border rounded px-2 py-1 text-sm cursor-pointer hover:bg-accent"
+                data-testid="select-month"
+              >
+                {months.map((m, i) => (
+                  <option key={i} value={i}>{m}</option>
+                ))}
+              </select>
+              <select
+                value={viewYear}
+                onChange={(e) => setViewYear(Number(e.target.value))}
+                className="bg-transparent border rounded px-2 py-1 text-sm cursor-pointer hover:bg-accent"
+                data-testid="select-year"
+              >
+                {YEARS.map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <Button variant="ghost" size="icon" onClick={handleNextMonth} data-testid="btn-next-month">
+              <span className="text-lg">›</span>
             </Button>
           </div>
           
