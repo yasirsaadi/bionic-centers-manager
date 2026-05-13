@@ -1,8 +1,8 @@
 import nodemailer from "nodemailer";
 import cron from "node-cron";
 import { db } from "./db";
-import { patients, branches, payments, expenses, systemSettings } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { patients, branches, systemSettings } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
 
@@ -237,182 +237,6 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
   }
 }
 
-const BRANCH_ORDER = ["كربلاء", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
-
-export interface NightlyBranchRow {
-  name: string;
-  worked: number;
-  spent: number;
-  remaining: number;
-  prosthetics: number;
-  physiotherapy: number;
-}
-
-export interface NightlyReportData {
-  date: string;
-  branches: NightlyBranchRow[];
-  totals: Omit<NightlyBranchRow, "name">;
-}
-
-export async function getNightlyReportData(): Promise<NightlyReportData> {
-  const allBranches = await db.select().from(branches);
-  const sortedBranches = [...allBranches].sort((a, b) => {
-    const ai = BRANCH_ORDER.indexOf(a.name);
-    const bi = BRANCH_ORDER.indexOf(b.name);
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-  });
-
-  const patientStats = await db
-    .select({
-      branchId: patients.branchId,
-      totalCost: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)`,
-      amputeeCount: sql<string>`COUNT(CASE WHEN ${patients.isAmputee} = true THEN 1 END)`,
-      physioCount: sql<string>`COUNT(CASE WHEN ${patients.isPhysiotherapy} = true THEN 1 END)`,
-    })
-    .from(patients)
-    .groupBy(patients.branchId);
-
-  const paymentStats = await db
-    .select({
-      branchId: payments.branchId,
-      totalPaid: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
-    })
-    .from(payments)
-    .groupBy(payments.branchId);
-
-  const expenseStats = await db
-    .select({
-      branchId: expenses.branchId,
-      totalExpenses: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
-    })
-    .from(expenses)
-    .groupBy(expenses.branchId);
-
-  const patientMap = new Map(patientStats.map(r => [r.branchId, r]));
-  const paymentMap = new Map(paymentStats.map(r => [r.branchId, r]));
-  const expenseMap = new Map(expenseStats.map(r => [r.branchId, r]));
-
-  let totalWorked = 0, totalSpent = 0, totalRemaining = 0;
-  let totalProsthetics = 0, totalPhysiotherapy = 0;
-
-  const branchRows: NightlyBranchRow[] = sortedBranches.map(branch => {
-    const ps = patientMap.get(branch.id);
-    const py = paymentMap.get(branch.id);
-    const ex = expenseMap.get(branch.id);
-
-    const worked = Number(py?.totalPaid ?? 0);
-    const spent = Number(ex?.totalExpenses ?? 0);
-    const cost = Number(ps?.totalCost ?? 0);
-    const remaining = cost - worked;
-    const prosthetics = Number(ps?.amputeeCount ?? 0);
-    const physiotherapy = Number(ps?.physioCount ?? 0);
-
-    totalWorked += worked;
-    totalSpent += spent;
-    totalRemaining += remaining;
-    totalProsthetics += prosthetics;
-    totalPhysiotherapy += physiotherapy;
-
-    return { name: branch.name, worked, spent, remaining, prosthetics, physiotherapy };
-  });
-
-  return {
-    date: getBaghdadDateString(),
-    branches: branchRows,
-    totals: {
-      worked: totalWorked,
-      spent: totalSpent,
-      remaining: totalRemaining,
-      prosthetics: totalProsthetics,
-      physiotherapy: totalPhysiotherapy,
-    },
-  };
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("ar-IQ").format(amount) + " د.ع";
-}
-
-async function generateNightlyReportHTML(): Promise<string> {
-  const now = new Date();
-  const data = await getNightlyReportData();
-
-  const rows = data.branches.map(b => `
-      <tr>
-        <td style="padding:8px 12px;border:1px solid #ddd;font-weight:bold">${b.name}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(b.worked)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(b.spent)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(b.remaining)}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${b.prosthetics}</td>
-        <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${b.physiotherapy}</td>
-      </tr>`).join("");
-
-  const timeStr = new Intl.DateTimeFormat("ar-IQ", {
-    hour: "2-digit", minute: "2-digit", timeZone: "Asia/Baghdad",
-  }).format(now);
-
-  return `
-    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto">
-      <h2 style="color:#2c3e50">التقرير الليلي - مراكز الأطراف الاصطناعية</h2>
-      <p><strong>التاريخ:</strong> ${data.date} &nbsp;&nbsp; <strong>الوقت:</strong> ${timeStr}</p>
-      <table style="width:100%;border-collapse:collapse;margin-top:16px">
-        <thead>
-          <tr style="background:#2c3e50;color:#fff">
-            <th style="padding:10px 12px;border:1px solid #ddd;text-align:right">الفرع</th>
-            <th style="padding:10px 12px;border:1px solid #ddd">المحصّل</th>
-            <th style="padding:10px 12px;border:1px solid #ddd">المصروف</th>
-            <th style="padding:10px 12px;border:1px solid #ddd">المتبقي</th>
-            <th style="padding:10px 12px;border:1px solid #ddd">أطراف اصطناعية</th>
-            <th style="padding:10px 12px;border:1px solid #ddd">علاج طبيعي</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-          <tr style="background:#ecf0f1;font-weight:bold">
-            <td style="padding:8px 12px;border:1px solid #ddd">الإجمالي</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#1a7a3a">${formatCurrency(data.totals.worked)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#c0392b">${formatCurrency(data.totals.spent)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center;color:#2980b9">${formatCurrency(data.totals.remaining)}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${data.totals.prosthetics}</td>
-            <td style="padding:8px 12px;border:1px solid #ddd;text-align:center">${data.totals.physiotherapy}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p style="margin-top:16px;color:#666;font-size:12px">هذه رسالة تلقائية من نظام إدارة مراكز الدكتور ياسر الساعدي</p>
-    </div>`;
-}
-
-async function sendNightlyReport(): Promise<void> {
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
-
-  if (!gmailUser || !gmailAppPassword) {
-    console.error("[Report] Missing GMAIL_USER or GMAIL_APP_PASSWORD");
-    return;
-  }
-
-  try {
-    const html = await generateNightlyReportHTML();
-    const baghdadDate = getBaghdadDateString();
-
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: gmailUser, pass: gmailAppPassword },
-    });
-
-    await transporter.sendMail({
-      from: gmailUser,
-      to: BACKUP_EMAIL,
-      subject: `التقرير الليلي - ${baghdadDate}`,
-      html,
-    });
-
-    console.log(`[Report] Nightly report sent for ${baghdadDate}`);
-  } catch (error) {
-    console.error("[Report] Failed to send nightly report:", error);
-  }
-}
-
 export async function initBackupScheduler(): Promise<void> {
   cron.schedule(
     "55 20 * * *",
@@ -435,18 +259,7 @@ export async function initBackupScheduler(): Promise<void> {
     { timezone: "UTC" }
   );
 
-  // Nightly report: 9:00 PM Baghdad time = 18:00 UTC
-  cron.schedule(
-    "0 18 * * *",
-    async () => {
-      const today = getBaghdadDateString();
-      console.log(`[Report] Sending nightly report for ${today}...`);
-      await sendNightlyReport();
-    },
-    { timezone: "UTC" }
-  );
-
-  console.log("[Backup] Scheduler initialized - daily backup at 23:55 and nightly report at 9:00 PM Baghdad time");
+  console.log("[Backup] Scheduler initialized - daily backup at 23:55 Baghdad time only");
 }
 
 export async function sendManualBackup(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
