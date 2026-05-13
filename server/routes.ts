@@ -3410,18 +3410,6 @@ export async function registerRoutes(
     res.json(comparison);
   });
 
-  app.get("/api/reports/nightly", isAuthenticated, async (req: any, res) => {
-    const branchSession = (req.session as any).branchSession;
-    const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
-    if (!canAccess) {
-      return res.status(403).json({ error: "غير مصرح لك بالوصول لهذا التقرير" });
-    }
-    const { getNightlyReportData } = await import("./backup");
-    const data = await getNightlyReportData();
-    res.json(data);
-  });
-
   // ======================= INVOICE ENDPOINTS =======================
 
   // Get all invoices (admin-only or branch-filtered)
