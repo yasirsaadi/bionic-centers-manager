@@ -129,7 +129,7 @@ export function Sidebar() {
         </Button>
       </div>
 
-      <nav className="flex-1 p-4 md:p-6 space-y-1 md:space-y-2">
+      <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-1 md:space-y-2">
         {menuItems.map((item) => {
           const isActive = location === item.href;
           return (
