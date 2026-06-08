@@ -4199,12 +4199,12 @@ export async function registerRoutes(
     });
 
     // Sort by score descending — highest performers first.
-    const sorted = rows
-      .map((r) => ({
-        ...r,
-        totalEntries: r.expenseCount + r.invoiceCount + r.purchaseCount,
-      }))
-      .sort((a, b) => b.score - a.score);
+    // Note: totalEntries already comes correctly computed from storage
+    // (patients + visits + payments + expenses + invoices + purchases).
+    // Do not recompute it here — an earlier version overwrote it with
+    // expenses+invoices+purchases only, which zeroed it out for reception
+    // staff who create patients/visits but never touch finances.
+    const sorted = rows.slice().sort((a, b) => b.score - a.score);
 
     res.json({ days, rows: sorted });
   });
