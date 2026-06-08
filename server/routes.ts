@@ -336,10 +336,12 @@ export async function registerRoutes(
             canManageUsers: grantAll || systemUser.canManageUsers,
             canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
             canManageSurveys: grantAll || isReception || systemUser.canManageSurveys,
-            // Visit permissions: branch_manager always gets both; everyone
-            // else uses whatever the admin toggled on their row.
+            // Visit permissions. Edit follows the manager grant-all
+            // pattern, but delete is destructive and silent, so it
+            // never auto-grants — even a branch_manager must have the
+            // explicit canDeleteVisits flag set on their user row.
             canEditVisits: grantAll || systemUser.canEditVisits,
-            canDeleteVisits: grantAll || systemUser.canDeleteVisits,
+            canDeleteVisits: Boolean(systemUser.canDeleteVisits),
             // Sessions module (migration 009): admin and branch_manager
             // get all three; reception gets entry; anyone else uses the
             // toggles set on their row.
