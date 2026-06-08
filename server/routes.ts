@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, and, isNull } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { patients, visits, payments, documents, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
@@ -1371,21 +1371,38 @@ export async function registerRoutes(
     const ctx = getUserContext(req);
     const permissions = getPermissions(req);
     const patient = await storage.getPatient(id);
-    
+
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
     }
-    
+
     // Check permission to delete patients
     if (!permissions.canDeletePatients) {
       return res.status(403).json({ message: "ليس لديك صلاحية لحذف المرضى" });
     }
-    
+
     const canAccess = ctx.role === 'admin' || !ctx.branchId || patient.branchId === ctx.branchId;
     if (!canAccess) {
       return res.status(403).json({ message: "غير مصرح لك بحذف هذا المريض" });
     }
-    
+
+    // Audit the delete BEFORE the cascade fires. deletePatient wipes
+    // payments, invoices, documents and visits along with the patient
+    // row — without this log, the cascade was completely silent and
+    // indistinguishable from data vanishing on its own.
+    const branchSession = (req.session as any).branchSession;
+    await logAudit({
+      entityType: "patient",
+      entityId: id,
+      action: "delete",
+      userId: branchSession?.userId ?? null,
+      userName: branchSession?.displayName ?? null,
+      branchId: patient.branchId,
+      oldValues: patient,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
     try {
       await storage.deletePatient(id);
       res.status(204).send();
@@ -1649,7 +1666,8 @@ export async function registerRoutes(
     }
 
     const id = Number(req.params.id);
-    const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+    const [existing] = await db.select().from(visits)
+      .where(and(eq(visits.id, id), isNull(visits.deletedAt)));
     if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
 
     const allowed = accessibleBranchesFor(req);
@@ -1700,7 +1718,8 @@ export async function registerRoutes(
     }
 
     const id = Number(req.params.id);
-    const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+    const [existing] = await db.select().from(visits)
+      .where(and(eq(visits.id, id), isNull(visits.deletedAt)));
     if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
 
     const allowed = accessibleBranchesFor(req);
@@ -2278,13 +2297,13 @@ export async function registerRoutes(
       const visitsResult = filterBranchId
         ? await db.execute(sql`
             SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
-            FROM visits 
-            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+            FROM visits
+            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND branch_id = ${filterBranchId} AND deleted_at IS NULL
           `)
         : await db.execute(sql`
             SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
-            FROM visits 
-            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp
+            FROM visits
+            WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND deleted_at IS NULL
           `);
       const visitStats = visitsResult.rows[0] || { total_visits: 0, unique_patients: 0 };
       
@@ -2297,17 +2316,17 @@ export async function registerRoutes(
               COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
-            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.branch_id = ${filterBranchId}
+            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.branch_id = ${filterBranchId} AND v.deleted_at IS NULL
           `)
         : await db.execute(sql`
-            SELECT 
+            SELECT
               COUNT(DISTINCT v.patient_id) as visiting_patients,
               COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_amputee = true) as visiting_amputees,
               COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_physiotherapy = true) as visiting_physiotherapy,
               COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
-            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp
+            WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.deleted_at IS NULL
           `);
       const visitingStats = visitingBreakdownResult.rows[0] || { visiting_patients: 0, visiting_amputees: 0, visiting_physiotherapy: 0, visiting_medical_support: 0 };
       
@@ -2448,6 +2467,7 @@ export async function registerRoutes(
         LEFT  JOIN system_users u ON u.id = v.created_by
         WHERE v.visit_date >= ${startTs}::timestamp
           AND v.visit_date <  ${endTs}::timestamp
+          AND v.deleted_at IS NULL
           AND (${effectiveBranchId}::int IS NULL OR v.branch_id = ${effectiveBranchId}::int)
           AND (${employeeFilterId}::int IS NULL OR v.created_by = ${employeeFilterId}::int)
         ORDER BY v.visit_date ASC
