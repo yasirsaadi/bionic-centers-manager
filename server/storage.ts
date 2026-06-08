@@ -46,6 +46,10 @@ export interface EmployeeAccuracyRow {
   patientCreateCount: number;
   visitCreateCount: number;
   paymentCreateCount: number;
+  // Sum of all create events (expenses + invoices + purchases +
+  // patients + visits + payments). Computed for scoring; must be
+  // returned so the accuracy panel's "إجمالي الإدخالات" box isn't blank.
+  totalEntries: number;
   anomalyDecisionsCount: number;
   editCount: number;
   deleteCount: number;
@@ -1649,6 +1653,7 @@ export class DatabaseStorage implements IStorage {
         patientCreateCount: agg.patientCreateCount,
         visitCreateCount: agg.visitCreateCount,
         paymentCreateCount: agg.paymentCreateCount,
+        totalEntries,
         anomalyDecisionsCount: agg.anomalyDecisionsCount,
         editCount: agg.editCount,
         deleteCount: agg.deleteCount,
