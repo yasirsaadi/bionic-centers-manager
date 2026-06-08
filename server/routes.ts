@@ -32,6 +32,7 @@ import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
 import { generateSurveyReply } from "./ai/survey_reply";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
+import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
 
 // Validation schemas for admin settings
@@ -4379,6 +4380,120 @@ export async function registerRoutes(
     );
     if (!ok) {
       return res.status(404).json({ error: "القرار غير موجود أو خارج نطاقك" });
+    }
+    res.json({ ok: true });
+  });
+
+  // ==================== FOLLOW-UP CALL REMINDERS ====================
+  //
+  // Reminders to call physiotherapy patients who stopped coming (>= 7 days
+  // since last visit). Branch-isolated: non-admins see only their own branch.
+  // Anyone who can view patients can read and record outcomes; recording an
+  // outcome marks the episode handled so it leaves the active list. All branch
+  // members (and admin) can edit/delete notes within their scope.
+
+  // Active reminders (un-handled stop-episodes).
+  app.get("/api/follow-ups", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canViewPatients;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول للتذكيرات" });
+    }
+    const branchId = enforceBranchAccess(req);
+    const reminders = await computeActiveReminders(branchId);
+    res.json(reminders);
+  });
+
+  // Handled history (reviewable record of logged calls).
+  app.get("/api/follow-ups/history", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canViewPatients;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const branchId = isAdmin ? undefined : branchSession?.branchId ?? undefined;
+    const list = await storage.getFollowUpHistory(branchId);
+    res.json(list);
+  });
+
+  // Logs a call outcome → marks the current stop-episode handled. The anchor
+  // (last visit) and branch are re-derived server-side from the DB so a stale
+  // or forged client value can't suppress the wrong episode.
+  app.post("/api/follow-ups", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canViewPatients;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const patientId = parseInt(req.body?.patientId);
+    const outcomeNote = typeof req.body?.outcomeNote === "string" ? req.body.outcomeNote.trim() : "";
+    if (!Number.isFinite(patientId) || !outcomeNote) {
+      return res.status(400).json({ error: "بيانات المتابعة ناقصة" });
+    }
+    const snapshot = await getReminderSnapshot(patientId);
+    if (!snapshot) {
+      return res.status(409).json({ error: "المريض ليس تذكيراً نشطاً صالحاً" });
+    }
+    // Non-admins can only log calls for their own branch.
+    if (!isAdmin && snapshot.branchId !== branchSession?.branchId) {
+      return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+    }
+    const created = await storage.createFollowUpCall({
+      patientId,
+      branchId: snapshot.branchId,
+      lastVisitAnchor: snapshot.lastVisit,
+      outcomeNote,
+      createdBy: branchSession?.userId ?? null,
+    });
+    res.json(created);
+  });
+
+  // Edits a saved outcome note. Branch-isolated for non-admins.
+  app.patch("/api/follow-ups/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canViewPatients;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const id = parseInt(req.params.id);
+    const outcomeNote = typeof req.body?.outcomeNote === "string" ? req.body.outcomeNote.trim() : "";
+    if (!Number.isFinite(id) || !outcomeNote) {
+      return res.status(400).json({ error: "بيانات غير صالحة" });
+    }
+    const updated = await storage.updateFollowUpNote(
+      id,
+      outcomeNote,
+      isAdmin ? null : branchSession?.branchId ?? null
+    );
+    if (!updated) {
+      return res.status(404).json({ error: "الملاحظة غير موجودة أو خارج نطاقك" });
+    }
+    res.json(updated);
+  });
+
+  // Deletes a handled record → the reminder re-arms if the patient is still
+  // stopped. Branch-isolated for non-admins.
+  app.delete("/api/follow-ups/:id", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canAccess = isAdmin || branchSession?.permissions?.canViewPatients;
+    if (!canAccess) {
+      return res.status(403).json({ error: "غير مصرح لك" });
+    }
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "معرّف غير صالح" });
+    }
+    const ok = await storage.deleteFollowUpCall(
+      id,
+      isAdmin ? null : branchSession?.branchId ?? null
+    );
+    if (!ok) {
+      return res.status(404).json({ error: "الملاحظة غير موجودة أو خارج نطاقك" });
     }
     res.json({ ok: true });
   });

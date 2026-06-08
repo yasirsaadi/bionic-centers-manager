@@ -265,6 +265,23 @@ export const aiMemoryNotes = pgTable("ai_memory_notes", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Follow-up call reminders for physiotherapy patients who stopped coming.
+// Active reminders are computed on the fly (physio patient whose last
+// non-deleted visit is >= 7 days ago). A row here marks a *handled* episode:
+// once the call outcome is recorded the reminder is suppressed. last_visit_anchor
+// pins the suppression to the patient's last-visit timestamp at handling time,
+// so a later visit re-arms the reminder for the new stop-episode.
+export const followUpCalls = pgTable("follow_up_calls", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  lastVisitAnchor: timestamp("last_visit_anchor").notNull(),
+  outcomeNote: text("outcome_note").notNull(),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -305,6 +322,7 @@ export const insertVendorSchema = createInsertSchema(vendors).omit({ id: true, c
 export const insertPurchaseSchema = createInsertSchema(purchases).omit({ id: true, createdAt: true, purchaseNumber: true, paidAmount: true, status: true });
 export const insertAnomalyDecisionSchema = createInsertSchema(anomalyDecisions).omit({ id: true, createdAt: true });
 export const insertAiMemoryNoteSchema = createInsertSchema(aiMemoryNotes).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertFollowUpCallSchema = createInsertSchema(followUpCalls).omit({ id: true, createdAt: true, updatedAt: true });
 
 // ============================================================
 // نظام المحاسبة الاحترافي - Professional Accounting Tables
@@ -441,6 +459,8 @@ export type AnomalyDecision = typeof anomalyDecisions.$inferSelect;
 export type InsertAnomalyDecision = z.infer<typeof insertAnomalyDecisionSchema>;
 export type AiMemoryNote = typeof aiMemoryNotes.$inferSelect;
 export type InsertAiMemoryNote = z.infer<typeof insertAiMemoryNoteSchema>;
+export type FollowUpCall = typeof followUpCalls.$inferSelect;
+export type InsertFollowUpCall = z.infer<typeof insertFollowUpCallSchema>;
 
 // System users for internal authentication
 export const systemUsers = pgTable("system_users", {

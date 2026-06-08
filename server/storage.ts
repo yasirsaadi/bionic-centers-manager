@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
-  anomalyDecisions, aiMemoryNotes, auditLog,
+  anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -18,6 +18,7 @@ import {
   type Purchase, type InsertPurchase,
   type AnomalyDecision, type InsertAnomalyDecision,
   type AiMemoryNote, type InsertAiMemoryNote,
+  type FollowUpCall, type InsertFollowUpCall,
   type SystemSetting, type BranchPassword, type BranchSetting, type InsertBranchSetting,
   type SystemUser, type InsertSystemUser,
   type TreatmentPlan, type InsertTreatmentPlan,
@@ -1390,6 +1391,71 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(anomalyDecisions.branchId, enforcedBranchId));
     }
     const result = await db.delete(anomalyDecisions).where(and(...conditions)).returning();
+    return result.length > 0;
+  }
+
+  // ==================== Follow-up call reminders ====================
+
+  // Records a follow-up call outcome, marking the patient's current
+  // stop-episode as handled (it disappears from the active reminder list).
+  async createFollowUpCall(input: InsertFollowUpCall): Promise<FollowUpCall> {
+    const [created] = await db.insert(followUpCalls).values(input).returning();
+    return created;
+  }
+
+  // Handled-episode history, enriched with patient name + author name via
+  // joins (no N+1). Branch-scoped: pass undefined for admin (all branches).
+  async getFollowUpHistory(branchId?: number): Promise<
+    (FollowUpCall & { patientName: string | null; createdByName: string | null })[]
+  > {
+    const branchClause = branchId ? eq(followUpCalls.branchId, branchId) : sql`TRUE`;
+    return await db
+      .select({
+        id: followUpCalls.id,
+        patientId: followUpCalls.patientId,
+        branchId: followUpCalls.branchId,
+        lastVisitAnchor: followUpCalls.lastVisitAnchor,
+        outcomeNote: followUpCalls.outcomeNote,
+        createdBy: followUpCalls.createdBy,
+        createdAt: followUpCalls.createdAt,
+        updatedAt: followUpCalls.updatedAt,
+        patientName: patients.name,
+        createdByName: systemUsers.displayName,
+      })
+      .from(followUpCalls)
+      .leftJoin(patients, eq(patients.id, followUpCalls.patientId))
+      .leftJoin(systemUsers, eq(systemUsers.id, followUpCalls.createdBy))
+      .where(branchClause)
+      .orderBy(desc(followUpCalls.createdAt));
+  }
+
+  // Edits a saved outcome note. Branch-scoped: enforcedBranchId === null
+  // means admin (no scope). Returns the updated row or null if out of scope.
+  async updateFollowUpNote(
+    id: number,
+    outcomeNote: string,
+    enforcedBranchId: number | null
+  ): Promise<FollowUpCall | null> {
+    const conditions = [eq(followUpCalls.id, id)];
+    if (enforcedBranchId !== null) {
+      conditions.push(eq(followUpCalls.branchId, enforcedBranchId));
+    }
+    const [updated] = await db
+      .update(followUpCalls)
+      .set({ outcomeNote, updatedAt: new Date() })
+      .where(and(...conditions))
+      .returning();
+    return updated ?? null;
+  }
+
+  // Deletes a handled record so the reminder re-arms (the patient reappears
+  // in the active list if still stopped). Branch-scoped like the update.
+  async deleteFollowUpCall(id: number, enforcedBranchId: number | null): Promise<boolean> {
+    const conditions = [eq(followUpCalls.id, id)];
+    if (enforcedBranchId !== null) {
+      conditions.push(eq(followUpCalls.branchId, enforcedBranchId));
+    }
+    const result = await db.delete(followUpCalls).where(and(...conditions)).returning();
     return result.length > 0;
   }
 
