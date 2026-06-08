@@ -8,7 +8,7 @@
 
 import { db } from "../db";
 import { expenses, invoices, patients, payments, visits, branches, anomalyDecisions } from "@shared/schema";
-import { and, eq, gte, lte, sql, desc, or } from "drizzle-orm";
+import { and, eq, gte, lte, sql, desc, or, isNull } from "drizzle-orm";
 
 export type AnomalySeverity = "high" | "medium" | "low";
 
@@ -276,7 +276,10 @@ async function detectPatientsWithoutPayments(branchId?: number): Promise<Anomaly
       count: sql<number>`COUNT(*)::int`,
     })
     .from(visits)
-    .where(sql`${visits.patientId} IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})`)
+    .where(and(
+      sql`${visits.patientId} IN (${sql.join(candidateIds.map((id) => sql`${id}`), sql`, `)})`,
+      isNull(visits.deletedAt),
+    ))
     .groupBy(visits.patientId);
   const visitsByPatient = new Map(visitRows.map((r) => [r.patientId, Number(r.count)]));
 

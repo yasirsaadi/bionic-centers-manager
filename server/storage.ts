@@ -364,15 +364,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Visits
+  //
+  // All reads filter `deleted_at IS NULL` so soft-deleted rows stay in
+  // the table for forensic / restoration but never reach the UI.
   async getVisitsByPatientId(patientId: number): Promise<Visit[]> {
-    return await db.select().from(visits).where(eq(visits.patientId, patientId)).orderBy(desc(visits.visitDate));
+    return await db.select().from(visits)
+      .where(and(eq(visits.patientId, patientId), isNull(visits.deletedAt)))
+      .orderBy(desc(visits.visitDate));
   }
   async getVisitsByPatientIds(patientIds: number[]): Promise<Visit[]> {
     if (patientIds.length === 0) return [];
-    return await db.select().from(visits).where(inArray(visits.patientId, patientIds)).orderBy(desc(visits.visitDate));
+    return await db.select().from(visits)
+      .where(and(inArray(visits.patientId, patientIds), isNull(visits.deletedAt)))
+      .orderBy(desc(visits.visitDate));
   }
   async getVisitsByBranch(branchId: number): Promise<Visit[]> {
-    return await db.select().from(visits).where(eq(visits.branchId, branchId)).orderBy(desc(visits.visitDate));
+    return await db.select().from(visits)
+      .where(and(eq(visits.branchId, branchId), isNull(visits.deletedAt)))
+      .orderBy(desc(visits.visitDate));
   }
   async createVisit(insertVisit: InsertVisit): Promise<Visit> {
     const { customDate, ...visitData } = insertVisit as InsertVisit & { customDate?: string | null };
@@ -398,8 +407,15 @@ export class DatabaseStorage implements IStorage {
     const [visit] = await db.insert(visits).values(valuesToInsert).returning();
     return visit;
   }
+  // Soft delete: mark the row instead of removing it. Reads filter on
+  // `deleted_at IS NULL` so it disappears from the UI, but the data
+  // stays for restoration if a delete was a mistake. If we ever need
+  // hard delete, do it deliberately via SQL — the BEFORE DELETE trigger
+  // will mirror the row into visits_forensic_log.
   async deleteVisit(id: number): Promise<void> {
-    await db.delete(visits).where(eq(visits.id, id));
+    await db.update(visits)
+      .set({ deletedAt: new Date() })
+      .where(eq(visits.id, id));
   }
   async updateVisit(id: number, updates: { details?: string | null; notes?: string | null; treatmentType?: string | null; sessionCount?: number | null; cost?: number | null; visitDate?: Date | null }): Promise<Visit> {
     const [updated] = await db.update(visits)
@@ -871,15 +887,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]> {
-    const conditions = [];
+    const conditions = [isNull(visits.deletedAt)];
     if (branchId) conditions.push(eq(visits.branchId, branchId));
     if (startDate) conditions.push(gte(visits.visitDate, new Date(startDate)));
     if (endDate) conditions.push(lte(visits.visitDate, new Date(endDate)));
 
-    if (conditions.length > 0) {
-      return await db.select().from(visits).where(and(...conditions)).orderBy(desc(visits.visitDate));
-    }
-    return await db.select().from(visits).orderBy(desc(visits.visitDate));
+    return await db.select().from(visits).where(and(...conditions)).orderBy(desc(visits.visitDate));
   }
 
   // ======================= INVOICE METHODS =======================

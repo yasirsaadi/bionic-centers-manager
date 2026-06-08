@@ -80,6 +80,35 @@ export const visits = pgTable("visits", {
   cost: integer("cost"),
   shift: text("shift"),
   createdBy: integer("created_by").references(() => systemUsers.id),
+  // Soft delete. Reads always filter `deleted_at IS NULL` so the row
+  // stays recoverable indefinitely. Hard deletes only happen during the
+  // deletePatient cascade — the BEFORE DELETE trigger captures those
+  // rows into `visits_forensic_log`.
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+// Captures every visit row that gets physically deleted, regardless of
+// source — app cascade, manual SQL from Neon Console, anything that
+// issues DELETE FROM visits. Populated by a BEFORE DELETE trigger in
+// migration 011 so we always have a row-level forensic trail even when
+// the application audit_log can't see the operation.
+export const visitsForensicLog = pgTable("visits_forensic_log", {
+  id: serial("id").primaryKey(),
+  loggedAt: timestamp("logged_at", { withTimezone: true }).notNull().defaultNow(),
+  pgUser: text("pg_user").notNull(),
+  pgAppName: text("pg_app_name"),
+  pgClientAddr: text("pg_client_addr"),
+  visitId: integer("visit_id").notNull(),
+  patientId: integer("patient_id"),
+  branchId: integer("branch_id"),
+  visitDate: timestamp("visit_date"),
+  details: text("details"),
+  notes: text("notes"),
+  treatmentType: text("treatment_type"),
+  sessionCount: integer("session_count"),
+  cost: integer("cost"),
+  shift: text("shift"),
+  createdBy: integer("created_by"),
 });
 
 export const payments = pgTable("payments", {
