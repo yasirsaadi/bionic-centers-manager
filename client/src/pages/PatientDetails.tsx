@@ -1184,16 +1184,38 @@ export default function PatientDetails() {
                               </Button>
                               )}
                               {(permissions.canDeleteVisits || isAdminOrManager) && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => deleteVisit({ visitId: visit.id, patientId: patient.id })}
-                                  disabled={isDeletingVisit}
-                                  data-testid={`button-delete-visit-${visit.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                      disabled={isDeletingVisit}
+                                      data-testid={`button-delete-visit-${visit.id}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>حذف الزيارة؟</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        سيتم حذف هذه الزيارة نهائياً ولا يمكن استرجاعها. هل أنت متأكد؟
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter className="gap-2">
+                                      <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => deleteVisit({ visitId: visit.id, patientId: patient.id })}
+                                        className="bg-red-600 hover:bg-red-700"
+                                        disabled={isDeletingVisit}
+                                        data-testid={`confirm-delete-visit-${visit.id}`}
+                                      >
+                                        نعم، احذف
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
                               )}
                             </div>
                           </td>

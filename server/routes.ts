@@ -1647,15 +1647,12 @@ export async function registerRoutes(
     }
 
     const id = Number(req.params.id);
-    // Branch isolation for branch_manager: load the visit, ensure it
-    // belongs to one of their accessible branches.
+    const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+    if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
+
     const allowed = accessibleBranchesFor(req);
-    if (allowed !== null) {
-      const [existing] = await db.select().from(visits).where(eq(visits.id, id));
-      if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
-      if (!allowed.includes(existing.branchId)) {
-        return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
-      }
+    if (allowed !== null && !allowed.includes(existing.branchId)) {
+      return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
     const updateData: any = { details, notes, treatmentType, sessionCount, cost };
@@ -1672,6 +1669,20 @@ export async function registerRoutes(
     }
 
     const updated = await storage.updateVisit(id, updateData);
+
+    await logAudit({
+      entityType: "visit",
+      entityId: id,
+      action: "update",
+      userId: branchSession?.userId ?? null,
+      userName: branchSession?.displayName ?? null,
+      branchId: existing.branchId,
+      oldValues: existing,
+      newValues: updated,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
     res.json(updated);
   });
 
@@ -1687,15 +1698,28 @@ export async function registerRoutes(
     }
 
     const id = Number(req.params.id);
+    const [existing] = await db.select().from(visits).where(eq(visits.id, id));
+    if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
+
     const allowed = accessibleBranchesFor(req);
-    if (allowed !== null) {
-      const [existing] = await db.select().from(visits).where(eq(visits.id, id));
-      if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
-      if (!allowed.includes(existing.branchId)) {
-        return res.status(403).json({ message: "لا يمكنك حذف زيارة من فرع آخر" });
-      }
+    if (allowed !== null && !allowed.includes(existing.branchId)) {
+      return res.status(403).json({ message: "لا يمكنك حذف زيارة من فرع آخر" });
     }
+
     await storage.deleteVisit(id);
+
+    await logAudit({
+      entityType: "visit",
+      entityId: id,
+      action: "delete",
+      userId: branchSession?.userId ?? null,
+      userName: branchSession?.displayName ?? null,
+      branchId: existing.branchId,
+      oldValues: existing,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
     res.status(204).send();
   });
 
