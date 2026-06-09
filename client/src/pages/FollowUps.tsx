@@ -30,8 +30,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   PhoneCall, Phone, History, Pencil, Trash2, Check, X, Search,
-  ChevronRight, ChevronLeft,
+  ChevronRight, ChevronLeft, ArrowDownUp,
 } from "lucide-react";
+
+// Sort by the relevant date of each list: last visit for active reminders,
+// the logged-call date for history. "newest" = most recent first.
+type SortOrder = "newest" | "oldest";
 
 // Active reminder shape returned by GET /api/follow-ups
 interface ReminderItem {
@@ -85,14 +89,15 @@ export default function FollowUps() {
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [pageSize, setPageSize] = useState<number>(50);
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [activePage, setActivePage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
 
-  // Any change to search / branch / page size resets both lists to page 1.
+  // Any change to search / branch / page size / sort resets both lists to page 1.
   useEffect(() => {
     setActivePage(1);
     setHistoryPage(1);
-  }, [search, branchFilter, pageSize]);
+  }, [search, branchFilter, pageSize, sortOrder]);
 
   const { data: reminders = [], isLoading } = useQuery<ReminderItem[]>({
     queryKey: ["/api/follow-ups"],
@@ -202,8 +207,28 @@ export default function FollowUps() {
     [history, branchId, q]
   );
 
-  const activeSlice = filteredActive.slice((activePage - 1) * pageSize, activePage * pageSize);
-  const historySlice = filteredHistory.slice((historyPage - 1) * pageSize, historyPage * pageSize);
+  const dir = sortOrder === "newest" ? -1 : 1;
+
+  // Active sorted by last visit date; history by the logged-call date.
+  const sortedActive = useMemo(
+    () =>
+      [...filteredActive].sort(
+        (a, b) =>
+          dir * (new Date(a.lastVisitDate).getTime() - new Date(b.lastVisitDate).getTime())
+      ),
+    [filteredActive, dir]
+  );
+  const sortedHistory = useMemo(
+    () =>
+      [...filteredHistory].sort(
+        (a, b) =>
+          dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      ),
+    [filteredHistory, dir]
+  );
+
+  const activeSlice = sortedActive.slice((activePage - 1) * pageSize, activePage * pageSize);
+  const historySlice = sortedHistory.slice((historyPage - 1) * pageSize, historyPage * pageSize);
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" dir="rtl">
@@ -243,6 +268,17 @@ export default function FollowUps() {
             </SelectContent>
           </Select>
         )}
+
+        <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as SortOrder)}>
+          <SelectTrigger className="w-[160px]">
+            <ArrowDownUp className="w-4 h-4 ml-1 text-muted-foreground" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">الأحدث أولاً</SelectItem>
+            <SelectItem value="oldest">الأقدم أولاً</SelectItem>
+          </SelectContent>
+        </Select>
 
         <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
           <SelectTrigger className="w-[130px]">
