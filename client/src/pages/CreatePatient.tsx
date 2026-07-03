@@ -1341,9 +1341,10 @@ export default function CreatePatient() {
                       <Input
                         type="number"
                         {...field}
+                        value={field.value || ""}
                         readOnly={!isAdmin && conditionType === "physiotherapy"}
                         className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
-                        placeholder="0.00"
+                        placeholder="0"
                         data-testid="input-total-cost"
                         onChange={(e) => {
                           field.onChange(e);
