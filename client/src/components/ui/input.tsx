@@ -2,8 +2,31 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+function toAsciiDigits(value: string): string {
+  return value
+    .replace(/[٠-٩]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0x0660 + 0x30))
+    .replace(/[۰-۹]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0x06f0 + 0x30));
+}
+
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+  ({ className, type, onChange, ...props }, ref) => {
+    const handleChange = React.useCallback(
+      (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (type === "number" && e.target.value) {
+          const converted = toAsciiDigits(e.target.value);
+          if (converted !== e.target.value) {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              HTMLInputElement.prototype,
+              "value"
+            )?.set;
+            nativeSetter?.call(e.target, converted);
+          }
+        }
+        onChange?.(e);
+      },
+      [type, onChange]
+    );
+
     // h-9 to match icon buttons and default buttons.
     return (
       <input
@@ -13,6 +36,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className
         )}
         ref={ref}
+        onChange={handleChange}
         {...props}
       />
     )
