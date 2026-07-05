@@ -670,10 +670,21 @@ export class DatabaseStorage implements IStorage {
     effectiveEndDate: string;
     daysInRange: number;
   }> {
-    // Get total revenue (all patient costs)
-    const patientsQuery = branchId
+    // Total revenue = sum of the cost of patients registered within the date
+    // range (and branch). Previously this summed EVERY patient's cost with no
+    // date filter, so the figure was identical for every period selected (and
+    // the monthly-trends / branch-comparison reports showed a flat revenue).
+    // Revenue is attributed to the patient's registration date (createdAt),
+    // matching how the daily branch report computes "sold", and filtered the
+    // same way as payments below so revenue and payments stay comparable.
+    const revenueConditions = [];
+    if (branchId) revenueConditions.push(eq(patients.branchId, branchId));
+    if (startDate) revenueConditions.push(gte(patients.createdAt, new Date(startDate)));
+    if (endDate) revenueConditions.push(lte(patients.createdAt, new Date(endDate)));
+
+    const patientsQuery = revenueConditions.length > 0
       ? await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients).where(eq(patients.branchId, branchId))
+          .from(patients).where(and(...revenueConditions))
       : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
           .from(patients);
     const totalRevenue = Number(patientsQuery[0]?.total) || 0;
