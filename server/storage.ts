@@ -675,8 +675,9 @@ export class DatabaseStorage implements IStorage {
     // date filter, so the figure was identical for every period selected (and
     // the monthly-trends / branch-comparison reports showed a flat revenue).
     // Revenue is attributed to the patient's registration date (createdAt),
-    // matching how the daily branch report computes "sold", and filtered the
-    // same way as payments below so revenue and payments stay comparable.
+    // matching how the daily branch report computes "sold". Payments and
+    // remaining below are scoped to this SAME cohort of patients, so all three
+    // figures describe one group and المتبقي = revenue − paid stays coherent.
     const revenueConditions = [];
     if (branchId) revenueConditions.push(eq(patients.branchId, branchId));
     if (startDate) revenueConditions.push(gte(patients.createdAt, new Date(startDate)));
@@ -689,17 +690,21 @@ export class DatabaseStorage implements IStorage {
           .from(patients);
     const totalRevenue = Number(patientsQuery[0]?.total) || 0;
 
-    // Get total paid (all payments within date range if specified)
-    const paymentConditions = [];
-    if (branchId) paymentConditions.push(eq(payments.branchId, branchId));
-    if (startDate) paymentConditions.push(gte(payments.date, new Date(startDate)));
-    if (endDate) paymentConditions.push(lte(payments.date, new Date(endDate)));
-
-    const paymentsQuery = paymentConditions.length > 0
+    // Total paid = every payment made by the SAME cohort of patients counted
+    // in revenue (those registered within the date range / branch), joined via
+    // patient. We intentionally do NOT filter by the payment's own date: we
+    // want each cohort's full paid-so-far, so المتبقي = cost − paid reflects
+    // their true outstanding balance and can't go negative just because old
+    // patients paid installments this month. (Reuses revenueConditions, which
+    // constrain the joined patients row by branch + createdAt.)
+    const paymentsQuery = revenueConditions.length > 0
       ? await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments).where(and(...paymentConditions))
+          .from(payments)
+          .innerJoin(patients, eq(payments.patientId, patients.id))
+          .where(and(...revenueConditions))
       : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments);
+          .from(payments)
+          .innerJoin(patients, eq(payments.patientId, patients.id));
     const totalPaid = Number(paymentsQuery[0]?.total) || 0;
 
     // Get total expenses
