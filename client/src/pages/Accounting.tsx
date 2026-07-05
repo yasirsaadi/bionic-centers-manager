@@ -1104,6 +1104,24 @@ export default function Accounting() {
     startDate: "",
     endDate: ""
   });
+  // Quick whole-month picker (month + year) that fills the from/to range with
+  // the first and last day of the chosen month, alongside the day-precise picker.
+  const [pickerMonth, setPickerMonth] = useState<string>(""); // "1".."12" or ""
+  const [pickerYear, setPickerYear] = useState<string>(String(new Date().getFullYear()));
+  const applyMonthRange = (yearStr: string, monthStr: string) => {
+    if (!yearStr || !monthStr) return;
+    const y = parseInt(yearStr, 10);
+    const m = parseInt(monthStr, 10); // 1-12
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const lastDay = new Date(y, m, 0).getDate(); // day 0 of next month = last day
+    setDateRange({ startDate: `${y}-${pad(m)}-01`, endDate: `${y}-${pad(m)}-${pad(lastDay)}` });
+  };
+  const pickerYears = (() => {
+    const current = new Date().getFullYear();
+    const list: number[] = [];
+    for (let y = current; y >= 2024; y--) list.push(y);
+    return list;
+  })();
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
@@ -2771,6 +2789,38 @@ export default function Accounting() {
             )}
             
             <div className="flex items-center gap-1">
+              <label className="text-sm font-medium text-muted-foreground">شهر</label>
+              <Select
+                value={pickerMonth}
+                onValueChange={(v) => { setPickerMonth(v); applyMonthRange(pickerYear, v); }}
+              >
+                <SelectTrigger className="w-28" data-testid="select-report-month">
+                  <SelectValue placeholder="الشهر" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ARABIC_MONTHS_IQ.map((name, i) => (
+                    <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={pickerYear}
+                onValueChange={(v) => { setPickerYear(v); if (pickerMonth) applyMonthRange(v, pickerMonth); }}
+              >
+                <SelectTrigger className="w-24" data-testid="select-report-year">
+                  <SelectValue placeholder="السنة" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pickerYears.map((y) => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator orientation="vertical" className="h-8 mx-1" />
+
+            <div className="flex items-center gap-1">
               <label className="text-sm font-medium text-muted-foreground">من</label>
               <DatePickerIraq
                 value={dateRange.startDate}
@@ -2792,7 +2842,7 @@ export default function Accounting() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setDateRange({ startDate: "", endDate: "" })}
+              onClick={() => { setDateRange({ startDate: "", endDate: "" }); setPickerMonth(""); }}
               data-testid="button-clear-filters"
             >
               <RefreshCw className="h-4 w-4" />
