@@ -3457,6 +3457,94 @@ export async function registerRoutes(
     res.json(comparison);
   });
 
+  // ======================= CRON / EXTERNAL BRIEFING =======================
+  // Read-only endpoint for scheduled external consumers (e.g. nightly
+  // briefing). Protected by a bearer-style query key stored in the
+  // CRON_API_KEY environment variable — no session/cookie required.
+  app.get("/api/cron/daily-income", async (req, res) => {
+    const cronKey = process.env.CRON_API_KEY;
+    if (!cronKey || req.query.key !== cronKey) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    // Which date to report on — defaults to today Baghdad time.
+    const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : undefined; // undefined = today
+
+    const allBranches = await storage.getBranches();
+
+    const rows: Array<{
+      branchId: number;
+      branchName: string;
+      paymentCount: number;
+      totalIncome: number;
+      newPatients: number;
+      totalExpenses: number;
+    }> = [];
+
+    let grandIncome = 0;
+    let grandExpenses = 0;
+    let grandPatients = 0;
+
+    for (const branch of allBranches) {
+      // Payments (income)
+      const paymentsResult = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0)::int AS total
+        FROM payments
+        WHERE branch_id = ${branch.id}
+          AND (date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+      `);
+      const pRow = paymentsResult.rows[0] as any;
+
+      // New patients
+      const patientsResult = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt
+        FROM patients
+        WHERE branch_id = ${branch.id}
+          AND (created_at AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+      `);
+      const ptRow = patientsResult.rows[0] as any;
+
+      // Expenses
+      const expensesResult = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0)::int AS total
+        FROM expenses
+        WHERE branch_id = ${branch.id}
+          AND expense_date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+      `);
+      const eRow = expensesResult.rows[0] as any;
+
+      const income = Number(pRow?.total ?? 0);
+      const expenses = Number(eRow?.total ?? 0);
+      const newPat = Number(ptRow?.cnt ?? 0);
+
+      grandIncome += income;
+      grandExpenses += expenses;
+      grandPatients += newPat;
+
+      rows.push({
+        branchId: branch.id,
+        branchName: branch.name,
+        paymentCount: Number(pRow?.cnt ?? 0),
+        totalIncome: income,
+        newPatients: newPat,
+        totalExpenses: expenses,
+      });
+    }
+
+    res.json({
+      date: targetDate || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }),
+      branches: rows,
+      totals: {
+        totalIncome: grandIncome,
+        totalExpenses: grandExpenses,
+        netIncome: grandIncome - grandExpenses,
+        newPatients: grandPatients,
+      },
+    });
+  });
+
   app.get("/api/reports/nightly", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
