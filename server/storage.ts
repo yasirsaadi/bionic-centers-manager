@@ -28,6 +28,10 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
+import {
+  computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
+  type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
+} from "./performance/config";
 
 // One row of the employee-accuracy panel. Numbers come from a mix of
 // row-level createdBy attribution and the audit_log table.
@@ -55,8 +59,17 @@ export interface EmployeeAccuracyRow {
   editCount: number;
   deleteCount: number;
   loginCount: number;
+  // Monthly performance signals (calendar-month, target-based scoring).
+  activeDays: number;         // distinct Baghdad days with any audit action
+  followUpsCount: number;     // follow-up calls logged by the user
+  patientsCreated: number;    // patients this user created in the month
+  patientsComplete: number;   // of those, how many have a phone filled
   lastActivityAt: string | null;
   score: number;
+  // Per-dimension breakdown (points out of 100, achievement ratio, and the
+  // role target used) so the panel can show progress vs target.
+  breakdown: ScoreBreakdown;
+  target: RoleTarget;
 }
 
 interface EmployeeAccuracyAccum {
@@ -231,6 +244,8 @@ export interface IStorage {
     startDate: string;
     endDate: string;
   }): Promise<EmployeeAccuracyRow[]>;
+  getPerformanceTargets(): Promise<PerformanceTargets>;
+  setPerformanceTargets(targets: PerformanceTargets): Promise<PerformanceTargets>;
 
   // System Users
   getSystemUsers(): Promise<SystemUser[]>;
@@ -1513,12 +1528,15 @@ export class DatabaseStorage implements IStorage {
     const startTs = new Date(`${startDate}T00:00:00+03:00`);
     const endTs = new Date(`${endDate}T23:59:59.999+03:00`);
 
+    const targets = await this.getPerformanceTargets();
+
     const [
       expenseRows,
       invoiceRows,
       purchaseRows,
       anomalyDecisionRows,
       auditRows,
+      followUpRows,
     ] = await Promise.all([
       this.getExpenses(branchId, startDate, endDate),
       this.getInvoices(branchId, undefined, undefined, startDate, endDate),
@@ -1535,12 +1553,14 @@ export class DatabaseStorage implements IStorage {
         ),
       // Audit rows over the same window. The existing audit_log
       // schema uses entityType (not resourceType) and tracks every
-      // accounting mutation already; we just consume it.
+      // accounting mutation already; we just consume it. entityId lets
+      // us follow patient-create events to check data completeness.
       db
         .select({
           userId: auditLog.userId,
           action: auditLog.action,
           entityType: auditLog.entityType,
+          entityId: auditLog.entityId,
           createdAt: auditLog.createdAt,
         })
         .from(auditLog)
@@ -1551,7 +1571,33 @@ export class DatabaseStorage implements IStorage {
             lte(auditLog.createdAt, endTs)
           )
         ),
+      // Follow-up calls logged in the window, per employee.
+      db
+        .select({
+          createdBy: followUpCalls.createdBy,
+          count: sql<number>`COUNT(*)::int`,
+        })
+        .from(followUpCalls)
+        .where(
+          and(
+            branchId ? eq(followUpCalls.branchId, branchId) : sql`TRUE`,
+            gte(followUpCalls.createdAt, startTs),
+            lte(followUpCalls.createdAt, endTs)
+          )
+        )
+        .groupBy(followUpCalls.createdBy),
     ]);
+
+    // Per-user follow-up counts keyed by stringified user id.
+    const followUpsByUser = new Map<string, number>(
+      followUpRows.map((r) => [String(r.createdBy ?? "unknown"), Number(r.count)])
+    );
+
+    // Distinct active Baghdad days + patient IDs created, per user.
+    const activeDaysByUser = new Map<string, Set<string>>();
+    const patientIdsByUser = new Map<string, number[]>();
+    const baghdadDay = (ts: Date | string | null): string | null =>
+      ts ? new Date(ts).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }) : null;
 
     // Bucket by createdBy text key. The new createdBy convention is
     // stringified system_users.id; legacy "unknown" rows aggregate
@@ -1609,13 +1655,41 @@ export class DatabaseStorage implements IStorage {
         // what makes reception staff (who create patients + visits
         // but don't touch finances) actually appear with non-zero
         // entries on the accuracy panel.
-        if (a.entityType === "patient") b.patientCreateCount += 1;
+        if (a.entityType === "patient") {
+          b.patientCreateCount += 1;
+          const list = patientIdsByUser.get(key) ?? [];
+          list.push(a.entityId);
+          patientIdsByUser.set(key, list);
+        }
         else if (a.entityType === "visit") b.visitCreateCount += 1;
         else if (a.entityType === "payment") b.paymentCreateCount += 1;
+      }
+      // Consistency: count distinct Baghdad calendar days the user was
+      // active (any audited action, including logins).
+      const day = baghdadDay(a.createdAt);
+      if (day) {
+        const set = activeDaysByUser.get(key) ?? new Set<string>();
+        set.add(day);
+        activeDaysByUser.set(key, set);
       }
       const ts = a.createdAt ? new Date(a.createdAt) : null;
       if (ts && (!b.lastActivityAt || ts > b.lastActivityAt)) {
         b.lastActivityAt = ts;
+      }
+    }
+
+    // Data completeness: for every patient any employee created in the
+    // window, check whether the core contact field (phone) is filled.
+    // One query for all candidate patient IDs — no N+1.
+    const allCreatedPatientIds = Array.from(patientIdsByUser.values()).flat();
+    const phoneById = new Map<number, boolean>();
+    if (allCreatedPatientIds.length > 0) {
+      const patientRows = await db
+        .select({ id: patients.id, phone: patients.phone })
+        .from(patients)
+        .where(inArray(patients.id, allCreatedPatientIds));
+      for (const p of patientRows) {
+        phoneById.set(p.id, !!(p.phone && p.phone.trim().length > 0));
       }
     }
 
@@ -1655,15 +1729,6 @@ export class DatabaseStorage implements IStorage {
       : [];
     const userById = new Map(sysUsers.map((u) => [u.id, u]));
 
-    // First pass: compute aggregates so we can find the team-wide
-    // maxima used to scale the activity and engagement components.
-    // Without this, two users with very different entry counts could
-    // end up with similar scores because the previous log10 scaling
-    // dampened the difference too much. Now whoever has the most
-    // entries gets the full activity points; everyone else is
-    // proportional, so the relative ranking always tracks the
-    // raw volume.
-    type AggShape = typeof aggBlank;
     const aggBlank = {
       expenseCount: 0, expenseTotal: 0,
       invoiceCount: 0, invoiceTotal: 0,
@@ -1675,56 +1740,45 @@ export class DatabaseStorage implements IStorage {
       editCount: 0, deleteCount: 0,
       loginCount: 0, lastActivityAt: null as Date | null,
     };
-    const allEntries: { key: string; agg: AggShape; totalEntries: number; totalActions: number }[] = [];
-    for (const key of allKeys) {
-      const agg = buckets.get(key) ?? aggBlank;
-      const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount
-        + agg.patientCreateCount + agg.visitCreateCount + agg.paymentCreateCount;
-      const totalActions = totalEntries + agg.editCount + agg.deleteCount;
-      allEntries.push({ key, agg, totalEntries, totalActions });
-    }
-    const maxEntries = allEntries.reduce((m, x) => Math.max(m, x.totalEntries), 0);
-    const maxLogins = allEntries.reduce((m, x) => Math.max(m, x.agg.loginCount), 0);
 
-    return allEntries.map(({ key: createdBy, agg, totalEntries, totalActions }) => {
+    const noTarget: RoleTarget = { entriesTarget: 0, activeDaysTarget: 0, followUpsTarget: 0 };
+
+    return Array.from(allKeys).map((createdBy) => {
+      const agg = buckets.get(createdBy) ?? aggBlank;
       const numId = Number(createdBy);
       const sysUser = Number.isFinite(numId) ? userById.get(numId) : undefined;
+      const role = sysUser?.role ?? null;
 
-      // Score (0-100), team-relative. Three components:
-      //
-      //   activity (60 pts): linear share of the team's leader. The
-      //     person with the most entries this period gets 60; everyone
-      //     else proportional. This is the dominant signal — the user
-      //     made it crystal clear that "more entries = higher score"
-      //     is the basic expectation and the previous log10 scaling
-      //     muted that too much.
-      //
-      //   quality (30 pts): inverse of error rate. errorRate is
-      //     (deletes + anomaly decisions) / totalActions. A clean
-      //     worker keeps the full 30; lots of deletes/anomalies eats
-      //     into it.
-      //
-      //   engagement (10 pts): logins relative to the team's most-
-      //     active logger. Tiebreaker mainly.
-      let score: number;
-      if (totalActions === 0 && agg.loginCount === 0) {
-        // Truly inactive in this window — no work, no logins.
-        score = 0;
-      } else if (totalEntries === 0) {
-        // Logged in but didn't create anything. Engagement-only.
-        score = maxLogins > 0 ? Math.round((agg.loginCount / maxLogins) * 10) : 0;
-      } else {
-        const activity = maxEntries > 0 ? (totalEntries / maxEntries) * 60 : 0;
-        const errorRate = totalActions > 0 ? (agg.deleteCount + agg.anomalyDecisionsCount) / totalActions : 0;
-        const quality = Math.max(0, 30 * (1 - errorRate));
-        const engagement = maxLogins > 0 ? (agg.loginCount / maxLogins) * 10 : 0;
-        score = Math.round(activity + quality + engagement);
-      }
+      const totalEntries = agg.expenseCount + agg.invoiceCount + agg.purchaseCount
+        + agg.patientCreateCount + agg.visitCreateCount + agg.paymentCreateCount;
+
+      const activeDays = activeDaysByUser.get(createdBy)?.size ?? 0;
+      const followUpsCount = followUpsByUser.get(createdBy) ?? 0;
+      const createdIds = patientIdsByUser.get(createdBy) ?? [];
+      const patientsCreated = createdIds.length;
+      const patientsComplete = createdIds.reduce((n, id) => n + (phoneById.get(id) ? 1 : 0), 0);
+
+      // Target-based scoring against the employee's role. Unknown/legacy
+      // rows and roles without a configured target fall back to no-target
+      // (score 0 on target dimensions), which is correct — they carry no
+      // reward signal.
+      const target = (role && targets[role]) ? targets[role] : noTarget;
+      const { score, breakdown } = computeScore(
+        {
+          entries: totalEntries,
+          activeDays,
+          followUpsCount,
+          deleteCount: agg.deleteCount,
+          patientsCreated,
+          patientsComplete,
+        },
+        target
+      );
 
       return {
         createdBy,
         displayName: sysUser?.displayName ?? (createdBy === "unknown" ? "غير معروف" : `#${createdBy}`),
-        role: sysUser?.role ?? null,
+        role,
         branchId: sysUser?.branchId ?? null,
         expenseCount: agg.expenseCount,
         expenseTotal: agg.expenseTotal,
@@ -1740,10 +1794,37 @@ export class DatabaseStorage implements IStorage {
         editCount: agg.editCount,
         deleteCount: agg.deleteCount,
         loginCount: agg.loginCount,
+        activeDays,
+        followUpsCount,
+        patientsCreated,
+        patientsComplete,
         lastActivityAt: agg.lastActivityAt ? agg.lastActivityAt.toISOString() : null,
         score,
+        breakdown,
+        target,
       };
     });
+  }
+
+  // ==================== Performance targets ====================
+
+  // Per-role monthly targets used by the employee accuracy scoring. Stored
+  // as a single JSON blob in system_settings, merged over sane defaults so a
+  // newly added role always has a target.
+  async getPerformanceTargets(): Promise<PerformanceTargets> {
+    const raw = await this.getSystemSetting(PERFORMANCE_TARGETS_KEY);
+    if (!raw) return mergeTargets(null);
+    try {
+      return mergeTargets(JSON.parse(raw));
+    } catch {
+      return mergeTargets(null);
+    }
+  }
+
+  async setPerformanceTargets(targets: PerformanceTargets): Promise<PerformanceTargets> {
+    const merged = mergeTargets(targets);
+    await this.setSystemSetting(PERFORMANCE_TARGETS_KEY, JSON.stringify(merged));
+    return merged;
   }
 
   // ==================== AI memory notes ====================
