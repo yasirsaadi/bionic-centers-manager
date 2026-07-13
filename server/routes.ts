@@ -4286,28 +4286,48 @@ export async function registerRoutes(
     if (!branchSession?.isAdmin) {
       return res.status(403).json({ error: "غير مصرح — مسؤول النظام فقط" });
     }
-    const days = Math.max(7, Math.min(180, Number(req.query.days) || 30));
     const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
 
-    const today = new Date();
-    const start = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
-    const iso = (d: Date) => d.toISOString().split("T")[0];
+    // Reward cycle is a calendar month (Baghdad). `month=YYYY-MM` selects a
+    // specific month; default is the current Baghdad month. Bounds are the
+    // first and last day of that month as YYYY-MM-DD (storage builds the
+    // Baghdad-timezone timestamps).
+    const monthParam = typeof req.query.month === "string" && /^\d{4}-\d{2}$/.test(req.query.month)
+      ? req.query.month
+      : new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
+    const [yy, mm] = monthParam.split("-").map(Number);
+    const startDate = `${monthParam}-01`;
+    const lastDay = new Date(Date.UTC(yy, mm, 0)).getUTCDate(); // day 0 of next month = last of this
+    const endDate = `${monthParam}-${String(lastDay).padStart(2, "0")}`;
 
-    const rows = await storage.getEmployeeAccuracy({
-      branchId,
-      startDate: iso(start),
-      endDate: iso(today),
-    });
+    const rows = await storage.getEmployeeAccuracy({ branchId, startDate, endDate });
 
     // Sort by score descending — highest performers first.
-    // Note: totalEntries already comes correctly computed from storage
-    // (patients + visits + payments + expenses + invoices + purchases).
-    // Do not recompute it here — an earlier version overwrote it with
-    // expenses+invoices+purchases only, which zeroed it out for reception
-    // staff who create patients/visits but never touch finances.
     const sorted = rows.slice().sort((a, b) => b.score - a.score);
 
-    res.json({ days, rows: sorted });
+    res.json({ month: monthParam, startDate, endDate, rows: sorted });
+  });
+
+  // Per-role monthly targets used by the performance scoring. Admin only.
+  app.get("/api/admin/performance-targets", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "غير مصرح — مسؤول النظام فقط" });
+    }
+    res.json(await storage.getPerformanceTargets());
+  });
+
+  app.put("/api/admin/performance-targets", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ error: "غير مصرح — مسؤول النظام فقط" });
+    }
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      return res.status(400).json({ error: "بيانات غير صالحة" });
+    }
+    const saved = await storage.setPerformanceTargets(body);
+    res.json(saved);
   });
 
   // Smart accounting audit — periodic deep review across a 30/60/90-day

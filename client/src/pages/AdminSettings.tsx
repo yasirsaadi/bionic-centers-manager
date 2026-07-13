@@ -507,6 +507,16 @@ interface BranchOption {
 // number — that's misleading without an audit log of edits/deletes.
 // Instead the admin sees raw counts and totals, plus the number of
 // anomaly decisions each user resolved (a workload signal).
+interface DimensionScore { earned: number; max: number; ratio: number; }
+interface ScoreBreakdown {
+  productivity: DimensionScore;
+  consistency: DimensionScore;
+  followups: DimensionScore;
+  quality: DimensionScore;
+}
+interface RoleTarget { entriesTarget: number; activeDaysTarget: number; followUpsTarget: number; }
+type PerformanceTargets = Record<string, RoleTarget>;
+
 interface AccuracyRow {
   createdBy: string;
   displayName: string;
@@ -525,9 +535,15 @@ interface AccuracyRow {
   editCount: number;
   deleteCount: number;
   loginCount: number;
+  activeDays: number;
+  followUpsCount: number;
+  patientsCreated: number;
+  patientsComplete: number;
   lastActivityAt: string | null;
   score: number;
   totalEntries: number;
+  breakdown: ScoreBreakdown;
+  target: RoleTarget;
 }
 
 function formatIQD(amount: number): string {
@@ -570,12 +586,39 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString("ar-IQ");
 }
 
+const ROLE_ORDER = ["reception", "branch_manager", "accountant", "therapist", "surveyor", "admin"];
+
+function currentBaghdadMonth(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
+}
+
+// A single scored dimension rendered as a labelled progress bar.
+function DimensionBar({ label, dim, detail }: { label: string; dim: DimensionScore; detail: string }) {
+  const applicable = dim.max > 0;
+  const pct = applicable ? Math.min(100, (dim.earned / dim.max) * 100) : 0;
+  const barColor = pct >= 80 ? "bg-green-500" : pct >= 50 ? "bg-blue-500" : pct >= 25 ? "bg-amber-500" : "bg-red-400";
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[11px] mb-1">
+        <span className="font-medium text-slate-700">{label}</span>
+        <span className="text-muted-foreground">
+          {applicable ? `${Math.round(dim.earned)} / ${Math.round(dim.max)}` : "غير مطبّق"}
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+        <div className={`h-full ${applicable ? barColor : "bg-slate-200"}`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-0.5">{detail}</div>
+    </div>
+  );
+}
+
 function EmployeeAccuracyTab() {
-  const [days, setDays] = useState(30);
-  const { data, isLoading } = useQuery<{ days: number; rows: AccuracyRow[] }>({
-    queryKey: ["/api/admin/employee-accuracy", days],
+  const [month, setMonth] = useState(currentBaghdadMonth());
+  const { data, isLoading } = useQuery<{ month: string; rows: AccuracyRow[] }>({
+    queryKey: ["/api/admin/employee-accuracy", month],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/employee-accuracy?days=${days}`, {
+      const res = await fetch(`/api/admin/employee-accuracy?month=${month}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error("failed");
@@ -584,55 +627,68 @@ function EmployeeAccuracyTab() {
   });
 
   const rows = data?.rows ?? [];
-  // Hide the legacy "unknown" bucket from the main grid — show it
-  // separately at the bottom as a one-line note for transparency.
   const knownRows = rows.filter((r) => r.createdBy !== "unknown");
   const unknownRow = rows.find((r) => r.createdBy === "unknown");
 
+  // Group by role — comparison and the reward are per-role. Within each role
+  // sort by score descending; the #1 (score > 0) is the month's candidate.
+  const byRole = new Map<string, AccuracyRow[]>();
+  for (const r of knownRows) {
+    const key = r.role ?? "—";
+    if (!byRole.has(key)) byRole.set(key, []);
+    byRole.get(key)!.push(r);
+  }
+  Array.from(byRole.values()).forEach((list) => list.sort((a, b) => b.score - a.score));
+  const orderedRoles = [
+    ...ROLE_ORDER.filter((r) => byRole.has(r)),
+    ...Array.from(byRole.keys()).filter((r) => !ROLE_ORDER.includes(r)),
+  ];
+
   return (
     <div className="space-y-4">
+      <TargetsEditor />
+
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div>
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <Activity className="w-5 h-5 text-primary" />
-              دقّة وحركة الموظفين
+              مراقب أداء الموظفين
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              تقييم أداء كل موظّف بناءً على نشاطه الفعليّ في النظام: الإدخالات، التعديلات، الحذف، التنبيهات، تسجيلات الدخول.
+              تقييم شهري لكل موظّف مقارنةً بأهداف دوره: الإنتاجية، الانتظام اليومي، متابعة المرضى، وجودة البيانات.
+              المقارنة تكون بين كل دور ومثيله.
             </p>
           </div>
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="p-2 border rounded-md text-sm bg-background"
-            data-testid="select-accuracy-window"
-          >
-            <option value={7}>آخر 7 أيام</option>
-            <option value={30}>آخر 30 يوماً</option>
-            <option value={60}>آخر 60 يوماً</option>
-            <option value={90}>آخر 90 يوماً</option>
-            <option value={180}>آخر 180 يوماً</option>
-          </select>
+          <div className="flex flex-col items-start gap-1">
+            <label className="text-xs text-muted-foreground">شهر التقييم</label>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value || currentBaghdadMonth())}
+              className="p-2 border rounded-md text-sm bg-background"
+              data-testid="select-accuracy-month"
+            />
+          </div>
         </div>
 
-        {/* Score legend / explainer */}
+        {/* Score legend */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-xs">
           <div className="rounded-md border bg-green-50 px-3 py-2">
             <div className="font-semibold text-green-800">ممتاز ≥ 75</div>
-            <div className="text-green-700/70">نشاط مرتفع وأخطاء قليلة</div>
+            <div className="text-green-700/70">بلغ أهدافه أو تجاوزها</div>
           </div>
           <div className="rounded-md border bg-blue-50 px-3 py-2">
             <div className="font-semibold text-blue-800">جيّد 50-74</div>
-            <div className="text-blue-700/70">أداء طبيعي</div>
+            <div className="text-blue-700/70">قريب من الأهداف</div>
           </div>
           <div className="rounded-md border bg-amber-50 px-3 py-2">
             <div className="font-semibold text-amber-800">مقبول 25-49</div>
-            <div className="text-amber-700/70">يحتاج تحسين بسيط</div>
+            <div className="text-amber-700/70">دون الأهداف</div>
           </div>
           <div className="rounded-md border bg-red-50 px-3 py-2">
             <div className="font-semibold text-red-800">يحتاج متابعة &lt; 25</div>
-            <div className="text-red-700/70">نشاط قليل أو أخطاء كثيرة</div>
+            <div className="text-red-700/70">نشاط ضعيف جدّاً</div>
           </div>
         </div>
 
@@ -640,56 +696,93 @@ function EmployeeAccuracyTab() {
           <div className="text-center py-8 text-muted-foreground text-sm">جارٍ التحميل…</div>
         ) : knownRows.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">
-            لا توجد بيانات في الفترة المحدّدة.
+            لا توجد بيانات في هذا الشهر.
           </div>
         ) : (
-          <div className="space-y-3">
-            {knownRows.map((r) => (
-              <div
-                key={r.createdBy}
-                className="border rounded-lg p-4 hover:shadow-sm transition-shadow"
-              >
-                <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-base">{r.displayName}</span>
-                      <Badge variant="outline" className="text-xs">
-                        {r.role ? ROLE_LABELS[r.role] ?? r.role : "—"}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      آخر نشاط: {relativeTime(r.lastActivityAt)}
-                    </div>
+          <div className="space-y-5">
+            {orderedRoles.map((roleKey) => {
+              const list = byRole.get(roleKey)!;
+              return (
+                <div key={roleKey}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="text-sm font-bold text-slate-800">
+                      {ROLE_LABELS[roleKey] ?? roleKey}
+                    </h3>
+                    <span className="text-xs text-muted-foreground">({list.length})</span>
                   </div>
-                  <div className="text-center">
-                    <div className={`inline-flex items-center justify-center min-w-[72px] px-3 py-1.5 rounded-full border text-sm font-bold ${scoreColor(r.score)}`}>
-                      {r.score} / 100
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">{scoreLabel(r.score)}</div>
+                  <div className="space-y-3">
+                    {list.map((r, idx) => {
+                      const isTop = idx === 0 && r.score > 0;
+                      const completeness = r.patientsCreated > 0
+                        ? Math.round((r.patientsComplete / r.patientsCreated) * 100)
+                        : null;
+                      return (
+                        <div
+                          key={r.createdBy}
+                          className={`border rounded-lg p-4 transition-shadow hover:shadow-sm ${isTop ? "border-green-300 bg-green-50/40" : ""}`}
+                        >
+                          <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-base">{r.displayName}</span>
+                                {isTop && (
+                                  <Badge className="text-xs bg-green-100 text-green-800 border-green-200">
+                                    ⭐ الأول في دوره
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                آخر نشاط: {relativeTime(r.lastActivityAt)}
+                              </div>
+                            </div>
+                            <div className="text-center">
+                              <div className={`inline-flex items-center justify-center min-w-[72px] px-3 py-1.5 rounded-full border text-sm font-bold ${scoreColor(r.score)}`}>
+                                {r.score} / 100
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">{scoreLabel(r.score)}</div>
+                            </div>
+                          </div>
+
+                          {/* Dimension breakdown vs role targets */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                            <DimensionBar
+                              label="الإنتاجية"
+                              dim={r.breakdown.productivity}
+                              detail={`${r.totalEntries} / ${r.target.entriesTarget || "—"} إدخال`}
+                            />
+                            <DimensionBar
+                              label="الانتظام اليومي"
+                              dim={r.breakdown.consistency}
+                              detail={`${r.activeDays} / ${r.target.activeDaysTarget || "—"} يوم عمل`}
+                            />
+                            <DimensionBar
+                              label="متابعة المرضى"
+                              dim={r.breakdown.followups}
+                              detail={r.target.followUpsTarget > 0 ? `${r.followUpsCount} / ${r.target.followUpsTarget} اتصال` : "غير مطلوب لهذا الدور"}
+                            />
+                            <DimensionBar
+                              label="جودة البيانات"
+                              dim={r.breakdown.quality}
+                              detail={`${completeness !== null ? `اكتمال ${completeness}%` : "لا مرضى جدد"} • حذف ${r.deleteCount}`}
+                            />
+                          </div>
+
+                          {/* Raw counts */}
+                          <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+                            <MetricBox label="مرضى جدد" count={r.patientCreateCount} />
+                            <MetricBox label="زيارات" count={r.visitCreateCount} />
+                            <MetricBox label="دفعات" count={r.paymentCreateCount} />
+                            <MetricBox label="إجمالي الإدخالات" count={r.totalEntries} highlight />
+                            <MetricBox label="اتصالات متابعة" count={r.followUpsCount} />
+                            <MetricBox label="عمليّات حذف" count={r.deleteCount} tone={r.deleteCount > 5 ? "red" : "default"} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <MetricBox label="مرضى جدد" count={r.patientCreateCount} />
-                  <MetricBox label="زيارات" count={r.visitCreateCount} />
-                  <MetricBox label="دفعات" count={r.paymentCreateCount} />
-                  <MetricBox label="إجمالي الإدخالات" count={r.totalEntries} highlight />
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-2">
-                  <MetricBox label="مصاريف" count={r.expenseCount} amount={r.expenseTotal} />
-                  <MetricBox label="فواتير" count={r.invoiceCount} amount={r.invoiceTotal} />
-                  <MetricBox label="مشتريات" count={r.purchaseCount} amount={r.purchaseTotal} />
-                  <MetricBox label="تسجيلات دخول" count={r.loginCount} />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 text-xs mt-2">
-                  <MetricBox label="تعديلات" count={r.editCount} tone="amber" />
-                  <MetricBox label="عمليّات حذف" count={r.deleteCount} tone={r.deleteCount > 5 ? "red" : "default"} />
-                  <MetricBox label="قرارات تنبيهات" count={r.anomalyDecisionsCount} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -707,24 +800,150 @@ function EmployeeAccuracyTab() {
         </h3>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc pr-5">
           <li>
-            <span className="font-semibold text-foreground">النشاط (٦٠ نقطة)</span> — يقاس نسبةً إلى صاحب أكثر إدخالات في الفريق.
-            من له أكثر إدخالات يأخذ الـ ٦٠ كاملةً، والباقون يأخذون نسبتهم منها.
-            (مثلاً: إن كان الأعلى ٥٠ إدخالاً وأنت أدخلت ٢٥ → تحصل على ٣٠ نقطة).
+            <span className="font-semibold text-foreground">الإنتاجية (٤٠ نقطة)</span> — إدخالاتك (مرضى + زيارات + دفعات + عمل محاسبي)
+            مقارنةً بهدف دورك الشهري. بلوغ الهدف = كامل النقاط، وتجاوزه لا يمنح أكثر من الكامل.
           </li>
           <li>
-            <span className="font-semibold text-foreground">الجودة (٣٠ نقطة)</span> — تنخفض كلّما زادت نسبة الحذف وقرارات التنبيهات
-            مقارنةً بإجمالي عملك. الموظّف الذي يُدخِل بدون أخطاء يأخذها كاملة.
+            <span className="font-semibold text-foreground">الانتظام اليومي (٢٠ نقطة)</span> — عدد الأيام التي عملت فيها فعلاً خلال الشهر
+            مقارنةً بأيام العمل المستهدفة. العمل الموزّع على أيام الشهر أفضل من دفعة واحدة.
           </li>
           <li>
-            <span className="font-semibold text-foreground">الانضباط (١٠ نقاط)</span> — تسجيلات الدخول نسبةً إلى صاحب أكثر تسجيلات.
+            <span className="font-semibold text-foreground">متابعة المرضى (١٥ نقطة)</span> — عدد اتصالات المتابعة التي سجّلتها
+            مقارنةً بالهدف (يُطبّق على الأدوار المعنيّة فقط).
           </li>
           <li>
-            <span className="font-semibold text-foreground">الترتيب يتبع الحجم</span>: إن كان موظّف "أ" أدخل أكثر من "ب"،
-            فترتيبه دائماً أعلى — إلاّ إذا كانت أخطاؤه كثيرة بشكل واضح. النقاط مؤشّر استرشادي، وتعديل واحد ليس بالضرورة خطأ.
+            <span className="font-semibold text-foreground">جودة البيانات (٢٥ نقطة)</span> — اكتمال بيانات المرضى الذين أدخلتهم
+            (وجود رقم الهاتف) مع قلّة عمليّات الحذف.
+          </li>
+          <li>
+            <span className="font-semibold text-foreground">عدل بين الأدوار</span>: أيّ بُعد لا ينطبق على دورك (هدفه صفر) يُستبعَد
+            ويُعاد توزيع وزنه، فيبقى تقييم كل دور من ١٠٠. والمقارنة دائماً بين كل دور ومثيله.
           </li>
         </ul>
       </Card>
     </div>
+  );
+}
+
+// Admin editor for the per-role monthly targets that drive the scoring.
+function TargetsEditor() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<PerformanceTargets | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const { data: targets } = useQuery<PerformanceTargets>({
+    queryKey: ["/api/admin/performance-targets"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/performance-targets", { credentials: "include" });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+  });
+
+  const effective = draft ?? targets ?? {};
+
+  const save = useMutation({
+    mutationFn: async (payload: PerformanceTargets) => {
+      const res = await fetch("/api/admin/performance-targets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/performance-targets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/employee-accuracy"] });
+      setDraft(null);
+      toast({ title: "تم حفظ الأهداف" });
+    },
+    onError: () => toast({ title: "خطأ", description: "تعذّر حفظ الأهداف", variant: "destructive" }),
+  });
+
+  const setField = (role: string, field: keyof RoleTarget, value: number) => {
+    setDraft({
+      ...(effective as PerformanceTargets),
+      [role]: { ...(effective as PerformanceTargets)[role], [field]: value },
+    });
+  };
+
+  const roles = [
+    ...ROLE_ORDER.filter((r) => (effective as PerformanceTargets)[r]),
+    ...Object.keys(effective).filter((r) => !ROLE_ORDER.includes(r)),
+  ];
+
+  return (
+    <Card className="p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between text-sm font-bold"
+      >
+        <span className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
+          الأهداف الشهرية لكل دور
+        </span>
+        <span className="text-xs text-muted-foreground">{open ? "▲ إخفاء" : "▼ تعديل"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4">
+          <p className="text-xs text-muted-foreground mb-3">
+            حدّد أهداف كل دور شهريّاً. الهدف صفر يعني أن البُعد لا يُطبَّق على هذا الدور (يُستبعَد من نقاطه).
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-muted-foreground border-b">
+                  <th className="text-right py-2 px-2">الدور</th>
+                  <th className="text-center py-2 px-2">هدف الإدخالات</th>
+                  <th className="text-center py-2 px-2">أيام العمل</th>
+                  <th className="text-center py-2 px-2">اتصالات المتابعة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => {
+                  const t = (effective as PerformanceTargets)[role];
+                  return (
+                    <tr key={role} className="border-b last:border-0">
+                      <td className="py-2 px-2 font-medium">{ROLE_LABELS[role] ?? role}</td>
+                      {(["entriesTarget", "activeDaysTarget", "followUpsTarget"] as const).map((f) => (
+                        <td key={f} className="py-2 px-2 text-center">
+                          <Input
+                            type="number"
+                            min={0}
+                            value={t?.[f] ?? 0}
+                            onChange={(e) => setField(role, f, Math.max(0, Number(e.target.value) || 0))}
+                            className="h-8 w-20 text-center mx-auto"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 mt-3">
+            {draft && (
+              <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
+                إلغاء
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={!draft || save.isPending}
+              onClick={() => draft && save.mutate(draft)}
+            >
+              حفظ الأهداف
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
