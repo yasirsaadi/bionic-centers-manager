@@ -282,6 +282,51 @@ export const followUpCalls = pgTable("follow_up_calls", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// ==================== Prosthetic / medical-support manufacturing ====================
+// One work order = one patient assigned to exactly ONE expert. The expert is
+// never stored on the patients table; a patient may accumulate several work
+// orders over time. History and rework rows are append-only (never deleted).
+export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  expertUserId: integer("expert_user_id").references(() => systemUsers.id).notNull(),
+  serviceType: text("service_type").notNull(), // prosthetic | medical_support
+  status: text("status").notNull().default("active"),
+  currentStage: text("current_stage").notNull().default("new_assignment"),
+  expectedDeliveryDate: date("expected_delivery_date"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  finalResult: text("final_result"), // fabrication & fit outcome code (on delivery)
+  finalNotes: text("final_notes"),
+  assignedBy: integer("assigned_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const prostheticWorkHistory = pgTable("prosthetic_work_history", {
+  id: serial("id").primaryKey(),
+  workOrderId: integer("work_order_id").references(() => prostheticWorkOrders.id).notNull(),
+  actionType: text("action_type").notNull(), // created | stage_change | status_change | reassigned | rework | delivered
+  fromStage: text("from_stage"),
+  toStage: text("to_stage"),
+  notes: text("notes"),
+  performedBy: integer("performed_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const prostheticReworkEvents = pgTable("prosthetic_rework_events", {
+  id: serial("id").primaryKey(),
+  workOrderId: integer("work_order_id").references(() => prostheticWorkOrders.id).notNull(),
+  reworkType: text("rework_type").notNull(), // recast | resocket | major_adjustment | full_remake
+  reasonCode: text("reason_code"),
+  reasonDetails: text("reason_details"),
+  stageWhenDetected: text("stage_when_detected"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
 // Custom statistics fields - allows creating custom metrics
 export const customStats = pgTable("custom_stats", {
   id: serial("id").primaryKey(),
@@ -323,6 +368,9 @@ export const insertPurchaseSchema = createInsertSchema(purchases).omit({ id: tru
 export const insertAnomalyDecisionSchema = createInsertSchema(anomalyDecisions).omit({ id: true, createdAt: true });
 export const insertAiMemoryNoteSchema = createInsertSchema(aiMemoryNotes).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertFollowUpCallSchema = createInsertSchema(followUpCalls).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProstheticWorkOrderSchema = createInsertSchema(prostheticWorkOrders).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProstheticWorkHistorySchema = createInsertSchema(prostheticWorkHistory).omit({ id: true, createdAt: true });
+export const insertProstheticReworkEventSchema = createInsertSchema(prostheticReworkEvents).omit({ id: true, createdAt: true });
 
 // ============================================================
 // نظام المحاسبة الاحترافي - Professional Accounting Tables
@@ -461,6 +509,12 @@ export type AiMemoryNote = typeof aiMemoryNotes.$inferSelect;
 export type InsertAiMemoryNote = z.infer<typeof insertAiMemoryNoteSchema>;
 export type FollowUpCall = typeof followUpCalls.$inferSelect;
 export type InsertFollowUpCall = z.infer<typeof insertFollowUpCallSchema>;
+export type ProstheticWorkOrder = typeof prostheticWorkOrders.$inferSelect;
+export type InsertProstheticWorkOrder = z.infer<typeof insertProstheticWorkOrderSchema>;
+export type ProstheticWorkHistory = typeof prostheticWorkHistory.$inferSelect;
+export type InsertProstheticWorkHistory = z.infer<typeof insertProstheticWorkHistorySchema>;
+export type ProstheticReworkEvent = typeof prostheticReworkEvents.$inferSelect;
+export type InsertProstheticReworkEvent = z.infer<typeof insertProstheticReworkEventSchema>;
 
 // System users for internal authentication
 export const systemUsers = pgTable("system_users", {

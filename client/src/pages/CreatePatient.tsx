@@ -157,6 +157,29 @@ export default function CreatePatient() {
   });
 
   const conditionType = form.watch("medicalCondition");
+  const selectedBranchId = form.watch("branchId");
+  // Prosthetic (amputee) and medical-support cases must be assigned to an expert.
+  const needsExpert = conditionType === "amputee" || conditionType === "medical_support";
+  const [expertUserId, setExpertUserId] = useState<number | null>(null);
+
+  // Experts allowed for the selected branch — server-filtered. Reception sees
+  // only its own branch's experts; when an admin changes the branch the list
+  // refetches and a now-disallowed expert selection is cleared.
+  const { data: experts = [], isLoading: expertsLoading } = useQuery<{ id: number; displayName: string }[]>({
+    queryKey: ["/api/manufacturing/experts", selectedBranchId],
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${selectedBranchId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: needsExpert && !!selectedBranchId,
+  });
+
+  useEffect(() => {
+    if (expertUserId != null && !experts.some((e) => e.id === expertUserId)) {
+      setExpertUserId(null);
+    }
+  }, [experts, expertUserId]);
 
   // Amputation selection state
   const [amputationType, setAmputationType] = useState<"single" | "double" | "silicone">("single");
@@ -302,12 +325,23 @@ export default function CreatePatient() {
         return;
       }
     }
+    // Prosthetic / medical-support patients cannot be saved without an expert.
+    if (needsExpert) {
+      if (experts.length === 0) {
+        toast({ title: "لا يوجد خبير متاح لهذا الفرع", description: "لا يمكن حفظ المريض. يرجى إضافة خبير للفرع أولاً.", variant: "destructive" });
+        return;
+      }
+      if (!expertUserId) {
+        toast({ title: "يجب اختيار الخبير المسؤول عن التصنيع", variant: "destructive" });
+        return;
+      }
+    }
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
     const submitData = {
       ...values,
       treatmentEntries: conditionType === "physiotherapy" ? validEntries : undefined,
+      expertUserId: needsExpert ? expertUserId : undefined,
     };
-    console.log("Submitting patient with branchId:", values.branchId, "all values:", submitData);
     mutate(submitData as any, {
       onSuccess: (data) => {
         setLocation(`/patients/${data.id}`);
@@ -523,6 +557,36 @@ export default function CreatePatient() {
               />
             </div>
           </Card>
+
+          {/* Manufacturing expert — mandatory for prosthetic / medical-support */}
+          {needsExpert && (
+            <Card className="p-4 md:p-6 border-primary/40 bg-primary/5">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold flex items-center gap-1">
+                  الخبير المسؤول عن التصنيع <span className="text-red-500">*</span>
+                </label>
+                {expertsLoading ? (
+                  <div className="text-sm text-muted-foreground">جارٍ تحميل الخبراء…</div>
+                ) : experts.length === 0 ? (
+                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2" data-testid="no-expert-warning">
+                    لا يوجد خبير متاح لهذا الفرع — لا يمكن حفظ المريض. يرجى إسناد خبير لهذا الفرع من إدارة المستخدمين.
+                  </div>
+                ) : (
+                  <Select value={expertUserId ? String(expertUserId) : ""} onValueChange={(v) => setExpertUserId(Number(v))}>
+                    <SelectTrigger className="bg-white" data-testid="select-expert">
+                      <SelectValue placeholder="اختر الخبير المسؤول" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {experts.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-xs text-muted-foreground">تُجلب القائمة حسب الفرع المختار. لكل مريض خبير واحد مسؤول عن تصنيع الحالة.</p>
+              </div>
+            </Card>
+          )}
 
           <Card className="p-6 rounded-2xl shadow-sm border-border/60">
             <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">{t.patientForm.medicalDetails}</h3>

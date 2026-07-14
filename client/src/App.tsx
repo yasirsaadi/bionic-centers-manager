@@ -36,6 +36,8 @@ const SessionTargets = lazy(() => import("@/pages/SessionTargets"));
 const SessionsList = lazy(() => import("@/pages/SessionsList"));
 const SessionAnalytics = lazy(() => import("@/pages/SessionAnalytics"));
 const FollowUps = lazy(() => import("@/pages/FollowUps"));
+const Manufacturing = lazy(() => import("@/pages/Manufacturing"));
+const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 
 function DashboardRoute() {
   const [session, setSession] = useState<{ role?: string } | null>(null);
@@ -54,11 +56,16 @@ function DashboardRoute() {
   if (session?.role === "reception") {
     return <Redirect to="/patients" />;
   }
-  
+
   if (session?.role === "surveyor") {
     return <Redirect to="/surveys" />;
   }
-  
+
+  // Prosthetics experts land straight in the manufacturing module.
+  if (session?.role === "prosthetics_expert") {
+    return <Redirect to="/manufacturing" />;
+  }
+
   return <Dashboard />;
 }
 
@@ -110,6 +117,8 @@ function Router() {
             <Route path="/patients/:id/edit" component={EditPatient} />
             <Route path="/patients/:id" component={PatientDetails} />
             <Route path="/follow-ups" component={FollowUps} />
+            <Route path="/manufacturing" component={Manufacturing} />
+            <Route path="/manufacturing/orders/:id" component={ManufacturingOrder} />
             <Route path="/reports" component={Reports} />
             <Route path="/reports/daily-patients" component={DailyPatientReport} />
             <Route path="/revenues" component={BranchRevenues} />

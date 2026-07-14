@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -76,6 +76,7 @@ export function Sidebar() {
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
+    { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
   ];
 
@@ -86,8 +87,15 @@ export function Sidebar() {
       return false;
     }
     
-    // Hide dashboard for reception, therapist, and surveyor users
-    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist" || branchSession?.role === "surveyor")) {
+    // Hide dashboard for reception, therapist, surveyor, and prosthetics-expert users
+    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist" || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert")) {
+      return false;
+    }
+
+    // Role-restricted items: an allow-list of roles. Admins always pass
+    // (they have isAdmin, not a `role`); a non-admin must match the list.
+    const itemRoles = (item as any).roles as string[] | undefined;
+    if (itemRoles && !branchSession?.isAdmin && !itemRoles.includes(branchSession?.role ?? "")) {
       return false;
     }
     

@@ -79,7 +79,7 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor";
+type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor" | "prosthetics_expert";
 
 function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
   return {
@@ -89,6 +89,7 @@ function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRo
     reception: t.roles.reception,
     therapist: t.roles.therapist,
     surveyor: t.roles.surveyor,
+    prosthetics_expert: t.roles.prosthetics_expert,
   };
 }
 
@@ -253,6 +254,30 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: true,
+    canEditVisits: false,
+    canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
+  },
+  // Prosthetics expert works ONLY inside the manufacturing module, gated by
+  // role — not by these general permissions. All general permissions stay off
+  // (the expert must not use the general patient/payments/reports screens).
+  prosthetics_expert: {
+    canViewPatients: false,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canManageSettings: false,
+    canManageUsers: false,
+    canManageTreatmentPlans: false,
+    canManageSurveys: false,
     canEditVisits: false,
     canDeleteVisits: false,
     canEnterSessions: false,
@@ -557,6 +582,7 @@ const ROLE_LABELS: Record<string, string> = {
   reception: "استقبال",
   therapist: "أخصّائي علاج",
   surveyor: "مسؤول استبيانات",
+  prosthetics_expert: "خبير أطراف",
 };
 
 function scoreColor(score: number): string {
@@ -586,7 +612,7 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString("ar-IQ");
 }
 
-const ROLE_ORDER = ["reception", "branch_manager", "accountant", "therapist", "surveyor", "admin"];
+const ROLE_ORDER = ["reception", "branch_manager", "accountant", "therapist", "surveyor", "prosthetics_expert", "admin"];
 
 function currentBaghdadMonth(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
@@ -2512,6 +2538,7 @@ export default function AdminSettings() {
                     <SelectItem value="reception">{t.roles.reception}</SelectItem>
                     <SelectItem value="therapist">{t.roles.therapist}</SelectItem>
                     <SelectItem value="surveyor">{t.roles.surveyor}</SelectItem>
+                    <SelectItem value="prosthetics_expert">{t.roles.prosthetics_expert}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2532,7 +2559,7 @@ export default function AdminSettings() {
               </div>
             </div>
 
-            {userFormData.role !== "admin" && userFormData.role !== "branch_manager" && (
+            {userFormData.role !== "admin" && userFormData.role !== "branch_manager" && userFormData.role !== "prosthetics_expert" && (
               <div>
                 <Label>{t.adminSettings.branchLabel}</Label>
                 <Select
@@ -2557,10 +2584,10 @@ export default function AdminSettings() {
                 The list of selected branches doubles as accessibleBranches
                 at runtime — they'll switch between them with a dropdown
                 in the header. */}
-            {userFormData.role === "branch_manager" && (
+            {(userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (
               <div>
                 <Label className="flex items-center gap-2">
-                  الفروع التي يديرها
+                  {userFormData.role === "prosthetics_expert" ? "الفروع المسموح له بها" : "الفروع التي يديرها"}
                   <span className="text-xs font-normal text-muted-foreground">
                     (يمكن اختيار أكثر من فرع — سيستطيع التبديل بينها)
                   </span>
@@ -2816,8 +2843,9 @@ export default function AdminSettings() {
                 (!editingUser && !userFormData.password) ||
                 (userFormData.role !== "admin" &&
                   userFormData.role !== "branch_manager" &&
+                  userFormData.role !== "prosthetics_expert" &&
                   !userFormData.branchId) ||
-                (userFormData.role === "branch_manager" && (userFormData.branchIds ?? []).length === 0)
+                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0)
               }
               data-testid="button-save-user"
             >
