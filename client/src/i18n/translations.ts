@@ -28,6 +28,7 @@ const translations = {
       reception: "موظف استقبال",
       therapist: "معالج طبيعي",
       surveyor: "موظف استبيان",
+      prosthetics_expert: "خبير أطراف",
     },
     branches: {
       "بايونك بغداد": "بايونك بغداد",
@@ -1220,6 +1221,7 @@ const translations = {
       reception: "Receptionist",
       therapist: "Therapist",
       surveyor: "Surveyor",
+      prosthetics_expert: "Prosthetics Expert",
     },
     branches: {
       "بايونك بغداد": "Bionic Baghdad",

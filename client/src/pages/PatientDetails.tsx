@@ -2,6 +2,7 @@ import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDel
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
+import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -765,8 +766,14 @@ export default function PatientDetails() {
         </div>
       </div>
 
+      {(patient.isAmputee || patient.isMedicalSupport) && (
+        <div className="mb-6">
+          <PatientWorkOrderCard patientId={patient.id} />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
+
         {/* Left Column: Info & Stats */}
         <div className="space-y-6 lg:col-span-1">
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 space-y-6">

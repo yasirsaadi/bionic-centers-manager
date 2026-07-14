@@ -14,6 +14,8 @@ import fs from "fs";
 import bcrypt from "bcryptjs";
 import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
+import { registerManufacturingRoutes } from "./manufacturing/routes";
+import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
   createJournalForExpense,
@@ -950,7 +952,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor"].includes(userData.role)) {
+      if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -1007,7 +1009,7 @@ export async function registerRoutes(
       const { password, ...userData } = req.body;
       
       // Validate role if provided
-      if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor"].includes(userData.role)) {
+      if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -1240,31 +1242,64 @@ export async function registerRoutes(
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;
-      
-      // Determine branchId: form value > branch session > fallback to 1
+
+      // Determine branchId. Non-admins are ALWAYS pinned to their own branch —
+      // they cannot create a patient (or a manufacturing work order) for
+      // another branch, even by forging branchId in the request body.
       let branchId = req.body.branchId;
-      
-      // If branchId not provided or is falsy (0), use session branch for non-admins
-      if (!branchId && branchSession && !branchSession.isAdmin) {
+      if (branchSession && !branchSession.isAdmin) {
         branchId = branchSession.branchId;
       }
-      
-      // Final fallback for admins who didn't select a branch
       if (!branchId || branchId === 0) {
         return res.status(400).json({ message: "يجب اختيار الفرع" });
       }
-      
-      console.log("Creating patient with branchId:", branchId, "from body:", req.body.branchId, "session:", branchSession?.branchId);
-      
+
       const input = api.patients.create.input.parse({
         ...req.body,
         branchId
       });
-      const patient = await storage.createPatient(input);
 
-      // Log to audit_log so this counts toward the receptionist's
-      // employee-accuracy stats. Without this, reception staff who
-      // create lots of patients show as zero entries on the panel.
+      // Prosthetic / medical-support patients MUST be assigned to exactly one
+      // expert. The patient + first work order + first history row are created
+      // atomically (a failed work order rolls back the patient).
+      const mc = (input as any).medicalCondition;
+      const serviceType = (input.isAmputee || mc === "amputee") ? "prosthetic"
+        : (input.isMedicalSupport || mc === "medical_support") ? "medical_support"
+        : null;
+
+      if (serviceType) {
+        const expertUserId = parseInt(req.body?.expertUserId);
+        if (!Number.isFinite(expertUserId)) {
+          return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
+        }
+        // Server-side validation — never trust the UI list.
+        const v = await manufacturingStore.validateExpertForBranch(expertUserId, branchId);
+        if (!v.ok) return res.status(400).json({ message: v.reason });
+
+        const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && req.body.expectedDeliveryDate
+          ? req.body.expectedDeliveryDate : null;
+
+        const { patient, workOrder } = await manufacturingStore.createPatientWithWorkOrder(input, {
+          serviceType, expertUserId, expectedDeliveryDate, assignedBy: branchSession?.userId ?? null,
+        });
+
+        await logAudit({
+          entityType: "patient", entityId: patient.id, action: "create",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        });
+        await logAudit({
+          entityType: "prosthetic_work_order", entityId: workOrder.id, action: "create",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `أمر تصنيع (${serviceType}) للخبير #${expertUserId}`,
+        });
+
+        return res.status(201).json(patient);
+      }
+
+      // Non-manufacturing (physiotherapy / other): existing single-insert path.
+      const patient = await storage.createPatient(input);
       await logAudit({
         entityType: "patient",
         entityId: patient.id,
@@ -5012,6 +5047,9 @@ export async function registerRoutes(
 
   // Register session tracking routes (daily device counts + monthly targets)
   registerSessionTrackingRoutes(app, isAuthenticated);
+
+  // Register prosthetic/medical-support manufacturing routes
+  registerManufacturingRoutes(app, isAuthenticated);
 
   return httpServer;
 }
