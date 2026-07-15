@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Button } from "@/components/ui/button";
@@ -912,7 +913,7 @@ export default function EditPatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.siliconSize}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.siliconSizePlaceholder} />
+                            <Input {...field} type="number" inputMode="numeric" value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.siliconSizePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1166,7 +1167,7 @@ export default function EditPatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.totalCost}</FormLabel>
                     <FormControl>
-                      <Input type="number" {...field} className="bg-slate-50" placeholder="0" />
+                      <MoneyInput value={field.value ?? ""} onValueChange={field.onChange} className="bg-slate-50" placeholder="0" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
