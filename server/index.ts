@@ -5,6 +5,19 @@ import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
 import { runMigrations } from "./migrations/runner";
 
+// Resilience: a single failing request must NEVER take down the whole service.
+// In Express, an async handler that rejects (or any stray promise rejection)
+// isn't caught by the express error middleware — and Node exits with status 1
+// on an unhandled rejection by default. That is exactly the
+// "Instance failed: Exited with status 1" crash seen on Render. Log it and
+// keep serving; the affected request still gets its error response.
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] Unhandled promise rejection (service kept alive):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[process] Uncaught exception (service kept alive):", err);
+});
+
 const app = express();
 const httpServer = createServer(app);
 
