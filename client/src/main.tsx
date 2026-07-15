@@ -3,6 +3,42 @@ import App from "./App";
 import "./index.css";
 import { toEnglishDigits } from "./lib/utils";
 
+// Global auth guard: if the SERVER session has expired (any /api call returns
+// 401) while the client still holds a saved branch_session, the app used to
+// stay in a broken "looks logged in but nothing loads" state until a manual
+// logout. Instead, detect that dead session centrally, clear the stale local
+// session, and return to the login screen. Login/verify endpoints are exempt
+// so a wrong-password 401 doesn't trigger a redirect loop.
+{
+  const AUTH_EXEMPT = ["/api/verify-branch", "/api/auth/switch-branch", "/api/auth/user", "/api/logout"];
+  const originalFetch = window.fetch.bind(window);
+  let loggingOut = false;
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await originalFetch(input as any, init);
+    try {
+      const raw = typeof input === "string" ? input
+        : input instanceof Request ? input.url
+        : String(input);
+      const path = raw.startsWith("http") ? new URL(raw).pathname : raw;
+      if (
+        res.status === 401 &&
+        path.startsWith("/api/") &&
+        !AUTH_EXEMPT.some((p) => path.startsWith(p)) &&
+        !loggingOut &&
+        localStorage.getItem("branch_session")
+      ) {
+        loggingOut = true;
+        localStorage.removeItem("branch_session");
+        localStorage.removeItem("admin_verified");
+        window.location.reload();
+      }
+    } catch {
+      /* never let the guard break a request */
+    }
+    return res;
+  };
+}
+
 // Global event listener to convert Arabic/Persian digits to English in all inputs
 let isConverting = false;
 document.addEventListener('input', (e) => {

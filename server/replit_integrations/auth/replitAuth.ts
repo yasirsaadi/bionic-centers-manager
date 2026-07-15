@@ -3,7 +3,11 @@ import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 
 export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
+  // Sliding (rolling) session: expires 1 day after the LAST activity, and the
+  // expiry is refreshed on every request while the user is active. So an
+  // active user is never logged out mid-work, and an idle session dies after
+  // a day instead of lingering as a stale, half-working session.
+  const sessionTtl = 24 * 60 * 60 * 1000; // 1 day
   const pgStore = connectPg(session);
 
   const sessionStore = new pgStore({
@@ -18,6 +22,7 @@ export function getSession() {
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    rolling: true, // refresh cookie + store expiry on every response
     cookie: {
       httpOnly: true,
       secure: true,

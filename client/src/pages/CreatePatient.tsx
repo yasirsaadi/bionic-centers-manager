@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -1117,7 +1118,7 @@ export default function CreatePatient() {
                         <FormItem>
                           <FormLabel>{t.patientForm.siliconSize}</FormLabel>
                           <FormControl>
-                            <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.siliconSizePlaceholder} />
+                            <Input {...field} type="number" inputMode="numeric" value={field.value || ""} className="bg-white" placeholder={t.patientForm.siliconSizePlaceholder} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1402,16 +1403,14 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.estimatedCost}</FormLabel>
                     <FormControl>
-                      <Input
-                        type="number"
-                        {...field}
-                        value={field.value || ""}
+                      <MoneyInput
+                        value={field.value ?? ""}
                         readOnly={!isAdmin && conditionType === "physiotherapy"}
-                        className={`font-mono text-left ${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
+                        className={`${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
                         placeholder="0"
                         data-testid="input-total-cost"
-                        onChange={(e) => {
-                          field.onChange(e);
+                        onValueChange={(n) => {
+                          field.onChange(n);
                           if (isAdmin) {
                             setManualCostOverride(true);
                           }

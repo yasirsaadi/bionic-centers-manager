@@ -20,6 +20,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import {
@@ -337,16 +338,14 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                 <FormItem>
                   <FormLabel>{t.modals.paidAmount}</FormLabel>
                   <FormControl>
-                    <Input 
-                      type="number" 
-                      className={`text-left font-mono ${!isAdmin && isPhysiotherapy === true ? "bg-muted" : ""}`}
+                    <MoneyInput
+                      className={`${!isAdmin && isPhysiotherapy === true ? "bg-muted" : ""}`}
                       placeholder={t.modals.enterAmount}
                       data-testid="input-payment-amount"
                       readOnly={!isAdmin && isPhysiotherapy === true}
                       value={field.value === 0 ? "" : field.value}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? "" : Number(val));
+                      onValueChange={(n) => {
+                        field.onChange(n);
                         if (isAdmin) {
                           setManualCostOverride(true);
                         }
