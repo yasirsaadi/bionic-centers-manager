@@ -19,6 +19,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
@@ -244,9 +245,9 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
             {visit.cost ? (
               <FormItem>
                 <FormLabel>{t.modals.cost}</FormLabel>
-                <Input 
-                  type="number" 
+                <MoneyInput
                   value={visit.cost}
+                  onValueChange={() => {}}
                   disabled
                   className="bg-slate-100"
                   data-testid="input-edit-visit-cost"

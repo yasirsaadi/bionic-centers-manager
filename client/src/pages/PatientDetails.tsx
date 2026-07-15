@@ -3,6 +3,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
+import { MoneyInput } from "@/components/ui/money-input";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -1912,12 +1913,11 @@ export default function PatientDetails() {
             )}
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.patientDetails.amountCurrency}</label>
-              <Input 
-                type="number" 
-                className="text-left font-mono" 
+              <MoneyInput
+                className="text-left font-mono"
                 placeholder={t.patientDetails.enterAmount}
                 value={editPaymentAmount}
-                onChange={(e) => setEditPaymentAmount(e.target.value)}
+                onValueChange={(n) => setEditPaymentAmount(n ? String(n) : "")}
                 readOnly={editPaymentFreeSessions}
                 data-testid="input-edit-payment-amount"
               />
