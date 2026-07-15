@@ -521,6 +521,9 @@ export const systemUsers = pgTable("system_users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // Plaintext copy of the password, readable ONLY by the admin users screen
+  // (bcrypt hashes can't be reversed). NULL until the password is next set.
+  passwordPlain: text("password_plain"),
   displayName: text("display_name").notNull(),
   branchId: integer("branch_id").references(() => branches.id),
   // Multi-branch access. When non-empty, this user can act on every

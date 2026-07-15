@@ -988,10 +988,11 @@ export async function registerRoutes(
 
       const user = await storage.createSystemUser({
         ...userData,
-        passwordHash
+        passwordHash,
+        passwordPlain: password, // admin-only visibility
       });
-      
-      res.json({ ...user, passwordHash: undefined });
+
+      res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
     } catch (err) {
       throw err;
     }
@@ -1036,6 +1037,7 @@ export async function registerRoutes(
       let updateData = { ...userData };
       if (password && password.length >= 4) {
         updateData.passwordHash = await bcrypt.hash(password, 10);
+        updateData.passwordPlain = password; // admin-only visibility
       }
       
       // If username is being changed, check if it already exists
@@ -1050,8 +1052,8 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ message: "المستخدم غير موجود" });
       }
-      
-      res.json({ ...user, passwordHash: undefined });
+
+      res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
     } catch (err) {
       throw err;
     }
