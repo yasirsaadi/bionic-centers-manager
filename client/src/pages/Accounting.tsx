@@ -5,6 +5,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -4265,19 +4266,11 @@ export default function Accounting() {
                             (2) Arabic-Indic numerals (١٠٠) are accepted and
                                 converted to Western (100) on the fly, no need
                                 to switch keyboard layouts. */}
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          dir="ltr"
+                        <MoneyInput
                           name={field.name}
-                          ref={field.ref}
                           onBlur={field.onBlur}
                           value={field.value === 0 || field.value == null ? "" : field.value}
-                          onChange={(e) => {
-                            const cleaned = arabicDigitsToWestern(e.target.value);
-                            const num = parseFloat(cleaned);
-                            field.onChange(isNaN(num) ? 0 : num);
-                          }}
+                          onValueChange={(n) => field.onChange(n)}
                           placeholder="0"
                           data-testid="input-expense-amount"
                         />
@@ -4692,16 +4685,9 @@ export default function Accounting() {
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-muted-foreground">{t.accounting.price}</label>
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          dir="ltr"
+                        <MoneyInput
                           value={item.unitPrice === 0 ? "" : item.unitPrice}
-                          onChange={(e) => {
-                            const cleaned = arabicDigitsToWestern(e.target.value);
-                            const num = parseInt(cleaned);
-                            updateInvoiceItem(index, "unitPrice", isNaN(num) ? 0 : num);
-                          }}
+                          onValueChange={(n) => updateInvoiceItem(index, "unitPrice", n)}
                           placeholder="0"
                           data-testid={`input-item-price-${index}`}
                         />
@@ -5209,7 +5195,7 @@ export default function Accounting() {
                   category: String(fd.get("category") || "").trim(),
                   description: String(fd.get("description") || "").trim() || null,
                   vendorInvoiceNumber: String(fd.get("vendorInvoiceNumber") || "").trim() || null,
-                  totalAmount: parseInt(String(fd.get("totalAmount") || "0")) || 0,
+                  totalAmount: parseInt(String(fd.get("totalAmount") || "0").replace(/,/g, "")) || 0,
                   paymentMethod: String(fd.get("paymentMethod") || "credit"),
                   notes: String(fd.get("notes") || "").trim() || null,
                 };
@@ -5297,13 +5283,17 @@ export default function Accounting() {
                   <Input
                     name="totalAmount"
                     type="text"
-                    inputMode="decimal"
+                    inputMode="numeric"
                     dir="ltr"
-                    defaultValue={editingPurchase?.totalAmount || ""}
+                    className="font-mono text-left"
+                    defaultValue={editingPurchase?.totalAmount ? Number(editingPurchase.totalAmount).toLocaleString("en-US") : ""}
                     required
                     placeholder="0"
                     onChange={(e) => {
-                      e.target.value = arabicDigitsToWestern(e.target.value);
+                      // Live thousands separators (e.g. 1,500,000) to prevent
+                      // an extra-zero typo on million-scale amounts.
+                      const digits = arabicDigitsToWestern(e.target.value).replace(/[^\d]/g, "");
+                      e.target.value = digits ? Number(digits).toLocaleString("en-US") : "";
                     }}
                     data-testid="input-purchase-amount"
                   />
