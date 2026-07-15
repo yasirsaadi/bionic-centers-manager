@@ -446,6 +446,17 @@ export async function initBackupScheduler(): Promise<void> {
     { timezone: "UTC" }
   );
 
+  // Daily income briefing: 23:00 Baghdad time = 20:00 UTC
+  cron.schedule(
+    "0 20 * * *",
+    async () => {
+      const { sendDailyIncomeEmail } = await import("./daily_income");
+      console.log("[DailyIncome] Sending nightly income briefing...");
+      await sendDailyIncomeEmail();
+    },
+    { timezone: "UTC" }
+  );
+
   console.log("[Backup] Scheduler initialized - daily backup at 23:55 and nightly report at 23:57 Baghdad time");
 }
 
