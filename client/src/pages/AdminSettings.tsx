@@ -1282,6 +1282,8 @@ export default function AdminSettings() {
   const [showUserDialog, setShowUserDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
   const [userToDelete, setUserToDelete] = useState<SystemUser | null>(null);
+  const [showUserPassword, setShowUserPassword] = useState(false);
+  const [revealedPwUserId, setRevealedPwUserId] = useState<number | null>(null);
   const [userFormData, setUserFormData] = useState({
     username: "",
     displayName: "",
@@ -1836,6 +1838,7 @@ export default function AdminSettings() {
                     <tr className="border-b">
                       <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableUsername}</th>
                       <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableName}</th>
+                      <th className="text-right py-3 px-4 font-medium">كلمة المرور</th>
                       <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableRole}</th>
                       <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableBranch}</th>
                       <th className="text-right py-3 px-4 font-medium">{t.adminSettings.tableStatus}</th>
@@ -1856,6 +1859,26 @@ export default function AdminSettings() {
                         <tr key={user.id} className="border-b hover-elevate" data-testid={`row-user-${user.id}`}>
                           <td className="py-3 px-4">{user.username}</td>
                           <td className="py-3 px-4">{user.displayName || "-"}</td>
+                          <td className="py-3 px-4">
+                            {(user as any).passwordPlain ? (
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-sm" dir="ltr">
+                                  {revealedPwUserId === user.id ? (user as any).passwordPlain : "••••••••"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setRevealedPwUserId(revealedPwUserId === user.id ? null : user.id)}
+                                  className="text-muted-foreground hover:text-foreground"
+                                  tabIndex={-1}
+                                  aria-label={revealedPwUserId === user.id ? "إخفاء" : "إظهار"}
+                                >
+                                  {revealedPwUserId === user.id ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">غير متوفّرة — عيّن كلمة مرور جديدة</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
                             <Badge variant={user.role === "admin" ? "default" : "secondary"}>
                               {roleLabels[user.role as UserRole] || user.role}
@@ -2512,15 +2535,26 @@ export default function AdminSettings() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="password">{editingUser ? t.adminSettings.newPasswordLabel : t.adminSettings.passwordRequired}</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={userFormData.password}
-                  onChange={(e) => setUserFormData(prev => ({ ...prev, password: e.target.value }))}
-                  placeholder={editingUser ? t.adminSettings.leaveBlankToKeep : t.adminSettings.passwordLabel}
-                  className="mt-1"
-                  data-testid="input-user-password"
-                />
+                <div className="relative mt-1">
+                  <Input
+                    id="password"
+                    type={showUserPassword ? "text" : "password"}
+                    value={userFormData.password}
+                    onChange={(e) => setUserFormData(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder={editingUser ? t.adminSettings.leaveBlankToKeep : t.adminSettings.passwordLabel}
+                    className="pl-9"
+                    data-testid="input-user-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPassword((v) => !v)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                    aria-label={showUserPassword ? "إخفاء" : "إظهار"}
+                  >
+                    {showUserPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               <div>
                 <Label>{t.adminSettings.roleLabel}</Label>
