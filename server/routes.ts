@@ -3568,6 +3568,14 @@ export async function registerRoutes(
       });
     }
 
+    // Optionally also email the briefing (used by the nightly scheduler
+    // and for on-demand tests): ?send=email
+    let emailResult: { success: boolean; error?: string } | undefined;
+    if (req.query.send === "email") {
+      const { sendDailyIncomeEmail } = await import("./daily_income");
+      emailResult = await sendDailyIncomeEmail(targetDate);
+    }
+
     res.json({
       date: targetDate || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }),
       branches: rows,
@@ -3577,6 +3585,7 @@ export async function registerRoutes(
         netIncome: grandIncome - grandExpenses,
         newPatients: grandPatients,
       },
+      ...(emailResult ? { emailSent: emailResult.success, emailError: emailResult.error } : {}),
     });
   });
 
