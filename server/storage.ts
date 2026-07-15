@@ -2,6 +2,7 @@ import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
   anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog,
+  prostheticWorkOrders, prostheticWorkHistory, prostheticReworkEvents,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -356,6 +357,19 @@ export class DatabaseStorage implements IStorage {
     await db.delete(payments).where(eq(payments.patientId, id));
     await db.delete(documents).where(eq(documents.patientId, id));
     await db.delete(visits).where(eq(visits.patientId, id));
+    // Manufacturing work orders (and their append-only history / rework) hold a
+    // FK to the patient, so they must be removed for a full patient delete —
+    // otherwise the delete fails. (The append-only rule protects a LIVE order's
+    // trail, not a patient being permanently deleted.)
+    const woRows = await db.select({ id: prostheticWorkOrders.id })
+      .from(prostheticWorkOrders)
+      .where(eq(prostheticWorkOrders.patientId, id));
+    if (woRows.length > 0) {
+      const woIds = woRows.map((w) => w.id);
+      await db.delete(prostheticWorkHistory).where(inArray(prostheticWorkHistory.workOrderId, woIds));
+      await db.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
+      await db.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
+    }
     await db.delete(patients).where(eq(patients.id, id));
   }
 
