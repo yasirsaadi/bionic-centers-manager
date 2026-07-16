@@ -543,7 +543,7 @@ export default function PatientDetails() {
       {/* Action Buttons - Print at top */}
       <div className="flex flex-wrap gap-3 items-center justify-end print:hidden">
         {isAdmin && (
-          <MergePatientDialog patientId={patient.id} patientName={patient.name} />
+          <MergePatientDialog patientId={patient.id} patientName={patient.name} patientCreatedAt={patient.createdAt as any} />
         )}
         {permissions.canEditPatients && (
           <Link href={`/patients/${patient.id}/edit${fromBranch ? `?branch=${fromBranch}` : ""}`}>
