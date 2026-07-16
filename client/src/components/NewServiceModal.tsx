@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { RefreshCcw, Loader2, Plus, X } from "lucide-react";
@@ -51,6 +52,7 @@ interface TreatmentEntry {
 const formSchema = z.object({
   serviceType: z.string().min(1, "اختر نوع الخدمة"),
   serviceCost: z.string().min(1, "أدخل تكلفة الخدمة"),
+  paidNow: z.string().optional(),
   sessionCount: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -77,6 +79,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   const [open, setOpen] = useState(false);
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
+  const [paidNowOverride, setPaidNowOverride] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -111,6 +114,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       form.reset();
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
+      setPaidNowOverride(false);
     },
     onError: () => {
       toast({
@@ -126,6 +130,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     defaultValues: {
       serviceType: "",
       serviceCost: "",
+      paidNow: "",
       sessionCount: "",
       notes: "",
     },
@@ -159,6 +164,17 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
   const newTotal = currentTotalCost + serviceCostValue;
+  const paidNowValue = Number(form.watch("paidNow")) || 0;
+  const remainingAfter = Math.max(0, serviceCostValue - paidNowValue);
+
+  // Non-physio services: default "amount paid now" to the full service cost
+  // (the common case) until the accountant/receptionist edits it down for a
+  // partial payment. Physio keeps its per-session payment model untouched.
+  useEffect(() => {
+    if (isPhysiotherapy !== false) return;
+    if (paidNowOverride) return;
+    form.setValue("paidNow", serviceCostValue ? String(serviceCostValue) : "");
+  }, [serviceCostValue, isPhysiotherapy, paidNowOverride, form]);
 
   function onSubmit(values: FormValues) {
     const serviceCost = Number(values.serviceCost) || 0;
@@ -185,10 +201,16 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       return;
     }
     
+    // Physio keeps its per-session full payment; prosthetic/medical-support
+    // records only the amount actually paid now (partial allowed).
+    const paidNow = isPhysiotherapy !== false
+      ? serviceCost
+      : Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
+
     mutate({
       serviceType: values.serviceType,
       serviceCost,
-      initialPayment: 0,
+      initialPayment: paidNow,
       notes: values.notes,
       treatmentEntries: isPhysiotherapy !== false ? validEntries : undefined,
       paymentTreatmentType: isPhysiotherapy !== false ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") : null,
@@ -326,15 +348,13 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                 <FormItem>
                   <FormLabel>{t.modals.serviceCost}</FormLabel>
                   <FormControl>
-                    <Input 
-                      type="text"
-                      inputMode="numeric"
-                      {...field} 
-                      className="text-left font-mono bg-white"
+                    <MoneyInput
+                      value={field.value}
+                      className="bg-white"
                       placeholder={t.modals.enterCost}
                       data-testid="input-service-cost"
-                      onChange={(e) => {
-                        field.onChange(e);
+                      onValueChange={(n) => {
+                        field.onChange(String(n));
                         setManualCostOverride(true);
                       }}
                     />
@@ -344,7 +364,43 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               )}
             />
 
+            {/* Amount paid now — prosthetic / medical-support only. Any unpaid
+                remainder becomes a balance the accountant collects later. */}
+            {isPhysiotherapy === false && (
+              <FormField
+                control={form.control}
+                name="paidNow"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>المبلغ المدفوع الآن</FormLabel>
+                    <FormControl>
+                      <MoneyInput
+                        value={field.value ?? ""}
+                        className="bg-white"
+                        placeholder="0"
+                        data-testid="input-service-paid-now"
+                        onValueChange={(n) => {
+                          field.onChange(String(n));
+                          setPaidNowOverride(true);
+                        }}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      اتركه بكامل السعر إن دفع المريض كاملاً، أو أنقصه لدفعٍ جزئي — والباقي يبقى ديناً يحصّله المحاسب لاحقاً.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <div className="bg-slate-50 p-3 rounded-lg text-sm">
+              {isPhysiotherapy === false && (
+                <div className="flex justify-between gap-2 text-amber-700 font-semibold mb-1">
+                  <span>المتبقّي على المريض من هذه الخدمة</span>
+                  <span className="font-mono">{remainingAfter.toLocaleString()} {t.patientDetails.currency}</span>
+                </div>
+              )}
               <div className="flex justify-between gap-2 text-muted-foreground">
                 <span>{t.modals.currentTotalCost}</span>
                 <span className="font-mono">{currentTotalCost.toLocaleString()} {t.patientDetails.currency}</span>
