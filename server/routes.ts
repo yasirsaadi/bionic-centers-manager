@@ -1611,11 +1611,15 @@ export async function registerRoutes(
           notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
         });
 
-        if (serviceCost > 0) {
+        // Record ONLY the amount actually paid now (may be partial or zero).
+        // The service still raised totalCost above, so any unpaid part stays
+        // as a remaining balance the accountant collects later.
+        const paidNow = Math.max(0, Math.min(Number(initialPayment) || 0, Number(serviceCost) || 0));
+        if (paidNow > 0) {
           await storage.createPayment({
             patientId,
             branchId: effectiveBranchId,
-            amount: serviceCost,
+            amount: paidNow,
             notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: paymentTreatmentType || null,
             sessionCount: sessionCount ? Number(sessionCount) : null,
