@@ -38,6 +38,7 @@ const SessionAnalytics = lazy(() => import("@/pages/SessionAnalytics"));
 const FollowUps = lazy(() => import("@/pages/FollowUps"));
 const Manufacturing = lazy(() => import("@/pages/Manufacturing"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
 
 function DashboardRoute() {
   const [session, setSession] = useState<{ role?: string } | null>(null);
@@ -119,6 +120,7 @@ function Router() {
             <Route path="/follow-ups" component={FollowUps} />
             <Route path="/manufacturing" component={Manufacturing} />
             <Route path="/manufacturing/orders/:id" component={ManufacturingOrder} />
+            <Route path="/notifications" component={Notifications} />
             <Route path="/reports" component={Reports} />
             <Route path="/reports/daily-patients" component={DailyPatientReport} />
             <Route path="/revenues" component={BranchRevenues} />

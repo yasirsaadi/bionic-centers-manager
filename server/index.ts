@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -20,6 +21,11 @@ process.on("uncaughtException", (err) => {
 
 const app = express();
 const httpServer = createServer(app);
+
+// gzip every compressible response. The heaviest endpoints ship large JSON
+// (patients list with visits+payments) that compresses ~10x — this is the
+// single biggest transfer-speed win on slow connections.
+app.use(compression());
 
 declare module "http" {
   interface IncomingMessage {

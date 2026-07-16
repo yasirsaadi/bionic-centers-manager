@@ -129,14 +129,15 @@ export function CreateOrderDialog({
           )}
 
           <div>
-            <label className="text-sm font-medium">موعد التسليم المتوقّع (اختياري)</label>
+            <label className="text-sm font-medium">تاريخ التسليم المتوقع <span className="text-red-500">*</span></label>
             <Input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="mt-1" />
+            <p className="text-xs text-muted-foreground mt-1">إلزامي — يُبنى عليه نظام التنبيهات قبل التسليم.</p>
           </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => { reset(); onOpenChange(false); }}>إلغاء</Button>
           <Button
-            disabled={!patientId || !expertUserId || create.isPending}
+            disabled={!patientId || !expertUserId || !expected || create.isPending}
             onClick={() => create.mutate()}
           >
             إنشاء الأمر
