@@ -66,6 +66,8 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
 
   const effectivePaidNow = paidTouched ? Math.min(paidNow, serviceCost) : serviceCost;
   const remaining = Math.max(0, serviceCost - effectivePaidNow);
+  // Cost entered → expert + date required; no cost → examination-only add.
+  const committing = isManufacturing && serviceCost > 0;
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
@@ -76,8 +78,8 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
         body: JSON.stringify({
           caseType,
           ...fields,
-          expertUserId: isManufacturing ? Number(expertUserId) : undefined,
-          expectedDeliveryDate: expectedDeliveryDate || undefined,
+          expertUserId: committing ? Number(expertUserId) : undefined,
+          expectedDeliveryDate: committing ? (expectedDeliveryDate || undefined) : undefined,
           serviceCost,
           paidNow: effectivePaidNow,
         }),
@@ -108,7 +110,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
     setFields((prev) => ({ ...prev, [k]: v }));
   }
 
-  const canSubmit = !!caseType && (!isManufacturing || (!!expertUserId && !!expectedDeliveryDate)) && !isPending;
+  const canSubmit = !!caseType && (!committing || (!!expertUserId && !!expectedDeliveryDate)) && !isPending;
 
   if (missingTypes.length === 0) return null;
 
@@ -176,14 +178,37 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
             </div>
           )}
 
-          {isManufacturing && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">تكلفة الخدمة</label>
+              <MoneyInput value={serviceCost || ""} onValueChange={setServiceCost} className="mt-1 bg-white" placeholder="0" />
+            </div>
+            <div>
+              <label className="text-sm font-medium">المبلغ المدفوع الآن</label>
+              <MoneyInput
+                value={paidTouched ? (paidNow || "") : (serviceCost || "")}
+                onValueChange={(n) => { setPaidNow(n); setPaidTouched(true); }}
+                className="mt-1 bg-white"
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          {/* Cost = commitment: entering a cost reveals (and requires) the
+              expert + expected delivery. No cost = examination only. */}
+          {isManufacturing && serviceCost <= 0 && (
+            <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
+              بدون كلفة: يُفعَّل النوع <b>كفحص فقط</b> دون إسناد خبير أو أمر تصنيع. عند كتابة الكلفة يظهر اختيار الخبير وتاريخ التسليم.
+            </div>
+          )}
+          {isManufacturing && serviceCost > 0 && (
             <div className="border border-primary/40 bg-primary/5 rounded-lg p-3 space-y-2">
               <label className="text-sm font-semibold">الخبير المسؤول عن التصنيع <span className="text-red-500">*</span></label>
               {expertsLoading ? (
                 <div className="text-sm text-muted-foreground">جارٍ تحميل الخبراء…</div>
               ) : experts.length === 0 ? (
                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-                  لا يوجد خبير متاح لهذا الفرع — لا يمكن إضافة هذا النوع.
+                  لا يوجد خبير متاح لهذا الفرع — لا يمكن إضافة هذا النوع بكلفة.
                 </div>
               ) : (
                 <Select value={expertUserId} onValueChange={setExpertUserId}>
@@ -204,22 +229,6 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
               </div>
             </div>
           )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium">تكلفة الخدمة (اختياري)</label>
-              <MoneyInput value={serviceCost || ""} onValueChange={setServiceCost} className="mt-1 bg-white" placeholder="0" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">المبلغ المدفوع الآن</label>
-              <MoneyInput
-                value={paidTouched ? (paidNow || "") : (serviceCost || "")}
-                onValueChange={(n) => { setPaidNow(n); setPaidTouched(true); }}
-                className="mt-1 bg-white"
-                placeholder="0"
-              />
-            </div>
-          </div>
           {serviceCost > 0 && remaining > 0 && (
             <div className="text-sm text-amber-700 font-semibold flex justify-between bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
               <span>المتبقّي على المريض</span>
