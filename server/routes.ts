@@ -1221,6 +1221,104 @@ export async function registerRoutes(
     res.json(patientsWithRelations);
   });
 
+  // Lean, PAGINATED patients registry — powers the سجل المرضى page.
+  // Unlike /api/patients (which ships every patient with ALL visits and
+  // payments), this returns one small page of table-ready rows with a
+  // payments SUM, so the registry opens fast no matter how many patients
+  // exist. Filtering (search / branch / visit-date) runs in SQL.
+  app.get("/api/patients/registry", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = Boolean(branchSession?.isAdmin);
+
+    const page = Math.max(1, parseInt(String(req.query.page)) || 1);
+    const pageSize = Math.min(10000, Math.max(1, parseInt(String(req.query.pageSize)) || 25));
+    const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const visitDate = typeof req.query.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.visitDate)
+      ? req.query.visitDate : null;
+
+    const conditions: any[] = [];
+    if (!isAdmin) {
+      // Non-admins are always pinned to their own branch.
+      conditions.push(eq(patients.branchId, branchSession?.branchId ?? -1));
+    } else if (!search && req.query.branchId && req.query.branchId !== "all") {
+      const b = parseInt(String(req.query.branchId));
+      if (Number.isFinite(b)) conditions.push(eq(patients.branchId, b));
+    }
+    if (search) {
+      // Searching intentionally ignores the date filter (and, for admins,
+      // the branch filter) — same behaviour the registry always had.
+      const like = `%${search}%`;
+      conditions.push(sql`(${patients.name} ILIKE ${like} OR ${patients.phone} LIKE ${like} OR ${patients.medicalCondition} LIKE ${like})`);
+    } else if (visitDate) {
+      // Patients who had a (non-deleted) visit on that Baghdad calendar day.
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM visits v
+        WHERE v.patient_id = ${patients.id}
+          AND v.deleted_at IS NULL
+          AND ((v.visit_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = ${visitDate}::date
+      )`);
+    }
+    const where = conditions.length ? and(...conditions) : sql`TRUE`;
+
+    const [[{ count }], rows] = await Promise.all([
+      db.select({ count: sql<number>`COUNT(*)::int` }).from(patients).where(where),
+      db.select({
+        id: patients.id, name: patients.name, phone: patients.phone, age: patients.age,
+        branchId: patients.branchId, medicalCondition: patients.medicalCondition,
+        isAmputee: patients.isAmputee, isPhysiotherapy: patients.isPhysiotherapy,
+        isMedicalSupport: patients.isMedicalSupport, amputationSite: patients.amputationSite,
+        supportType: patients.supportType, diseaseType: patients.diseaseType,
+        patientClassification: patients.patientClassification, totalCost: patients.totalCost,
+        createdAt: patients.createdAt,
+      }).from(patients).where(where)
+        .orderBy(sql`${patients.createdAt} DESC NULLS LAST`)
+        .limit(pageSize).offset((page - 1) * pageSize),
+    ]);
+
+    // Payment totals for just this page — one grouped query.
+    const ids = rows.map((r) => r.id);
+    const paidByPatient = new Map<number, number>();
+    if (ids.length > 0) {
+      const sums = await db.execute(sql`
+        SELECT patient_id, COALESCE(SUM(amount), 0)::int AS total
+        FROM payments WHERE patient_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        GROUP BY patient_id
+      `);
+      for (const r of sums.rows as any[]) paidByPatient.set(Number(r.patient_id), Number(r.total));
+    }
+
+    // Tab-badge counts: patients in the selected branch scope, and of those,
+    // patients with a visit on the selected day — independent of the search.
+    const badgeConds: any[] = [];
+    if (!isAdmin) badgeConds.push(eq(patients.branchId, branchSession?.branchId ?? -1));
+    else if (req.query.branchId && req.query.branchId !== "all") {
+      const b = parseInt(String(req.query.branchId));
+      if (Number.isFinite(b)) badgeConds.push(eq(patients.branchId, b));
+    }
+    const badgeWhere = badgeConds.length ? and(...badgeConds) : sql`TRUE`;
+    const [[{ count: branchCount }], dateCountRow] = await Promise.all([
+      db.select({ count: sql<number>`COUNT(*)::int` }).from(patients).where(badgeWhere),
+      visitDate
+        ? db.select({ count: sql<number>`COUNT(*)::int` }).from(patients).where(and(
+            badgeWhere,
+            sql`EXISTS (
+              SELECT 1 FROM visits v
+              WHERE v.patient_id = ${patients.id}
+                AND v.deleted_at IS NULL
+                AND ((v.visit_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = ${visitDate}::date
+            )`,
+          ))
+        : Promise.resolve([{ count: 0 }]),
+    ]);
+
+    res.json({
+      total: Number(count),
+      page, pageSize,
+      counts: { branch: Number(branchCount), date: Number((dateCountRow as any)[0]?.count ?? 0) },
+      rows: rows.map((r) => ({ ...r, totalPaid: paidByPatient.get(r.id) ?? 0 })),
+    });
+  });
+
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
     const patient = await storage.getPatient(id);
