@@ -1,5 +1,4 @@
-import { usePatients } from "@/hooks/use-patients";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Link, useSearch, useLocation } from "wouter";
 import { 
   Table, 
@@ -37,7 +36,6 @@ function getTodayDateString(): string {
 }
 
 export default function PatientsList() {
-  const { data: patients, isLoading } = usePatients();
   const branchSession = useBranchSession();
   const { t, dir } = useTranslation();
   const { language } = useLanguage();
@@ -121,33 +119,50 @@ export default function PatientsList() {
     return branches?.find(b => b.id === branchId)?.name || "-";
   };
 
-  const branchFilteredPatients = useMemo(() => {
-    if (!patients) return [];
-    if (selectedBranch === "all") return patients;
-    return patients.filter(p => p.branchId === Number(selectedBranch));
-  }, [patients, selectedBranch]);
+  // Server-side registry: search, filters, pagination and payment totals all
+  // run in SQL — the browser receives ONE small page instead of every patient
+  // with all their visits and payments. This is what makes the registry fast.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
-  const dateFilteredPatients = useMemo(() => {
-    const filterDate = new Date(selectedDate);
-    return branchFilteredPatients.filter(p => {
-      const visits = (p as any).visits as { visitDate: string | null }[] | undefined;
-      if (!visits || visits.length === 0) return false;
-      return visits.some(v => v.visitDate && isSameDay(new Date(v.visitDate), filterDate));
-    });
-  }, [branchFilteredPatients, selectedDate]);
+  const buildRegistryParams = (page: number, size: number) => {
+    const p = new URLSearchParams({ page: String(page), pageSize: String(size) });
+    if (debouncedSearch) p.set("search", debouncedSearch);
+    if (selectedBranch !== "all") p.set("branchId", selectedBranch);
+    if (viewMode === "date" && !debouncedSearch) p.set("visitDate", selectedDate);
+    return p;
+  };
 
-  const basePatients = viewMode === "date" ? dateFilteredPatients : branchFilteredPatients;
-  
-  // When searching, search ALL patients (ignore filters)
-  const filteredPatients = searchTerm.trim()
-    ? (patients || []).filter(p => 
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.medicalCondition.includes(searchTerm) ||
-        (p.phone && p.phone.includes(searchTerm))
-      )
-    : basePatients;
+  interface RegistryRow {
+    id: number; name: string; phone: string | null; age: string; branchId: number;
+    medicalCondition: string; isAmputee: boolean | null; isPhysiotherapy: boolean | null;
+    isMedicalSupport: boolean | null; amputationSite: string | null; supportType: string | null;
+    diseaseType: string | null; patientClassification: string | null; totalCost: number | null;
+    createdAt: string | null; totalPaid: number;
+  }
+  interface RegistryResponse {
+    total: number; page: number; pageSize: number;
+    counts: { branch: number; date: number };
+    rows: RegistryRow[];
+  }
 
-  const totalPatients = filteredPatients?.length || 0;
+  const { data: registry, isLoading } = useQuery<RegistryResponse>({
+    queryKey: ["/api/patients/registry", currentPage, pageSize, debouncedSearch, selectedBranch, viewMode, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/registry?${buildRegistryParams(currentPage, pageSize)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const paginatedPatients = registry?.rows ?? [];
+  const totalPatients = registry?.total ?? 0;
+  const branchCount = registry?.counts?.branch ?? 0;
+  const dateCount = registry?.counts?.date ?? 0;
   const totalPages = Math.ceil(totalPatients / pageSize);
 
   useEffect(() => {
@@ -157,7 +172,14 @@ export default function PatientsList() {
   }, [totalPages, currentPage]);
 
   const startIndex = (currentPage - 1) * pageSize;
-  const paginatedPatients = filteredPatients?.slice(startIndex, startIndex + pageSize);
+
+  // Exports need the full filtered list (not just the visible page) — fetch
+  // it on demand with the same filters.
+  const fetchAllForExport = async (): Promise<RegistryRow[]> => {
+    const res = await fetch(`/api/patients/registry?${buildRegistryParams(1, 10000)}`, { credentials: "include" });
+    if (!res.ok) return [];
+    return (await res.json()).rows;
+  };
 
   const handlePageSizeChange = (value: string) => {
     setPageSize(Number(value));
@@ -181,15 +203,15 @@ export default function PatientsList() {
 
   const exportToExcel = async () => {
     const XLSX = await import("xlsx");
-    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
-    
+    const dataToExport = await fetchAllForExport();
+
     if (dataToExport.length === 0) {
       alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
       return;
     }
-    
+
     const excelData = dataToExport.map((patient, index) => {
-      const totalPaid = ((patient as any).payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+      const totalPaid = patient.totalPaid || 0;
       const remaining = (patient.totalCost || 0) - totalPaid;
       return {
         "#": index + 1,
@@ -213,9 +235,9 @@ export default function PatientsList() {
     XLSX.writeFile(wb, `patients_${dateStr}.xlsx`);
   };
 
-  const exportToPDF = () => {
-    const dataToExport = viewMode === "date" ? filteredPatients : branchFilteredPatients;
-    
+  const exportToPDF = async () => {
+    const dataToExport = await fetchAllForExport();
+
     if (dataToExport.length === 0) {
       alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
       return;
@@ -262,7 +284,7 @@ export default function PatientsList() {
           </thead>
           <tbody>
             ${dataToExport.map((patient, index) => {
-              const totalPaid = ((patient as any).payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+              const totalPaid = patient.totalPaid || 0;
               const remaining = Math.max(0, (patient.totalCost || 0) - totalPaid);
               return `
               <tr>
@@ -340,7 +362,7 @@ export default function PatientsList() {
           )}
           {selectedBranch !== "all" && (
             <Badge variant="secondary" className="text-xs">
-              {branchFilteredPatients.length} {t.patients.patientsInBranch}
+              {branchCount} {t.patients.patientsInBranch}
             </Badge>
           )}
         </div>
@@ -352,12 +374,12 @@ export default function PatientsList() {
               <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
                 <Calendar className="w-4 h-4" />
                 <span>{t.patients.datePatients}</span>
-                <Badge variant="secondary" className="mr-1 text-xs">{dateFilteredPatients.length}</Badge>
+                <Badge variant="secondary" className="mr-1 text-xs">{dateCount}</Badge>
               </TabsTrigger>
               <TabsTrigger value="all" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white" data-testid="tab-all-patients">
                 <Users className="w-4 h-4" />
                 <span>{t.patients.allPatients}</span>
-                <Badge variant="secondary" className="mr-1 text-xs">{branchFilteredPatients.length}</Badge>
+                <Badge variant="secondary" className="mr-1 text-xs">{branchCount}</Badge>
               </TabsTrigger>
             </TabsList>
           </Tabs>
