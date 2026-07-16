@@ -146,6 +146,11 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) {
       return res.status(400).json({ error: "بيانات ناقصة" });
     }
+    // The expected delivery date drives the delivery-alerts feature — it is
+    // mandatory for every work order (agreed with the expert up front).
+    if (!expectedDeliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      return res.status(400).json({ error: "تاريخ التسليم المتوقع إلزامي" });
+    }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
     // Only prosthetic / medical-support patients.
@@ -307,6 +312,65 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       if (!Number.isNaN(b)) branchIds = [b];
     }
     res.json(await store.getOverview({ branchIds }));
+  });
+
+  // ---- delivery alerts (التنبيهات) --------------------------------------------
+  // Computed on the fly from work orders — no cron, no stored notifications.
+  // Windows: D-2, D-1, D-0 for un-finished orders, plus OVERDUE after the
+  // date; completed orders show as green info inside the same window instead
+  // of an alert. Scope follows the caller: expert → own orders only,
+  // manager → own branches, admin → all, reception/accountant → own branch.
+  app.get("/api/manufacturing/notifications", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    const filters: store.OrderFilters = {};
+    if (isExpert(s)) {
+      if (!s.userId) return res.status(403).json({ error: "غير مصرح" });
+      filters.expertUserId = s.userId;
+    } else if (s.isAdmin) {
+      // all branches
+    } else if (isManager(s)) {
+      filters.branchIds = s.accessible.length ? s.accessible : (s.branchId ? [s.branchId] : [-1]);
+    } else if (s.branchId && (s.permissions?.canViewPatients || s.permissions?.canManageAccounting)) {
+      filters.branchId = s.branchId;
+    } else {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+
+    const orders = await store.listOrders(filters);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+    const dayMs = 86_400_000;
+    const daysUntil = (d: string) =>
+      Math.round((new Date(d + "T00:00:00Z").getTime() - new Date(today + "T00:00:00Z").getTime()) / dayMs);
+
+    const items: any[] = [];
+    for (const o of orders) {
+      if (!o.expectedDeliveryDate || o.status === "cancelled") continue;
+      const days = daysUntil(o.expectedDeliveryDate);
+      const base = {
+        orderId: o.id, patientId: o.patientId, patientName: o.patientName,
+        serviceType: o.serviceType, expertName: o.expertName, branchName: o.branchName,
+        expectedDeliveryDate: o.expectedDeliveryDate, currentStage: o.currentStage,
+        status: o.status, days,
+      };
+      if (o.status === "completed") {
+        // "Show it as completed on the scheduled date" — green info inside
+        // the alert window instead of an alert.
+        if (days >= 0 && days <= 2) items.push({ ...base, kind: "completed" });
+      } else if (days < 0) {
+        items.push({ ...base, kind: "overdue" });
+      } else if (days === 0) {
+        items.push({ ...base, kind: "due_today" });
+      } else if (days === 1) {
+        items.push({ ...base, kind: "due_tomorrow" });
+      } else if (days === 2) {
+        items.push({ ...base, kind: "due_in_2_days" });
+      }
+    }
+
+    const rank: Record<string, number> = { overdue: 0, due_today: 1, due_tomorrow: 2, due_in_2_days: 3, completed: 4 };
+    items.sort((a, b) => (rank[a.kind] - rank[b.kind]) || a.days - b.days);
+    const alertCount = items.filter((i) => i.kind !== "completed").length;
+    res.json({ alertCount, items });
   });
 
   // ---- patient-page summary card (authorized NON-expert users) ---------------

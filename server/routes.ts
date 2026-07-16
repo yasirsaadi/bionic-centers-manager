@@ -1278,8 +1278,13 @@ export async function registerRoutes(
         const v = await manufacturingStore.validateExpertForBranch(expertUserId, branchId);
         if (!v.ok) return res.status(400).json({ message: v.reason });
 
-        const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && req.body.expectedDeliveryDate
+        // Mandatory: the expected delivery date (agreed with the expert)
+        // drives the delivery-alerts feature.
+        const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
           ? req.body.expectedDeliveryDate : null;
+        if (!expectedDeliveryDate) {
+          return res.status(400).json({ message: "يجب تحديد تاريخ التسليم المتوقع (اسأل الخبير)" });
+        }
 
         const { patient, workOrder } = await manufacturingStore.createPatientWithWorkOrder(input, {
           serviceType, expertUserId, expectedDeliveryDate, assignedBy: branchSession?.userId ?? null,
@@ -1691,8 +1696,11 @@ export async function registerRoutes(
         if (!v.ok) return res.status(400).json({ message: v.reason });
       }
 
-      const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && req.body.expectedDeliveryDate
+      const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
         ? req.body.expectedDeliveryDate : null;
+      if (caseType !== "physiotherapy" && !expectedDeliveryDate) {
+        return res.status(400).json({ message: "يجب تحديد تاريخ التسليم المتوقع (اسأل الخبير)" });
+      }
 
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
         patientId, caseType, fields, serviceCost, paidNow,

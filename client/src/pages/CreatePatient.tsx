@@ -162,6 +162,7 @@ export default function CreatePatient() {
   // Prosthetic (amputee) and medical-support cases must be assigned to an expert.
   const needsExpert = conditionType === "amputee" || conditionType === "medical_support";
   const [expertUserId, setExpertUserId] = useState<number | null>(null);
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
 
   // Experts allowed for the selected branch — server-filtered. Reception sees
   // only its own branch's experts; when an admin changes the branch the list
@@ -336,12 +337,17 @@ export default function CreatePatient() {
         toast({ title: "يجب اختيار الخبير المسؤول عن التصنيع", variant: "destructive" });
         return;
       }
+      if (!expectedDeliveryDate) {
+        toast({ title: "يجب تحديد تاريخ التسليم المتوقع", description: "اسأل الخبير عن الموعد المتوقع لإكمال التصنيع.", variant: "destructive" });
+        return;
+      }
     }
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
     const submitData = {
       ...values,
       treatmentEntries: conditionType === "physiotherapy" ? validEntries : undefined,
       expertUserId: needsExpert ? expertUserId : undefined,
+      expectedDeliveryDate: needsExpert ? expectedDeliveryDate : undefined,
     };
     mutate(submitData as any, {
       onSuccess: (data) => {
@@ -585,6 +591,18 @@ export default function CreatePatient() {
                   </Select>
                 )}
                 <p className="text-xs text-muted-foreground">تُجلب القائمة حسب الفرع المختار. لكل مريض خبير واحد مسؤول عن تصنيع الحالة.</p>
+
+                <label className="text-sm font-semibold flex items-center gap-1 mt-3">
+                  تاريخ التسليم المتوقع <span className="text-red-500">*</span>
+                </label>
+                <Input
+                  type="date"
+                  value={expectedDeliveryDate}
+                  onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+                  className="bg-white"
+                  data-testid="input-expected-delivery"
+                />
+                <p className="text-xs text-muted-foreground">اسأل الخبير عن الموعد المتوقع — يُبنى عليه نظام التنبيهات قبل التسليم.</p>
               </div>
             </Card>
           )}

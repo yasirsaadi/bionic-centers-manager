@@ -108,7 +108,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
     setFields((prev) => ({ ...prev, [k]: v }));
   }
 
-  const canSubmit = !!caseType && (!isManufacturing || !!expertUserId) && !isPending;
+  const canSubmit = !!caseType && (!isManufacturing || (!!expertUserId && !!expectedDeliveryDate)) && !isPending;
 
   if (missingTypes.length === 0) return null;
 
@@ -198,8 +198,9 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
                 </Select>
               )}
               <div>
-                <label className="text-sm font-medium">موعد التسليم المتوقّع (اختياري)</label>
+                <label className="text-sm font-medium">تاريخ التسليم المتوقع <span className="text-red-500">*</span></label>
                 <Input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className="mt-1" />
+                <p className="text-xs text-muted-foreground mt-1">اسأل الخبير عن الموعد — يُبنى عليه نظام التنبيهات.</p>
               </div>
             </div>
           )}

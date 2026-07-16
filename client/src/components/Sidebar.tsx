@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -56,6 +56,24 @@ export function Sidebar() {
     enabled: !!branchSession,
   });
 
+  // Delivery-alert count for the التنبيهات badge. Light polling keeps the
+  // badge honest without hammering the server.
+  const alertEligible = !!branchSession && (
+    branchSession.isAdmin ||
+    ["prosthetics_expert", "branch_manager", "reception", "accountant"].includes(branchSession.role ?? "")
+  );
+  const { data: alertData } = useQuery<{ alertCount: number }>({
+    queryKey: ["/api/manufacturing/notifications"],
+    enabled: alertEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/manufacturing/notifications", { credentials: "include" });
+      if (!res.ok) return { alertCount: 0 };
+      return res.json();
+    },
+  });
+  const alertCount = alertData?.alertCount ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -77,6 +95,7 @@ export function Sidebar() {
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
+    { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
   ];
 
@@ -153,6 +172,11 @@ export function Sidebar() {
                 isActive ? "text-primary" : "text-slate-400 group-hover:text-slate-600"
               )} />
               {item.label}
+              {((item as any).badge ?? 0) > 0 && (
+                <span className="mr-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold">
+                  {(item as any).badge}
+                </span>
+              )}
             </Link>
           );
         })}
