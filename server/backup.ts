@@ -435,17 +435,6 @@ export async function initBackupScheduler(): Promise<void> {
     { timezone: "UTC" }
   );
 
-  // Nightly report: 23:57 Baghdad time = 20:57 UTC
-  cron.schedule(
-    "57 20 * * *",
-    async () => {
-      const today = getBaghdadDateString();
-      console.log(`[Report] Sending nightly report for ${today}...`);
-      await sendNightlyReport();
-    },
-    { timezone: "UTC" }
-  );
-
   // Daily income briefing: 23:00 Baghdad time = 20:00 UTC
   cron.schedule(
     "0 20 * * *",
@@ -457,7 +446,7 @@ export async function initBackupScheduler(): Promise<void> {
     { timezone: "UTC" }
   );
 
-  console.log("[Backup] Scheduler initialized - daily backup at 23:55 and nightly report at 23:57 Baghdad time");
+  console.log("[Backup] Scheduler initialized - daily backup at 23:55 and daily income briefing at 23:00 Baghdad time");
 }
 
 export async function sendManualBackup(filter: BackupFilter = { type: "all" }): Promise<{ success: boolean; count?: number; filterDescription?: string }> {
