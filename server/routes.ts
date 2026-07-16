@@ -1634,6 +1634,121 @@ export async function registerRoutes(
     }
   });
 
+  // Adds a case type to an EXISTING patient (one person = one record).
+  // E.g. a physiotherapy patient who now needs a medical support: instead of
+  // opening a duplicate patient file, the same record gains the new type,
+  // and for manufacturing types a work order is created for ONE expert —
+  // all atomically.
+  app.post("/api/patients/:id/add-case-type", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
+
+      const patientId = Number(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+
+      // Branch isolation for non-admins.
+      if (!isAdmin) {
+        const accessible: number[] = Array.isArray(branchSession?.accessibleBranches) && branchSession.accessibleBranches.length > 0
+          ? branchSession.accessibleBranches
+          : (branchSession?.branchId ? [branchSession.branchId] : []);
+        if (!accessible.includes(patient.branchId)) {
+          return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+        }
+      }
+
+      const caseType = req.body?.caseType;
+      if (!["amputee", "medical_support", "physiotherapy"].includes(caseType)) {
+        return res.status(400).json({ message: "نوع الحالة غير صالح" });
+      }
+      const alreadyHas = caseType === "amputee" ? patient.isAmputee
+        : caseType === "medical_support" ? patient.isMedicalSupport
+        : patient.isPhysiotherapy;
+      if (alreadyHas) return res.status(409).json({ message: "هذا النوع مفعّل أصلاً على ملف المريض" });
+
+      // Only allow the type-specific descriptive fields through.
+      const allowed = ["amputationSite", "prostheticType", "supportType", "injurySide", "diseaseType", "treatmentType"] as const;
+      const fields: any = {};
+      for (const f of allowed) {
+        if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
+      }
+
+      const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
+      const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
+
+      // Manufacturing types require a valid expert for the patient's branch —
+      // validated server-side, never trusted from the UI list.
+      let expertUserId: number | null = null;
+      if (caseType !== "physiotherapy") {
+        expertUserId = parseInt(req.body?.expertUserId);
+        if (!Number.isFinite(expertUserId)) {
+          return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
+        }
+        const v = await manufacturingStore.validateExpertForBranch(expertUserId, patient.branchId);
+        if (!v.ok) return res.status(400).json({ message: v.reason });
+      }
+
+      const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && req.body.expectedDeliveryDate
+        ? req.body.expectedDeliveryDate : null;
+
+      const { patient: updated, workOrderId } = await storage.addPatientCaseType({
+        patientId, caseType, fields, serviceCost, paidNow,
+        expertUserId, expectedDeliveryDate,
+        performedBy: branchSession?.userId ?? null,
+      });
+
+      await logAudit({
+        entityType: "patient", entityId: patientId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `إضافة نوع حالة: ${caseType}${workOrderId ? ` مع أمر تصنيع #${workOrderId}` : ""}`,
+      });
+      if (workOrderId) {
+        await logAudit({
+          entityType: "prosthetic_work_order", entityId: workOrderId, action: "create",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `أمر تصنيع عند إضافة نوع حالة لمريض موجود #${patientId}`,
+        });
+      }
+
+      res.json({ success: true, patient: updated, workOrderId });
+    } catch (err: any) {
+      console.error("Error adding case type:", err);
+      res.status(500).json({ message: err?.message || "حدث خطأ أثناء إضافة نوع الحالة" });
+    }
+  });
+
+  // Merges a duplicate patient record into the original (admin only). Used
+  // to clean up cases where staff opened a second file for the same person.
+  app.post("/api/admin/patients/merge", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح — مسؤول النظام فقط" });
+      }
+      const sourceId = Number(req.body?.sourceId);
+      const targetId = Number(req.body?.targetId);
+      if (!Number.isFinite(sourceId) || !Number.isFinite(targetId)) {
+        return res.status(400).json({ message: "معرّفات غير صالحة" });
+      }
+      const result = await storage.mergePatients(sourceId, targetId);
+      await logAudit({
+        entityType: "patient", entityId: targetId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: result.patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `دمج الملف المكرّر #${sourceId} في الملف #${targetId} — ${JSON.stringify(result.moved)}`,
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("Error merging patients:", err);
+      res.status(500).json({ message: err?.message || "حدث خطأ أثناء الدمج" });
+    }
+  });
+
   // Visits
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     const input = api.visits.create.input.parse(req.body);
