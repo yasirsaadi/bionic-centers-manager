@@ -1367,7 +1367,14 @@ export async function registerRoutes(
         : (input.isMedicalSupport || mc === "medical_support") ? "medical_support"
         : null;
 
-      if (serviceType) {
+      // The COST is the commitment signal (the owner's rule): a cost entered
+      // means the patient is buying → expert + delivery date are mandatory
+      // and a work order is created. No cost = examination only — the
+      // patient is registered normally WITHOUT an expert or a work order
+      // ("بدء التصنيع" on the patient page creates it if they commit later).
+      const committed = Number((input as any).totalCost) > 0;
+
+      if (serviceType && committed) {
         const expertUserId = parseInt(req.body?.expertUserId);
         if (!Number.isFinite(expertUserId)) {
           return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
@@ -1782,10 +1789,15 @@ export async function registerRoutes(
       const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
       const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
 
+      // The COST is the commitment signal: cost entered → expert + delivery
+      // date mandatory and a work order is created. No cost = the type is
+      // activated on the record (examination) without a work order.
+      const committed = serviceCost > 0;
+
       // Manufacturing types require a valid expert for the patient's branch —
       // validated server-side, never trusted from the UI list.
       let expertUserId: number | null = null;
-      if (caseType !== "physiotherapy") {
+      if (caseType !== "physiotherapy" && committed) {
         expertUserId = parseInt(req.body?.expertUserId);
         if (!Number.isFinite(expertUserId)) {
           return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
@@ -1796,13 +1808,14 @@ export async function registerRoutes(
 
       const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
         ? req.body.expectedDeliveryDate : null;
-      if (caseType !== "physiotherapy" && !expectedDeliveryDate) {
+      if (caseType !== "physiotherapy" && committed && !expectedDeliveryDate) {
         return res.status(400).json({ message: "يجب تحديد تاريخ التسليم المتوقع (اسأل الخبير)" });
       }
 
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
         patientId, caseType, fields, serviceCost, paidNow,
         expertUserId, expectedDeliveryDate,
+        skipWorkOrder: !committed,
         performedBy: branchSession?.userId ?? null,
       });
 

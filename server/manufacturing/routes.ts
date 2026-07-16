@@ -136,10 +136,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     res.json(await store.getOrderDetail(id));
   });
 
-  // ---- create an order for an EXISTING patient (admin / manager) -------------
+  // ---- create an order for an EXISTING patient --------------------------------
+  // Admin / manager anywhere in their scope; reception may also start
+  // manufacturing for a patient of ITS OWN branch (the examined-then-decided
+  // -to-buy flow: the patient was registered without cost/expert, came back
+  // and committed).
   app.post("/api/manufacturing/orders", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!(s.isAdmin || isManager(s))) return res.status(403).json({ error: "غير مصرح" });
+    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s) && Boolean(s.permissions?.canAddPatients);
+    if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
     const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
@@ -161,6 +166,14 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // Expert must be valid for the patient's branch.
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
+
+    // One ACTIVE order per patient: block a second order while one is still
+    // open (completed/cancelled don't count).
+    const existing = await store.listOrders({ completed: false });
+    const activeForPatient = existing.find((o) => o.patientId === patientId && o.status !== "cancelled");
+    if (activeForPatient) {
+      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+    }
 
     const order = await store.createWorkOrderForExisting({
       patientId, branchId: patient.branchId, serviceType, expertUserId,

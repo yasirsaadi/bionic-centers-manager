@@ -112,6 +112,7 @@ export interface IStorage {
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
+    skipWorkOrder?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number | null }>;
   mergePatients(sourceId: number, targetId: number): Promise<{ patient: Patient; moved: Record<string, number> }>;
   transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined>;
@@ -413,6 +414,7 @@ export class DatabaseStorage implements IStorage {
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
+    skipWorkOrder?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number | null }> {
     const { patientId, caseType, fields, serviceCost, paidNow } = params;
     return await db.transaction(async (tx) => {
@@ -453,8 +455,10 @@ export class DatabaseStorage implements IStorage {
 
       // Manufacturing types get a work order assigned to ONE expert, with
       // the first history row — same shape as new-patient registration.
+      // Consultation-only additions skip the work order entirely (created
+      // later via "بدء التصنيع" once the patient commits).
       let workOrderId: number | null = null;
-      if (caseType !== "physiotherapy") {
+      if (caseType !== "physiotherapy" && !params.skipWorkOrder) {
         if (!params.expertUserId) throw new Error("يجب اختيار الخبير المسؤول عن التصنيع");
         const [wo] = await tx.insert(prostheticWorkOrders).values({
           patientId,

@@ -6,6 +6,7 @@ import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrde
 import { MoneyInput } from "@/components/ui/money-input";
 import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
+import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -773,8 +774,9 @@ export default function PatientDetails() {
       </div>
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
-        <div className="mb-6">
+        <div className="mb-6 space-y-3">
           <PatientWorkOrderCard patientId={patient.id} />
+          <StartManufacturingDialog patient={patient} />
         </div>
       )}
 
