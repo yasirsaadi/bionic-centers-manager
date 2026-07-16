@@ -4,6 +4,8 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { MoneyInput } from "@/components/ui/money-input";
+import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
+import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -540,6 +542,9 @@ export default function PatientDetails() {
     <div className="space-y-8 page-transition pb-12">
       {/* Action Buttons - Print at top */}
       <div className="flex flex-wrap gap-3 items-center justify-end print:hidden">
+        {isAdmin && (
+          <MergePatientDialog patientId={patient.id} patientName={patient.name} />
+        )}
         {permissions.canEditPatients && (
           <Link href={`/patients/${patient.id}/edit${fromBranch ? `?branch=${fromBranch}` : ""}`}>
             <Button variant="outline" className="gap-2" data-testid="button-edit-patient">
@@ -1043,14 +1048,15 @@ export default function PatientDetails() {
 
             <TabsContent value="visits" className="space-y-4">
               {permissions.canAddPatients && (
-              <div className="flex justify-end gap-2 mb-4">
+              <div className="flex justify-end gap-2 mb-4 flex-wrap">
                 <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
-                <NewServiceModal 
-                  patientId={patient.id} 
-                  branchId={patient.branchId} 
+                <NewServiceModal
+                  patientId={patient.id}
+                  branchId={patient.branchId}
                   currentTotalCost={patient.totalCost || 0}
                   isPhysiotherapy={!!patient.isPhysiotherapy}
                 />
+                <AddCaseTypeModal patient={patient} />
               </div>
               )}
 

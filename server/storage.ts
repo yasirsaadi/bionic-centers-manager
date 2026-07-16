@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
-  anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog,
+  anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog, journalLines,
   prostheticWorkOrders, prostheticWorkHistory, prostheticReworkEvents,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
@@ -103,6 +103,17 @@ export interface IStorage {
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient | undefined>;
   deletePatient(id: number): Promise<void>;
+  addPatientCaseType(params: {
+    patientId: number;
+    caseType: "amputee" | "medical_support" | "physiotherapy";
+    fields: Partial<InsertPatient>;
+    serviceCost: number;
+    paidNow: number;
+    expertUserId?: number | null;
+    expectedDeliveryDate?: string | null;
+    performedBy: number | null;
+  }): Promise<{ patient: Patient; workOrderId: number | null }>;
+  mergePatients(sourceId: number, targetId: number): Promise<{ patient: Patient; moved: Record<string, number> }>;
   transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined>;
 
   // Visits
@@ -370,7 +381,168 @@ export class DatabaseStorage implements IStorage {
       await db.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
       await db.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
     }
+    // Remaining FK holders that used to make the delete fail silently:
+    // follow-up calls, treatment plans, and survey responses (+answers) go
+    // with the patient; journal lines are ACCOUNTING history and must
+    // survive — detach them from the patient instead of deleting.
+    await db.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
+    await db.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
+    const respRows = await db.select({ id: surveyResponses.id })
+      .from(surveyResponses)
+      .where(eq(surveyResponses.patientId, id));
+    if (respRows.length > 0) {
+      const respIds = respRows.map((r) => r.id);
+      await db.delete(surveyAnswers).where(inArray(surveyAnswers.responseId, respIds));
+      await db.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
+    }
+    await db.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
     await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  // Adds a case type (amputee / medical_support / physiotherapy) to an
+  // EXISTING patient — the one-person-one-record principle: the same human
+  // never gets a second patient row just because a new service type started.
+  // Atomic: flags + optional cost + optional payment + (for manufacturing
+  // types) the work order and its first history row all commit together.
+  async addPatientCaseType(params: {
+    patientId: number;
+    caseType: "amputee" | "medical_support" | "physiotherapy";
+    fields: Partial<InsertPatient>;
+    serviceCost: number;
+    paidNow: number;
+    expertUserId?: number | null;
+    expectedDeliveryDate?: string | null;
+    performedBy: number | null;
+  }): Promise<{ patient: Patient; workOrderId: number | null }> {
+    const { patientId, caseType, fields, serviceCost, paidNow } = params;
+    return await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      if (!existing) throw new Error("المريض غير موجود");
+
+      const flagPatch: any = { ...fields };
+      if (caseType === "amputee") flagPatch.isAmputee = true;
+      else if (caseType === "medical_support") flagPatch.isMedicalSupport = true;
+      else flagPatch.isPhysiotherapy = true;
+      if (serviceCost > 0) flagPatch.totalCost = (existing.totalCost || 0) + serviceCost;
+
+      const [patient] = await tx.update(patients)
+        .set(flagPatch)
+        .where(eq(patients.id, patientId))
+        .returning();
+
+      const caseLabel = caseType === "amputee" ? "أطراف صناعية"
+        : caseType === "medical_support" ? "مساند طبية" : "علاج طبيعي";
+
+      // Timeline marker so the patient's history shows when the new case
+      // type started.
+      await tx.insert(visits).values({
+        patientId,
+        branchId: existing.branchId,
+        details: "إضافة نوع حالة",
+        notes: `إضافة نوع حالة: ${caseLabel}${serviceCost > 0 ? ` (تكلفة: ${serviceCost.toLocaleString()} د.ع)` : ""}`,
+      });
+
+      if (paidNow > 0) {
+        await tx.insert(payments).values({
+          patientId,
+          branchId: existing.branchId,
+          amount: paidNow,
+          notes: `دفعة عند إضافة نوع حالة: ${caseLabel}`,
+        });
+      }
+
+      // Manufacturing types get a work order assigned to ONE expert, with
+      // the first history row — same shape as new-patient registration.
+      let workOrderId: number | null = null;
+      if (caseType !== "physiotherapy") {
+        if (!params.expertUserId) throw new Error("يجب اختيار الخبير المسؤول عن التصنيع");
+        const [wo] = await tx.insert(prostheticWorkOrders).values({
+          patientId,
+          branchId: existing.branchId,
+          expertUserId: params.expertUserId,
+          serviceType: caseType === "amputee" ? "prosthetic" : "medical_support",
+          status: "active",
+          currentStage: "new_assignment",
+          expectedDeliveryDate: params.expectedDeliveryDate ?? null,
+          assignedBy: params.performedBy,
+        }).returning();
+        await tx.insert(prostheticWorkHistory).values({
+          workOrderId: wo.id,
+          actionType: "created",
+          fromStage: null,
+          toStage: "new_assignment",
+          notes: `إنشاء أمر تصنيع عند إضافة نوع حالة (${caseLabel}) لمريض موجود`,
+          performedBy: params.performedBy,
+        });
+        workOrderId = wo.id;
+      }
+
+      return { patient, workOrderId };
+    });
+  }
+
+  // Merges a duplicate patient row into the original one (admin tool).
+  // Every child record is re-pointed to the target, the type flags are
+  // OR-merged, empty descriptive fields on the target are filled from the
+  // source, costs are summed, and the duplicate row is deleted — all in one
+  // transaction.
+  async mergePatients(sourceId: number, targetId: number): Promise<{
+    patient: Patient;
+    moved: Record<string, number>;
+  }> {
+    if (sourceId === targetId) throw new Error("لا يمكن دمج الملف مع نفسه");
+    return await db.transaction(async (tx) => {
+      const [source] = await tx.select().from(patients).where(eq(patients.id, sourceId));
+      const [target] = await tx.select().from(patients).where(eq(patients.id, targetId));
+      if (!source || !target) throw new Error("أحد الملفين غير موجود");
+
+      const moved: Record<string, number> = {};
+      const repoint = async (label: string, table: any, column: any) => {
+        const rows = await tx.update(table)
+          .set({ patientId: targetId })
+          .where(eq(column, sourceId))
+          .returning();
+        moved[label] = rows.length;
+      };
+      await repoint("visits", visits, visits.patientId);
+      await repoint("payments", payments, payments.patientId);
+      await repoint("documents", documents, documents.patientId);
+      await repoint("invoices", invoices, invoices.patientId);
+      await repoint("installmentPlans", installmentPlans, installmentPlans.patientId);
+      await repoint("followUpCalls", followUpCalls, followUpCalls.patientId);
+      await repoint("workOrders", prostheticWorkOrders, prostheticWorkOrders.patientId);
+      await repoint("treatmentPlans", treatmentPlans, treatmentPlans.patientId);
+      await repoint("surveyResponses", surveyResponses, surveyResponses.patientId);
+      await repoint("journalLines", journalLines, journalLines.patientId);
+
+      // Merge the patient row itself: flags OR, costs summed, and any
+      // descriptive field that is empty on the target gets the source's value.
+      const fillable = [
+        "phone", "address", "referralNotes", "weight", "height", "injuryCause",
+        "injuryDate", "patientClassification", "generalNotes", "amputationSite",
+        "prostheticType", "siliconType", "siliconSize", "suspensionSystem",
+        "footType", "footSize", "kneeJointType", "diseaseType", "injuryType",
+        "injuryArea", "injuries", "treatmentType", "supportType", "injurySide",
+      ] as const;
+      const patch: any = {
+        isAmputee: Boolean(target.isAmputee || source.isAmputee),
+        isPhysiotherapy: Boolean(target.isPhysiotherapy || source.isPhysiotherapy),
+        isMedicalSupport: Boolean(target.isMedicalSupport || source.isMedicalSupport),
+        totalCost: (target.totalCost || 0) + (source.totalCost || 0),
+      };
+      for (const f of fillable) {
+        const tv = (target as any)[f];
+        const sv = (source as any)[f];
+        if ((tv === null || tv === undefined || tv === "") && sv) patch[f] = sv;
+      }
+      const [patient] = await tx.update(patients)
+        .set(patch)
+        .where(eq(patients.id, targetId))
+        .returning();
+
+      await tx.delete(patients).where(eq(patients.id, sourceId));
+      return { patient, moved };
+    });
   }
 
   async transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined> {

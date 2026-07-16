@@ -421,11 +421,17 @@ export default function Statistics() {
 
     const totalPatients = timeFilteredPatients.length;
     const totalNewPatients = newClassifiedPatients.length;
+    // A patient may carry MORE than one case type (e.g. physio + medical
+    // support on the same record). Count him in every type he has — but the
+    // patient totals above still count him once. The `!isAmputee &&
+    // !isMedicalSupport` fallback keeps legacy rows (no flags set) counted
+    // as physiotherapy.
+    const isPhysio = (p: any) => p.isPhysiotherapy || (!p.isAmputee && !p.isMedicalSupport);
     const amputeeCount = timeFilteredPatients.filter(p => p.isAmputee).length;
-    const physioCount = timeFilteredPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
+    const physioCount = timeFilteredPatients.filter(isPhysio).length;
     const medicalSupportCount = timeFilteredPatients.filter(p => p.isMedicalSupport).length;
     const newAmputeeCount = newClassifiedPatients.filter(p => p.isAmputee).length;
-    const newPhysioCount = newClassifiedPatients.filter(p => !p.isAmputee && !p.isMedicalSupport).length;
+    const newPhysioCount = newClassifiedPatients.filter(isPhysio).length;
     const newMedicalSupportCount = newClassifiedPatients.filter(p => p.isMedicalSupport).length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
