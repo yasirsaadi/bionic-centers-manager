@@ -115,6 +115,10 @@ export interface IStorage {
     skipWorkOrder?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number | null }>;
   mergePatients(sourceId: number, targetId: number): Promise<{ patient: Patient; moved: Record<string, number> }>;
+  getPatientsSince(branchId: number, cutoff: Date | null): Promise<Patient[]>;
+  getPaymentsByBranchSince(branchId: number, cutoff: Date | null): Promise<Payment[]>;
+  getVisitsByBranchSince(branchId: number, cutoff: Date | null): Promise<Visit[]>;
+  getBranchFinanceTotals(branchId: number): Promise<{ totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number }>;
   transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined>;
 
   // Visits
@@ -302,6 +306,38 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patients
+  // Windowed reads for the detailed financial report: only rows since
+  // `cutoff` (null = full history). Keeps that report fast as data grows.
+  async getPatientsSince(branchId: number, cutoff: Date | null): Promise<Patient[]> {
+    const conds = [eq(patients.branchId, branchId)];
+    if (cutoff) conds.push(gte(patients.createdAt, cutoff));
+    return await db.select().from(patients).where(and(...conds)).orderBy(desc(patients.createdAt));
+  }
+  async getPaymentsByBranchSince(branchId: number, cutoff: Date | null): Promise<Payment[]> {
+    const conds = [eq(payments.branchId, branchId)];
+    if (cutoff) conds.push(gte(payments.date, cutoff));
+    return await db.select().from(payments).where(and(...conds)).orderBy(desc(payments.date));
+  }
+  async getVisitsByBranchSince(branchId: number, cutoff: Date | null): Promise<Visit[]> {
+    const conds = [eq(visits.branchId, branchId), isNull(visits.deletedAt)];
+    if (cutoff) conds.push(gte(visits.visitDate, cutoff));
+    return await db.select().from(visits).where(and(...conds)).orderBy(desc(visits.visitDate));
+  }
+  // Whole-history totals for a branch via SQL aggregates (no row loading).
+  async getBranchFinanceTotals(branchId: number): Promise<{
+    totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number;
+  }> {
+    const [pat, pay] = await Promise.all([
+      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(total_cost),0)::bigint AS s FROM patients WHERE branch_id = ${branchId}`),
+      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount),0)::bigint AS s FROM payments WHERE branch_id = ${branchId}`),
+    ]);
+    const p = pat.rows[0] as any, y = pay.rows[0] as any;
+    return {
+      totalCost: Number(p?.s ?? 0), totalPatients: Number(p?.n ?? 0),
+      totalPaid: Number(y?.s ?? 0), totalPayments: Number(y?.n ?? 0),
+    };
+  }
+
   async getPatients(branchId?: number): Promise<Patient[]> {
     if (branchId) {
       return await db.select().from(patients).where(eq(patients.branchId, branchId)).orderBy(desc(patients.createdAt));

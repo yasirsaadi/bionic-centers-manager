@@ -278,11 +278,15 @@ function ReportsContent() {
     },
   });
 
+  // Windowed report: load only the last N days of the daily log (the header
+  // totals are always whole-history). Keeps the page fast as data grows.
+  const [reportDays, setReportDays] = useState(45);
+
   const { data: report, isLoading } = useQuery<DetailedReport>({
-    queryKey: ["/api/reports/detailed", effectiveBranchFilter],
+    queryKey: ["/api/reports/detailed", effectiveBranchFilter, reportDays],
     queryFn: async () => {
-      const res = await fetch(`/api/reports/detailed/${effectiveBranchFilter}`, { 
-        credentials: "include" 
+      const res = await fetch(`/api/reports/detailed/${effectiveBranchFilter}?days=${reportDays}`, {
+        credentials: "include"
       });
       if (!res.ok) throw new Error(t.reports.fetchReportError);
       return res.json();
@@ -425,10 +429,23 @@ function ReportsContent() {
           </div>
 
           <div className="space-y-4">
-            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary" />
-              {t.reports.dailyLog}
-            </h3>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-primary" />
+                {t.reports.dailyLog}
+              </h3>
+              <select
+                value={reportDays}
+                onChange={(e) => setReportDays(Number(e.target.value))}
+                className="p-2 border rounded-md text-sm bg-background"
+                data-testid="select-report-days"
+              >
+                <option value={45}>آخر 45 يوماً</option>
+                <option value={90}>آخر 90 يوماً</option>
+                <option value={180}>آخر 180 يوماً</option>
+                <option value={0}>كل الفترة</option>
+              </select>
+            </div>
             
             {report?.dailySummaries && report.dailySummaries.length > 0 ? (
               <div className="space-y-3">
