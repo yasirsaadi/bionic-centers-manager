@@ -2257,41 +2257,34 @@ export async function registerRoutes(
     // Non-admins are pinned to their own branch; admin honours the query param
     // or omits it for cross-branch totals.
     const enforced = enforceBranchAccess(req);
-    const filterBranchId = enforced ?? null;
 
-    const allPatients = await storage.getPatients(enforced);
-    const allBranches = await storage.getBranches();
-    const branches = enforced !== undefined ? allBranches.filter((b) => b.id === enforced) : allBranches;
-    
-    // Filter patients by branch if specified
-    const filteredPatients = filterBranchId 
-      ? allPatients.filter(p => p.branchId === filterBranchId)
-      : allPatients;
-    
-    let totalSold = 0;
-    let totalPaid = 0;
-    
-    // Get branches to check payments
-    const branchesToCheck = filterBranchId 
-      ? branches.filter(b => b.id === filterBranchId)
-      : branches;
-    
-    for (const branch of branchesToCheck) {
-      const branchPayments = await storage.getPaymentsByBranch(branch.id);
-      totalPaid += branchPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
-    }
-    
-    totalSold = filteredPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
-    
+    // Pure SQL aggregates — previously this loaded EVERY patient and EVERY
+    // payment into memory just to sum them, which made the dashboard slow.
+    const pWhere = enforced !== undefined ? sql`WHERE branch_id = ${enforced}` : sql``;
+    const [patAgg, payAgg] = await Promise.all([
+      db.execute(sql`
+        SELECT COUNT(*)::int AS total,
+               COALESCE(SUM(total_cost), 0)::bigint AS sold,
+               COUNT(*) FILTER (WHERE is_amputee)::int AS amputees,
+               COUNT(*) FILTER (WHERE is_physiotherapy)::int AS physiotherapy,
+               COUNT(*) FILTER (WHERE is_medical_support)::int AS medical_support
+        FROM patients ${pWhere}
+      `),
+      db.execute(sql`SELECT COALESCE(SUM(amount), 0)::bigint AS paid FROM payments ${pWhere}`),
+    ]);
+    const p = patAgg.rows[0] as any;
+    const totalPaid = Number((payAgg.rows[0] as any)?.paid ?? 0);
+    const totalSold = Number(p?.sold ?? 0);
+
     res.json({
       revenue: totalPaid,
       sold: totalSold,
       paid: totalPaid,
       remaining: totalSold - totalPaid,
-      totalPatients: filteredPatients.length,
-      amputees: filteredPatients.filter(p => p.isAmputee).length,
-      physiotherapy: filteredPatients.filter(p => p.isPhysiotherapy).length,
-      medicalSupport: filteredPatients.filter(p => p.isMedicalSupport).length
+      totalPatients: Number(p?.total ?? 0),
+      amputees: Number(p?.amputees ?? 0),
+      physiotherapy: Number(p?.physiotherapy ?? 0),
+      medicalSupport: Number(p?.medical_support ?? 0)
     });
   });
 
@@ -2304,54 +2297,52 @@ export async function registerRoutes(
     const branches = allowedBranchId !== undefined
       ? allBranches.filter((b) => b.id === allowedBranchId)
       : allBranches;
-    const allPatients = await storage.getPatients(allowedBranchId);
     const daily = req.query.daily === "true";
-    
-    // Get today's date range if daily filter is enabled
+
+    // Today's range (same semantics the in-memory version used).
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-    
+
+    // Two grouped aggregates instead of loading every patient + N payment
+    // queries. In daily mode, "paid" counts only payments made today FOR
+    // patients registered today (unchanged behaviour).
+    const [soldRows, paidRows] = await Promise.all([
+      daily
+        ? db.execute(sql`
+            SELECT branch_id, COALESCE(SUM(total_cost), 0)::bigint AS sold
+            FROM patients
+            WHERE created_at >= ${startOfDay} AND created_at < ${endOfDay}
+            GROUP BY branch_id
+          `)
+        : db.execute(sql`
+            SELECT branch_id, COALESCE(SUM(total_cost), 0)::bigint AS sold
+            FROM patients GROUP BY branch_id
+          `),
+      daily
+        ? db.execute(sql`
+            SELECT pay.branch_id, COALESCE(SUM(pay.amount), 0)::bigint AS paid
+            FROM payments pay
+            JOIN patients pt ON pt.id = pay.patient_id
+              AND pt.created_at >= ${startOfDay} AND pt.created_at < ${endOfDay}
+            WHERE pay.date >= ${startOfDay} AND pay.date < ${endOfDay}
+            GROUP BY pay.branch_id
+          `)
+        : db.execute(sql`
+            SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS paid
+            FROM payments GROUP BY branch_id
+          `),
+    ]);
+    const soldBy = new Map((soldRows.rows as any[]).map((r) => [Number(r.branch_id), Number(r.sold)]));
+    const paidBy = new Map((paidRows.rows as any[]).map((r) => [Number(r.branch_id), Number(r.paid)]));
+
     const result: Record<number, { revenue: number; sold: number; paid: number; remaining: number }> = {};
-    
     for (const branch of branches) {
-      const branchPayments = await storage.getPaymentsByBranch(branch.id);
-      
-      let filteredPatients = allPatients.filter(p => p.branchId === branch.id);
-      let filteredPayments = branchPayments;
-      
-      if (daily) {
-        // Filter patients registered today
-        filteredPatients = filteredPatients.filter(p => {
-          if (!p.createdAt) return false;
-          const createdAt = new Date(p.createdAt);
-          return createdAt >= startOfDay && createdAt < endOfDay;
-        });
-        
-        // Get IDs of today's patients
-        const todayPatientIds = new Set(filteredPatients.map(p => p.id));
-        
-        // Filter payments made today FOR today's patients only
-        filteredPayments = branchPayments.filter(p => {
-          if (!p.date) return false;
-          const paymentDate = new Date(p.date);
-          const isToday = paymentDate >= startOfDay && paymentDate < endOfDay;
-          const isForTodayPatient = todayPatientIds.has(p.patientId);
-          return isToday && isForTodayPatient;
-        });
-      }
-      
-      const sold = filteredPatients.reduce((acc, p) => acc + (p.totalCost || 0), 0);
-      const paid = filteredPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
-      
-      result[branch.id] = {
-        revenue: paid,
-        sold,
-        paid,
-        remaining: sold - paid
-      };
+      const sold = soldBy.get(branch.id) ?? 0;
+      const paid = paidBy.get(branch.id) ?? 0;
+      result[branch.id] = { revenue: paid, sold, paid, remaining: sold - paid };
     }
-    
+
     res.json(result);
   });
 
@@ -2363,10 +2354,20 @@ export async function registerRoutes(
     if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
       return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
     }
-    const patients = await storage.getPatients(branchId);
-    const payments = await storage.getPaymentsByBranch(branchId);
-    const visits = await storage.getVisitsByBranch(branchId);
-    
+    // Window the report: only the last N days of rows are loaded and shipped
+    // (default 45; days=0 = full history). Whole-history totals still come
+    // from SQL aggregates below, so the header numbers stay complete.
+    const daysRaw = parseInt(String(req.query.days));
+    const days = Number.isFinite(daysRaw) && daysRaw >= 0 ? daysRaw : 45;
+    const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+
+    const [patients, payments, visits, financeTotals] = await Promise.all([
+      storage.getPatientsSince(branchId, cutoff),
+      storage.getPaymentsByBranchSince(branchId, cutoff),
+      storage.getVisitsByBranchSince(branchId, cutoff),
+      storage.getBranchFinanceTotals(branchId),
+    ]);
+
     // Create patient lookup map
     const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
     
@@ -2499,19 +2500,17 @@ export async function registerRoutes(
       };
     });
     
-    // Calculate overall totals
-    const overallTotalCost = patients.reduce((acc: number, p: Patient) => acc + (p.totalCost || 0), 0);
-    const overallTotalPaid = payments.reduce((acc: number, p: Payment) => acc + p.amount, 0);
-    
+    // Overall totals: whole-history SQL aggregates (NOT just the window).
     res.json({
       branchId,
+      days,
       dailySummaries,
       overall: {
-        totalCost: overallTotalCost,
-        totalPaid: overallTotalPaid,
-        remaining: overallTotalCost - overallTotalPaid,
-        totalPatients: patients.length,
-        totalPayments: payments.length
+        totalCost: financeTotals.totalCost,
+        totalPaid: financeTotals.totalPaid,
+        remaining: financeTotals.totalCost - financeTotals.totalPaid,
+        totalPatients: financeTotals.totalPatients,
+        totalPayments: financeTotals.totalPayments
       }
     });
   });

@@ -1,4 +1,3 @@
-import { usePatients } from "@/hooks/use-patients";
 import { StatsCard } from "@/components/StatsCard";
 import { Users, Activity, Banknote, Clock, Calendar, HeartPulse, Building2, UserPlus, Stethoscope, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -122,7 +121,18 @@ function DashboardContent() {
     },
   });
 
-  const { data: patients } = usePatients();
+  // Recent-patients widget: fetch just 5 lean rows from the paginated
+  // registry — previously this pulled EVERY patient with all their visits
+  // and payments only to show five names.
+  const { data: recentRegistry } = useQuery<{ rows: { id: number; name: string; medicalCondition: string; createdAt: string | null }[] }>({
+    queryKey: ["/api/patients/registry", "dashboard-recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/patients/registry?page=1&pageSize=5", { credentials: "include" });
+      if (!res.ok) return { rows: [] };
+      return res.json();
+    },
+  });
+  const patients = recentRegistry?.rows;
 
   if (isLoading) {
     return (
