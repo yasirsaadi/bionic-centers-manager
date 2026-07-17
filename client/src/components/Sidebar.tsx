@@ -134,7 +134,11 @@ export function Sidebar() {
     return true;
   });
 
-  const SidebarContent = () => (
+  // NOTE: this is a plain JSX element, NOT a nested component. Defining it as
+  // a component (`const SidebarContent = () => ...`) made React see a brand
+  // new component type on every render, remounting the whole sidebar — which
+  // reset the nav's scroll position to the top after every navigation.
+  const sidebarContent = (
     <>
       <div className="p-4 flex items-center gap-3 border-b border-border/50">
         <img src={logoImage} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
@@ -298,13 +302,13 @@ export function Sidebar() {
         }}
       >
         <div className="flex flex-col h-full">
-          <SidebarContent />
+          {sidebarContent}
         </div>
       </aside>
 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
-        <SidebarContent />
+        {sidebarContent}
       </aside>
     </>
   );
