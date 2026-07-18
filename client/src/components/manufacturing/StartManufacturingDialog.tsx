@@ -72,6 +72,7 @@ export function StartManufacturingDialog({ patient }: {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/summary`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
       toast({ title: "تم بدء التصنيع وإسناد الخبير" });
       setOpen(false);

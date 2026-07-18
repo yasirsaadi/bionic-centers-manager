@@ -69,6 +69,7 @@ export function ManufacturingEditCard({ patient }: {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: summaryKey });
+    queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
     queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
   };
 

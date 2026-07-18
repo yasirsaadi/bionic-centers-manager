@@ -30,7 +30,9 @@ export async function getExpertsForBranch(branchId: number): Promise<ExpertOptio
     .from(systemUsers)
     .where(
       and(
-        eq(systemUsers.role, EXPERT_ROLE),
+        // A pure expert OR anyone carrying the expert capability flag
+        // (e.g. an accountant / branch-manager who also does mold work).
+        or(eq(systemUsers.role, EXPERT_ROLE), eq(systemUsers.canWorkAsExpert, true)),
         eq(systemUsers.isActive, true),
         or(
           sql`${systemUsers.branchIds} @> ${JSON.stringify([branchId])}::jsonb`,
@@ -51,7 +53,8 @@ export async function validateExpertForBranch(
   const [u] = await db.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
   if (!u) return { ok: false, reason: "الخبير غير موجود" };
   if (!u.isActive) return { ok: false, reason: "حساب الخبير غير فعّال" };
-  if (u.role !== EXPERT_ROLE) return { ok: false, reason: "المستخدم ليس خبير أطراف" };
+  // Pure expert OR a user carrying the expert capability flag.
+  if (u.role !== EXPERT_ROLE && !u.canWorkAsExpert) return { ok: false, reason: "المستخدم ليس خبير أطراف" };
   const branchIds = Array.isArray(u.branchIds) ? (u.branchIds as number[]) : [];
   const allowed = branchIds.includes(branchId) || u.branchId === branchId;
   if (!allowed) return { ok: false, reason: "الخبير غير مسموح له بالعمل في هذا الفرع" };
@@ -559,6 +562,38 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
     finalResult: row.finalResult ?? null,
     recastCount, resocketCount,
   };
+}
+
+// Every work order for a patient, newest first — the full manufacturing
+// history (e.g. عناد built the limb in June, أيوب did a maintenance mold in
+// July). Each order is an independent episode with its own expert, service
+// type, dates and lifecycle. Read-only shape for the patient page.
+export async function getAllOrdersForPatient(patientId: number) {
+  const rows = await db
+    .select({
+      id: WO.id, serviceType: WO.serviceType, status: WO.status, currentStage: WO.currentStage,
+      startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
+      completedAt: WO.completedAt, finalResult: WO.finalResult, createdAt: WO.createdAt,
+      expertUserId: WO.expertUserId, expertName: systemUsers.displayName,
+    })
+    .from(WO)
+    .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
+    .where(eq(WO.patientId, patientId))
+    .orderBy(desc(WO.createdAt));
+  return rows.map((r) => ({
+    id: r.id,
+    expertUserId: r.expertUserId,
+    expertName: r.expertName ?? null,
+    serviceType: r.serviceType,
+    status: r.status,
+    currentStage: r.currentStage,
+    startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,
+    expectedDeliveryDate: r.expectedDeliveryDate ? String(r.expectedDeliveryDate) : null,
+    completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
+    createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+    finalResult: r.finalResult ?? null,
+    active: r.status !== "completed" && r.status !== "cancelled",
+  }));
 }
 
 // ---- admin / manager overview aggregations (done in SQL) ---------------------

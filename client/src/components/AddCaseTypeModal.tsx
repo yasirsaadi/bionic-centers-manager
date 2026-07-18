@@ -94,6 +94,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patient.id] });
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/summary`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
       toast({ title: "تمت إضافة نوع الحالة", description: "أُضيف النوع الجديد على نفس ملف المريض." });
       reset();
       setOpen(false);
