@@ -9,6 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeArabic } from "@/lib/utils";
 
 interface Branch { id: number; name: string; }
 interface PatientLite {
@@ -42,7 +43,7 @@ export function CreateOrderDialog({
   // Only prosthetic / medical-support patients are eligible.
   const eligible = useMemo(
     () => patients.filter((p) => (p.isAmputee || p.isMedicalSupport)
-      && (!search.trim() || p.name.toLowerCase().includes(search.trim().toLowerCase()))),
+      && (!search.trim() || normalizeArabic(p.name).includes(normalizeArabic(search.trim())))),
     [patients, search],
   );
   const selectedPatient = patients.find((p) => String(p.id) === patientId);
