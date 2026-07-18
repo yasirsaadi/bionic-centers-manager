@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
+import { ManufacturingEditCard } from "@/components/manufacturing/ManufacturingEditCard";
 import { Textarea } from "@/components/ui/textarea";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Button } from "@/components/ui/button";
@@ -345,6 +346,10 @@ export default function EditPatient() {
           <p className="text-xs md:text-base text-muted-foreground">{t.patientForm.editInfo} {patient.name}</p>
         </div>
       </div>
+
+      {(patient.isAmputee || patient.isMedicalSupport) && (
+        <ManufacturingEditCard patient={patient} />
+      )}
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
