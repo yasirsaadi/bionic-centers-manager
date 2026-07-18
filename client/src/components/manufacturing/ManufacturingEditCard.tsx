@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,14 @@ export function ManufacturingEditCard({ patient }: {
 
   const active = summary && summary.status !== "cancelled" && summary.status !== "completed";
 
+  // Pre-fill the date field with the current delivery date. An EMPTY controlled
+  // <input type="date"> misbehaves on iOS Safari (the pick often doesn't stick),
+  // and starting from the real value makes the change obvious and the save
+  // button meaningful. Re-syncs whenever the server value changes.
+  useEffect(() => {
+    if (summary?.expectedDeliveryDate) setNewDate(summary.expectedDeliveryDate);
+  }, [summary?.expectedDeliveryDate]);
+
   const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
     queryKey: ["/api/manufacturing/experts", patient.branchId],
     enabled: Boolean(active),
@@ -99,11 +107,16 @@ export function ManufacturingEditCard({ patient }: {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "تعذّر تعديل الموعد"); }
       return res.json();
     },
-    onSuccess: () => { invalidate(); setNewDate(""); toast({ title: "تم تعديل موعد التسليم" }); },
+    // Do NOT clear the field on success — keep the saved date visible so the
+    // change is obvious (clearing it read as "nothing happened").
+    onSuccess: () => { invalidate(); toast({ title: "تم تعديل موعد التسليم" }); },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
   if (isExpertRole || !active) return null;
+
+  // Only meaningful to save when the picked date differs from the stored one.
+  const dateChanged = !!newDate && newDate !== (summary!.expectedDeliveryDate ?? "");
 
   return (
     <Card className="p-6 rounded-2xl border-primary/30 bg-primary/5 space-y-4">
@@ -131,7 +144,7 @@ export function ManufacturingEditCard({ patient }: {
             </SelectContent>
           </Select>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="سبب التحويل (إلزامي)" />
-          <Button size="sm" className="w-full" disabled={!newExpertId || !reason.trim() || reassign.isPending}
+          <Button type="button" size="sm" className="w-full" disabled={!newExpertId || !reason.trim() || reassign.isPending}
             onClick={() => reassign.mutate()} data-testid="button-edit-reassign">
             {reassign.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "تحويل"}
           </Button>
@@ -142,9 +155,9 @@ export function ManufacturingEditCard({ patient }: {
         <div className="bg-white border rounded-lg p-3 space-y-2">
           <label className="text-sm font-semibold">تعديل موعد التسليم المتوقع</label>
           <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} data-testid="input-edit-delivery" />
-          <Button size="sm" className="w-full" disabled={!newDate || updateDate.isPending}
+          <Button type="button" size="sm" className="w-full" disabled={!dateChanged || updateDate.isPending}
             onClick={() => updateDate.mutate()} data-testid="button-edit-delivery">
-            {updateDate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "حفظ الموعد الجديد"}
+            {updateDate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : dateChanged ? "حفظ الموعد الجديد" : "اختر تاريخاً مختلفاً"}
           </Button>
           <p className="text-[11px] text-muted-foreground">يُسجَّل التغيير في الخط الزمني وتُحدَّث التنبيهات عليه.</p>
         </div>
