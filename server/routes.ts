@@ -2391,7 +2391,21 @@ export async function registerRoutes(
 
     // Create patient lookup map
     const patientMap = new Map(patients.map((p: Patient) => [p.id, p]));
-    
+
+    // The `patients` list is windowed by REGISTRATION date, but a payment or
+    // visit inside the window can belong to an OLDER patient (registered before
+    // the cutoff) — that patient would be missing from the map and render as
+    // "غير معروف". Backfill every referenced-but-missing patient by id so
+    // names always resolve, while keeping the windowing performance win.
+    const referencedIds = new Set<number>();
+    for (const p of payments) referencedIds.add(p.patientId);
+    for (const v of visits) referencedIds.add(v.patientId);
+    const missingIds = Array.from(referencedIds).filter((id) => id != null && !patientMap.has(id));
+    if (missingIds.length > 0) {
+      const extra = await storage.getPatientsByIds(missingIds);
+      for (const p of extra) patientMap.set(p.id, p);
+    }
+
     const patientVisitMap = new Map<number, string>();
     for (const visit of visits) {
       if (!patientVisitMap.has(visit.patientId)) {
