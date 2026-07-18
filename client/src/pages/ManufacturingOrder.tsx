@@ -153,6 +153,7 @@ export default function ManufacturingOrder() {
                 <div className="text-sm">
                   {h.actionType === "reassigned" ? "تحويل خبير"
                     : h.actionType === "rework" ? "إعادة عمل"
+                    : h.actionType === "date_change" ? "تغيير موعد التسليم"
                     : h.actionType === "status_change" ? "تغيير حالة"
                     : h.actionType === "delivered" ? "تسليم"
                     : h.actionType === "created" ? "إنشاء الأمر"

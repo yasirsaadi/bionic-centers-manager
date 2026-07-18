@@ -235,6 +235,23 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     res.json(updated);
   });
 
+  // ---- expected delivery date update ------------------------------------------
+  // The date can be renegotiated with the expert; updating it appends a
+  // history row (nothing is overwritten silently) and drives the alerts.
+  app.patch("/api/manufacturing/orders/:id/delivery-date", isAuthenticated, async (req: Req, res) => {
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    const date = strOrU(req.body?.expectedDeliveryDate);
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: "تاريخ غير صالح" });
+    }
+    const updated = await store.updateDeliveryDate({
+      order: raw, expectedDeliveryDate: date,
+      performedBy: getSession(req).userId ?? null,
+    });
+    res.json(updated);
+  });
+
   // ---- status update ---------------------------------------------------------
   app.patch("/api/manufacturing/orders/:id/status", isAuthenticated, async (req: Req, res) => {
     const raw = await loadWritable(req, res);

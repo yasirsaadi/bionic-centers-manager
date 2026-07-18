@@ -420,6 +420,28 @@ export async function updateStage(params: {
   });
 }
 
+export async function updateDeliveryDate(params: {
+  order: ProstheticWorkOrder;
+  expectedDeliveryDate: string;
+  performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  const { order, expectedDeliveryDate } = params;
+  const previous = order.expectedDeliveryDate ? String(order.expectedDeliveryDate) : "—";
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx.update(WO)
+      .set({ expectedDeliveryDate, updatedAt: new Date() })
+      .where(eq(WO.id, order.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: order.id,
+      actionType: "date_change",
+      fromStage: order.currentStage, toStage: order.currentStage,
+      notes: `تغيير موعد التسليم المتوقع من ${previous} إلى ${expectedDeliveryDate}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
 export async function updateStatus(params: {
   order: ProstheticWorkOrder;
   status: string;
@@ -526,6 +548,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
   const resocketCount = Number(rework.find((r) => r.reworkType === "resocket")?.n ?? 0);
   return {
     id: row.id,
+    expertUserId: row.expertUserId,
     expertName: row.expertName ?? null,
     serviceType: row.serviceType,
     status: row.status,
