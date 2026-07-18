@@ -570,10 +570,36 @@ export class DatabaseStorage implements IStorage {
         isMedicalSupport: Boolean(target.isMedicalSupport || source.isMedicalSupport),
         totalCost: (target.totalCost || 0) + (source.totalCost || 0),
       };
+      // Arabic labels for the detail fields, used when preserving a conflicting
+      // source value below.
+      const fieldLabels: Record<string, string> = {
+        phone: "الهاتف", address: "العنوان", weight: "الوزن", height: "الطول",
+        injuryCause: "سبب الإصابة", injuryDate: "تاريخ الإصابة",
+        amputationSite: "موقع البتر", prostheticType: "نوع الطرف",
+        siliconType: "نوع السيليكون", siliconSize: "قياس السيليكون",
+        suspensionSystem: "نظام التعليق", footType: "نوع القدم",
+        footSize: "قياس الحذاء", kneeJointType: "نوع مفصل الركبة",
+        diseaseType: "التشخيص", injuryType: "نوع الإصابة", injuryArea: "منطقة الإصابة",
+        injuries: "الإصابات", treatmentType: "نوع العلاج", supportType: "نوع المسند",
+        injurySide: "الجهة",
+      };
+      // Any source value that would otherwise be dropped (target already has a
+      // DIFFERENT value) is preserved into notes so a merge NEVER silently
+      // loses details a staff member entered.
+      const preserved: string[] = [];
       for (const f of fillable) {
         const tv = (target as any)[f];
         const sv = (source as any)[f];
-        if ((tv === null || tv === undefined || tv === "") && sv) patch[f] = sv;
+        const tEmpty = tv === null || tv === undefined || tv === "";
+        if (tEmpty && sv) {
+          patch[f] = sv; // union: fill the gap from the source
+        } else if (!tEmpty && sv && String(tv) !== String(sv) && f !== "generalNotes") {
+          preserved.push(`${fieldLabels[f] ?? f}: ${sv}`);
+        }
+      }
+      if (preserved.length > 0) {
+        const stamp = `— من الملف المدموج #${sourceId}: ${preserved.join("، ")}`;
+        patch.generalNotes = target.generalNotes ? `${target.generalNotes}\n${stamp}` : stamp;
       }
       const [patient] = await tx.update(patients)
         .set(patch)

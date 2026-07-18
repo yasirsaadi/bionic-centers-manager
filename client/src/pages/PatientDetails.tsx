@@ -3,6 +3,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
+import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
 import { MoneyInput } from "@/components/ui/money-input";
 import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
@@ -822,124 +823,15 @@ export default function PatientDetails() {
                   )}
                 </div>
               )}
-              {patient.isPhysiotherapy && (() => {
-                let injuriesList: { type: string; area: string; side: string }[] = [];
-                if (patient.injuries) {
-                  try {
-                    const parsed = JSON.parse(patient.injuries);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                      injuriesList = parsed.filter((e: any) => e.type || e.area);
-                    }
-                  } catch {}
-                }
-                if (injuriesList.length === 0 && (patient.injuryType || patient.injuryArea)) {
-                  const types = patient.injuryType?.split(/، |, /).filter(Boolean) || [];
-                  const areas = patient.injuryArea?.split(/، |, /).filter(Boolean) || [];
-                  const maxLen = Math.max(types.length, areas.length, 1);
-                  for (let i = 0; i < maxLen; i++) {
-                    injuriesList.push({ type: types[i] || "", area: areas[i] || "", side: "" });
-                  }
-                }
-                if (injuriesList.length === 0) return null;
-                return (
-                  <div className="pb-4 border-b border-dashed">
-                    <p className="text-muted-foreground mb-2">{t.patientDetails.injuries} ({injuriesList.length})</p>
-                    <div className="space-y-2">
-                      {injuriesList.map((injury, i) => (
-                        <div key={i} className="flex flex-wrap items-center gap-2" data-testid={`injury-entry-${i}`}>
-                          <Badge variant="secondary" className="text-xs">{i + 1}</Badge>
-                          {injury.type && <Badge variant="secondary" className="text-xs" data-testid={`badge-injury-type-${i}`}>{translateInjuryType(injury.type)}</Badge>}
-                          {injury.area && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-area-${i}`}>{translateInjuryArea(injury.area)}</Badge>}
-                          {injury.side && <Badge variant="outline" className="text-xs" data-testid={`badge-injury-side-${i}`}>{translateInjurySide(injury.side)}</Badge>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-              <div>
-                <p className="text-muted-foreground mb-1">
-                  {patient.isAmputee ? t.patientDetails.diagnosisCondition : patient.isMedicalSupport ? (t.patientForm?.supportType || "نوع التقويمي") : t.patientDetails.diagnosisCondition}
-                </p>
-                <p className="font-semibold text-base">
-                  {patient.isAmputee ? patient.amputationSite : patient.isMedicalSupport ? patient.supportType : patient.diseaseType}
-                </p>
-              </div>
-              {patient.isMedicalSupport && patient.injurySide && (
-                <div>
-                  <p className="text-muted-foreground mb-1">{t.patientDetails.injurySide}</p>
-                  <p className="font-semibold text-base">{patient.injurySide}</p>
-                </div>
-              )}
-              {patient.isAmputee && patient.prostheticType && (
-                <div>
-                  <p className="text-muted-foreground mb-1">{t.patientDetails.prostheticType}</p>
-                  <p className="font-semibold text-base">{patient.prostheticType}</p>
-                </div>
-              )}
-              {patient.isAmputee && (patient.siliconType || patient.siliconSize || patient.suspensionSystem) && (
-                <div className="grid grid-cols-3 gap-4">
-                  {patient.siliconType && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">{t.patientDetails.siliconType}</p>
-                      <p className="font-semibold text-base">{patient.siliconType}</p>
-                    </div>
-                  )}
-                  {patient.siliconSize && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">{t.patientDetails.siliconSize}</p>
-                      <p className="font-semibold text-base">{patient.siliconSize}</p>
-                    </div>
-                  )}
-                  {patient.suspensionSystem && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">{t.patientDetails.suspensionSystem}</p>
-                      <p className="font-semibold text-base">{patient.suspensionSystem}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {patient.isAmputee && patient.footType && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-muted-foreground mb-1">{t.patientDetails.footType}</p>
-                    <p className="font-semibold text-base">{patient.footType}</p>
-                  </div>
-                  {patient.footSize && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">{t.patientDetails.footSize}</p>
-                      <p className="font-semibold text-base">{patient.footSize}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {patient.isAmputee && patient.kneeJointType && (
-                <div>
-                  <p className="text-muted-foreground mb-1">{t.patientDetails.kneeJointType}</p>
-                  <p className="font-semibold text-base">{patient.kneeJointType}</p>
-                </div>
-              )}
-              {patient.isPhysiotherapy && (() => {
-                const paymentTreatmentTypes = new Set<string>();
-                patient.payments?.forEach((p) => {
-                  if (p.paymentTreatmentType) {
-                    p.paymentTreatmentType.split(",").forEach((tt: string) => {
-                      const trimmed = tt.trim();
-                      if (trimmed) paymentTreatmentTypes.add(trimmed);
-                    });
-                  }
-                });
-                return paymentTreatmentTypes.size > 0 ? (
-                  <div>
-                    <p className="text-muted-foreground mb-1">{t.patientDetails.treatmentType}</p>
-                    <div className="flex flex-wrap gap-1">
-                      {Array.from(paymentTreatmentTypes).map((tt, i) => (
-                        <span key={i} className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-sm">{translateTreatmentType(tt)}</span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null;
-              })()}
+              {/* أقسام الحالات منفصلة — كل حالة يحملها المريض تظهر بتفاصيلها الكاملة */}
+              <CaseDetailSections
+                patient={patient}
+                t={t}
+                translateInjurySide={translateInjurySide}
+                translateInjuryType={translateInjuryType}
+                translateInjuryArea={translateInjuryArea}
+                translateTreatmentType={translateTreatmentType}
+              />
               {patient.patientClassification && (
                 <div className="pt-4 border-t border-dashed">
                   <p className="text-muted-foreground mb-1">{t.patientForm.patientClassification}</p>
