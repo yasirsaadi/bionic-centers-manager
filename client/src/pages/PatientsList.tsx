@@ -35,6 +35,28 @@ function getTodayDateString(): string {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 }
 
+// A patient can carry more than one case type at once (e.g. أطراف + مساند +
+// علاج طبيعي). The list used to show a single badge via an if/else chain, so a
+// second type stayed hidden. This renders ONE badge per active type so the
+// full picture is visible straight from the search results.
+function CaseTypeBadges({ patient, labels }: {
+  patient: { isAmputee: boolean | null; isPhysiotherapy: boolean | null; isMedicalSupport: boolean | null };
+  labels: { amputee: string; physiotherapy: string; medicalSupport: string };
+}) {
+  const types: { label: string; variant: "default" | "secondary" | "outline" }[] = [];
+  if (patient.isAmputee) types.push({ label: labels.amputee, variant: "default" });
+  if (patient.isPhysiotherapy) types.push({ label: labels.physiotherapy, variant: "secondary" });
+  if (patient.isMedicalSupport) types.push({ label: labels.medicalSupport, variant: "outline" });
+  if (types.length === 0) return <span className="text-slate-400">-</span>;
+  return (
+    <div className="flex flex-wrap gap-1 justify-end">
+      {types.map((tp) => (
+        <Badge key={tp.label} variant={tp.variant} className="font-normal text-xs shrink-0">{tp.label}</Badge>
+      ))}
+    </div>
+  );
+}
+
 export default function PatientsList() {
   const branchSession = useBranchSession();
   const { t, dir } = useTranslation();
@@ -218,7 +240,7 @@ export default function PatientsList() {
         "الاسم": patient.name,
         "الهاتف": patient.phone || "",
         "العمر": patient.age,
-        "الحالة": patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند طبية",
+        "الحالة": [patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند طبية" : null].filter(Boolean).join(" + ") || "-",
         "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
         "التكلفة الكلية": patient.totalCost || 0,
@@ -292,7 +314,7 @@ export default function PatientsList() {
                 <td>${patient.name}</td>
                 <td>${patient.phone || "-"}</td>
                 <td>${patient.age}</td>
-                <td>${patient.isAmputee ? "بتر" : patient.isPhysiotherapy ? "علاج طبيعي" : "مساند"}</td>
+                <td>${[patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند" : null].filter(Boolean).join(" + ") || "-"}</td>
                 <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
                 <td>${(patient.totalCost || 0).toLocaleString()}</td>
@@ -461,9 +483,7 @@ export default function PatientsList() {
                           </span>
                           <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
                         </div>
-                        <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
-                          {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-                        </Badge>
+                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} />
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-1 mb-2">
                         {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
@@ -525,9 +545,7 @@ export default function PatientsList() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal">
-                            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-                          </Badge>
+                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} />
                         </TableCell>
                         <TableCell className="text-slate-600">
                           {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
