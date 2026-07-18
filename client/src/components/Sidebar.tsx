@@ -60,6 +60,7 @@ export function Sidebar() {
   // badge honest without hammering the server.
   const alertEligible = !!branchSession && (
     branchSession.isAdmin ||
+    permissions.canWorkAsExpert ||
     ["prosthetics_expert", "branch_manager", "reception", "accountant"].includes(branchSession.role ?? "")
   );
   const { data: alertData } = useQuery<{ alertCount: number }>({
@@ -113,9 +114,14 @@ export function Sidebar() {
 
     // Role-restricted items: an allow-list of roles. Admins always pass
     // (they have isAdmin, not a `role`); a non-admin must match the list.
+    // The expert CAPABILITY flag also grants any expert-gated item, so an
+    // accountant/manager who also works as an expert sees the manufacturing
+    // board even though their primary role isn't prosthetics_expert.
     const itemRoles = (item as any).roles as string[] | undefined;
-    if (itemRoles && !branchSession?.isAdmin && !itemRoles.includes(branchSession?.role ?? "")) {
-      return false;
+    if (itemRoles && !branchSession?.isAdmin) {
+      const matchesRole = itemRoles.includes(branchSession?.role ?? "");
+      const expertBypass = itemRoles.includes("prosthetics_expert") && permissions.canWorkAsExpert;
+      if (!matchesRole && !expertBypass) return false;
     }
     
     // Check branch settings for non-admin users

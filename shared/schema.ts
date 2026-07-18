@@ -562,6 +562,13 @@ export const systemUsers = pgTable("system_users", {
   canEnterSessions: boolean("can_enter_sessions").default(false),
   canManageSessionTargets: boolean("can_manage_session_targets").default(false),
   canViewSessionsReport: boolean("can_view_sessions_report").default(false),
+  // Prosthetics-expert CAPABILITY, independent of the primary `role`. Lets a
+  // user whose main job is accountant / branch_manager ALSO be assigned work
+  // orders and operate the manufacturing board — while keeping every
+  // permission of their primary role (an accountant-expert still sees money).
+  // The financial lock-out stays tied to role === 'prosthetics_expert' (a
+  // *pure* expert), so this flag never leaks financial data.
+  canWorkAsExpert: boolean("can_work_as_expert").default(false),
   language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

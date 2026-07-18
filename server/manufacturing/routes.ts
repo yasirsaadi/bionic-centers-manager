@@ -32,7 +32,14 @@ function getSession(req: Req) {
 }
 
 export function registerManufacturingRoutes(app: Express, isAuthenticated: any) {
+  // A PURE expert: their primary job is expert. Drives the restrictions
+  // (financial lock-out, "experts use the order page", hidden dashboard).
   const isExpert = (s: ReturnType<typeof getSession>) => s.role === store.EXPERT_ROLE;
+  // Anyone who may OPERATE the manufacturing board: a pure expert OR a user
+  // carrying the expert capability flag (accountant/manager who also does mold
+  // work). This is additive to their base role — it never removes access.
+  const worksAsExpert = (s: ReturnType<typeof getSession>) =>
+    s.role === store.EXPERT_ROLE || Boolean(s.permissions?.canWorkAsExpert);
   const isManager = (s: ReturnType<typeof getSession>) => s.role === "branch_manager";
 
   // Can this manager/admin session act on `branchId`?
@@ -66,7 +73,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // ---- expert's own orders ---------------------------------------------------
   app.get("/api/manufacturing/my-orders", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!isExpert(s) || !s.userId) return res.status(403).json({ error: "غير مصرح" });
+    if (!worksAsExpert(s) || !s.userId) return res.status(403).json({ error: "غير مصرح" });
     // Optional branch filter must be one of the expert's own branches.
     let branchId: number | undefined;
     if (req.query.branchId) {
@@ -125,12 +132,19 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const raw = await store.getRawOrder(id);
     if (!raw) return res.status(404).json({ error: "الأمر غير موجود" });
 
-    // Authorization BEFORE any patient data is loaded.
-    if (isExpert(s)) {
-      if (raw.expertUserId !== s.userId) return res.status(403).json({ error: "غير مصرح" });
-    } else if (isManager(s)) {
-      if (!branchInScope(s, raw.branchId)) return res.status(403).json({ error: "غير مصرح" });
-    } else if (!s.isAdmin) {
+    // Authorization BEFORE any patient data is loaded. Access is the UNION of
+    // the caller's roles: admin (all), manager (own branches), and anyone who
+    // works as an expert may open an order ASSIGNED to them. This lets a
+    // manager-expert keep branch-wide access and an accountant-expert reach
+    // their own assigned orders.
+    const assignedToMe = worksAsExpert(s) && raw.expertUserId === s.userId;
+    if (s.isAdmin) {
+      // all
+    } else if (isManager(s) && branchInScope(s, raw.branchId)) {
+      // own branch
+    } else if (assignedToMe) {
+      // own assigned order
+    } else {
       return res.status(403).json({ error: "غير مصرح" });
     }
     res.json(await store.getOrderDetail(id));
@@ -192,11 +206,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (Number.isNaN(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
     const raw = await store.getRawOrder(id);
     if (!raw) { res.status(404).json({ error: "الأمر غير موجود" }); return null; }
-    if (isExpert(s)) {
-      if (raw.expertUserId !== s.userId) { res.status(403).json({ error: "غير مصرح" }); return null; }
-    } else if (isManager(s)) {
-      if (!branchInScope(s, raw.branchId)) { res.status(403).json({ error: "غير مصرح" }); return null; }
-    } else if (!s.isAdmin) {
+    // Same union model as the read path: admin, manager-in-branch, or anyone
+    // working as the assigned expert may WRITE to the order.
+    const assignedToMe = worksAsExpert(s) && raw.expertUserId === s.userId;
+    if (s.isAdmin) {
+      // all
+    } else if (isManager(s) && branchInScope(s, raw.branchId)) {
+      // own branch
+    } else if (assignedToMe) {
+      // own assigned order
+    } else {
       res.status(403).json({ error: "غير مصرح" }); return null;
     }
     return raw;
@@ -416,6 +435,23 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const canView = s.isAdmin || isManager(s) || s.permissions?.canViewPatients;
     if (!canView) return res.status(403).json({ error: "غير مصرح" });
     res.json(await store.getActiveOrderSummaryForPatient(patientId));
+  });
+
+  // ---- patient-page FULL manufacturing history (all orders over time) --------
+  // Each returning visit that needed work is its own order with its own expert
+  // and service type, so the patient page can show the whole story instead of
+  // only the latest order.
+  app.get("/api/manufacturing/patient/:patientId/orders", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (isExpert(s)) return res.status(403).json({ error: "غير مصرح" }); // experts use the order page
+    const patientId = parseInt(req.params.patientId);
+    if (Number.isNaN(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح" });
+    const canView = s.isAdmin || isManager(s) || s.permissions?.canViewPatients;
+    if (!canView) return res.status(403).json({ error: "غير مصرح" });
+    res.json(await store.getAllOrdersForPatient(patientId));
   });
 }
 

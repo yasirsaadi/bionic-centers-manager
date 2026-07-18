@@ -1313,6 +1313,9 @@ export default function AdminSettings() {
     canEnterSessions: false,
     canManageSessionTargets: false,
     canViewSessionsReport: false,
+    // Expert capability, independent of the primary role — lets an accountant
+    // or branch manager ALSO be assigned prosthetics work orders.
+    canWorkAsExpert: false,
     language: "ar",
   });
 
@@ -1450,6 +1453,7 @@ export default function AdminSettings() {
       canEnterSessions: false,
       canManageSessionTargets: false,
       canViewSessionsReport: false,
+      canWorkAsExpert: false,
       language: "ar",
     });
   };
@@ -1491,6 +1495,7 @@ export default function AdminSettings() {
       canEnterSessions: (user as any).canEnterSessions ?? false,
       canManageSessionTargets: (user as any).canManageSessionTargets ?? false,
       canViewSessionsReport: (user as any).canViewSessionsReport ?? false,
+      canWorkAsExpert: (user as any).canWorkAsExpert ?? false,
       language: (user as any).language || "ar",
     });
     setShowUserDialog(true);
@@ -2863,6 +2868,27 @@ export default function AdminSettings() {
                       <Label htmlFor="canViewSessionsReport" className="text-sm">عرض تقرير الجلسات</Label>
                     </div>
                   </div>
+                </div>
+
+                {/* Expert capability — independent of the primary role. */}
+                <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="canWorkAsExpert"
+                      checked={userFormData.canWorkAsExpert}
+                      onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canWorkAsExpert: checked }))}
+                      data-testid="switch-canWorkAsExpert"
+                      disabled={userFormData.role === "prosthetics_expert"}
+                    />
+                    <Label htmlFor="canWorkAsExpert" className="text-sm font-semibold">
+                      يعمل أيضاً كخبير أطراف
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {userFormData.role === "prosthetics_expert"
+                      ? "هذا المستخدم خبير أطراف أصلاً (دوره الأساسي)."
+                      : "يظهر في قائمة الخبراء ويُسنَد له أوامر تصنيع ويفتح لوحة التصنيع — مع احتفاظه بكامل صلاحيات دوره الأساسي (مثل محاسب خبير، أو مدير فرع خبير)."}
+                  </p>
                 </div>
               </div>
             </div>

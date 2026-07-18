@@ -351,6 +351,10 @@ export async function registerRoutes(
             canEnterSessions: isAdmin || grantAll || isReception || systemUser.canEnterSessions,
             canManageSessionTargets: isAdmin || grantAll || systemUser.canManageSessionTargets,
             canViewSessionsReport: isAdmin || grantAll || systemUser.canViewSessionsReport,
+            // Prosthetics-expert capability (independent of primary role). A
+            // pure expert (role === prosthetics_expert) implicitly works as an
+            // expert too; anyone else needs the explicit flag on their row.
+            canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
           };
 
           // Store session with user permissions
@@ -943,7 +947,13 @@ export async function registerRoutes(
       }
       
       const { password, ...userData } = req.body;
-      
+
+      // Expert capability flag: normalise to a real boolean (a "false" string
+      // would be truthy). Independent of the primary role.
+      if (userData.canWorkAsExpert !== undefined) {
+        userData.canWorkAsExpert = userData.canWorkAsExpert === true || userData.canWorkAsExpert === "true";
+      }
+
       if (!userData.username || userData.username.length < 1) {
         return res.status(400).json({ message: "اسم المستخدم مطلوب" });
       }
@@ -1008,7 +1018,12 @@ export async function registerRoutes(
       
       const id = Number(req.params.id);
       const { password, ...userData } = req.body;
-      
+
+      // Expert capability flag: normalise to a real boolean when present.
+      if (userData.canWorkAsExpert !== undefined) {
+        userData.canWorkAsExpert = userData.canWorkAsExpert === true || userData.canWorkAsExpert === "true";
+      }
+
       // Validate role if provided
       if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });

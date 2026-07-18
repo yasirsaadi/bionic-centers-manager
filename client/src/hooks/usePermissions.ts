@@ -20,6 +20,7 @@ interface UserPermissions {
   canEnterSessions: boolean;
   canManageSessionTargets: boolean;
   canViewSessionsReport: boolean;
+  canWorkAsExpert: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -42,6 +43,7 @@ const defaultAdminPermissions: UserPermissions = {
   canEnterSessions: true,
   canManageSessionTargets: true,
   canViewSessionsReport: true,
+  canWorkAsExpert: false,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -64,6 +66,7 @@ const defaultBranchPermissions: UserPermissions = {
   canEnterSessions: false,
   canManageSessionTargets: false,
   canViewSessionsReport: false,
+  canWorkAsExpert: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -90,6 +93,7 @@ export function usePermissions(): UserPermissions {
       canEnterSessions: false,
       canManageSessionTargets: false,
       canViewSessionsReport: false,
+      canWorkAsExpert: false,
     };
   }
 
@@ -115,6 +119,7 @@ export function usePermissions(): UserPermissions {
       canEnterSessions: perms.canEnterSessions ?? false,
       canManageSessionTargets: perms.canManageSessionTargets ?? false,
       canViewSessionsReport: perms.canViewSessionsReport ?? false,
+      canWorkAsExpert: perms.canWorkAsExpert ?? false,
     };
   }
   
