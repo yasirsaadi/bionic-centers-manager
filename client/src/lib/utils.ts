@@ -79,3 +79,14 @@ export function toEnglishDigits(str: string): string {
   }
   return result;
 }
+
+// Arabic-normalized comparison: unifies ة/ه, أ/إ/آ/ا, ى/ي and strips
+// diacritics so spelling variants of the same name match in searches.
+export function normalizeArabic(s: string): string {
+  return (s || "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[ً-ْٰ]/g, "")
+    .toLowerCase();
+}

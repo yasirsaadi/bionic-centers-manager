@@ -220,7 +220,12 @@ function orderConditions(f: OrderFilters) {
   if (f.status) c.push(eq(WO.status, f.status));
   if (f.completed === true) c.push(eq(WO.status, "completed"));
   if (f.completed === false) c.push(sql`${WO.status} <> 'completed'`);
-  if (f.search && f.search.trim()) c.push(sql`${patients.name} ILIKE ${"%" + f.search.trim() + "%"}`);
+  // Arabic-normalized match (ة↔ه, أ/إ/آ↔ا, ى↔ي) so spelling variants of the
+  // same name still match.
+  if (f.search && f.search.trim()) {
+    const like = "%" + f.search.trim() + "%";
+    c.push(sql`translate(${patients.name}, 'أإآةى', 'اااهي') ILIKE translate(${like}, 'أإآةى', 'اااهي')`);
+  }
   return c;
 }
 

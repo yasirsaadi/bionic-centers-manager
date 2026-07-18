@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import { normalizeArabic } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -179,18 +180,19 @@ export default function FollowUps() {
     },
   });
 
-  const q = search.trim().toLowerCase();
+  const q = normalizeArabic(search.trim());
   const branchId = branchFilter === "all" ? null : Number(branchFilter);
 
-  // Active list: filter by branch (admin) + search (name or phone).
+  // Active list: filter by branch (admin) + search (name or phone),
+  // Arabic-normalized so ة/ه etc. variants still match.
   const filteredActive = useMemo(
     () =>
       reminders.filter((r) => {
         if (branchId !== null && r.branchId !== branchId) return false;
         if (!q) return true;
         return (
-          r.name.toLowerCase().includes(q) ||
-          (r.phone ?? "").toLowerCase().includes(q)
+          normalizeArabic(r.name).includes(q) ||
+          (r.phone ?? "").includes(q)
         );
       }),
     [reminders, branchId, q]
@@ -202,7 +204,7 @@ export default function FollowUps() {
       history.filter((h) => {
         if (branchId !== null && h.branchId !== branchId) return false;
         if (!q) return true;
-        return (h.patientName ?? "").toLowerCase().includes(q);
+        return normalizeArabic(h.patientName ?? "").includes(q);
       }),
     [history, branchId, q]
   );

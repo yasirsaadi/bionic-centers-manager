@@ -1248,7 +1248,13 @@ export async function registerRoutes(
       // Searching intentionally ignores the date filter (and, for admins,
       // the branch filter) — same behaviour the registry always had.
       const like = `%${search}%`;
-      conditions.push(sql`(${patients.name} ILIKE ${like} OR ${patients.phone} LIKE ${like} OR ${patients.medicalCondition} LIKE ${like})`);
+      // Arabic-normalized name match: ة↔ه, أ/إ/آ↔ا, ى↔ي on BOTH sides, so
+      // searching "عطية" finds a patient stored as "عطيه" (and vice versa).
+      conditions.push(sql`(
+        translate(${patients.name}, 'أإآةى', 'اااهي') ILIKE translate(${like}, 'أإآةى', 'اااهي')
+        OR ${patients.phone} LIKE ${like}
+        OR ${patients.medicalCondition} LIKE ${like}
+      )`);
     } else if (visitDate) {
       // Patients who had a (non-deleted) visit on that Baghdad calendar day.
       conditions.push(sql`EXISTS (
