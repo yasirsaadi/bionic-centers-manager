@@ -42,7 +42,12 @@ export function ManufacturingEditCard({ patient }: {
   const summaryKey = [`/api/manufacturing/patient/${patient.id}/summary`];
   const { data: summary } = useQuery<Summary | null>({
     queryKey: summaryKey,
-    enabled: !isExpertRole && !!patient.id && Boolean(patient.isAmputee || patient.isMedicalSupport),
+    // Enabled for every non-expert viewer regardless of the patient's
+    // case-type flag: the work order is the source of truth. A patient with an
+    // active order but a missing isAmputee flag (e.g. after a merge/import)
+    // must still get the card. The endpoint returns null when no order exists,
+    // so a stray request for a non-manufacturing patient is cheap and harmless.
+    enabled: !isExpertRole && !!patient.id,
     queryFn: async () => {
       const res = await fetch(`/api/manufacturing/patient/${patient.id}/summary`, { credentials: "include" });
       if (!res.ok) return null;

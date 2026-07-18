@@ -347,9 +347,11 @@ export default function EditPatient() {
         </div>
       </div>
 
-      {(patient.isAmputee || patient.isMedicalSupport) && (
-        <ManufacturingEditCard patient={patient} />
-      )}
+      {/* The card self-hides when there's no active work order. We do NOT gate
+          on the patient's case-type flag here: a work order is the source of
+          truth, and gating on the flag hid the card whenever the flag was
+          missing (e.g. after certain merges/imports). */}
+      <ManufacturingEditCard patient={patient} />
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
