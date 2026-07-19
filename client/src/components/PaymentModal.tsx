@@ -39,6 +39,11 @@ interface PaymentModalProps {
   patientId: number;
   branchId: number;
   isPhysiotherapy?: boolean;
+  // When the patient also carries these case types, offer them in the
+  // treatment-type dropdown so a returning patient paying a prosthetics /
+  // medical-support balance is tagged to the right case.
+  isAmputee?: boolean;
+  isMedicalSupport?: boolean;
 }
 
 interface TreatmentEntry {
@@ -67,13 +72,22 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`;
 }
 
-const TREATMENT_TYPE_OPTIONS = [
+const TREATMENT_TYPE_OPTIONS: { value: string; labelKey?: string; label?: string }[] = [
   { value: "استشارة طبية", labelKey: "medicalConsultation" as const },
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
+
+// Prosthetics / medical-support payment types: a single balance, entered
+// manually, with NO per-session pricing or session count.
+const AMPUTEE_TYPE = { value: "أطراف صناعية", label: "أطراف صناعية" };
+const SUPPORT_TYPE = { value: "مساند طبية", label: "مساند طبية" };
+// Types that take a MANUAL amount (no auto pricing) and have no sessions.
+const MANUAL_AMOUNT_TYPES = new Set<string>([AMPUTEE_TYPE.value, SUPPORT_TYPE.value]);
+// Types with no session-count input at all.
+const NON_SESSION_TYPES = new Set<string>(["استشارة طبية", AMPUTEE_TYPE.value, SUPPORT_TYPE.value]);
 
 const TREATMENT_PRICES: Record<string, number> = {
   "استشارة طبية": 0,
@@ -83,8 +97,17 @@ const TREATMENT_PRICES: Record<string, number> = {
   "أبر صينية": 25000,
 };
 
-export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentModalProps) {
+export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport }: PaymentModalProps) {
   const [open, setOpen] = useState(false);
+
+  // Physio types (from i18n) plus أطراف/مساند when the patient carries those
+  // case types — so a returning patient can pay a prosthetics/support balance
+  // and have it tagged correctly.
+  const treatmentOptions = [
+    ...TREATMENT_TYPE_OPTIONS,
+    ...(isAmputee ? [AMPUTEE_TYPE] : []),
+    ...(isMedicalSupport ? [SUPPORT_TYPE] : []),
+  ];
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddPayment();
@@ -114,6 +137,8 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
 
     const updatedEntries = treatmentEntries.map(entry => {
       if (!entry.treatmentType) return { ...entry, cost: 0 };
+      // أطراف / مساند: manual amount, no sessions — leave the cost alone.
+      if (MANUAL_AMOUNT_TYPES.has(entry.treatmentType)) return { ...entry, sessionCount: 0 };
       const price = TREATMENT_PRICES[entry.treatmentType];
       if (price === undefined) return entry;
       if (entry.treatmentType === "استشارة طبية") {
@@ -130,15 +155,27 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
       setTreatmentEntries(updatedEntries);
     }
 
+    const allTypes = updatedEntries.map(e => e.treatmentType).filter(Boolean).join("، ");
+    form.setValue("paymentTreatmentType", allTypes);
+
+    // For a prosthetics / medical-support balance the staff types the amount
+    // themselves; never auto-compute or zero it out. No sessions either.
+    const hasManualType = updatedEntries.some(e => MANUAL_AMOUNT_TYPES.has(e.treatmentType));
+    if (hasManualType) {
+      form.setValue("sessionCount", 0 as any);
+      return;
+    }
+
     const totalCost = updatedEntries.filter(e => !e.isFree).reduce((sum, e) => sum + e.cost, 0);
     form.setValue("amount", totalCost);
 
     const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
     form.setValue("sessionCount", totalSessions as any);
-
-    const allTypes = updatedEntries.map(e => e.treatmentType).filter(Boolean).join("، ");
-    form.setValue("paymentTreatmentType", allTypes);
   }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride]);
+
+  // Whether any selected entry is a manual-amount (أطراف/مساند) type — used to
+  // keep the amount field editable and hide session inputs.
+  const hasManualType = treatmentEntries.some(e => MANUAL_AMOUNT_TYPES.has(e.treatmentType));
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     if (isPhysiotherapy !== false) {
@@ -237,8 +274,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                           value={entry.treatmentType}
                           onValueChange={(val) => {
                             const updated = [...treatmentEntries];
-                            updated[index] = { ...updated[index], treatmentType: val, sessionCount: val === "استشارة طبية" ? 0 : updated[index].sessionCount, cost: 0 };
+                            updated[index] = { ...updated[index], treatmentType: val, sessionCount: NON_SESSION_TYPES.has(val) ? 0 : updated[index].sessionCount, cost: 0 };
                             setTreatmentEntries(updated);
+                            // Keep false so the effect still writes the type tag;
+                            // the effect itself skips auto-pricing for manual types.
                             setManualCostOverride(false);
                           }}
                         >
@@ -246,9 +285,9 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                             <SelectValue placeholder={t.modals.selectTreatmentType} />
                           </SelectTrigger>
                           <SelectContent>
-                            {TREATMENT_TYPE_OPTIONS.map((option) => (
+                            {treatmentOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
-                                {t.modals[option.labelKey]}
+                                {(option as any).label ?? (t.modals as any)[(option as any).labelKey]}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -261,10 +300,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                         </span>
                       )}
 
-                      {entry.treatmentType && entry.treatmentType !== "استشارة طبية" && (
+                      {entry.treatmentType && !NON_SESSION_TYPES.has(entry.treatmentType) && (
                         <div className="w-[80px]">
-                          <Input 
-                            type="number" 
+                          <Input
+                            type="number"
                             className="text-left font-mono" 
                             placeholder={t.modals.sessionCount}
                             data-testid={`input-payment-session-count-${index}`}
@@ -281,7 +320,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                         </div>
                       )}
 
-                      {!entry.isFree && (
+                      {!entry.isFree && !MANUAL_AMOUNT_TYPES.has(entry.treatmentType) && (
                         <div className="text-sm font-mono text-muted-foreground">
                           {entry.cost.toLocaleString()}
                         </div>
@@ -339,10 +378,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy }: PaymentMo
                   <FormLabel>{t.modals.paidAmount}</FormLabel>
                   <FormControl>
                     <MoneyInput
-                      className={`${!isAdmin && isPhysiotherapy === true ? "bg-muted" : ""}`}
+                      className={`${!isAdmin && isPhysiotherapy === true && !hasManualType ? "bg-muted" : ""}`}
                       placeholder={t.modals.enterAmount}
                       data-testid="input-payment-amount"
-                      readOnly={!isAdmin && isPhysiotherapy === true}
+                      readOnly={!isAdmin && isPhysiotherapy === true && !hasManualType}
                       value={field.value === 0 ? "" : field.value}
                       onValueChange={(n) => {
                         field.onChange(n);
