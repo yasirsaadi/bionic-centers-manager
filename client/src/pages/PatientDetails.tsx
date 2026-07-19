@@ -913,7 +913,7 @@ export default function PatientDetails() {
 
               {permissions.canAddPayments && (
               <div className="pt-4 border-t border-dashed">
-                <PaymentModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
+                <PaymentModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
               </div>
               )}
             </div>
