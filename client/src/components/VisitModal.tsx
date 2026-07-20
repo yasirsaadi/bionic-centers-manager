@@ -30,7 +30,7 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2, Calendar, Wrench } from "lucide-react";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 
@@ -72,6 +72,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   const { mutate, isPending } = useAddVisit();
   const { t } = useTranslation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const dir = t.dir;
 
   // Maintenance path — only offered to patients who own a device.
@@ -81,12 +82,15 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [maintPending, setMaintPending] = useState(false);
 
-  const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
+  // Do NOT swallow fetch errors as an empty list — a transient 403/500 would
+  // otherwise be cached as "no experts" and block the maintenance path. Throw
+  // so React Query records it as an error we can surface.
+  const { data: experts = [], isError: expertsError, isLoading: expertsLoading } = useQuery<{ id: number; displayName: string }[]>({
     queryKey: ["/api/manufacturing/experts", branchId],
     enabled: open && purpose === "maintenance" && hasDevice,
     queryFn: async () => {
       const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`, { credentials: "include" });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
   });
@@ -107,20 +111,23 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
-  // Maintenance: create a NEW work order (purpose=maintenance) with an expert +
-  // delivery date, then log the visit row so the patient's timeline shows they
-  // came for صيانة. The work order goes first — if the patient still has an
-  // active build (409), we abort BEFORE writing a visit.
+  // Maintenance: ONE atomic call creates the maintenance work order AND the
+  // visit row together (server transaction). Either both are recorded or
+  // neither — no orphaned order, no half-recorded visit. If the patient still
+  // has an open build, the server returns 409 and nothing is written.
   async function submitMaintenance(values: z.infer<typeof formSchema>) {
     if (!expertUserId) { toast({ title: "اختر الخبير المسؤول عن الصيانة", variant: "destructive" }); return; }
     if (!expectedDeliveryDate) { toast({ title: "تاريخ التسليم المتوقع إلزامي", variant: "destructive" }); return; }
     setMaintPending(true);
     try {
-      const res = await fetch("/api/manufacturing/orders", {
+      const res = await fetch("/api/manufacturing/maintenance-visit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ patientId, expertUserId: Number(expertUserId), expectedDeliveryDate, purpose: "maintenance" }),
+        body: JSON.stringify({
+          patientId, expertUserId: Number(expertUserId), expectedDeliveryDate,
+          notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
+        }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -128,19 +135,13 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         setMaintPending(false);
         return;
       }
-      // Work order created — now record the visit row (reason defaults to صيانة).
-      mutate({
-        patientId, branchId,
-        notes: values.notes?.trim() || "صيانة طرف/مسند",
-        treatmentType: null,
-        customDate: values.customDate || null,
-      } as any, {
-        onSuccess: () => {
-          toast({ title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
-          setMaintPending(false); setOpen(false); resetAll();
-        },
-        onError: () => { setMaintPending(false); },
-      });
+      // Refresh the patient's visits, payments and manufacturing views.
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
+      toast({ title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
+      setMaintPending(false); setOpen(false); resetAll();
     } catch {
       toast({ title: "تعذّر فتح الصيانة", variant: "destructive" });
       setMaintPending(false);
