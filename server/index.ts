@@ -122,6 +122,12 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       initBackupScheduler();
+      // One-time patient-cases backfill runs in the BACKGROUND, AFTER the
+      // server is listening — so a large dataset never blocks/times-out the
+      // deploy. It's guarded (runs once) and fails safe.
+      import("./migrations/backfill_all_cases")
+        .then((m) => m.backfillAllPatientCases())
+        .catch((e) => console.error("[backfill] launch failed:", e));
     },
   );
 })();
