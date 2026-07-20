@@ -472,6 +472,16 @@ export class DatabaseStorage implements IStorage {
       await db.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
     }
 
+    // Any still-unattributed rows (caseId IS NULL) — e.g. physio/untagged rows,
+    // or rows whose case link was cleared during a merge — attach to the physio
+    // case, or the primary case if there is none. Guarantees every visit/payment
+    // shows under a case instead of vanishing from all per-case views.
+    const fallbackId = idOf("physiotherapy") ?? idOf("prosthetic") ?? idOf("medical_support") ?? cases[0]?.id ?? null;
+    if (fallbackId) {
+      await db.update(payments).set({ caseId: fallbackId }).where(and(eq(payments.patientId, patientId), isNull(payments.caseId)));
+      await db.update(visits).set({ caseId: fallbackId }).where(and(eq(visits.patientId, patientId), isNull(visits.caseId)));
+    }
+
     // ---- cost floor: a case can never cost LESS than what was paid into it --
     // The app never stored a per-service price (work orders carry no cost), so
     // the truest recorded figure for what a طرف/مسند cost is the money recorded
@@ -743,10 +753,42 @@ export class DatabaseStorage implements IStorage {
     moved: Record<string, number>;
   }> {
     if (sourceId === targetId) throw new Error("لا يمكن دمج الملف مع نفسه");
-    return await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const [source] = await tx.select().from(patients).where(eq(patients.id, sourceId));
       const [target] = await tx.select().from(patients).where(eq(patients.id, targetId));
       if (!source || !target) throw new Error("أحد الملفين غير موجود");
+
+      // Combine the two patients' per-case allocations. The per-case table
+      // (patient_cases) references the source patient, and the source's
+      // visits/payments point at ITS case rows — so before deleting the source
+      // we fold each source case into the target: add its cost into the target's
+      // same-type case (or create that case on the target carrying the
+      // cost+details), then re-point the source's visits/payments from its case
+      // to the target's. Finally drop the source's case rows so deleting the
+      // source patient won't violate the FK. This PRESERVES the per-case cost
+      // split (sum of case costs stays == the summed total_cost) instead of
+      // losing the source's case costs. Without this the delete failed with
+      // "violates foreign key constraint patient_cases_patient_id_fkey".
+      const sourceCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, sourceId));
+      const targetCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, targetId));
+      for (const sc of sourceCases) {
+        let tc = targetCases.find((c) => c.caseType === sc.caseType);
+        if (!tc) {
+          const [created] = await tx.insert(patientCases).values({
+            patientId: targetId, branchId: target.branchId, caseType: sc.caseType,
+            cost: sc.cost || 0, details: sc.details ?? {},
+          }).returning();
+          tc = created;
+          targetCases.push(created);
+        } else {
+          await tx.update(patientCases).set({ cost: (tc.cost || 0) + (sc.cost || 0), updatedAt: new Date() }).where(eq(patientCases.id, tc.id));
+        }
+        await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
+        await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
+      }
+      if (sourceCases.length > 0) {
+        await tx.delete(patientCases).where(eq(patientCases.patientId, sourceId));
+      }
 
       const moved: Record<string, number> = {};
       const repoint = async (label: string, table: any, column: any) => {
@@ -821,6 +863,12 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(patients).where(eq(patients.id, sourceId));
       return { patient, moved };
     });
+    // Rebuild the target's cases from the merged data — add any case type the
+    // source brought in, re-attribute the moved visits/payments to the target's
+    // cases, and apply the cost floor. Runs AFTER commit so syncPatientCases
+    // (pooled connection) sees the merged rows. Never fails the merge itself.
+    try { await this.syncPatientCases(targetId); } catch (e) { console.error("[mergePatients] case sync failed:", e); }
+    return result;
   }
 
   async transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined> {
