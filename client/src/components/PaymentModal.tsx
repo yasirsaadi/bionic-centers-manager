@@ -104,15 +104,16 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   // case types — so a returning patient can pay a prosthetics/support balance
   // and have it tagged correctly.
   const treatmentOptions = [
-    // Physio types only for physiotherapy patients; أطراف/مساند for those types.
+    // Physio types only for physiotherapy patients.
     ...(isPhysiotherapy !== false ? TREATMENT_TYPE_OPTIONS : []),
-    ...(isAmputee ? [AMPUTEE_TYPE] : []),
-    ...(isMedicalSupport ? [SUPPORT_TYPE] : []),
+    // أطراف / مساند are ALWAYS offered (owner's choice): a returning patient
+    // may pay a prosthetics/support balance regardless of which case flags are
+    // currently set on their record, so the staff can always tag it correctly.
+    AMPUTEE_TYPE,
+    SUPPORT_TYPE,
   ];
-  // Show the treatment-type picker whenever the patient has ANY taggable case
-  // type — including a pure prosthetics / medical-support patient (previously
-  // the whole section was hidden unless the patient did physiotherapy, so a
-  // limb-only patient's payment could never be tagged).
+  // With أطراف/مساند always present, the treatment-type picker always shows and
+  // a type is required on every payment (keeps every payment tagged).
   const showTreatmentSection = treatmentOptions.length > 0;
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
