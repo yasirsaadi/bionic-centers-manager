@@ -11,7 +11,12 @@
 import { pool } from "../db";
 import { storage } from "../storage";
 
-const GUARD = "backfill_all_cases_v1";
+// v2: re-run after broadening syncPatientCases detection to include the
+// service detail fields (support_type / prosthetic_type / amputation_site),
+// which surfaces مسند/طرف cases that were recorded via those columns while the
+// boolean flag stayed false. Re-sync only ADDS missing cases (existing cases
+// are skipped by `has(t)`), so it never disturbs already-split costs.
+const GUARD = "backfill_all_cases_v2";
 
 export async function backfillAllPatientCases(): Promise<void> {
   try {

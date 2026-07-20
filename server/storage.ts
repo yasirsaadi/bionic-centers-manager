@@ -400,8 +400,15 @@ export class DatabaseStorage implements IStorage {
     const hasWO = (st: string) => wos.some((w) => w.st === st);
     const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
     const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));
-    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t === "أطراف صناعية");
-    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t === "مساند طبية");
+    // A service is present when ANY of its signals exist: the boolean flag,
+    // a work order, a tagged payment, OR the service's own recorded detail
+    // field. The detail-field signal is essential because many patients had
+    // their مسند/طرف recorded only via its type field (e.g. support_type /
+    // prosthetic_type) while the boolean flag was left false — so flag-only
+    // detection made those cases invisible. Reading the real recorded column
+    // is not a guess; it is where the service was actually stored.
+    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t === "أطراف صناعية") || !!p.prostheticType || !!p.amputationSite;
+    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t === "مساند طبية") || !!p.supportType;
     const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => PHYSIO_TAGS.has(t));
 
     // ---- per-service cost from "تكلفة: X" markers --------------------------
