@@ -1399,6 +1399,36 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
+  // Update a case's cost (admin / branch manager). Historical per-service costs
+  // were never stored separately (only the aggregate total_cost), so this lets
+  // staff set each case's real cost. It does NOT change patient.total_cost — so
+  // the aggregate/financial reports are completely unaffected.
+  app.patch("/api/patients/:id/cases/:caseId", isAuthenticated, async (req, res) => {
+    const patientId = Number(req.params.id);
+    const caseId = Number(req.params.caseId);
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const isManager = branchSession?.role === "branch_manager";
+    if (!isAdmin && !isManager) return res.status(403).json({ message: "غير مصرح" });
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+    if (!isAdmin && branchSession?.branchId !== patient.branchId) return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+
+    const cost = Number(req.body?.cost);
+    if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ message: "قيمة غير صالحة" });
+
+    const updated = await storage.updateCaseCost(patientId, caseId, Math.round(cost));
+    if (!updated) return res.status(404).json({ message: "الحالة غير موجودة" });
+    await logAudit({
+      entityType: "patient_case", entityId: caseId, action: "update",
+      userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+      branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      notes: `تعديل كلفة الحالة #${caseId} إلى ${Math.round(cost).toLocaleString()} د.ع`,
+    });
+    res.json(updated);
+  });
+
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;
