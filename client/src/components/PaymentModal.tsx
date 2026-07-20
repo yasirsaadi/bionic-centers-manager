@@ -104,10 +104,16 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   // case types — so a returning patient can pay a prosthetics/support balance
   // and have it tagged correctly.
   const treatmentOptions = [
-    ...TREATMENT_TYPE_OPTIONS,
+    // Physio types only for physiotherapy patients; أطراف/مساند for those types.
+    ...(isPhysiotherapy !== false ? TREATMENT_TYPE_OPTIONS : []),
     ...(isAmputee ? [AMPUTEE_TYPE] : []),
     ...(isMedicalSupport ? [SUPPORT_TYPE] : []),
   ];
+  // Show the treatment-type picker whenever the patient has ANY taggable case
+  // type — including a pure prosthetics / medical-support patient (previously
+  // the whole section was hidden unless the patient did physiotherapy, so a
+  // limb-only patient's payment could never be tagged).
+  const showTreatmentSection = treatmentOptions.length > 0;
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddPayment();
@@ -132,7 +138,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   });
 
   useEffect(() => {
-    if (isPhysiotherapy === false) return;
+    if (!showTreatmentSection) return;
     if (manualCostOverride) return;
 
     const updatedEntries = treatmentEntries.map(entry => {
@@ -178,7 +184,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   const hasManualType = treatmentEntries.some(e => MANUAL_AMOUNT_TYPES.has(e.treatmentType));
 
   function onSubmit(values: z.infer<typeof formSchema>) {
-    if (isPhysiotherapy !== false) {
+    if (showTreatmentSection) {
       const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
       if (hasEmptyType) {
         toast({
@@ -201,15 +207,15 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     }
     
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
-    const paymentTreatmentType = isPhysiotherapy !== false ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") || null : null;
-    const sessionCount = isPhysiotherapy !== false ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) || null : null;
-    
+    const paymentTreatmentType = showTreatmentSection ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") || null : null;
+    const sessionCount = showTreatmentSection ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) || null : null;
+
     mutate({
       ...values,
       date: submissionDate,
       paymentTreatmentType,
       sessionCount,
-      treatmentEntries: isPhysiotherapy !== false ? validEntries : undefined,
+      treatmentEntries: showTreatmentSection ? validEntries : undefined,
     } as any, {
       onSuccess: () => {
         setOpen(false);
@@ -263,7 +269,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
               )}
             />
 
-            {isPhysiotherapy !== false && (
+            {showTreatmentSection && (
               <div className="space-y-3">
                 <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                 {treatmentEntries.map((entry, index) => (
