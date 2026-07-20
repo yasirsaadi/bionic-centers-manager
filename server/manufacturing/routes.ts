@@ -162,6 +162,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
     const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+    // Order purpose: a first build or a later maintenance episode.
+    const purpose = req.body?.purpose === "maintenance" ? "maintenance" : "initial_build";
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) {
       return res.status(400).json({ error: "بيانات ناقصة" });
     }
@@ -191,10 +193,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     const order = await store.createWorkOrderForExisting({
       patientId, branchId: patient.branchId, serviceType, expertUserId,
-      expectedDeliveryDate, assignedBy: s.userId ?? null,
+      expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
     });
     await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-      `إنشاء أمر تصنيع لمريض موجود #${patientId} للخبير #${expertUserId}`);
+      `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
     res.status(201).json(order);
   });
 

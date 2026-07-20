@@ -147,13 +147,16 @@ export async function createWorkOrderForExisting(params: {
   expertUserId: number;
   expectedDeliveryDate?: string | null;
   assignedBy: number | null;
+  purpose?: string;
 }): Promise<ProstheticWorkOrder> {
+  const purpose = params.purpose === "maintenance" ? "maintenance" : "initial_build";
   return await db.transaction(async (tx) => {
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,
       branchId: params.branchId,
       expertUserId: params.expertUserId,
       serviceType: params.serviceType,
+      purpose,
       status: "active",
       currentStage: NEW_ASSIGNMENT_STAGE,
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
@@ -164,7 +167,7 @@ export async function createWorkOrderForExisting(params: {
       actionType: "created",
       fromStage: null,
       toStage: NEW_ASSIGNMENT_STAGE,
-      notes: "إنشاء أمر تصنيع لمريض موجود",
+      notes: purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود",
       performedBy: params.assignedBy,
     });
     return workOrder;
@@ -237,7 +240,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
   const rows = await db
     .select({
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId,
-      serviceType: WO.serviceType, currentStage: WO.currentStage, status: WO.status,
+      serviceType: WO.serviceType, purpose: WO.purpose, currentStage: WO.currentStage, status: WO.status,
       expertUserId: WO.expertUserId, assignedAt: WO.createdAt, startedAt: WO.startedAt,
       expectedDeliveryDate: WO.expectedDeliveryDate, completedAt: WO.completedAt,
       finalResult: WO.finalResult,
@@ -299,6 +302,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       branchId: r.branchId,
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
+      purpose: r.purpose ?? "initial_build",
       itemType: r.serviceType === "medical_support" ? (r.supportType ?? null) : (r.prostheticType ?? null),
       currentStage: r.currentStage,
       status: r.status,
@@ -533,7 +537,7 @@ export async function reassignExpert(params: {
 export async function getActiveOrderSummaryForPatient(patientId: number) {
   const [row] = await db
     .select({
-      id: WO.id, serviceType: WO.serviceType, status: WO.status, currentStage: WO.currentStage,
+      id: WO.id, serviceType: WO.serviceType, purpose: WO.purpose, status: WO.status, currentStage: WO.currentStage,
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, expertUserId: WO.expertUserId,
       expertName: systemUsers.displayName,
@@ -554,6 +558,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
     expertUserId: row.expertUserId,
     expertName: row.expertName ?? null,
     serviceType: row.serviceType,
+    purpose: row.purpose ?? "initial_build",
     status: row.status,
     currentStage: row.currentStage,
     startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : null,
@@ -571,7 +576,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
 export async function getAllOrdersForPatient(patientId: number) {
   const rows = await db
     .select({
-      id: WO.id, serviceType: WO.serviceType, status: WO.status, currentStage: WO.currentStage,
+      id: WO.id, serviceType: WO.serviceType, purpose: WO.purpose, status: WO.status, currentStage: WO.currentStage,
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, createdAt: WO.createdAt,
       expertUserId: WO.expertUserId, expertName: systemUsers.displayName,
@@ -585,6 +590,7 @@ export async function getAllOrdersForPatient(patientId: number) {
     expertUserId: r.expertUserId,
     expertName: r.expertName ?? null,
     serviceType: r.serviceType,
+    purpose: r.purpose ?? "initial_build",
     status: r.status,
     currentStage: r.currentStage,
     startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,

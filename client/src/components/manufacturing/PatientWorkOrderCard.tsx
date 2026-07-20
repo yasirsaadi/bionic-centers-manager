@@ -9,6 +9,7 @@ interface OrderRow {
   id: number;
   expertName: string | null;
   serviceType: string;
+  purpose?: string;
   status: string;
   currentStage: string;
   startedAt: string | null;
@@ -67,6 +68,9 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                 <span className="font-semibold text-sm">
                   {SERVICE_TYPE_LABELS[o.serviceType as "prosthetic"] ?? o.serviceType}
                 </span>
+                {o.purpose === "maintenance" && (
+                  <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200 text-[11px] px-1.5 py-0">صيانة</Badge>
+                )}
                 <span className="text-xs text-muted-foreground">— الخبير: {o.expertName ?? "—"}</span>
               </div>
               <Badge

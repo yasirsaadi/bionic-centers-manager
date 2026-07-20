@@ -292,6 +292,9 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   branchId: integer("branch_id").references(() => branches.id).notNull(),
   expertUserId: integer("expert_user_id").references(() => systemUsers.id).notNull(),
   serviceType: text("service_type").notNull(), // prosthetic | medical_support
+  // Distinguishes a first build from a later maintenance episode on an already
+  // delivered device. Each is its own independent order/expert/timeline.
+  purpose: text("purpose").notNull().default("initial_build"), // initial_build | maintenance
   status: text("status").notNull().default("active"),
   currentStage: text("current_stage").notNull().default("new_assignment"),
   expectedDeliveryDate: date("expected_delivery_date"),

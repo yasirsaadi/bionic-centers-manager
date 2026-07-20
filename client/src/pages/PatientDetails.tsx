@@ -943,7 +943,7 @@ export default function PatientDetails() {
             <TabsContent value="visits" className="space-y-4">
               {permissions.canAddPatients && (
               <div className="flex justify-end gap-2 mb-4 flex-wrap">
-                <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} />
+                <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
                 <NewServiceModal
                   patientId={patient.id}
                   branchId={patient.branchId}
