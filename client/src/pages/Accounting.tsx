@@ -87,6 +87,10 @@ const EXPENSE_CATEGORIES = [
   { value: "hospitality", label: "ضيافة" },
   { value: "stationery", label: "قرطاسية" },
   { value: "bank_fees", label: "رسوم بنكية" },
+  // Karbala-only: the shrine's percentage. Offered in the expense form only
+  // when the selected branch is كربلاء (karbalaOnly), but still labelled
+  // everywhere so existing records display correctly.
+  { value: "shrine_percentage", label: "نسبة العتبة", karbalaOnly: true },
   { value: "other", label: "أخرى" }
 ];
 
@@ -102,6 +106,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   hospitality: "#f97316",
   stationery: "#a855f7",
   bank_fees: "#64748b",
+  shrine_percentage: "#0ea5e9",
   other: "#6b7280"
 };
 
@@ -1625,6 +1630,15 @@ export default function Accounting() {
   // when the user picks "أخرى".
   const watchedCategory = form.watch("category");
   const subcategoryRequired = watchedCategory === "other";
+
+  // Karbala-only categories (نسبة العتبة) are offered only when the expense's
+  // selected branch is كربلاء. Match by branch name so it follows the data.
+  const watchedBranchId = form.watch("branchId");
+  const selectedBranchIsKarbala = allowedBranches
+    .some((b) => b.id === watchedBranchId && (b.name || "").includes("كربلاء"));
+  const categoriesForForm = EXPENSE_CATEGORIES.filter(
+    (c) => !(c as any).karbalaOnly || selectedBranchIsKarbala,
+  );
 
   // Pull previously-used subcategories for this category in the user's branch.
   // Used to populate the <datalist> the subcategory input is bound to so
@@ -4195,7 +4209,7 @@ export default function Accounting() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {EXPENSE_CATEGORIES.map((cat) => (
+                          {categoriesForForm.map((cat) => (
                             <SelectItem key={cat.value} value={cat.value}>
                               {getCategoryLabelTranslated(cat.value)}
                             </SelectItem>
