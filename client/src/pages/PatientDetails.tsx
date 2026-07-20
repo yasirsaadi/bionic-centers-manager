@@ -153,8 +153,14 @@ export default function PatientDetails() {
 
   // Independent cases (Phase 2, relocated): chips in the header + a full panel
   // per case. Each case is its own view (details / cost / visits / payments).
+  // Key it UNDER the patient-detail key (["/api/patients/:id", id, "cases"]) so
+  // it shares a prefix with the main patient query. EVERY payment/visit mutation
+  // already invalidates ["/api/patients/:id", id] (the detail page depends on it),
+  // so those invalidations now ALSO refresh these per-case paid/remaining/cost
+  // cards — they can never again disagree with the payment list below. Otherwise a
+  // payment re-tag moved money on the server but the cards stayed stale ("الجمع لا يتغير").
   const { data: patientCasesList = [] } = useQuery<CaseRow[]>({
-    queryKey: [`/api/patients/${id}/cases`],
+    queryKey: ["/api/patients/:id", Number(id), "cases"],
     enabled: !!id,
     queryFn: async () => {
       const res = await fetch(`/api/patients/${id}/cases`, { credentials: "include" });
