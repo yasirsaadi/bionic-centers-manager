@@ -101,7 +101,7 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}/cases`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId, "cases"] });
       setEditing(false);
       toast({ title: "تم تحديث كلفة الحالة" });
     },
