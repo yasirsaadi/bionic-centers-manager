@@ -362,6 +362,55 @@ export class DatabaseStorage implements IStorage {
       .orderBy(patientCases.id);
   }
 
+  // Ensure a patient_cases row exists for each active case flag, copying the
+  // type-specific detail fields. Preserves existing case costs; only the very
+  // first case-set gets the patient's total_cost (on the highest-priority
+  // case: prosthetic > medical_support > physiotherapy). Idempotent.
+  async syncPatientCases(patientId: number): Promise<void> {
+    const [p] = await db.select().from(patients).where(eq(patients.id, patientId));
+    if (!p) return;
+    const existing = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const has = (t: string) => existing.some((c) => c.caseType === t);
+    const firstEver = existing.length === 0;
+    const clean = (o: Record<string, any>) =>
+      Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+
+    const wanted: { type: string; priority: number; details: Record<string, any> }[] = [];
+    if (p.isAmputee) wanted.push({ type: "prosthetic", priority: 1, details: {
+      amputationSite: p.amputationSite, prostheticType: p.prostheticType, siliconType: p.siliconType,
+      siliconSize: p.siliconSize, suspensionSystem: p.suspensionSystem, footType: p.footType,
+      footSize: p.footSize, kneeJointType: p.kneeJointType, injurySide: p.injurySide,
+      injuryCause: p.injuryCause, injuryDate: p.injuryDate, injuryType: p.injuryType } });
+    if (p.isMedicalSupport) wanted.push({ type: "medical_support", priority: 2, details: {
+      supportType: p.supportType, injurySide: p.injurySide, injuryCause: p.injuryCause, injuryDate: p.injuryDate } });
+    if (p.isPhysiotherapy) wanted.push({ type: "physiotherapy", priority: 3, details: {
+      diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea, injuries: p.injuries, treatmentType: p.treatmentType } });
+
+    const primaryType = [...wanted].sort((a, b) => a.priority - b.priority)[0]?.type;
+    for (const w of wanted) {
+      if (has(w.type)) continue;
+      const cost = firstEver && w.type === primaryType ? (p.totalCost || 0) : 0;
+      await db.insert(patientCases).values({
+        patientId, branchId: p.branchId, caseType: w.type, cost, details: clean(w.details),
+      });
+    }
+  }
+
+  // Which case a new payment/visit settles, from its treatment tag / type.
+  // Mirrors the migration's linking so new rows attribute consistently.
+  async resolveCaseId(patientId: number, opts: { tag?: string | null; treatmentType?: string | null }): Promise<number | null> {
+    const cases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    if (cases.length === 0) return null;
+    const byType = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
+    const order: Record<string, number> = { prosthetic: 1, medical_support: 2, physiotherapy: 3 };
+    const primary = [...cases].sort((a, b) => (order[a.caseType] ?? 9) - (order[b.caseType] ?? 9))[0]?.id ?? null;
+    const tag = opts.tag ?? "";
+    if (tag === "أطراف صناعية") return byType("prosthetic") ?? primary;
+    if (tag === "مساند طبية") return byType("medical_support") ?? primary;
+    if (opts.treatmentType || tag) { const ph = byType("physiotherapy"); if (ph) return ph; }
+    return primary;
+  }
+
   async getPatient(id: number): Promise<Patient | undefined> {
     const [patient] = await db.select().from(patients).where(eq(patients.id, id));
     return patient;
@@ -393,6 +442,8 @@ export class DatabaseStorage implements IStorage {
     }
     
     const [patient] = await db.insert(patients).values(valuesToInsert).returning();
+    // Create the case row(s) for this new patient from its flags (Phase 3).
+    await this.syncPatientCases(patient.id);
     return patient;
   }
 
@@ -480,11 +531,46 @@ export class DatabaseStorage implements IStorage {
       const caseLabel = caseType === "amputee" ? "أطراف صناعية"
         : caseType === "medical_support" ? "مساند طبية" : "علاج طبيعي";
 
+      // Create (or top up) the independent case row for this type, with THIS
+      // service's cost and details — so the new case is fully isolated with its
+      // own balance from the moment it's added (Phase 3).
+      const caseTypeKey = caseType === "amputee" ? "prosthetic"
+        : caseType === "medical_support" ? "medical_support" : "physiotherapy";
+      const detailsForType: Record<string, any> = caseTypeKey === "prosthetic" ? {
+        amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
+        siliconType: patient.siliconType, siliconSize: patient.siliconSize,
+        suspensionSystem: patient.suspensionSystem, footType: patient.footType,
+        footSize: patient.footSize, kneeJointType: patient.kneeJointType, injurySide: patient.injurySide,
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate, injuryType: patient.injuryType,
+      } : caseTypeKey === "medical_support" ? {
+        supportType: patient.supportType, injurySide: patient.injurySide,
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
+      } : {
+        diseaseType: patient.diseaseType, injuryType: patient.injuryType, injuryArea: patient.injuryArea,
+        injuries: patient.injuries, treatmentType: patient.treatmentType,
+      };
+      const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+      const [existingCase] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
+      let caseId: number;
+      if (existingCase) {
+        caseId = existingCase.id;
+        if (serviceCost > 0) {
+          await tx.update(patientCases).set({ cost: (existingCase.cost || 0) + serviceCost, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+        }
+      } else {
+        const [newCase] = await tx.insert(patientCases).values({
+          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: serviceCost, details: cleanDetails,
+        }).returning();
+        caseId = newCase.id;
+      }
+
       // Timeline marker so the patient's history shows when the new case
-      // type started.
+      // type started — attributed to the new case.
       await tx.insert(visits).values({
         patientId,
         branchId: existing.branchId,
+        caseId,
         details: "إضافة نوع حالة",
         notes: `إضافة نوع حالة: ${caseLabel}${serviceCost > 0 ? ` (تكلفة: ${serviceCost.toLocaleString()} د.ع)` : ""}`,
       });
@@ -493,6 +579,7 @@ export class DatabaseStorage implements IStorage {
         await tx.insert(payments).values({
           patientId,
           branchId: existing.branchId,
+          caseId,
           amount: paidNow,
           notes: `دفعة عند إضافة نوع حالة: ${caseLabel}`,
         });
@@ -684,7 +771,12 @@ export class DatabaseStorage implements IStorage {
         valuesToInsert.visitDate = new Date(backdatedBaghdad.getTime() - baghdadOffset);
       }
     }
-    
+
+    // Attribute the visit to a case (Phase 3) unless one was already provided.
+    if (valuesToInsert.caseId == null && valuesToInsert.patientId) {
+      valuesToInsert.caseId = await this.resolveCaseId(valuesToInsert.patientId, { treatmentType: valuesToInsert.treatmentType ?? null });
+    }
+
     const [visit] = await db.insert(visits).values(valuesToInsert).returning();
     return visit;
   }
@@ -732,10 +824,15 @@ export class DatabaseStorage implements IStorage {
     } else {
       dateValue = new Date();
     }
-    const paymentData = {
+    const paymentData: any = {
       ...insertPayment,
       date: dateValue,
     };
+    // Attribute the payment to a case (Phase 3) unless one was already provided,
+    // resolved from its treatment tag (أطراف/مساند/نوع العلاج).
+    if (paymentData.caseId == null && paymentData.patientId) {
+      paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null });
+    }
     const [payment] = await db.insert(payments).values(paymentData).returning();
     return payment;
   }

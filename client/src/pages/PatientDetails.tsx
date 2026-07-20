@@ -542,6 +542,13 @@ export default function PatientDetails() {
   if (isLoading) return <div className="p-8"><Skeleton className="h-96 w-full rounded-3xl" /></div>;
   if (!patient) return <div className="p-8 text-center text-muted-foreground">{t.patientDetails.patientNotFound}</div>;
 
+  // Case isolation: when a case is selected (chips), the visits/payments tabs
+  // show ONLY that case's rows. Falls back to all when no cases exist.
+  const allVisits = patient.visits || [];
+  const allPayments = patient.payments || [];
+  const caseVisits = selectedCaseId == null ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId);
+  const casePayments = selectedCaseId == null ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId);
+
   // Calculate totals
   const totalPaid = patient.payments?.reduce((sum, p) => sum + p.amount, 0) || 0;
   const remaining = (patient.totalCost || 0) - totalPaid;
@@ -800,10 +807,9 @@ export default function PatientDetails() {
         </div>
       </div>
 
-      {/* Selected case's fully independent page — driven by the header chips. */}
-      {selectedCase && (
-        <PatientCasePanel caseRow={selectedCase} visits={patient.visits || []} payments={patient.payments || []} />
-      )}
+      {/* Selected case's header (finances + details). Its visits/payments show
+          in the tabs below, filtered to this case — not duplicated here. */}
+      {selectedCase && <PatientCasePanel caseRow={selectedCase} />}
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">
@@ -987,12 +993,12 @@ export default function PatientDetails() {
 
               {patient.isPhysiotherapy && (() => {
                 const sessionsByType: Record<string, number> = {};
-                patient.payments?.forEach((p) => {
+                casePayments?.forEach((p) => {
                   const type = p.paymentTreatmentType || t.patientDetails.unspecified;
                   sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
                 });
                 const visitsByType: Record<string, number> = {};
-                patient.visits?.forEach((v) => {
+                caseVisits?.forEach((v) => {
                   const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
                   const isConsultation = v.treatmentType === "استشارة طبية";
                   if (isServiceVisit || isConsultation) return;
@@ -1039,7 +1045,7 @@ export default function PatientDetails() {
                     </tr>
                   </thead>
                   <tbody>
-                    {patient.visits?.length === 0 ? (
+                    {caseVisits?.length === 0 ? (
                       <tr><td colSpan={patient.isPhysiotherapy ? 5 : 3} className="border border-slate-300 p-8 text-center text-muted-foreground">
                         <ClipboardList className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                         {t.patientDetails.noVisits}
@@ -1047,15 +1053,15 @@ export default function PatientDetails() {
                     ) : (
                       (() => {
                         const sessionsByType: Record<string, number> = {};
-                        patient.payments?.forEach((p) => {
+                        casePayments?.forEach((p) => {
                           const type = p.paymentTreatmentType || t.patientDetails.unspecified;
                           sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
                         });
                         const remainingMap: Record<number, number> = {};
                         const visitCountByType: Record<string, number> = {};
                         const paidByType: Record<string, number> = {};
-                        const visitsOldestFirst = [...(patient.visits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
-                        const paymentsSorted = [...(patient.payments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
+                        const visitsOldestFirst = [...(caseVisits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
+                        const paymentsSorted = [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
                         let paymentIdx = 0;
                         visitsOldestFirst.forEach((v) => {
                           const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
@@ -1081,7 +1087,7 @@ export default function PatientDetails() {
                             remainingMap[v.id] = (paidByType[type] || sessionsByType[type] || 0) - (visitCountByType[type] || 0);
                           }
                         });
-                        return patient.visits?.map((visit) => {
+                        return caseVisits?.map((visit) => {
                           const remaining = remainingMap[visit.id] ?? 0;
                           return (
                         <tr key={visit.id} className="hover:bg-slate-50">
@@ -1201,10 +1207,10 @@ export default function PatientDetails() {
                     </tr>
                   </thead>
                   <tbody>
-                    {patient.payments?.length === 0 ? (
+                    {casePayments?.length === 0 ? (
                       <tr><td colSpan={isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3)} className="border border-slate-300 p-8 text-center text-muted-foreground">{t.patientDetails.noPayments}</td></tr>
                     ) : (
-                      patient.payments?.map((payment) => (
+                      casePayments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
                           <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">
                             {payment.amount.toLocaleString('ar-IQ')} {t.patientDetails.currency}
