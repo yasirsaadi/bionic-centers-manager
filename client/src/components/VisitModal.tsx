@@ -28,14 +28,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Textarea } from "@/components/ui/textarea";
-import { PlusCircle, Loader2, Calendar } from "lucide-react";
+import { PlusCircle, Loader2, Calendar, Wrench } from "lucide-react";
 import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 
 interface VisitModalProps {
   patientId: number;
   branchId: number;
   isPhysiotherapy?: boolean;
+  // A prosthetic/support patient can come for MAINTENANCE of their device;
+  // these enable the "غرض الزيارة: صيانة" path (expert + delivery date).
+  isAmputee?: boolean;
+  isMedicalSupport?: boolean;
 }
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -61,12 +67,34 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalProps) {
+export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport }: VisitModalProps) {
   const [open, setOpen] = useState(false);
   const { mutate, isPending } = useAddVisit();
   const { t } = useTranslation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const dir = t.dir;
-  
+
+  // Maintenance path — only offered to patients who own a device.
+  const hasDevice = !!isAmputee || !!isMedicalSupport;
+  const [purpose, setPurpose] = useState<"visit" | "maintenance">("visit");
+  const [expertUserId, setExpertUserId] = useState("");
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
+  const [maintPending, setMaintPending] = useState(false);
+
+  // Do NOT swallow fetch errors as an empty list — a transient 403/500 would
+  // otherwise be cached as "no experts" and block the maintenance path. Throw
+  // so React Query records it as an error we can surface.
+  const { data: experts = [], isError: expertsError, isLoading: expertsLoading } = useQuery<{ id: number; displayName: string }[]>({
+    queryKey: ["/api/manufacturing/experts", branchId],
+    enabled: open && purpose === "maintenance" && hasDevice,
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`, { credentials: "include" });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
+  });
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -78,7 +106,50 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
     },
   });
 
+  const resetAll = () => {
+    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate("");
+    form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
+  };
+
+  // Maintenance: ONE atomic call creates the maintenance work order AND the
+  // visit row together (server transaction). Either both are recorded or
+  // neither — no orphaned order, no half-recorded visit. If the patient still
+  // has an open build, the server returns 409 and nothing is written.
+  async function submitMaintenance(values: z.infer<typeof formSchema>) {
+    if (!expertUserId) { toast({ title: "اختر الخبير المسؤول عن الصيانة", variant: "destructive" }); return; }
+    if (!expectedDeliveryDate) { toast({ title: "تاريخ التسليم المتوقع إلزامي", variant: "destructive" }); return; }
+    setMaintPending(true);
+    try {
+      const res = await fetch("/api/manufacturing/maintenance-visit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          patientId, expertUserId: Number(expertUserId), expectedDeliveryDate,
+          notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        toast({ title: "تعذّر فتح الصيانة", description: e.error || "خطأ", variant: "destructive" });
+        setMaintPending(false);
+        return;
+      }
+      // Refresh the patient's visits, payments and manufacturing views.
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
+      toast({ title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
+      setMaintPending(false); setOpen(false); resetAll();
+    } catch {
+      toast({ title: "تعذّر فتح الصيانة", variant: "destructive" });
+      setMaintPending(false);
+    }
+  }
+
   function onSubmit(values: z.infer<typeof formSchema>) {
+    if (purpose === "maintenance") { void submitMaintenance(values); return; }
     if (isPhysiotherapy !== false && !values.treatmentType) {
       form.setError("treatmentType", { message: t.modals.treatmentTypeRequired || "يجب اختيار نوع العلاج" });
       return;
@@ -91,19 +162,13 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
     mutate(submitData, {
       onSuccess: () => {
         setOpen(false);
-        form.reset({
-          patientId: patientId,
-          branchId: branchId,
-          notes: "",
-          treatmentType: "",
-          customDate: getTodayDate(),
-        });
+        resetAll();
       },
     });
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetAll(); }}>
       <DialogTrigger asChild>
         <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20" data-testid="button-add-visit">
           <PlusCircle className="w-4 h-4" />
@@ -114,9 +179,25 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
         <DialogHeader>
           <DialogTitle className="font-display text-xl text-blue-600">{t.modals.visitReason}</DialogTitle>
         </DialogHeader>
-        
+
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+            {/* غرض الزيارة — يظهر لمرضى الطرف/المسند ليختار الاستقبال مراجعة أو صيانة */}
+            {hasDevice && (
+              <FormItem>
+                <FormLabel className="flex items-center gap-2">
+                  <Wrench className="w-4 h-4" /> غرض الزيارة
+                </FormLabel>
+                <Select value={purpose} onValueChange={(v) => setPurpose(v as "visit" | "maintenance")}>
+                  <SelectTrigger data-testid="select-visit-purpose"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="visit">مراجعة / متابعة</SelectItem>
+                    <SelectItem value="maintenance">صيانة الطرف/المسند</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormItem>
+            )}
+
             <FormField
               control={form.control}
               name="customDate"
@@ -158,7 +239,8 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
               )}
             />
 
-            {isPhysiotherapy !== false && (
+            {/* نوع العلاج — لمرضى العلاج الطبيعي وفي وضع المراجعة فقط */}
+            {isPhysiotherapy !== false && purpose !== "maintenance" && (
               <FormField
                 control={form.control}
                 name="treatmentType"
@@ -185,14 +267,41 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy }: VisitModalP
               />
             )}
 
-            <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending}>
-              {isPending ? (
+            {/* حقول الصيانة — الخبير + تاريخ التسليم المتوقع (إلزاميان) */}
+            {purpose === "maintenance" && (
+              <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                <FormItem>
+                  <FormLabel>الخبير المسؤول عن الصيانة <span className="text-red-500">*</span></FormLabel>
+                  {experts.length === 0 ? (
+                    <p className="text-sm text-red-600">لا يوجد خبير متاح لهذا الفرع.</p>
+                  ) : (
+                    <Select value={expertUserId} onValueChange={setExpertUserId}>
+                      <SelectTrigger data-testid="select-maintenance-expert"><SelectValue placeholder="اختر الخبير" /></SelectTrigger>
+                      <SelectContent>
+                        {experts.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </FormItem>
+                <FormItem>
+                  <FormLabel>تاريخ التسليم المتوقع <span className="text-red-500">*</span></FormLabel>
+                  <DatePickerIraq value={expectedDeliveryDate} onChange={setExpectedDeliveryDate} data-testid="input-maintenance-delivery" />
+                  <p className="text-xs text-muted-foreground">يُبنى عليه نظام التنبيهات قبل التسليم.</p>
+                </FormItem>
+                <p className="text-[11px] text-muted-foreground">
+                  ستُفتح حلقة صيانة مستقلّة بخبيرها وتاريخها. إن كان للمريض أمر بناء جارٍ لم يُسلَّم، تُمنع الصيانة حتى يكتمل.
+                </p>
+              </div>
+            )}
+
+            <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending || maintPending}>
+              {(isPending || maintPending) ? (
                 <>
                   <Loader2 className="ml-2 h-4 w-4 animate-spin" />
                   {t.modals.savingVisit}
                 </>
               ) : (
-                t.modals.saveVisit
+                purpose === "maintenance" ? "فتح الصيانة وتسجيل الزيارة" : t.modals.saveVisit
               )}
             </Button>
           </form>

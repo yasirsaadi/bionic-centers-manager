@@ -162,6 +162,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
     const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+    // Order purpose: a first build or a later maintenance episode.
+    const purpose = req.body?.purpose === "maintenance" ? "maintenance" : "initial_build";
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) {
       return res.status(400).json({ error: "بيانات ناقصة" });
     }
@@ -191,11 +193,64 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     const order = await store.createWorkOrderForExisting({
       patientId, branchId: patient.branchId, serviceType, expertUserId,
-      expectedDeliveryDate, assignedBy: s.userId ?? null,
+      expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
     });
     await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-      `إنشاء أمر تصنيع لمريض موجود #${patientId} للخبير #${expertUserId}`);
+      `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
     res.status(201).json(order);
+  });
+
+  // ---- maintenance visit (order + visit row created ATOMICALLY) ---------------
+  // Reception opens this from the patient's "new visit" flow. Both the
+  // maintenance work order and the visit row are written in one transaction, so
+  // a returning patient's صيانة is never half-recorded.
+  app.post("/api/manufacturing/maintenance-visit", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s) && Boolean(s.permissions?.canAddPatients);
+    if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
+    const patientId = parseInt(req.body?.patientId);
+    const expertUserId = parseInt(req.body?.expertUserId);
+    const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+    if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) return res.status(400).json({ error: "بيانات ناقصة" });
+    if (!expectedDeliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      return res.status(400).json({ error: "تاريخ التسليم المتوقع إلزامي" });
+    }
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+    const serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
+    if (!serviceType) return res.status(400).json({ error: "الصيانة لمرضى الأطراف والمساند فقط" });
+    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+    const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
+    if (!v.ok) return res.status(400).json({ error: v.reason });
+
+    // Visit date: honour a chosen Baghdad calendar day, else now.
+    const BAGHDAD = 3 * 60 * 60 * 1000;
+    const customDate = strOrU(req.body?.customDate);
+    let visitDate = new Date();
+    if (customDate && /^\d{4}-\d{2}-\d{2}$/.test(customDate)) {
+      const nowB = new Date(Date.now() + BAGHDAD);
+      const todayB = nowB.toISOString().split("T")[0];
+      if (customDate !== todayB) {
+        const [y, m, d] = customDate.split("-").map(Number);
+        visitDate = new Date(Date.UTC(y, m - 1, d, nowB.getUTCHours(), nowB.getUTCMinutes(), nowB.getUTCSeconds()) - BAGHDAD);
+      }
+    }
+    const visitNotes = strOrU(req.body?.notes) ?? "صيانة طرف/مسند";
+
+    try {
+      const order = await store.createMaintenanceOrderWithVisit({
+        patientId, branchId: patient.branchId, serviceType, expertUserId,
+        expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate,
+      });
+      await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
+        `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`);
+      res.status(201).json(order);
+    } catch (err: any) {
+      if (err instanceof store.ActiveOrderError) {
+        return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+      }
+      throw err;
+    }
   });
 
   // Resolves an order + checks the caller may WRITE to it (assigned expert,

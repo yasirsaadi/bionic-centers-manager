@@ -7,13 +7,19 @@
 
 import { db } from "../db";
 import {
-  patients, branches, systemUsers,
+  patients, branches, systemUsers, visits,
   prostheticWorkOrders as WO,
   prostheticWorkHistory as WH,
   prostheticReworkEvents as RW,
   type InsertPatient, type Patient, type ProstheticWorkOrder,
 } from "@shared/schema";
-import { and, eq, or, inArray, sql, desc, asc } from "drizzle-orm";
+import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
+
+// Thrown when a maintenance order can't be opened because the patient still has
+// an open (non-completed, non-cancelled) order. The route maps it to 409.
+export class ActiveOrderError extends Error {
+  constructor() { super("active order exists"); this.name = "ActiveOrderError"; }
+}
 import { stagesForService, NEW_ASSIGNMENT_STAGE } from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
@@ -147,13 +153,16 @@ export async function createWorkOrderForExisting(params: {
   expertUserId: number;
   expectedDeliveryDate?: string | null;
   assignedBy: number | null;
+  purpose?: string;
 }): Promise<ProstheticWorkOrder> {
+  const purpose = params.purpose === "maintenance" ? "maintenance" : "initial_build";
   return await db.transaction(async (tx) => {
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,
       branchId: params.branchId,
       expertUserId: params.expertUserId,
       serviceType: params.serviceType,
+      purpose,
       status: "active",
       currentStage: NEW_ASSIGNMENT_STAGE,
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
@@ -164,8 +173,61 @@ export async function createWorkOrderForExisting(params: {
       actionType: "created",
       fromStage: null,
       toStage: NEW_ASSIGNMENT_STAGE,
-      notes: "إنشاء أمر تصنيع لمريض موجود",
+      notes: purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود",
       performedBy: params.assignedBy,
+    });
+    return workOrder;
+  });
+}
+
+// Maintenance from the "new visit" flow: create the maintenance work order AND
+// the visit row in ONE transaction — so a returning patient's صيانة is either
+// fully recorded (order + visit) or not at all. This removes the two-call race
+// that could orphan an order (with no visit) and then wedge retries via the
+// one-active-order 409 guard. The active-order check runs inside the same tx.
+export async function createMaintenanceOrderWithVisit(params: {
+  patientId: number;
+  branchId: number;
+  serviceType: string;
+  expertUserId: number;
+  expectedDeliveryDate: string;
+  assignedBy: number | null;
+  visitNotes: string;
+  visitDate: Date;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const openOrders = await tx.select({ id: WO.id })
+      .from(WO)
+      .where(and(eq(WO.patientId, params.patientId), notInArray(WO.status, ["completed", "cancelled"])))
+      .limit(1);
+    if (openOrders.length > 0) throw new ActiveOrderError();
+
+    const [workOrder] = await tx.insert(WO).values({
+      patientId: params.patientId,
+      branchId: params.branchId,
+      expertUserId: params.expertUserId,
+      serviceType: params.serviceType,
+      purpose: "maintenance",
+      status: "active",
+      currentStage: NEW_ASSIGNMENT_STAGE,
+      expectedDeliveryDate: params.expectedDeliveryDate,
+      assignedBy: params.assignedBy,
+    }).returning();
+    await tx.insert(WH).values({
+      workOrderId: workOrder.id,
+      actionType: "created",
+      fromStage: null,
+      toStage: NEW_ASSIGNMENT_STAGE,
+      notes: "إنشاء أمر صيانة لمريض موجود",
+      performedBy: params.assignedBy,
+    });
+    await tx.insert(visits).values({
+      patientId: params.patientId,
+      branchId: params.branchId,
+      visitDate: params.visitDate,
+      notes: params.visitNotes,
+      treatmentType: null,
+      createdBy: params.assignedBy,
     });
     return workOrder;
   });
@@ -237,7 +299,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
   const rows = await db
     .select({
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId,
-      serviceType: WO.serviceType, currentStage: WO.currentStage, status: WO.status,
+      serviceType: WO.serviceType, purpose: WO.purpose, currentStage: WO.currentStage, status: WO.status,
       expertUserId: WO.expertUserId, assignedAt: WO.createdAt, startedAt: WO.startedAt,
       expectedDeliveryDate: WO.expectedDeliveryDate, completedAt: WO.completedAt,
       finalResult: WO.finalResult,
@@ -299,6 +361,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       branchId: r.branchId,
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
+      purpose: r.purpose ?? "initial_build",
       itemType: r.serviceType === "medical_support" ? (r.supportType ?? null) : (r.prostheticType ?? null),
       currentStage: r.currentStage,
       status: r.status,
@@ -533,7 +596,7 @@ export async function reassignExpert(params: {
 export async function getActiveOrderSummaryForPatient(patientId: number) {
   const [row] = await db
     .select({
-      id: WO.id, serviceType: WO.serviceType, status: WO.status, currentStage: WO.currentStage,
+      id: WO.id, serviceType: WO.serviceType, purpose: WO.purpose, status: WO.status, currentStage: WO.currentStage,
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, expertUserId: WO.expertUserId,
       expertName: systemUsers.displayName,
@@ -554,6 +617,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
     expertUserId: row.expertUserId,
     expertName: row.expertName ?? null,
     serviceType: row.serviceType,
+    purpose: row.purpose ?? "initial_build",
     status: row.status,
     currentStage: row.currentStage,
     startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : null,
@@ -571,7 +635,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
 export async function getAllOrdersForPatient(patientId: number) {
   const rows = await db
     .select({
-      id: WO.id, serviceType: WO.serviceType, status: WO.status, currentStage: WO.currentStage,
+      id: WO.id, serviceType: WO.serviceType, purpose: WO.purpose, status: WO.status, currentStage: WO.currentStage,
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, createdAt: WO.createdAt,
       expertUserId: WO.expertUserId, expertName: systemUsers.displayName,
@@ -585,6 +649,7 @@ export async function getAllOrdersForPatient(patientId: number) {
     expertUserId: r.expertUserId,
     expertName: r.expertName ?? null,
     serviceType: r.serviceType,
+    purpose: r.purpose ?? "initial_build",
     status: r.status,
     currentStage: r.currentStage,
     startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,

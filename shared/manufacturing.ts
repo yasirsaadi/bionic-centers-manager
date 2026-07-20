@@ -10,6 +10,16 @@ export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   medical_support: "مساند طبية",
 };
 
+// Why the order exists: a first build vs a maintenance job on a delivered
+// device. Drives a visible badge and lets reception open a maintenance episode
+// from the patient's "new visit" flow.
+export const PURPOSES = ["initial_build", "maintenance"] as const;
+export type Purpose = (typeof PURPOSES)[number];
+export const PURPOSE_LABELS: Record<string, string> = {
+  initial_build: "بناء أولي",
+  maintenance: "صيانة",
+};
+
 // Ordered fabrication stages for a prosthetic limb.
 export const PROSTHETIC_STAGES: string[] = [
   "new_assignment",
