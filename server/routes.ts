@@ -1360,6 +1360,36 @@ export async function registerRoutes(
     res.json({ ...patient, payments, documents, visits });
   });
 
+  // Independent cases for a patient (Phase 1 of the per-case architecture).
+  // Read-only; each case carries its own details/cost, and case-attributed
+  // visits/payments totals so the UI can show a page per specialty.
+  app.get("/api/patients/:id/cases", isAuthenticated, async (req, res) => {
+    const id = Number(req.params.id);
+    const patient = await storage.getPatient(id);
+    const ctx = getUserContext(req);
+    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
+    if (!patient || !canAccess) return res.status(404).json({ message: "Patient not found or unauthorized" });
+
+    const [cases, payments, visits] = await Promise.all([
+      storage.getCasesByPatientId(id),
+      storage.getPaymentsByPatientId(id),
+      storage.getVisitsByPatientId(id),
+    ]);
+    // Attach per-case paid total + visit count (case-attributed rows).
+    const enriched = cases.map((c) => {
+      const casePayments = payments.filter((p: any) => p.caseId === c.id);
+      const caseVisits = visits.filter((v: any) => v.caseId === c.id);
+      const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
+      return {
+        ...c,
+        paid,
+        remaining: (c.cost || 0) - paid,
+        visitCount: caseVisits.length,
+      };
+    });
+    res.json(enriched);
+  });
+
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;

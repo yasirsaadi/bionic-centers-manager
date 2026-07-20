@@ -3,6 +3,7 @@ import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
   anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog, journalLines,
   prostheticWorkOrders, prostheticWorkHistory, prostheticReworkEvents,
+  patientCases, type PatientCase,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -351,6 +352,14 @@ export class DatabaseStorage implements IStorage {
   async getPatientsByIds(ids: number[]): Promise<Patient[]> {
     if (ids.length === 0) return [];
     return await db.select().from(patients).where(inArray(patients.id, ids));
+  }
+
+  // Independent cases for a patient (Phase 1). Each row is one specialty with
+  // its own details, cost, and (via case_id) its own visits and payments.
+  async getCasesByPatientId(patientId: number): Promise<PatientCase[]> {
+    return await db.select().from(patientCases)
+      .where(eq(patientCases.patientId, patientId))
+      .orderBy(patientCases.id);
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {

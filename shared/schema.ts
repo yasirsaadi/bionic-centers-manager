@@ -68,6 +68,27 @@ export const patients = pgTable("patients", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ── Independent cases per patient (Phase 1 foundation) ──────────────────────
+// One patient identity, but each specialty (physiotherapy / prosthetic /
+// medical_support) is its OWN case with its own details, cost, visits and
+// payments. This replaces the flat, physio-centric patient row where all
+// case types shared one set of columns (the source of the merge/payment bugs).
+// The legacy patient columns/flags remain populated in parallel until later
+// phases cut over, so this table is purely additive and non-breaking.
+export const patientCases = pgTable("patient_cases", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  caseType: text("case_type").notNull(), // physiotherapy | prosthetic | medical_support
+  status: text("status").notNull().default("active"), // active | closed
+  cost: integer("cost").notNull().default(0), // total cost for THIS case, IQD
+  // Type-specific fields live here (amputationSite, prostheticType, siliconSize,
+  // diseaseType, supportType, …) so each case owns its own details.
+  details: jsonb("details").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const visits = pgTable("visits", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
@@ -80,6 +101,9 @@ export const visits = pgTable("visits", {
   cost: integer("cost"),
   shift: text("shift"),
   createdBy: integer("created_by").references(() => systemUsers.id),
+  // Which case (physiotherapy / prosthetic / medical_support) this visit belongs
+  // to. Nullable during the additive phase; backfilled best-effort.
+  caseId: integer("case_id").references(() => patientCases.id),
   // Soft delete. Reads always filter `deleted_at IS NULL` so the row
   // stays recoverable indefinitely. Hard deletes only happen during the
   // deletePatient cascade — the BEFORE DELETE trigger captures those
@@ -120,6 +144,9 @@ export const payments = pgTable("payments", {
   paymentTreatmentType: text("payment_treatment_type"),
   sessionCount: integer("session_count"),
   isFreeSessions: boolean("is_free_sessions").default(false),
+  // Which case this payment settles. Nullable during the additive phase;
+  // backfilled best-effort from the treatment-type tag.
+  caseId: integer("case_id").references(() => patientCases.id),
   date: timestamp("date").defaultNow(),
 });
 
@@ -486,6 +513,9 @@ export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
 export type Patient = typeof patients.$inferSelect;
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
+export const insertPatientCaseSchema = createInsertSchema(patientCases).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientCase = typeof patientCases.$inferSelect;
+export type InsertPatientCase = z.infer<typeof insertPatientCaseSchema>;
 export type Visit = typeof visits.$inferSelect;
 export type InsertVisit = z.infer<typeof insertVisitSchema>;
 export type Payment = typeof payments.$inferSelect;
