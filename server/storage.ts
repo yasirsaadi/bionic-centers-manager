@@ -362,6 +362,16 @@ export class DatabaseStorage implements IStorage {
       .orderBy(patientCases.id);
   }
 
+  // Set a case's cost. Scoped by patientId so a case can never be edited under
+  // the wrong patient. Never touches patient.total_cost (reports unaffected).
+  async updateCaseCost(patientId: number, caseId: number, cost: number): Promise<PatientCase | undefined> {
+    const [updated] = await db.update(patientCases)
+      .set({ cost, updatedAt: new Date() })
+      .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)))
+      .returning();
+    return updated;
+  }
+
   // Ensure a patient_cases row exists for each active case flag, copying the
   // type-specific detail fields. Preserves existing case costs; only the very
   // first case-set gets the patient's total_cost (on the highest-priority

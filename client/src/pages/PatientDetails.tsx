@@ -809,7 +809,7 @@ export default function PatientDetails() {
 
       {/* Selected case's header (finances + details). Its visits/payments show
           in the tabs below, filtered to this case — not duplicated here. */}
-      {selectedCase && <PatientCasePanel caseRow={selectedCase} />}
+      {selectedCase && <PatientCasePanel caseRow={selectedCase} patientId={patient.id} />}
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">

@@ -1,6 +1,11 @@
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Activity, Wrench, HeartPulse } from "lucide-react";
+import { Activity, Wrench, HeartPulse, Pencil, Check, X } from "lucide-react";
 import { formatDateIraq } from "@/lib/utils";
+import { useBranchSession } from "@/components/BranchGate";
+import { MoneyInput } from "@/components/ui/money-input";
+import { useToast } from "@/hooks/use-toast";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -73,11 +78,37 @@ export function PatientCaseChips({ cases, selectedId, onSelect }: {
 // The selected case's header: its finances + type-specific details. The
 // case's visits and payments render in the tabs below (filtered by case),
 // so they are NOT duplicated here.
-export function PatientCasePanel({ caseRow }: { caseRow: CaseRow }) {
+export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; patientId: number }) {
   const details = caseRow.details || {};
   const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k]);
   const m = meta(caseRow.caseType);
   const Icon = m.icon;
+
+  const session = useBranchSession();
+  const canEditCost = !!session?.isAdmin || session?.role === "branch_manager";
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<number>(caseRow.cost || 0);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/cases/${caseRow.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ cost: draft }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر الحفظ"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}/cases`] });
+      setEditing(false);
+      toast({ title: "تم تحديث كلفة الحالة" });
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  const remaining = (caseRow.cost || 0) - (caseRow.paid || 0);
 
   return (
     <Card className="p-4 md:p-6 rounded-2xl shadow-sm border-primary/20 mb-6 space-y-4">
@@ -87,9 +118,27 @@ export function PatientCasePanel({ caseRow }: { caseRow: CaseRow }) {
 
       {/* Financial summary for THIS case */}
       <div className="grid grid-cols-3 gap-3">
-        <StatBox label="التكلفة" value={fmtIQD(caseRow.cost)} tone="slate" />
+        <div className="rounded-xl p-3 text-center text-slate-700 bg-slate-50 relative">
+          <div className="text-xs opacity-80 flex items-center justify-center gap-1">
+            التكلفة
+            {canEditCost && !editing && (
+              <button type="button" onClick={() => { setDraft(caseRow.cost || 0); setEditing(true); }} data-testid={`edit-case-cost-${caseRow.id}`} className="text-primary hover:opacity-70">
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          {editing ? (
+            <div className="flex items-center gap-1 mt-1">
+              <MoneyInput value={draft} onValueChange={setDraft} className="h-8 text-center" />
+              <button type="button" disabled={save.isPending} onClick={() => save.mutate()} className="text-green-600" data-testid={`save-case-cost-${caseRow.id}`}><Check className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setEditing(false)} className="text-red-500"><X className="w-4 h-4" /></button>
+            </div>
+          ) : (
+            <div className="font-bold text-sm md:text-base">{fmtIQD(caseRow.cost)}</div>
+          )}
+        </div>
         <StatBox label="المدفوع" value={fmtIQD(caseRow.paid)} tone="green" />
-        <StatBox label="المتبقّي" value={fmtIQD(caseRow.remaining)} tone={caseRow.remaining > 0 ? "red" : "green"} />
+        <StatBox label="المتبقّي" value={fmtIQD(remaining)} tone={remaining > 0 ? "red" : "green"} />
       </div>
 
       {detailKeys.length > 0 && (
