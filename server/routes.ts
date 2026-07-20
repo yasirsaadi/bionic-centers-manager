@@ -2098,6 +2098,19 @@ export async function registerRoutes(
           });
         }
       }
+      // SAFETY NET: أنواع الطرف/المسند بمبلغ يدوي تصل بكلفة إدخال = 0، فلا
+      // ينشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
+      // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
+      if (results.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
+        const payment = await storage.createPayment(input);
+        results.push(payment);
+        if (payment.amount > 0) await createJournalForPayment(payment, userId);
+        await logAudit({
+          entityType: "payment", entityId: payment.id, action: "create",
+          userId, userName, branchId: payment.branchId, newValues: payment,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        });
+      }
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
       const payment = await storage.createPayment(input);
