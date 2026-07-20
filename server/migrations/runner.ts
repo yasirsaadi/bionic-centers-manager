@@ -1,6 +1,5 @@
 import { pool } from "../db";
 import { seedChartOfAccounts, ensureCurrentPeriod } from "./seed_chart_of_accounts";
-import { backfillAllPatientCases } from "./backfill_all_cases";
 import * as migration001 from "./001_accounting_foundation";
 import * as migration002 from "./002_invoices";
 import * as migration003 from "./003_vendors_purchases";
@@ -107,9 +106,6 @@ export async function runMigrations(): Promise<void> {
 
     console.log("[migrations] ensuring current accounting period...");
     await ensureCurrentPeriod();
-
-    // One-time: surface every طرف/مسند case from all signals + split costs.
-    await backfillAllPatientCases();
 
     console.log("[migrations] all migrations applied successfully");
   } catch (err) {
