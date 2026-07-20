@@ -211,12 +211,17 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     const paymentTreatmentType = showTreatmentSection ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") || null : null;
     const sessionCount = showTreatmentSection ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) || null : null;
 
+    // أطراف/مساند بمبلغ يدوي: كلفة الإدخال = 0 والمبلغ الحقيقي في `amount`.
+    // نُرسله كدفعة واحدة (بدون treatmentEntries) فيأخذ الخادم المبلغ اليدوي
+    // مباشرة مع وسم النوع — بدل حلقة الإدخالات التي تتجاهل المبلغ اليدوي.
+    const sendEntries = showTreatmentSection && !hasManualType;
+
     mutate({
       ...values,
       date: submissionDate,
       paymentTreatmentType,
       sessionCount,
-      treatmentEntries: showTreatmentSection ? validEntries : undefined,
+      treatmentEntries: sendEntries ? validEntries : undefined,
     } as any, {
       onSuccess: () => {
         setOpen(false);
