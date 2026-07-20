@@ -366,33 +366,93 @@ export class DatabaseStorage implements IStorage {
   // type-specific detail fields. Preserves existing case costs; only the very
   // first case-set gets the patient's total_cost (on the highest-priority
   // case: prosthetic > medical_support > physiotherapy). Idempotent.
+  //
+  // A patient "has" a case type if ANY of these signals is present, so a طرف
+  // recorded only as a work order (or أطراف-tagged payments) surfaces even when
+  // the is_amputee flag was never set:
+  //   flag  OR  a work order of that service type  OR  a payment tagged for it.
+  // Per-case cost is recovered from the "تكلفة: X" markers left by add-case-type
+  // / new-service, so e.g. a 5M prosthetic added to a physio patient moves out
+  // of the physio case into the prosthetic case — sum(case.cost) stays exactly
+  // total_cost. The patient FLAGS and total_cost are NEVER changed here, so the
+  // aggregate/financial reports (which count by flag + total_cost) are untouched.
+  // Idempotent: only missing cases are created; existing case costs are moved
+  // only for the cases created in THIS call.
   async syncPatientCases(patientId: number): Promise<void> {
     const [p] = await db.select().from(patients).where(eq(patients.id, patientId));
     if (!p) return;
-    const existing = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
-    const has = (t: string) => existing.some((c) => c.caseType === t);
-    const firstEver = existing.length === 0;
     const clean = (o: Record<string, any>) =>
       Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
-    const wanted: { type: string; priority: number; details: Record<string, any> }[] = [];
-    if (p.isAmputee) wanted.push({ type: "prosthetic", priority: 1, details: {
+    // ---- signals -----------------------------------------------------------
+    const wos = await db.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
+    const pays = await db.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
+    const hasWO = (st: string) => wos.some((w) => w.st === st);
+    const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
+    const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));
+    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t === "أطراف صناعية");
+    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t === "مساند طبية");
+    const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => PHYSIO_TAGS.has(t));
+
+    // ---- per-service cost from "تكلفة: X" markers --------------------------
+    const markers = await db.select({ notes: visits.notes }).from(visits).where(eq(visits.patientId, patientId));
+    const parseCost = (s: string | null) => { const m = (s || "").match(/تكلفة:\s*([\d,]+)/); return m ? Number(m[1].replace(/,/g, "")) : 0; };
+    let prostheticMarkerCost = 0, supportMarkerCost = 0;
+    for (const mk of markers) {
+      const c = parseCost(mk.notes); if (!c) continue;
+      if ((mk.notes || "").includes("أطراف")) prostheticMarkerCost += c;
+      else if ((mk.notes || "").includes("مساند")) supportMarkerCost += c;
+    }
+
+    const preExisting = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const has = (t: string) => preExisting.some((c) => c.caseType === t);
+    const firstEver = preExisting.length === 0;
+    const otherCosts = (wantProsthetic ? prostheticMarkerCost : 0) + (wantSupport ? supportMarkerCost : 0);
+    // On a first-ever sync the remainder (base cost) lands on the primary case.
+    const primaryType = wantProsthetic ? "prosthetic" : wantSupport ? "medical_support" : "physiotherapy";
+
+    const detailsFor = (t: string) => t === "prosthetic" ? clean({
       amputationSite: p.amputationSite, prostheticType: p.prostheticType, siliconType: p.siliconType,
       siliconSize: p.siliconSize, suspensionSystem: p.suspensionSystem, footType: p.footType,
       footSize: p.footSize, kneeJointType: p.kneeJointType, injurySide: p.injurySide,
-      injuryCause: p.injuryCause, injuryDate: p.injuryDate, injuryType: p.injuryType } });
-    if (p.isMedicalSupport) wanted.push({ type: "medical_support", priority: 2, details: {
-      supportType: p.supportType, injurySide: p.injurySide, injuryCause: p.injuryCause, injuryDate: p.injuryDate } });
-    if (p.isPhysiotherapy) wanted.push({ type: "physiotherapy", priority: 3, details: {
-      diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea, injuries: p.injuries, treatmentType: p.treatmentType } });
+      injuryCause: p.injuryCause, injuryDate: p.injuryDate, injuryType: p.injuryType,
+    }) : t === "medical_support" ? clean({
+      supportType: p.supportType, injurySide: p.injurySide, injuryCause: p.injuryCause, injuryDate: p.injuryDate,
+    }) : clean({
+      diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea, injuries: p.injuries, treatmentType: p.treatmentType,
+    });
 
-    const primaryType = [...wanted].sort((a, b) => a.priority - b.priority)[0]?.type;
-    for (const w of wanted) {
-      if (has(w.type)) continue;
-      const cost = firstEver && w.type === primaryType ? (p.totalCost || 0) : 0;
-      await db.insert(patientCases).values({
-        patientId, branchId: p.branchId, caseType: w.type, cost, details: clean(w.details),
-      });
+    const markerCostOf = (t: string) => t === "prosthetic" ? prostheticMarkerCost : t === "medical_support" ? supportMarkerCost : 0;
+    let movedFromHolder = 0;
+    const create = async (t: string) => {
+      if (has(t)) return;
+      let cost = markerCostOf(t);
+      if (firstEver && t === primaryType) cost = Math.max(0, (p.totalCost || 0) - otherCosts);
+      else if (!firstEver && cost > 0) movedFromHolder += cost; // moving this out of the pre-existing holder
+      await db.insert(patientCases).values({ patientId, branchId: p.branchId, caseType: t, cost, details: detailsFor(t) });
+    };
+    if (wantProsthetic) await create("prosthetic");
+    if (wantSupport) await create("medical_support");
+    if (wantPhysio) await create("physiotherapy");
+
+    // Move the recovered marker cost OUT of the pre-existing case that holds the
+    // total (usually the physio case created by the migration), preserving the sum.
+    if (!firstEver && movedFromHolder > 0) {
+      const holder = [...preExisting].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
+      if (holder) await db.update(patientCases).set({ cost: Math.max(0, (holder.cost || 0) - movedFromHolder), updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+    }
+
+    // ---- re-attribute tagged payments/markers to their real case -----------
+    const cases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const idOf = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
+    const prosId = idOf("prosthetic"), supId = idOf("medical_support");
+    if (prosId) {
+      await db.update(payments).set({ caseId: prosId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "أطراف صناعية")));
+      await db.update(visits).set({ caseId: prosId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%أطراف%'`));
+    }
+    if (supId) {
+      await db.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "مساند طبية")));
+      await db.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
     }
   }
 
