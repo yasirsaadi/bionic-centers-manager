@@ -283,9 +283,12 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
                             const updated = [...treatmentEntries];
                             updated[index] = { ...updated[index], treatmentType: val, sessionCount: NON_SESSION_TYPES.has(val) ? 0 : updated[index].sessionCount, cost: 0 };
                             setTreatmentEntries(updated);
-                            // Keep false so the effect still writes the type tag;
-                            // the effect itself skips auto-pricing for manual types.
-                            setManualCostOverride(false);
+                            // Manual types (أطراف/مساند): fully hand the amount to
+                            // the staff — the auto-pricing effect backs off entirely
+                            // so it can never zero/overwrite the typed amount. The
+                            // type tag is still computed at submit from the entries.
+                            // Physio types resume auto-pricing (override = false).
+                            setManualCostOverride(MANUAL_AMOUNT_TYPES.has(val));
                           }}
                         >
                           <SelectTrigger data-testid={`select-payment-treatment-type-${index}`}>
