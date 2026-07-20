@@ -70,13 +70,10 @@ export function PatientCaseChips({ cases, selectedId, onSelect }: {
 }
 
 // The selected case's fully independent panel.
-export function PatientCasePanel({ caseRow, visits, payments }: {
-  caseRow: CaseRow;
-  visits: any[];
-  payments: any[];
-}) {
-  const caseVisits = visits.filter((v) => v.caseId === caseRow.id);
-  const casePayments = payments.filter((p) => p.caseId === caseRow.id);
+// The selected case's header: its finances + type-specific details. The
+// case's visits and payments render in the tabs below (filtered by case),
+// so they are NOT duplicated here.
+export function PatientCasePanel({ caseRow }: { caseRow: CaseRow }) {
   const details = caseRow.details || {};
   const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k]);
   const m = meta(caseRow.caseType);
@@ -108,39 +105,6 @@ export function PatientCasePanel({ caseRow, visits, payments }: {
           </div>
         </div>
       )}
-
-      <div className="rounded-xl border p-3">
-        <p className="text-sm font-semibold text-primary mb-2">الزيارات ({caseVisits.length})</p>
-        {caseVisits.length === 0 ? (
-          <p className="text-sm text-muted-foreground">لا زيارات لهذه الحالة.</p>
-        ) : (
-          <div className="space-y-1 max-h-56 overflow-y-auto">
-            {caseVisits.map((v) => (
-              <div key={v.id} className="flex items-center justify-between text-sm border-b border-dashed py-1">
-                <span className="text-slate-400 font-mono text-xs">{formatDateIraq(v.visitDate)}</span>
-                <span className="flex-1 px-2 truncate">{v.treatmentType || v.notes || "زيارة"}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-xl border p-3">
-        <p className="text-sm font-semibold text-primary mb-2">الدفعات ({casePayments.length})</p>
-        {casePayments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">لا دفعات لهذه الحالة.</p>
-        ) : (
-          <div className="space-y-1 max-h-56 overflow-y-auto">
-            {casePayments.map((p) => (
-              <div key={p.id} className="flex items-center justify-between text-sm border-b border-dashed py-1">
-                <span className="text-slate-400 font-mono text-xs">{formatDateIraq(p.date)}</span>
-                <span className="flex-1 px-2 truncate">{p.paymentTreatmentType || p.notes || "دفعة"}</span>
-                <span className="font-semibold text-green-700">{fmtIQD(p.amount)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </Card>
   );
 }
