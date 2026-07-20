@@ -1449,58 +1449,12 @@ export async function registerRoutes(
         branchId
       });
 
-      // Prosthetic / medical-support patients MUST be assigned to exactly one
-      // expert. The patient + first work order + first history row are created
-      // atomically (a failed work order rolls back the patient).
-      const mc = (input as any).medicalCondition;
-      const serviceType = (input.isAmputee || mc === "amputee") ? "prosthetic"
-        : (input.isMedicalSupport || mc === "medical_support") ? "medical_support"
-        : null;
-
-      // The COST is the commitment signal (the owner's rule): a cost entered
-      // means the patient is buying → expert + delivery date are mandatory
-      // and a work order is created. No cost = examination only — the
-      // patient is registered normally WITHOUT an expert or a work order
-      // ("بدء التصنيع" on the patient page creates it if they commit later).
-      const committed = Number((input as any).totalCost) > 0;
-
-      if (serviceType && committed) {
-        const expertUserId = parseInt(req.body?.expertUserId);
-        if (!Number.isFinite(expertUserId)) {
-          return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
-        }
-        // Server-side validation — never trust the UI list.
-        const v = await manufacturingStore.validateExpertForBranch(expertUserId, branchId);
-        if (!v.ok) return res.status(400).json({ message: v.reason });
-
-        // Mandatory: the expected delivery date (agreed with the expert)
-        // drives the delivery-alerts feature.
-        const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
-          ? req.body.expectedDeliveryDate : null;
-        if (!expectedDeliveryDate) {
-          return res.status(400).json({ message: "يجب تحديد تاريخ التسليم المتوقع (اسأل الخبير)" });
-        }
-
-        const { patient, workOrder } = await manufacturingStore.createPatientWithWorkOrder(input, {
-          serviceType, expertUserId, expectedDeliveryDate, assignedBy: branchSession?.userId ?? null,
-        });
-
-        await logAudit({
-          entityType: "patient", entityId: patient.id, action: "create",
-          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        });
-        await logAudit({
-          entityType: "prosthetic_work_order", entityId: workOrder.id, action: "create",
-          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: `أمر تصنيع (${serviceType}) للخبير #${expertUserId}`,
-        });
-
-        return res.status(201).json(patient);
-      }
-
-      // Non-manufacturing (physiotherapy / other): existing single-insert path.
+      // Patients are ALWAYS registered WITHOUT an expert — expert assignment is
+      // a separate, later step ("تحديد خبير" from the patients registry), so the
+      // add form no longer asks for an expert or a delivery date. Prosthetic /
+      // support patients simply carry their flags; the "تحديد خبير" action
+      // creates the work order (and the expert commits to the delivery date only
+      // when they reach the mold stage).
       const patient = await storage.createPatient(input);
       await logAudit({
         entityType: "patient",
@@ -1879,33 +1833,15 @@ export async function registerRoutes(
       const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
       const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
 
-      // The COST is the commitment signal: cost entered → expert + delivery
-      // date mandatory and a work order is created. No cost = the type is
-      // activated on the record (examination) without a work order.
-      const committed = serviceCost > 0;
-
-      // Manufacturing types require a valid expert for the patient's branch —
-      // validated server-side, never trusted from the UI list.
-      let expertUserId: number | null = null;
-      if (caseType !== "physiotherapy" && committed) {
-        expertUserId = parseInt(req.body?.expertUserId);
-        if (!Number.isFinite(expertUserId)) {
-          return res.status(400).json({ message: "يجب اختيار الخبير المسؤول عن التصنيع" });
-        }
-        const v = await manufacturingStore.validateExpertForBranch(expertUserId, patient.branchId);
-        if (!v.ok) return res.status(400).json({ message: v.reason });
-      }
-
-      const expectedDeliveryDate = typeof req.body?.expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expectedDeliveryDate)
-        ? req.body.expectedDeliveryDate : null;
-      if (caseType !== "physiotherapy" && committed && !expectedDeliveryDate) {
-        return res.status(400).json({ message: "يجب تحديد تاريخ التسليم المتوقع (اسأل الخبير)" });
-      }
-
+      // Expert assignment is now a SEPARATE step ("تحديد خبير" in the patients
+      // registry), so adding a case type never asks for an expert or a delivery
+      // date and never creates the work order here. The case (and its cost) is
+      // recorded; the expert is assigned afterward, and commits to the delivery
+      // date only when reaching the mold stage.
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
         patientId, caseType, fields, serviceCost, paidNow,
-        expertUserId, expectedDeliveryDate,
-        skipWorkOrder: !committed,
+        expertUserId: null, expectedDeliveryDate: null,
+        skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,
       });
 

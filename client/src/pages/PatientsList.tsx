@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download } from "lucide-react";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download, UserCog } from "lucide-react";
+import { AssignExpertDialog } from "@/components/manufacturing/AssignExpertDialog";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo, useEffect } from "react";
@@ -66,6 +67,14 @@ export default function PatientsList() {
   const userBranchId = branchSession?.branchId;
   const [, setLocation] = useLocation();
   const searchString = useSearch();
+
+  // "تحديد خبير" — reception / branch manager / admin may assign a manufacturing
+  // expert to any أطراف/مساند patient from the registry. A pure expert does not
+  // assign experts. This replaces assigning the expert at patient creation.
+  const isExpert = branchSession?.role === "prosthetics_expert";
+  const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
+    || !!permissions.canAddPatients || !!permissions.canViewPatients);
+  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string } | null>(null);
   
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -492,12 +501,20 @@ export default function PatientsList() {
                         <span className="text-xs text-slate-400 font-mono">
                           {formatDateIraq(patient.createdAt)}
                         </span>
-                        <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
-                          <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
-                            <Eye className="w-3.5 h-3.5" />
-                            {t.patients.viewFile}
-                          </Button>
-                        </Link>
+                        <div className="flex items-center gap-1">
+                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
+                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
+                              <UserCog className="w-3.5 h-3.5" />
+                              تحديد خبير
+                            </Button>
+                          )}
+                          <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
+                            <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
+                              <Eye className="w-3.5 h-3.5" />
+                              {t.patients.viewFile}
+                            </Button>
+                          </Link>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -558,12 +575,20 @@ export default function PatientsList() {
                           <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">
-                          <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
-                            <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-2">
-                              <Eye className="w-4 h-4" />
-                              {t.patients.viewFile}
-                            </Button>
-                          </Link>
+                          <div className="flex items-center gap-1 justify-end">
+                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
+                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
+                                <UserCog className="w-4 h-4" />
+                                تحديد خبير
+                              </Button>
+                            )}
+                            <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
+                              <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-2">
+                                <Eye className="w-4 h-4" />
+                                {t.patients.viewFile}
+                              </Button>
+                            </Link>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -624,6 +649,12 @@ export default function PatientsList() {
           </div>
         </div>
       </div>
+
+      <AssignExpertDialog
+        patient={assignExpertPatient}
+        open={!!assignExpertPatient}
+        onOpenChange={(o) => { if (!o) setAssignExpertPatient(null); }}
+      />
     </div>
   );
 }

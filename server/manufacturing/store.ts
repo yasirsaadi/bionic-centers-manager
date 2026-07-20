@@ -454,7 +454,11 @@ export async function updateStage(params: {
   order: ProstheticWorkOrder;
   toStage: string;
   notes?: string | null;
-  nextDate?: string | null;
+  // The promised delivery date, captured when the expert reaches the mold stage.
+  // Applied ONLY when the order has no delivery date yet (first commitment) —
+  // it is INDEPENDENT of the stage timeline and never overwrites an existing
+  // date here, so the promised date stays fixed for accuracy tracking.
+  deliveryDate?: string | null;
   newStatus?: string | null;
   finalResult?: string | null;
   finalNotes?: string | null;
@@ -466,7 +470,7 @@ export async function updateStage(params: {
   return await db.transaction(async (tx) => {
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
     if (!order.startedAt && fromStage === NEW_ASSIGNMENT_STAGE) patch.startedAt = new Date();
-    if (params.nextDate) patch.expectedDeliveryDate = params.nextDate;
+    if (params.deliveryDate && !order.expectedDeliveryDate) patch.expectedDeliveryDate = params.deliveryDate;
     if (params.newStatus) patch.status = params.newStatus;
     if (delivered) {
       patch.status = "completed";
