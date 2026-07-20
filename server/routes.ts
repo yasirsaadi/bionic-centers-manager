@@ -335,6 +335,9 @@ export async function registerRoutes(
             canDeletePayments: grantAll || systemUser.canDeletePayments,
             canViewReports: grantAll || systemUser.canViewReports,
             canManageAccounting: grantAll || systemUser.canManageAccounting,
+            // Narrow "add expenses" grant. Full accounting managers implicitly
+            // have it; otherwise it's the explicit per-user flag.
+            canAddExpenses: grantAll || Boolean(systemUser.canManageAccounting) || Boolean(systemUser.canAddExpenses),
             canManageSettings: grantAll || systemUser.canManageSettings,
             canManageUsers: grantAll || systemUser.canManageUsers,
             canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
@@ -953,6 +956,9 @@ export async function registerRoutes(
       if (userData.canWorkAsExpert !== undefined) {
         userData.canWorkAsExpert = userData.canWorkAsExpert === true || userData.canWorkAsExpert === "true";
       }
+      if (userData.canAddExpenses !== undefined) {
+        userData.canAddExpenses = userData.canAddExpenses === true || userData.canAddExpenses === "true";
+      }
 
       if (!userData.username || userData.username.length < 1) {
         return res.status(400).json({ message: "اسم المستخدم مطلوب" });
@@ -1022,6 +1028,9 @@ export async function registerRoutes(
       // Expert capability flag: normalise to a real boolean when present.
       if (userData.canWorkAsExpert !== undefined) {
         userData.canWorkAsExpert = userData.canWorkAsExpert === true || userData.canWorkAsExpert === "true";
+      }
+      if (userData.canAddExpenses !== undefined) {
+        userData.canAddExpenses = userData.canAddExpenses === true || userData.canAddExpenses === "true";
       }
 
       // Validate role if provided
@@ -3046,7 +3055,7 @@ export async function registerRoutes(
   app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddExpenses;
 
     if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
@@ -3065,7 +3074,7 @@ export async function registerRoutes(
   app.get("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddExpenses;
 
     if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });
@@ -3083,7 +3092,7 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const canAdd = isAdmin || branchSession?.permissions?.canManageAccounting;
+      const canAdd = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddExpenses;
       const user = req.user;
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
@@ -3246,7 +3255,7 @@ export async function registerRoutes(
   app.get("/api/expenses/subcategories", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddExpenses;
     if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك" });
     }
@@ -3262,7 +3271,7 @@ export async function registerRoutes(
   app.get("/api/expenses/by-category/summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
+    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddExpenses;
 
     if (!canAccess) {
       return res.status(403).json({ error: "غير مصرح لك بالوصول للمصروفات" });

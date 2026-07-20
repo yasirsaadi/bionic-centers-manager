@@ -580,6 +580,9 @@ export const systemUsers = pgTable("system_users", {
   // Reports & Accounting Permissions
   canViewReports: boolean("can_view_reports").default(false),
   canManageAccounting: boolean("can_manage_accounting").default(false),
+  // Narrow grant: add & view expenses ONLY (the المصروفات tab), without full
+  // accounting management. Independent of canManageAccounting.
+  canAddExpenses: boolean("can_add_expenses").default(false),
   // System Permissions
   canManageSettings: boolean("can_manage_settings").default(false),
   canManageUsers: boolean("can_manage_users").default(false),

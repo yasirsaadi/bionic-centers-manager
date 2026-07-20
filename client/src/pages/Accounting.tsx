@@ -1100,8 +1100,23 @@ export default function Accounting() {
   // toggles like "all-branches view", continue using `isAdmin` alone.
   const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
   const userBranchId = branchSession?.branchId;
-  
-  const [activeTab, setActiveTab] = useState("dashboard");
+
+  // Accounting access tiers:
+  //  - fullAccounting: admin / branch_manager / canManageAccounting → everything.
+  //  - expensesOnly: has the narrow "add expenses" grant but NOT full
+  //    management → sees ONLY the expenses tab, can add & view (no edit/delete).
+  const perms = (branchSession as any)?.permissions ?? {};
+  const fullAccounting = isAdmin || isAdminOrManager || Boolean(perms.canManageAccounting);
+  const canAddExpenses = fullAccounting || Boolean(perms.canAddExpenses);
+  const expensesOnly = !fullAccounting && canAddExpenses;
+
+  const [activeTab, setActiveTab] = useState(expensesOnly ? "expenses" : "dashboard");
+
+  // If the session resolves after mount and the user turns out to be
+  // expenses-only, snap them to the expenses tab.
+  useEffect(() => {
+    if (expensesOnly) setActiveTab("expenses");
+  }, [expensesOnly]);
   // For branch staff, lock to their branch only
   const [selectedBranch, setSelectedBranch] = useState<string>(
     isAdmin ? "all" : (userBranchId?.toString() || "all")
@@ -2907,15 +2922,18 @@ export default function Accounting() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 gap-1">
+          <TabsList className={expensesOnly ? "grid w-full grid-cols-1" : "grid w-full grid-cols-4 md:grid-cols-8 gap-1"}>
+            {!expensesOnly && (
             <TabsTrigger value="dashboard" className="gap-2" data-testid="tab-dashboard">
               <Calculator className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabDashboard}</span>
             </TabsTrigger>
+            )}
             <TabsTrigger value="expenses" className="gap-2" data-testid="tab-expenses">
               <Receipt className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabExpenses}</span>
             </TabsTrigger>
+            {!expensesOnly && (<>
             <TabsTrigger value="invoices" className="gap-2" data-testid="tab-invoices">
               <FileText className="h-4 w-4" />
               <span className="hidden md:inline">{t.accounting.tabInvoices}</span>
@@ -2948,6 +2966,7 @@ export default function Accounting() {
                 </Badge>
               )}
             </TabsTrigger>
+            </>)}
           </TabsList>
 
           {/* Dashboard Tab */}
@@ -3312,6 +3331,9 @@ export default function Accounting() {
                             {formatDateIraq(expense.expenseDate)}
                           </TableCell>
                           <TableCell>
+                            {/* Edit/delete are full-accounting only. An
+                                add-expenses-only user can add & view, not modify. */}
+                            {fullAccounting ? (
                             <div className="flex items-center gap-2">
                               <Button
                                 variant="ghost"
@@ -3330,6 +3352,9 @@ export default function Accounting() {
                                 <Trash2 className="h-4 w-4 text-red-500" />
                               </Button>
                             </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))

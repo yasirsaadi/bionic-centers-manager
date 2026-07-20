@@ -104,6 +104,7 @@ type PermissionSet = {
   canDeletePayments: boolean;
   canViewReports: boolean;
   canManageAccounting: boolean;
+  canAddExpenses: boolean;
   canManageSettings: boolean;
   canManageUsers: boolean;
   canManageTreatmentPlans: boolean;
@@ -131,6 +132,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: true,
     canViewReports: true,
     canManageAccounting: true,
+    canAddExpenses: false,
     canManageSettings: true,
     canManageUsers: true,
     canManageTreatmentPlans: true,
@@ -156,6 +158,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: true,
     canViewReports: true,
     canManageAccounting: true,
+    canAddExpenses: false,
     canManageSettings: true,
     canManageUsers: true,
     canManageTreatmentPlans: true,
@@ -180,6 +183,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: false,
     canViewReports: true,
     canManageAccounting: true,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
@@ -201,6 +205,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: false,
     canViewReports: false,
     canManageAccounting: false,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
@@ -227,6 +232,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: false,
     canViewReports: false,
     canManageAccounting: false,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: true,
@@ -250,6 +256,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: false,
     canViewReports: false,
     canManageAccounting: false,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
@@ -274,6 +281,7 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canDeletePayments: false,
     canViewReports: false,
     canManageAccounting: false,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
@@ -1305,6 +1313,7 @@ export default function AdminSettings() {
     canDeletePayments: false,
     canViewReports: false,
     canManageAccounting: false,
+    canAddExpenses: false,
     canManageSettings: false,
     canManageUsers: false,
     canManageTreatmentPlans: false,
@@ -1445,6 +1454,7 @@ export default function AdminSettings() {
       canDeletePayments: false,
       canViewReports: false,
       canManageAccounting: false,
+      canAddExpenses: false,
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
@@ -1487,6 +1497,7 @@ export default function AdminSettings() {
       canDeletePayments: user.canDeletePayments ?? false,
       canViewReports: user.canViewReports ?? false,
       canManageAccounting: user.canManageAccounting ?? false,
+      canAddExpenses: (user as any).canAddExpenses ?? false,
       canManageSettings: user.canManageSettings ?? false,
       canManageUsers: user.canManageUsers ?? false,
       canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
@@ -2784,6 +2795,23 @@ export default function AdminSettings() {
                         onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageAccounting: checked }))}
                       />
                       <Label htmlFor="canManageAccounting" className="text-sm">{t.adminSettings.canManageAccounting}</Label>
+                    </div>
+                    {/* Narrow grant: add & view expenses only (المصروفات tab),
+                        without full accounting management. */}
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canAddExpenses"
+                        checked={userFormData.canAddExpenses}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canAddExpenses: checked }))}
+                        data-testid="switch-canAddExpenses"
+                        disabled={userFormData.canManageAccounting}
+                      />
+                      <Label htmlFor="canAddExpenses" className="text-sm">
+                        إضافة المصاريف فقط
+                        {userFormData.canManageAccounting && (
+                          <span className="text-xs text-muted-foreground mr-1">(مشمولة في إدارة المحاسبة)</span>
+                        )}
+                      </Label>
                     </div>
                   </div>
                 </div>

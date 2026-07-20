@@ -134,7 +134,11 @@ export function Sidebar() {
     
     // Check permissions
     if (item.permission && !permissions[item.permission]) {
-      return false;
+      // The accounting section is also reachable with the narrow
+      // "add expenses" grant (expenses tab only) — not just full management.
+      if (!(item.href === "/accounting" && permissions.canAddExpenses)) {
+        return false;
+      }
     }
     
     return true;
