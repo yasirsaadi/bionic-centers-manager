@@ -4,6 +4,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
+import { PatientCasesTabs } from "@/components/patient/PatientCasesTabs";
 import { MoneyInput } from "@/components/ui/money-input";
 import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
@@ -773,6 +774,10 @@ export default function PatientDetails() {
           })()}
         </div>
       </div>
+
+      {/* Per-case tabs: each specialty (علاج/طرف/مسند) with its own details,
+          cost, paid/remaining, visits and payments — read from patient_cases. */}
+      <PatientCasesTabs patientId={patient.id} visits={patient.visits || []} payments={patient.payments || []} />
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">
