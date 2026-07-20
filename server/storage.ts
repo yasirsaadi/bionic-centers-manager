@@ -471,6 +471,45 @@ export class DatabaseStorage implements IStorage {
       await db.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "مساند طبية")));
       await db.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
     }
+
+    // ---- cost floor: a case can never cost LESS than what was paid into it --
+    // The app never stored a per-service price (work orders carry no cost), so
+    // the truest recorded figure for what a طرف/مسند cost is the money recorded
+    // against it. "paid ≤ cost" is a domain truth: you can't pay more than the
+    // price. So any طرف/مسند case whose cost sits below its attributed paid total
+    // (e.g. a fully-paid 7M طرف left at cost 0 because the total landed on the
+    // physio holder) is raised to that paid total, and the difference is moved
+    // OUT of the physio/primary holder. A fully-paid service thus shows its real
+    // price and 0 remaining automatically, for every patient. total_cost and the
+    // patient flags are NEVER touched here → the aggregate/financial reports stay
+    // byte-identical. Editable per-case cost still overrides this afterwards.
+    const finalCases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    if (finalCases.length > 1) {
+      const paidRows = await db.select({ caseId: payments.caseId, amount: payments.amount })
+        .from(payments).where(eq(payments.patientId, patientId));
+      const paidByCase = new Map<number, number>();
+      for (const r of paidRows) if (r.caseId) paidByCase.set(r.caseId, (paidByCase.get(r.caseId) || 0) + (r.amount || 0));
+      const holder = finalCases.find((c) => c.caseType === "physiotherapy")
+        ?? [...finalCases].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
+      if (holder) {
+        let holderCost = holder.cost || 0;
+        for (const c of finalCases) {
+          if (c.id === holder.id) continue;
+          const paid = paidByCase.get(c.id) || 0;
+          const shortfall = paid - (c.cost || 0);
+          if (shortfall > 0) {
+            const delta = Math.min(shortfall, holderCost); // never push the holder negative
+            if (delta > 0) {
+              await db.update(patientCases).set({ cost: (c.cost || 0) + delta, updatedAt: new Date() }).where(eq(patientCases.id, c.id));
+              holderCost -= delta;
+            }
+          }
+        }
+        if (holderCost !== (holder.cost || 0)) {
+          await db.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+        }
+      }
+    }
   }
 
   // Which case a new payment/visit settles, from its treatment tag / type.

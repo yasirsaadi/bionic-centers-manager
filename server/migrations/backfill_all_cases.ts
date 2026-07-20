@@ -16,7 +16,12 @@ import { storage } from "../storage";
 // which surfaces مسند/طرف cases that were recorded via those columns while the
 // boolean flag stayed false. Re-sync only ADDS missing cases (existing cases
 // are skipped by `has(t)`), so it never disturbs already-split costs.
-const GUARD = "backfill_all_cases_v2";
+//
+// v3: re-run after adding the "cost floor" pass — a طرف/مسند case can never
+// cost less than what was paid into it, so fully-paid products (e.g. a 7M طرف
+// left at cost 0) now show their real price and 0 remaining automatically,
+// with the cost moved out of the physio holder. total_cost/flags untouched.
+const GUARD = "backfill_all_cases_v3";
 
 export async function backfillAllPatientCases(): Promise<void> {
   try {
