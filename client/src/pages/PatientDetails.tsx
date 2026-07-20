@@ -4,7 +4,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
-import { PatientCasesTabs } from "@/components/patient/PatientCasesTabs";
+import { PatientCaseChips, PatientCasePanel, type CaseRow } from "@/components/patient/PatientCasesTabs";
 import { MoneyInput } from "@/components/ui/money-input";
 import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
@@ -71,7 +71,7 @@ import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
 import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -140,6 +140,25 @@ export default function PatientDetails() {
   const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
   const [editPaymentTreatmentType, setEditPaymentTreatmentType] = useState<string>("");
   const [editPaymentFreeSessions, setEditPaymentFreeSessions] = useState(false);
+
+  // Independent cases (Phase 2, relocated): chips in the header + a full panel
+  // per case. Each case is its own view (details / cost / visits / payments).
+  const { data: patientCasesList = [] } = useQuery<CaseRow[]>({
+    queryKey: [`/api/patients/${id}/cases`],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${id}/cases`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
+  useEffect(() => {
+    if (patientCasesList.length > 0 && (selectedCaseId == null || !patientCasesList.some((c) => c.id === selectedCaseId))) {
+      setSelectedCaseId(patientCasesList[0].id);
+    }
+  }, [patientCasesList, selectedCaseId]);
+  const selectedCase = patientCasesList.find((c) => c.id === selectedCaseId) || null;
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const [editCreatedAtOpen, setEditCreatedAtOpen] = useState(false);
@@ -757,9 +776,15 @@ export default function PatientDetails() {
             <Building2 className="w-3 h-3" />
             {getBranchName(patient.branchId)}
           </Badge>
-          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
-            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-          </Badge>
+          {/* Case chips: one per specialty. Click → that case's page below.
+              Falls back to the legacy single badge until cases are loaded. */}
+          {patientCasesList.length > 0 ? (
+            <PatientCaseChips cases={patientCasesList} selectedId={selectedCaseId} onSelect={setSelectedCaseId} />
+          ) : (
+            <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
+              {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
+            </Badge>
+          )}
           {(() => {
             const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
             if (totalSessions > 0) {
@@ -775,9 +800,10 @@ export default function PatientDetails() {
         </div>
       </div>
 
-      {/* Per-case tabs: each specialty (علاج/طرف/مسند) with its own details,
-          cost, paid/remaining, visits and payments — read from patient_cases. */}
-      <PatientCasesTabs patientId={patient.id} visits={patient.visits || []} payments={patient.payments || []} />
+      {/* Selected case's fully independent page — driven by the header chips. */}
+      {selectedCase && (
+        <PatientCasePanel caseRow={selectedCase} visits={patient.visits || []} payments={patient.payments || []} />
+      )}
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">
