@@ -11,6 +11,7 @@ interface UserPermissions {
   canDeletePayments: boolean;
   canViewReports: boolean;
   canManageAccounting: boolean;
+  canAddExpenses: boolean;
   canManageSettings: boolean;
   canManageUsers: boolean;
   canManageTreatmentPlans: boolean;
@@ -34,6 +35,7 @@ const defaultAdminPermissions: UserPermissions = {
   canDeletePayments: true,
   canViewReports: true,
   canManageAccounting: true,
+  canAddExpenses: true,
   canManageSettings: true,
   canManageUsers: true,
   canManageTreatmentPlans: true,
@@ -57,6 +59,7 @@ const defaultBranchPermissions: UserPermissions = {
   canDeletePayments: false,
   canViewReports: true,
   canManageAccounting: false,
+  canAddExpenses: false,
   canManageSettings: false,
   canManageUsers: false,
   canManageTreatmentPlans: false,
@@ -84,6 +87,7 @@ export function usePermissions(): UserPermissions {
       canDeletePayments: false,
       canViewReports: false,
       canManageAccounting: false,
+  canAddExpenses: false,
       canManageSettings: false,
       canManageUsers: false,
       canManageTreatmentPlans: false,
@@ -110,6 +114,7 @@ export function usePermissions(): UserPermissions {
       canDeletePayments: perms.canDeletePayments ?? false,
       canViewReports: perms.canViewReports ?? false,
       canManageAccounting: perms.canManageAccounting ?? false,
+      canAddExpenses: perms.canAddExpenses ?? false,
       canManageSettings: perms.canManageSettings ?? false,
       canManageUsers: perms.canManageUsers ?? false,
       canManageTreatmentPlans: perms.canManageTreatmentPlans ?? false,
