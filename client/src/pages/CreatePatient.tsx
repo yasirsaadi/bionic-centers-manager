@@ -1046,8 +1046,11 @@ export default function CreatePatient() {
                     </div>
                   )}
 
-                  {/* Show prosthetic details only for single/double amputation */}
-                  {(amputationType === "single" || amputationType === "double") && (
+                  {/* Device specs (نوع الطرف/السليكون/التعليق/القدم/الحذاء/مفصل الركبة)
+                      are NOT collected at registration anymore — the doctor decides
+                      them during the exam, so reception fills them AFTER the exam via
+                      the «تخصيص الطرف/المسند» step in the patients registry. */}
+                  {false && (amputationType === "single" || amputationType === "double") && (
                     <>
                   <FormField
                     control={form.control}
@@ -1169,19 +1172,7 @@ export default function CreatePatient() {
 
               {conditionType === "medical_support" && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <FormField
-                    control={form.control}
-                    name="supportType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t.patientForm.supportType}</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.supportTypePlaceholder} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {/* نوع المسند يُحدَّد بعد الفحص عبر «تخصيص الطرف/المسند» — لا هنا. */}
                   <FormField
                     control={form.control}
                     name="injurySide"
@@ -1361,31 +1352,36 @@ export default function CreatePatient() {
                 render={({ field }) => <input type="hidden" {...field} value={field.value || 0} />}
               />
 
-              <FormField
-                control={form.control}
-                name="totalCost"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t.patientForm.estimatedCost}</FormLabel>
-                    <FormControl>
-                      <MoneyInput
-                        value={field.value ?? ""}
-                        readOnly={!isAdmin && conditionType === "physiotherapy"}
-                        className={`${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
-                        placeholder="0"
-                        data-testid="input-total-cost"
-                        onValueChange={(n) => {
-                          field.onChange(n);
-                          if (isAdmin) {
-                            setManualCostOverride(true);
-                          }
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* Cost for a طرف/مسند is set AFTER the exam (when the patient agrees
+                  to buy) in the «تخصيص الطرف/المسند» step — not at registration. It
+                  stays here for physiotherapy (and any non-manufacturing patient). */}
+              {!needsExpert && (
+                <FormField
+                  control={form.control}
+                  name="totalCost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.estimatedCost}</FormLabel>
+                      <FormControl>
+                        <MoneyInput
+                          value={field.value ?? ""}
+                          readOnly={!isAdmin && conditionType === "physiotherapy"}
+                          className={`${!isAdmin && conditionType === "physiotherapy" ? "bg-slate-100 cursor-not-allowed" : "bg-white"}`}
+                          placeholder="0"
+                          data-testid="input-total-cost"
+                          onValueChange={(n) => {
+                            field.onChange(n);
+                            if (isAdmin) {
+                              setManualCostOverride(true);
+                            }
+                          }}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {/* Expert assignment is a separate step: after saving, the patient
                   appears in the registry with a «تحديد خبير» button. The add

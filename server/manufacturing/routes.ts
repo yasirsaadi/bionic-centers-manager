@@ -203,6 +203,51 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     res.status(201).json(order);
   });
 
+  // ---- "تخصيص الطرف/المسند": device specs + price + expert, in ONE step -------
+  // The post-exam step: the doctor decided the specs and the patient agreed to
+  // buy, so reception records the device details + the agreed price + assigns
+  // the expert together. No delivery date (the expert commits to it at the mold
+  // stage). Same authorization as assigning an expert.
+  app.post("/api/patients/:id/assign-manufacturing", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
+      && Boolean(s.permissions?.canAddPatients || s.permissions?.canViewPatients);
+    if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
+
+    const patientId = parseInt(req.params.id);
+    const expertUserId = parseInt(req.body?.expertUserId);
+    if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) return res.status(400).json({ error: "بيانات ناقصة" });
+    const cost = Math.max(0, Number(req.body?.cost) || 0);
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+    const serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
+    if (!serviceType) return res.status(400).json({ error: "هذه الميزة لمرضى الأطراف والمساند فقط" });
+    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+    const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
+    if (!v.ok) return res.status(400).json({ error: v.reason });
+
+    // One ACTIVE order per patient.
+    const existing = await store.listOrders({ completed: false });
+    if (existing.find((o) => o.patientId === patientId && o.status !== "cancelled")) {
+      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+    }
+
+    // Only the device-spec fields the doctor decides pass through (whitelist).
+    const allowed = serviceType === "prosthetic"
+      ? ["prostheticType", "siliconType", "siliconSize", "suspensionSystem", "footType", "footSize", "kneeJointType"] as const
+      : ["supportType"] as const;
+    const fields: any = {};
+    for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
+
+    const { workOrderId } = await storage.assignManufacturing({
+      patientId, serviceType, fields, cost, expertUserId, assignedBy: s.userId ?? null,
+    });
+    await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
+      `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${cost})`);
+    res.status(201).json({ ok: true, workOrderId });
+  });
+
   // ---- maintenance visit (order + visit row created ATOMICALLY) ---------------
   // Reception opens this from the patient's "new visit" flow. Both the
   // maintenance work order and the visit row are written in one transaction, so
