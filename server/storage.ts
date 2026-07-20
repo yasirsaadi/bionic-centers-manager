@@ -743,6 +743,74 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
+  // patient agreed to buy, so reception now (in ONE step) records the device
+  // details + the price + assigns the expert. Updates the patient's device
+  // fields, sets the (existing) case's cost to the agreed price and adjusts
+  // total_cost by the delta, refreshes the case details, and creates the work
+  // order for the chosen expert (NO delivery date — the expert commits to that
+  // at the mold stage). All atomic.
+  async assignManufacturing(params: {
+    patientId: number;
+    serviceType: "prosthetic" | "medical_support";
+    fields: Partial<InsertPatient>;
+    cost: number;
+    expertUserId: number;
+    assignedBy: number | null;
+  }): Promise<{ patient: Patient; workOrderId: number }> {
+    const { patientId, serviceType, fields, cost, expertUserId, assignedBy } = params;
+    const result = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      if (!existing) throw new Error("المريض غير موجود");
+
+      const [existingCase] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
+      const oldCaseCost = existingCase?.cost || 0;
+      const delta = cost - oldCaseCost;
+
+      // Update device fields + flag + total_cost (by the delta, so re-running is safe).
+      const patch: any = { ...fields };
+      if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
+      patch.totalCost = Math.max(0, (existing.totalCost || 0) + delta);
+      const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
+
+      // Build the case details from the freshly-updated patient fields.
+      const detailsForType: Record<string, any> = serviceType === "prosthetic" ? {
+        amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
+        siliconType: patient.siliconType, siliconSize: patient.siliconSize,
+        suspensionSystem: patient.suspensionSystem, footType: patient.footType,
+        footSize: patient.footSize, kneeJointType: patient.kneeJointType, injurySide: patient.injurySide,
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate, injuryType: patient.injuryType,
+      } : {
+        supportType: patient.supportType, injurySide: patient.injurySide,
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
+      };
+      const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+
+      let caseId: number;
+      if (existingCase) {
+        caseId = existingCase.id;
+        await tx.update(patientCases).set({ cost, details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+      } else {
+        const [nc] = await tx.insert(patientCases).values({
+          patientId, branchId: existing.branchId, caseType: serviceType, cost, details: cleanDetails,
+        }).returning();
+        caseId = nc.id;
+      }
+
+      const [wo] = await tx.insert(prostheticWorkOrders).values({
+        patientId, branchId: existing.branchId, expertUserId, serviceType,
+        status: "active", currentStage: "new_assignment", expectedDeliveryDate: null, assignedBy,
+      }).returning();
+      await tx.insert(prostheticWorkHistory).values({
+        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: "new_assignment",
+        notes: "تخصيص الطرف/المسند وإسناد الخبير", performedBy: assignedBy,
+      });
+      return { patient, workOrderId: wo.id };
+    });
+    return result;
+  }
+
   // Merges a duplicate patient row into the original one (admin tool).
   // Every child record is re-pointed to the target, the type flags are
   // OR-merged, empty descriptive fields on the target are filled from the

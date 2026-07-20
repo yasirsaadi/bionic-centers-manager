@@ -74,7 +74,7 @@ export default function PatientsList() {
   const isExpert = branchSession?.role === "prosthetics_expert";
   const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
     || !!permissions.canAddPatients || !!permissions.canViewPatients);
-  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string } | null>(null);
+  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null } | null>(null);
   
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -503,9 +503,9 @@ export default function PatientsList() {
                         </span>
                         <div className="flex items-center gap-1">
                           {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
-                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
+                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
                               <UserCog className="w-3.5 h-3.5" />
-                              تحديد خبير
+                              تخصيص
                             </Button>
                           )}
                           <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
@@ -577,9 +577,9 @@ export default function PatientsList() {
                         <TableCell className="pl-6">
                           <div className="flex items-center gap-1 justify-end">
                             {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
-                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
+                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
                                 <UserCog className="w-4 h-4" />
-                                تحديد خبير
+                                تخصيص وإسناد خبير
                               </Button>
                             )}
                             <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
