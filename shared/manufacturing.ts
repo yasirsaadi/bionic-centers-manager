@@ -185,3 +185,16 @@ export function isValidFinalResult(v: unknown): boolean {
 
 export const NEW_ASSIGNMENT_STAGE = "new_assignment";
 export const DELIVERED_STAGE = "delivered";
+
+// The "mold/cast taken" stage per service — the point where the expert commits
+// to a delivery date (a طرف: cast_taken; a مسند: cast_if_needed). Reaching it
+// requires a mandatory promised delivery date, which then locks (only branch
+// management / admin may change it afterward) so the expert's delivery accuracy
+// can be tracked against the date they themselves promised.
+export const MOLD_STAGE: Record<string, string> = {
+  prosthetic: "cast_taken",
+  medical_support: "cast_if_needed",
+};
+export function isMoldStage(serviceType: string, stage: string): boolean {
+  return MOLD_STAGE[serviceType] === stage;
+}

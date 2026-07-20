@@ -14,7 +14,7 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
-  isValidFinalResult, isValidStageFor, DELIVERED_STAGE,
+  isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isMoldStage,
 } from "@shared/manufacturing";
 
 type Req = any;
@@ -157,20 +157,23 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // and committed).
   app.post("/api/manufacturing/orders", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s) && Boolean(s.permissions?.canAddPatients);
+    // Reception (استعلامات) may assign an expert too: gate on the same
+    // add/view-patients capability used for the experts roster.
+    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
+      && Boolean(s.permissions?.canAddPatients || s.permissions?.canViewPatients);
     if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
+    // The delivery date is NO LONGER set at assignment. The expert commits to it
+    // later, when they reach the mold stage. So it is optional here (null now).
     const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+    if (expectedDeliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      return res.status(400).json({ error: "تاريخ غير صالح" });
+    }
     // Order purpose: a first build or a later maintenance episode.
     const purpose = req.body?.purpose === "maintenance" ? "maintenance" : "initial_build";
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) {
       return res.status(400).json({ error: "بيانات ناقصة" });
-    }
-    // The expected delivery date drives the delivery-alerts feature — it is
-    // mandatory for every work order (agreed with the expert up front).
-    if (!expectedDeliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
-      return res.status(400).json({ error: "تاريخ التسليم المتوقع إلزامي" });
     }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
@@ -294,10 +297,20 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
       }
     }
+    // At the mold stage the expert MUST commit to a delivery date — unless one
+    // was already set (then it stays locked; not re-taken here). This is the
+    // single point the promised date is captured, independent of stage dates.
+    let deliveryDate: string | null = null;
+    if (isMoldStage(raw.serviceType, toStage) && !raw.expectedDeliveryDate) {
+      deliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+      if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
+        return res.status(400).json({ error: "تاريخ التسليم إلزامي عند أخذ القالب" });
+      }
+    }
     const updated = await store.updateStage({
       order: raw, toStage,
       notes: strOrU(req.body?.notes) ?? null,
-      nextDate: strOrU(req.body?.nextDate) ?? null,
+      deliveryDate,
       newStatus: newStatus ?? null,
       finalResult: finalResult ?? null,
       finalNotes: strOrU(req.body?.finalNotes) ?? null,
@@ -315,6 +328,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   app.patch("/api/manufacturing/orders/:id/delivery-date", isAuthenticated, async (req: Req, res) => {
     const raw = await loadWritable(req, res);
     if (!raw) return;
+    // Once the delivery date has been committed (by the expert at the mold
+    // stage), CHANGING it is restricted to branch management / admin — so the
+    // promised date the expert is measured against can't be quietly moved.
+    if (raw.expectedDeliveryDate) {
+      const s = getSession(req);
+      if (!(s.isAdmin || isManager(s))) {
+        return res.status(403).json({ error: "تعديل تاريخ التسليم بعد تحديده يقتصر على إدارة الفرع أو الإدارة العامة" });
+      }
+    }
     const date = strOrU(req.body?.expectedDeliveryDate);
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: "تاريخ غير صالح" });

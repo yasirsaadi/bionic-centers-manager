@@ -331,29 +331,12 @@ export default function CreatePatient() {
         return;
       }
     }
-    // Cost entered = the patient is BUYING → expert + delivery date are
-    // mandatory. No cost = examination only, saved without assignment.
-    const committing = needsExpert && (Number(values.totalCost) || 0) > 0;
-    if (committing) {
-      if (experts.length === 0) {
-        toast({ title: "لا يوجد خبير متاح لهذا الفرع", description: "لا يمكن حفظ المريض. يرجى إضافة خبير للفرع أولاً.", variant: "destructive" });
-        return;
-      }
-      if (!expertUserId) {
-        toast({ title: "يجب اختيار الخبير المسؤول عن التصنيع", variant: "destructive" });
-        return;
-      }
-      if (!expectedDeliveryDate) {
-        toast({ title: "يجب تحديد تاريخ التسليم المتوقع", description: "اسأل الخبير عن الموعد المتوقع لإكمال التصنيع.", variant: "destructive" });
-        return;
-      }
-    }
+    // Expert assignment is a SEPARATE step now ("تحديد خبير" from the patients
+    // registry), so the add form never asks for an expert or a delivery date.
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
     const submitData = {
       ...values,
       treatmentEntries: conditionType === "physiotherapy" ? validEntries : undefined,
-      expertUserId: committing ? expertUserId : undefined,
-      expectedDeliveryDate: committing ? expectedDeliveryDate : undefined,
     };
     mutate(submitData as any, {
       onSuccess: (data) => {
@@ -1404,49 +1387,12 @@ export default function CreatePatient() {
                 )}
               />
 
-              {/* The cost is the commitment signal (owner's rule): entering a
-                  cost for a prosthetic/medical-support patient reveals the
-                  expert + expected-delivery fields and makes them mandatory.
-                  No cost = examination only — no expert, no work order. */}
-              {needsExpert && !hasCommitCost && (
+              {/* Expert assignment is a separate step: after saving, the patient
+                  appears in the registry with a «تحديد خبير» button. The add
+                  form never asks for an expert or a delivery date anymore. */}
+              {needsExpert && (
                 <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
-                  بدون كلفة: سيُسجَّل المريض <b>كفحص فقط</b> دون إسناد خبير. عند كتابة الكلفة يظهر اختيار الخبير وتاريخ التسليم.
-                </div>
-              )}
-              {needsExpert && hasCommitCost && (
-                <div className="border border-primary/40 bg-primary/5 rounded-lg p-4 space-y-2">
-                  <label className="text-sm font-semibold flex items-center gap-1">
-                    الخبير المسؤول عن التصنيع <span className="text-red-500">*</span>
-                  </label>
-                  {expertsLoading ? (
-                    <div className="text-sm text-muted-foreground">جارٍ تحميل الخبراء…</div>
-                  ) : experts.length === 0 ? (
-                    <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2" data-testid="no-expert-warning">
-                      لا يوجد خبير متاح لهذا الفرع — لا يمكن حفظ المريض. يرجى إسناد خبير لهذا الفرع من إدارة المستخدمين.
-                    </div>
-                  ) : (
-                    <Select value={expertUserId ? String(expertUserId) : ""} onValueChange={(v) => setExpertUserId(Number(v))}>
-                      <SelectTrigger className="bg-white" data-testid="select-expert">
-                        <SelectValue placeholder="اختر الخبير المسؤول" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {experts.map((e) => (
-                          <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                  <label className="text-sm font-semibold flex items-center gap-1 mt-3">
-                    تاريخ التسليم المتوقع <span className="text-red-500">*</span>
-                  </label>
-                  <Input
-                    type="date"
-                    value={expectedDeliveryDate}
-                    onChange={(e) => setExpectedDeliveryDate(e.target.value)}
-                    className="bg-white"
-                    data-testid="input-expected-delivery"
-                  />
-                  <p className="text-xs text-muted-foreground">اسأل الخبير عن الموعد المتوقع — يُبنى عليه نظام التنبيهات قبل التسليم.</p>
+                  يُسجَّل المريض الآن <b>دون خبير</b>. بعد الحفظ، حدِّد الخبير من زر <b>«تحديد خبير»</b> بجانب المريض في سجل المرضى. ويحدّد الخبير تاريخ التسليم عند أخذ القالب.
                 </div>
               )}
             </div>

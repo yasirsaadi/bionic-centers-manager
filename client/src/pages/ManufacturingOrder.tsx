@@ -18,7 +18,7 @@ import { ArrowRight, Wrench, History, RotateCcw, UserCog } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS,
   REWORK_TYPES, REWORK_TYPE_LABELS, REASON_CODES, REASON_CODE_LABELS,
-  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForService, DELIVERED_STAGE,
+  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForService, DELIVERED_STAGE, isMoldStage,
 } from "@shared/manufacturing";
 
 function fmt(iso: string | null): string {
@@ -187,7 +187,7 @@ export default function ManufacturingOrder() {
         </Card>
       )}
 
-      <StageDialog open={stageOpen} onOpenChange={setStageOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} onDone={invalidate} />
+      <StageDialog open={stageOpen} onOpenChange={setStageOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} serviceType={order.serviceType} deliveryDateSet={!!order.expectedDeliveryDate} onDone={invalidate} />
       <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} orderId={order.id} onDone={invalidate} />
       <ReworkDialog open={reworkOpen} onOpenChange={setReworkOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
@@ -222,14 +222,17 @@ function useAction(url: string, method: string, onDone: () => void) {
   });
 }
 
-function StageDialog({ open, onOpenChange, orderId, stages, currentStage, onDone }: any) {
+function StageDialog({ open, onOpenChange, orderId, stages, currentStage, serviceType, deliveryDateSet, onDone }: any) {
   const [toStage, setToStage] = useState("");
   const [notes, setNotes] = useState("");
-  const [nextDate, setNextDate] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [finalResult, setFinalResult] = useState("");
   const m = useAction(`/api/manufacturing/orders/${orderId}/stage`, "PATCH", () => { onOpenChange(false); reset(); onDone(); });
-  function reset() { setToStage(""); setNotes(""); setNextDate(""); setFinalResult(""); }
+  function reset() { setToStage(""); setNotes(""); setDeliveryDate(""); setFinalResult(""); }
   const needsResult = toStage === DELIVERED_STAGE;
+  // Reaching the mold stage requires committing to a delivery date — but only
+  // if one hasn't already been set (it locks after that).
+  const needsDelivery = !!toStage && !deliveryDateSet && isMoldStage(serviceType, toStage);
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent dir="rtl" className="max-w-md">
@@ -257,19 +260,22 @@ function StageDialog({ open, onOpenChange, orderId, stages, currentStage, onDone
               </Select>
             </div>
           )}
+          {needsDelivery && (
+            <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
+              <label className="text-sm font-semibold flex items-center gap-1">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+              <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-mold-delivery-date" />
+              <p className="text-xs text-muted-foreground mt-1">إلزامي عند أخذ القالب. بعد تحديده لا يتغيّر إلا من إدارة الفرع/العامة — وعليه تُقاس دقّة التسليم.</p>
+            </div>
+          )}
           <div>
             <label className="text-sm font-medium">ملاحظات فنّية (اختياري)</label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="mt-1" />
           </div>
-          <div>
-            <label className="text-sm font-medium">موعد المرحلة القادمة (اختياري)</label>
-            <Input type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} className="mt-1" />
-          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button disabled={!toStage || (needsResult && !finalResult) || m.isPending}
-            onClick={() => m.mutate({ toStage, notes: notes || undefined, nextDate: nextDate || undefined, finalResult: finalResult || undefined })}>
+          <Button disabled={!toStage || (needsResult && !finalResult) || (needsDelivery && !deliveryDate) || m.isPending}
+            onClick={() => m.mutate({ toStage, notes: notes || undefined, expectedDeliveryDate: needsDelivery ? deliveryDate : undefined, finalResult: finalResult || undefined })}>
             تأكيد
           </Button>
         </DialogFooter>
