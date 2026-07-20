@@ -922,6 +922,7 @@ export class DatabaseStorage implements IStorage {
       .set({ sessionCount, paymentTreatmentType })
       .where(eq(payments.id, id))
       .returning();
+    if (updated) await this.reattachPaymentCase(updated.id, updated.patientId, paymentTreatmentType);
     return updated;
   }
 
@@ -930,7 +931,26 @@ export class DatabaseStorage implements IStorage {
       .set(data)
       .where(eq(payments.id, id))
       .returning();
+    // When the payment's service tag changes (e.g. a طرف that was mistakenly
+    // recorded under علاج), make its case follow: sync creates the أطراف/مساند
+    // case if this is now the only signal for it, then we point the payment at
+    // that case. total_cost/flags are never touched, so reports are unaffected.
+    if (updated && data.paymentTreatmentType !== undefined) {
+      await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null);
+    }
     return updated;
+  }
+
+  // Re-resolve (and if needed create) the case a payment belongs to after its
+  // service tag was edited. Additive only.
+  private async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
+    try {
+      await this.syncPatientCases(patientId);
+      const caseId = await this.resolveCaseId(patientId, { tag });
+      if (caseId) await db.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
+    } catch (e) {
+      console.error(`[reattachPaymentCase] payment ${paymentId} failed:`, e);
+    }
   }
 
   // Documents

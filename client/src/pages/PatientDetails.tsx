@@ -86,6 +86,16 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أبر صينية", label: "أبر صينية" },
 ];
 
+// When EDITING a payment we must be able to (re)classify it into ANY service —
+// including أطراف صناعية / مساند طبية — so a payment recorded under the wrong
+// service (e.g. a طرف paid but tagged as physio) can be moved to its real case.
+// Picking one of these tags makes the server create/attach the matching case.
+const PAYMENT_TYPE_OPTIONS = [
+  ...TREATMENT_TYPE_OPTIONS,
+  { value: "أطراف صناعية", label: "أطراف صناعية" },
+  { value: "مساند طبية", label: "مساند طبية" },
+];
+
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
   "سوفان", "انزلاق ديسك", "انزلاق فقرات", "جنف", "جلطة دماغية", "نزف دماغي",
@@ -1758,29 +1768,27 @@ export default function PatientDetails() {
             <DialogTitle className="font-display text-xl text-primary">{t.patientDetails.editSessionData}</DialogTitle>
           </DialogHeader>
           <div className="space-y-6 mt-4">
-            {patient.isPhysiotherapy && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
-                <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
-                  <SelectTrigger data-testid="select-edit-treatment-type">
-                    <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TREATMENT_TYPE_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {translateTreatmentType(option.value)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
+              <Select value={editTreatmentType} onValueChange={setEditTreatmentType}>
+                <SelectTrigger data-testid="select-edit-treatment-type">
+                  <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {translateTreatmentType(option.value)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
                 <label className="text-sm font-medium">{t.patientDetails.sessionCount}</label>
-                <Input 
-                  type="number" 
-                  className="text-left font-mono" 
+                <Input
+                  type="number"
+                  className="text-left font-mono"
                   placeholder={t.patientDetails.enterSessionCount}
                   value={editSessionCount}
                   onChange={(e) => setEditSessionCount(e.target.value)}
@@ -1793,13 +1801,13 @@ export default function PatientDetails() {
             <Button variant="outline" onClick={() => setEditingPaymentSession(null)}>
               {t.common.cancel}
             </Button>
-            <Button 
+            <Button
               onClick={() => {
                 if (editingPaymentSession) {
                   updatePaymentSession.mutate({
                     paymentId: editingPaymentSession.id,
                     sessionCount: patient.isPhysiotherapy ? (editSessionCount ? Number(editSessionCount) : null) : null,
-                    paymentTreatmentType: patient.isPhysiotherapy ? (editTreatmentType || null) : null,
+                    paymentTreatmentType: editTreatmentType || null,
                   });
                 }
               }}
@@ -1859,23 +1867,21 @@ export default function PatientDetails() {
                 data-testid="input-edit-payment-amount"
               />
             </div>
-            {patient.isPhysiotherapy && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
-                <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
-                  <SelectTrigger data-testid="select-edit-pay-treatment-type">
-                    <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TREATMENT_TYPE_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {translateTreatmentType(option.value)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t.patientDetails.treatmentType}</label>
+              <Select value={editPaymentTreatmentType} onValueChange={setEditPaymentTreatmentType}>
+                <SelectTrigger data-testid="select-edit-pay-treatment-type">
+                  <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {translateTreatmentType(option.value)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {patient.isPhysiotherapy && (
               <div className="space-y-2">
                 <label className="text-sm font-medium">{t.patientDetails.sessionCount}</label>
@@ -1912,7 +1918,7 @@ export default function PatientDetails() {
                     amount: editPaymentFreeSessions ? 0 : Number(editPaymentAmount),
                     notes: editPaymentNotes || null,
                     sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
-                    paymentTreatmentType: patient.isPhysiotherapy ? (editPaymentTreatmentType || null) : null,
+                    paymentTreatmentType: editPaymentTreatmentType || null,
                     customDate: editPaymentDate || undefined,
                     isFreeSessions: editPaymentFreeSessions || undefined,
                   } as any);
