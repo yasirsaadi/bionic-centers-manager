@@ -72,8 +72,10 @@ export default function PatientsList() {
   // expert to any أطراف/مساند patient from the registry. A pure expert does not
   // assign experts. This replaces assigning the expert at patient creation.
   const isExpert = branchSession?.role === "prosthetics_expert";
+  // Mirrors the server gate: assigning creates a work order (a WRITE), so it
+  // needs canAddPatients — view-only users don't get the button.
   const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
-    || !!permissions.canAddPatients || !!permissions.canViewPatients);
+    || !!permissions.canAddPatients);
   const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null } | null>(null);
   
   const { data: branches } = useQuery<Branch[]>({

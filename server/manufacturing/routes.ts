@@ -157,10 +157,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // and committed).
   app.post("/api/manufacturing/orders", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    // Reception (استعلامات) may assign an expert too: gate on the same
-    // add/view-patients capability used for the experts roster.
+    // Reception (استعلامات) may assign an expert too — but this endpoint
+    // WRITES (creates a work order), so it requires the add-patients
+    // capability. canViewPatients alone stays read-only (roster/lists) and
+    // must never mutate patients or orders.
     const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
-      && Boolean(s.permissions?.canAddPatients || s.permissions?.canViewPatients);
+      && Boolean(s.permissions?.canAddPatients);
     if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
@@ -210,8 +212,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // stage). Same authorization as assigning an expert.
   app.post("/api/patients/:id/assign-manufacturing", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
+    // WRITE endpoint (mutates flags/cost/total_cost + creates the order):
+    // requires canAddPatients. canViewPatients alone is read-only by design.
     const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
-      && Boolean(s.permissions?.canAddPatients || s.permissions?.canViewPatients);
+      && Boolean(s.permissions?.canAddPatients);
     if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
 
     const patientId = parseInt(req.params.id);

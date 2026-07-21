@@ -334,8 +334,16 @@ export default function CreatePatient() {
     // Expert assignment is a SEPARATE step now ("تحديد خبير" from the patients
     // registry), so the add form never asks for an expert or a delivery date.
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
+    // A طرف/مسند patient is registered WITHOUT cost (priced later at تخصيص).
+    // If the clerk started on physiotherapy and then switched the condition,
+    // the auto-computed physio cost/type/sessions still sit in the form state —
+    // strip them so the patient isn't saved with a phantom cost.
+    const manufacturingOverrides = needsExpert
+      ? { totalCost: 0, treatmentType: "", sessionCount: 0 }
+      : {};
     const submitData = {
       ...values,
+      ...manufacturingOverrides,
       treatmentEntries: conditionType === "physiotherapy" ? validEntries : undefined,
     };
     mutate(submitData as any, {
