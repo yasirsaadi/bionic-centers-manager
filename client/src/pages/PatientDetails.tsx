@@ -179,6 +179,25 @@ export default function PatientDetails() {
     }
   }, [patientCasesList, selectedCaseId]);
   const selectedCase = selectedCaseId === ALL_CASES ? null : (patientCasesList.find((c) => c.id === selectedCaseId) || null);
+  const CASE_SHORT_LABELS: Record<string, string> = { physiotherapy: "علاج", prosthetic: "أطراف", medical_support: "مساند" };
+  // Human corrector for mis-attributed visits: moves a visit to another of the
+  // SAME patient's cases (server re-validates ownership + audits).
+  const moveVisitCase = useMutation({
+    mutationFn: async ({ visitId, caseId }: { visitId: number; caseId: number }) => {
+      const res = await fetch(`/api/visits/${visitId}/case`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ caseId }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر النقل"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      toast({ title: "نُقلت الزيارة إلى الحالة الصحيحة" });
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const [editCreatedAtOpen, setEditCreatedAtOpen] = useState(false);
@@ -1127,6 +1146,25 @@ export default function PatientDetails() {
                             {visit.details || visit.notes || "-"}
                             {visit.details && visit.notes && (
                               <div className="text-xs text-slate-400 mt-1" dir="auto" style={{ unicodeBidi: "plaintext" }}>{visit.notes}</div>
+                            )}
+                            {patientCasesList.length > 1 && (
+                              (permissions.canEditVisits || isAdminOrManager) ? (
+                                <select
+                                  className="mt-1 text-xs border border-slate-200 rounded px-1 py-0.5 bg-slate-50 text-slate-600"
+                                  value={(visit as any).caseId ?? ""}
+                                  onChange={(e) => { const v = Number(e.target.value); if (v) moveVisitCase.mutate({ visitId: visit.id, caseId: v }); }}
+                                  data-testid={`visit-case-switch-${visit.id}`}
+                                >
+                                  {(visit as any).caseId == null && <option value="">بلا حالة</option>}
+                                  {patientCasesList.map((c) => (
+                                    <option key={c.id} value={c.id}>{CASE_SHORT_LABELS[c.caseType] ?? c.caseType}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  {CASE_SHORT_LABELS[patientCasesList.find((c) => c.id === (visit as any).caseId)?.caseType ?? ""] ?? "—"}
+                                </div>
+                              )
                             )}
                           </td>
                           {patient.isPhysiotherapy && (

@@ -78,6 +78,24 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   // Maintenance path — only offered to patients who own a device.
   const hasDevice = !!isAmputee || !!isMedicalSupport;
   const [purpose, setPurpose] = useState<"visit" | "maintenance">("visit");
+  // Which of the patient's cases this visit belongs to. Multi-case patients
+  // pick explicitly — the form used to FORCE a physio treatment type, so a
+  // prosthetic-related visit always landed under the physio case.
+  const [visitCaseId, setVisitCaseId] = useState<number | null>(null);
+  const { data: patientCasesList = [] } = useQuery<{ id: number; caseType: string }[]>({
+    queryKey: ["/api/patients/:id", patientId, "cases"],
+    enabled: open,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/cases`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const CASE_LABELS: Record<string, string> = { physiotherapy: "علاج طبيعي", prosthetic: "أطراف صناعية", medical_support: "مساند طبية" };
+  const multiCase = patientCasesList.length > 1;
+  const selectedCase = patientCasesList.find((c) => c.id === visitCaseId) ?? null;
+  const effectiveCase = selectedCase ?? patientCasesList.find((c) => c.caseType === "physiotherapy") ?? patientCasesList[0] ?? null;
+  const isPhysioVisit = !multiCase ? isPhysiotherapy !== false : effectiveCase?.caseType === "physiotherapy";
   const [expertUserId, setExpertUserId] = useState("");
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [maintPending, setMaintPending] = useState(false);
@@ -107,7 +125,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   });
 
   const resetAll = () => {
-    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate("");
+    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate(""); setVisitCaseId(null);
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
@@ -150,13 +168,14 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     if (purpose === "maintenance") { void submitMaintenance(values); return; }
-    if (isPhysiotherapy !== false && !values.treatmentType) {
+    if (isPhysioVisit && !values.treatmentType) {
       form.setError("treatmentType", { message: t.modals.treatmentTypeRequired || "يجب اختيار نوع العلاج" });
       return;
     }
     const submitData: any = {
       ...values,
-      treatmentType: isPhysiotherapy !== false ? (values.treatmentType || null) : null,
+      treatmentType: isPhysioVisit ? (values.treatmentType || null) : null,
+      caseId: effectiveCase?.id ?? null,
       customDate: values.customDate || null,
     };
     mutate(submitData, {
@@ -239,8 +258,30 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
               )}
             />
 
-            {/* نوع العلاج — لمرضى العلاج الطبيعي وفي وضع المراجعة فقط */}
-            {isPhysiotherapy !== false && purpose !== "maintenance" && (
+            {/* لأي حالة تعود هذه الزيارة؟ — للمريض متعدد الحالات (علاج + طرف/مسند)
+                حتى لا تُجبَر زيارة الطرف على حمل نوع علاج فتظهر تحت العلاج. */}
+            {multiCase && purpose !== "maintenance" && (
+              <FormItem>
+                <FormLabel>هذه الزيارة تخصّ <span className="text-red-500">*</span></FormLabel>
+                <div className="flex flex-wrap gap-2">
+                  {patientCasesList.map((c) => (
+                    <Button
+                      key={c.id}
+                      type="button"
+                      size="sm"
+                      variant={effectiveCase?.id === c.id ? "default" : "outline"}
+                      onClick={() => setVisitCaseId(c.id)}
+                      data-testid={`visit-case-${c.caseType}`}
+                    >
+                      {CASE_LABELS[c.caseType] ?? c.caseType}
+                    </Button>
+                  ))}
+                </div>
+              </FormItem>
+            )}
+
+            {/* نوع العلاج — لزيارات العلاج الطبيعي وفي وضع المراجعة فقط */}
+            {isPhysioVisit && purpose !== "maintenance" && (
               <FormField
                 control={form.control}
                 name="treatmentType"
