@@ -9,7 +9,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBranchSession } from "@/components/BranchGate";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { getTodayIraq } from "@/lib/utils";
-import * as XLSX from "xlsx";
 
 type Branch = { id: number; name: string };
 type Device = { id: number; nameAr: string; nameEn: string; displayOrder: number };
@@ -115,9 +114,11 @@ export default function SessionsList() {
     URL.revokeObjectURL(url);
   }
 
-  function exportExcel(): void {
+  async function exportExcel(): Promise<void> {
     const data = buildExportRows();
     if (!data) return;
+    // xlsx is ~200KB gzipped — load it only when the user actually exports.
+    const XLSX = await import("xlsx");
     const sheet = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows, data.totals]);
     // Set RTL on the sheet so Arabic flows correctly when opened in Excel
     sheet["!view"] = [{ RTL: lang === "ar" }];
