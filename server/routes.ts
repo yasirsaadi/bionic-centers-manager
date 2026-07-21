@@ -6,7 +6,7 @@ import { sql, eq, and, isNull } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { z } from "zod";
-import { patients, visits, payments, documents, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
+import { patients, visits, payments, documents, patientCases, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -2007,6 +2007,14 @@ export async function registerRoutes(
       (input as any).createdBy = sessionUserId;
     }
 
+    // A client-supplied caseId must belong to THIS patient — otherwise drop it
+    // and let storage auto-resolve (never trust a foreign case id).
+    if ((input as any).caseId != null) {
+      const [ownCase] = await db.select({ id: patientCases.id }).from(patientCases)
+        .where(and(eq(patientCases.id, Number((input as any).caseId)), eq(patientCases.patientId, input.patientId)));
+      if (!ownCase) (input as any).caseId = null;
+    }
+
     const visit = await storage.createVisit(input);
 
     // Audit log so visit creation counts on the employee accuracy
@@ -2040,6 +2048,40 @@ export async function registerRoutes(
     }
     
     res.status(201).json(visit);
+  });
+
+  // Move a visit to another of the SAME patient's cases — the human corrector
+  // for historically mis-attributed rows (old physio visits stamped onto the
+  // prosthetic case by migration 019's primary-first catch-all, and device
+  // visits typed as physio because the visit form used to force a physio
+  // treatment type). Admin / branch manager / canEditVisits, branch-scoped.
+  app.patch("/api/visits/:id/case", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const canEdit = branchSession?.isAdmin || branchSession?.role === "branch_manager"
+      || Boolean(branchSession?.permissions?.canEditVisits);
+    if (!canEdit) return res.status(403).json({ message: "ليس لديك صلاحية تعديل الزيارات" });
+
+    const id = Number(req.params.id);
+    const [existing] = await db.select().from(visits)
+      .where(and(eq(visits.id, id), isNull(visits.deletedAt)));
+    if (!existing) return res.status(404).json({ message: "الزيارة غير موجودة" });
+    const allowedMv = accessibleBranchesFor(req);
+    if (allowedMv !== null && !allowedMv.includes(existing.branchId)) {
+      return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
+    }
+    const caseId = Number(req.body?.caseId);
+    const [target] = await db.select().from(patientCases)
+      .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, existing.patientId)));
+    if (!target) return res.status(400).json({ message: "الحالة غير موجودة لهذا المريض" });
+
+    const [updated] = await db.update(visits).set({ caseId }).where(eq(visits.id, id)).returning();
+    await logAudit({
+      entityType: "visit", entityId: id, action: "update",
+      userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+      branchId: existing.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      notes: `نقل الزيارة إلى حالة ${target.caseType} (#${caseId})`,
+    });
+    res.json(updated);
   });
 
   // Update visit (admin only — visits are financial records that trigger
