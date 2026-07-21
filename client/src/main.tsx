@@ -3,6 +3,22 @@ import App from "./App";
 import "./index.css";
 import { toEnglishDigits } from "./lib/utils";
 
+// Deploy-safety: after a new release, an app that was ALREADY OPEN still holds
+// references to the PREVIOUS build's hashed lazy-chunk URLs. Navigating then
+// requests a file the deploy deleted → the dynamic import fails and the screen
+// freezes. Vite surfaces exactly that as `vite:preloadError` — reload once to
+// pick up the fresh build. The sessionStorage guard (cleared on success)
+// prevents a reload loop if the network itself is down.
+window.addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  const KEY = "chunk_reload_at";
+  const last = Number(sessionStorage.getItem(KEY) || 0);
+  if (Date.now() - last > 15_000) {
+    sessionStorage.setItem(KEY, String(Date.now()));
+    window.location.reload();
+  }
+});
+
 // Global auth guard: if the SERVER session has expired (any /api call returns
 // 401) while the client still holds a saved branch_session, the app used to
 // stay in a broken "looks logged in but nothing loads" state until a manual
