@@ -45,11 +45,12 @@ export default defineConfig({
           // (and every page) to the heavy pdf bundle.
           if (id.startsWith("\0")) return "vendor";
           if (id.includes("node_modules")) {
-            // The framework must live in its OWN chunk: without this rule
-            // rollup co-locates the shared react runtime inside the first
-            // manual chunk it meets (vendor-charts), which drags that whole
-            // chunk back into the entry's static imports — defeating the split.
-            if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) return "vendor-react";
+            // NOTE deliberately NO separate react chunk: splitting the react
+            // runtime away from the libraries that touch it at module-eval
+            // time created a chunk-initialization cycle in production
+            // ("Cannot read properties of undefined (reading useLayoutEffect)"
+            // = white page). React lives inside the shared `vendor` chunk with
+            // everything that needs it, so initialization order is guaranteed.
             if (id.includes("/xlsx/")) return "vendor-xlsx";
             if (id.includes("/jspdf") || id.includes("html2canvas") || id.includes("purify")) return "vendor-pdf";
             if (id.includes("/recharts/") || id.includes("/d3-") || id.includes("victory-vendor")) return "vendor-charts";
