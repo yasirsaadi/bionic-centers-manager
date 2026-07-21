@@ -35,6 +35,14 @@ import {
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
 } from "./performance/config";
 
+// Did a payment's service tag really change? null / undefined / "" are the
+// same "untagged" identity — the edit dialogs always send the field, so an
+// unchanged select must not count as a change.
+function tagChanged(before: string | null | undefined, after: string | null | undefined): boolean {
+  const norm = (v: string | null | undefined) => (v && v.trim() !== "" ? v.trim() : null);
+  return norm(before) !== norm(after);
+}
+
 // One row of the employee-accuracy panel. Numbers come from a mix of
 // row-level createdBy attribution and the audit_log table.
 export interface EmployeeAccuracyRow {
@@ -364,9 +372,10 @@ export class DatabaseStorage implements IStorage {
 
   // Set a case's cost. Scoped by patientId so a case can never be edited under
   // the wrong patient. Never touches patient.total_cost (reports unaffected).
+  // Marks the cost 'manual' so the automatic cost floor never overrides it.
   async updateCaseCost(patientId: number, caseId: number, cost: number): Promise<PatientCase | undefined> {
     const [updated] = await db.update(patientCases)
-      .set({ cost, updatedAt: new Date() })
+      .set({ cost, costSource: "manual", updatedAt: new Date() })
       .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)))
       .returning();
     return updated;
@@ -389,14 +398,22 @@ export class DatabaseStorage implements IStorage {
   // Idempotent: only missing cases are created; existing case costs are moved
   // only for the cases created in THIS call.
   async syncPatientCases(patientId: number): Promise<void> {
-    const [p] = await db.select().from(patients).where(eq(patients.id, patientId));
+    // ONE transaction + a per-patient advisory lock. Concurrent syncs for the
+    // same patient (backfill loop + a payment retag + a merge) previously
+    // interleaved ~10 autocommitted statements — the check-then-insert on case
+    // rows could duplicate, and cost moves could half-apply. The xact-scoped
+    // advisory lock serializes syncs per patient; the unique index from
+    // migration 020 (+ onConflictDoNothing) is the database-level backstop.
+    await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+    const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
     if (!p) return;
     const clean = (o: Record<string, any>) =>
       Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
     // ---- signals -----------------------------------------------------------
-    const wos = await db.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
-    const pays = await db.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
+    const wos = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
+    const pays = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
     const hasWO = (st: string) => wos.some((w) => w.st === st);
     const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
     const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));
@@ -412,7 +429,10 @@ export class DatabaseStorage implements IStorage {
     const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => PHYSIO_TAGS.has(t));
 
     // ---- per-service cost from "تكلفة: X" markers --------------------------
-    const markers = await db.select({ notes: visits.notes }).from(visits).where(eq(visits.patientId, patientId));
+    // Soft-deleted visits are excluded: a deleted add-case-type marker must not
+    // keep moving money between cases.
+    const markers = await tx.select({ notes: visits.notes }).from(visits)
+      .where(and(eq(visits.patientId, patientId), isNull(visits.deletedAt)));
     const parseCost = (s: string | null) => { const m = (s || "").match(/تكلفة:\s*([\d,]+)/); return m ? Number(m[1].replace(/,/g, "")) : 0; };
     let prostheticMarkerCost = 0, supportMarkerCost = 0;
     for (const mk of markers) {
@@ -421,7 +441,7 @@ export class DatabaseStorage implements IStorage {
       else if ((mk.notes || "").includes("مساند")) supportMarkerCost += c;
     }
 
-    const preExisting = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const preExisting = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const has = (t: string) => preExisting.some((c) => c.caseType === t);
     const firstEver = preExisting.length === 0;
     const otherCosts = (wantProsthetic ? prostheticMarkerCost : 0) + (wantSupport ? supportMarkerCost : 0);
@@ -446,30 +466,39 @@ export class DatabaseStorage implements IStorage {
       let cost = markerCostOf(t);
       if (firstEver && t === primaryType) cost = Math.max(0, (p.totalCost || 0) - otherCosts);
       else if (!firstEver && cost > 0) movedFromHolder += cost; // moving this out of the pre-existing holder
-      await db.insert(patientCases).values({ patientId, branchId: p.branchId, caseType: t, cost, details: detailsFor(t) });
+      // onConflictDoNothing: if a concurrent path already created this case
+      // (unique index uq_patient_cases_patient_type), keep the existing row.
+      const inserted = await tx.insert(patientCases)
+        .values({ patientId, branchId: p.branchId, caseType: t, cost, details: detailsFor(t) })
+        .onConflictDoNothing()
+        .returning({ id: patientCases.id });
+      // If the insert was skipped, the marker cost was NOT placed on a new
+      // case — undo its contribution so the holder isn't debited for it.
+      if (inserted.length === 0 && !firstEver && cost > 0) movedFromHolder -= cost;
     };
     if (wantProsthetic) await create("prosthetic");
     if (wantSupport) await create("medical_support");
     if (wantPhysio) await create("physiotherapy");
 
     // Move the recovered marker cost OUT of the pre-existing case that holds the
-    // total (usually the physio case created by the migration), preserving the sum.
+    // total (usually the physio case created by the migration), preserving the
+    // sum. A manually-priced holder is NEVER debited by automation.
     if (!firstEver && movedFromHolder > 0) {
-      const holder = [...preExisting].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
-      if (holder) await db.update(patientCases).set({ cost: Math.max(0, (holder.cost || 0) - movedFromHolder), updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+      const holder = [...preExisting].filter((c) => c.costSource !== "manual").sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
+      if (holder) await tx.update(patientCases).set({ cost: Math.max(0, (holder.cost || 0) - movedFromHolder), updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
     }
 
     // ---- re-attribute tagged payments/markers to their real case -----------
-    const cases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const cases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const idOf = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
     const prosId = idOf("prosthetic"), supId = idOf("medical_support");
     if (prosId) {
-      await db.update(payments).set({ caseId: prosId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "أطراف صناعية")));
-      await db.update(visits).set({ caseId: prosId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%أطراف%'`));
+      await tx.update(payments).set({ caseId: prosId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "أطراف صناعية")));
+      await tx.update(visits).set({ caseId: prosId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%أطراف%'`));
     }
     if (supId) {
-      await db.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "مساند طبية")));
-      await db.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
+      await tx.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "مساند طبية")));
+      await tx.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
     }
 
     // Any still-unattributed rows (caseId IS NULL) — e.g. physio/untagged rows,
@@ -478,8 +507,8 @@ export class DatabaseStorage implements IStorage {
     // shows under a case instead of vanishing from all per-case views.
     const fallbackId = idOf("physiotherapy") ?? idOf("prosthetic") ?? idOf("medical_support") ?? cases[0]?.id ?? null;
     if (fallbackId) {
-      await db.update(payments).set({ caseId: fallbackId }).where(and(eq(payments.patientId, patientId), isNull(payments.caseId)));
-      await db.update(visits).set({ caseId: fallbackId }).where(and(eq(visits.patientId, patientId), isNull(visits.caseId)));
+      await tx.update(payments).set({ caseId: fallbackId }).where(and(eq(payments.patientId, patientId), isNull(payments.caseId)));
+      await tx.update(visits).set({ caseId: fallbackId }).where(and(eq(visits.patientId, patientId), isNull(visits.caseId)));
     }
 
     // ---- cost floor: a case can never cost LESS than what was paid into it --
@@ -489,37 +518,40 @@ export class DatabaseStorage implements IStorage {
     // price. So any طرف/مسند case whose cost sits below its attributed paid total
     // (e.g. a fully-paid 7M طرف left at cost 0 because the total landed on the
     // physio holder) is raised to that paid total, and the difference is moved
-    // OUT of the physio/primary holder. A fully-paid service thus shows its real
-    // price and 0 remaining automatically, for every patient. total_cost and the
-    // patient flags are NEVER touched here → the aggregate/financial reports stay
-    // byte-identical. Editable per-case cost still overrides this afterwards.
-    const finalCases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    // OUT of the physio/auto holder. total_cost and the patient flags are NEVER
+    // touched here → the aggregate/financial reports stay byte-identical.
+    // HUMAN PRICING WINS: a case whose cost_source is 'manual' (per-case ✏️ /
+    // تخصيص / add-case-type) is never raised NOR drained by the floor.
+    const finalCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     if (finalCases.length > 1) {
-      const paidRows = await db.select({ caseId: payments.caseId, amount: payments.amount })
+      const paidRows = await tx.select({ caseId: payments.caseId, amount: payments.amount })
         .from(payments).where(eq(payments.patientId, patientId));
       const paidByCase = new Map<number, number>();
       for (const r of paidRows) if (r.caseId) paidByCase.set(r.caseId, (paidByCase.get(r.caseId) || 0) + (r.amount || 0));
-      const holder = finalCases.find((c) => c.caseType === "physiotherapy")
-        ?? [...finalCases].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
+      const autoCases = finalCases.filter((c) => c.costSource !== "manual");
+      const holder = autoCases.find((c) => c.caseType === "physiotherapy")
+        ?? [...autoCases].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
       if (holder) {
         let holderCost = holder.cost || 0;
         for (const c of finalCases) {
           if (c.id === holder.id) continue;
+          if (c.costSource === "manual") continue; // human pricing is untouchable
           const paid = paidByCase.get(c.id) || 0;
           const shortfall = paid - (c.cost || 0);
           if (shortfall > 0) {
             const delta = Math.min(shortfall, holderCost); // never push the holder negative
             if (delta > 0) {
-              await db.update(patientCases).set({ cost: (c.cost || 0) + delta, updatedAt: new Date() }).where(eq(patientCases.id, c.id));
+              await tx.update(patientCases).set({ cost: (c.cost || 0) + delta, updatedAt: new Date() }).where(eq(patientCases.id, c.id));
               holderCost -= delta;
             }
           }
         }
         if (holderCost !== (holder.cost || 0)) {
-          await db.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+          await tx.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
         }
       }
     }
+    });
   }
 
   // Which case a new payment/visit settles, from its treatment tag / type.
@@ -582,44 +614,54 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePatient(id: number): Promise<void> {
-    const patientInvoices = await db.select({ id: invoices.id }).from(invoices).where(eq(invoices.patientId, id));
-    for (const inv of patientInvoices) {
-      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, inv.id));
-    }
-    await db.delete(invoices).where(eq(invoices.patientId, id));
-    await db.delete(installmentPlans).where(eq(installmentPlans.patientId, id));
-    await db.delete(payments).where(eq(payments.patientId, id));
-    await db.delete(documents).where(eq(documents.patientId, id));
-    await db.delete(visits).where(eq(visits.patientId, id));
-    // Manufacturing work orders (and their append-only history / rework) hold a
-    // FK to the patient, so they must be removed for a full patient delete —
-    // otherwise the delete fails. (The append-only rule protects a LIVE order's
-    // trail, not a patient being permanently deleted.)
-    const woRows = await db.select({ id: prostheticWorkOrders.id })
-      .from(prostheticWorkOrders)
-      .where(eq(prostheticWorkOrders.patientId, id));
-    if (woRows.length > 0) {
-      const woIds = woRows.map((w) => w.id);
-      await db.delete(prostheticWorkHistory).where(inArray(prostheticWorkHistory.workOrderId, woIds));
-      await db.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
-      await db.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
-    }
-    // Remaining FK holders that used to make the delete fail silently:
-    // follow-up calls, treatment plans, and survey responses (+answers) go
-    // with the patient; journal lines are ACCOUNTING history and must
-    // survive — detach them from the patient instead of deleting.
-    await db.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
-    await db.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
-    const respRows = await db.select({ id: surveyResponses.id })
-      .from(surveyResponses)
-      .where(eq(surveyResponses.patientId, id));
-    if (respRows.length > 0) {
-      const respIds = respRows.map((r) => r.id);
-      await db.delete(surveyAnswers).where(inArray(surveyAnswers.responseId, respIds));
-      await db.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
-    }
-    await db.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
-    await db.delete(patients).where(eq(patients.id, id));
+    // ONE transaction: a patient delete either fully completes or leaves
+    // NOTHING destroyed. Previously each child delete auto-committed, so a
+    // late FK failure (e.g. the patient_cases reference added in migration
+    // 017) would leave the patient stripped of payments/visits/documents but
+    // still present — irreversible partial destruction.
+    await db.transaction(async (tx) => {
+      const patientInvoices = await tx.select({ id: invoices.id }).from(invoices).where(eq(invoices.patientId, id));
+      for (const inv of patientInvoices) {
+        await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, inv.id));
+      }
+      await tx.delete(invoices).where(eq(invoices.patientId, id));
+      await tx.delete(installmentPlans).where(eq(installmentPlans.patientId, id));
+      await tx.delete(payments).where(eq(payments.patientId, id));
+      await tx.delete(documents).where(eq(documents.patientId, id));
+      await tx.delete(visits).where(eq(visits.patientId, id));
+      // patient_cases must go AFTER payments/visits (their case_id FK points
+      // here) and BEFORE the patient row (its patient_id FK points there).
+      await tx.delete(patientCases).where(eq(patientCases.patientId, id));
+      // Manufacturing work orders (and their append-only history / rework) hold a
+      // FK to the patient, so they must be removed for a full patient delete —
+      // otherwise the delete fails. (The append-only rule protects a LIVE order's
+      // trail, not a patient being permanently deleted.)
+      const woRows = await tx.select({ id: prostheticWorkOrders.id })
+        .from(prostheticWorkOrders)
+        .where(eq(prostheticWorkOrders.patientId, id));
+      if (woRows.length > 0) {
+        const woIds = woRows.map((w) => w.id);
+        await tx.delete(prostheticWorkHistory).where(inArray(prostheticWorkHistory.workOrderId, woIds));
+        await tx.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
+        await tx.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
+      }
+      // Remaining FK holders that used to make the delete fail silently:
+      // follow-up calls, treatment plans, and survey responses (+answers) go
+      // with the patient; journal lines are ACCOUNTING history and must
+      // survive — detach them from the patient instead of deleting.
+      await tx.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
+      await tx.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
+      const respRows = await tx.select({ id: surveyResponses.id })
+        .from(surveyResponses)
+        .where(eq(surveyResponses.patientId, id));
+      if (respRows.length > 0) {
+        const respIds = respRows.map((r) => r.id);
+        await tx.delete(surveyAnswers).where(inArray(surveyAnswers.responseId, respIds));
+        await tx.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
+      }
+      await tx.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
+      await tx.delete(patients).where(eq(patients.id, id));
+    });
   }
 
   // Adds a case type (amputee / medical_support / physiotherapy) to an
@@ -682,13 +724,26 @@ export class DatabaseStorage implements IStorage {
       if (existingCase) {
         caseId = existingCase.id;
         if (serviceCost > 0) {
-          await tx.update(patientCases).set({ cost: (existingCase.cost || 0) + serviceCost, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+          // A human priced this addition — mark manual so the floor keeps out.
+          await tx.update(patientCases).set({ cost: (existingCase.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
         }
       } else {
         const [newCase] = await tx.insert(patientCases).values({
           patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: serviceCost, details: cleanDetails,
-        }).returning();
-        caseId = newCase.id;
+          costSource: serviceCost > 0 ? "manual" : "auto",
+        }).onConflictDoNothing().returning();
+        // Unique-index race: another path created the case between our select
+        // and insert — fall back to the existing row.
+        if (newCase) {
+          caseId = newCase.id;
+        } else {
+          const [raced] = await tx.select().from(patientCases)
+            .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
+          caseId = raced.id;
+          if (serviceCost > 0) {
+            await tx.update(patientCases).set({ cost: (raced.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+          }
+        }
       }
 
       // Timeline marker so the patient's history shows when the new case
@@ -790,12 +845,21 @@ export class DatabaseStorage implements IStorage {
       let caseId: number;
       if (existingCase) {
         caseId = existingCase.id;
-        await tx.update(patientCases).set({ cost, details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+        // A human priced the device — 'manual' keeps the cost floor away.
+        await tx.update(patientCases).set({ cost, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
       } else {
         const [nc] = await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: serviceType, cost, details: cleanDetails,
-        }).returning();
-        caseId = nc.id;
+          patientId, branchId: existing.branchId, caseType: serviceType, cost, details: cleanDetails, costSource: "manual",
+        }).onConflictDoNothing().returning();
+        if (nc) {
+          caseId = nc.id;
+        } else {
+          // Unique-index race: fall back to the row the concurrent path made.
+          const [raced] = await tx.select().from(patientCases)
+            .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
+          caseId = raced.id;
+          await tx.update(patientCases).set({ cost, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+        }
       }
 
       const [wo] = await tx.insert(prostheticWorkOrders).values({
@@ -844,12 +908,14 @@ export class DatabaseStorage implements IStorage {
         if (!tc) {
           const [created] = await tx.insert(patientCases).values({
             patientId: targetId, branchId: target.branchId, caseType: sc.caseType,
-            cost: sc.cost || 0, details: sc.details ?? {},
+            cost: sc.cost || 0, details: sc.details ?? {}, costSource: sc.costSource ?? "auto",
           }).returning();
           tc = created;
           targetCases.push(created);
         } else {
-          await tx.update(patientCases).set({ cost: (tc.cost || 0) + (sc.cost || 0), updatedAt: new Date() }).where(eq(patientCases.id, tc.id));
+          // Summed cost stays human-owned if EITHER side was priced by a human.
+          const mergedSource = tc.costSource === "manual" || sc.costSource === "manual" ? "manual" : "auto";
+          await tx.update(patientCases).set({ cost: (tc.cost || 0) + (sc.cost || 0), costSource: mergedSource, updatedAt: new Date() }).where(eq(patientCases.id, tc.id));
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
@@ -1073,36 +1139,50 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any> {
+    const [before] = await db.select().from(payments).where(eq(payments.id, id));
     const [updated] = await db.update(payments)
       .set({ sessionCount, paymentTreatmentType })
       .where(eq(payments.id, id))
       .returning();
-    if (updated) await this.reattachPaymentCase(updated.id, updated.patientId, paymentTreatmentType);
+    if (updated && tagChanged(before?.paymentTreatmentType, paymentTreatmentType)) {
+      await this.reattachPaymentCase(updated.id, updated.patientId, paymentTreatmentType);
+    }
     return updated;
   }
 
   async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null, isFreeSessions?: boolean }): Promise<any> {
+    const [before] = await db.select().from(payments).where(eq(payments.id, id));
     const [updated] = await db.update(payments)
       .set(data)
       .where(eq(payments.id, id))
       .returning();
-    // When the payment's service tag changes (e.g. a طرف that was mistakenly
-    // recorded under علاج), make its case follow: sync creates the أطراف/مساند
-    // case if this is now the only signal for it, then we point the payment at
-    // that case. total_cost/flags are never touched, so reports are unaffected.
-    if (updated && data.paymentTreatmentType !== undefined) {
+    // When the payment's service tag ACTUALLY changes (e.g. a طرف that was
+    // mistakenly recorded under علاج), make its case follow. The edit dialogs
+    // always send paymentTreatmentType, so an amount/notes-only edit must NOT
+    // trigger a re-sync — that used to silently re-attribute the payment and
+    // re-run the cost floor over admin-set numbers. total_cost/flags are never
+    // touched, so reports are unaffected.
+    if (updated && data.paymentTreatmentType !== undefined && tagChanged(before?.paymentTreatmentType, data.paymentTreatmentType)) {
       await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null);
     }
     return updated;
   }
 
   // Re-resolve (and if needed create) the case a payment belongs to after its
-  // service tag was edited. Additive only.
+  // service tag was edited. Additive only. The stale attribution is cleared
+  // FIRST so the sync computes attribution/floor on the payment's NEW identity
+  // (a retag away from أطراف no longer leaves the money counted on the طرف),
+  // then sync's exact-tag/fallback rules re-home it; resolveCaseId is the
+  // final safety net.
   private async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
     try {
+      await db.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
       await this.syncPatientCases(patientId);
-      const caseId = await this.resolveCaseId(patientId, { tag });
-      if (caseId) await db.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
+      const [row] = await db.select({ caseId: payments.caseId }).from(payments).where(eq(payments.id, paymentId));
+      if (!row?.caseId) {
+        const caseId = await this.resolveCaseId(patientId, { tag });
+        if (caseId) await db.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
+      }
     } catch (e) {
       console.error(`[reattachPaymentCase] payment ${paymentId} failed:`, e);
     }

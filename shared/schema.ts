@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -82,12 +82,21 @@ export const patientCases = pgTable("patient_cases", {
   caseType: text("case_type").notNull(), // physiotherapy | prosthetic | medical_support
   status: text("status").notNull().default("active"), // active | closed
   cost: integer("cost").notNull().default(0), // total cost for THIS case, IQD
+  // Who owns this cost figure. 'auto' = derived (migration/sync/cost-floor) and
+  // MAY be adjusted by the automatic cost floor; 'manual' = a human priced it
+  // (per-case ✏️ editor, تخصيص, add-case-type) and automation must NEVER touch it.
+  costSource: text("cost_source").notNull().default("auto"), // auto | manual
   // Type-specific fields live here (amputationSite, prostheticType, siliconSize,
   // diseaseType, supportType, …) so each case owns its own details.
   details: jsonb("details").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // ONE case row per (patient, type) — the database-level backstop against
+  // concurrent syncPatientCases runs duplicating a case. Also created by
+  // migration 020 (after de-duplicating) for existing databases.
+  uniqueIndex("uq_patient_cases_patient_type").on(t.patientId, t.caseType),
+]);
 
 export const visits = pgTable("visits", {
   id: serial("id").primaryKey(),
