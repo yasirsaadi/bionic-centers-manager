@@ -8,8 +8,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Layers, Loader2 } from "lucide-react";
@@ -38,10 +36,6 @@ const TYPE_LABELS: Record<string, string> = {
 export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
   const [open, setOpen] = useState(false);
   const [caseType, setCaseType] = useState<string>("");
-  const [fields, setFields] = useState<Record<string, string>>({});
-  const [serviceCost, setServiceCost] = useState(0);
-  const [paidNow, setPaidNow] = useState(0);
-  const [paidTouched, setPaidTouched] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -54,21 +48,16 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
 
   const isManufacturing = caseType === "amputee" || caseType === "medical_support";
 
-  const effectivePaidNow = paidTouched ? Math.min(paidNow, serviceCost) : serviceCost;
-  const remaining = Math.max(0, serviceCost - effectivePaidNow);
-
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/patients/${patient.id}/add-case-type`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          caseType,
-          ...fields,
-          serviceCost,
-          paidNow: effectivePaidNow,
-        }),
+        // Decision only — NO money here. Pricing stays in its dedicated
+        // post-exam steps (تخصيص for devices / الكلفة والجلسات for physio),
+        // so the clerk never sees mixed totals while adding a case.
+        body: JSON.stringify({ caseType, serviceCost: 0, paidNow: 0 }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -88,18 +77,12 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
       // The dialog holds only the decision; the FULL registration-grade fields
       // for the new type (amputation builder / injuries builder / device
       // specs) live in the edit page — open it directly on that section.
-      setLocation(`/patients/${patient.id}/edit?section=${addedType}`);
+      setLocation(`/patients/${patient.id}/edit?section=${addedType}&adding=1`);
     },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  function reset() {
-    setCaseType(""); setFields({}); setServiceCost(0); setPaidNow(0); setPaidTouched(false);
-  }
-
-  function setField(k: string, v: string) {
-    setFields((prev) => ({ ...prev, [k]: v }));
-  }
+  function reset() { setCaseType(""); }
 
   const canSubmit = !!caseType && !isPending;
 
@@ -142,22 +125,6 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium">تكلفة الخدمة</label>
-              <MoneyInput value={serviceCost || ""} onValueChange={setServiceCost} className="mt-1 bg-white" placeholder="0" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">المبلغ المدفوع الآن</label>
-              <MoneyInput
-                value={paidTouched ? (paidNow || "") : (serviceCost || "")}
-                onValueChange={(n) => { setPaidNow(n); setPaidTouched(true); }}
-                className="mt-1 bg-white"
-                placeholder="0"
-              />
-            </div>
-          </div>
-
           {/* Expert assignment happens in the SEPARATE «تخصيص وإسناد خبير»
               registry step (the server ignores expert/date here and creates no
               work order) — asking for them in this dialog misled staff into
@@ -165,12 +132,6 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
           {isManufacturing && (
             <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
               يُفعَّل النوع على الملف الآن. لإسناد الخبير وبدء التصنيع استخدم زر <b>«تخصيص وإسناد خبير»</b> بجانب المريض في سجل المرضى — وتاريخ التسليم يحدّده الخبير عند أخذ القالب.
-            </div>
-          )}
-          {serviceCost > 0 && remaining > 0 && (
-            <div className="text-sm text-amber-700 font-semibold flex justify-between bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-              <span>المتبقّي على المريض</span>
-              <span className="font-mono">{remaining.toLocaleString()} د.ع</span>
             </div>
           )}
 

@@ -70,6 +70,11 @@ export default function EditPatient() {
   const [, setLocation] = useLocation();
   const searchStr = useSearch();
   const sectionParam = new URLSearchParams(searchStr).get("section");
+  // «إضافة نوع حالة» lands here to fill the new type's FULL fields — in that
+  // mode the aggregate الكلفة الكلية is hidden even from managers: it shows a
+  // SUMMED number across cases and confused staff into thinking the new case
+  // inherited it. Pricing happens later in the dedicated steps.
+  const addingMode = new URLSearchParams(searchStr).get("adding") === "1";
   const searchString = window.location.search;
   const fromBranch = new URLSearchParams(searchString).get("branch");
   const branchParam = fromBranch ? `?branch=${fromBranch}` : "";
@@ -1170,7 +1175,7 @@ export default function EditPatient() {
           <Card className="p-6 rounded-2xl shadow-sm border-border/60">
             <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">{t.patientForm.financialAndNotes}</h3>
             <div className="space-y-6">
-              {canEditCost && (
+              {canEditCost && !addingMode && (
                 <FormField
                   control={form.control}
                   name="totalCost"

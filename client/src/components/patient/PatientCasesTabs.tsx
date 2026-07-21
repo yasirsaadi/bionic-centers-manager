@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Activity, Wrench, HeartPulse, Pencil, Check, X } from "lucide-react";
+import { Activity, Wrench, HeartPulse, Pencil, Check, X, Trash2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { formatDateIraq } from "@/lib/utils";
 import { useBranchSession } from "@/components/BranchGate";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -126,10 +131,50 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
 
   const remaining = (caseRow.cost || 0) - (caseRow.paid || 0);
 
+  // ADMIN-ONLY «حذف نوع الحالة» — also cleans ghost cases (flag wiped by the
+  // old destructive edit while the case row survived showing a stale cost).
+  const isAdminOnly = !!session?.isAdmin;
+  const removeCase = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/case-type/${caseRow.caseType}`, {
+        method: "DELETE", credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر الحذف"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      toast({ title: "حُذف نوع الحالة", description: "نُقلت زياراته ودفعاته إلى الحالة المتبقية." });
+    },
+    onError: (err: any) => toast({ title: "تعذّر الحذف", description: err.message, variant: "destructive" }),
+  });
+
   return (
     <Card className="p-4 md:p-6 rounded-2xl shadow-sm border-primary/20 mb-6 space-y-4">
       <h3 className="font-bold text-lg text-primary flex items-center gap-2">
         <Icon className="w-5 h-5" /> {m.label}
+        {isAdminOnly && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button type="button" className="mr-auto text-red-400 hover:text-red-600" title="حذف نوع الحالة (المدير العام)" data-testid={`delete-case-${caseRow.id}`}>
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </AlertDialogTrigger>
+            <AlertDialogContent dir="rtl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>حذف حالة «{m.label}» من ملف المريض؟</AlertDialogTitle>
+                <AlertDialogDescription>
+                  تُنقل زيارات ودفعات هذه الحالة إلى الحالة المتبقية (لا تُحذف)، وتُصفَّر حقول النوع من الملف. يُمنع الحذف إن وُجد سجل تصنيع أو دفعات موسومة لهذا النوع. هذا الإجراء للمدير العام حصراً ويُسجَّل في سجل التدقيق.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="gap-2">
+                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => removeCase.mutate()}>حذف الحالة</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </h3>
 
       {/* Financial summary for THIS case */}

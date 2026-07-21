@@ -1439,6 +1439,33 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  // Delete a case type from a patient — STRICTLY the general admin (owner's
+  // rule: not even branch managers). Cleans ghost cases too. See
+  // storage.deleteCaseType for the full safety model.
+  app.delete("/api/patients/:id/case-type/:caseType", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) return res.status(403).json({ message: "حذف نوع الحالة للمدير العام حصراً" });
+    const patientId = Number(req.params.id);
+    const caseType = String(req.params.caseType);
+    if (!["prosthetic", "medical_support", "physiotherapy"].includes(caseType)) {
+      return res.status(400).json({ message: "نوع غير صالح" });
+    }
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+    try {
+      const r = await storage.deleteCaseType(patientId, caseType as any);
+      await logAudit({
+        entityType: "patient", entityId: patientId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `حذف نوع حالة ${caseType} (نُقل ${r.movedRows} صفاً للحالة المتبقية)`,
+      });
+      res.json({ ok: true, ...r });
+    } catch (err: any) {
+      res.status(409).json({ message: err?.message || "تعذّر الحذف" });
+    }
+  });
+
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;
