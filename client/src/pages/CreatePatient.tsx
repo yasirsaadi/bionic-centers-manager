@@ -321,30 +321,16 @@ export default function CreatePatient() {
   }, [treatmentEntries, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
-    if (conditionType === "physiotherapy") {
-      const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
-      if (hasEmptyType) {
-        toast({
-          title: t.modals.treatmentTypeRequired,
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-    // Expert assignment is a SEPARATE step now ("تحديد خبير" from the patients
-    // registry), so the add form never asks for an expert or a delivery date.
-    const validEntries = treatmentEntries.filter(e => e.treatmentType);
-    // A طرف/مسند patient is registered WITHOUT cost (priced later at تخصيص).
-    // If the clerk started on physiotherapy and then switched the condition,
-    // the auto-computed physio cost/type/sessions still sit in the form state —
-    // strip them so the patient isn't saved with a phantom cost.
-    const manufacturingOverrides = needsExpert
-      ? { totalCost: 0, treatmentType: "", sessionCount: 0 }
-      : {};
+    // REGISTRATION IS PRICELESS for every condition type now (owner's flow):
+    // - طرف/مسند: priced after the exam via «تخصيص وإسناد خبير».
+    // - علاج طبيعي: priced after the exam via «الكلفة والجلسات» in the
+    //   registry (the doctor decides the plan; the server computes the cost).
+    // Any auto-computed cost/type/sessions left in the form state is stripped.
     const submitData = {
       ...values,
-      ...manufacturingOverrides,
-      treatmentEntries: conditionType === "physiotherapy" ? validEntries : undefined,
+      totalCost: 0,
+      treatmentType: "",
+      sessionCount: 0,
     };
     mutate(submitData as any, {
       onSuccess: (data) => {
@@ -1235,117 +1221,12 @@ export default function CreatePatient() {
                 )}
               />
               
+              {/* Physio pricing (نوع العلاج/الجلسات/الكلفة) moved to the
+                  post-exam «الكلفة والجلسات» step in the patients registry —
+                  the doctor decides the plan, then reception prices it. */}
               {conditionType === "physiotherapy" && (
-                <div className="space-y-3">
-                  <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
-                  {treatmentEntries.map((entry, index) => (
-                    <div key={index} className="border border-border/60 rounded-lg p-3 space-y-3 bg-slate-50/50" data-testid={`treatment-entry-${index}`}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="flex-1 min-w-[180px]">
-                          <Select
-                            value={entry.treatmentType}
-                            onValueChange={(val) => {
-                              const updated = [...treatmentEntries];
-                              updated[index] = { ...updated[index], treatmentType: val, sessionCount: val === "استشارة طبية" ? 0 : updated[index].sessionCount, cost: 0 };
-                              setTreatmentEntries(updated);
-                              setManualCostOverride(false);
-                            }}
-                          >
-                            <SelectTrigger className="bg-white" data-testid={`select-treatment-type-${index}`}>
-                              <SelectValue placeholder={t.modals.selectTreatmentType} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TREATMENT_TYPE_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {t.modals[opt.labelKey]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {entry.isFree && (
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                            {t.modals.freeSessions}
-                          </span>
-                        )}
-
-                        {entry.treatmentType && entry.treatmentType !== "استشارة طبية" && (
-                          <div className="w-[100px]">
-                            <Input
-                              type="number"
-                              value={entry.sessionCount || ""}
-                              onChange={(e) => {
-                                const val = Math.max(0, Number(e.target.value) || 0);
-                                const updated = [...treatmentEntries];
-                                updated[index] = { ...updated[index], sessionCount: val };
-                                setTreatmentEntries(updated);
-                              }}
-                              min={0}
-                              className="bg-white text-left font-mono"
-                              placeholder={t.modals.sessionCount}
-                              data-testid={`input-session-count-${index}`}
-                            />
-                          </div>
-                        )}
-
-                        {!entry.isFree && (
-                        <div className="w-[120px] text-sm font-mono text-muted-foreground flex items-center gap-1">
-                          <span>{t.modals.treatmentCost}:</span>
-                          <span>{entry.cost.toLocaleString()}</span>
-                        </div>
-                        )}
-
-                        {treatmentEntries.length > 1 && (isAdmin || entry.isFree) && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setTreatmentEntries(treatmentEntries.filter((_, i) => i !== index));
-                              setManualCostOverride(false);
-                            }}
-                            data-testid={`button-remove-treatment-${index}`}
-                          >
-                            <X className="w-4 h-4 text-destructive" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0 }]);
-                      }}
-                      className="gap-2"
-                      data-testid="button-add-treatment-entry"
-                    >
-                      <Plus className="w-4 h-4" />
-                      {t.modals.addTreatmentType}
-                    </Button>
-                    {canEnterZeroSessions && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setTreatmentEntries([...treatmentEntries, { treatmentType: "", sessionCount: 0, cost: 0, isFree: true }])}
-                        className="gap-2 border-green-300 text-green-700 hover:bg-green-50"
-                        data-testid="button-add-free-treatment-entry"
-                      >
-                        <Plus className="w-4 h-4" />
-                        {t.modals.addFreeSessions}
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className="bg-slate-100 p-3 rounded-lg">
-                    <div className="flex justify-between gap-2 items-center font-semibold text-primary">
-                      <span>{t.modals.totalForAllTreatments}</span>
-                      <span className="font-mono">{treatmentEntries.filter(e => !e.isFree).reduce((sum, e) => sum + e.cost, 0).toLocaleString()} {t.patientDetails.currency}</span>
-                    </div>
-                  </div>
+                <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
+                  يُسجَّل المريض الآن <b>دون كلفة أو جلسات</b>. بعد فحص الطبيب، حدِّد الأنواع والجلسات من زر <b>«الكلفة والجلسات»</b> بجانب المريض في سجل المرضى — وتُحسب الكلفة تلقائياً.
                 </div>
               )}
 
@@ -1360,10 +1241,9 @@ export default function CreatePatient() {
                 render={({ field }) => <input type="hidden" {...field} value={field.value || 0} />}
               />
 
-              {/* Cost for a طرف/مسند is set AFTER the exam (when the patient agrees
-                  to buy) in the «تخصيص الطرف/المسند» step — not at registration. It
-                  stays here for physiotherapy (and any non-manufacturing patient). */}
-              {!needsExpert && (
+              {/* Registration is PRICELESS for every type now: cost is entered
+                  after the exam (تخصيص for devices, الكلفة والجلسات for physio). */}
+              {false && (
                 <FormField
                   control={form.control}
                   name="totalCost"

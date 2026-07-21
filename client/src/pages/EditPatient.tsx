@@ -5,6 +5,7 @@ import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
+import { useBranchSession } from "@/components/BranchGate";
 import {
   Form,
   FormControl,
@@ -71,6 +72,10 @@ export default function EditPatient() {
   const fromBranch = new URLSearchParams(searchString).get("branch");
   const branchParam = fromBranch ? `?branch=${fromBranch}` : "";
   const { t, dir } = useTranslation();
+  const branchSession = useBranchSession();
+  // Cost is management-only: mirrors the server, which strips totalCost for
+  // anyone below branch manager.
+  const canEditCost = !!branchSession?.isAdmin || branchSession?.role === "branch_manager";
   const patientId = Number(id);
   
   const { data: patient, isLoading: isLoadingPatient } = usePatient(patientId);
@@ -1167,19 +1172,21 @@ export default function EditPatient() {
           <Card className="p-6 rounded-2xl shadow-sm border-border/60">
             <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">{t.patientForm.financialAndNotes}</h3>
             <div className="space-y-6">
-              <FormField
-                control={form.control}
-                name="totalCost"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t.patientForm.totalCost}</FormLabel>
-                    <FormControl>
-                      <MoneyInput value={field.value ?? ""} onValueChange={field.onChange} className="bg-slate-50" placeholder="0" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {canEditCost && (
+                <FormField
+                  control={form.control}
+                  name="totalCost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.totalCost}</FormLabel>
+                      <FormControl>
+                        <MoneyInput value={field.value ?? ""} onValueChange={field.onChange} className="bg-slate-50" placeholder="0" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {patient?.branchId && (
                 <FormField
