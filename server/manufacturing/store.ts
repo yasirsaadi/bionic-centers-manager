@@ -30,7 +30,7 @@ export async function hasActiveOrder(patientId: number, serviceType: string): Pr
     .limit(1);
   return rows.length > 0;
 }
-import { stagesForService, NEW_ASSIGNMENT_STAGE } from "@shared/manufacturing";
+import { stagesForService, NEW_ASSIGNMENT_STAGE, MAINTENANCE_DONE_STAGES } from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
 
@@ -420,6 +420,7 @@ export async function getOrderDetail(id: number) {
   const [order] = await db
     .select({
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId, serviceType: WO.serviceType,
+      purpose: WO.purpose,
       status: WO.status, currentStage: WO.currentStage, expectedDeliveryDate: WO.expectedDeliveryDate,
       startedAt: WO.startedAt, completedAt: WO.completedAt, finalResult: WO.finalResult,
       finalNotes: WO.finalNotes, expertUserId: WO.expertUserId, assignedBy: WO.assignedBy,
@@ -495,6 +496,10 @@ export async function updateStage(params: {
   const { order, toStage } = params;
   const fromStage = order.currentStage;
   const delivered = toStage === "delivered";
+  // "تم إنجاز صيانة القالب/الطرف/المسند" is the terminal step of a maintenance
+  // episode: reaching it completes the order in the same action, so status and
+  // stage can never contradict each other again.
+  const maintenanceDone = MAINTENANCE_DONE_STAGES.has(toStage);
   return await db.transaction(async (tx) => {
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
     if (!order.startedAt && fromStage === NEW_ASSIGNMENT_STAGE) patch.startedAt = new Date();
@@ -509,6 +514,11 @@ export async function updateStage(params: {
       patch.status = "completed";
       patch.completedAt = new Date();
       patch.finalResult = params.finalResult ?? null;
+      if (params.finalNotes) patch.finalNotes = params.finalNotes;
+    }
+    if (maintenanceDone) {
+      patch.status = "completed";
+      patch.completedAt = new Date();
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
@@ -553,9 +563,19 @@ export async function updateStatus(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order, status } = params;
   return await db.transaction(async (tx) => {
-    // NOTE: never touches current_stage — status is independent of stage.
+    // NOTE: status is independent of stage — EXCEPT when a MAINTENANCE order
+    // is marked completed while its stage never left the pipeline: the card
+    // used to show "مكتمل" over "مريض جديد بانتظار بدء العمل". Completing a
+    // maintenance order aligns the stage to the service's "تم إنجاز الصيانة"
+    // step (the device one by default; the expert picks القالب explicitly via
+    // the stage dialog when that is what was serviced).
+    const patch: any = { status, updatedAt: new Date() };
+    if (status === "completed" && (order as any).purpose === "maintenance" && !MAINTENANCE_DONE_STAGES.has(order.currentStage)) {
+      patch.currentStage = order.serviceType === "medical_support" ? "maintenance_support_done" : "maintenance_device_done";
+      patch.completedAt = (order as any).completedAt ?? new Date();
+    }
     const [updated] = await tx.update(WO)
-      .set({ status, updatedAt: new Date() })
+      .set(patch)
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
