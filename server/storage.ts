@@ -984,6 +984,68 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
+  // ADMIN-ONLY case-type deletion («حذف نوع حالة») — also the cleaner for
+  // GHOST cases left by the old destructive edit (flag wiped, case row kept).
+  // Safety model:
+  //   - BLOCKED while manufacturing history (any work order) or payments
+  //     TAGGED for this type exist — real history is never deleted, and those
+  //     are resurrection signals syncPatientCases would rebuild the case from.
+  //   - The case's visits/payments are re-pointed to the remaining case
+  //     (physio first) or detached (case_id NULL) — never deleted.
+  //   - Cost: 'manual' (a priced business event) is SUBTRACTED from
+  //     total_cost (undoing the event); 'auto' (an aggregate-split remnant)
+  //     is MOVED onto the remaining case so total_cost — and the reports —
+  //     stay untouched. No remaining case → subtract.
+  //   - The type's flag AND its detail columns are cleared so no signal
+  //     resurrects the case on the next sync.
+  async deleteCaseType(patientId: number, caseType: "prosthetic" | "medical_support" | "physiotherapy"): Promise<{ movedRows: number }> {
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+      const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      if (!p) throw new Error("المريض غير موجود");
+      const [row] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
+      if (!row) throw new Error("لا توجد حالة من هذا النوع لهذا المريض");
+
+      if (caseType !== "physiotherapy") {
+        const wos = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
+          .where(and(eq(prostheticWorkOrders.patientId, patientId), eq(prostheticWorkOrders.serviceType, caseType))).limit(1);
+        if (wos.length > 0) throw new Error("يوجد سجل تصنيع لهذا النوع — لا يمكن حذفه");
+        const tag = caseType === "prosthetic" ? "أطراف صناعية" : "مساند طبية";
+        const tagged = await tx.select({ id: payments.id }).from(payments)
+          .where(and(eq(payments.patientId, patientId), sql`${payments.paymentTreatmentType} LIKE ${"%" + tag + "%"}`)).limit(1);
+        if (tagged.length > 0) throw new Error("توجد دفعات موسومة لهذا النوع — عدّل تصنيفها أولاً ثم احذف");
+      }
+
+      const others = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), sql`${patientCases.id} <> ${row.id}`));
+      const target = others.find((c) => c.caseType === "physiotherapy") ?? others[0] ?? null;
+
+      const rp = await tx.update(payments).set({ caseId: target?.id ?? null }).where(eq(payments.caseId, row.id)).returning({ id: payments.id });
+      const rv = await tx.update(visits).set({ caseId: target?.id ?? null }).where(eq(visits.caseId, row.id)).returning({ id: visits.id });
+
+      const cost = row.cost || 0;
+      if (cost > 0) {
+        if (row.costSource !== "manual" && target) {
+          await tx.update(patientCases).set({ cost: (target.cost || 0) + cost, updatedAt: new Date() }).where(eq(patientCases.id, target.id));
+        } else {
+          await tx.update(patients).set({ totalCost: Math.max(0, (p.totalCost || 0) - cost) }).where(eq(patients.id, patientId));
+        }
+      }
+
+      await tx.delete(patientCases).where(eq(patientCases.id, row.id));
+
+      const clear: any = caseType === "prosthetic"
+        ? { isAmputee: false, amputationSite: null, prostheticType: null, siliconType: null, siliconSize: null, suspensionSystem: null, footType: null, footSize: null, kneeJointType: null }
+        : caseType === "medical_support"
+          ? { isMedicalSupport: false, supportType: null }
+          : { isPhysiotherapy: false, diseaseType: null, injuries: null, injuryType: null, injuryArea: null, treatmentType: null };
+      await tx.update(patients).set(clear).where(eq(patients.id, patientId));
+
+      return { movedRows: rp.length + rv.length };
+    });
+  }
+
   // Merges a duplicate patient row into the original one (admin tool).
   // Every child record is re-pointed to the target, the type flags are
   // OR-merged, empty descriptive fields on the target are filled from the
