@@ -34,6 +34,16 @@ import { stagesForService, NEW_ASSIGNMENT_STAGE, MAINTENANCE_DONE_STAGES } from 
 
 export const EXPERT_ROLE = "prosthetics_expert";
 
+// Display name of the expert an order is being assigned to — recorded inside
+// the creation history note so the FIRST assignee stays on the permanent
+// record even after later reassignments.
+async function expertNameOf(tx: any, expertUserId: number): Promise<string> {
+  const [u] = await tx.select({ displayName: systemUsers.displayName })
+    .from(systemUsers).where(eq(systemUsers.id, expertUserId));
+  return u?.displayName ?? `#${expertUserId}`;
+}
+
+
 // ---- experts roster (data-driven; never hardcoded) ---------------------------
 
 export interface ExpertOption { id: number; displayName: string; }
@@ -148,7 +158,7 @@ export async function createPatientWithWorkOrder(
       actionType: "created",
       fromStage: null,
       toStage: NEW_ASSIGNMENT_STAGE,
-      notes: "إنشاء أمر التصنيع وإسناده للخبير",
+      notes: `إنشاء أمر التصنيع وإسناده للخبير ${await expertNameOf(tx, wo.expertUserId)}`,
       performedBy: wo.assignedBy,
     });
     return { patient, workOrder };
@@ -189,7 +199,7 @@ export async function createWorkOrderForExisting(params: {
       actionType: "created",
       fromStage: null,
       toStage: NEW_ASSIGNMENT_STAGE,
-      notes: purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود",
+      notes: `${purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود"} — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
     return workOrder;
@@ -238,7 +248,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       actionType: "created",
       fromStage: null,
       toStage: NEW_ASSIGNMENT_STAGE,
-      notes: "إنشاء أمر صيانة لمريض موجود",
+      notes: `إنشاء أمر صيانة لمريض موجود — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
     // Attribute the visit to the matching case so it shows in the patient's
@@ -641,7 +651,7 @@ export async function reassignExpert(params: {
       workOrderId: order.id,
       actionType: "reassigned",
       fromStage: order.currentStage, toStage: order.currentStage,
-      notes: `تحويل من الخبير #${fromExpert} إلى #${newExpertUserId} — السبب: ${params.reason}`,
+      notes: `تحويل من الخبير ${await expertNameOf(tx, fromExpert)} إلى ${await expertNameOf(tx, newExpertUserId)} — السبب: ${params.reason}`,
       performedBy: params.performedBy,
     });
     return updated;
