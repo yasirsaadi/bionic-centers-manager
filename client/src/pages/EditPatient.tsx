@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
@@ -68,6 +68,8 @@ interface InjuryEntry {
 export default function EditPatient() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
+  const searchStr = useSearch();
+  const sectionParam = new URLSearchParams(searchStr).get("section");
   const searchString = window.location.search;
   const fromBranch = new URLSearchParams(searchString).get("branch");
   const branchParam = fromBranch ? `?branch=${fromBranch}` : "";
@@ -133,7 +135,9 @@ export default function EditPatient() {
         age: patient.age,
         weight: patient.weight || "",
         height: patient.height || "",
-        medicalCondition: patient.medicalCondition,
+        medicalCondition: (sectionParam === "amputee" || sectionParam === "physiotherapy" || sectionParam === "medical_support")
+          ? sectionParam
+          : patient.medicalCondition,
         isAmputee: patient.isAmputee,
         isPhysiotherapy: patient.isPhysiotherapy,
         isMedicalSupport: patient.isMedicalSupport,
@@ -302,20 +306,14 @@ export default function EditPatient() {
     form.setValue("amputationSite", site);
   }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form, isInitialized]);
 
+  // ADDITIVE, never destructive: the radio selects which type's SECTION is
+  // open for editing and turns THAT type's flag on — it must never turn the
+  // patient's OTHER flags off (saving a dual علاج+أطراف patient used to wipe
+  // whichever flag the radio wasn't on, silently deleting a case type).
   useEffect(() => {
-    if (conditionType === "amputee") {
-      form.setValue("isAmputee", true);
-      form.setValue("isPhysiotherapy", false);
-      form.setValue("isMedicalSupport", false);
-    } else if (conditionType === "physiotherapy") {
-      form.setValue("isAmputee", false);
-      form.setValue("isPhysiotherapy", true);
-      form.setValue("isMedicalSupport", false);
-    } else if (conditionType === "medical_support") {
-      form.setValue("isAmputee", false);
-      form.setValue("isPhysiotherapy", false);
-      form.setValue("isMedicalSupport", true);
-    }
+    if (conditionType === "amputee") form.setValue("isAmputee", true);
+    else if (conditionType === "physiotherapy") form.setValue("isPhysiotherapy", true);
+    else if (conditionType === "medical_support") form.setValue("isMedicalSupport", true);
   }, [conditionType, form]);
 
   function onSubmit(values: FormValues) {
