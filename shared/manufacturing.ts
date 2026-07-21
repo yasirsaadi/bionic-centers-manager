@@ -198,3 +198,15 @@ export const MOLD_STAGE: Record<string, string> = {
 export function isMoldStage(serviceType: string, stage: string): boolean {
   return MOLD_STAGE[serviceType] === stage;
 }
+
+// Is `stage` the mold stage OR any stage after it in the service's ordered
+// list? Stage transitions are not forced to be sequential, so the delivery
+// date must be demanded on ANY transition that lands at-or-beyond the mold
+// stage — otherwise an expert who jumps straight past cast_taken would never
+// commit a date and the delivery-accuracy tracking would silently never arm.
+export function isAtOrBeyondMoldStage(serviceType: string, stage: string): boolean {
+  const stages = stagesForService(serviceType);
+  const moldIdx = stages.indexOf(MOLD_STAGE[serviceType] ?? "");
+  const idx = stages.indexOf(stage);
+  return moldIdx >= 0 && idx >= moldIdx;
+}

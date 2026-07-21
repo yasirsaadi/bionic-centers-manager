@@ -14,7 +14,7 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
-  isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isMoldStage,
+  isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
 } from "@shared/manufacturing";
 
 type Req = any;
@@ -179,8 +179,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    // Only prosthetic / medical-support patients.
-    const serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
+    // Only prosthetic / medical-support patients. A dual-flag patient may pass
+    // an explicit serviceType matching one of their flags.
+    const requestedSt = strOrU(req.body?.serviceType);
+    let serviceType: "prosthetic" | "medical_support" | null = null;
+    if (requestedSt === "prosthetic" && patient.isAmputee) serviceType = "prosthetic";
+    else if (requestedSt === "medical_support" && patient.isMedicalSupport) serviceType = "medical_support";
+    else if (!requestedSt) serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
     if (!serviceType) return res.status(400).json({ error: "هذه الميزة لمرضى الأطراف الصناعية والمساند الطبية فقط" });
     // Branch scope.
     if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
@@ -188,12 +193,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per patient: block a second order while one is still
-    // open (completed/cancelled don't count).
-    const existing = await store.listOrders({ completed: false });
-    const activeForPatient = existing.find((o) => o.patientId === patientId && o.status !== "cancelled");
-    if (activeForPatient) {
-      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+    // One ACTIVE order per (patient, serviceType): block a second order of the
+    // SAME service while one is still open (completed/cancelled don't count).
+    if (await store.hasActiveOrder(patientId, serviceType)) {
+      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
     const order = await store.createWorkOrderForExisting({
@@ -225,16 +228,24 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    const serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
+    // A patient can carry BOTH flags (طرف + مسند). The dialog then sends an
+    // explicit serviceType; it must match a flag the patient actually has —
+    // otherwise fall back to prosthetic-first.
+    const requested = strOrU(req.body?.serviceType);
+    let serviceType: "prosthetic" | "medical_support" | null = null;
+    if (requested === "prosthetic" && patient.isAmputee) serviceType = "prosthetic";
+    else if (requested === "medical_support" && patient.isMedicalSupport) serviceType = "medical_support";
+    else if (!requested) serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
     if (!serviceType) return res.status(400).json({ error: "هذه الميزة لمرضى الأطراف والمساند فقط" });
     if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per patient.
-    const existing = await store.listOrders({ completed: false });
-    if (existing.find((o) => o.patientId === patientId && o.status !== "cancelled")) {
-      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+    // One ACTIVE order per (patient, serviceType) — a dual-flag patient may
+    // have a طرف order and a مسند order running in parallel; a second order
+    // of the SAME service is still blocked.
+    if (await store.hasActiveOrder(patientId, serviceType)) {
+      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
     // Only the device-spec fields the doctor decides pass through (whitelist).
@@ -262,10 +273,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
+    // Optional: the delivery date is committed by the EXPERT at the mold stage
+    // (same model as initial builds) — reception no longer invents one here.
     const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) return res.status(400).json({ error: "بيانات ناقصة" });
-    if (!expectedDeliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
-      return res.status(400).json({ error: "تاريخ التسليم المتوقع إلزامي" });
+    if (expectedDeliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      return res.status(400).json({ error: "تاريخ غير صالح" });
     }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
@@ -346,11 +359,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
       }
     }
-    // At the mold stage the expert MUST commit to a delivery date — unless one
-    // was already set (then it stays locked; not re-taken here). This is the
-    // single point the promised date is captured, independent of stage dates.
+    // Reaching (or jumping PAST) the mold stage requires the expert to commit
+    // to a delivery date — unless one was already set (then it stays locked;
+    // not re-taken here). Checked against stage ORDER, not equality, so
+    // skipping cast_taken cannot bypass the mandatory commitment.
     let deliveryDate: string | null = null;
-    if (isMoldStage(raw.serviceType, toStage) && !raw.expectedDeliveryDate) {
+    if (isAtOrBeyondMoldStage(raw.serviceType, toStage) && !raw.expectedDeliveryDate) {
       deliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
       if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
         return res.status(400).json({ error: "تاريخ التسليم إلزامي عند أخذ القالب" });

@@ -38,8 +38,6 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
   const [open, setOpen] = useState(false);
   const [caseType, setCaseType] = useState<string>("");
   const [fields, setFields] = useState<Record<string, string>>({});
-  const [expertUserId, setExpertUserId] = useState<string>("");
-  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [serviceCost, setServiceCost] = useState(0);
   const [paidNow, setPaidNow] = useState(0);
   const [paidTouched, setPaidTouched] = useState(false);
@@ -54,20 +52,8 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
 
   const isManufacturing = caseType === "amputee" || caseType === "medical_support";
 
-  const { data: experts = [], isLoading: expertsLoading } = useQuery<{ id: number; displayName: string }[]>({
-    queryKey: ["/api/manufacturing/experts", patient.branchId],
-    enabled: open && isManufacturing,
-    queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/experts?branchId=${patient.branchId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
   const effectivePaidNow = paidTouched ? Math.min(paidNow, serviceCost) : serviceCost;
   const remaining = Math.max(0, serviceCost - effectivePaidNow);
-  // Cost entered → expert + date required; no cost → examination-only add.
-  const committing = isManufacturing && serviceCost > 0;
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
@@ -78,8 +64,6 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
         body: JSON.stringify({
           caseType,
           ...fields,
-          expertUserId: committing ? Number(expertUserId) : undefined,
-          expectedDeliveryDate: committing ? (expectedDeliveryDate || undefined) : undefined,
           serviceCost,
           paidNow: effectivePaidNow,
         }),
@@ -103,15 +87,14 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
   });
 
   function reset() {
-    setCaseType(""); setFields({}); setExpertUserId("");
-    setExpectedDeliveryDate(""); setServiceCost(0); setPaidNow(0); setPaidTouched(false);
+    setCaseType(""); setFields({}); setServiceCost(0); setPaidNow(0); setPaidTouched(false);
   }
 
   function setField(k: string, v: string) {
     setFields((prev) => ({ ...prev, [k]: v }));
   }
 
-  const canSubmit = !!caseType && (!committing || (!!expertUserId && !!expectedDeliveryDate)) && !isPending;
+  const canSubmit = !!caseType && !isPending;
 
   if (missingTypes.length === 0) return null;
 
@@ -134,7 +117,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
         <div className="space-y-4 mt-2">
           <div>
             <label className="text-sm font-medium">نوع الحالة الجديد</label>
-            <Select value={caseType} onValueChange={(v) => { setCaseType(v); setExpertUserId(""); }}>
+            <Select value={caseType} onValueChange={setCaseType}>
               <SelectTrigger className="mt-1" data-testid="select-case-type">
                 <SelectValue placeholder="اختر النوع" />
               </SelectTrigger>
@@ -195,39 +178,13 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
             </div>
           </div>
 
-          {/* Cost = commitment: entering a cost reveals (and requires) the
-              expert + expected delivery. No cost = examination only. */}
-          {isManufacturing && serviceCost <= 0 && (
+          {/* Expert assignment happens in the SEPARATE «تخصيص وإسناد خبير»
+              registry step (the server ignores expert/date here and creates no
+              work order) — asking for them in this dialog misled staff into
+              thinking an order was created. */}
+          {isManufacturing && (
             <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
-              بدون كلفة: يُفعَّل النوع <b>كفحص فقط</b> دون إسناد خبير أو أمر تصنيع. عند كتابة الكلفة يظهر اختيار الخبير وتاريخ التسليم.
-            </div>
-          )}
-          {isManufacturing && serviceCost > 0 && (
-            <div className="border border-primary/40 bg-primary/5 rounded-lg p-3 space-y-2">
-              <label className="text-sm font-semibold">الخبير المسؤول عن التصنيع <span className="text-red-500">*</span></label>
-              {expertsLoading ? (
-                <div className="text-sm text-muted-foreground">جارٍ تحميل الخبراء…</div>
-              ) : experts.length === 0 ? (
-                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-                  لا يوجد خبير متاح لهذا الفرع — لا يمكن إضافة هذا النوع بكلفة.
-                </div>
-              ) : (
-                <Select value={expertUserId} onValueChange={setExpertUserId}>
-                  <SelectTrigger data-testid="select-case-expert">
-                    <SelectValue placeholder="اختر الخبير" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {experts.map((e) => (
-                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <div>
-                <label className="text-sm font-medium">تاريخ التسليم المتوقع <span className="text-red-500">*</span></label>
-                <Input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className="mt-1" />
-                <p className="text-xs text-muted-foreground mt-1">اسأل الخبير عن الموعد — يُبنى عليه نظام التنبيهات.</p>
-              </div>
+              يُفعَّل النوع على الملف الآن. لإسناد الخبير وبدء التصنيع استخدم زر <b>«تخصيص وإسناد خبير»</b> بجانب المريض في سجل المرضى — وتاريخ التسليم يحدّده الخبير عند أخذ القالب.
             </div>
           )}
           {serviceCost > 0 && remaining > 0 && (

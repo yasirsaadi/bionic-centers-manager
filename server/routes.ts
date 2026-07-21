@@ -2191,8 +2191,18 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const isBranchManager = branchSession?.role === "branch_manager";
-    
+
     const id = Number(req.params.id);
+    // Branch isolation — same guard as /session-info: a branch-A user must not
+    // edit (or retag, which restructures cases) another branch's payments.
+    const allowedBranches = accessibleBranchesFor(req);
+    if (allowedBranches !== null) {
+      const [existingPayment] = await db.select().from(payments).where(eq(payments.id, id));
+      if (!existingPayment) return res.status(404).json({ message: "الدفعة غير موجودة" });
+      if (!allowedBranches.includes(existingPayment.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
+      }
+    }
     const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions } = req.body;
     const updateData: any = {};
     if (amount !== undefined) updateData.amount = amount;
@@ -3050,6 +3060,13 @@ export async function registerRoutes(
     const expense = await storage.getExpense(id);
     if (!expense) {
       return res.status(404).json({ error: "المصروف غير موجود" });
+    }
+    // Branch isolation (mirrors PUT/DELETE): a non-admin — including the
+    // narrow expenses-only tier — must not read another branch's expenses
+    // by iterating ids.
+    const allowedExp = accessibleBranchesFor(req);
+    if (allowedExp !== null && !allowedExp.includes(expense.branchId)) {
+      return res.status(403).json({ error: "غير مصرح لك بمصروفات هذا الفرع" });
     }
     res.json(expense);
   });

@@ -117,7 +117,6 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   // has an open build, the server returns 409 and nothing is written.
   async function submitMaintenance(values: z.infer<typeof formSchema>) {
     if (!expertUserId) { toast({ title: "اختر الخبير المسؤول عن الصيانة", variant: "destructive" }); return; }
-    if (!expectedDeliveryDate) { toast({ title: "تاريخ التسليم المتوقع إلزامي", variant: "destructive" }); return; }
     setMaintPending(true);
     try {
       const res = await fetch("/api/manufacturing/maintenance-visit", {
@@ -125,7 +124,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          patientId, expertUserId: Number(expertUserId), expectedDeliveryDate,
+          patientId, expertUserId: Number(expertUserId),
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
         }),
       });
@@ -136,7 +135,8 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         return;
       }
       // Refresh the patient's visits, payments and manufacturing views.
-      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
@@ -267,7 +267,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
               />
             )}
 
-            {/* حقول الصيانة — الخبير + تاريخ التسليم المتوقع (إلزاميان) */}
+            {/* حقول الصيانة — الخبير فقط؛ تاريخ التسليم يحدّده الخبير عند أخذ القالب */}
             {purpose === "maintenance" && (
               <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
                 <FormItem>
@@ -283,13 +283,8 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
                     </Select>
                   )}
                 </FormItem>
-                <FormItem>
-                  <FormLabel>تاريخ التسليم المتوقع <span className="text-red-500">*</span></FormLabel>
-                  <DatePickerIraq value={expectedDeliveryDate} onChange={setExpectedDeliveryDate} data-testid="input-maintenance-delivery" />
-                  <p className="text-xs text-muted-foreground">يُبنى عليه نظام التنبيهات قبل التسليم.</p>
-                </FormItem>
                 <p className="text-[11px] text-muted-foreground">
-                  ستُفتح حلقة صيانة مستقلّة بخبيرها وتاريخها. إن كان للمريض أمر بناء جارٍ لم يُسلَّم، تُمنع الصيانة حتى يكتمل.
+                  ستُفتح حلقة صيانة مستقلّة بخبيرها — يحدّد الخبير تاريخ التسليم عند أخذ القالب. إن كان للمريض أمر صيانة/بناء جارٍ لنفس الخدمة لم يُسلَّم، تُمنع حتى يكتمل.
                 </p>
               </div>
             )}

@@ -42,7 +42,8 @@ const DETAIL_LABELS: Record<string, string> = {
 
 const fmtIQD = (n: number) => `${(n || 0).toLocaleString("en-US")} د.ع`;
 
-// Clickable chips for the header — one per case.
+// Clickable chips for the header — one per case, plus «الكل» (id -1) which
+// clears the case filter so every visit/payment shows regardless of case.
 export function PatientCaseChips({ cases, selectedId, onSelect }: {
   cases: CaseRow[];
   selectedId: number | null;
@@ -50,6 +51,21 @@ export function PatientCaseChips({ cases, selectedId, onSelect }: {
 }) {
   return (
     <>
+      {cases.length > 1 && (
+        <button
+          key="all"
+          type="button"
+          onClick={() => onSelect(-1)}
+          data-testid="case-chip-all"
+          className={`inline-flex items-center gap-1 rounded-full px-3 md:px-4 py-1 md:py-1.5 text-xs md:text-base font-medium transition-colors border ${
+            selectedId === -1
+              ? "bg-primary text-primary-foreground border-primary shadow-sm"
+              : "bg-white text-primary border-primary/30 hover:bg-primary/5"
+          }`}
+        >
+          الكل
+        </button>
+      )}
       {cases.map((c) => {
         const m = meta(c.caseType);
         const Icon = m.icon;
