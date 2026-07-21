@@ -13,20 +13,22 @@ import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
-import CreatePatient from "@/pages/CreatePatient";
-import PatientDetails from "@/pages/PatientDetails";
-import EditPatient from "@/pages/EditPatient";
-import Reports from "@/pages/Reports";
-import DailyPatientReport from "@/pages/DailyPatientReport";
-import Branches from "@/pages/Branches";
-import BranchDetails from "@/pages/BranchDetails";
-import BranchRevenues from "@/pages/BranchRevenues";
 import { useState, useEffect, lazy, Suspense } from "react";
 
 // Heavy pages — code-split so the main bundle stays small. Each
 // chunk only loads when the user navigates to that route, which
 // noticeably speeds up the initial paint of Dashboard and Patients
-// (the screens most users open first).
+// (the screens most users open first). Only those two entry screens
+// (plus NotFound) stay eager — everything else, including the very
+// large patient file/registration/edit pages, is fetched on demand.
+const CreatePatient = lazy(() => import("@/pages/CreatePatient"));
+const PatientDetails = lazy(() => import("@/pages/PatientDetails"));
+const EditPatient = lazy(() => import("@/pages/EditPatient"));
+const Reports = lazy(() => import("@/pages/Reports"));
+const DailyPatientReport = lazy(() => import("@/pages/DailyPatientReport"));
+const Branches = lazy(() => import("@/pages/Branches"));
+const BranchDetails = lazy(() => import("@/pages/BranchDetails"));
+const BranchRevenues = lazy(() => import("@/pages/BranchRevenues"));
 const Accounting = lazy(() => import("@/pages/Accounting"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
