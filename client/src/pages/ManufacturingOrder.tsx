@@ -18,7 +18,7 @@ import { ArrowRight, Wrench, History, RotateCcw, UserCog } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS,
   REWORK_TYPES, REWORK_TYPE_LABELS, REASON_CODES, REASON_CODE_LABELS,
-  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForService, DELIVERED_STAGE, isAtOrBeyondMoldStage,
+  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForOrder, DELIVERED_STAGE, isAtOrBeyondMoldStage,
 } from "@shared/manufacturing";
 
 function fmt(iso: string | null): string {
@@ -71,7 +71,7 @@ export default function ManufacturingOrder() {
   if (!data) return <div className="p-8 text-center text-muted-foreground text-sm">الأمر غير موجود.</div>;
 
   const { order, patient, timeline, rework } = data;
-  const stages = stagesForService(order.serviceType);
+  const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
 
   return (

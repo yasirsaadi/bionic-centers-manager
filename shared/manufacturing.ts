@@ -66,6 +66,10 @@ export const STAGE_LABELS: Record<string, string> = {
   ready_for_delivery: "جاهز للتسليم",
   delivered: "تم التسليم",
   post_delivery_followup: "متابعة ما بعد التسليم",
+  // maintenance lifecycle
+  maintenance_cast_done: "تم إنجاز صيانة القالب",
+  maintenance_device_done: "تم إنجاز صيانة الطرف",
+  maintenance_support_done: "تم إنجاز صيانة المسند",
   // medical-support specific
   cast_if_needed: "أخذ القالب عند الحاجة",
   manufacturing: "التصنيع",
@@ -158,17 +162,45 @@ export const FINAL_RESULT_LABELS: Record<string, string> = {
   transferred_to_another_expert: "تم تحويله إلى خبير آخر",
 };
 
+// A MAINTENANCE episode has its own tiny lifecycle — walking a repaired
+// device through the full build pipeline (cast → socket → fitting …) makes no
+// sense, and completing via a status change used to leave the stage stuck at
+// "مريض جديد بانتظار بدء العمل" under a "مكتمل" badge. The expert instead
+// marks WHAT was serviced: the cast or the device itself.
+export const PROSTHETIC_MAINTENANCE_STAGES: string[] = [
+  "new_assignment",
+  "maintenance_cast_done",
+  "maintenance_device_done",
+];
+export const SUPPORT_MAINTENANCE_STAGES: string[] = [
+  "new_assignment",
+  "maintenance_support_done",
+];
+// Reaching any of these completes the maintenance order (status → completed).
+export const MAINTENANCE_DONE_STAGES = new Set([
+  "maintenance_cast_done", "maintenance_device_done", "maintenance_support_done",
+]);
+
 // Ordered stage list for a given service type.
 export function stagesForService(serviceType: string): string[] {
   return serviceType === "medical_support" ? MEDICAL_SUPPORT_STAGES : PROSTHETIC_STAGES;
+}
+
+// Ordered stage list for an ORDER: maintenance orders get the maintenance
+// lifecycle; initial builds keep the full pipeline.
+export function stagesForOrder(serviceType: string, purpose?: string | null): string[] {
+  if (purpose === "maintenance") {
+    return serviceType === "medical_support" ? SUPPORT_MAINTENANCE_STAGES : PROSTHETIC_MAINTENANCE_STAGES;
+  }
+  return stagesForService(serviceType);
 }
 
 // Server-side validators (fail closed on unknown codes).
 export function isValidServiceType(v: unknown): v is ServiceType {
   return v === "prosthetic" || v === "medical_support";
 }
-export function isValidStageFor(serviceType: string, stage: unknown): boolean {
-  return typeof stage === "string" && stagesForService(serviceType).includes(stage);
+export function isValidStageFor(serviceType: string, stage: unknown, purpose?: string | null): boolean {
+  return typeof stage === "string" && stagesForOrder(serviceType, purpose).includes(stage);
 }
 export function isValidStatus(v: unknown): boolean {
   return typeof v === "string" && STATUSES.includes(v);

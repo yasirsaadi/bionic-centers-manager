@@ -361,7 +361,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const raw = await loadWritable(req, res);
     if (!raw) return;
     const toStage = strOrU(req.body?.toStage);
-    if (!toStage || !isValidStageFor(raw.serviceType, toStage)) {
+    if (!toStage || !isValidStageFor(raw.serviceType, toStage, raw.purpose)) {
       return res.status(400).json({ error: "المرحلة غير صالحة لهذا النوع" });
     }
     const newStatus = strOrU(req.body?.status);
@@ -451,7 +451,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const reasonCode = strOrU(req.body?.reasonCode);
     if (reasonCode && !isValidReasonCode(reasonCode)) return res.status(400).json({ error: "سبب غير صالح" });
     const stageWhenDetected = strOrU(req.body?.stageWhenDetected);
-    if (stageWhenDetected && !isValidStageFor(raw.serviceType, stageWhenDetected)) {
+    if (stageWhenDetected && !isValidStageFor(raw.serviceType, stageWhenDetected, raw.purpose)) {
       return res.status(400).json({ error: "المرحلة غير صالحة" });
     }
     const updated = await store.recordRework({
