@@ -167,6 +167,12 @@ export async function createWorkOrderForExisting(params: {
 }): Promise<ProstheticWorkOrder> {
   const purpose = params.purpose === "maintenance" ? "maintenance" : "initial_build";
   return await db.transaction(async (tx) => {
+    // In-tx per-service guard (backed by the partial unique index) — the
+    // route's pre-check alone was a check-then-act race.
+    const open = await tx.select({ id: WO.id }).from(WO)
+      .where(and(eq(WO.patientId, params.patientId), eq(WO.serviceType, params.serviceType), notInArray(WO.status, ["completed", "cancelled"])))
+      .limit(1);
+    if (open.length > 0) throw new ActiveOrderError();
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,
       branchId: params.branchId,
@@ -492,7 +498,12 @@ export async function updateStage(params: {
   return await db.transaction(async (tx) => {
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
     if (!order.startedAt && fromStage === NEW_ASSIGNMENT_STAGE) patch.startedAt = new Date();
-    if (params.deliveryDate && !order.expectedDeliveryDate) patch.expectedDeliveryDate = params.deliveryDate;
+    // First-commit only, decided IN the database (COALESCE), not on the
+    // possibly-stale `order` snapshot — two concurrent mold updates can't
+    // both "win": whichever lands second finds the column already set.
+    if (params.deliveryDate && !order.expectedDeliveryDate) {
+      patch.expectedDeliveryDate = sql`COALESCE(${WO.expectedDeliveryDate}, ${params.deliveryDate})`;
+    }
     if (params.newStatus) patch.status = params.newStatus;
     if (delivered) {
       patch.status = "completed";

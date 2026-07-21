@@ -1375,8 +1375,17 @@ export async function registerRoutes(
   app.get("/api/patients/:id/cases", isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
     const patient = await storage.getPatient(id);
-    const ctx = getUserContext(req);
-    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
+    const branchSession = (req.session as any).branchSession;
+    // Per-case financials (cost/paid/remaining): a PURE prosthetics expert is
+    // financially locked out (same rule as the manufacturing module), and
+    // everyone else needs view rights + the patient inside their branches.
+    if (branchSession?.role === "prosthetics_expert") {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+    const canView = branchSession?.isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canViewPatients;
+    if (!canView) return res.status(403).json({ message: "غير مصرح" });
+    const allowedCases = accessibleBranchesFor(req);
+    const canAccess = patient && (allowedCases === null || allowedCases.includes(patient.branchId));
     if (!patient || !canAccess) return res.status(404).json({ message: "Patient not found or unauthorized" });
 
     const [cases, payments, visits] = await Promise.all([
@@ -1720,6 +1729,18 @@ export async function registerRoutes(
       // Update totalCost
       const newTotalCost = (patient.totalCost || 0) + serviceCost;
       await storage.updatePatient(patientId, { totalCost: newTotalCost });
+
+      // Keep the per-case split in step: the same amount the aggregate just
+      // gained is added onto the case(s) the service belongs to — otherwise
+      // sum(case costs) permanently diverges from total_cost.
+      if (treatmentEntries && Array.isArray(treatmentEntries)) {
+        for (const entry of treatmentEntries) {
+          const c = Number(entry?.cost) || 0;
+          if (c > 0) await storage.addToCaseCost(patientId, { tag: entry.treatmentType ?? null, treatmentType: entry.treatmentType ?? null }, c);
+        }
+      } else {
+        await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, Number(serviceCost) || 0);
+      }
       
       // Service type labels in Arabic
       const serviceLabels: Record<string, string> = {
