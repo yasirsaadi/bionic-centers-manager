@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import {
@@ -43,6 +44,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
   const [paidTouched, setPaidTouched] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
 
   const missingTypes = [
     !patient.isAmputee && "amputee",
@@ -79,9 +81,14 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/summary`] });
       queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
-      toast({ title: "تمت إضافة نوع الحالة", description: "أُضيف النوع الجديد على نفس ملف المريض." });
+      toast({ title: "تمت إضافة نوع الحالة", description: "أكمل الآن كل حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة." });
+      const addedType = caseType;
       reset();
       setOpen(false);
+      // The dialog holds only the decision; the FULL registration-grade fields
+      // for the new type (amputation builder / injuries builder / device
+      // specs) live in the edit page — open it directly on that section.
+      setLocation(`/patients/${patient.id}/edit?section=${addedType}`);
     },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
@@ -129,36 +136,9 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
             </Select>
           </div>
 
-          {caseType === "medical_support" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">نوع المسند</label>
-                <Input value={fields.supportType || ""} onChange={(e) => setField("supportType", e.target.value)} className="mt-1" />
-              </div>
-              <div>
-                <label className="text-sm font-medium">جهة الإصابة</label>
-                <Input value={fields.injurySide || ""} onChange={(e) => setField("injurySide", e.target.value)} className="mt-1" />
-              </div>
-            </div>
-          )}
-
-          {caseType === "amputee" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">موقع البتر</label>
-                <Input value={fields.amputationSite || ""} onChange={(e) => setField("amputationSite", e.target.value)} className="mt-1" />
-              </div>
-              <div>
-                <label className="text-sm font-medium">نوع الطرف</label>
-                <Input value={fields.prostheticType || ""} onChange={(e) => setField("prostheticType", e.target.value)} className="mt-1" />
-              </div>
-            </div>
-          )}
-
-          {caseType === "physiotherapy" && (
-            <div>
-              <label className="text-sm font-medium">نوع المرض (اختياري)</label>
-              <Input value={fields.diseaseType || ""} onChange={(e) => setField("diseaseType", e.target.value)} className="mt-1" />
+          {caseType && (
+            <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
+              بعد الحفظ ستُفتح لك <b>صفحة الحقول الكاملة</b> للنوع الجديد (كما في تسجيل مريض جديد) لتكمل كل التفاصيل.
             </div>
           )}
 

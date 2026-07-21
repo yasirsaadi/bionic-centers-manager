@@ -590,6 +590,11 @@ export default function PatientDetails() {
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
   const caseVisits = showAll ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId || v.caseId == null);
   const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
+  // Sessions are a PHYSIOTHERAPY concept only (owner's rule): the remaining-
+  // sessions counter must never appear for a prosthetic/support case — device
+  // visits are not "sessions" and showing a decreasing number there confused
+  // staff into thinking data was misplaced.
+  const sessionsContext = !!patient.isPhysiotherapy && (showAll || selectedCase?.caseType === "physiotherapy");
 
   // Calculate totals
   const totalPaid = patient.payments?.reduce((sum, p) => sum + p.amount, 0) || 0;
@@ -1077,15 +1082,15 @@ export default function PatientDetails() {
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "15%" : "20%" }}>{t.patientDetails.date}</th>
-                      {patient.isPhysiotherapy && (
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: sessionsContext ? "15%" : "20%" }}>{t.patientDetails.date}</th>
+                      {sessionsContext && (
                         <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "17%" }}>{t.patientDetails.treatmentType}</th>
                       )}
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "33%" : "50%" }}>{t.patientDetails.visitDetails}</th>
-                      {patient.isPhysiotherapy && (
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: sessionsContext ? "33%" : "50%" }}>{t.patientDetails.visitDetails}</th>
+                      {sessionsContext && (
                         <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: "18%" }}>{t.patientDetails.remainingSessions}</th>
                       )}
-                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: patient.isPhysiotherapy ? "17%" : "30%" }}>{t.common.actions}</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700" style={{ width: sessionsContext ? "17%" : "30%" }}>{t.common.actions}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1125,7 +1130,7 @@ export default function PatientDetails() {
                           if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          if (isConsultation || isServiceVisit) {
+                          if (isConsultation || isServiceVisit || !v.treatmentType) {
                             remainingMap[v.id] = -999;
                           } else {
                             remainingMap[v.id] = (paidByType[type] || sessionsByType[type] || 0) - (visitCountByType[type] || 0);
@@ -1139,7 +1144,7 @@ export default function PatientDetails() {
                             <div>{formatDateIraq(visit.visitDate)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
-                          {patient.isPhysiotherapy && (
+                          {sessionsContext && (
                             <td className="border border-slate-300 px-3 py-2 text-center text-slate-700">{translateTreatmentType(visit.treatmentType)}</td>
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600" dir="auto" style={{ unicodeBidi: "plaintext" }}>
@@ -1167,7 +1172,7 @@ export default function PatientDetails() {
                               )
                             )}
                           </td>
-                          {patient.isPhysiotherapy && (
+                          {sessionsContext && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
                               {remaining === -999 ? (
                                 <span className="text-xs text-muted-foreground">-</span>
