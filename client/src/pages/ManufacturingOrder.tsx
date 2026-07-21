@@ -18,7 +18,7 @@ import { ArrowRight, Wrench, History, RotateCcw, UserCog } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS,
   REWORK_TYPES, REWORK_TYPE_LABELS, REASON_CODES, REASON_CODE_LABELS,
-  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForService, DELIVERED_STAGE, isMoldStage,
+  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForService, DELIVERED_STAGE, isAtOrBeyondMoldStage,
 } from "@shared/manufacturing";
 
 function fmt(iso: string | null): string {
@@ -232,7 +232,7 @@ function StageDialog({ open, onOpenChange, orderId, stages, currentStage, servic
   const needsResult = toStage === DELIVERED_STAGE;
   // Reaching the mold stage requires committing to a delivery date — but only
   // if one hasn't already been set (it locks after that).
-  const needsDelivery = !!toStage && !deliveryDateSet && isMoldStage(serviceType, toStage);
+  const needsDelivery = !!toStage && !deliveryDateSet && isAtOrBeyondMoldStage(serviceType, toStage);
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent dir="rtl" className="max-w-md">

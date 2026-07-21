@@ -7,7 +7,7 @@
 
 import { db } from "../db";
 import {
-  patients, branches, systemUsers, visits,
+  patients, branches, systemUsers, visits, patientCases,
   prostheticWorkOrders as WO,
   prostheticWorkHistory as WH,
   prostheticReworkEvents as RW,
@@ -19,6 +19,16 @@ import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
 export class ActiveOrderError extends Error {
   constructor() { super("active order exists"); this.name = "ActiveOrderError"; }
+}
+
+// Does the patient have an open (not completed/cancelled) order for this
+// service? Targeted query — replaces the old "list every open order in the
+// system then scan" guard.
+export async function hasActiveOrder(patientId: number, serviceType: string): Promise<boolean> {
+  const rows = await db.select({ id: WO.id }).from(WO)
+    .where(and(eq(WO.patientId, patientId), eq(WO.serviceType, serviceType), notInArray(WO.status, ["completed", "cancelled"])))
+    .limit(1);
+  return rows.length > 0;
 }
 import { stagesForService, NEW_ASSIGNMENT_STAGE } from "@shared/manufacturing";
 
@@ -190,15 +200,19 @@ export async function createMaintenanceOrderWithVisit(params: {
   branchId: number;
   serviceType: string;
   expertUserId: number;
-  expectedDeliveryDate: string;
+  // Optional now: the expert commits to the delivery date at the mold stage,
+  // same as initial builds — reception no longer invents one.
+  expectedDeliveryDate: string | null;
   assignedBy: number | null;
   visitNotes: string;
   visitDate: Date;
 }): Promise<ProstheticWorkOrder> {
   return await db.transaction(async (tx) => {
+    // Per-service guard: a dual-flag patient's مسند maintenance shouldn't be
+    // blocked by an unrelated active طرف order.
     const openOrders = await tx.select({ id: WO.id })
       .from(WO)
-      .where(and(eq(WO.patientId, params.patientId), notInArray(WO.status, ["completed", "cancelled"])))
+      .where(and(eq(WO.patientId, params.patientId), eq(WO.serviceType, params.serviceType), notInArray(WO.status, ["completed", "cancelled"])))
       .limit(1);
     if (openOrders.length > 0) throw new ActiveOrderError();
 
@@ -210,7 +224,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       purpose: "maintenance",
       status: "active",
       currentStage: NEW_ASSIGNMENT_STAGE,
-      expectedDeliveryDate: params.expectedDeliveryDate,
+      expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
     }).returning();
     await tx.insert(WH).values({
@@ -221,12 +235,20 @@ export async function createMaintenanceOrderWithVisit(params: {
       notes: "إنشاء أمر صيانة لمريض موجود",
       performedBy: params.assignedBy,
     });
+    // Attribute the visit to the matching case so it shows in the patient's
+    // per-case tabs (case-filtered views hide caseId-null rows by default).
+    const caseRows = await tx.select({ id: patientCases.id, caseType: patientCases.caseType })
+      .from(patientCases).where(eq(patientCases.patientId, params.patientId));
+    const caseId = caseRows.find((c) => c.caseType === params.serviceType)?.id
+      ?? caseRows.find((c) => c.caseType === "physiotherapy")?.id
+      ?? caseRows[0]?.id ?? null;
     await tx.insert(visits).values({
       patientId: params.patientId,
       branchId: params.branchId,
       visitDate: params.visitDate,
       notes: params.visitNotes,
       treatmentType: null,
+      caseId,
       createdBy: params.assignedBy,
     });
     return workOrder;

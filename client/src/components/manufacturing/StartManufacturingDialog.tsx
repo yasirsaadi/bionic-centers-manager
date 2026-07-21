@@ -61,7 +61,6 @@ export function StartManufacturingDialog({ patient }: {
         body: JSON.stringify({
           patientId: patient.id,
           expertUserId: Number(expertUserId),
-          expectedDeliveryDate: expected,
         }),
       });
       if (!res.ok) {
@@ -99,7 +98,7 @@ export function StartManufacturingDialog({ patient }: {
           <DialogTitle className="text-xl text-primary">بدء التصنيع</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground -mt-2">
-          المريض قرر الشراء — اختر الخبير المسؤول وتاريخ التسليم المتوقع، ثم أضِف الكلفة عبر «إضافة خدمة».
+          المريض قرر الشراء — اختر الخبير المسؤول. تاريخ التسليم يحدّده الخبير بنفسه عند أخذ القالب.
         </p>
         <div className="space-y-3 mt-1">
           <div>
@@ -121,14 +120,10 @@ export function StartManufacturingDialog({ patient }: {
               </Select>
             )}
           </div>
-          <div>
-            <label className="text-sm font-semibold">تاريخ التسليم المتوقع <span className="text-red-500">*</span></label>
-            <Input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="mt-1" />
-          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>إلغاء</Button>
-          <Button disabled={!expertUserId || !expected || start.isPending} onClick={() => start.mutate()}>
+          <Button disabled={!expertUserId || start.isPending} onClick={() => start.mutate()}>
             {start.isPending ? (<><Loader2 className="ml-2 h-4 w-4 animate-spin" /> جارٍ البدء…</>) : "بدء التصنيع"}
           </Button>
         </DialogFooter>

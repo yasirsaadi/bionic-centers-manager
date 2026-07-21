@@ -168,13 +168,17 @@ export default function PatientDetails() {
       return res.json();
     },
   });
+  // selectedCaseId: a case id, or null = «الكل» (all rows, no case filter).
+  // "ALL" sentinel distinguishes the user explicitly picking الكل from the
+  // initial not-yet-selected state (which auto-selects the first case).
+  const ALL_CASES = -1;
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
   useEffect(() => {
-    if (patientCasesList.length > 0 && (selectedCaseId == null || !patientCasesList.some((c) => c.id === selectedCaseId))) {
+    if (patientCasesList.length > 0 && (selectedCaseId == null || (selectedCaseId !== ALL_CASES && !patientCasesList.some((c) => c.id === selectedCaseId)))) {
       setSelectedCaseId(patientCasesList[0].id);
     }
   }, [patientCasesList, selectedCaseId]);
-  const selectedCase = patientCasesList.find((c) => c.id === selectedCaseId) || null;
+  const selectedCase = selectedCaseId === ALL_CASES ? null : (patientCasesList.find((c) => c.id === selectedCaseId) || null);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const [editCreatedAtOpen, setEditCreatedAtOpen] = useState(false);
@@ -559,11 +563,14 @@ export default function PatientDetails() {
   if (!patient) return <div className="p-8 text-center text-muted-foreground">{t.patientDetails.patientNotFound}</div>;
 
   // Case isolation: when a case is selected (chips), the visits/payments tabs
-  // show ONLY that case's rows. Falls back to all when no cases exist.
+  // show that case's rows PLUS any rows not yet attributed to a case
+  // (caseId null) — a row must never vanish from every tab just because the
+  // background sync hasn't attributed it yet. «الكل» (ALL_CASES) shows all.
   const allVisits = patient.visits || [];
   const allPayments = patient.payments || [];
-  const caseVisits = selectedCaseId == null ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId);
-  const casePayments = selectedCaseId == null ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId);
+  const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
+  const caseVisits = showAll ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId || v.caseId == null);
+  const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
 
   // Calculate totals
   const totalPaid = patient.payments?.reduce((sum, p) => sum + p.amount, 0) || 0;

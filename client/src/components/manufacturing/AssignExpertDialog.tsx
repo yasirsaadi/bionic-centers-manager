@@ -37,8 +37,14 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   const [expertUserId, setExpertUserId] = useState<number | null>(null);
   const [cost, setCost] = useState<number>(0);
   const [specs, setSpecs] = useState<Record<string, string>>({});
-
-  const isSupport = !!patient?.isMedicalSupport && !patient?.isAmputee;
+  // A patient can carry BOTH flags (طرف + مسند): the user must pick which
+  // service this تخصيص is for; single-flag patients skip the choice.
+  const dualFlag = !!patient?.isAmputee && !!patient?.isMedicalSupport;
+  const [serviceChoice, setServiceChoice] = useState<"prosthetic" | "medical_support" | null>(null);
+  const serviceType: "prosthetic" | "medical_support" = dualFlag
+    ? (serviceChoice ?? "prosthetic")
+    : (patient?.isMedicalSupport && !patient?.isAmputee ? "medical_support" : "prosthetic");
+  const isSupport = serviceType === "medical_support";
   const specFields = isSupport ? SUPPORT_SPECS : PROSTHETIC_SPECS;
 
   const { data: experts = [], isLoading } = useQuery<Expert[]>({
@@ -51,13 +57,13 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
     },
   });
 
-  function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); }
+  function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null); }
 
   const assign = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/patients/${patient!.id}/assign-manufacturing`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ expertUserId, cost, ...specs }),
+        body: JSON.stringify({ expertUserId, cost, serviceType, ...specs }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || e.message || "تعذّر التخصيص"); }
       return res.json();
@@ -83,6 +89,16 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
           <p className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
             بعد الفحص وموافقة المريض على الشراء: أدخِل ما حدّده الطبيب، الكلفة، والخبير. تاريخ التسليم يحدّده الخبير لاحقاً عند أخذ القالب.
           </p>
+
+          {dualFlag && (
+            <div className="space-y-1">
+              <label className="text-sm font-semibold">نوع الخدمة <span className="text-red-500">*</span></label>
+              <div className="flex gap-2">
+                <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
+                <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); }} data-testid="choose-support">مساند طبية</Button>
+              </div>
+            </div>
+          )}
 
           {specFields.map((f) => (
             <div key={f.key} className="space-y-1">
@@ -123,7 +139,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || assign.isPending} data-testid="button-confirm-assign-expert">
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || assign.isPending} data-testid="button-confirm-assign-expert">
             {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>
