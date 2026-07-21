@@ -43,6 +43,12 @@ function tagChanged(before: string | null | undefined, after: string | null | un
   return norm(before) !== norm(after);
 }
 
+// Thrown when تخصيص is attempted while the patient already has an open order
+// for the same service. Routes map it to 409.
+export class ActiveAssignmentError extends Error {
+  constructor() { super("active order exists for this service"); this.name = "ActiveAssignmentError"; }
+}
+
 // One row of the employee-accuracy panel. Numbers come from a mix of
 // row-level createdBy attribution and the audit_log table.
 export interface EmployeeAccuracyRow {
@@ -416,7 +422,10 @@ export class DatabaseStorage implements IStorage {
     const pays = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
     const hasWO = (st: string) => wos.some((w) => w.st === st);
     const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
+    // Tags can be COMPOUND ("روبوت، أطراف صناعية") when one receipt mixes
+    // services — match by containment/split, never by exact equality.
     const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));
+    const tagParts = (t: string) => t.split(/[،,]/).map((x) => x.trim()).filter(Boolean);
     // A service is present when ANY of its signals exist: the boolean flag,
     // a work order, a tagged payment, OR the service's own recorded detail
     // field. The detail-field signal is essential because many patients had
@@ -424,9 +433,9 @@ export class DatabaseStorage implements IStorage {
     // prosthetic_type) while the boolean flag was left false — so flag-only
     // detection made those cases invisible. Reading the real recorded column
     // is not a guess; it is where the service was actually stored.
-    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t === "أطراف صناعية") || !!p.prostheticType || !!p.amputationSite;
-    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t === "مساند طبية") || !!p.supportType;
-    const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => PHYSIO_TAGS.has(t));
+    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t.includes("أطراف صناعية")) || !!p.prostheticType || !!p.amputationSite;
+    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t.includes("مساند طبية")) || !!p.supportType;
+    const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => tagParts(t).some((x) => PHYSIO_TAGS.has(x)));
 
     // ---- per-service cost from "تكلفة: X" markers --------------------------
     // Soft-deleted visits are excluded: a deleted add-case-type marker must not
@@ -492,13 +501,20 @@ export class DatabaseStorage implements IStorage {
     const cases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const idOf = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
     const prosId = idOf("prosthetic"), supId = idOf("medical_support");
+    // Payments: containment match so compound tags ("روبوت، أطراف صناعية")
+    // still reach the device case (prosthetic wins over support on a payment
+    // carrying both — a broken receipt anyway).
+    // Visits: ONLY unattributed rows (case_id IS NULL) may be re-homed by the
+    // notes keyword — an attributed physiotherapy visit whose notes merely
+    // mention "الأطراف" must never be stolen onto the device case (confirmed
+    // bug: it was re-stolen on every sync even after manual correction).
     if (prosId) {
-      await tx.update(payments).set({ caseId: prosId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "أطراف صناعية")));
-      await tx.update(visits).set({ caseId: prosId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%أطراف%'`));
+      await tx.update(payments).set({ caseId: prosId }).where(and(eq(payments.patientId, patientId), sql`${payments.paymentTreatmentType} LIKE '%أطراف صناعية%'`));
+      await tx.update(visits).set({ caseId: prosId }).where(and(eq(visits.patientId, patientId), isNull(visits.caseId), sql`${visits.notes} LIKE '%أطراف%'`));
     }
     if (supId) {
-      await tx.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), eq(payments.paymentTreatmentType, "مساند طبية")));
-      await tx.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), sql`${visits.notes} LIKE '%مساند%'`));
+      await tx.update(payments).set({ caseId: supId }).where(and(eq(payments.patientId, patientId), sql`${payments.paymentTreatmentType} LIKE '%مساند طبية%'`, sql`${payments.paymentTreatmentType} NOT LIKE '%أطراف صناعية%'`));
+      await tx.update(visits).set({ caseId: supId }).where(and(eq(visits.patientId, patientId), isNull(visits.caseId), sql`${visits.notes} LIKE '%مساند%'`));
     }
 
     // Any still-unattributed rows (caseId IS NULL) — e.g. physio/untagged rows,
@@ -554,6 +570,27 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  // Add a service's price onto the case it belongs to (resolved from its
+  // treatment tag), keeping sum(case costs) in step with the total_cost bump
+  // the caller makes. Device cases become 'manual' (an explicitly priced
+  // sale); the physio case keeps its costSource so the floor's holder logic
+  // still works. Never touches patients.total_cost itself.
+  async addToCaseCost(patientId: number, opts: { tag?: string | null; treatmentType?: string | null }, amount: number): Promise<void> {
+    if (!(amount > 0)) return;
+    let caseId = await this.resolveCaseId(patientId, opts);
+    if (!caseId) {
+      await this.syncPatientCases(patientId);
+      caseId = await this.resolveCaseId(patientId, opts);
+    }
+    if (!caseId) return;
+    const [c] = await db.select().from(patientCases).where(eq(patientCases.id, caseId));
+    if (!c) return;
+    const isDevice = c.caseType === "prosthetic" || c.caseType === "medical_support";
+    await db.update(patientCases)
+      .set({ cost: (c.cost || 0) + amount, ...(isDevice ? { costSource: "manual" } : {}), updatedAt: new Date() })
+      .where(eq(patientCases.id, caseId));
+  }
+
   // Which case a new payment/visit settles, from its treatment tag / type.
   // Mirrors the migration's linking so new rows attribute consistently.
   async resolveCaseId(patientId: number, opts: { tag?: string | null; treatmentType?: string | null }): Promise<number | null> {
@@ -563,8 +600,10 @@ export class DatabaseStorage implements IStorage {
     const order: Record<string, number> = { prosthetic: 1, medical_support: 2, physiotherapy: 3 };
     const primary = [...cases].sort((a, b) => (order[a.caseType] ?? 9) - (order[b.caseType] ?? 9))[0]?.id ?? null;
     const tag = opts.tag ?? "";
-    if (tag === "أطراف صناعية") return byType("prosthetic") ?? primary;
-    if (tag === "مساند طبية") return byType("medical_support") ?? primary;
+    // Containment (not equality): compound tags like "روبوت، أطراف صناعية"
+    // must still resolve to the device case.
+    if (tag.includes("أطراف صناعية")) return byType("prosthetic") ?? primary;
+    if (tag.includes("مساند طبية")) return byType("medical_support") ?? primary;
     if (opts.treatmentType || tag) { const ph = byType("physiotherapy"); if (ph) return ph; }
     return primary;
   }
@@ -818,15 +857,46 @@ export class DatabaseStorage implements IStorage {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
 
+      // One active order per (patient, service) — enforced INSIDE the
+      // transaction (plus the partial unique index from migration 021), so two
+      // simultaneous clicks can't create duplicate orders.
+      const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
+        .where(and(
+          eq(prostheticWorkOrders.patientId, patientId),
+          eq(prostheticWorkOrders.serviceType, serviceType),
+          sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+        )).limit(1);
+      if (openWo.length > 0) throw new ActiveAssignmentError();
+
       const [existingCase] = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
       const oldCaseCost = existingCase?.cost || 0;
-      const delta = cost - oldCaseCost;
 
-      // Update device fields + flag + total_cost (by the delta, so re-running is safe).
+      // How the entered price moves patients.total_cost:
+      // - New case, human-priced case, or price >= current case cost:
+      //   delta semantics (total follows the price difference) — correct for
+      //   the new flow (case 0 → total += price) and for explicit re-pricing.
+      // - LEGACY trap: an 'auto' case that inherited the WHOLE old aggregate
+      //   (migration 017 put total_cost on the device case of a device+physio
+      //   patient, physio got 0). Entering the real device price there must
+      //   NOT shrink total_cost by the physio share — instead the excess is
+      //   parked back on the physio case and the total stays untouched.
+      let totalDelta = cost - oldCaseCost;
+      if (existingCase && existingCase.costSource !== "manual" && oldCaseCost > cost) {
+        const [physioCase] = await tx.select().from(patientCases)
+          .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
+        if (physioCase) {
+          await tx.update(patientCases)
+            .set({ cost: (physioCase.cost || 0) + (oldCaseCost - cost), updatedAt: new Date() })
+            .where(eq(patientCases.id, physioCase.id));
+          totalDelta = 0;
+        }
+      }
+
+      // Update device fields + flag + total_cost.
       const patch: any = { ...fields };
       if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
-      patch.totalCost = Math.max(0, (existing.totalCost || 0) + delta);
+      patch.totalCost = Math.max(0, (existing.totalCost || 0) + totalDelta);
       const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
 
       // Build the case details from the freshly-updated patient fields.

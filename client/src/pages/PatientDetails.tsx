@@ -832,7 +832,9 @@ export default function PatientDetails() {
 
       {/* Selected case's header (finances + details). Its visits/payments show
           in the tabs below, filtered to this case — not duplicated here. */}
-      {selectedCase && <PatientCasePanel caseRow={selectedCase} patientId={patient.id} />}
+      {/* key: switching chips must remount the panel so an OPEN cost editor's
+          draft can never be saved onto the newly-selected case. */}
+      {selectedCase && <PatientCasePanel key={selectedCase.id} caseRow={selectedCase} patientId={patient.id} />}
 
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">

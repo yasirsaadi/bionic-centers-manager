@@ -199,13 +199,20 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
-    const order = await store.createWorkOrderForExisting({
-      patientId, branchId: patient.branchId, serviceType, expertUserId,
-      expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
-    });
-    await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-      `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
-    res.status(201).json(order);
+    try {
+      const order = await store.createWorkOrderForExisting({
+        patientId, branchId: patient.branchId, serviceType, expertUserId,
+        expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
+      });
+      await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
+        `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
+      res.status(201).json(order);
+    } catch (err: any) {
+      if (err instanceof store.ActiveOrderError || err?.code === "23505") {
+        return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+      }
+      throw err;
+    }
   });
 
   // ---- "تخصيص الطرف/المسند": device specs + price + expert, in ONE step -------
@@ -255,12 +262,20 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const fields: any = {};
     for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
 
-    const { workOrderId } = await storage.assignManufacturing({
-      patientId, serviceType, fields, cost, expertUserId, assignedBy: s.userId ?? null,
-    });
-    await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
-      `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${cost})`);
-    res.status(201).json({ ok: true, workOrderId });
+    try {
+      const { workOrderId } = await storage.assignManufacturing({
+        patientId, serviceType, fields, cost, expertUserId, assignedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
+        `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${cost})`);
+      res.status(201).json({ ok: true, workOrderId });
+    } catch (err: any) {
+      // In-tx guard or the partial unique index: someone beat us to it.
+      if (err?.name === "ActiveAssignmentError" || err?.code === "23505") {
+        return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+      }
+      throw err;
+    }
   });
 
   // ---- maintenance visit (order + visit row created ATOMICALLY) ---------------
