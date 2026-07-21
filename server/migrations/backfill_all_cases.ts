@@ -21,7 +21,11 @@ import { storage } from "../storage";
 // cost less than what was paid into it, so fully-paid products (e.g. a 7M طرف
 // left at cost 0) now show their real price and 0 remaining automatically,
 // with the cost moved out of the physio holder. total_cost/flags untouched.
-const GUARD = "backfill_all_cases_v3";
+//
+// v4: re-run after the floor learned to raise a device case to its paid even
+// WITHOUT a funded holder (device-only patients stuck at "التكلفة: 0" while
+// paid/remaining moved) — repairs every such patient in production once.
+const GUARD = "backfill_all_cases_v4";
 
 export async function backfillAllPatientCases(): Promise<void> {
   try {

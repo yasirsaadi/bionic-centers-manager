@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download, UserCog } from "lucide-react";
 import { AssignExpertDialog } from "@/components/manufacturing/AssignExpertDialog";
+import { PhysioPricingDialog } from "@/components/PhysioPricingDialog";
+import { Activity } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo, useEffect } from "react";
@@ -77,6 +79,8 @@ export default function PatientsList() {
   const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
     || !!permissions.canAddPatients);
   const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null } | null>(null);
+  // «الكلفة والجلسات» — post-exam physiotherapy pricing (same gate: it writes).
+  const [physioPricingPatient, setPhysioPricingPatient] = useState<{ id: number; name: string } | null>(null);
   
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -510,6 +514,12 @@ export default function PatientsList() {
                               تخصيص
                             </Button>
                           )}
+                          {canAssignExpert && patient.isPhysiotherapy && (
+                            <Button variant="ghost" size="sm" onClick={() => setPhysioPricingPatient({ id: patient.id, name: patient.name })} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1 h-8 text-xs" data-testid={`price-physio-${patient.id}`}>
+                              <Activity className="w-3.5 h-3.5" />
+                              الكلفة والجلسات
+                            </Button>
+                          )}
                           <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                             <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                               <Eye className="w-3.5 h-3.5" />
@@ -584,6 +594,12 @@ export default function PatientsList() {
                                 تخصيص وإسناد خبير
                               </Button>
                             )}
+                            {canAssignExpert && patient.isPhysiotherapy && (
+                              <Button variant="ghost" size="sm" onClick={() => setPhysioPricingPatient({ id: patient.id, name: patient.name })} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1.5" data-testid={`price-physio-${patient.id}`}>
+                                <Activity className="w-4 h-4" />
+                                الكلفة والجلسات
+                              </Button>
+                            )}
                             <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                               <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-2">
                                 <Eye className="w-4 h-4" />
@@ -656,6 +672,12 @@ export default function PatientsList() {
         patient={assignExpertPatient}
         open={!!assignExpertPatient}
         onOpenChange={(o) => { if (!o) setAssignExpertPatient(null); }}
+      />
+
+      <PhysioPricingDialog
+        patient={physioPricingPatient}
+        open={!!physioPricingPatient}
+        onOpenChange={(o) => { if (!o) setPhysioPricingPatient(null); }}
       />
     </div>
   );

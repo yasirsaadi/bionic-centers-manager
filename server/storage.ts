@@ -539,34 +539,73 @@ export class DatabaseStorage implements IStorage {
     // HUMAN PRICING WINS: a case whose cost_source is 'manual' (per-case ✏️ /
     // تخصيص / add-case-type) is never raised NOR drained by the floor.
     const finalCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
-    if (finalCases.length > 1) {
+    if (finalCases.length > 0) {
       const paidRows = await tx.select({ caseId: payments.caseId, amount: payments.amount })
         .from(payments).where(eq(payments.patientId, patientId));
       const paidByCase = new Map<number, number>();
       for (const r of paidRows) if (r.caseId) paidByCase.set(r.caseId, (paidByCase.get(r.caseId) || 0) + (r.amount || 0));
-      const autoCases = finalCases.filter((c) => c.costSource !== "manual");
-      const holder = autoCases.find((c) => c.caseType === "physiotherapy")
-        ?? [...autoCases].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
-      if (holder) {
-        let holderCost = holder.cost || 0;
-        for (const c of finalCases) {
-          if (c.id === holder.id) continue;
-          if (c.costSource === "manual") continue; // human pricing is untouchable
-          const paid = paidByCase.get(c.id) || 0;
-          const shortfall = paid - (c.cost || 0);
-          if (shortfall > 0) {
-            const delta = Math.min(shortfall, holderCost); // never push the holder negative
-            if (delta > 0) {
-              await tx.update(patientCases).set({ cost: (c.cost || 0) + delta, updatedAt: new Date() }).where(eq(patientCases.id, c.id));
-              holderCost -= delta;
-            }
-          }
-        }
-        if (holderCost !== (holder.cost || 0)) {
-          await tx.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+      // ONLY the physiotherapy (auto) case may fund a move — an explicitly
+      // priced device must never be silently drained to cover another
+      // device's shortfall. Device cases are RAISE-ONLY targets.
+      const holder = finalCases.find((c) => c.caseType === "physiotherapy" && c.costSource !== "manual") ?? null;
+      // Every auto device case is ALWAYS raised to its full paid amount —
+      // even with no holder to fund the move (e.g. a device-only patient
+      // whose aggregate was never priced: cost 0 with real payments used to
+      // display "التكلفة: 0" forever). The holder is only debited for what it
+      // actually has; an un-fundable remainder is honest new information
+      // (money was taken without pricing), not an error.
+      let holderCost = holder ? (holder.cost || 0) : 0;
+      for (const c of finalCases) {
+        if (holder && c.id === holder.id) continue;
+        if (c.costSource === "manual") continue; // human pricing is untouchable
+        if (c.caseType === "physiotherapy") continue; // the floor prices devices only
+        const paid = paidByCase.get(c.id) || 0;
+        const shortfall = paid - (c.cost || 0);
+        if (shortfall > 0) {
+          await tx.update(patientCases).set({ cost: (c.cost || 0) + shortfall, updatedAt: new Date() }).where(eq(patientCases.id, c.id));
+          if (holder) holderCost = Math.max(0, holderCost - shortfall);
         }
       }
+      if (holder && holderCost !== (holder.cost || 0)) {
+        await tx.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
+      }
     }
+    });
+  }
+
+  // Post-exam physiotherapy pricing («الكلفة والجلسات» from the registry —
+  // the physio mirror of assignManufacturing): bumps the patient's totalCost
+  // by the server-computed amount, records the plan (treatmentType, total
+  // sessions), and tops up the physiotherapy case cost by the SAME amount so
+  // sum(case costs) stays in step. One transaction.
+  async pricePhysiotherapy(patientId: number, params: {
+    entries: { treatmentType: string; sessionCount: number; isFree?: boolean }[];
+    totalCost: number;
+    totalSessions: number;
+    treatmentType: string;
+  }): Promise<Patient> {
+    return await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      if (!existing) throw new Error("المريض غير موجود");
+      // (patients has no sessionCount column — sessions live on the plan's
+      // visits/payments; the treatment plan summary is the treatmentType text.)
+      const [updated] = await tx.update(patients).set({
+        totalCost: (existing.totalCost || 0) + params.totalCost,
+        treatmentType: params.treatmentType,
+      }).where(eq(patients.id, patientId)).returning();
+
+      const [physioCase] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
+      if (physioCase) {
+        await tx.update(patientCases)
+          .set({ cost: (physioCase.cost || 0) + params.totalCost, updatedAt: new Date() })
+          .where(eq(patientCases.id, physioCase.id));
+      } else {
+        await tx.insert(patientCases).values({
+          patientId, branchId: existing.branchId, caseType: "physiotherapy", cost: params.totalCost,
+        }).onConflictDoNothing();
+      }
+      return updated;
     });
   }
 

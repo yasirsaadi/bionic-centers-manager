@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, isNull } from "drizzle-orm";
 import { api } from "@shared/routes";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { z } from "zod";
 import { patients, visits, payments, documents, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
@@ -1558,8 +1559,16 @@ export async function registerRoutes(
       if (!canAccess) {
         return res.status(403).json({ message: "غير مصرح لك بتعديل هذا المريض" });
       }
-      
-      const patient = await storage.updatePatient(id, req.body);
+
+      // COST is management-only (owner's rule): even an accountant with
+      // edit-patient rights must not change totalCost — only branch managers
+      // and the admin may. Everyone else gets the field silently stripped.
+      const branchSession = (req.session as any).branchSession;
+      const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
+      const patch: any = { ...req.body };
+      if (!mayEditCost) delete patch.totalCost;
+
+      const patient = await storage.updatePatient(id, patch);
       res.json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -1814,6 +1823,62 @@ export async function registerRoutes(
   // opening a duplicate patient file, the same record gains the new type,
   // and for manufacturing types a work order is created for ONE expert —
   // all atomically.
+  // ---- "الكلفة والجلسات": post-exam physiotherapy pricing ---------------------
+  // Mirrors the أطراف/مساند تخصيص model: the patient is REGISTERED without a
+  // cost; after the doctor's exam reception opens this from the registry,
+  // enters the treatment types + session counts, and the server computes the
+  // cost from the shared price table (روبوت 50k، أجهزة/تمارين/أبر 25k،
+  // استشارة 0) — prices are NEVER trusted from the client. Atomic: bumps
+  // totalCost, records treatmentType/sessionCount on the patient, and tops up
+  // the physiotherapy case cost by the same amount so sum(cases) stays in step.
+  app.post("/api/patients/:id/price-physio", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
+
+      const patientId = Number(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!patient.isPhysiotherapy) return res.status(400).json({ message: "هذه الميزة لمرضى العلاج الطبيعي" });
+      const allowedPp = accessibleBranchesFor(req);
+      if (allowedPp !== null && !allowedPp.includes(patient.branchId)) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+      }
+
+      const rawEntries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      const entries = rawEntries
+        .map((e: any) => ({
+          treatmentType: String(e?.treatmentType || ""),
+          sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+          isFree: Boolean(e?.isFree),
+        }))
+        .filter((e: any) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+      if (entries.length === 0) return res.status(400).json({ message: "أدخل نوع علاج وعدد جلسات صحيحاً" });
+
+      // SERVER-side pricing from the shared table.
+      const totalCost = entries.reduce((s: number, e: any) => s + physioEntryCost(e), 0);
+      const totalSessions = entries.reduce((s: number, e: any) => s + e.sessionCount, 0);
+      const typesJoined = Array.from(new Set<string>(entries.map((e: any) => e.treatmentType))).join("، ");
+
+      const updated = await storage.pricePhysiotherapy(patientId, {
+        entries, totalCost, totalSessions, treatmentType: typesJoined,
+      });
+
+      await logAudit({
+        entityType: "patient", entityId: patientId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `تسعير علاج طبيعي بعد الفحص: ${typesJoined} — ${totalSessions} جلسة بكلفة ${totalCost.toLocaleString()} د.ع`,
+      });
+      res.json({ ok: true, totalCost, patient: updated });
+    } catch (err) {
+      console.error("Error pricing physiotherapy:", err);
+      res.status(500).json({ message: "تعذّر حفظ التسعير" });
+    }
+  });
+
   app.post("/api/patients/:id/add-case-type", isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;
