@@ -115,7 +115,8 @@ export default function ManufacturingOrder() {
       </Card>
 
       {/* Key facts */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-sm">
+        <Fact label="الخبير المسؤول" value={order.expertName ?? "—"} />
         <Fact label="تاريخ الإسناد" value={fmtD(order.createdAt)} />
         <Fact label="بدء العمل" value={fmtD(order.startedAt)} />
         <Fact label="التسليم المتوقّع" value={fmtD(order.expectedDeliveryDate)} />

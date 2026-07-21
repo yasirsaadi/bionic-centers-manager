@@ -977,7 +977,7 @@ export class DatabaseStorage implements IStorage {
       }).returning();
       await tx.insert(prostheticWorkHistory).values({
         workOrderId: wo.id, actionType: "created", fromStage: null, toStage: "new_assignment",
-        notes: "تخصيص الطرف/المسند وإسناد الخبير", performedBy: assignedBy,
+        notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
       });
       return { patient, workOrderId: wo.id };
     });
