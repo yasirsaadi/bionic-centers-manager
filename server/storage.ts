@@ -1545,6 +1545,20 @@ export class DatabaseStorage implements IStorage {
     effectiveStartDate: string | null;
     effectiveEndDate: string;
     daysInRange: number;
+    // Revenue-stream breakdown. Every field reconciles back to the grand
+    // totals above (so the combined figures are never affected):
+    //   devices.revenue + physio.revenue + unclassified.revenue = totalRevenue
+    //   devices.paid    + physio.paid    + unclassified.paid    = totalPaid
+    //   devices.expenses + physio.expenses + shared.expenses     = totalExpenses
+    // "devices" = الأطراف والمساند (prosthetic + medical_support),
+    // "physio" = العلاج الطبيعي, "shared" = مشترك/غير محدّد (expenses only),
+    // "unclassified" = وارد/مدفوع لا يحمل حالة مبوّبة (reconciliation remainder).
+    bySection: {
+      devices: { revenue: number; paid: number; expenses: number };
+      physio: { revenue: number; paid: number; expenses: number };
+      shared: { expenses: number };
+      unclassified: { revenue: number; paid: number };
+    };
   }> {
     // Total revenue = sum of the cost of patients registered within the date
     // range (and branch). Previously this summed EVERY patient's cost with no
@@ -1595,6 +1609,65 @@ export class DatabaseStorage implements IStorage {
       : await db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
           .from(expenses);
     const totalExpenses = Number(expensesQuery[0]?.total) || 0;
+
+    // ---- revenue-stream breakdown (reconciles to the grand totals) ---------
+    // A case is "physio" when case_type = physiotherapy; everything else
+    // (prosthetic / medical_support) is a "device". Scoped to the SAME patient
+    // cohort as revenue via the join on revenueConditions.
+    const bucketExpr = sql<string>`CASE WHEN ${patientCases.caseType} = 'physiotherapy' THEN 'physio' ELSE 'devices' END`;
+    const revWhere = revenueConditions.length > 0 ? and(...revenueConditions) : sql`TRUE`;
+
+    // Revenue per bucket = SUM of each case's cost for the cohort's patients.
+    const caseRevenueRows = await db
+      .select({ bucket: bucketExpr, total: sql<string>`COALESCE(SUM(${patientCases.cost}), 0)` })
+      .from(patientCases)
+      .innerJoin(patients, eq(patientCases.patientId, patients.id))
+      .where(revWhere)
+      .groupBy(bucketExpr);
+
+    // Paid per bucket = SUM of payments tagged to a case of that bucket.
+    // Payments with no case tag (case_id NULL) drop out of the inner join and
+    // land in the "unclassified" remainder below.
+    const casePaidRows = await db
+      .select({ bucket: bucketExpr, total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .innerJoin(patients, eq(payments.patientId, patients.id))
+      .innerJoin(patientCases, eq(payments.caseId, patientCases.id))
+      .where(revWhere)
+      .groupBy(bucketExpr);
+
+    // Expenses per section (NULL/legacy → shared).
+    const expWhere = expenseConditions.length > 0 ? and(...expenseConditions) : sql`TRUE`;
+    const expenseSectionRows = await db
+      .select({ section: sql<string>`COALESCE(${expenses.section}, 'shared')`, total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
+      .from(expenses)
+      .where(expWhere)
+      .groupBy(sql`COALESCE(${expenses.section}, 'shared')`);
+
+    const pick = (rows: { bucket?: string; section?: string; total: string }[], key: string) =>
+      Number(rows.find((r) => (r.bucket ?? r.section) === key)?.total) || 0;
+
+    const deviceRevenue = pick(caseRevenueRows, "devices");
+    const physioRevenue = pick(caseRevenueRows, "physio");
+    const devicePaid = pick(casePaidRows, "devices");
+    const physioPaid = pick(casePaidRows, "physio");
+    // Any expense row whose section is neither 'prosthetic' nor 'physio'
+    // (i.e. 'shared', NULL, or anything unexpected) reconciles into shared, so
+    // device + physio + shared always equals totalExpenses exactly.
+    const deviceExpenses = pick(expenseSectionRows, "prosthetic");
+    const physioExpenses = pick(expenseSectionRows, "physio");
+    const sharedExpenses = totalExpenses - deviceExpenses - physioExpenses;
+
+    const bySection = {
+      devices: { revenue: deviceRevenue, paid: devicePaid, expenses: deviceExpenses },
+      physio: { revenue: physioRevenue, paid: physioPaid, expenses: physioExpenses },
+      shared: { expenses: sharedExpenses },
+      // Remainders keep the split reconciled to the authoritative grand totals.
+      unclassified: {
+        revenue: totalRevenue - deviceRevenue - physioRevenue,
+        paid: totalPaid - devicePaid - physioPaid,
+      },
+    };
 
     // Compute effective date range. If user did not specify startDate, use
     // the earliest financial record date across payments and expenses
@@ -1652,6 +1725,7 @@ export class DatabaseStorage implements IStorage {
       effectiveStartDate,
       effectiveEndDate,
       daysInRange,
+      bySection,
     };
   }
 

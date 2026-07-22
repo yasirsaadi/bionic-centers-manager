@@ -173,6 +173,10 @@ export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
   branchId: integer("branch_id").references(() => branches.id).notNull(),
   category: text("category").notNull(), // رواتب، إيجارات، مستلزمات طبية، صيانة، كهرباء ومياه، أخرى
+  // القسم/الجهة التي يخصّها المصروف: أطراف ومساند | علاج طبيعي | مشترك (عام).
+  // Added in migration 027. NULL on legacy rows (before the field existed);
+  // reports treat NULL as "shared/غير محدّد" so the grand total is unchanged.
+  section: text("section"), // 'prosthetic' | 'physio' | 'shared'
   subcategory: text("subcategory"), // تصنيف فرعي
   description: text("description"), // وصف المصروف
   amount: integer("amount").notNull(), // المبلغ بالدينار العراقي
@@ -422,6 +426,11 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true 
 });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertCustomStatSchema = createInsertSchema(customStats).omit({ id: true, createdAt: true });
+// The three expense "sections" (revenue-stream buckets). Shared by client +
+// server so the picker, validation and reports never drift. Stored as the
+// `expenses.section` text value.
+export const EXPENSE_SECTIONS = ["prosthetic", "physio", "shared"] as const;
+export type ExpenseSection = (typeof EXPENSE_SECTIONS)[number];
 export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
 export const insertInstallmentPlanSchema = createInsertSchema(installmentPlans).omit({ id: true, createdAt: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });

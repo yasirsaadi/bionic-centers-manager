@@ -6,7 +6,7 @@ import { sql, eq, and, isNull, desc } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { z } from "zod";
-import { patients, visits, payments, documents, patientCases, expenseCategories, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
+import { patients, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -3308,6 +3308,15 @@ export async function registerRoutes(
       }
       const data = insertExpenseSchema.parse(enforcedBody);
 
+      // Section (revenue stream) is required on every new expense so the
+      // per-department reports never carry a blank bucket. Must be one of the
+      // three known values.
+      if (!data.section || !EXPENSE_SECTIONS.includes(data.section as any)) {
+        return res.status(400).json({
+          error: "يجب اختيار القسم: الأطراف والمساند، أو العلاج الطبيعي، أو مشترك",
+        });
+      }
+
       // Subcategory is required when category is "other" — otherwise an
       // accountant could file an expense as "أخرى" with no further detail
       // and lose visibility on what it actually was.
@@ -3373,6 +3382,13 @@ export async function registerRoutes(
         return res.status(400).json({
           error: "عند اختيار فئة 'أخرى'، يجب كتابة تصنيف فرعي يوضّح طبيعة المصروف",
         });
+      }
+
+      // If the edit touches the section, it must stay one of the known values.
+      // Editing other fields on a legacy row (section still NULL) is allowed.
+      if (req.body.section !== undefined && req.body.section !== null &&
+          !EXPENSE_SECTIONS.includes(req.body.section)) {
+        return res.status(400).json({ error: "قسم غير صالح" });
       }
 
       const expense = await storage.updateExpense(id, req.body);

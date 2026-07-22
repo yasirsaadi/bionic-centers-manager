@@ -111,9 +111,21 @@ const CATEGORY_COLORS: Record<string, string> = {
   other: "#6b7280"
 };
 
+// The three revenue-stream sections a expense can belong to. `value` is stored
+// on the expense; labels drive the picker, the badge and the report cards.
+const EXPENSE_SECTION_OPTIONS = [
+  { value: "prosthetic", label: "الأطراف والمساند" },
+  { value: "physio", label: "العلاج الطبيعي" },
+  { value: "shared", label: "مشترك (عام)" },
+] as const;
+function sectionLabel(section?: string | null): string {
+  return EXPENSE_SECTION_OPTIONS.find((s) => s.value === section)?.label ?? "غير محدّد";
+}
+
 const expenseFormSchema = z.object({
   branchId: z.number(),
   category: z.string().min(1, "يرجى اختيار التصنيف"),
+  section: z.enum(["prosthetic", "physio", "shared"], { required_error: "يرجى اختيار القسم" }),
   subcategory: z.string().optional(),
   amount: z.number().min(1, "المبلغ يجب أن يكون أكبر من صفر"),
   description: z.string().optional(),
@@ -157,6 +169,13 @@ interface AccountingSummary {
   effectiveStartDate: string | null;
   effectiveEndDate: string;
   daysInRange: number;
+  // Revenue-stream breakdown — reconciles exactly to the grand totals.
+  bySection?: {
+    devices: { revenue: number; paid: number; expenses: number };
+    physio: { revenue: number; paid: number; expenses: number };
+    shared: { expenses: number };
+    unclassified: { revenue: number; paid: number };
+  };
 }
 
 interface Debtor {
@@ -1714,6 +1733,7 @@ export default function Accounting() {
     defaultValues: {
       branchId: 1,
       category: "",
+      section: undefined,       // force an explicit choice (required)
       subcategory: "",
       amount: 0,
       description: "",
@@ -1900,6 +1920,7 @@ export default function Accounting() {
     form.reset({
       branchId: expense.branchId,
       category: expense.category,
+      section: (expense as any).section ?? undefined,
       subcategory: expense.subcategory || "",
       amount: expense.amount,
       description: expense.description || "",
@@ -1928,6 +1949,7 @@ export default function Accounting() {
     form.reset({
       branchId: defaultBranchId,
       category: "",
+      section: undefined,
       subcategory: "",
       amount: 0,
       description: "",
@@ -3221,6 +3243,58 @@ export default function Accounting() {
               </Card>
             </div>
 
+            {/* Per-section (revenue-stream) breakdown. Each card's وارد/صرف
+                reconciles back to the grand totals above, so the combined
+                figures are never affected — the split is purely a detail view.
+                Net per section = وارد − صرف مباشر. المصاريف «المشتركة» تظهر
+                منفصلة ولا تُخصم من قسم بعينه. */}
+            {summary?.bySection && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-base font-semibold">تفصيل حسب القسم</h3>
+                  <span className="text-xs text-muted-foreground">(الوارد والصرف مقسومَين — المجموع الكلي أعلاه لا يتغيّر)</span>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {[
+                    { key: "prosthetic", title: "الأطراف والمساند", d: summary.bySection.devices, accent: "text-sky-600" },
+                    { key: "physio", title: "العلاج الطبيعي", d: summary.bySection.physio, accent: "text-violet-600" },
+                  ].map(({ key, title, d, accent }) => {
+                    const net = (d.revenue || 0) - (d.expenses || 0);
+                    return (
+                      <Card key={key} data-testid={`section-card-${key}`}>
+                        <CardHeader className="pb-2">
+                          <CardTitle className={`text-sm font-semibold ${accent}`}>{title}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1.5 text-sm">
+                          <div className="flex justify-between"><span className="text-muted-foreground">الوارد</span><span className="tabular-nums font-medium text-primary">{formatNumberOnly(d.revenue || 0)}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">المدفوع</span><span className="tabular-nums text-green-600">{formatNumberOnly(d.paid || 0)}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">الصرف</span><span className="tabular-nums text-red-600">{formatNumberOnly(d.expenses || 0)}</span></div>
+                          <div className="flex justify-between border-t pt-1.5"><span className="font-medium">صافي القسم</span><span className={`tabular-nums font-bold ${net >= 0 ? "text-green-600" : "text-red-600"}`}>{formatNumberOnly(net)}</span></div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                  {/* Shared expenses — general costs not tied to one section. */}
+                  <Card data-testid="section-card-shared">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold text-amber-600">مشترك (مصاريف عامة)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">الصرف المشترك</span><span className="tabular-nums text-red-600">{formatNumberOnly(summary.bySection.shared.expenses || 0)}</span></div>
+                      <p className="text-xs text-muted-foreground pt-1">إيجار، كهرباء، رواتب مشتركة… تُحسب ضمن الصرف الكلي لكن لا تُنسب لقسم واحد.</p>
+                      {(summary.bySection.unclassified.revenue > 0 || summary.bySection.unclassified.paid > 0) && (
+                        <div className="flex justify-between border-t pt-1.5 text-xs">
+                          <span className="text-muted-foreground">وارد غير مبوّب</span>
+                          <span className="tabular-nums">{formatNumberOnly(summary.bySection.unclassified.revenue || 0)}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            )}
+
             {/* Charts Row */}
             <div className="grid gap-6 md:grid-cols-2">
               {/* Monthly Trends Chart */}
@@ -3376,6 +3450,7 @@ export default function Accounting() {
                     <TableRow>
                       <TableHead className="text-right">#</TableHead>
                       <TableHead className="text-right">{t.accounting.branchCol}</TableHead>
+                      <TableHead className="text-right">القسم</TableHead>
                       <TableHead className="text-right">{t.accounting.categoryCol}</TableHead>
                       <TableHead className="text-right">{t.accounting.descriptionCol}</TableHead>
                       <TableHead className="text-right">{t.accounting.amountCol}</TableHead>
@@ -3386,13 +3461,13 @@ export default function Accounting() {
                   <TableBody>
                     {expensesLoading ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           {t.accounting.loading}
                         </TableCell>
                       </TableRow>
                     ) : expenses.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                           {t.accounting.noExpenses}
                         </TableCell>
                       </TableRow>
@@ -3402,6 +3477,11 @@ export default function Accounting() {
                           <TableCell>{index + 1}</TableCell>
                           <TableCell>
                             {branches.find(b => b.id === expense.branchId)?.name || "-"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="whitespace-nowrap">
+                              {sectionLabel((expense as any).section)}
+                            </Badge>
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
@@ -4294,6 +4374,33 @@ export default function Accounting() {
                             <SelectItem key={branch.id} value={branch.id.toString()}>
                               {branch.name}
                             </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* القسم/الجهة — required. Attributes the expense to a revenue
+                    stream (أطراف/مساند، علاج طبيعي، أو مشترك للمصاريف العامة)
+                    so the per-department report can split it without changing
+                    the grand total. */}
+                <FormField
+                  control={form.control}
+                  name="section"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>القسم <span className="text-destructive">*</span></FormLabel>
+                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-expense-section">
+                            <SelectValue placeholder="اختر القسم (أطراف/مساند، علاج طبيعي، مشترك)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {EXPENSE_SECTION_OPTIONS.map((s) => (
+                            <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
