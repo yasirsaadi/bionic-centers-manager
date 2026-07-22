@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -55,7 +55,8 @@ import {
   FileDown,
   FileSpreadsheet,
   Search,
-  X
+  X,
+  Layers
 } from "lucide-react";
 import { 
   AreaChart, 
@@ -1089,6 +1090,75 @@ function sourceTypeLabel(type: string): string {
   return map[type] ?? type;
 }
 
+// Admin-only manager for custom expense categories. Adds a category (for all
+// branches) and soft-removes one from the picker — past expenses keep their
+// stored category text. Placed in the expenses tab header.
+function ManageExpenseCategories() {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState("");
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: cats = [] } = useQuery<{ id: number; label: string; branchId: number | null }[]>({
+    queryKey: ["/api/expense-categories"],
+    enabled: open,
+    queryFn: async () => {
+      const res = await fetch("/api/expense-categories", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const add = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/expense-categories", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ label: label.trim() }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "تعذّرت الإضافة"); }
+      return res.json();
+    },
+    onSuccess: () => { setLabel(""); qc.invalidateQueries({ queryKey: ["/api/expense-categories"] }); toast({ title: "أُضيف التصنيف" }); },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/expense-categories/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("تعذّر الحذف");
+      return res.json();
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/expense-categories"] }); toast({ title: "حُذف التصنيف من القائمة" }); },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" data-testid="button-manage-categories"><Layers className="h-4 w-4 ml-2" /> إدارة التصنيفات</Button>
+      </DialogTrigger>
+      <DialogContent dir="rtl" className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>تصنيفات المصاريف المخصّصة</DialogTitle>
+          <DialogDescription>أضِف تصنيفاتك (تظهر لكل الفروع بجانب التصنيفات الأساسية). الحذف يزيله من القائمة فقط دون المساس بأي مصروف سابق.</DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-2 mt-2">
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="اسم التصنيف الجديد (مثل: غداء)" data-testid="input-new-category" />
+          <Button onClick={() => add.mutate()} disabled={!label.trim() || add.isPending}>إضافة</Button>
+        </div>
+        <div className="mt-3 max-h-[45vh] overflow-y-auto space-y-1">
+          {cats.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">لا توجد تصنيفات مخصّصة بعد.</p>
+          ) : cats.map((c) => (
+            <div key={c.id} className="flex items-center justify-between border rounded-md px-3 py-1.5 text-sm">
+              <span>{c.label}</span>
+              <button type="button" onClick={() => remove.mutate(c.id)} className="text-red-400 hover:text-red-600" data-testid={`delete-category-${c.id}`}>
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Accounting() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -1663,9 +1733,22 @@ export default function Accounting() {
   const watchedBranchId = form.watch("branchId");
   const selectedBranchIsKarbala = allowedBranches
     .some((b) => b.id === watchedBranchId && (b.name || "").includes("كربلاء"));
-  const categoriesForForm = EXPENSE_CATEGORIES.filter(
-    (c) => !(c as any).karbalaOnly || selectedBranchIsKarbala,
-  );
+  // Admin-managed custom categories (غداء / حوالات … ) merged onto the
+  // built-in list. Their value IS their label (expenses store category as text).
+  const { data: customCategories = [] } = useQuery<{ id: number; label: string; branchId: number | null; color: string | null }[]>({
+    queryKey: ["/api/expense-categories"],
+    queryFn: async () => {
+      const res = await fetch("/api/expense-categories", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const categoriesForForm = [
+    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).karbalaOnly || selectedBranchIsKarbala),
+    ...customCategories
+      .filter((c) => c.branchId == null || c.branchId === watchedBranchId)
+      .map((c) => ({ value: c.label, label: c.label, custom: true })),
+  ];
 
   // Pull previously-used subcategories for this category in the user's branch.
   // Used to populate the <datalist> the subcategory input is bound to so
@@ -3275,12 +3358,15 @@ export default function Accounting() {
 
           {/* Expenses Tab */}
           <TabsContent value="expenses" className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-2 flex-wrap">
               <h2 className="text-xl font-semibold">{t.accounting.expenseManagement}</h2>
-              <Button onClick={openNewExpenseDialog} data-testid="button-add-expense">
-                <Plus className="h-4 w-4 ml-2" />
-                {t.accounting.addExpense}
-              </Button>
+              <div className="flex gap-2">
+                {isAdmin && <ManageExpenseCategories />}
+                <Button onClick={openNewExpenseDialog} data-testid="button-add-expense">
+                  <Plus className="h-4 w-4 ml-2" />
+                  {t.accounting.addExpense}
+                </Button>
+              </div>
             </div>
 
             <Card>
