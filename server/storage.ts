@@ -1634,7 +1634,12 @@ export class DatabaseStorage implements IStorage {
     }
 
     const totalRemaining = totalRevenue - totalPaid;
-    const netProfit = totalPaid - totalExpenses;
+    // صافي الربح (accrual) = revenue billed − expenses — matching its UI label
+    // «الإيرادات − المصروفات». It was wrongly computed as (paid − expenses),
+    // which is the CASH position, so «صافي الربح» came out identical to
+    // «المتبقي بالقاصة». Profit and cash are different figures: profit counts
+    // what was SOLD; cash counts what was COLLECTED.
+    const netProfit = totalRevenue - totalExpenses;
     const collectionRate = totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0;
 
     return {
