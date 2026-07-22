@@ -1231,6 +1231,11 @@ export default function Accounting() {
       if (!res.ok) throw new Error("Failed to fetch today summary");
       return res.json();
     },
+    // Today's cash position moves with every payment across all devices —
+    // keep it live (tab-return + 30s) without a manual refresh.
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   // Fetch accounting summary
@@ -1244,7 +1249,14 @@ export default function Accounting() {
       const res = await fetch(`/api/accounting/summary?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch summary");
       return res.json();
-    }
+    },
+    // Cash/accounting figures change from OTHER devices (a receptionist logging
+    // a payment) — those never invalidate THIS browser's cache. Keep the number
+    // fresh without a manual refresh: refetch when the user returns to the tab,
+    // and every 30s while the accounting screen is open.
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   // Fetch expenses
