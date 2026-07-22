@@ -2,11 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, eq, and, isNull } from "drizzle-orm";
+import { sql, eq, and, isNull, desc } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { z } from "zod";
-import { patients, visits, payments, documents, patientCases, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
+import { patients, visits, payments, documents, patientCases, expenseCategories, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -3200,6 +3200,59 @@ export async function registerRoutes(
       endDate as string
     );
     res.json(expenses);
+  });
+
+  // ---- custom expense categories (admin-managed) ----------------------------
+  // Anyone with accounting/expense access reads them (to fill the picker);
+  // only the general admin creates/removes. The category is stored on the
+  // expense as free text, so removing a category never touches past records.
+  app.get("/api/expense-categories", isAuthenticated, async (req: any, res) => {
+    const s = (req.session as any).branchSession;
+    const canRead = s?.isAdmin || s?.permissions?.canManageAccounting || s?.permissions?.canAddExpenses;
+    if (!canRead) return res.status(403).json({ error: "غير مصرح" });
+    const rows = await db.select().from(expenseCategories)
+      .where(eq(expenseCategories.isActive, true))
+      .orderBy(desc(expenseCategories.createdAt));
+    // Non-admins only see all-branch categories + their own branches'.
+    const allowed = accessibleBranchesFor(req);
+    const visible = allowed === null ? rows
+      : rows.filter((r) => r.branchId == null || allowed.includes(r.branchId));
+    res.json(visible);
+  });
+
+  app.post("/api/expense-categories", isAuthenticated, async (req: any, res) => {
+    const s = (req.session as any).branchSession;
+    if (!s?.isAdmin) return res.status(403).json({ error: "إضافة التصنيفات للمدير العام حصراً" });
+    const label = String(req.body?.label || "").trim();
+    if (!label) return res.status(400).json({ error: "اسم التصنيف مطلوب" });
+    const branchId = req.body?.branchId != null ? Number(req.body.branchId) : null;
+    const color = typeof req.body?.color === "string" ? req.body.color : null;
+    try {
+      const [row] = await db.insert(expenseCategories)
+        .values({ label, branchId, color, createdBy: s?.userId ?? null })
+        .onConflictDoNothing()
+        .returning();
+      if (!row) {
+        // Re-activate a previously-removed same-name category instead of erroring.
+        const [existing] = await db.update(expenseCategories)
+          .set({ isActive: true })
+          .where(and(eq(expenseCategories.label, label), branchId == null ? isNull(expenseCategories.branchId) : eq(expenseCategories.branchId, branchId)))
+          .returning();
+        return res.json(existing);
+      }
+      res.status(201).json(row);
+    } catch (err: any) {
+      res.status(400).json({ error: "تعذّرت الإضافة" });
+    }
+  });
+
+  app.delete("/api/expense-categories/:id", isAuthenticated, async (req: any, res) => {
+    const s = (req.session as any).branchSession;
+    if (!s?.isAdmin) return res.status(403).json({ error: "حذف التصنيفات للمدير العام حصراً" });
+    const id = Number(req.params.id);
+    // Soft-remove: keep past expenses' category text intact.
+    await db.update(expenseCategories).set({ isActive: false }).where(eq(expenseCategories.id, id));
+    res.json({ ok: true });
   });
 
   app.get("/api/expenses/:id", isAuthenticated, async (req: any, res) => {

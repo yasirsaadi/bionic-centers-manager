@@ -185,6 +185,30 @@ export const expenses = pgTable("expenses", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Admin-managed CUSTOM expense categories — added on top of the built-in list
+// (رواتب، إيجارات، …) without a code change. The expense row stores the
+// category as free text (its label), so a custom category needs no slug and
+// existing records are unaffected if it is later deactivated.
+export const expenseCategories = pgTable("expense_categories", {
+  id: serial("id").primaryKey(),
+  label: text("label").notNull(),               // the Arabic name shown + stored on expenses
+  branchId: integer("branch_id").references(() => branches.id), // null = all branches
+  color: text("color"),                          // optional chart color
+  isActive: boolean("is_active").notNull().default(true), // soft-remove from the picker
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // The real index is created in migration 026 with NULLS NOT DISTINCT so two
+  // global rows (branch_id NULL) with the same label collide. This Drizzle
+  // version's IndexBuilder does not expose .nullsNotDistinct(), and this table
+  // is created by the raw-SQL migration (not drizzle-kit push), so the plain
+  // declaration here is for type inference only — the migration is the source
+  // of truth for the constraint.
+  uniqueIndex("uq_expense_category_label_branch").on(t.label, t.branchId),
+]);
+export const insertExpenseCategorySchema = createInsertSchema(expenseCategories).omit({ id: true, createdAt: true });
+export type ExpenseCategory = typeof expenseCategories.$inferSelect;
+
 // Installment plans for patient debt management
 export const installmentPlans = pgTable("installment_plans", {
   id: serial("id").primaryKey(),
