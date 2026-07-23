@@ -1310,6 +1310,7 @@ export default function Accounting() {
   const todayISO = new Date().toISOString().split("T")[0];
   const { data: todaySummary } = useQuery<{
     todayRevenue: number;
+    todayExpenses: number;
     todayClosing: number;
   }>({
     queryKey: ["/api/accounting/daily-summary", effectiveBranchFilter, todayISO],
@@ -3222,6 +3223,24 @@ export default function Accounting() {
                     <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">دفعات سُجِّلت اليوم</p>
+                </CardContent>
+              </Card>
+
+              {/* Today's expenses — requested by the accountant so the daily
+                  spend total is visible at a glance, like the old system. */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                  <CardTitle className="text-sm font-medium">مصاريف اليوم</CardTitle>
+                  <TrendingDown className="h-4 w-4 text-rose-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-1.5" data-testid="text-today-expenses">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-rose-600 truncate">
+                      {todaySummary ? formatNumberOnly(todaySummary.todayExpenses) : "..."}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">مصاريف سُجِّلت اليوم</p>
                 </CardContent>
               </Card>
 
