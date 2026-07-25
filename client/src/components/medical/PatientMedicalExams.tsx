@@ -12,25 +12,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
   EXAM_FIELDS,
   SPECIALTY_COLORS,
-  SPECIALTY_LABELS,
   isMedicalSpecialty,
   specialtyLabel,
-  type ExamFieldKey,
   type MedicalSpecialty,
 } from "@shared/medical";
+import { NewExamDialog } from "./NewExamDialog";
 
 interface Addendum {
   id: number;
@@ -59,13 +51,6 @@ interface ExamsResponse {
   specialties: MedicalSpecialty[];
 }
 
-const EMPTY_FORM: Record<ExamFieldKey, string> = {
-  chiefComplaint: "",
-  clinicalFindings: "",
-  diagnosis: "",
-  plan: "",
-  notes: "",
-};
 
 function accent(caseType: string) {
   return isMedicalSpecialty(caseType)
@@ -95,8 +80,7 @@ export function PatientMedicalExams({
   const queryClient = useQueryClient();
 
   const [examOpen, setExamOpen] = useState(false);
-  const [specialty, setSpecialty] = useState<MedicalSpecialty | "">("");
-  const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
+  const [preferredSpecialty, setPreferredSpecialty] = useState<string | null>(null);
   const [addendumFor, setAddendumFor] = useState<Exam | null>(null);
   const [addendumBody, setAddendumBody] = useState("");
 
@@ -119,29 +103,6 @@ export function PatientMedicalExams({
   const mySpecialties = data?.specialties ?? [];
   const isDoctor = Boolean(data?.canWriteMedicalExam) && mySpecialties.length > 0;
 
-  const saveExam = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/medical/patients/${patientId}/exams`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ caseType: specialty, ...form }),
-      });
-      if (!res.ok) throw new Error((await res.json())?.error || "تعذّر حفظ المعاينة");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: ["/api/medical/pending"] });
-      setExamOpen(false);
-      setForm({ ...EMPTY_FORM });
-      setSpecialty("");
-      toast({ title: "حُفظت المعاينة ووُقّعت باسمك" });
-    },
-    onError: (err: any) =>
-      toast({ title: "خطأ", description: err.message, variant: "destructive" }),
-  });
-
   const saveAddendum = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/medical/exams/${addendumFor?.id}/addenda`, {
@@ -162,8 +123,6 @@ export function PatientMedicalExams({
     onError: (err: any) =>
       toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
-
-  const hasContent = Object.values(form).some((v) => v.trim().length > 0);
 
   // Official print sheet. Opened in its own window so the app's layout, sidebar
   // and colours never leak into a document that goes into a patient file.
@@ -236,16 +195,12 @@ ${addenda}
               size="sm"
               className="h-8"
               onClick={() => {
-                // Pre-select the specialty the doctor is most likely here for:
-                // one that is waiting on them, else their only specialty.
-                const waiting = pending.find((p) =>
-                  mySpecialties.includes(p as MedicalSpecialty),
+                // Seed the specialty the doctor is most likely here for: one
+                // that is waiting on them. The dialog falls back to their only
+                // specialty when there is nothing pending.
+                setPreferredSpecialty(
+                  pending.find((p) => mySpecialties.includes(p as MedicalSpecialty)) ?? null,
                 );
-                setSpecialty(
-                  (waiting as MedicalSpecialty) ??
-                    (mySpecialties.length === 1 ? mySpecialties[0] : ""),
-                );
-                setForm({ ...EMPTY_FORM });
                 setExamOpen(true);
               }}
               data-testid="button-new-medical-exam"
@@ -383,72 +338,14 @@ ${addenda}
         )}
       </Card>
 
-      {/* ── New exam ───────────────────────────────────────────────────── */}
-      <Dialog open={examOpen} onOpenChange={setExamOpen}>
-        <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-primary flex items-center gap-2">
-              <Stethoscope className="w-5 h-5" /> معاينة طبية جديدة
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 mt-2">
-            <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-900 flex gap-2">
-              <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                بعد الحفظ تُقفل المعاينة باسمك ولا يمكن تعديلها ولا حذفها. أي تصحيح لاحق
-                يُضاف كملحق مؤرّخ.
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              <Label>الاختصاص</Label>
-              <Select
-                value={specialty}
-                onValueChange={(v) => setSpecialty(v as MedicalSpecialty)}
-              >
-                <SelectTrigger className="bg-white" data-testid="select-exam-specialty">
-                  <SelectValue placeholder="اختر الاختصاص" />
-                </SelectTrigger>
-                <SelectContent>
-                  {mySpecialties.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {SPECIALTY_LABELS[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {EXAM_FIELDS.map((f) => (
-              <div key={f.key} className="space-y-2">
-                <Label htmlFor={`exam-${f.key}`}>{f.label}</Label>
-                <Textarea
-                  id={`exam-${f.key}`}
-                  rows={f.key === "notes" ? 2 : 3}
-                  placeholder={f.placeholder}
-                  value={form[f.key]}
-                  onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
-                  data-testid={`input-exam-${f.key}`}
-                />
-              </div>
-            ))}
-          </div>
-
-          <DialogFooter className="gap-2 mt-4">
-            <Button variant="outline" onClick={() => setExamOpen(false)}>
-              إلغاء
-            </Button>
-            <Button
-              onClick={() => saveExam.mutate()}
-              disabled={!specialty || !hasContent || saveExam.isPending}
-              data-testid="button-save-medical-exam"
-            >
-              {saveExam.isPending ? "جارٍ الحفظ…" : "حفظ وتوقيع"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewExamDialog
+        patientId={patientId}
+        patientName={patientName}
+        open={examOpen}
+        onOpenChange={setExamOpen}
+        preferSpecialty={preferredSpecialty}
+        onDone={() => setPreferredSpecialty(null)}
+      />
 
       {/* ── Addendum ───────────────────────────────────────────────────── */}
       <Dialog open={!!addendumFor} onOpenChange={(o) => !o && setAddendumFor(null)}>

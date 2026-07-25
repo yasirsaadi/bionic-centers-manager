@@ -81,7 +81,7 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor" | "prosthetics_expert";
+type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor" | "prosthetics_expert" | "doctor";
 
 function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
   return {
@@ -92,6 +92,7 @@ function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRo
     therapist: t.roles.therapist,
     surveyor: t.roles.surveyor,
     prosthetics_expert: t.roles.prosthetics_expert,
+    doctor: t.roles.doctor,
   };
 }
 
@@ -289,6 +290,32 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canManageTreatmentPlans: false,
     canManageSurveys: false,
     canEditVisits: false,
+    canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
+  },
+  // A doctor owns the patient's clinical side and nothing else. Financially
+  // blind by the same rule as the pure prosthetics expert above: no payments,
+  // no reports, no accounting. The admin can still raise any of these for an
+  // individual doctor afterwards.
+  doctor: {
+    canViewPatients: true,
+    canAddPatients: true,
+    canEditPatients: true,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canAddExpenses: false,
+    canManageSettings: false,
+    canManageUsers: false,
+    canManageTreatmentPlans: true,
+    canManageSurveys: false,
+    canEditVisits: true,
     canDeleteVisits: false,
     canEnterSessions: false,
     canManageSessionTargets: false,
@@ -1334,6 +1361,10 @@ export default function AdminSettings() {
     medicalSpecialties: [] as string[],
     language: "ar",
   });
+
+  // A user whose PRIMARY role is doctor carries the exam capability implicitly,
+  // so the switch is locked on and the specialty becomes mandatory.
+  const isDoctorRole = userFormData.role === "doctor";
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -2932,14 +2963,16 @@ export default function AdminSettings() {
                   </p>
                 </div>
 
-                {/* Doctor capability. Like the expert flag it is independent of
-                    the primary role, and it is never auto-granted to anyone —
-                    an admin without it cannot sign a clinical record either. */}
+                {/* Doctor. Mirrors the expert block above: a user whose PRIMARY
+                    role is doctor carries the capability implicitly (the switch
+                    is locked on), while anyone else — a branch manager who also
+                    examines — can be granted it explicitly. Never auto-granted
+                    to an admin: signing a clinical record is a professional act. */}
                 <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50/60 p-3">
                   <div className="flex items-center gap-2">
                     <Switch
                       id="canWriteMedicalExam"
-                      checked={userFormData.canWriteMedicalExam}
+                      checked={isDoctorRole || userFormData.canWriteMedicalExam}
                       onCheckedChange={(checked) =>
                         setUserFormData(prev => ({
                           ...prev,
@@ -2950,16 +2983,19 @@ export default function AdminSettings() {
                         }))
                       }
                       data-testid="switch-canWriteMedicalExam"
+                      disabled={isDoctorRole}
                     />
                     <Label htmlFor="canWriteMedicalExam" className="text-sm font-semibold">
                       طبيب — يكتب المعاينة الطبية
                     </Label>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    المعاينة سجلّ سريري موقّع باسمه، تُقفل بعد الحفظ فلا تُعدّل ولا تُحذف، والتصحيح يكون بملحق مؤرّخ. بقية الموظفين يرونها للقراءة فقط.
+                    {isDoctorRole
+                      ? "هذا المستخدم طبيب أصلاً (دوره الأساسي) — يبقى أن تحدّد اختصاصه."
+                      : "المعاينة سجلّ سريري موقّع باسمه، تُقفل بعد الحفظ فلا تُعدّل ولا تُحذف، والتصحيح يكون بملحق مؤرّخ. بقية الموظفين يرونها للقراءة فقط."}
                   </p>
 
-                  {userFormData.canWriteMedicalExam && (
+                  {(isDoctorRole || userFormData.canWriteMedicalExam) && (
                     <div className="mt-3 border-t border-teal-200 pt-3">
                       <Label className="text-xs font-semibold text-teal-900">
                         اختصاصاته (يكتب معاينة في المحدَّد فقط)
@@ -2987,8 +3023,10 @@ export default function AdminSettings() {
                         ))}
                       </div>
                       {userFormData.medicalSpecialties.length === 0 && (
-                        <p className="text-xs text-amber-700 mt-2">
-                          لم تحدّد أي اختصاص — لن يتمكّن من كتابة أي معاينة.
+                        <p className={`text-xs mt-2 ${isDoctorRole ? "text-red-600 font-semibold" : "text-amber-700"}`}>
+                          {isDoctorRole
+                            ? "الاختصاص إلزامي للطبيب — لا يمكن الحفظ بدونه."
+                            : "لم تحدّد أي اختصاص — لن يتمكّن من كتابة أي معاينة."}
                         </p>
                       )}
                     </div>
@@ -3009,7 +3047,11 @@ export default function AdminSettings() {
                   userFormData.role !== "branch_manager" &&
                   userFormData.role !== "prosthetics_expert" &&
                   !userFormData.branchId) ||
-                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0)
+                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0) ||
+                // "doctor" names the profession, not the department: without a
+                // specialty the account could sign nothing. Blocked here as well
+                // as on the server so the admin sees it before saving.
+                (isDoctorRole && userFormData.medicalSpecialties.length === 0)
               }
               data-testid="button-save-user"
             >
