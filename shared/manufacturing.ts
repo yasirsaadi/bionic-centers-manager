@@ -231,13 +231,24 @@ export function isMoldStage(serviceType: string, stage: string): boolean {
   return MOLD_STAGE[serviceType] === stage;
 }
 
-// Is `stage` the mold stage OR any stage after it in the service's ordered
-// list? Stage transitions are not forced to be sequential, so the delivery
-// date must be demanded on ANY transition that lands at-or-beyond the mold
-// stage — otherwise an expert who jumps straight past cast_taken would never
-// commit a date and the delivery-accuracy tracking would silently never arm.
-export function isAtOrBeyondMoldStage(serviceType: string, stage: string): boolean {
-  const stages = stagesForService(serviceType);
+// Is `stage` the mold stage OR any stage after it in the ORDER's ordered list?
+// Stage transitions are not forced to be sequential, so the delivery date must
+// be demanded on ANY transition that lands at-or-beyond the mold stage —
+// otherwise an expert who jumps straight past cast_taken would never commit a
+// date and the delivery-accuracy tracking would silently never arm.
+//
+// `purpose` matters: a maintenance episode runs a different, much shorter
+// lifecycle that has no mold stage at all. Measuring its stages against the
+// initial-build list compares against the wrong ruler — every maintenance stage
+// scores -1 there, which happens to yield the right answer for the wrong
+// reason. Resolving the order's real list makes the "maintenance never demands
+// a promised date" rule explicit (moldIdx = -1) instead of accidental.
+export function isAtOrBeyondMoldStage(
+  serviceType: string,
+  stage: string,
+  purpose?: string | null,
+): boolean {
+  const stages = stagesForOrder(serviceType, purpose);
   const moldIdx = stages.indexOf(MOLD_STAGE[serviceType] ?? "");
   const idx = stages.indexOf(stage);
   return moldIdx >= 0 && idx >= moldIdx;
