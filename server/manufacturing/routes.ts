@@ -379,7 +379,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // not re-taken here). Checked against stage ORDER, not equality, so
     // skipping cast_taken cannot bypass the mandatory commitment.
     let deliveryDate: string | null = null;
-    if (isAtOrBeyondMoldStage(raw.serviceType, toStage) && !raw.expectedDeliveryDate) {
+    if (isAtOrBeyondMoldStage(raw.serviceType, toStage, raw.purpose) && !raw.expectedDeliveryDate) {
       deliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
       if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
         return res.status(400).json({ error: "تاريخ التسليم إلزامي عند أخذ القالب" });

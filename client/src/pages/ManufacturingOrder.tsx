@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBranchSession } from "@/components/BranchGate";
@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Wrench, History, RotateCcw, UserCog } from "lucide-react";
+import { ArrowRight, Wrench, History, RotateCcw, UserCog, CalendarDays } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS,
   REWORK_TYPES, REWORK_TYPE_LABELS, REASON_CODES, REASON_CODE_LABELS,
@@ -54,6 +54,7 @@ export default function ManufacturingOrder() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [reworkOpen, setReworkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [dateOpen, setDateOpen] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: orderKey });
@@ -73,6 +74,12 @@ export default function ManufacturingOrder() {
   const { order, patient, timeline, rework } = data;
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
+  // Mirrors the server rule exactly (PATCH /orders/:id/delivery-date): while the
+  // date is still empty ANY writer on the order may commit one — including the
+  // assigned expert, who is the person who actually knows when it will be
+  // ready. After it is set, changing it is management/admin only, so the date
+  // the expert is measured against can't be quietly moved.
+  const canSetDeliveryDate = !order.expectedDeliveryDate || isAdmin || isManager;
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
@@ -139,6 +146,20 @@ export default function ManufacturingOrder() {
           <Button size="sm" onClick={() => setStageOpen(true)} className="gap-1"><ArrowRight className="w-4 h-4" /> الانتقال لمرحلة</Button>
           <Button size="sm" variant="outline" onClick={() => setStatusOpen(true)}>تغيير الحالة</Button>
           <Button size="sm" variant="outline" onClick={() => setReworkOpen(true)} className="gap-1"><RotateCcw className="w-4 h-4" /> تسجيل إعادة عمل</Button>
+          {/* Setting the promised delivery date used to be possible ONLY in the
+              instant of moving to/past the mold stage. An expert who wasn't
+              asked then — a maintenance order has no mold stage at all, and a
+              legacy order may sit past it with an empty date — had no screen
+              left that could enter one: the standalone control lives on the
+              patient page, which experts never open. The server always allowed
+              this write while the date is still empty; only the UI was missing.
+              Once set, the lock stands: management/admin only. */}
+          {canSetDeliveryDate && (
+            <Button size="sm" variant="outline" onClick={() => setDateOpen(true)} className="gap-1" data-testid="button-set-delivery-date">
+              <CalendarDays className="w-4 h-4" />
+              {order.expectedDeliveryDate ? "تعديل تاريخ التسليم" : "تحديد تاريخ التسليم"}
+            </Button>
+          )}
           {canReassign && <Button size="sm" variant="outline" onClick={() => setReassignOpen(true)} className="gap-1"><UserCog className="w-4 h-4" /> تحويل لخبير</Button>}
         </div>
       )}
@@ -188,9 +209,10 @@ export default function ManufacturingOrder() {
         </Card>
       )}
 
-      <StageDialog open={stageOpen} onOpenChange={setStageOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} serviceType={order.serviceType} deliveryDateSet={!!order.expectedDeliveryDate} onDone={invalidate} />
+      <StageDialog open={stageOpen} onOpenChange={setStageOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} serviceType={order.serviceType} purpose={order.purpose} deliveryDateSet={!!order.expectedDeliveryDate} onDone={invalidate} />
       <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} orderId={order.id} onDone={invalidate} />
       <ReworkDialog open={reworkOpen} onOpenChange={setReworkOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} onDone={invalidate} />
+      <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
     </div>
   );
@@ -223,7 +245,7 @@ function useAction(url: string, method: string, onDone: () => void) {
   });
 }
 
-function StageDialog({ open, onOpenChange, orderId, stages, currentStage, serviceType, deliveryDateSet, onDone }: any) {
+function StageDialog({ open, onOpenChange, orderId, stages, currentStage, serviceType, purpose, deliveryDateSet, onDone }: any) {
   const [toStage, setToStage] = useState("");
   const [notes, setNotes] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -233,7 +255,7 @@ function StageDialog({ open, onOpenChange, orderId, stages, currentStage, servic
   const needsResult = toStage === DELIVERED_STAGE;
   // Reaching the mold stage requires committing to a delivery date — but only
   // if one hasn't already been set (it locks after that).
-  const needsDelivery = !!toStage && !deliveryDateSet && isAtOrBeyondMoldStage(serviceType, toStage);
+  const needsDelivery = !!toStage && !deliveryDateSet && isAtOrBeyondMoldStage(serviceType, toStage, purpose);
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent dir="rtl" className="max-w-md">
@@ -278,6 +300,55 @@ function StageDialog({ open, onOpenChange, orderId, stages, currentStage, servic
           <Button disabled={!toStage || (needsResult && !finalResult) || (needsDelivery && !deliveryDate) || m.isPending}
             onClick={() => m.mutate({ toStage, notes: notes || undefined, expectedDeliveryDate: needsDelivery ? deliveryDate : undefined, finalResult: finalResult || undefined })}>
             تأكيد
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Standalone delivery-date entry, reachable from the order page the expert
+// actually works in. Kept separate from the stage dialog so committing a date
+// never requires also moving the order to a new stage.
+function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: any) {
+  // Pre-filled with the current value: an empty controlled <input type="date">
+  // misbehaves on iOS Safari (the pick often doesn't stick), which is exactly
+  // the device the experts use on the floor.
+  const [date, setDate] = useState(current ?? "");
+  useEffect(() => { setDate(current ?? ""); }, [current, open]);
+  const m = useAction(`/api/manufacturing/orders/${orderId}/delivery-date`, "PATCH", () => { onOpenChange(false); onDone(); });
+  const isFirstCommit = !current;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{isFirstCommit ? "تحديد تاريخ التسليم" : "تعديل تاريخ التسليم"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {!isFirstCommit && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">الموعد الحالي: </span>
+              <span className="font-semibold">{fmtD(current)}</span>
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-medium">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 bg-white" data-testid="input-delivery-date" />
+            <p className="text-xs text-muted-foreground mt-1">
+              {isFirstCommit
+                ? "بعد تحديده لا يتغيّر إلا من إدارة الفرع/العامة — وعليه تُقاس دقّة التسليم."
+                : "يُسجَّل التغيير في الخطّ الزمني ولا يُمحى الموعد السابق."}
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
+          <Button
+            disabled={!date || date === (current ?? "") || m.isPending}
+            onClick={() => m.mutate({ expectedDeliveryDate: date })}
+            data-testid="button-save-delivery-date"
+          >
+            {m.isPending ? "جارٍ الحفظ…" : "حفظ"}
           </Button>
         </DialogFooter>
       </DialogContent>
