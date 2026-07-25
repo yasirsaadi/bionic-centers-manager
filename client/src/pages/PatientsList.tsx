@@ -25,6 +25,9 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import type { Branch } from "@shared/schema";
 import { specialtyShortLabel } from "@shared/medical";
+import { useDoctorGrant } from "@/components/medical/useDoctorGrant";
+import { NewExamDialog } from "@/components/medical/NewExamDialog";
+import { Stethoscope } from "lucide-react";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation, useLanguage } from "@/i18n/LanguageContext";
 
@@ -96,6 +99,11 @@ export default function PatientsList() {
   const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null } | null>(null);
   // «الكلفة والجلسات» — post-exam physiotherapy pricing (same gate: it writes).
   const [physioPricingPatient, setPhysioPricingPatient] = useState<{ id: number; name: string } | null>(null);
+  // «كتابة معاينة» straight from the registry row. The doctor searching a name
+  // is one click from documenting, instead of opening the file to find the
+  // button. Live grant, not the cached session — see useDoctorGrant.
+  const { specialties: mySpecialties } = useDoctorGrant();
+  const [examPatient, setExamPatient] = useState<{ id: number; name: string; specialty: string } | null>(null);
   
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -225,6 +233,17 @@ export default function PatientsList() {
     },
   });
   const pendingByPatient = pendingExams?.pending ?? {};
+
+  // Show the button only where the doctor can actually act: this patient has a
+  // pending case AND it falls in one of their own specialties. Returns the
+  // specialty so the dialog opens pre-set to it — no second choice to make.
+  const examableSpecialty = (patientId: number): string | null =>
+    (pendingByPatient[patientId] ?? []).find((c) => mySpecialties.includes(c as any)) ?? null;
+
+  const openExamFor = (patient: { id: number; name: string }) => {
+    const specialty = examableSpecialty(patient.id);
+    if (specialty) setExamPatient({ id: patient.id, name: patient.name, specialty });
+  };
   const totalPatients = registry?.total ?? 0;
   const branchCount = registry?.counts?.branch ?? 0;
   const dateCount = registry?.counts?.date ?? 0;
@@ -548,6 +567,12 @@ export default function PatientsList() {
                               الكلفة والجلسات
                             </Button>
                           )}
+                          {examableSpecialty(patient.id) && (
+                            <Button variant="ghost" size="sm" onClick={() => openExamFor(patient)} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1 h-8 text-xs" data-testid={`write-exam-${patient.id}`}>
+                              <Stethoscope className="w-3.5 h-3.5" />
+                              معاينة
+                            </Button>
+                          )}
                           <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`}>
                             <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                               <Eye className="w-3.5 h-3.5" />
@@ -616,6 +641,12 @@ export default function PatientsList() {
                         </TableCell>
                         <TableCell className="pl-6">
                           <div className="flex items-center gap-1 justify-end">
+                            {examableSpecialty(patient.id) && (
+                              <Button variant="ghost" size="sm" onClick={() => openExamFor(patient)} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1.5" data-testid={`write-exam-${patient.id}`}>
+                                <Stethoscope className="w-4 h-4" />
+                                كتابة معاينة
+                              </Button>
+                            )}
                             {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
                               <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
                                 <UserCog className="w-4 h-4" />
@@ -707,6 +738,17 @@ export default function PatientsList() {
         open={!!physioPricingPatient}
         onOpenChange={(o) => { if (!o) setPhysioPricingPatient(null); }}
       />
+
+      {examPatient && (
+        <NewExamDialog
+          patientId={examPatient.id}
+          patientName={examPatient.name}
+          preferSpecialty={examPatient.specialty}
+          open={!!examPatient}
+          onOpenChange={(o) => { if (!o) setExamPatient(null); }}
+          onDone={() => setExamPatient(null)}
+        />
+      )}
     </div>
   );
 }

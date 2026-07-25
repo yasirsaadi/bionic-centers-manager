@@ -39,6 +39,7 @@ const SessionsList = lazy(() => import("@/pages/SessionsList"));
 const SessionAnalytics = lazy(() => import("@/pages/SessionAnalytics"));
 const FollowUps = lazy(() => import("@/pages/FollowUps"));
 const Manufacturing = lazy(() => import("@/pages/Manufacturing"));
+const MyExams = lazy(() => import("@/pages/MyExams"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 
@@ -67,6 +68,13 @@ function DashboardRoute() {
   // Prosthetics experts land straight in the manufacturing module.
   if (session?.role === "prosthetics_expert") {
     return <Redirect to="/manufacturing" />;
+  }
+
+  // Doctors land on their worklist, not the dashboard: clinical systems put the
+  // clinician in front of the queue waiting on them rather than a directory
+  // they would have to search.
+  if (session?.role === "doctor") {
+    return <Redirect to="/my-exams" />;
   }
 
   return <Dashboard />;
@@ -120,6 +128,7 @@ function Router() {
             <Route path="/patients/:id/edit" component={EditPatient} />
             <Route path="/patients/:id" component={PatientDetails} />
             <Route path="/follow-ups" component={FollowUps} />
+            <Route path="/my-exams" component={MyExams} />
             <Route path="/manufacturing" component={Manufacturing} />
             <Route path="/manufacturing/orders/:id" component={ManufacturingOrder} />
             <Route path="/notifications" component={Notifications} />

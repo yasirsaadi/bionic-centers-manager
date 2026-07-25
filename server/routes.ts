@@ -361,11 +361,15 @@ export async function registerRoutes(
             // pure expert (role === prosthetics_expert) implicitly works as an
             // expert too; anyone else needs the explicit flag on their row.
             canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
-            // Doctor capability. NEVER auto-granted — not to managers and not to
-            // admins: signing a clinical record is a professional act. This copy
-            // only drives the UI; every write re-reads the grant from the
-            // database so a revocation applies immediately, not at next login.
-            canWriteMedicalExam: Boolean(systemUser.canWriteMedicalExam),
+            // Doctor capability. A user whose PRIMARY role is doctor carries it
+            // implicitly; anyone else needs the explicit flag on their row —
+            // the same shape as canWorkAsExpert above. Still never auto-granted
+            // to managers or admins: signing a clinical record is a
+            // professional act, not an administrative one. This copy only
+            // drives the UI; every write re-reads the grant from the database
+            // so a revocation applies immediately, not at next login.
+            canWriteMedicalExam:
+              systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
           };
 
           // Store session with user permissions
@@ -986,8 +990,15 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert"].includes(userData.role)) {
+      if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
+      }
+
+      // "doctor" names the profession, not the department. Without a specialty
+      // the account can sign nothing, so refuse to create one that is silently
+      // useless rather than letting the admin discover it from a 403 later.
+      if (userData.role === "doctor" && !(userData.medicalSpecialties?.length > 0)) {
+        return res.status(400).json({ message: "يجب تحديد اختصاص واحد على الأقل للطبيب" });
       }
       
       // Normalise branchIds: accept either a JSON array or an
@@ -1062,10 +1073,27 @@ export async function registerRoutes(
       }
 
       // Validate role if provided
-      if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert"].includes(userData.role)) {
+      if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
-      
+
+      // Same "a doctor must have a specialty" rule as the create handler, but a
+      // PATCH is partial: the role may be arriving while the specialties stay
+      // untouched, or vice versa. Both are resolved against the stored row so
+      // an edit can't strand an existing doctor with an empty list.
+      if (userData.role === "doctor" || userData.medicalSpecialties !== undefined) {
+        const stored = await storage.getSystemUser(id);
+        const effectiveRole = userData.role ?? stored?.role;
+        if (effectiveRole === "doctor") {
+          const effectiveSpecialties =
+            userData.medicalSpecialties ??
+            (Array.isArray(stored?.medicalSpecialties) ? stored.medicalSpecialties : []);
+          if (effectiveSpecialties.length === 0) {
+            return res.status(400).json({ message: "يجب تحديد اختصاص واحد على الأقل للطبيب" });
+          }
+        }
+      }
+
       // Multi-branch normalisation, same shape as the create handler.
       if (userData.branchIds !== undefined) {
         const incoming = Array.isArray(userData.branchIds)
@@ -1421,11 +1449,23 @@ export async function registerRoutes(
       storage.getPaymentsByPatientId(id),
       storage.getVisitsByPatientId(id),
     ]);
+    // A PURE doctor is financially locked out like the expert is — but unlike
+    // the expert they DO work in the patient page, and the case rows are what
+    // tell them which specialties this patient is being treated for. So the
+    // cases are returned with the money stripped out at the source, rather than
+    // 403'ing the endpoint (which would blank their clinical view) or trusting
+    // the UI to hide fields the payload still carries.
+    const financiallyBlind = branchSession?.role === "doctor";
+
     // Attach per-case paid total + visit count (case-attributed rows).
     const enriched = cases.map((c) => {
       const casePayments = payments.filter((p: any) => p.caseId === c.id);
       const caseVisits = visits.filter((v: any) => v.caseId === c.id);
       const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
+      if (financiallyBlind) {
+        const { cost, costSource, ...clinical } = c as any;
+        return { ...clinical, visitCount: caseVisits.length };
+      }
       return {
         ...c,
         paid,

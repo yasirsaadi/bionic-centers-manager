@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -95,6 +95,7 @@ export function Sidebar() {
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
+    { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
@@ -107,8 +108,9 @@ export function Sidebar() {
       return false;
     }
     
-    // Hide dashboard for reception, therapist, surveyor, and prosthetics-expert users
-    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist" || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert")) {
+    // Hide dashboard for reception, therapist, surveyor, prosthetics-expert and
+    // doctor users — each of them lands on their own working screen instead.
+    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist" || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert" || branchSession?.role === "doctor")) {
       return false;
     }
 

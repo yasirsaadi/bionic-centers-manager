@@ -29,6 +29,7 @@ const translations = {
       therapist: "معالج طبيعي",
       surveyor: "موظف استبيان",
       prosthetics_expert: "خبير أطراف",
+      doctor: "طبيب",
     },
     branches: {
       "بايونك بغداد": "بايونك بغداد",
@@ -1222,6 +1223,7 @@ const translations = {
       therapist: "Therapist",
       surveyor: "Surveyor",
       prosthetics_expert: "Prosthetics Expert",
+      doctor: "Doctor",
     },
     branches: {
       "بايونك بغداد": "Bionic Baghdad",

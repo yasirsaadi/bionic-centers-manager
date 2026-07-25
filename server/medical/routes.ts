@@ -238,6 +238,22 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     }
   });
 
+  // ── The doctor's own worklist ────────────────────────────────────────────
+  // Who is waiting on ME, in MY specialties, oldest first. Empty for anyone who
+  // is not a doctor — the queue only exists for someone who can act on it.
+  app.get("/api/medical/worklist", isAuthenticated, async (req: Req, res) => {
+    try {
+      const { userId } = getSession(req);
+      const specialties = await store.doctorSpecialties(userId);
+      if (specialties.length === 0) return res.json({ rows: [], specialties: [] });
+      const rows = await store.getWorklist(specialties, branchScope(req));
+      res.json({ rows, specialties });
+    } catch (err: any) {
+      console.error("[medical] GET worklist failed:", err);
+      res.status(500).json({ error: "تعذّر تحميل قائمة المعاينات" });
+    }
+  });
+
   // ── Pending-exam signal for the patients list ────────────────────────────
   // Returns one entry per patient who still has an unexamined active case, so
   // each doctor can see who is waiting on THEIR specialty.

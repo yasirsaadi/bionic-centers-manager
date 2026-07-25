@@ -24,6 +24,9 @@ import { isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
+/** Primary role whose whole job is clinical examination. */
+export const DOCTOR_ROLE = "doctor";
+
 /** One patient's full clinical thread, newest exam first, each with its addenda. */
 export async function getExamsByPatient(patientId: number): Promise<ExamWithAddenda[]> {
   const exams = await db
@@ -137,6 +140,82 @@ export async function getPendingExams(
   }));
 }
 
+export interface WorklistRow {
+  patientId: number;
+  patientName: string;
+  phone: string | null;
+  branchId: number | null;
+  branchName: string | null;
+  caseType: string;
+  waitingSince: string | null;
+}
+
+/**
+ * The doctor's own queue: active cases with no exam yet, restricted to the
+ * specialties THEY may sign for, oldest wait first.
+ *
+ * This is the difference between a registry and a worklist — the registry
+ * answers "who are our patients", this answers "who is waiting on me". Filtered
+ * server-side by specialty so a physiotherapy doctor is never shown a
+ * prosthetics case they cannot act on.
+ */
+export async function getWorklist(
+  specialties: MedicalSpecialty[],
+  branchIds: number[] | null,
+): Promise<WorklistRow[]> {
+  if (specialties.length === 0) return [];
+
+  const scoped =
+    branchIds === null
+      ? sql`TRUE`
+      : branchIds.length === 0
+        ? sql`FALSE`
+        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(
+            branchIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`;
+
+  const rows = await db.execute<{
+    patient_id: number;
+    patient_name: string;
+    phone: string | null;
+    branch_id: number | null;
+    branch_name: string | null;
+    case_type: string;
+    waiting_since: string | null;
+  }>(sql`
+    SELECT pc.patient_id, p.name AS patient_name, p.phone,
+           COALESCE(pc.branch_id, p.branch_id) AS branch_id,
+           b.name AS branch_name,
+           pc.case_type, pc.created_at AS waiting_since
+    FROM patient_cases pc
+    JOIN patients p ON p.id = pc.patient_id
+    LEFT JOIN branches b ON b.id = COALESCE(pc.branch_id, p.branch_id)
+    WHERE pc.status = 'active'
+      AND ${scoped}
+      AND pc.case_type IN (${sql.join(
+        specialties.map((s) => sql`${s}`),
+        sql`, `,
+      )})
+      AND NOT EXISTS (
+        SELECT 1 FROM medical_exams me
+        WHERE me.patient_id = pc.patient_id
+          AND me.case_type = pc.case_type
+      )
+    ORDER BY pc.created_at ASC
+  `);
+
+  return (rows.rows ?? []).map((r) => ({
+    patientId: Number(r.patient_id),
+    patientName: String(r.patient_name ?? ""),
+    phone: r.phone ?? null,
+    branchId: r.branch_id === null ? null : Number(r.branch_id),
+    branchName: r.branch_name ?? null,
+    caseType: String(r.case_type),
+    waitingSince: r.waiting_since ? String(r.waiting_since) : null,
+  }));
+}
+
 /** Which specialties of THIS patient are still waiting for a first exam. */
 export async function getPendingForPatient(patientId: number): Promise<string[]> {
   const rows = await db.execute<{ case_type: string }>(sql`
@@ -165,6 +244,7 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
   if (!userId) return [];
   const [user] = await db
     .select({
+      role: systemUsers.role,
       canWrite: systemUsers.canWriteMedicalExam,
       specialties: systemUsers.medicalSpecialties,
       isActive: systemUsers.isActive,
@@ -172,8 +252,16 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
     .from(systemUsers)
     .where(eq(systemUsers.id, userId));
 
-  if (!user || !user.canWrite || user.isActive === false) return [];
+  if (!user || user.isActive === false) return [];
+  // A user whose PRIMARY role is doctor carries the capability implicitly;
+  // anyone else needs the explicit flag. Mirrors how a pure prosthetics_expert
+  // works as an expert without needing can_work_as_expert set.
+  const isDoctor = user.role === DOCTOR_ROLE || Boolean(user.canWrite);
+  if (!isDoctor) return [];
   const raw = Array.isArray(user.specialties) ? user.specialties : [];
+  // Still gated on specialties: "doctor" says the profession, not the
+  // department. Without at least one specialty there is nothing they may sign,
+  // which is why creating a doctor with an empty list is rejected up front.
   return raw.filter(isMedicalSpecialty);
 }
 
