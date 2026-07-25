@@ -1,0 +1,189 @@
+// Data layer for doctor medical examinations (معاينة الطبيب).
+//
+// Invariants enforced here — the routes layer assumes all of them:
+//   1. An exam is only ever INSERTed. There is no update and no delete in this
+//      file, and none anywhere else in the app. Postgres backs that up with a
+//      trigger (migration 028) that rejects UPDATE on both tables.
+//   2. The doctor's name is snapshotted onto the row at signing time, so a
+//      record stays readable after the account is renamed or removed.
+//   3. `caseType` is always one of the three specialties, validated by the
+//      caller against the doctor's own grant before we get here.
+
+import { db } from "../db";
+import {
+  medicalExams as EX,
+  medicalExamAddenda as AD,
+  patientCases,
+  patients,
+  systemUsers,
+  type MedicalExam,
+  type MedicalExamAddendum,
+} from "@shared/schema";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
+
+export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
+
+/** One patient's full clinical thread, newest exam first, each with its addenda. */
+export async function getExamsByPatient(patientId: number): Promise<ExamWithAddenda[]> {
+  const exams = await db
+    .select()
+    .from(EX)
+    .where(eq(EX.patientId, patientId))
+    .orderBy(desc(EX.signedAt), desc(EX.id));
+
+  if (exams.length === 0) return [];
+
+  // Addenda are read in one round-trip and grouped in memory — a patient never
+  // has enough exams for this to be worth a join.
+  const addenda = await db
+    .select()
+    .from(AD)
+    .where(inArray(AD.examId, exams.map((e) => e.id)))
+    .orderBy(AD.signedAt, AD.id);
+
+  const byExam = new Map<number, MedicalExamAddendum[]>();
+  for (const a of addenda) {
+    const list = byExam.get(a.examId);
+    if (list) list.push(a);
+    else byExam.set(a.examId, [a]);
+  }
+
+  return exams.map((e) => ({ ...e, addenda: byExam.get(e.id) ?? [] }));
+}
+
+export async function getExam(id: number): Promise<MedicalExam | undefined> {
+  const [row] = await db.select().from(EX).where(eq(EX.id, id));
+  return row;
+}
+
+/** Sign a new exam. The only write path that exists for this table. */
+export async function createExam(values: {
+  patientId: number;
+  caseId: number | null;
+  caseType: MedicalSpecialty;
+  branchId: number | null;
+  doctorId: number | null;
+  doctorName: string;
+  chiefComplaint: string | null;
+  clinicalFindings: string | null;
+  diagnosis: string | null;
+  plan: string | null;
+  notes: string | null;
+}): Promise<MedicalExam> {
+  const [row] = await db.insert(EX).values(values).returning();
+  return row;
+}
+
+/** Append a dated correction. The original exam text is never touched. */
+export async function addAddendum(values: {
+  examId: number;
+  doctorId: number | null;
+  doctorName: string;
+  body: string;
+}): Promise<MedicalExamAddendum> {
+  const [row] = await db.insert(AD).values(values).returning();
+  return row;
+}
+
+/** Resolve the patient's case row for a specialty, so the exam can point at it. */
+export async function findCaseFor(
+  patientId: number,
+  caseType: MedicalSpecialty,
+): Promise<{ id: number; branchId: number | null } | null> {
+  const [row] = await db
+    .select({ id: patientCases.id, branchId: patientCases.branchId })
+    .from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
+  return row ?? null;
+}
+
+/**
+ * The "بانتظار معاينة" signal: every ACTIVE case that has no exam yet.
+ *
+ * One row per (patient, specialty), so a patient in two departments can be
+ * waiting on the prosthetics doctor while the physiotherapy side is already
+ * seen. Scoped by branch for non-admins; `branchIds === null` means admin/all.
+ */
+export async function getPendingExams(
+  branchIds: number[] | null,
+): Promise<{ patientId: number; caseType: string }[]> {
+  const scoped =
+    branchIds === null
+      ? sql`TRUE`
+      : branchIds.length === 0
+        ? sql`FALSE`
+        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(
+            branchIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`;
+
+  const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
+    SELECT pc.patient_id, pc.case_type
+    FROM patient_cases pc
+    JOIN patients p ON p.id = pc.patient_id
+    WHERE pc.status = 'active'
+      AND ${scoped}
+      AND NOT EXISTS (
+        SELECT 1 FROM medical_exams me
+        WHERE me.patient_id = pc.patient_id
+          AND me.case_type = pc.case_type
+      )
+  `);
+
+  return (rows.rows ?? []).map((r) => ({
+    patientId: Number(r.patient_id),
+    caseType: String(r.case_type),
+  }));
+}
+
+/** Which specialties of THIS patient are still waiting for a first exam. */
+export async function getPendingForPatient(patientId: number): Promise<string[]> {
+  const rows = await db.execute<{ case_type: string }>(sql`
+    SELECT pc.case_type
+    FROM patient_cases pc
+    WHERE pc.patient_id = ${patientId}
+      AND pc.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM medical_exams me
+        WHERE me.patient_id = pc.patient_id
+          AND me.case_type = pc.case_type
+      )
+  `);
+  return (rows.rows ?? []).map((r) => String(r.case_type));
+}
+
+/**
+ * The specialties a user may sign for, read fresh from the database rather than
+ * from the session: a grant revoked by the admin must take effect immediately,
+ * not at the doctor's next login.
+ *
+ * Returns [] for anyone without the capability — including admins. Signing a
+ * clinical record is a professional act, not an administrative one.
+ */
+export async function doctorSpecialties(userId: number | null): Promise<MedicalSpecialty[]> {
+  if (!userId) return [];
+  const [user] = await db
+    .select({
+      canWrite: systemUsers.canWriteMedicalExam,
+      specialties: systemUsers.medicalSpecialties,
+      isActive: systemUsers.isActive,
+    })
+    .from(systemUsers)
+    .where(eq(systemUsers.id, userId));
+
+  if (!user || !user.canWrite || user.isActive === false) return [];
+  const raw = Array.isArray(user.specialties) ? user.specialties : [];
+  return raw.filter(isMedicalSpecialty);
+}
+
+/** Patient identity + branch, for authorization and for stamping the exam. */
+export async function getPatientScope(
+  patientId: number,
+): Promise<{ id: number; name: string | null; branchId: number | null } | null> {
+  const [row] = await db
+    .select({ id: patients.id, name: patients.name, branchId: patients.branchId })
+    .from(patients)
+    .where(eq(patients.id, patientId));
+  return row ?? null;
+}

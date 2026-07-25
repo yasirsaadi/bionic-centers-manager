@@ -647,6 +647,15 @@ export const systemUsers = pgTable("system_users", {
   // The financial lock-out stays tied to role === 'prosthetics_expert' (a
   // *pure* expert), so this flag never leaks financial data.
   canWorkAsExpert: boolean("can_work_as_expert").default(false),
+  // Doctor CAPABILITY (migration 028), same reasoning as canWorkAsExpert: the
+  // branch manager may also be the doctor, and keeps every permission of the
+  // primary role. Grants the right to SIGN clinical records — nothing else can
+  // write them, not even an admin without this flag.
+  canWriteMedicalExam: boolean("can_write_medical_exam").default(false),
+  // Which specialties this doctor may sign for: a subset of
+  // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
+  // so granting the flag without a specialty is a no-op by design.
+  medicalSpecialties: jsonb("medical_specialties").$type<string[]>().default([]),
   language: text("language").default("ar"), // ar = Arabic, en = English
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -697,6 +706,63 @@ export type BranchSetting = typeof branchSettings.$inferSelect;
 export type InsertBranchSetting = z.infer<typeof insertBranchSettingsSchema>;
 export type SystemUser = typeof systemUsers.$inferSelect;
 export type InsertSystemUser = z.infer<typeof insertSystemUserSchema>;
+
+// ── Doctor medical examinations (migration 028) ─────────────────────────────
+// A SIGNED, IMMUTABLE clinical record. Only a user carrying
+// `canWriteMedicalExam` may create one, and only for a specialty listed in
+// their `medicalSpecialties`. Everyone else reads it. Nothing edits it: a
+// Postgres trigger rejects UPDATE outright, and no delete endpoint exists.
+//
+// Distinct from `treatmentPlans` above, which is a mutable working document
+// that non-doctors maintain. This is the doctor's word, fixed in time.
+export const medicalExams = pgTable("medical_exams", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  // The case this exam belongs to. Nullable because a case row may not exist
+  // yet for a brand-new patient — `caseType` is the authoritative field.
+  caseId: integer("case_id").references(() => patientCases.id),
+  caseType: text("case_type").notNull(), // prosthetic | medical_support | physiotherapy
+  branchId: integer("branch_id").references(() => branches.id),
+  // The signature. `doctorName` is a SNAPSHOT, not a join: the record must
+  // still read correctly if the account is later renamed or removed.
+  doctorId: integer("doctor_id").references(() => systemUsers.id),
+  doctorName: text("doctor_name").notNull(),
+  chiefComplaint: text("chief_complaint"),     // الشكوى
+  clinicalFindings: text("clinical_findings"), // الفحص السريري
+  diagnosis: text("diagnosis"),                // التشخيص
+  plan: text("plan"),                          // الخطة والتوصيات
+  notes: text("notes"),                        // متن حر
+  signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Corrections append, never overwrite. The original exam text stays untouched
+// forever; an addendum carries its own signature and timestamp.
+export const medicalExamAddenda = pgTable("medical_exam_addenda", {
+  id: serial("id").primaryKey(),
+  examId: integer("exam_id").references(() => medicalExams.id).notNull(),
+  doctorId: integer("doctor_id").references(() => systemUsers.id),
+  doctorName: text("doctor_name").notNull(),
+  body: text("body").notNull(),
+  signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// `signedAt` is omitted as well: the server stamps the signature, never the client.
+export const insertMedicalExamSchema = createInsertSchema(medicalExams).omit({
+  id: true,
+  createdAt: true,
+  signedAt: true,
+});
+export const insertMedicalExamAddendumSchema = createInsertSchema(medicalExamAddenda).omit({
+  id: true,
+  createdAt: true,
+  signedAt: true,
+});
+export type MedicalExam = typeof medicalExams.$inferSelect;
+export type InsertMedicalExam = z.infer<typeof insertMedicalExamSchema>;
+export type MedicalExamAddendum = typeof medicalExamAddenda.$inferSelect;
+export type InsertMedicalExamAddendum = z.infer<typeof insertMedicalExamAddendumSchema>;
 
 export const treatmentPlans = pgTable("treatment_plans", {
   id: serial("id").primaryKey(),

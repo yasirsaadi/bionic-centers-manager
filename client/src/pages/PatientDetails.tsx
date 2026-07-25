@@ -9,6 +9,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
+import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -866,6 +867,16 @@ export default function PatientDetails() {
           <StartManufacturingDialog patient={patient} />
         </div>
       )}
+
+      {/* The doctor's signed clinical thread — read-only for everyone except a
+          doctor granted the matching specialty. */}
+      <div className="mb-6">
+        <PatientMedicalExams
+          patientId={patient.id}
+          patientName={patient.name}
+          branchName={branches?.find((b) => b.id === patient.branchId)?.name ?? null}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
