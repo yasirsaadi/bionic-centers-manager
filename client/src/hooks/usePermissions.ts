@@ -22,6 +22,9 @@ interface UserPermissions {
   canManageSessionTargets: boolean;
   canViewSessionsReport: boolean;
   canWorkAsExpert: boolean;
+  // Doctor capability. Never auto-granted — not even to admins — because
+  // signing a clinical record is a professional act, not an administrative one.
+  canWriteMedicalExam: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -46,6 +49,7 @@ const defaultAdminPermissions: UserPermissions = {
   canManageSessionTargets: true,
   canViewSessionsReport: true,
   canWorkAsExpert: false,
+  canWriteMedicalExam: false,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -70,6 +74,7 @@ const defaultBranchPermissions: UserPermissions = {
   canManageSessionTargets: false,
   canViewSessionsReport: false,
   canWorkAsExpert: false,
+  canWriteMedicalExam: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -98,6 +103,7 @@ export function usePermissions(): UserPermissions {
       canManageSessionTargets: false,
       canViewSessionsReport: false,
       canWorkAsExpert: false,
+      canWriteMedicalExam: false,
     };
   }
 
@@ -125,6 +131,7 @@ export function usePermissions(): UserPermissions {
       canManageSessionTargets: perms.canManageSessionTargets ?? false,
       canViewSessionsReport: perms.canViewSessionsReport ?? false,
       canWorkAsExpert: perms.canWorkAsExpert ?? false,
+      canWriteMedicalExam: perms.canWriteMedicalExam ?? false,
     };
   }
   

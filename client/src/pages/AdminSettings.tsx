@@ -57,6 +57,8 @@ import {
   Trash2
 } from "lucide-react";
 import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
+import { MEDICAL_SPECIALTIES, SPECIALTY_LABELS } from "@shared/medical";
 import {
   Select,
   SelectContent,
@@ -1325,6 +1327,11 @@ export default function AdminSettings() {
     // Expert capability, independent of the primary role — lets an accountant
     // or branch manager ALSO be assigned prosthetics work orders.
     canWorkAsExpert: false,
+    // Doctor capability + the specialties it covers. Deliberately NOT part of
+    // `defaultPermissions[role]`, so switching a user's role never silently
+    // grants or revokes the right to sign clinical records.
+    canWriteMedicalExam: false,
+    medicalSpecialties: [] as string[],
     language: "ar",
   });
 
@@ -1464,6 +1471,8 @@ export default function AdminSettings() {
       canManageSessionTargets: false,
       canViewSessionsReport: false,
       canWorkAsExpert: false,
+      canWriteMedicalExam: false,
+      medicalSpecialties: [] as string[],
       language: "ar",
     });
   };
@@ -1507,6 +1516,10 @@ export default function AdminSettings() {
       canManageSessionTargets: (user as any).canManageSessionTargets ?? false,
       canViewSessionsReport: (user as any).canViewSessionsReport ?? false,
       canWorkAsExpert: (user as any).canWorkAsExpert ?? false,
+      canWriteMedicalExam: (user as any).canWriteMedicalExam ?? false,
+      medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
+        ? ((user as any).medicalSpecialties as string[])
+        : [],
       language: (user as any).language || "ar",
     });
     setShowUserDialog(true);
@@ -2917,6 +2930,69 @@ export default function AdminSettings() {
                       ? "هذا المستخدم خبير أطراف أصلاً (دوره الأساسي)."
                       : "يظهر في قائمة الخبراء ويُسنَد له أوامر تصنيع ويفتح لوحة التصنيع — مع احتفاظه بكامل صلاحيات دوره الأساسي (مثل محاسب خبير، أو مدير فرع خبير)."}
                   </p>
+                </div>
+
+                {/* Doctor capability. Like the expert flag it is independent of
+                    the primary role, and it is never auto-granted to anyone —
+                    an admin without it cannot sign a clinical record either. */}
+                <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="canWriteMedicalExam"
+                      checked={userFormData.canWriteMedicalExam}
+                      onCheckedChange={(checked) =>
+                        setUserFormData(prev => ({
+                          ...prev,
+                          canWriteMedicalExam: checked,
+                          // Revoking clears the specialties too, so a re-grant
+                          // always starts from an explicit choice.
+                          medicalSpecialties: checked ? prev.medicalSpecialties : [],
+                        }))
+                      }
+                      data-testid="switch-canWriteMedicalExam"
+                    />
+                    <Label htmlFor="canWriteMedicalExam" className="text-sm font-semibold">
+                      طبيب — يكتب المعاينة الطبية
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    المعاينة سجلّ سريري موقّع باسمه، تُقفل بعد الحفظ فلا تُعدّل ولا تُحذف، والتصحيح يكون بملحق مؤرّخ. بقية الموظفين يرونها للقراءة فقط.
+                  </p>
+
+                  {userFormData.canWriteMedicalExam && (
+                    <div className="mt-3 border-t border-teal-200 pt-3">
+                      <Label className="text-xs font-semibold text-teal-900">
+                        اختصاصاته (يكتب معاينة في المحدَّد فقط)
+                      </Label>
+                      <div className="flex flex-wrap gap-4 mt-2">
+                        {MEDICAL_SPECIALTIES.map((spec) => (
+                          <div key={spec} className="flex items-center gap-2">
+                            <Checkbox
+                              id={`spec-${spec}`}
+                              checked={userFormData.medicalSpecialties.includes(spec)}
+                              onCheckedChange={(checked) =>
+                                setUserFormData(prev => ({
+                                  ...prev,
+                                  medicalSpecialties: checked
+                                    ? [...prev.medicalSpecialties, spec]
+                                    : prev.medicalSpecialties.filter((s) => s !== spec),
+                                }))
+                              }
+                              data-testid={`checkbox-specialty-${spec}`}
+                            />
+                            <Label htmlFor={`spec-${spec}`} className="text-sm font-normal">
+                              {SPECIALTY_LABELS[spec]}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                      {userFormData.medicalSpecialties.length === 0 && (
+                        <p className="text-xs text-amber-700 mt-2">
+                          لم تحدّد أي اختصاص — لن يتمكّن من كتابة أي معاينة.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -193,6 +193,63 @@ canDeleteVisits: Boolean(systemUser.canDeleteVisits)
 
 ---
 
+## 4.b معاينة الطبيب (migration 028)
+
+**سجلّ سريري موقّع ومقفل.** يُبنى فوق الاختصاصات الثلاثة الموجودة أصلاً
+في `patient_cases.case_type`: `prosthetic` (أطراف) · `medical_support`
+(مساند) · `physiotherapy` (علاج طبيعي) — لا تصنيف موازٍ.
+
+### الجداول
+- `medical_exams` — المعاينة. `doctor_name` **لقطة** لا join، ليبقى
+  السجل مقروءاً بعد تغيير اسم الحساب أو حذفه.
+- `medical_exam_addenda` — الملاحق. التصحيح يُضاف ولا يمسح الأصل.
+- `medical_exams_forensic_log` — لقطة كاملة لأي صفّ يُحذف فعلياً.
+
+### مَن يكتب
+قدرة `system_users.can_write_medical_exam` + `medical_specialties`
+(مصفوفة jsonb بالاختصاصات). **لا تُمنح تلقائياً لأحد — ولا للمسؤول.**
+المدير يفعّلها من إعدادات المستخدمين. القدرة مستقلّة عن الدور
+(مدير فرع قد يكون طبيباً)، على غرار `can_work_as_expert`.
+
+المنح **يُقرأ من القاعدة عند كل كتابة** لا من الجلسة، فسحب الصلاحية
+يسري فوراً لا عند تسجيل الدخول التالي.
+
+### ثلاث طبقات حماية
+1. **ترِكر `BEFORE UPDATE`** على الجدولين يرفع استثناءً — السجل مقفل.
+   مخرج طوارئ للمالك داخل معاملة:
+   ```sql
+   BEGIN; SET LOCAL app.allow_exam_edit = 'on';
+   UPDATE medical_exams SET ... WHERE id = ...; COMMIT;
+   ```
+2. **ترِكر `BEFORE DELETE`** يصوّر الصفّ في الجدول الجنائي مع
+   `current_user` و `client_addr`. لا توجد نقطة REST للحذف إطلاقاً؛
+   المسار الوحيد هو كاسكيد حذف المريض.
+3. `logAudit` بـ `entity_type = 'medical_exam'` و
+   `'medical_exam_addendum'`.
+
+### وسم «بانتظار معاينة»
+`GET /api/medical/pending` يرجع كل **حالة نشطة بلا معاينة**، صفّ لكل
+(مريض، اختصاص). يظهر شارة كهرمانية في قائمة المرضى وصفحة المريض، فيرى
+كل طبيب مَن ينتظره في اختصاصه. الحالات `status='closed'` مستثناة.
+
+### نقاط REST (`server/medical/routes.ts`)
+| النقطة | الوصف |
+|---|---|
+| `GET /api/medical/me` | صلاحية الطبيب واختصاصاته |
+| `GET /api/medical/patients/:id/exams` | التسلسل + الملاحق + الانتظار |
+| `POST /api/medical/patients/:id/exams` | توقيع معاينة |
+| `POST /api/medical/exams/:id/addenda` | إضافة ملحق |
+| `GET /api/medical/pending` | خريطة الانتظار للقائمة |
+
+**القراءة للجميع** ضمن نطاق الفرع — السجل السريري يراه فريق العلاج كلّه.
+
+### تحقّق ميداني
+شُغّلت الـ migration على Postgres 16 محلي مرّتين (idempotent)، وثُبّت
+عملياً: رفض التعديل، بقاء النص الأصلي، نجاح مخرج الطوارئ، وكتابة
+الصفّ الجنائي عند الحذف.
+
+---
+
 ## 5. ثغرات معروفة لم تُعالج بعد
 
 - **`req.ip` يُظهر حافة Cloudflare**: نحتاج `app.set('trust proxy', N)`
@@ -225,6 +282,9 @@ server/
     routes.ts            # نقاط محاسبية.
   anomalies/
     detector.ts          # كشف الشذوذ (قراءة فقط).
+  medical/
+    store.ts             # طبقة بيانات المعاينات (إدراج فقط، لا تعديل ولا حذف).
+    routes.ts            # نقاط المعاينة + الملاحق + قائمة الانتظار.
   sessions_module/
     routes.ts            # تتبّع الجلسات اليومية لكل جهاز.
   replit_integrations/

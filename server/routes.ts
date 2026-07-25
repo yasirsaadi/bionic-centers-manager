@@ -5,6 +5,7 @@ import { db } from "./db";
 import { sql, eq, and, isNull, desc } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
+import { isMedicalSpecialty } from "@shared/medical";
 import { z } from "zod";
 import { patients, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
@@ -16,6 +17,7 @@ import bcrypt from "bcryptjs";
 import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
+import { registerMedicalRoutes } from "./medical/routes";
 import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
@@ -359,6 +361,11 @@ export async function registerRoutes(
             // pure expert (role === prosthetics_expert) implicitly works as an
             // expert too; anyone else needs the explicit flag on their row.
             canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
+            // Doctor capability. NEVER auto-granted — not to managers and not to
+            // admins: signing a clinical record is a professional act. This copy
+            // only drives the UI; every write re-reads the grant from the
+            // database so a revocation applies immediately, not at next login.
+            canWriteMedicalExam: Boolean(systemUser.canWriteMedicalExam),
           };
 
           // Store session with user permissions
@@ -960,6 +967,16 @@ export async function registerRoutes(
       if (userData.canAddExpenses !== undefined) {
         userData.canAddExpenses = userData.canAddExpenses === true || userData.canAddExpenses === "true";
       }
+      // Doctor capability + the specialties it covers. An empty specialty list
+      // makes the flag a no-op by design, so the two always travel together.
+      if (userData.canWriteMedicalExam !== undefined) {
+        userData.canWriteMedicalExam =
+          userData.canWriteMedicalExam === true || userData.canWriteMedicalExam === "true";
+      }
+      if (userData.medicalSpecialties !== undefined) {
+        const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
+        userData.medicalSpecialties = raw.filter(isMedicalSpecialty);
+      }
 
       if (!userData.username || userData.username.length < 1) {
         return res.status(400).json({ message: "اسم المستخدم مطلوب" });
@@ -1032,6 +1049,16 @@ export async function registerRoutes(
       }
       if (userData.canAddExpenses !== undefined) {
         userData.canAddExpenses = userData.canAddExpenses === true || userData.canAddExpenses === "true";
+      }
+      // Doctor capability + the specialties it covers. An empty specialty list
+      // makes the flag a no-op by design, so the two always travel together.
+      if (userData.canWriteMedicalExam !== undefined) {
+        userData.canWriteMedicalExam =
+          userData.canWriteMedicalExam === true || userData.canWriteMedicalExam === "true";
+      }
+      if (userData.medicalSpecialties !== undefined) {
+        const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
+        userData.medicalSpecialties = raw.filter(isMedicalSpecialty);
       }
 
       // Validate role if provided
@@ -5592,6 +5619,9 @@ export async function registerRoutes(
 
   // Register prosthetic/medical-support manufacturing routes
   registerManufacturingRoutes(app, isAuthenticated);
+
+  // Register doctor medical-examination routes (معاينة الطبيب)
+  registerMedicalRoutes(app, isAuthenticated);
 
   return httpServer;
 }
