@@ -284,12 +284,21 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const allowed = serviceType === "prosthetic"
       ? ["prostheticType", "siliconType", "siliconSize", "suspensionSystem", "footType", "footSize", "kneeJointType"] as const
       : ["supportType"] as const;
+    // Clinical spec fields follow the registration-form rule: only managers,
+    // doctors and the admin may WRITE them (the legacy escape for gaps the
+    // doctor left blank). A reception session's spec values are dropped at the
+    // source — its UI shows a read-only summary and sends none, and this makes
+    // that real for a hand-crafted request too.
+    const mayWriteClinical = s.isAdmin || isManager(s)
+      || s.role === "doctor" || Boolean(s.permissions?.canWriteMedicalExam);
     const fields: any = {};
-    for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
-    // The doctor's signed specs are not reception's to change: whatever the
+    if (mayWriteClinical) {
+      for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
+    }
+    // The doctor's signed specs are not anyone's to change: whatever the
     // latest exam prescribes overrides the request body, field by field.
-    // Fields the doctor left blank remain fillable here. Failure to read the
-    // exam must not block the assignment — it degrades to trusting the body.
+    // Failure to read the exam must not block the assignment — it degrades to
+    // trusting the (already role-filtered) body.
     try {
       Object.assign(fields, await prescribedSpecs(patientId, serviceType));
     } catch (err) {
