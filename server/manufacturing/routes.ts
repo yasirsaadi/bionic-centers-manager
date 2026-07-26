@@ -12,6 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import { prescribedSpecs } from "../medical/store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
@@ -261,6 +262,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       : ["supportType"] as const;
     const fields: any = {};
     for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
+    // The doctor's signed specs are not reception's to change: whatever the
+    // latest exam prescribes overrides the request body, field by field.
+    // Fields the doctor left blank remain fillable here. Failure to read the
+    // exam must not block the assignment — it degrades to trusting the body.
+    try {
+      Object.assign(fields, await prescribedSpecs(patientId, serviceType));
+    } catch (err) {
+      console.error("[manufacturing] reading prescribed specs failed:", err);
+    }
 
     try {
       const { workOrderId } = await storage.assignManufacturing({

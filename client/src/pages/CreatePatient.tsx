@@ -98,6 +98,15 @@ export default function CreatePatient() {
   const { t, dir } = useTranslation();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
+  // The amputation decision is the doctor's. Reception registers the service
+  // TYPE only (that is what routes the patient to the doctor's worklist); the
+  // builder stays available to the roles that may legitimately pre-record it —
+  // branch manager, doctor, admin. Enforced again server-side on create.
+  const canEditClinicalDetails =
+    isAdmin ||
+    branchSession?.role === "branch_manager" ||
+    branchSession?.role === "doctor" ||
+    Boolean((branchSession as any)?.permissions?.canWriteMedicalExam);
   const userRole = branchSession?.role;
   const canBackdateRegistration = userRole !== "reception"; // موظفو الاستقبال لا يمكنهم التسجيل بتاريخ قديم
   
@@ -214,6 +223,9 @@ export default function CreatePatient() {
   // Build amputationSite string from selections
   useEffect(() => {
     if (conditionType !== "amputee") return;
+    // Builder hidden for this role ⇒ its default state must not silently write
+    // "احادي - طرف سفلي - يمين" onto every reception-registered amputee.
+    if (!canEditClinicalDetails) return;
     
     let site = "";
     if (amputationType === "single") {
@@ -252,7 +264,7 @@ export default function CreatePatient() {
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, canEditClinicalDetails, form]);
 
   // Sync boolean flags with string selection, AND clear the fields belonging to
   // the services no longer selected.
@@ -746,7 +758,13 @@ export default function CreatePatient() {
                 )}
               />
 
-              {conditionType === "amputee" && (
+              {conditionType === "amputee" && !canEditClinicalDetails && (
+                <p className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3" data-testid="note-doctor-decides">
+                  تفاصيل البتر ونوع الطرف يحدّدها الطبيب في المعاينة — سيظهر المريض في قائمة «بانتظار معاينة أطراف صناعية» بعد الحفظ.
+                </p>
+              )}
+
+              {conditionType === "amputee" && canEditClinicalDetails && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
                   {/* Amputation Type Selection */}
                   <div className="space-y-4">
