@@ -359,14 +359,19 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       }
     }
     const visitNotes = strOrU(req.body?.notes) ?? "صيانة طرف/مسند";
+    // أجور الصيانة — reception / manager / admin set it here (the roles this
+    // endpoint already admits). 0 = warranty. Booked inside the same
+    // transaction that opens the maintenance episode.
+    const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
     try {
       const order = await store.createMaintenanceOrderWithVisit({
         patientId, branchId: patient.branchId, serviceType, expertUserId,
-        expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate,
+        expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate, cost,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-        `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`);
+        `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
+          + (cost > 0 ? ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)` : " (ضمن الضمان)"));
       res.status(201).json(order);
     } catch (err: any) {
       if (err instanceof store.ActiveOrderError) {
@@ -444,28 +449,35 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   });
 
   // ---- expected delivery date update ------------------------------------------
-  // The date can be renegotiated with the expert; updating it appends a
-  // history row (nothing is overwritten silently) and drives the alerts.
+  // Any writer on the order — the ASSIGNED EXPERT included, since they are the
+  // one who knows the workshop reality — may change a committed date, but
+  // never quietly: the reason is MANDATORY on a change, lands in the order
+  // history, and the patient page shows it to the whole team. The first
+  // commitment (no date yet) needs no reason.
   app.patch("/api/manufacturing/orders/:id/delivery-date", isAuthenticated, async (req: Req, res) => {
     const raw = await loadWritable(req, res);
     if (!raw) return;
-    // Once the delivery date has been committed (by the expert at the mold
-    // stage), CHANGING it is restricted to branch management / admin — so the
-    // promised date the expert is measured against can't be quietly moved.
-    if (raw.expectedDeliveryDate) {
-      const s = getSession(req);
-      if (!(s.isAdmin || isManager(s))) {
-        return res.status(403).json({ error: "تعديل تاريخ التسليم بعد تحديده يقتصر على إدارة الفرع أو الإدارة العامة" });
-      }
-    }
     const date = strOrU(req.body?.expectedDeliveryDate);
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: "تاريخ غير صالح" });
     }
+    const isChange = !!raw.expectedDeliveryDate;
+    const reason = (strOrU(req.body?.reason) ?? "").trim();
+    if (isChange && !reason) {
+      return res.status(400).json({ error: "سبب تغيير تاريخ التسليم إلزامي — اذكر لماذا تغيّر الموعد" });
+    }
+    if (isChange && String(raw.expectedDeliveryDate) === date) {
+      return res.status(400).json({ error: "التاريخ الجديد مطابق للحالي" });
+    }
     const updated = await store.updateDeliveryDate({
       order: raw, expectedDeliveryDate: date,
       performedBy: getSession(req).userId ?? null,
+      reason: isChange ? reason : null,
     });
+    if (isChange) {
+      await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
+        `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`);
+    }
     res.json(updated);
   });
 

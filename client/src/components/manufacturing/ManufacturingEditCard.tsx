@@ -38,6 +38,7 @@ export function ManufacturingEditCard({ patient }: {
   const [newExpertId, setNewExpertId] = useState("");
   const [reason, setReason] = useState("");
   const [newDate, setNewDate] = useState("");
+  const [dateReason, setDateReason] = useState("");
 
   const summaryKey = [`/api/manufacturing/patient/${patient.id}/summary`];
   const { data: summary } = useQuery<Summary | null>({
@@ -102,14 +103,14 @@ export function ManufacturingEditCard({ patient }: {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ expectedDeliveryDate: newDate }),
+        body: JSON.stringify({ expectedDeliveryDate: newDate, reason: dateReason.trim() || undefined }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "تعذّر تعديل الموعد"); }
       return res.json();
     },
     // Do NOT clear the field on success — keep the saved date visible so the
     // change is obvious (clearing it read as "nothing happened").
-    onSuccess: () => { invalidate(); toast({ title: "تم تعديل موعد التسليم" }); },
+    onSuccess: () => { invalidate(); setDateReason(""); toast({ title: "تم تغيير موعد التسليم وتسجيل السبب" }); },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
@@ -151,15 +152,24 @@ export function ManufacturingEditCard({ patient }: {
           <p className="text-[11px] text-muted-foreground">للاستقبال: التحويل متاح قبل بدء الخبير العمل فقط؛ بعده يحوّل المدير أو المسؤول.</p>
         </div>
 
-        {/* Change expected delivery date */}
+        {/* Change expected delivery date — reason mandatory when a date exists */}
         <div className="bg-white border rounded-lg p-3 space-y-2">
-          <label className="text-sm font-semibold">تعديل موعد التسليم المتوقع</label>
+          <label className="text-sm font-semibold">تغيير موعد التسليم المتوقع</label>
           <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} data-testid="input-edit-delivery" />
-          <Button type="button" size="sm" className="w-full" disabled={!dateChanged || updateDate.isPending}
+          {summary!.expectedDeliveryDate && (
+            <Input
+              value={dateReason}
+              onChange={(e) => setDateReason(e.target.value)}
+              placeholder="سبب التغيير (إلزامي) — مثال: تأخّر المورّد"
+              data-testid="input-edit-delivery-reason"
+            />
+          )}
+          <Button type="button" size="sm" className="w-full"
+            disabled={!dateChanged || (!!summary!.expectedDeliveryDate && !dateReason.trim()) || updateDate.isPending}
             onClick={() => updateDate.mutate()} data-testid="button-edit-delivery">
             {updateDate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : dateChanged ? "حفظ الموعد الجديد" : "اختر تاريخاً مختلفاً"}
           </Button>
-          <p className="text-[11px] text-muted-foreground">يُسجَّل التغيير في الخط الزمني وتُحدَّث التنبيهات عليه.</p>
+          <p className="text-[11px] text-muted-foreground">يُسجَّل التغيير وسببه في الخط الزمني وملف المريض، وتُحدَّث التنبيهات عليه.</p>
         </div>
       </div>
     </Card>

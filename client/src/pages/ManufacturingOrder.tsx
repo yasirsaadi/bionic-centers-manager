@@ -74,12 +74,11 @@ export default function ManufacturingOrder() {
   const { order, patient, timeline, rework } = data;
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
-  // Mirrors the server rule exactly (PATCH /orders/:id/delivery-date): while the
-  // date is still empty ANY writer on the order may commit one — including the
-  // assigned expert, who is the person who actually knows when it will be
-  // ready. After it is set, changing it is management/admin only, so the date
-  // the expert is measured against can't be quietly moved.
-  const canSetDeliveryDate = !order.expectedDeliveryDate || isAdmin || isManager;
+  // Mirrors the server rule (PATCH /orders/:id/delivery-date): every writer on
+  // the order — the assigned expert included — may set OR change the date.
+  // Changing a committed date demands a mandatory reason that lands in the
+  // order history and on the patient page, so the promise never moves quietly.
+  const canSetDeliveryDate = true;
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
@@ -315,7 +314,8 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
   // misbehaves on iOS Safari (the pick often doesn't stick), which is exactly
   // the device the experts use on the floor.
   const [date, setDate] = useState(current ?? "");
-  useEffect(() => { setDate(current ?? ""); }, [current, open]);
+  const [reason, setReason] = useState("");
+  useEffect(() => { setDate(current ?? ""); setReason(""); }, [current, open]);
   const m = useAction(`/api/manufacturing/orders/${orderId}/delivery-date`, "PATCH", () => { onOpenChange(false); onDone(); });
   const isFirstCommit = !current;
   return (
@@ -336,16 +336,29 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 bg-white" data-testid="input-delivery-date" />
             <p className="text-xs text-muted-foreground mt-1">
               {isFirstCommit
-                ? "بعد تحديده لا يتغيّر إلا من إدارة الفرع/العامة — وعليه تُقاس دقّة التسليم."
-                : "يُسجَّل التغيير في الخطّ الزمني ولا يُمحى الموعد السابق."}
+                ? "عليه تُقاس دقّة التسليم — وأي تغيير لاحق يتطلّب ذكر السبب ويُسجَّل في ملف المريض."
+                : "يُسجَّل التغيير وسببه في الخطّ الزمني وملف المريض، ولا يُمحى الموعد السابق."}
             </p>
           </div>
+          {!isFirstCommit && (
+            <div>
+              <label className="text-sm font-semibold">سبب التغيير <span className="text-red-500">*</span></label>
+              <Textarea
+                rows={2}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="مثال: تأخّر وصول مفصل الركبة من المورّد"
+                className="mt-1 bg-white"
+                data-testid="input-delivery-date-reason"
+              />
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
           <Button
-            disabled={!date || date === (current ?? "") || m.isPending}
-            onClick={() => m.mutate({ expectedDeliveryDate: date })}
+            disabled={!date || date === (current ?? "") || (!isFirstCommit && !reason.trim()) || m.isPending}
+            onClick={() => m.mutate({ expectedDeliveryDate: date, reason: reason.trim() || undefined })}
             data-testid="button-save-delivery-date"
           >
             {m.isPending ? "جارٍ الحفظ…" : "حفظ"}
