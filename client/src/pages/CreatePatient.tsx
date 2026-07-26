@@ -254,20 +254,45 @@ export default function CreatePatient() {
     form.setValue("amputationSite", site);
   }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form]);
 
-  // Sync boolean flags with string selection
+  // Sync boolean flags with string selection, AND clear the fields belonging to
+  // the services no longer selected.
+  //
+  // Clearing matters as much as flagging. Switching the service used to leave
+  // the previous one's values behind — the amputationSite builder above bails
+  // out early once conditionType is no longer "amputee", so it never erases
+  // what it already wrote — and the form starts on أطراف for most branches. A
+  // receptionist who clicked through the أطراف fields before correcting to
+  // مساند therefore submitted a stale amputationSite, and the server read that
+  // leftover as proof the patient needed a limb. Each service now leaves the
+  // form as cleanly as physiotherapy always did.
   useEffect(() => {
+    const PROSTHETIC_FIELDS = [
+      "amputationSite", "prostheticType", "siliconType", "siliconSize",
+      "suspensionSystem", "footType", "footSize", "kneeJointType",
+    ] as const;
+    const SUPPORT_FIELDS = ["supportType"] as const;
+    const PHYSIO_FIELDS = ["diseaseType", "injuries", "injuryType", "injuryArea", "treatmentType"] as const;
+    const clear = (fields: readonly string[]) =>
+      fields.forEach((f) => form.setValue(f as any, "" as any));
+
     if (conditionType === "amputee") {
       form.setValue("isAmputee", true);
       form.setValue("isPhysiotherapy", false);
       form.setValue("isMedicalSupport", false);
+      clear(SUPPORT_FIELDS);
+      clear(PHYSIO_FIELDS);
     } else if (conditionType === "physiotherapy") {
       form.setValue("isAmputee", false);
       form.setValue("isPhysiotherapy", true);
       form.setValue("isMedicalSupport", false);
+      clear(PROSTHETIC_FIELDS);
+      clear(SUPPORT_FIELDS);
     } else if (conditionType === "medical_support") {
       form.setValue("isAmputee", false);
       form.setValue("isPhysiotherapy", false);
       form.setValue("isMedicalSupport", true);
+      clear(PROSTHETIC_FIELDS);
+      clear(PHYSIO_FIELDS);
     }
   }, [conditionType, form]);
 

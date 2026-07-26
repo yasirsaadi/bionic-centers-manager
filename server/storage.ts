@@ -30,6 +30,7 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
+import { wantedServices } from "@shared/case_signals";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -426,16 +427,27 @@ export class DatabaseStorage implements IStorage {
     // services — match by containment/split, never by exact equality.
     const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));
     const tagParts = (t: string) => t.split(/[،,]/).map((x) => x.trim()).filter(Boolean);
-    // A service is present when ANY of its signals exist: the boolean flag,
-    // a work order, a tagged payment, OR the service's own recorded detail
-    // field. The detail-field signal is essential because many patients had
-    // their مسند/طرف recorded only via its type field (e.g. support_type /
-    // prosthetic_type) while the boolean flag was left false — so flag-only
-    // detection made those cases invisible. Reading the real recorded column
-    // is not a guess; it is where the service was actually stored.
-    const wantProsthetic = !!p.isAmputee || hasWO("prosthetic") || hasTag((t) => t.includes("أطراف صناعية")) || !!p.prostheticType || !!p.amputationSite;
-    const wantSupport = !!p.isMedicalSupport || hasWO("medical_support") || hasTag((t) => t.includes("مساند طبية")) || !!p.supportType;
-    const wantPhysio = !!p.isPhysiotherapy || hasTag((t) => tagParts(t).some((x) => PHYSIO_TAGS.has(x)));
+    // The rule lives in shared/case_signals.ts so it can be tested without a
+    // database — see `npm run test:case-signals`. In short: flags, work orders
+    // and tagged payments always count; a service's own detail column counts
+    // only for a patient with no classification at all (the legacy rescue),
+    // because for a classified patient it is just what the registration form
+    // left behind when the service type was switched.
+    const want = wantedServices({
+      isAmputee: !!p.isAmputee,
+      isMedicalSupport: !!p.isMedicalSupport,
+      isPhysiotherapy: !!p.isPhysiotherapy,
+      hasProstheticWorkOrder: hasWO("prosthetic"),
+      hasSupportWorkOrder: hasWO("medical_support"),
+      hasProstheticTag: hasTag((t) => t.includes("أطراف صناعية")),
+      hasSupportTag: hasTag((t) => t.includes("مساند طبية")),
+      hasPhysioTag: hasTag((t) => tagParts(t).some((x) => PHYSIO_TAGS.has(x))),
+      hasProstheticDetails: !!p.prostheticType || !!p.amputationSite,
+      hasSupportDetails: !!p.supportType,
+    });
+    const wantProsthetic = want.prosthetic;
+    const wantSupport = want.medical_support;
+    const wantPhysio = want.physiotherapy;
 
     // ---- per-service cost from "تكلفة: X" markers --------------------------
     // Soft-deleted visits are excluded: a deleted add-case-type marker must not
