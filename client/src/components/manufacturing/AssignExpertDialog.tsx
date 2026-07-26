@@ -6,7 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
-import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite } from "@shared/case_fields";
+import { useBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Stethoscope } from "lucide-react";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
@@ -24,6 +26,17 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const session = useBranchSession();
+  const permissions = usePermissions();
+  // Same rule as the registration form: clinical fields are the doctor's;
+  // branch managers / doctors / admin may still edit the gaps (the legacy
+  // escape hatch), reception may not — they get a read-only summary of the
+  // doctor's decision plus the two things that are theirs: price and expert.
+  const canEditClinicalDetails =
+    Boolean(session?.isAdmin) ||
+    session?.role === "branch_manager" ||
+    session?.role === "doctor" ||
+    permissions.canWriteMedicalExam;
   const [expertUserId, setExpertUserId] = useState<number | null>(null);
   const [cost, setCost] = useState<number>(0);
   const [specs, setSpecs] = useState<Record<string, string>>({});
@@ -74,6 +87,22 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // version of its 409. (examsLoaded avoids flashing the lock while fetching.)
   const examsLoaded = examData !== undefined;
   const examMissing = examsLoaded && !rxExam;
+  // What the doctor actually determined, as label/value lines — including the
+  // amputation builder's composed site, which lives in the prescription but
+  // NOT in the seven spec inputs, so it was invisible here before.
+  const rx: Record<string, any> = rxExam?.prescription ?? {};
+  const doctorLines: { label: string; value: string }[] = [];
+  if (!isSupport && typeof rx.amputationType === "string" && rx.amputationType) {
+    const site = buildAmputationSite(rx);
+    if (site) doctorLines.push({ label: "موقع البتر", value: site });
+  }
+  for (const f of specFields) {
+    const v = rx[f.key];
+    if (typeof v === "string" && v.trim()) doctorLines.push({ label: f.label, value: v });
+  }
+  if (typeof rx.injurySide === "string" && rx.injurySide.trim()) {
+    doctorLines.push({ label: "جهة الإصابة", value: rx.injurySide });
+  }
 
   useEffect(() => {
     if (!open || !rxExam?.prescription) return;
@@ -149,31 +178,41 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             <div className="rounded-lg border border-teal-300 bg-teal-50/60 p-2.5 text-xs text-teal-900 flex gap-2">
               <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                ما حدّده <b>{prescribedBy}</b> في المعاينة ثابت هنا للقراءة — الحقول
-                الفارغة فقط يمكنك إكمالها عند الحاجة. يبقى لك الكلفة وإسناد الخبير.
+                {canEditClinicalDetails
+                  ? <>ما حدّده <b>{prescribedBy}</b> ثابت للقراءة — الحقول الفارغة فقط يمكنك إكمالها عند الحاجة. تبقى الكلفة وإسناد الخبير.</>
+                  : <>هذا قرار <b>{prescribedBy}</b> الموقّع. دورك هنا: اعتماد الكلفة وإسناد الخبير.</>}
               </span>
             </div>
           )}
 
-          {specFields.map((f) => {
-            // A field the doctor filled is their SIGNED decision — shown, sent,
-            // but not editable here (and the server re-asserts it regardless of
-            // what the request carries). Fields the doctor left blank stay
-            // fillable, so a legacy patient without an exam works as before.
-            const doctorValue = rxExam?.prescription?.[f.key];
-            const fromDoctor = typeof doctorValue === "string" && doctorValue.trim().length > 0;
-            return fromDoctor ? (
-              <div key={f.key} className="space-y-1">
-                <label className="text-sm font-medium">{f.label}</label>
-                <div
-                  className="rounded-md border border-teal-200 bg-teal-50/40 px-3 py-2 text-sm"
-                  dir="auto"
-                  data-testid={`spec-${f.key}`}
-                >
-                  {doctorValue}
-                </div>
+          {/* What the doctor determined — one read-only box for everyone, so
+              reception UNDERSTANDS the decision (site, specs, side) without
+              being handed clinical inputs that registration already hides
+              from them. */}
+          {doctorLines.length > 0 && (
+            <div className="rounded-lg border border-teal-200 bg-teal-50/40 p-3 space-y-1" data-testid="doctor-decision-summary">
+              <div className="text-xs font-bold text-teal-900 mb-1">
+                ما حدّده {prescribedBy ?? "الطبيب"} في المعاينة
               </div>
-            ) : (
+              {doctorLines.map((l) => (
+                <div key={l.label} className="text-sm flex gap-2">
+                  <span className="text-muted-foreground shrink-0 min-w-[110px]">{l.label}:</span>
+                  <span dir="auto" style={{ unicodeBidi: "plaintext" }}>{l.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* The EDITABLE clinical inputs exist only for the roles that may
+              write clinical data anywhere (manager / doctor / admin) — the
+              legacy escape for gaps the doctor left blank. Reception never
+              sees an editable clinical field here, mirroring the registration
+              form; the server enforces the same. */}
+          {canEditClinicalDetails && specFields.map((f) => {
+            const doctorValue = rx[f.key];
+            const fromDoctor = typeof doctorValue === "string" && doctorValue.trim().length > 0;
+            if (fromDoctor) return null; // already in the summary above
+            return (
               <div key={f.key} className="space-y-1">
                 <label className="text-sm font-medium">{f.label}</label>
                 <Input
