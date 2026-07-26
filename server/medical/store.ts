@@ -336,6 +336,34 @@ export async function getRevisions(examIds: number[]): Promise<MedicalExamRevisi
     .orderBy(REV.examId, REV.version);
 }
 
+/**
+ * The newest signed exam's non-empty device specs for (patient, specialty).
+ *
+ * Read by the تخصيص endpoint so the doctor's signed specification always wins
+ * over whatever the request body carries: reception may FILL fields the doctor
+ * left blank, but may not rewrite the ones the doctor decided.
+ */
+export async function prescribedSpecs(
+  patientId: number,
+  caseType: MedicalSpecialty,
+): Promise<Record<string, string>> {
+  const [exam] = await db
+    .select({ prescription: EX.prescription })
+    .from(EX)
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .orderBy(desc(EX.signedAt), desc(EX.id))
+    .limit(1);
+  const rx = exam?.prescription;
+  if (!rx || typeof rx !== "object") return {};
+  const fields = caseType === "prosthetic" ? PROSTHETIC_SPECS : SUPPORT_SPECS;
+  const out: Record<string, string> = {};
+  for (const f of fields) {
+    const v = (rx as Record<string, unknown>)[f.key];
+    if (typeof v === "string" && v.trim()) out[f.key] = v.trim();
+  }
+  return out;
+}
+
 /** Resolve the patient's case row for a specialty, so the exam can point at it. */
 export async function findCaseFor(
   patientId: number,

@@ -134,25 +134,44 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             <div className="rounded-lg border border-teal-300 bg-teal-50/60 p-2.5 text-xs text-teal-900 flex gap-2">
               <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                المواصفات أدناه من معاينة <b>{prescribedBy}</b>. عدِّلها فقط عند الضرورة —
-                يبقى عليك الاتفاق على الكلفة وإسناد الخبير.
+                ما حدّده <b>{prescribedBy}</b> في المعاينة ثابت هنا للقراءة — الحقول
+                الفارغة فقط يمكنك إكمالها عند الحاجة. يبقى لك الكلفة وإسناد الخبير.
               </span>
             </div>
           )}
 
-          {specFields.map((f) => (
-            <div key={f.key} className="space-y-1">
-              <label className="text-sm font-medium">{f.label}</label>
-              <Input
-                value={specs[f.key] ?? ""}
-                type={f.numeric ? "number" : "text"}
-                inputMode={f.numeric ? "numeric" : undefined}
-                placeholder={f.placeholder}
-                onChange={(e) => setSpecs((s) => ({ ...s, [f.key]: e.target.value }))}
-                data-testid={`spec-${f.key}`}
-              />
-            </div>
-          ))}
+          {specFields.map((f) => {
+            // A field the doctor filled is their SIGNED decision — shown, sent,
+            // but not editable here (and the server re-asserts it regardless of
+            // what the request carries). Fields the doctor left blank stay
+            // fillable, so a legacy patient without an exam works as before.
+            const doctorValue = rxExam?.prescription?.[f.key];
+            const fromDoctor = typeof doctorValue === "string" && doctorValue.trim().length > 0;
+            return fromDoctor ? (
+              <div key={f.key} className="space-y-1">
+                <label className="text-sm font-medium">{f.label}</label>
+                <div
+                  className="rounded-md border border-teal-200 bg-teal-50/40 px-3 py-2 text-sm"
+                  dir="auto"
+                  data-testid={`spec-${f.key}`}
+                >
+                  {doctorValue}
+                </div>
+              </div>
+            ) : (
+              <div key={f.key} className="space-y-1">
+                <label className="text-sm font-medium">{f.label}</label>
+                <Input
+                  value={specs[f.key] ?? ""}
+                  type={f.numeric ? "number" : "text"}
+                  inputMode={f.numeric ? "numeric" : undefined}
+                  placeholder={f.placeholder}
+                  onChange={(e) => setSpecs((s) => ({ ...s, [f.key]: e.target.value }))}
+                  data-testid={`spec-${f.key}`}
+                />
+              </div>
+            );
+          })}
 
           <div className="space-y-1">
             <label className="text-sm font-semibold">الكلفة (السعر) <span className="text-red-500">*</span></label>

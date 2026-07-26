@@ -1524,8 +1524,27 @@ export async function registerRoutes(
         return res.status(400).json({ message: "يجب اختيار الفرع" });
       }
 
+      // The amputation/device details are the doctor's decision. Only
+      // management and doctors may pre-record them at registration; any other
+      // session's values are dropped at the source — the UI hides the builder
+      // for reception, and this makes the hiding real rather than cosmetic.
+      const mayWriteClinical =
+        branchSession?.isAdmin ||
+        branchSession?.role === "branch_manager" ||
+        branchSession?.role === "doctor" ||
+        Boolean(branchSession?.permissions?.canWriteMedicalExam);
+      const creationBody: any = { ...req.body };
+      if (!mayWriteClinical) {
+        for (const k of [
+          "amputationSite", "prostheticType", "siliconType", "siliconSize",
+          "suspensionSystem", "footType", "footSize", "kneeJointType", "supportType",
+        ]) {
+          delete creationBody[k];
+        }
+      }
+
       const input = api.patients.create.input.parse({
-        ...req.body,
+        ...creationBody,
         branchId
       });
 
