@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Loader2, User, ShieldCheck, Building2, Clock, Globe } from "lucide-react";
+import { Lock, Loader2, User, ShieldCheck, Building2, Clock, Globe, Eye, EyeOff } from "lucide-react";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -85,6 +85,7 @@ export function BranchGate({ children }: BranchGateProps) {
   const [selectedBranch, setSelectedBranch] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [selectedShift, setSelectedShift] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -230,14 +231,24 @@ export function BranchGate({ children }: BranchGateProps) {
             <div className="relative">
               <Lock className={`absolute ${iconPosition} top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground`} />
               <Input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder={t.login.passwordPlaceholder}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={`${inputPadding} h-12`}
+                className={`${inputPadding} h-12 ${dir === "rtl" ? "pl-10" : "pr-10"}`}
                 autoComplete="current-password"
                 data-testid="input-branch-password"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className={`absolute ${dir === "rtl" ? "left-3" : "right-3"} top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground`}
+                aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+                tabIndex={-1}
+                data-testid="button-toggle-password"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
           </div>
 

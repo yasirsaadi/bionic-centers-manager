@@ -227,17 +227,40 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             );
           })}
 
-          <div className="space-y-1">
-            <label className="text-sm font-semibold">الكلفة (السعر) <span className="text-red-500">*</span></label>
-            <MoneyInput value={cost} onValueChange={setCost} placeholder="0" data-testid="input-assign-cost" />
-            {proposedCost != null && (
-              <p className="text-xs text-teal-800" data-testid="text-proposed-cost">
-                كلفة مقترحة من معاينة {prescribedBy ?? "الطبيب"}:{" "}
-                <b>{proposedCost.toLocaleString("en-US")} د.ع</b> — لا تدخل الحسابات
-                إلا بحفظ هذه النافذة.
+          {/* The PRICE follows the clinical-fields split. The doctor proposed
+              it; reception CONFIRMS it (read-only — the server ignores any other
+              number from a reception session anyway). Managers/doctors/admin may
+              still adjust it, and that adjustment is theirs in the audit log. */}
+          {canEditClinicalDetails ? (
+            <div className="space-y-1">
+              <label className="text-sm font-semibold">الكلفة (السعر) <span className="text-red-500">*</span></label>
+              <MoneyInput value={cost} onValueChange={setCost} placeholder="0" data-testid="input-assign-cost" />
+              {proposedCost != null && (
+                <p className="text-xs text-teal-800" data-testid="text-proposed-cost">
+                  كلفة مقترحة من معاينة {prescribedBy ?? "الطبيب"}:{" "}
+                  <b>{proposedCost.toLocaleString("en-US")} د.ع</b> — لا تدخل الحسابات
+                  إلا بحفظ هذه النافذة.
+                </p>
+              )}
+            </div>
+          ) : proposedCost != null ? (
+            <div className="space-y-1">
+              <label className="text-sm font-semibold">الكلفة (سعر الطبيب — تُعتمد بالحفظ)</label>
+              <div className="rounded-md border border-teal-200 bg-teal-50/40 px-3 py-2 text-sm font-semibold" data-testid="text-assign-cost-readonly">
+                {proposedCost.toLocaleString("en-US")} د.ع
+              </div>
+              <p className="text-xs text-muted-foreground">
+                حدّدها {prescribedBy ?? "الطبيب"} في المعاينة — لا تدخل الحسابات إلا بحفظ هذه النافذة.
               </p>
-            )}
-          </div>
+            </div>
+          ) : (
+            !examMissing && examsLoaded && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="notice-cost-missing">
+                لم يحدّد الطبيب كلفة الجهاز في المعاينة — تُستكمل الكلفة في المعاينة
+                أو يعتمد مدير الفرع التخصيص.
+              </div>
+            )
+          )}
 
           <div className="space-y-1">
             <label className="text-sm font-semibold">الخبير المسؤول عن التصنيع <span className="text-red-500">*</span></label>
@@ -259,7 +282,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || assign.isPending} data-testid="button-confirm-assign-expert">
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null) || assign.isPending} data-testid="button-confirm-assign-expert">
             {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>
