@@ -27,7 +27,8 @@ import {
   type SurveyTemplate, type InsertSurveyTemplate,
   type SurveyQuestion, type InsertSurveyQuestion,
   type SurveyResponse, type InsertSurveyResponse,
-  type SurveyAnswer, type InsertSurveyAnswer
+  type SurveyAnswer, type InsertSurveyAnswer,
+  medicalExams, medicalExamAddenda, medicalExamRevisions,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -719,8 +720,24 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(payments).where(eq(payments.patientId, id));
       await tx.delete(documents).where(eq(documents.patientId, id));
       await tx.delete(visits).where(eq(visits.patientId, id));
-      // patient_cases must go AFTER payments/visits (their case_id FK points
-      // here) and BEFORE the patient row (its patient_id FK points there).
+      // Medical exams must go BEFORE patient_cases: medical_exams.case_id
+      // points at the case row, and its children (addenda, revisions) point at
+      // the exam. Deleting the exam rows here is the ONE legitimate hard-delete
+      // path for a sealed record — and the BEFORE DELETE trigger from
+      // migration 028 snapshots every row into medical_exams_forensic_log
+      // (which has no FKs and survives), so even a full patient delete leaves
+      // the clinical evidence behind.
+      const examRows = await tx.select({ id: medicalExams.id })
+        .from(medicalExams)
+        .where(eq(medicalExams.patientId, id));
+      if (examRows.length > 0) {
+        const examIds = examRows.map((e) => e.id);
+        await tx.delete(medicalExamAddenda).where(inArray(medicalExamAddenda.examId, examIds));
+        await tx.delete(medicalExamRevisions).where(inArray(medicalExamRevisions.examId, examIds));
+        await tx.delete(medicalExams).where(eq(medicalExams.patientId, id));
+      }
+      // patient_cases must go AFTER payments/visits/exams (their case_id FKs
+      // point here) and BEFORE the patient row (its patient_id FK points there).
       await tx.delete(patientCases).where(eq(patientCases.patientId, id));
       // Manufacturing work orders (and their append-only history / rework) hold a
       // FK to the patient, so they must be removed for a full patient delete —
