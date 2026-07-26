@@ -222,6 +222,11 @@ export async function createMaintenanceOrderWithVisit(params: {
   assignedBy: number | null;
   visitNotes: string;
   visitDate: Date;
+  // أجور الصيانة. 0 = warranty / free. When > 0 it is booked the same way a
+  // confirmed device price is: onto the device case's cost AND onto
+  // patients.total_cost, so it reaches totalRevenue, the section split, and
+  // the patient's remaining — and payments are then collected as usual.
+  cost: number;
 }): Promise<ProstheticWorkOrder> {
   return await db.transaction(async (tx) => {
     // Per-service guard: a dual-flag patient's مسند maintenance shouldn't be
@@ -262,11 +267,29 @@ export async function createMaintenanceOrderWithVisit(params: {
       patientId: params.patientId,
       branchId: params.branchId,
       visitDate: params.visitDate,
-      notes: params.visitNotes,
+      // Deliberately NOT the "تكلفة:" marker format — syncPatientCases parses
+      // that marker to reallocate base costs, and maintenance fees are booked
+      // directly below, not via markers.
+      notes: params.cost > 0 ? `${params.visitNotes} — أجور الصيانة: ${params.cost.toLocaleString("en-US")} د.ع` : params.visitNotes,
       treatmentType: null,
       caseId,
       createdBy: params.assignedBy,
     });
+
+    if (params.cost > 0) {
+      // Book the fee: device case cost (manual — automation keeps off) + the
+      // patient total that totalRevenue actually sums. Same double-write the
+      // تخصيص confirmation performs.
+      const deviceCase = caseRows.find((c) => c.caseType === params.serviceType);
+      if (deviceCase) {
+        await tx.update(patientCases)
+          .set({ cost: sql`${patientCases.cost} + ${params.cost}`, costSource: "manual", updatedAt: new Date() })
+          .where(eq(patientCases.id, deviceCase.id));
+      }
+      await tx.update(patients)
+        .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
+        .where(eq(patients.id, params.patientId));
+    }
     return workOrder;
   });
 }
@@ -547,6 +570,10 @@ export async function updateDeliveryDate(params: {
   order: ProstheticWorkOrder;
   expectedDeliveryDate: string;
   performedBy: number | null;
+  // Mandatory (enforced by the route) whenever an EXISTING date is being
+  // changed — the promised date is what delivery accuracy is measured
+  // against, so moving it must carry its justification into the record.
+  reason?: string | null;
 }): Promise<ProstheticWorkOrder> {
   const { order, expectedDeliveryDate } = params;
   const previous = order.expectedDeliveryDate ? String(order.expectedDeliveryDate) : "—";
@@ -558,7 +585,8 @@ export async function updateDeliveryDate(params: {
       workOrderId: order.id,
       actionType: "date_change",
       fromStage: order.currentStage, toStage: order.currentStage,
-      notes: `تغيير موعد التسليم المتوقع من ${previous} إلى ${expectedDeliveryDate}`,
+      notes: `تغيير موعد التسليم المتوقع من ${previous} إلى ${expectedDeliveryDate}`
+        + (params.reason ? ` — السبب: ${params.reason}` : ""),
       performedBy: params.performedBy,
     });
     return updated;
@@ -711,6 +739,34 @@ export async function getAllOrdersForPatient(patientId: number) {
     .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
     .where(eq(WO.patientId, patientId))
     .orderBy(desc(WO.createdAt));
+  // Delivery-date changes travel WITH the orders so the patient page can show
+  // them to the whole team — the change and its mandatory reason are part of
+  // the patient's record, not a private note on the expert's board.
+  const orderIds = rows.map((r) => r.id);
+  const changes = orderIds.length
+    ? await db
+        .select({
+          workOrderId: WH.workOrderId,
+          notes: WH.notes,
+          createdAt: WH.createdAt,
+          byName: systemUsers.displayName,
+        })
+        .from(WH)
+        .leftJoin(systemUsers, eq(systemUsers.id, WH.performedBy))
+        .where(and(inArray(WH.workOrderId, orderIds), eq(WH.actionType, "date_change")))
+        .orderBy(asc(WH.createdAt))
+    : [];
+  const changesByOrder = new Map<number, { note: string; byName: string | null; at: string | null }[]>();
+  for (const c of changes) {
+    const list = changesByOrder.get(c.workOrderId) ?? [];
+    list.push({
+      note: c.notes ?? "",
+      byName: c.byName ?? null,
+      at: c.createdAt ? new Date(c.createdAt).toISOString() : null,
+    });
+    changesByOrder.set(c.workOrderId, list);
+  }
+
   return rows.map((r) => ({
     id: r.id,
     expertUserId: r.expertUserId,
@@ -725,6 +781,7 @@ export async function getAllOrdersForPatient(patientId: number) {
     createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
     finalResult: r.finalResult ?? null,
     active: r.status !== "completed" && r.status !== "cancelled",
+    dateChanges: changesByOrder.get(r.id) ?? [],
   }));
 }
 

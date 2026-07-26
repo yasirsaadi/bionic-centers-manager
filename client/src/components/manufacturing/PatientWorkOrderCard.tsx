@@ -18,6 +18,7 @@ interface OrderRow {
   createdAt: string | null;
   finalResult: string | null;
   active: boolean;
+  dateChanges?: { note: string; byName: string | null; at: string | null }[];
 }
 
 // Full manufacturing HISTORY on the patient page for authorized NON-expert
@@ -88,6 +89,17 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
               <Item label="التسليم المتوقّع" value={fmtD(o.expectedDeliveryDate)} />
               <Item label={o.completedAt ? "تاريخ التسليم" : "الإنشاء"} value={fmtD(o.completedAt ?? o.createdAt)} />
             </div>
+            {(o.dateChanges?.length ?? 0) > 0 && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 space-y-1">
+                <div className="text-[11px] font-bold text-amber-900">تغييرات موعد التسليم</div>
+                {o.dateChanges!.map((c, i) => (
+                  <div key={i} className="text-xs text-amber-900" dir="auto">
+                    {c.note}
+                    <span className="text-muted-foreground"> — {c.byName ?? "غير معروف"}{c.at ? `، ${fmtD(c.at)}` : ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {o.finalResult && (
               <div className="mt-2">
                 <Badge variant="outline" className="bg-green-100 text-green-800 border-green-200">

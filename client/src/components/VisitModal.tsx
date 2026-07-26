@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2, Calendar, Wrench } from "lucide-react";
 import { useState } from "react";
@@ -78,6 +79,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   // Maintenance path — only offered to patients who own a device.
   const hasDevice = !!isAmputee || !!isMedicalSupport;
   const [purpose, setPurpose] = useState<"visit" | "maintenance">("visit");
+  const [maintCost, setMaintCost] = useState<number>(0);
   // Which of the patient's cases this visit belongs to. Multi-case patients
   // pick explicitly — the form used to FORCE a physio treatment type, so a
   // prosthetic-related visit always landed under the physio case.
@@ -125,7 +127,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   });
 
   const resetAll = () => {
-    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate(""); setVisitCaseId(null);
+    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate(""); setVisitCaseId(null); setMaintCost(0);
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
@@ -143,6 +145,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         credentials: "include",
         body: JSON.stringify({
           patientId, expertUserId: Number(expertUserId),
+          cost: maintCost,
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
         }),
       });
@@ -323,6 +326,13 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
                       </SelectContent>
                     </Select>
                   )}
+                </FormItem>
+                <FormItem>
+                  <FormLabel>أجور الصيانة (د.ع)</FormLabel>
+                  <MoneyInput value={maintCost} onValueChange={setMaintCost} placeholder="0" data-testid="input-maintenance-cost" />
+                  <p className="text-[11px] text-muted-foreground">
+                    تُقيَّد على حساب المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. اتركها 0 إن كانت الصيانة ضمن الضمان.
+                  </p>
                 </FormItem>
                 <p className="text-[11px] text-muted-foreground">
                   ستُفتح حلقة صيانة مستقلّة بخبيرها — يحدّد الخبير تاريخ التسليم عند أخذ القالب. إن كان للمريض أمر صيانة/بناء جارٍ لنفس الخدمة لم يُسلَّم، تُمنع حتى يكتمل.
