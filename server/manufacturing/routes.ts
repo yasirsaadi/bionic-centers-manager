@@ -12,7 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { prescribedSpecs } from "../medical/store";
+import { hasSignedExam, prescribedSpecs } from "../medical/store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
@@ -200,6 +200,17 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
+    // Workflow order: an INITIAL build needs the doctor's signed exam first —
+    // it is the exam that says which device to build. A maintenance episode is
+    // exempt: the device already exists and was prescribed once.
+    if (purpose !== "maintenance" && !(await hasSignedExam(patientId, serviceType))) {
+      return res.status(409).json({
+        error: serviceType === "prosthetic"
+          ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
+          : "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
+      });
+    }
+
     try {
       const order = await store.createWorkOrderForExisting({
         patientId, branchId: patient.branchId, serviceType, expertUserId,
@@ -254,6 +265,19 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // of the SAME service is still blocked.
     if (await store.hasActiveOrder(patientId, serviceType)) {
       return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+    }
+
+    // Workflow order: no expert before the doctor. تخصيص is always an
+    // INITIAL build, and assigning an expert to an unexamined patient has no
+    // clinical basis — the exam is what says which device to build.
+    // (Maintenance is exempt by construction: it runs through its own
+    // endpoint, /api/manufacturing/maintenance-visit.)
+    if (!(await hasSignedExam(patientId, serviceType))) {
+      return res.status(409).json({
+        error: serviceType === "prosthetic"
+          ? "لا يمكن تخصيص خبير قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
+          : "لا يمكن تخصيص خبير قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
+      });
     }
 
     // Only the device-spec fields the doctor decides pass through (whitelist).

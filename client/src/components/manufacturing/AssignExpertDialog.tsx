@@ -68,6 +68,12 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // so a patient who never comes back to pay leaves the accounts untouched.
   const proposedCost: number | null =
     typeof rxExam?.deviceCost === "number" && rxExam.deviceCost > 0 ? rxExam.deviceCost : null;
+  // No signed exam for this service ⇒ تخصيص is locked. Assigning an expert to
+  // an unexamined patient has no clinical basis — the exam is what says which
+  // device to build. The server enforces the same rule; this is the courteous
+  // version of its 409. (examsLoaded avoids flashing the lock while fetching.)
+  const examsLoaded = examData !== undefined;
+  const examMissing = examsLoaded && !rxExam;
 
   useEffect(() => {
     if (!open || !rxExam?.prescription) return;
@@ -127,6 +133,15 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
                 <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); setCost(0); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
                 <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); setCost(0); }} data-testid="choose-support">مساند طبية</Button>
               </div>
+            </div>
+          )}
+
+          {examMissing && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="notice-exam-required">
+              <b>لا يمكن التخصيص قبل معاينة الطبيب.</b>{" "}
+              {isSupport ? "المريض بانتظار معاينة مساند طبية" : "المريض بانتظار معاينة أطراف صناعية"} —
+              بعد توقيعها تظهر هنا مواصفات الطبيب وكلفته المقترحة. (صيانة جهازٍ موجود تُفتح
+              من نافذة تسجيل الزيارة.)
             </div>
           )}
 
@@ -205,7 +220,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || assign.isPending} data-testid="button-confirm-assign-expert">
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || assign.isPending} data-testid="button-confirm-assign-expert">
             {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>
