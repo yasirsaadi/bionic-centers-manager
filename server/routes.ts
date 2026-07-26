@@ -1536,8 +1536,13 @@ export async function registerRoutes(
       const creationBody: any = { ...req.body };
       if (!mayWriteClinical) {
         for (const k of [
+          // أطراف
           "amputationSite", "prostheticType", "siliconType", "siliconSize",
-          "suspensionSystem", "footType", "footSize", "kneeJointType", "supportType",
+          "suspensionSystem", "footType", "footSize", "kneeJointType",
+          // مساند
+          "supportType", "injurySide",
+          // علاج طبيعي مستثنى بقرار المالك: آلياته مختلفة، والاستقبال
+          // يسجّل تشخيصه وإصاباته كما كان دائماً.
         ]) {
           delete creationBody[k];
         }

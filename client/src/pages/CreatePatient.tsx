@@ -1207,7 +1207,13 @@ export default function CreatePatient() {
                 </div>
               )}
 
-              {conditionType === "medical_support" && (
+              {conditionType === "medical_support" && !canEditClinicalDetails && (
+                <p className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3" data-testid="note-doctor-decides-support">
+                  نوع المسند وتفاصيله يحدّدها الطبيب في المعاينة — سيظهر المريض في قائمة «بانتظار معاينة مساند طبية» بعد الحفظ.
+                </p>
+              )}
+
+              {conditionType === "medical_support" && canEditClinicalDetails && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
                   {/* نوع المسند يُحدَّد بعد الفحص عبر «تخصيص الطرف/المسند» — لا هنا. */}
                   <FormField
