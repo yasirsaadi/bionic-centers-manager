@@ -31,6 +31,97 @@ export const PROSTHETIC_SPECS: SpecField[] = [
   { key: "kneeJointType", label: "نوع مفصل الركبة", placeholder: "مثال: مفصل هيدروليكي، مفصل ميكانيكي…" },
 ];
 
+// ── نوع البتر (the amputation builder) ──────────────────────────────────────
+// Verbatim from CreatePatient.tsx, where these lists lived only as inline
+// <SelectItem> JSX (repeated six times each across CreatePatient/EditPatient).
+// The doctor's exam is where the amputation is actually determined, so the
+// vocabulary is lifted here and the composed string format is kept
+// byte-identical — EditPatient's reverse-parser and the expert order page both
+// read `amputationSite` and must keep understanding doctor-written values.
+
+/** نوع البتر — the three top-level variants, exactly as on the patient form. */
+export const AMPUTATION_TYPE_OPTIONS = [
+  { value: "single", label: "احادي" },
+  { value: "double", label: "ثنائي" },
+  { value: "silicone", label: "اطراف سليكونية تعويضية" },
+] as const;
+
+/** Lower-limb amputation levels — verbatim, value === label. */
+export const LOWER_AMPUTATION_DETAILS = [
+  "جوبارت", "سايمز", "تحت الركبة", "خلال الركبة", "فوق الركبة", "خلال الحوض",
+];
+
+/** Upper-limb amputation levels — verbatim, value === label. */
+export const UPPER_AMPUTATION_DETAILS = [
+  "اصبع", "خلال الكف", "خلال الرسغ", "تحت المرفق", "خلال المرفق", "فوق المرفق", "خلال الكتف",
+];
+
+/** أنواع الأطراف السليكونية التعويضية — verbatim, value === label. */
+export const SILICONE_PARTS = ["اذن", "انف", "محجر عين", "اصبع", "كف"];
+
+/**
+ * The structured parts the builder collects. All optional strings: an absent
+ * `amputationType` means the doctor didn't touch the builder at all, and
+ * buildAmputationSite returns "" for it.
+ */
+export interface AmputationParts {
+  amputationType?: string; // "single" | "double" | "silicone"
+  singleLimb?: string;     // "upper" | "lower"
+  singleSide?: string;     // "right" | "left"
+  singleDetail?: string;
+  doubleLimbType?: string; // "upper" | "lower" | "both"
+  doubleRightDetail?: string;
+  doubleLeftDetail?: string;
+  bothRightLimb?: string;  // "upper" | "lower"
+  bothLeftLimb?: string;
+  bothRightDetail?: string;
+  bothLeftDetail?: string;
+  siliconePart?: string;
+  siliconeSide?: string;   // "right" | "left" | "both"
+  siliconeNotes?: string;
+}
+
+/**
+ * Compose the `amputationSite` string EXACTLY as CreatePatient's useEffect
+ * does — same segments, same ` - ` / ` | ` separators, same `-` placeholders,
+ * same "no side for انف" rule. One format, wherever the record was written.
+ */
+export function buildAmputationSite(p: AmputationParts): string {
+  if (p.amputationType === "single") {
+    const limbText = p.singleLimb === "upper" ? "طرف علوي" : "طرف سفلي";
+    const sideText = p.singleSide === "right" ? "يمين" : "يسار";
+    let site = `احادي - ${limbText} - ${sideText}`;
+    if (p.singleDetail) site += ` - ${p.singleDetail}`;
+    return site;
+  }
+  if (p.amputationType === "double") {
+    if (p.doubleLimbType === "upper" || p.doubleLimbType === "lower") {
+      let site = p.doubleLimbType === "upper" ? "ثنائي - علوي" : "ثنائي - سفلي";
+      if (p.doubleRightDetail || p.doubleLeftDetail) {
+        site += ` | يمين: ${p.doubleRightDetail || "-"} | يسار: ${p.doubleLeftDetail || "-"}`;
+      }
+      return site;
+    }
+    const rightLimbText = p.bothRightLimb === "upper" ? "علوي" : "سفلي";
+    const leftLimbText = p.bothLeftLimb === "upper" ? "علوي" : "سفلي";
+    let site = "ثنائي - علوي وسفلي";
+    site += ` | يمين (${rightLimbText}): ${p.bothRightDetail || "-"}`;
+    site += ` | يسار (${leftLimbText}): ${p.bothLeftDetail || "-"}`;
+    return site;
+  }
+  if (p.amputationType === "silicone") {
+    let site = `اطراف سليكونية تعويضية - ${p.siliconePart || "-"}`;
+    if (p.siliconePart && p.siliconePart !== "انف") {
+      const sideText =
+        p.siliconeSide === "right" ? "يمين" : p.siliconeSide === "left" ? "يسار" : "كلا الجانبين";
+      site += ` - ${sideText}`;
+    }
+    if (p.siliconeNotes) site += ` | ملاحظات: ${p.siliconeNotes}`;
+    return site;
+  }
+  return "";
+}
+
 // ── مساند طبية ──────────────────────────────────────────────────────────────
 // Verbatim from AssignExpertDialog.tsx SUPPORT_SPECS.
 export const SUPPORT_SPECS: SpecField[] = [

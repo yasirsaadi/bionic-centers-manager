@@ -63,6 +63,11 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // Exams come back newest-first, so the first match is the current decision.
   const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === serviceType);
   const prescribedBy: string | null = rxExam?.doctorName ?? null;
+  // The doctor's PROPOSED price. It lives only on the exam until this dialog's
+  // save — the one write that books a device sale (case cost + total_cost) —
+  // so a patient who never comes back to pay leaves the accounts untouched.
+  const proposedCost: number | null =
+    typeof rxExam?.deviceCost === "number" && rxExam.deviceCost > 0 ? rxExam.deviceCost : null;
 
   useEffect(() => {
     if (!open || !rxExam?.prescription) return;
@@ -74,6 +79,13 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
     // Only seed fields reception hasn't already typed into.
     if (Object.keys(seeded).length > 0) setSpecs((prev) => ({ ...seeded, ...prev }));
   }, [open, rxExam?.id, serviceType]);
+
+  // Seed the price the same way: the doctor's proposal fills the empty field,
+  // and anything reception already typed wins.
+  useEffect(() => {
+    if (!open || proposedCost == null) return;
+    setCost((prev) => (prev > 0 ? prev : proposedCost));
+  }, [open, rxExam?.id, serviceType, proposedCost]);
 
   function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null); }
 
@@ -112,8 +124,8 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             <div className="space-y-1">
               <label className="text-sm font-semibold">نوع الخدمة <span className="text-red-500">*</span></label>
               <div className="flex gap-2">
-                <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
-                <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); }} data-testid="choose-support">مساند طبية</Button>
+                <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); setCost(0); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
+                <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); setCost(0); }} data-testid="choose-support">مساند طبية</Button>
               </div>
             </div>
           )}
@@ -145,6 +157,13 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
           <div className="space-y-1">
             <label className="text-sm font-semibold">الكلفة (السعر) <span className="text-red-500">*</span></label>
             <MoneyInput value={cost} onValueChange={setCost} placeholder="0" data-testid="input-assign-cost" />
+            {proposedCost != null && (
+              <p className="text-xs text-teal-800" data-testid="text-proposed-cost">
+                كلفة مقترحة من معاينة {prescribedBy ?? "الطبيب"}:{" "}
+                <b>{proposedCost.toLocaleString("en-US")} د.ع</b> — لا تدخل الحسابات
+                إلا بحفظ هذه النافذة.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1">

@@ -23,7 +23,7 @@ import {
   type MedicalSpecialty,
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
-import { specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
+import { buildAmputationSite, specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
 
 // Render the signed decision as label/value lines, using the very same field
 // definitions the form wrote it with, so nothing can drift out of sync.
@@ -32,6 +32,13 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
   if (!rx || typeof rx !== "object") return [];
   const out: { label: string; value: string }[] = [];
 
+  // The amputation decision leads: it is what defines the limb. Rendered from
+  // the same composer that writes the patient column, so the exam shows
+  // exactly the string the rest of the app carries.
+  if (exam.caseType === "prosthetic" && typeof rx.amputationType === "string" && rx.amputationType) {
+    const site = buildAmputationSite(rx);
+    if (site) out.push({ label: "موقع البتر", value: site });
+  }
   for (const f of specsForSpecialty(exam.caseType)) {
     if (typeof rx[f.key] === "string" && rx[f.key].trim()) out.push({ label: f.label, value: rx[f.key] });
   }
@@ -48,7 +55,9 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
     if (list.length) out.push({ label: "الإصابات", value: list.join("، ") });
   }
   if (typeof exam.deviceCost === "number") {
-    out.push({ label: "الكلفة", value: `${exam.deviceCost.toLocaleString("en-US")} د.ع` });
+    // Proposed, not booked: the amount enters the accounts only when reception
+    // confirms it in تخصيص.
+    out.push({ label: "الكلفة المقترحة", value: `${exam.deviceCost.toLocaleString("en-US")} د.ع` });
   }
   if (Array.isArray(rx.treatments)) {
     const list = (rx.treatments as any[])

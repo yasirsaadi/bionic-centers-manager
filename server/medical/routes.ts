@@ -84,8 +84,12 @@ function parseDeviceCost(raw: unknown, caseType: string): number | null {
  *      specialty the patient had none for),
  *   2. the superseded device case is retired — reception's initial pick was a
  *      guess and the doctor's decision replaces it, so nothing is left hanging
- *      in the pending badge,
- *   3. the device cost, last, because step 2 can move costs between cases.
+ *      in the pending badge.
+ *
+ * The device price is deliberately NOT applied here. It stays on the exam as a
+ * proposal until reception confirms it in «تخصيص وإسناد خبير» — the one save
+ * that puts a device sale into the books (case cost + patients.total_cost). A
+ * patient who walks out without paying therefore leaves the accounts untouched.
  *
  * Every step is isolated: a signed clinical record must never be undone by a
  * bookkeeping failure downstream, so problems are logged and reported, not
@@ -95,7 +99,6 @@ async function applyDecision(
   patientId: number,
   caseType: MedicalSpecialty,
   prescription: Record<string, any>,
-  deviceCost: number | null,
 ): Promise<{ switchNote?: string }> {
   let switchNote: string | undefined;
 
@@ -122,14 +125,6 @@ async function applyDecision(
     }
   } catch (err) {
     console.error("[medical] retiring superseded case failed:", err);
-  }
-
-  if (deviceCost !== null) {
-    try {
-      await store.applyDeviceCost(patientId, caseType, deviceCost);
-    } catch (err) {
-      console.error("[medical] applying device cost failed:", err);
-    }
   }
 
   return { switchNote };
@@ -271,7 +266,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // doctor decides a specialty the patient had no case for, applying it is
       // what creates that case. Resolving the case before this step returned
       // null, and the exam was saved permanently orphaned from its own case.
-      const applied = await applyDecision(patientId, caseType, prescription, deviceCost);
+      const applied = await applyDecision(patientId, caseType, prescription);
 
       const caseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
@@ -379,7 +374,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const editorName = session.userName?.trim() || "مستخدم";
       // Same ordering rule as signing: the decision lands on the case first, so
       // a specialty change has a case to point the revised exam at.
-      const applied = await applyDecision(exam.patientId, caseType, prescription, deviceCost);
+      const applied = await applyDecision(exam.patientId, caseType, prescription);
 
       const updated = await store.reviseExam(
         examId,
