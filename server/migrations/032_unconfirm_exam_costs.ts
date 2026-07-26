@@ -39,11 +39,25 @@ SET cost = 0, cost_source = 'auto', updated_at = NOW()
 WHERE pc.case_type IN ('prosthetic', 'medical_support')
   AND COALESCE(pc.cost, 0) > 0
   AND pc.cost_source = 'manual'
-  AND EXISTS (
-    SELECT 1 FROM medical_exams me
-    WHERE me.patient_id = pc.patient_id
-      AND me.case_type = pc.case_type
-      AND me.device_cost = pc.cost
+  AND (
+    EXISTS (
+      SELECT 1 FROM medical_exams me
+      WHERE me.patient_id = pc.patient_id
+        AND me.case_type = pc.case_type
+        AND me.device_cost = pc.cost
+    )
+    -- The exam may have been REVISED since it priced the case (the old flow
+    -- applied the price on every save), so the fingerprint must also match
+    -- superseded versions — otherwise a doctor who later changed or removed
+    -- the price leaves the case stuck at the old, unconfirmed amount.
+    OR EXISTS (
+      SELECT 1
+      FROM medical_exam_revisions rev
+      JOIN medical_exams me2 ON me2.id = rev.exam_id
+      WHERE me2.patient_id = pc.patient_id
+        AND rev.case_type = pc.case_type
+        AND rev.device_cost = pc.cost
+    )
   )
   AND NOT EXISTS (
     SELECT 1 FROM prosthetic_work_orders wo
