@@ -83,6 +83,21 @@ interface BranchWithDetails extends Branch {
 
 type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor" | "prosthetics_expert" | "doctor";
 
+// Display order of the role PICKER. Typed as the full union, so TypeScript
+// refuses to compile if a role is added to UserRole and forgotten here.
+// Distinct from the ROLE_ORDER further down, which orders the performance
+// report — that one is a loose string list and tolerates unknown roles.
+const ROLE_PICKER_ORDER: readonly UserRole[] = [
+  "admin",
+  "branch_manager",
+  "accountant",
+  "reception",
+  "doctor",
+  "therapist",
+  "surveyor",
+  "prosthetics_expert",
+];
+
 function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRole, string> {
   return {
     admin: t.roles.admin,
@@ -649,7 +664,7 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString("ar-IQ");
 }
 
-const ROLE_ORDER = ["reception", "branch_manager", "accountant", "therapist", "surveyor", "prosthetics_expert", "admin"];
+const ROLE_ORDER = ["reception", "doctor", "branch_manager", "accountant", "therapist", "surveyor", "prosthetics_expert", "admin"];
 
 function currentBaghdadMonth(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
@@ -2625,14 +2640,15 @@ export default function AdminSettings() {
                   <SelectTrigger className="mt-1" data-testid="select-user-role">
                     <SelectValue placeholder={t.adminSettings.selectRole} />
                   </SelectTrigger>
+                  {/* Derived from ROLE_PICKER_ORDER, never hand-listed: this was
+                      previously seven literal <SelectItem>s, so adding the
+                      `doctor` role everywhere else still left it unpickable.
+                      Now a new role in the union is a compile error until it is
+                      given a position and a label. */}
                   <SelectContent>
-                    <SelectItem value="admin">{t.roles.admin}</SelectItem>
-                    <SelectItem value="branch_manager">{t.roles.branch_manager}</SelectItem>
-                    <SelectItem value="accountant">{t.roles.accountant}</SelectItem>
-                    <SelectItem value="reception">{t.roles.reception}</SelectItem>
-                    <SelectItem value="therapist">{t.roles.therapist}</SelectItem>
-                    <SelectItem value="surveyor">{t.roles.surveyor}</SelectItem>
-                    <SelectItem value="prosthetics_expert">{t.roles.prosthetics_expert}</SelectItem>
+                    {ROLE_PICKER_ORDER.map((role) => (
+                      <SelectItem key={role} value={role}>{roleLabels[role]}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2991,14 +3007,14 @@ export default function AdminSettings() {
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {isDoctorRole
-                      ? "هذا المستخدم طبيب أصلاً (دوره الأساسي) — يبقى أن تحدّد اختصاصه."
+                      ? "هذا المستخدم طبيب أصلاً (دوره الأساسي) — المعاينة من صلاحياته تلقائياً."
                       : "المعاينة سجلّ سريري موقّع باسمه، تُقفل بعد الحفظ فلا تُعدّل ولا تُحذف، والتصحيح يكون بملحق مؤرّخ. بقية الموظفين يرونها للقراءة فقط."}
                   </p>
 
                   {(isDoctorRole || userFormData.canWriteMedicalExam) && (
                     <div className="mt-3 border-t border-teal-200 pt-3">
                       <Label className="text-xs font-semibold text-teal-900">
-                        اختصاصاته (يكتب معاينة في المحدَّد فقط)
+                        اختصاصاته <span className="font-normal text-muted-foreground">(اختياري — اتركها فارغة ليغطّي الثلاثة)</span>
                       </Label>
                       <div className="flex flex-wrap gap-4 mt-2">
                         {MEDICAL_SPECIALTIES.map((spec) => (
@@ -3023,10 +3039,9 @@ export default function AdminSettings() {
                         ))}
                       </div>
                       {userFormData.medicalSpecialties.length === 0 && (
-                        <p className={`text-xs mt-2 ${isDoctorRole ? "text-red-600 font-semibold" : "text-amber-700"}`}>
-                          {isDoctorRole
-                            ? "الاختصاص إلزامي للطبيب — لا يمكن الحفظ بدونه."
-                            : "لم تحدّد أي اختصاص — لن يتمكّن من كتابة أي معاينة."}
+                        <p className="text-xs mt-2 text-muted-foreground">
+                          بلا تحديد ⇐ يعاين في الاختصاصات الثلاثة. حدِّد اختصاصاً أو أكثر
+                          فقط إن أردت حصر قائمة عمله بها.
                         </p>
                       )}
                     </div>
@@ -3047,11 +3062,7 @@ export default function AdminSettings() {
                   userFormData.role !== "branch_manager" &&
                   userFormData.role !== "prosthetics_expert" &&
                   !userFormData.branchId) ||
-                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0) ||
-                // "doctor" names the profession, not the department: without a
-                // specialty the account could sign nothing. Blocked here as well
-                // as on the server so the admin sees it before saving.
-                (isDoctorRole && userFormData.medicalSpecialties.length === 0)
+                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0) 
               }
               data-testid="button-save-user"
             >

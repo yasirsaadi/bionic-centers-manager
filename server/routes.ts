@@ -993,13 +993,6 @@ export async function registerRoutes(
       if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
-
-      // "doctor" names the profession, not the department. Without a specialty
-      // the account can sign nothing, so refuse to create one that is silently
-      // useless rather than letting the admin discover it from a 403 later.
-      if (userData.role === "doctor" && !(userData.medicalSpecialties?.length > 0)) {
-        return res.status(400).json({ message: "يجب تحديد اختصاص واحد على الأقل للطبيب" });
-      }
       
       // Normalise branchIds: accept either a JSON array or an
       // empty/undefined value. Branch managers may belong to several
@@ -1075,23 +1068,6 @@ export async function registerRoutes(
       // Validate role if provided
       if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
-      }
-
-      // Same "a doctor must have a specialty" rule as the create handler, but a
-      // PATCH is partial: the role may be arriving while the specialties stay
-      // untouched, or vice versa. Both are resolved against the stored row so
-      // an edit can't strand an existing doctor with an empty list.
-      if (userData.role === "doctor" || userData.medicalSpecialties !== undefined) {
-        const stored = await storage.getSystemUser(id);
-        const effectiveRole = userData.role ?? stored?.role;
-        if (effectiveRole === "doctor") {
-          const effectiveSpecialties =
-            userData.medicalSpecialties ??
-            (Array.isArray(stored?.medicalSpecialties) ? stored.medicalSpecialties : []);
-          if (effectiveSpecialties.length === 0) {
-            return res.status(400).json({ message: "يجب تحديد اختصاص واحد على الأقل للطبيب" });
-          }
-        }
       }
 
       // Multi-branch normalisation, same shape as the create handler.

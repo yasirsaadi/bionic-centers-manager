@@ -732,6 +732,12 @@ export const medicalExams = pgTable("medical_exams", {
   diagnosis: text("diagnosis"),                // التشخيص
   plan: text("plan"),                          // الخطة والتوصيات
   notes: text("notes"),                        // متن حر
+  // The structured clinical DECISION (الوصفة), migration 029: which prosthesis,
+  // which support, which physiotherapy course. Same field set the patient form
+  // already uses, but filed by the doctor and sealed with the exam — the server
+  // then copies it onto the patient's case so the rest of the app reads it
+  // exactly as before. Shape is per specialty; see shared/case_fields.ts.
+  prescription: jsonb("prescription").$type<Record<string, any>>().default({}),
   signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

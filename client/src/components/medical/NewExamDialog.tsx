@@ -21,6 +21,7 @@ import { Stethoscope, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EXAM_FIELDS, SPECIALTY_LABELS, type ExamFieldKey, type MedicalSpecialty } from "@shared/medical";
 import { useDoctorGrant } from "./useDoctorGrant";
+import { PrescriptionFields, type PrescriptionValue } from "./PrescriptionFields";
 
 const EMPTY_FORM: Record<ExamFieldKey, string> = {
   chiefComplaint: "",
@@ -61,12 +62,14 @@ export function NewExamDialog({
 
   const [specialty, setSpecialty] = useState<MedicalSpecialty | "">("");
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
+  const [rx, setRx] = useState<PrescriptionValue>({});
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
   useEffect(() => {
     if (!open) return;
     setForm({ ...EMPTY_FORM });
+    setRx({});
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
         ? (preferSpecialty as MedicalSpecialty)
@@ -82,7 +85,7 @@ export function NewExamDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ caseType: specialty, ...form }),
+        body: JSON.stringify({ caseType: specialty, ...form, prescription: rx }),
       });
       if (!res.ok) throw new Error((await res.json())?.error || "تعذّر حفظ المعاينة");
       return res.json();
@@ -92,6 +95,9 @@ export function NewExamDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/medical/pending"] });
       // The patient just left the doctor's queue — refresh it wherever it shows.
       queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      // The prescription just rewrote the patient's case details.
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId, "cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patients/registry"] });
       onOpenChange(false);
       toast({ title: "حُفظت المعاينة ووُقّعت باسمك" });
       onDone?.();
@@ -100,7 +106,15 @@ export function NewExamDialog({
       toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  const hasContent = Object.values(form).some((v) => v.trim().length > 0);
+  // A prescription alone is a real clinical decision, so it counts as content
+  // just as the narrative does — the server applies the same rule.
+  const hasNarrative = Object.values(form).some((v) => v.trim().length > 0);
+  const hasPrescription = Object.entries(rx).some(([, v]) =>
+    Array.isArray(v)
+      ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
+      : typeof v === "string" && v.trim().length > 0,
+  );
+  const hasContent = hasNarrative || hasPrescription;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -138,6 +152,10 @@ export function NewExamDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {specialty && (
+            <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
+          )}
 
           {EXAM_FIELDS.map((f) => (
             <div key={f.key} className="space-y-2">

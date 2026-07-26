@@ -143,9 +143,26 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         notes: clean(req.body?.notes),
       };
 
+      // The structured clinical decision. Sealed into the exam row alongside
+      // the narrative, so what the doctor prescribed is as unalterable as what
+      // they wrote — and attributable to them rather than to whoever typed it
+      // into the patient file afterwards.
+      const prescription =
+        req.body?.prescription && typeof req.body.prescription === "object"
+          ? (req.body.prescription as Record<string, any>)
+          : {};
+
       // A signed record must actually say something. Since the row can never be
-      // edited afterwards, an accidental empty save would be permanent.
-      if (!Object.values(body).some((v) => v !== null)) {
+      // edited afterwards, an accidental empty save would be permanent. Either
+      // half counts: a narrative, or a prescription on its own — specifying the
+      // device IS a clinical decision even with no prose around it.
+      const hasNarrative = Object.values(body).some((v) => v !== null);
+      const hasPrescription = Object.values(prescription).some((v) =>
+        Array.isArray(v)
+          ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
+          : typeof v === "string" && v.trim().length > 0,
+      );
+      if (!hasNarrative && !hasPrescription) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
@@ -159,8 +176,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         branchId: caseRow?.branchId ?? patient.branchId,
         doctorId: session.userId,
         doctorName,
+        prescription,
         ...body,
       });
+
+      // Push the decision onto the patient's case so manufacturing, the expert
+      // board and reception all see it. Isolated: a failure here must not undo
+      // a signed record, so it is logged and the exam still stands.
+      try {
+        await store.applyPrescription(patientId, caseType as MedicalSpecialty, prescription);
+      } catch (err) {
+        console.error("[medical] applying prescription to case failed:", err);
+      }
 
       await logAudit({
         entityType: "medical_exam",

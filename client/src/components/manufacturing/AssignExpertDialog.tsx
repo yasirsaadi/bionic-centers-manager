@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { Stethoscope } from "lucide-react";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
 // patient agreed to buy, so reception records the specs + the agreed price and
@@ -14,18 +16,6 @@ import { useToast } from "@/hooks/use-toast";
 interface Expert { id: number; displayName: string }
 type PatientLite = { id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null };
 
-const PROSTHETIC_SPECS: { key: string; label: string; placeholder: string; numeric?: boolean }[] = [
-  { key: "prostheticType", label: "نوع الطرف الصناعي", placeholder: "مثال: طرف سفلي ذكي، ركبة ميكانيكية…" },
-  { key: "siliconType", label: "نوع السليكون", placeholder: "مثال: سليكون طبي…" },
-  { key: "siliconSize", label: "حجم السليكون", placeholder: "مثال: 3، 4، 5…", numeric: true },
-  { key: "suspensionSystem", label: "نظام التعليق", placeholder: "مثال: حزام، فاكيوم، سليكون…" },
-  { key: "footType", label: "نوع القدم", placeholder: "مثال: قدم كربون، قدم مرنة…" },
-  { key: "footSize", label: "قياس الحذاء الذي يلبسه المريض", placeholder: "مثال: 42، 43…" },
-  { key: "kneeJointType", label: "نوع مفصل الركبة", placeholder: "مثال: مفصل هيدروليكي، مفصل ميكانيكي…" },
-];
-const SUPPORT_SPECS: { key: string; label: string; placeholder: string; numeric?: boolean }[] = [
-  { key: "supportType", label: "نوع المسند", placeholder: "مثال: مسند ظهر، مسند رقبة…" },
-];
 
 export function AssignExpertDialog({ patient, open, onOpenChange }: {
   patient: PatientLite | null;
@@ -56,6 +46,34 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
       return res.json();
     },
   });
+
+  // The doctor's signed decision for THIS service, if one exists. Reception no
+  // longer re-types the specs from a paper note: they arrive pre-filled and
+  // attributed, and reception is left with the two things that are actually
+  // theirs — the agreed price and the expert.
+  const { data: examData } = useQuery<{ exams: any[] }>({
+    queryKey: [`/api/medical/patients/${patient?.id}/exams`],
+    enabled: open && !!patient,
+    queryFn: async () => {
+      const res = await fetch(`/api/medical/patients/${patient!.id}/exams`, { credentials: "include" });
+      if (!res.ok) return { exams: [] };
+      return res.json();
+    },
+  });
+  // Exams come back newest-first, so the first match is the current decision.
+  const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === serviceType);
+  const prescribedBy: string | null = rxExam?.doctorName ?? null;
+
+  useEffect(() => {
+    if (!open || !rxExam?.prescription) return;
+    const seeded: Record<string, string> = {};
+    for (const f of specFields) {
+      const v = rxExam.prescription[f.key];
+      if (typeof v === "string" && v.trim()) seeded[f.key] = v;
+    }
+    // Only seed fields reception hasn't already typed into.
+    if (Object.keys(seeded).length > 0) setSpecs((prev) => ({ ...seeded, ...prev }));
+  }, [open, rxExam?.id, serviceType]);
 
   function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null); }
 
@@ -97,6 +115,16 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
                 <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
                 <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); }} data-testid="choose-support">مساند طبية</Button>
               </div>
+            </div>
+          )}
+
+          {prescribedBy && (
+            <div className="rounded-lg border border-teal-300 bg-teal-50/60 p-2.5 text-xs text-teal-900 flex gap-2">
+              <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                المواصفات أدناه من معاينة <b>{prescribedBy}</b>. عدِّلها فقط عند الضرورة —
+                يبقى عليك الاتفاق على الكلفة وإسناد الخبير.
+              </span>
             </div>
           )}
 
