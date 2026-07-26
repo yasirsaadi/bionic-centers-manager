@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock } from "lucide-react";
+import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
@@ -47,6 +47,9 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
       .map((i) => [i.type, i.area, i.side].filter(Boolean).join(" — "));
     if (list.length) out.push({ label: "الإصابات", value: list.join("، ") });
   }
+  if (typeof exam.deviceCost === "number") {
+    out.push({ label: "الكلفة", value: `${exam.deviceCost.toLocaleString("en-US")} د.ع` });
+  }
   if (Array.isArray(rx.treatments)) {
     const list = (rx.treatments as any[])
       .filter((t) => t?.treatmentType)
@@ -63,10 +66,31 @@ interface Addendum {
   signedAt: string;
 }
 
+interface Revision {
+  id: number;
+  version: number;
+  doctorName: string | null;
+  chiefComplaint: string | null;
+  clinicalFindings: string | null;
+  diagnosis: string | null;
+  plan: string | null;
+  notes: string | null;
+  prescription?: Record<string, any> | null;
+  deviceCost?: number | null;
+  editedByName: string | null;
+  editedAt: string;
+}
+
 interface Exam {
   id: number;
   caseType: string;
   prescription?: Record<string, any> | null;
+  deviceCost?: number | null;
+  version?: number;
+  doctorId?: number | null;
+  editedByName?: string | null;
+  editedAt?: string | null;
+  revisions?: Revision[];
   doctorName: string;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
@@ -82,6 +106,9 @@ interface ExamsResponse {
   pending: string[];
   canWriteMedicalExam: boolean;
   specialties: MedicalSpecialty[];
+  /** Branch manager / admin — may revise anyone's exam. */
+  canManageExams: boolean;
+  userId: number | null;
 }
 
 
@@ -116,6 +143,8 @@ export function PatientMedicalExams({
   const [preferredSpecialty, setPreferredSpecialty] = useState<string | null>(null);
   const [addendumFor, setAddendumFor] = useState<Exam | null>(null);
   const [addendumBody, setAddendumBody] = useState("");
+  const [editing, setEditing] = useState<Exam | null>(null);
+  const [historyOf, setHistoryOf] = useState<Exam | null>(null);
 
   const queryKey = [`/api/medical/patients/${patientId}/exams`];
 
@@ -135,6 +164,15 @@ export function PatientMedicalExams({
   const pending = data?.pending ?? [];
   const mySpecialties = data?.specialties ?? [];
   const isDoctor = Boolean(data?.canWriteMedicalExam) && mySpecialties.length > 0;
+  // Mirrors the server rule exactly: the doctor who signed it, or the
+  // responsible manager. A different doctor files an addendum instead.
+  // A specialty is "decided" once a signed exam exists for it. Derived rather
+  // than stored: the exam IS the decision, so a second source of truth could
+  // only ever drift from it.
+  const decided = Array.from(new Set(exams.map((e) => e.caseType)));
+  const canEdit = (exam: Exam) =>
+    Boolean(data?.canManageExams) ||
+    (exam.doctorId != null && data?.userId != null && exam.doctorId === data.userId);
 
   const saveAddendum = useMutation({
     mutationFn: async () => {
@@ -248,6 +286,25 @@ ${addenda}
           )}
         </div>
 
+        {/* Which specialties the doctor has DECIDED — the positive counterpart to
+            the pending badge, so the state reads as "settled" rather than merely
+            "no longer nagging", and reception knows it may assign and collect. */}
+        {decided.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {decided.map((c) => (
+              <Badge
+                key={`decided-${c}`}
+                variant="outline"
+                className="bg-green-100 text-green-800 border-green-200 font-normal text-xs"
+                data-testid={`badge-decided-${c}`}
+              >
+                <CheckCircle2 className="w-3 h-3 ml-1" />
+                تم تحديد {specialtyLabel(c)}
+              </Badge>
+            ))}
+          </div>
+        )}
+
         {/* Who is still waiting, per specialty. */}
         {pending.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
@@ -291,10 +348,23 @@ ${addenda}
                       </span>
                       <span
                         className="text-[10px] text-muted-foreground flex items-center gap-1"
-                        title="سجلّ موقّع — لا يُعدّل ولا يُحذف"
+                        title="سجلّ موقّع — كل نسخة سابقة محفوظة"
                       >
                         <Lock className="w-3 h-3" /> موقّعة
                       </span>
+                      {(exam.version ?? 1) > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setHistoryOf(exam)}
+                          className="text-[10px] text-amber-800 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5 flex items-center gap-1 hover:bg-amber-200"
+                          title="عرض النسخ السابقة"
+                          data-testid={`button-exam-history-${exam.id}`}
+                        >
+                          <History className="w-3 h-3" />
+                          النسخة {exam.version}
+                          {exam.editedByName ? ` — عدّلها ${exam.editedByName}` : ""}
+                        </button>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
                       {canAppend && (
@@ -309,6 +379,17 @@ ${addenda}
                           data-testid={`button-add-addendum-${exam.id}`}
                         >
                           <FilePlus2 className="w-3.5 h-3.5 ml-1" /> ملحق
+                        </Button>
+                      )}
+                      {canEdit(exam) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => setEditing(exam)}
+                          data-testid={`button-edit-exam-${exam.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5 ml-1" /> تعديل
                         </Button>
                       )}
                       <Button
@@ -396,6 +477,89 @@ ${addenda}
         preferSpecialty={preferredSpecialty}
         onDone={() => setPreferredSpecialty(null)}
       />
+
+      {/* Same dialog, revising instead of signing. Keyed by exam id so switching
+          between two exams re-hydrates the form instead of reusing stale state. */}
+      {editing && (
+        <NewExamDialog
+          key={`edit-${editing.id}`}
+          patientId={patientId}
+          patientName={patientName}
+          open={!!editing}
+          onOpenChange={(o) => !o && setEditing(null)}
+          exam={editing}
+          onDone={() => setEditing(null)}
+        />
+      )}
+
+      {/* ── Version history ────────────────────────────────────────────── */}
+      <Dialog open={!!historyOf} onOpenChange={(o) => !o && setHistoryOf(null)}>
+        <DialogContent className="sm:max-w-[620px] max-h-[85vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-primary flex items-center gap-2">
+              <History className="w-5 h-5" /> النسخ السابقة للمعاينة
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 mt-2">
+            <p className="text-xs text-muted-foreground">
+              كل تعديل يحفظ النصّ الذي كان قبله. لا شيء يُمحى.
+            </p>
+
+            {(historyOf?.revisions ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">لا توجد نسخ سابقة.</p>
+            ) : (
+              (historyOf?.revisions ?? [])
+                .slice()
+                .sort((a, b) => b.version - a.version)
+                .map((rev) => (
+                  <div key={rev.id} className="rounded-xl border bg-slate-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mb-2">
+                      <span className="font-bold text-slate-700">النسخة {rev.version}</span>
+                      <span>كتبها {rev.doctorName ?? "—"}</span>
+                      <span>
+                        استُبدلت في {formatDateIraq(rev.editedAt)} — {formatTimeIraq(rev.editedAt)}
+                      </span>
+                      {rev.editedByName && <span>بواسطة {rev.editedByName}</span>}
+                    </div>
+                    <div className="space-y-1">
+                      {EXAM_FIELDS.map((f) => {
+                        const value = (rev as any)[f.key] as string | null;
+                        if (!value) return null;
+                        return (
+                          <div key={f.key} className="flex gap-2">
+                            <span className="text-muted-foreground shrink-0 min-w-[92px]">
+                              {f.label}:
+                            </span>
+                            <span
+                              className="whitespace-pre-wrap"
+                              dir="auto"
+                              style={{ unicodeBidi: "plaintext" }}
+                            >
+                              {value}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {rev.deviceCost != null && (
+                        <div className="flex gap-2">
+                          <span className="text-muted-foreground shrink-0 min-w-[92px]">الكلفة:</span>
+                          <span>{rev.deviceCost.toLocaleString("en-US")} د.ع</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setHistoryOf(null)}>
+              إغلاق
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Addendum ───────────────────────────────────────────────────── */}
       <Dialog open={!!addendumFor} onOpenChange={(o) => !o && setAddendumFor(null)}>

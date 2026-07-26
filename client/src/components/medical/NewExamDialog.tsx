@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -21,7 +22,21 @@ import { Stethoscope, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EXAM_FIELDS, SPECIALTY_LABELS, type ExamFieldKey, type MedicalSpecialty } from "@shared/medical";
 import { useDoctorGrant } from "./useDoctorGrant";
+import { api } from "@shared/routes";
 import { PrescriptionFields, type PrescriptionValue } from "./PrescriptionFields";
+
+export interface ExamToEdit {
+  id: number;
+  caseType: string;
+  prescription?: Record<string, any> | null;
+  deviceCost?: number | null;
+  chiefComplaint: string | null;
+  clinicalFindings: string | null;
+  diagnosis: string | null;
+  plan: string | null;
+  notes: string | null;
+  version?: number;
+}
 
 const EMPTY_FORM: Record<ExamFieldKey, string> = {
   chiefComplaint: "",
@@ -46,16 +61,24 @@ export function NewExamDialog({
   open,
   onOpenChange,
   preferSpecialty,
+  exam,
   onDone,
 }: {
   patientId: number;
   patientName?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pre-selected specialty — normally the one this patient is waiting on. */
+  /**
+   * Pre-selected specialty. Normally the one this patient is waiting on — which
+   * IS what reception registered — so the doctor opens the form already showing
+   * their colleague's determination, and changes it only if they disagree.
+   */
   preferSpecialty?: string | null;
+  /** Passed to REVISE an existing exam instead of signing a new one. */
+  exam?: ExamToEdit | null;
   onDone?: () => void;
 }) {
+  const isEdit = !!exam;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { specialties } = useDoctorGrant();
@@ -63,13 +86,28 @@ export function NewExamDialog({
   const [specialty, setSpecialty] = useState<MedicalSpecialty | "">("");
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
   const [rx, setRx] = useState<PrescriptionValue>({});
+  const [deviceCost, setDeviceCost] = useState<string>("");
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
   useEffect(() => {
     if (!open) return;
+    if (exam) {
+      setForm({
+        chiefComplaint: exam.chiefComplaint ?? "",
+        clinicalFindings: exam.clinicalFindings ?? "",
+        diagnosis: exam.diagnosis ?? "",
+        plan: exam.plan ?? "",
+        notes: exam.notes ?? "",
+      });
+      setRx((exam.prescription ?? {}) as PrescriptionValue);
+      setDeviceCost(exam.deviceCost != null ? String(exam.deviceCost) : "");
+      setSpecialty(exam.caseType as MedicalSpecialty);
+      return;
+    }
     setForm({ ...EMPTY_FORM });
     setRx({});
+    setDeviceCost("");
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
         ? (preferSpecialty as MedicalSpecialty)
@@ -77,20 +115,36 @@ export function NewExamDialog({
           ? specialties[0]
           : "";
     setSpecialty(wanted);
-  }, [open, preferSpecialty, specialties.join(",")]);
+  }, [open, exam?.id, preferSpecialty, specialties.join(",")]);
+
+  // Cost belongs to the doctor for a DEVICE only: they specify the prosthesis or
+  // the support, so they know its price. Physiotherapy is left exactly as it
+  // was — priced per session by reception in «الكلفة والجلسات».
+  // Declared above the mutation that reads it, so the dependency is obvious.
+  const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
 
   const save = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/medical/patients/${patientId}/exams`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ caseType: specialty, ...form, prescription: rx }),
-      });
+      const res = await fetch(
+        isEdit ? `/api/medical/exams/${exam!.id}` : `/api/medical/patients/${patientId}/exams`,
+        {
+          method: isEdit ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            caseType: specialty,
+            ...form,
+            prescription: rx,
+            // Sent only where it is meaningful; the server drops it for
+            // physiotherapy regardless, whose pricing stays with reception.
+            deviceCost: isDeviceSpecialty ? deviceCost : undefined,
+          }),
+        },
+      );
       if (!res.ok) throw new Error((await res.json())?.error || "تعذّر حفظ المعاينة");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
       queryClient.invalidateQueries({ queryKey: ["/api/medical/pending"] });
       // The patient just left the doctor's queue — refresh it wherever it shows.
@@ -98,8 +152,19 @@ export function NewExamDialog({
       // The prescription just rewrote the patient's case details.
       queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId, "cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients/registry"] });
+      // The prescription also rewrites the PATIENT row itself (isAmputee /
+      // isMedicalSupport), and those flags gate the manufacturing card and the
+      // «تخصيص» service type. Without this the page keeps rendering the
+      // pre-decision shape until a manual reload.
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       onOpenChange(false);
-      toast({ title: "حُفظت المعاينة ووُقّعت باسمك" });
+      toast({
+        title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
+        // The server could not retire the superseded case (it already carries a
+        // work order or tagged payments) — the doctor has to know both are open.
+        description: saved?.switchNote ?? undefined,
+      });
       onDone?.();
     },
     onError: (err: any) =>
@@ -121,7 +186,8 @@ export function NewExamDialog({
       <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto" dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
-            <Stethoscope className="w-5 h-5" /> معاينة طبية جديدة
+            <Stethoscope className="w-5 h-5" />
+            {isEdit ? `تعديل المعاينة${exam?.version ? ` — النسخة ${exam.version}` : ""}` : "معاينة طبية جديدة"}
           </DialogTitle>
           {patientName && (
             <p className="text-sm text-muted-foreground text-right">{patientName}</p>
@@ -132,8 +198,9 @@ export function NewExamDialog({
           <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-900 flex gap-2">
             <Lock className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              بعد الحفظ تُقفل المعاينة باسمك ولا يمكن تعديلها ولا حذفها. أي تصحيح لاحق
-              يُضاف كملحق مؤرّخ.
+              {isEdit
+                ? "سيُحفظ النصّ الحالي كنسخة سابقة يمكن الاطّلاع عليها، ولن يُمحى. لا شيء يضيع."
+                : "تُحفظ المعاينة موقّعة باسمك. يمكنك تعديلها لاحقاً، وكل نسخة سابقة تبقى محفوظة ومرئية."}
             </span>
           </div>
 
@@ -155,6 +222,26 @@ export function NewExamDialog({
 
           {specialty && (
             <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
+          )}
+
+          {isDeviceSpecialty && (
+            <div className="space-y-2 rounded-lg border border-teal-200 bg-teal-50/50 p-3">
+              <Label htmlFor="exam-device-cost" className="font-semibold">
+                كلفة {specialty === "prosthetic" ? "الطرف" : "المسند"} (د.ع)
+              </Label>
+              <Input
+                id="exam-device-cost"
+                inputMode="numeric"
+                placeholder="مثال: 1,500,000"
+                value={deviceCost}
+                onChange={(e) => setDeviceCost(e.target.value.replace(/[^\d,]/g, ""))}
+                className="bg-white"
+                data-testid="input-exam-device-cost"
+              />
+              <p className="text-xs text-muted-foreground">
+                تحدّدها أنت لأنك مَن يحدّد الجهاز. يبقى القبض وإسناد الخبير على الاستعلامات.
+              </p>
+            </div>
           )}
 
           {EXAM_FIELDS.map((f) => (
@@ -181,7 +268,7 @@ export function NewExamDialog({
             disabled={!specialty || !hasContent || save.isPending}
             data-testid="button-save-medical-exam"
           >
-            {save.isPending ? "جارٍ الحفظ…" : "حفظ وتوقيع"}
+            {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}
           </Button>
         </DialogFooter>
       </DialogContent>

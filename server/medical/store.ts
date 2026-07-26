@@ -1,9 +1,12 @@
 // Data layer for doctor medical examinations (معاينة الطبيب).
 //
 // Invariants enforced here — the routes layer assumes all of them:
-//   1. An exam is only ever INSERTed. There is no update and no delete in this
-//      file, and none anywhere else in the app. Postgres backs that up with a
-//      trigger (migration 028) that rejects UPDATE on both tables.
+//   1. Nothing is ever destroyed. An exam may be REVISED (030), but only
+//      through `reviseExam`, which snapshots the outgoing version into
+//      `medical_exam_revisions` inside the same transaction. There is no
+//      delete anywhere. The 028 trigger still rejects any UPDATE that has not
+//      opened the supervised `app.allow_exam_edit` door, so a stray write from
+//      a console or a future bug is still refused.
 //   2. The doctor's name is snapshotted onto the row at signing time, so a
 //      record stays readable after the account is renamed or removed.
 //   3. `caseType` is always one of the three specialties, validated by the
@@ -13,11 +16,13 @@ import { db } from "../db";
 import {
   medicalExams as EX,
   medicalExamAddenda as AD,
+  medicalExamRevisions as REV,
   patientCases,
   patients,
   systemUsers,
   type MedicalExam,
   type MedicalExamAddendum,
+  type MedicalExamRevision,
 } from "@shared/schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
@@ -71,6 +76,7 @@ export async function createExam(values: {
   doctorId: number | null;
   doctorName: string;
   prescription: Record<string, any>;
+  deviceCost: number | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -123,9 +129,17 @@ export async function applyPrescription(
   if (caseType === "prosthetic") {
     for (const f of PROSTHETIC_SPECS) put(f.key, prescription[f.key]);
     put("injurySide", prescription.injurySide);
+    // Raise the legacy flag too. `syncPatientCases` would infer the case from
+    // the detail columns alone, but a great deal of UI still reads the FLAG:
+    // the registry chips, the manufacturing card on the patient page, and —
+    // most consequentially — AssignExpertDialog, which derives the work order's
+    // serviceType from it. Leaving the flag false produced a prosthesis order
+    // for a patient the doctor had prescribed a support for.
+    patch.isAmputee = true;
   } else if (caseType === "medical_support") {
     for (const f of SUPPORT_SPECS) put(f.key, prescription[f.key]);
     put("injurySide", prescription.injurySide);
+    patch.isMedicalSupport = true;
   } else {
     put("diseaseType", prescription.diseaseType);
     // Injuries travel as three columns kept in sync, exactly as the patient
@@ -145,6 +159,182 @@ export async function applyPrescription(
   await db.update(patients).set(patch).where(eq(patients.id, patientId));
   // Re-derive the case's `details` from the columns we just wrote.
   await storage.syncPatientCases(patientId);
+}
+
+/**
+ * Put the doctor's device price on the case, as a MANUAL cost.
+ *
+ * `costSource = 'manual'` is what tells the automatic cost floor and every sync
+ * pass to keep its hands off — the same marker reception's own pricing sets.
+ * أطراف/مساند only; the caller never passes a physiotherapy case here.
+ */
+export async function applyDeviceCost(
+  patientId: number,
+  caseType: MedicalSpecialty,
+  deviceCost: number,
+): Promise<void> {
+  if (!Number.isFinite(deviceCost) || deviceCost < 0) return;
+  await db
+    .update(patientCases)
+    .set({ cost: Math.round(deviceCost), costSource: "manual", updatedAt: new Date() })
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
+}
+
+/**
+ * The doctor changed WHICH device the patient needs (أطراف ⇄ مساند).
+ *
+ * Reception's initial pick is a first guess; the doctor's decision replaces it
+ * rather than adding a second thread — otherwise the superseded case stays
+ * active forever, nagging in the pending badge and the worklist, which is
+ * exactly what happened in practice.
+ *
+ * Reuses `storage.deleteCaseType`, which already carries the guards this needs:
+ * it refuses when a work order or a tagged payment exists for the old type, and
+ * it moves any visits/payments onto the remaining case before clearing the old
+ * columns. So a case that has REAL history is never silently discarded — the
+ * caller reports the refusal and both cases simply stay.
+ *
+ * Returns true when the switch happened.
+ */
+export async function retireSupersededCase(
+  patientId: number,
+  keepType: MedicalSpecialty,
+  /**
+   * The patient's device case types as they stood BEFORE this prescription was
+   * applied. Essential: applying the prescription creates the new case, so
+   * reading the state afterwards can no longer tell a CHANGE apart from an
+   * addition.
+   */
+  deviceTypesBefore: string[],
+): Promise<{ switched: boolean; reason?: string }> {
+  // Only the two device specialties trade places. Physiotherapy is a different
+  // service entirely, not an alternative reading of the same need.
+  if (keepType !== "prosthetic" && keepType !== "medical_support") {
+    return { switched: false };
+  }
+  const dropType = keepType === "prosthetic" ? "medical_support" : "prosthetic";
+
+  // A switch is ONLY when reception had made exactly one device determination
+  // and the doctor picked the other one. If the patient already carried BOTH —
+  // a legitimate combination reception adds through «إضافة نوع حالة» — then the
+  // doctor is documenting one of two real threads, and retiring the other would
+  // silently destroy a service the patient actually needs.
+  const hadOnlyTheOther =
+    deviceTypesBefore.length === 1 && deviceTypesBefore[0] === dropType;
+  if (!hadOnlyTheOther) return { switched: false };
+
+  try {
+    await storage.deleteCaseType(patientId, dropType);
+    return { switched: true };
+  } catch (err: any) {
+    // Guard tripped — the old case has real history (a work order, or tagged
+    // payments). Keep both and let the caller say so.
+    return { switched: false, reason: err?.message || "تعذّر استبدال الحالة السابقة" };
+  }
+}
+
+/** The patient's DEVICE case types (أطراف/مساند) as they stand right now. */
+export async function deviceCaseTypes(patientId: number): Promise<string[]> {
+  const rows = await db
+    .select({ caseType: patientCases.caseType })
+    .from(patientCases)
+    .where(eq(patientCases.patientId, patientId));
+  return rows
+    .map((r) => r.caseType)
+    .filter((t) => t === "prosthetic" || t === "medical_support");
+}
+
+/**
+ * Replace an exam with a new version, keeping the old one.
+ *
+ * The whole transaction runs behind `app.allow_exam_edit`, the supervised door
+ * the 028 trigger leaves open: the previous version is copied into
+ * `medical_exam_revisions` FIRST, and only then is the live row replaced. If
+ * anything fails the transaction rolls back and the record is untouched — there
+ * is no window in which a version exists nowhere.
+ */
+export async function reviseExam(
+  examId: number,
+  values: {
+    caseType: MedicalSpecialty;
+    prescription: Record<string, any>;
+    deviceCost: number | null;
+    chiefComplaint: string | null;
+    clinicalFindings: string | null;
+    diagnosis: string | null;
+    plan: string | null;
+    notes: string | null;
+  },
+  editor: { userId: number | null; userName: string },
+): Promise<MedicalExam> {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
+
+    const [current] = await tx.select().from(EX).where(eq(EX.id, examId));
+    if (!current) throw new Error("المعاينة غير موجودة");
+
+    await tx.insert(REV).values({
+      examId: current.id,
+      version: current.version,
+      caseType: current.caseType,
+      doctorId: current.doctorId,
+      doctorName: current.doctorName,
+      chiefComplaint: current.chiefComplaint,
+      clinicalFindings: current.clinicalFindings,
+      diagnosis: current.diagnosis,
+      plan: current.plan,
+      notes: current.notes,
+      prescription: current.prescription,
+      deviceCost: current.deviceCost,
+      signedAt: current.signedAt,
+      editedBy: editor.userId,
+      editedByName: editor.userName,
+    });
+
+    // `caseId` is re-resolved for the (possibly new) specialty so a type change
+    // does not leave the exam pointing at the case it used to belong to.
+    const [caseRow] = await tx
+      .select({ id: patientCases.id })
+      .from(patientCases)
+      .where(
+        and(
+          eq(patientCases.patientId, current.patientId),
+          eq(patientCases.caseType, values.caseType),
+        ),
+      );
+
+    const [updated] = await tx
+      .update(EX)
+      .set({
+        caseType: values.caseType,
+        caseId: caseRow?.id ?? current.caseId,
+        prescription: values.prescription,
+        deviceCost: values.deviceCost,
+        chiefComplaint: values.chiefComplaint,
+        clinicalFindings: values.clinicalFindings,
+        diagnosis: values.diagnosis,
+        plan: values.plan,
+        notes: values.notes,
+        version: current.version + 1,
+        editedAt: new Date(),
+        editedBy: editor.userId,
+        editedByName: editor.userName,
+      })
+      .where(eq(EX.id, examId))
+      .returning();
+
+    return updated;
+  });
+}
+
+/** Every superseded version of an exam, oldest first. */
+export async function getRevisions(examIds: number[]): Promise<MedicalExamRevision[]> {
+  if (examIds.length === 0) return [];
+  return await db
+    .select()
+    .from(REV)
+    .where(inArray(REV.examId, examIds))
+    .orderBy(REV.examId, REV.version);
 }
 
 /** Resolve the patient's case row for a specialty, so the exam can point at it. */
@@ -190,6 +380,39 @@ export async function getPendingExams(
         WHERE me.patient_id = pc.patient_id
           AND me.case_type = pc.case_type
       )
+  `);
+
+  return (rows.rows ?? []).map((r) => ({
+    patientId: Number(r.patient_id),
+    caseType: String(r.case_type),
+  }));
+}
+
+/**
+ * The positive counterpart: specialties the doctor has already DECIDED, so the
+ * registry can say "تم تحديد مسند" rather than merely dropping the amber chip.
+ * Reception reads this as their cue to assign an expert and take payment.
+ *
+ * Scoped by the exam's own branch, since that is where the exam was signed.
+ */
+export async function getDecidedExams(
+  branchIds: number[] | null,
+): Promise<{ patientId: number; caseType: string }[]> {
+  const scoped =
+    branchIds === null
+      ? sql`TRUE`
+      : branchIds.length === 0
+        ? sql`FALSE`
+        : sql`COALESCE(me.branch_id, p.branch_id) IN (${sql.join(
+            branchIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`;
+
+  const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
+    SELECT DISTINCT me.patient_id, me.case_type
+    FROM medical_exams me
+    JOIN patients p ON p.id = me.patient_id
+    WHERE ${scoped}
   `);
 
   return (rows.rows ?? []).map((r) => ({

@@ -11,6 +11,7 @@
     "db:push": "drizzle-kit push",
     "test:manufacturing": "tsx server/manufacturing/isolation.test.ts",
     "test:mold-stage": "tsx server/manufacturing/mold_stage.test.ts",
+    "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:prescription": "tsx server/medical/prescription.test.ts"
   },
   "dependencies": {
