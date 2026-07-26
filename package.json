@@ -13,6 +13,7 @@
     "test:mold-stage": "tsx server/manufacturing/mold_stage.test.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",
+    "test:amputation-site": "tsx server/medical/amputation_site.test.ts",
     "test:prescription": "tsx server/medical/prescription.test.ts"
   },
   "dependencies": {

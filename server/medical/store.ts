@@ -26,7 +26,7 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
-import { PROSTHETIC_SPECS, SUPPORT_SPECS, serializeInjuries } from "@shared/case_fields";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
@@ -129,6 +129,12 @@ export async function applyPrescription(
   if (caseType === "prosthetic") {
     for (const f of PROSTHETIC_SPECS) put(f.key, prescription[f.key]);
     put("injurySide", prescription.injurySide);
+    // The amputation builder's structured parts live in the prescription; the
+    // legacy column stores the COMPOSED string, in the exact format the
+    // registration form has always produced — EditPatient's parser and the
+    // expert order page keep reading doctor-written values unchanged.
+    const site = buildAmputationSite(prescription);
+    if (site) patch.amputationSite = site;
     // Raise the legacy flag too. `syncPatientCases` would infer the case from
     // the detail columns alone, but a great deal of UI still reads the FLAG:
     // the registry chips, the manufacturing card on the patient page, and —
@@ -161,24 +167,17 @@ export async function applyPrescription(
   await storage.syncPatientCases(patientId);
 }
 
-/**
- * Put the doctor's device price on the case, as a MANUAL cost.
- *
- * `costSource = 'manual'` is what tells the automatic cost floor and every sync
- * pass to keep its hands off — the same marker reception's own pricing sets.
- * أطراف/مساند only; the caller never passes a physiotherapy case here.
- */
-export async function applyDeviceCost(
-  patientId: number,
-  caseType: MedicalSpecialty,
-  deviceCost: number,
-): Promise<void> {
-  if (!Number.isFinite(deviceCost) || deviceCost < 0) return;
-  await db
-    .update(patientCases)
-    .set({ cost: Math.round(deviceCost), costSource: "manual", updatedAt: new Date() })
-    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
-}
+// NOTE deliberately absent: nothing here writes the doctor's device price onto
+// the case. The price stays on the exam as a PROPOSAL (`medical_exams.
+// device_cost`) until reception confirms it in «تخصيص وإسناد خبير» — whose
+// save path (storage.assignManufacturing) is the single place a device sale
+// enters the books: it sets the case cost AND bumps patients.total_cost, which
+// is what totalRevenue actually sums. Writing the case cost directly from the
+// exam (the first implementation) put the amount into the per-section split
+// while totalRevenue never saw it — and then assignManufacturing's delta
+// (price − oldCaseCost) came out 0, so the sale never reached the books at
+// all. A patient who walks out without paying now leaves no trace in the
+// accounts, exactly as the owner specified.
 
 /**
  * The doctor changed WHICH device the patient needs (أطراف ⇄ مساند).
