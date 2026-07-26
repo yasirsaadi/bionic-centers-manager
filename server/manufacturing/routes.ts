@@ -376,7 +376,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     const visitNotes = strOrU(req.body?.notes) ?? "صيانة طرف/مسند";
     // أجور الصيانة — reception / manager / admin set it here (the roles this
-    // endpoint already admits). 0 = warranty. Booked inside the same
+    // endpoint already admits). The amount is the STAFF'S decision — zero or
+    // anything else, with no warranty assumption baked in. Booked inside the same
     // transaction that opens the maintenance episode.
     const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
@@ -387,7 +388,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
         `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
-          + (cost > 0 ? ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)` : " (ضمن الضمان)"));
+          + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`);
       res.status(201).json(order);
     } catch (err: any) {
       if (err instanceof store.ActiveOrderError) {

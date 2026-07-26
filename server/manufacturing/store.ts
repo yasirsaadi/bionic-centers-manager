@@ -222,7 +222,8 @@ export async function createMaintenanceOrderWithVisit(params: {
   assignedBy: number | null;
   visitNotes: string;
   visitDate: Date;
-  // أجور الصيانة. 0 = warranty / free. When > 0 it is booked the same way a
+  // أجور الصيانة. The amount is the staff's call — zero or otherwise, no
+  // warranty assumption. When > 0 it is booked the same way a
   // confirmed device price is: onto the device case's cost AND onto
   // patients.total_cost, so it reaches totalRevenue, the section split, and
   // the patient's remaining — and payments are then collected as usual.

@@ -331,7 +331,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
                   <FormLabel>أجور الصيانة (د.ع)</FormLabel>
                   <MoneyInput value={maintCost} onValueChange={setMaintCost} placeholder="0" data-testid="input-maintenance-cost" />
                   <p className="text-[11px] text-muted-foreground">
-                    تُقيَّد على حساب المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. اتركها 0 إن كانت الصيانة ضمن الضمان.
+                    تُقيَّد على حساب المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. المبلغ قراركم — صفر أو أي مبلغ، بغضّ النظر عن الضمان.
                   </p>
                 </FormItem>
                 <p className="text-[11px] text-muted-foreground">
