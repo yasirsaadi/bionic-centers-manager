@@ -258,6 +258,11 @@ export default function PatientsList() {
   const examableSpecialty = (patientId: number): string | null =>
     (pendingByPatient[patientId] ?? []).find((c) => mySpecialties.includes(c as any)) ?? null;
 
+  // تخصيص requires a SIGNED device exam — the workflow gate the server also
+  // enforces. `decided` already carries exactly that signal.
+  const hasDeviceExam = (patientId: number) =>
+    (decidedByPatient[patientId] ?? []).some((t) => t === "prosthetic" || t === "medical_support");
+
   const openExamFor = (patient: { id: number; name: string }) => {
     const specialty = examableSpecialty(patient.id);
     if (specialty) setExamPatient({ id: patient.id, name: patient.name, specialty });
@@ -573,7 +578,7 @@ export default function PatientsList() {
                           {formatDateIraq(patient.createdAt)}
                         </span>
                         <div className="flex items-center gap-1">
-                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
+                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && hasDeviceExam(patient.id) && (
                             <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
                               <UserCog className="w-3.5 h-3.5" />
                               تخصيص
@@ -665,7 +670,7 @@ export default function PatientsList() {
                                 كتابة معاينة
                               </Button>
                             )}
-                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (
+                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && hasDeviceExam(patient.id) && (
                               <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
                                 <UserCog className="w-4 h-4" />
                                 تخصيص وإسناد خبير

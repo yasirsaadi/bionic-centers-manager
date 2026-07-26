@@ -337,6 +337,26 @@ export async function getRevisions(examIds: number[]): Promise<MedicalExamRevisi
 }
 
 /**
+ * Does a signed exam exist for (patient, specialty)?
+ *
+ * The workflow gate: an INITIAL-BUILD work order (تخصيص / بدء التصنيع) may not
+ * be created before the doctor has examined the patient — on what basis would
+ * an expert be assigned? Maintenance episodes are exempt: the device already
+ * exists and was prescribed once.
+ */
+export async function hasSignedExam(
+  patientId: number,
+  caseType: MedicalSpecialty,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: EX.id })
+    .from(EX)
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .limit(1);
+  return !!row;
+}
+
+/**
  * The newest signed exam's non-empty device specs for (patient, specialty).
  *
  * Read by the تخصيص endpoint so the doctor's signed specification always wins

@@ -81,9 +81,26 @@ export function StartManufacturingDialog({ patient }: {
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  // Show only when there is no ACTIVE order (never / cancelled / completed).
+  // The initial build needs the doctor's signed exam first (the server
+  // enforces this too). Same query key as the exam card — deduped.
+  const { data: examData } = useQuery<{ exams: any[] }>({
+    queryKey: [`/api/medical/patients/${patient.id}/exams`],
+    enabled: mayStart && !!patient.id,
+    queryFn: async () => {
+      const res = await fetch(`/api/medical/patients/${patient.id}/exams`, { credentials: "include" });
+      if (!res.ok) return { exams: [] };
+      return res.json();
+    },
+  });
+  // Mirrors the server's serviceType derivation: prosthetic first.
+  const derivedService = patient.isAmputee ? "prosthetic" : "medical_support";
+  const hasExam = (examData?.exams ?? []).some((e: any) => e.caseType === derivedService);
+
+  // Show only when there is no ACTIVE order (never / cancelled / completed)
+  // AND the doctor has signed the exam — before that, the patient page shows
+  // the amber "بانتظار معاينة" badge instead of a button that would 409.
   const hasActive = summary && summary.status !== "cancelled" && summary.status !== "completed";
-  if (!mayStart || hasActive) return null;
+  if (!mayStart || hasActive || !hasExam) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
