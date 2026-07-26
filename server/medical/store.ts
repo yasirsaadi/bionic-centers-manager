@@ -356,6 +356,20 @@ export async function hasSignedExam(
   return !!row;
 }
 
+/** The newest signed exam's proposed device price, or null when unset. */
+export async function latestDeviceCost(
+  patientId: number,
+  caseType: MedicalSpecialty,
+): Promise<number | null> {
+  const [exam] = await db
+    .select({ deviceCost: EX.deviceCost })
+    .from(EX)
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .orderBy(desc(EX.signedAt), desc(EX.id))
+    .limit(1);
+  return typeof exam?.deviceCost === "number" && exam.deviceCost > 0 ? exam.deviceCost : null;
+}
+
 /**
  * The newest signed exam's non-empty device specs for (patient, specialty).
  *

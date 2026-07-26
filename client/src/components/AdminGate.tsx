@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Lock, Loader2, ShieldAlert } from "lucide-react";
+import { Lock, Loader2, ShieldAlert, Eye, EyeOff } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
 interface AdminGateProps {
@@ -13,6 +13,7 @@ export function AdminGate({ children }: AdminGateProps) {
   const [isVerified, setIsVerified] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
   const [code, setCode] = useState("");
+  const [showCode, setShowCode] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -72,14 +73,24 @@ export function AdminGate({ children }: AdminGateProps) {
           <div className="relative">
             <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <Input
-              type="password"
+              type={showCode ? "text" : "password"}
               placeholder="أدخل كود المسؤول"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="pr-10 text-center text-lg tracking-widest"
+              className="px-10 text-center text-lg tracking-widest"
               data-testid="input-admin-code"
               autoFocus
             />
+            <button
+              type="button"
+              onClick={() => setShowCode((v) => !v)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label={showCode ? "إخفاء الكود" : "إظهار الكود"}
+              tabIndex={-1}
+              data-testid="button-toggle-admin-code"
+            >
+              {showCode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
           </div>
 
           {error && (

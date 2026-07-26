@@ -12,7 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { hasSignedExam, prescribedSpecs } from "../medical/store";
+import { hasSignedExam, latestDeviceCost, prescribedSpecs } from "../medical/store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
@@ -295,6 +295,22 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (mayWriteClinical) {
       for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
     }
+
+    // The PRICE follows the same split: reception CONFIRMS the doctor's
+    // proposed price, it does not type one — whatever number the request
+    // carries is ignored and the exam's proposal is booked verbatim. Managers
+    // and the admin may still override (negotiations happen), and that
+    // override is theirs to answer for in the audit log.
+    let effectiveCost = cost;
+    if (!mayWriteClinical) {
+      const proposed = await latestDeviceCost(patientId, serviceType);
+      if (proposed === null) {
+        return res.status(409).json({
+          error: "لم يحدّد الطبيب كلفة الجهاز في المعاينة — تُستكمل الكلفة في المعاينة أو يعتمد المدير التخصيص",
+        });
+      }
+      effectiveCost = proposed;
+    }
     // The doctor's signed specs are not anyone's to change: whatever the
     // latest exam prescribes overrides the request body, field by field.
     // Failure to read the exam must not block the assignment — it degrades to
@@ -307,10 +323,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     try {
       const { workOrderId } = await storage.assignManufacturing({
-        patientId, serviceType, fields, cost, expertUserId, assignedBy: s.userId ?? null,
+        patientId, serviceType, fields, cost: effectiveCost, expertUserId, assignedBy: s.userId ?? null,
       });
       await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
-        `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${cost})`);
+        `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${effectiveCost}${mayWriteClinical ? "" : " — سعر الطبيب المعتمد"})`);
       res.status(201).json({ ok: true, workOrderId });
     } catch (err: any) {
       // In-tx guard or the partial unique index: someone beat us to it.
