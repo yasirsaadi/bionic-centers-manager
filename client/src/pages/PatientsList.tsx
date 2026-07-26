@@ -48,20 +48,34 @@ function getTodayDateString(): string {
 // full picture is visible straight from the search results.
 // `pending` lists the specialties whose case is active but has no signed exam
 // yet, so the doctor can spot who is waiting on THEM without opening a file.
-function CaseTypeBadges({ patient, labels, pending = [] }: {
+function CaseTypeBadges({ patient, labels, pending = [], decided = [] }: {
   patient: { isAmputee: boolean | null; isPhysiotherapy: boolean | null; isMedicalSupport: boolean | null };
   labels: { amputee: string; physiotherapy: string; medicalSupport: string };
   pending?: string[];
+  decided?: string[];
 }) {
   const types: { label: string; variant: "default" | "secondary" | "outline" }[] = [];
   if (patient.isAmputee) types.push({ label: labels.amputee, variant: "default" });
   if (patient.isPhysiotherapy) types.push({ label: labels.physiotherapy, variant: "secondary" });
   if (patient.isMedicalSupport) types.push({ label: labels.medicalSupport, variant: "outline" });
-  if (types.length === 0 && pending.length === 0) return <span className="text-slate-400">-</span>;
+  if (types.length === 0 && pending.length === 0 && decided.length === 0) {
+    return <span className="text-slate-400">-</span>;
+  }
   return (
     <div className="flex flex-wrap gap-1 justify-end">
       {types.map((tp) => (
         <Badge key={tp.label} variant={tp.variant} className="font-normal text-xs shrink-0">{tp.label}</Badge>
+      ))}
+      {decided.map((c) => (
+        <Badge
+          key={`decided-${c}`}
+          variant="outline"
+          className="font-normal text-xs shrink-0 bg-green-100 text-green-800 border-green-200"
+          title="عاينها الطبيب وحدّد نوعها — يمكن إسناد الخبير والقبض"
+          data-testid={`badge-decided-${c}`}
+        >
+          تم تحديد {specialtyShortLabel(c)}
+        </Badge>
       ))}
       {pending.map((p) => (
         <Badge
@@ -224,15 +238,19 @@ export default function PatientsList() {
   // Pending-exam signal, fetched independently of the (heavy, paginated)
   // registry query so it stays cheap and refreshes on its own when a doctor
   // signs an exam elsewhere in the app.
-  const { data: pendingExams } = useQuery<{ pending: Record<number, string[]> }>({
+  const { data: pendingExams } = useQuery<{
+    pending: Record<number, string[]>;
+    decided: Record<number, string[]>;
+  }>({
     queryKey: ["/api/medical/pending"],
     queryFn: async () => {
       const res = await fetch("/api/medical/pending", { credentials: "include" });
-      if (!res.ok) return { pending: {} };
+      if (!res.ok) return { pending: {}, decided: {} };
       return res.json();
     },
   });
   const pendingByPatient = pendingExams?.pending ?? {};
+  const decidedByPatient = pendingExams?.decided ?? {};
 
   // Show the button only where the doctor can actually act: this patient has a
   // pending case AND it falls in one of their own specialties. Returns the
@@ -545,7 +563,7 @@ export default function PatientsList() {
                           </span>
                           <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
                         </div>
-                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} />
+                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={decidedByPatient[patient.id] ?? []} />
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-1 mb-2">
                         {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
@@ -627,7 +645,7 @@ export default function PatientsList() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} />
+                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={decidedByPatient[patient.id] ?? []} />
                         </TableCell>
                         <TableCell className="text-slate-600">
                           {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}

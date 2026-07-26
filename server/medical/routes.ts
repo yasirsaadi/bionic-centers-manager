@@ -9,8 +9,12 @@
 //           exempt: signing a clinical record is a professional act, not an
 //           administrative one, so an admin who was never granted the
 //           capability cannot sign either.
-//   EDIT / DELETE — do not exist. There is deliberately no such endpoint. A
-//           correction is filed as an addendum; the original stands.
+//   EDIT  — the doctor who SIGNED it, or the responsible manager (admin /
+//           branch_manager). Nobody else, not even another doctor holding the
+//           same specialty: they file an addendum rather than rewrite a
+//           colleague's signature. Editing never destroys — the outgoing
+//           version is archived first (see store.reviseExam).
+//   DELETE — does not exist. There is deliberately no such endpoint.
 //
 // The grant is re-read from the database on every write rather than trusted
 // from the session, so revoking a doctor's capability takes effect at once
@@ -57,6 +61,80 @@ function clean(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * The device price, accepted for أطراف/مساند ONLY.
+ *
+ * Physiotherapy is untouched by design: its price is computed per session by
+ * reception in «الكلفة والجلسات», so a cost arriving on a physiotherapy exam is
+ * dropped rather than honoured — the doctor's form does not offer the field
+ * there, and the server must not trust that it didn't.
+ */
+function parseDeviceCost(raw: unknown, caseType: string): number | null {
+  if (caseType !== "prosthetic" && caseType !== "medical_support") return null;
+  const n = typeof raw === "string" ? Number(raw.replace(/,/g, "")) : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n);
+}
+
+/**
+ * Land the doctor's decision on the patient's record, in the order the rest of
+ * the app depends on:
+ *
+ *   1. the prescription (which CREATES the case when the doctor decides a
+ *      specialty the patient had none for),
+ *   2. the superseded device case is retired — reception's initial pick was a
+ *      guess and the doctor's decision replaces it, so nothing is left hanging
+ *      in the pending badge,
+ *   3. the device cost, last, because step 2 can move costs between cases.
+ *
+ * Every step is isolated: a signed clinical record must never be undone by a
+ * bookkeeping failure downstream, so problems are logged and reported, not
+ * thrown.
+ */
+async function applyDecision(
+  patientId: number,
+  caseType: MedicalSpecialty,
+  prescription: Record<string, any>,
+  deviceCost: number | null,
+): Promise<{ switchNote?: string }> {
+  let switchNote: string | undefined;
+
+  // Read the device cases BEFORE anything is applied — once the prescription
+  // has run, the new case exists and a change is indistinguishable from an
+  // addition.
+  let deviceTypesBefore: string[] = [];
+  try {
+    deviceTypesBefore = await store.deviceCaseTypes(patientId);
+  } catch (err) {
+    console.error("[medical] reading device cases failed:", err);
+  }
+
+  try {
+    await store.applyPrescription(patientId, caseType, prescription);
+  } catch (err) {
+    console.error("[medical] applying prescription to case failed:", err);
+  }
+
+  try {
+    const result = await store.retireSupersededCase(patientId, caseType, deviceTypesBefore);
+    if (result.reason) {
+      switchNote = `بقيت الحالة السابقة مفتوحة: ${result.reason}`;
+    }
+  } catch (err) {
+    console.error("[medical] retiring superseded case failed:", err);
+  }
+
+  if (deviceCost !== null) {
+    try {
+      await store.applyDeviceCost(patientId, caseType, deviceCost);
+    } catch (err) {
+      console.error("[medical] applying device cost failed:", err);
+    }
+  }
+
+  return { switchNote };
+}
+
 export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   // ── The current user's doctor grant ──────────────────────────────────────
   // The UI asks this to decide whether to offer the "معاينة جديدة" button and
@@ -86,18 +164,39 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
 
-      const { userId } = getSession(req);
+      const session = getSession(req);
       const [exams, pending, specialties] = await Promise.all([
         store.getExamsByPatient(patientId),
         store.getPendingForPatient(patientId),
-        store.doctorSpecialties(userId),
+        store.doctorSpecialties(session.userId),
       ]);
 
+      // Superseded versions, grouped onto their exam. Read by everyone: the
+      // history is the reason editing is safe, so hiding it would defeat it.
+      const revisions = await store.getRevisions(exams.map((e) => e.id));
+      const byExam: Record<number, typeof revisions> = {};
+      for (const r of revisions) (byExam[r.examId] ||= []).push(r);
+
+      // A PURE prosthetics expert is financially locked out everywhere else in
+      // the app; the exam carries a device price now, so strip it for them
+      // rather than let the clinical record become a side channel to it.
+      const hideMoney = session.role === "prosthetics_expert";
+      const scrub = <T extends { deviceCost?: number | null }>(row: T): T =>
+        hideMoney ? { ...row, deviceCost: null } : row;
+
       res.json({
-        exams,
+        exams: exams.map((e) => ({
+          ...scrub(e),
+          revisions: (byExam[e.id] ?? []).map(scrub),
+        })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         canWriteMedicalExam: specialties.length > 0,
         specialties,
+        // Who may press "تعديل" — the author, or the responsible manager. Sent
+        // from the server so the UI can never offer an action the server would
+        // then refuse.
+        canManageExams: session.isAdmin || session.role === "branch_manager",
+        userId: session.userId,
       });
     } catch (err: any) {
       console.error("[medical] GET exams failed:", err);
@@ -152,10 +251,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           ? (req.body.prescription as Record<string, any>)
           : {};
 
-      // A signed record must actually say something. Since the row can never be
-      // edited afterwards, an accidental empty save would be permanent. Either
-      // half counts: a narrative, or a prescription on its own — specifying the
-      // device IS a clinical decision even with no prose around it.
+      // A signed record must actually say something — either half counts: a
+      // narrative, or a prescription on its own, since specifying the device IS
+      // a clinical decision even with no prose around it.
       const hasNarrative = Object.values(body).some((v) => v !== null);
       const hasPrescription = Object.values(prescription).some((v) =>
         Array.isArray(v)
@@ -166,7 +264,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
+      const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
       const doctorName = session.userName?.trim() || "طبيب";
+
+      // ORDER MATTERS. The prescription is applied FIRST, because when the
+      // doctor decides a specialty the patient had no case for, applying it is
+      // what creates that case. Resolving the case before this step returned
+      // null, and the exam was saved permanently orphaned from its own case.
+      const applied = await applyDecision(patientId, caseType, prescription, deviceCost);
+
       const caseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
       const exam = await store.createExam({
@@ -177,17 +283,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         doctorId: session.userId,
         doctorName,
         prescription,
+        deviceCost,
         ...body,
       });
-
-      // Push the decision onto the patient's case so manufacturing, the expert
-      // board and reception all see it. Isolated: a failure here must not undo
-      // a signed record, so it is logged and the exam still stands.
-      try {
-        await store.applyPrescription(patientId, caseType as MedicalSpecialty, prescription);
-      } catch (err) {
-        console.error("[medical] applying prescription to case failed:", err);
-      }
 
       await logAudit({
         entityType: "medical_exam",
@@ -202,10 +300,111 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
       });
 
-      res.json(exam);
+      // `switchNote` is surfaced, not swallowed: when the superseded case could
+      // not be retired (it already carries a work order or tagged payments) the
+      // doctor must know both cases are still open.
+      res.json({ ...exam, switchNote: applied.switchNote ?? null });
     } catch (err: any) {
       console.error("[medical] POST exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر حفظ المعاينة" });
+    }
+  });
+
+  // ── Revise an exam ───────────────────────────────────────────────────────
+  // The doctor who signed it, or branch management / admin. Nothing is lost:
+  // the outgoing version is archived before the live row is replaced.
+  app.patch("/api/medical/exams/:examId", isAuthenticated, async (req: Req, res) => {
+    try {
+      const examId = Number(req.params.examId);
+      if (!Number.isFinite(examId)) {
+        return res.status(400).json({ error: "معرّف معاينة غير صالح" });
+      }
+
+      const session = getSession(req);
+      const exam = await store.getExam(examId);
+      if (!exam) return res.status(404).json({ error: "المعاينة غير موجودة" });
+      if (!canReachBranch(req, exam.branchId)) {
+        return res.status(403).json({ error: "لا يمكنك التعديل على معاينة فرع آخر" });
+      }
+
+      // Exactly two parties, as agreed: the author, or the responsible manager.
+      // A different doctor — even one holding the same specialty — may not
+      // rewrite a colleague's signature; they file an addendum instead.
+      const isAuthor = exam.doctorId !== null && exam.doctorId === session.userId;
+      const isResponsibleManager = session.isAdmin || session.role === "branch_manager";
+      if (!isAuthor && !isResponsibleManager) {
+        return res
+          .status(403)
+          .json({ error: "تعديل المعاينة للطبيب صاحبها أو للمدير المسؤول فقط" });
+      }
+
+      const caseType = req.body?.caseType ?? exam.caseType;
+      if (!isMedicalSpecialty(caseType)) {
+        return res.status(400).json({ error: "اختصاص المعاينة غير صالح" });
+      }
+      // The author must still hold the specialty they are moving the exam to;
+      // a manager editing on someone's behalf is not bound by that.
+      if (isAuthor && !isResponsibleManager) {
+        const specialties = await store.doctorSpecialties(session.userId);
+        if (!specialties.includes(caseType)) {
+          return res
+            .status(403)
+            .json({ error: `لا تملك صلاحية المعاينة في اختصاص ${specialtyLabel(caseType)}` });
+        }
+      }
+
+      const body = {
+        chiefComplaint: clean(req.body?.chiefComplaint),
+        clinicalFindings: clean(req.body?.clinicalFindings),
+        diagnosis: clean(req.body?.diagnosis),
+        plan: clean(req.body?.plan),
+        notes: clean(req.body?.notes),
+      };
+      const prescription =
+        req.body?.prescription && typeof req.body.prescription === "object"
+          ? (req.body.prescription as Record<string, any>)
+          : {};
+      const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
+
+      const hasNarrative = Object.values(body).some((v) => v !== null);
+      const hasPrescription = Object.values(prescription).some((v) =>
+        Array.isArray(v)
+          ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
+          : typeof v === "string" && v.trim().length > 0,
+      );
+      if (!hasNarrative && !hasPrescription) {
+        return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
+      }
+
+      const editorName = session.userName?.trim() || "مستخدم";
+      // Same ordering rule as signing: the decision lands on the case first, so
+      // a specialty change has a case to point the revised exam at.
+      const applied = await applyDecision(exam.patientId, caseType, prescription, deviceCost);
+
+      const updated = await store.reviseExam(
+        examId,
+        { caseType, prescription, deviceCost, ...body },
+        { userId: session.userId, userName: editorName },
+      );
+
+      await logAudit({
+        entityType: "medical_exam",
+        entityId: examId,
+        action: "update",
+        userId: session.userId,
+        userName: editorName,
+        branchId: exam.branchId,
+        oldValues: exam,
+        newValues: updated,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+        notes: `تعديل المعاينة #${examId} إلى النسخة ${updated.version} — بواسطة ${editorName}${isAuthor ? "" : " (مدير)"}`,
+      });
+
+      res.json({ ...updated, switchNote: applied.switchNote ?? null });
+    } catch (err: any) {
+      console.error("[medical] PATCH exam failed:", err);
+      res.status(500).json({ error: err?.message || "تعذّر تعديل المعاينة" });
     }
   });
 
@@ -286,12 +485,20 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   // each doctor can see who is waiting on THEIR specialty.
   app.get("/api/medical/pending", isAuthenticated, async (req: Req, res) => {
     try {
-      const rows = await store.getPendingExams(branchScope(req));
+      const scope = branchScope(req);
+      const [rows, decidedRows] = await Promise.all([
+        store.getPendingExams(scope),
+        store.getDecidedExams(scope),
+      ]);
       const byPatient: Record<number, string[]> = {};
       for (const r of rows) {
         (byPatient[r.patientId] ||= []).push(r.caseType);
       }
-      res.json({ pending: byPatient, total: rows.length });
+      const decidedByPatient: Record<number, string[]> = {};
+      for (const r of decidedRows) {
+        (decidedByPatient[r.patientId] ||= []).push(r.caseType);
+      }
+      res.json({ pending: byPatient, decided: decidedByPatient, total: rows.length });
     } catch (err: any) {
       console.error("[medical] GET pending failed:", err);
       res.status(500).json({ error: "تعذّر تحميل قائمة الانتظار" });

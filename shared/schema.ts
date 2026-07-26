@@ -738,9 +738,45 @@ export const medicalExams = pgTable("medical_exams", {
   // then copies it onto the patient's case so the rest of the app reads it
   // exactly as before. Shape is per specialty; see shared/case_fields.ts.
   prescription: jsonb("prescription").$type<Record<string, any>>().default({}),
+  // What the device costs (migration 030). أطراف/مساند ONLY — the doctor
+  // specifies the device, so the doctor knows its price, and it lands on the
+  // case as a MANUAL cost. Physiotherapy is deliberately excluded: its price is
+  // derived per session by reception in «الكلفة والجلسات».
+  deviceCost: integer("device_cost"),
+  // Version stamp. The live row is always the current version; every superseded
+  // version is kept in `medicalExamRevisions`.
+  version: integer("version").notNull().default(1),
+  editedAt: timestamp("edited_at", { withTimezone: true }),
+  editedBy: integer("edited_by").references(() => systemUsers.id),
+  editedByName: text("edited_by_name"),
   signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Every SUPERSEDED version of an exam (migration 030). An edit never destroys:
+// the previous text is snapshotted here first, with who replaced it and when,
+// so "what did the doctor say, and when" stays answerable across versions.
+export const medicalExamRevisions = pgTable("medical_exam_revisions", {
+  id: serial("id").primaryKey(),
+  examId: integer("exam_id").references(() => medicalExams.id).notNull(),
+  version: integer("version").notNull(),
+  caseType: text("case_type"),
+  doctorId: integer("doctor_id"),
+  doctorName: text("doctor_name"),
+  chiefComplaint: text("chief_complaint"),
+  clinicalFindings: text("clinical_findings"),
+  diagnosis: text("diagnosis"),
+  plan: text("plan"),
+  notes: text("notes"),
+  prescription: jsonb("prescription").$type<Record<string, any>>(),
+  deviceCost: integer("device_cost"),
+  signedAt: timestamp("signed_at", { withTimezone: true }),
+  editedBy: integer("edited_by").references(() => systemUsers.id),
+  editedByName: text("edited_by_name"),
+  editedAt: timestamp("edited_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type MedicalExamRevision = typeof medicalExamRevisions.$inferSelect;
 
 // Corrections append, never overwrite. The original exam text stays untouched
 // forever; an addendum carries its own signature and timestamp.

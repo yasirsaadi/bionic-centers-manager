@@ -28,6 +28,7 @@ import * as migration026 from "./026_expense_categories";
 import * as migration027 from "./027_expense_section";
 import * as migration028 from "./028_medical_exams";
 import * as migration029 from "./029_exam_prescription";
+import * as migration030 from "./030_exam_revisions_and_cost";
 
 /**
  * Migration Runner
@@ -51,7 +52,7 @@ interface Migration {
 }
 
 // Ordered list of migrations. Add new ones at the end.
-const migrations: Migration[] = [migration001, migration002, migration003, migration004, migration005, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028, migration029];
+const migrations: Migration[] = [migration001, migration002, migration003, migration004, migration005, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028, migration029, migration030];
 
 async function runSqlMigration(migration: Migration): Promise<void> {
   const client = await pool.connect();
