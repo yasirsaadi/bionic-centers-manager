@@ -20,7 +20,7 @@ import {
   type MedicalExamAddendum,
 } from "@shared/schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
+import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -259,10 +259,12 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
   const isDoctor = user.role === DOCTOR_ROLE || Boolean(user.canWrite);
   if (!isDoctor) return [];
   const raw = Array.isArray(user.specialties) ? user.specialties : [];
-  // Still gated on specialties: "doctor" says the profession, not the
-  // department. Without at least one specialty there is nothing they may sign,
-  // which is why creating a doctor with an empty list is rejected up front.
-  return raw.filter(isMedicalSpecialty);
+  const chosen = raw.filter(isMedicalSpecialty);
+  // An empty list means "no restriction", not "nothing". Most centres have one
+  // doctor who covers everything, and forcing them to tick three boxes to
+  // achieve the default was pure friction. Narrowing stays available for
+  // centres that run separate departments.
+  return chosen.length > 0 ? chosen : [...MEDICAL_SPECIALTIES];
 }
 
 /** Patient identity + branch, for authorization and for stamping the exam. */
