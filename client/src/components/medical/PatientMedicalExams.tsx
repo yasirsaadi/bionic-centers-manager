@@ -23,6 +23,38 @@ import {
   type MedicalSpecialty,
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
+import { specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
+
+// Render the signed decision as label/value lines, using the very same field
+// definitions the form wrote it with, so nothing can drift out of sync.
+function prescriptionLines(exam: Exam): { label: string; value: string }[] {
+  const rx = exam.prescription;
+  if (!rx || typeof rx !== "object") return [];
+  const out: { label: string; value: string }[] = [];
+
+  for (const f of specsForSpecialty(exam.caseType)) {
+    if (typeof rx[f.key] === "string" && rx[f.key].trim()) out.push({ label: f.label, value: rx[f.key] });
+  }
+  if (typeof rx.injurySide === "string" && rx.injurySide.trim()) {
+    out.push({ label: "جهة الإصابة", value: rx.injurySide });
+  }
+  if (typeof rx.diseaseType === "string" && rx.diseaseType.trim()) {
+    out.push({ label: "التشخيص / نوع المرض", value: rx.diseaseType });
+  }
+  if (Array.isArray(rx.injuries)) {
+    const list = (rx.injuries as InjuryEntry[])
+      .filter((i) => i && (i.type || i.area))
+      .map((i) => [i.type, i.area, i.side].filter(Boolean).join(" — "));
+    if (list.length) out.push({ label: "الإصابات", value: list.join("، ") });
+  }
+  if (Array.isArray(rx.treatments)) {
+    const list = (rx.treatments as any[])
+      .filter((t) => t?.treatmentType)
+      .map((t) => (t.sessionCount ? `${t.treatmentType} (${t.sessionCount} جلسة)` : t.treatmentType));
+    if (list.length) out.push({ label: "العلاج الموصوف", value: list.join("، ") });
+  }
+  return out;
+}
 
 interface Addendum {
   id: number;
@@ -34,6 +66,7 @@ interface Addendum {
 interface Exam {
   id: number;
   caseType: string;
+  prescription?: Record<string, any> | null;
   doctorName: string;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
@@ -140,6 +173,10 @@ export function PatientMedicalExams({
       )
       .join("");
 
+    const rxRows = prescriptionLines(exam)
+      .map((l) => `<tr><th>${l.label}</th><td>${l.value}</td></tr>`)
+      .join("");
+
     const win = window.open("", "_blank", "width=900,height=1000");
     if (!win) return;
     win.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
@@ -165,6 +202,7 @@ export function PatientMedicalExams({
   <span><b>التاريخ:</b> ${formatDateIraq(exam.signedAt)} — ${formatTimeIraq(exam.signedAt)}</span>
 </div>
 <table>${rows}</table>
+${rxRows ? `<h2 style="font-size:15px;margin:22px 0 8px">الوصفة</h2><table>${rxRows}</table>` : ""}
 ${addenda}
 <div class="sign"><div>توقيع الطبيب: ${exam.doctorName}</div><div>ختم المركز</div></div>
 </body></html>`);
@@ -284,6 +322,18 @@ ${addenda}
                       </Button>
                     </div>
                   </div>
+
+                  {prescriptionLines(exam).length > 0 && (
+                    <div className="mb-2 rounded-lg border border-teal-200 bg-teal-50/60 p-2 space-y-1">
+                      <div className="text-[11px] font-bold text-teal-900">الوصفة</div>
+                      {prescriptionLines(exam).map((l) => (
+                        <div key={l.label} className="text-xs flex gap-2">
+                          <span className="text-muted-foreground shrink-0 min-w-[92px]">{l.label}:</span>
+                          <span dir="auto" style={{ unicodeBidi: "plaintext" }}>{l.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="space-y-1.5">
                     {EXAM_FIELDS.map((f) => {

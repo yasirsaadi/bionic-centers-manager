@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Stethoscope } from "lucide-react";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, type PhysioEntry } from "@shared/pricing";
 import { api } from "@shared/routes";
 
@@ -27,6 +27,33 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
 
   const total = rows.reduce((s, r) => s + physioEntryCost(r), 0);
   const validRows = rows.filter((r) => r.treatmentType && (r.sessionCount > 0 || r.treatmentType === "استشارة طبية"));
+
+  // The doctor prescribed the course; reception prices it. Seeding the rows
+  // from the signed exam means the clerk confirms a clinical decision instead
+  // of re-entering it from a paper note — while the money stays entirely theirs.
+  const { data: examData } = useQuery<{ exams: any[] }>({
+    queryKey: [`/api/medical/patients/${patient?.id}/exams`],
+    enabled: open && !!patient,
+    queryFn: async () => {
+      const res = await fetch(`/api/medical/patients/${patient!.id}/exams`, { credentials: "include" });
+      if (!res.ok) return { exams: [] };
+      return res.json();
+    },
+  });
+  // Newest first, so the first physiotherapy exam is the current decision.
+  const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === "physiotherapy");
+  const prescribed: Row[] = Array.isArray(rxExam?.prescription?.treatments)
+    ? rxExam.prescription.treatments
+        .filter((t: any) => t?.treatmentType)
+        .map((t: any) => ({ treatmentType: t.treatmentType, sessionCount: Number(t.sessionCount) || 0 }))
+    : [];
+
+  useEffect(() => {
+    // Only seed while the clerk hasn't started typing, so reopening the dialog
+    // never discards their edits.
+    const untouched = rows.length === 1 && !rows[0].treatmentType;
+    if (open && prescribed.length > 0 && untouched) setRows(prescribed);
+  }, [open, rxExam?.id]);
 
   function reset() { setRows([{ treatmentType: "", sessionCount: 0 }]); }
 
@@ -64,6 +91,15 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
           <p className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
             بعد فحص الطبيب: اختر أنواع العلاج وعدد الجلسات — الكلفة تُحسب تلقائياً (روبوت 50,000 / جلسة، الأجهزة والتمارين والأبر 25,000 / جلسة).
           </p>
+
+          {rxExam?.doctorName && prescribed.length > 0 && (
+            <p className="text-xs text-teal-900 bg-teal-50/60 border border-teal-300 rounded-md px-3 py-2 flex gap-2">
+              <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                العلاج والجلسات أدناه من معاينة <b>{rxExam.doctorName}</b> — أكِّدها واحسب الكلفة.
+              </span>
+            </p>
+          )}
 
           {rows.map((r, i) => (
             <div key={i} className="border rounded-lg p-3 bg-slate-50/50 space-y-2" data-testid={`physio-row-${i}`}>

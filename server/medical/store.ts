@@ -21,6 +21,8 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS, serializeInjuries } from "@shared/case_fields";
+import { storage } from "../storage";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -68,6 +70,7 @@ export async function createExam(values: {
   branchId: number | null;
   doctorId: number | null;
   doctorName: string;
+  prescription: Record<string, any>;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -87,6 +90,61 @@ export async function addAddendum(values: {
 }): Promise<MedicalExamAddendum> {
   const [row] = await db.insert(AD).values(values).returning();
   return row;
+}
+
+/**
+ * Apply the doctor's signed decision to the patient's record.
+ *
+ * Writes the SAME legacy `patients` columns reception has always written, then
+ * lets `syncPatientCases` derive `patient_cases.details` from them — the
+ * existing, proven propagation path. Nothing downstream (manufacturing, the
+ * expert board, the case panel, reports) needs to know the values now come
+ * from a doctor rather than a receptionist.
+ *
+ * Only non-empty values are written: a prescription that leaves a field blank
+ * means "not specified", never "erase what is already there".
+ *
+ * Physiotherapy's prescribed course is deliberately NOT written here. Treatment
+ * types and session counts drive the price, and pricing belongs to reception —
+ * they open «الكلفة والجلسات» pre-filled from this prescription and confirm it.
+ * The doctor decides the treatment; the clerk decides the money.
+ */
+export async function applyPrescription(
+  patientId: number,
+  caseType: MedicalSpecialty,
+  prescription: Record<string, any>,
+): Promise<void> {
+  const patch: Record<string, any> = {};
+
+  const put = (column: string, value: unknown) => {
+    if (typeof value === "string" && value.trim()) patch[column] = value.trim();
+  };
+
+  if (caseType === "prosthetic") {
+    for (const f of PROSTHETIC_SPECS) put(f.key, prescription[f.key]);
+    put("injurySide", prescription.injurySide);
+  } else if (caseType === "medical_support") {
+    for (const f of SUPPORT_SPECS) put(f.key, prescription[f.key]);
+    put("injurySide", prescription.injurySide);
+  } else {
+    put("diseaseType", prescription.diseaseType);
+    // Injuries travel as three columns kept in sync, exactly as the patient
+    // form writes them: the JSON array plus the two joined legacy strings.
+    if (Array.isArray(prescription.injuries)) {
+      const { injuries, injuryType, injuryArea } = serializeInjuries(prescription.injuries);
+      if (injuries) {
+        patch.injuries = injuries;
+        patch.injuryType = injuryType;
+        patch.injuryArea = injuryArea;
+      }
+    }
+  }
+
+  if (Object.keys(patch).length === 0) return;
+
+  await db.update(patients).set(patch).where(eq(patients.id, patientId));
+  // Re-derive the case's `details` from the columns we just wrote.
+  await storage.syncPatientCases(patientId);
 }
 
 /** Resolve the patient's case row for a specialty, so the exam can point at it. */
