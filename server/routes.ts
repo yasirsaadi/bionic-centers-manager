@@ -6,6 +6,7 @@ import { sql, eq, and, isNull, desc } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
+import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
@@ -689,6 +690,44 @@ export async function registerRoutes(
     
     const email = await storage.getSystemSetting("backup_email");
     res.json({ email: email || "" });
+  });
+
+  // ── Telegram notification settings (admin) ────────────────────────────
+  // Token + chat id live in system_settings so the owner configures them from
+  // the panel with no redeploy. The token is never echoed back in full.
+  app.get("/api/admin/settings/telegram", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) return res.status(403).json({ message: "غير مصرح" });
+    const token = await storage.getSystemSetting(TELEGRAM_SETTINGS.SETTING_TOKEN);
+    const chatId = await storage.getSystemSetting(TELEGRAM_SETTINGS.SETTING_CHAT_ID);
+    res.json({
+      hasToken: Boolean(token),
+      tokenPreview: token ? `…${token.slice(-6)}` : "",
+      chatId: chatId || "",
+    });
+  });
+
+  app.post("/api/admin/settings/telegram", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) return res.status(403).json({ message: "غير مصرح" });
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    if (token) {
+      await storage.setSystemSetting(TELEGRAM_SETTINGS.SETTING_TOKEN, token);
+      // A new bot means the old chat id may belong to the old bot — re-resolve
+      // on the next test instead of silently pinging the wrong chat.
+      await storage.setSystemSetting(TELEGRAM_SETTINGS.SETTING_CHAT_ID, "");
+    }
+    const chatId = typeof req.body?.chatId === "string" ? req.body.chatId.trim() : undefined;
+    if (chatId !== undefined && chatId !== "") {
+      await storage.setSystemSetting(TELEGRAM_SETTINGS.SETTING_CHAT_ID, chatId);
+    }
+    res.json({ success: true, message: "حُفظت إعدادات تلغرام" });
+  });
+
+  app.post("/api/admin/settings/telegram/test", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) return res.status(403).json({ message: "غير مصرح" });
+    res.json(await testAndLink());
   });
 
   // Get backup status
@@ -1560,6 +1599,24 @@ export async function registerRoutes(
       // creates the work order (and the expert commits to the delivery date only
       // when they reach the mold stage).
       const patient = await storage.createPatient(input);
+
+      // Owner's instant ping. Fire-and-forget: a Telegram hiccup must never
+      // fail or slow the registration itself.
+      void (async () => {
+        const branch = await storage.getBranch(patient.branchId);
+        const services = [
+          patient.isAmputee ? "أطراف صناعية" : null,
+          patient.isMedicalSupport ? "مساند طبية" : null,
+          patient.isPhysiotherapy ? "علاج طبيعي" : null,
+        ].filter(Boolean).join("، ") || "غير محدد";
+        await notifyNewPatient({
+          name: patient.name,
+          branchName: branch?.name ?? `فرع #${patient.branchId}`,
+          serviceLabel: services,
+          registeredBy: branchSession?.displayName ?? "غير معروف",
+        });
+      })().catch((err) => console.error("[telegram] new-patient notify failed:", err));
+
       await logAudit({
         entityType: "patient",
         entityId: patient.id,
