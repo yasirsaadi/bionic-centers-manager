@@ -54,7 +54,7 @@ import {
   Sparkles,
   Activity,
   Plus,
-  Trash2
+  Trash2, Bell,
 } from "lucide-react";
 import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1628,6 +1628,51 @@ export default function AdminSettings() {
     },
   });
 
+  // ── تنبيهات تلغرام ──────────────────────────────────────────────────────
+  const [telegramToken, setTelegramToken] = useState("");
+  const { data: telegramSettings } = useQuery<{ hasToken: boolean; tokenPreview: string; chatId: string }>({
+    queryKey: ["/api/admin/settings/telegram"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/settings/telegram", { credentials: "include" });
+      if (!res.ok) return { hasToken: false, tokenPreview: "", chatId: "" };
+      return res.json();
+    },
+  });
+  const saveTelegramMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/settings/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ token: telegramToken.trim() }),
+      });
+      if (!res.ok) throw new Error("تعذّر الحفظ");
+      return res.json();
+    },
+    onSuccess: () => {
+      setTelegramToken("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/telegram"] });
+      toast({ title: "حُفظ التوكن — اضغط «إرسال رسالة تجريبية» لإتمام الربط" });
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+  const testTelegramMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/settings/telegram/test", {
+        method: "POST", credentials: "include",
+      });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/telegram"] });
+      toast({
+        title: data.ok ? "نجح الربط ✅" : "لم يكتمل الربط",
+        description: data.message,
+        variant: data.ok ? undefined : "destructive",
+      });
+    },
+  });
+
   const updateBackupEmailMutation = useMutation({
     mutationFn: async (email: string) => {
       const res = await fetch("/api/admin/settings/backup-email", {
@@ -2338,6 +2383,62 @@ export default function AdminSettings() {
                 <Save className="w-4 h-4" />
                 {updateBackupEmailMutation.isPending ? t.adminSettings.saving : t.adminSettings.saveEmail}
               </Button>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Bell className="w-5 h-5 text-primary" />
+              <h3 className="font-semibold">تنبيهات تلغرام — مريض جديد</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              تصلك رسالة تلغرام فورية عند تسجيل كل مريض جديد (الاسم، الفرع، النوع، مَن سجّله).
+            </p>
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2 leading-relaxed">
+                الإعداد مرة واحدة: أنشئ بوتاً عبر <b>@BotFather</b> في تلغرام (أمر /newbot)،
+                انسخ التوكن هنا واحفظه، افتح بوتك واضغط <b>Start</b>، ثم اضغط «إرسال رسالة تجريبية».
+              </div>
+              <div>
+                <Label htmlFor="telegramToken">
+                  توكن البوت
+                  {telegramSettings?.hasToken && (
+                    <span className="text-xs text-green-700 mr-2">
+                      (محفوظ: {telegramSettings.tokenPreview}{telegramSettings.chatId ? " — مرتبط ✅" : " — بانتظار الرسالة التجريبية"})
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  id="telegramToken"
+                  value={telegramToken}
+                  onChange={(e) => setTelegramToken(e.target.value)}
+                  placeholder="123456789:AA...  (يُلصق مرة واحدة)"
+                  className="mt-1"
+                  dir="ltr"
+                  data-testid="input-telegram-token"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => saveTelegramMutation.mutate()}
+                  disabled={!telegramToken.trim() || saveTelegramMutation.isPending}
+                  className="flex-1 gap-2"
+                  data-testid="button-save-telegram"
+                >
+                  <Save className="w-4 h-4" />
+                  {saveTelegramMutation.isPending ? "جارٍ الحفظ…" : "حفظ التوكن"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => testTelegramMutation.mutate()}
+                  disabled={!telegramSettings?.hasToken || testTelegramMutation.isPending}
+                  className="flex-1 gap-2"
+                  data-testid="button-test-telegram"
+                >
+                  <Bell className="w-4 h-4" />
+                  {testTelegramMutation.isPending ? "جارٍ الإرسال…" : "إرسال رسالة تجريبية"}
+                </Button>
+              </div>
             </div>
           </Card>
 
