@@ -1664,42 +1664,58 @@ export class DatabaseStorage implements IStorage {
       unclassified: { revenue: number; paid: number };
     };
   }> {
-    // Total revenue = sum of the cost of patients registered within the date
-    // range (and branch). Previously this summed EVERY patient's cost with no
-    // date filter, so the figure was identical for every period selected (and
-    // the monthly-trends / branch-comparison reports showed a flat revenue).
-    // Revenue is attributed to the patient's registration date (createdAt),
-    // matching how the daily branch report computes "sold". Payments and
-    // remaining below are scoped to this SAME cohort of patients, so all three
-    // figures describe one group and المتبقي = revenue − paid stays coherent.
-    const revenueConditions = [];
-    if (branchId) revenueConditions.push(eq(patients.branchId, branchId));
-    if (startDate) revenueConditions.push(gte(patients.createdAt, new Date(startDate)));
-    if (endDate) revenueConditions.push(lte(patients.createdAt, new Date(endDate)));
+    // ---- FLOW semantics (owner's definitions, 2026-07-28) -------------------
+    // A period describes the MONEY MOVEMENT inside it, not a registration
+    // cohort:
+    //   totalPaid      الوارد    = payments dated inside the range
+    //   totalRevenue   المبيعات  = cost-ledger entries dated inside the range
+    //   totalExpenses  المصاريف  = expenses dated inside the range (inclusive)
+    //   netProfit      الصافي    = paid − expenses (cash view, same as the
+    //                              daily financial report)
+    //   totalRemaining الديون    = lifetime cost − lifetime paid (a stock)
+    //   collectionRate            = lifetime paid ÷ lifetime cost
+    // The old version attributed revenue to patients REGISTERED in the range
+    // and paid to that cohort's lifetime payments; worse, endDate parsed as
+    // MIDNIGHT so selecting a single day matched nothing — the dashboard
+    // showed zeros for a day that had half a million in payments, while the
+    // expenses column (string compare, inclusive) still showed. Every figure
+    // here now matches the daily report's definitions.
+    const endExclusive = endDate
+      ? new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000)
+      : null;
 
-    const patientsQuery = revenueConditions.length > 0
+    const paidConds = [];
+    if (branchId) paidConds.push(eq(payments.branchId, branchId));
+    if (startDate) paidConds.push(gte(payments.date, new Date(startDate)));
+    if (endExclusive) paidConds.push(sql`${payments.date} < ${endExclusive}`);
+    const paidWhere = paidConds.length > 0 ? and(...paidConds) : sql`TRUE`;
+    const paidQuery = await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments).where(paidWhere);
+    const totalPaid = Number(paidQuery[0]?.total) || 0;
+
+    const revConds = [];
+    if (branchId) revConds.push(eq(costEntries.branchId, branchId));
+    if (startDate) revConds.push(gte(costEntries.createdAt, new Date(startDate)));
+    if (endExclusive) revConds.push(sql`${costEntries.createdAt} < ${endExclusive}`);
+    const revWhereFlow = revConds.length > 0 ? and(...revConds) : sql`TRUE`;
+    const revQuery = await db.select({ total: sql<string>`COALESCE(SUM(${costEntries.amount}), 0)` })
+      .from(costEntries).where(revWhereFlow);
+    const totalRevenue = Number(revQuery[0]?.total) || 0;
+
+    // Lifetime stock figures (branch-scoped, deliberately undated): what the
+    // patients still owe overall, and how much of everything sold has been
+    // collected. These don't change when the user narrows the period — debt
+    // is debt whichever week you look at it through.
+    const lifeCostQ = branchId
       ? await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients).where(and(...revenueConditions))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients);
-    const totalRevenue = Number(patientsQuery[0]?.total) || 0;
-
-    // Total paid = every payment made by the SAME cohort of patients counted
-    // in revenue (those registered within the date range / branch), joined via
-    // patient. We intentionally do NOT filter by the payment's own date: we
-    // want each cohort's full paid-so-far, so المتبقي = cost − paid reflects
-    // their true outstanding balance and can't go negative just because old
-    // patients paid installments this month. (Reuses revenueConditions, which
-    // constrain the joined patients row by branch + createdAt.)
-    const paymentsQuery = revenueConditions.length > 0
+          .from(patients).where(eq(patients.branchId, branchId))
+      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` }).from(patients);
+    const lifePaidQ = branchId
       ? await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments)
-          .innerJoin(patients, eq(payments.patientId, patients.id))
-          .where(and(...revenueConditions))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments)
-          .innerJoin(patients, eq(payments.patientId, patients.id));
-    const totalPaid = Number(paymentsQuery[0]?.total) || 0;
+          .from(payments).where(eq(payments.branchId, branchId))
+      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` }).from(payments);
+    const lifetimeCost = Number(lifeCostQ[0]?.total) || 0;
+    const lifetimePaid = Number(lifePaidQ[0]?.total) || 0;
 
     // Get total expenses
     const expenseConditions = [];
@@ -1715,30 +1731,30 @@ export class DatabaseStorage implements IStorage {
     const totalExpenses = Number(expensesQuery[0]?.total) || 0;
 
     // ---- revenue-stream breakdown (reconciles to the grand totals) ---------
-    // A case is "physio" when case_type = physiotherapy; everything else
-    // (prosthetic / medical_support) is a "device". Scoped to the SAME patient
-    // cohort as revenue via the join on revenueConditions.
+    // Paid per bucket = payments IN THE RANGE tagged to a case of that bucket
+    // (case_id NULL rows land in the "unclassified" remainder). Revenue per
+    // bucket = the range's cost-ledger entries mapped by SOURCE — تخصيص and
+    // maintenance are device money, physio pricing and the session backfill
+    // are physio money; ambiguous sources (registration, opening, …) stay in
+    // the remainder rather than being guessed.
     const bucketExpr = sql<string>`CASE WHEN ${patientCases.caseType} = 'physiotherapy' THEN 'physio' ELSE 'devices' END`;
-    const revWhere = revenueConditions.length > 0 ? and(...revenueConditions) : sql`TRUE`;
 
-    // Revenue per bucket = SUM of each case's cost for the cohort's patients.
-    const caseRevenueRows = await db
-      .select({ bucket: bucketExpr, total: sql<string>`COALESCE(SUM(${patientCases.cost}), 0)` })
-      .from(patientCases)
-      .innerJoin(patients, eq(patientCases.patientId, patients.id))
-      .where(revWhere)
-      .groupBy(bucketExpr);
-
-    // Paid per bucket = SUM of payments tagged to a case of that bucket.
-    // Payments with no case tag (case_id NULL) drop out of the inner join and
-    // land in the "unclassified" remainder below.
     const casePaidRows = await db
       .select({ bucket: bucketExpr, total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
       .from(payments)
-      .innerJoin(patients, eq(payments.patientId, patients.id))
       .innerJoin(patientCases, eq(payments.caseId, patientCases.id))
-      .where(revWhere)
+      .where(paidWhere)
       .groupBy(bucketExpr);
+
+    const sourceBucketExpr = sql<string>`CASE
+      WHEN ${costEntries.source} IN ('assign_manufacturing', 'maintenance') THEN 'devices'
+      WHEN ${costEntries.source} IN ('physio_pricing', 'session_backfill') THEN 'physio'
+      ELSE 'other' END`;
+    const caseRevenueRows = await db
+      .select({ bucket: sourceBucketExpr, total: sql<string>`COALESCE(SUM(${costEntries.amount}), 0)` })
+      .from(costEntries)
+      .where(revWhereFlow)
+      .groupBy(sourceBucketExpr);
 
     // Expenses per section (NULL/legacy → shared).
     const expWhere = expenseConditions.length > 0 ? and(...expenseConditions) : sql`TRUE`;
@@ -1810,14 +1826,15 @@ export class DatabaseStorage implements IStorage {
       daysInRange = Math.max(1, Math.floor((end.getTime() - start.getTime()) / msPerDay) + 1);
     }
 
-    const totalRemaining = totalRevenue - totalPaid;
-    // صافي الربح (accrual) = revenue billed − expenses — matching its UI label
-    // «الإيرادات − المصروفات». It was wrongly computed as (paid − expenses),
-    // which is the CASH position, so «صافي الربح» came out identical to
-    // «المتبقي بالقاصة». Profit and cash are different figures: profit counts
-    // what was SOLD; cash counts what was COLLECTED.
-    const netProfit = totalRevenue - totalExpenses;
-    const collectionRate = totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0;
+    // الديون المستحقة — a stock, not a flow: what all patients still owe now.
+    const totalRemaining = Math.max(0, lifetimeCost - lifetimePaid);
+    // الصافي — the cash view the owner asked for (وارد − مصاريف), matching the
+    // daily financial report exactly.
+    const netProfit = totalPaid - totalExpenses;
+    // نسبة التحصيل — lifetime collected ÷ lifetime sold, so it reads as the
+    // clinic's overall collection health and never exceeds sense when a
+    // narrow period collects old debts.
+    const collectionRate = lifetimeCost > 0 ? Math.round((lifetimePaid / lifetimeCost) * 100) : 0;
 
     return {
       totalRevenue,
