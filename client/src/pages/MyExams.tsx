@@ -2,11 +2,10 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2 } from "lucide-react";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel } from "@shared/medical";
@@ -45,6 +44,12 @@ function daysWaiting(iso: string | null): number | null {
 export default function MyExams() {
   const [search, setSearch] = useState("");
   const [target, setTarget] = useState<WorklistRow | null>(null);
+  // Newest first by default (owner, 2026-07-29): the patient who registered
+  // today is the one standing at the door. The doctor can flip to oldest-first
+  // when working through the backlog.
+  const [order, setOrder] = useState<"newest" | "oldest">("newest");
+  // null = every specialty this doctor holds; otherwise just the picked one.
+  const [only, setOnly] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ rows: WorklistRow[]; specialties: string[] }>({
     queryKey: ["/api/medical/worklist"],
@@ -60,11 +65,16 @@ export default function MyExams() {
 
   const filtered = useMemo(() => {
     const q = search.trim();
-    if (!q) return rows;
-    return rows.filter(
-      (r) => r.patientName.includes(q) || (r.phone ?? "").includes(q),
-    );
-  }, [rows, search]);
+    const base = rows
+      .filter((r) => (only ? r.caseType === only : true))
+      .filter((r) => (q ? r.patientName.includes(q) || (r.phone ?? "").includes(q) : true));
+    // Sort a COPY: `rows` is react-query's cached array.
+    return [...base].sort((a, b) => {
+      const ta = a.waitingSince ? new Date(a.waitingSince).getTime() : 0;
+      const tb = b.waitingSince ? new Date(b.waitingSince).getTime() : 0;
+      return order === "newest" ? tb - ta : ta - tb;
+    });
+  }, [rows, search, only, order]);
 
   // Grouped by specialty so a two-specialty doctor reads two queues, not one
   // mixed pile.
@@ -86,17 +96,52 @@ export default function MyExams() {
             <Stethoscope className="w-5 h-5 text-primary" /> معايناتي
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            المرضى المنتظرون معاينتك في اختصاصك — الأقدم أولاً.
+            المرضى المنتظرون معاينتك في اختصاصك — {order === "newest" ? "الأحدث أولاً" : "الأقدم أولاً"}.
           </p>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {specialties.map((s) => (
-            <Badge key={s} variant="outline" className={`${accent(s).badge} font-normal text-xs`}>
-              {specialtyLabel(s)}
-            </Badge>
-          ))}
-        </div>
+        {/* Newest ↔ oldest, one click. */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={() => setOrder((o) => (o === "newest" ? "oldest" : "newest"))}
+          data-testid="button-toggle-order"
+        >
+          <ArrowUpDown className="w-3.5 h-3.5" />
+          {order === "newest" ? "الأحدث أولاً" : "الأقدم أولاً"}
+        </Button>
       </div>
+
+      {/* Specialty picker. A doctor holding one specialty needs no chooser. */}
+      {specialties.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          <Button
+            size="sm"
+            variant={only === null ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setOnly(null)}
+            data-testid="filter-specialty-all"
+          >
+            الكل ({rows.length})
+          </Button>
+          {specialties.map((s) => {
+            const count = rows.filter((r) => r.caseType === s).length;
+            return (
+              <Button
+                key={s}
+                size="sm"
+                variant={only === s ? "default" : "outline"}
+                className="h-8 text-xs gap-1.5"
+                onClick={() => setOnly(only === s ? null : s)}
+                data-testid={`filter-specialty-${s}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${accent(s).dot}`} />
+                {specialtyLabel(s)} ({count})
+              </Button>
+            );
+          })}
+        </div>
+      )}
 
       {specialties.length === 0 && !isLoading ? (
         <Card>
