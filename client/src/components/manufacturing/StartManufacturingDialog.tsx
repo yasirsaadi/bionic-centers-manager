@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -94,7 +94,16 @@ export function StartManufacturingDialog({ patient }: {
   });
   // Mirrors the server's serviceType derivation: prosthetic first.
   const derivedService = patient.isAmputee ? "prosthetic" : "medical_support";
-  const hasExam = (examData?.exams ?? []).some((e: any) => e.caseType === derivedService);
+  const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === derivedService);
+  const hasExam = !!rxExam;
+  // The doctor's suggested expert pre-fills the picker here too, so the same
+  // decision doesn't have to be made twice on two different screens.
+  const proposedExpertId: number | null =
+    typeof rxExam?.proposedExpertUserId === "number" ? rxExam.proposedExpertUserId : null;
+  useEffect(() => {
+    if (!open || proposedExpertId == null) return;
+    setExpertUserId((prev) => prev || String(proposedExpertId));
+  }, [open, proposedExpertId]);
   // Legacy patients (registered before the exam system) are exempt from the
   // exam gate — same rule the server applies.
   const legacyExempt = Boolean((examData as any)?.legacyExempt);

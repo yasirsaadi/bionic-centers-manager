@@ -59,6 +59,9 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
     // confirms it in تخصيص.
     out.push({ label: "الكلفة المقترحة", value: `${exam.deviceCost.toLocaleString("en-US")} د.ع` });
   }
+  if (exam.proposedExpertName) {
+    out.push({ label: "الخبير المقترح", value: exam.proposedExpertName });
+  }
   if (Array.isArray(rx.treatments)) {
     const list = (rx.treatments as any[])
       .filter((t) => t?.treatmentType)
@@ -95,6 +98,8 @@ interface Exam {
   caseType: string;
   prescription?: Record<string, any> | null;
   deviceCost?: number | null;
+  proposedExpertUserId?: number | null;
+  proposedExpertName?: string | null;
   version?: number;
   doctorId?: number | null;
   editedByName?: string | null;
