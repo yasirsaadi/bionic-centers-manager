@@ -1388,13 +1388,13 @@ export default function Accounting() {
   // Per-day totals for the expenses list. Precomputed once so the day divider
   // can carry its own sum without an O(n²) scan inside the render loop.
   const expenseDayTotals = useMemo(() => {
-    const out: Record<string, { count: number; total: number }> = {};
-    for (const e of expenses) {
+    const out: Record<string, { count: number; total: number; firstIndex: number }> = {};
+    expenses.forEach((e, i) => {
       const key = String(e.expenseDate);
-      const row = (out[key] ||= { count: 0, total: 0 });
+      const row = (out[key] ||= { count: 0, total: 0, firstIndex: i });
       row.count += 1;
       row.total += e.amount;
-    }
+    });
     return out;
   }, [expenses]);
 
@@ -3526,8 +3526,15 @@ export default function Accounting() {
                         // catches where one day ends and the next begins —
                         // without reading the date column on every row.
                         const prev = index > 0 ? expenses[index - 1] : null;
+                        const next = index + 1 < expenses.length ? expenses[index + 1] : null;
                         const isNewDay = !prev || String(prev.expenseDate) !== String(expense.expenseDate);
+                        const isLastOfDay = !next || String(next.expenseDate) !== String(expense.expenseDate);
                         const day = expenseDayTotals[String(expense.expenseDate)];
+                        // Each day is its own little register: numbering starts
+                        // at 1 again, so "third expense of the day" is readable
+                        // straight off the row instead of counting backwards
+                        // from a running total.
+                        const dayIndex = index - (day?.firstIndex ?? index) + 1;
                         return (
                         <Fragment key={expense.id}>
                         {isNewDay && (
@@ -3538,15 +3545,15 @@ export default function Accounting() {
                                   {formatDateIraq(expense.expenseDate)}
                                 </span>
                                 <span className="h-px flex-1 bg-slate-200" />
-                                <span className="text-xs text-muted-foreground whitespace-nowrap font-mono">
-                                  {day?.count ?? 0} × {displayCurrency(day?.total ?? 0)}
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                  {day?.count ?? 0} مصروف
                                 </span>
                               </div>
                             </TableCell>
                           </TableRow>
                         )}
                         <TableRow>
-                          <TableCell>{index + 1}</TableCell>
+                          <TableCell>{dayIndex}</TableCell>
                           <TableCell>
                             {branches.find(b => b.id === expense.branchId)?.name || "-"}
                           </TableCell>
@@ -3607,6 +3614,21 @@ export default function Accounting() {
                             )}
                           </TableCell>
                         </TableRow>
+                        {/* The day's bottom line, right where the day ends. */}
+                        {isLastOfDay && (
+                          <TableRow className="hover:bg-transparent" data-testid={`expense-day-total-${expense.expenseDate}`}>
+                            <TableCell colSpan={8} className="p-0">
+                              <div className="flex items-center justify-between gap-3 bg-red-50/60 border-y border-red-100 px-3 py-2">
+                                <span className="text-xs font-semibold text-slate-700">
+                                  مجموع مصاريف {formatDateIraq(expense.expenseDate)}
+                                </span>
+                                <span className="text-sm font-bold text-red-700 font-mono">
+                                  {displayCurrency(day?.total ?? 0)}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
                         </Fragment>
                         );
                       })
