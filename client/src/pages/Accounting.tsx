@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -1384,6 +1384,19 @@ export default function Accounting() {
       return res.json();
     }
   });
+
+  // Per-day totals for the expenses list. Precomputed once so the day divider
+  // can carry its own sum without an O(n²) scan inside the render loop.
+  const expenseDayTotals = useMemo(() => {
+    const out: Record<string, { count: number; total: number }> = {};
+    for (const e of expenses) {
+      const key = String(e.expenseDate);
+      const row = (out[key] ||= { count: 0, total: 0 });
+      row.count += 1;
+      row.total += e.amount;
+    }
+    return out;
+  }, [expenses]);
 
   // Fetch expenses by category
   const { data: expensesByCategory = [] } = useQuery<{category: string, total: number}[]>({
@@ -3508,8 +3521,31 @@ export default function Accounting() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      expenses.map((expense, index) => (
-                        <TableRow key={expense.id}>
+                      expenses.map((expense, index) => {
+                        // A hairline day divider: scrolling the list, the eye
+                        // catches where one day ends and the next begins —
+                        // without reading the date column on every row.
+                        const prev = index > 0 ? expenses[index - 1] : null;
+                        const isNewDay = !prev || String(prev.expenseDate) !== String(expense.expenseDate);
+                        const day = expenseDayTotals[String(expense.expenseDate)];
+                        return (
+                        <Fragment key={expense.id}>
+                        {isNewDay && (
+                          <TableRow className="hover:bg-transparent border-0" data-testid={`expense-day-${expense.expenseDate}`}>
+                            <TableCell colSpan={8} className="p-0">
+                              <div className={`flex items-center gap-3 px-1 pb-1.5 ${index === 0 ? "pt-1" : "border-t border-slate-300 pt-3 mt-2"}`}>
+                                <span className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                                  {formatDateIraq(expense.expenseDate)}
+                                </span>
+                                <span className="h-px flex-1 bg-slate-200" />
+                                <span className="text-xs text-muted-foreground whitespace-nowrap font-mono">
+                                  {day?.count ?? 0} × {displayCurrency(day?.total ?? 0)}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        <TableRow>
                           <TableCell>{index + 1}</TableCell>
                           <TableCell>
                             {branches.find(b => b.id === expense.branchId)?.name || "-"}
@@ -3571,7 +3607,9 @@ export default function Accounting() {
                             )}
                           </TableCell>
                         </TableRow>
-                      ))
+                        </Fragment>
+                        );
+                      })
                     )}
                   </TableBody>
                 </Table>
