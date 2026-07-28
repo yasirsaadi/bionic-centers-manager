@@ -476,6 +476,14 @@ export async function findCaseFor(
  */
 export async function getPendingExams(
   branchIds: number[] | null,
+  /**
+   * `false` (default) → the MANDATORY queue: new patients only.
+   * `true` → the OPTIONAL list: exam-exempt legacy patients who still have an
+   * un-examined active case. They carry no amber badge and no obligation, but
+   * a doctor must still be able to open «كتابة معاينة» for them from the
+   * registry — the exemption lifted the requirement, not the possibility.
+   */
+  legacyOnly = false,
 ): Promise<{ patientId: number; caseType: string }[]> {
   const scoped =
     branchIds === null
@@ -492,9 +500,10 @@ export async function getPendingExams(
   // for genuinely new patients. Legacy = registered before go-live OR
   // classified «مريض قديم» by reception (same rule as isLegacyPatient).
   const activated = await examSystemActivatedAt();
-  const notLegacy = activated
-    ? sql`(p.created_at >= ${activated} AND COALESCE(p.patient_classification, '') <> 'past')`
-    : sql`COALESCE(p.patient_classification, '') <> 'past'`;
+  const isLegacy = activated
+    ? sql`(p.created_at < ${activated} OR COALESCE(p.patient_classification, '') = 'past')`
+    : sql`COALESCE(p.patient_classification, '') = 'past'`;
+  const legacyFilter = legacyOnly ? isLegacy : sql`NOT ${isLegacy}`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
@@ -502,7 +511,7 @@ export async function getPendingExams(
     JOIN patients p ON p.id = pc.patient_id
     WHERE pc.status = 'active'
       AND ${scoped}
-      AND ${notLegacy}
+      AND ${legacyFilter}
       AND NOT EXISTS (
         SELECT 1 FROM medical_exams me
         WHERE me.patient_id = pc.patient_id
@@ -631,6 +640,14 @@ export async function getWorklist(
     caseType: String(r.case_type),
     waitingSince: r.waiting_since ? String(r.waiting_since) : null,
   }));
+}
+
+/** Branch id → name, for error messages that must name the branch. */
+export async function branchNames(): Promise<Record<number, string>> {
+  const rows = await db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM branches`);
+  const out: Record<number, string> = {};
+  for (const r of rows.rows ?? []) out[Number(r.id)] = String(r.name);
+  return out;
 }
 
 /** Which specialties of THIS patient are still waiting for a first exam. */
