@@ -1931,7 +1931,7 @@ export async function registerRoutes(
 
       // Update totalCost
       const newTotalCost = (patient.totalCost || 0) + serviceCost;
-      await storage.updatePatient(patientId, { totalCost: newTotalCost });
+      await storage.updatePatient(patientId, { totalCost: newTotalCost }, "new_service");
 
       // Keep the per-case split in step: the same amount the aggregate just
       // gained is added onto the case(s) the service belongs to — otherwise
@@ -2221,7 +2221,7 @@ export async function registerRoutes(
       const patient = await storage.getPatient(input.patientId);
       if (patient) {
         const newTotalCost = (patient.totalCost || 0) + input.cost;
-        await storage.updatePatient(patient.id, { totalCost: newTotalCost });
+        await storage.updatePatient(patient.id, { totalCost: newTotalCost }, "visit");
         
         await storage.createPayment({
           patientId: input.patientId,
@@ -2669,13 +2669,14 @@ export async function registerRoutes(
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
 
     // Two grouped aggregates instead of loading every patient + N payment
-    // queries. In daily mode, "paid" counts only payments made today FOR
-    // patients registered today (unchanged behaviour).
+    // queries. Daily mode (owner's definitions, 2026-07-28): "sold" is the
+    // day's cost-ledger sum (cost created today, any patient) and "paid" is
+    // every payment collected today — not just from today's registrees.
     const [soldRows, paidRows] = await Promise.all([
       daily
         ? db.execute(sql`
-            SELECT branch_id, COALESCE(SUM(total_cost), 0)::bigint AS sold
-            FROM patients
+            SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS sold
+            FROM cost_entries
             WHERE created_at >= ${startOfDay} AND created_at < ${endOfDay}
             GROUP BY branch_id
           `)
@@ -2685,12 +2686,10 @@ export async function registerRoutes(
           `),
       daily
         ? db.execute(sql`
-            SELECT pay.branch_id, COALESCE(SUM(pay.amount), 0)::bigint AS paid
-            FROM payments pay
-            JOIN patients pt ON pt.id = pay.patient_id
-              AND pt.created_at >= ${startOfDay} AND pt.created_at < ${endOfDay}
-            WHERE pay.date >= ${startOfDay} AND pay.date < ${endOfDay}
-            GROUP BY pay.branch_id
+            SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS paid
+            FROM payments
+            WHERE date >= ${startOfDay} AND date < ${endOfDay}
+            GROUP BY branch_id
           `)
         : db.execute(sql`
             SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS paid
@@ -2725,11 +2724,12 @@ export async function registerRoutes(
     const days = Number.isFinite(daysRaw) && daysRaw >= 0 ? daysRaw : 45;
     const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 
-    const [patients, payments, visits, financeTotals] = await Promise.all([
+    const [patients, payments, visits, financeTotals, dayCostEntries] = await Promise.all([
       storage.getPatientsSince(branchId, cutoff),
       storage.getPaymentsByBranchSince(branchId, cutoff),
       storage.getVisitsByBranchSince(branchId, cutoff),
       storage.getBranchFinanceTotals(branchId),
+      storage.getCostEntriesByBranchSince(branchId, cutoff),
     ]);
 
     // Create patient lookup map
@@ -2743,6 +2743,7 @@ export async function registerRoutes(
     const referencedIds = new Set<number>();
     for (const p of payments) referencedIds.add(p.patientId);
     for (const v of visits) referencedIds.add(v.patientId);
+    for (const e of dayCostEntries) referencedIds.add(e.patientId);
     const missingIds = Array.from(referencedIds).filter((id) => id != null && !patientMap.has(id));
     if (missingIds.length > 0) {
       const extra = await storage.getPatientsByIds(missingIds);
@@ -2782,11 +2783,24 @@ export async function registerRoutes(
       visitReason: string | null;
     };
     
+    type CostEntryDetail = {
+      id: number;
+      patientId: number;
+      patientName: string;
+      amount: number;
+      source: string;
+      notes: string | null;
+      date: string;
+    };
+
     // Group payments by date (YYYY-MM-DD)
     const paymentsByDate: Record<string, PaymentDetail[]> = {};
-    
+
     // Group patients by registration date (for showing new patients)
     const patientsByDate: Record<string, PatientDetail[]> = {};
+
+    // Group dated cost-ledger rows (migration 033) — THE day's التكاليف.
+    const costEntriesByDate: Record<string, CostEntryDetail[]> = {};
     
     // Helper function to get local date key (YYYY-MM-DD)
     const getLocalDateKey = (date: Date | string | null): string => {
@@ -2854,25 +2868,50 @@ export async function registerRoutes(
       });
     }
     
+    // Process cost-ledger rows
+    for (const entry of dayCostEntries) {
+      const patient = patientMap.get(entry.patientId);
+      const dateKey = getLocalDateKey(entry.createdAt);
+      if (!costEntriesByDate[dateKey]) {
+        costEntriesByDate[dateKey] = [];
+      }
+      costEntriesByDate[dateKey].push({
+        id: entry.id,
+        patientId: entry.patientId,
+        patientName: patient?.name || 'غير معروف',
+        amount: entry.amount,
+        source: entry.source,
+        notes: entry.notes,
+        date: entry.createdAt?.toString() || '',
+      });
+    }
+
     // Get all unique dates and sort (newest first)
     const paymentDates = Object.keys(paymentsByDate);
     const patientDates = Object.keys(patientsByDate);
-    const allDatesSet = new Set([...paymentDates, ...patientDates]);
+    const costDates = Object.keys(costEntriesByDate);
+    const allDatesSet = new Set([...paymentDates, ...patientDates, ...costDates]);
     const allDates = Array.from(allDatesSet).filter(d => d !== 'unknown').sort((a, b) => b.localeCompare(a));
-    
-    // Calculate daily summaries
+
+    // Calculate daily summaries. التكاليف is the day's LEDGER sum — cost
+    // actually created that day, on any patient — no longer the current
+    // lifetime cost of whoever happened to register that day (which missed
+    // same-day costs on old patients and grew retroactively). المتبقي in the
+    // UI is therefore an honest (التكاليف − المدفوع) for the same day.
     const dailySummaries = allDates.map(date => {
       const dayPayments = paymentsByDate[date] || [];
       const dayPatients = patientsByDate[date] || [];
-      
+      const dayEntries = costEntriesByDate[date] || [];
+
       return {
         date,
-        payments: dayPayments.sort((a: PaymentDetail, b: PaymentDetail) => 
+        payments: dayPayments.sort((a: PaymentDetail, b: PaymentDetail) =>
           new Date(b.date).getTime() - new Date(a.date).getTime()
         ),
         patients: dayPatients,
+        costEntries: dayEntries,
         totalPaid: dayPayments.reduce((acc: number, p: PaymentDetail) => acc + p.amount, 0),
-        totalCosts: dayPatients.reduce((acc: number, p: PatientDetail) => acc + p.totalCost, 0),
+        totalCosts: dayEntries.reduce((acc: number, e: CostEntryDetail) => acc + e.amount, 0),
         patientCount: dayPatients.length,
         paymentCount: dayPayments.length
       };

@@ -29,6 +29,7 @@ import {
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
+  costEntries,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -340,6 +341,12 @@ export class DatabaseStorage implements IStorage {
     if (cutoff) conds.push(gte(visits.visitDate, cutoff));
     return await db.select().from(visits).where(and(...conds)).orderBy(desc(visits.visitDate));
   }
+  // Dated cost-ledger rows for the daily report window (migration 033).
+  async getCostEntriesByBranchSince(branchId: number, cutoff: Date | null) {
+    const conds = [eq(costEntries.branchId, branchId)];
+    if (cutoff) conds.push(gte(costEntries.createdAt, cutoff));
+    return await db.select().from(costEntries).where(and(...conds)).orderBy(desc(costEntries.createdAt));
+  }
   // Whole-history totals for a branch via SQL aggregates (no row loading).
   async getBranchFinanceTotals(branchId: number): Promise<{
     totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number;
@@ -606,6 +613,12 @@ export class DatabaseStorage implements IStorage {
         totalCost: (existing.totalCost || 0) + params.totalCost,
         treatmentType: params.treatmentType,
       }).where(eq(patients.id, patientId)).returning();
+      if (params.totalCost > 0) {
+        await tx.insert(costEntries).values({
+          patientId, branchId: existing.branchId, amount: params.totalCost,
+          source: "physio_pricing", notes: `الكلفة والجلسات: ${params.treatmentType}`,
+        });
+      }
 
       const [physioCase] = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
@@ -691,16 +704,40 @@ export class DatabaseStorage implements IStorage {
     }
     
     const [patient] = await db.insert(patients).values(valuesToInsert).returning();
+    if ((patient.totalCost || 0) > 0) {
+      // Dated at the patient's own createdAt so a backdated registration lands
+      // its cost on the day the owner chose, not the day the form was typed.
+      await db.insert(costEntries).values({
+        patientId: patient.id, branchId: patient.branchId,
+        amount: patient.totalCost || 0, source: "registration",
+        notes: "كلفة التسجيل", createdAt: patient.createdAt ?? undefined,
+      });
+    }
     // Create the case row(s) for this new patient from its flags (Phase 3).
     await this.syncPatientCases(patient.id);
     return patient;
   }
 
-  async updatePatient(id: number, updates: Partial<InsertPatient>): Promise<Patient | undefined> {
+  async updatePatient(id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit"): Promise<Patient | undefined> {
+    // The generic patch is one of the ways total_cost moves (management edit,
+    // خدمة جديدة, paid visit) — the ledger entry is written here, at the choke
+    // point, so no caller can move the number without dating the move.
+    const wantsCost = (updates as any).totalCost !== undefined;
+    const [before] = wantsCost
+      ? await db.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
+      : [undefined as any];
     const [updated] = await db.update(patients)
       .set(updates)
       .where(eq(patients.id, id))
       .returning();
+    if (updated && wantsCost && before) {
+      const delta = (updated.totalCost || 0) - (before.totalCost || 0);
+      if (delta !== 0) {
+        await db.insert(costEntries).values({
+          patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
+        });
+      }
+    }
     return updated;
   }
 
@@ -767,6 +804,9 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
       }
       await tx.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
+      // Cost-ledger rows FK the patient (migration 033) and their money
+      // vanishes from every total with the row, so they go with it too.
+      await tx.delete(costEntries).where(eq(costEntries.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
     });
   }
@@ -802,6 +842,11 @@ export class DatabaseStorage implements IStorage {
         .set(flagPatch)
         .where(eq(patients.id, patientId))
         .returning();
+      if (serviceCost > 0) {
+        await tx.insert(costEntries).values({
+          patientId, branchId: existing.branchId, amount: serviceCost, source: "add_case_type",
+        });
+      }
 
       const caseLabel = caseType === "amputee" ? "أطراف صناعية"
         : caseType === "medical_support" ? "مساند طبية" : "علاج طبيعي";
@@ -966,6 +1011,16 @@ export class DatabaseStorage implements IStorage {
       if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
       patch.totalCost = Math.max(0, (existing.totalCost || 0) + totalDelta);
       const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
+      // Ledger the APPLIED delta (after the zero clamp), signed — a downward
+      // re-pricing is a real negative cost event and must date-stamp too.
+      const appliedDelta = (patient.totalCost || 0) - (existing.totalCost || 0);
+      if (appliedDelta !== 0) {
+        await tx.insert(costEntries).values({
+          patientId, branchId: existing.branchId, amount: appliedDelta,
+          source: "assign_manufacturing",
+          notes: serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي",
+        });
+      }
 
       // Build the case details from the freshly-updated patient fields.
       const detailsForType: Record<string, any> = serviceType === "prosthetic" ? {
@@ -1058,7 +1113,14 @@ export class DatabaseStorage implements IStorage {
         if (row.costSource !== "manual" && target) {
           await tx.update(patientCases).set({ cost: (target.cost || 0) + cost, updatedAt: new Date() }).where(eq(patientCases.id, target.id));
         } else {
+          const reduction = Math.min(cost, p.totalCost || 0);
           await tx.update(patients).set({ totalCost: Math.max(0, (p.totalCost || 0) - cost) }).where(eq(patients.id, patientId));
+          if (reduction > 0) {
+            await tx.insert(costEntries).values({
+              patientId, branchId: p.branchId, amount: -reduction, source: "case_retired",
+              notes: `سحب حالة ${caseType === "prosthetic" ? "أطراف" : caseType === "medical_support" ? "مساند" : "علاج طبيعي"}`,
+            });
+          }
         }
       }
 
@@ -1142,6 +1204,9 @@ export class DatabaseStorage implements IStorage {
       await repoint("treatmentPlans", treatmentPlans, treatmentPlans.patientId);
       await repoint("surveyResponses", surveyResponses, surveyResponses.patientId);
       await repoint("journalLines", journalLines, journalLines.patientId);
+      // Ledger entries follow their patient: dated history is preserved, and
+      // the summed total_cost below stays equal to the summed entries.
+      await repoint("costEntries", costEntries, costEntries.patientId);
 
       // Merge the patient row itself: flags OR, costs summed, and any
       // descriptive field that is empty on the target gets the source's value.
