@@ -26,7 +26,7 @@ import * as XLSX from "xlsx";
 import { AmiriRegular } from "@/lib/amiri-font";
 import ArabicReshaper from "arabic-reshaper";
 import { useBranchSession } from "@/components/BranchGate";
-import { formatDateIraq } from "@/lib/utils";
+import { formatDateIraq, getTodayIraq } from "@/lib/utils";
 import { 
   DollarSign, 
   TrendingUp, 
@@ -56,7 +56,9 @@ import {
   FileSpreadsheet,
   Search,
   X,
-  Layers
+  Layers,
+  ChevronRight,
+  ChevronLeft
 } from "lucide-react";
 import { 
   AreaChart, 
@@ -1225,6 +1227,26 @@ export default function Accounting() {
     const pad = (n: number) => String(n).padStart(2, "0");
     const lastDay = new Date(y, m, 0).getDate(); // day 0 of next month = last day
     setDateRange({ startDate: `${y}-${pad(m)}-01`, endDate: `${y}-${pad(m)}-${pad(lastDay)}` });
+  };
+  // One-click day browsing (owner's request): «اليوم» pins the range to a
+  // single day, and the arrows slide the whole window by its own length —
+  // a one-day window steps day by day, a month window steps month-sized.
+  const setRangeToToday = () => {
+    const today = getTodayIraq();
+    setDateRange({ startDate: today, endDate: today });
+    setPickerMonth("");
+  };
+  const shiftRange = (dir: 1 | -1) => {
+    const iso = (d: Date) => d.toISOString().split("T")[0];
+    const start = dateRange.startDate || getTodayIraq();
+    const end = dateRange.endDate || start;
+    const s = new Date(start);
+    const e = new Date(end);
+    const dayMs = 24 * 60 * 60 * 1000;
+    const lenDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / dayMs) + 1);
+    const shift = dir * lenDays * dayMs;
+    setDateRange({ startDate: iso(new Date(s.getTime() + shift)), endDate: iso(new Date(e.getTime() + shift)) });
+    setPickerMonth("");
   };
   const pickerYears = (() => {
     const current = new Date().getFullYear();
@@ -2995,6 +3017,19 @@ export default function Accounting() {
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
+
+            {/* Day-by-day browsing: RTL — the right arrow goes back in time. */}
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="icon" onClick={() => shiftRange(-1)} title="الفترة السابقة" data-testid="button-range-prev">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="sm" onClick={setRangeToToday} data-testid="button-range-today">
+                اليوم
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => shiftRange(1)} title="الفترة التالية" data-testid="button-range-next">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            </div>
             
             <Separator orientation="vertical" className="h-8 mx-1" />
 
@@ -3116,22 +3151,9 @@ export default function Accounting() {
 
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">{t.accounting.totalRevenue}</CardTitle>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-baseline gap-1.5" data-testid="text-total-revenue">
-                    <span className="text-lg md:text-xl font-bold tabular-nums text-primary truncate">
-                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRevenue || 0)}
-                    </span>
-                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueAmounts}</p>
-                </CardContent>
-              </Card>
-
+              {/* Order matters (owner's request): his three daily-language
+                  numbers first — الوارد، المصاريف، الصافي — then the deeper
+                  figures (مبيعات الفترة، الديون، نسبة التحصيل). */}
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                   <CardTitle className="text-sm font-medium">{t.accounting.payments}</CardTitle>
@@ -3145,22 +3167,6 @@ export default function Accounting() {
                     <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{t.accounting.receivedAmounts}</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">{t.accounting.remaining}</CardTitle>
-                  <Wallet className="h-4 w-4 text-yellow-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-baseline gap-1.5" data-testid="text-total-remaining">
-                    <span className="text-lg md:text-xl font-bold tabular-nums text-yellow-600 truncate">
-                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRemaining || 0)}
-                    </span>
-                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
                 </CardContent>
               </Card>
 
@@ -3193,6 +3199,38 @@ export default function Accounting() {
                     <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{t.accounting.revenueMinusExpenses}</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                  <CardTitle className="text-sm font-medium">{t.accounting.totalRevenue}</CardTitle>
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-revenue">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-primary truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRevenue || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueAmounts}</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                  <CardTitle className="text-sm font-medium">{t.accounting.remaining}</CardTitle>
+                  <Wallet className="h-4 w-4 text-yellow-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-1.5" data-testid="text-total-remaining">
+                    <span className="text-lg md:text-xl font-bold tabular-nums text-yellow-600 truncate">
+                      {summaryLoading ? "..." : formatNumberOnly(summary?.totalRemaining || 0)}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
                 </CardContent>
               </Card>
 
@@ -3279,17 +3317,17 @@ export default function Accounting() {
                     { key: "prosthetic", title: "الأطراف والمساند", d: summary.bySection.devices, accent: "text-sky-600" },
                     { key: "physio", title: "العلاج الطبيعي", d: summary.bySection.physio, accent: "text-violet-600" },
                   ].map(({ key, title, d, accent }) => {
-                    const net = (d.revenue || 0) - (d.expenses || 0);
+                    const net = (d.paid || 0) - (d.expenses || 0);
                     return (
                       <Card key={key} data-testid={`section-card-${key}`}>
                         <CardHeader className="pb-2">
                           <CardTitle className={`text-sm font-semibold ${accent}`}>{title}</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-1.5 text-sm">
-                          <div className="flex justify-between"><span className="text-muted-foreground">الوارد</span><span className="tabular-nums font-medium text-primary">{formatNumberOnly(d.revenue || 0)}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">المدفوع</span><span className="tabular-nums text-green-600">{formatNumberOnly(d.paid || 0)}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">الوارد (المقبوض)</span><span className="tabular-nums font-medium text-green-600">{formatNumberOnly(d.paid || 0)}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">مبيعات الفترة</span><span className="tabular-nums text-primary">{formatNumberOnly(d.revenue || 0)}</span></div>
                           <div className="flex justify-between"><span className="text-muted-foreground">الصرف</span><span className="tabular-nums text-red-600">{formatNumberOnly(d.expenses || 0)}</span></div>
-                          <div className="flex justify-between border-t pt-1.5"><span className="font-medium">صافي القسم</span><span className={`tabular-nums font-bold ${net >= 0 ? "text-green-600" : "text-red-600"}`}>{formatNumberOnly(net)}</span></div>
+                          <div className="flex justify-between border-t pt-1.5"><span className="font-medium">صافي القسم (وارد − صرف)</span><span className={`tabular-nums font-bold ${net >= 0 ? "text-green-600" : "text-red-600"}`}>{formatNumberOnly(net)}</span></div>
                         </CardContent>
                       </Card>
                     );
@@ -3302,10 +3340,10 @@ export default function Accounting() {
                     <CardContent className="space-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-muted-foreground">الصرف المشترك</span><span className="tabular-nums text-red-600">{formatNumberOnly(summary.bySection.shared.expenses || 0)}</span></div>
                       <p className="text-xs text-muted-foreground pt-1">إيجار، كهرباء، رواتب مشتركة… تُحسب ضمن الصرف الكلي لكن لا تُنسب لقسم واحد.</p>
-                      {(summary.bySection.unclassified.revenue > 0 || summary.bySection.unclassified.paid > 0) && (
+                      {(summary.bySection.unclassified.paid > 0) && (
                         <div className="flex justify-between border-t pt-1.5 text-xs">
-                          <span className="text-muted-foreground">وارد غير مبوّب</span>
-                          <span className="tabular-nums">{formatNumberOnly(summary.bySection.unclassified.revenue || 0)}</span>
+                          <span className="text-muted-foreground">وارد غير مبوّب على قسم</span>
+                          <span className="tabular-nums">{formatNumberOnly(summary.bySection.unclassified.paid || 0)}</span>
                         </div>
                       )}
                     </CardContent>
