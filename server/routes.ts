@@ -1875,17 +1875,58 @@ export async function registerRoutes(
     });
   });
 
-  // New Service (add service to existing patient)
+  // New Service (add service to existing patient).
+  // Only service types WITHOUT a dedicated flow live here: physio session
+  // top-ups, consultations, and the misc catch-all. Device work is refused —
+  // maintenance goes through the visit modal (order + expert + fee), and a
+  // new prosthetic goes through doctor exam → تخصيص (the only booking point).
   app.post("/api/patients/:id/new-service", isAuthenticated, async (req, res) => {
     try {
+      // Same gate as add-case-type/price-physio: this books money onto the
+      // patient's record, so it takes the patient-writing permission.
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
+
       const patientId = Number(req.params.id);
-      const { serviceType, serviceCost, initialPayment, notes, branchId, paymentTreatmentType, sessionCount, treatmentEntries } = req.body;
-      
+      const { serviceType, notes, paymentTreatmentType, sessionCount, treatmentEntries } = req.body;
+      const serviceCost = Math.max(0, Math.round(Number(req.body?.serviceCost) || 0));
+
       const patient = await storage.getPatient(patientId);
       if (!patient) {
         return res.status(404).json({ message: "Patient not found" });
       }
-      
+
+      // Branch isolation — and every row this writes is pinned to the
+      // patient's own branch, never a branch id from the request body.
+      const allowedNs = accessibleBranchesFor(req);
+      if (allowedNs !== null && !allowedNs.includes(patient.branchId)) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+      }
+
+      const serviceLabels: Record<string, string> = {
+        additional_therapy: "جلسات علاج إضافية",
+        consultation: "استشارة طبية",
+        other: "خدمة أخرى",
+      };
+      const redirects: Record<string, string> = {
+        maintenance: "الصيانة تُسجَّل من «تسجيل زيارة» (زيارة صيانة) لتُقيَّد أجورها ويُفتح أمرها",
+        new_prosthetic: "الطرف الجديد يمرّ عبر معاينة الطبيب ثم «تخصيص وإسناد خبير»",
+        adjustment: "التعديل والضبط يُسجَّلان كزيارة صيانة من «تسجيل زيارة»",
+      };
+      if (redirects[serviceType]) return res.status(400).json({ message: redirects[serviceType] });
+      const serviceLabel = serviceLabels[serviceType];
+      if (!serviceLabel) return res.status(400).json({ message: "نوع الخدمة غير صالح" });
+
+      const entries = Array.isArray(treatmentEntries)
+        ? treatmentEntries.map((e: any) => ({
+            treatmentType: typeof e?.treatmentType === "string" && e.treatmentType ? e.treatmentType : null,
+            sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+            cost: Math.max(0, Math.round(Number(e?.cost) || 0)),
+          }))
+        : null;
+
       // Update totalCost
       const newTotalCost = (patient.totalCost || 0) + serviceCost;
       await storage.updatePatient(patientId, { totalCost: newTotalCost });
@@ -1893,35 +1934,21 @@ export async function registerRoutes(
       // Keep the per-case split in step: the same amount the aggregate just
       // gained is added onto the case(s) the service belongs to — otherwise
       // sum(case costs) permanently diverges from total_cost.
-      if (treatmentEntries && Array.isArray(treatmentEntries)) {
-        for (const entry of treatmentEntries) {
-          const c = Number(entry?.cost) || 0;
-          if (c > 0) await storage.addToCaseCost(patientId, { tag: entry.treatmentType ?? null, treatmentType: entry.treatmentType ?? null }, c);
+      if (entries) {
+        for (const entry of entries) {
+          if (entry.cost > 0) await storage.addToCaseCost(patientId, { tag: entry.treatmentType, treatmentType: entry.treatmentType }, entry.cost);
         }
       } else {
-        await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, Number(serviceCost) || 0);
+        await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, serviceCost);
       }
-      
-      // Service type labels in Arabic
-      const serviceLabels: Record<string, string> = {
-        maintenance: "صيانة الطرف الصناعي",
-        additional_therapy: "جلسات علاج إضافية",
-        new_prosthetic: "طرف صناعي جديد",
-        adjustment: "تعديل أو ضبط",
-        consultation: "استشارة طبية",
-        other: "خدمة أخرى",
-      };
-      
-      const serviceLabel = serviceLabels[serviceType] || serviceType;
-      const effectiveBranchId = branchId || patient.branchId;
-      
+
       // Create payment records and visit records - either from treatmentEntries or single entry
-      if (treatmentEntries && Array.isArray(treatmentEntries)) {
-        for (const entry of treatmentEntries) {
+      if (entries) {
+        for (const entry of entries) {
           await storage.createVisit({
             patientId,
-            branchId: effectiveBranchId,
-            treatmentType: entry.treatmentType || null,
+            branchId: patient.branchId,
+            treatmentType: entry.treatmentType,
             details: "خدمة جديدة",
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة) (تكلفة: ${entry.cost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
           });
@@ -1929,7 +1956,7 @@ export async function registerRoutes(
           if (entry.cost > 0) {
             await storage.createPayment({
               patientId,
-              branchId: effectiveBranchId,
+              branchId: patient.branchId,
               amount: entry.cost,
               notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
               paymentTreatmentType: entry.treatmentType,
@@ -1940,7 +1967,7 @@ export async function registerRoutes(
       } else {
         await storage.createVisit({
           patientId,
-          branchId: effectiveBranchId,
+          branchId: patient.branchId,
           treatmentType: paymentTreatmentType || null,
           details: "خدمة جديدة",
           notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
@@ -1949,11 +1976,11 @@ export async function registerRoutes(
         // Record ONLY the amount actually paid now (may be partial or zero).
         // The service still raised totalCost above, so any unpaid part stays
         // as a remaining balance the accountant collects later.
-        const paidNow = Math.max(0, Math.min(Number(initialPayment) || 0, Number(serviceCost) || 0));
+        const paidNow = Math.max(0, Math.min(Number(req.body?.initialPayment) || 0, serviceCost));
         if (paidNow > 0) {
           await storage.createPayment({
             patientId,
-            branchId: effectiveBranchId,
+            branchId: patient.branchId,
             amount: paidNow,
             notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: paymentTreatmentType || null,
@@ -1961,7 +1988,14 @@ export async function registerRoutes(
           });
         }
       }
-      
+
+      await logAudit({
+        entityType: "patient", entityId: patientId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`,
+      });
+
       res.json({ success: true, newTotalCost });
     } catch (err) {
       console.error("Error adding new service:", err);

@@ -87,11 +87,11 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
 
+  // Only services WITHOUT a dedicated flow. Maintenance lives in the visit
+  // modal (order + expert + fee booked there), and a new prosthetic goes
+  // through doctor exam → «تخصيص» — the server refuses those types here.
   const serviceTypes = [
-    { value: "maintenance", labelKey: "maintenanceLabel" as const },
     { value: "additional_therapy", labelKey: "additionalTherapyLabel" as const },
-    { value: "new_prosthetic", labelKey: "newProstheticLabel" as const },
-    { value: "adjustment", labelKey: "adjustmentLabel" as const },
     { value: "consultation", labelKey: "consultationLabel" as const },
     { value: "other", labelKey: "otherServiceLabel" as const },
   ];
