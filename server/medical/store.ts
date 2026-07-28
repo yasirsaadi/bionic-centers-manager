@@ -398,13 +398,19 @@ export async function examSystemActivatedAt(): Promise<Date | null> {
 }
 
 export async function isLegacyPatient(patientId: number): Promise<boolean> {
-  const activated = await examSystemActivatedAt();
-  if (!activated) return false;
   const [p] = await db
-    .select({ createdAt: patients.createdAt })
+    .select({ createdAt: patients.createdAt, classification: patients.patientClassification })
     .from(patients)
     .where(eq(patients.id, patientId));
-  return !!p?.createdAt && p.createdAt < activated;
+  if (!p) return false;
+  // Reception's own classification counts too: a returning patient whose
+  // paper file is years old often gets his SYSTEM file created today —
+  // createdAt alone would wrongly treat him as new (caught by the owner on
+  // patient نعمه, classified "مريض قديم" but registered hours after go-live).
+  if (p.classification === "past") return true;
+  const activated = await examSystemActivatedAt();
+  if (!activated) return false;
+  return !!p.createdAt && p.createdAt < activated;
 }
 
 /** The newest signed exam's proposed device price, or null when unset. */
@@ -483,9 +489,12 @@ export async function getPendingExams(
 
   // Legacy patients are exempt from the exam requirement, so they never
   // appear as "waiting" — the amber badges and the doctor's queue stay clean
-  // for genuinely new patients.
+  // for genuinely new patients. Legacy = registered before go-live OR
+  // classified «مريض قديم» by reception (same rule as isLegacyPatient).
   const activated = await examSystemActivatedAt();
-  const notLegacy = activated ? sql`p.created_at >= ${activated}` : sql`TRUE`;
+  const notLegacy = activated
+    ? sql`(p.created_at >= ${activated} AND COALESCE(p.patient_classification, '') <> 'past')`
+    : sql`COALESCE(p.patient_classification, '') <> 'past'`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
@@ -578,7 +587,9 @@ export async function getWorklist(
   // Legacy patients never enter the doctor's queue (same rule as the pending
   // maps): the worklist is for genuinely new patients only.
   const activatedWl = await examSystemActivatedAt();
-  const notLegacyWl = activatedWl ? sql`p.created_at >= ${activatedWl}` : sql`TRUE`;
+  const notLegacyWl = activatedWl
+    ? sql`(p.created_at >= ${activatedWl} AND COALESCE(p.patient_classification, '') <> 'past')`
+    : sql`COALESCE(p.patient_classification, '') <> 'past'`;
 
   const rows = await db.execute<{
     patient_id: number;

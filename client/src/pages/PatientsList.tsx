@@ -252,11 +252,14 @@ export default function PatientsList() {
   });
   const pendingByPatient = pendingExams?.pending ?? {};
   const decidedByPatient = pendingExams?.decided ?? {};
-  // Registered before the exam system went live ⇒ exempt from the exam gate:
-  // تخصيص opens directly (the server applies the same rule).
+  // Legacy ⇒ exempt from the exam gate, تخصيص opens directly (the server
+  // applies the same rule): registered before the exam system went live, OR
+  // classified «مريض قديم» by reception — a returning patient's SYSTEM file
+  // is often created today even though his paper file is years old.
   const examActivatedAt = pendingExams?.activatedAt ? new Date(pendingExams.activatedAt).getTime() : null;
-  const isLegacyPatientRow = (p: { createdAt?: string | Date | null }) =>
-    examActivatedAt !== null && !!p.createdAt && new Date(p.createdAt).getTime() < examActivatedAt;
+  const isLegacyPatientRow = (p: { createdAt?: string | Date | null; patientClassification?: string | null }) =>
+    p.patientClassification === "past" ||
+    (examActivatedAt !== null && !!p.createdAt && new Date(p.createdAt).getTime() < examActivatedAt);
 
   // Show the button only where the doctor can actually act: this patient has a
   // pending case AND it falls in one of their own specialties. Returns the
