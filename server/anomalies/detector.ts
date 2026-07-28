@@ -20,7 +20,8 @@ export interface Anomaly {
     | "expense_amount_outlier"
     | "expense_duplicate"
     | "invoice_overdue"
-    | "patient_no_payment";
+    | "patient_no_payment"
+    | "cost_ledger_mismatch";
   severity: AnomalySeverity;
   // Short Arabic title for the list.
   title: string;
@@ -48,17 +49,18 @@ export interface Anomaly {
  * Optionally restricted to a single branch.
  */
 export async function detectAnomalies(branchId?: number): Promise<Anomaly[]> {
-  const [outliers, duplicates, overdue, noPayments] = await Promise.all([
+  const [outliers, duplicates, overdue, noPayments, ledgerDrift] = await Promise.all([
     detectExpenseAmountOutliers(branchId),
     detectDuplicateExpenses(branchId),
     detectOverdueInvoices(branchId),
     detectPatientsWithoutPayments(branchId),
+    detectCostLedgerMismatch(branchId),
   ]);
 
   const branchList = await db.select().from(branches);
   const nameByBranch = new Map(branchList.map((b) => [b.id, b.name]));
 
-  const all = [...outliers, ...duplicates, ...overdue, ...noPayments];
+  const all = [...outliers, ...duplicates, ...overdue, ...noPayments, ...ledgerDrift];
 
   // Suppress anomalies that the accountant has already decided on. A
   // 'reviewed' decision suppresses for 30 days; a 'not_error' decision is
@@ -302,6 +304,60 @@ async function detectPatientsWithoutPayments(branchId?: number): Promise<Anomaly
     });
   }
   return anomalies;
+}
+
+/**
+ * Cost-ledger integrity — the alarm the owner asked for after seeing a
+ * patient's cost read 2,999,889 instead of 3,000,000 for one render.
+ *
+ * Since migration 033 every движение of `patients.total_cost` also writes a
+ * dated entry in `cost_entries` with the SAME delta. That makes one invariant
+ * true for every patient:
+ *
+ *     SUM(cost_entries.amount) == patients.total_cost
+ *
+ * If it ever stops being true, money moved through a path that did not book
+ * it — a bug, a hand-run SQL statement, an interrupted transaction. Silence is
+ * exactly what made the original incident hard to explain, so any drift now
+ * surfaces as a HIGH anomaly naming the patient and the exact difference.
+ */
+async function detectCostLedgerMismatch(branchId?: number): Promise<Anomaly[]> {
+  const scope = branchId ? sql`AND p.branch_id = ${branchId}` : sql``;
+  const rows = await db.execute<{
+    id: number; name: string; branch_id: number;
+    total_cost: number; ledger: number; created_at: string;
+  }>(sql`
+    SELECT p.id, p.name, p.branch_id, COALESCE(p.total_cost, 0) AS total_cost,
+           COALESCE(SUM(ce.amount), 0) AS ledger, p.created_at
+    FROM patients p
+    LEFT JOIN cost_entries ce ON ce.patient_id = p.id
+    WHERE TRUE ${scope}
+    GROUP BY p.id, p.name, p.branch_id, p.total_cost, p.created_at
+    HAVING COALESCE(SUM(ce.amount), 0) <> COALESCE(p.total_cost, 0)
+    ORDER BY ABS(COALESCE(SUM(ce.amount), 0) - COALESCE(p.total_cost, 0)) DESC
+    LIMIT 50
+  `);
+
+  return (rows.rows ?? []).map((r) => {
+    const total = Number(r.total_cost);
+    const ledger = Number(r.ledger);
+    const diff = total - ledger;
+    return {
+      id: `cost-ledger-${r.id}`,
+      type: "cost_ledger_mismatch" as const,
+      severity: "high" as const,
+      title: "كلفة مريض لا تطابق دفتر القيود",
+      description:
+        `${r.name}: الكلفة المسجَّلة ${total.toLocaleString("en-US")} د.ع بينما مجموع قيودها ` +
+        `${ledger.toLocaleString("en-US")} د.ع — فرق ${Math.abs(diff).toLocaleString("en-US")} د.ع. ` +
+        `معناه أن مبلغاً تحرّك دون أن يُقيَّد؛ راجع سجل التدقيق لهذا المريض.`,
+      date: new Date().toISOString().split("T")[0],
+      branchId: Number(r.branch_id),
+      source: { type: "patient" as const, id: Number(r.id), name: r.name },
+      amount: Math.abs(diff),
+      context: { totalCost: total, ledgerSum: ledger, difference: diff },
+    };
+  });
 }
 
 // --------------------------------- helpers ---------------------------------
