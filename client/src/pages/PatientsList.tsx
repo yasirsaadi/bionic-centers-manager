@@ -241,6 +241,7 @@ export default function PatientsList() {
   const { data: pendingExams } = useQuery<{
     pending: Record<number, string[]>;
     decided: Record<number, string[]>;
+    activatedAt?: string | null;
   }>({
     queryKey: ["/api/medical/pending"],
     queryFn: async () => {
@@ -251,6 +252,14 @@ export default function PatientsList() {
   });
   const pendingByPatient = pendingExams?.pending ?? {};
   const decidedByPatient = pendingExams?.decided ?? {};
+  // Legacy ⇒ exempt from the exam gate, تخصيص opens directly (the server
+  // applies the same rule): registered before the exam system went live, OR
+  // classified «مريض قديم» by reception — a returning patient's SYSTEM file
+  // is often created today even though his paper file is years old.
+  const examActivatedAt = pendingExams?.activatedAt ? new Date(pendingExams.activatedAt).getTime() : null;
+  const isLegacyPatientRow = (p: { createdAt?: string | Date | null; patientClassification?: string | null }) =>
+    p.patientClassification === "past" ||
+    (examActivatedAt !== null && !!p.createdAt && new Date(p.createdAt).getTime() < examActivatedAt);
 
   // Show the button only where the doctor can actually act: this patient has a
   // pending case AND it falls in one of their own specialties. Returns the
@@ -578,7 +587,7 @@ export default function PatientsList() {
                           {formatDateIraq(patient.createdAt)}
                         </span>
                         <div className="flex items-center gap-1">
-                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && hasDeviceExam(patient.id) && (
+                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (hasDeviceExam(patient.id) || isLegacyPatientRow(patient)) && (
                             <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
                               <UserCog className="w-3.5 h-3.5" />
                               تخصيص
@@ -670,7 +679,7 @@ export default function PatientsList() {
                                 كتابة معاينة
                               </Button>
                             )}
-                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && hasDeviceExam(patient.id) && (
+                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (hasDeviceExam(patient.id) || isLegacyPatientRow(patient)) && (
                               <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
                                 <UserCog className="w-4 h-4" />
                                 تخصيص وإسناد خبير

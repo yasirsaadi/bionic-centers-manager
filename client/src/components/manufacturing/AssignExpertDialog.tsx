@@ -85,8 +85,14 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // an unexamined patient has no clinical basis — the exam is what says which
   // device to build. The server enforces the same rule; this is the courteous
   // version of its 409. (examsLoaded avoids flashing the lock while fetching.)
+  // EXCEPT legacy patients (registered before the exam system): the server
+  // exempts them, so this dialog opens fully — reception completes specs and
+  // enters the cost directly, exactly as the pre-exam workflow worked.
   const examsLoaded = examData !== undefined;
-  const examMissing = examsLoaded && !rxExam;
+  const legacyExempt = Boolean((examData as any)?.legacyExempt);
+  const examMissing = examsLoaded && !rxExam && !legacyExempt;
+  // A legacy patient WITH a voluntary exam still follows the doctor's word.
+  const legacyOpen = legacyExempt && examsLoaded && !rxExam;
   // What the doctor actually determined, as label/value lines — including the
   // amputation builder's composed site, which lives in the prescription but
   // NOT in the seven spec inputs, so it was invisible here before.
@@ -203,12 +209,20 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             </div>
           )}
 
+          {legacyOpen && (
+            <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700" data-testid="notice-legacy-exempt">
+              <b>ملف قديم — مسجَّل قبل نظام المعاينة، مستثنى منها.</b>{" "}
+              أكمِل المواصفات والكلفة وأسنِد الخبير مباشرة. (ويبقى بإمكان الطبيب معاينته متى لزم.)
+            </div>
+          )}
+
           {/* The EDITABLE clinical inputs exist only for the roles that may
               write clinical data anywhere (manager / doctor / admin) — the
               legacy escape for gaps the doctor left blank. Reception never
               sees an editable clinical field here, mirroring the registration
-              form; the server enforces the same. */}
-          {canEditClinicalDetails && specFields.map((f) => {
+              form; the server enforces the same — EXCEPT on legacy files,
+              where there is no doctor decision to protect. */}
+          {(canEditClinicalDetails || legacyOpen) && specFields.map((f) => {
             const doctorValue = rx[f.key];
             const fromDoctor = typeof doctorValue === "string" && doctorValue.trim().length > 0;
             if (fromDoctor) return null; // already in the summary above
@@ -231,7 +245,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
               it; reception CONFIRMS it (read-only — the server ignores any other
               number from a reception session anyway). Managers/doctors/admin may
               still adjust it, and that adjustment is theirs in the audit log. */}
-          {canEditClinicalDetails ? (
+          {(canEditClinicalDetails || legacyOpen) ? (
             <div className="space-y-1">
               <label className="text-sm font-semibold">الكلفة (السعر) <span className="text-red-500">*</span></label>
               <MoneyInput value={cost} onValueChange={setCost} placeholder="0" data-testid="input-assign-cost" />
@@ -282,7 +296,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null) || assign.isPending} data-testid="button-confirm-assign-expert">
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending} data-testid="button-confirm-assign-expert">
             {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>

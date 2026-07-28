@@ -50,10 +50,11 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
 
   useEffect(() => {
     // Only seed while the clerk hasn't started typing, so reopening the dialog
-    // never discards their edits.
+    // never discards their edits. prescribed.length is a dependency so the
+    // seed also fires when the exam data arrives AFTER the dialog opened.
     const untouched = rows.length === 1 && !rows[0].treatmentType;
     if (open && prescribed.length > 0 && untouched) setRows(prescribed);
-  }, [open, rxExam?.id]);
+  }, [open, rxExam?.id, prescribed.length]);
 
   function reset() { setRows([{ treatmentType: "", sessionCount: 0 }]); }
 

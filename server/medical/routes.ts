@@ -192,6 +192,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         // then refuse.
         canManageExams: session.isAdmin || session.role === "branch_manager",
         userId: session.userId,
+        // Registered before the exam system went live ⇒ exempt from the exam
+        // requirement (تخصيص unlocks, reception enters the cost directly).
+        legacyExempt: await store.isLegacyPatient(patientId),
       });
     } catch (err: any) {
       console.error("[medical] GET exams failed:", err);
@@ -493,7 +496,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       for (const r of decidedRows) {
         (decidedByPatient[r.patientId] ||= []).push(r.caseType);
       }
-      res.json({ pending: byPatient, decided: decidedByPatient, total: rows.length });
+      res.json({
+        pending: byPatient,
+        decided: decidedByPatient,
+        total: rows.length,
+        // The exam system's go-live moment: patients registered before it are
+        // legacy-exempt, and the registry compares createdAt against this to
+        // unlock تخصيص without a signed exam.
+        activatedAt: (await store.examSystemActivatedAt())?.toISOString() ?? null,
+      });
     } catch (err: any) {
       console.error("[medical] GET pending failed:", err);
       res.status(500).json({ error: "تعذّر تحميل قائمة الانتظار" });
