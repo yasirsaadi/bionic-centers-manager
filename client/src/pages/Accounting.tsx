@@ -3133,6 +3133,14 @@ export default function Accounting() {
                 className="flex flex-row-reverse flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border border-border/50 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
                 data-testid="text-summary-date-range"
               >
+                {/* Name the SCOPE next to the dates — the owner compared an
+                    all-branches dashboard against a one-branch report and read
+                    the difference as a bug. */}
+                <span className="inline-flex items-center rounded-full bg-teal-600/10 px-2.5 py-0.5 font-semibold text-teal-700" data-testid="text-summary-scope">
+                  {effectiveBranchFilter === "all"
+                    ? "جميع الفروع"
+                    : `فرع ${branches.find((b) => b.id.toString() === effectiveBranchFilter)?.name ?? ""}`}
+                </span>
                 <span>النتائج أدناه تغطّي الفترة</span>
                 <span className="font-medium">من</span>
                 <span className="font-semibold text-foreground">
@@ -3247,42 +3255,13 @@ export default function Accounting() {
                 </CardContent>
               </Card>
 
-              {/* Today's revenue — pulled from /api/accounting/daily-summary */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">وارد اليوم</CardTitle>
-                  <Calendar className="h-4 w-4 text-emerald-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-baseline gap-1.5" data-testid="text-today-revenue">
-                    <span className="text-lg md:text-xl font-bold tabular-nums text-emerald-600 truncate">
-                      {todaySummary ? formatNumberOnly(todaySummary.todayRevenue) : "..."}
-                    </span>
-                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">دفعات سُجِّلت اليوم</p>
-                </CardContent>
-              </Card>
-
-              {/* Today's expenses — requested by the accountant so the daily
-                  spend total is visible at a glance, like the old system. */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <CardTitle className="text-sm font-medium">مصاريف اليوم</CardTitle>
-                  <TrendingDown className="h-4 w-4 text-rose-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-baseline gap-1.5" data-testid="text-today-expenses">
-                    <span className="text-lg md:text-xl font-bold tabular-nums text-rose-600 truncate">
-                      {todaySummary ? formatNumberOnly(todaySummary.todayExpenses) : "..."}
-                    </span>
-                    <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">مصاريف سُجِّلت اليوم</p>
-                </CardContent>
-              </Card>
-
-              {/* Cash on hand — yesterday's closing + today's net revenue */}
+              {/* «وارد اليوم» و«مصاريف اليوم» were REMOVED (owner, 2026-07-28):
+                  they always showed the ACTUAL today regardless of the selected
+                  period, so two off-period numbers sat between the period
+                  figures and read like contradictions. The «اليوم» button now
+                  pins the whole dashboard to today with one click, making them
+                  redundant. Cash-on-hand stays: it is a running balance with no
+                  period, and says so on its face. */}
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                   <CardTitle className="text-sm font-medium">المتبقي بالقاصة</CardTitle>
@@ -3295,7 +3274,7 @@ export default function Accounting() {
                     </span>
                     <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">الرصيد النقدي حتى الآن</p>
+                  <p className="mt-1 text-xs text-muted-foreground">الرصيد النقدي التراكمي حتى هذه اللحظة — لا يتأثر بالفترة المحددة</p>
                 </CardContent>
               </Card>
             </div>
