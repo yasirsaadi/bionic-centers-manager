@@ -1189,7 +1189,13 @@ export default function CreatePatient() {
                 </div>
               )}
 
-              {conditionType === "physiotherapy" && (
+              {conditionType === "physiotherapy" && !canEditClinicalDetails && (
+                <p className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3" data-testid="note-doctor-decides-physio">
+                  تشخيص الحالة / نوع المرض يحدّده الطبيب في المعاينة — سيظهر المريض في قائمة «بانتظار معاينة علاج طبيعي» بعد الحفظ.
+                </p>
+              )}
+
+              {conditionType === "physiotherapy" && canEditClinicalDetails && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
                   <FormField
                     control={form.control}

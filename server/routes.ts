@@ -1580,8 +1580,10 @@ export async function registerRoutes(
           "suspensionSystem", "footType", "footSize", "kneeJointType",
           // مساند
           "supportType", "injurySide",
-          // علاج طبيعي مستثنى بقرار المالك: آلياته مختلفة، والاستقبال
-          // يسجّل تشخيصه وإصاباته كما كان دائماً.
+          // علاج طبيعي: التشخيص وحده للطبيب (قرار المالك 2026-07-28) —
+          // يكتبه في المعاينة وتطبّقه الوصفة. الإصابات وتاريخها وسببها
+          // والتصنيف تبقى للاستقبال كما كانت.
+          "diseaseType",
         ]) {
           delete creationBody[k];
         }
