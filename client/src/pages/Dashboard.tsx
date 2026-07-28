@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import type { Branch } from "@shared/schema";
 import { api } from "@shared/routes";
-import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
+import { formatDateIraq, formatDateTimeIraq, formatTimeIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { WeeklyReviewBanner } from "@/components/WeeklyReviewBanner";
 
@@ -395,7 +395,7 @@ function DashboardContent() {
                   </div>
                 </div>
                 <span className="text-xs font-medium px-2 py-1 rounded-md bg-blue-50 text-blue-600">
-                  {formatDateIraq(patient.createdAt)}
+                  {formatDateTimeIraq(patient.createdAt)}
                 </span>
               </div>
             ))}

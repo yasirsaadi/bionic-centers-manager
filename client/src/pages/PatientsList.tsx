@@ -28,7 +28,7 @@ import { specialtyShortLabel } from "@shared/medical";
 import { useDoctorGrant } from "@/components/medical/useDoctorGrant";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { Stethoscope } from "lucide-react";
-import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
+import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation, useLanguage } from "@/i18n/LanguageContext";
 
 function isSameDay(date1: Date, date2: Date): boolean {
@@ -344,7 +344,7 @@ export default function PatientsList() {
         "الفرع": getBranchName(patient.branchId),
         "التكلفة الكلية": patient.totalCost || 0,
         "المبلغ المتبقي": remaining > 0 ? remaining : 0,
-        "تاريخ التسجيل": patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : "",
+        "تاريخ التسجيل": patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : "",
       };
     });
 
@@ -418,7 +418,7 @@ export default function PatientsList() {
                 <td>${getBranchName(patient.branchId)}</td>
                 <td>${(patient.totalCost || 0).toLocaleString()}</td>
                 <td style="color: ${remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${remaining.toLocaleString()}</td>
-                <td>${patient.createdAt ? formatDateIraq(new Date(patient.createdAt)) : ""}</td>
+                <td>${patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : ""}</td>
               </tr>`;
             }).join("")}
           </tbody>
@@ -589,7 +589,7 @@ export default function PatientsList() {
                       </p>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                         <span className="text-xs text-slate-400 font-mono">
-                          {formatDateIraq(patient.createdAt)}
+                          {formatDateTimeIraq(patient.createdAt)}
                         </span>
                         <div className="flex items-center gap-1">
                           {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (hasDeviceExam(patient.id) || isLegacyPatientRow(patient)) && (
@@ -673,7 +673,7 @@ export default function PatientsList() {
                           {patient.patientClassification === "new" ? t.patientForm.newPatient : patient.patientClassification === "past" ? t.patientForm.pastPatient : "-"}
                         </TableCell>
                         <TableCell className="text-slate-500 font-mono text-sm">
-                          <div>{formatDateIraq(patient.createdAt)}</div>
+                          <div>{formatDateTimeIraq(patient.createdAt)}</div>
                           <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">
