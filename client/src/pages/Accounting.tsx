@@ -1098,6 +1098,7 @@ function anomalyTypeLabel(type: string): string {
     expense_duplicate: "مصاريف مكرَّرة",
     invoice_overdue: "فاتورة متأخّرة",
     patient_no_payment: "مريض بدون دفعات",
+    cost_ledger_mismatch: "كلفة لا تطابق دفتر القيود",
   };
   return map[type] ?? type;
 }
@@ -1501,7 +1502,7 @@ export default function Accounting() {
   // isolation, so the accountant only ever sees their own branch.
   type Anomaly = {
     id: string;
-    type: "expense_amount_outlier" | "expense_duplicate" | "invoice_overdue" | "patient_no_payment";
+    type: "expense_amount_outlier" | "expense_duplicate" | "invoice_overdue" | "patient_no_payment" | "cost_ledger_mismatch";
     severity: "high" | "medium" | "low";
     title: string;
     description: string;
