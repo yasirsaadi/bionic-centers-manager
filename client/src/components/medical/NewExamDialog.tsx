@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { parseInjuries } from "@shared/case_fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -87,6 +88,19 @@ export function NewExamDialog({
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [deviceCost, setDeviceCost] = useState<string>("");
+  const [prefilled, setPrefilled] = useState(false);
+
+  // The patient row, for prefilling what reception already recorded. Only
+  // needed when SIGNING (an edit re-opens the exam's own prescription).
+  const { data: patientRow } = useQuery<any>({
+    queryKey: ["/api/patients", patientId, "exam-prefill"],
+    enabled: open && !isEdit,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
@@ -108,6 +122,7 @@ export function NewExamDialog({
     setForm({ ...EMPTY_FORM });
     setRx({});
     setDeviceCost("");
+    setPrefilled(false);
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
         ? (preferSpecialty as MedicalSpecialty)
@@ -116,6 +131,38 @@ export function NewExamDialog({
           : "";
     setSpecialty(wanted);
   }, [open, exam?.id, preferSpecialty, specialties.join(",")]);
+
+  // Physiotherapy prefill: the diagnosis and the injuries are SHARED fields —
+  // reception records them at registration (injuries; diagnosis on legacy
+  // files), and the doctor's prescription writes the same patient columns
+  // back. Starting the form blank made the doctor retype (or lose) what was
+  // already on file, so the form opens carrying reception's values for the
+  // doctor to complete or correct. Only fields the doctor hasn't touched are
+  // filled, and once both are present the effect converges to a no-op.
+  useEffect(() => {
+    if (!open || isEdit || specialty !== "physiotherapy" || !patientRow) return;
+    const hasDisease = typeof rx.diseaseType === "string" && rx.diseaseType.trim().length > 0;
+    const hasInjuries = Array.isArray(rx.injuries) && rx.injuries.some((r: any) => r && (r.type || r.area));
+    if (hasDisease && hasInjuries) return;
+
+    const patch: PrescriptionValue = {};
+    if (!hasDisease && patientRow.diseaseType) patch.diseaseType = patientRow.diseaseType;
+    if (!hasInjuries) {
+      let rows = parseInjuries(patientRow.injuries);
+      if (rows.length === 0 && (patientRow.injuryType || patientRow.injuryArea)) {
+        // Legacy files predate the injuries JSON: rebuild rows from the two
+        // joined strings the old form kept in sync.
+        const types = String(patientRow.injuryType || "").split("، ").filter(Boolean);
+        const areas = String(patientRow.injuryArea || "").split("، ").filter(Boolean);
+        const n = Math.max(types.length, areas.length);
+        rows = Array.from({ length: n }, (_, i) => ({ type: types[i] ?? "", area: areas[i] ?? "", side: "" }));
+      }
+      if (rows.length > 0) patch.injuries = rows;
+    }
+    if (Object.keys(patch).length === 0) return;
+    setRx((prev) => ({ ...prev, ...patch }));
+    setPrefilled(true);
+  }, [open, isEdit, specialty, patientRow, rx]);
 
   // Cost belongs to the doctor for a DEVICE only: they specify the prosthesis or
   // the support, so they know its price. Physiotherapy is left exactly as it
@@ -222,6 +269,12 @@ export function NewExamDialog({
 
           {specialty && (
             <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
+          )}
+
+          {prefilled && specialty === "physiotherapy" && (
+            <p className="text-xs text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2" data-testid="note-rx-prefilled">
+              التشخيص والإصابات أعلاه مملوءة مما سجّله الاستعلامات — أكمل وعدّل ما يلزم، وما توقّعه هو المعتمد على ملف المريض.
+            </p>
           )}
 
           {isDeviceSpecialty && (

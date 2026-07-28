@@ -168,6 +168,26 @@ export const documents = pgTable("documents", {
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
 
+// Dated cost ledger (migration 033). `patients.total_cost` is a single
+// running number with no history, so no report could ever answer "how much
+// cost was CREATED on day X" — the daily report used to fake it from the
+// day's registrees and produced meaningless per-day remainders. Every path
+// that moves total_cost writes a dated entry here with the SAME delta, so
+// sum(entries per patient) == patients.total_cost from the backfill onward.
+// Negative amounts are legitimate (case retirement, re-pricing downward).
+export const costEntries = pgTable("cost_entries", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  amount: integer("amount").notNull(),
+  // 'opening' (backfill) | 'registration' | 'assign_manufacturing' |
+  // 'physio_pricing' | 'maintenance' | 'new_service' | 'add_case_type' |
+  // 'visit' | 'case_retired' | 'manual_edit'
+  source: text("source").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Expenses table for accounting system
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),

@@ -34,15 +34,40 @@ interface PatientDetail {
   visitReason: string | null;
 }
 
+interface CostEntryDetail {
+  id: number;
+  patientId: number;
+  patientName: string;
+  amount: number;
+  source: string;
+  notes: string | null;
+  date: string;
+}
+
 interface DailySummary {
   date: string;
   payments: PaymentDetail[];
   patients: PatientDetail[];
+  costEntries: CostEntryDetail[];
   totalPaid: number;
   totalCosts: number;
   patientCount: number;
   paymentCount: number;
 }
+
+// Ledger-source labels (domain vocabulary — Arabic like the data itself).
+const COST_SOURCE_LABELS: Record<string, string> = {
+  opening: "قيد افتتاحي",
+  registration: "تسجيل مريض",
+  assign_manufacturing: "تخصيص طرف/مسند",
+  physio_pricing: "الكلفة والجلسات",
+  maintenance: "أجور صيانة",
+  new_service: "خدمة جديدة",
+  add_case_type: "إضافة نوع حالة",
+  visit: "زيارة بكلفة",
+  case_retired: "سحب حالة",
+  manual_edit: "تعديل إداري",
+};
 
 interface DetailedReport {
   branchId: number;
@@ -128,9 +153,13 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
               <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString(locale)} {t.reports.currency}</p>
             </div>
             <div className={dir === "rtl" ? "text-left" : "text-right"}>
-              <p className="text-xs text-muted-foreground">{t.reports.remaining}</p>
-              <p className="font-bold font-mono text-red-600">
-                {(summary.totalCosts - summary.totalPaid).toLocaleString(locale)} {t.reports.currency}
+              <p className="text-xs text-muted-foreground">
+                {summary.totalCosts - summary.totalPaid < 0 ? t.reports.surplus : t.reports.remaining}
+              </p>
+              {/* Negative = the day collected MORE than it sold (old debts paid
+                  off) — a good thing, not a red debt. */}
+              <p className={`font-bold font-mono ${summary.totalCosts - summary.totalPaid < 0 ? "text-emerald-600" : "text-red-600"}`}>
+                {Math.abs(summary.totalCosts - summary.totalPaid).toLocaleString(locale)} {t.reports.currency}
               </p>
             </div>
             <Button variant="ghost" size="icon" className={dir === "rtl" ? "mr-2" : "ml-2"}>
@@ -178,6 +207,56 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                   </tbody>
                   <tfoot className="bg-blue-50/80">
                     <tr>
+                      {/* Lifetime cost of the day's registrees — informational.
+                          The day's REAL التكاليف is the ledger table below. */}
+                      <td colSpan={4} className="p-3 font-bold text-slate-700">{t.reports.registeredCostTotal}</td>
+                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>
+                        {summary.patients.reduce((acc, p) => acc + p.totalCost, 0).toLocaleString(locale)} {t.reports.currency}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {summary.costEntries?.length > 0 && (
+            <div>
+              <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Banknote className="w-5 h-5 text-amber-600" />
+                {t.reports.costEntriesTitle} ({summary.costEntries.length})
+              </h4>
+              <div className="overflow-hidden border rounded-xl bg-white">
+                <table className="w-full">
+                  <thead className="bg-amber-50/80">
+                    <tr>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.time}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.costSource}</th>
+                      <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.amountCurrency}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {summary.costEntries.map((entry, idx) => (
+                      <tr key={entry.id} className="hover:bg-slate-50/50" data-testid={`cost-entry-row-${entry.id}`}>
+                        <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                        <td className="p-3 font-medium text-slate-800">{entry.patientName}</td>
+                        <td className="p-3 text-sm text-muted-foreground">{entry.date ? formatTimeIraq(entry.date) : '-'}</td>
+                        <td className="p-3 text-sm">
+                          <span className="inline-block bg-amber-50 text-amber-700 rounded px-2 py-0.5 text-xs">
+                            {COST_SOURCE_LABELS[entry.source] || entry.source}
+                          </span>
+                          {entry.notes && <span className="text-muted-foreground text-xs mr-2 rtl:mr-2 ltr:ml-2">{entry.notes}</span>}
+                        </td>
+                        <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold ${entry.amount < 0 ? "text-red-600" : "text-slate-800"}`}>
+                          {entry.amount.toLocaleString(locale)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-amber-50/80">
+                    <tr>
                       <td colSpan={4} className="p-3 font-bold text-slate-700">{t.reports.dayCostTotal}</td>
                       <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>
                         {summary.totalCosts.toLocaleString(locale)} {t.reports.currency}
@@ -188,7 +267,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
               </div>
             </div>
           )}
-          
+
           {summary.payments.length > 0 && (
             <div>
               <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -245,7 +324,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             </div>
           )}
           
-          {summary.patients.length === 0 && summary.payments.length === 0 && (
+          {summary.patients.length === 0 && summary.payments.length === 0 && !summary.costEntries?.length && (
             <p className="text-center text-muted-foreground py-4">{t.reports.noOpsToday}</p>
           )}
         </div>

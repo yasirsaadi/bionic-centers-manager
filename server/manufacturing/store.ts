@@ -7,7 +7,7 @@
 
 import { db } from "../db";
 import {
-  patients, branches, systemUsers, visits, patientCases,
+  patients, branches, systemUsers, visits, patientCases, costEntries,
   prostheticWorkOrders as WO,
   prostheticWorkHistory as WH,
   prostheticReworkEvents as RW,
@@ -290,6 +290,10 @@ export async function createMaintenanceOrderWithVisit(params: {
       await tx.update(patients)
         .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
         .where(eq(patients.id, params.patientId));
+      await tx.insert(costEntries).values({
+        patientId: params.patientId, branchId: params.branchId,
+        amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+      });
     }
     return workOrder;
   });
