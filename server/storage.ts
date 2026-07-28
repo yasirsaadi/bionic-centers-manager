@@ -347,6 +347,16 @@ export class DatabaseStorage implements IStorage {
     if (cutoff) conds.push(gte(costEntries.createdAt, cutoff));
     return await db.select().from(costEntries).where(and(...conds)).orderBy(desc(costEntries.createdAt));
   }
+  // Lifetime paid per patient — one grouped query, for the "still owed"
+  // column next to old-debt payments in the daily report.
+  async getPaidTotalsByPatientIds(ids: number[]): Promise<Map<number, number>> {
+    if (ids.length === 0) return new Map();
+    const rows = await db.select({
+      patientId: payments.patientId,
+      total: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+    }).from(payments).where(inArray(payments.patientId, ids)).groupBy(payments.patientId);
+    return new Map(rows.map((r) => [r.patientId, Number(r.total)]));
+  }
   // Whole-history totals for a branch via SQL aggregates (no row loading).
   async getBranchFinanceTotals(branchId: number): Promise<{
     totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number;

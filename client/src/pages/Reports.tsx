@@ -21,6 +21,8 @@ interface PaymentDetail {
   paymentTreatmentType: string | null;
   date: string;
   patientTotalCost: number;
+  isForToday?: boolean;
+  patientRemaining?: number;
 }
 
 interface PatientDetail {
@@ -34,40 +36,25 @@ interface PatientDetail {
   visitReason: string | null;
 }
 
-interface CostEntryDetail {
+interface ExpenseDetail {
   id: number;
-  patientId: number;
-  patientName: string;
+  category: string;
+  subcategory: string | null;
+  description: string | null;
   amount: number;
-  source: string;
-  notes: string | null;
-  date: string;
 }
 
 interface DailySummary {
   date: string;
   payments: PaymentDetail[];
   patients: PatientDetail[];
-  costEntries: CostEntryDetail[];
+  expenses: ExpenseDetail[];
   totalPaid: number;
   totalCosts: number;
+  totalExpenses: number;
   patientCount: number;
   paymentCount: number;
 }
-
-// Ledger-source labels (domain vocabulary — Arabic like the data itself).
-const COST_SOURCE_LABELS: Record<string, string> = {
-  opening: "قيد افتتاحي",
-  registration: "تسجيل مريض",
-  assign_manufacturing: "تخصيص طرف/مسند",
-  physio_pricing: "الكلفة والجلسات",
-  maintenance: "أجور صيانة",
-  new_service: "خدمة جديدة",
-  add_case_type: "إضافة نوع حالة",
-  visit: "زيارة بكلفة",
-  case_retired: "سحب حالة",
-  manual_edit: "تعديل إداري",
-};
 
 interface DetailedReport {
   branchId: number;
@@ -144,22 +131,20 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
           </div>
           
           <div className="flex items-center gap-6">
+            {/* The owner's three numbers (2026-07-28): money in, expenses out,
+                net — no accounting vocabulary. */}
             <div className={dir === "rtl" ? "text-left" : "text-right"}>
-              <p className="text-xs text-muted-foreground">{t.reports.costs}</p>
-              <p className="font-bold font-mono text-slate-800">{summary.totalCosts.toLocaleString(locale)} {t.reports.currency}</p>
+              <p className="text-xs text-muted-foreground">{t.reports.incoming}</p>
+              <p className="font-bold font-mono text-emerald-600" data-testid={`day-incoming-${summary.date}`}>{summary.totalPaid.toLocaleString(locale)} {t.reports.currency}</p>
             </div>
             <div className={dir === "rtl" ? "text-left" : "text-right"}>
-              <p className="text-xs text-muted-foreground">{t.reports.paid}</p>
-              <p className="font-bold font-mono text-emerald-600">{summary.totalPaid.toLocaleString(locale)} {t.reports.currency}</p>
+              <p className="text-xs text-muted-foreground">{t.reports.dayExpensesLabel}</p>
+              <p className="font-bold font-mono text-red-600">{(summary.totalExpenses || 0).toLocaleString(locale)} {t.reports.currency}</p>
             </div>
             <div className={dir === "rtl" ? "text-left" : "text-right"}>
-              <p className="text-xs text-muted-foreground">
-                {summary.totalCosts - summary.totalPaid < 0 ? t.reports.surplus : t.reports.remaining}
-              </p>
-              {/* Negative = the day collected MORE than it sold (old debts paid
-                  off) — a good thing, not a red debt. */}
-              <p className={`font-bold font-mono ${summary.totalCosts - summary.totalPaid < 0 ? "text-emerald-600" : "text-red-600"}`}>
-                {Math.abs(summary.totalCosts - summary.totalPaid).toLocaleString(locale)} {t.reports.currency}
+              <p className="text-xs text-muted-foreground">{t.reports.dayNet}</p>
+              <p className={`font-bold font-mono ${summary.totalPaid - (summary.totalExpenses || 0) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                {(summary.totalPaid - (summary.totalExpenses || 0)).toLocaleString(locale)} {t.reports.currency}
               </p>
             </div>
             <Button variant="ghost" size="icon" className={dir === "rtl" ? "mr-2" : "ml-2"}>
@@ -220,46 +205,114 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             </div>
           )}
 
-          {summary.costEntries?.length > 0 && (
+          {summary.totalCosts > 0 && (
+            <p className="text-sm text-slate-600 bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2" data-testid={`day-new-services-${summary.date}`}>
+              {t.reports.newServicesLine}{" "}
+              <span className="font-mono font-bold">{summary.totalCosts.toLocaleString(locale)} {t.reports.currency}</span>
+            </p>
+          )}
+
+          {summary.payments.length > 0 && (() => {
+            const todayPayments = summary.payments.filter((p) => p.isForToday !== false);
+            const debtPayments = summary.payments.filter((p) => p.isForToday === false);
+            const renderTable = (rows: PaymentDetail[], title: string, showRemaining: boolean, tint: string) => rows.length > 0 && (
+              <div key={title}>
+                <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <CreditCard className={`w-5 h-5 ${showRemaining ? "text-amber-600" : "text-emerald-600"}`} />
+                  {title} ({rows.length})
+                </h4>
+                <div className="overflow-hidden border rounded-xl bg-white">
+                  <table className="w-full">
+                    <thead className={tint}>
+                      <tr>
+                        <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
+                        <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
+                        <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.time}</th>
+                        <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.notes}</th>
+                        <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.amountCurrency}</th>
+                        {showRemaining && (
+                          <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.remainingOnPatient}</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {rows.map((payment, idx) => (
+                        <tr key={payment.id} className="hover:bg-slate-50/50">
+                          <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
+                          <td className="p-3 font-medium text-slate-800">{payment.patientName}</td>
+                          <td className="p-3 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{payment.date ? formatTimeIraq(payment.date) : '-'}</span>
+                          </td>
+                          <td className="p-3 text-sm text-muted-foreground">
+                            {payment.paymentTreatmentType && (
+                              <span className={`inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs ${dir === "rtl" ? "ml-2" : "mr-2"}`}>{payment.paymentTreatmentType}</span>
+                            )}
+                            {payment.notes || (payment.paymentTreatmentType ? '' : '-')}
+                          </td>
+                          <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
+                            {payment.amount.toLocaleString(locale)}
+                          </td>
+                          {showRemaining && (
+                            <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold ${(payment.patientRemaining || 0) > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                              {(payment.patientRemaining || 0).toLocaleString(locale)}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className={tint}>
+                      <tr>
+                        <td colSpan={4} className="p-3 font-bold text-slate-700">{t.reports.paymentsTotal}</td>
+                        <td colSpan={showRemaining ? 2 : 1} className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
+                          {rows.reduce((acc, p) => acc + p.amount, 0).toLocaleString(locale)} {t.reports.currency}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+            return (
+              <>
+                {renderTable(todayPayments, t.reports.todayServicePayments, false, "bg-emerald-50/80")}
+                {renderTable(debtPayments, t.reports.oldDebtPayments, true, "bg-amber-50/80")}
+              </>
+            );
+          })()}
+
+          {summary.expenses?.length > 0 && (
             <div>
               <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <Banknote className="w-5 h-5 text-amber-600" />
-                {t.reports.costEntriesTitle} ({summary.costEntries.length})
+                <Banknote className="w-5 h-5 text-red-600" />
+                {t.reports.dayExpensesTable} ({summary.expenses.length})
               </h4>
               <div className="overflow-hidden border rounded-xl bg-white">
                 <table className="w-full">
-                  <thead className="bg-amber-50/80">
+                  <thead className="bg-red-50/80">
                     <tr>
                       <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.time}</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.costSource}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.expCategory}</th>
+                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.expDescription}</th>
                       <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.amountCurrency}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {summary.costEntries.map((entry, idx) => (
-                      <tr key={entry.id} className="hover:bg-slate-50/50" data-testid={`cost-entry-row-${entry.id}`}>
+                    {summary.expenses.map((ex, idx) => (
+                      <tr key={ex.id} className="hover:bg-slate-50/50">
                         <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
-                        <td className="p-3 font-medium text-slate-800">{entry.patientName}</td>
-                        <td className="p-3 text-sm text-muted-foreground">{entry.date ? formatTimeIraq(entry.date) : '-'}</td>
-                        <td className="p-3 text-sm">
-                          <span className="inline-block bg-amber-50 text-amber-700 rounded px-2 py-0.5 text-xs">
-                            {COST_SOURCE_LABELS[entry.source] || entry.source}
-                          </span>
-                          {entry.notes && <span className="text-muted-foreground text-xs mr-2 rtl:mr-2 ltr:ml-2">{entry.notes}</span>}
-                        </td>
-                        <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold ${entry.amount < 0 ? "text-red-600" : "text-slate-800"}`}>
-                          {entry.amount.toLocaleString(locale)}
+                        <td className="p-3 text-sm text-slate-800">{ex.category}{ex.subcategory ? ` — ${ex.subcategory}` : ''}</td>
+                        <td className="p-3 text-sm text-muted-foreground">{ex.description || '-'}</td>
+                        <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-red-600`}>
+                          {ex.amount.toLocaleString(locale)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-amber-50/80">
+                  <tfoot className="bg-red-50/80">
                     <tr>
-                      <td colSpan={4} className="p-3 font-bold text-slate-700">{t.reports.dayCostTotal}</td>
-                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>
-                        {summary.totalCosts.toLocaleString(locale)} {t.reports.currency}
+                      <td colSpan={3} className="p-3 font-bold text-slate-700">{t.reports.dayExpensesLabel}</td>
+                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-red-600`}>
+                        {(summary.totalExpenses || 0).toLocaleString(locale)} {t.reports.currency}
                       </td>
                     </tr>
                   </tfoot>
@@ -268,63 +321,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
             </div>
           )}
 
-          {summary.payments.length > 0 && (
-            <div>
-              <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-emerald-600" />
-                {t.reports.payments} ({summary.payments.length})
-              </h4>
-              <div className="overflow-hidden border rounded-xl bg-white">
-                <table className="w-full">
-                  <thead className="bg-emerald-50/80">
-                    <tr>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>#</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.patientName}</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.time}</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.treatmentType}</th>
-                      <th className={`${dir === "rtl" ? "text-right" : "text-left"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.notes}</th>
-                      <th className={`${dir === "rtl" ? "text-left" : "text-right"} p-3 font-semibold text-slate-600 text-sm`}>{t.reports.amountCurrency}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {summary.payments.map((payment, idx) => {
-                      const paymentTime = payment.date ? formatTimeIraq(payment.date) : '-';
-                      return (
-                        <tr key={payment.id} className="hover:bg-slate-50/50">
-                          <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
-                          <td className="p-3 font-medium text-slate-800">{payment.patientName}</td>
-                          <td className="p-3 text-sm text-muted-foreground flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {paymentTime}
-                          </td>
-                          <td className="p-3 text-sm">
-                            {payment.paymentTreatmentType 
-                              ? <span className="inline-block bg-blue-50 text-blue-700 rounded px-2 py-0.5 text-xs">{payment.paymentTreatmentType}</span>
-                              : <span className="text-muted-foreground">-</span>
-                            }
-                          </td>
-                          <td className="p-3 text-sm text-muted-foreground">{payment.notes || '-'}</td>
-                          <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
-                            {payment.amount.toLocaleString(locale)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="bg-emerald-50/80">
-                    <tr>
-                      <td colSpan={5} className="p-3 font-bold text-slate-700">{t.reports.paymentsTotal}</td>
-                      <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-emerald-600`}>
-                        {summary.totalPaid.toLocaleString(locale)} {t.reports.currency}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
-          
-          {summary.patients.length === 0 && summary.payments.length === 0 && !summary.costEntries?.length && (
+          {summary.patients.length === 0 && summary.payments.length === 0 && !summary.expenses?.length && (
             <p className="text-center text-muted-foreground py-4">{t.reports.noOpsToday}</p>
           )}
         </div>
