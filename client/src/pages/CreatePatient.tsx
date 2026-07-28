@@ -358,6 +358,18 @@ export default function CreatePatient() {
   }, [treatmentEntries, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
+    // The classification is now the WORKFLOW SWITCH (owner, 2026-07-29):
+    // «مريض جديد» goes to the doctor first, «مريض قديم» goes straight to
+    // reception's تخصيص/expert. An unclassified patient would silently take
+    // the new-patient path, so the choice must be explicit.
+    if (!values.patientClassification) {
+      toast({
+        title: "اختر تصنيف المريض",
+        description: "جديد = معاينة الطبيب أولاً · قديم = تخصيص وإسناد مباشر من الاستعلامات.",
+        variant: "destructive",
+      });
+      return;
+    }
     // REGISTRATION IS PRICELESS for every condition type now (owner's flow):
     // - طرف/مسند: priced after the exam via «تخصيص وإسناد خبير».
     // - علاج طبيعي: priced after the exam via «الكلفة والجلسات» in the
@@ -1244,7 +1256,7 @@ export default function CreatePatient() {
                   name="patientClassification"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t.patientForm.patientClassification}</FormLabel>
+                      <FormLabel>{t.patientForm.patientClassification} <span className="text-red-500">*</span></FormLabel>
                       <Select onValueChange={field.onChange} value={field.value || ""}>
                         <FormControl>
                           <SelectTrigger className="bg-white" data-testid="select-patient-classification">
@@ -1256,6 +1268,10 @@ export default function CreatePatient() {
                           <SelectItem value="past">{t.patientForm.pastPatient}</SelectItem>
                         </SelectContent>
                       </Select>
+                      {/* The classification routes the whole workflow now. */}
+                      <p className="text-xs text-muted-foreground">
+                        جديد = معاينة الطبيب أولاً · قديم = تخصيص وإسناد خبير مباشرة من الاستعلامات
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
