@@ -11,6 +11,7 @@ import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
+import { resolvePurchasedSessions } from "@shared/pricing";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -951,25 +952,17 @@ export default function PatientDetails() {
             // it exists (new flow), payments are the truth when it doesn't (old
             // flow). This card used to read payments only, so a priced patient
             // saw no session card at all.
-            const sessionsByType: Record<string, number> = {};
-            let totalSessions = 0;
-            const planCard = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
-            if (planCard && planCard.length > 0) {
-              planCard.forEach((e) => {
-                const n = Number(e?.sessionCount) || 0;
-                if (!e?.treatmentType || n <= 0) return;
-                totalSessions += n;
-                sessionsByType[e.treatmentType] = (sessionsByType[e.treatmentType] || 0) + n;
-              });
-            } else {
-              patient.payments?.forEach((p) => {
-                if (p.sessionCount && p.sessionCount > 0) {
-                  totalSessions += p.sessionCount;
-                  const type = p.paymentTreatmentType || t.patientDetails.unspecified;
-                  sessionsByType[type] = (sessionsByType[type] || 0) + p.sessionCount;
-                }
-              });
-            }
+            const physioCaseCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
+            const purchased = resolvePurchasedSessions({
+              plan: (patient as any).physioPlan,
+              treatmentTypeText: patient.treatmentType,
+              caseCost: physioCaseCost,
+              paymentSessions: (patient.payments ?? []).map((p) => ({
+                treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+              })),
+            });
+            const sessionsByType = purchased.byType;
+            const totalSessions = purchased.total;
             // The card now shows even at zero: a physiotherapy patient with no
             // recorded sessions is exactly the case that needs fixing, and
             // hiding the card hid the problem (and its remedy) from view.
@@ -1092,19 +1085,15 @@ export default function PatientDetails() {
                 // old flow have no plan; for them the sessions really do live on
                 // their payments, so that stays the fallback. Never both, or a
                 // patient who was priced AND paid would read double.
-                const sessionsByType: Record<string, number> = {};
-                const plan = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
-                if (plan && plan.length > 0) {
-                  plan.forEach((e) => {
-                    if (!e?.treatmentType) return;
-                    sessionsByType[e.treatmentType] = (sessionsByType[e.treatmentType] || 0) + (Number(e.sessionCount) || 0);
-                  });
-                } else {
-                  casePayments?.forEach((p) => {
-                    const type = p.paymentTreatmentType || t.patientDetails.unspecified;
-                    sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
-                  });
-                }
+                const physioCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
+                const sessionsByType = resolvePurchasedSessions({
+                  plan: (patient as any).physioPlan,
+                  treatmentTypeText: patient.treatmentType,
+                  caseCost: physioCost,
+                  paymentSessions: (casePayments ?? []).map((p) => ({
+                    treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+                  })),
+                }).byType;
                 const visitsByType: Record<string, number> = {};
                 caseVisits?.forEach((v) => {
                   const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
@@ -1171,14 +1160,20 @@ export default function PatientDetails() {
                         // With a stored plan the whole course is bought up front,
                         // so seed the credit and skip the payment walk entirely —
                         // otherwise every row would count down from zero.
-                        const planRows = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
-                        const usePlan = !!(planRows && planRows.length > 0);
-                        if (usePlan) {
-                          planRows!.forEach((e) => {
-                            if (!e?.treatmentType) return;
-                            paidByType[e.treatmentType] = (paidByType[e.treatmentType] || 0) + (Number(e.sessionCount) || 0);
-                          });
-                        }
+                        const physioCostRows = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
+                        const purchasedRows = resolvePurchasedSessions({
+                          plan: (patient as any).physioPlan,
+                          treatmentTypeText: patient.treatmentType,
+                          caseCost: physioCostRows,
+                          paymentSessions: (casePayments ?? []).map((p) => ({
+                            treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+                          })),
+                        });
+                        // Anything but the old payment-by-payment flow means the
+                        // whole course was bought up front: seed the credit and
+                        // skip the chronological payment walk below.
+                        const usePlan = purchasedRows.source !== "payments" && purchasedRows.total > 0;
+                        if (usePlan) Object.assign(paidByType, purchasedRows.byType);
                         const visitsOldestFirst = [...(caseVisits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         const paymentsSorted = usePlan ? [] : [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
                         let paymentIdx = 0;

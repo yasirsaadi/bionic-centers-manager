@@ -60,6 +60,86 @@ export function describePhysioPlan(plan: PhysioPlanEntry[] | null | undefined): 
     .join("، ");
 }
 
+/**
+ * Read counts back out of a plan TEXT like «روبوت (10 جلسات)، أبر صينية (5 جلسات)».
+ *
+ * That format is what the doctor's prescription and the pricing step write onto
+ * `patients.treatment_type`, so it often carries the counts even when the
+ * structured plan predates this feature.
+ */
+export function parsePlanFromText(text: string | null | undefined): PhysioPlanEntry[] {
+  if (!text || typeof text !== "string") return [];
+  const out: PhysioPlanEntry[] = [];
+  for (const part of text.split("،")) {
+    const m = part.match(/^\s*(.+?)\s*\(\s*(\d+)\s*جلس/);
+    if (!m) continue;
+    const type = m[1].trim();
+    const n = Number(m[2]) || 0;
+    if (type && n > 0) out.push({ treatmentType: type, sessionCount: n });
+  }
+  return out;
+}
+
+/**
+ * How many sessions this patient actually BOUGHT, per treatment type.
+ *
+ * Resolved from the most explicit source available, never by summing several
+ * (two sources would double the purchase):
+ *
+ *   1. the stored plan — written by «الكلفة والجلسات» and the correction dialog;
+ *   2. counts embedded in the plan text — «روبوت (10 جلسات)»;
+ *   3. DERIVED FROM THE PRICE: a single known treatment type whose case cost
+ *      divides exactly by its per-session price. This is the one that matters
+ *      in practice: a patient priced 275,000 for «أجهزة علاج طبيعي» bought 11
+ *      sessions, whatever his payments happen to say so far — and reading the
+ *      payments instead is precisely what made the counter disagree with the
+ *      cost (منتهى: 11 bought, 4 on payments · مصطفى: 40 bought, 11 on payments);
+ *   4. the payment session counts — the old flow, where every sale WAS a payment.
+ */
+export function resolvePurchasedSessions(input: {
+  plan?: PhysioPlanEntry[] | null;
+  treatmentTypeText?: string | null;
+  caseCost?: number | null;
+  paymentSessions?: { treatmentType: string | null; sessionCount: number | null }[];
+}): { byType: Record<string, number>; total: number; source: "plan" | "text" | "cost" | "payments" | "none" } {
+  const sum = (byType: Record<string, number>) =>
+    Object.keys(byType).reduce((s, k) => s + byType[k], 0);
+
+  const fromPlan = (input.plan ?? []).filter((e) => e?.treatmentType && Number(e.sessionCount) > 0);
+  if (fromPlan.length > 0) {
+    const byType: Record<string, number> = {};
+    for (const e of fromPlan) byType[e.treatmentType] = (byType[e.treatmentType] ?? 0) + Number(e.sessionCount);
+    return { byType, total: sum(byType), source: "plan" };
+  }
+
+  const fromText = parsePlanFromText(input.treatmentTypeText);
+  if (fromText.length > 0) {
+    const byType: Record<string, number> = {};
+    for (const e of fromText) byType[e.treatmentType] = (byType[e.treatmentType] ?? 0) + e.sessionCount;
+    return { byType, total: sum(byType), source: "text" };
+  }
+
+  // Derive from the money: only when the text names exactly ONE priced type and
+  // the cost divides exactly — anything else would be a guess.
+  const label = String(input.treatmentTypeText ?? "").trim();
+  const cost = Math.max(0, Math.floor(Number(input.caseCost) || 0));
+  const price = PHYSIO_TREATMENT_PRICES[label];
+  if (label && !label.includes("،") && price && price > 0 && cost > 0 && cost % price === 0) {
+    const byType = { [label]: cost / price };
+    return { byType, total: cost / price, source: "cost" };
+  }
+
+  const byType: Record<string, number> = {};
+  for (const p of input.paymentSessions ?? []) {
+    const n = Number(p?.sessionCount) || 0;
+    if (n <= 0) continue;
+    const type = (p.treatmentType || "").trim() || "غير محدد";
+    byType[type] = (byType[type] ?? 0) + n;
+  }
+  const total = sum(byType);
+  return { byType, total, source: total > 0 ? "payments" : "none" };
+}
+
 // Cost of one entry: sessions × the type's price, 0 when marked free.
 export function physioEntryCost(e: PhysioEntry): number {
   if (e.isFree) return 0;
