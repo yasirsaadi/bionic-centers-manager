@@ -33,6 +33,7 @@ import {
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
+import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -617,11 +618,17 @@ export class DatabaseStorage implements IStorage {
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
-      // (patients has no sessionCount column — sessions live on the plan's
-      // visits/payments; the treatment plan summary is the treatmentType text.)
+      // Remember HOW MANY sessions were sold, not just their price (036). The
+      // page's counter measures visits against this; before it existed the
+      // counts were computed, charged for, and then discarded — so a priced
+      // patient read "0 sessions purchased" and went negative on first visit.
+      const plan = mergePhysioPlan(existing.physioPlan, params.entries);
       const [updated] = await tx.update(patients).set({
         totalCost: (existing.totalCost || 0) + params.totalCost,
-        treatmentType: params.treatmentType,
+        // The plan text carries the counts too, so the file reads
+        // «روبوت (10 جلسات)» instead of a bare type name.
+        treatmentType: describePhysioPlan(plan) || params.treatmentType,
+        physioPlan: plan,
       }).where(eq(patients.id, patientId)).returning();
       if (params.totalCost > 0) {
         await tx.insert(costEntries).values({
@@ -737,7 +744,10 @@ export class DatabaseStorage implements IStorage {
       ? await db.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
       : [undefined as any];
     const [updated] = await db.update(patients)
-      .set(updates)
+      // Cast: drizzle-zod widens the jsonb columns (physioPlan) into a shape
+      // Drizzle's own .set() type doesn't accept back. The values are validated
+      // by the callers that build them, not by this assignment.
+      .set(updates as any)
       .where(eq(patients.id, id))
       .returning();
     if (updated && wantsCost && before) {

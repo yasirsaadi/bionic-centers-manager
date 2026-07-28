@@ -70,6 +70,7 @@ import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { NewServiceModal } from "@/components/NewServiceModal";
+import { PhysioPlanDialog } from "@/components/PhysioPlanDialog";
 import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useRef, useState, useEffect } from "react";
@@ -140,6 +141,7 @@ export default function PatientDetails() {
   const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
+  const [editingPlan, setEditingPlan] = useState(false);
   const [editingVisit, setEditingVisit] = useState<{ id: number; details: string | null; notes: string | null; treatmentType: string | null; sessionCount: number | null; cost: number | null; visitDate: string | null } | null>(null);
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
@@ -945,21 +947,54 @@ export default function PatientDetails() {
           </Card>
 
           {patient.isPhysiotherapy && (() => {
+            // Same rule as the counter below: the stored plan is the truth when
+            // it exists (new flow), payments are the truth when it doesn't (old
+            // flow). This card used to read payments only, so a priced patient
+            // saw no session card at all.
             const sessionsByType: Record<string, number> = {};
             let totalSessions = 0;
-            patient.payments?.forEach((p) => {
-              if (p.sessionCount && p.sessionCount > 0) {
-                totalSessions += p.sessionCount;
-                const type = p.paymentTreatmentType || t.patientDetails.unspecified;
-                sessionsByType[type] = (sessionsByType[type] || 0) + p.sessionCount;
-              }
-            });
-            return totalSessions > 0 ? (
+            const planCard = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
+            if (planCard && planCard.length > 0) {
+              planCard.forEach((e) => {
+                const n = Number(e?.sessionCount) || 0;
+                if (!e?.treatmentType || n <= 0) return;
+                totalSessions += n;
+                sessionsByType[e.treatmentType] = (sessionsByType[e.treatmentType] || 0) + n;
+              });
+            } else {
+              patient.payments?.forEach((p) => {
+                if (p.sessionCount && p.sessionCount > 0) {
+                  totalSessions += p.sessionCount;
+                  const type = p.paymentTreatmentType || t.patientDetails.unspecified;
+                  sessionsByType[type] = (sessionsByType[type] || 0) + p.sessionCount;
+                }
+              });
+            }
+            // The card now shows even at zero: a physiotherapy patient with no
+            // recorded sessions is exactly the case that needs fixing, and
+            // hiding the card hid the problem (and its remedy) from view.
+            return (
               <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
                 <h3 className="font-bold text-lg flex items-center gap-2 text-blue-600 mb-6">
                   <Activity className="w-5 h-5" />
                   {t.patientDetails.sessionSummary}
+                  {permissions.canAddPatients && (
+                    <Button
+                      variant="ghost" size="sm"
+                      className="mr-auto h-7 text-xs gap-1 text-blue-700 hover:bg-blue-50"
+                      onClick={() => setEditingPlan(true)}
+                      data-testid="button-edit-physio-plan"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> تعديل
+                    </Button>
+                  )}
                 </h3>
+                {totalSessions === 0 && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                    لم تُسجَّل جلسات لهذا المريض بعد. اضغط «تعديل» وأدخل عدد الجلسات المتفق عليها —
+                    لا تتأثر الكلفة ولا المدفوعات.
+                  </p>
+                )}
                 <div className="space-y-4">
                   <div className="flex justify-between items-end">
                     <span className="text-muted-foreground">{t.patientDetails.totalSessionsCount}</span>
@@ -975,7 +1010,7 @@ export default function PatientDetails() {
                   </div>
                 </div>
               </Card>
-            ) : null;
+            );
           })()}
 
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
@@ -1052,11 +1087,24 @@ export default function PatientDetails() {
               )}
 
               {patient.isPhysiotherapy && (() => {
+                // Purchased sessions come from the stored PLAN — what reception
+                // priced (and what «جلسات علاج إضافية» added). Patients from the
+                // old flow have no plan; for them the sessions really do live on
+                // their payments, so that stays the fallback. Never both, or a
+                // patient who was priced AND paid would read double.
                 const sessionsByType: Record<string, number> = {};
-                casePayments?.forEach((p) => {
-                  const type = p.paymentTreatmentType || t.patientDetails.unspecified;
-                  sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
-                });
+                const plan = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
+                if (plan && plan.length > 0) {
+                  plan.forEach((e) => {
+                    if (!e?.treatmentType) return;
+                    sessionsByType[e.treatmentType] = (sessionsByType[e.treatmentType] || 0) + (Number(e.sessionCount) || 0);
+                  });
+                } else {
+                  casePayments?.forEach((p) => {
+                    const type = p.paymentTreatmentType || t.patientDetails.unspecified;
+                    sessionsByType[type] = (sessionsByType[type] || 0) + (p.sessionCount || 0);
+                  });
+                }
                 const visitsByType: Record<string, number> = {};
                 caseVisits?.forEach((v) => {
                   const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
@@ -1120,8 +1168,19 @@ export default function PatientDetails() {
                         const remainingMap: Record<number, number> = {};
                         const visitCountByType: Record<string, number> = {};
                         const paidByType: Record<string, number> = {};
+                        // With a stored plan the whole course is bought up front,
+                        // so seed the credit and skip the payment walk entirely —
+                        // otherwise every row would count down from zero.
+                        const planRows = (patient as any).physioPlan as { treatmentType: string; sessionCount: number }[] | null;
+                        const usePlan = !!(planRows && planRows.length > 0);
+                        if (usePlan) {
+                          planRows!.forEach((e) => {
+                            if (!e?.treatmentType) return;
+                            paidByType[e.treatmentType] = (paidByType[e.treatmentType] || 0) + (Number(e.sessionCount) || 0);
+                          });
+                        }
                         const visitsOldestFirst = [...(caseVisits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
-                        const paymentsSorted = [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
+                        const paymentsSorted = usePlan ? [] : [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
                         let paymentIdx = 0;
                         visitsOldestFirst.forEach((v) => {
                           const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
@@ -2001,6 +2060,13 @@ export default function PatientDetails() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Session-count correction — counts only, never money. */}
+      <PhysioPlanDialog
+        patient={patient ? { id: patient.id, name: patient.name, physioPlan: (patient as any).physioPlan } : null}
+        open={editingPlan}
+        onOpenChange={setEditingPlan}
+      />
     </div>
   );
 }

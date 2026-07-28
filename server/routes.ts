@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, isNull, desc } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
@@ -1929,9 +1929,16 @@ export async function registerRoutes(
           }))
         : null;
 
-      // Update totalCost
+      // Update totalCost. Extra physiotherapy sessions also top up the stored
+      // plan (036) — otherwise the counter would charge for them and then not
+      // know they exist, exactly the gap that broke the original counter.
       const newTotalCost = (patient.totalCost || 0) + serviceCost;
-      await storage.updatePatient(patientId, { totalCost: newTotalCost }, "new_service");
+      const planPatch = entries && entries.length > 0
+        ? { physioPlan: mergePhysioPlan(patient.physioPlan, entries.map((e) => ({
+            treatmentType: e.treatmentType ?? "", sessionCount: e.sessionCount,
+          }))) }
+        : {};
+      await storage.updatePatient(patientId, { totalCost: newTotalCost, ...planPatch } as any, "new_service");
 
       // Keep the per-case split in step: the same amount the aggregate just
       // gained is added onto the case(s) the service belongs to — otherwise
@@ -2063,6 +2070,57 @@ export async function registerRoutes(
     } catch (err) {
       console.error("Error pricing physiotherapy:", err);
       res.status(500).json({ message: "تعذّر حفظ التسعير" });
+    }
+  });
+
+  // ---- «تعديل خطة الجلسات»: fix the COUNTS, never the money ------------------
+  // The escape hatch for patients priced before migration 036, whose session
+  // counts were charged for and then discarded, and for any later correction
+  // ("we agreed on 12, not 10"). It writes the plan and the plan text — and
+  // deliberately touches neither total_cost nor the cost ledger, so a counter
+  // correction can never move a dinar.
+  app.put("/api/patients/:id/physio-plan", isAuthenticated, async (req, res) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      const isAdmin = branchSession?.isAdmin;
+      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
+
+      const patientId = Number(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!patient.isPhysiotherapy) return res.status(400).json({ message: "هذه الميزة لمرضى العلاج الطبيعي" });
+      const allowedPp = accessibleBranchesFor(req);
+      if (allowedPp !== null && !allowedPp.includes(patient.branchId)) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+      }
+
+      const raw = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      const cleaned = raw
+        .map((e: any) => ({
+          treatmentType: String(e?.treatmentType || "").trim(),
+          sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+        }))
+        .filter((e: any) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+      // Replace, don't merge: this dialog shows the current plan and saves what
+      // the user sees, so merging would silently double what they just edited.
+      const plan = mergePhysioPlan(null, cleaned);
+
+      const updated = await storage.updatePatient(patientId, {
+        physioPlan: plan,
+        treatmentType: describePhysioPlan(plan) || patient.treatmentType,
+      } as any);
+
+      await logAudit({
+        entityType: "patient", entityId: patientId, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `تعديل خطة الجلسات (بلا أثر مالي): ${describePhysioPlan(plan) || "—"}`,
+      });
+      res.json({ ok: true, patient: updated });
+    } catch (err) {
+      console.error("Error updating physio plan:", err);
+      res.status(500).json({ message: "تعذّر حفظ خطة الجلسات" });
     }
   });
 
