@@ -10,7 +10,7 @@ import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
-import { formatDateIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
+import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1152,7 +1152,7 @@ export default function PatientDetails() {
                           return (
                         <tr key={visit.id} className="hover:bg-slate-50">
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
-                            <div>{formatDateIraq(visit.visitDate)}</div>
+                            <div>{formatDateTimeIraq(visit.visitDate)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(visit.visitDate)}</div>
                           </td>
                           {sessionsContext && (
@@ -1298,7 +1298,7 @@ export default function PatientDetails() {
                             )}
                           </td>
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
-                            <div>{formatDateIraq(payment.date)}</div>
+                            <div>{formatDateTimeIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
                           </td>
                           {patient.isPhysiotherapy && (
@@ -1388,7 +1388,7 @@ export default function PatientDetails() {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 break-words" title={doc.fileName}>{doc.fileName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatDateIraq(doc.uploadedAt)}
+                          {formatDateTimeIraq(doc.uploadedAt)}
                         </p>
                       </div>
                       <Button 
@@ -1455,7 +1455,7 @@ export default function PatientDetails() {
                             )}
                             {plan.createdAt && (
                               <span className="text-xs text-muted-foreground" data-testid={`text-plan-date-${plan.id}`}>
-                                {formatDateIraq(plan.createdAt)}
+                                {formatDateTimeIraq(plan.createdAt)}
                               </span>
                             )}
                             {plan.goalType && (

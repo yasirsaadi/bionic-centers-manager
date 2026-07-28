@@ -11,7 +11,7 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
-import { formatDateIraq, getTodayIraq } from "@/lib/utils";
+import { formatDateIraq, formatDateTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
@@ -337,7 +337,7 @@ export default function BranchDetails() {
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                             <Calendar className="w-4 h-4" />
-                            <span>{formatDateIraq(patient.createdAt)}</span>
+                            <span>{formatDateTimeIraq(patient.createdAt)}</span>
                           </div>
                           <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
                             {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}

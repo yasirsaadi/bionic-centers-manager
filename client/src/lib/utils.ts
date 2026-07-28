@@ -23,6 +23,14 @@ export function formatDateIraq(date: Date | string | null | undefined): string {
 }
 
 // Format time for display (12-hour with AM/PM in Arabic) - converts UTC to Iraq timezone
+/**
+ * Date AND clock time, Baghdad — for anything that happened at a MOMENT:
+ * a registration, a visit, a payment, an uploaded document.
+ *
+ * Deliberately NOT for date-only columns (expense date, injury date, expected
+ * delivery): those carry no time, so rendering one would print a fictional
+ * "12:00 ص".
+ */
 export function formatTimeIraq(date: Date | string | null | undefined): string {
   if (!date) return 'وقت غير محدد';
   // Parse the date as UTC first, then convert to Baghdad timezone
@@ -36,7 +44,14 @@ export function formatTimeIraq(date: Date | string | null | undefined): string {
   return `${hour12}:${minutes} ${ampm}`;
 }
 
-// Format date and time together - converts UTC to Iraq timezone
+/**
+ * Date AND clock time, Baghdad — for anything that happened at a MOMENT:
+ * a registration, a visit, a payment, an uploaded document.
+ *
+ * Deliberately NOT for date-only columns (expense date, injury date, expected
+ * delivery): those carry no time, so rendering one would print a fictional
+ * "12:00 ص".
+ */
 export function formatDateTimeIraq(date: Date | string | null | undefined): string {
   if (!date) return '';
   const d = dayjs.utc(date).tz(IRAQ_TIMEZONE);

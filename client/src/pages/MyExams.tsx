@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
-import { formatDateIraq } from "@/lib/utils";
+import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel } from "@shared/medical";
 
 interface WorklistRow {
@@ -204,7 +204,7 @@ export default function MyExams() {
                                   {r.waitingSince && (
                                     <span className="flex items-center gap-1">
                                       <Clock className="w-3 h-3" />
-                                      منذ {formatDateIraq(r.waitingSince)}
+                                      منذ {formatDateTimeIraq(r.waitingSince)}
                                       {days !== null && days > 0 && ` (${days} يوم)`}
                                     </span>
                                   )}
