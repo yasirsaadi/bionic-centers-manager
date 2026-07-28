@@ -2724,12 +2724,13 @@ export async function registerRoutes(
     const days = Number.isFinite(daysRaw) && daysRaw >= 0 ? daysRaw : 45;
     const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 
-    const [patients, payments, visits, financeTotals, dayCostEntries] = await Promise.all([
+    const [patients, payments, visits, financeTotals, dayCostEntries, branchExpenses] = await Promise.all([
       storage.getPatientsSince(branchId, cutoff),
       storage.getPaymentsByBranchSince(branchId, cutoff),
       storage.getVisitsByBranchSince(branchId, cutoff),
       storage.getBranchFinanceTotals(branchId),
       storage.getCostEntriesByBranchSince(branchId, cutoff),
+      storage.getExpenses(branchId, cutoff ? cutoff.toISOString().split("T")[0] : undefined),
     ]);
 
     // Create patient lookup map
@@ -2749,6 +2750,12 @@ export async function registerRoutes(
       const extra = await storage.getPatientsByIds(missingIds);
       for (const p of extra) patientMap.set(p.id, p);
     }
+
+    // Lifetime paid per referenced patient — powers the "still owed" column
+    // next to old-debt payments.
+    const paidTotals = await storage.getPaidTotalsByPatientIds(
+      Array.from(referencedIds).filter((id) => id != null),
+    );
 
     const patientVisitMap = new Map<number, string>();
     for (const visit of visits) {
@@ -2770,6 +2777,11 @@ export async function registerRoutes(
       date: string;
       patientTotalCost: number;
       paymentTreatmentType: string | null;
+      // true = pays for a service created the same day (a cost entry or the
+      // patient's registration on that date); false = settles an older debt.
+      isForToday: boolean;
+      // What the patient still owes right now (lifetime cost − lifetime paid).
+      patientRemaining: number;
     };
     
     type PatientDetail = {
@@ -2801,6 +2813,27 @@ export async function registerRoutes(
 
     // Group dated cost-ledger rows (migration 033) — THE day's التكاليف.
     const costEntriesByDate: Record<string, CostEntryDetail[]> = {};
+
+    type ExpenseDetail = {
+      id: number;
+      category: string;
+      subcategory: string | null;
+      description: string | null;
+      amount: number;
+    };
+    // Branch expenses by their user-chosen date (already YYYY-MM-DD).
+    const expensesByDate: Record<string, ExpenseDetail[]> = {};
+    for (const ex of branchExpenses) {
+      const key = String(ex.expenseDate);
+      if (!expensesByDate[key]) expensesByDate[key] = [];
+      expensesByDate[key].push({
+        id: ex.id,
+        category: ex.category,
+        subcategory: ex.subcategory ?? null,
+        description: ex.description ?? null,
+        amount: ex.amount,
+      });
+    }
     
     // Helper function to get local date key (YYYY-MM-DD)
     const getLocalDateKey = (date: Date | string | null): string => {
@@ -2812,15 +2845,27 @@ export async function registerRoutes(
       return `${year}-${month}-${day}`;
     };
     
+    // (patientId, day) pairs that created cost that day — the test for
+    // "this payment pays for TODAY's service" vs "settles an old debt".
+    const sameDayCost = new Set<string>();
+    for (const e of dayCostEntries) {
+      if (e.amount > 0) sameDayCost.add(`${e.patientId}|${getLocalDateKey(e.createdAt)}`);
+    }
+
     // Process payments
     for (const payment of payments) {
       const patient = patientMap.get(payment.patientId);
       const dateKey = getLocalDateKey(payment.date);
-      
+
       if (!paymentsByDate[dateKey]) {
         paymentsByDate[dateKey] = [];
       }
-      
+
+      const isForToday =
+        sameDayCost.has(`${payment.patientId}|${dateKey}`) ||
+        (patient ? getLocalDateKey(patient.createdAt) === dateKey : false);
+      const paidLifetime = paidTotals.get(payment.patientId) ?? 0;
+
       paymentsByDate[dateKey].push({
         id: payment.id,
         patientId: payment.patientId,
@@ -2830,6 +2875,8 @@ export async function registerRoutes(
         date: payment.date?.toString() || '',
         patientTotalCost: patient?.totalCost || 0,
         paymentTreatmentType: payment.paymentTreatmentType || null,
+        isForToday,
+        patientRemaining: Math.max(0, (patient?.totalCost || 0) - paidLifetime),
       });
     }
     
@@ -2890,7 +2937,8 @@ export async function registerRoutes(
     const paymentDates = Object.keys(paymentsByDate);
     const patientDates = Object.keys(patientsByDate);
     const costDates = Object.keys(costEntriesByDate);
-    const allDatesSet = new Set([...paymentDates, ...patientDates, ...costDates]);
+    const expenseDates = Object.keys(expensesByDate);
+    const allDatesSet = new Set([...paymentDates, ...patientDates, ...costDates, ...expenseDates]);
     const allDates = Array.from(allDatesSet).filter(d => d !== 'unknown').sort((a, b) => b.localeCompare(a));
 
     // Calculate daily summaries. التكاليف is the day's LEDGER sum — cost
@@ -2902,6 +2950,7 @@ export async function registerRoutes(
       const dayPayments = paymentsByDate[date] || [];
       const dayPatients = patientsByDate[date] || [];
       const dayEntries = costEntriesByDate[date] || [];
+      const dayExpenses = expensesByDate[date] || [];
 
       return {
         date,
@@ -2910,8 +2959,10 @@ export async function registerRoutes(
         ),
         patients: dayPatients,
         costEntries: dayEntries,
+        expenses: dayExpenses,
         totalPaid: dayPayments.reduce((acc: number, p: PaymentDetail) => acc + p.amount, 0),
         totalCosts: dayEntries.reduce((acc: number, e: CostEntryDetail) => acc + e.amount, 0),
+        totalExpenses: dayExpenses.reduce((acc: number, e: ExpenseDetail) => acc + e.amount, 0),
         patientCount: dayPatients.length,
         paymentCount: dayPayments.length
       };
