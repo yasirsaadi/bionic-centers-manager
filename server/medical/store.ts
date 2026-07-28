@@ -158,6 +158,23 @@ export async function applyPrescription(
         patch.injuryArea = injuryArea;
       }
     }
+    // The prescribed course lands on the patient row THE MOMENT the exam is
+    // signed. Doctors reported their session counts "not showing in the
+    // patient record": they lived only inside the exam card until reception
+    // priced them, so the file looked untreated and patients waited. This
+    // writes the SAME treatmentType column the pricing step writes — with the
+    // counts, e.g. "روبوت (10 جلسات)، أبر صينية (5 جلسات)" — and pricing later
+    // overwrites it with the confirmed plan through the same proven path.
+    // Money still never moves here: pricing remains reception's alone.
+    if (Array.isArray(prescription.treatments)) {
+      const course = (prescription.treatments as any[])
+        .filter((t) => t && typeof t.treatmentType === "string" && t.treatmentType)
+        .map((t) => {
+          const n = Number(t.sessionCount) || 0;
+          return n > 0 ? `${t.treatmentType} (${n} جلسات)` : t.treatmentType;
+        });
+      if (course.length > 0) patch.treatmentType = course.join("، ");
+    }
   }
 
   if (Object.keys(patch).length === 0) return;
@@ -356,6 +373,40 @@ export async function hasSignedExam(
   return !!row;
 }
 
+// ---- legacy exemption (owner's decision 2026-07-29) -------------------------
+// Patients registered BEFORE the exam system went live were prescribed and
+// fitted under the old workflow; holding their routine work hostage to a
+// retroactive exam served no one — reception froze waiting for the doctor,
+// and the doctor's worklist drowned in old files. "Legacy" is pinned to the
+// moment migration 028 was applied in THIS database: deterministic, exact per
+// environment, and a NEW patient can never age into the exemption. The doctor
+// may still examine a legacy patient — the exemption removes the OBLIGATION,
+// not the possibility.
+let examActivationCache: Date | null | undefined;
+export async function examSystemActivatedAt(): Promise<Date | null> {
+  if (examActivationCache !== undefined) return examActivationCache;
+  try {
+    const r = await db.execute<{ applied_at: string | Date }>(sql`
+      SELECT applied_at FROM _migrations WHERE name = '028_medical_exams' LIMIT 1
+    `);
+    const v = (r.rows ?? [])[0]?.applied_at;
+    examActivationCache = v ? new Date(v) : null;
+  } catch {
+    examActivationCache = null;
+  }
+  return examActivationCache;
+}
+
+export async function isLegacyPatient(patientId: number): Promise<boolean> {
+  const activated = await examSystemActivatedAt();
+  if (!activated) return false;
+  const [p] = await db
+    .select({ createdAt: patients.createdAt })
+    .from(patients)
+    .where(eq(patients.id, patientId));
+  return !!p?.createdAt && p.createdAt < activated;
+}
+
 /** The newest signed exam's proposed device price, or null when unset. */
 export async function latestDeviceCost(
   patientId: number,
@@ -430,12 +481,19 @@ export async function getPendingExams(
             sql`, `,
           )})`;
 
+  // Legacy patients are exempt from the exam requirement, so they never
+  // appear as "waiting" — the amber badges and the doctor's queue stay clean
+  // for genuinely new patients.
+  const activated = await examSystemActivatedAt();
+  const notLegacy = activated ? sql`p.created_at >= ${activated}` : sql`TRUE`;
+
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
     WHERE pc.status = 'active'
       AND ${scoped}
+      AND ${notLegacy}
       AND NOT EXISTS (
         SELECT 1 FROM medical_exams me
         WHERE me.patient_id = pc.patient_id
@@ -517,6 +575,11 @@ export async function getWorklist(
             sql`, `,
           )})`;
 
+  // Legacy patients never enter the doctor's queue (same rule as the pending
+  // maps): the worklist is for genuinely new patients only.
+  const activatedWl = await examSystemActivatedAt();
+  const notLegacyWl = activatedWl ? sql`p.created_at >= ${activatedWl}` : sql`TRUE`;
+
   const rows = await db.execute<{
     patient_id: number;
     patient_name: string;
@@ -535,6 +598,7 @@ export async function getWorklist(
     LEFT JOIN branches b ON b.id = COALESCE(pc.branch_id, p.branch_id)
     WHERE pc.status = 'active'
       AND ${scoped}
+      AND ${notLegacyWl}
       AND pc.case_type IN (${sql.join(
         specialties.map((s) => sql`${s}`),
         sql`, `,
@@ -560,6 +624,8 @@ export async function getWorklist(
 
 /** Which specialties of THIS patient are still waiting for a first exam. */
 export async function getPendingForPatient(patientId: number): Promise<string[]> {
+  // A legacy patient waits on no one — same exemption as the branch-wide maps.
+  if (await isLegacyPatient(patientId)) return [];
   const rows = await db.execute<{ case_type: string }>(sql`
     SELECT pc.case_type
     FROM patient_cases pc

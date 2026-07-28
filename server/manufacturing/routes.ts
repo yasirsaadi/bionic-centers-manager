@@ -12,7 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { hasSignedExam, latestDeviceCost, prescribedSpecs } from "../medical/store";
+import { hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs } from "../medical/store";
 import {
   isValidStatus, isValidReworkType, isValidReasonCode,
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
@@ -203,7 +203,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // Workflow order: an INITIAL build needs the doctor's signed exam first —
     // it is the exam that says which device to build. A maintenance episode is
     // exempt: the device already exists and was prescribed once.
-    if (purpose !== "maintenance" && !(await hasSignedExam(patientId, serviceType))) {
+    // Legacy patients (registered before the exam system) are exempt: their
+    // devices were prescribed under the old workflow, and holding routine
+    // work hostage to a retroactive exam served no one.
+    if (purpose !== "maintenance"
+        && !(await hasSignedExam(patientId, serviceType))
+        && !(await isLegacyPatient(patientId))) {
       return res.status(409).json({
         error: serviceType === "prosthetic"
           ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
@@ -272,7 +277,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // clinical basis — the exam is what says which device to build.
     // (Maintenance is exempt by construction: it runs through its own
     // endpoint, /api/manufacturing/maintenance-visit.)
-    if (!(await hasSignedExam(patientId, serviceType))) {
+    // Legacy patients (registered before the exam system) are exempt — see
+    // the identical rule on the orders endpoint above.
+    const legacyExempt = await isLegacyPatient(patientId);
+    if (!legacyExempt && !(await hasSignedExam(patientId, serviceType))) {
       return res.status(409).json({
         error: serviceType === "prosthetic"
           ? "لا يمكن تخصيص خبير قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
@@ -292,7 +300,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const mayWriteClinical = s.isAdmin || isManager(s)
       || s.role === "doctor" || Boolean(s.permissions?.canWriteMedicalExam);
     const fields: any = {};
-    if (mayWriteClinical) {
+    // Legacy patients have no doctor decision to protect: reception completes
+    // the specs directly, exactly as the pre-exam workflow always worked.
+    if (mayWriteClinical || legacyExempt) {
       for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
     }
 
@@ -304,12 +314,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     let effectiveCost = cost;
     if (!mayWriteClinical) {
       const proposed = await latestDeviceCost(patientId, serviceType);
-      if (proposed === null) {
+      if (proposed !== null) {
+        effectiveCost = proposed;
+      } else if (!legacyExempt) {
         return res.status(409).json({
           error: "لم يحدّد الطبيب كلفة الجهاز في المعاينة — تُستكمل الكلفة في المعاينة أو يعتمد المدير التخصيص",
         });
       }
-      effectiveCost = proposed;
+      // legacyExempt with no doctor price: reception's entered cost stands —
+      // there is no exam proposal to confirm, exactly as before the system.
     }
     // The doctor's signed specs are not anyone's to change: whatever the
     // latest exam prescribes overrides the request body, field by field.

@@ -95,12 +95,16 @@ export function StartManufacturingDialog({ patient }: {
   // Mirrors the server's serviceType derivation: prosthetic first.
   const derivedService = patient.isAmputee ? "prosthetic" : "medical_support";
   const hasExam = (examData?.exams ?? []).some((e: any) => e.caseType === derivedService);
+  // Legacy patients (registered before the exam system) are exempt from the
+  // exam gate — same rule the server applies.
+  const legacyExempt = Boolean((examData as any)?.legacyExempt);
 
   // Show only when there is no ACTIVE order (never / cancelled / completed)
-  // AND the doctor has signed the exam — before that, the patient page shows
-  // the amber "بانتظار معاينة" badge instead of a button that would 409.
+  // AND the doctor has signed the exam (or the file is legacy-exempt) —
+  // before that, the patient page shows the amber "بانتظار معاينة" badge
+  // instead of a button that would 409.
   const hasActive = summary && summary.status !== "cancelled" && summary.status !== "completed";
-  if (!mayStart || hasActive || !hasExam) return null;
+  if (!mayStart || hasActive || (!hasExam && !legacyExempt)) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
