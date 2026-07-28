@@ -139,13 +139,15 @@ export function NewExamDialog({
   // already on file, so the form opens carrying reception's values for the
   // doctor to complete or correct. Only fields the doctor hasn't touched are
   // filled, and once both are present the effect converges to a no-op.
+  // Runs ONCE per opened physiotherapy form. The `prefilled` latch matters:
+  // without it the effect re-fired on every keystroke and refilled a field the
+  // doctor had deliberately cleared, so the form fought back.
   useEffect(() => {
-    if (!open || isEdit || specialty !== "physiotherapy" || !patientRow) return;
-    const hasDisease = typeof rx.diseaseType === "string" && rx.diseaseType.trim().length > 0;
-    const hasInjuries = Array.isArray(rx.injuries) && rx.injuries.some((r: any) => r && (r.type || r.area));
-    if (hasDisease && hasInjuries) return;
+    if (!open || isEdit || specialty !== "physiotherapy" || !patientRow || prefilled) return;
 
     const patch: PrescriptionValue = {};
+    const hasDisease = typeof rx.diseaseType === "string" && rx.diseaseType.trim().length > 0;
+    const hasInjuries = Array.isArray(rx.injuries) && rx.injuries.some((r: any) => r && (r.type || r.area));
     if (!hasDisease && patientRow.diseaseType) patch.diseaseType = patientRow.diseaseType;
     if (!hasInjuries) {
       let rows = parseInjuries(patientRow.injuries);
@@ -162,7 +164,7 @@ export function NewExamDialog({
     if (Object.keys(patch).length === 0) return;
     setRx((prev) => ({ ...prev, ...patch }));
     setPrefilled(true);
-  }, [open, isEdit, specialty, patientRow, rx]);
+  }, [open, isEdit, specialty, patientRow, prefilled]);
 
   // Cost belongs to the doctor for a DEVICE only: they specify the prosthesis or
   // the support, so they know its price. Physiotherapy is left exactly as it

@@ -229,7 +229,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (!canReachBranch(req, patient.branchId)) {
-        return res.status(403).json({ error: "لا يمكنك المعاينة في فرع آخر" });
+        // Name both sides: a bare "another branch" left the doctor guessing
+        // why a save he had every right to make was refused.
+        const names = await store.branchNames();
+        const mine = branchScope(req)?.map((b) => names[b] ?? `#${b}`).join("، ") || "لا شيء";
+        return res.status(403).json({
+          error: `المريض في فرع ${names[patient.branchId ?? -1] ?? "غير معروف"} وحسابك على فرع ${mine} — راجع المسؤول لإضافة الفرع لحسابك`,
+        });
       }
 
       const body = {
@@ -484,13 +490,20 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   app.get("/api/medical/pending", isAuthenticated, async (req: Req, res) => {
     try {
       const scope = branchScope(req);
-      const [rows, decidedRows] = await Promise.all([
+      const [rows, decidedRows, optionalRows] = await Promise.all([
         store.getPendingExams(scope),
         store.getDecidedExams(scope),
+        store.getPendingExams(scope, true),
       ]);
       const byPatient: Record<number, string[]> = {};
       for (const r of rows) {
         (byPatient[r.patientId] ||= []).push(r.caseType);
+      }
+      // Legacy patients with an un-examined case: no badge, no obligation —
+      // but the doctor still gets the «كتابة معاينة» button for them.
+      const optionalByPatient: Record<number, string[]> = {};
+      for (const r of optionalRows) {
+        (optionalByPatient[r.patientId] ||= []).push(r.caseType);
       }
       const decidedByPatient: Record<number, string[]> = {};
       for (const r of decidedRows) {
@@ -499,6 +512,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       res.json({
         pending: byPatient,
         decided: decidedByPatient,
+        optional: optionalByPatient,
         total: rows.length,
         // The exam system's go-live moment: patients registered before it are
         // legacy-exempt, and the registry compares createdAt against this to

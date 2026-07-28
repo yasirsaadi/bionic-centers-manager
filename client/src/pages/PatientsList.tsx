@@ -241,6 +241,7 @@ export default function PatientsList() {
   const { data: pendingExams } = useQuery<{
     pending: Record<number, string[]>;
     decided: Record<number, string[]>;
+    optional?: Record<number, string[]>;
     activatedAt?: string | null;
   }>({
     queryKey: ["/api/medical/pending"],
@@ -252,6 +253,9 @@ export default function PatientsList() {
   });
   const pendingByPatient = pendingExams?.pending ?? {};
   const decidedByPatient = pendingExams?.decided ?? {};
+  // Legacy patients: no amber badge (no obligation) but the doctor may still
+  // examine them voluntarily, so their un-examined specialties feed the button.
+  const optionalByPatient = pendingExams?.optional ?? {};
   // Legacy ⇒ exempt from the exam gate, تخصيص opens directly (the server
   // applies the same rule): registered before the exam system went live, OR
   // classified «مريض قديم» by reception — a returning patient's SYSTEM file
@@ -265,7 +269,8 @@ export default function PatientsList() {
   // pending case AND it falls in one of their own specialties. Returns the
   // specialty so the dialog opens pre-set to it — no second choice to make.
   const examableSpecialty = (patientId: number): string | null =>
-    (pendingByPatient[patientId] ?? []).find((c) => mySpecialties.includes(c as any)) ?? null;
+    [...(pendingByPatient[patientId] ?? []), ...(optionalByPatient[patientId] ?? [])]
+      .find((c) => mySpecialties.includes(c as any)) ?? null;
 
   // تخصيص requires a SIGNED device exam — the workflow gate the server also
   // enforces. `decided` already carries exactly that signal.
