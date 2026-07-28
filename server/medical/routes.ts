@@ -69,6 +69,23 @@ function clean(value: unknown): string | null {
  * dropped rather than honoured — the doctor's form does not offer the field
  * there, and the server must not trust that it didn't.
  */
+/**
+ * The doctor's suggested manufacturing expert — أطراف/مساند only, and only if
+ * the id really is an active expert reachable from the patient's branch. An
+ * unusable suggestion is dropped rather than refused: it is a convenience for
+ * reception, never a gate, and a signed clinical record must not fail over it.
+ */
+async function parseProposedExpert(
+  raw: unknown,
+  caseType: string,
+  branchId: number | null,
+): Promise<number | null> {
+  if (caseType !== "prosthetic" && caseType !== "medical_support") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return (await store.isExpertInBranch(n, branchId)) ? Math.round(n) : null;
+}
+
 function parseDeviceCost(raw: unknown, caseType: string): number | null {
   if (caseType !== "prosthetic" && caseType !== "medical_support") return null;
   const n = typeof raw === "string" ? Number(raw.replace(/,/g, "")) : Number(raw);
@@ -179,9 +196,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const scrub = <T extends { deviceCost?: number | null }>(row: T): T =>
         hideMoney ? { ...row, deviceCost: null } : row;
 
+      // Resolve the suggested experts' names once, so the card and reception's
+      // dialog can show a person rather than an id.
+      const expertNames = await store.userNames(
+        exams.map((e) => e.proposedExpertUserId).filter((n): n is number => typeof n === "number"),
+      );
+
       res.json({
         exams: exams.map((e) => ({
           ...scrub(e),
+          proposedExpertName: e.proposedExpertUserId != null
+            ? expertNames[e.proposedExpertUserId] ?? null
+            : null,
           revisions: (byExam[e.id] ?? []).map(scrub),
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
@@ -269,6 +295,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       }
 
       const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
+      const proposedExpertUserId = await parseProposedExpert(
+        req.body?.proposedExpertUserId, caseType, patient.branchId,
+      );
       const doctorName = session.userName?.trim() || "طبيب";
 
       // ORDER MATTERS. The prescription is applied FIRST, because when the
@@ -288,6 +317,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         doctorName,
         prescription,
         deviceCost,
+        proposedExpertUserId,
         ...body,
       });
 
@@ -369,6 +399,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           ? (req.body.prescription as Record<string, any>)
           : {};
       const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
+      const proposedExpertUserId = await parseProposedExpert(
+        req.body?.proposedExpertUserId, caseType, exam.branchId,
+      );
 
       const hasNarrative = Object.values(body).some((v) => v !== null);
       const hasPrescription = Object.values(prescription).some((v) =>
@@ -387,7 +420,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const updated = await store.reviseExam(
         examId,
-        { caseType, prescription, deviceCost, ...body },
+        { caseType, prescription, deviceCost, proposedExpertUserId, ...body },
         { userId: session.userId, userName: editorName },
       );
 

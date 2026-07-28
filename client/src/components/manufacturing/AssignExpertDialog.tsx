@@ -128,6 +128,16 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
     setCost((prev) => (prev > 0 ? prev : proposedCost));
   }, [open, rxExam?.id, serviceType, proposedCost]);
 
+  // …and the expert the doctor suggested. Reception stays free to change it;
+  // this only spares them re-picking what the doctor already decided.
+  const proposedExpertId: number | null =
+    typeof rxExam?.proposedExpertUserId === "number" ? rxExam.proposedExpertUserId : null;
+  const proposedExpertName = experts.find((e) => e.id === proposedExpertId)?.displayName ?? null;
+  useEffect(() => {
+    if (!open || proposedExpertId == null) return;
+    setExpertUserId((prev) => prev ?? proposedExpertId);
+  }, [open, rxExam?.id, serviceType, proposedExpertId]);
+
   function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null); }
 
   const assign = useMutation({
@@ -291,6 +301,11 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
                   {experts.map((e) => (<SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>))}
                 </SelectContent>
               </Select>
+            )}
+            {proposedExpertName && (
+              <p className="text-xs text-teal-800" data-testid="text-proposed-expert">
+                اقترحه {prescribedBy ?? "الطبيب"} في المعاينة: <b>{proposedExpertName}</b> — يمكنك إبقاؤه أو تغييره.
+              </p>
             )}
           </div>
         </div>

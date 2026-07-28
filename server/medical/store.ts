@@ -77,6 +77,7 @@ export async function createExam(values: {
   doctorName: string;
   prescription: Record<string, any>;
   deviceCost: number | null;
+  proposedExpertUserId: number | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -85,6 +86,29 @@ export async function createExam(values: {
 }): Promise<MedicalExam> {
   const [row] = await db.insert(EX).values(values).returning();
   return row;
+}
+
+/**
+ * Is this user a manufacturing expert reachable from `branchId`?
+ *
+ * The doctor's suggested expert is validated against the same roster
+ * reception picks from, so a stale or hand-crafted id can never reach the
+ * work order — it is dropped and the field simply stays empty.
+ */
+export async function isExpertInBranch(userId: number, branchId: number | null): Promise<boolean> {
+  if (!Number.isFinite(userId) || branchId === null) return false;
+  const [row] = await db
+    .select({ id: systemUsers.id })
+    .from(systemUsers)
+    .where(
+      and(
+        eq(systemUsers.id, userId),
+        eq(systemUsers.isActive, true),
+        sql`(${systemUsers.role} = 'prosthetics_expert' OR ${systemUsers.canWorkAsExpert} = true)`,
+        sql`(${systemUsers.branchIds} @> ${JSON.stringify([branchId])}::jsonb OR ${systemUsers.branchId} = ${branchId})`,
+      ),
+    );
+  return !!row;
 }
 
 /** Append a dated correction. The original exam text is never touched. */
@@ -275,6 +299,7 @@ export async function reviseExam(
     caseType: MedicalSpecialty;
     prescription: Record<string, any>;
     deviceCost: number | null;
+    proposedExpertUserId: number | null;
     chiefComplaint: string | null;
     clinicalFindings: string | null;
     diagnosis: string | null;
@@ -302,6 +327,7 @@ export async function reviseExam(
       notes: current.notes,
       prescription: current.prescription,
       deviceCost: current.deviceCost,
+      proposedExpertUserId: current.proposedExpertUserId,
       signedAt: current.signedAt,
       editedBy: editor.userId,
       editedByName: editor.userName,
@@ -326,6 +352,7 @@ export async function reviseExam(
         caseId: caseRow?.id ?? current.caseId,
         prescription: values.prescription,
         deviceCost: values.deviceCost,
+        proposedExpertUserId: values.proposedExpertUserId,
         chiefComplaint: values.chiefComplaint,
         clinicalFindings: values.clinicalFindings,
         diagnosis: values.diagnosis,
@@ -640,6 +667,19 @@ export async function getWorklist(
     caseType: String(r.case_type),
     waitingSince: r.waiting_since ? String(r.waiting_since) : null,
   }));
+}
+
+/** User id → display name, for showing WHO the doctor suggested. */
+export async function userNames(ids: number[]): Promise<Record<number, string>> {
+  const unique = Array.from(new Set(ids.filter((n) => Number.isFinite(n))));
+  if (unique.length === 0) return {};
+  const rows = await db
+    .select({ id: systemUsers.id, displayName: systemUsers.displayName })
+    .from(systemUsers)
+    .where(inArray(systemUsers.id, unique));
+  const out: Record<number, string> = {};
+  for (const r of rows) out[r.id] = r.displayName;
+  return out;
 }
 
 /** Branch id → name, for error messages that must name the branch. */

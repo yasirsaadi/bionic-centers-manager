@@ -763,6 +763,13 @@ export const medicalExams = pgTable("medical_exams", {
   // case as a MANUAL cost. Physiotherapy is deliberately excluded: its price is
   // derived per session by reception in «الكلفة والجلسات».
   deviceCost: integer("device_cost"),
+  // The doctor's SUGGESTED manufacturing expert (migration 035). أطراف/مساند
+  // only. A proposal exactly like the price: it pre-fills reception's «تخصيص»
+  // dialog, and reception may keep it, change it, or fill it in when the
+  // doctor left it blank. Nothing is assigned until reception saves.
+  // A SNAPSHOT of the id, with no foreign key (migration 035 explains why:
+  // an ON DELETE action is an UPDATE, and the seal-trigger refuses those).
+  proposedExpertUserId: integer("proposed_expert_user_id"),
   // Version stamp. The live row is always the current version; every superseded
   // version is kept in `medicalExamRevisions`.
   version: integer("version").notNull().default(1),
@@ -790,6 +797,7 @@ export const medicalExamRevisions = pgTable("medical_exam_revisions", {
   notes: text("notes"),
   prescription: jsonb("prescription").$type<Record<string, any>>(),
   deviceCost: integer("device_cost"),
+  proposedExpertUserId: integer("proposed_expert_user_id"),
   signedAt: timestamp("signed_at", { withTimezone: true }),
   editedBy: integer("edited_by").references(() => systemUsers.id),
   editedByName: text("edited_by_name"),

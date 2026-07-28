@@ -31,6 +31,7 @@ export interface ExamToEdit {
   caseType: string;
   prescription?: Record<string, any> | null;
   deviceCost?: number | null;
+  proposedExpertUserId?: number | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -88,16 +89,29 @@ export function NewExamDialog({
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [deviceCost, setDeviceCost] = useState<string>("");
+  const [expertUserId, setExpertUserId] = useState<string>("");
   const [prefilled, setPrefilled] = useState(false);
 
-  // The patient row, for prefilling what reception already recorded. Only
-  // needed when SIGNING (an edit re-opens the exam's own prescription).
+  // The patient row: prefills what reception already recorded (physiotherapy)
+  // and gives the branch whose expert roster this doctor may suggest from.
   const { data: patientRow } = useQuery<any>({
     queryKey: ["/api/patients", patientId, "exam-prefill"],
-    enabled: open && !isEdit,
+    enabled: open,
     queryFn: async () => {
       const res = await fetch(`/api/patients/${patientId}`, { credentials: "include" });
       if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
+  // The manufacturing experts of the patient's branch — the same roster
+  // reception picks from, so the doctor's suggestion is always a real option.
+  const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
+    queryKey: ["/api/manufacturing/experts", patientRow?.branchId],
+    enabled: open && !!patientRow?.branchId,
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${patientRow.branchId}`, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
   });
@@ -116,12 +130,14 @@ export function NewExamDialog({
       });
       setRx((exam.prescription ?? {}) as PrescriptionValue);
       setDeviceCost(exam.deviceCost != null ? String(exam.deviceCost) : "");
+      setExpertUserId(exam.proposedExpertUserId != null ? String(exam.proposedExpertUserId) : "");
       setSpecialty(exam.caseType as MedicalSpecialty);
       return;
     }
     setForm({ ...EMPTY_FORM });
     setRx({});
     setDeviceCost("");
+    setExpertUserId("");
     setPrefilled(false);
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
@@ -187,6 +203,9 @@ export function NewExamDialog({
             // Sent only where it is meaningful; the server drops it for
             // physiotherapy regardless, whose pricing stays with reception.
             deviceCost: isDeviceSpecialty ? deviceCost : undefined,
+            // A SUGGESTION. Reception's «تخصيص» opens with it filled in and
+            // may keep or change it; nothing is assigned until they save.
+            proposedExpertUserId: isDeviceSpecialty && expertUserId ? Number(expertUserId) : undefined,
           }),
         },
       );
@@ -298,6 +317,35 @@ export function NewExamDialog({
                 يعتمدها في «تخصيص وإسناد خبير» بعد موافقة المريض. فإن لم يدفع أو
                 غيّر رأيه، لا يبقى لها أثر في الأرقام.
               </p>
+
+              {/* The expert follows the same proposal rule as the price. */}
+              <div className="space-y-2 pt-1">
+                <Label htmlFor="exam-expert" className="font-semibold">الخبير المقترح (اختياري)</Label>
+                <Select value={expertUserId} onValueChange={setExpertUserId}>
+                  <SelectTrigger className="bg-white" id="exam-expert" data-testid="select-exam-expert">
+                    <SelectValue placeholder={experts.length ? "اتركه للاستعلامات أو اقترح خبيراً" : "لا يوجد خبير في هذا الفرع"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {experts.map((e) => (
+                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {expertUserId && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline"
+                    onClick={() => setExpertUserId("")}
+                    data-testid="button-clear-exam-expert"
+                  >
+                    مسح الاقتراح
+                  </button>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  اقتراح فقط: يظهر لموظف الاستعلامات مملوءاً ويمكنه إبقاؤه أو تغييره.
+                  وإن تركته فارغاً يختاره هو.
+                </p>
+              </div>
             </div>
           )}
 
