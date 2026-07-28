@@ -58,7 +58,13 @@ export const patients = pgTable("patients", {
   injuryArea: text("injury_area"), // منطقة الإصابة (legacy)
   injuries: text("injuries"), // JSON array of {type, area, side} objects
   treatmentType: text("treatment_type"), // نوع العلاج
-  
+  // The physiotherapy course the patient BOUGHT: [{treatmentType, sessionCount}]
+  // (migration 036). Written by «الكلفة والجلسات» and topped up by «جلسات علاج
+  // إضافية», it is what the session counter measures consumption against.
+  // NULL on patients from the old flow, whose sessions live on their payments —
+  // the counter falls back to those, so nothing about them changes.
+  physioPlan: jsonb("physio_plan").$type<{ treatmentType: string; sessionCount: number }[]>(),
+
   // For medical support (مساند طبية)
   isMedicalSupport: boolean("is_medical_support").default(false),
   supportType: text("support_type"), // نوع المسند
