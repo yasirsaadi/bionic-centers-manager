@@ -162,6 +162,11 @@ export const payments = pgTable("payments", {
   // Which case this payment settles. Nullable during the additive phase;
   // backfilled best-effort from the treatment-type tag.
   caseId: integer("case_id").references(() => patientCases.id),
+  // What created this payment (migration 038): the paid visit or the invoice
+  // collection. Plain ids, no FK — deletePatient removes invoices before
+  // payments, and an FK here would break that cascade order.
+  visitId: integer("visit_id"),
+  invoiceId: integer("invoice_id"),
   date: timestamp("date").defaultNow(),
 });
 

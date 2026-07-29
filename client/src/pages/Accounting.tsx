@@ -28,9 +28,10 @@ import ArabicReshaper from "arabic-reshaper";
 import { useBranchSession } from "@/components/BranchGate";
 import { formatDateIraq, getTodayIraq } from "@/lib/utils";
 import { 
-  DollarSign, 
-  TrendingUp, 
-  TrendingDown, 
+  DollarSign,
+  Banknote,
+  TrendingUp,
+  TrendingDown,
   CreditCard, 
   Wallet, 
   Calculator, 
@@ -1259,6 +1260,10 @@ export default function Accounting() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  // «تسجيل قبض» على فاتورة — المال يدخل جدول الدفعات (فيظهر في الوارد)
+  // وتتحدّث حالة الفاتورة معاً في عملية واحدة.
+  const [collectInvoice, setCollectInvoice] = useState<Invoice | null>(null);
+  const [collectAmount, setCollectAmount] = useState<number>(0);
   const [invoiceItems, setInvoiceItems] = useState<{description: string; serviceType: string; quantity: number; unitPrice: number}[]>([
     { description: "", serviceType: "", quantity: 1, unitPrice: 0 }
   ]);
@@ -3715,6 +3720,18 @@ export default function Accounting() {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
+                                {remaining > 0 && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 gap-1 text-emerald-700 hover:bg-emerald-50"
+                                    onClick={() => { setCollectInvoice(invoice); setCollectAmount(remaining); }}
+                                    data-testid={`button-collect-invoice-${invoice.id}`}
+                                    title="تسجيل قبض على هذه الفاتورة — يدخل الوارد ويحدّث حالتها"
+                                  >
+                                    <Banknote className="h-4 w-4" /> قبض
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -5122,6 +5139,56 @@ export default function Accounting() {
         </Dialog>
 
         {/* Delete Confirmation Dialog */}
+        {/* «تسجيل قبض» على فاتورة */}
+        <Dialog open={!!collectInvoice} onOpenChange={(o) => { if (!o) setCollectInvoice(null); }}>
+          <DialogContent className="sm:max-w-[420px]" dir="rtl">
+            <DialogHeader>
+              <DialogTitle>تسجيل قبض — فاتورة {collectInvoice?.invoiceNumber ?? collectInvoice?.id}</DialogTitle>
+              <DialogDescription>
+                يُسجَّل المبلغ دفعةً حقيقية (يظهر في الوارد والتقارير) وتتحدّث حالة الفاتورة معاً.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex justify-between text-sm bg-slate-50 rounded-md px-3 py-2">
+                <span className="text-muted-foreground">المتبقي على الفاتورة</span>
+                <span className="font-mono font-bold text-red-600">
+                  {collectInvoice ? displayCurrency(collectInvoice.total - (collectInvoice.paidAmount || 0)) : ""}
+                </span>
+              </div>
+              <div>
+                <label className="text-sm font-semibold">المبلغ المقبوض <span className="text-red-500">*</span></label>
+                <MoneyInput value={collectAmount} onValueChange={setCollectAmount} placeholder="0" data-testid="input-collect-amount" />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setCollectInvoice(null)}>إلغاء</Button>
+              <Button
+                disabled={!collectAmount || collectAmount <= 0}
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/invoices/${collectInvoice!.id}/collect`, {
+                      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+                      body: JSON.stringify({ amount: collectAmount }),
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(body?.error || "تعذّر تسجيل القبض");
+                    queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/accounting/daily-summary"] });
+                    toast({ title: "تم القبض", description: "سُجِّلت الدفعة وتحدّثت حالة الفاتورة." });
+                    setCollectInvoice(null);
+                  } catch (e: any) {
+                    toast({ title: "خطأ", description: e.message, variant: "destructive" });
+                  }
+                }}
+                data-testid="button-confirm-collect"
+              >
+                تسجيل القبض
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={deleteConfirmId !== null} onOpenChange={(open) => { if (!open) { setDeleteConfirmId(null); setDeleteType(null); } }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>

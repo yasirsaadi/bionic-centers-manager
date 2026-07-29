@@ -108,6 +108,23 @@ export async function registerRoutes(
     next();
   }, (await import('express')).static('uploads'));
 
+  // The payment a paid VISIT created. Preferred: the explicit visit_id link
+  // (migration 038). Fallback for rows older than the link: a match is
+  // accepted only when EXACTLY ONE payment fits (same patient, same amount,
+  // the visit-payment note) — anything ambiguous returns null so the caller
+  // reports instead of guessing at someone's money.
+  const findVisitPayment = async (visitId: number, patientId: number, amount: number) => {
+    const [byLink] = await db.select().from(payments).where(eq(payments.visitId, visitId));
+    if (byLink) return byLink;
+    if (!(amount > 0)) return null;
+    const candidates = await db.select().from(payments).where(and(
+      eq(payments.patientId, patientId),
+      eq(payments.amount, amount),
+      eq(payments.notes, "دفعة زيارة"),
+    ));
+    return candidates.length === 1 ? candidates[0] : null;
+  };
+
   // Helper to get user branch
   const getUserContext = (req: any) => {
     const branchSession = (req.session as any)?.branchSession;
@@ -2286,15 +2303,19 @@ export async function registerRoutes(
       if (patient) {
         const newTotalCost = (patient.totalCost || 0) + input.cost;
         await storage.updatePatient(patient.id, { totalCost: newTotalCost }, "visit");
-        
-        await storage.createPayment({
+
+        const visitPayment = await storage.createPayment({
           patientId: input.patientId,
           branchId: input.branchId,
           amount: input.cost,
           notes: "دفعة زيارة",
           paymentTreatmentType: input.treatmentType || null,
           sessionCount: input.sessionCount || null,
-        });
+          // Link back to the visit (038): editing the visit's cost or deleting
+          // the visit can then correct THIS payment instead of guessing.
+          visitId: visit.id,
+        } as any);
+        await createJournalForPayment(visitPayment, sessionUserId ?? null);
       }
     }
     
@@ -2371,6 +2392,41 @@ export async function registerRoutes(
 
     const updated = await storage.updateVisit(id, updateData);
 
+    // Changing a paid visit's COST corrects the money with it (owner's
+    // decision, audit 2026-07-29): the patient total, the dated cost ledger,
+    // and the payment this visit created — previously only the visit row
+    // changed and the three records drifted apart. The linked payment is
+    // found by visit_id (038); for visits older than the link, an exact
+    // single-candidate match is accepted and anything ambiguous is left
+    // untouched and REPORTED, never guessed.
+    let moneyNote: string | null = null;
+    const oldCost = existing.cost || 0;
+    const newCost = typeof cost === "number" ? cost : oldCost;
+    if (newCost !== oldCost) {
+      const patient = await storage.getPatient(existing.patientId);
+      if (patient) {
+        await storage.updatePatient(patient.id, {
+          totalCost: Math.max(0, (patient.totalCost || 0) + (newCost - oldCost)),
+        }, "visit");
+      }
+      const linked = await findVisitPayment(id, existing.patientId, oldCost);
+      if (linked) {
+        await reverseJournalForSource("payment", linked.id, branchSession?.userId ?? null, "تعديل كلفة الزيارة");
+        const updatedPayment = await storage.updatePayment(linked.id, { amount: newCost });
+        if (updatedPayment && newCost > 0) await createJournalForPayment(updatedPayment, branchSession?.userId ?? null);
+        await logAudit({
+          entityType: "payment", entityId: linked.id, action: "update",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: existing.branchId,
+          oldValues: { amount: oldCost }, newValues: { amount: newCost },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `تصحيح دفعة الزيارة تبعاً لتعديل كلفتها`,
+        });
+      } else {
+        moneyNote = "عُدّلت كلفة الزيارة وكلفة المريض، لكن لم أجد دفعة الزيارة الأصلية بشكل قاطع — راجع دفعات المريض وصحّح المبلغ يدوياً.";
+      }
+    }
+
     await logAudit({
       entityType: "visit",
       entityId: id,
@@ -2384,7 +2440,7 @@ export async function registerRoutes(
       userAgent: req.get("user-agent") ?? null,
     });
 
-    res.json(updated);
+    res.json({ ...updated, moneyNote });
   });
 
   // Delete visit — admin, branch_manager, or any user the admin
@@ -2410,6 +2466,37 @@ export async function registerRoutes(
 
     await storage.deleteVisit(id);
 
+    // Deleting a PAID visit takes its money with it (owner's decision, audit
+    // 2026-07-29: «حذف كل شيء كي يبقى النظام صحيح»): the cost it added and
+    // the payment it created both reverse, so no phantom debt or orphan
+    // payment survives the deletion. If the visit's payment cannot be
+    // identified with certainty, NOTHING money-side is touched and the staff
+    // is told — reversing half of it would fabricate a debt.
+    let moneyNote: string | null = null;
+    const visitCost = existing.cost || 0;
+    if (visitCost > 0) {
+      const linked = await findVisitPayment(id, existing.patientId, visitCost);
+      if (linked) {
+        const patient = await storage.getPatient(existing.patientId);
+        if (patient) {
+          await storage.updatePatient(patient.id, {
+            totalCost: Math.max(0, (patient.totalCost || 0) - visitCost),
+          }, "visit");
+        }
+        await reverseJournalForSource("payment", linked.id, branchSession?.userId ?? null, "حذف الزيارة المدفوعة");
+        await logAudit({
+          entityType: "payment", entityId: linked.id, action: "delete",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: existing.branchId, oldValues: linked,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `حذف دفعة الزيارة تبعاً لحذف الزيارة ${id}`,
+        });
+        await storage.deletePayment(linked.id);
+      } else {
+        moneyNote = "حُذفت الزيارة، لكن لم أجد دفعتها الأصلية بشكل قاطع فبقيت كلفتها ودفعتها — راجع دفعات المريض واحذف/صحّح يدوياً.";
+      }
+    }
+
     await logAudit({
       entityType: "visit",
       entityId: id,
@@ -2422,7 +2509,7 @@ export async function registerRoutes(
       userAgent: req.get("user-agent") ?? null,
     });
 
-    res.status(204).send();
+    res.json({ ok: true, moneyNote });
   });
 
   // Payments
@@ -2556,7 +2643,20 @@ export async function registerRoutes(
       }
     }
     const { sessionCount, paymentTreatmentType } = req.body;
+    const [beforeInfo] = await db.select().from(payments).where(eq(payments.id, id));
     const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
+    // Retagging moves the money between SECTIONS in the accounting split, so
+    // it is audited like any other money-shape change.
+    const s = (req.session as any).branchSession;
+    await logAudit({
+      entityType: "payment", entityId: id, action: "update",
+      userId: s?.userId ?? null, userName: s?.displayName ?? null,
+      branchId: updated?.branchId ?? beforeInfo?.branchId ?? null,
+      oldValues: beforeInfo ? { sessionCount: beforeInfo.sessionCount, paymentTreatmentType: beforeInfo.paymentTreatmentType } : undefined,
+      newValues: { sessionCount: sessionCount ?? null, paymentTreatmentType: paymentTreatmentType ?? null },
+      ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      notes: "تعديل بيانات جلسات/وسم الدفعة",
+    });
     res.json(updated);
   });
 
@@ -2602,7 +2702,24 @@ export async function registerRoutes(
       const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
       updateData.date = new Date(backdatedBaghdad.getTime() - baghdadOffset);
     }
+    // Audit + double-entry resync (accounting audit, 2026-07-29): CREATE and
+    // DELETE were both audited and journaled, but EDIT was neither — a money
+    // amount could change with no trace, and the journal kept the old figure.
+    const [beforeEdit] = await db.select().from(payments).where(eq(payments.id, id));
     const updated = await storage.updatePayment(id, updateData);
+    if (beforeEdit && updated && updateData.amount !== undefined && updated.amount !== beforeEdit.amount) {
+      await reverseJournalForSource("payment", id, branchSession?.userId ?? null, "تعديل مبلغ الدفعة");
+      if (updated.amount > 0 && !updated.isFreeSessions) {
+        await createJournalForPayment(updated, branchSession?.userId ?? null);
+      }
+    }
+    await logAudit({
+      entityType: "payment", entityId: id, action: "update",
+      userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+      branchId: updated?.branchId ?? beforeEdit?.branchId ?? null,
+      oldValues: beforeEdit ?? undefined, newValues: updated ?? undefined,
+      ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+    });
     res.json(updated);
   });
 
@@ -4639,6 +4756,12 @@ export async function registerRoutes(
 
       const { items, ...invoiceData } = req.body;
 
+      // Money moves through ONE door (accounting audit, 2026-07-29): cash
+      // against an invoice is recorded via /collect below, which writes a
+      // real payment row (so الوارد sees it) and updates the invoice
+      // atomically. A raw paidAmount edit here would move money invisibly.
+      delete (invoiceData as any).paidAmount;
+
       const invoice = await storage.updateInvoice(id, invoiceData);
 
       // Update items if provided
@@ -4681,6 +4804,68 @@ export async function registerRoutes(
   });
 
   // Delete invoice — admin or any user with canManageAccounting.
+  // ---- «تسجيل قبض» على فاتورة -----------------------------------------------
+  // The ONE door for invoice cash (accounting audit, 2026-07-29). The owner
+  // confirmed real money is collected against invoices; before this, there was
+  // no way to record it — the invoice stayed «قيد الانتظار» after the patient
+  // paid, and any ad-hoc paidAmount edit would have been invisible to الوارد.
+  // This writes a REAL payment row (entering الوارد like all cash, linked via
+  // invoice_id) and updates the invoice's paidAmount/status with it.
+  app.post("/api/invoices/:id/collect", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const isAdmin = branchSession?.isAdmin;
+    const canCollect = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddPayments;
+    if (!canCollect) return res.status(403).json({ error: "غير مصرح لك بتسجيل القبض" });
+
+    try {
+      const id = parseInt(req.params.id);
+      const invoice = await storage.getInvoiceById(id);
+      if (!invoice) return res.status(404).json({ error: "الفاتورة غير موجودة" });
+
+      const allowedInv = accessibleBranchesFor(req);
+      if (allowedInv !== null && !allowedInv.includes(invoice.branchId)) {
+        return res.status(403).json({ error: "لا يمكنك القبض على فاتورة من فرع آخر" });
+      }
+
+      const amount = Math.round(Number(req.body?.amount) || 0);
+      const remaining = invoice.total - (invoice.paidAmount || 0);
+      if (amount <= 0) return res.status(400).json({ error: "أدخل مبلغاً صحيحاً" });
+      if (amount > remaining) {
+        return res.status(400).json({ error: `المبلغ أكبر من المتبقي على الفاتورة (${remaining.toLocaleString("en-US")} د.ع)` });
+      }
+
+      const payment = await storage.createPayment({
+        patientId: invoice.patientId,
+        branchId: invoice.branchId,
+        amount,
+        notes: `قبض فاتورة رقم ${invoice.invoiceNumber ?? id}`,
+        invoiceId: id,
+      } as any);
+      await createJournalForPayment(payment, branchSession?.userId ?? null);
+
+      const newPaid = (invoice.paidAmount || 0) + amount;
+      const updatedInvoice = await storage.updateInvoice(id, {
+        paidAmount: newPaid,
+        status: newPaid >= invoice.total ? "paid" : "partial",
+      });
+
+      await logAudit({
+        entityType: "invoice", entityId: id, action: "update",
+        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+        branchId: invoice.branchId,
+        oldValues: { paidAmount: invoice.paidAmount, status: invoice.status },
+        newValues: { paidAmount: newPaid, status: updatedInvoice?.status, paymentId: payment.id },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `قبض ${amount.toLocaleString("en-US")} د.ع على الفاتورة`,
+      });
+
+      res.json({ invoice: updatedInvoice, payment });
+    } catch (err: any) {
+      console.error("Error collecting invoice payment:", err);
+      res.status(500).json({ error: "تعذّر تسجيل القبض" });
+    }
+  });
+
   app.delete("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;

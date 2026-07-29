@@ -319,9 +319,11 @@ export function useUpdateVisit() {
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, result.patientId] });
+      const moneyNote = (result.visit as any)?.moneyNote as string | null;
       toast({
         title: "تم التحديث",
-        description: "تم تحديث تفاصيل الزيارة بنجاح",
+        description: moneyNote ?? "تم تحديث تفاصيل الزيارة بنجاح",
+        ...(moneyNote ? { variant: "destructive" as const } : {}),
       });
     },
     onError: (error) => {
@@ -350,13 +352,18 @@ export function useDeleteVisit() {
         throw new Error("فقط المسؤول يمكنه حذف الزيارات");
       }
       if (!res.ok) throw new Error("فشل في حذف الزيارة");
-      return patientId;
+      const body = await res.json().catch(() => ({} as any));
+      return { patientId, moneyNote: body?.moneyNote ?? null };
     },
-    onSuccess: (patientId) => {
+    onSuccess: ({ patientId, moneyNote }) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      // A paid visit takes its cost and payment with it; when the server
+      // could not identify the payment with certainty it says so instead of
+      // guessing — surface that so the staff completes the correction.
       toast({
         title: "تم الحذف",
-        description: "تم حذف الزيارة بنجاح",
+        description: moneyNote ?? "تم حذف الزيارة، وسُحبت كلفتها ودفعتها إن وُجدتا",
+        ...(moneyNote ? { variant: "destructive" as const } : {}),
       });
     },
     onError: (error) => {
