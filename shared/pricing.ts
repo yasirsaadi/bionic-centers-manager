@@ -101,7 +101,7 @@ export function resolvePurchasedSessions(input: {
   treatmentTypeText?: string | null;
   caseCost?: number | null;
   paymentSessions?: { treatmentType: string | null; sessionCount: number | null }[];
-}): { byType: Record<string, number>; total: number; source: "plan" | "text" | "cost" | "payments" | "none" } {
+}): { byType: Record<string, number>; total: number; source: "plan" | "cost" | "payments" | "none" } {
   const sum = (byType: Record<string, number>) =>
     Object.keys(byType).reduce((s, k) => s + byType[k], 0);
 
@@ -123,12 +123,13 @@ export function resolvePurchasedSessions(input: {
     return { byType, total: sum(byType), source: "plan" };
   }
 
-  const fromText = parsePlanFromText(input.treatmentTypeText);
-  if (fromText.length > 0) {
-    const byType: Record<string, number> = {};
-    for (const e of fromText) byType[e.treatmentType] = (byType[e.treatmentType] ?? 0) + e.sessionCount;
-    return { byType, total: sum(byType), source: "text" };
-  }
+  // NOTE deliberately absent: counts parsed from the treatment-type TEXT.
+  // That text is written by the doctor's PRESCRIPTION as well as by pricing,
+  // and a prescribed course is not a purchased one — reading «روبوت (10
+  // جلسات)» as ten bought sessions credited an examined-but-unpriced patient
+  // with sessions nobody paid for, and undercounted a per-session veteran the
+  // doctor happened to examine. Purchases come from the plan, the price, or
+  // the payments — the three places money actually passes through.
 
   // Derive from the money: only when the text names exactly ONE priced type,
   // the cost divides exactly — AND the result exceeds what the payments prove.

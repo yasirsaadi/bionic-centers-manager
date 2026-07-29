@@ -55,14 +55,24 @@ check(
   { byType: { "روبوت": 7 }, total: 7, source: "plan" },
 );
 check(
-  "الأعداد المكتوبة في النص تسبق الاشتقاق من الكلفة",
+  "الجلسات الموصوفة في النص لا تُحتسب مشتراة — الوصف ليس شراءً",
   resolvePurchasedSessions({
     plan: null,
     treatmentTypeText: "روبوت (10 جلسات)، أبر صينية (5 جلسات)",
-    caseCost: 275000,
+    caseCost: 0, // عاينه الطبيب ولم يُسعَّر بعد
     paymentSessions: [],
   }),
-  { byType: { "روبوت": 10, "أبر صينية": 5 }, total: 15, source: "text" },
+  { byType: {}, total: 0, source: "none" },
+);
+check(
+  "مفرد قديم عاينه الطبيب: النص الموصوف لا يطمس دفعاته",
+  resolvePurchasedSessions({
+    plan: null,
+    treatmentTypeText: "روبوت (10 جلسات)",
+    caseCost: 375000,
+    paymentSessions: [{ treatmentType: "روبوت", sessionCount: 15 }],
+  }),
+  { byType: { "روبوت": 15 }, total: 15, source: "payments" },
 );
 check(
   "بلا خطة ولا نص ولا كلفة قابلة للقسمة ⇒ الدفعات (المسار القديم)",
