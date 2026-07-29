@@ -105,6 +105,31 @@ check(
   10,
 );
 
+console.log("\n── مريض المفرد (حادثة ذي قار): دفعاته هي الحقيقة ──");
+check(
+  "جلسات مجانية لا كلفة لها: الدفعات (10) تغلب الاشتقاق من الكلفة (8)",
+  resolvePurchasedSessions({
+    plan: null,
+    treatmentTypeText: "أجهزة علاج طبيعي",
+    caseCost: 200000, // 8 جلسات مدفوعة فقط — والجلستان المجانيتان بلا كلفة
+    paymentSessions: [
+      { treatmentType: "أجهزة علاج طبيعي", sessionCount: 8 },
+      { treatmentType: "أجهزة علاج طبيعي", sessionCount: 2 }, // مجانية
+    ],
+  }),
+  { byType: { "أجهزة علاج طبيعي": 10 }, total: 10, source: "payments" },
+);
+check(
+  "التساوي لا يستدعي الاشتقاق — الدفعات تكفي",
+  resolvePurchasedSessions({
+    plan: null,
+    treatmentTypeText: "روبوت",
+    caseCost: 500000,
+    paymentSessions: [{ treatmentType: "روبوت", sessionCount: 10 }],
+  }).source,
+  "payments",
+);
+
 console.log("\n── قراءة الأعداد من النص ──");
 check("نوع واحد بعدد", parsePlanFromText("روبوت (10 جلسات)"), [{ treatmentType: "روبوت", sessionCount: 10 }]);
 check("نص بلا أعداد", parsePlanFromText("روبوت، أبر صينية"), []);
