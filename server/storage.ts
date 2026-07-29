@@ -622,7 +622,25 @@ export class DatabaseStorage implements IStorage {
       // page's counter measures visits against this; before it existed the
       // counts were computed, charged for, and then discarded — so a priced
       // patient read "0 sessions purchased" and went negative on first visit.
-      const plan = mergePhysioPlan(existing.physioPlan, params.entries);
+      //
+      // If this patient has NO plan yet but DOES have session-bearing payments
+      // (a per-session veteran buying his first package), the plan starts from
+      // that payment history — the counter reads the plan alone once one
+      // exists, so a plan of only the new package would erase his old sessions
+      // and flip the counter negative: the exact ذي قار failure, through the
+      // pricing door instead of the new-service door.
+      let base = existing.physioPlan;
+      if (!Array.isArray(base) || base.length === 0) {
+        const priorPayments = await tx
+          .select({ type: payments.paymentTreatmentType, n: payments.sessionCount })
+          .from(payments)
+          .where(eq(payments.patientId, patientId));
+        const legacy = priorPayments
+          .filter((r) => (r.n ?? 0) > 0)
+          .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
+        base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
+      }
+      const plan = mergePhysioPlan(base, params.entries);
       const [updated] = await tx.update(patients).set({
         totalCost: (existing.totalCost || 0) + params.totalCost,
         // The plan text carries the counts too, so the file reads
