@@ -105,6 +105,17 @@ export function resolvePurchasedSessions(input: {
   const sum = (byType: Record<string, number>) =>
     Object.keys(byType).reduce((s, k) => s + byType[k], 0);
 
+  // Payments are computed up front: they are both the legacy fallback AND the
+  // sanity floor for the cost derivation below.
+  const paymentsByType: Record<string, number> = {};
+  for (const p of input.paymentSessions ?? []) {
+    const n = Number(p?.sessionCount) || 0;
+    if (n <= 0) continue;
+    const type = (p.treatmentType || "").trim() || "غير محدد";
+    paymentsByType[type] = (paymentsByType[type] ?? 0) + n;
+  }
+  const paymentsTotal = sum(paymentsByType);
+
   const fromPlan = (input.plan ?? []).filter((e) => e?.treatmentType && Number(e.sessionCount) > 0);
   if (fromPlan.length > 0) {
     const byType: Record<string, number> = {};
@@ -119,25 +130,25 @@ export function resolvePurchasedSessions(input: {
     return { byType, total: sum(byType), source: "text" };
   }
 
-  // Derive from the money: only when the text names exactly ONE priced type and
-  // the cost divides exactly — anything else would be a guess.
+  // Derive from the money: only when the text names exactly ONE priced type,
+  // the cost divides exactly — AND the result exceeds what the payments prove.
+  // The last guard is what protects the per-session (مفرد) patient: gifted
+  // sessions add a payment row with amount 0 but no cost, so cost ÷ price
+  // UNDERCOUNTS him; his payments are his complete history and must win.
+  // (The priced-course patient is the opposite — cost 275,000 = 11 sessions
+  // while his installments carry only 4 — and for him the derivation still
+  // fires because 11 > 4.)
   const label = String(input.treatmentTypeText ?? "").trim();
   const cost = Math.max(0, Math.floor(Number(input.caseCost) || 0));
   const price = PHYSIO_TREATMENT_PRICES[label];
   if (label && !label.includes("،") && price && price > 0 && cost > 0 && cost % price === 0) {
-    const byType = { [label]: cost / price };
-    return { byType, total: cost / price, source: "cost" };
+    const derived = cost / price;
+    if (derived > paymentsTotal) {
+      return { byType: { [label]: derived }, total: derived, source: "cost" };
+    }
   }
 
-  const byType: Record<string, number> = {};
-  for (const p of input.paymentSessions ?? []) {
-    const n = Number(p?.sessionCount) || 0;
-    if (n <= 0) continue;
-    const type = (p.treatmentType || "").trim() || "غير محدد";
-    byType[type] = (byType[type] ?? 0) + n;
-  }
-  const total = sum(byType);
-  return { byType, total, source: total > 0 ? "payments" : "none" };
+  return { byType: paymentsByType, total: paymentsTotal, source: paymentsTotal > 0 ? "payments" : "none" };
 }
 
 // Cost of one entry: sessions × the type's price, 0 when marked free.

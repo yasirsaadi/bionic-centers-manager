@@ -1929,11 +1929,17 @@ export async function registerRoutes(
           }))
         : null;
 
-      // Update totalCost. Extra physiotherapy sessions also top up the stored
-      // plan (036) — otherwise the counter would charge for them and then not
-      // know they exist, exactly the gap that broke the original counter.
+      // Update totalCost. Extra physiotherapy sessions top up the stored plan
+      // (036) — but ONLY when a plan already exists. A per-session patient
+      // (يدفع مفرد) has no plan: his whole history lives on his payments, and
+      // creating a one-session plan here OVERRODE that history in the counter —
+      // a patient with 15 paid sessions read "1 purchased" the moment he bought
+      // one more, and went deeply negative (ذي قار incident, 2026-07-29). For
+      // him we write no plan: the payment rows this endpoint creates below
+      // carry the session counts, which is exactly where his counter reads.
       const newTotalCost = (patient.totalCost || 0) + serviceCost;
-      const planPatch = entries && entries.length > 0
+      const hasPlan = Array.isArray(patient.physioPlan) && patient.physioPlan.length > 0;
+      const planPatch = hasPlan && entries && entries.length > 0
         ? { physioPlan: mergePhysioPlan(patient.physioPlan, entries.map((e) => ({
             treatmentType: e.treatmentType ?? "", sessionCount: e.sessionCount,
           }))) }
