@@ -22,27 +22,41 @@ async function getLastDailyBackupDate(): Promise<string | null> {
   }
 }
 
-async function saveLastDailyBackupDate(): Promise<void> {
+/**
+ * حجز ذرّي لمهمّة يومية واحدة عبر كل مثيلات الخادم.
+ *
+ * أثناء نقل الخدمة بين مناطق Render يعمل سيرفران على نفس القاعدة لفترة،
+ * وكلاهما يملك نفس الكرون — فالفحص ثم الكتابة على خطوتين يسمح لهما
+ * بالمرور معاً وإرسال رسالتين. هذا البيان الواحد يجعل الحجز والكتابة
+ * عمليةً واحدة: مَن يُرجع صفّاً هو الفائز، والآخر يتخطّى بصمت.
+ */
+async function claimDailyJob(settingKey: string): Promise<boolean> {
   const today = getBaghdadDateString();
   try {
-    const [existing] = await db
-      .select()
-      .from(systemSettings)
-      .where(eq(systemSettings.settingKey, "last_daily_backup_date"));
-
-    if (existing) {
-      await db
-        .update(systemSettings)
-        .set({ settingValue: today, updatedAt: new Date() })
-        .where(eq(systemSettings.settingKey, "last_daily_backup_date"));
-    } else {
-      await db.insert(systemSettings).values({
-        settingKey: "last_daily_backup_date",
-        settingValue: today,
-      });
-    }
+    const result = await db.execute(sql`
+      INSERT INTO system_settings (setting_key, setting_value, updated_at)
+      VALUES (${settingKey}, ${today}, NOW())
+      ON CONFLICT (setting_key) DO UPDATE
+        SET setting_value = ${today}, updated_at = NOW()
+        WHERE system_settings.setting_value IS DISTINCT FROM ${today}
+      RETURNING id
+    `);
+    return (result.rowCount ?? 0) > 0;
   } catch (error) {
-    console.error("[Backup] Error saving backup date:", error);
+    console.error(`[Cron] claim failed for ${settingKey}:`, error);
+    return false;
+  }
+}
+
+/** إطلاق الحجز حين يفشل الإرسال، كي لا يضيع تقرير اليوم. */
+async function releaseDailyJob(settingKey: string): Promise<void> {
+  try {
+    await db
+      .update(systemSettings)
+      .set({ settingValue: "", updatedAt: new Date() })
+      .where(eq(systemSettings.settingKey, settingKey));
+  } catch (error) {
+    console.error(`[Cron] release failed for ${settingKey}:`, error);
   }
 }
 
@@ -418,9 +432,9 @@ export async function initBackupScheduler(): Promise<void> {
     "55 20 * * *",
     async () => {
       const today = getBaghdadDateString();
-      const lastDate = await getLastDailyBackupDate();
 
-      if (lastDate === today) {
+      // الحجز أولاً: مثيل واحد فقط يرسل مهما تعدّدت الخوادم على القاعدة.
+      if (!(await claimDailyJob("last_daily_backup_date"))) {
         console.log(`[Backup] Already sent today (${today}) - skipping`);
         return;
       }
@@ -428,8 +442,10 @@ export async function initBackupScheduler(): Promise<void> {
       console.log(`[Backup] Sending scheduled daily backup for ${today}...`);
       const result = await sendBackupEmail();
       if (result.success) {
-        await saveLastDailyBackupDate();
         console.log(`[Backup] Daily backup completed (${result.count} patients)`);
+      } else {
+        // فشل الإرسال: نُطلق الحجز كي تعيد المحاولةُ التالية الإرسال.
+        await releaseDailyJob("last_daily_backup_date");
       }
     },
     { timezone: "UTC" }
@@ -439,9 +455,14 @@ export async function initBackupScheduler(): Promise<void> {
   cron.schedule(
     "0 20 * * *",
     async () => {
+      if (!(await claimDailyJob("last_daily_income_date"))) {
+        console.log("[DailyIncome] Already sent today - skipping");
+        return;
+      }
       const { sendDailyIncomeEmail } = await import("./daily_income");
       console.log("[DailyIncome] Sending nightly income briefing...");
-      await sendDailyIncomeEmail();
+      const result = await sendDailyIncomeEmail();
+      if (!result?.success) await releaseDailyJob("last_daily_income_date");
     },
     { timezone: "UTC" }
   );
