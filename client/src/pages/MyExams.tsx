@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown } from "lucide-react";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel } from "@shared/medical";
@@ -25,6 +26,8 @@ function accent(caseType: string) {
     ? SPECIALTY_COLORS[caseType]
     : { badge: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-400", ring: "border-slate-200" };
 }
+
+const PAGE_SIZE_OPTIONS = [10, 50, 100];
 
 function daysWaiting(iso: string | null): number | null {
   if (!iso) return null;
@@ -50,6 +53,10 @@ export default function MyExams() {
   const [order, setOrder] = useState<"newest" | "oldest">("newest");
   // null = every specialty this doctor holds; otherwise just the picked one.
   const [only, setOnly] = useState<string | null>(null);
+  // Ten at a time by default (owner, 2026-07-30): a long queue rendered in one
+  // pile is slow to draw and hard to work through.
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [page, setPage] = useState(1);
 
   const { data, isLoading } = useQuery<{ rows: WorklistRow[]; specialties: string[] }>({
     queryKey: ["/api/medical/worklist"],
@@ -76,17 +83,29 @@ export default function MyExams() {
     });
   }, [rows, search, only, order]);
 
+  // Any change to search / specialty / order / page size sends us back to
+  // page 1 — otherwise a narrowed list can leave you stranded on an empty page.
+  useEffect(() => {
+    setPage(1);
+  }, [search, only, order, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  // One page of the WHOLE queue (owner's choice): ten patients per page
+  // whatever their specialty, with the specialty headings kept over each run.
+  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   // Grouped by specialty so a two-specialty doctor reads two queues, not one
   // mixed pile.
   const groups = useMemo(() => {
     // Plain object rather than a Map: the project's tsconfig target predates
     // downlevelIteration, so spreading a Map iterator does not compile.
     const byType: Record<string, WorklistRow[]> = {};
-    for (const r of filtered) {
+    for (const r of pageRows) {
       (byType[r.caseType] ||= []).push(r);
     }
     return Object.keys(byType).map((caseType) => ({ caseType, list: byType[caseType] }));
-  }, [filtered]);
+  }, [pageRows]);
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" dir="rtl">
@@ -151,15 +170,27 @@ export default function MyExams() {
         </Card>
       ) : (
         <>
-          <div className="relative mb-4">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="ابحث باسم المريض أو رقم الهاتف"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pr-9"
-              data-testid="input-search-worklist"
-            />
+          <div className="flex gap-2 mb-4">
+            <div className="relative flex-1">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="ابحث باسم المريض أو رقم الهاتف"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pr-9"
+                data-testid="input-search-worklist"
+              />
+            </div>
+            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+              <SelectTrigger className="w-[130px]" data-testid="select-page-size">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <SelectItem key={n} value={String(n)}>{n} لكل صفحة</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {isLoading ? (
@@ -233,6 +264,38 @@ export default function MyExams() {
                   </div>
                 );
               })}
+
+              {/* Pagination footer — only when the queue exceeds one page. */}
+              {filtered.length > pageSize && (
+                <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
+                  <span className="text-xs text-muted-foreground">
+                    {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} من {filtered.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1 text-xs"
+                      disabled={safePage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      data-testid="button-prev-page"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" /> السابق
+                    </Button>
+                    <span className="text-xs px-2">صفحة {safePage} من {totalPages}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1 text-xs"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      data-testid="button-next-page"
+                    >
+                      التالي <ChevronLeft className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

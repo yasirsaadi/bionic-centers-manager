@@ -606,6 +606,61 @@ export async function registerRoutes(
   });
   
   // Update admin password
+  // Self-service password change for any staff account (owner, 2026-07-30).
+  // The employee proves the CURRENT password first, so a device left unlocked
+  // can't be used to lock its owner out. The new password is stored hashed AND
+  // in the admin-only plaintext column, so the owner keeps seeing it on the
+  // users screen exactly as before — that was the owner's condition.
+  //
+  // The legacy "admin" key has no system_users row (no userId on the session),
+  // so it can't use this route; it keeps its own endpoint below.
+  app.post("/api/auth/change-password", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const userId = branchSession?.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "هذا الحساب لا يملك كلمة سر شخصية — غيّرها من إعدادات المسؤول" });
+    }
+
+    const currentPassword = String(req.body?.currentPassword ?? "").trim();
+    const newPassword = String(req.body?.newPassword ?? "").trim();
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "أدخل كلمة السر الحالية والجديدة" });
+    }
+    if (newPassword.length < 4) {
+      return res.status(400).json({ message: "كلمة السر الجديدة قصيرة جداً (٤ أحرف على الأقل)" });
+    }
+
+    const user = await storage.getSystemUser(userId);
+    if (!user || user.isActive === false) {
+      return res.status(404).json({ message: "الحساب غير موجود" });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ message: "كلمة السر الحالية غير صحيحة" });
+    }
+
+    await storage.updateSystemUser(userId, {
+      passwordHash: await bcrypt.hash(newPassword, 10),
+      passwordPlain: newPassword, // admin-only visibility, unchanged behaviour
+    } as any);
+
+    // Audited like every other account change — the value itself is never logged.
+    await logAudit({
+      entityType: "system_user",
+      entityId: userId,
+      action: "update",
+      userId,
+      userName: branchSession?.displayName ?? null,
+      branchId: branchSession?.branchId ?? null,
+      ipAddress: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+      newValues: { passwordChangedBySelf: true },
+    });
+
+    res.json({ ok: true });
+  });
+
   app.post("/api/admin/settings/admin-password", isAuthenticated, async (req, res) => {
     try {
       const branchSession = (req.session as any).branchSession;

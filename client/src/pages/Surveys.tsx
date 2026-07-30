@@ -99,9 +99,21 @@ function AddSurveyTab() {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [notes, setNotes] = useState("");
 
-  const { data: patients, isLoading: patientsLoading } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
+  // The lean, server-side-searched registry — NOT /api/patients, which ships
+  // every patient with all their visits and payments just to fill this picker
+  // (the reason this page was slow to open). The registry pins non-admins to
+  // their own branch server-side, so no client filtering is needed either.
+  const { data: registry, isLoading: patientsLoading } = useQuery<{ rows: Patient[] }>({
+    queryKey: ["/api/patients/registry", "survey-picker", searchTerm],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: "1", pageSize: "50" });
+      if (searchTerm.trim()) params.set("search", searchTerm.trim());
+      const res = await fetch(`/api/patients/registry?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) return { rows: [] };
+      return res.json();
+    },
   });
+  const patients = registry?.rows;
 
   const { data: templates } = useQuery<SurveyTemplate[]>({
     queryKey: ["/api/survey-templates"],
@@ -118,20 +130,9 @@ function AddSurveyTab() {
     enabled: !!selectedTemplateId,
   });
 
-  const filteredPatients = useMemo(() => {
-    if (!patients) return [];
-    let filtered = patients;
-    if (!isAdmin && branchSession?.branchId) {
-      filtered = filtered.filter(p => p.branchId === branchSession.branchId);
-    }
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(p =>
-        p.name.toLowerCase().includes(term) || (p.phone && p.phone.includes(term))
-      );
-    }
-    return filtered.slice(0, 50);
-  }, [patients, searchTerm, branchSession, isAdmin]);
+  // Search and branch scoping now happen in SQL (see the registry query above),
+  // so this is simply what the server sent back.
+  const filteredPatients = patients ?? [];
 
   const selectedPatient = useMemo(() => {
     if (!selectedPatientId || !patients) return null;
@@ -355,6 +356,10 @@ function ResultsTab() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin ?? false;
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
+  // Ten rows a page by default (owner, 2026-07-30). The table used to render a
+  // hard-capped 20 with no way to reach the rest.
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [page, setPage] = useState(1);
   const [viewResponseId, setViewResponseId] = useState<number | null>(null);
   const [draftReply, setDraftReply] = useState<string>("");
   const [draftSummary, setDraftSummary] = useState<string>("");
@@ -387,17 +392,13 @@ function ResultsTab() {
   });
 
   const branchIdParam = selectedBranch !== "all" ? `?branchId=${selectedBranch}` : "";
-  const { data: responses, isLoading } = useQuery<SurveyResponse[]>({
+  const { data: responses, isLoading } = useQuery<(SurveyResponse & { patientName?: string | null })[]>({
     queryKey: ["/api/survey-responses", selectedBranch],
     queryFn: async () => {
       const res = await fetch(`/api/survey-responses${branchIdParam}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-  });
-
-  const { data: patients } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
   });
 
   const { data: viewAnswers } = useQuery<SurveyAnswer[]>({
@@ -439,6 +440,11 @@ function ResultsTab() {
     return { total, avgSatisfaction, thisMonth };
   }, [responses]);
 
+  // Pagination bounds for the responses table. Clamped so switching branch or
+  // page size can never strand the view on a page that no longer exists.
+  const respTotalPages = Math.max(1, Math.ceil((responses?.length ?? 0) / pageSize));
+  const safeRespPage = Math.min(page, respTotalPages);
+
   const branchChartData = useMemo(() => {
     if (!responses || !branches) return [];
     return branches.map(branch => {
@@ -461,8 +467,10 @@ function ResultsTab() {
     }).filter(d => d.count > 0);
   }, [responses, templates]);
 
+  // The name now travels on the response row itself (server-side join), so this
+  // page no longer downloads the whole patient table to resolve one column.
   const getPatientName = (patientId: number) => {
-    return patients?.find(p => p.id === patientId)?.name || `#${patientId}`;
+    return responses?.find(r => r.patientId === patientId)?.patientName || `#${patientId}`;
   };
 
   const getTemplateName = (templateId: number) => {
@@ -774,8 +782,18 @@ function ResultsTab() {
       )}
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-lg">{t.surveys.recentSurveys}</CardTitle>
+          <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+            <SelectTrigger className="w-[130px]" data-testid="select-responses-page-size">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[10, 50, 100].map((n) => (
+                <SelectItem key={n} value={String(n)}>{n} لكل صفحة</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </CardHeader>
         <CardContent>
           {!responses || responses.length === 0 ? (
@@ -794,7 +812,7 @@ function ResultsTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {responses.slice(0, 20).map((resp) => (
+                  {responses.slice((safeRespPage - 1) * pageSize, safeRespPage * pageSize).map((resp) => (
                     <tr key={resp.id} className="border-b last:border-0">
                       <td className="p-2" data-testid={`text-patient-${resp.id}`}>{getPatientName(resp.patientId)}</td>
                       <td className="p-2">{getTemplateName(resp.templateId)}</td>
@@ -822,6 +840,37 @@ function ResultsTab() {
                   ))}
                 </tbody>
               </table>
+
+              {responses.length > pageSize && (
+                <div className="flex items-center justify-between gap-3 pt-3 flex-wrap">
+                  <span className="text-xs text-muted-foreground">
+                    {(safeRespPage - 1) * pageSize + 1}–{Math.min(safeRespPage * pageSize, responses.length)} من {responses.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={safeRespPage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      data-testid="button-responses-prev"
+                    >
+                      السابق
+                    </Button>
+                    <span className="text-xs px-2">صفحة {safeRespPage} من {respTotalPages}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={safeRespPage >= respTotalPages}
+                      onClick={() => setPage((p) => Math.min(respTotalPages, p + 1))}
+                      data-testid="button-responses-next"
+                    >
+                      التالي
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

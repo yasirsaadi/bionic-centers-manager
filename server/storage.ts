@@ -2325,13 +2325,30 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getSurveyResponses(branchId?: number): Promise<SurveyResponse[]> {
-    if (branchId) {
-      return await db.select().from(surveyResponses)
-        .where(eq(surveyResponses.branchId, branchId))
-        .orderBy(desc(surveyResponses.completedAt));
-    }
-    return await db.select().from(surveyResponses).orderBy(desc(surveyResponses.completedAt));
+  // Carries the patient's name on the row. Without it the surveys page had to
+  // download EVERY patient (with all their visits and payments) just to turn
+  // an id into a name — the single reason that page was slow to open.
+  async getSurveyResponses(branchId?: number): Promise<(SurveyResponse & { patientName: string | null })[]> {
+    const branchClause = branchId ? eq(surveyResponses.branchId, branchId) : sql`TRUE`;
+    return await db
+      .select({
+        id: surveyResponses.id,
+        templateId: surveyResponses.templateId,
+        patientId: surveyResponses.patientId,
+        branchId: surveyResponses.branchId,
+        surveyorId: surveyResponses.surveyorId,
+        surveyorName: surveyResponses.surveyorName,
+        totalScore: surveyResponses.totalScore,
+        maxScore: surveyResponses.maxScore,
+        percentage: surveyResponses.percentage,
+        notes: surveyResponses.notes,
+        completedAt: surveyResponses.completedAt,
+        patientName: patients.name,
+      })
+      .from(surveyResponses)
+      .leftJoin(patients, eq(patients.id, surveyResponses.patientId))
+      .where(branchClause)
+      .orderBy(desc(surveyResponses.completedAt));
   }
 
   async getSurveyResponsesByPatient(patientId: number): Promise<SurveyResponse[]> {

@@ -1,9 +1,10 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher } from "@/components/BranchSwitcher";
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +39,7 @@ export function Sidebar() {
   const { setLanguage } = useLanguage();
   const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem("branch_session");
@@ -209,6 +211,20 @@ export function Sidebar() {
                   ({t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role})
                 </span>
               )}
+              {/* Only a real staff account has a personal password to change;
+                  the legacy admin key changes its own from admin settings. */}
+              {(branchSession as any).userId && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 mr-auto"
+                  onClick={() => setPasswordOpen(true)}
+                  title="تغيير كلمة السر"
+                  data-testid="button-change-password"
+                >
+                  <KeyRound className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              )}
             </div>
           )}
           {Array.isArray((branchSession as any).accessibleBranches) &&
@@ -322,6 +338,10 @@ export function Sidebar() {
       <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
         {sidebarContent}
       </aside>
+
+      {/* Mounted once, outside both sidebars: `sidebarContent` is rendered
+          twice (mobile + desktop) and a dialog must not be. */}
+      <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
     </>
   );
 }
