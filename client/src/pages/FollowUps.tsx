@@ -68,7 +68,7 @@ interface BranchOption {
   name: string;
 }
 
-const PAGE_SIZE_OPTIONS = [50, 100, 200];
+const PAGE_SIZE_OPTIONS = [10, 50, 100];
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -89,7 +89,7 @@ export default function FollowUps() {
   // Shared controls (search is the primary filter; branch filter is admin-only).
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState<string>("all");
-  const [pageSize, setPageSize] = useState<number>(50);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [activePage, setActivePage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
