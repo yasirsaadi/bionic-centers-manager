@@ -4,7 +4,8 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileBarChart } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FileBarChart, FileSpreadsheet, Printer } from "lucide-react";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -70,6 +71,11 @@ export default function DailyPatientReport() {
     return ta - tb;
   });
 
+  // The branch column earns its place only when the list actually mixes
+  // branches — i.e. an admin viewing "all branches". Otherwise every row would
+  // repeat the same name.
+  const showBranchColumn = isAdmin && !adminBranchId;
+
   const labels = isAr
     ? {
         title: "التقرير اليومي للمرضى",
@@ -88,6 +94,8 @@ export default function DailyPatientReport() {
         empty: "لا توجد زيارات في هذا اليوم",
         error: "تعذّر تحميل التقرير",
         rowsCount: (n: number) => `إجمالي الزيارات: ${n}`,
+        print: "طباعة / PDF",
+        excel: "إكسل",
       }
     : {
         title: "Daily Patient Report",
@@ -106,7 +114,99 @@ export default function DailyPatientReport() {
         empty: "No visits on this day",
         error: "Failed to load report",
         rowsCount: (n: number) => `Total visits: ${n}`,
+        print: "Print / PDF",
+        excel: "Excel",
       };
+
+  // The heading that names the scope of the exported list, so a printed sheet
+  // is never ambiguous about which day and which branch it covers.
+  const scopeLabel = showBranchColumn
+    ? labels.allBranches
+    : (isAdmin
+        ? ((branches ?? []).find((b) => String(b.id) === adminBranchId)?.name ?? labels.allBranches)
+        : (userBranchName || "-"));
+
+  const exportToExcel = async () => {
+    const XLSX = await import("xlsx");
+    const sheetRows = rows.map((row, index) => {
+      const base: Record<string, string | number> = { "#": index + 1 };
+      base[labels.patientName] = row.patientName || "";
+      base[labels.age] = row.age ?? "";
+      base[labels.phone] = row.phone || "";
+      base[labels.problem] = row.problem || "";
+      base[labels.actionToday] = row.actionToday || "";
+      base[labels.treatment] = row.treatment || "";
+      base[labels.notes] = row.notes || "";
+      if (showBranchColumn) base[labels.branch] = row.branchName || "";
+      base[labels.date] = `${formatDateIraq(row.date)} ${formatTimeIraq(row.date)}`;
+      return base;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(sheetRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "التقرير اليومي");
+    XLSX.writeFile(wb, `daily_patients_${selectedDate}.xlsx`);
+  };
+
+  // One window serves both "print" and "save as PDF" — the browser's own print
+  // dialog offers PDF, which is how every other export in this app works.
+  const printReport = () => {
+    const esc = (v: unknown) =>
+      String(v ?? "-").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+
+    const head = [
+      "#", labels.patientName, labels.age, labels.phone, labels.problem,
+      labels.actionToday, labels.treatment, labels.notes,
+      ...(showBranchColumn ? [labels.branch] : []),
+      labels.date,
+    ];
+
+    const body = rows.map((row, index) => [
+      index + 1,
+      row.patientName || "-",
+      row.age ?? "-",
+      row.phone || "-",
+      row.problem || "-",
+      row.actionToday || "-",
+      row.treatment || "-",
+      row.notes || "-",
+      ...(showBranchColumn ? [row.branchName || "-"] : []),
+      `${formatDateIraq(row.date)} ${formatTimeIraq(row.date)}`,
+    ]);
+
+    const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <title>${esc(labels.title)} - ${esc(selectedDate)}</title>
+  <style>
+    * { font-family: Tajawal, Arial, sans-serif; }
+    body { padding: 20px; direction: rtl; }
+    h1 { text-align: center; color: #0f766e; margin-bottom: 4px; font-size: 20px; }
+    h3 { text-align: center; color: #6b7280; margin-top: 0; font-size: 13px; font-weight: normal; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 11px; }
+    th { background: #0f766e; color: #fff; padding: 7px 5px; border: 1px solid #cbd5e1; }
+    td { padding: 6px 5px; border: 1px solid #cbd5e1; text-align: center; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+</head>
+<body>
+  <h1>${esc(labels.title)} — مراكز د. ياسر الساعدي</h1>
+  <h3>${esc(formatDateIraq(selectedDate))} · ${esc(scopeLabel)} · ${esc(labels.rowsCount(rows.length))}</h3>
+  <table>
+    <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => win.print();
+  };
 
   return (
     <div className="space-y-6" data-testid="page-daily-patient-report">
@@ -160,6 +260,31 @@ export default function DailyPatientReport() {
               </div>
             )}
           </div>
+
+          {/* Exports act on exactly what the table shows — same day, same
+              branch scope, same columns. */}
+          <div className="flex gap-2 sm:mr-auto">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={printReport}
+              disabled={rows.length === 0}
+              data-testid="button-print-report"
+            >
+              <Printer className="w-4 h-4" />
+              {labels.print}
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={exportToExcel}
+              disabled={rows.length === 0}
+              data-testid="button-export-excel"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              {labels.excel}
+            </Button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -193,6 +318,7 @@ export default function DailyPatientReport() {
                     <TableHead>{labels.actionToday}</TableHead>
                     <TableHead>{labels.treatment}</TableHead>
                     <TableHead>{labels.notes}</TableHead>
+                    {showBranchColumn && <TableHead>{labels.branch}</TableHead>}
                     <TableHead>{labels.date}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -220,6 +346,11 @@ export default function DailyPatientReport() {
                       <TableCell className="max-w-[220px] whitespace-pre-wrap" data-testid={`text-notes-${row.visitId}`}>
                         {row.notes || "-"}
                       </TableCell>
+                      {showBranchColumn && (
+                        <TableCell className="whitespace-nowrap" data-testid={`text-branch-${row.visitId}`}>
+                          {row.branchName || "-"}
+                        </TableCell>
+                      )}
                       <TableCell className="whitespace-nowrap" data-testid={`text-date-${row.visitId}`}>
                         {formatDateIraq(row.date)} {formatTimeIraq(row.date)}
                       </TableCell>
