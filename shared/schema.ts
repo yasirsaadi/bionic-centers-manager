@@ -1,5 +1,6 @@
 export * from "./models/auth";
 import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -134,7 +135,12 @@ export const visits = pgTable("visits", {
 export const visitsForensicLog = pgTable("visits_forensic_log", {
   id: serial("id").primaryKey(),
   loggedAt: timestamp("logged_at", { withTimezone: true }).notNull().defaultNow(),
-  pgUser: text("pg_user").notNull(),
+  // The trigger (migration 011) does NOT pass this column — Postgres fills it
+  // from the default. Declaring notNull() without the default made this file
+  // disagree with the real table, so a `db:push` would have dropped the
+  // default and broken every visit delete (and with it every patient delete,
+  // which cascades through visits). Mirrors migration 011 exactly.
+  pgUser: text("pg_user").notNull().default(sql`current_user`),
   pgAppName: text("pg_app_name"),
   pgClientAddr: text("pg_client_addr"),
   visitId: integer("visit_id").notNull(),
