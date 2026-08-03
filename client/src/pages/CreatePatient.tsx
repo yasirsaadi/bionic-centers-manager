@@ -65,15 +65,31 @@ const injuryAreaOptions = [
   "الركبة", "الساق", "الكاحل", "القدم", "اصابع القدم",
 ];
 
+// الجهة «من شخص آخر» تفتح سؤالاً فرعياً إلزامياً، و«أخرى» فيه تفتح حقلاً نصياً.
+const REFERRAL_OTHER_PERSON = "من شخص آخر";
+const REFERRAL_SUB_OTHER = "أخرى";
+
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
   totalCost: z.coerce.number().optional(),
   sessionCount: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
-  referralSource: z.string().min(1, "الجهة المحول منها مطلوبة"),
+  referralSource: z.string().min(1, "املأ هذا الحقل لتتمكن من الحفظ"),
+  referralSubSource: z.string().optional().nullable(),
+  referralSubSourceOther: z.string().optional(),
   registrationDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
-});
+})
+  // الفرعي إلزامي حين تكون الجهة «من شخص آخر».
+  .refine(
+    (v) => v.referralSource !== REFERRAL_OTHER_PERSON || Boolean(v.referralSubSource),
+    { path: ["referralSubSource"], message: "املأ هذا الحقل لتتمكن من الحفظ" },
+  )
+  // والنص إلزامي حين يكون الفرعي «أخرى».
+  .refine(
+    (v) => v.referralSubSource !== REFERRAL_SUB_OTHER || Boolean(v.referralSubSourceOther?.trim()),
+    { path: ["referralSubSourceOther"], message: "املأ هذا الحقل لتتمكن من الحفظ" },
+  );
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -134,6 +150,8 @@ export default function CreatePatient() {
       phone: "",
       address: "",
       referralSource: "",
+      referralSubSource: "",
+      referralSubSourceOther: "",
       referralNotes: "",
       age: "",
       weight: "",
@@ -375,8 +393,19 @@ export default function CreatePatient() {
     // - علاج طبيعي: priced after the exam via «الكلفة والجلسات» in the
     //   registry (the doctor decides the plan; the server computes the cost).
     // Any auto-computed cost/type/sessions left in the form state is stripped.
+    // «أخرى» تُحفظ بنصّها المكتوب لا بالكلمة نفسها، وإلا صار العمود يقول
+    // «أخرى» في كل مرة ولا يُقرأ منه شيء. والحقل النصّي حقل نموذج لا عمود.
+    const { referralSubSourceOther, ...rest } = values as any;
+    const subSource =
+      values.referralSource === REFERRAL_OTHER_PERSON
+        ? (values.referralSubSource === REFERRAL_SUB_OTHER
+            ? (referralSubSourceOther || "").trim()
+            : values.referralSubSource || null)
+        : null;
+
     const submitData = {
-      ...values,
+      ...rest,
+      referralSubSource: subSource,
       totalCost: 0,
       treatmentType: "",
       sessionCount: 0,
@@ -475,9 +504,24 @@ export default function CreatePatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.referralSource}</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                    <Select
+                      onValueChange={(v) => {
+                        field.onChange(v);
+                        // تبديل الجهة يُلغي إجابة السؤال الفرعي القديمة.
+                        if (v !== REFERRAL_OTHER_PERSON) {
+                          form.setValue("referralSubSource", "");
+                          form.setValue("referralSubSourceOther", "");
+                        }
+                        form.trigger("referralSource");
+                      }}
+                      value={field.value || ""}
+                    >
                       <FormControl>
-                        <SelectTrigger className="bg-white" data-testid="select-referral-source">
+                        <SelectTrigger
+                          className="bg-white"
+                          data-testid="select-referral-source"
+                          onBlur={() => form.trigger("referralSource")}
+                        >
                           <SelectValue placeholder={t.patientForm.selectReferralSource} />
                         </SelectTrigger>
                       </FormControl>
@@ -485,13 +529,15 @@ export default function CreatePatient() {
                         <SelectItem value="طبيبنا">{t.patientForm.refOurDoctor}</SelectItem>
                         <SelectItem value="طبيب خارجي">{t.patientForm.refExternalDoctor}</SelectItem>
                         <SelectItem value="مستشفى">{t.patientForm.refHospital}</SelectItem>
+                        <SelectItem value="أطباء مستشفى العين">{t.patientForm.refAinDoctors}</SelectItem>
                         <SelectItem value="جهة حكومية">{t.patientForm.refGovernment}</SelectItem>
                         <SelectItem value="منظمة انسانية">{t.patientForm.refNGO}</SelectItem>
                         <SelectItem value="فيسبوك">{t.patientForm.refFacebook}</SelectItem>
                         <SelectItem value="انستاغرام">{t.patientForm.refInstagram}</SelectItem>
                         <SelectItem value="تيك توك">{t.patientForm.refTikTok}</SelectItem>
                         <SelectItem value="كوكل">{t.patientForm.refGoogle}</SelectItem>
-                        <SelectItem value="من شخص آخر">{t.patientForm.refOtherPerson}</SelectItem>
+                        <SelectItem value="شاشة إعلان خارجية">{t.patientForm.refOutdoorScreen}</SelectItem>
+                        <SelectItem value={REFERRAL_OTHER_PERSON}>{t.patientForm.refOtherPerson}</SelectItem>
                         <SelectItem value="دكتور بيرم">{t.patientForm.refDrBiram}</SelectItem>
                       </SelectContent>
                     </Select>
@@ -499,6 +545,74 @@ export default function CreatePatient() {
                   </FormItem>
                 )}
               />
+
+              {/* «من شخص آخر» يجيب عمّن أرسل المريض، لا عمّا أوصل المركز إلى
+                  ذلك الشخص — وهذا السؤال الفرعي الإلزامي يسدّ الفجوة. */}
+              {form.watch("referralSource") === REFERRAL_OTHER_PERSON && (
+                <FormField
+                  control={form.control}
+                  name="referralSubSource"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.refHowPersonKnew}</FormLabel>
+                      <Select
+                        onValueChange={(v) => {
+                          field.onChange(v);
+                          if (v !== REFERRAL_SUB_OTHER) form.setValue("referralSubSourceOther", "");
+                          form.trigger("referralSubSource");
+                        }}
+                        value={field.value || ""}
+                      >
+                        <FormControl>
+                          <SelectTrigger
+                            className="bg-white"
+                            data-testid="select-referral-sub-source"
+                            onBlur={() => form.trigger("referralSubSource")}
+                          >
+                            <SelectValue placeholder={t.patientForm.selectHowPersonKnew} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="فيسبوك">{t.patientForm.refSubFacebook}</SelectItem>
+                          <SelectItem value="انستاغرام">{t.patientForm.refSubInstagram}</SelectItem>
+                          <SelectItem value="تيك توك">{t.patientForm.refSubTikTok}</SelectItem>
+                          <SelectItem value="واتس اب">{t.patientForm.refSubWhatsApp}</SelectItem>
+                          <SelectItem value="مريض سابق لدينا">{t.patientForm.refSubFormerPatient}</SelectItem>
+                          <SelectItem value="شاشة اعلان">{t.patientForm.refSubAdScreen}</SelectItem>
+                          <SelectItem value={REFERRAL_SUB_OTHER}>{t.patientForm.refSubOther}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {form.watch("referralSource") === REFERRAL_OTHER_PERSON &&
+                form.watch("referralSubSource") === REFERRAL_SUB_OTHER && (
+                <FormField
+                  control={form.control}
+                  name="referralSubSourceOther"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t.patientForm.refSubOtherLabel}</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          value={field.value || ""}
+                          className="bg-white"
+                          data-testid="input-referral-sub-source-other"
+                          onBlur={() => {
+                            field.onBlur();
+                            form.trigger("referralSubSourceOther");
+                          }}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {form.watch("referralSource") && (
                 <FormField
