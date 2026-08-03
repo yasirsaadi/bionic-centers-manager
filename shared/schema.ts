@@ -28,6 +28,9 @@ export const patients = pgTable("patients", {
   phone: text("phone"),
   address: text("address"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
+  // كيف عرف «الشخص الآخر» بالمركز — يُملأ فقط حين تكون الجهة «من شخص آخر».
+  // عمود مستقل لا جزء من referral_source، لأن الإحصاءات تجمّع بذلك العمود.
+  referralSubSource: text("referral_sub_source"),
   referralNotes: text("referral_notes"), // ملاحظات إضافية عن الجهة المحول منها
   age: text("age").notNull(),
   weight: text("weight"),
