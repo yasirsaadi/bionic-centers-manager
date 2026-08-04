@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { parseInjuries } from "@shared/case_fields";
+import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -181,6 +181,22 @@ export function NewExamDialog({
     setRx((prev) => ({ ...prev, ...patch }));
     setPrefilled(true);
   }, [open, isEdit, specialty, patientRow, prefilled]);
+
+  // Prosthetic prefill, same contract as the physiotherapy one above: reception
+  // now records the amputation at registration (owner, 2026-07-31), so the exam
+  // opens carrying it instead of making the doctor re-enter what is on file.
+  // The doctor stays free to change every part of it — the exam is what signs
+  // the record. Only runs when the doctor hasn't already touched the builder,
+  // and an unparseable legacy site simply leaves the form blank.
+  useEffect(() => {
+    if (!open || isEdit || specialty !== "prosthetic" || !patientRow || prefilled) return;
+    if (rx.amputationType) return;
+
+    const parts = parseAmputationSite(patientRow.amputationSite);
+    if (!parts.amputationType) return;
+    setRx((prev) => ({ ...prev, ...parts }));
+    setPrefilled(true);
+  }, [open, isEdit, specialty, patientRow, prefilled, rx.amputationType]);
 
   // Cost belongs to the doctor for a DEVICE only: they specify the prosthesis or
   // the support, so they know its price. Physiotherapy is left exactly as it

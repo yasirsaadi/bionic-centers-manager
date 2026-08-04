@@ -122,6 +122,92 @@ export function buildAmputationSite(p: AmputationParts): string {
   return "";
 }
 
+/**
+ * The exact inverse of buildAmputationSite: read a stored site string back into
+ * the builder's parts.
+ *
+ * Needed because reception now records the amputation at registration (owner,
+ * 2026-07-31) and the doctor's exam must OPEN carrying it — otherwise the
+ * doctor retypes what is already on file, which is the very friction the
+ * prefill was built to remove for physiotherapy.
+ *
+ * Returns {} for anything it does not recognise (legacy free-text sites,
+ * empty values); the caller then leaves the builder untouched rather than
+ * guessing. Round-trip is covered by `npm run test:amputation-site`.
+ */
+export function parseAmputationSite(site: string | null | undefined): AmputationParts {
+  const raw = (site || "").trim();
+  if (!raw) return {};
+
+  // Silicone: "اطراف سليكونية تعويضية - {part}[ - {side}][ | ملاحظات: {notes}]"
+  if (raw.startsWith("اطراف سليكونية تعويضية")) {
+    const notesMarker = " | ملاحظات: ";
+    const at = raw.indexOf(notesMarker);
+    const head = at === -1 ? raw : raw.slice(0, at);
+    const notes = at === -1 ? "" : raw.slice(at + notesMarker.length);
+    const seg = head.split(" - ");
+    const part = seg[1] && seg[1] !== "-" ? seg[1] : "";
+    const sideText = seg[2] || "";
+    const parts: AmputationParts = { amputationType: "silicone" };
+    if (part) parts.siliconePart = part;
+    if (sideText) {
+      parts.siliconeSide =
+        sideText === "يمين" ? "right" : sideText === "يسار" ? "left" : "both";
+    }
+    if (notes) parts.siliconeNotes = notes;
+    return parts;
+  }
+
+  // Single: "احادي - {طرف علوي|طرف سفلي} - {يمين|يسار}[ - {detail}]"
+  if (raw.startsWith("احادي")) {
+    const seg = raw.split(" - ");
+    const parts: AmputationParts = { amputationType: "single" };
+    parts.singleLimb = seg[1] === "طرف علوي" ? "upper" : "lower";
+    parts.singleSide = seg[2] === "يسار" ? "left" : "right";
+    if (seg[3]) parts.singleDetail = seg[3];
+    return parts;
+  }
+
+  // Double: "ثنائي - {علوي|سفلي|علوي وسفلي} …"
+  if (raw.startsWith("ثنائي")) {
+    const [head, ...rest] = raw.split(" | ");
+    const kind = head.split(" - ")[1] || "";
+    const parts: AmputationParts = { amputationType: "double" };
+
+    if (kind === "علوي وسفلي") {
+      parts.doubleLimbType = "both";
+      for (const chunk of rest) {
+        // "يمين (علوي): تحت المرفق"
+        const m = chunk.match(/^(يمين|يسار) \((علوي|سفلي)\): (.*)$/);
+        if (!m) continue;
+        const limb = m[2] === "علوي" ? "upper" : "lower";
+        const detail = m[3] === "-" ? "" : m[3];
+        if (m[1] === "يمين") {
+          parts.bothRightLimb = limb;
+          if (detail) parts.bothRightDetail = detail;
+        } else {
+          parts.bothLeftLimb = limb;
+          if (detail) parts.bothLeftDetail = detail;
+        }
+      }
+      return parts;
+    }
+
+    parts.doubleLimbType = kind === "علوي" ? "upper" : "lower";
+    for (const chunk of rest) {
+      const m = chunk.match(/^(يمين|يسار): (.*)$/);
+      if (!m) continue;
+      const detail = m[2] === "-" ? "" : m[2];
+      if (!detail) continue;
+      if (m[1] === "يمين") parts.doubleRightDetail = detail;
+      else parts.doubleLeftDetail = detail;
+    }
+    return parts;
+  }
+
+  return {};
+}
+
 // ── مساند طبية ──────────────────────────────────────────────────────────────
 // Verbatim from AssignExpertDialog.tsx SUPPORT_SPECS.
 export const SUPPORT_SPECS: SpecField[] = [

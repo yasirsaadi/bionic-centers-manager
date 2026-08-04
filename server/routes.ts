@@ -1647,8 +1647,10 @@ export async function registerRoutes(
       const creationBody: any = { ...req.body };
       if (!mayWriteClinical) {
         for (const k of [
-          // أطراف
-          "amputationSite", "prostheticType", "siliconType", "siliconSize",
+          // أطراف — `amputationSite` is deliberately ABSENT (owner, 2026-07-31):
+          // reception records the amputation itself now, and the doctor's exam
+          // opens carrying it. The DEVICE specs below stay the doctor's.
+          "prostheticType", "siliconType", "siliconSize",
           "suspensionSystem", "footType", "footSize", "kneeJointType",
           // مساند
           "supportType", "injurySide",
