@@ -114,15 +114,19 @@ export default function CreatePatient() {
   const { t, dir } = useTranslation();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
-  // The amputation decision is the doctor's. Reception registers the service
-  // TYPE only (that is what routes the patient to the doctor's worklist); the
-  // builder stays available to the roles that may legitimately pre-record it —
-  // branch manager, doctor, admin. Enforced again server-side on create.
+  // Physiotherapy diagnosis and the support's injury side stay the doctor's:
+  // reception registers the service TYPE only, and the patient reaches the
+  // doctor's worklist. Enforced again server-side on create.
   const canEditClinicalDetails =
     isAdmin ||
     branchSession?.role === "branch_manager" ||
     branchSession?.role === "doctor" ||
     Boolean((branchSession as any)?.permissions?.canWriteMedicalExam);
+  // The amputation builder is the EXCEPTION (owner, 2026-07-31): reception sees
+  // the limb in front of them, so recording it here saves the doctor retyping
+  // it. The exam opens carrying whatever reception entered, and the doctor
+  // remains free to change it — the exam is still what signs the record.
+  const canEditAmputationBuilder = true;
   const userRole = branchSession?.role;
   const canBackdateRegistration = userRole !== "reception"; // موظفو الاستقبال لا يمكنهم التسجيل بتاريخ قديم
   
@@ -243,7 +247,7 @@ export default function CreatePatient() {
     if (conditionType !== "amputee") return;
     // Builder hidden for this role ⇒ its default state must not silently write
     // "احادي - طرف سفلي - يمين" onto every reception-registered amputee.
-    if (!canEditClinicalDetails) return;
+    if (!canEditAmputationBuilder) return;
     
     let site = "";
     if (amputationType === "single") {
@@ -282,7 +286,7 @@ export default function CreatePatient() {
       if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
     }
     form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, canEditClinicalDetails, form]);
+  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, canEditAmputationBuilder, form]);
 
   // Sync boolean flags with string selection, AND clear the fields belonging to
   // the services no longer selected.
@@ -884,13 +888,13 @@ export default function CreatePatient() {
                 )}
               />
 
-              {conditionType === "amputee" && !canEditClinicalDetails && (
+              {conditionType === "amputee" && !canEditAmputationBuilder && (
                 <p className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3" data-testid="note-doctor-decides">
                   تفاصيل البتر ونوع الطرف يحدّدها الطبيب في المعاينة — سيظهر المريض في قائمة «بانتظار معاينة أطراف صناعية» بعد الحفظ.
                 </p>
               )}
 
-              {conditionType === "amputee" && canEditClinicalDetails && (
+              {conditionType === "amputee" && canEditAmputationBuilder && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
                   {/* Amputation Type Selection */}
                   <div className="space-y-4">

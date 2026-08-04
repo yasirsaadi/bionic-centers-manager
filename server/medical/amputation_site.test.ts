@@ -10,6 +10,8 @@ import {
   SILICONE_PARTS,
   UPPER_AMPUTATION_DETAILS,
   buildAmputationSite,
+  parseAmputationSite,
+  type AmputationParts,
 } from "@shared/case_fields";
 
 let failures = 0;
@@ -97,6 +99,56 @@ pin("upper list = 7 levels ending خلال الكتف",
   UPPER_AMPUTATION_DETAILS.length === 7 && UPPER_AMPUTATION_DETAILS[6] === "خلال الكتف");
 pin("silicone parts = 5 incl. محجر عين",
   SILICONE_PARTS.length === 5 && SILICONE_PARTS.includes("محجر عين"));
+
+// ── parseAmputationSite: the exact inverse ──────────────────────────────────
+// Reception now records the amputation at registration, and the doctor's exam
+// opens carrying it. That round trip is only safe if parse(build(x)) === x for
+// every shape the builder can produce.
+console.log("\n── round trip: parse(build(x)) === x ──");
+function roundTrip(label: string, parts: AmputationParts) {
+  const built = buildAmputationSite(parts);
+  const back = parseAmputationSite(built);
+  const rebuilt = buildAmputationSite(back);
+  const ok = rebuilt === built;
+  if (!ok) failures++;
+  console.log(
+    `${ok ? "✅" : "❌"} ${label}` +
+      (ok ? "" : `\n   built:   "${built}"\n   rebuilt: "${rebuilt}"\n   parsed:  ${JSON.stringify(back)}`),
+  );
+}
+
+roundTrip("احادي سفلي يمين + مستوى", { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة" });
+roundTrip("احادي علوي يسار بلا مستوى", { amputationType: "single", singleLimb: "upper", singleSide: "left" });
+roundTrip("ثنائي سفلي بجهتين", { amputationType: "double", doubleLimbType: "lower", doubleRightDetail: "فوق الركبة", doubleLeftDetail: "تحت الركبة" });
+roundTrip("ثنائي علوي بيمين فقط", { amputationType: "double", doubleLimbType: "upper", doubleRightDetail: "تحت المرفق" });
+roundTrip("ثنائي بلا تفاصيل", { amputationType: "double", doubleLimbType: "lower" });
+roundTrip("ثنائي علوي وسفلي كامل", { amputationType: "double", doubleLimbType: "both", bothRightLimb: "upper", bothLeftLimb: "lower", bothRightDetail: "خلال الكتف", bothLeftDetail: "خلال الحوض" });
+roundTrip("ثنائي علوي وسفلي بلا تفاصيل", { amputationType: "double", doubleLimbType: "both", bothRightLimb: "lower", bothLeftLimb: "lower" });
+roundTrip("سليكوني اذن يمين", { amputationType: "silicone", siliconePart: "اذن", siliconeSide: "right" });
+roundTrip("سليكوني اصبع يسار + ملاحظات", { amputationType: "silicone", siliconePart: "اصبع", siliconeSide: "left", siliconeNotes: "السبابة" });
+roundTrip("سليكوني انف — بلا جهة", { amputationType: "silicone", siliconePart: "انف", siliconeNotes: "بعد استئصال" });
+roundTrip("سليكوني محجر عين كلا الجانبين", { amputationType: "silicone", siliconePart: "محجر عين", siliconeSide: "both" });
+roundTrip("سليكوني بلا جزء", { amputationType: "silicone" });
+
+console.log("\n── ما لا يُفهَم يُترك للطبيب فارغاً ──");
+function empty(label: string, site: string | null | undefined) {
+  const got = parseAmputationSite(site);
+  const ok = Object.keys(got).length === 0;
+  if (!ok) failures++;
+  console.log(`${ok ? "✅" : "❌"} ${label}${ok ? "" : `\n   got: ${JSON.stringify(got)}`}`);
+}
+empty("فارغ", "");
+empty("null", null);
+empty("نص حرّ قديم", "بتر تحت الركبة يمين");
+
+console.log("\n── الملاحظات تُقرأ كاملة ولو حوت فواصل ──");
+{
+  const site = buildAmputationSite({ amputationType: "silicone", siliconePart: "كف", siliconeSide: "right", siliconeNotes: "جزئي - الإبهام | مراجعة" });
+  const back = parseAmputationSite(site);
+  const ok = back.siliconeNotes === "جزئي - الإبهام | مراجعة";
+  if (!ok) failures++;
+  console.log(`${ok ? "✅" : "❌"} ملاحظة تحوي - و |${ok ? "" : `\n   got: "${back.siliconeNotes}"`}`);
+}
 
 console.log(failures === 0 ? "\n✅ all amputation-site cases pass" : `\n❌ ${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
