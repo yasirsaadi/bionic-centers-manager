@@ -530,7 +530,14 @@ export async function getPendingExams(
   const isLegacy = activated
     ? sql`(p.created_at < ${activated} OR COALESCE(p.patient_classification, '') = 'past')`
     : sql`COALESCE(p.patient_classification, '') = 'past'`;
-  const legacyFilter = legacyOnly ? isLegacy : sql`NOT ${isLegacy}`;
+  // PHYSIOTHERAPY IS NEVER MANDATORY (owner, 2026-08-01, all branches):
+  // reception registers, prices and runs the whole course on its own. A
+  // doctor's exam is welcome — «فزايد خير» — so the case still shows up as an
+  // OPTIONAL one (the «كتابة معاينة» button stays), it just never wears the
+  // amber "waiting" badge or blocks anybody. Only the device specialties keep
+  // the obligation, because there تخصيص genuinely cannot proceed without it.
+  const isExempt = sql`(${isLegacy} OR pc.case_type = 'physiotherapy')`;
+  const legacyFilter = legacyOnly ? isExempt : sql`NOT ${isExempt}`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
