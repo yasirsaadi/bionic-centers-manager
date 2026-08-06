@@ -53,6 +53,9 @@ export default function MyExams() {
   const [order, setOrder] = useState<"newest" | "oldest">("newest");
   // null = every specialty this doctor holds; otherwise just the picked one.
   const [only, setOnly] = useState<string | null>(null);
+  // null = every branch in reach; otherwise just the picked one. A doctor who
+  // covers more than one centre reads one queue per centre when they want to.
+  const [onlyBranch, setOnlyBranch] = useState<number | null>(null);
   // Ten at a time by default (owner, 2026-07-30): a long queue rendered in one
   // pile is slow to draw and hard to work through.
   const [pageSize, setPageSize] = useState<number>(10);
@@ -70,10 +73,30 @@ export default function MyExams() {
   const rows = data?.rows ?? [];
   const specialties = data?.specialties ?? [];
 
+  // The branches actually present in this doctor's queue — derived from the
+  // rows rather than the branch table, so the picker never offers a centre
+  // with nobody waiting in it.
+  const branches = useMemo(() => {
+    const seen: Record<number, { id: number; name: string; count: number }> = {};
+    for (const r of rows) {
+      if (r.branchId == null) continue;
+      const b = (seen[r.branchId] ||= {
+        id: r.branchId,
+        name: r.branchName || `فرع #${r.branchId}`,
+        count: 0,
+      });
+      b.count += 1;
+    }
+    return Object.keys(seen)
+      .map((k) => seen[Number(k)])
+      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const q = search.trim();
     const base = rows
       .filter((r) => (only ? r.caseType === only : true))
+      .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true))
       .filter((r) => (q ? r.patientName.includes(q) || (r.phone ?? "").includes(q) : true));
     // Sort a COPY: `rows` is react-query's cached array.
     return [...base].sort((a, b) => {
@@ -81,13 +104,13 @@ export default function MyExams() {
       const tb = b.waitingSince ? new Date(b.waitingSince).getTime() : 0;
       return order === "newest" ? tb - ta : ta - tb;
     });
-  }, [rows, search, only, order]);
+  }, [rows, search, only, onlyBranch, order]);
 
   // Any change to search / specialty / order / page size sends us back to
   // page 1 — otherwise a narrowed list can leave you stranded on an empty page.
   useEffect(() => {
     setPage(1);
-  }, [search, only, order, pageSize]);
+  }, [search, only, onlyBranch, order, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -172,6 +195,36 @@ export default function MyExams() {
               </Button>
             );
           })}
+        </div>
+      )}
+
+      {/* Branch picker — same shape as the specialty one. Shown only when the
+          queue actually spans more than one centre, so a doctor working in a
+          single branch is never given a chooser with one option. */}
+      {branches.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-4">
+          <span className="text-xs text-muted-foreground ml-1">الفرع:</span>
+          <Button
+            size="sm"
+            variant={onlyBranch === null ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setOnlyBranch(null)}
+            data-testid="filter-branch-all"
+          >
+            كل الفروع ({rows.length})
+          </Button>
+          {branches.map((b) => (
+            <Button
+              key={b.id}
+              size="sm"
+              variant={onlyBranch === b.id ? "default" : "outline"}
+              className="h-8 text-xs"
+              onClick={() => setOnlyBranch(onlyBranch === b.id ? null : b.id)}
+              data-testid={`filter-branch-${b.id}`}
+            >
+              {b.name} ({b.count})
+            </Button>
+          ))}
         </div>
       )}
 
