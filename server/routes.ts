@@ -2051,8 +2051,23 @@ export async function registerRoutes(
       // gained is added onto the case(s) the service belongs to — otherwise
       // sum(case costs) permanently diverges from total_cost.
       if (entries) {
+        let distributed = 0;
         for (const entry of entries) {
-          if (entry.cost > 0) await storage.addToCaseCost(patientId, { tag: entry.treatmentType, treatmentType: entry.treatmentType }, entry.cost);
+          if (entry.cost > 0) {
+            await storage.addToCaseCost(patientId, { tag: entry.treatmentType, treatmentType: entry.treatmentType }, entry.cost);
+            distributed += entry.cost;
+          }
+        }
+        // The aggregate gained `serviceCost`, but the lines only account for
+        // `distributed` — they differ whenever the total was typed by hand
+        // (the form lets a human override it). Booking only the lines left the
+        // remainder on the patient and on NO case, so sum(cases) fell short of
+        // total_cost permanently — exactly the 25,000 gap the owner found on
+        // امل عويز, reproduced 1:1 before this fix. The remainder follows the
+        // service's own treatment tag, like the single-entry branch below.
+        const remainder = serviceCost - distributed;
+        if (remainder > 0) {
+          await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, remainder);
         }
       } else {
         await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, serviceCost);
