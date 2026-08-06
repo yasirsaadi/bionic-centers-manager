@@ -8,7 +8,7 @@ import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysi
 import { isMedicalSpecialty } from "@shared/medical";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
-import { patients, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
+import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
@@ -1490,6 +1490,51 @@ export async function registerRoutes(
       counts: { branch: Number(branchCount), date: Number((dateCountRow as any)[0]?.count ?? 0) },
       rows: rows.map((r) => ({ ...r, totalPaid: paidByPatient.get(r.id) ?? 0 })),
     });
+  });
+
+  // "Is this person already on file at another centre?" — asked while the
+  // receptionist types the name into the registration form.
+  //
+  // Why it exists (owner, 2026-08-06): reception only ever sees its OWN branch,
+  // so a patient who moves between centres is invisible and a second file gets
+  // opened for the same person — كاظم حيال مايع ended up with two, in two
+  // branches, with the same amputation. The cure is to say so BEFORE the file
+  // is created: reception then asks the manager to TRANSFER him (that endpoint
+  // already exists and moves his whole history) instead of starting from zero.
+  //
+  // This deliberately reaches ACROSS the branch boundary reception normally
+  // lives inside, so it returns the bare minimum needed to recognise a person
+  // and act — name, phone, branch — and never the clinical or financial record.
+  app.get("/api/patients/lookup-by-name", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const canAsk = branchSession?.isAdmin
+      || branchSession?.role === "branch_manager"
+      || Boolean(branchSession?.permissions?.canAddPatients);
+    if (!canAsk) return res.status(403).json({ message: "غير مصرح" });
+
+    const name = String(req.query.name ?? "").trim();
+    // Two characters find everybody; a real name is the point of the check.
+    if (name.length < 3) return res.json({ matches: [] });
+
+    const mine = accessibleBranchesFor(req); // null ⇒ admin sees everything
+    const rows = await db
+      .select({
+        id: patients.id,
+        name: patients.name,
+        phone: patients.phone,
+        branchId: patients.branchId,
+        branchName: branches.name,
+        createdAt: patients.createdAt,
+      })
+      .from(patients)
+      .leftJoin(branches, eq(branches.id, patients.branchId))
+      .where(sql`${patients.name} ILIKE ${"%" + name + "%"}`)
+      .limit(20);
+
+    // Only the ones the asker CANNOT already see: a namesake inside their own
+    // branch is their own list's business, not a cross-branch warning.
+    const matches = mine === null ? [] : rows.filter((r) => !mine.includes(r.branchId));
+    res.json({ matches });
   });
 
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
