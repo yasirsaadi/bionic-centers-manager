@@ -96,6 +96,10 @@ export default function EditPatient() {
     },
   });
 
+  // True only once the form carries the PATIENT's values rather than the
+  // component's placeholder defaults. Effects that write flags must wait for it.
+  const [formLoaded, setFormLoaded] = useState(false);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -168,6 +172,9 @@ export default function EditPatient() {
         referralSource: patient.referralSource || "",
         referralNotes: patient.referralNotes || "",
       });
+      // The form now holds the patient's real values instead of the
+      // placeholders — only from here may an effect act on the radio.
+      setFormLoaded(true);
     }
   }, [patient, form]);
 
@@ -315,11 +322,22 @@ export default function EditPatient() {
   // open for editing and turns THAT type's flag on — it must never turn the
   // patient's OTHER flags off (saving a dual علاج+أطراف patient used to wipe
   // whichever flag the radio wasn't on, silently deleting a case type).
+  //
+  // The `formLoaded` gate is what keeps "additive" from meaning "always an
+  // amputee". This form's DEFAULT medicalCondition is "amputee", and on the
+  // first commit this effect still sees that default — it runs after the reset
+  // above, with the stale value — so it raised isAmputee on EVERY patient whose
+  // file was merely opened for editing, and being additive nothing ever lowered
+  // it again. Saving then made a physiotherapy or support patient an amputee
+  // for good, and «بتر» appeared on their file with no amputation behind it
+  // (patient امل عويز, reported 2026-08-06). The flag may only follow a radio
+  // the user actually chose, never the placeholder shown before loading.
   useEffect(() => {
+    if (!formLoaded) return;
     if (conditionType === "amputee") form.setValue("isAmputee", true);
     else if (conditionType === "physiotherapy") form.setValue("isPhysiotherapy", true);
     else if (conditionType === "medical_support") form.setValue("isMedicalSupport", true);
-  }, [conditionType, form]);
+  }, [conditionType, form, formLoaded]);
 
   function onSubmit(values: FormValues) {
     mutate({ id: patientId, data: values }, {
