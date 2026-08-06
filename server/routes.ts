@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, eq, and, isNull, desc } from "drizzle-orm";
+import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
@@ -4337,6 +4337,59 @@ export async function registerRoutes(
 
   // Daily cash summary — accountant's PDF source.
   // Returns today's revenue/expenses, yesterday's running cash, and today's closing.
+  // Live revenue board — the owner's own screen (owner, 2026-08-06).
+  //
+  // Counts ONLY money the patient actually handed over: rows in `payments`.
+  // Not costs, not invoices issued, not what is owed — cash in hand today.
+  //
+  // The day is bounded EXACTLY as getDailyCashSummary bounds it (Baghdad
+  // midnight to midnight, +03:00), so this counter and «الوارد» in the daily
+  // report can never disagree — a mismatch between two screens showing the
+  // same money is the fastest way to lose trust in both.
+  //
+  // Admin only, enforced here and not merely hidden in the UI.
+  app.get("/api/dashboard/live-revenue", isAuthenticated, async (req: any, res) => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      return res.status(403).json({ message: "غير مصرح" });
+    }
+
+    // "Today" in Baghdad, whatever the server's own clock is set to.
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+    const dayStart = new Date(`${today}T00:00:00+03:00`);
+    const dayEnd = new Date(`${today}T23:59:59.999+03:00`);
+
+    // Every branch gets a card — including one that has taken nothing yet, so
+    // a silent branch is visibly silent rather than absent.
+    const [allBranches, sums] = await Promise.all([
+      db.select({ id: branches.id, name: branches.name }).from(branches).orderBy(branches.id),
+      db
+        .select({
+          branchId: payments.branchId,
+          total: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+        })
+        .from(payments)
+        .where(and(gte(payments.date, dayStart), lte(payments.date, dayEnd)))
+        .groupBy(payments.branchId),
+    ]);
+
+    const byBranch = new Map<number, number>();
+    for (const s of sums) {
+      if (s.branchId != null) byBranch.set(s.branchId, Number(s.total) || 0);
+    }
+
+    const rows = allBranches.map((b) => ({
+      id: b.id,
+      name: b.name,
+      today: byBranch.get(b.id) ?? 0,
+    }));
+    // Sum the BRANCH ROWS, not a separate query: the total can then never
+    // disagree with the cards printed above it.
+    const total = rows.reduce((s, r) => s + r.today, 0);
+
+    res.json({ date: today, asOf: new Date().toISOString(), branches: rows, total });
+  });
+
   app.get("/api/accounting/daily-summary", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;

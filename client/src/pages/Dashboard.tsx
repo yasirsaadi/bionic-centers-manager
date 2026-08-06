@@ -15,6 +15,7 @@ import { api } from "@shared/routes";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { WeeklyReviewBanner } from "@/components/WeeklyReviewBanner";
+import { LiveRevenueBoard } from "@/components/LiveRevenueBoard";
 
 function translateCondition(condition: string | null | undefined, t: any): string {
   if (!condition) return "";
@@ -156,6 +157,9 @@ function DashboardContent() {
   return (
     <div className="space-y-6 md:space-y-8 page-transition">
       <WeeklyReviewBanner isAdmin={isAdmin} />
+      {/* The owner's live takings board — his screen alone (the endpoint
+          refuses everyone else, this keeps it off their dashboard). */}
+      {isAdmin && <LiveRevenueBoard />}
       <div className="flex flex-col gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.dashboard.overview}</h2>
