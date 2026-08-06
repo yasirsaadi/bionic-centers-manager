@@ -1697,8 +1697,9 @@ export async function registerRoutes(
           // opens carrying it. The DEVICE specs below stay the doctor's.
           "prostheticType", "siliconType", "siliconSize",
           "suspensionSystem", "footType", "footSize", "kneeJointType",
-          // مساند
-          "supportType", "injurySide",
+          // مساند: `supportType` و `injurySide` عادا للاستقبال أيضاً
+          // (قرار المالك 2026-08-06) — المساند تُعامَل كالأطراف تماماً:
+          // الاستقبال يسجّل القرار الأولي والطبيب يفتح عليه ويغيّره.
           // علاج طبيعي: `diseaseType` عاد للاستقبال (قرار المالك 2026-08-01) —
           // العلاج الطبيعي لا يشترط معاينة في أي فرع، فالاستقبال يُدخل كل شيء
           // والطبيب زيادة خير. (نقض صريح لقرار 2026-07-28.)
