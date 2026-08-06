@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { api } from "@shared/routes";
 import { useTranslation } from "@/i18n/LanguageContext";
 import {
@@ -110,8 +110,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      invalidatePatientData(queryClient, patientId);
       toast({
         title: t.modals.serviceAddedSuccess,
         description: t.modals.serviceAddedDesc,
