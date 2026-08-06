@@ -1968,6 +1968,34 @@ export async function registerRoutes(
       const { serviceType, notes, paymentTreatmentType, sessionCount, treatmentEntries } = req.body;
       const serviceCost = Math.max(0, Math.round(Number(req.body?.serviceCost) || 0));
 
+      // ONE CLICK = ONE SERVICE. The form mints a token when it opens and sends
+      // it with the request; the first arrival claims it, any repeat of that
+      // same submission is answered without writing a second time. Proven need:
+      // patient امل عويز carries two identical 12,500 entries 17 seconds apart,
+      // and reception reports one click producing two services after an error.
+      // Claiming BEFORE any write is what makes it safe — the duplicate never
+      // reaches the money.
+      const submissionToken = typeof req.body?.submissionToken === "string"
+        ? req.body.submissionToken.trim().slice(0, 100)
+        : "";
+      if (submissionToken) {
+        const claimed = await db.execute(sql`
+          INSERT INTO submission_tokens (token, scope)
+          VALUES (${submissionToken}, ${"new_service"})
+          ON CONFLICT (token) DO NOTHING
+          RETURNING token
+        `);
+        if ((claimed.rowCount ?? 0) === 0) {
+          // Already applied. Report success — the service the user asked for
+          // does exist — but write nothing and say so plainly.
+          return res.json({
+            success: true,
+            duplicate: true,
+            message: "هذه الخدمة مسجَّلة سابقاً — لم تُضف مرّتين",
+          });
+        }
+      }
+
       const patient = await storage.getPatient(patientId);
       if (!patient) {
         return res.status(404).json({ message: "Patient not found" });
