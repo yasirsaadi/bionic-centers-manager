@@ -198,6 +198,22 @@ export function NewExamDialog({
     setPrefilled(true);
   }, [open, isEdit, specialty, patientRow, prefilled, rx.amputationType]);
 
+  // Medical-support prefill — the same contract as the two above (owner,
+  // 2026-08-06): reception records the support type and the injured side at
+  // registration, so the exam opens carrying them rather than blank, and the
+  // doctor is free to change either. Only fields the doctor hasn't touched.
+  useEffect(() => {
+    if (!open || isEdit || specialty !== "medical_support" || !patientRow || prefilled) return;
+
+    const patch: PrescriptionValue = {};
+    const has = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+    if (!has(rx.supportType) && has(patientRow.supportType)) patch.supportType = patientRow.supportType;
+    if (!has(rx.injurySide) && has(patientRow.injurySide)) patch.injurySide = patientRow.injurySide;
+    if (Object.keys(patch).length === 0) return;
+    setRx((prev) => ({ ...prev, ...patch }));
+    setPrefilled(true);
+  }, [open, isEdit, specialty, patientRow, prefilled, rx.supportType, rx.injurySide]);
+
   // Cost belongs to the doctor for a DEVICE only: they specify the prosthesis or
   // the support, so they know its price. Physiotherapy is left exactly as it
   // was — priced per session by reception in «الكلفة والجلسات».

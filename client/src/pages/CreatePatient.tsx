@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
+import { SUPPORT_SPECS } from "@shared/case_fields";
 import { useCreatePatient } from "@/hooks/use-patients";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useSearch } from "wouter";
@@ -1399,15 +1400,36 @@ export default function CreatePatient() {
                 </div>
               )}
 
-              {conditionType === "medical_support" && !canEditClinicalDetails && (
-                <p className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3" data-testid="note-doctor-decides-support">
-                  نوع المسند وتفاصيله يحدّدها الطبيب في المعاينة — سيظهر المريض في قائمة «بانتظار معاينة مساند طبية» بعد الحفظ.
-                </p>
-              )}
-
-              {conditionType === "medical_support" && canEditClinicalDetails && (
+              {/* Medical supports now work exactly like أطراف (owner,
+                  2026-08-06): reception records the preliminary decision it can
+                  see, and the doctor's exam opens carrying it and may change it.
+                  The label and placeholder come from `shared/case_fields`, the
+                  same source the doctor's prescription reads, so a
+                  reception-written support is identical to a doctor-written one. */}
+              {conditionType === "medical_support" && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                  {/* نوع المسند يُحدَّد بعد الفحص عبر «تخصيص الطرف/المسند» — لا هنا. */}
+                  {SUPPORT_SPECS.map((spec) => (
+                    <FormField
+                      key={spec.key}
+                      control={form.control}
+                      name={spec.key as any}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{spec.label}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              value={field.value || ""}
+                              className="bg-white"
+                              placeholder={spec.placeholder}
+                              data-testid={`input-${spec.key}`}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ))}
                   <FormField
                     control={form.control}
                     name="injurySide"
