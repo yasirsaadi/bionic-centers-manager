@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Layers, Loader2 } from "lucide-react";
+import { invalidatePatientData } from "@/lib/queryClient";
 
 interface AddCaseTypeModalProps {
   patient: {
@@ -66,10 +67,7 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patient.id] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
-      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/summary`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
+      invalidatePatientData(queryClient, patient.id);
       toast({ title: "تمت إضافة نوع الحالة", description: "أكمل الآن كل حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة." });
       const addedType = caseType;
       reset();

@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, X, Stethoscope } from "lucide-react";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, type PhysioEntry } from "@shared/pricing";
 import { api } from "@shared/routes";
+import { invalidatePatientData } from "@/lib/queryClient";
 
 // Post-exam physiotherapy pricing («الكلفة والجلسات») — the physio mirror of
 // the أطراف/مساند تخصيص step: the patient was registered without a cost; after
@@ -68,9 +69,7 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patient!.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patient!.id] });
+      invalidatePatientData(queryClient, patient!.id);
       toast({ title: "تم تسعير العلاج", description: `الكلفة المضافة: ${(data.totalCost || 0).toLocaleString()} د.ع` });
       reset();
       onOpenChange(false);

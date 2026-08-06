@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { invalidatePatientData } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,9 +51,7 @@ export function PhysioPlanDialog({ patient, open, onOpenChange }: {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patient!.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", patient!.id] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      invalidatePatientData(queryClient, patient!.id);
       toast({ title: "حُفظت خطة الجلسات", description: "العدّاد سيحتسب منها — ولم تتغيّر الكلفة." });
       onOpenChange(false);
     },

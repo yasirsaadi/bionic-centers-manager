@@ -10,6 +10,7 @@ import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite } from "@shared/ca
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Stethoscope } from "lucide-react";
+import { invalidatePatientData } from "@/lib/queryClient";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
 // patient agreed to buy, so reception records the specs + the agreed price and
@@ -150,9 +151,8 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      invalidatePatientData(queryClient, patient!.id);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient!.id}/summary`] });
       toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
       resetState();
       onOpenChange(false);

@@ -34,6 +34,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
+import { invalidatePatientData } from "@/lib/queryClient";
 
 interface VisitModalProps {
   patientId: number;
@@ -156,10 +157,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         return;
       }
       // Refresh the patient's visits, payments and manufacturing views.
-      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+      invalidatePatientData(queryClient, patientId);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
       toast({ title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
       setMaintPending(false); setOpen(false); resetAll();
