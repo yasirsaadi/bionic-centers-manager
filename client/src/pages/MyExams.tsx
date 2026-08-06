@@ -104,8 +104,21 @@ export default function MyExams() {
     for (const r of pageRows) {
       (byType[r.caseType] ||= []).push(r);
     }
-    return Object.keys(byType).map((caseType) => ({ caseType, list: byType[caseType] }));
-  }, [pageRows]);
+    // The heading must state how many are WAITING in this specialty, not how
+    // many landed on the page being read. Showing the page slice made the
+    // heading say «أطراف صناعية (4)» directly under a filter button saying
+    // «(8)» — the owner read the difference as patients gone missing, when
+    // they were simply on a later page (2026-08-06).
+    const totalByType: Record<string, number> = {};
+    for (const r of filtered) {
+      totalByType[r.caseType] = (totalByType[r.caseType] ?? 0) + 1;
+    }
+    return Object.keys(byType).map((caseType) => ({
+      caseType,
+      list: byType[caseType],
+      total: totalByType[caseType] ?? byType[caseType].length,
+    }));
+  }, [pageRows, filtered]);
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" dir="rtl">
@@ -208,7 +221,7 @@ export default function MyExams() {
             </Card>
           ) : (
             <div className="space-y-6">
-              {groups.map(({ caseType, list }) => {
+              {groups.map(({ caseType, list, total }) => {
                 const a = accent(caseType);
                 return (
                   <div key={caseType}>
@@ -216,7 +229,7 @@ export default function MyExams() {
                       <span className={`w-2 h-2 rounded-full ${a.dot}`} />
                       {specialtyLabel(caseType)}
                       <span className="text-xs font-normal text-muted-foreground">
-                        ({list.length})
+                        {list.length === total ? `(${total})` : `(${list.length} من ${total})`}
                       </span>
                     </h2>
                     <div className="space-y-2">
