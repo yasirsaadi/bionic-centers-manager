@@ -330,6 +330,39 @@ export default function CreatePatient() {
     }
   }, [conditionType, form]);
 
+  // Cross-branch duplicate check while the name is typed (owner, 2026-08-06).
+  // Reception cannot see other branches, so a returning patient was invisible
+  // and a second file got opened for the same person. Debounced so it asks
+  // once the typing settles, and it never blocks saving — it informs.
+  const typedName = form.watch("name");
+  const [otherBranchMatches, setOtherBranchMatches] = useState<
+    { id: number; name: string; phone: string | null; branchId: number; branchName: string | null }[]
+  >([]);
+  useEffect(() => {
+    const q = (typedName ?? "").trim();
+    if (q.length < 3) {
+      setOtherBranchMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/patients/lookup-by-name?name=${encodeURIComponent(q)}`, {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setOtherBranchMatches(data?.matches ?? []);
+      } catch {
+        // A failed check must never stand between reception and registering.
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [typedName]);
+
   // Sync injury entries with form fields
   useEffect(() => {
     if (conditionType !== "physiotherapy") return;
@@ -470,6 +503,32 @@ export default function CreatePatient() {
                       <Input {...field} className="bg-white" placeholder={t.patientForm.fullNamePlaceholder} />
                     </FormControl>
                     <FormMessage />
+                    {/* Already on file at another centre? Say so BEFORE a second
+                        file is opened — the transfer moves his whole history,
+                        a new file starts him from zero. */}
+                    {otherBranchMatches.length > 0 && (
+                      <div
+                        className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                        data-testid="notice-patient-other-branch"
+                      >
+                        <p className="font-semibold mb-1">
+                          هذا الاسم مسجَّل في فرع آخر — لا تفتح ملفاً جديداً
+                        </p>
+                        <ul className="space-y-0.5 mb-2">
+                          {otherBranchMatches.map((m) => (
+                            <li key={m.id}>
+                              {m.name} — <b>{m.branchName || `فرع #${m.branchId}`}</b>
+                              {m.phone ? ` — ${m.phone}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="text-xs">
+                          إن كان هو نفسه، اطلب من مدير الفرع نقله إلى فرعك من صفحة المريض
+                          («نقل المريض») — فينتقل بكل زياراته ودفعاته وتاريخه. أما فتح ملف
+                          جديد فيبدأ به من الصفر ويترك له ملفين.
+                        </p>
+                      </div>
+                    )}
                   </FormItem>
                 )}
               />
