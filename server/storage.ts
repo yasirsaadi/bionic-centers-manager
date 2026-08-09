@@ -29,7 +29,7 @@ import {
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
-  costEntries,
+  costEntries, patientEvents,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -892,6 +892,13 @@ export class DatabaseStorage implements IStorage {
       // Cost-ledger rows FK the patient (migration 033) and their money
       // vanishes from every total with the row, so they go with it too.
       await tx.delete(costEntries).where(eq(costEntries.patientId, id));
+      // The event log FKs the patient (migration 044). It is the patient's own
+      // narrative, so it goes with them. Nothing references patient_events, so
+      // its position here is free — it only has to precede the patient row.
+      // NOTE: the append-only trigger guards UPDATE only, never DELETE —
+      // guarding DELETE would have broken patient deletion for every user,
+      // which this project has already lived through once.
+      await tx.delete(patientEvents).where(eq(patientEvents.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
     });
   }
@@ -1292,6 +1299,35 @@ export class DatabaseStorage implements IStorage {
       // Ledger entries follow their patient: dated history is preserved, and
       // the summed total_cost below stays equal to the summed entries.
       await repoint("costEntries", costEntries, costEntries.patientId);
+
+      // ── Event log (migration 044) ────────────────────────────────────────
+      // Repointing patient_id alone is NOT enough, for two independent reasons.
+      //
+      // 1. The rows are sealed. `patient_events` refuses UPDATE unless the
+      //    audited door is open, so the repoint must open it explicitly — and
+      //    close it again straight after, so the rest of this transaction
+      //    stays under the seal.
+      // 2. `dedupe_key` is unique PER PATIENT, not globally. Both files can
+      //    therefore legitimately hold the same key, and moving the source's
+      //    rows onto the target would violate `uq_patient_events_dedupe` and
+      //    abort the whole merge. The source copy is by definition the
+      //    duplicate of an event the target already recorded, so its KEY is
+      //    cleared — never the row: the narrative survives in full, only its
+      //    idempotency marker (whose job is done) is dropped.
+      await tx.execute(sql`SET LOCAL app.allow_event_edit = 'on'`);
+      await tx.execute(sql`
+        UPDATE patient_events s
+           SET dedupe_key = NULL
+         WHERE s.patient_id = ${sourceId}
+           AND s.dedupe_key IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM patient_events t
+              WHERE t.patient_id = ${targetId}
+                AND t.dedupe_key = s.dedupe_key
+           )
+      `);
+      await repoint("patientEvents", patientEvents, patientEvents.patientId);
+      await tx.execute(sql`SET LOCAL app.allow_event_edit = 'off'`);
 
       // Merge the patient row itself: flags OR, costs summed, and any
       // descriptive field that is empty on the target gets the source's value.

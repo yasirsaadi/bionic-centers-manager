@@ -17,7 +17,9 @@
     "test:prescription": "tsx server/medical/prescription.test.ts",
     "test:physio-sessions": "tsx server/medical/physio_sessions.test.ts",
     "test:phone": "tsx server/phone.test.ts",
-    "test:phone-concurrency": "tsx server/migrations/backfill_phone_concurrency.test.ts"
+    "test:phone-concurrency": "tsx server/migrations/backfill_phone_concurrency.test.ts",
+    "test:events-purity": "tsx server/events/purity.test.ts",
+    "test:patient-events": "tsx server/events/patient_events.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
