@@ -35,6 +35,17 @@ CREATE INDEX IF NOT EXISTS idx_patients_phone_e164
   ON patients (phone_e164) WHERE phone_e164 IS NOT NULL;
 
 -- قائمة «يحتاج مراجعة» للمدير: تُقرأ كثيراً بعد الإطلاق.
+--
+-- الشرط IS DISTINCT FROM لا <> : في SQL نتيجة NULL <> 'ok' هي NULL لا true،
+-- فالصفوف التي لم تصلها التعبئة الرجعية بعد (phone_status = NULL) كانت
+-- ستسقط من الفهرس — بينما التطبيق يعتبرها «تحتاج مراجعة» تماماً
+-- (needsPhoneReview في shared/phone.ts ترجع true لـNULL). فالفهرس كان
+-- سيخالف تعريف التطبيق ويُخفي أكثر الصفوف احتياجاً للمراجعة.
+--
+-- والـDROP قبله ضروري: CREATE INDEX IF NOT EXISTS لا يعدّل شرط فهرس موجود،
+-- فقاعدة تطوير طبّقت النسخة الأولى كانت ستحتفظ بالشرط الخاطئ صامتةً.
+-- الترحيل لم يبلغ الإنتاج بعد، وهذا السطر يجعله يصحّح نفسه أينما طُبّق.
+DROP INDEX IF EXISTS idx_patients_phone_status;
 CREATE INDEX IF NOT EXISTS idx_patients_phone_status
-  ON patients (phone_status) WHERE phone_status <> 'ok';
+  ON patients (phone_status) WHERE phone_status IS DISTINCT FROM 'ok';
 `;
