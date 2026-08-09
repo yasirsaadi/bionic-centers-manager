@@ -12,6 +12,14 @@
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
+import {
+  ALL_PATIENT_EVENT_TYPES,
+  CLINICAL_EVENT_TYPES,
+  PATIENT_EVENT_LABELS_AR,
+  PATIENT_EVENT_POLICY,
+  VISIBILITY_POLICIES,
+  isVisibilityAllowed,
+} from "@shared/patient_events";
 
 const DIR = join(import.meta.dirname, ".");
 
@@ -84,28 +92,28 @@ console.log("\n── لا نصّ حرّ لأنواع الأحداث خارج ا
 
 console.log("\n── السجل المشترك متّسق ──");
 {
-  // مستورَد هنا لا في الأعلى: هذا القسم يفحص السجل نفسه لا الوحدة.
-  const registry = readFileSync(join(DIR, "../../shared/patient_events.ts"), "utf8");
-  const declared = [...registry.matchAll(/^\s+[A-Z_]+:\s*"([^"]+)",$/gm)].map((m) => m[1]);
-  const visibility = [...registry.matchAll(/^\s+"([^"]+)":\s*"(internal|patient)",$/gm)].map((m) => m[1]);
-  const labels = [...registry.matchAll(/^\s+"([^"]+)":\s*"[^"]*",$/gm)].map((m) => m[1]);
+  // يُفحَص بالاستيراد لا بالتعبير النمطي: قراءة الخرائط نفسها أوثق من
+  // مطابقة أسطر نصّية تنكسر مع أول إعادة تنسيق.
+  const missingPolicy = ALL_PATIENT_EVENT_TYPES.filter((t) => !(t in PATIENT_EVENT_POLICY));
+  check(missingPolicy.length === 0, "كل نوع معلَن له سياسة صريحة", `بلا سياسة: ${missingPolicy.join("، ")}`);
 
-  const missingVisibility = declared.filter((t) => !visibility.includes(t));
-  check(missingVisibility.length === 0, "كل نوع معلَن له وجهة صريحة", `بلا وجهة: ${missingVisibility.join("، ")}`);
+  const badPolicy = ALL_PATIENT_EVENT_TYPES.filter((t) => !VISIBILITY_POLICIES.includes(PATIENT_EVENT_POLICY[t]));
+  check(badPolicy.length === 0, "وكل سياسة من الدرجات الثلاث", `غير صالحة: ${badPolicy.join("، ")}`);
 
-  const missingLabel = declared.filter((t) => !labels.includes(t));
+  const missingLabel = ALL_PATIENT_EVENT_TYPES.filter((t) => !PATIENT_EVENT_LABELS_AR[t]);
   check(missingLabel.length === 0, "وكل نوع له تسمية عربية", `بلا تسمية: ${missingLabel.join("، ")}`);
 
-  // القاعدة الصلبة: لا حدث سريري موجَّه للمريض.
-  const clinical = ["visit.recorded", "exam.signed", "exam.amended", "prescription.applied"];
-  const clinicalPatientFacing = clinical.filter((t) =>
-    new RegExp(`"${t.replace(".", "\\.")}":\\s*"patient"`).test(registry),
-  );
-  check(
-    clinicalPatientFacing.length === 0,
-    "ولا حدث سريري موجَّه للمريض",
-    `موجَّه للمريض: ${clinicalPatientFacing.join("، ")}`,
-  );
+  // القاعدة الصلبة: لا حدث سريري يمكن أن يصل المريض — لا افتراضاً ولا
+  // بتجاوز. تُفحَص عبر السياسة نفسها لا عبر القيمة الافتراضية.
+  const leaky = CLINICAL_EVENT_TYPES.filter((t) => PATIENT_EVENT_POLICY[t] !== "internal_only");
+  check(leaky.length === 0, "ولا حدث سريري خارج internal_only", `مخالف: ${leaky.join("، ")}`);
+
+  const clinicalAllowed = CLINICAL_EVENT_TYPES.filter((t) => isVisibilityAllowed(t, "patient"));
+  check(clinicalAllowed.length === 0, "والسياسة ترفض جعله patient فعلياً", `يقبل patient: ${clinicalAllowed.join("، ")}`);
+
+  // وكل نوع يقبل التضييق إلى internal — زيادة الخصوصية لا تحتاج إذناً.
+  const cannotNarrow = ALL_PATIENT_EVENT_TYPES.filter((t) => !isVisibilityAllowed(t, "internal"));
+  check(cannotNarrow.length === 0, "وكل نوع يقبل التضييق إلى internal", `يرفض: ${cannotNarrow.join("، ")}`);
 }
 
 console.log(failures === 0 ? "\n✅ all events-purity cases pass" : `\n❌ ${failures} case(s) failed`);

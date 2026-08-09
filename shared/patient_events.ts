@@ -12,15 +12,43 @@
 // مريض. ولا يقرأ منه أحد ليقرّر شيئاً. الجداول التجارية تبقى صاحبة الحقيقة،
 // والحدث يشير إليها بـ`source_type`/`source_id` بلا مفتاح أجنبي.
 //
-// ── الوجهة ────────────────────────────────────────────────────────────────
-// الافتراض `internal`. و`patient` تعني «يجوز إبلاغ المريض به مستقبلاً» —
-// لا «سيُرسَل»: لا إرسال في هذه المرحلة إطلاقاً. والقاعدة الصلبة التي لا
-// تُخرَق: **لا محتوى سريري** (تشخيص، نوع جهاز، موقع بتر) في أي حدث موجَّه
-// للمريض.
+// ── الوجهة: سياسة لا مجرّد افتراض ────────────────────────────────────────
+// الوجهة المخزَّنة قيمتان: `internal` و`patient`. لكن ما يحكم أي قيمة يجوز
+// أن يحملها نوعٌ ما ليس «افتراضاً» قابلاً للتجاوز — بل **سياسة** بثلاث
+// درجات:
+//
+//   internal_only
+//       داخلي دائماً. **لا يمكن لأي مستدعٍ جعله `patient` أبداً.**
+//       هنا يعيش كل ما هو سريري (تشخيص، معاينة، وصفة، زيارة) وكل ما هو
+//       دفتري بحت. الرفض وقت التشغيل لا في تعليق.
+//
+//   internal_default_patient_allowed
+//       داخلي افتراضاً، ويجوز للمنتج أن يختار `patient` لحالة بعينها.
+//       هذه هي درجة `manufacturing.stage_changed`: أغلب المراحل لا تعني
+//       المريض، لكن مرحلةً مختارة قد تستحق إبلاغه.
+//
+//   patient_default
+//       موجَّه للمريض افتراضاً. والتضييق إلى `internal` مسموح دائماً —
+//       زيادة الخصوصية لا تحتاج إذناً.
+//
+// **القاعدة الصلبة**: لا محتوى سريري (تشخيص، نوع جهاز، موقع بتر) في أي حدث
+// يمكن أن يصل المريض. تُنفَّذ بجعل كل نوع سريري `internal_only`، ويحرسها
+// اختبار دائم.
+//
+// و`patient` هنا تعني «يجوز إبلاغ المريض به» لا «سيُرسَل»: لا إرسال في
+// هذه المرحلة إطلاقاً.
 
-/** الوجهة المسموح بها لكل نوع حدث. */
+/** القيمة المخزَّنة في العمود. */
 export const PATIENT_EVENT_VISIBILITIES = ["internal", "patient"] as const;
 export type PatientEventVisibility = (typeof PATIENT_EVENT_VISIBILITIES)[number];
+
+/** ما يجوز لنوع الحدث أن يحمله من وجهات. */
+export const VISIBILITY_POLICIES = [
+  "internal_only",
+  "internal_default_patient_allowed",
+  "patient_default",
+] as const;
+export type VisibilityPolicy = (typeof VISIBILITY_POLICIES)[number];
 
 /**
  * الأنواع المعلَنة. القيمة النصّية هي ما يُخزَّن في العمود، وشكلها
@@ -69,40 +97,66 @@ export const PATIENT_EVENT_TYPES = {
 
 export type PatientEventType = (typeof PATIENT_EVENT_TYPES)[keyof typeof PATIENT_EVENT_TYPES];
 
-/** كل نوع ووجهته. غياب نوع من هذه الخريطة خطأ يكشفه الاختبار. */
-export const PATIENT_EVENT_VISIBILITY: Record<PatientEventType, PatientEventVisibility> = {
-  "patient.registered": "internal",
-  "patient.updated": "internal",
-  "patient.phone_changed": "internal",
-  "patient.merged": "internal",
-  "patient.transferred": "internal",
-  "patient.case_added": "internal",
+/** سياسة كل نوع. غياب نوع من هذه الخريطة خطأ يكشفه الاختبار. */
+export const PATIENT_EVENT_POLICY: Record<PatientEventType, VisibilityPolicy> = {
+  // ── هوية المريض وملفّه ────────────────────────────────────────────────
+  // تأكيد التسجيل ونقل الفرع وتغيّر رقمه: أخبار تخصّه ولا تحمل شيئاً
+  // سريرياً، فيُسمح بها دون أن تُفتح افتراضاً.
+  "patient.registered": "internal_default_patient_allowed",
+  "patient.phone_changed": "internal_default_patient_allowed",
+  "patient.transferred": "internal_default_patient_allowed",
+  // نظافة سجلات داخلية بحتة — إبلاغ المريض بها يُربك ولا يُفيد.
+  "patient.updated": "internal_only",
+  "patient.merged": "internal_only",
+  "patient.case_added": "internal_only",
 
-  "manufacturing.order_created": "internal",
-  "manufacturing.stage_changed": "internal",
-  // الثلاثة الوحيدة التي يعنيه أمرها: جهازه جاهز، سُلِّم، أو تغيّر موعده.
-  "manufacturing.ready_for_delivery": "patient",
-  "manufacturing.delivered": "patient",
-  "manufacturing.delivery_date_changed": "patient",
-  "manufacturing.expert_reassigned": "internal",
+  // ── التصنيع ───────────────────────────────────────────────────────────
+  "manufacturing.order_created": "internal_default_patient_allowed",
+  // الدرجة التي طلبها المنتج صراحةً: «تحضير القالب» لا تعني المريض، لكن
+  // مرحلةً مختارة قد تستحق إبلاغه — فالقرار لكل حالة لا للنوع كلّه.
+  "manufacturing.stage_changed": "internal_default_patient_allowed",
+  // الثلاثة التي يعنيه أمرها فعلاً.
+  "manufacturing.ready_for_delivery": "patient_default",
+  "manufacturing.delivered": "patient_default",
+  "manufacturing.delivery_date_changed": "patient_default",
+  // إسناد داخلي — مَن يصنع جهازه ليس خبراً يُرسَل إليه.
+  "manufacturing.expert_reassigned": "internal_only",
 
-  "maintenance.opened": "internal",
-  "maintenance.completed": "patient",
+  // ── الصيانة ───────────────────────────────────────────────────────────
+  "maintenance.opened": "internal_default_patient_allowed",
+  "maintenance.completed": "patient_default",
 
-  "payment.received": "patient",
-  "payment.updated": "internal",
-  "payment.deleted": "internal",
-  "cost.recorded": "internal",
+  // ── المال ─────────────────────────────────────────────────────────────
+  // إيصال القبض يبني ثقة ويقلّل النزاع، والمريض يعرف المبلغ أصلاً.
+  "payment.received": "patient_default",
+  // تصحيح سجلاتنا نحن. رسالة آلية عنه تُقلِق بلا فائدة، وإن استحقّ فمكالمة.
+  "payment.updated": "internal_only",
+  "payment.deleted": "internal_only",
+  // التسعير داخلي: المريض يعرف السعر من الاستعلامات لا من بوت.
+  "cost.recorded": "internal_only",
 
-  // سريري ⇒ داخلي دائماً. تلغرام ليس قناة سرّية طبية.
-  "visit.recorded": "internal",
-  "exam.signed": "internal",
-  "exam.amended": "internal",
-  "prescription.applied": "internal",
+  // ── العيادة: سريري ⇒ internal_only بلا استثناء ────────────────────────
+  // تلغرام ليس قناة سرّية طبية، والهوية موثَّقة برقم في أحسن الأحوال.
+  "visit.recorded": "internal_only",
+  "exam.signed": "internal_only",
+  "exam.amended": "internal_only",
+  "prescription.applied": "internal_only",
 
-  "appointment.scheduled": "patient",
-  "appointment.cancelled": "patient",
+  // ── المواعيد ──────────────────────────────────────────────────────────
+  "appointment.scheduled": "patient_default",
+  "appointment.cancelled": "patient_default",
 };
+
+/**
+ * الأنواع السريرية التي **لا يجوز** أن تصل المريض بأي حال. مُعلَنة صراحةً
+ * كي يحرسها اختبار دائم بدل أن تعتمد على انتباه من يعدّل الخريطة أعلاه.
+ */
+export const CLINICAL_EVENT_TYPES: PatientEventType[] = [
+  "visit.recorded",
+  "exam.signed",
+  "exam.amended",
+  "prescription.applied",
+];
 
 /** التسمية العربية المعروضة في الجدول الزمني. */
 export const PATIENT_EVENT_LABELS_AR: Record<PatientEventType, string> = {
@@ -145,9 +199,51 @@ export function isPatientEventType(value: unknown): value is PatientEventType {
   return typeof value === "string" && (ALL_PATIENT_EVENT_TYPES as string[]).includes(value);
 }
 
-/** وجهة النوع، وهي ما يُكتب في العمود حين لا يُمرَّر شيء صراحةً. */
+/** سياسة النوع. الافتراض الآمن لنوع مجهول هو أضيق الدرجات. */
+export function policyFor(eventType: PatientEventType): VisibilityPolicy {
+  return PATIENT_EVENT_POLICY[eventType] ?? "internal_only";
+}
+
+/** ما يُكتب في العمود حين لا يطلب المستدعي وجهةً صراحةً. */
 export function defaultVisibilityFor(eventType: PatientEventType): PatientEventVisibility {
-  return PATIENT_EVENT_VISIBILITY[eventType] ?? "internal";
+  return policyFor(eventType) === "patient_default" ? "patient" : "internal";
+}
+
+/**
+ * هل يجوز لهذا النوع أن يحمل هذه الوجهة؟
+ *
+ * `internal` مسموحة دائماً — تضييق الوجهة زيادةُ خصوصية لا تحتاج إذناً،
+ * حتى لنوع `patient_default`. و`patient` ممنوعة على `internal_only` قطعاً.
+ */
+export function isVisibilityAllowed(
+  eventType: PatientEventType,
+  visibility: PatientEventVisibility,
+): boolean {
+  if (visibility === "internal") return true;
+  return policyFor(eventType) !== "internal_only";
+}
+
+/**
+ * يحسم الوجهة النهائية، ويرمي عند مخالفة السياسة.
+ *
+ * هذا هو الموضع الذي يمنع حدثاً سريرياً من أن يصير موجَّهاً للمريض بتمريرة
+ * واحدة من مستدعٍ مستعجل. الضمان المعماري لا يكون ضماناً ما لم يُرفَض
+ * خرقُه وقت التشغيل.
+ */
+export function resolveVisibility(
+  eventType: PatientEventType,
+  requested?: PatientEventVisibility | null,
+): PatientEventVisibility {
+  if (requested === undefined || requested === null) return defaultVisibilityFor(eventType);
+  if (!PATIENT_EVENT_VISIBILITIES.includes(requested)) {
+    throw new Error(`patient_events: invalid visibility "${String(requested)}"`);
+  }
+  if (!isVisibilityAllowed(eventType, requested)) {
+    throw new Error(
+      `patient_events: "${eventType}" is ${policyFor(eventType)} — it can never be written with visibility "patient".`,
+    );
+  }
+  return requested;
 }
 
 /**

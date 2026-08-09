@@ -39,7 +39,13 @@ export const name = "044_patient_events";
 export const sql = `
 CREATE TABLE IF NOT EXISTS patient_events (
   id              BIGSERIAL PRIMARY KEY,
-  patient_id      INTEGER NOT NULL REFERENCES patients(id),
+  -- المفتاح مُسمّى صراحةً بالاسم الذي يولّده Drizzle، لا بالاسم الافتراضي
+  -- من Postgres (patient_events_patient_id_fkey). فالاسمان يصفان القيد
+  -- نفسه، لكن drizzle-kit يقارن بالاسم — فاختلافه يجعل db:push يرى فرقاً
+  -- دائماً ويحاول إعادة بناء المفتاح. نفس عائلة فرق DESC NULLS LAST أدناه.
+  patient_id      INTEGER NOT NULL
+                  CONSTRAINT patient_events_patient_id_patients_id_fk
+                  REFERENCES patients(id),
   branch_id       INTEGER,
   case_id         INTEGER,
   case_type       TEXT,
@@ -52,7 +58,13 @@ CREATE TABLE IF NOT EXISTS patient_events (
   actor_name      TEXT,
   occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  dedupe_key      TEXT
+  dedupe_key      TEXT,
+  -- آخر خطّ دفاع عن الوجهة. السياسة تُفرَض في resolveVisibility قبل كل
+  -- كتابة، لكن القاعدة لا تعرف السياسة — وقيمة ثالثة تتسلّل من كتابة
+  -- مباشرة أو ترحيل لاحق كانت ستُقرأ «ليست internal» في كل استعلام يبحث
+  -- عن الداخلي. القيد يجعل ذلك مستحيلاً لا مستبعَداً.
+  CONSTRAINT patient_events_visibility_check
+    CHECK (visibility IN ('internal', 'patient'))
 );
 
 -- الجدول الزمني لمريض واحد — أكثر قراءة متوقَّعة.

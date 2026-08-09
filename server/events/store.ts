@@ -30,8 +30,8 @@ import { db } from "../db";
 import * as schema from "@shared/schema";
 import { patientEvents, type PatientEvent } from "@shared/schema";
 import {
-  defaultVisibilityFor,
   isPatientEventType,
+  resolveVisibility,
   type PatientEventType,
   type PatientEventVisibility,
 } from "@shared/patient_events";
@@ -59,7 +59,10 @@ export interface RecordPatientEventInput {
   sourceId?: number | null;
   /** كل ما يلزم لعرض الحدث بلا join. */
   payload?: Record<string, unknown>;
-  /** يُشتقّ من السجل حين لا يُمرَّر. */
+  /**
+   * يُشتقّ من سياسة النوع حين لا يُمرَّر. وحين يُمرَّر يُفحَص ضدّها ويُرفض
+   * إن خالفها — فنوع `internal_only` لا يصير `patient` بتمريرة.
+   */
   visibility?: PatientEventVisibility;
   actorUserId?: number | null;
   actorName?: string | null;
@@ -101,6 +104,11 @@ export async function recordPatientEvent(
     );
   }
 
+  // السياسة تُفرَض هنا، قبل أي كتابة. تمرير `patient` على نوع
+  // `internal_only` (معاينة، وصفة، زيارة) يرمي ولا يُكتب شيء — وإلا صار
+  // «الأحداث السريرية لا تصل المريض» أمنيةً لا ضماناً.
+  const visibility = resolveVisibility(input.eventType, input.visibility ?? null);
+
   const dedupeKey = input.dedupeKey?.trim() || null;
 
   const rows = await tx
@@ -114,7 +122,7 @@ export async function recordPatientEvent(
       sourceType: input.sourceType ?? null,
       sourceId: input.sourceId ?? null,
       payload: input.payload ?? {},
-      visibility: input.visibility ?? defaultVisibilityFor(input.eventType),
+      visibility,
       actorUserId: input.actorUserId ?? null,
       actorName: input.actorName ?? null,
       // `occurredAt` يُمرَّر أو يأخذ الآن. و`createdAt` **لا يُمرَّر أبداً**:

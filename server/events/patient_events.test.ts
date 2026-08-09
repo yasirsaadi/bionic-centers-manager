@@ -40,6 +40,9 @@ async function mkPatient(name: string): Promise<number> {
 }
 
 async function cleanup() {
+  // جدول الاختبار المصنوع لإفشال الدمج: يُسقَط أولاً لأن مفتاحه إلى
+  // `patients` يمنع حذف صفوف الاختبار لو تعطّل تشغيل سابق في منتصفه.
+  await pool.query(`DROP TABLE IF EXISTS _merge_block_test`);
   await pool.query(
     `DELETE FROM patient_events WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await pool.query(
@@ -50,6 +53,20 @@ async function cleanup() {
 }
 
 async function main() {
+  // شرط مسبق: نصف ما يلي يختبر الختم، وقاعدةٌ لم يُطبَّق عليها ترحيل 044
+  // كاملاً ستُظهر أربعة فشل غامضة بدل سبب واحد واضح. يُقال هنا صراحةً.
+  const { rows: trig } = await pool.query(
+    `SELECT 1 FROM information_schema.triggers
+      WHERE event_object_table = 'patient_events' AND trigger_name = 'trg_patient_events_sealed'`,
+  );
+  if (trig.length === 0) {
+    console.error(
+      "❌ الترِكر trg_patient_events_sealed غير موجود — شغّل ترحيلات المشروع على قاعدة الاختبار أولاً.\n" +
+      "   (drizzle-kit push ينشئ الجدول لكنه لا ينشئ الترِكر: هو من migration 044.)",
+    );
+    process.exit(1);
+  }
+
   await pool.query(`INSERT INTO branches (id, name) VALUES (1, 'بغداد') ON CONFLICT (id) DO NOTHING`);
   await cleanup();
 
@@ -123,6 +140,60 @@ async function main() {
     recordPatientEvent(tx, { patientId: p1, eventType: PATIENT_EVENT_TYPES.PATIENT_UPDATED }));
   await pool.query(`DELETE FROM patient_events WHERE id = $1`, [throwaway.id]);
   check(true, "والحذف المباشر مسموح (الكاسكيد يحتاجه)");
+
+  // ── ٢.ب سياسة الوجهة ─────────────────────────────────────────────────
+  console.log("\n── سياسة الوجهة: internal_only لا يصير patient أبداً ──");
+  async function tryVisibility(type: any, vis: any): Promise<string | null> {
+    try {
+      await db.transaction((tx) => recordPatientEvent(tx, { patientId: p1, eventType: type, visibility: vis }));
+      return null;
+    } catch (e: any) { return String(e?.message ?? e); }
+  }
+  async function storedVisibility(type: any, vis?: any): Promise<string> {
+    const r = await db.transaction((tx) =>
+      recordPatientEvent(tx, { patientId: p1, eventType: type, ...(vis ? { visibility: vis } : {}) }));
+    const [row] = await db.select().from(patientEvents).where(eq(patientEvents.id, r.id!));
+    return row.visibility;
+  }
+
+  for (const clinical of [
+    PATIENT_EVENT_TYPES.EXAM_SIGNED,
+    PATIENT_EVENT_TYPES.VISIT_RECORDED,
+    PATIENT_EVENT_TYPES.PRESCRIPTION_APPLIED,
+  ]) {
+    const err = await tryVisibility(clinical, "patient");
+    check(err !== null, `${clinical} لا يمكن جعله patient`);
+    check(/internal_only/.test(err ?? ""), `  والرسالة تسمّي السياسة`, err ?? "");
+    const count = await db.select({ n: sql<number>`count(*)::int` }).from(patientEvents)
+      .where(and(eq(patientEvents.patientId, p1), eq(patientEvents.eventType, clinical), eq(patientEvents.visibility, "patient")));
+    eq_(`  ولا صفّ patient كُتب لـ${clinical}`, count[0].n, 0);
+  }
+  eq_("والسريري يبقى internal افتراضاً", await storedVisibility(PATIENT_EVENT_TYPES.EXAM_AMENDED), "internal");
+
+  console.log("\n── internal_default_patient_allowed: الاختيار للمنتج ──");
+  eq_(
+    "manufacturing.stage_changed يبقى internal افتراضاً",
+    await storedVisibility(PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED),
+    "internal",
+  );
+  eq_(
+    "ويمكن أن يصير patient حين يطلب المنتج ذلك",
+    await storedVisibility(PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, "patient"),
+    "patient",
+  );
+
+  console.log("\n── patient_default ──");
+  eq_("ready_for_delivery موجَّه للمريض افتراضاً", await storedVisibility(PATIENT_EVENT_TYPES.MANUFACTURING_READY_FOR_DELIVERY), "patient");
+  eq_("payment.received كذلك", await storedVisibility(PATIENT_EVENT_TYPES.PAYMENT_RECEIVED), "patient");
+  eq_("والتضييق إلى internal مسموح دائماً", await storedVisibility(PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERED, "internal"), "internal");
+
+  // قيد القاعدة: آخر خطّ دفاع لو تسلّلت قيمة ثالثة من خارج التطبيق.
+  let checkViolated = false;
+  try {
+    await pool.query(
+      `INSERT INTO patient_events (patient_id, event_type, visibility) VALUES ($1, 'patient.updated', 'everyone')`, [p1]);
+  } catch (e: any) { checkViolated = /visibility_check/.test(String(e?.message ?? "")); }
+  check(checkViolated, "وقيد القاعدة يرفض أي قيمة ثالثة للوجهة");
 
   // ── ٣. منع التكرار ───────────────────────────────────────────────────
   console.log("\n── منع التكرار عبر dedupe_key ──");
@@ -234,6 +305,79 @@ async function main() {
     await pool.query(`UPDATE patient_events SET actor_name = 'x' WHERE patient_id = $1`, [tgt]);
   } catch { sealedAfterMerge = true; }
   check(sealedAfterMerge, "والختم عاد بعد انتهاء الدمج");
+
+  // ── ٥.ب الباب لا يتسرّب إلى المعاملة التالية على نفس الاتصال ─────────
+  // `SET LOCAL` محدود بالمعاملة، لكن الاعتماد على ذلك بلا إثبات خطر: لو
+  // كان `SET` عادياً بدل `SET LOCAL` لبقي الباب مفتوحاً على هذا الاتصال
+  // المجمَّع، فتصير كل كتابة لاحقة تمرّ عليه قابلةً لتعديل الأحداث بصمت.
+  console.log("\n── الباب لا يتسرّب على نفس الاتصال ──");
+  {
+    const c = await pool.connect();
+    try {
+      const [victim] = await db.select().from(patientEvents).where(eq(patientEvents.patientId, tgt)).limit(1);
+      // معاملة تفتح الباب ثم تفشل.
+      await c.query("BEGIN");
+      await c.query("SET LOCAL app.allow_event_edit = 'on'");
+      await c.query(`UPDATE patient_events SET actor_name = 'داخل المعاملة' WHERE id = $1`, [victim.id]);
+      try { await c.query("SELECT 1/0"); } catch { /* الفشل مقصود */ }
+      await c.query("ROLLBACK");
+
+      const [afterRollback] = await db.select().from(patientEvents).where(eq(patientEvents.id, victim.id));
+      check(afterRollback.actorName !== "داخل المعاملة", "التعديل تراجع كاملاً مع المعاملة الفاشلة",
+        `actor_name=${afterRollback.actorName}`);
+
+      // **نفس الاتصال** بعدها مباشرة: الباب يجب أن يكون مغلقاً.
+      let sealedSameConn = false;
+      try {
+        await c.query(`UPDATE patient_events SET actor_name = 'بعد التراجع' WHERE id = $1`, [victim.id]);
+      } catch { sealedSameConn = true; }
+      check(sealedSameConn, "والباب مغلق في المعاملة التالية على نفس الاتصال");
+
+      // وحتى بعد معاملة ناجحة فتحت الباب.
+      await c.query("BEGIN");
+      await c.query("SET LOCAL app.allow_event_edit = 'on'");
+      await c.query(`UPDATE patient_events SET actor_name = 'مسموح' WHERE id = $1`, [victim.id]);
+      await c.query("COMMIT");
+      let sealedAfterCommit = false;
+      try {
+        await c.query(`UPDATE patient_events SET actor_name = 'ممنوع' WHERE id = $1`, [victim.id]);
+      } catch { sealedAfterCommit = true; }
+      check(sealedAfterCommit, "ومغلق كذلك بعد معاملة ناجحة فتحته");
+    } finally { c.release(); }
+  }
+
+  // ── ٥.ج فشل الدمج يتراجع كاملاً ──────────────────────────────────────
+  // الفشل يُصنَع بجدول خارجي يحمل مفتاحاً إلى المريض المصدر، فيسقط
+  // `DELETE FROM patients` في آخر المعاملة — بعد أن تكون خطوة الأحداث قد
+  // نُفِّذت. مصنوع هنا لا مستعار من علّة قائمة، فيبقى حتمياً.
+  console.log("\n── فشل الدمج يتراجع كاملاً ──");
+  {
+    const s2 = await mkPatient("مصدر يفشل");
+    const t2 = await mkPatient("هدف يفشل");
+    await db.transaction((tx) => recordPatientEvent(tx, {
+      patientId: s2, eventType: PATIENT_EVENT_TYPES.VISIT_RECORDED, dedupeKey: eventDedupeKey("rollback", 1),
+    }));
+    await pool.query(`CREATE TABLE IF NOT EXISTS _merge_block_test (id serial primary key, patient_id integer references patients(id))`);
+    await pool.query(`INSERT INTO _merge_block_test (patient_id) VALUES ($1)`, [s2]);
+
+    let mergeFailed = false;
+    try { await storage.mergePatients(s2, t2); } catch { mergeFailed = true; }
+    check(mergeFailed, "الدمج فشل كما هو مصمَّم للاختبار");
+
+    const stillOnSource = await db.select({ n: sql<number>`count(*)::int` }).from(patientEvents).where(eq(patientEvents.patientId, s2));
+    eq_("والحدث بقي على المصدر — لا نقل جزئي", stillOnSource[0].n, 1);
+    const onTarget = await db.select({ n: sql<number>`count(*)::int` }).from(patientEvents).where(eq(patientEvents.patientId, t2));
+    eq_("ولا شيء وصل الهدف", onTarget[0].n, 0);
+    const srcAlive = await db.select({ n: sql<number>`count(*)::int` }).from(patients).where(eq(patients.id, s2));
+    eq_("وصفّ المريض المصدر ما زال قائماً", srcAlive[0].n, 1);
+
+    let sealedAfterFailure = false;
+    try { await pool.query(`UPDATE patient_events SET actor_name = 'x' WHERE patient_id = $1`, [s2]); }
+    catch { sealedAfterFailure = true; }
+    check(sealedAfterFailure, "والختم سليم بعد الفشل");
+
+    await pool.query(`DROP TABLE IF EXISTS _merge_block_test`);
+  }
 
   // ── ٦. حذف مريض له أحداث ─────────────────────────────────────────────
   console.log("\n── حذف مريض له أحداث ──");

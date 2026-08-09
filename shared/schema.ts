@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -163,6 +163,10 @@ export const patientEvents = pgTable("patient_events", {
   uniqueIndex("uq_patient_events_dedupe")
     .on(t.patientId, t.dedupeKey)
     .where(sql`dedupe_key IS NOT NULL`),
+  // آخر خطّ دفاع عن الوجهة، مطابق حرفياً لما في migration 044. السياسة
+  // تُفرَض في `resolveVisibility` قبل كل كتابة؛ هذا يمنع قيمةً ثالثة من
+  // التسلّل عبر كتابة مباشرة أو ترحيل لاحق.
+  check("patient_events_visibility_check", sql`${t.visibility} IN ('internal', 'patient')`),
 ]);
 
 export type PatientEvent = typeof patientEvents.$inferSelect;

@@ -19,6 +19,7 @@
     "test:phone": "tsx server/phone.test.ts",
     "test:phone-concurrency": "tsx server/migrations/backfill_phone_concurrency.test.ts",
     "test:events-purity": "tsx server/events/purity.test.ts",
+    "test:events-single-writer": "tsx server/events/single_writer.test.ts",
     "test:patient-events": "tsx server/events/patient_events.test.ts"
   },
   "dependencies": {
