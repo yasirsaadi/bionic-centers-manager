@@ -25,7 +25,15 @@ export const users = pgTable("users", {
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  // رقم الاتصال الأساسي — بالمريض أو بالمسؤول عنه (طفل برقم أبيه مثلاً).
+  // `phone` هو ما كتبه الموظف حرفياً ولا يُمسّ؛ الأعمدة الثلاثة تحته
+  // مشتقّة منه عبر `shared/phone.ts` (migration 043). عمداً nullable على
+  // مستوى القاعدة: آلاف الصفوف القديمة بلا رقم، والإلزام يُفرض في طبقة
+  // الـAPI للمرضى الجدد وحدهم.
   phone: text("phone"),
+  phoneE164: text("phone_e164"),       // +9647701234567 — مفتاح المطابقة وكشف التكرار
+  phoneCountry: text("phone_country"), // IQ | TR | ISO أخرى | INTL
+  phoneStatus: text("phone_status"),   // ok | needs_review
   address: text("address"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
   // كيف عرف «الشخص الآخر» بالمركز — يُملأ فقط حين تكون الجهة «من شخص آخر».

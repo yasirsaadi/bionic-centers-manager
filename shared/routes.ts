@@ -1,5 +1,27 @@
 import { z } from 'zod';
 import { insertPatientSchema, insertPaymentSchema, insertDocumentSchema, insertVisitSchema, insertBranchSchema, patients, payments, documents, visits, branches } from './schema';
+import { normalizePhone, DEFAULT_PHONE_COUNTRY } from './phone';
+
+// A valid contact number is required to OPEN a new patient file — and only
+// there. It is deliberately NOT added to `insertPatientSchema` itself: that
+// schema is also the source of `update.input` below (via `.partial()`), and
+// `storage.updatePatient` is called from ~8 places with tiny patches that
+// carry no phone at all (visit cost, physio plan, تخصيص, …). Requiring the
+// field on the shared schema would reject every one of them.
+const patientCreateSchema = insertPatientSchema.superRefine((value, ctx) => {
+  const v = value as { phone?: unknown; phoneCountry?: unknown };
+  const result = normalizePhone(
+    typeof v.phone === 'string' ? v.phone : null,
+    typeof v.phoneCountry === 'string' && v.phoneCountry ? v.phoneCountry : DEFAULT_PHONE_COUNTRY,
+  );
+  if (!result.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['phone'],
+      message: result.reason ?? 'رقم اتصال صالح مطلوب',
+    });
+  }
+});
 
 export const errorSchemas = {
   validation: z.object({
@@ -52,7 +74,7 @@ export const api = {
     create: {
       method: 'POST' as const,
       path: '/api/patients',
-      input: insertPatientSchema,
+      input: patientCreateSchema,
       responses: {
         201: z.custom<typeof patients.$inferSelect>(),
         400: errorSchemas.validation,
@@ -61,6 +83,7 @@ export const api = {
     update: {
       method: 'PUT' as const,
       path: '/api/patients/:id',
+      // Unchanged on purpose — see the comment on `patientCreateSchema`.
       input: insertPatientSchema.partial(),
       responses: {
         200: z.custom<typeof patients.$inferSelect>(),

@@ -34,6 +34,7 @@ import {
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -715,9 +716,20 @@ export class DatabaseStorage implements IStorage {
 
   async createPatient(insertPatient: InsertPatient): Promise<Patient> {
     const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
-    
+
     const valuesToInsert: any = { ...patientData };
-    
+
+    // نقطة الخنق الوحيدة لتطبيع رقم الاتصال عند الإنشاء. الأعمدة الثلاثة
+    // المشتقّة تُكتب من الدالّة دائماً — فقيمة يرسلها العميل لأيٍّ منها
+    // تُستبدَل هنا ولا تصل القاعدة. `phone` يُحفظ كما كُتب بعد قصّ الأطراف.
+    {
+      const n = normalizePhone(valuesToInsert.phone, valuesToInsert.phoneCountry || DEFAULT_PHONE_COUNTRY);
+      valuesToInsert.phone = n.raw || null;
+      valuesToInsert.phoneE164 = n.e164;
+      valuesToInsert.phoneCountry = n.country;
+      valuesToInsert.phoneStatus = n.status;
+    }
+
     if (registrationDate) {
       const baghdadOffset = 3 * 60 * 60 * 1000;
       const nowBaghdad = new Date(Date.now() + baghdadOffset);
@@ -761,11 +773,46 @@ export class DatabaseStorage implements IStorage {
     const [before] = wantsCost
       ? await db.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
       : [undefined as any];
+
+    // Phone: same choke point as the cost ledger. The three derived columns
+    // are NEVER writable by a caller — they are stripped unconditionally and
+    // re-derived only when `phone` itself is part of the patch. Without the
+    // strip, a body carrying `phoneStatus: "ok"` with no `phone` would mark a
+    // garbage number as clean.
+    const patch: any = { ...updates };
+    delete patch.phoneE164;
+    delete patch.phoneCountry;
+    delete patch.phoneStatus;
+    if ((updates as any).phone !== undefined) {
+      // The stored country is the normalization hint, so re-typing a Turkish
+      // number on a Turkish file still resolves as Turkish.
+      const [existing] = await db
+        .select({ phoneCountry: patients.phoneCountry })
+        .from(patients)
+        .where(eq(patients.id, id));
+      const hint = (updates as any).phoneCountry || existing?.phoneCountry || DEFAULT_PHONE_COUNTRY;
+      const n = normalizePhone((updates as any).phone, hint);
+      patch.phone = n.raw || null;
+      patch.phoneE164 = n.e164;
+      patch.phoneCountry = n.country;
+      patch.phoneStatus = n.status;
+    }
+
+    // Stripping the derived columns can empty an otherwise-valid patch (a body
+    // carrying ONLY `phoneStatus`, for instance). Drizzle throws "No values to
+    // set" on an empty .set(), which would surface as a 500 on a request that
+    // asks for nothing — so answer it with the current row instead. Found by
+    // the live Postgres run, not by types.
+    if (Object.keys(patch).length === 0) {
+      const [current] = await db.select().from(patients).where(eq(patients.id, id));
+      return current;
+    }
+
     const [updated] = await db.update(patients)
       // Cast: drizzle-zod widens the jsonb columns (physioPlan) into a shape
       // Drizzle's own .set() type doesn't accept back. The values are validated
       // by the callers that build them, not by this assignment.
-      .set(updates as any)
+      .set(patch as any)
       .where(eq(patients.id, id))
       .returning();
     if (updated && wantsCost && before) {
@@ -1291,6 +1338,21 @@ export class DatabaseStorage implements IStorage {
       if (preserved.length > 0) {
         const stamp = `— من الملف المدموج #${sourceId}: ${preserved.join("، ")}`;
         patch.generalNotes = target.generalNotes ? `${target.generalNotes}\n${stamp}` : stamp;
+      }
+      // The derived phone columns are NOT in `fillable` on purpose: copying
+      // them field-by-field could leave the target carrying its OWN raw phone
+      // next to the SOURCE's normalized one — a silently wrong pairing. They
+      // are re-derived from whatever `phone` the merge settled on instead, so
+      // the four columns always describe the same number.
+      // (Merge precedence itself is unchanged: a target that already has a
+      // phone keeps it, and the source's different number is still preserved
+      // into `generalNotes` by the loop above.)
+      if (patch.phone !== undefined) {
+        const n = normalizePhone(patch.phone, source.phoneCountry || target.phoneCountry || DEFAULT_PHONE_COUNTRY);
+        patch.phone = n.raw || null;
+        patch.phoneE164 = n.e164;
+        patch.phoneCountry = n.country;
+        patch.phoneStatus = n.status;
       }
       const [patient] = await tx.update(patients)
         .set(patch)

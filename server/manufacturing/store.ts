@@ -14,6 +14,7 @@ import {
   type InsertPatient, type Patient, type ProstheticWorkOrder,
 } from "@shared/schema";
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
+import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -140,6 +141,17 @@ export async function createPatientWithWorkOrder(
   const values: any = { ...patientData };
   const createdAt = resolveCreatedAt(registrationDate);
   if (createdAt) values.createdAt = createdAt;
+  // This is the SECOND path that inserts a patient row (storage.createPatient
+  // is the first). No live caller reaches it today, but leaving it un-normalized
+  // would mean the moment one does, it writes a patient whose phone_e164 is
+  // silently absent — invisible to duplicate detection and to the review list.
+  {
+    const n = normalizePhone(values.phone, values.phoneCountry || DEFAULT_PHONE_COUNTRY);
+    values.phone = n.raw || null;
+    values.phoneE164 = n.e164;
+    values.phoneCountry = n.country;
+    values.phoneStatus = n.status;
+  }
 
   return await db.transaction(async (tx) => {
     const [patient] = await tx.insert(patients).values(values).returning();

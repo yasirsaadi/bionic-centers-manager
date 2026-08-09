@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
+import { normalizePhone } from "@shared/phone";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -52,6 +53,18 @@ const injuryAreaOptions = [
 
 const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
+  // أخفّ من نموذج الإنشاء عمداً: مريض قديم قد لا يحمل رقماً إطلاقاً ويجب
+  // أن يبقى ملفه قابلاً للتعديل. فالمكتوب يجب أن يكون صحيحاً، والفراغ
+  // مسموح. ومنع *حذف* رقم قائم قرار يحتاج معرفة الصفّ المحفوظ، فيفرضه
+  // الخادم في PUT /api/patients/:id.
+  phone: z.string().nullish().superRefine((value, ctx) => {
+    const typed = String(value ?? "").trim();
+    if (!typed) return;
+    const result = normalizePhone(typed);
+    if (!result.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.reason ?? "رقم اتصال غير صالح" });
+    }
+  }),
   totalCost: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
   referralSource: z.string().optional().default(""),
@@ -406,8 +419,9 @@ export default function EditPatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.phone}</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.phonePlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-slate-50" dir="ltr" inputMode="tel" placeholder={t.patientForm.phonePlaceholder} />
                     </FormControl>
+                    <p className="text-xs text-muted-foreground">{t.patientForm.phoneHint}</p>
                     <FormMessage />
                   </FormItem>
                 )}
