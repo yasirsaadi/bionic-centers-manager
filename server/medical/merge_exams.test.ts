@@ -218,6 +218,48 @@ async function main() {
     await pool.query(`DROP TABLE IF EXISTS _merge_exam_block`);
   }
 
+  // ── ٨. صفّ غير متسق لا يُمسّ، والدمج يفشل بأمان ────────────────────
+  // معاينة تحمل `case_id` لحالة المريض المصدر بينما `patient_id` فيها
+  // لمريض ثالث. لا قيد في القاعدة يمنع هذا، وبيانات تاريخية قد تحمله.
+  //
+  // القاعدة: إعادة الربط تشترط `patient_id` للمصدر أيضاً، فلا تُحرَّك
+  // معاينة إنسان آخر. والصفّ الباقي يشير إلى حالة على وشك الحذف، فيسقط
+  // الدمج على المفتاح الأجنبي — **فشل ظاهر يكشف الخلل، لا تعديل صامت
+  // يخفيه**.
+  console.log("\n── صفّ غير متسق: لا يُمسّ، والدمج يفشل بأمان ──");
+  {
+    const s4 = await mkPatient("مصدر بصفّ غريب");
+    const t4 = await mkPatient("هدف رابع");
+    const stranger = await mkPatient("مريض ثالث لا علاقة له");
+    const c4 = await mkCase(s4, "physiotherapy");
+    await mkCase(t4, "physiotherapy");
+
+    // معاينة سليمة للمصدر — يجب أن تتراجع مع المعاملة لا أن تبقى منقولة.
+    const ownExam = await mkExam(s4, c4, "physiotherapy");
+    // والصفّ غير المتسق: حالة المصدر، ومريض آخر.
+    const crossed = await mkExam(stranger, c4, "physiotherapy");
+    eq_("الصفّ غير المتسق أُنشئ: حالة المصدر + مريض ثالث",
+      [crossed.caseId, crossed.patientId], [c4, stranger]);
+
+    let mergeErr = "";
+    try { await storage.mergePatients(s4, t4); } catch (e: any) { mergeErr = String(e?.message ?? e); }
+    check(mergeErr !== "", "الدمج فشل بدل أن يمسّ بيانات مريض آخر", "نجح — وهذا خطأ");
+    check(/foreign key|medical_exams/i.test(mergeErr), "  والفشل على المفتاح الأجنبي كما هو مقصود", mergeErr);
+
+    const [crossedAfter] = await db.select().from(medicalExams).where(eq(medicalExams.id, crossed.id));
+    eq_("معاينة المريض الثالث لم تُمسّ: patient_id", crossedAfter.patientId, stranger);
+    eq_("ولا case_id", crossedAfter.caseId, c4);
+    eq_("ولا تشخيصها", crossedAfter.diagnosis, before.diagnosis);
+
+    // التراجع الكامل: حتى معاينة المصدر السليمة عادت كما كانت.
+    const [ownAfter] = await db.select().from(medicalExams).where(eq(medicalExams.id, ownExam.id));
+    eq_("ومعاينة المصدر السليمة تراجعت أيضاً", [ownAfter.patientId, ownAfter.caseId], [s4, c4]);
+    const s4Alive = await db.select({ n: sql<number>`count(*)::int` }).from(patients).where(eq(patients.id, s4));
+    eq_("والملف المصدر لم يُحذف", s4Alive[0].n, 1);
+    const c4Alive = await db.select({ n: sql<number>`count(*)::int` }).from(patientCases).where(eq(patientCases.id, c4));
+    eq_("وحالته لم تُحذف", c4Alive[0].n, 1);
+  }
+
   await cleanup();
   await pool.query(`DELETE FROM system_users WHERE id = $1`, [DOCTOR_ID]);
   console.log(failures === 0 ? "\n✅ all merge-exams cases pass" : `\n❌ ${failures} case(s) failed`);

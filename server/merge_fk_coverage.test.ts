@@ -1,0 +1,135 @@
+// سلك تعثّر (tripwire) على اكتمال قائمة الدمج.
+// يحتاج قاعدة محلية: `npm run test:merge-fk-coverage`.
+//
+// ── لماذا يوجد ─────────────────────────────────────────────────────────────
+// وقعت العلّة نفسها مرّتين: جدول جديد يحمل مفتاحاً أجنبياً إلى `patients`
+// أو `patient_cases`، و`mergePatients` لا يعلم به — فيسقط الدمج على
+// المفتاح، أو (أسوأ) يترك صفوفاً معلّقة. آخرها `medical_exams` التي جعلت
+// دمج أي مريض سبق أن فُحِص يفشل كلّياً.
+//
+// المراجعة البشرية لا تمسك هذا: كاتب الترحيل يفكّر في جدوله هو، لا في
+// دالّة دمج في ملفّ آخر. فالحارس هنا يقرأ **فهرس Postgres نفسه** ويقارن كل
+// مفتاح موجود فعلاً بقائمة القرارات المعلَنة أدناه.
+//
+// ── ما لا يفعله عمداً ─────────────────────────────────────────────────────
+// لا ينفّذ دمجاً لكل جدول ولا يتحقّق من صحّة القرار. هو سؤال واحد:
+// «هل اتُّخذ قرار صريح بشأن هذا المفتاح؟» فإجابته «لا» تعني أن أحدهم أضاف
+// جدولاً ونسي الدمج. الصواب يبقى مسؤولية المراجع؛ هذا يضمن ألّا يمرّ
+// السؤال بلا طرح.
+//
+// ── وهو ثنائي الاتجاه ─────────────────────────────────────────────────────
+// مفتاح في القاعدة بلا قرار ⇒ فشل (جدول جديد نُسي).
+// قرار في القائمة بلا مفتاح في القاعدة ⇒ فشل أيضاً (قائمة متعفّنة تعطي
+// طمأنينة كاذبة عن جدول لم يعد موجوداً).
+
+import { pool } from "./db";
+
+// Safety: read-only, but keep the same guard as the rest of the DB tests.
+const DBURL = process.env.DATABASE_URL || "";
+if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
+  console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database (must contain 'test' or a local host).");
+  process.exit(1);
+}
+
+/**
+ * القرار المتَّخذ في `storage.mergePatients` لكل مفتاح أجنبي.
+ * المفتاح: "الجدول.العمود" · القيمة: ما يفعله الدمج به.
+ *
+ * إضافة جدول جديد هنا **بلا** تعديل `mergePatients` غشٌّ للحارس — لكن
+ * كتابة السطر تُجبر الكاتب على النظر في الدالّة، وهو كل المطلوب.
+ */
+const MERGE_DECISIONS: Record<string, string> = {
+  // ── تشير إلى patients.id ───────────────────────────────────────────────
+  "visits.patient_id": "repoint إلى الملف الهدف",
+  "payments.patient_id": "repoint إلى الملف الهدف",
+  "documents.patient_id": "repoint إلى الملف الهدف",
+  "invoices.patient_id": "repoint إلى الملف الهدف",
+  "installment_plans.patient_id": "repoint إلى الملف الهدف",
+  "follow_up_calls.patient_id": "repoint إلى الملف الهدف",
+  "prosthetic_work_orders.patient_id": "repoint إلى الملف الهدف",
+  "treatment_plans.patient_id": "repoint إلى الملف الهدف",
+  "survey_responses.patient_id": "repoint إلى الملف الهدف",
+  "journal_lines.patient_id": "repoint إلى الملف الهدف (تاريخ محاسبي)",
+  "cost_entries.patient_id": "repoint — دفتر الكلف المؤرَّخ يتبع المريض",
+  "patient_events.patient_id": "repoint داخل باب الختم، مع إفراغ dedupe_key المتصادم",
+  "medical_exams.patient_id": "repoint داخل باب الختم — إعادة ربط إدارية بلا مساس سريري",
+  "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
+
+  // ── تشير إلى patient_cases.id ─────────────────────────────────────────
+  "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",
+  "payments.case_id": "remap من حالة المصدر إلى حالة الهدف",
+  "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
+};
+
+const PARENTS = ["patients", "patient_cases"];
+
+let failures = 0;
+function fail(msg: string) { failures++; console.log(`❌ FAIL  ${msg}`); }
+function pass(msg: string) { console.log(`✅  ${msg}`); }
+
+async function main() {
+  const { rows } = await pool.query<{ parent: string; child: string; column: string; constraint: string }>(
+    `SELECT tgt.relname AS parent, src.relname AS child, a.attname AS column, c.conname AS constraint
+       FROM pg_constraint c
+       JOIN pg_class src ON src.oid = c.conrelid
+       JOIN pg_class tgt ON tgt.oid = c.confrelid
+       JOIN unnest(c.conkey) AS k(attnum) ON true
+       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+      WHERE c.contype = 'f' AND tgt.relname = ANY($1)
+      ORDER BY tgt.relname, src.relname, a.attname`,
+    [PARENTS],
+  );
+
+  if (rows.length === 0) {
+    console.error("❌ لم يُعثر على أي مفتاح أجنبي — هل شُغّلت ترحيلات المشروع على قاعدة الاختبار؟");
+    await pool.end();
+    process.exit(1);
+  }
+  pass(`قُرئ فهرس Postgres: ${rows.length} مفتاحاً أجنبياً إلى ${PARENTS.join(" و ")}`);
+
+  console.log("\n── كل مفتاح في القاعدة له قرار معلَن ──");
+  const found = new Set<string>();
+  for (const r of rows) {
+    const key = `${r.child}.${r.column}`;
+    found.add(key);
+    if (MERGE_DECISIONS[key]) {
+      pass(`${r.parent} ← ${key} — ${MERGE_DECISIONS[key]}`);
+    } else {
+      fail(
+        `${r.parent} ← ${key} بلا قرار في الدمج.\n` +
+        `      جدول جديد يشير إلى ${r.parent} أُضيف بلا تحديث storage.mergePatients.\n` +
+        `      اتّخذ قراراً صريحاً (repoint / حذف / تجاهل) ثم أضف السطر إلى\n` +
+        `      MERGE_DECISIONS في server/merge_fk_coverage.test.ts.\n` +
+        `      القيد: ${r.constraint}`,
+      );
+    }
+  }
+
+  console.log("\n── ولا قرار متعفّن لمفتاح لم يعد موجوداً ──");
+  const stale = Object.keys(MERGE_DECISIONS).filter((k) => !found.has(k));
+  if (stale.length === 0) {
+    pass("كل القرارات المعلَنة تقابل مفاتيح قائمة");
+  } else {
+    fail(
+      `قرارات لمفاتيح غير موجودة: ${stale.join("، ")}\n` +
+      `      إمّا حُذف الجدول أو أُزيل مفتاحه — احذف السطر من MERGE_DECISIONS\n` +
+      `      كي لا تعطي القائمة طمأنينة كاذبة.`,
+    );
+  }
+
+  // تذكير صريح: هذا حارس تغيّر مخطّط، لا اختبار صحّة.
+  console.log(
+    "\nℹ  هذا الحارس يسأل «هل اتُّخذ قرار؟» لا «هل القرار صحيح؟».\n" +
+    "   صحّة السلوك يغطّيها test:merge-exams و test:patient-events.",
+  );
+
+  console.log(failures === 0 ? "\n✅ all merge-fk-coverage cases pass" : `\n❌ ${failures} case(s) failed`);
+  await pool.end();
+  process.exit(failures === 0 ? 0 : 1);
+}
+
+main().catch(async (e) => {
+  console.error(e);
+  try { await pool.end(); } catch { /* ignore */ }
+  process.exit(1);
+});

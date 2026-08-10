@@ -21,7 +21,8 @@
     "test:events-purity": "tsx server/events/purity.test.ts",
     "test:events-single-writer": "tsx server/events/single_writer.test.ts",
     "test:patient-events": "tsx server/events/patient_events.test.ts",
-    "test:merge-exams": "tsx server/medical/merge_exams.test.ts"
+    "test:merge-exams": "tsx server/medical/merge_exams.test.ts",
+    "test:merge-fk-coverage": "tsx server/merge_fk_coverage.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

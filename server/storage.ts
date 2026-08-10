@@ -1297,9 +1297,21 @@ export class DatabaseStorage implements IStorage {
       if (caseRemap.length > 0) {
         await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
         for (const { from, to } of caseRemap) {
-          // Source case ids belong to the source patient alone, so this can
-          // never reach another patient's exam.
-          await tx.update(medicalExams).set({ caseId: to }).where(eq(medicalExams.caseId, from));
+          // BOTH conditions, not just the case id. A source case id *should*
+          // only ever appear on the source patient's exams — but "should" is
+          // not a constraint, and a historically inconsistent row (an exam
+          // carrying another patient's id next to this case) would otherwise
+          // be silently re-pointed onto the target, moving a third person's
+          // clinical record.
+          //
+          // Refusing to touch it is the safe half; the loud half follows on
+          // its own: the source case rows are deleted a few lines below, and
+          // that inconsistent exam still references one — so the FK aborts the
+          // merge and the whole transaction rolls back. A visible failure that
+          // surfaces the bad data beats a quiet edit that hides it.
+          await tx.update(medicalExams)
+            .set({ caseId: to })
+            .where(and(eq(medicalExams.caseId, from), eq(medicalExams.patientId, sourceId)));
         }
         await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
       }
