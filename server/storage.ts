@@ -1257,6 +1257,10 @@ export class DatabaseStorage implements IStorage {
       // "violates foreign key constraint patient_cases_patient_id_fkey".
       const sourceCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, sourceId));
       const targetCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, targetId));
+      // Which source case became which target case. Collected in the loop and
+      // applied to the sealed exam table in ONE guarded pass afterwards, so the
+      // door is opened once instead of on every iteration.
+      const caseRemap: { from: number; to: number }[] = [];
       for (const sc of sourceCases) {
         let tc = targetCases.find((c) => c.caseType === sc.caseType);
         if (!tc) {
@@ -1273,7 +1277,33 @@ export class DatabaseStorage implements IStorage {
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
+        caseRemap.push({ from: sc.id, to: tc.id });
       }
+
+      // Medical exams are the THIRD table pointing at patient_cases.id — the
+      // other two (visits, payments) are re-pointed just above, and this one
+      // was missed, so merging a patient who had ever been examined failed on
+      // the FK when the source's case rows were deleted below.
+      //
+      // This is an ADMINISTRATIVE re-point, not a clinical edit: one human had
+      // two files, and the exam must follow them. Not a single clinical value
+      // is touched — diagnosis, prescription, doctor, signature, version and
+      // notes all stay byte-identical, and NO revision is written because the
+      // doctor's words did not change. `reviseExam` is deliberately not used.
+      //
+      // The table is sealed, so the audited door is opened around these two
+      // statements ONLY and shut immediately after — the rest of the merge
+      // stays under the seal.
+      if (caseRemap.length > 0) {
+        await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
+        for (const { from, to } of caseRemap) {
+          // Source case ids belong to the source patient alone, so this can
+          // never reach another patient's exam.
+          await tx.update(medicalExams).set({ caseId: to }).where(eq(medicalExams.caseId, from));
+        }
+        await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
+      }
+
       if (sourceCases.length > 0) {
         await tx.delete(patientCases).where(eq(patientCases.patientId, sourceId));
       }
@@ -1299,6 +1329,17 @@ export class DatabaseStorage implements IStorage {
       // Ledger entries follow their patient: dated history is preserved, and
       // the summed total_cost below stays equal to the summed entries.
       await repoint("costEntries", costEntries, costEntries.patientId);
+
+      // The clinical record follows the human. Sealed table, so the same
+      // narrow door — opened around this one statement and shut again.
+      // Covers exams whose `case_id` is NULL too: they simply change owner,
+      // and no case link is invented for them.
+      // `medical_exam_addenda` and `medical_exam_revisions` are keyed on
+      // `exam_id`, which does not change, so they stay attached with nothing
+      // copied or recreated.
+      await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
+      await repoint("medicalExams", medicalExams, medicalExams.patientId);
+      await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
 
       // ── Event log (migration 044) ────────────────────────────────────────
       // Repointing patient_id alone is NOT enough, for two independent reasons.
