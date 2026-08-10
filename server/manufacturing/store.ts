@@ -33,6 +33,9 @@ export async function hasActiveOrder(patientId: number, serviceType: string): Pr
 }
 import {
   FIRST_STAGE, MAINTENANCE_DONE_STAGES, REWORK_TYPE, stagesForOrder,
+  currentStageEnteredAt, parseDeliveryDateNote,
+  deliveryDateSetNote, deliveryDateChangeNote,
+  type StageHistoryRow,
 } from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
@@ -417,24 +420,31 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
     reworkByOrder.set(r.workOrderId, (reworkByOrder.get(r.workOrderId) ?? 0) + Number(r.n));
   }
 
-  // When each order entered its current stage — latest history row whose
-  // to_stage equals the order's current stage. One query for all orders.
+  // متى دخل كل أمر مرحلته الحالية. السجلّ يحمل الأكواد القديمة كما هي
+  // (الترحيل 045 لم يمسّه عمداً)، فالمقارنة الحرفية تفشل على كل أمر قديم —
+  // ولذلك يمرّ الحساب كلّه عبر `currentStageEnteredAt` المطبِّعة.
+  // ويلزمها `fromStage` لتميّز الدخولَ من الحركة داخل المرحلة نفسها.
   const hist = await db
-    .select({ workOrderId: WH.workOrderId, toStage: WH.toStage, createdAt: WH.createdAt })
+    .select({
+      workOrderId: WH.workOrderId, fromStage: WH.fromStage, toStage: WH.toStage,
+      createdAt: WH.createdAt,
+    })
     .from(WH)
     .where(inArray(WH.workOrderId, ids));
-  const enteredStageAt = new Map<string, Date>(); // key `${orderId}|${stage}`
+  const histByOrder = new Map<number, StageHistoryRow[]>();
   for (const h of hist) {
-    if (!h.toStage) continue;
-    const key = `${h.workOrderId}|${h.toStage}`;
-    const prev = enteredStageAt.get(key);
-    const ts = h.createdAt ? new Date(h.createdAt) : null;
-    if (ts && (!prev || ts > prev)) enteredStageAt.set(key, ts);
+    const list = histByOrder.get(h.workOrderId) ?? [];
+    list.push({ fromStage: h.fromStage, toStage: h.toStage, at: h.createdAt });
+    histByOrder.set(h.workOrderId, list);
   }
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
   return rows.map((r) => {
-    const stageEntered = enteredStageAt.get(`${r.id}|${r.currentStage}`) ?? r.startedAt ?? r.assignedAt;
+    const stageEntered =
+      currentStageEnteredAt(
+        { currentStage: r.currentStage, serviceType: r.serviceType, purpose: r.purpose },
+        histByOrder.get(r.id) ?? [],
+      ) ?? r.startedAt ?? r.assignedAt;
     const notFinished = r.status !== "completed" && r.status !== "cancelled";
     const isOverdue = !!r.expectedDeliveryDate && notFinished
       && String(r.expectedDeliveryDate) < today;
@@ -514,7 +524,19 @@ export async function getOrderDetail(id: number) {
   // عدّاد واحد: نوع إعادة العمل صار واحداً، والصفوف القديمة
   // (recast/resocket) تُحتسب معه فلا يضيع تاريخها.
   const reworkCount = rework.length;
-  const branchNameVal = (patient ? { branchName: order.branchName ?? null } : {});
+
+  // سجلّ مواعيد التسليم — مشتقّ من `prosthetic_work_history` لا من جدول
+  // جديد. الموعد الحالي وحده لا يكفي: مَن يقرأ الأمر يحتاج أن يرى كم مرّة
+  // تحرّك الوعد ولماذا، وإلا صار التأخير بلا تفسير.
+  const dateChanges = timeline
+    .filter((h) => h.actionType === "date_change")
+    .map((h) => ({
+      id: h.id,
+      ...parseDeliveryDateNote(h.notes),
+      byName: h.performedByName ?? null,
+      at: h.createdAt ? new Date(h.createdAt).toISOString() : null,
+    }));
+
   return {
     order: {
       ...order,
@@ -527,6 +549,7 @@ export async function getOrderDetail(id: number) {
     patient: patient ? { ...patient, branchName: order.branchName ?? null } : null,
     timeline,
     rework,
+    dateChanges,
   };
 }
 
@@ -604,6 +627,21 @@ export async function updateStage(params: {
       notes: params.notes ?? null,
       performedBy: params.performedBy,
     });
+    // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
+    // نافذة الموعد المستقلّة. فلولا هذا السطر لَما ظهر أشيعُ التزامٍ بموعد
+    // في سجلّ المواعيد إطلاقاً، وبدا الأمر كأنّ موعده وُلد من العدم.
+    // والشرط الثاني يحترم سباق COALESCE: إن سبقنا آخرُ فالموعد موعدُه لا
+    // موعدنا، ولا يُسجَّل باسمنا.
+    if (params.deliveryDate && !order.expectedDeliveryDate
+        && String(updated.expectedDeliveryDate) === params.deliveryDate) {
+      await tx.insert(WH).values({
+        workOrderId: order.id,
+        actionType: "date_change",
+        fromStage: toStage, toStage,
+        notes: deliveryDateSetNote(params.deliveryDate),
+        performedBy: params.performedBy,
+      });
+    }
     return updated;
   });
 }
@@ -618,7 +656,13 @@ export async function updateDeliveryDate(params: {
   reason?: string | null;
 }): Promise<ProstheticWorkOrder> {
   const { order, expectedDeliveryDate } = params;
-  const previous = order.expectedDeliveryDate ? String(order.expectedDeliveryDate) : "—";
+  const previous = order.expectedDeliveryDate ? String(order.expectedDeliveryDate) : null;
+  // أول تحديد ليس «تغييراً» فلا يُكتب بصيغته: لا موعد سابق له ولا سبب.
+  // والتغيير يحمل الموعدين والسبب داخل نصّه، فالسطر يُقرأ وحده بلا مقارنة
+  // بسطرٍ آخر — وهذا ما يجعل الأثر دائماً لا مشتقّاً.
+  const notes = previous
+    ? deliveryDateChangeNote(previous, expectedDeliveryDate, params.reason ?? "")
+    : deliveryDateSetNote(expectedDeliveryDate);
   return await db.transaction(async (tx) => {
     const [updated] = await tx.update(WO)
       .set({ expectedDeliveryDate, updatedAt: new Date() })
@@ -626,9 +670,9 @@ export async function updateDeliveryDate(params: {
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "date_change",
+      // الموعد لا يحرّك المرحلة — والطرفان متساويان توثيقاً لذلك.
       fromStage: order.currentStage, toStage: order.currentStage,
-      notes: `تغيير موعد التسليم المتوقع من ${previous} إلى ${expectedDeliveryDate}`
-        + (params.reason ? ` — السبب: ${params.reason}` : ""),
+      notes,
       performedBy: params.performedBy,
     });
     return updated;

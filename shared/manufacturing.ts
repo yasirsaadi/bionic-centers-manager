@@ -399,3 +399,112 @@ export const PATIENT_FORBIDDEN_FIELDS = [
   "status", "holdReasonCode", "holdNote", "reasonCode", "reasonDetails",
   "reworkType", "expertName", "expertUserId", "finalResult", "finalNotes", "notes",
 ];
+
+// ══ ١١. قراءة السجلّ القديم بالمفردات الجديدة ════════════════════════════
+// الترحيل 045 حوّل `current_stage` وترك `prosthetic_work_history` كما هو
+// عمداً — وهذا صحيح، لكنه يعني أن السجلّ يتكلّم لغةً والعمودُ لغةً أخرى.
+// فكل حساب يقارن بينهما يجب أن يعبر هنا أولاً.
+
+/**
+ * يترجم مرحلةً مكتوبة في السجلّ إلى مفردات اليوم.
+ *
+ * الصيانة **لا تُترجَم**: مراحلها لم يمسّها الترحيل، و`new_assignment`
+ * عندها مرحلةٌ حيّة لا كودٌ قديم — وترجمتها إلى `order_received` تُفسد
+ * حسابها.
+ */
+export function normalizeHistoryStage(
+  serviceType: string,
+  purpose: string | null | undefined,
+  stage: string | null | undefined,
+): string | null {
+  if (!stage) return null;
+  if (purpose === "maintenance") return stage;
+  if ((BUILD_STAGES as readonly string[]).includes(stage)) return stage;
+  return mapLegacyStage(serviceType, stage) ?? stage;
+}
+
+export interface StageHistoryRow {
+  fromStage: string | null;
+  toStage: string | null;
+  at: Date | string | null;
+}
+
+/**
+ * متى **دخل** الأمر مرحلته الحالية؟
+ *
+ * لا يكفي «آخر سطر توجهته المرحلة الحالية»، لسببين اكتُشفا معاً:
+ *
+ * ١) **السجلّ القديم بلغته القديمة.** أمرٌ قديم يقرأ اليوم `manufacturing`
+ *    بينما سجلّه يقول `test_socket` و`alignment` — فلا تطابق حرفياً،
+ *    ويسقط الحساب إلى تاريخ بدء الأمر كلّه فيخرج «في المرحلة منذ ٩٠ يوماً».
+ *
+ * ٢) **تنقّلٌ داخل المرحلة الواحدة ليس دخولاً.** بعد التطبيع تصير
+ *    `mold → test_socket → first_fitting → socket_adjustment` هي
+ *    `mold → manufacturing → manufacturing → manufacturing`: دخولٌ واحد
+ *    عند أوّلها، والباقي حركةٌ **داخلها**. فلو عُدّت كلّها دخولاً لأظهر
+ *    العدّاد صفراً لأمرٍ يعمل منذ شهر.
+ *
+ * ولذلك: أحدث سطرٍ **تغيّرت فيه المرحلة فعلاً** إلى الحالية. وهذا وحده
+ * يعطي الرجوع الفنّي حقّه — `ready_for_fitting → manufacturing` تغيّرٌ
+ * حقيقي، فيبدأ العدّ من لحظة الرجوع لا من الدخول الأول.
+ *
+ * وسطرُ التوقّف (`fromStage === toStage`) لا يُعَدّ دخولاً بحكم القاعدة
+ * نفسها — والتوقّف لا يحرّك المرحلة، فلا يجوز أن يصفّر عدّادها.
+ */
+export function currentStageEnteredAt(
+  order: { currentStage: string; serviceType: string; purpose?: string | null },
+  history: StageHistoryRow[],
+): Date | null {
+  const current = normalizeHistoryStage(order.serviceType, order.purpose, order.currentStage);
+  if (!current) return null;
+  let latest: Date | null = null;
+  for (const h of history) {
+    const to = normalizeHistoryStage(order.serviceType, order.purpose, h.toStage);
+    if (to !== current) continue;
+    const from = normalizeHistoryStage(order.serviceType, order.purpose, h.fromStage);
+    if (from === current) continue; // حركة داخل المرحلة نفسها، لا دخول إليها
+    const at = h.at ? new Date(h.at) : null;
+    if (at && !Number.isNaN(at.getTime()) && (!latest || at > latest)) latest = at;
+  }
+  return latest;
+}
+
+// ══ ١٢. سجلّ موعد التسليم ════════════════════════════════════════════════
+// الموعد يُكتب في `prosthetic_work_history` بنوع `date_change` — لا جدول
+// جديد له. وهذه الدوالّ **تكتب النصّ وتقرؤه معاً**، فالصيغة عقدٌ واحد في
+// مكان واحد لا صدفةٌ يتفق عليها طرفان.
+
+/** نصّ أول تحديد للموعد — لا سبب له، فليس تغييراً لشيء. */
+export function deliveryDateSetNote(date: string): string {
+  return `تم تحديد موعد التسليم المتوقع: ${date}`;
+}
+
+/** نصّ تغيير موعدٍ قائم — السبب جزء منه لا ملحق به. */
+export function deliveryDateChangeNote(from: string, to: string, reason: string): string {
+  return `تم تغيير موعد التسليم المتوقع من: ${from} إلى: ${to} — السبب: ${reason}`;
+}
+
+export interface DeliveryDateChange {
+  previousDate: string | null;
+  newDate: string | null;
+  reason: string | null;
+}
+
+/**
+ * يستخرج الحقول من نصّ السطر. يقرأ **الصيغة القديمة أيضاً**
+ * («تغيير موعد التسليم المتوقع من X إلى Y — السبب: Z»، وفيها `—` مكان
+ * الموعد المعدوم) لأن سجلّات الإنتاج مكتوبة بها ولا تُعاد كتابتها أبداً.
+ *
+ * الاعتماد على شكل التاريخ نفسه لا على الكلمات: تاريخان ⇒ سابق ولاحق،
+ * وواحد ⇒ أول تحديد.
+ */
+export function parseDeliveryDateNote(note: string | null | undefined): DeliveryDateChange {
+  const text = note ?? "";
+  const dates = text.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
+  // `[\s\S]` لا العلَم `s`: هدف الترجمة هنا أقدم من es2018.
+  const reasonMatch = text.match(/السبب:\s*([\s\S]+)$/);
+  const reason = reasonMatch?.[1]?.trim() || null;
+  if (dates.length >= 2) return { previousDate: dates[0] ?? null, newDate: dates[1] ?? null, reason };
+  if (dates.length === 1) return { previousDate: null, newDate: dates[0] ?? null, reason };
+  return { previousDate: null, newDate: null, reason };
+}

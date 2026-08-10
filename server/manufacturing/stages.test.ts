@@ -13,6 +13,8 @@ import {
   SUPPORT_MAINTENANCE_STAGES, defaultNextStage, isAtOrBeyondMoldStage,
   isHoldStatus, isValidHoldReason, mapLegacyStage, nextStages,
   reworkReturnStages, stagesForOrder, toPatientStageView,
+  currentStageEnteredAt, normalizeHistoryStage, parseDeliveryDateNote,
+  deliveryDateSetNote, deliveryDateChangeNote,
 } from "@shared/manufacturing";
 
 let failures = 0;
@@ -200,6 +202,94 @@ console.log("\n── الحالة لا تدخل حساب التقدّم إطل�
   const a = toPatientStageView({ currentStage: "mold", serviceType: "prosthetic", purpose: "initial_build" });
   const b = toPatientStageView({ currentStage: "mold", serviceType: "prosthetic", purpose: "initial_build", status: "medical_hold" } as any);
   eq("متوقّف أو لا، النتيجة واحدة", a, b);
+}
+
+// ══ قراءة السجلّ القديم: متى دخل الأمر مرحلته الحالية؟ ═══════════════════
+console.log("\n── تطبيع مراحل السجلّ ──");
+eq("كود قديم يُترجَم", normalizeHistoryStage("prosthetic", "initial_build", "test_socket"), "manufacturing");
+eq("وكود جديد يبقى", normalizeHistoryStage("prosthetic", "initial_build", "manufacturing"), "manufacturing");
+eq("والفراغ فراغ", normalizeHistoryStage("prosthetic", "initial_build", null), null);
+eq("والمساند بخريطتها", normalizeHistoryStage("medical_support", "initial_build", "cast_if_needed"), "mold");
+// الصيانة لم يمسّها الترحيل، فـ new_assignment عندها مرحلة حيّة لا كود قديم.
+eq("والصيانة لا تُترجَم", normalizeHistoryStage("prosthetic", "maintenance", "new_assignment"), "new_assignment");
+
+console.log("\n── دخول المرحلة يُحسب بعد التطبيع ──");
+{
+  const order = { currentStage: "manufacturing", serviceType: "prosthetic", purpose: "initial_build" };
+  // سجلّ أمرٍ قديم: أربع مراحل قديمة ثلاثٌ منها «تصنيع» بعد التطبيع.
+  const hist = [
+    { fromStage: null, toStage: "new_assignment", at: "2026-01-01T08:00:00Z" },
+    { fromStage: "new_assignment", toStage: "assessment_measurements", at: "2026-01-02T08:00:00Z" },
+    { fromStage: "assessment_measurements", toStage: "cast_taken", at: "2026-01-03T08:00:00Z" },
+    { fromStage: "cast_taken", toStage: "test_socket", at: "2026-01-04T08:00:00Z" },
+    { fromStage: "test_socket", toStage: "first_fitting", at: "2026-01-05T08:00:00Z" },
+    { fromStage: "first_fitting", toStage: "socket_adjustment", at: "2026-01-06T08:00:00Z" },
+  ];
+  eq("الدخول هو أوّل انتقال من القالب إلى التصنيع",
+    currentStageEnteredAt(order, hist)?.toISOString(), "2026-01-04T08:00:00.000Z");
+
+  // ولو قورنت الأسماء حرفياً لَما طابق شيء ولسقط الحساب — هذه هي العلّة.
+  const literal = hist.filter((h) => h.toStage === order.currentStage);
+  eq("ولا سطر يطابق حرفياً (العلّة قبل الإصلاح)", literal.length, 0);
+}
+
+console.log("\n── الرجوع الفنّي يعيد العدّ من لحظته ──");
+{
+  const order = { currentStage: "manufacturing", serviceType: "prosthetic", purpose: "initial_build" };
+  const hist = [
+    { fromStage: "cast_taken", toStage: "test_socket", at: "2026-01-04T08:00:00Z" },
+    { fromStage: "test_socket", toStage: "ready_for_delivery", at: "2026-01-10T08:00:00Z" },
+    // إعادة عمل فنّي: رجوع حقيقي إلى التصنيع.
+    { fromStage: "ready_for_fitting", toStage: "manufacturing", at: "2026-01-20T08:00:00Z" },
+  ];
+  eq("العدّ من الرجوع الأخير لا من الدخول الأول",
+    currentStageEnteredAt(order, hist)?.toISOString(), "2026-01-20T08:00:00.000Z");
+}
+
+console.log("\n── التوقّف لا يصفّر عدّاد المرحلة ──");
+{
+  const order = { currentStage: "mold", serviceType: "prosthetic", purpose: "initial_build" };
+  const hist = [
+    { fromStage: "measurements", toStage: "mold", at: "2026-02-01T08:00:00Z" },
+    // سطر توقّف: الطرفان متساويان، فليس دخولاً.
+    { fromStage: "mold", toStage: "mold", at: "2026-02-09T08:00:00Z" },
+  ];
+  eq("يبقى الدخول هو الدخول", currentStageEnteredAt(order, hist)?.toISOString(), "2026-02-01T08:00:00.000Z");
+}
+
+console.log("\n── الصيانة تُحسب بمراحلها هي ──");
+{
+  const order = { currentStage: "new_assignment", serviceType: "prosthetic", purpose: "maintenance" };
+  const hist = [{ fromStage: null, toStage: "new_assignment", at: "2026-03-01T08:00:00Z" }];
+  eq("ولا تُترجَم إلى order_received", currentStageEnteredAt(order, hist)?.toISOString(), "2026-03-01T08:00:00.000Z");
+}
+
+console.log("\n── سجلّ فارغ أو بلا دخول ──");
+{
+  const order = { currentStage: "manufacturing", serviceType: "prosthetic", purpose: "initial_build" };
+  eq("سجلّ فارغ ⇒ null", currentStageEnteredAt(order, []), null);
+  eq("سجلّ بلا دخول للمرحلة ⇒ null",
+    currentStageEnteredAt(order, [{ fromStage: null, toStage: "new_assignment", at: "2026-01-01T08:00:00Z" }]), null);
+}
+
+// ══ نصّ موعد التسليم: يُكتب ويُقرأ بعقد واحد ═════════════════════════════
+console.log("\n── سجلّ موعد التسليم ──");
+{
+  const first = deliveryDateSetNote("2026-08-20");
+  eq("أول تحديد بلا موعد سابق", parseDeliveryDateNote(first),
+    { previousDate: null, newDate: "2026-08-20", reason: null });
+
+  const changed = deliveryDateChangeNote("2026-08-20", "2026-08-25", "تأخر وصول المكونات من الشركة المصنعة");
+  eq("والتغيير يحمل الموعدين والسبب", parseDeliveryDateNote(changed),
+    { previousDate: "2026-08-20", newDate: "2026-08-25", reason: "تأخر وصول المكونات من الشركة المصنعة" });
+
+  // سجلّات الإنتاج مكتوبة بالصيغة القديمة ولا يُعاد كتابتها أبداً.
+  eq("والصيغة القديمة تُقرأ أيضاً",
+    parseDeliveryDateNote("تغيير موعد التسليم المتوقع من 2026-08-20 إلى 2026-08-25 — السبب: تأخير"),
+    { previousDate: "2026-08-20", newDate: "2026-08-25", reason: "تأخير" });
+  eq("والقديمة بلا موعد سابق",
+    parseDeliveryDateNote("تغيير موعد التسليم المتوقع من — إلى 2026-08-20"),
+    { previousDate: null, newDate: "2026-08-20", reason: null });
 }
 
 console.log(failures === 0 ? "\n✅ all stage-model cases pass" : `\n❌ ${failures} case(s) failed`);

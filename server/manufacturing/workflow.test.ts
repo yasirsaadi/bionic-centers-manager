@@ -34,10 +34,26 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-مسار-التصنيع";
 const EXPERT = 9301, MANAGER = 9302;
 
+const EXPERT2 = 9303, MANAGER2 = 9304, ADMIN = 9305, RECEPTION = 9306;
+
 const S = {
   expert: { userId: EXPERT, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: {} },
   manager: { userId: MANAGER, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: { canViewPatients: true, canAddPatients: true } },
+  // خبير آخر في الفرع نفسه — لا يمسّ وعد زميله.
+  expert2: { userId: EXPERT2, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: {} },
+  // مدير فرعٍ آخر — العزل الفرعي القائم يمنعه.
+  manager2: { userId: MANAGER2, role: "branch_manager", isAdmin: false, branchId: 2, accessibleBranches: [2], permissions: { canViewPatients: true } },
+  admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [], permissions: {} },
+  reception: { userId: RECEPTION, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: { canViewPatients: true, canAddPatients: true } },
 };
+
+/** تاريخ بصيغة YYYY-MM-DD مزاحٌ بأيام عن «اليوم» ببغداد — أساس التنبيهات. */
+function baghdadDate(offsetDays: number): string {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+  const d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
 
 async function req(method: string, path: string, session: any, body?: any) {
   const res = await fetch(BASE + path, {
@@ -81,16 +97,25 @@ async function cleanup() {
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   // المخرج الإداري يكتب في audit_log باسم المستخدم، فيمنع حذفه بعد الاختبار.
-  await pool.query(`DELETE FROM audit_log WHERE user_id IN ($1,$2)`, [EXPERT, MANAGER]);
+  await pool.query(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`,
+    [[EXPERT, MANAGER, EXPERT2, MANAGER2, ADMIN, RECEPTION]]);
 }
 
 async function main() {
-  await pool.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
-  for (const [id, name, role] of [[EXPERT, "عناد", "prosthetics_expert"], [MANAGER, "مدير", "branch_manager"]] as any[]) {
+  await pool.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'كربلاء') ON CONFLICT DO NOTHING`);
+  const users: [number, string, string, number][] = [
+    [EXPERT, "عناد", "prosthetics_expert", 1],
+    [MANAGER, "مدير", "branch_manager", 1],
+    [EXPERT2, "خبير آخر", "prosthetics_expert", 1],
+    [MANAGER2, "مدير كربلاء", "branch_manager", 2],
+    [ADMIN, "المسؤول", "admin", 1],
+    [RECEPTION, "استقبال", "reception", 1],
+  ];
+  for (const [id, name, role, branch] of users) {
     await pool.query(
       `INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-       VALUES ($1,$2,'x',$3,$4,1,'[1]'::jsonb,true) ON CONFLICT (id) DO NOTHING`,
-      [id, `wf_u${id}`, name, role]);
+       VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true) ON CONFLICT (id) DO NOTHING`,
+      [id, `wf_u${id}`, name, role, branch, JSON.stringify([branch])]);
   }
   await cleanup();
 
@@ -273,12 +298,152 @@ async function main() {
     same("صيانة الطرف مباشرةً بلا المرور على القالب", maint.currentStage, "maintenance_device_done");
     same("وتُنهي الأمر", maint.status, "completed");
     same("ولم يُطلب منها موعد تسليم", r.status, 200);
+
+    // ══ موعد التسليم: مَن يملكه، وكيف يُسجَّل ═══════════════════════════════
+    console.log("\n── صلاحيات موعد التسليم ──");
+    const pd = await mkPatient("مريض الموعد");
+    const oidD = await mkOrder(pd, "measurements");
+    const D1 = baghdadDate(20), D2 = baghdadDate(25);
+
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert2, { expectedDeliveryDate: D1 });
+    same("خبير غير مسنَد ممنوع", r.status, 403);
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.reception, { expectedDeliveryDate: D1 });
+    same("والاستقبال ممنوع", r.status, 403);
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.manager2, { expectedDeliveryDate: D1 });
+    same("ومدير فرعٍ آخر ممنوع", r.status, 403);
+
+    // أول تحديد: بلا سبب، ومع ذلك يُسجَّل.
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert, { expectedDeliveryDate: D1 });
+    same("الخبير المسنَد يحدّد الموعد أولاً بلا سبب", r.status, 200);
+    same("والموعد ثُبِّت", String((await order(oidD)).expectedDeliveryDate).slice(0, 10), D1);
+    {
+      const rows = (await history(oidD)).filter((h) => h.actionType === "date_change");
+      same("وسُجِّل سطر واحد", rows.length, 1);
+      check(!!rows[0].notes?.includes("تم تحديد موعد التسليم المتوقع"), "بصيغة «تحديد» لا «تغيير»", rows[0].notes ?? "");
+      check(!!rows[0].notes?.includes(D1), "ويحمل الموعد");
+      same("وبمَن فعله", rows[0].performedBy, EXPERT);
+      check(!!rows[0].createdAt, "وبوقته");
+    }
+
+    // تغيير موعدٍ قائم: السبب إلزامي، والمطابق مرفوض.
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert, { expectedDeliveryDate: D2 });
+    same("التغيير بلا سبب مرفوض", r.status, 400);
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert, { expectedDeliveryDate: D1, reason: "بلا تغيير" });
+    same("والمطابق للحالي مرفوض", r.status, 400);
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert2, { expectedDeliveryDate: D2, reason: "محاولة" });
+    same("وخبير غير مسنَد ممنوع ولو بسبب", r.status, 403);
+
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.expert,
+      { expectedDeliveryDate: D2, reason: "تأخر وصول المكونات من الشركة المصنعة" });
+    same("وبالسبب ينجح", r.status, 200);
+    {
+      const rows = (await history(oidD)).filter((h) => h.actionType === "date_change");
+      same("والسطر الأول لم يُمسّ", rows.length, 2);
+      const last = rows[1].notes ?? "";
+      check(last.includes(D1) && last.includes(D2), "والسطر الجديد يحمل الموعدين", last);
+      check(last.includes("تأخر وصول المكونات من الشركة المصنعة"), "ومعه السبب", last);
+      same("والمرحلة لم تتحرّك بتغيير الموعد", [rows[1].fromStage, rows[1].toStage], ["measurements", "measurements"]);
+    }
+    // ونقطة التفاصيل تُخرجه مفكَّكاً — لا يقرأ الموظف نصّاً ليعرف الموعدين.
+    {
+      const detail = (await req("GET", `/api/manufacturing/orders/${oidD}`, S.expert)).json;
+      same("سجلّ الموعد في نقطة التفاصيل", detail.dateChanges.length, 2);
+      same("أول تحديد بلا موعد سابق",
+        [detail.dateChanges[0].previousDate, detail.dateChanges[0].newDate], [null, D1]);
+      same("والتغيير مفكَّك",
+        [detail.dateChanges[1].previousDate, detail.dateChanges[1].newDate, detail.dateChanges[1].reason],
+        [D1, D2, "تأخر وصول المكونات من الشركة المصنعة"]);
+      check(!!detail.dateChanges[1].byName && !!detail.dateChanges[1].at, "ومعه مَن ومتى");
+    }
+    // المدير في فرعه، والمسؤول في كل فرع.
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.manager,
+      { expectedDeliveryDate: baghdadDate(26), reason: "قرار إداري" });
+    same("مدير الفرع يغيّره داخل فرعه", r.status, 200);
+    r = await req("PATCH", `/api/manufacturing/orders/${oidD}/delivery-date`, S.admin,
+      { expectedDeliveryDate: baghdadDate(27), reason: "تصحيح" });
+    same("والمسؤول كذلك", r.status, 200);
+
+    // الالتزام الأشيع بالموعد يقع في نافذة القالب لا في نافذة الموعد.
+    {
+      const pm2 = await mkPatient("مريض موعد القالب");
+      const oidM = await mkOrder(pm2, "measurements");
+      const DM = baghdadDate(30);
+      r = await req("PATCH", `/api/manufacturing/orders/${oidM}/advance`, S.expert, { expectedDeliveryDate: DM });
+      same("بلوغ القالب يثبّت الموعد", r.status, 200);
+      const rows = (await history(oidM)).filter((h) => h.actionType === "date_change");
+      same("ويُسجَّل في سجلّ المواعيد أيضاً", rows.length, 1);
+      check(!!rows[0].notes?.includes(DM), "بالموعد نفسه", rows[0].notes ?? "");
+      same("وبمَن فعله", rows[0].performedBy, EXPERT);
+      // ولا يتكرّر: التقدّم التالي لا يعيد تسجيل موعدٍ مثبَّت أصلاً.
+      await req("PATCH", `/api/manufacturing/orders/${oidM}/advance`, S.expert, { expectedDeliveryDate: baghdadDate(40) });
+      same("ولا يُسجَّل مرّتين", (await history(oidM)).filter((h) => h.actionType === "date_change").length, 1);
+      same("والموعد الأول هو الملزِم", String((await order(oidM)).expectedDeliveryDate).slice(0, 10), DM);
+    }
+
+    // ══ التنبيهات تتبع الموعد الحالي لحظةً بلحظة ═══════════════════════════
+    console.log("\n── تنبيهات التسليم تتبع الموعد ──");
+    const kindFor = async (session: any, orderId: number): Promise<string | null> => {
+      const res = await req("GET", "/api/manufacturing/notifications", session);
+      const hit = (res.json?.items ?? []).find((i: any) => i.orderId === orderId);
+      return hit ? hit.kind : null;
+    };
+    const setDate = (session: any, orderId: number, date: string, reason = "اختبار") =>
+      req("PATCH", `/api/manufacturing/orders/${orderId}/delivery-date`, session, { expectedDeliveryDate: date, reason });
+
+    const pn = await mkPatient("مريض التنبيه");
+    const oidN = await mkOrder(pn, "manufacturing");
+    await req("PATCH", `/api/manufacturing/orders/${oidN}/delivery-date`, S.expert, { expectedDeliveryDate: baghdadDate(1) });
+    same("موعد الغد ⇒ تنبيه غداً", await kindFor(S.expert, oidN), "due_tomorrow");
+    // التأجيل أسبوعاً يجب أن يُسقط تنبيه الغد فوراً — لا يبقى معلّقاً.
+    await setDate(S.expert, oidN, baghdadDate(7));
+    same("والتأجيل أسبوعاً يُسقطه", await kindFor(S.expert, oidN), null);
+    await setDate(S.expert, oidN, baghdadDate(1));
+    same("وإعادته للغد تُعيده", await kindFor(S.expert, oidN), "due_tomorrow");
+    await setDate(S.expert, oidN, baghdadDate(0));
+    same("واليوم ⇒ تنبيه اليوم", await kindFor(S.expert, oidN), "due_today");
+    await setDate(S.expert, oidN, baghdadDate(2));
+    same("وبعد يومين ⇒ تنبيه بعد يومين", await kindFor(S.expert, oidN), "due_in_2_days");
+    await setDate(S.expert, oidN, baghdadDate(-1));
+    same("والأمس ⇒ متأخّر", await kindFor(S.expert, oidN), "overdue");
+    // العزل الفرعي القائم لم يتغيّر: المدير يرى فرعه، والمسؤول الكلّ.
+    same("والمدير يراه في فرعه", await kindFor(S.manager, oidN), "overdue");
+    same("والمسؤول يراه", await kindFor(S.admin, oidN), "overdue");
+    same("ومدير فرعٍ آخر لا يراه", await kindFor(S.manager2, oidN), null);
+
+    // ══ daysInStage بعد الترحيل: يقرأ السجلّ القديم بلغته ══════════════════
+    console.log("\n── daysInStage على سجلّ قديم ──");
+    {
+      const pl = await mkPatient("مريض السجل القديم");
+      const oidL = await mkOrder(pl, "manufacturing");
+      // سجلّ بالأكواد القديمة كما يخلّفه الترحيل: دخولٌ واحد ثم حركة داخلية.
+      await pool.query(
+        `INSERT INTO prosthetic_work_history (work_order_id, action_type, from_stage, to_stage, notes, created_at) VALUES
+           ($1,'stage_change','assessment_measurements','cast_taken','قديم', NOW() - INTERVAL '30 days'),
+           ($1,'stage_change','cast_taken','test_socket','قديم',        NOW() - INTERVAL '20 days'),
+           ($1,'stage_change','test_socket','first_fitting','قديم',     NOW() - INTERVAL '15 days'),
+           ($1,'stage_change','first_fitting','socket_adjustment','قديم', NOW() - INTERVAL '10 days')`,
+        [oidL]);
+      const cards = (await req("GET", "/api/manufacturing/my-orders", S.expert)).json;
+      const card = cards.find((c: any) => c.id === oidL);
+      // الدخول هو cast_taken → test_socket قبل ٢٠ يوماً، لا آخر سطر (١٠).
+      same("العدّ من أول دخول للتصنيع لا من الحركة داخله", card.daysInStage, 20);
+
+      // ثم رجوع فنّي حقيقي: العدّ يبدأ من لحظته.
+      await pool.query(
+        `INSERT INTO prosthetic_work_history (work_order_id, action_type, from_stage, to_stage, notes, created_at)
+         VALUES ($1,'rework','ready_for_fitting','manufacturing','رجوع', NOW() - INTERVAL '3 days')`,
+        [oidL]);
+      const after = (await req("GET", "/api/manufacturing/my-orders", S.expert)).json
+        .find((c: any) => c.id === oidL);
+      same("والرجوع الفنّي يعيد العدّ من لحظته", after.daysInStage, 3);
+    }
   } finally {
     server.close();
   }
 
   await cleanup();
-  await pool.query(`DELETE FROM system_users WHERE id IN ($1,$2)`, [EXPERT, MANAGER]);
+  await pool.query(`DELETE FROM system_users WHERE id = ANY($1::int[])`,
+    [[EXPERT, MANAGER, EXPERT2, MANAGER2, ADMIN, RECEPTION]]);
   console.log(failures === 0 ? "\n✅ all workflow cases pass" : `\n❌ ${failures} case(s) failed`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);

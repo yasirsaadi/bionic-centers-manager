@@ -62,6 +62,11 @@ export default function ManufacturingOrder() {
     queryClient.invalidateQueries({ queryKey: orderKey });
     queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/my-orders"] });
     queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
+    // تنبيهات التسليم تُحسب من الموعد الحالي، فتغييره يجعل ما في الذاكرة
+    // كذباً: «تسليم غداً» يبقى معلّقاً بعد تأجيل الموعد أسبوعاً — والشارة
+    // في القائمة الجانبية تقرأ المفتاح نفسه. والملخّص كذلك يعدّ المتأخّرين.
+    queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/overview"] });
   };
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground text-sm">جارٍ التحميل…</div>;
@@ -73,7 +78,7 @@ export default function ManufacturingOrder() {
   );
   if (!data) return <div className="p-8 text-center text-muted-foreground text-sm">الأمر غير موجود.</div>;
 
-  const { order, patient, timeline, rework } = data;
+  const { order, patient, timeline, rework, dateChanges = [] } = data;
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
   const onHold = isHoldStatus(order.status);
@@ -81,10 +86,10 @@ export default function ManufacturingOrder() {
   const progress = toPatientStageView(order);
   const forward = nextStages(order.serviceType, order.currentStage, order.purpose);
   const nextLabel = STAGE_LABELS[defaultNextStage(order.serviceType, order.currentStage, order.purpose) ?? ""] ?? "";
-  // Mirrors the server rule (PATCH /orders/:id/delivery-date): every writer on
-  // the order — the assigned expert included — may set OR change the date.
-  // Changing a committed date demands a mandatory reason that lands in the
-  // order history and on the patient page, so the promise never moves quietly.
+  // مَن يفتح هذه الصفحة أصلاً هم الثلاثة أنفسهم الذين تقبلهم نقطة الموعد
+  // (`loadWritable`): الخبير المسنَد، ومدير الفرع ضمن فروعه، والإدارة —
+  // فنقطة القراءة ونقطة الكتابة تتشاركان الشرط نفسه حرفياً. ولذلك الزرّ
+  // ظاهر لكل مَن وصل إلى هنا، والخادم يبقى هو الحارس لا الواجهة.
   const canSetDeliveryDate = true;
 
   return (
@@ -215,6 +220,41 @@ export default function ManufacturingOrder() {
         </div>
       )}
 
+      {/* سجلّ مواعيد التسليم — الوعد وتاريخ تحرّكه، لا الوعد الحالي وحده */}
+      {dateChanges.length > 0 && (
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-primary" /> سجلّ موعد التسليم
+            </h3>
+            <ul className="space-y-2 text-sm">
+              {dateChanges.map((d: any) => (
+                <li key={d.id} className="border-b last:border-0 pb-2" data-testid="row-date-change">
+                  {d.previousDate ? (
+                    <div>
+                      <span className="text-muted-foreground">من: </span>
+                      <span className="font-medium line-through decoration-slate-400">{fmtD(d.previousDate)}</span>
+                      <span className="mx-2 text-slate-400">←</span>
+                      <span className="text-muted-foreground">إلى: </span>
+                      <span className="font-semibold">{fmtD(d.newDate)}</span>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-muted-foreground">تم تحديد الموعد: </span>
+                      <span className="font-semibold">{fmtD(d.newDate)}</span>
+                    </div>
+                  )}
+                  {d.reason && (
+                    <p className="text-xs text-muted-foreground mt-0.5">السبب: {d.reason}</p>
+                  )}
+                  <div className="text-[11px] text-muted-foreground">{d.byName ?? "—"} • {fmt(d.at)}</div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Timeline */}
       <Card className="mb-4">
         <CardContent className="p-4">
@@ -326,8 +366,8 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 bg-white" data-testid="input-delivery-date" />
             <p className="text-xs text-muted-foreground mt-1">
               {isFirstCommit
-                ? "عليه تُقاس دقّة التسليم — وأي تغيير لاحق يتطلّب ذكر السبب ويُسجَّل في ملف المريض."
-                : "يُسجَّل التغيير وسببه في الخطّ الزمني وملف المريض، ولا يُمحى الموعد السابق."}
+                ? "عليه تُقاس دقّة التسليم. وبعد تحديده يمكنك أنت أو مدير الفرع أو الإدارة تغييره، وكلّ تغيير يتطلّب سبباً ويُسجَّل في السجلّ."
+                : "يُسجَّل التغيير وسببه في سجلّ موعد التسليم وملف المريض، ولا يُمحى الموعد السابق."}
             </p>
           </div>
           {!isFirstCommit && (
@@ -426,7 +466,7 @@ function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
             <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
               <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
               <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-mold-delivery-date" />
-              <p className="text-xs text-muted-foreground mt-1">إلزامي عند بلوغ القالب. بعد تحديده لا يتغيّر إلا من الإدارة — وعليه تُقاس دقّة التسليم.</p>
+              <p className="text-xs text-muted-foreground mt-1">إلزامي عند بلوغ القالب — وعليه تُقاس دقّة التسليم. وبعد تحديده يمكنك أنت أو مدير الفرع أو الإدارة تغييره، وكلّ تغيير يتطلّب سبباً ويُسجَّل في السجلّ.</p>
             </div>
           )}
           <div>

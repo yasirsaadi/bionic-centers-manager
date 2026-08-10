@@ -594,11 +594,14 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   });
 
   // ---- expected delivery date update ------------------------------------------
-  // Any writer on the order — the ASSIGNED EXPERT included, since they are the
-  // one who knows the workshop reality — may change a committed date, but
-  // never quietly: the reason is MANDATORY on a change, lands in the order
-  // history, and the patient page shows it to the whole team. The first
-  // commitment (no date yet) needs no reason.
+  // مَن يملك تحريك الوعد؟ `loadWritable` وحدها تقرّر، وهي ثلاثة بالضبط:
+  // **الخبير المسنَد** (هو مَن يعرف واقع الورشة)، و**مدير الفرع** ضمن فروعه
+  // المخوّلة، و**الإدارة**. وخبيرٌ آخر — ولو في الفرع نفسه — لا يمسّ وعد
+  // زميله، وموظّف الاستقبال لا يمسّه إطلاقاً (٤٠٣ من `loadWritable`).
+  //
+  // وأول تحديد ليس تغييراً: لا موعد سابق يُبرَّر تركُه، فلا سبب. أما تحريك
+  // موعدٍ قائم فسببه إلزامي — عليه تُقاس دقّة التسليم، فلا يتحرّك صامتاً.
+  // وفي الحالتين يُكتب سطر في سجلّ الأمر بمَن فعل ومتى.
   app.patch("/api/manufacturing/orders/:id/delivery-date", isAuthenticated, async (req: Req, res) => {
     const raw = await loadWritable(req, res);
     if (!raw) return;
@@ -619,10 +622,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       performedBy: getSession(req).userId ?? null,
       reason: isChange ? reason : null,
     });
-    if (isChange) {
-      await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
-        `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`);
-    }
+    await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
+      isChange
+        ? `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`
+        : `تحديد موعد التسليم المتوقع: ${date}`);
     res.json(updated);
   });
 
