@@ -688,6 +688,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           : `تحديد موعد التسليم المتوقع: ${date}`);
       res.json(updated);
     } catch (e: any) {
+      // الأمر انتهى بينما ننتظر القفل — تعارضُ حالٍ لا تعارضُ موعد.
+      if (handledConflict(res, e)) return;
       // سبقَنا كاتبٌ آخر. لا كتابة ولا سطر ولا تدقيق — والمستخدم يرى ما
       // صار إليه الموعد فعلاً ليقرّر من جديد على أرضٍ صلبة.
       if (e instanceof store.DeliveryDateConflictError) {

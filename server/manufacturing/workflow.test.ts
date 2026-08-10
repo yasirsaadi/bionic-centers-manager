@@ -607,6 +607,106 @@ async function main() {
       }
     }
 
+    // ══ الأمر المنتهي لا يتحرّك — لا بمخرجٍ إداري ولا بموعد ولا بإلغاء ════
+    console.log("\n── أمر مكتمل: لا مساس ──");
+    {
+      const pz = await mkPatient("مريض مكتمل");
+      const oidZ = await mkOrder(pz, "ready_for_fitting");
+      await req("PATCH", `/api/manufacturing/orders/${oidZ}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-10-01", ifCurrentDate: null });
+      await req("PATCH", `/api/manufacturing/orders/${oidZ}/advance`, S.expert,
+        { finalResult: "first_fit_success", finalNotes: "ملاحظة نهائية" });
+      const before = await order(oidZ);
+      same("انتهى مكتملاً عند التسليم", [before.status, before.currentStage], ["completed", "delivered"]);
+      const rowsBefore = (await history(oidZ)).length;
+
+      const c1 = await req("POST", `/api/manufacturing/orders/${oidZ}/cancel`, S.manager, { note: "محاولة" });
+      same("الإلغاء مرفوض", c1.status, 409);
+      const c2 = await req("PATCH", `/api/manufacturing/orders/${oidZ}/stage`, S.manager,
+        { toStage: "manufacturing", reason: "تصحيح" });
+      same("والمخرج الإداري مرفوض", c2.status, 409);
+      same("ويُعلِم بالحال النهائي", [c2.json?.currentStage, c2.json?.status], ["delivered", "completed"]);
+      const c3 = await req("PATCH", `/api/manufacturing/orders/${oidZ}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-10-09", reason: "بعد التسليم", ifCurrentDate: "2026-10-01" });
+      same("وتغيير الموعد مرفوض", c3.status, 409);
+      const c4 = await req("PATCH", `/api/manufacturing/orders/${oidZ}/advance`, S.expert, {});
+      same("ولا تقدّم بعده", c4.status, 409);
+      const c5 = await req("POST", `/api/manufacturing/orders/${oidZ}/hold`, S.expert,
+        { status: "medical_hold", reasonCode: "swelling" });
+      same("ولا توقّف", c5.status, 409);
+
+      const after = await order(oidZ);
+      same("المرحلة كما هي", after.currentStage, "delivered");
+      same("والحالة كما هي", after.status, "completed");
+      same("وتاريخ الإنجاز لم يتغيّر", String(before.completedAt), String(after.completedAt));
+      same("والنتيجة لم تتغيّر", after.finalResult, "first_fit_success");
+      same("والملاحظة النهائية لم تتغيّر", after.finalNotes, "ملاحظة نهائية");
+      same("وموعد التسليم لم يتغيّر",
+        String(after.expectedDeliveryDate).slice(0, 10), "2026-10-01");
+      same("ولا سطر سجلٍّ جديد", (await history(oidZ)).length, rowsBefore);
+    }
+
+    console.log("\n── أمر ملغى: لا مساس ──");
+    {
+      const py2 = await mkPatient("مريض ملغى");
+      const oidY = await mkOrder(py2, "measurements");
+      await req("PATCH", `/api/manufacturing/orders/${oidY}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-10-02", ifCurrentDate: null });
+      await req("POST", `/api/manufacturing/orders/${oidY}/cancel`, S.manager, { note: "قرار إداري" });
+      const before = await order(oidY);
+      const rowsBefore = (await history(oidY)).length;
+
+      const d1 = await req("PATCH", `/api/manufacturing/orders/${oidY}/stage`, S.manager,
+        { toStage: "mold", reason: "تصحيح" });
+      same("المخرج الإداري مرفوض", d1.status, 409);
+      const d2 = await req("PATCH", `/api/manufacturing/orders/${oidY}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-10-10", reason: "بعد الإلغاء", ifCurrentDate: "2026-10-02" });
+      same("وتغيير الموعد مرفوض", d2.status, 409);
+      const d3 = await req("POST", `/api/manufacturing/orders/${oidY}/cancel`, S.manager, { note: "مرّة ثانية" });
+      same("وإلغاءٌ ثانٍ مرفوض", d3.status, 409);
+
+      const after = await order(oidY);
+      same("لا شيء تغيّر",
+        [after.status, after.currentStage, String(after.expectedDeliveryDate).slice(0, 10)],
+        [before.status, before.currentStage, "2026-10-02"]);
+      same("ولا سطر سجلٍّ جديد", (await history(oidY)).length, rowsBefore);
+    }
+
+    console.log("\n── لقطة قديمة انتهى أمرُها أثناء انتظارها ──");
+    {
+      // اللقطة تقول `active`، ثم يُسلَّم الأمر قبل أن تُنفَّذ. لا يجوز أن
+      // تعدّل أمراً انتهى وهي تنتظر القفل.
+      const pw = await mkPatient("مريض لقطة انتهت");
+      const oidW = await mkOrder(pw, "ready_for_fitting");
+      const snap = await order(oidW);                       // active @ ready_for_fitting
+      await req("PATCH", `/api/manufacturing/orders/${oidW}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-10-03", ifCurrentDate: null });
+      await req("PATCH", `/api/manufacturing/orders/${oidW}/advance`, S.expert, { finalResult: "first_fit_success" });
+      const doneRows = (await history(oidW)).length;
+
+      const tries: [string, () => Promise<any>][] = [
+        ["نقل المرحلة", () => store.updateStage({
+          order: snap, toStage: "delivered", finalResult: "first_fit_success", performedBy: EXPERT,
+        })],
+        ["الإلغاء", () => store.cancelOrder({ order: snap, note: "قديم", performedBy: MANAGER })],
+        ["تغيير الموعد", () => store.updateDeliveryDate({
+          order: snap, expectedDeliveryDate: "2026-10-11", reason: "قديم", performedBy: EXPERT,
+        })],
+        ["التوقّف", () => store.holdOrder({
+          order: snap, status: "medical_hold", reasonCode: "swelling", performedBy: EXPERT,
+        })],
+      ];
+      for (const [label, run] of tries) {
+        let err: any = null;
+        try { await run(); } catch (e) { err = e; }
+        check(err instanceof store.WorkOrderConflictError, `${label} باللقطة القديمة مرفوض`, String(err));
+      }
+      const after = await order(oidW);
+      same("والأمر باقٍ مكتملاً عند التسليم", [after.status, after.currentStage], ["completed", "delivered"]);
+      same("وموعده لم يتحرّك", String(after.expectedDeliveryDate).slice(0, 10), "2026-10-03");
+      same("ولا سطر سجلٍّ جديد", (await history(oidW)).length, doneRows);
+    }
+
     // ══ التنبيهات تتبع الموعد الحالي لحظةً بلحظة ═══════════════════════════
     console.log("\n── تنبيهات التسليم تتبع الموعد ──");
     const kindFor = async (session: any, orderId: number): Promise<string | null> => {

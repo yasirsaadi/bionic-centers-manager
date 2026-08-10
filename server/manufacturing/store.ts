@@ -597,6 +597,13 @@ export async function updateStage(params: {
   return await db.transaction(async (tx) => {
     const live = await lockOrder(tx, order.id);
 
+    // **الأمر المنتهي لا يتحرّك.** ولا تُغني عنه مقارنةُ الانحراف تحتَه:
+    // لقطةٌ تقول `completed` تساوي الحالَ `completed` فتمرّ المقارنة، فيصير
+    // المخرج الإداري باباً يُرجع أمراً سُلِّم إلى «التصنيع» وحالته مكتمل.
+    // وإعادة فتح أمرٍ منتهٍ — إن لزمت يوماً — عمليةٌ صريحة مدقَّقة، لا
+    // استعمالٌ جانبي لمخرج التصحيح.
+    assertNotTerminal(live);
+
     // القفل يسلسل ولا يُبطل: الطلب الثاني ينتظر ثم ينفّذ **بمعطياته هو**.
     // فطلبان بُنيا على `measurements` ينتجان تقدّمين وسطرين، والثاني يصف
     // انتقالاً من مرحلة غادرها الأمر. وطلبٌ بُني على `active` يعيد أمراً
@@ -754,6 +761,10 @@ export async function updateDeliveryDate(params: {
 
   return await db.transaction(async (tx) => {
     const live = await lockOrder(tx, order.id);
+    // الموعد هو الوعد الذي تُقاس عليه دقّة التسليم. تحريكه بعد أن انتهى
+    // الأمر يعني إعادة كتابة الوعد **بعد معرفة النتيجة** — فيصير كل تسليم
+    // في موعده، ويفقد المؤشّر معناه.
+    assertNotTerminal(live);
     const actual = live.expectedDeliveryDate;
     // سبقَنا أحد. نخرج بلا كتابة وبلا سطر — والسطر هنا هو بيت القصيد:
     // لو كتبناه لَادّعى انتقالاً من موعدٍ لم يكن قائماً حين كتبنا.
@@ -911,9 +922,11 @@ export async function cancelOrder(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order } = params;
   return await db.transaction(async (tx) => {
-    // إلغاءٌ لأمرٍ أُلغي بعد قراءتنا ليس إلغاءً — والمرحلة من الصفّ المقفول.
+    // إلغاءٌ لأمرٍ أُلغي بعد قراءتنا ليس إلغاءً — والمكتملُ ليس محلّاً
+    // للإلغاء أصلاً: جهازٌ سُلِّم لا يُلغى أمرُه بأثر رجعي، وإلا مُحيت
+    // نتيجته من الأرقام. والمرحلة من الصفّ المقفول.
     const live = await lockOrder(tx, order.id);
-    if (live.status === "cancelled") throw new WorkOrderConflictError(live);
+    assertNotTerminal(live);
     const [updated] = await tx.update(WO)
       .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
