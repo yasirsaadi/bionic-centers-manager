@@ -9,6 +9,7 @@ import express from "express";
 import { pool, db } from "../db";
 import { isAuthenticated } from "../replit_integrations/auth/replitAuth";
 import { registerManufacturingRoutes } from "./routes";
+import * as store from "./store";
 import { runMigrations } from "../migrations/runner";
 import { prostheticWorkOrders as WO, prostheticWorkHistory as WH, prostheticReworkEvents as RW } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
@@ -466,6 +467,144 @@ async function main() {
       same("المرحلة تقدّمت", (await order(oidG)).currentStage, "mold");
       same("وسطر التزام واحد رغم تزامن الكاتبين",
         (await history(oidG)).filter((h) => h.actionType === "date_change").length, 1);
+    }
+
+    // ══ تزامن حالة الأمر نفسه ══════════════════════════════════════════════
+    // القفل يسلسل الطلبات زمنياً لكنه لا يُبطل طلباً بُني على حالٍ زالت:
+    // الثاني ينتظر ثم ينفّذ بمعطياته هو. هنا نتأكّد أنه يُردّ بدلاً منها.
+    const stageRows = async (id: number) =>
+      (await history(id)).filter((h) => h.actionType === "stage_change");
+    const dateRows = async (id: number) =>
+      (await history(id)).filter((h) => h.actionType === "date_change");
+
+    console.log("\n── تقدّم متزامن على المرحلة نفسها ──");
+    {
+      const pa = await mkPatient("مريض تقدّم متزامن");
+      const oidA = await mkOrder(pa, "measurements");
+      const D = "2026-09-15";
+      const [x, y] = await Promise.all([
+        req("PATCH", `/api/manufacturing/orders/${oidA}/advance`, S.expert, { expectedDeliveryDate: D }),
+        req("PATCH", `/api/manufacturing/orders/${oidA}/advance`, S.manager, { expectedDeliveryDate: D }),
+      ]);
+      same("واحد يتقدّم والآخر يتعارض", [x.status, y.status].sort(), [200, 409]);
+      const conflict = x.status === 409 ? x : y;
+      same("والتعارض يحمل الحال الحقيقي", [conflict.json?.currentStage, conflict.json?.status], ["mold", "active"]);
+      same("والمرحلة القالب", (await order(oidA)).currentStage, "mold");
+      const sr = await stageRows(oidA);
+      same("سطر تقدّم واحد لا سطران", sr.length, 1);
+      same("ومن القياسات إلى القالب", [sr[0].fromStage, sr[0].toStage], ["measurements", "mold"]);
+      same("والتزام موعد واحد", (await dateRows(oidA)).length, 1);
+    }
+
+    console.log("\n── تقدّم مقابل إلغاء ──");
+    {
+      // الإلغاء أولاً: التقدّم المبنيّ على `active` لا يعيد الأمر للعمل.
+      const pb = await mkPatient("مريض إلغاء ثم تقدّم");
+      const oidB = await mkOrder(pb, "measurements");
+      await req("POST", `/api/manufacturing/orders/${oidB}/cancel`, S.manager, { note: "قرار" });
+      const late = await req("PATCH", `/api/manufacturing/orders/${oidB}/advance`, S.expert,
+        { expectedDeliveryDate: "2026-09-16" });
+      same("التقدّم بعد الإلغاء مرفوض", late.status, 409);
+      const b = await order(oidB);
+      same("والأمر باقٍ ملغى في مرحلته", [b.status, b.currentStage], ["cancelled", "measurements"]);
+      same("وبلا سطر تقدّم", (await stageRows(oidB)).length, 0);
+
+      // والعكس: تقدّمٌ ثم إلغاء — النتيجة ملغى، والسجلّ يصف الترتيب فعلاً.
+      const pc2 = await mkPatient("مريض تقدّم ثم إلغاء");
+      const oidB2 = await mkOrder(pc2, "measurements");
+      await req("PATCH", `/api/manufacturing/orders/${oidB2}/advance`, S.expert, { expectedDeliveryDate: "2026-09-17" });
+      const cancelled = await req("POST", `/api/manufacturing/orders/${oidB2}/cancel`, S.manager, { note: "بعد التقدّم" });
+      same("الإلغاء بعد التقدّم ينجح", cancelled.status, 200);
+      const b2 = await order(oidB2);
+      same("والنتيجة ملغى عند القالب", [b2.status, b2.currentStage], ["cancelled", "mold"]);
+      const cancelRow = (await history(oidB2)).filter((h) => h.notes?.includes("إلغاء الأمر"))[0];
+      same("وسطر الإلغاء يسمّي المرحلة الجديدة لا القديمة",
+        [cancelRow.fromStage, cancelRow.toStage], ["mold", "mold"]);
+    }
+
+    console.log("\n── تقدّم مقابل توقّف ──");
+    {
+      // ملاحظة منهجية: عبر HTTP لا يمكن **صنع** لقطة قديمة — المسار يعيد
+      // القراءة مع كل طلب. فاللقطة القديمة تُحقن هنا في طبقة المخزن مباشرة،
+      // وهي بالضبط ما ينتجه التزامن الحقيقي: طلبٌ قرأ ثم انتظر القفل.
+      const pd2 = await mkPatient("مريض توقّف ثم تقدّم");
+      const oidH = await mkOrder(pd2, "measurements");
+      const staleSnap = await order(oidH);   // active @ measurements
+      await req("POST", `/api/manufacturing/orders/${oidH}/hold`, S.expert,
+        { status: "waiting_patient", reasonCode: "patient_no_show" });
+
+      let rejected: any = null;
+      try {
+        await store.updateStage({
+          order: staleSnap, toStage: "mold", deliveryDate: "2026-09-18",
+          newStatus: "active", clearHold: true, performedBy: EXPERT,
+        });
+      } catch (e) { rejected = e; }
+      check(rejected instanceof store.WorkOrderConflictError,
+        "التقدّم المبنيّ على active مرفوض", String(rejected));
+      same("ويُعلِم بالحال الحقيقي",
+        [rejected?.currentStage, rejected?.status], ["measurements", "waiting_patient"]);
+      const h = await order(oidH);
+      same("والتوقّف باقٍ بسببه", [h.status, h.holdReasonCode], ["waiting_patient", "patient_no_show"]);
+      same("وبلا سطر تقدّم", (await stageRows(oidH)).length, 0);
+      same("ولم يُفرَغ سبب التوقّف", h.holdNote, null);
+
+      // ونفس الحماية للإلغاء: لقطةٌ قديمة لا تُحيي أمراً أُلغي.
+      const pd3 = await mkPatient("مريض إلغاء ولقطة قديمة");
+      const oidX = await mkOrder(pd3, "measurements");
+      const snapX = await order(oidX);
+      await req("POST", `/api/manufacturing/orders/${oidX}/cancel`, S.manager, {});
+      let rejX: any = null;
+      try {
+        await store.updateStage({
+          order: snapX, toStage: "mold", deliveryDate: "2026-09-20",
+          newStatus: "active", clearHold: true, performedBy: EXPERT,
+        });
+      } catch (e) { rejX = e; }
+      check(rejX instanceof store.WorkOrderConflictError, "ولا تُحيي أمراً ملغى");
+      same("والأمر باقٍ ملغى", (await order(oidX)).status, "cancelled");
+      same("وبلا سطر تقدّم", (await stageRows(oidX)).length, 0);
+
+      // والعكس: تقدّمٌ ثم توقّف — السجلّ يصف المرحلة الجديدة لا القديمة.
+      const pe = await mkPatient("مريض تقدّم ثم توقّف");
+      const oidH2 = await mkOrder(pe, "measurements");
+      await req("PATCH", `/api/manufacturing/orders/${oidH2}/advance`, S.expert, { expectedDeliveryDate: "2026-09-19" });
+      const held = await req("POST", `/api/manufacturing/orders/${oidH2}/hold`, S.expert,
+        { status: "medical_hold", reasonCode: "swelling", note: "تورّم" });
+      same("التوقّف بعد التقدّم ينجح", held.status, 200);
+      const h2 = await order(oidH2);
+      same("والأمر متوقّف عند القالب", [h2.status, h2.currentStage], ["medical_hold", "mold"]);
+      const holdRow = (await history(oidH2)).filter((h) => h.notes?.startsWith("توقّف:"))[0];
+      same("وسطر التوقّف يسمّي المرحلة الجديدة",
+        [holdRow.fromStage, holdRow.toStage], ["mold", "mold"]);
+    }
+
+    console.log("\n── سباق حقيقي: تقدّم وتوقّف معاً ──");
+    {
+      // كلا الترتيبين مشروع؛ ما ليس مشروعاً هو أن يمرّا معاً فيلغي التقدّمُ
+      // توقّفاً لم يره. لذلك نتحقّق من ثبات النتيجة أياً كان الفائز.
+      const pf2 = await mkPatient("مريض سباق التوقّف");
+      const oidR = await mkOrder(pf2, "measurements");
+      const [adv, hld] = await Promise.all([
+        req("PATCH", `/api/manufacturing/orders/${oidR}/advance`, S.expert, { expectedDeliveryDate: "2026-09-21" }),
+        req("POST", `/api/manufacturing/orders/${oidR}/hold`, S.manager,
+          { status: "waiting_patient", reasonCode: "patient_no_show" }),
+      ]);
+      const fin = await order(oidR);
+      const rows = await stageRows(oidR);
+      if (adv.status === 200) {
+        // التقدّم سبق: التوقّف يقع على المرحلة الجديدة ويصفها.
+        same("التقدّم سبق ⇒ التوقّف عليه", [hld.status, fin.currentStage], [200, "mold"]);
+        same("والحالة متوقّفة", fin.status, "waiting_patient");
+        same("وسطر تقدّم واحد", rows.length, 1);
+        const hr = (await history(oidR)).filter((x) => x.notes?.startsWith("توقّف:"))[0];
+        same("وسطر التوقّف على المرحلة الفعلية", [hr.fromStage, hr.toStage], ["mold", "mold"]);
+      } else {
+        // التوقّف سبق: التقدّم يُردّ ولا يمحو التوقّف.
+        same("التوقّف سبق ⇒ التقدّم يُردّ", [adv.status, hld.status], [409, 200]);
+        same("والأمر متوقّف في مرحلته", [fin.status, fin.currentStage], ["waiting_patient", "measurements"]);
+        same("وبلا سطر تقدّم", rows.length, 0);
+      }
     }
 
     // ══ التنبيهات تتبع الموعد الحالي لحظةً بلحظة ═══════════════════════════

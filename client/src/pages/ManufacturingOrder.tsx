@@ -323,6 +323,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 // ---- dialogs ----------------------------------------------------------------
 
+// `onFail` لحالة ٤٠٩: الأمر تحرّك تحت أيدي المستخدم، فيُعاد الجلب ليرى
+// حاله الحقيقي بدل أن يعيد المحاولة على صورة زالت.
 function useAction(url: string, method: string, onDone: () => void, onFail?: () => void) {
   const { toast } = useToast();
   return useMutation({
@@ -415,7 +417,7 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
 }
 
 function ResumeButton({ orderId, onDone }: any) {
-  const m = useAction(`/api/manufacturing/orders/${orderId}/resume`, "POST", onDone);
+  const m = useAction(`/api/manufacturing/orders/${orderId}/resume`, "POST", onDone, onDone);
   return (
     <Button size="lg" onClick={() => m.mutate({})} disabled={m.isPending} className="gap-2" data-testid="button-resume">
       <PlayCircle className="w-5 h-5" /> إلغاء التوقّف ومتابعة العمل
@@ -432,7 +434,7 @@ function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
   const [deliveryDate, setDeliveryDate] = useState("");
   const [finalResult, setFinalResult] = useState("");
   useEffect(() => { setToStage(options[0] ?? ""); setNotes(""); setDeliveryDate(""); setFinalResult(""); }, [open, order.currentStage]);
-  const m = useAction(`/api/manufacturing/orders/${order.id}/advance`, "PATCH", () => { onOpenChange(false); onDone(); });
+  const m = useAction(`/api/manufacturing/orders/${order.id}/advance`, "PATCH", () => { onOpenChange(false); onDone(); }, onDone);
   const isMaintenance = order.purpose === "maintenance";
   const needsResult = toStage === DELIVERED_STAGE;
   const needsDelivery = !!toStage && !order.expectedDeliveryDate
@@ -510,7 +512,7 @@ function HoldDialog({ open, onOpenChange, order, onDone }: any) {
   const [note, setNote] = useState("");
   const [returnToStage, setReturnToStage] = useState("");
   useEffect(() => { setStatus(""); setReasonCode(""); setNote(""); setReturnToStage(""); }, [open]);
-  const m = useAction(`/api/manufacturing/orders/${order.id}/hold`, "POST", () => { onOpenChange(false); onDone(); });
+  const m = useAction(`/api/manufacturing/orders/${order.id}/hold`, "POST", () => { onOpenChange(false); onDone(); }, onDone);
   const reasons = status && isHoldStatus(status) ? HOLD_REASONS[status] : [];
   const isRework = status === "technical_rework";
   const returnOptions = reworkReturnStages(order.serviceType, order.currentStage, order.purpose);
@@ -585,7 +587,7 @@ function AdminStageDialog({ open, onOpenChange, order, stages, onDone }: any) {
   const [reason, setReason] = useState("");
   const [finalResult, setFinalResult] = useState("");
   useEffect(() => { setToStage(""); setReason(""); setFinalResult(""); }, [open]);
-  const m = useAction(`/api/manufacturing/orders/${order.id}/stage`, "PATCH", () => { onOpenChange(false); onDone(); });
+  const m = useAction(`/api/manufacturing/orders/${order.id}/stage`, "PATCH", () => { onOpenChange(false); onDone(); }, onDone);
   const needsResult = toStage === DELIVERED_STAGE;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -635,7 +637,7 @@ function ReassignDialog({ open, onOpenChange, orderId, branchId, currentExpert, 
       return res.json();
     },
   });
-  const m = useAction(`/api/manufacturing/orders/${orderId}/reassign`, "PATCH", () => { onOpenChange(false); setNewExpertUserId(""); setReason(""); onDone(); });
+  const m = useAction(`/api/manufacturing/orders/${orderId}/reassign`, "PATCH", () => { onOpenChange(false); setNewExpertUserId(""); setReason(""); onDone(); }, onDone);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md">

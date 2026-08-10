@@ -589,22 +589,31 @@ export async function updateStage(params: {
   performedBy: number | null;
 }): Promise<ProstheticWorkOrder> {
   const { order, toStage } = params;
-  const fromStage = order.currentStage;
   const delivered = toStage === "delivered";
   // "تم إنجاز صيانة القالب/الطرف/المسند" is the terminal step of a maintenance
   // episode: reaching it completes the order in the same action, so status and
   // stage can never contradict each other again.
   const maintenanceDone = MAINTENANCE_DONE_STAGES.has(toStage);
   return await db.transaction(async (tx) => {
-    // القفل أولاً. `COALESCE` كانت تمنع الكتابة المزدوجة لكنها لا تقول
-    // **مَن** كتب: كاتبان اختارا التاريخ نفسه يجد كلاهما قيمته في الصفّ
-    // بعد التحديث، فيسجّل كلاهما «أنا مَن التزم». القفل يحسمها بحقيقة
-    // واحدة — مَن وجد العمود فارغاً هو صاحب الالتزام، وحده.
-    const actualDate = await lockOrderDate(tx, order.id);
-    const commitsDate = !!params.deliveryDate && actualDate === null;
+    const live = await lockOrder(tx, order.id);
+
+    // القفل يسلسل ولا يُبطل: الطلب الثاني ينتظر ثم ينفّذ **بمعطياته هو**.
+    // فطلبان بُنيا على `measurements` ينتجان تقدّمين وسطرين، والثاني يصف
+    // انتقالاً من مرحلة غادرها الأمر. وطلبٌ بُني على `active` يعيد أمراً
+    // أُلغي أو أُوقِف بعده إلى العمل بصمت. المقارنة هنا تمنع الاثنين.
+    if (live.currentStage !== order.currentStage || live.status !== order.status) {
+      throw new WorkOrderConflictError(live);
+    }
+    const fromStage = live.currentStage;
+
+    // `COALESCE` كانت تمنع الكتابة المزدوجة لكنها لا تقول **مَن** كتب:
+    // كاتبان اختارا التاريخ نفسه يجد كلاهما قيمته في الصفّ بعد التحديث،
+    // فيسجّل كلاهما «أنا مَن التزم». القفل يحسمها بحقيقة واحدة — مَن وجد
+    // العمود فارغاً هو صاحب الالتزام، وحده.
+    const commitsDate = !!params.deliveryDate && live.expectedDeliveryDate === null;
 
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
-    if (!order.startedAt && fromStage === firstStageFor(order.serviceType, order.purpose)) patch.startedAt = new Date();
+    if (!live.startedAt && fromStage === firstStageFor(order.serviceType, order.purpose)) patch.startedAt = new Date();
     if (commitsDate) patch.expectedDeliveryDate = params.deliveryDate;
     if (params.newStatus) patch.status = params.newStatus;
     if (params.clearHold) { patch.holdReasonCode = null; patch.holdNote = null; }
@@ -659,24 +668,68 @@ export class DeliveryDateConflictError extends Error {
   }
 }
 
+/**
+ * تغيّر الأمر بين قراءة الطلب وتنفيذه.
+ *
+ * القفل يسلسل الطلبات زمنياً لكنه **لا يُبطل** طلباً بُني على حال قديمة:
+ * الثاني ينتظر ثم ينفّذ بمعطياته هو. فبلا هذه المقارنة يمرّ تقدّمٌ مكرّر،
+ * ويعود أمرٌ ألغاه غيرُنا إلى `active` بصمت، ويُكتب سطرٌ يصف حالاً زالت.
+ */
+export class WorkOrderConflictError extends Error {
+  readonly currentStage: string;
+  readonly status: string;
+  constructor(state: { currentStage: string; status: string }) {
+    super("work order changed by another writer");
+    this.name = "WorkOrderConflictError";
+    this.currentStage = state.currentStage;
+    this.status = state.status;
+  }
+}
+
 /** قيمة عمود التاريخ كنصّ `YYYY-MM-DD` أو `null`. */
 function dateStr(v: unknown): string | null {
   return v ? String(v).slice(0, 10) : null;
 }
 
+interface LockedOrder {
+  currentStage: string;
+  status: string;
+  expectedDeliveryDate: string | null;
+  expertUserId: number;
+  startedAt: Date | null;
+}
+
 /**
- * يقفل صفّ الأمر داخل المعاملة ويُرجع موعده **الحقيقي** لحظتَها.
+ * يقفل صفّ الأمر داخل المعاملة ويُرجع حاله **الحقيقي** لحظتَها.
  *
  * القفل هو الفرق كلّه: من هنا حتى نهاية المعاملة لا يستطيع كاتبٌ آخر أن
- * يغيّر الموعد — فما نقرؤه هو ما سنكتب فوقه، لا صورةً قديمة عنه.
+ * يغيّر الصفّ — فما نقرؤه هو ما سنكتب فوقه، لا صورةً قديمة عنه. وكل قرار
+ * أو سطرِ سجلٍّ يخصّ هذه الحقول يُبنى على المُرجَع من هنا لا على اللقطة.
  */
-async function lockOrderDate(tx: any, orderId: number): Promise<string | null> {
+async function lockOrder(tx: any, orderId: number): Promise<LockedOrder> {
   const [locked] = await tx
-    .select({ current: WO.expectedDeliveryDate })
+    .select({
+      currentStage: WO.currentStage, status: WO.status,
+      expectedDeliveryDate: WO.expectedDeliveryDate,
+      expertUserId: WO.expertUserId, startedAt: WO.startedAt,
+    })
     .from(WO)
     .where(eq(WO.id, orderId))
     .for("update");
-  return dateStr(locked?.current);
+  return {
+    currentStage: locked?.currentStage ?? "",
+    status: locked?.status ?? "",
+    expectedDeliveryDate: dateStr(locked?.expectedDeliveryDate),
+    expertUserId: locked?.expertUserId ?? 0,
+    startedAt: locked?.startedAt ?? null,
+  };
+}
+
+/** الأمر المنتهي لا يُكتب عليه شيء — والحكم من الصفّ المقفول لا من اللقطة. */
+function assertNotTerminal(live: LockedOrder) {
+  if (live.status === "completed" || live.status === "cancelled") {
+    throw new WorkOrderConflictError(live);
+  }
 }
 
 export async function updateDeliveryDate(params: {
@@ -700,7 +753,8 @@ export async function updateDeliveryDate(params: {
     : dateStr(order.expectedDeliveryDate);
 
   return await db.transaction(async (tx) => {
-    const actual = await lockOrderDate(tx, order.id);
+    const live = await lockOrder(tx, order.id);
+    const actual = live.expectedDeliveryDate;
     // سبقَنا أحد. نخرج بلا كتابة وبلا سطر — والسطر هنا هو بيت القصيد:
     // لو كتبناه لَادّعى انتقالاً من موعدٍ لم يكن قائماً حين كتبنا.
     if (actual !== base) throw new DeliveryDateConflictError(actual);
@@ -720,7 +774,9 @@ export async function updateDeliveryDate(params: {
       workOrderId: order.id,
       actionType: "date_change",
       // الموعد لا يحرّك المرحلة — والطرفان متساويان توثيقاً لذلك.
-      fromStage: order.currentStage, toStage: order.currentStage,
+      // والمرحلة من الصفّ المقفول: لو تقدّم الأمر بيننا وبين قراءتنا لَسمّى
+      // السطرُ مرحلةً غادرها الأمر.
+      fromStage: live.currentStage, toStage: live.currentStage,
       notes,
       performedBy: params.performedBy,
     });
@@ -747,6 +803,10 @@ export async function holdOrder(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order, status, reasonCode } = params;
   return await db.transaction(async (tx) => {
+    // التوقّف لا يشترط مرحلةً بعينها، فلا يُردّ لتقدّم الأمر — لكنه يُسجَّل
+    // على المرحلة **الفعلية** لا على لقطةٍ غادرها. والمنتهي لا يُوقَف.
+    const live = await lockOrder(tx, order.id);
+    assertNotTerminal(live);
     const [updated] = await tx.update(WO)
       .set({ status, holdReasonCode: reasonCode, holdNote: params.note ?? null, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
@@ -754,7 +814,7 @@ export async function holdOrder(params: {
       workOrderId: order.id,
       actionType: "status_change",
       // نفس المرحلة على الطرفين — توثيق صريح في السجلّ أن التوقّف لم يحرّكها.
-      fromStage: order.currentStage, toStage: order.currentStage,
+      fromStage: live.currentStage, toStage: live.currentStage,
       notes: `توقّف: ${status} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
@@ -770,13 +830,18 @@ export async function resumeOrder(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order } = params;
   return await db.transaction(async (tx) => {
+    // استئنافٌ لأمرٍ استُؤنف أو انتهى بعد قراءتنا ليس استئنافاً — والحكم
+    // من الصفّ المقفول لا من حارس المسار الذي قرأ قبل القفل.
+    const live = await lockOrder(tx, order.id);
+    assertNotTerminal(live);
+    if (live.status === "active") throw new WorkOrderConflictError(live);
     const [updated] = await tx.update(WO)
       .set({ status: "active", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "status_change",
-      fromStage: order.currentStage, toStage: order.currentStage,
+      fromStage: live.currentStage, toStage: live.currentStage,
       notes: `استئناف العمل${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
@@ -803,12 +868,19 @@ export async function reworkToStage(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order, returnToStage, reasonCode } = params;
   return await db.transaction(async (tx) => {
+    // مرحلة الرجوع صُودق عليها في المسار مقابل المرحلة **وقت القراءة**.
+    // فلو تقدّم الأمر بعدها لَصار «الرجوع» قفزاً إلى الأمام بمصادقةٍ باطلة،
+    // ولَكذب `stageWhenDetected` على المرحلة التي اكتُشف فيها العطب.
+    const live = await lockOrder(tx, order.id);
+    assertNotTerminal(live);
+    if (live.currentStage !== order.currentStage) throw new WorkOrderConflictError(live);
+
     await tx.insert(RW).values({
       workOrderId: order.id,
       reworkType: REWORK_TYPE,
       reasonCode,
       reasonDetails: params.note ?? null,
-      stageWhenDetected: order.currentStage,
+      stageWhenDetected: live.currentStage,
       createdBy: params.performedBy,
     });
     const [updated] = await tx.update(WO)
@@ -823,8 +895,8 @@ export async function reworkToStage(params: {
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "rework",
-      fromStage: order.currentStage, toStage: returnToStage,
-      notes: `إعادة عمل فني — رجوع من ${order.currentStage} إلى ${returnToStage} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
+      fromStage: live.currentStage, toStage: returnToStage,
+      notes: `إعادة عمل فني — رجوع من ${live.currentStage} إلى ${returnToStage} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
     return updated;
@@ -839,13 +911,16 @@ export async function cancelOrder(params: {
 }): Promise<ProstheticWorkOrder> {
   const { order } = params;
   return await db.transaction(async (tx) => {
+    // إلغاءٌ لأمرٍ أُلغي بعد قراءتنا ليس إلغاءً — والمرحلة من الصفّ المقفول.
+    const live = await lockOrder(tx, order.id);
+    if (live.status === "cancelled") throw new WorkOrderConflictError(live);
     const [updated] = await tx.update(WO)
       .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "status_change",
-      fromStage: order.currentStage, toStage: order.currentStage,
+      fromStage: live.currentStage, toStage: live.currentStage,
       notes: `إلغاء الأمر${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
@@ -858,18 +933,31 @@ export async function reassignExpert(params: {
   newExpertUserId: number;
   reason: string;
   performedBy: number | null;
+  /**
+   * قاعدة الاستقبال: لا تحويل بعد بدء العمل. يفحصها المسار قبل القفل،
+   * فتُعاد هنا على الصفّ المقفول — وإلا مرّ تحويلٌ بعد تقدّمٍ متزامن.
+   */
+  requireNotStarted?: boolean;
 }): Promise<ProstheticWorkOrder> {
   const { order, newExpertUserId } = params;
-  const fromExpert = order.expertUserId;
   return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, order.id);
+    assertNotTerminal(live);
+    // الخبير السابق يُقرأ من الصفّ المقفول: لو حوّله غيرُنا بيننا وبين
+    // قراءتنا لَسمّى سطرُنا خبيراً لم يكن مسنَداً حين حوّلنا.
+    if (live.expertUserId !== order.expertUserId) throw new WorkOrderConflictError(live);
+    if (params.requireNotStarted
+        && (live.currentStage !== firstStageFor(order.serviceType, order.purpose) || !!live.startedAt)) {
+      throw new WorkOrderConflictError(live);
+    }
     const [updated] = await tx.update(WO)
       .set({ expertUserId: newExpertUserId, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "reassigned",
-      fromStage: order.currentStage, toStage: order.currentStage,
-      notes: `تحويل من الخبير ${await expertNameOf(tx, fromExpert)} إلى ${await expertNameOf(tx, newExpertUserId)} — السبب: ${params.reason}`,
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: `تحويل من الخبير ${await expertNameOf(tx, live.expertUserId)} إلى ${await expertNameOf(tx, newExpertUserId)} — السبب: ${params.reason}`,
       performedBy: params.performedBy,
     });
     return updated;

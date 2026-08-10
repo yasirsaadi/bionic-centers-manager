@@ -414,6 +414,23 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
   // Resolves an order + checks the caller may WRITE to it (assigned expert,
   // admin, or manager in-branch). Returns the raw order or sends the response.
+  /**
+   * تعارضٌ بين قراءة الطلب وتنفيذه: الأمر تحرّك تحت أيدينا. يُردّ ٤٠٩ ومعه
+   * حالُه الحقيقي، فتُحدِّث الواجهة نفسها ويقرّر المستخدم على ما هو قائم.
+   * يُرجع `true` إن كان الخطأ تعارضاً وقد رُدّ عليه.
+   */
+  function handledConflict(res: any, e: unknown): boolean {
+    if (e instanceof store.WorkOrderConflictError) {
+      res.status(409).json({
+        error: "تغيّر أمر التصنيع بواسطة مستخدم آخر. حدّث الصفحة وحاول مجدداً.",
+        currentStage: e.currentStage,
+        status: e.status,
+      });
+      return true;
+    }
+    return false;
+  }
+
   async function loadWritable(req: Req, res: any): Promise<any | null> {
     const s = getSession(req);
     const id = parseInt(req.params.id);
@@ -473,21 +490,26 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "تاريخ التسليم المتوقّع إلزامي عند هذه المرحلة" });
       }
     }
-    const updated = await store.updateStage({
-      order: raw, toStage,
-      notes: strOrU(req.body?.notes) ?? null,
-      deliveryDate,
-      // التقدّم يعيد الأمر إلى العمل: توقّفٌ سابق ينتهي بمجرّد المضيّ قُدُماً.
-      newStatus: MAINTENANCE_DONE_STAGES.has(toStage) || delivered ? null : "active",
-      clearHold: true,
-      finalResult: finalResult ?? null,
-      finalNotes: strOrU(req.body?.finalNotes) ?? null,
-      performedBy: getSession(req).userId ?? null,
-    });
-    if (delivered) {
-      await audit(req, "prosthetic_work_order", raw.id, "deliver", raw.branchId, `تسليم — النتيجة ${finalResult}`);
+    try {
+      const updated = await store.updateStage({
+        order: raw, toStage,
+        notes: strOrU(req.body?.notes) ?? null,
+        deliveryDate,
+        // التقدّم يعيد الأمر إلى العمل: توقّفٌ سابق ينتهي بمجرّد المضيّ قُدُماً.
+        newStatus: MAINTENANCE_DONE_STAGES.has(toStage) || delivered ? null : "active",
+        clearHold: true,
+        finalResult: finalResult ?? null,
+        finalNotes: strOrU(req.body?.finalNotes) ?? null,
+        performedBy: getSession(req).userId ?? null,
+      });
+      if (delivered) {
+        await audit(req, "prosthetic_work_order", raw.id, "deliver", raw.branchId, `تسليم — النتيجة ${finalResult}`);
+      }
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
     }
-    res.json(updated);
   });
 
   // ---- ADMIN escape hatch: set any valid stage -------------------------------
@@ -515,16 +537,21 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
       }
     }
-    const updated = await store.updateStage({
-      order: raw, toStage,
-      notes: `تعديل إداري — ${reason}`,
-      deliveryDate: null,
-      finalResult: finalResult ?? null,
-      performedBy: s.userId ?? null,
-    });
-    await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
-      `تعديل إداري للمرحلة من ${raw.currentStage} إلى ${toStage} — السبب: ${reason}`);
-    res.json(updated);
+    try {
+      const updated = await store.updateStage({
+        order: raw, toStage,
+        notes: `تعديل إداري — ${reason}`,
+        deliveryDate: null,
+        finalResult: finalResult ?? null,
+        performedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
+        `تعديل إداري للمرحلة من ${raw.currentStage} إلى ${toStage} — السبب: ${reason}`);
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
+    }
   });
 
   // ---- hold: stop the work WITHOUT moving the stage --------------------------
@@ -548,20 +575,30 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       if (!returnToStage || !allowed.includes(returnToStage)) {
         return res.status(400).json({ error: "اختر مرحلة سابقة للرجوع إليها" });
       }
-      const updated = await store.reworkToStage({
-        order: raw, returnToStage, reasonCode: reasonCode!, note,
-        performedBy: getSession(req).userId ?? null,
-      });
-      await audit(req, "prosthetic_work_order", raw.id, "rework", raw.branchId,
-        `إعادة عمل فني — رجوع إلى ${returnToStage} — السبب: ${reasonCode}`);
-      return res.json(updated);
+      try {
+        const updated = await store.reworkToStage({
+          order: raw, returnToStage, reasonCode: reasonCode!, note,
+          performedBy: getSession(req).userId ?? null,
+        });
+        await audit(req, "prosthetic_work_order", raw.id, "rework", raw.branchId,
+          `إعادة عمل فني — رجوع إلى ${returnToStage} — السبب: ${reasonCode}`);
+        return res.json(updated);
+      } catch (e) {
+        if (handledConflict(res, e)) return;
+        throw e;
+      }
     }
 
-    const updated = await store.holdOrder({
-      order: raw, status, reasonCode: reasonCode!, note,
-      performedBy: getSession(req).userId ?? null,
-    });
-    res.json(updated);
+    try {
+      const updated = await store.holdOrder({
+        order: raw, status, reasonCode: reasonCode!, note,
+        performedBy: getSession(req).userId ?? null,
+      });
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
+    }
   });
 
   // ---- resume: back to active, stage untouched -------------------------------
@@ -572,11 +609,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(409).json({ error: "الأمر منتهٍ" });
     }
     if (raw.status === "active") return res.status(409).json({ error: "الأمر يعمل أصلاً" });
-    const updated = await store.resumeOrder({
-      order: raw, note: strOrU(req.body?.note) ?? null,
-      performedBy: getSession(req).userId ?? null,
-    });
-    res.json(updated);
+    try {
+      const updated = await store.resumeOrder({
+        order: raw, note: strOrU(req.body?.note) ?? null,
+        performedBy: getSession(req).userId ?? null,
+      });
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
+    }
   });
 
   // ---- cancel ----------------------------------------------------------------
@@ -586,11 +628,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const raw = await loadWritable(req, res);
     if (!raw) return;
     if (raw.status === "cancelled") return res.status(409).json({ error: "الأمر ملغى أصلاً" });
-    const updated = await store.cancelOrder({
-      order: raw, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null,
-    });
-    await audit(req, "prosthetic_work_order", raw.id, "cancel", raw.branchId, "إلغاء أمر التصنيع");
-    res.json(updated);
+    try {
+      const updated = await store.cancelOrder({
+        order: raw, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "cancel", raw.branchId, "إلغاء أمر التصنيع");
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
+    }
   });
 
   // ---- expected delivery date update ------------------------------------------
@@ -687,10 +734,19 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(newExpertUserId, raw.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    const updated = await store.reassignExpert({ order: raw, newExpertUserId, reason, performedBy: s.userId ?? null });
-    await audit(req, "prosthetic_work_order", raw.id, "reassign", raw.branchId,
-      `تحويل من #${raw.expertUserId} إلى #${newExpertUserId} — ${reason}`);
-    res.json(updated);
+    try {
+      const updated = await store.reassignExpert({
+        order: raw, newExpertUserId, reason, performedBy: s.userId ?? null,
+        // الاستقبال وحده مقيَّد بـ«قبل بدء العمل» — يُعاد فحصه تحت القفل.
+        requireNotStarted: !(s.isAdmin || isManager(s)),
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "reassign", raw.branchId,
+        `تحويل من #${raw.expertUserId} إلى #${newExpertUserId} — ${reason}`);
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      throw e;
+    }
   });
 
   // ---- admin / manager overview ---------------------------------------------
