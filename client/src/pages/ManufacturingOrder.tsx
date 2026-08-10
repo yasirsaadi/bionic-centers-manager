@@ -323,7 +323,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 // ---- dialogs ----------------------------------------------------------------
 
-function useAction(url: string, method: string, onDone: () => void) {
+function useAction(url: string, method: string, onDone: () => void, onFail?: () => void) {
   const { toast } = useToast();
   return useMutation({
     mutationFn: async (body: any) => {
@@ -332,7 +332,10 @@ function useAction(url: string, method: string, onDone: () => void) {
       return res.json();
     },
     onSuccess: () => { toast({ title: "تم" }); onDone(); },
-    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+      onFail?.();
+    },
   });
 }
 
@@ -346,7 +349,13 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
   const [date, setDate] = useState(current ?? "");
   const [reason, setReason] = useState("");
   useEffect(() => { setDate(current ?? ""); setReason(""); }, [current, open]);
-  const m = useAction(`/api/manufacturing/orders/${orderId}/delivery-date`, "PATCH", () => { onOpenChange(false); onDone(); });
+  // عند التعارض تبقى النافذة مفتوحة ويُعاد جلب الأمر: يتبدّل `current`
+  // أمام المستخدم فيقرّر على الموعد الذي صار قائماً فعلاً، لا على قديمه.
+  const m = useAction(
+    `/api/manufacturing/orders/${orderId}/delivery-date`, "PATCH",
+    () => { onOpenChange(false); onDone(); },
+    () => onDone(),
+  );
   const isFirstCommit = !current;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -388,7 +397,13 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
           <Button
             disabled={!date || date === (current ?? "") || (!isFirstCommit && !reason.trim()) || m.isPending}
-            onClick={() => m.mutate({ expectedDeliveryDate: date, reason: reason.trim() || undefined })}
+            onClick={() => m.mutate({
+              expectedDeliveryDate: date,
+              reason: reason.trim() || undefined,
+              // ما كان معروضاً حين قرّر المستخدم — يردّه الخادم بتعارض إن
+              // كان قد تحرّك، فلا تُمحى نيّة زميلٍ سبقه بضغطة غير مطّلعة.
+              ifCurrentDate: current ?? null,
+            })}
             data-testid="button-save-delivery-date"
           >
             {m.isPending ? "جارٍ الحفظ…" : "حفظ"}

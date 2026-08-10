@@ -596,14 +596,16 @@ export async function updateStage(params: {
   // stage can never contradict each other again.
   const maintenanceDone = MAINTENANCE_DONE_STAGES.has(toStage);
   return await db.transaction(async (tx) => {
+    // القفل أولاً. `COALESCE` كانت تمنع الكتابة المزدوجة لكنها لا تقول
+    // **مَن** كتب: كاتبان اختارا التاريخ نفسه يجد كلاهما قيمته في الصفّ
+    // بعد التحديث، فيسجّل كلاهما «أنا مَن التزم». القفل يحسمها بحقيقة
+    // واحدة — مَن وجد العمود فارغاً هو صاحب الالتزام، وحده.
+    const actualDate = await lockOrderDate(tx, order.id);
+    const commitsDate = !!params.deliveryDate && actualDate === null;
+
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
     if (!order.startedAt && fromStage === firstStageFor(order.serviceType, order.purpose)) patch.startedAt = new Date();
-    // First-commit only, decided IN the database (COALESCE), not on the
-    // possibly-stale `order` snapshot — two concurrent mold updates can't
-    // both "win": whichever lands second finds the column already set.
-    if (params.deliveryDate && !order.expectedDeliveryDate) {
-      patch.expectedDeliveryDate = sql`COALESCE(${WO.expectedDeliveryDate}, ${params.deliveryDate})`;
-    }
+    if (commitsDate) patch.expectedDeliveryDate = params.deliveryDate;
     if (params.newStatus) patch.status = params.newStatus;
     if (params.clearHold) { patch.holdReasonCode = null; patch.holdNote = null; }
     if (delivered) {
@@ -630,20 +632,51 @@ export async function updateStage(params: {
     // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
     // نافذة الموعد المستقلّة. فلولا هذا السطر لَما ظهر أشيعُ التزامٍ بموعد
     // في سجلّ المواعيد إطلاقاً، وبدا الأمر كأنّ موعده وُلد من العدم.
-    // والشرط الثاني يحترم سباق COALESCE: إن سبقنا آخرُ فالموعد موعدُه لا
-    // موعدنا، ولا يُسجَّل باسمنا.
-    if (params.deliveryDate && !order.expectedDeliveryDate
-        && String(updated.expectedDeliveryDate) === params.deliveryDate) {
+    // والخاسر في السباق يمضي في نقل المرحلة ولا يدّعي التزاماً ليس له.
+    if (commitsDate) {
       await tx.insert(WH).values({
         workOrderId: order.id,
         actionType: "date_change",
         fromStage: toStage, toStage,
-        notes: deliveryDateSetNote(params.deliveryDate),
+        notes: deliveryDateSetNote(params.deliveryDate!),
         performedBy: params.performedBy,
       });
     }
     return updated;
   });
+}
+
+/**
+ * كاتبٌ آخر حرّك الموعد بيننا وبين قراءتنا. لا يُكتب فوقه بصمت — ولا
+ * يُسجَّل سطرٌ يدّعي أنّنا انتقلنا من موعدٍ لم يعد قائماً.
+ */
+export class DeliveryDateConflictError extends Error {
+  readonly currentDate: string | null;
+  constructor(currentDate: string | null) {
+    super("delivery date changed by another writer");
+    this.name = "DeliveryDateConflictError";
+    this.currentDate = currentDate;
+  }
+}
+
+/** قيمة عمود التاريخ كنصّ `YYYY-MM-DD` أو `null`. */
+function dateStr(v: unknown): string | null {
+  return v ? String(v).slice(0, 10) : null;
+}
+
+/**
+ * يقفل صفّ الأمر داخل المعاملة ويُرجع موعده **الحقيقي** لحظتَها.
+ *
+ * القفل هو الفرق كلّه: من هنا حتى نهاية المعاملة لا يستطيع كاتبٌ آخر أن
+ * يغيّر الموعد — فما نقرؤه هو ما سنكتب فوقه، لا صورةً قديمة عنه.
+ */
+async function lockOrderDate(tx: any, orderId: number): Promise<string | null> {
+  const [locked] = await tx
+    .select({ current: WO.expectedDeliveryDate })
+    .from(WO)
+    .where(eq(WO.id, orderId))
+    .for("update");
+  return dateStr(locked?.current);
 }
 
 export async function updateDeliveryDate(params: {
@@ -654,16 +687,32 @@ export async function updateDeliveryDate(params: {
   // changed — the promised date is what delivery accuracy is measured
   // against, so moving it must carry its justification into the record.
   reason?: string | null;
+  /**
+   * الموعد الذي **بُني عليه** الطلب: ما كان معروضاً أمام المستخدم. غيابه
+   * يعني «قِس على اللقطة التي قرأها الخادم» — والأدقّ أن ترسله الواجهة،
+   * فتبويبةٌ قديمة تُردّ بتعارض بدل أن تكتب فوق قرار غيرها.
+   */
+  ifCurrentDate?: string | null;
 }): Promise<ProstheticWorkOrder> {
   const { order, expectedDeliveryDate } = params;
-  const previous = order.expectedDeliveryDate ? String(order.expectedDeliveryDate) : null;
-  // أول تحديد ليس «تغييراً» فلا يُكتب بصيغته: لا موعد سابق له ولا سبب.
-  // والتغيير يحمل الموعدين والسبب داخل نصّه، فالسطر يُقرأ وحده بلا مقارنة
-  // بسطرٍ آخر — وهذا ما يجعل الأثر دائماً لا مشتقّاً.
-  const notes = previous
-    ? deliveryDateChangeNote(previous, expectedDeliveryDate, params.reason ?? "")
-    : deliveryDateSetNote(expectedDeliveryDate);
+  const base = params.ifCurrentDate !== undefined
+    ? dateStr(params.ifCurrentDate)
+    : dateStr(order.expectedDeliveryDate);
+
   return await db.transaction(async (tx) => {
+    const actual = await lockOrderDate(tx, order.id);
+    // سبقَنا أحد. نخرج بلا كتابة وبلا سطر — والسطر هنا هو بيت القصيد:
+    // لو كتبناه لَادّعى انتقالاً من موعدٍ لم يكن قائماً حين كتبنا.
+    if (actual !== base) throw new DeliveryDateConflictError(actual);
+
+    // أول تحديد ليس «تغييراً» فلا يُكتب بصيغته: لا موعد سابق له ولا سبب.
+    // والتغيير يحمل الموعدين والسبب داخل نصّه، فالسطر يُقرأ وحده بلا
+    // مقارنة بسطرٍ آخر — وهذا ما يجعل الأثر دائماً لا مشتقّاً.
+    // و`actual` — لا اللقطة — هو ما نكتب فوقه، فالسطر يصف ما جرى فعلاً.
+    const notes = actual
+      ? deliveryDateChangeNote(actual, expectedDeliveryDate, params.reason ?? "")
+      : deliveryDateSetNote(expectedDeliveryDate);
+
     const [updated] = await tx.update(WO)
       .set({ expectedDeliveryDate, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();

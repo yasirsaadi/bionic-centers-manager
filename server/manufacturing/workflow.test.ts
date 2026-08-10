@@ -380,6 +380,94 @@ async function main() {
       same("والموعد الأول هو الملزِم", String((await order(oidM)).expectedDeliveryDate).slice(0, 10), DM);
     }
 
+    // ══ التزامن: السجلّ يطابق ما جرى في القاعدة، لا ما ظنّه الكاتب ═════════
+    console.log("\n── تعارض تغيير موعد قائم ──");
+    {
+      const pc = await mkPatient("مريض التزامن");
+      const oidC = await mkOrder(pc, "measurements");
+      const B0 = "2026-08-20", A1 = "2026-08-25", B1 = "2026-08-28";
+      await req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.expert,
+        { expectedDeliveryDate: B0, ifCurrentDate: null });
+
+      // كاتبان **متزامنان فعلاً**، كلاهما بُني على الموعد نفسه.
+      const [ra, rb] = await Promise.all([
+        req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.expert,
+          { expectedDeliveryDate: A1, reason: "سبب أ", ifCurrentDate: B0 }),
+        req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.manager,
+          { expectedDeliveryDate: B1, reason: "سبب ب", ifCurrentDate: B0 }),
+      ]);
+      const codes = [ra.status, rb.status].sort();
+      same("واحد ينجح والآخر يتعارض", codes, [200, 409]);
+      const winner = ra.status === 200 ? A1 : B1;
+      const loser = ra.status === 200 ? B1 : A1;
+      same("والموعد في القاعدة هو موعد الفائز",
+        String((await order(oidC)).expectedDeliveryDate).slice(0, 10), winner);
+
+      const rows = (await history(oidC)).filter((h) => h.actionType === "date_change");
+      same("سطران فقط: التحديد الأول وتغييرٌ واحد", rows.length, 2);
+      check(!!rows[1].notes?.includes(B0) && !!rows[1].notes?.includes(winner),
+        "والسطر يوثّق الانتقال الحقيقي", rows[1].notes ?? "");
+      // الادّعاء الكاذب الذي كان ممكناً: «من 20 إلى موعد الخاسر».
+      check(!rows.some((h) => h.notes?.includes(loser)),
+        "ولا أثر لموعد الخاسر إطلاقاً — لا سطر كاذب");
+
+      // وبعد التحديث يمرّ التغيير الثاني موثّقاً من الموعد الحقيقي.
+      const r2 = await req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.manager,
+        { expectedDeliveryDate: loser, reason: "بعد التحديث", ifCurrentDate: winner });
+      same("والمحاولة بعد التحديث تنجح", r2.status, 200);
+      const rows2 = (await history(oidC)).filter((h) => h.actionType === "date_change");
+      check(!!rows2[2].notes?.includes(winner) && !!rows2[2].notes?.includes(loser),
+        "وتوثّق الانتقال من موعد الفائز", rows2[2].notes ?? "");
+
+      // وطلبٌ قديم لا يعرف ما جرى يُردّ ولا يمسّ شيئاً.
+      const stale = await req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.expert,
+        { expectedDeliveryDate: "2026-09-09", reason: "قديم", ifCurrentDate: B0 });
+      same("والطلب القديم يُردّ ٤٠٩", stale.status, 409);
+      same("ويُعلِم المستخدم بالموعد الحقيقي", stale.json?.currentDate, loser);
+      same("ولم يُكتب سطر للتعارض",
+        (await history(oidC)).filter((h) => h.actionType === "date_change").length, 3);
+      same("والموعد لم يتحرّك", String((await order(oidC)).expectedDeliveryDate).slice(0, 10), loser);
+
+      // «تغيير» إلى الموعد نفسه ليس تغييراً — ولا يُترك ليكتب سطراً فارغاً.
+      const noop = await req("PATCH", `/api/manufacturing/orders/${oidC}/delivery-date`, S.expert,
+        { expectedDeliveryDate: loser, reason: "بلا فائدة", ifCurrentDate: loser });
+      same("والتغيير إلى الموعد نفسه مرفوض", noop.status, 400);
+      same("وبلا سطر جديد",
+        (await history(oidC)).filter((h) => h.actionType === "date_change").length, 3);
+    }
+
+    console.log("\n── تعارض أول التزام بالموعد ──");
+    {
+      // كاتبان يلتزمان **بالتاريخ نفسه** في اللحظة نفسها: المقارنة بالقيمة
+      // كانت ستجعل كليهما يظنّ أنه الفائز ويكتب سطراً.
+      const pf = await mkPatient("مريض أول التزام");
+      const oidF = await mkOrder(pf, "measurements");
+      const SAME = "2026-08-30";
+      const [fa, fb] = await Promise.all([
+        req("PATCH", `/api/manufacturing/orders/${oidF}/delivery-date`, S.expert,
+          { expectedDeliveryDate: SAME, ifCurrentDate: null }),
+        req("PATCH", `/api/manufacturing/orders/${oidF}/delivery-date`, S.manager,
+          { expectedDeliveryDate: SAME, ifCurrentDate: null }),
+      ]);
+      same("واحد يلتزم والآخر يتعارض", [fa.status, fb.status].sort(), [200, 409]);
+      same("وموعد واحد نهائي", String((await order(oidF)).expectedDeliveryDate).slice(0, 10), SAME);
+      const rows = (await history(oidF)).filter((h) => h.actionType === "date_change");
+      same("وسطر التزام واحد لا سطران", rows.length, 1);
+      same("وباسم الفائز وحده", rows[0].performedBy, fa.status === 200 ? EXPERT : MANAGER);
+
+      // ونفس السباق عبر «بلوغ القالب»: الخاسر يمضي في نقل المرحلة، ولا
+      // يدّعي التزاماً ليس له.
+      const pg = await mkPatient("مريض قالب متزامن");
+      const oidG = await mkOrder(pg, "measurements");
+      await Promise.all([
+        req("PATCH", `/api/manufacturing/orders/${oidG}/advance`, S.expert, { expectedDeliveryDate: SAME }),
+        req("PATCH", `/api/manufacturing/orders/${oidG}/advance`, S.manager, { expectedDeliveryDate: SAME }),
+      ]);
+      same("المرحلة تقدّمت", (await order(oidG)).currentStage, "mold");
+      same("وسطر التزام واحد رغم تزامن الكاتبين",
+        (await history(oidG)).filter((h) => h.actionType === "date_change").length, 1);
+    }
+
     // ══ التنبيهات تتبع الموعد الحالي لحظةً بلحظة ═══════════════════════════
     console.log("\n── تنبيهات التسليم تتبع الموعد ──");
     const kindFor = async (session: any, orderId: number): Promise<string | null> => {

@@ -609,24 +609,48 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: "تاريخ غير صالح" });
     }
+    // إلزام السبب يُقاس على **صفّ الخادم** لا على ما يدّعيه الطلب، وإلّا
+    // لَأسقطه عميلٌ بادّعاء «لا موعد سابق». (وادّعاؤه ذاك يُردّ ٤٠٩ تحت
+    // القفل على أي حال.)
     const isChange = !!raw.expectedDeliveryDate;
     const reason = (strOrU(req.body?.reason) ?? "").trim();
     if (isChange && !reason) {
       return res.status(400).json({ error: "سبب تغيير تاريخ التسليم إلزامي — اذكر لماذا تغيّر الموعد" });
     }
-    if (isChange && String(raw.expectedDeliveryDate) === date) {
+    // ما كان معروضاً أمام المستخدم حين قرّر. ترسله الواجهة، وغيابه يُقاس
+    // على لقطة الخادم — والفحص الحاسم يقع تحت القفل داخل المعاملة.
+    const hasBase = Object.prototype.hasOwnProperty.call(req.body ?? {}, "ifCurrentDate");
+    const believed = hasBase
+      ? (strOrU(req.body?.ifCurrentDate) ?? null)
+      : (raw.expectedDeliveryDate ? String(raw.expectedDeliveryDate).slice(0, 10) : null);
+    // «تغييرٌ» إلى الموعد نفسه ليس تغييراً: سطرٌ يقول «من ٢٥ إلى ٢٥» ضجيج
+    // في سجلٍّ وُضع ليُقرأ. ويُقاس على ما رآه المستخدم وعلى صفّ الخادم معاً.
+    if (believed === date || (isChange && String(raw.expectedDeliveryDate).slice(0, 10) === date)) {
       return res.status(400).json({ error: "التاريخ الجديد مطابق للحالي" });
     }
-    const updated = await store.updateDeliveryDate({
-      order: raw, expectedDeliveryDate: date,
-      performedBy: getSession(req).userId ?? null,
-      reason: isChange ? reason : null,
-    });
-    await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
-      isChange
-        ? `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`
-        : `تحديد موعد التسليم المتوقع: ${date}`);
-    res.json(updated);
+    try {
+      const updated = await store.updateDeliveryDate({
+        order: raw, expectedDeliveryDate: date,
+        performedBy: getSession(req).userId ?? null,
+        reason: isChange ? reason : null,
+        ...(hasBase ? { ifCurrentDate: strOrU(req.body?.ifCurrentDate) ?? null } : {}),
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
+        isChange
+          ? `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`
+          : `تحديد موعد التسليم المتوقع: ${date}`);
+      res.json(updated);
+    } catch (e: any) {
+      // سبقَنا كاتبٌ آخر. لا كتابة ولا سطر ولا تدقيق — والمستخدم يرى ما
+      // صار إليه الموعد فعلاً ليقرّر من جديد على أرضٍ صلبة.
+      if (e instanceof store.DeliveryDateConflictError) {
+        return res.status(409).json({
+          error: "تغيّر موعد التسليم بواسطة مستخدم آخر. حدّث الصفحة وحاول مجدداً.",
+          currentDate: e.currentDate,
+        });
+      }
+      throw e;
+    }
   });
 
   // ---- reassign expert -------------------------------------------------------
