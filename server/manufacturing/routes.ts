@@ -14,8 +14,9 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs } from "../medical/store";
 import {
-  isValidStatus, isValidReworkType, isValidReasonCode,
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
+  defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
+  MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
 
 type Req = any;
@@ -434,47 +435,161 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     return raw;
   }
 
-  // ---- stage update ----------------------------------------------------------
-  app.patch("/api/manufacturing/orders/:id/stage", isAuthenticated, async (req: Req, res) => {
+  // ---- advance to the NEXT stage --------------------------------------------
+  // زرّ الخبير الرئيسي. **لا تنقّل عشوائي**: الوجهة الوحيدة المقبولة هي
+  // المرحلة التالية في الترتيب (ولمسند لا يحتاج قالباً: تخطّي القالب إلى
+  // التصنيع). الرجوع للخلف ليس هنا إطلاقاً — مساره «إعادة عمل فني».
+  app.patch("/api/manufacturing/orders/:id/advance", isAuthenticated, async (req: Req, res) => {
     const raw = await loadWritable(req, res);
     if (!raw) return;
-    const toStage = strOrU(req.body?.toStage);
-    if (!toStage || !isValidStageFor(raw.serviceType, toStage, raw.purpose)) {
-      return res.status(400).json({ error: "المرحلة غير صالحة لهذا النوع" });
+    if (raw.status === "completed" || raw.status === "cancelled") {
+      return res.status(409).json({ error: "الأمر منتهٍ — لا يمكن نقله" });
     }
-    const newStatus = strOrU(req.body?.status);
-    if (newStatus && !isValidStatus(newStatus)) return res.status(400).json({ error: "الحالة غير صالحة" });
-    // Delivery requires a fabrication & fit result.
+    const allowed = nextStages(raw.serviceType, raw.currentStage, raw.purpose);
+    if (allowed.length === 0) {
+      return res.status(409).json({ error: "لا توجد مرحلة تالية — الأمر في نهاية المسار" });
+    }
+    // الافتراضية إن لم تُطلب وجهة، وإلا يجب أن تكون ضمن المسموح.
+    const requested = strOrU(req.body?.toStage);
+    const toStage = requested ?? defaultNextStage(raw.serviceType, raw.currentStage, raw.purpose)!;
+    if (!allowed.includes(toStage)) {
+      return res.status(400).json({ error: "لا يمكن الانتقال إلى هذه المرحلة — المسموح هو المرحلة التالية فقط" });
+    }
+
+    const delivered = toStage === DELIVERED_STAGE;
     let finalResult: string | undefined;
-    if (toStage === DELIVERED_STAGE) {
+    if (delivered) {
       finalResult = strOrU(req.body?.finalResult);
       if (!finalResult || !isValidFinalResult(finalResult)) {
         return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
       }
     }
-    // Reaching (or jumping PAST) the mold stage requires the expert to commit
-    // to a delivery date — unless one was already set (then it stays locked;
-    // not re-taken here). Checked against stage ORDER, not equality, so
-    // skipping cast_taken cannot bypass the mandatory commitment.
+    // بلوغ القالب (أو تخطّيه إلى ما بعده) يستدعي التزاماً بموعد التسليم،
+    // ما لم يكن قد التُزم به سابقاً — فيبقى مثبَّتاً لقياس دقّة التسليم.
     let deliveryDate: string | null = null;
     if (isAtOrBeyondMoldStage(raw.serviceType, toStage, raw.purpose) && !raw.expectedDeliveryDate) {
       deliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
       if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
-        return res.status(400).json({ error: "تاريخ التسليم إلزامي عند أخذ القالب" });
+        return res.status(400).json({ error: "تاريخ التسليم المتوقّع إلزامي عند هذه المرحلة" });
       }
     }
     const updated = await store.updateStage({
       order: raw, toStage,
       notes: strOrU(req.body?.notes) ?? null,
       deliveryDate,
-      newStatus: newStatus ?? null,
+      // التقدّم يعيد الأمر إلى العمل: توقّفٌ سابق ينتهي بمجرّد المضيّ قُدُماً.
+      newStatus: MAINTENANCE_DONE_STAGES.has(toStage) || delivered ? null : "active",
+      clearHold: true,
       finalResult: finalResult ?? null,
       finalNotes: strOrU(req.body?.finalNotes) ?? null,
       performedBy: getSession(req).userId ?? null,
     });
-    if (toStage === DELIVERED_STAGE) {
+    if (delivered) {
       await audit(req, "prosthetic_work_order", raw.id, "deliver", raw.branchId, `تسليم — النتيجة ${finalResult}`);
     }
+    res.json(updated);
+  });
+
+  // ---- ADMIN escape hatch: set any valid stage -------------------------------
+  // ليس واجهة الخبير. مخرج إداري للمدير والمسؤول وحدهما حين تحتاج البيانات
+  // تصحيحاً، ويُدقَّق في كل مرّة.
+  app.patch("/api/manufacturing/orders/:id/stage", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!(s.isAdmin || isManager(s))) {
+      return res.status(403).json({ error: "تعديل المرحلة مباشرةً للإدارة — استعمل «الانتقال للمرحلة التالية»" });
+    }
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    const toStage = strOrU(req.body?.toStage);
+    if (!toStage || !isValidStageFor(raw.serviceType, toStage, raw.purpose)) {
+      return res.status(400).json({ error: "المرحلة غير صالحة لهذا النوع" });
+    }
+    const reason = (strOrU(req.body?.reason) ?? "").trim();
+    if (!reason) return res.status(400).json({ error: "سبب التعديل الإداري إلزامي" });
+
+    const delivered = toStage === DELIVERED_STAGE;
+    let finalResult: string | undefined;
+    if (delivered) {
+      finalResult = strOrU(req.body?.finalResult);
+      if (!finalResult || !isValidFinalResult(finalResult)) {
+        return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
+      }
+    }
+    const updated = await store.updateStage({
+      order: raw, toStage,
+      notes: `تعديل إداري — ${reason}`,
+      deliveryDate: null,
+      finalResult: finalResult ?? null,
+      performedBy: s.userId ?? null,
+    });
+    await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
+      `تعديل إداري للمرحلة من ${raw.currentStage} إلى ${toStage} — السبب: ${reason}`);
+    res.json(updated);
+  });
+
+  // ---- hold: stop the work WITHOUT moving the stage --------------------------
+  app.post("/api/manufacturing/orders/:id/hold", isAuthenticated, async (req: Req, res) => {
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    if (raw.status === "completed" || raw.status === "cancelled") {
+      return res.status(409).json({ error: "الأمر منتهٍ" });
+    }
+    const status = strOrU(req.body?.status);
+    if (!status || !isHoldStatus(status)) return res.status(400).json({ error: "نوع التوقّف غير صالح" });
+    const reasonCode = strOrU(req.body?.reasonCode);
+    if (!isValidHoldReason(status, reasonCode)) return res.status(400).json({ error: "السبب غير صالح لهذا النوع" });
+    const note = strOrU(req.body?.note) ?? null;
+
+    // إعادة العمل الفني وحدها تحرّك المرحلة — إلى الخلف، وبمرحلة يختارها
+    // الخبير من المراحل السابقة فقط.
+    if (status === "technical_rework") {
+      const returnToStage = strOrU(req.body?.returnToStage);
+      const allowed = reworkReturnStages(raw.serviceType, raw.currentStage, raw.purpose);
+      if (!returnToStage || !allowed.includes(returnToStage)) {
+        return res.status(400).json({ error: "اختر مرحلة سابقة للرجوع إليها" });
+      }
+      const updated = await store.reworkToStage({
+        order: raw, returnToStage, reasonCode: reasonCode!, note,
+        performedBy: getSession(req).userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "rework", raw.branchId,
+        `إعادة عمل فني — رجوع إلى ${returnToStage} — السبب: ${reasonCode}`);
+      return res.json(updated);
+    }
+
+    const updated = await store.holdOrder({
+      order: raw, status, reasonCode: reasonCode!, note,
+      performedBy: getSession(req).userId ?? null,
+    });
+    res.json(updated);
+  });
+
+  // ---- resume: back to active, stage untouched -------------------------------
+  app.post("/api/manufacturing/orders/:id/resume", isAuthenticated, async (req: Req, res) => {
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    if (raw.status === "completed" || raw.status === "cancelled") {
+      return res.status(409).json({ error: "الأمر منتهٍ" });
+    }
+    if (raw.status === "active") return res.status(409).json({ error: "الأمر يعمل أصلاً" });
+    const updated = await store.resumeOrder({
+      order: raw, note: strOrU(req.body?.note) ?? null,
+      performedBy: getSession(req).userId ?? null,
+    });
+    res.json(updated);
+  });
+
+  // ---- cancel ----------------------------------------------------------------
+  app.post("/api/manufacturing/orders/:id/cancel", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!(s.isAdmin || isManager(s))) return res.status(403).json({ error: "إلغاء الأمر للإدارة" });
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    if (raw.status === "cancelled") return res.status(409).json({ error: "الأمر ملغى أصلاً" });
+    const updated = await store.cancelOrder({
+      order: raw, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null,
+    });
+    await audit(req, "prosthetic_work_order", raw.id, "cancel", raw.branchId, "إلغاء أمر التصنيع");
     res.json(updated);
   });
 
@@ -508,45 +623,6 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
         `تغيير موعد التسليم من ${raw.expectedDeliveryDate} إلى ${date} — السبب: ${reason}`);
     }
-    res.json(updated);
-  });
-
-  // ---- status update ---------------------------------------------------------
-  app.patch("/api/manufacturing/orders/:id/status", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
-    const status = strOrU(req.body?.status);
-    if (!status || !isValidStatus(status)) return res.status(400).json({ error: "الحالة غير صالحة" });
-    const updated = await store.updateStatus({
-      order: raw, status, notes: strOrU(req.body?.notes) ?? null,
-      performedBy: getSession(req).userId ?? null,
-    });
-    if (status === "cancelled") {
-      await audit(req, "prosthetic_work_order", raw.id, "cancel", raw.branchId, "إلغاء أمر التصنيع");
-    }
-    res.json(updated);
-  });
-
-  // ---- record rework (recast / resocket / …) ---------------------------------
-  app.post("/api/manufacturing/orders/:id/rework", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
-    const reworkType = strOrU(req.body?.reworkType);
-    if (!reworkType || !isValidReworkType(reworkType)) return res.status(400).json({ error: "نوع إعادة العمل غير صالح" });
-    const reasonCode = strOrU(req.body?.reasonCode);
-    if (reasonCode && !isValidReasonCode(reasonCode)) return res.status(400).json({ error: "سبب غير صالح" });
-    const stageWhenDetected = strOrU(req.body?.stageWhenDetected);
-    if (stageWhenDetected && !isValidStageFor(raw.serviceType, stageWhenDetected, raw.purpose)) {
-      return res.status(400).json({ error: "المرحلة غير صالحة" });
-    }
-    const updated = await store.recordRework({
-      order: raw, reworkType, reasonCode: reasonCode ?? null,
-      reasonDetails: strOrU(req.body?.reasonDetails) ?? null,
-      stageWhenDetected: stageWhenDetected ?? null,
-      createdBy: getSession(req).userId ?? null,
-    });
-    if (reworkType === "recast") await audit(req, "prosthetic_work_order", raw.id, "recast", raw.branchId, "تسجيل إعادة قالب");
-    if (reworkType === "resocket") await audit(req, "prosthetic_work_order", raw.id, "resocket", raw.branchId, "تسجيل إعادة سوكت");
     res.json(updated);
   });
 

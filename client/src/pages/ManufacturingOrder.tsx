@@ -14,11 +14,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Wrench, History, RotateCcw, UserCog, CalendarDays } from "lucide-react";
+import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import {
-  STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS,
-  REWORK_TYPES, REWORK_TYPE_LABELS, REASON_CODES, REASON_CODE_LABELS,
-  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForOrder, DELIVERED_STAGE, isAtOrBeyondMoldStage,
+  STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
+  REWORK_TYPE_LABELS, REASON_CODE_LABELS,
+  FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForOrder, DELIVERED_STAGE,
+  isAtOrBeyondMoldStage, defaultNextStage, nextStages, reworkReturnStages,
+  HOLD_STATUSES, HOLD_REASONS, isHoldStatus, toPatientStageView,
 } from "@shared/manufacturing";
 
 function fmt(iso: string | null): string {
@@ -50,9 +52,9 @@ export default function ManufacturingOrder() {
     },
   });
 
-  const [stageOpen, setStageOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [reworkOpen, setReworkOpen] = useState(false);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [adminStageOpen, setAdminStageOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
 
@@ -74,6 +76,11 @@ export default function ManufacturingOrder() {
   const { order, patient, timeline, rework } = data;
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
+  const onHold = isHoldStatus(order.status);
+  // شريط التقدّم من المرحلة الحالية وحدها — يرجع للخلف حين يرجع العمل.
+  const progress = toPatientStageView(order);
+  const forward = nextStages(order.serviceType, order.currentStage, order.purpose);
+  const nextLabel = STAGE_LABELS[defaultNextStage(order.serviceType, order.currentStage, order.purpose) ?? ""] ?? "";
   // Mirrors the server rule (PATCH /orders/:id/delivery-date): every writer on
   // the order — the assigned expert included — may set OR change the date.
   // Changing a committed date demands a mandatory reason that lands in the
@@ -100,7 +107,9 @@ export default function ManufacturingOrder() {
         </div>
         <div className="flex flex-col items-end gap-1">
           <Badge variant="outline" className="text-sm">{STAGE_LABELS[order.currentStage] ?? order.currentStage}</Badge>
-          <Badge variant="outline" className="text-xs">{STATUS_LABELS[order.status] ?? order.status}</Badge>
+          <Badge variant="outline" className={`text-xs ${onHold ? "border-amber-400 bg-amber-50 text-amber-800" : ""}`}>
+            {STATUS_LABELS[order.status] ?? order.status}
+          </Badge>
         </div>
       </div>
 
@@ -126,7 +135,7 @@ export default function ManufacturingOrder() {
         <Fact label="تاريخ الإسناد" value={fmtD(order.createdAt)} />
         <Fact label="بدء العمل" value={fmtD(order.startedAt)} />
         <Fact label="التسليم المتوقّع" value={fmtD(order.expectedDeliveryDate)} />
-        <Fact label="إعادة قالب / سوكت" value={`${order.recastCount} / ${order.resocketCount}`} />
+        <Fact label="مرات إعادة العمل" value={String(order.reworkCount ?? 0)} />
       </div>
 
       {order.status === "completed" && order.finalResult && (
@@ -139,20 +148,57 @@ export default function ManufacturingOrder() {
         </Card>
       )}
 
-      {/* Actions */}
+      {/* مسار المراحل + التقدّم */}
+      <Card className="mb-4">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-bold text-sm">مسار العمل</h3>
+            <span className="text-xs text-muted-foreground">{progress.stepNumber} / {progress.totalSteps}</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-3">
+            <div className="h-full bg-primary transition-all" style={{ width: `${progress.percent}%` }} data-testid="bar-progress" />
+          </div>
+          <ol className="flex flex-wrap gap-x-2 gap-y-1 text-xs">
+            {stages.map((st: string, i: number) => {
+              const idx = stages.indexOf(order.currentStage);
+              const done = i < idx, here = i === idx;
+              return (
+                <li key={st} className={here ? "font-bold text-primary" : done ? "text-slate-500" : "text-slate-300"}>
+                  {STAGE_LABELS[st] ?? st}{i < stages.length - 1 && <span className="mx-1 text-slate-300">‹</span>}
+                </li>
+              );
+            })}
+          </ol>
+        </CardContent>
+      </Card>
+
+      {/* سبب التوقّف — داخلي، لا يصل المريض */}
+      {onHold && order.holdReasonCode && (
+        <Card className="mb-4 border-amber-300 bg-amber-50/50">
+          <CardContent className="p-4 text-sm">
+            <span className="font-semibold">{STATUS_LABELS[order.status]} — </span>
+            {REASON_CODE_LABELS[order.holdReasonCode] ?? order.holdReasonCode}
+            {order.holdNote && <p className="text-xs text-muted-foreground mt-1">{order.holdNote}</p>}
+            <p className="text-[11px] text-muted-foreground mt-2">داخلي — لا يظهر للمريض. والمرحلة لم تتغيّر.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Actions — زرّان لا أكثر */}
       {!isCompleted && (
         <div className="flex flex-wrap gap-2 mb-6">
-          <Button size="sm" onClick={() => setStageOpen(true)} className="gap-1"><ArrowRight className="w-4 h-4" /> الانتقال لمرحلة</Button>
-          <Button size="sm" variant="outline" onClick={() => setStatusOpen(true)}>تغيير الحالة</Button>
-          <Button size="sm" variant="outline" onClick={() => setReworkOpen(true)} className="gap-1"><RotateCcw className="w-4 h-4" /> تسجيل إعادة عمل</Button>
-          {/* Setting the promised delivery date used to be possible ONLY in the
-              instant of moving to/past the mold stage. An expert who wasn't
-              asked then — a maintenance order has no mold stage at all, and a
-              legacy order may sit past it with an empty date — had no screen
-              left that could enter one: the standalone control lives on the
-              patient page, which experts never open. The server always allowed
-              this write while the date is still empty; only the UI was missing.
-              Once set, the lock stands: management/admin only. */}
+          {onHold ? (
+            <ResumeButton orderId={order.id} onDone={invalidate} />
+          ) : forward.length > 0 ? (
+            <Button size="lg" onClick={() => setAdvanceOpen(true)} className="gap-2" data-testid="button-advance">
+              <ArrowRight className="w-5 h-5" /> الانتقال للمرحلة التالية{nextLabel ? `: ${nextLabel}` : ""}
+            </Button>
+          ) : null}
+          {!onHold && (
+            <Button size="lg" variant="outline" onClick={() => setHoldOpen(true)} className="gap-2" data-testid="button-hold">
+              <PauseCircle className="w-5 h-5" /> توقّف / مشكلة
+            </Button>
+          )}
           {canSetDeliveryDate && (
             <Button size="sm" variant="outline" onClick={() => setDateOpen(true)} className="gap-1" data-testid="button-set-delivery-date">
               <CalendarDays className="w-4 h-4" />
@@ -160,6 +206,12 @@ export default function ManufacturingOrder() {
             </Button>
           )}
           {canReassign && <Button size="sm" variant="outline" onClick={() => setReassignOpen(true)} className="gap-1"><UserCog className="w-4 h-4" /> تحويل لخبير</Button>}
+          {/* مخرج إداري — ليس واجهة الخبير، وسببه إلزامي ومُدقَّق. */}
+          {canReassign && (
+            <Button size="sm" variant="ghost" onClick={() => setAdminStageOpen(true)} className="gap-1 text-muted-foreground" data-testid="button-admin-stage">
+              <Settings2 className="w-4 h-4" /> تعديل إداري للمرحلة
+            </Button>
+          )}
         </div>
       )}
 
@@ -208,9 +260,9 @@ export default function ManufacturingOrder() {
         </Card>
       )}
 
-      <StageDialog open={stageOpen} onOpenChange={setStageOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} serviceType={order.serviceType} purpose={order.purpose} deliveryDateSet={!!order.expectedDeliveryDate} onDone={invalidate} />
-      <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} orderId={order.id} onDone={invalidate} />
-      <ReworkDialog open={reworkOpen} onOpenChange={setReworkOpen} orderId={order.id} stages={stages} currentStage={order.currentStage} onDone={invalidate} />
+      <AdvanceDialog open={advanceOpen} onOpenChange={setAdvanceOpen} order={order} onDone={invalidate} />
+      <HoldDialog open={holdOpen} onOpenChange={setHoldOpen} order={order} onDone={invalidate} />
+      {canReassign && <AdminStageDialog open={adminStageOpen} onOpenChange={setAdminStageOpen} order={order} stages={stages} onDone={invalidate} />}
       <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
     </div>
@@ -242,68 +294,6 @@ function useAction(url: string, method: string, onDone: () => void) {
     onSuccess: () => { toast({ title: "تم" }); onDone(); },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
-}
-
-function StageDialog({ open, onOpenChange, orderId, stages, currentStage, serviceType, purpose, deliveryDateSet, onDone }: any) {
-  const [toStage, setToStage] = useState("");
-  const [notes, setNotes] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState("");
-  const [finalResult, setFinalResult] = useState("");
-  const m = useAction(`/api/manufacturing/orders/${orderId}/stage`, "PATCH", () => { onOpenChange(false); reset(); onDone(); });
-  function reset() { setToStage(""); setNotes(""); setDeliveryDate(""); setFinalResult(""); }
-  const needsResult = toStage === DELIVERED_STAGE;
-  // Reaching the mold stage requires committing to a delivery date — but only
-  // if one hasn't already been set (it locks after that).
-  const needsDelivery = !!toStage && !deliveryDateSet && isAtOrBeyondMoldStage(serviceType, toStage, purpose);
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
-      <DialogContent dir="rtl" className="max-w-md">
-        <DialogHeader><DialogTitle>الانتقال إلى مرحلة جديدة</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium">المرحلة الجديدة</label>
-            <Select value={toStage} onValueChange={setToStage}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="اختر المرحلة" /></SelectTrigger>
-              <SelectContent>
-                {stages.filter((s: string) => s !== currentStage).map((s: string) => (
-                  <SelectItem key={s} value={s}>{STAGE_LABELS[s] ?? s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {needsResult && (
-            <div>
-              <label className="text-sm font-medium">نتيجة التصنيع والملاءمة <span className="text-red-500">*</span></label>
-              <Select value={finalResult} onValueChange={setFinalResult}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="اختر النتيجة" /></SelectTrigger>
-                <SelectContent>
-                  {FINAL_RESULTS.map((r) => <SelectItem key={r} value={r}>{FINAL_RESULT_LABELS[r]}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {needsDelivery && (
-            <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
-              <label className="text-sm font-semibold flex items-center gap-1">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
-              <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-mold-delivery-date" />
-              <p className="text-xs text-muted-foreground mt-1">إلزامي عند أخذ القالب. بعد تحديده لا يتغيّر إلا من إدارة الفرع/العامة — وعليه تُقاس دقّة التسليم.</p>
-            </div>
-          )}
-          <div>
-            <label className="text-sm font-medium">ملاحظات فنّية (اختياري)</label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="mt-1" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button disabled={!toStage || (needsResult && !finalResult) || (needsDelivery && !deliveryDate) || m.isPending}
-            onClick={() => m.mutate({ toStage, notes: notes || undefined, expectedDeliveryDate: needsDelivery ? deliveryDate : undefined, finalResult: finalResult || undefined })}>
-            تأكيد
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 // Standalone delivery-date entry, reachable from the order page the expert
@@ -369,71 +359,208 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
   );
 }
 
-function StatusDialog({ open, onOpenChange, orderId, onDone }: any) {
-  const [status, setStatus] = useState("");
+function ResumeButton({ orderId, onDone }: any) {
+  const m = useAction(`/api/manufacturing/orders/${orderId}/resume`, "POST", onDone);
+  return (
+    <Button size="lg" onClick={() => m.mutate({})} disabled={m.isPending} className="gap-2" data-testid="button-resume">
+      <PlayCircle className="w-5 h-5" /> إلغاء التوقّف ومتابعة العمل
+    </Button>
+  );
+}
+
+// الانتقال للمرحلة التالية — وجهة واحدة محدَّدة سلفاً، بلا قائمة مراحل.
+// (والاستثناء الوحيد: مسند لا يحتاج قالباً يجوز له تخطّيه.)
+function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
+  const options = nextStages(order.serviceType, order.currentStage, order.purpose);
+  const [toStage, setToStage] = useState(options[0] ?? "");
   const [notes, setNotes] = useState("");
-  const m = useAction(`/api/manufacturing/orders/${orderId}/status`, "PATCH", () => { onOpenChange(false); setStatus(""); setNotes(""); onDone(); });
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [finalResult, setFinalResult] = useState("");
+  useEffect(() => { setToStage(options[0] ?? ""); setNotes(""); setDeliveryDate(""); setFinalResult(""); }, [open, order.currentStage]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/advance`, "PATCH", () => { onOpenChange(false); onDone(); });
+  const isMaintenance = order.purpose === "maintenance";
+  const needsResult = toStage === DELIVERED_STAGE;
+  const needsDelivery = !!toStage && !order.expectedDeliveryDate
+    && isAtOrBeyondMoldStage(order.serviceType, toStage, order.purpose);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md">
-        <DialogHeader><DialogTitle>تغيير حالة الأمر</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>الانتقال للمرحلة التالية</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger><SelectValue placeholder="اختر الحالة" /></SelectTrigger>
-            <SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
-          </Select>
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="ملاحظة (اختياري)" />
-          <p className="text-xs text-muted-foreground">تغيير الحالة لا يغيّر المرحلة الحالية.</p>
+          <div className="rounded-md bg-slate-50 p-3 text-sm">
+            <span className="text-muted-foreground">من: </span>{STAGE_LABELS[order.currentStage] ?? order.currentStage}
+            <span className="mx-2 text-slate-400">←</span>
+            <span className="font-semibold">{STAGE_LABELS[toStage] ?? toStage}</span>
+          </div>
+          {options.length > 1 && (
+            <div>
+              <label className="text-sm font-medium">
+                {isMaintenance ? "ما الذي أُنجِز؟" : "هذا المسند لا يحتاج قالباً؟"}
+              </label>
+              <Select value={toStage} onValueChange={setToStage}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {options.map((st: string) => <SelectItem key={st} value={st}>{STAGE_LABELS[st] ?? st}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isMaintenance
+                  ? "اختر ما جرت صيانته فعلاً — الاختيار يُنهي أمر الصيانة."
+                  : "اختر «التصنيع والتجهيز» لتخطّي مرحلة القالب."}
+              </p>
+            </div>
+          )}
+          {needsResult && (
+            <div>
+              <label className="text-sm font-medium">نتيجة التصنيع والملاءمة <span className="text-red-500">*</span></label>
+              <Select value={finalResult} onValueChange={setFinalResult}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="اختر النتيجة" /></SelectTrigger>
+                <SelectContent>
+                  {FINAL_RESULTS.map((r) => <SelectItem key={r} value={r}>{FINAL_RESULT_LABELS[r]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">داخلية — لا تُعرض للمريض.</p>
+            </div>
+          )}
+          {needsDelivery && (
+            <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
+              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+              <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-mold-delivery-date" />
+              <p className="text-xs text-muted-foreground mt-1">إلزامي عند بلوغ القالب. بعد تحديده لا يتغيّر إلا من الإدارة — وعليه تُقاس دقّة التسليم.</p>
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-medium">ملاحظات فنّية (اختياري)</label>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="mt-1" />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button disabled={!status || m.isPending} onClick={() => m.mutate({ status, notes: notes || undefined })}>تأكيد</Button>
+          <Button disabled={!toStage || (needsResult && !finalResult) || (needsDelivery && !deliveryDate) || m.isPending}
+            data-testid="button-confirm-advance"
+            onClick={() => m.mutate({ toStage, notes: notes || undefined, expectedDeliveryDate: needsDelivery ? deliveryDate : undefined, finalResult: finalResult || undefined })}>
+            تأكيد
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function ReworkDialog({ open, onOpenChange, orderId, stages, currentStage, onDone }: any) {
-  const [reworkType, setReworkType] = useState("");
+// توقّف / مشكلة — أربعة أنواع، وأسبابها داخلية بحتة.
+// وإعادة العمل الفني وحدها تسأل عن المرحلة التي يُرجَع إليها.
+function HoldDialog({ open, onOpenChange, order, onDone }: any) {
+  const [status, setStatus] = useState<string>("");
   const [reasonCode, setReasonCode] = useState("");
-  const [reasonDetails, setReasonDetails] = useState("");
-  const [stageWhenDetected, setStageWhenDetected] = useState(currentStage);
-  const m = useAction(`/api/manufacturing/orders/${orderId}/rework`, "POST", () => { onOpenChange(false); onDone(); });
+  const [note, setNote] = useState("");
+  const [returnToStage, setReturnToStage] = useState("");
+  useEffect(() => { setStatus(""); setReasonCode(""); setNote(""); setReturnToStage(""); }, [open]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/hold`, "POST", () => { onOpenChange(false); onDone(); });
+  const reasons = status && isHoldStatus(status) ? HOLD_REASONS[status] : [];
+  const isRework = status === "technical_rework";
+  const returnOptions = reworkReturnStages(order.serviceType, order.currentStage, order.purpose);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md">
-        <DialogHeader><DialogTitle>تسجيل إعادة عمل</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>توقّف / مشكلة</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
-            <label className="text-sm font-medium">نوع إعادة العمل</label>
-            <Select value={reworkType} onValueChange={setReworkType}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="اختر" /></SelectTrigger>
-              <SelectContent>{REWORK_TYPES.map((r) => <SelectItem key={r} value={r}>{REWORK_TYPE_LABELS[r]}</SelectItem>)}</SelectContent>
+            <label className="text-sm font-medium">نوع التوقّف</label>
+            <Select value={status} onValueChange={(v) => { setStatus(v); setReasonCode(""); setReturnToStage(""); }}>
+              <SelectTrigger className="mt-1" data-testid="select-hold-type"><SelectValue placeholder="اختر" /></SelectTrigger>
+              <SelectContent>
+                {HOLD_STATUSES.map((st) => <SelectItem key={st} value={st}>{STATUS_LABELS[st]}</SelectItem>)}
+              </SelectContent>
             </Select>
           </div>
+          {reasons.length > 0 && (
+            <div>
+              <label className="text-sm font-medium">السبب <span className="text-red-500">*</span></label>
+              <Select value={reasonCode} onValueChange={setReasonCode}>
+                <SelectTrigger className="mt-1" data-testid="select-hold-reason"><SelectValue placeholder="اختر السبب" /></SelectTrigger>
+                <SelectContent>
+                  {reasons.map((r) => <SelectItem key={r.code} value={r.code}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {isRework && (
+            <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
+              <label className="text-sm font-semibold">الرجوع إلى مرحلة <span className="text-red-500">*</span></label>
+              {returnOptions.length === 0 ? (
+                <p className="text-xs text-red-600 mt-1">لا توجد مرحلة سابقة يمكن الرجوع إليها.</p>
+              ) : (
+                <>
+                  <Select value={returnToStage} onValueChange={setReturnToStage}>
+                    <SelectTrigger className="mt-1 bg-white" data-testid="select-return-stage"><SelectValue placeholder="اختر المرحلة" /></SelectTrigger>
+                    <SelectContent>
+                      {returnOptions.map((st: string) => <SelectItem key={st} value={st}>{STAGE_LABELS[st] ?? st}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground mt-1">يُسجَّل الرجوع وسببه في الخطّ الزمني. والمريض يرى المرحلة الجديدة فقط.</p>
+                </>
+              )}
+            </div>
+          )}
           <div>
-            <label className="text-sm font-medium">سبب الإعادة</label>
-            <Select value={reasonCode} onValueChange={setReasonCode}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="اختر السبب" /></SelectTrigger>
-              <SelectContent>{REASON_CODES.map((r) => <SelectItem key={r} value={r}>{REASON_CODE_LABELS[r]}</SelectItem>)}</SelectContent>
-            </Select>
+            <label className="text-sm font-medium">ملاحظة داخلية (اختياري)</label>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1" />
           </div>
-          <div>
-            <label className="text-sm font-medium">المرحلة التي ظهرت فيها المشكلة</label>
-            <Select value={stageWhenDetected} onValueChange={setStageWhenDetected}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>{stages.map((s: string) => <SelectItem key={s} value={s}>{STAGE_LABELS[s] ?? s}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <Textarea value={reasonDetails} onChange={(e) => setReasonDetails(e.target.value)} rows={2} placeholder="شرح تفصيلي" />
-          <p className="text-xs text-muted-foreground">إعادة القالب/السوكت تُغيّر الحالة تلقائياً وتبقي كل السجلات السابقة.</p>
+          <p className="text-xs text-muted-foreground">
+            {isRework ? "إعادة العمل الفني هي المسار الوحيد للرجوع بمرحلة." : "التوقّف لا يغيّر المرحلة الحالية."}
+          </p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button disabled={!reworkType || m.isPending}
-            onClick={() => m.mutate({ reworkType, reasonCode: reasonCode || undefined, reasonDetails: reasonDetails || undefined, stageWhenDetected })}>
-            تسجيل
+          <Button
+            data-testid="button-confirm-hold"
+            disabled={!status || !reasonCode || (isRework && !returnToStage) || m.isPending}
+            onClick={() => m.mutate({ status, reasonCode, note: note || undefined, returnToStage: isRework ? returnToStage : undefined })}>
+            تأكيد
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// مخرج إداري — للمدير والمسؤول وحدهما، بسبب إلزامي ومُدقَّق.
+function AdminStageDialog({ open, onOpenChange, order, stages, onDone }: any) {
+  const [toStage, setToStage] = useState("");
+  const [reason, setReason] = useState("");
+  const [finalResult, setFinalResult] = useState("");
+  useEffect(() => { setToStage(""); setReason(""); setFinalResult(""); }, [open]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/stage`, "PATCH", () => { onOpenChange(false); onDone(); });
+  const needsResult = toStage === DELIVERED_STAGE;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>تعديل إداري للمرحلة</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            ليس مسار العمل العادي. يُستعمل لتصحيح بيانات فقط، ويُسجَّل في سجلّ التدقيق.
+          </p>
+          <Select value={toStage} onValueChange={setToStage}>
+            <SelectTrigger><SelectValue placeholder="اختر المرحلة" /></SelectTrigger>
+            <SelectContent>
+              {stages.filter((st: string) => st !== order.currentStage).map((st: string) => (
+                <SelectItem key={st} value={st}>{STAGE_LABELS[st] ?? st}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {needsResult && (
+            <Select value={finalResult} onValueChange={setFinalResult}>
+              <SelectTrigger><SelectValue placeholder="نتيجة التصنيع والملاءمة" /></SelectTrigger>
+              <SelectContent>{FINAL_RESULTS.map((r) => <SelectItem key={r} value={r}>{FINAL_RESULT_LABELS[r]}</SelectItem>)}</SelectContent>
+            </Select>
+          )}
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="سبب التعديل الإداري (إلزامي)" />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
+          <Button disabled={!toStage || !reason.trim() || (needsResult && !finalResult) || m.isPending}
+            onClick={() => m.mutate({ toStage, reason: reason.trim(), finalResult: finalResult || undefined })}>
+            تأكيد
           </Button>
         </DialogFooter>
       </DialogContent>

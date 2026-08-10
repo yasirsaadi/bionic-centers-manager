@@ -1,7 +1,16 @@
-// Prosthetic / medical-support manufacturing — canonical codes + Arabic labels.
-// Single source of truth shared by the server (validation) and the client
-// (display). Stable internal codes, Arabic labels for the UI. No expert names
-// are ever hardcoded here — the expert roster is data-driven from system_users.
+// تصنيع الأطراف والمساند — المفردات الرسمية، مشتركة بين الخادم والواجهة.
+//
+// ══ المبدأ الحاكم بعد التبسيط ═════════════════════════════════════════════
+// **المرحلة تصف أين وصل العمل. الحالة تصف هل هو متوقّف ولماذا.** وهما
+// مستقلّان تماماً: توقّفٌ لا يغيّر المرحلة أبداً.
+//
+// المرحلة لغة مشتركة بين الخبير والمريض — ستّ مراحل واضحة، الاسم نفسه
+// للاثنين. أما الحالة وأسبابها وإعادة العمل فداخلية بحتة ولا تُعرض للمريض
+// إطلاقاً.
+//
+// ما سبق كان أربع عشرة مرحلة تفصيلية للأطراف (test_socket، alignment،
+// final_socket…) تخلط «أين وصلنا» بـ«ماذا حدث»، ولا تصلح لغةً للمريض،
+// وتجعل شريط التقدّم بلا معنى.
 
 export type ServiceType = "prosthetic" | "medical_support";
 
@@ -10,9 +19,6 @@ export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   medical_support: "مساند طبية",
 };
 
-// Why the order exists: a first build vs a maintenance job on a delivered
-// device. Drives a visible badge and lets reception open a maintenance episode
-// from the patient's "new visit" flow.
 export const PURPOSES = ["initial_build", "maintenance"] as const;
 export type Purpose = (typeof PURPOSES)[number];
 export const PURPOSE_LABELS: Record<string, string> = {
@@ -20,126 +26,229 @@ export const PURPOSE_LABELS: Record<string, string> = {
   maintenance: "صيانة",
 };
 
-// Ordered fabrication stages for a prosthetic limb.
-export const PROSTHETIC_STAGES: string[] = [
-  "new_assignment",
-  "assessment_measurements",
-  "cast_taken",
-  "cast_preparation",
-  "test_socket",
-  "first_fitting",
-  "socket_adjustment",
-  "alignment",
-  "final_socket",
-  "final_assembly",
-  "quality_check",
-  "ready_for_delivery",
-  "delivered",
-  "post_delivery_followup",
-];
+// ══ ١. المراحل الست ═══════════════════════════════════════════════════════
+// نفس الترتيب ونفس التسميات للأطراف وللمساند، وللخبير وللمريض.
 
-// Ordered stages for a medical support.
-export const MEDICAL_SUPPORT_STAGES: string[] = [
-  "new_assignment",
-  "assessment_measurements",
-  "cast_if_needed",
+export const BUILD_STAGES = [
+  "order_received",
+  "measurements",
+  "mold",
   "manufacturing",
-  "fitting",
-  "adjustment",
-  "quality_check",
-  "ready_for_delivery",
+  "ready_for_fitting",
   "delivered",
-];
+] as const;
+export type BuildStage = (typeof BUILD_STAGES)[number];
 
+export const FIRST_STAGE: BuildStage = "order_received";
+export const DELIVERED_STAGE: BuildStage = "delivered";
+/** المرحلة التي يلتزم عندها الخبير بموعد التسليم. */
+export const MOLD_STAGE: BuildStage = "mold";
+
+// ══ ٢. الصيانة — دورة حياتها القصيرة كما هي ══════════════════════════════
+// فُحصت ولم تُمسّ: ثلاث خطوات لا تحتاج تبسيطاً، ولا معنى لتمرير جهاز
+// مُصلَّح عبر خطّ البناء الكامل. المراحل الست أعلاه لأوامر البناء الأولي
+// حصراً، وهذا يبقي الصيانة على `new_assignment` بداية — وهو مقصود لا سهو.
+export const PROSTHETIC_MAINTENANCE_STAGES: string[] = [
+  "new_assignment",
+  "maintenance_cast_done",
+  "maintenance_device_done",
+];
+export const SUPPORT_MAINTENANCE_STAGES: string[] = [
+  "new_assignment",
+  "maintenance_support_done",
+];
+export const MAINTENANCE_DONE_STAGES = new Set([
+  "maintenance_cast_done", "maintenance_device_done", "maintenance_support_done",
+]);
+
+// ══ ٣. التسميات ═══════════════════════════════════════════════════════════
+// تشمل الأكواد القديمة عمداً: `prosthetic_work_history` محفوظ بالكامل ولم
+// يُعَد كتابته، فسجلّ أمرٍ من العام الماضي يذكر `test_socket` ويجب أن
+// يُقرأ. القديم للعرض التاريخي فقط — لا يُكتب في `current_stage` بعد اليوم.
 export const STAGE_LABELS: Record<string, string> = {
-  new_assignment: "مريض جديد بانتظار بدء العمل",
-  assessment_measurements: "التقييم والقياسات",
-  cast_taken: "أخذ القالب",
-  cast_preparation: "تحضير القالب",
-  test_socket: "تصنيع السوكت التجريبي",
-  first_fitting: "التجربة الأولى",
-  socket_adjustment: "تعديل السوكت أو القالب",
-  alignment: "المحاذاة والتجربة الوظيفية",
-  final_socket: "تصنيع السوكت النهائي",
-  final_assembly: "التجميع النهائي",
-  quality_check: "الفحص النهائي",
-  ready_for_delivery: "جاهز للتسليم",
+  // الست الحالية
+  order_received: "استلام أمر التصنيع",
+  measurements: "القياسات والتقييم",
+  mold: "أخذ وتجهيز القالب",
+  manufacturing: "التصنيع والتجهيز",
+  ready_for_fitting: "جاهز للتجربة والتسليم",
   delivered: "تم التسليم",
-  post_delivery_followup: "متابعة ما بعد التسليم",
-  // maintenance lifecycle
+
+  // الصيانة
+  new_assignment: "أمر جديد بانتظار بدء العمل",
   maintenance_cast_done: "تم إنجاز صيانة القالب",
   maintenance_device_done: "تم إنجاز صيانة الطرف",
   maintenance_support_done: "تم إنجاز صيانة المسند",
-  // medical-support specific
-  cast_if_needed: "أخذ القالب عند الحاجة",
-  manufacturing: "التصنيع",
-  fitting: "التجربة",
-  adjustment: "التعديل",
+
+  // ── قديمة، للسجلّ التاريخي فقط ──
+  assessment_measurements: "التقييم والقياسات (سابقاً)",
+  cast_taken: "أخذ القالب (سابقاً)",
+  cast_preparation: "تحضير القالب (سابقاً)",
+  test_socket: "تصنيع السوكت التجريبي (سابقاً)",
+  first_fitting: "التجربة الأولى (سابقاً)",
+  socket_adjustment: "تعديل السوكت أو القالب (سابقاً)",
+  alignment: "المحاذاة والتجربة الوظيفية (سابقاً)",
+  final_socket: "تصنيع السوكت النهائي (سابقاً)",
+  final_assembly: "التجميع النهائي (سابقاً)",
+  quality_check: "الفحص النهائي (سابقاً)",
+  ready_for_delivery: "جاهز للتسليم (سابقاً)",
+  post_delivery_followup: "متابعة ما بعد التسليم (سابقاً)",
+  cast_if_needed: "أخذ القالب عند الحاجة (سابقاً)",
+  fitting: "التجربة (سابقاً)",
+  adjustment: "التعديل (سابقاً)",
 };
 
-// Order status — deliberately separate from the current stage.
-export const STATUSES: string[] = [
+// ══ ٤. خريطة القديم إلى الجديد ════════════════════════════════════════════
+// يستعملها ترحيل 045 لتحويل `current_stage`، وتبقى هنا لأن الواجهة قد
+// تلتقي كوداً قديماً في بيانات مخبوءة (cache) قبل التحديث.
+export const LEGACY_STAGE_MAP: Record<string, Record<string, BuildStage>> = {
+  prosthetic: {
+    new_assignment: "order_received",
+    assessment_measurements: "measurements",
+    cast_taken: "mold",
+    cast_preparation: "mold",
+    test_socket: "manufacturing",
+    first_fitting: "manufacturing",
+    socket_adjustment: "manufacturing",
+    alignment: "manufacturing",
+    final_socket: "manufacturing",
+    final_assembly: "manufacturing",
+    quality_check: "manufacturing",
+    ready_for_delivery: "ready_for_fitting",
+    delivered: "delivered",
+    post_delivery_followup: "delivered",
+  },
+  medical_support: {
+    new_assignment: "order_received",
+    assessment_measurements: "measurements",
+    cast_if_needed: "mold",
+    manufacturing: "manufacturing",
+    fitting: "manufacturing",
+    adjustment: "manufacturing",
+    quality_check: "manufacturing",
+    ready_for_delivery: "ready_for_fitting",
+    delivered: "delivered",
+  },
+};
+
+/** يحوّل كوداً قديماً إلى المرحلة المقابلة. يُرجع null لما لا يُعرف. */
+export function mapLegacyStage(serviceType: string, stage: string): BuildStage | null {
+  if ((BUILD_STAGES as readonly string[]).includes(stage)) return stage as BuildStage;
+  return LEGACY_STAGE_MAP[serviceType]?.[stage] ?? null;
+}
+
+// ══ ٥. الحالات — داخلية بحتة ══════════════════════════════════════════════
+export const STATUSES = [
   "active",
   "waiting_patient",
-  "waiting_components",
+  "waiting_materials",
   "medical_hold",
-  "needs_recast",
-  "needs_resocket",
+  "technical_rework",
   "completed",
   "cancelled",
-];
+] as const;
+export type OrderStatus = (typeof STATUSES)[number];
 
 export const STATUS_LABELS: Record<string, string> = {
   active: "قيد العمل",
   waiting_patient: "بانتظار المريض",
-  waiting_components: "بانتظار المكونات",
+  waiting_materials: "بانتظار المواد",
   medical_hold: "متوقف لسبب طبي",
-  needs_recast: "يحتاج إعادة قالب",
-  needs_resocket: "يحتاج إعادة سوكت",
+  technical_rework: "إعادة عمل فني",
   completed: "مكتمل",
   cancelled: "ملغى",
+  // قديمة — للسجلّ التاريخي فقط
+  waiting_components: "بانتظار المكونات (سابقاً)",
+  needs_recast: "يحتاج إعادة قالب (سابقاً)",
+  needs_resocket: "يحتاج إعادة سوكت (سابقاً)",
 };
 
-export const REWORK_TYPES: string[] = ["recast", "resocket", "major_adjustment", "full_remake"];
+/** الحالات التي تعني «متوقّف» — أربع، وكلها تُبقي المرحلة كما هي. */
+export const HOLD_STATUSES = [
+  "waiting_patient",
+  "waiting_materials",
+  "medical_hold",
+  "technical_rework",
+] as const;
+export type HoldStatus = (typeof HOLD_STATUSES)[number];
 
-export const REWORK_TYPE_LABELS: Record<string, string> = {
-  recast: "إعادة القالب",
-  resocket: "إعادة تصنيع السوكت",
-  major_adjustment: "تعديل كبير",
-  full_remake: "إعادة تصنيع كاملة",
+export function isHoldStatus(v: unknown): v is HoldStatus {
+  return typeof v === "string" && (HOLD_STATUSES as readonly string[]).includes(v);
+}
+
+export const LEGACY_STATUS_MAP: Record<string, OrderStatus> = {
+  waiting_components: "waiting_materials",
+  needs_recast: "technical_rework",
+  needs_resocket: "technical_rework",
 };
 
-export const REASON_CODES: string[] = [
-  "measurement_error",
-  "cast_error",
-  "socket_fit_error",
-  "manufacturing_error",
-  "patient_body_change",
-  "medical_reason",
-  "patient_noncompliance",
-  "component_problem",
-  "other",
-];
+// ══ ٦. أسباب التوقّف — داخلية، ولا تصل المريض أبداً ══════════════════════
+export const HOLD_REASONS: Record<HoldStatus, { code: string; label: string }[]> = {
+  waiting_patient: [
+    { code: "patient_no_show", label: "المريض لم يحضر" },
+    { code: "patient_return_required", label: "يحتاج مراجعة المريض" },
+    { code: "patient_preparation_required", label: "يحتاج تحضير المريض" },
+  ],
+  waiting_materials: [
+    { code: "manufacturer_components", label: "مكوّنات من المصنّع" },
+    { code: "materials_unavailable", label: "المواد غير متوفّرة" },
+    { code: "component_delay", label: "تأخّر وصول مكوّن" },
+    { code: "other", label: "سبب آخر" },
+  ],
+  medical_hold: [
+    { code: "swelling", label: "تورّم" },
+    { code: "wound_or_skin_issue", label: "جرح أو مشكلة جلدية" },
+    { code: "medical_clearance", label: "بانتظار موافقة طبية" },
+    { code: "other", label: "سبب آخر" },
+  ],
+  technical_rework: [
+    { code: "mold_fit", label: "ملاءمة القالب" },
+    { code: "socket_fit", label: "ملاءمة السوكت" },
+    { code: "alignment_or_calibration", label: "المحاذاة أو المعايرة" },
+    { code: "device_adjustment", label: "تعديل الجهاز" },
+    { code: "remake", label: "إعادة تصنيع" },
+    { code: "other", label: "سبب آخر" },
+  ],
+};
 
+/** كل رموز الأسباب مسطَّحة، مع القديمة، للعرض التاريخي. */
 export const REASON_CODE_LABELS: Record<string, string> = {
-  measurement_error: "خطأ في القياس",
-  cast_error: "خطأ في القالب",
-  socket_fit_error: "مشكلة في ملاءمة السوكت",
-  manufacturing_error: "خطأ في التصنيع",
-  patient_body_change: "تغيّر في وزن أو حجم الطرف المتبقّي",
-  medical_reason: "سبب طبي أو جلدي",
-  patient_noncompliance: "عدم التزام المريض",
-  component_problem: "مشكلة في المكونات",
+  ...Object.fromEntries(
+    Object.values(HOLD_REASONS).flat().map((r) => [r.code, r.label]),
+  ),
+  // قديمة من نظام إعادة العمل السابق
+  measurement_error: "خطأ في القياس (سابقاً)",
+  cast_error: "خطأ في القالب (سابقاً)",
+  socket_fit_error: "مشكلة في ملاءمة السوكت (سابقاً)",
+  manufacturing_error: "خطأ في التصنيع (سابقاً)",
+  patient_body_change: "تغيّر في حجم الطرف (سابقاً)",
+  medical_reason: "سبب طبي (سابقاً)",
+  patient_noncompliance: "عدم التزام المريض (سابقاً)",
+  component_problem: "مشكلة في المكونات (سابقاً)",
   other: "سبب آخر",
 };
 
-// Fabrication & fit result — required when the stage becomes "delivered".
+export function isValidHoldReason(status: string, code: unknown): boolean {
+  if (!isHoldStatus(status)) return false;
+  return typeof code === "string" && HOLD_REASONS[status].some((r) => r.code === code);
+}
+
+/** نوع إعادة العمل المسجَّل في `prosthetic_rework_events` من اليوم فصاعداً. */
+export const REWORK_TYPE = "technical_rework";
+export const REWORK_TYPE_LABELS: Record<string, string> = {
+  technical_rework: "إعادة عمل فني",
+  // قديمة — صفوف محفوظة لا تُمسّ
+  recast: "إعادة القالب (سابقاً)",
+  resocket: "إعادة تصنيع السوكت (سابقاً)",
+  major_adjustment: "تعديل كبير (سابقاً)",
+  full_remake: "إعادة تصنيع كاملة (سابقاً)",
+};
+
+// ══ ٧. نتيجة التسليم — داخلية، تُطلب عند التسليم ═════════════════════════
 export const FINAL_RESULTS: string[] = [
   "first_fit_success",
   "minor_adjustment_success",
   "multiple_adjustments_success",
-  "recast_required",
-  "resocket_required",
   "component_changed",
   "medical_incomplete",
   "patient_absent",
@@ -152,50 +261,77 @@ export const FINAL_RESULT_LABELS: Record<string, string> = {
   first_fit_success: "ناجح من أول تجربة",
   minor_adjustment_success: "ناجح بعد تعديل بسيط",
   multiple_adjustments_success: "ناجح بعد تعديلات متعددة",
-  recast_required: "احتاج إعادة قالب",
-  resocket_required: "احتاج إعادة سوكت",
   component_changed: "احتاج تغيير مكوّن",
   medical_incomplete: "غير مكتمل بسبب حالة طبية",
   patient_absent: "غير مكتمل بسبب عدم حضور المريض",
   components_unavailable: "غير مكتمل بسبب نقص المكونات",
   technical_rejection: "غير مقبول فنيّاً",
   transferred_to_another_expert: "تم تحويله إلى خبير آخر",
+  // قديمة
+  recast_required: "احتاج إعادة قالب (سابقاً)",
+  resocket_required: "احتاج إعادة سوكت (سابقاً)",
 };
 
-// A MAINTENANCE episode has its own tiny lifecycle — walking a repaired
-// device through the full build pipeline (cast → socket → fitting …) makes no
-// sense, and completing via a status change used to leave the stage stuck at
-// "مريض جديد بانتظار بدء العمل" under a "مكتمل" badge. The expert instead
-// marks WHAT was serviced: the cast or the device itself.
-export const PROSTHETIC_MAINTENANCE_STAGES: string[] = [
-  "new_assignment",
-  "maintenance_cast_done",
-  "maintenance_device_done",
-];
-export const SUPPORT_MAINTENANCE_STAGES: string[] = [
-  "new_assignment",
-  "maintenance_support_done",
-];
-// Reaching any of these completes the maintenance order (status → completed).
-export const MAINTENANCE_DONE_STAGES = new Set([
-  "maintenance_cast_done", "maintenance_device_done", "maintenance_support_done",
-]);
+// ══ ٨. المسار ═════════════════════════════════════════════════════════════
 
-// Ordered stage list for a given service type.
-export function stagesForService(serviceType: string): string[] {
-  return serviceType === "medical_support" ? MEDICAL_SUPPORT_STAGES : PROSTHETIC_STAGES;
-}
-
-// Ordered stage list for an ORDER: maintenance orders get the maintenance
-// lifecycle; initial builds keep the full pipeline.
 export function stagesForOrder(serviceType: string, purpose?: string | null): string[] {
   if (purpose === "maintenance") {
     return serviceType === "medical_support" ? SUPPORT_MAINTENANCE_STAGES : PROSTHETIC_MAINTENANCE_STAGES;
   }
-  return stagesForService(serviceType);
+  return [...BUILD_STAGES];
 }
 
-// Server-side validators (fail closed on unknown codes).
+/** موضع المرحلة في مسار الأمر، أو -1. */
+export function stageIndex(stage: string, serviceType: string, purpose?: string | null): number {
+  return stagesForOrder(serviceType, purpose).indexOf(stage);
+}
+
+/**
+ * المراحل التي يجوز **التقدّم** إليها من المرحلة الحالية.
+ *
+ * التالية فقط — لا تنقّل عشوائي. والاستثناء الوحيد: مسند لا يحتاج قالباً
+ * يجوز له القفز من القياسات إلى التصنيع مباشرة (وهو قرار فنّي حقيقي، لا
+ * ثغرة: كثير من المساند جاهزة القياس).
+ *
+ * الرجوع للخلف ليس هنا إطلاقاً — مساره الوحيد «إعادة عمل فني» بسببه
+ * المسجَّل.
+ */
+export function nextStages(serviceType: string, current: string, purpose?: string | null): string[] {
+  const stages = stagesForOrder(serviceType, purpose);
+  const i = stages.indexOf(current);
+  if (i < 0 || i >= stages.length - 1) return [];
+
+  // الصيانة ليست خطّ إنتاج بل **اختيار ما أُنجِز**: الخبير يصلح القالب أو
+  // الطرف، لا هذا ثم ذاك. فمن «إسناد جديد» تُعرَض خطوات الإنجاز كلّها.
+  // إلزامه بالتسلسل كان سيسجّل صيانة قالب لم تحدث ليصل إلى صيانة الطرف.
+  if (purpose === "maintenance") {
+    return i === 0 ? stages.slice(1) : [];
+  }
+
+  const out = [stages[i + 1]];
+  if (serviceType === "medical_support" && current === "measurements") {
+    out.push("manufacturing"); // تخطّي القالب لمسند لا يحتاجه
+  }
+  return out;
+}
+
+/** المرحلة التالية الافتراضية (زرّ «الانتقال للمرحلة التالية»). */
+export function defaultNextStage(serviceType: string, current: string, purpose?: string | null): string | null {
+  return nextStages(serviceType, current, purpose)[0] ?? null;
+}
+
+/** المراحل التي يجوز **الرجوع** إليها في إعادة العمل الفني: ما قبل الحالية. */
+export function reworkReturnStages(serviceType: string, current: string, purpose?: string | null): string[] {
+  const stages = stagesForOrder(serviceType, purpose);
+  const i = stages.indexOf(current);
+  if (i <= 0) return [];
+  // لا يُرجَع إلى «استلام أمر التصنيع»: العمل بدأ فعلاً، والرجوع إليها
+  // يعني إلغاء الأمر لا إعادة عمله.
+  return stages.slice(1, i);
+}
+
+// ══ ٩. حسابات وتحقّق ══════════════════════════════════════════════════════
+
 export function isValidServiceType(v: unknown): v is ServiceType {
   return v === "prosthetic" || v === "medical_support";
 }
@@ -203,53 +339,63 @@ export function isValidStageFor(serviceType: string, stage: unknown, purpose?: s
   return typeof stage === "string" && stagesForOrder(serviceType, purpose).includes(stage);
 }
 export function isValidStatus(v: unknown): boolean {
-  return typeof v === "string" && STATUSES.includes(v);
-}
-export function isValidReworkType(v: unknown): boolean {
-  return typeof v === "string" && REWORK_TYPES.includes(v);
-}
-export function isValidReasonCode(v: unknown): boolean {
-  return typeof v === "string" && REASON_CODES.includes(v);
+  return typeof v === "string" && (STATUSES as readonly string[]).includes(v);
 }
 export function isValidFinalResult(v: unknown): boolean {
   return typeof v === "string" && FINAL_RESULTS.includes(v);
 }
 
-export const NEW_ASSIGNMENT_STAGE = "new_assignment";
-export const DELIVERED_STAGE = "delivered";
-
-// The "mold/cast taken" stage per service — the point where the expert commits
-// to a delivery date (a طرف: cast_taken; a مسند: cast_if_needed). Reaching it
-// requires a mandatory promised delivery date, which then locks (only branch
-// management / admin may change it afterward) so the expert's delivery accuracy
-// can be tracked against the date they themselves promised.
-export const MOLD_STAGE: Record<string, string> = {
-  prosthetic: "cast_taken",
-  medical_support: "cast_if_needed",
-};
-export function isMoldStage(serviceType: string, stage: string): boolean {
-  return MOLD_STAGE[serviceType] === stage;
-}
-
-// Is `stage` the mold stage OR any stage after it in the ORDER's ordered list?
-// Stage transitions are not forced to be sequential, so the delivery date must
-// be demanded on ANY transition that lands at-or-beyond the mold stage —
-// otherwise an expert who jumps straight past cast_taken would never commit a
-// date and the delivery-accuracy tracking would silently never arm.
-//
-// `purpose` matters: a maintenance episode runs a different, much shorter
-// lifecycle that has no mold stage at all. Measuring its stages against the
-// initial-build list compares against the wrong ruler — every maintenance stage
-// scores -1 there, which happens to yield the right answer for the wrong
-// reason. Resolving the order's real list makes the "maintenance never demands
-// a promised date" rule explicit (moldIdx = -1) instead of accidental.
-export function isAtOrBeyondMoldStage(
-  serviceType: string,
-  stage: string,
-  purpose?: string | null,
-): boolean {
+/**
+ * هل هذه المرحلة عند القالب أو بعده؟ عندها يصير موعد التسليم إلزامياً.
+ * مسند تخطّى القالب يقع عند «التصنيع» فيُطلَب منه الموعد أيضاً.
+ * والصيانة لا قالب لها فلا موعد إلزامياً.
+ */
+export function isAtOrBeyondMoldStage(serviceType: string, stage: string, purpose?: string | null): boolean {
+  if (purpose === "maintenance") return false;
   const stages = stagesForOrder(serviceType, purpose);
-  const moldIdx = stages.indexOf(MOLD_STAGE[serviceType] ?? "");
+  const moldIdx = stages.indexOf(MOLD_STAGE);
   const idx = stages.indexOf(stage);
   return moldIdx >= 0 && idx >= moldIdx;
 }
+
+// ══ ١٠. عرض المريض — ما يجوز أن يراه، ولا شيء غيره ═══════════════════════
+/**
+ * **العقد مع المريض.** يُحسب التقدّم من المرحلة الحالية وحدها — لا من أعلى
+ * مرحلة بلغها الأمر يوماً — فرجوعُ العمل يُرجع الشريط معه، وهذا صدق لا عيب.
+ *
+ * والمُخرَج **لا يحمل**: حالة، ولا سبباً، ولا ملاحظة، ولا إعادة عمل، ولا
+ * اسم خبير. المريض يرى أين وصل جهازه، ولا يُشرَح له لماذا رجع.
+ */
+export interface PatientStageView {
+  stage: string;
+  stageLabel: string;
+  stepNumber: number;   // ١-based
+  totalSteps: number;
+  percent: number;      // ٠..١٠٠
+  isDelivered: boolean;
+}
+
+export function toPatientStageView(order: {
+  currentStage: string;
+  serviceType: string;
+  purpose?: string | null;
+}): PatientStageView {
+  const stages = stagesForOrder(order.serviceType, order.purpose);
+  const idx = stages.indexOf(order.currentStage);
+  const stepNumber = idx < 0 ? 1 : idx + 1;
+  const totalSteps = stages.length;
+  return {
+    stage: order.currentStage,
+    stageLabel: STAGE_LABELS[order.currentStage] ?? order.currentStage,
+    stepNumber,
+    totalSteps,
+    percent: Math.round((stepNumber / totalSteps) * 100),
+    isDelivered: order.currentStage === DELIVERED_STAGE || MAINTENANCE_DONE_STAGES.has(order.currentStage),
+  };
+}
+
+/** الحقول الممنوعة على أي مُخرَج موجَّه للمريض — يحرسها اختبار دائم. */
+export const PATIENT_FORBIDDEN_FIELDS = [
+  "status", "holdReasonCode", "holdNote", "reasonCode", "reasonDetails",
+  "reworkType", "expertName", "expertUserId", "finalResult", "finalNotes", "notes",
+];

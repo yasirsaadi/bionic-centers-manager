@@ -35,6 +35,7 @@ import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+import { FIRST_STAGE } from "@shared/manufacturing";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -1023,7 +1024,7 @@ export class DatabaseStorage implements IStorage {
           expertUserId: params.expertUserId,
           serviceType: caseType === "amputee" ? "prosthetic" : "medical_support",
           status: "active",
-          currentStage: "new_assignment",
+          currentStage: FIRST_STAGE,
           expectedDeliveryDate: params.expectedDeliveryDate ?? null,
           assignedBy: params.performedBy,
         }).returning();
@@ -1031,7 +1032,7 @@ export class DatabaseStorage implements IStorage {
           workOrderId: wo.id,
           actionType: "created",
           fromStage: null,
-          toStage: "new_assignment",
+          toStage: FIRST_STAGE,
           notes: `إنشاء أمر تصنيع عند إضافة نوع حالة (${caseLabel}) لمريض موجود`,
           performedBy: params.performedBy,
         });
@@ -1149,10 +1150,10 @@ export class DatabaseStorage implements IStorage {
 
       const [wo] = await tx.insert(prostheticWorkOrders).values({
         patientId, branchId: existing.branchId, expertUserId, serviceType,
-        status: "active", currentStage: "new_assignment", expectedDeliveryDate: null, assignedBy,
+        status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
       }).returning();
       await tx.insert(prostheticWorkHistory).values({
-        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: "new_assignment",
+        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
         notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
       });
       return { patient, workOrderId: wo.id };

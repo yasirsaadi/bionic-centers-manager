@@ -31,9 +31,17 @@ export async function hasActiveOrder(patientId: number, serviceType: string): Pr
     .limit(1);
   return rows.length > 0;
 }
-import { stagesForService, NEW_ASSIGNMENT_STAGE, MAINTENANCE_DONE_STAGES } from "@shared/manufacturing";
+import {
+  FIRST_STAGE, MAINTENANCE_DONE_STAGES, REWORK_TYPE, stagesForOrder,
+} from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
+
+// أول مرحلة في مسار الأمر. البناء الأولي يبدأ من المراحل الست الجديدة،
+// والصيانة تبقى على دورتها القصيرة كما هي (لم تُبسَّط في هذه المهمة).
+function firstStageFor(serviceType: string, purpose?: string | null): string {
+  return stagesForOrder(serviceType, purpose)[0];
+}
 
 // Display name of the expert an order is being assigned to — recorded inside
 // the creation history note so the FIRST assignee stays on the permanent
@@ -161,7 +169,7 @@ export async function createPatientWithWorkOrder(
       expertUserId: wo.expertUserId,
       serviceType: wo.serviceType,
       status: "active",
-      currentStage: NEW_ASSIGNMENT_STAGE,
+      currentStage: FIRST_STAGE,
       expectedDeliveryDate: wo.expectedDeliveryDate ?? null,
       assignedBy: wo.assignedBy,
     }).returning();
@@ -169,7 +177,7 @@ export async function createPatientWithWorkOrder(
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
-      toStage: NEW_ASSIGNMENT_STAGE,
+      toStage: FIRST_STAGE,
       notes: `إنشاء أمر التصنيع وإسناده للخبير ${await expertNameOf(tx, wo.expertUserId)}`,
       performedBy: wo.assignedBy,
     });
@@ -202,7 +210,7 @@ export async function createWorkOrderForExisting(params: {
       serviceType: params.serviceType,
       purpose,
       status: "active",
-      currentStage: NEW_ASSIGNMENT_STAGE,
+      currentStage: firstStageFor(params.serviceType, purpose),
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
     }).returning();
@@ -210,7 +218,7 @@ export async function createWorkOrderForExisting(params: {
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
-      toStage: NEW_ASSIGNMENT_STAGE,
+      toStage: firstStageFor(params.serviceType, purpose),
       notes: `${purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود"} — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
@@ -257,7 +265,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       serviceType: params.serviceType,
       purpose: "maintenance",
       status: "active",
-      currentStage: NEW_ASSIGNMENT_STAGE,
+      currentStage: firstStageFor(params.serviceType, "maintenance"),
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
     }).returning();
@@ -265,7 +273,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
-      toStage: NEW_ASSIGNMENT_STAGE,
+      toStage: firstStageFor(params.serviceType, "maintenance"),
       notes: `إنشاء أمر صيانة لمريض موجود — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
@@ -341,8 +349,7 @@ export interface OrderCard {
   expectedDeliveryDate: string | null;
   completedAt: string | null;
   finalResult: string | null;
-  recastCount: number;
-  resocketCount: number;
+  reworkCount: number;
   daysInStage: number;
   isOverdue: boolean;
 }
@@ -398,17 +405,16 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
 
-  // Rework counts (recast / resocket) per order — one grouped query.
+  // عدد مرات إعادة العمل لكل أمر — استعلام مجمَّع واحد، يشمل الصفوف
+  // القديمة (recast/resocket) فلا يضيع تاريخها.
   const rework = await db
     .select({ workOrderId: RW.workOrderId, reworkType: RW.reworkType, n: sql<number>`COUNT(*)::int` })
     .from(RW)
     .where(inArray(RW.workOrderId, ids))
     .groupBy(RW.workOrderId, RW.reworkType);
-  const recast = new Map<number, number>();
-  const resocket = new Map<number, number>();
+  const reworkByOrder = new Map<number, number>();
   for (const r of rework) {
-    if (r.reworkType === "recast") recast.set(r.workOrderId, Number(r.n));
-    else if (r.reworkType === "resocket") resocket.set(r.workOrderId, Number(r.n));
+    reworkByOrder.set(r.workOrderId, (reworkByOrder.get(r.workOrderId) ?? 0) + Number(r.n));
   }
 
   // When each order entered its current stage — latest history row whose
@@ -450,8 +456,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       expectedDeliveryDate: r.expectedDeliveryDate ? String(r.expectedDeliveryDate) : null,
       completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
       finalResult: r.finalResult ?? null,
-      recastCount: recast.get(r.id) ?? 0,
-      resocketCount: resocket.get(r.id) ?? 0,
+      reworkCount: reworkByOrder.get(r.id) ?? 0,
       daysInStage: daysSince(stageEntered),
       isOverdue,
     };
@@ -472,6 +477,9 @@ export async function getOrderDetail(id: number) {
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId, serviceType: WO.serviceType,
       purpose: WO.purpose,
       status: WO.status, currentStage: WO.currentStage, expectedDeliveryDate: WO.expectedDeliveryDate,
+      // سبب التوقّف — تقرؤه بطاقة «متوقّف» في صفحة الأمر. داخلي: هذه النقطة
+      // للخبير والإدارة، ولا يمرّ منها شيء إلى المريض.
+      holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
       startedAt: WO.startedAt, completedAt: WO.completedAt, finalResult: WO.finalResult,
       finalNotes: WO.finalNotes, expertUserId: WO.expertUserId, assignedBy: WO.assignedBy,
       createdAt: WO.createdAt,
@@ -503,8 +511,9 @@ export async function getOrderDetail(id: number) {
     .where(eq(RW.workOrderId, id))
     .orderBy(desc(RW.createdAt));
 
-  const recastCount = rework.filter((r) => r.reworkType === "recast").length;
-  const resocketCount = rework.filter((r) => r.reworkType === "resocket").length;
+  // عدّاد واحد: نوع إعادة العمل صار واحداً، والصفوف القديمة
+  // (recast/resocket) تُحتسب معه فلا يضيع تاريخها.
+  const reworkCount = rework.length;
   const branchNameVal = (patient ? { branchName: order.branchName ?? null } : {});
   return {
     order: {
@@ -513,7 +522,7 @@ export async function getOrderDetail(id: number) {
       startedAt: order.startedAt ? new Date(order.startedAt).toISOString() : null,
       completedAt: order.completedAt ? new Date(order.completedAt).toISOString() : null,
       createdAt: order.createdAt ? new Date(order.createdAt).toISOString() : null,
-      recastCount, resocketCount,
+      reworkCount,
     },
     patient: patient ? { ...patient, branchName: order.branchName ?? null } : null,
     timeline,
@@ -521,24 +530,37 @@ export async function getOrderDetail(id: number) {
   };
 }
 
-// Whether the order has started (left new_assignment). Used to gate who may
-// reassign (reception only before work has started).
+// Whether the order has left its FIRST stage. Used to gate who may reassign
+// (reception only before work has started). Purpose-aware: a maintenance
+// order's first stage is still `new_assignment`, not the build pipeline's.
 export function hasStarted(order: ProstheticWorkOrder): boolean {
-  return order.currentStage !== NEW_ASSIGNMENT_STAGE || !!order.startedAt;
+  return order.currentStage !== firstStageFor(order.serviceType, order.purpose) || !!order.startedAt;
 }
 
 // ---- mutations (all append a history row) ------------------------------------
 
+/**
+ * ينقل الأمر إلى مرحلة. **لا يلمس الحالة إطلاقاً** — عدا الإنهاء التلقائي
+ * عند التسليم أو إنجاز الصيانة، وهو ليس «توقّفاً» بل نهاية المسار.
+ *
+ * التحقّق من أن الانتقال مشروع (التالية فقط، أو رجوع بإعادة عمل، أو مخرج
+ * إداري) يقع في طبقة النقاط قبل الوصول إلى هنا.
+ */
 export async function updateStage(params: {
   order: ProstheticWorkOrder;
   toStage: string;
+  /** نوع السطر في السجلّ: تقدّم عادي أم رجوع بإعادة عمل. */
+  actionType?: "stage_change" | "rework";
   notes?: string | null;
   // The promised delivery date, captured when the expert reaches the mold stage.
   // Applied ONLY when the order has no delivery date yet (first commitment) —
   // it is INDEPENDENT of the stage timeline and never overwrites an existing
   // date here, so the promised date stays fixed for accuracy tracking.
   deliveryDate?: string | null;
+  /** الحالة الجديدة — تُمرَّر فقط من مسارَي الاستئناف وإعادة العمل. */
   newStatus?: string | null;
+  /** يُفرَغ سبب التوقّف حين يعود الأمر إلى العمل. */
+  clearHold?: boolean;
   finalResult?: string | null;
   finalNotes?: string | null;
   performedBy: number | null;
@@ -552,7 +574,7 @@ export async function updateStage(params: {
   const maintenanceDone = MAINTENANCE_DONE_STAGES.has(toStage);
   return await db.transaction(async (tx) => {
     const patch: any = { currentStage: toStage, updatedAt: new Date() };
-    if (!order.startedAt && fromStage === NEW_ASSIGNMENT_STAGE) patch.startedAt = new Date();
+    if (!order.startedAt && fromStage === firstStageFor(order.serviceType, order.purpose)) patch.startedAt = new Date();
     // First-commit only, decided IN the database (COALESCE), not on the
     // possibly-stale `order` snapshot — two concurrent mold updates can't
     // both "win": whichever lands second finds the column already set.
@@ -560,9 +582,12 @@ export async function updateStage(params: {
       patch.expectedDeliveryDate = sql`COALESCE(${WO.expectedDeliveryDate}, ${params.deliveryDate})`;
     }
     if (params.newStatus) patch.status = params.newStatus;
+    if (params.clearHold) { patch.holdReasonCode = null; patch.holdNote = null; }
     if (delivered) {
       patch.status = "completed";
       patch.completedAt = new Date();
+      patch.holdReasonCode = null;
+      patch.holdNote = null;
       patch.finalResult = params.finalResult ?? null;
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
@@ -574,7 +599,7 @@ export async function updateStage(params: {
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
-      actionType: delivered ? "delivered" : "stage_change",
+      actionType: delivered ? "delivered" : (params.actionType ?? "stage_change"),
       fromStage, toStage,
       notes: params.notes ?? null,
       performedBy: params.performedBy,
@@ -610,71 +635,126 @@ export async function updateDeliveryDate(params: {
   });
 }
 
-export async function updateStatus(params: {
+/**
+ * إيقاف الأمر — **بلا مساس بالمرحلة إطلاقاً**.
+ *
+ * هذا هو جوهر الفصل: المريض متورّم فلا يمكن أخذ القالب ⇒ المرحلة تبقى
+ * `mold` والحالة تصير `medical_hold`. المواد لم تصل ⇒ المرحلة تبقى
+ * `manufacturing` والحالة `waiting_materials`. أين وصل العمل حقيقة ثابتة،
+ * والتوقّف ظرف عارض فوقها.
+ *
+ * السبب داخلي بحت ولا يصل المريض بأي حال.
+ */
+export async function holdOrder(params: {
   order: ProstheticWorkOrder;
-  status: string;
-  notes?: string | null;
+  status: string;          // إحدى حالات التوقّف الأربع
+  reasonCode: string;
+  note?: string | null;
   performedBy: number | null;
 }): Promise<ProstheticWorkOrder> {
-  const { order, status } = params;
+  const { order, status, reasonCode } = params;
   return await db.transaction(async (tx) => {
-    // NOTE: status is independent of stage — EXCEPT when a MAINTENANCE order
-    // is marked completed while its stage never left the pipeline: the card
-    // used to show "مكتمل" over "مريض جديد بانتظار بدء العمل". Completing a
-    // maintenance order aligns the stage to the service's "تم إنجاز الصيانة"
-    // step (the device one by default; the expert picks القالب explicitly via
-    // the stage dialog when that is what was serviced).
-    const patch: any = { status, updatedAt: new Date() };
-    if (status === "completed" && (order as any).purpose === "maintenance" && !MAINTENANCE_DONE_STAGES.has(order.currentStage)) {
-      patch.currentStage = order.serviceType === "medical_support" ? "maintenance_support_done" : "maintenance_device_done";
-      patch.completedAt = (order as any).completedAt ?? new Date();
-    }
     const [updated] = await tx.update(WO)
-      .set(patch)
+      .set({ status, holdReasonCode: reasonCode, holdNote: params.note ?? null, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "status_change",
+      // نفس المرحلة على الطرفين — توثيق صريح في السجلّ أن التوقّف لم يحرّكها.
       fromStage: order.currentStage, toStage: order.currentStage,
-      notes: params.notes ? `الحالة: ${status} — ${params.notes}` : `الحالة: ${status}`,
+      notes: `توقّف: ${status} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
     return updated;
   });
 }
 
-export async function recordRework(params: {
+/** إلغاء التوقّف: الحالة تعود `active`، والمرحلة **كما هي**. */
+export async function resumeOrder(params: {
   order: ProstheticWorkOrder;
-  reworkType: string;
-  reasonCode?: string | null;
-  reasonDetails?: string | null;
-  stageWhenDetected?: string | null;
-  createdBy: number | null;
+  note?: string | null;
+  performedBy: number | null;
 }): Promise<ProstheticWorkOrder> {
-  const { order, reworkType } = params;
-  // recast/resocket move the order into the matching blocked status; the stage
-  // is preserved (never cleared) so the previous trail stays intact.
-  const newStatus = reworkType === "recast" ? "needs_recast"
-    : reworkType === "resocket" ? "needs_resocket"
-    : order.status;
+  const { order } = params;
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx.update(WO)
+      .set({ status: "active", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
+      .where(eq(WO.id, order.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: order.id,
+      actionType: "status_change",
+      fromStage: order.currentStage, toStage: order.currentStage,
+      notes: `استئناف العمل${params.note ? ` — ${params.note}` : ""}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/**
+ * إعادة عمل فني — المسار **الوحيد** للرجوع بمرحلة إلى الخلف.
+ *
+ * ثلاثة آثار في معاملة واحدة: المرحلة ترجع، والحالة تصير `technical_rework`
+ * بسببها، وصفّ في `prosthetic_rework_events` يحفظ ما جرى. والسجلّ يوثّق
+ * الرجوع صراحةً `fromStage → toStage`.
+ *
+ * وللمريض لا شيء من هذا: يرى المرحلة الجديدة فقط، بلا كلمة عن إعادة عمل
+ * ولا سبب ولا خطأ.
+ */
+export async function reworkToStage(params: {
+  order: ProstheticWorkOrder;
+  returnToStage: string;
+  reasonCode: string;
+  note?: string | null;
+  performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  const { order, returnToStage, reasonCode } = params;
   return await db.transaction(async (tx) => {
     await tx.insert(RW).values({
       workOrderId: order.id,
-      reworkType,
-      reasonCode: params.reasonCode ?? null,
-      reasonDetails: params.reasonDetails ?? null,
-      stageWhenDetected: params.stageWhenDetected ?? order.currentStage,
-      createdBy: params.createdBy,
+      reworkType: REWORK_TYPE,
+      reasonCode,
+      reasonDetails: params.note ?? null,
+      stageWhenDetected: order.currentStage,
+      createdBy: params.performedBy,
     });
     const [updated] = await tx.update(WO)
-      .set({ status: newStatus, updatedAt: new Date() })
+      .set({
+        currentStage: returnToStage,
+        status: "technical_rework",
+        holdReasonCode: reasonCode,
+        holdNote: params.note ?? null,
+        updatedAt: new Date(),
+      })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "rework",
+      fromStage: order.currentStage, toStage: returnToStage,
+      notes: `إعادة عمل فني — رجوع من ${order.currentStage} إلى ${returnToStage} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/** إلغاء الأمر — القرار الإداري الوحيد الذي ينهي أمراً بلا تسليم. */
+export async function cancelOrder(params: {
+  order: ProstheticWorkOrder;
+  note?: string | null;
+  performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  const { order } = params;
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx.update(WO)
+      .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
+      .where(eq(WO.id, order.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: order.id,
+      actionType: "status_change",
       fromStage: order.currentStage, toStage: order.currentStage,
-      notes: `إعادة عمل: ${reworkType}${params.reasonCode ? ` (${params.reasonCode})` : ""}`,
-      performedBy: params.createdBy,
+      notes: `إلغاء الأمر${params.note ? ` — ${params.note}` : ""}`,
+      performedBy: params.performedBy,
     });
     return updated;
   });
@@ -722,8 +802,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
   const rework = await db
     .select({ reworkType: RW.reworkType, n: sql<number>`COUNT(*)::int` })
     .from(RW).where(eq(RW.workOrderId, row.id)).groupBy(RW.reworkType);
-  const recastCount = Number(rework.find((r) => r.reworkType === "recast")?.n ?? 0);
-  const resocketCount = Number(rework.find((r) => r.reworkType === "resocket")?.n ?? 0);
+  const reworkCount = rework.reduce((n, r) => n + Number(r.n), 0);
   return {
     id: row.id,
     expertUserId: row.expertUserId,
@@ -736,7 +815,7 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
     expectedDeliveryDate: row.expectedDeliveryDate ? String(row.expectedDeliveryDate) : null,
     completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
     finalResult: row.finalResult ?? null,
-    recastCount, resocketCount,
+    reworkCount,
   };
 }
 
@@ -837,24 +916,22 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
   const branchAgg = new Map<number, any>();
   let overdue = 0, ready = 0, completed = 0, stale = 0;
 
-  const recastByOrder = new Map<number, number>();
-  const resocketByOrder = new Map<number, number>();
+  const reworkByOrder = new Map<number, number>();
   for (const r of reworkRows) {
-    if (r.reworkType === "recast") recastByOrder.set(r.workOrderId, (recastByOrder.get(r.workOrderId) ?? 0) + 1);
-    if (r.reworkType === "resocket") resocketByOrder.set(r.workOrderId, (resocketByOrder.get(r.workOrderId) ?? 0) + 1);
+    reworkByOrder.set(r.workOrderId, (reworkByOrder.get(r.workOrderId) ?? 0) + 1);
     if (r.reasonCode) reasonCounts[r.reasonCode] = (reasonCounts[r.reasonCode] ?? 0) + 1;
   }
 
   for (const o of orders) {
     stageCounts[o.currentStage] = (stageCounts[o.currentStage] ?? 0) + 1;
     if (!!o.expectedDeliveryDate && notFinished(o.status) && String(o.expectedDeliveryDate) < today) overdue++;
-    if (o.currentStage === "ready_for_delivery") ready++;
+    if (o.currentStage === "ready_for_fitting") ready++;
     if (o.status === "completed") completed++;
     if (notFinished(o.status) && daysSince(o.updatedAt) >= 14) stale++;
 
     const e = experts.get(o.expertUserId) ?? {
       expertUserId: o.expertUserId, expertName: o.expertName ?? `#${o.expertUserId}`,
-      total: 0, active: 0, completed: 0, overdue: 0, recasts: 0, resockets: 0,
+      total: 0, active: 0, completed: 0, overdue: 0, reworks: 0,
       firstFitSuccess: 0, completedWithResult: 0, durationSum: 0, durationCount: 0,
     };
     e.total++;
@@ -871,8 +948,7 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
       }
     }
     if (!!o.expectedDeliveryDate && notFinished(o.status) && String(o.expectedDeliveryDate) < today) e.overdue++;
-    e.recasts += recastByOrder.get(o.id) ?? 0;
-    e.resockets += resocketByOrder.get(o.id) ?? 0;
+    e.reworks += reworkByOrder.get(o.id) ?? 0;
     experts.set(o.expertUserId, e);
 
     const b = branchAgg.get(o.branchId) ?? { branchId: o.branchId, branchName: o.branchName ?? `#${o.branchId}`, total: 0, completed: 0, overdue: 0 };
@@ -902,6 +978,6 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
 }
 
 // Guard used by routes: is `stage` valid for the order's service type?
-export function stageValidFor(serviceType: string, stage: string): boolean {
-  return stagesForService(serviceType).includes(stage);
+export function stageValidFor(serviceType: string, stage: string, purpose?: string | null): boolean {
+  return stagesForOrder(serviceType, purpose).includes(stage);
 }

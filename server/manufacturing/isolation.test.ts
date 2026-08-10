@@ -47,6 +47,16 @@ async function req(method: string, path: string, session: any, body?: any) {
   return { status: res.status, json };
 }
 
+// The seeded patients carry FIXED ids, and `createWorkOrderForExisting`
+// refuses a second OPEN order for the same patient+service. Without this the
+// suite passes exactly once per database and then fails on its own leftovers.
+async function clearSeededOrders() {
+  const P = "(1,2,3,5)";
+  await pool.query(`DELETE FROM prosthetic_rework_events WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN ${P})`);
+  await pool.query(`DELETE FROM prosthetic_work_history  WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN ${P})`);
+  await pool.query(`DELETE FROM prosthetic_work_orders WHERE patient_id IN ${P}`);
+}
+
 async function seed() {
   await pool.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'كربلاء'),(3,'ذي قار'),(4,'الموصل'),(5,'كركوك') ON CONFLICT DO NOTHING`);
   const mkUser = (id: number, name: string, role: string, branchIds: number[]) =>
@@ -76,6 +86,7 @@ async function seed() {
   await mkPatient(2, "مريض بغداد ب", 1, "amputee");
   await mkPatient(3, "مريض كربلاء", 2, "medical_support");
   await mkPatient(5, "مريض ذي قار", 3, "amputee");
+  await clearSeededOrders();
 
   // Orders: o1→عناد(b1), o2→أيوب(b1), o3→مصطفى(b2), o5→أيوب(b3)
   const o1 = await store.createWorkOrderForExisting({ patientId: 1, branchId: 1, serviceType: "prosthetic", expertUserId: 101, assignedBy: 999 });
@@ -145,7 +156,7 @@ async function main() {
   assert(r15.status === 200, "15. reception changes expert BEFORE work started");
   // move it back to عناد, then start work (advance stage), then reception tries again
   await req("PATCH", `/api/manufacturing/orders/${ids.o1}/reassign`, S.mgr1, { newExpertUserId: 101, reason: "إرجاع" });
-  await req("PATCH", `/api/manufacturing/orders/${ids.o1}/stage`, S.anad, { toStage: "assessment_measurements" });
+  await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, {});
   const r16 = await req("PATCH", `/api/manufacturing/orders/${ids.o1}/reassign`, S.recBaghdad, { newExpertUserId: 102, reason: "بعد البدء" });
   assert(r16.status === 409, "16. reception CANNOT change expert after work started (409)");
 
@@ -157,21 +168,26 @@ async function main() {
   assert((await req("PATCH", `/api/manufacturing/orders/${ids.o1}/reassign`, S.admin, { newExpertUserId: 101, reason: "أدمن" })).status === 200, "18a. admin transfers to a branch-allowed expert");
   assert((await req("PATCH", `/api/manufacturing/orders/${ids.o1}/reassign`, S.admin, { newExpertUserId: 105, reason: "غير مسموح" })).status === 400, "18b. admin CANNOT assign an expert not allowed for the branch (400)");
 
-  // ---- scenarios 19,20: recast/resocket append + keep history ----
+  // ---- scenarios 19,20: technical rework appends + keeps history ----
+  // o1 is at `measurements`; walk it up so a backwards return actually exists.
+  await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, { expectedDeliveryDate: "2026-12-01" }); // → mold
+  await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, {}); // → manufacturing
   const histBefore = (await db.select().from(prostheticWorkHistory).where(eq(prostheticWorkHistory.workOrderId, ids.o1))).length;
-  const rc = await req("POST", `/api/manufacturing/orders/${ids.o1}/rework`, S.anad, { reworkType: "recast", reasonCode: "cast_error", reasonDetails: "قالب سيّئ" });
-  assert(rc.status === 200 && rc.json.status === "needs_recast", "19. recast → status needs_recast");
-  const rs = await req("POST", `/api/manufacturing/orders/${ids.o1}/rework`, S.anad, { reworkType: "resocket", reasonCode: "socket_fit_error" });
-  assert(rs.status === 200 && rs.json.status === "needs_resocket", "20. resocket → status needs_resocket");
+  const rc = await req("POST", `/api/manufacturing/orders/${ids.o1}/hold`, S.anad, { status: "technical_rework", reasonCode: "mold_fit", returnToStage: "mold", note: "قالب سيّئ" });
+  assert(rc.status === 200 && rc.json.status === "technical_rework" && rc.json.currentStage === "mold", "19. technical rework → status technical_rework + stage moved BACK");
+  const rs = await req("POST", `/api/manufacturing/orders/${ids.o1}/hold`, S.anad, { status: "technical_rework", reasonCode: "socket_fit", returnToStage: "measurements" });
+  assert(rs.status === 200 && rs.json.currentStage === "measurements", "20. a second rework returns further back");
   const histAfter = (await db.select().from(prostheticWorkHistory).where(eq(prostheticWorkHistory.workOrderId, ids.o1))).length;
   assert(histAfter > histBefore, "   rework APPENDS history (nothing deleted)");
   const detail2 = (await req("GET", `/api/manufacturing/orders/${ids.o1}`, S.anad)).json;
-  assert(detail2.order.recastCount === 1 && detail2.order.resocketCount === 1, "   recast/resocket counts surfaced");
+  assert(detail2.order.reworkCount === 2, "   rework count surfaced");
 
   // ---- scenario 21: delivery requires a final result ----
-  const noResult = await req("PATCH", `/api/manufacturing/orders/${ids.o1}/stage`, S.anad, { toStage: "delivered" });
+  for (const _ of [1, 2, 3]) await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, {}); // → ready_for_fitting
+  assert((await req("GET", `/api/manufacturing/orders/${ids.o1}`, S.anad)).json.order.currentStage === "ready_for_fitting", "   walked back up to ready_for_fitting");
+  const noResult = await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, {});
   assert(noResult.status === 400, "21a. delivery WITHOUT final result → 400");
-  const withResult = await req("PATCH", `/api/manufacturing/orders/${ids.o1}/stage`, S.anad, { toStage: "delivered", finalResult: "minor_adjustment_success" });
+  const withResult = await req("PATCH", `/api/manufacturing/orders/${ids.o1}/advance`, S.anad, { finalResult: "minor_adjustment_success" });
   assert(withResult.status === 200 && withResult.json.status === "completed", "21b. delivery WITH final result → completed");
 
   // ---- scenario 22: work-order failure rolls back the patient ----

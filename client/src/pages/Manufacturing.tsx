@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Wrench, Search, AlertTriangle, PlusCircle } from "lucide-react";
 import {
-  STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS,
+  STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, FIRST_STAGE, BUILD_STAGES,
 } from "@shared/manufacturing";
 import { CreateOrderDialog } from "@/components/manufacturing/CreateOrderDialog";
 
@@ -20,7 +20,7 @@ interface OrderCard {
   serviceType: string; itemType: string | null; currentStage: string; status: string;
   expertUserId: number; expertName: string | null; assignedAt: string | null; startedAt: string | null;
   expectedDeliveryDate: string | null; completedAt: string | null; finalResult: string | null;
-  recastCount: number; resocketCount: number; daysInStage: number; isOverdue: boolean;
+  reworkCount: number; daysInStage: number; isOverdue: boolean;
 }
 
 interface Branch { id: number; name: string; }
@@ -33,7 +33,7 @@ function fmtDate(iso: string | null): string {
 function statusTone(status: string): string {
   if (status === "completed") return "bg-green-100 text-green-800 border-green-200";
   if (status === "cancelled") return "bg-slate-100 text-slate-600 border-slate-200";
-  if (status === "needs_recast" || status === "needs_resocket") return "bg-red-100 text-red-800 border-red-200";
+  if (status === "technical_rework") return "bg-red-100 text-red-800 border-red-200";
   if (status.startsWith("waiting") || status === "medical_hold") return "bg-amber-100 text-amber-800 border-amber-200";
   return "bg-blue-100 text-blue-800 border-blue-200";
 }
@@ -61,8 +61,7 @@ function OrderRow({ o }: { o: OrderCard }) {
                 <span>الإسناد: {fmtDate(o.assignedAt)}</span>
                 <span>التسليم المتوقّع: {fmtDate(o.expectedDeliveryDate)}</span>
                 <span>في المرحلة منذ {o.daysInStage} يوم</span>
-                {o.recastCount > 0 && <span>إعادة قالب: {o.recastCount}</span>}
-                {o.resocketCount > 0 && <span>إعادة سوكت: {o.resocketCount}</span>}
+                {o.reworkCount > 0 && <span>إعادة عمل فني: {o.reworkCount}</span>}
               </div>
             </div>
             <div className="text-left flex flex-col items-end gap-1">
@@ -132,13 +131,13 @@ export default function Manufacturing() {
   // Client-side buckets (from the fetched list) for the summary chips.
   const nowMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
   const buckets = useMemo(() => ({
-    "مرضى جدد": orders.filter((o) => o.currentStage === "new_assignment" && o.status !== "cancelled"),
-    "قيد العمل": orders.filter((o) => o.status === "active" && o.currentStage !== "new_assignment"),
+    "أوامر جديدة": orders.filter((o) => o.currentStage === FIRST_STAGE && o.status !== "cancelled"),
+    "قيد العمل": orders.filter((o) => o.status === "active" && o.currentStage !== FIRST_STAGE),
     "بانتظار المريض": orders.filter((o) => o.status === "waiting_patient"),
-    "بانتظار المكونات": orders.filter((o) => o.status === "waiting_components"),
-    "يحتاجون إعادة قالب": orders.filter((o) => o.status === "needs_recast"),
-    "يحتاجون إعادة سوكت": orders.filter((o) => o.status === "needs_resocket"),
-    "جاهزون للتسليم": orders.filter((o) => o.currentStage === "ready_for_delivery"),
+    "بانتظار المواد": orders.filter((o) => o.status === "waiting_materials"),
+    "متوقّفون لسبب طبي": orders.filter((o) => o.status === "medical_hold"),
+    "إعادة عمل فني": orders.filter((o) => o.status === "technical_rework"),
+    "جاهزون للتجربة والتسليم": orders.filter((o) => o.currentStage === "ready_for_fitting"),
     "مكتملون هذا الشهر": orders.filter((o) => o.status === "completed" && (o.completedAt ?? "").slice(0, 7) === nowMonth),
     "متأخرون": orders.filter((o) => o.isOverdue),
   }), [orders, nowMonth]);
@@ -215,6 +214,13 @@ export default function Manufacturing() {
             <SelectItem value="all">كل الأنواع</SelectItem>
             <SelectItem value="prosthetic">أطراف صناعية</SelectItem>
             <SelectItem value="medical_support">مساند طبية</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={stageFilter} onValueChange={setStageFilter}>
+          <SelectTrigger className="w-[170px]"><SelectValue placeholder="المرحلة" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">كل المراحل</SelectItem>
+            {BUILD_STAGES.map((st) => <SelectItem key={st} value={st}>{STAGE_LABELS[st]}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>

@@ -463,8 +463,14 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   // Distinguishes a first build from a later maintenance episode on an already
   // delivered device. Each is its own independent order/expert/timeline.
   purpose: text("purpose").notNull().default("initial_build"), // initial_build | maintenance
+  // الحالة تصف التوقّف، والمرحلة تصف أين وصل العمل — مستقلّان تماماً:
+  // توقّفٌ لا يغيّر المرحلة أبداً (migration 045).
   status: text("status").notNull().default("active"),
-  currentStage: text("current_stage").notNull().default("new_assignment"),
+  currentStage: text("current_stage").notNull().default("order_received"),
+  // سبب التوقّف الحالي — داخلي بحت، لا يصل المريض. يُملأ عند التوقّف
+  // ويُفرَغ عند الاستئناف، فيُجاب «لماذا هو متوقّف؟» بقراءة صفّ واحد.
+  holdReasonCode: text("hold_reason_code"),
+  holdNote: text("hold_note"),
   expectedDeliveryDate: date("expected_delivery_date"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
