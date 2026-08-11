@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
 import { SUPPORT_SPECS } from "@shared/case_fields";
+import { normalizePhone } from "@shared/phone";
 import { useCreatePatient } from "@/hooks/use-patients";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useSearch } from "wouter";
@@ -73,6 +74,15 @@ const REFERRAL_SUB_OTHER = "أخرى";
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
+  // رقم الاتصال إلزامي لكل ملف جديد. الرسالة تأتي من المطبّع نفسه ليقرأ
+  // الموظف سبب الرفض بالضبط («قصير» ≠ «حروف» ≠ «طول دولي خاطئ») بدل
+  // «حقل مطلوب» الغامضة. الخادم يعيد الفحص نفسه — هذا للإرشاد لا للأمان.
+  phone: z.string().superRefine((value, ctx) => {
+    const result = normalizePhone(value);
+    if (!result.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.reason ?? "رقم اتصال صالح مطلوب" });
+    }
+  }),
   totalCost: z.coerce.number().optional(),
   sessionCount: z.coerce.number().optional(),
   injuryDate: z.string().optional().nullable().transform(val => val === "" ? null : val),
@@ -539,10 +549,13 @@ export default function CreatePatient() {
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.patientForm.phone}</FormLabel>
+                    {/* النجمة هنا وحدها: الحقل إلزامي عند فتح ملف جديد، أما
+                        «تعديل مريض» فيقبل ملفاً قديماً بلا رقم إطلاقاً. */}
+                    <FormLabel>{t.patientForm.phone} *</FormLabel>
                     <FormControl>
-                      <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.phonePlaceholder} />
+                      <Input {...field} value={field.value || ""} className="bg-white" dir="ltr" inputMode="tel" placeholder={t.patientForm.phonePlaceholder} />
                     </FormControl>
+                    <p className="text-xs text-muted-foreground">{t.patientForm.phoneHint}</p>
                     <FormMessage />
                   </FormItem>
                 )}

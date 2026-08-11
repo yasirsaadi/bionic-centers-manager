@@ -11,11 +11,21 @@
     "db:push": "drizzle-kit push",
     "test:manufacturing": "tsx server/manufacturing/isolation.test.ts",
     "test:mold-stage": "tsx server/manufacturing/mold_stage.test.ts",
+    "test:stages": "tsx server/manufacturing/stages.test.ts",
+    "test:workflow": "tsx server/manufacturing/workflow.test.ts",
+    "test:legacy-catchup": "tsx server/migrations/legacy_catchup.test.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",
     "test:amputation-site": "tsx server/medical/amputation_site.test.ts",
     "test:prescription": "tsx server/medical/prescription.test.ts",
-    "test:physio-sessions": "tsx server/medical/physio_sessions.test.ts"
+    "test:physio-sessions": "tsx server/medical/physio_sessions.test.ts",
+    "test:phone": "tsx server/phone.test.ts",
+    "test:phone-concurrency": "tsx server/migrations/backfill_phone_concurrency.test.ts",
+    "test:events-purity": "tsx server/events/purity.test.ts",
+    "test:events-single-writer": "tsx server/events/single_writer.test.ts",
+    "test:patient-events": "tsx server/events/patient_events.test.ts",
+    "test:merge-exams": "tsx server/medical/merge_exams.test.ts",
+    "test:merge-fk-coverage": "tsx server/merge_fk_coverage.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

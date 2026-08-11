@@ -6,6 +6,7 @@ import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
+import { normalizePhone } from "@shared/phone";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
@@ -1839,6 +1840,31 @@ export async function registerRoutes(
       const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
+
+      // Contact number rules on EDIT (deliberately gentler than on create — a
+      // legacy patient may have no phone at all and must stay editable):
+      //   • a number that is present must be valid;
+      //   • an existing number may be REPLACED but never emptied, so a bad
+      //     legacy value ("هاتف الجار") gets corrected rather than erased —
+      //     the evidence of what was recorded stays until a real number
+      //     replaces it.
+      if (patch.phone !== undefined) {
+        const typed = String(patch.phone ?? "").trim();
+        const existingPhone = String(existingPatient.phone ?? "").trim();
+        if (!typed) {
+          if (existingPhone) {
+            return res.status(400).json({
+              message: "لا يمكن حذف رقم الاتصال المسجَّل — استبدله برقم صحيح",
+              field: "phone",
+            });
+          }
+        } else {
+          const n = normalizePhone(typed, patch.phoneCountry || existingPatient.phoneCountry || undefined);
+          if (!n.ok) {
+            return res.status(400).json({ message: n.reason ?? "رقم اتصال غير صالح", field: "phone" });
+          }
+        }
+      }
 
       const patient = await storage.updatePatient(id, patch);
       res.json(patient);

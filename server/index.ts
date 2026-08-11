@@ -128,6 +128,12 @@ app.use((req, res, next) => {
       import("./migrations/backfill_all_cases")
         .then((m) => m.backfillAllPatientCases())
         .catch((e) => console.error("[backfill] launch failed:", e));
+      // Phone normalization backfill (migration 043). Same reasoning: runs in
+      // the BACKGROUND after listen so a large table never blocks the deploy.
+      // Resumable via `phone_status IS NULL`, never touches `phone` itself.
+      import("./migrations/backfill_phone_normalization")
+        .then((m) => m.backfillPhoneNormalization())
+        .catch((e) => console.error("[backfill-phone] launch failed:", e));
     },
   );
 })();

@@ -29,11 +29,13 @@ import {
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
-  costEntries,
+  costEntries, patientEvents,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+import { FIRST_STAGE } from "@shared/manufacturing";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -715,9 +717,20 @@ export class DatabaseStorage implements IStorage {
 
   async createPatient(insertPatient: InsertPatient): Promise<Patient> {
     const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
-    
+
     const valuesToInsert: any = { ...patientData };
-    
+
+    // نقطة الخنق الوحيدة لتطبيع رقم الاتصال عند الإنشاء. الأعمدة الثلاثة
+    // المشتقّة تُكتب من الدالّة دائماً — فقيمة يرسلها العميل لأيٍّ منها
+    // تُستبدَل هنا ولا تصل القاعدة. `phone` يُحفظ كما كُتب بعد قصّ الأطراف.
+    {
+      const n = normalizePhone(valuesToInsert.phone, valuesToInsert.phoneCountry || DEFAULT_PHONE_COUNTRY);
+      valuesToInsert.phone = n.raw || null;
+      valuesToInsert.phoneE164 = n.e164;
+      valuesToInsert.phoneCountry = n.country;
+      valuesToInsert.phoneStatus = n.status;
+    }
+
     if (registrationDate) {
       const baghdadOffset = 3 * 60 * 60 * 1000;
       const nowBaghdad = new Date(Date.now() + baghdadOffset);
@@ -761,11 +774,46 @@ export class DatabaseStorage implements IStorage {
     const [before] = wantsCost
       ? await db.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
       : [undefined as any];
+
+    // Phone: same choke point as the cost ledger. The three derived columns
+    // are NEVER writable by a caller — they are stripped unconditionally and
+    // re-derived only when `phone` itself is part of the patch. Without the
+    // strip, a body carrying `phoneStatus: "ok"` with no `phone` would mark a
+    // garbage number as clean.
+    const patch: any = { ...updates };
+    delete patch.phoneE164;
+    delete patch.phoneCountry;
+    delete patch.phoneStatus;
+    if ((updates as any).phone !== undefined) {
+      // The stored country is the normalization hint, so re-typing a Turkish
+      // number on a Turkish file still resolves as Turkish.
+      const [existing] = await db
+        .select({ phoneCountry: patients.phoneCountry })
+        .from(patients)
+        .where(eq(patients.id, id));
+      const hint = (updates as any).phoneCountry || existing?.phoneCountry || DEFAULT_PHONE_COUNTRY;
+      const n = normalizePhone((updates as any).phone, hint);
+      patch.phone = n.raw || null;
+      patch.phoneE164 = n.e164;
+      patch.phoneCountry = n.country;
+      patch.phoneStatus = n.status;
+    }
+
+    // Stripping the derived columns can empty an otherwise-valid patch (a body
+    // carrying ONLY `phoneStatus`, for instance). Drizzle throws "No values to
+    // set" on an empty .set(), which would surface as a 500 on a request that
+    // asks for nothing — so answer it with the current row instead. Found by
+    // the live Postgres run, not by types.
+    if (Object.keys(patch).length === 0) {
+      const [current] = await db.select().from(patients).where(eq(patients.id, id));
+      return current;
+    }
+
     const [updated] = await db.update(patients)
       // Cast: drizzle-zod widens the jsonb columns (physioPlan) into a shape
       // Drizzle's own .set() type doesn't accept back. The values are validated
       // by the callers that build them, not by this assignment.
-      .set(updates as any)
+      .set(patch as any)
       .where(eq(patients.id, id))
       .returning();
     if (updated && wantsCost && before) {
@@ -845,6 +893,13 @@ export class DatabaseStorage implements IStorage {
       // Cost-ledger rows FK the patient (migration 033) and their money
       // vanishes from every total with the row, so they go with it too.
       await tx.delete(costEntries).where(eq(costEntries.patientId, id));
+      // The event log FKs the patient (migration 044). It is the patient's own
+      // narrative, so it goes with them. Nothing references patient_events, so
+      // its position here is free — it only has to precede the patient row.
+      // NOTE: the append-only trigger guards UPDATE only, never DELETE —
+      // guarding DELETE would have broken patient deletion for every user,
+      // which this project has already lived through once.
+      await tx.delete(patientEvents).where(eq(patientEvents.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
     });
   }
@@ -969,7 +1024,7 @@ export class DatabaseStorage implements IStorage {
           expertUserId: params.expertUserId,
           serviceType: caseType === "amputee" ? "prosthetic" : "medical_support",
           status: "active",
-          currentStage: "new_assignment",
+          currentStage: FIRST_STAGE,
           expectedDeliveryDate: params.expectedDeliveryDate ?? null,
           assignedBy: params.performedBy,
         }).returning();
@@ -977,7 +1032,7 @@ export class DatabaseStorage implements IStorage {
           workOrderId: wo.id,
           actionType: "created",
           fromStage: null,
-          toStage: "new_assignment",
+          toStage: FIRST_STAGE,
           notes: `إنشاء أمر تصنيع عند إضافة نوع حالة (${caseLabel}) لمريض موجود`,
           performedBy: params.performedBy,
         });
@@ -1095,10 +1150,10 @@ export class DatabaseStorage implements IStorage {
 
       const [wo] = await tx.insert(prostheticWorkOrders).values({
         patientId, branchId: existing.branchId, expertUserId, serviceType,
-        status: "active", currentStage: "new_assignment", expectedDeliveryDate: null, assignedBy,
+        status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
       }).returning();
       await tx.insert(prostheticWorkHistory).values({
-        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: "new_assignment",
+        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
         notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
       });
       return { patient, workOrderId: wo.id };
@@ -1203,6 +1258,10 @@ export class DatabaseStorage implements IStorage {
       // "violates foreign key constraint patient_cases_patient_id_fkey".
       const sourceCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, sourceId));
       const targetCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, targetId));
+      // Which source case became which target case. Collected in the loop and
+      // applied to the sealed exam table in ONE guarded pass afterwards, so the
+      // door is opened once instead of on every iteration.
+      const caseRemap: { from: number; to: number }[] = [];
       for (const sc of sourceCases) {
         let tc = targetCases.find((c) => c.caseType === sc.caseType);
         if (!tc) {
@@ -1219,7 +1278,45 @@ export class DatabaseStorage implements IStorage {
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
+        caseRemap.push({ from: sc.id, to: tc.id });
       }
+
+      // Medical exams are the THIRD table pointing at patient_cases.id — the
+      // other two (visits, payments) are re-pointed just above, and this one
+      // was missed, so merging a patient who had ever been examined failed on
+      // the FK when the source's case rows were deleted below.
+      //
+      // This is an ADMINISTRATIVE re-point, not a clinical edit: one human had
+      // two files, and the exam must follow them. Not a single clinical value
+      // is touched — diagnosis, prescription, doctor, signature, version and
+      // notes all stay byte-identical, and NO revision is written because the
+      // doctor's words did not change. `reviseExam` is deliberately not used.
+      //
+      // The table is sealed, so the audited door is opened around these two
+      // statements ONLY and shut immediately after — the rest of the merge
+      // stays under the seal.
+      if (caseRemap.length > 0) {
+        await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
+        for (const { from, to } of caseRemap) {
+          // BOTH conditions, not just the case id. A source case id *should*
+          // only ever appear on the source patient's exams — but "should" is
+          // not a constraint, and a historically inconsistent row (an exam
+          // carrying another patient's id next to this case) would otherwise
+          // be silently re-pointed onto the target, moving a third person's
+          // clinical record.
+          //
+          // Refusing to touch it is the safe half; the loud half follows on
+          // its own: the source case rows are deleted a few lines below, and
+          // that inconsistent exam still references one — so the FK aborts the
+          // merge and the whole transaction rolls back. A visible failure that
+          // surfaces the bad data beats a quiet edit that hides it.
+          await tx.update(medicalExams)
+            .set({ caseId: to })
+            .where(and(eq(medicalExams.caseId, from), eq(medicalExams.patientId, sourceId)));
+        }
+        await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
+      }
+
       if (sourceCases.length > 0) {
         await tx.delete(patientCases).where(eq(patientCases.patientId, sourceId));
       }
@@ -1245,6 +1342,46 @@ export class DatabaseStorage implements IStorage {
       // Ledger entries follow their patient: dated history is preserved, and
       // the summed total_cost below stays equal to the summed entries.
       await repoint("costEntries", costEntries, costEntries.patientId);
+
+      // The clinical record follows the human. Sealed table, so the same
+      // narrow door — opened around this one statement and shut again.
+      // Covers exams whose `case_id` is NULL too: they simply change owner,
+      // and no case link is invented for them.
+      // `medical_exam_addenda` and `medical_exam_revisions` are keyed on
+      // `exam_id`, which does not change, so they stay attached with nothing
+      // copied or recreated.
+      await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
+      await repoint("medicalExams", medicalExams, medicalExams.patientId);
+      await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
+
+      // ── Event log (migration 044) ────────────────────────────────────────
+      // Repointing patient_id alone is NOT enough, for two independent reasons.
+      //
+      // 1. The rows are sealed. `patient_events` refuses UPDATE unless the
+      //    audited door is open, so the repoint must open it explicitly — and
+      //    close it again straight after, so the rest of this transaction
+      //    stays under the seal.
+      // 2. `dedupe_key` is unique PER PATIENT, not globally. Both files can
+      //    therefore legitimately hold the same key, and moving the source's
+      //    rows onto the target would violate `uq_patient_events_dedupe` and
+      //    abort the whole merge. The source copy is by definition the
+      //    duplicate of an event the target already recorded, so its KEY is
+      //    cleared — never the row: the narrative survives in full, only its
+      //    idempotency marker (whose job is done) is dropped.
+      await tx.execute(sql`SET LOCAL app.allow_event_edit = 'on'`);
+      await tx.execute(sql`
+        UPDATE patient_events s
+           SET dedupe_key = NULL
+         WHERE s.patient_id = ${sourceId}
+           AND s.dedupe_key IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM patient_events t
+              WHERE t.patient_id = ${targetId}
+                AND t.dedupe_key = s.dedupe_key
+           )
+      `);
+      await repoint("patientEvents", patientEvents, patientEvents.patientId);
+      await tx.execute(sql`SET LOCAL app.allow_event_edit = 'off'`);
 
       // Merge the patient row itself: flags OR, costs summed, and any
       // descriptive field that is empty on the target gets the source's value.
@@ -1291,6 +1428,21 @@ export class DatabaseStorage implements IStorage {
       if (preserved.length > 0) {
         const stamp = `— من الملف المدموج #${sourceId}: ${preserved.join("، ")}`;
         patch.generalNotes = target.generalNotes ? `${target.generalNotes}\n${stamp}` : stamp;
+      }
+      // The derived phone columns are NOT in `fillable` on purpose: copying
+      // them field-by-field could leave the target carrying its OWN raw phone
+      // next to the SOURCE's normalized one — a silently wrong pairing. They
+      // are re-derived from whatever `phone` the merge settled on instead, so
+      // the four columns always describe the same number.
+      // (Merge precedence itself is unchanged: a target that already has a
+      // phone keeps it, and the source's different number is still preserved
+      // into `generalNotes` by the loop above.)
+      if (patch.phone !== undefined) {
+        const n = normalizePhone(patch.phone, source.phoneCountry || target.phoneCountry || DEFAULT_PHONE_COUNTRY);
+        patch.phone = n.raw || null;
+        patch.phoneE164 = n.e164;
+        patch.phoneCountry = n.country;
+        patch.phoneStatus = n.status;
       }
       const [patient] = await tx.update(patients)
         .set(patch)

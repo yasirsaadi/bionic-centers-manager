@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -25,7 +25,15 @@ export const users = pgTable("users", {
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  // رقم الاتصال الأساسي — بالمريض أو بالمسؤول عنه (طفل برقم أبيه مثلاً).
+  // `phone` هو ما كتبه الموظف حرفياً ولا يُمسّ؛ الأعمدة الثلاثة تحته
+  // مشتقّة منه عبر `shared/phone.ts` (migration 043). عمداً nullable على
+  // مستوى القاعدة: آلاف الصفوف القديمة بلا رقم، والإلزام يُفرض في طبقة
+  // الـAPI للمرضى الجدد وحدهم.
   phone: text("phone"),
+  phoneE164: text("phone_e164"),       // +9647701234567 — مفتاح المطابقة وكشف التكرار
+  phoneCountry: text("phone_country"), // IQ | TR | ISO أخرى | INTL
+  phoneStatus: text("phone_status"),   // ok | needs_review
   address: text("address"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
   // كيف عرف «الشخص الآخر» بالمركز — يُملأ فقط حين تكون الجهة «من شخص آخر».
@@ -107,6 +115,62 @@ export const patientCases = pgTable("patient_cases", {
   // migration 020 (after de-duplicating) for existing databases.
   uniqueIndex("uq_patient_cases_patient_type").on(t.patientId, t.caseType),
 ]);
+
+// ── سجل أحداث المريض (migration 044) ────────────────────────────────────────
+// سرد مشتقّ لما حدث للمريض عبر كل الأقسام — **وليس مصدر حقيقة لأي عملية
+// تجارية**. لا يملك مالاً ولا رصيداً ولا حالة تصنيع ولا موعداً ولا حالة
+// مريض، ولا يقرأ منه أحد ليقرّر شيئاً. الجداول التجارية تبقى صاحبة الحقيقة.
+//
+// مفتاح أجنبي واحد فقط — إلى `patients` — وكل ما عداه لقطات بلا مفاتيح
+// (`case_id`, `source_id`, `branch_id`, `actor_user_id`)، بنفس درس
+// `payments.visit_id` و `medical_exams.proposed_expert_user_id`: مفتاح
+// أجنبي هنا كان سيقيّد ترتيب الكاسكيد ويكسر الدمج عند تحريك الحالات.
+//
+// غير قابل للتعديل: ترِكر `BEFORE UPDATE` يرفض كل تعديل إلا عبر الباب
+// المراقَب `app.allow_event_edit`، ومستعمِله الوحيد المشروع هو إعادة توجيه
+// الأحداث في `mergePatients`. و`DELETE` يبقى مسموحاً لأن كاسكيد حذف المريض
+// يحتاجه.
+export const patientEvents = pgTable("patient_events", {
+  // BIGSERIAL: ينمو مع كل زيارة ودفعة ومرحلة تصنيع، فحدّ الـ32-بت قريب
+  // على مدى سنوات. `mode: "number"` آمن حتى 2^53، وهو أبعد من أي أفق.
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  caseId: integer("case_id"),
+  caseType: text("case_type"), // prosthetic | medical_support | physiotherapy
+  // من سجل `shared/patient_events.ts` حصراً — لا نصّ حرّ من أي مكان.
+  eventType: text("event_type").notNull(),
+  // الإشارة إلى الجدول المصدر بلا ارتباط به: 'work_order' | 'payment' | …
+  sourceType: text("source_type"),
+  // BIGINT لا INTEGER: مصادر اليوم كلها serial، لكن أي مصدر مستقبلي بمفتاح
+  // كبير كان سيفيض صامتاً.
+  sourceId: bigint("source_id", { mode: "number" }),
+  // كل ما يلزم لعرض الحدث **بلا join** — نفس مبدأ لقطة `doctor_name`.
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  visibility: text("visibility").notNull().default("internal"), // internal | patient
+  actorUserId: integer("actor_user_id"),
+  actorName: text("actor_name"), // لقطة الاسم — يبقى مقروءاً بعد حذف الحساب
+  // الزمن التجاري لا زمن الصفّ: تسجيل بأثر رجعي يحمل تاريخه هو، وإلا ناقض
+  // السرد دفتر الكلف (نفس علّة ترحيل 034).
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // منع التكرار — نطاقه **لكل مريض** لا عالمي. انظر `eventDedupeKey`.
+  dedupeKey: text("dedupe_key"),
+}, (t) => [
+  index("idx_patient_events_patient").on(t.patientId, t.occurredAt.desc()),
+  index("idx_patient_events_branch").on(t.branchId, t.occurredAt.desc()),
+  index("idx_patient_events_type").on(t.eventType, t.occurredAt.desc()),
+  uniqueIndex("uq_patient_events_dedupe")
+    .on(t.patientId, t.dedupeKey)
+    .where(sql`dedupe_key IS NOT NULL`),
+  // آخر خطّ دفاع عن الوجهة، مطابق حرفياً لما في migration 044. السياسة
+  // تُفرَض في `resolveVisibility` قبل كل كتابة؛ هذا يمنع قيمةً ثالثة من
+  // التسلّل عبر كتابة مباشرة أو ترحيل لاحق.
+  check("patient_events_visibility_check", sql`${t.visibility} IN ('internal', 'patient')`),
+]);
+
+export type PatientEvent = typeof patientEvents.$inferSelect;
+export type InsertPatientEvent = typeof patientEvents.$inferInsert;
 
 export const visits = pgTable("visits", {
   id: serial("id").primaryKey(),
@@ -399,8 +463,14 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   // Distinguishes a first build from a later maintenance episode on an already
   // delivered device. Each is its own independent order/expert/timeline.
   purpose: text("purpose").notNull().default("initial_build"), // initial_build | maintenance
+  // الحالة تصف التوقّف، والمرحلة تصف أين وصل العمل — مستقلّان تماماً:
+  // توقّفٌ لا يغيّر المرحلة أبداً (migration 045).
   status: text("status").notNull().default("active"),
-  currentStage: text("current_stage").notNull().default("new_assignment"),
+  currentStage: text("current_stage").notNull().default("order_received"),
+  // سبب التوقّف الحالي — داخلي بحت، لا يصل المريض. يُملأ عند التوقّف
+  // ويُفرَغ عند الاستئناف، فيُجاب «لماذا هو متوقّف؟» بقراءة صفّ واحد.
+  holdReasonCode: text("hold_reason_code"),
+  holdNote: text("hold_note"),
   expectedDeliveryDate: date("expected_delivery_date"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
