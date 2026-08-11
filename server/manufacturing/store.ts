@@ -15,6 +15,7 @@ import {
 } from "@shared/schema";
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+import { recordOrderCreatedEvent, recordStageEvent } from "./events";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -176,13 +177,16 @@ export async function createPatientWithWorkOrder(
       expectedDeliveryDate: wo.expectedDeliveryDate ?? null,
       assignedBy: wo.assignedBy,
     }).returning();
-    await tx.insert(WH).values({
+    const [created] = await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
       toStage: FIRST_STAGE,
       notes: `إنشاء أمر التصنيع وإسناده للخبير ${await expertNameOf(tx, wo.expertUserId)}`,
       performedBy: wo.assignedBy,
+    }).returning({ id: WH.id });
+    await recordOrderCreatedEvent(tx, {
+      order: workOrder, stage: FIRST_STAGE, historyId: created.id,
     });
     return { patient, workOrder };
   });
@@ -217,13 +221,18 @@ export async function createWorkOrderForExisting(params: {
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
     }).returning();
-    await tx.insert(WH).values({
+    const [created] = await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
       toStage: firstStageFor(params.serviceType, purpose),
       notes: `${purpose === "maintenance" ? "إنشاء أمر صيانة لمريض موجود" : "إنشاء أمر تصنيع لمريض موجود"} — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
+    }).returning({ id: WH.id });
+    // الصيانة تُصفّى داخل الجسر بحسب `purpose` — لا شرط مكرَّر هنا.
+    await recordOrderCreatedEvent(tx, {
+      order: workOrder, stage: firstStageFor(params.serviceType, purpose),
+      historyId: created.id,
     });
     return workOrder;
   });
@@ -638,13 +647,23 @@ export async function updateStage(params: {
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
-    await tx.insert(WH).values({
+    const [moved] = await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: delivered ? "delivered" : (params.actionType ?? "stage_change"),
       fromStage, toStage,
       notes: params.notes ?? null,
       performedBy: params.performedBy,
-    });
+    }).returning({ id: WH.id });
+
+    // حدث المريض — في المعاملة نفسها، فالأمر وسجلّه وحدثه ينجحون معاً أو
+    // يفشلون معاً. ويشمل هذا المسارَ الإداري: تصحيحُ الإدارة يحرّك المرحلة
+    // فعلاً، فالمريض يرى موضعه الجديد (بلا سبب التصحيح).
+    // وشرط التغيّر مقصود: «تصحيح» إلى المرحلة نفسها ليس انتقالاً.
+    if (toStage !== fromStage) {
+      await recordStageEvent(tx, {
+        order: updated, stage: toStage, historyId: moved.id,
+      });
+    }
     // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
     // نافذة الموعد المستقلّة. فلولا هذا السطر لَما ظهر أشيعُ التزامٍ بموعد
     // في سجلّ المواعيد إطلاقاً، وبدا الأمر كأنّ موعده وُلد من العدم.
@@ -903,12 +922,19 @@ export async function reworkToStage(params: {
         updatedAt: new Date(),
       })
       .where(eq(WO.id, order.id)).returning();
-    await tx.insert(WH).values({
+    const [back] = await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "rework",
       fromStage: live.currentStage, toStage: returnToStage,
       notes: `إعادة عمل فني — رجوع من ${live.currentStage} إلى ${returnToStage} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
+    }).returning({ id: WH.id });
+
+    // **بيت القصيد في هذه المرحلة كلّها.** السجلّ الداخلي أعلاه يحمل السبب
+    // ونوع إعادة العمل والمرحلة التي رجع منها. وحدث المريض لا يحمل منها
+    // شيئاً: مرحلةٌ مجرّدة، فيرى أين هو الآن ولا يُشرَح له لماذا رجع.
+    await recordStageEvent(tx, {
+      order: updated, stage: returnToStage, historyId: back.id,
     });
     return updated;
   });
