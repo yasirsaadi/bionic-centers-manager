@@ -1,8 +1,9 @@
 // هوية تواصل المريض — اختبار حيّ على Postgres.
 // قاعدة محلّية: `npm run test:patient-identity`.
 //
-// يحرس ثلاثة أشياء لا تُثبَت إلا على قاعدة حقيقية: أن النصّ الخام للتذكرة
-// **ليس في القاعدة**، وأن استهلاكها ذرّي فلا تُستهلَك مرّتين، وأن الدمج
+// يحرس ما لا يُثبَت إلا على قاعدة حقيقية: أن النصّ الخام للتذكرة **ليس في
+// القاعدة**، وأن الاستهلاك ذرّي فلا تُستهلَك تذكرة مرّتين **ولا تُنشئ
+// تذكرتان متزامنتان جهتين**، وأن تغيّر الصلة يُختَم ولا يُمحى، وأن الدمج
 // يحتمل التصادم المشروع بلا فقد صفٍّ واحد.
 
 import { createHash } from "crypto";
@@ -14,7 +15,7 @@ import {
   DEFAULT_TOKEN_TTL_MS,
 } from "./store";
 import { patientContacts, patientLinkTokens } from "@shared/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -124,7 +125,31 @@ async function main() {
     same("وجهة اتصال واحدة لا اثنتان", (await listActiveContacts(p)).length, 1);
   }
 
-  // ══ ٤. التزامن: نقرتان على الرابط نفسه ═══════════════════════════════
+  // ══ ٤. السحب للمعلَّقة وحدها ══════════════════════════════════════════
+  console.log("\n── السحب يُلغي المستقبل ولا يُنكِر الماضي ──");
+  {
+    const p = await mkPatient("مريض سحب التذاكر");
+
+    const pending = await createLinkToken({ patientId: p, channel: "telegram", relation: "self" });
+    same("المعلَّقة تُسحَب", await revokeLinkToken(pending.token.id), true);
+    same("وسحبها ثانيةً لا يفعل شيئاً — بلا خطأ", await revokeLinkToken(pending.token.id), false);
+
+    // والمستهلَكة ليست معلَّقة: ختمُها يقلب معناها في السجلّ من «رُبِط بها
+    // حساب» إلى «أُلغيت»، فيقرأ المدقّق تاريخاً لم يحدث.
+    const used = await createLinkToken({ patientId: p, channel: "telegram", relation: "family" });
+    const r = await redeemLinkToken({ rawToken: used.rawToken, externalId: "consumed-999" });
+    check(!!r.contact.id, "والمستهلَكة أدّت عملها فعلاً");
+    same("فلا تُسحَب", await revokeLinkToken(used.token.id), false);
+
+    const [row] = await db.select().from(patientLinkTokens)
+      .where(eq(patientLinkTokens.id, used.token.id));
+    check(!!row.consumedAt, "وتبقى مستهلَكة");
+    check(row.revokedAt === null, "ولا تنقلب دلالتها إلى «مسحوبة»", String(row.revokedAt));
+    // ومَن أراد فكّ الربط فسبيله جهة الاتصال لا التذكرة.
+    same("وجهة الاتصال هي التي تُسحَب", await revokeContact(r.contact.id), true);
+  }
+
+  // ══ ٥. التزامن: نقرتان على الرابط نفسه ═══════════════════════════════
   console.log("\n── نقرتان متزامنتان على التذكرة نفسها ──");
   {
     const p = await mkPatient("مريض التزامن");
@@ -145,7 +170,48 @@ async function main() {
     same("ومَن استهلكها مسجَّل", tok.consumedByExternalId, winner.contact.externalId);
   }
 
-  // ══ ٥. الصلة من التذكرة لا من المستهلِك ═══════════════════════════════
+  // ══ ٦. تذكرتان **مختلفتان** في اللحظة نفسها ═══════════════════════════
+  // قفل التذكرة لا يمسّ هذه: بصمتاهما مختلفتان فالصفّان مختلفان، فتمرّان
+  // معاً ولا تجد أيٌّ منهما جهةً قائمة. بلا تسلسلٍ على صفّ المريض تُدرَجان
+  // معاً فينفجر `uq_patient_contacts_active` في وجه مستخدمٍ لم يخطئ.
+  console.log("\n── تذكرتان مختلفتان لنفس الحساب في اللحظة نفسها ──");
+  {
+    const p = await mkPatient("مريض التذكرتين");
+    const t1 = await createLinkToken({ patientId: p, channel: "telegram", relation: "guardian" });
+    const t2 = await createLinkToken({ patientId: p, channel: "telegram", relation: "guardian" });
+    check(t1.token.id !== t2.token.id && t1.token.tokenHash !== t2.token.tokenHash,
+      "تذكرتان مستقلّتان تماماً");
+
+    const acct = "twin-1234";
+    const settled = await Promise.allSettled([
+      redeemLinkToken({ rawToken: t1.rawToken, externalId: acct }),
+      redeemLinkToken({ rawToken: t2.rawToken, externalId: acct }),
+    ]);
+
+    // الحُكم الأول: **لا خطأ يتسرّب**. لا انتهاك فرادة ولا رسالة Postgres خام.
+    const rejected = settled.filter((s) => s.status === "rejected") as PromiseRejectedResult[];
+    same("العمليتان نجحتا معاً — لا انتهاك فرادة يتسرّب",
+      rejected.map((s) => String(s.reason)), []);
+
+    const ok = settled.map((s) => (s as PromiseFulfilledResult<any>).value);
+    same("واحدة أنشأت والأخرى أعادت الموجودة",
+      ok.map((r) => r.createdContact).sort(), [false, true]);
+    same("وهي الجهة نفسها في الردّين", new Set(ok.map((r) => r.contact.id)).size, 1);
+    same("ونشِطٌ واحد", (await listActiveContacts(p)).length, 1);
+    same("ولا صفّ ثانٍ في الجدول إطلاقاً",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [p])).rows[0].n, 1);
+    same("وبلا جهة مختومة — لا صلة تغيّرت هنا",
+      ok.filter((r) => r.supersededContact).length, 0);
+
+    // والحُكم الثاني: التذكرتان كلتاهما استُهلكتا — لا واحدة تبقى معلَّقة.
+    const rows = await db.select().from(patientLinkTokens)
+      .where(inArray(patientLinkTokens.id, [t1.token.id, t2.token.id]))
+      .orderBy(patientLinkTokens.id);
+    same("والتذكرتان استُهلكتا", rows.filter((r) => r.consumedAt !== null).length, 2);
+    same("وكلتاهما تحمل مَن استهلكها", rows.map((r) => r.consumedByExternalId), [acct, acct]);
+  }
+
+  // ══ ٧. الصلة من التذكرة لا من المستهلِك ═══════════════════════════════
   console.log("\n── الصلة يحسمها الموظّف لا المستهلِك ──");
   {
     const p = await mkPatient("مريض الوصاية");
@@ -158,7 +224,7 @@ async function main() {
       "ودالّة الاستهلاك لا تقبل صلةً إطلاقاً");
   }
 
-  // ══ ٦. التكرار المشروع والتكرار الممنوع ══════════════════════════════
+  // ══ ٨. التكرار المشروع والتكرار الممنوع ══════════════════════════════
   console.log("\n── حسابٌ واحد، مرضى متعدّدون ──");
   {
     const p1 = await mkPatient("ابن أول");
@@ -182,7 +248,53 @@ async function main() {
     same("وهي الجهة نفسها", r2.contact.id, followed.find((c) => c.patientId === p1)!.id);
   }
 
-  // ══ ٧. السحب ثم إعادة الربط ══════════════════════════════════════════
+  // ══ ٩. تغيّر الصلة لنفس الحساب ════════════════════════════════════════
+  // الابن كبر: الحساب نفسه، والملفّ نفسه، والصلة صارت `self` بعد أن كانت
+  // وصاية أبيه. إعادةُ الجهة كما هي تُستهلَك التذكرةَ ولا تُطبّقها.
+  console.log("\n── تغيّر الصلة: الابن كبر ──");
+  {
+    const p = await mkPatient("مريض تغيّر الصلة");
+    const acct = "grown-2222";
+
+    const asGuardian = await createLinkToken({ patientId: p, channel: "telegram", relation: "guardian" });
+    const first = await redeemLinkToken({ rawToken: asGuardian.rawToken, externalId: acct });
+    same("رُبِط وصيّاً أولاً", first.contact.relation, "guardian");
+
+    const asSelf = await createLinkToken({ patientId: p, channel: "telegram", relation: "self" });
+    const second = await redeemLinkToken({ rawToken: asSelf.rawToken, externalId: acct });
+
+    check(second.createdContact, "وتذكرةٌ بصلة مختلفة تُنشئ جهة جديدة لا تُعيد القديمة");
+    same("بصلة التذكرة لا بالصلة السابقة", second.contact.relation, "self");
+    check(second.contact.id !== first.contact.id, "وبمعرّف مختلف");
+    same("والجهة المُستبدَلة معلَنة في المُخرَج", second.supersededContact?.id, first.contact.id);
+
+    // **ولا تعديل في مكانه**: الصفّ القديم يقول إلى الأبد إنها كانت وصاية.
+    const [old] = await db.select().from(patientContacts)
+      .where(eq(patientContacts.id, first.contact.id));
+    check(!!old.revokedAt, "والقديمة مختومة بـ`revoked_at`");
+    same("وصلتها لم تُمسّ — التاريخ يقول إنها كانت وصاية", old.relation, "guardian");
+
+    const active = await listActiveContacts(p);
+    same("ونشِطٌ واحد", active.length, 1);
+    same("وهو الجديد بصلة «self»",
+      [active[0].id, active[0].relation], [second.contact.id, "self"]);
+    same("والتاريخ صفّان لا صفّ",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [p])).rows[0].n, 2);
+
+    const [tok] = await db.select().from(patientLinkTokens)
+      .where(eq(patientLinkTokens.id, asSelf.token.id));
+    check(!!tok.consumedAt, "والتذكرة استُهلكت");
+    same("بمَن استهلكها", tok.consumedByExternalId, acct);
+
+    // ثم العودة إلى نفس الصلة الحالية: لا صفّ ثالث.
+    const again = await createLinkToken({ patientId: p, channel: "telegram", relation: "self" });
+    const third = await redeemLinkToken({ rawToken: again.rawToken, externalId: acct });
+    same("وتذكرةٌ بنفس الصلة الحالية تُعيد الجهة نفسها", third.createdContact, false);
+    same("بلا صفّ ثالث",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [p])).rows[0].n, 2);
+  }
+
+  // ══ ١٠. السحب ثم إعادة الربط ═════════════════════════════════════════
   console.log("\n── السحب يُبقي التاريخ ويسمح بربطٍ جديد ──");
   {
     const p = await mkPatient("مريض السحب");
@@ -205,7 +317,7 @@ async function main() {
     same("والتاريخ محفوظ: صفّان في الجدول", rows[0].n, 2);
   }
 
-  // ══ ٨. الدمج ═════════════════════════════════════════════════════════
+  // ══ ١١. الدمج ════════════════════════════════════════════════════════
   console.log("\n── الدمج: التصادم المشروع لا يُسقطه ──");
   {
     const source = await mkPatient("ملفّ مكرّر");
@@ -256,7 +368,7 @@ async function main() {
     same("وتُستهلَك بعد الدمج على الملفّ الهدف", redeemed.contact.patientId, target);
   }
 
-  // ══ ٩. حذف المريض ════════════════════════════════════════════════════
+  // ══ ١٢. حذف المريض ═══════════════════════════════════════════════════
   console.log("\n── حذف المريض: بلا فشل مفتاح ولا صفوف يتيمة ──");
   {
     const p = await mkPatient("مريض الحذف");
@@ -275,7 +387,7 @@ async function main() {
       (await pool.query(`SELECT COUNT(*)::int AS n FROM patients WHERE id = $1`, [p])).rows[0].n, 0);
   }
 
-  // ══ ١٠. تطابق المخطّط والترحيل ═══════════════════════════════════════
+  // ══ ١٣. تطابق المخطّط والترحيل ══════════════════════════════════════
   console.log("\n── تطابق الجدولين مع ما يعلنه Drizzle ──");
   {
     const cols = async (t: string) => (await pool.query(

@@ -22,7 +22,7 @@ import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  patientContacts, patientLinkTokens,
+  patientContacts, patientLinkTokens, patients,
   type PatientContact, type PatientLinkToken,
 } from "@shared/schema";
 import type { DbTransaction } from "../events/store";
@@ -142,11 +142,26 @@ export async function createLinkToken(
   return { rawToken, token };
 }
 
-/** سحب تذكرة معلَّقة قبل استهلاكها. */
+/**
+ * سحب تذكرة **معلَّقة**. تُرجع `false` إن لم يكن هناك ما يُسحَب.
+ *
+ * والمستهلَكة ليست منها: التذكرة التي أدّت عملها وأنشأت جهة اتصال حدثٌ
+ * وقع، وختمها بـ`revoked_at` يقلب معناها في السجل من «رُبِط بها حساب»
+ * إلى «أُلغيت» — فيقرأ المدقّق لاحقاً تاريخاً لم يحدث. السحب يُلغي
+ * المستقبل ولا يُنكِر الماضي، فمَن أراد فكّ الربط يسحب **جهة الاتصال**
+ * (`revokeContact`) لا التذكرة.
+ *
+ * ولا خطأ يُرمى: «لا يوجد ما يُسحَب» ليس فشلاً — والمسحوبة سلفاً تُرجع
+ * `false` أيضاً، فالنداء idempotent.
+ */
 export async function revokeLinkToken(tokenId: number): Promise<boolean> {
   const rows = await db.update(patientLinkTokens)
     .set({ revokedAt: new Date() })
-    .where(and(eq(patientLinkTokens.id, tokenId), isNull(patientLinkTokens.revokedAt)))
+    .where(and(
+      eq(patientLinkTokens.id, tokenId),
+      isNull(patientLinkTokens.revokedAt),
+      isNull(patientLinkTokens.consumedAt),
+    ))
     .returning({ id: patientLinkTokens.id });
   return rows.length > 0;
 }
@@ -156,8 +171,13 @@ export async function revokeLinkToken(tokenId: number): Promise<boolean> {
 export interface RedeemResult {
   contact: PatientContact;
   token: PatientLinkToken;
-  /** false تعني: الحساب كان مرتبطاً بهذا المريض أصلاً، فأُعيدت جهته. */
+  /** false تعني: الحساب كان مرتبطاً بهذا المريض **بنفس الصلة**، فأُعيدت جهته. */
   createdContact: boolean;
+  /**
+   * الجهة السابقة التي خُتمت لأن صلتها اختلفت عن صلة التذكرة — إن حدث.
+   * وجودها يعني أن الصلة تغيّرت، وأن الصفّ القديم باقٍ في الجدول تاريخاً.
+   */
+  supersededContact?: PatientContact;
 }
 
 /**
@@ -175,8 +195,14 @@ export interface RedeemResult {
  * تقبل** الصلة معاملاً أصلاً.
  *
  * ── والتكرار المشروع ────────────────────────────────────────────────────
- * الحساب نفسه مرتبطٌ بالمريض نفسه ونشِط ⇒ تُعاد جهته الموجودة بلا صفٍّ
- * ثانٍ. فإعادة الضغط لا تُنشئ ازدواجاً، ولا تفشل في وجه المستخدم.
+ * الحساب نفسه مرتبطٌ بالمريض نفسه **بنفس الصلة** ⇒ تُعاد جهته الموجودة بلا
+ * صفٍّ ثانٍ. فإعادة الضغط لا تُنشئ ازدواجاً، ولا تفشل في وجه المستخدم.
+ *
+ * ── فإن اختلفت الصلة ────────────────────────────────────────────────────
+ * الابن كبر فصار الحساب `self` بعد أن كان `guardian` أبيه. إعادةُ الجهة
+ * كما هي هنا **تخالف العقد**: التذكرة تحمل صلةً اختارها الموظّف، فتُستهلَك
+ * ولا تُطبَّق. والتعديل في مكانه يمحو أن العلاقة كانت يوماً وصاية.
+ * فالقديمة **تُختَم** والجديدة تُنشأ: صفّان، نشِطٌ واحد، وتاريخٌ كامل.
  */
 export async function redeemLinkToken(params: {
   rawToken: string;
@@ -201,14 +227,29 @@ export async function redeemLinkToken(params: {
     if (row.consumedAt) throw new LinkTokenError("already_consumed");
     if (row.expiresAt.getTime() <= Date.now()) throw new LinkTokenError("expired");
 
+    // ── القفل الثاني: صفّ المريض ─────────────────────────────────────────
+    // قفل التذكرة يسلسل نقرتين على **الرابط نفسه**، ولا يسلسل تذكرتين
+    // مختلفتين لنفس المريض والحساب: بصمتاهما مختلفتان فالصفّان مختلفان،
+    // فتمرّ الاثنتان معاً، ولا تجد أيٌّ منهما جهةً قائمة، فتُدرِجان صفّين
+    // ينتهكان `uq_patient_contacts_active` — ويصل خطأ Postgres خاماً إلى
+    // مستخدمٍ لم يفعل شيئاً خاطئاً.
+    //
+    // فصفّ المريض هو نقطة التسلسل الطبيعية: كل ما يمسّ هوية تواصله يمرّ
+    // من هنا. والترتيب ثابت (تذكرة ثم مريض) فلا دورة انتظار بين مستهلِكَين.
+    //
+    // و`NO KEY UPDATE` لا `UPDATE`: الأضعف يكفي للتسلسل بيننا، ولا يحجز
+    // مفتاح الصفّ فلا يُعطّل إدراج زيارة أو دفعة لنفس المريض في الأثناء.
+    await tx.select({ id: patients.id }).from(patients)
+      .where(eq(patients.id, row.patientId))
+      .for("no key update");
+
     const now = new Date();
     const [token] = await tx.update(patientLinkTokens)
       .set({ consumedAt: now, consumedByExternalId: externalId })
       .where(eq(patientLinkTokens.id, row.id))
       .returning();
 
-    // جهة نشطة لهذا الحساب على هذا المريض؟ تُعاد كما هي — لا صفّ ثانٍ ولا
-    // خطأ في وجه مَن ضغط مرّتين.
+    // جهة نشطة لهذا الحساب على هذا المريض؟
     const [existing] = await tx.select().from(patientContacts)
       .where(and(
         eq(patientContacts.patientId, row.patientId),
@@ -217,7 +258,22 @@ export async function redeemLinkToken(params: {
         isNull(patientContacts.revokedAt),
       ))
       .limit(1);
-    if (existing) return { contact: existing, token, createdContact: false };
+
+    // بنفس الصلة ⇒ تُعاد كما هي. لا صفّ ثانٍ ولا خطأ في وجه مَن ضغط مرّتين.
+    if (existing && existing.relation === row.relation) {
+      return { contact: existing, token, createdContact: false };
+    }
+
+    // بصلة مختلفة ⇒ تُختَم القديمة **ولا تُعدَّل**. التعديل في مكانه يجعل
+    // الوصاية كأنها لم تكن؛ والختم يُبقيها مقروءة بتاريخها.
+    let superseded: PatientContact | undefined;
+    if (existing) {
+      const [sealed] = await tx.update(patientContacts)
+        .set({ revokedAt: now })
+        .where(eq(patientContacts.id, existing.id))
+        .returning();
+      superseded = sealed;
+    }
 
     const [contact] = await tx.insert(patientContacts).values({
       patientId: row.patientId,
@@ -228,7 +284,9 @@ export async function redeemLinkToken(params: {
       linkedAt: now,
     }).returning();
 
-    return { contact, token, createdContact: true };
+    return superseded
+      ? { contact, token, createdContact: true, supersededContact: superseded }
+      : { contact, token, createdContact: true };
   });
 }
 
