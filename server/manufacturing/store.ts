@@ -187,7 +187,6 @@ export async function createPatientWithWorkOrder(
     }).returning({ id: WH.id });
     await recordOrderCreatedEvent(tx, {
       order: workOrder, stage: FIRST_STAGE, historyId: created.id,
-      actorUserId: wo.assignedBy,
     });
     return { patient, workOrder };
   });
@@ -233,7 +232,7 @@ export async function createWorkOrderForExisting(params: {
     // الصيانة تُصفّى داخل الجسر بحسب `purpose` — لا شرط مكرَّر هنا.
     await recordOrderCreatedEvent(tx, {
       order: workOrder, stage: firstStageFor(params.serviceType, purpose),
-      historyId: created.id, actorUserId: params.assignedBy,
+      historyId: created.id,
     });
     return workOrder;
   });
@@ -663,7 +662,6 @@ export async function updateStage(params: {
     if (toStage !== fromStage) {
       await recordStageEvent(tx, {
         order: updated, stage: toStage, historyId: moved.id,
-        actorUserId: params.performedBy,
       });
     }
     // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
@@ -937,7 +935,6 @@ export async function reworkToStage(params: {
     // شيئاً: مرحلةٌ مجرّدة، فيرى أين هو الآن ولا يُشرَح له لماذا رجع.
     await recordStageEvent(tx, {
       order: updated, stage: returnToStage, historyId: back.id,
-      actorUserId: params.performedBy,
     });
     return updated;
   });

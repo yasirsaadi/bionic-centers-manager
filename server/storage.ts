@@ -1040,7 +1040,6 @@ export class DatabaseStorage implements IStorage {
         // مسار إنشاء ثالث للأمر — والمريض يستحقّ خبر فتحه مهما كان الباب.
         await recordOrderCreatedEvent(tx, {
           order: wo, stage: FIRST_STAGE, historyId: created.id,
-          actorUserId: params.performedBy,
         });
         workOrderId = wo.id;
       }
@@ -1164,7 +1163,7 @@ export class DatabaseStorage implements IStorage {
       }).returning({ id: prostheticWorkHistory.id });
       // مسار إنشاء رابع — «تخصيص وإسناد خبير» من سجلّ المرضى.
       await recordOrderCreatedEvent(tx, {
-        order: wo, stage: FIRST_STAGE, historyId: created.id, actorUserId: assignedBy,
+        order: wo, stage: FIRST_STAGE, historyId: created.id,
       });
       return { patient, workOrderId: wo.id };
     });

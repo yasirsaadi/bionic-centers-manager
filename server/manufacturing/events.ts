@@ -10,6 +10,14 @@
 // **الحمولة حقلٌ واحد: `stage`.** لا حالة، ولا سبب توقّف، ولا ملاحظة، ولا
 // نوع إعادة عمل، ولا مرحلة سابقة، ولا اسم خبير، ولا نتيجة نهائية.
 //
+// و**الصفّ كلّه** لا الحمولة وحدها: هذه الأحداث تُكتب بلا `actor_user_id`
+// ولا `actor_name`. مَن حرّك المرحلة شأنٌ داخلي — والمريض لا يُعرَّف بخبيره
+// ولا بالموظّف الذي ضغط الزرّ. وحقلٌ في الصفّ يتسرّب بقناةٍ تُبنى لاحقاً
+// كما تتسرّب الحمولة تماماً، فيُمنع من المصدر لا عند العرض.
+//
+// ولا يضيع التدقيق: `prosthetic_work_history.performed_by` يحمل الفاعل
+// لكل انتقال، و`audit_log` كذلك. الحجب في السرد الموجَّه للمريض وحده.
+//
 // وأهمّ ما يُحجَب هو **الرجوع**: حين يعود جهازٌ من «جاهز للتجربة» إلى
 // «التصنيع» لإعادة عمل فنّي، يرى المريض أنه في «التصنيع» — ولا يُقال له
 // «رجع» ولا «إعادة عمل» ولا سببها. السجلّ الداخلي يحتفظ بكل ذلك كاملاً،
@@ -85,14 +93,16 @@ function transitionKey(orderId: number, historyId: number, eventType: string): s
   return eventDedupeKey("wo", orderId, `hist:${historyId}:${eventType}`);
 }
 
+/**
+ * لا حقل للفاعل هنا **عمداً**: ما لا تقبله الواجهة لا يستطيع مستدعٍ
+ * تمريره سهواً. والتدقيق الداخلي محفوظ في سجلّ الأمر لا في هذا الحدث.
+ */
 export interface StageEventParams {
   order: EventOrderRef;
   /** المرحلة التي صار إليها الأمر. */
   stage: string;
   /** معرّف سطر `prosthetic_work_history` الذي وثّق هذا الانتقال. */
   historyId: number;
-  actorUserId?: number | null;
-  actorName?: string | null;
 }
 
 /**
@@ -120,8 +130,7 @@ export async function recordStageEvent(
     // الحمولة تُبنى هنا حرفياً — لا تُمرَّر ولا تُدمج.
     payload: { stage },
     visibility: "patient",
-    actorUserId: params.actorUserId ?? null,
-    actorName: params.actorName ?? null,
+    // بلا فاعل: `actor_user_id` و`actor_name` يبقيان فارغين في الصفّ.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
 }
@@ -146,8 +155,7 @@ export async function recordOrderCreatedEvent(
     sourceId: order.id,
     payload: { stage },
     visibility: "patient",
-    actorUserId: params.actorUserId ?? null,
-    actorName: params.actorName ?? null,
+    // بلا فاعل — كسابقتها.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
 }

@@ -77,7 +77,11 @@ async function order(id: number) {
   return o;
 }
 
-/** الفحص الذي يمنع التسرّب: النوع والوجهة والحمولة **كاملةً**. */
+/**
+ * الفحص الذي يمنع التسرّب: النوع والوجهة والحمولة **كاملةً** — و**الصفّ
+ * نفسه**. الحمولة وحدها لا تكفي: عمودا الفاعل خارجها، وقناةُ عرضٍ تُبنى
+ * لاحقاً تقرأ الصفّ لا الحمولة، فتسرّبُ اسم الخبير منهما كتسرّبه من داخلها.
+ */
 function assertSafe(label: string, ev: any, expectedType: string, expectedStage: string) {
   same(`${label}: النوع`, ev?.eventType, expectedType);
   same(`${label}: الوجهة`, ev?.visibility, "patient");
@@ -87,6 +91,8 @@ function assertSafe(label: string, ev: any, expectedType: string, expectedStage:
   const leaked = keys.filter((k) => FORBIDDEN.includes(k));
   same(`${label}: لا حقل ممنوع`, leaked, []);
   same(`${label}: المصدر أمر تصنيع`, ev?.sourceType, "work_order");
+  // مَن حرّك المرحلة شأنٌ داخلي — والتدقيق محفوظ في سجلّ الأمر لا هنا.
+  same(`${label}: بلا فاعل في الصفّ`, [ev?.actorUserId, ev?.actorName], [null, null]);
 }
 
 async function cleanup() {
@@ -366,13 +372,21 @@ async function main() {
 
     // ══ ٩. كل أحداث التصنيع في هذا الاختبار آمنة بلا استثناء ═════════════
     console.log("\n── مسح شامل على كل ما كُتب ──");
-    const all = await db.select().from(patientEvents)
-      .where(and(eq(patientEvents.sourceType, "work_order"), eq(patientEvents.visibility, "patient")));
+    // مقصورٌ على ما كتبه هذا الاختبار: القاعدة مشتركة بين الحزم، وصفوفٌ
+    // قديمة من تشغيلات سابقة ليست موضوع الحكم هنا.
+    const { rows: mine } = await pool.query<{ id: number }>(
+      `SELECT id FROM patients WHERE referral_source = $1`, [MARK]);
+    const all = (await db.select().from(patientEvents)
+      .where(and(eq(patientEvents.sourceType, "work_order"), eq(patientEvents.visibility, "patient"))))
+      .filter((e) => mine.some((m) => m.id === e.patientId));
     const bad = all.filter((e) => {
       const keys = Object.keys((e.payload ?? {}) as object);
       return keys.length !== 1 || keys[0] !== "stage";
     });
     same("كل حدث موجَّه للمريض حمولته المرحلة وحدها", bad.map((b) => b.id), []);
+    // والصفّ نفسه: ولا واحدٌ منها يحمل فاعلاً.
+    const withActor = all.filter((e) => e.actorUserId !== null || e.actorName !== null);
+    same("ولا واحد منها يحمل فاعلاً", withActor.map((e) => e.id), []);
     check(all.length > 0, "والمسح ليس فارغاً (فحصٌ حقيقي)");
   } finally {
     server.close();
