@@ -301,6 +301,69 @@ async function main() {
       assertSafe("نوع حالة", ec[0], "manufacturing.order_created", "order_received");
     }
 
+    // ══ ٨.ب المساند: المسار الذي يتخطّى القالب ══════════════════════════
+    // نوع الخدمة الثاني للبناء الأوّلي، وله فرقٌ حقيقي لا شكليّ: مسندٌ لا
+    // يحتاج قالباً يقفز من القياسات إلى التصنيع مباشرة. فالمقصود هنا ليس
+    // تكرار المسار بنوعٍ آخر، بل التأكّد أن **المرحلة المتخطّاة لا تُنتج
+    // حدثاً** — فالمريض لا يُخبَر بقالبٍ لم يُؤخَذ.
+    console.log("\n── مساند: تخطّي القالب ──");
+    {
+      const ps = await mkPatient("مريض مساند");
+      const wos = await store.createWorkOrderForExisting({
+        patientId: ps, branchId: 1, serviceType: "medical_support",
+        expertUserId: EXPERT, assignedBy: MANAGER,
+      });
+
+      let sev = await mfgEvents(ps);
+      same("مساند: حدث واحد عند الإنشاء", sev.length, 1);
+      assertSafe("مساند/الإنشاء", sev[0], "manufacturing.order_created", "order_received");
+
+      let r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert, {});
+      same("مساند: التقدّم إلى القياسات نجح", r.status, 200);
+      sev = await mfgEvents(ps);
+      same("مساند: حدثان", sev.length, 2);
+      assertSafe("مساند/القياسات", sev[1], "manufacturing.stage_changed", "measurements");
+
+      // القفزة المشروعة: القياسات ⟶ التصنيع، بلا مرور على القالب. والموعد
+      // إلزامي لأن الوجهة عند القالب أو بعده.
+      r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert,
+        { toStage: "manufacturing", expectedDeliveryDate: "2026-12-20" });
+      same("مساند: القفز إلى التصنيع نجح", r.status, 200);
+      same("مساند: والمرحلة صارت التصنيع", (await order(wos.id)).currentStage, "manufacturing");
+      sev = await mfgEvents(ps);
+      same("مساند: حدث واحد للقفزة لا اثنان", sev.length, 3);
+      assertSafe("مساند/التصنيع", sev[2], "manufacturing.stage_changed", "manufacturing");
+
+      // **بيت القصيد**: لا حدث بمرحلة القالب إطلاقاً — لا لهذا المريض ولا
+      // في أي حدثٍ كُتب باسمه، لأن القالب لم يقع أصلاً.
+      const molds = (await events(ps)).filter((e) => (e.payload as any)?.stage === "mold");
+      same("مساند: لا حدث بمرحلة القالب", molds.map((m) => m.id), []);
+
+      // إكمال المسار حتى التسليم — بنفس قاعدة الحمولة.
+      r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert, {});
+      same("مساند: جاهز للتجربة نجح", r.status, 200);
+      sev = await mfgEvents(ps);
+      assertSafe("مساند/جاهز للتجربة", sev[3], "manufacturing.ready_for_delivery", "ready_for_fitting");
+
+      r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert,
+        { finalResult: "first_fit_success" });
+      same("مساند: التسليم نجح", r.status, 200);
+      sev = await mfgEvents(ps);
+      assertSafe("مساند/التسليم", sev[4], "manufacturing.delivered", "delivered");
+
+      same("مساند: خمسة أحداث — واحد أقلّ من الأطراف لتخطّي القالب", sev.length, 5);
+      same("مساند: التسلسل بأنواعه", sev.map((e) => e.eventType), [
+        "manufacturing.order_created",
+        "manufacturing.stage_changed",
+        "manufacturing.stage_changed",
+        "manufacturing.ready_for_delivery",
+        "manufacturing.delivered",
+      ]);
+      same("مساند: وبمراحله", sev.map((e) => (e.payload as any).stage), [
+        "order_received", "measurements", "manufacturing", "ready_for_fitting", "delivered",
+      ]);
+    }
+
     // ══ ٩. كل أحداث التصنيع في هذا الاختبار آمنة بلا استثناء ═════════════
     console.log("\n── مسح شامل على كل ما كُتب ──");
     const all = await db.select().from(patientEvents)
