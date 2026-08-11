@@ -36,6 +36,7 @@ import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { FIRST_STAGE } from "@shared/manufacturing";
+import { recordOrderCreatedEvent } from "./manufacturing/events";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -1028,13 +1029,18 @@ export class DatabaseStorage implements IStorage {
           expectedDeliveryDate: params.expectedDeliveryDate ?? null,
           assignedBy: params.performedBy,
         }).returning();
-        await tx.insert(prostheticWorkHistory).values({
+        const [created] = await tx.insert(prostheticWorkHistory).values({
           workOrderId: wo.id,
           actionType: "created",
           fromStage: null,
           toStage: FIRST_STAGE,
           notes: `إنشاء أمر تصنيع عند إضافة نوع حالة (${caseLabel}) لمريض موجود`,
           performedBy: params.performedBy,
+        }).returning({ id: prostheticWorkHistory.id });
+        // مسار إنشاء ثالث للأمر — والمريض يستحقّ خبر فتحه مهما كان الباب.
+        await recordOrderCreatedEvent(tx, {
+          order: wo, stage: FIRST_STAGE, historyId: created.id,
+          actorUserId: params.performedBy,
         });
         workOrderId = wo.id;
       }
@@ -1152,9 +1158,13 @@ export class DatabaseStorage implements IStorage {
         patientId, branchId: existing.branchId, expertUserId, serviceType,
         status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
       }).returning();
-      await tx.insert(prostheticWorkHistory).values({
+      const [created] = await tx.insert(prostheticWorkHistory).values({
         workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
         notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
+      }).returning({ id: prostheticWorkHistory.id });
+      // مسار إنشاء رابع — «تخصيص وإسناد خبير» من سجلّ المرضى.
+      await recordOrderCreatedEvent(tx, {
+        order: wo, stage: FIRST_STAGE, historyId: created.id, actorUserId: assignedBy,
       });
       return { patient, workOrderId: wo.id };
     });

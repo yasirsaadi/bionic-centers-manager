@@ -35,8 +35,10 @@
 // يمكن أن يصل المريض. تُنفَّذ بجعل كل نوع سريري `internal_only`، ويحرسها
 // اختبار دائم.
 //
-// و`patient` هنا تعني «يجوز إبلاغ المريض به» لا «سيُرسَل»: لا إرسال في
-// هذه المرحلة إطلاقاً.
+// و`patient` هنا تعني «يجوز إبلاغ المريض به» لا «سيُرسَل»: **لا إرسال في
+// المشروع كلّه بعد** — لا تلغرام ولا إشعارات ولا بوابة مريض. الحدث يُكتب
+// ويُخزَّن، ومَن يقرؤه لاحقاً يجد حمولةً آمنة أصلاً لا حمولةً تُنقَّى وقت
+// الإرسال.
 
 /** القيمة المخزَّنة في العمود. */
 export const PATIENT_EVENT_VISIBILITIES = ["internal", "patient"] as const;
@@ -54,8 +56,10 @@ export type VisibilityPolicy = (typeof VISIBILITY_POLICIES)[number];
  * الأنواع المعلَنة. القيمة النصّية هي ما يُخزَّن في العمود، وشكلها
  * `المجال.الفعل` كي تُجمَّع التقارير بالمجال.
  *
- * ملاحظة: إعلان النوع هنا لا يعني أن أحداً يُصدره اليوم. هذه المرحلة
- * تؤسّس البنية فقط — لا التصنيع ولا الدفعات ولا المواعيد موصولة بعد.
+ * ملاحظة: إعلان النوع هنا لا يعني أن أحداً يُصدره اليوم. الموصول فعلاً هو
+ * **مراحل التصنيع للبناء الأوّلي** وحدها (الأربعة الموسومة أدناه). أمّا
+ * الدفعات والمواعيد والصيانة وموعد التسليم وتغيير الخبير فمُعلَنة ولم
+ * تُوصَل بعد.
  */
 export const PATIENT_EVENT_TYPES = {
   // هوية المريض وملفّه
@@ -66,11 +70,15 @@ export const PATIENT_EVENT_TYPES = {
   PATIENT_TRANSFERRED: "patient.transferred",
   PATIENT_CASE_ADDED: "patient.case_added",
 
-  // التصنيع (تُوصَل في مرحلة لاحقة)
+  // التصنيع — الأربعة الأولى **موصولة** بمراحل البناء الأوّلي الست،
+  // يُصدرها `server/manufacturing/events.ts` بحمولة `{ stage }` وحدها.
   MANUFACTURING_ORDER_CREATED: "manufacturing.order_created",
   MANUFACTURING_STAGE_CHANGED: "manufacturing.stage_changed",
+  // اسمها القديم باقٍ عمداً: المرحلة صارت `ready_for_fitting`، لكن المريض
+  // يقرأ اسمها من حمولة `stage` لا من اسم النوع — فتغييره ترحيلٌ بلا فائدة.
   MANUFACTURING_READY_FOR_DELIVERY: "manufacturing.ready_for_delivery",
   MANUFACTURING_DELIVERED: "manufacturing.delivered",
+  // معلَنان ولم يُوصَلا بعد.
   MANUFACTURING_DELIVERY_DATE_CHANGED: "manufacturing.delivery_date_changed",
   MANUFACTURING_EXPERT_REASSIGNED: "manufacturing.expert_reassigned",
 
@@ -111,9 +119,11 @@ export const PATIENT_EVENT_POLICY: Record<PatientEventType, VisibilityPolicy> = 
   "patient.case_added": "internal_only",
 
   // ── التصنيع ───────────────────────────────────────────────────────────
+  // موصولٌ ويُكتب بوجهة `patient` صراحةً عند فتح أمر البناء الأوّلي.
   "manufacturing.order_created": "internal_default_patient_allowed",
-  // الدرجة التي طلبها المنتج صراحةً: «تحضير القالب» لا تعني المريض، لكن
-  // مرحلةً مختارة قد تستحق إبلاغه — فالقرار لكل حالة لا للنوع كلّه.
+  // الدرجة التي طلبها المنتج صراحةً: القرار لكل حالة لا للنوع كلّه. وقد
+  // اختير `patient` للمراحل الست كلّها — لأن التسميات الست نفسها صيغت
+  // لتُقال للمريض لا للورشة.
   "manufacturing.stage_changed": "internal_default_patient_allowed",
   // الثلاثة التي يعنيه أمرها فعلاً.
   "manufacturing.ready_for_delivery": "patient_default",
