@@ -54,6 +54,8 @@ const MERGE_DECISIONS: Record<string, string> = {
   "patient_events.patient_id": "repoint داخل باب الختم، مع إفراغ dedupe_key المتصادم",
   "medical_exams.patient_id": "repoint داخل باب الختم — إعادة ربط إدارية بلا مساس سريري",
   "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
+  "patient_link_tokens.patient_id": "repoint — البصمة فريدة عالمياً فلا تتصادم",
+  "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",
 
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",

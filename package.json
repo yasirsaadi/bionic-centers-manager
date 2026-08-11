@@ -15,6 +15,7 @@
     "test:workflow": "tsx server/manufacturing/workflow.test.ts",
     "test:legacy-catchup": "tsx server/migrations/legacy_catchup.test.ts",
     "test:manufacturing-events": "tsx server/manufacturing/events.test.ts",
+    "test:patient-identity": "tsx server/patient_contacts/identity.test.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",
     "test:amputation-site": "tsx server/medical/amputation_site.test.ts",

@@ -29,7 +29,7 @@ import {
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
-  costEntries, patientEvents,
+  costEntries, patientEvents, patientContacts, patientLinkTokens,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -37,6 +37,7 @@ import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
+import { mergeContactsInto } from "./patient_contacts/store";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -901,6 +902,11 @@ export class DatabaseStorage implements IStorage {
       // guarding DELETE would have broken patient deletion for every user,
       // which this project has already lived through once.
       await tx.delete(patientEvents).where(eq(patientEvents.patientId, id));
+      // هوية التواصل (migration 047) — حذفٌ صريح لا كاسكيد صامت: القاعدة
+      // الملزِمة في هذا المشروع أن كل جدول جديد يشير إلى `patients` يُضاف
+      // هنا بيده، فنسيانُه يُكشَف باختبار حذفٍ حقيقي لا بعطلٍ عند مستخدم.
+      await tx.delete(patientLinkTokens).where(eq(patientLinkTokens.patientId, id));
+      await tx.delete(patientContacts).where(eq(patientContacts.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
     });
   }
@@ -1391,6 +1397,15 @@ export class DatabaseStorage implements IStorage {
       `);
       await repoint("patientEvents", patientEvents, patientEvents.patientId);
       await tx.execute(sql`SET LOCAL app.allow_event_edit = 'off'`);
+
+      // ── هوية التواصل (migration 047) ─────────────────────────────────────
+      // التذاكر تتبع المريض بلا تعقيد: بصمتها فريدة عالمياً فلا تتصادم.
+      await repoint("patientLinkTokens", patientLinkTokens, patientLinkTokens.patientId);
+      // أمّا جهات الاتصال فلها تصادم مشروع: الحساب نفسه مرتبطٌ ونشِط على
+      // الملفّين. إعادة التوجيه وحدها كانت ستنتهك `uq_patient_contacts_active`
+      // وتُسقط الدمج. المعالجة في وحدة التواصل حيث تُعرَف قيود الجدول:
+      // جهة المصدر تُختَم قبل نقلها — تُنقل محفوظة كتاريخ، والنشِط يبقى واحداً.
+      await mergeContactsInto(tx, sourceId, targetId);
 
       // Merge the patient row itself: flags OR, costs summed, and any
       // descriptive field that is empty on the target gets the source's value.

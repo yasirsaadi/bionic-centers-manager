@@ -172,6 +172,67 @@ export const patientEvents = pgTable("patient_events", {
 export type PatientEvent = typeof patientEvents.$inferSelect;
 export type InsertPatientEvent = typeof patientEvents.$inferInsert;
 
+// ── هوية تواصل المريض (migration 047) ───────────────────────────────────
+// حساب تواصل خارجي مرتبط بملفّ مريض. **لا عمود في `patients`**: أبٌ واحد
+// يتابع ثلاثة أبناء بحسابٍ واحد، والابن يكبر فيربط حسابه، والوصاية تُسحَب —
+// وعمودٌ واحد يعجز عن الثلاثة.
+//
+// ووجود الصفّ يعني **الربط وحده**: لا أن الرقم يساوي `patients.phone`، ولا
+// أن صاحب الحساب هو المريض، ولا أن ملكيةً تحقّقت. حقائق أخرى لأعمدة أخرى
+// لم تُكتب بعد.
+export const patientContacts = pgTable("patient_contacts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  channel: text("channel").notNull(),          // telegram (الوحيد اليوم)
+  // نصّ لا رقم: معرّف تلغرام يتجاوز 32-بت، وغيره ليس رقماً أصلاً.
+  externalId: text("external_id").notNull(),
+  // self | guardian | family | caregiver | other — تُحسم عند إنشاء الرابط.
+  relation: text("relation").notNull(),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+  // النشِط هو ما هذا فارغ فيه. لا عمود `status` موازٍ ينحرف عنه.
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // نشِطٌ واحد لكل (مريض، قناة، حساب). جزئي: السحب يُبقي التاريخ، وإعادة
+  // الربط بعده تُنشئ صفّاً جديداً بلا تصادم.
+  uniqueIndex("uq_patient_contacts_active")
+    .on(t.patientId, t.channel, t.externalId)
+    .where(sql`revoked_at IS NULL`),
+  // ولا تفرّد عالمي على `external_id`: حسابٌ واحد لعدّة مرضى حالةٌ طبيعية.
+  index("idx_patient_contacts_external").on(t.channel, t.externalId),
+  index("idx_patient_contacts_patient").on(t.patientId),
+]);
+
+export type PatientContact = typeof patientContacts.$inferSelect;
+export type InsertPatientContact = typeof patientContacts.$inferInsert;
+
+// تذكرة ربط لمرّة واحدة. **نصّها لا يُخزَّن** — بصمته وحدها، فتسريب نسخة
+// القاعدة لا يعطي رابطاً صالحاً.
+export const patientLinkTokens = pgTable("patient_link_tokens", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  channel: text("channel").notNull(),
+  // الصلة تُحسم هنا وتُنسَخ إلى جهة الاتصال عند الاستهلاك — فلا يعلن
+  // المستهلِك عن نفسه ما ليس له.
+  relation: text("relation").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  consumedByExternalId: text("consumed_by_external_id"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_patient_link_tokens_patient").on(t.patientId),
+  // المعلَّقة: غير مستهلَكة وغير مسحوبة.
+  index("idx_patient_link_tokens_pending")
+    .on(t.expiresAt)
+    .where(sql`consumed_at IS NULL AND revoked_at IS NULL`),
+]);
+
+export type PatientLinkToken = typeof patientLinkTokens.$inferSelect;
+export type InsertPatientLinkToken = typeof patientLinkTokens.$inferInsert;
+
 export const visits = pgTable("visits", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
