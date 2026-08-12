@@ -436,43 +436,68 @@ async function main() {
         JSON.parse(JSON.stringify(redactForLog(realShape))),
         { tokenId: 1, rawToken: "[محجوب]", channel: "telegram", relation: "self", expiresAt: "2026-08-12T10:30:00.000Z" });
 
-      // **والباب الخلفي**: إعادةُ كل ما يحمل `toJSON` كما هو كانت تمرّر
-      // سرّاً كاملاً — `JSON.stringify` يكتب ناتجها، والحاجب لم يره.
-      const sneaky = { toJSON() { return { rawToken: "TOJSON-SECRET" }; } };
-      const sneakyOut = JSON.stringify(redactForLog({ x: sneaky }));
-      check(!sneakyOut.includes("TOJSON-SECRET"), "و`toJSON` مخصَّص يعيد سرّاً ⇒ محجوب", sneakyOut);
-      same("ويُكتب مكانه الحجب", JSON.parse(sneakyOut), { x: { rawToken: "[محجوب]" } });
+      // ══ مغلقٌ عند الشكّ: لا `toJSON` يُنفَّذ، ولا شكلٌ يُصدَّق ══════════
+      // (أ) ناتجٌ **بدائي** يهرب من الحجب كلّه لو نُفِّذ: الحجب يعرف
+      // الأسرار بأسماء مفاتيحها، ولا مفتاح لنصٍّ عارٍ. فكان يُطبع كما هو.
+      const primitiveJson: any = { rawToken: "PRIM-SECRET", toJSON() { return "PRIM-SECRET"; } };
+      const primOut = JSON.stringify(redactForLog({ x: primitiveJson }));
+      check(!primOut.includes("PRIM-SECRET"), "(أ) `toJSON` يعيد سرّاً بدائياً ⇒ لا يُنفَّذ ولا يتسرّب", primOut);
+      same("بل يُفكَّك الكائن ويُحجب حقله الظاهر", JSON.parse(primOut), { x: { rawToken: "[محجوب]" } });
 
-      const sneakyDeep = { toJSON() { return { a: { b: [{ tokenHash: "NESTED-SECRET" }] } }; } };
-      const deepSneak = JSON.stringify(redactForLog({ y: sneakyDeep }));
-      check(!deepSneak.includes("NESTED-SECRET"), "وسرٌّ متداخل في ناتجه ⇒ محجوب", deepSneak);
-      same("بناتجه مفحوصاً كاملاً", JSON.parse(deepSneak),
-        { y: { a: { b: [{ tokenHash: "[محجوب]" }] } } });
+      // (ب) وناتجٌ كائنيّ: لا يُنفَّذ أصلاً، والحقل الظاهر يُحجب.
+      const objJson: any = { rawToken: "OBJ-SECRET", toJSON() { return { rawToken: "OBJ-SECRET" }; } };
+      let executed = false;
+      const spy: any = { rawToken: "SPY-SECRET", toJSON() { executed = true; return { ok: 1 }; } };
+      const objOut = JSON.stringify(redactForLog({ y: objJson, z: spy }));
+      check(!objOut.includes("OBJ-SECRET") && !objOut.includes("SPY-SECRET"),
+        "(ب) `toJSON` يعيد كائناً ⇒ محجوب كذلك", objOut);
+      check(!executed, "**ولم يُستدعَ `toJSON` إطلاقاً** — لا تنفيذ داخل الحاجب");
+      same("والحقول الظاهرة وحدها هي ما يُكتب", JSON.parse(objOut),
+        { y: { rawToken: "[محجوب]" }, z: { rawToken: "[محجوب]" } });
 
-      // وناتجٌ سليم يمرّ كما هو — الحجب ليس مسحاً.
-      same("وناتج `toJSON` غير الحسّاس يمرّ كما هو",
-        redactForLog({ z: { toJSON() { return { ok: 1 }; } } }), { z: { ok: 1 } });
+      // وسرٌّ مخبوء لا يُخرجه إلا `toJSON`: لا يصل السجلّ لأنه لا يُنفَّذ.
+      class Hidden { #secret = "HIDDEN-SECRET"; public id = 7; toJSON() { return { rawToken: this.#secret }; } }
+      const hiddenOut = JSON.stringify(redactForLog({ h: new Hidden() }));
+      check(!hiddenOut.includes("HIDDEN-SECRET"), "والسرّ المخبوء خلف `toJSON` لا يصل السجلّ", hiddenOut);
+      same("ويبقى الظاهر وحده", JSON.parse(hiddenOut), { h: { id: 7 } });
 
-      // ورميُه لا يُسقط السجلّ.
-      const thrower = { toJSON() { throw new Error("boom"); } };
+      // ولا تُنقَل الدالّة إلى النسخة — منقولةً كانت تُستدعى عند التسلسل
+      // فيعود الباب من حيث أُغلق.
+      const copied: any = redactForLog({ w: { toJSON() { return "X"; } } });
+      check(typeof copied.w.toJSON !== "function", "ولا تُنقَل `toJSON` إلى النسخة");
+
+      // ورميُها لا يُسقط شيئاً — لأنها لا تُستدعى.
       let threw = false;
-      let safeOut: any = null;
-      try { safeOut = redactForLog({ t: thrower }); } catch { threw = true; }
-      check(!threw, "و`toJSON` الذي يرمي لا يُسقط الحاجب");
-      same("بل يُستبدل بعلامة", safeOut, { t: "[تعذّر التسلسل]" });
+      try { JSON.stringify(redactForLog({ t: { toJSON() { throw new Error("boom"); } } })); }
+      catch { threw = true; }
+      check(!threw, "و`toJSON` الذي يرمي لا يُسقط الحاجب — لأنه لا يُنفَّذ");
 
-      // و`toJSON` الذي يعيد نفسه لا يدور بلا نهاية.
-      const selfish: any = { toJSON() { return selfish; } };
-      let looped = false;
-      try { JSON.stringify(redactForLog({ s: selfish })); } catch { looped = true; }
-      check(!looped, "و`toJSON` الذي يعيد نفسه يُوقَف بلا انهيار");
+      // (ج) و**تاريخٌ مزوَّر**: `Object.prototype.toString` يُخدَع بسطر،
+      // فالشكل لا يُصدَّق — الفتحة الداخلية هي الحَكَم.
+      const fakeDate: any = { [Symbol.toStringTag]: "Date", rawToken: "FAKE-DATE-SECRET" };
+      same("والمزوَّر يبدو تاريخاً للفحص الشكلي",
+        Object.prototype.toString.call(fakeDate), "[object Date]");
+      const fakeOut = JSON.stringify(redactForLog({ d: fakeDate }));
+      check(!fakeOut.includes("FAKE-DATE-SECRET"), "(ج) ومع ذلك يُفحَص ويُحجب سرّه", fakeOut);
+      same("فيُفكَّك ككائن عادي", JSON.parse(fakeOut), { d: { rawToken: "[محجوب]" } });
 
-      // ولا يُعدَّل الأصل — الاستجابة تُرسل إلى العميل كما بناها المسار.
+      // (د) والتاريخ الحقيقي يبقى تاريخاً — ومن أي سياق تنفيذ.
+      check(redactForLog(when) instanceof Date, "(د) والتاريخ الحقيقي يبقى Date");
+      same("بقيمته نفسها", (redactForLog(when) as Date).getTime(), when.getTime());
+      // والتاريخ الذي زُرع عليه `toJSON` خاصّ: تُسقطه النسخة النظيفة.
+      const tampered: any = new Date("2026-08-12T10:30:00.000Z");
+      tampered.toJSON = () => "TAMPERED-SECRET";
+      const tamperedOut = JSON.stringify(redactForLog({ at: tampered }));
+      check(!tamperedOut.includes("TAMPERED-SECRET"), "وتاريخٌ زُرع عليه `toJSON` لا يتسرّب", tamperedOut);
+      same("بل يُكتب بصيغته الحقيقية", JSON.parse(tamperedOut), { at: "2026-08-12T10:30:00.000Z" });
+
+      // (هـ) ولا يُعدَّل الأصل — الاستجابة تُرسل إلى العميل كما بناها المسار.
       const original: any = { rawToken: "KEEP-ME", nested: { password: "KEEP-TOO" }, at: when };
       const snapshot = JSON.stringify(original);
       redactForLog(original);
-      same("والكائن الأصلي لم يتغيّر", JSON.stringify(original), snapshot);
+      same("(هـ) والكائن الأصلي لم يتغيّر", JSON.stringify(original), snapshot);
       check(original.at instanceof Date, "وتاريخه ما زال Date لا نصّاً");
+      check(original.rawToken === "KEEP-ME", "وسرّه ما زال في يد المسار");
 
       // والمرجع الدوري يُوقَف بلا انهيار — ولا يُفهَم توأمٌ جنباً إلى جنب دورةً.
       const cyc: any = { name: "أ" }; cyc.self = cyc;
@@ -481,6 +506,14 @@ async function main() {
       const shared = { v: 1 };
       same("والكائن المشترك مرّتين ليس دورة",
         redactForLog({ a: shared, b: shared }), { a: { v: 1 }, b: { v: 1 } });
+
+      // (و) والعمق والدورات والمصفوفات معاً في بنية واحدة — بعد التشديد.
+      const web: any = { list: [{ deep: { deeper: { rawToken: "WEB-SECRET" } } }], at: when };
+      web.list.push({ back: web });
+      const webOut = JSON.stringify(redactForLog(web));
+      check(!webOut.includes("WEB-SECRET"), "(و) العمق والمصفوفات والدورة معاً: السرّ محجوب", webOut);
+      check(webOut.includes("مرجع دوري"), "والدورة موقوفة");
+      check(webOut.includes("2026-08-12T10:30:00.000Z"), "والتاريخ سليم في البنية نفسها", webOut);
 
       // والسجلّ ما زال يمرّ عبر الحاجب — فحص ساكن، بلا إعادة تصميم.
       const indexSrc = readFileSync(join(import.meta.dirname, "..", "index.ts"), "utf8");
