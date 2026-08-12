@@ -19,7 +19,7 @@
 // حساباً — والقناة التي يصل بها الرابط إلى المريض مرحلةٌ أخرى لم تبدأ.
 
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   patientContacts, patientLinkTokens, patients,
@@ -291,6 +291,42 @@ export async function redeemLinkToken(params: {
 }
 
 // ══ جهات الاتصال ═════════════════════════════════════════════════════════
+
+/**
+ * التذاكر **المعلَّقة**: غير مستهلَكة، غير مسحوبة، **ولم تنتهِ بعد**.
+ *
+ * والمنتهية مستبعَدة عمداً: موظّفٌ يراها في القائمة يظنّ أن للمريض رابطاً
+ * قائماً فينتظر، والرابط ميت. «معلَّقة» تعني «ما زال يُستهلَك»، وما عداه
+ * تاريخ لا حاضر.
+ */
+export async function listPendingTokens(patientId: number): Promise<PatientLinkToken[]> {
+  return db.select().from(patientLinkTokens)
+    .where(and(
+      eq(patientLinkTokens.patientId, patientId),
+      isNull(patientLinkTokens.consumedAt),
+      isNull(patientLinkTokens.revokedAt),
+      gt(patientLinkTokens.expiresAt, new Date()),
+    ))
+    .orderBy(patientLinkTokens.id);
+}
+
+/**
+ * تذكرة بمعرّفها — **بلا تصفية بالمريض**، فالمستدعي هو مَن يقارن
+ * `patientId` بمريض المسار. الفصل مقصود: الدالّة تقرأ، والقرار بمَن يملك
+ * ماذا يبقى في طبقة الصلاحيات حيث يُرى.
+ */
+export async function getLinkToken(tokenId: number): Promise<PatientLinkToken | null> {
+  const [row] = await db.select().from(patientLinkTokens)
+    .where(eq(patientLinkTokens.id, tokenId)).limit(1);
+  return row ?? null;
+}
+
+/** جهة اتصال بمعرّفها — وبنفس القاعدة: الملكية يفحصها المستدعي. */
+export async function getContact(contactId: number): Promise<PatientContact | null> {
+  const [row] = await db.select().from(patientContacts)
+    .where(eq(patientContacts.id, contactId)).limit(1);
+  return row ?? null;
+}
 
 /** جهات المريض النشطة. «نشِط» = `revoked_at` فارغ — لا عمود حالة ثانٍ. */
 export async function listActiveContacts(patientId: number): Promise<PatientContact[]> {
