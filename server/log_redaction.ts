@@ -18,6 +18,9 @@
 /** أسماء حقول لا تُطبع في سجلّ الطلبات أبداً. */
 export const REDACTED_LOG_KEYS = new Set([
   "rawToken",
+  // الرابط العميق **يحمل النصّ الخام في سلسلة استعلامه**. فحجبُ `rawToken`
+  // باسمه وحده كان يترك النسخة الأخرى منه مكشوفة في السطر نفسه.
+  "telegramDeepLink",
   "tokenHash",
   "token_hash",
   "password",

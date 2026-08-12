@@ -21,6 +21,7 @@ import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
+import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
@@ -6324,6 +6325,12 @@ export async function registerRoutes(
   // Staff-facing only: issue / list / revoke. There is deliberately NO public
   // redeem endpoint — redeemLinkToken stays an internal function.
   registerPatientCommunicationRoutes(app, isAuthenticated);
+
+  // Patient Telegram bot webhook. PUBLIC by necessity — Telegram calls it and
+  // has no session. Guarded by a shared secret in the X-Telegram-Bot-Api-
+  // Secret-Token header, compared in constant time. Separate bot, separate
+  // module, separate credentials from the admin notification bot.
+  registerPatientTelegramWebhook(app);
 
   return httpServer;
 }
