@@ -353,10 +353,34 @@ async function main() {
       const [self] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, a.token.id));
       check(self.revokedAt === null, "ولا التذكرة المقصودة نفسها", String(self.revokedAt));
 
-      for (const bad of ["1.2", "1.7", "0", "-1", "NaN", "Infinity", "abc", "1e999"]) {
-        const rr = await req("POST", REVOKE_TOKEN(pd, bad as any), S.admin);
+      // **الفحص على النصّ لا على الرقم**: `Number("1e2")`=١٠٠ و
+      // `Number("0x10")`=١٦، وكلاهما صحيحٌ موجب فيمرّ من أي فحصٍ بعد
+      // التحويل — والمُرسِل لم يكتب ١٠٠ ولا ١٦.
+      for (const bad of [
+        "1e2", "0x10", "+1", "01", "1.2", "1.7", "0", "-1",
+        "NaN", "Infinity", "-Infinity", "abc", "1e999", " 1", "1 ", "1_0", "١٢",
+      ]) {
+        const rr = await req("POST", REVOKE_TOKEN(pd, encodeURIComponent(bad) as any), S.admin);
         same(`و«${bad}» ⇒ 400`, rr.status, 400);
       }
+      // والصفّان اللذان كانت هذه الصيغ تصيبهما لو حُوِّلت: سليمان.
+      for (const id of [a.token.id, b.token.id]) {
+        const [row] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, id));
+        check(row.revokedAt === null, `والتذكرة ${id} لم تُمسّ بأي صيغة`, String(row.revokedAt));
+      }
+      // ولا الصفّان ١٠٠ و١٦ اللذان كان `1e2` و`0x10` سيصيبانهما — لو
+      // وُجدا لمريضٍ آخر لكان تجاوزاً كاملاً للملكية.
+      const { rows: collateral } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM patient_link_tokens WHERE id IN (100,16) AND revoked_at IS NOT NULL`);
+      same("ولا صفّ ١٠٠ أو ١٦ سُحب بالتحويل", collateral[0].n, 0);
+
+      // وما يتجاوز حدّ الأمان: يفقد دقّته في التحويل فيصير معرّفاً آخر.
+      const unsafe = "9007199254740993"; // 2^53 + 1
+      const ru = await req("POST", REVOKE_TOKEN(pd, unsafe as any), S.admin);
+      same("والعدد فوق `Number.MAX_SAFE_INTEGER` ⇒ 400", ru.status, 400);
+      // ومع ذلك: لا حدّ ٣٢-بت — معرّف كبير مشروع يمرّ إلى البحث الطبيعي.
+      const big = await req("POST", REVOKE_TOKEN(pd, "4294967296" as any), S.admin);
+      same("ومعرّف فوق ٣٢-بت يمرّ الفحص ويُردّ 404 لا 400", big.status, 404);
 
       // وجهة الاتصال بنفس القاعدة.
       const cd = await redeemLinkToken({ rawToken: a.rawToken, externalId: "tg-dec-1" });
@@ -411,6 +435,37 @@ async function main() {
       same("وردّ الإصدار الحقيقي: التاريخ سليم والنصّ محجوب",
         JSON.parse(JSON.stringify(redactForLog(realShape))),
         { tokenId: 1, rawToken: "[محجوب]", channel: "telegram", relation: "self", expiresAt: "2026-08-12T10:30:00.000Z" });
+
+      // **والباب الخلفي**: إعادةُ كل ما يحمل `toJSON` كما هو كانت تمرّر
+      // سرّاً كاملاً — `JSON.stringify` يكتب ناتجها، والحاجب لم يره.
+      const sneaky = { toJSON() { return { rawToken: "TOJSON-SECRET" }; } };
+      const sneakyOut = JSON.stringify(redactForLog({ x: sneaky }));
+      check(!sneakyOut.includes("TOJSON-SECRET"), "و`toJSON` مخصَّص يعيد سرّاً ⇒ محجوب", sneakyOut);
+      same("ويُكتب مكانه الحجب", JSON.parse(sneakyOut), { x: { rawToken: "[محجوب]" } });
+
+      const sneakyDeep = { toJSON() { return { a: { b: [{ tokenHash: "NESTED-SECRET" }] } }; } };
+      const deepSneak = JSON.stringify(redactForLog({ y: sneakyDeep }));
+      check(!deepSneak.includes("NESTED-SECRET"), "وسرٌّ متداخل في ناتجه ⇒ محجوب", deepSneak);
+      same("بناتجه مفحوصاً كاملاً", JSON.parse(deepSneak),
+        { y: { a: { b: [{ tokenHash: "[محجوب]" }] } } });
+
+      // وناتجٌ سليم يمرّ كما هو — الحجب ليس مسحاً.
+      same("وناتج `toJSON` غير الحسّاس يمرّ كما هو",
+        redactForLog({ z: { toJSON() { return { ok: 1 }; } } }), { z: { ok: 1 } });
+
+      // ورميُه لا يُسقط السجلّ.
+      const thrower = { toJSON() { throw new Error("boom"); } };
+      let threw = false;
+      let safeOut: any = null;
+      try { safeOut = redactForLog({ t: thrower }); } catch { threw = true; }
+      check(!threw, "و`toJSON` الذي يرمي لا يُسقط الحاجب");
+      same("بل يُستبدل بعلامة", safeOut, { t: "[تعذّر التسلسل]" });
+
+      // و`toJSON` الذي يعيد نفسه لا يدور بلا نهاية.
+      const selfish: any = { toJSON() { return selfish; } };
+      let looped = false;
+      try { JSON.stringify(redactForLog({ s: selfish })); } catch { looped = true; }
+      check(!looped, "و`toJSON` الذي يعيد نفسه يُوقَف بلا انهيار");
 
       // ولا يُعدَّل الأصل — الاستجابة تُرسل إلى العميل كما بناها المسار.
       const original: any = { rawToken: "KEEP-ME", nested: { password: "KEEP-TOO" }, at: when };
