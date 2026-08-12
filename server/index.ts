@@ -5,6 +5,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
 import { runMigrations } from "./migrations/runner";
+// سجلّ الطلبات يطبع جسم كل استجابة /api؛ هذا يحجب الأسرار عنه بالاسم.
+import { redactForLog } from "./log_redaction";
 
 // Resilience: a single failing request must NEVER take down the whole service.
 // In Express, an async handler that rejects (or any stray promise rejection)
@@ -70,7 +72,7 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        logLine += ` :: ${JSON.stringify(redactForLog(capturedJsonResponse))}`;
       }
 
       log(logLine);

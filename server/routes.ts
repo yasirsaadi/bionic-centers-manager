@@ -20,6 +20,7 @@ import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
+import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
@@ -6318,6 +6319,11 @@ export async function registerRoutes(
 
   // Register doctor medical-examination routes (معاينة الطبيب)
   registerMedicalRoutes(app, isAuthenticated);
+
+  // Register patient communication link-token routes (روابط تواصل المريض).
+  // Staff-facing only: issue / list / revoke. There is deliberately NO public
+  // redeem endpoint — redeemLinkToken stays an internal function.
+  registerPatientCommunicationRoutes(app, isAuthenticated);
 
   return httpServer;
 }
