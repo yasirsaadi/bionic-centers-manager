@@ -233,6 +233,45 @@ export const patientLinkTokens = pgTable("patient_link_tokens", {
 export type PatientLinkToken = typeof patientLinkTokens.$inferSelect;
 export type InsertPatientLinkToken = typeof patientLinkTokens.$inferInsert;
 
+// صندوق الصادر: رسالة مستحقّة **لجهة اتصال بعينها**. الوحدة (حدث، جهة)
+// لأنها وحدة النجاح والفشل — أبٌ وأمٌّ يتابعان الابن نفسه، فتنجح إحداهما
+// وتفشل الأخرى. ولا يُخزَّن هنا معرّف حساب ولا سرّ ولا نصّ خطأ خام.
+export const patientNotificationDeliveries = pgTable("patient_notification_deliveries", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  // فارغ لرسائل الربط: ليست حدثاً في تاريخ المريض، ولا يُخترع لها حدث.
+  patientEventId: bigint("patient_event_id", { mode: "number" }).references(() => patientEvents.id),
+  patientContactId: bigint("patient_contact_id", { mode: "number" })
+    .references(() => patientContacts.id).notNull(),
+  channel: text("channel").notNull(),
+  notificationType: text("notification_type").notNull(),
+  // ما يحتاجه النصّ فقط: المرحلة أو الموعد. لا سبب ولا فاعل ولا حالة.
+  payload: jsonb("payload").notNull().default({}),
+  // pending | processing | sent | failed | skipped
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  // ختم الحجز — عاملٌ مات وهو يرسل يُستردّ صفّه بعد انقضاء المهلة.
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  // **رمز** من قائمة مغلقة: نصّ خطأ الشبكة قد يحمل عنوان Bot API وفيه التوكن.
+  lastErrorCode: text("last_error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // رسالة واحدة لكل (حدث، جهة). جزئي: رسائل الربط بلا حدث.
+  uniqueIndex("uq_pnd_event_contact")
+    .on(t.patientEventId, t.patientContactId)
+    .where(sql`patient_event_id IS NOT NULL`),
+  index("idx_pnd_due").on(t.nextAttemptAt).where(sql`status IN ('pending', 'failed')`),
+  index("idx_pnd_locked").on(t.lockedAt).where(sql`status = 'processing'`),
+  index("idx_pnd_patient").on(t.patientId),
+  index("idx_pnd_contact").on(t.patientContactId),
+]);
+
+export type PatientNotificationDelivery = typeof patientNotificationDeliveries.$inferSelect;
+export type InsertPatientNotificationDelivery = typeof patientNotificationDeliveries.$inferInsert;
+
 export const visits = pgTable("visits", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),

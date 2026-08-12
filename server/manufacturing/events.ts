@@ -31,6 +31,7 @@ import {
 } from "@shared/patient_events";
 import { DELIVERED_STAGE } from "@shared/manufacturing";
 import { recordPatientEvent, type DbTransaction } from "../events/store";
+import { enqueueForActiveContacts } from "../patient_notifications/outbox";
 
 /**
  * المرحلة التي بلغها الأمر ⇒ نوع الحدث الذي يراه المريض.
@@ -121,7 +122,7 @@ export async function recordStageEvent(
   const eventType = stageEventType(stage);
   if (!eventType) return;
 
-  await recordPatientEvent(tx, {
+  const recorded = await recordPatientEvent(tx, {
     patientId: order.patientId,
     eventType,
     branchId: order.branchId,
@@ -133,6 +134,7 @@ export async function recordStageEvent(
     // بلا فاعل: `actor_user_id` و`actor_name` يبقيان فارغين في الصفّ.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
+  await fanOut(tx, recorded, order.patientId, eventType, { stage });
 }
 
 /**
@@ -147,7 +149,7 @@ export async function recordOrderCreatedEvent(
   if (!isInitialBuild(order)) return;
   const eventType = PATIENT_EVENT_TYPES.MANUFACTURING_ORDER_CREATED;
 
-  await recordPatientEvent(tx, {
+  const recorded = await recordPatientEvent(tx, {
     patientId: order.patientId,
     eventType,
     branchId: order.branchId,
@@ -157,5 +159,63 @@ export async function recordOrderCreatedEvent(
     visibility: "patient",
     // بلا فاعل — كسابقتها.
     dedupeKey: transitionKey(order.id, historyId, eventType),
+  });
+  await fanOut(tx, recorded, order.patientId, eventType, { stage });
+}
+
+/**
+ * حدث موعد التسليم المتوقَّع — **أول تحديد وكل تغيير**.
+ *
+ * وحمولته الموعد الجديد وحده: لا الموعد السابق، ولا السبب، ولا مَن غيّره.
+ * السبب إلزامي داخلياً ويُحفظ في سجلّ الأمر و`audit_log` — لكنه تبريرٌ
+ * إداري يُقاس عليه أداء المركز، لا خبرٌ للمريض. والذي يعنيه رقمٌ واحد:
+ * متى يستلم جهازه.
+ *
+ * والمفتاح على سطر السجلّ كغيره: تغييران في يومٍ واحد حدثان، وإعادةُ
+ * كتابةِ السطر نفسه لا شيء.
+ */
+export async function recordDeliveryDateEvent(
+  tx: DbTransaction,
+  params: { order: EventOrderRef; expectedDeliveryDate: string; historyId: number },
+): Promise<void> {
+  const { order, expectedDeliveryDate, historyId } = params;
+  if (!isInitialBuild(order)) return;
+  if (!expectedDeliveryDate) return;
+  const eventType = PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED;
+
+  const recorded = await recordPatientEvent(tx, {
+    patientId: order.patientId,
+    eventType,
+    branchId: order.branchId,
+    sourceType: "work_order",
+    sourceId: order.id,
+    // الموعد وحده. لا سابق ولا سبب ولا فاعل.
+    payload: { expectedDeliveryDate },
+    visibility: "patient",
+    dedupeKey: transitionKey(order.id, historyId, eventType),
+  });
+  await fanOut(tx, recorded, order.patientId, eventType, { expectedDeliveryDate });
+}
+
+/**
+ * يستحقّ الرسائل **داخل معاملة الحدث نفسها** — فإمّا وقع الحدث وللمريض
+ * رسالة مستحقّة، وإمّا لم يقع شيء.
+ *
+ * و`inserted: false` تعني أن المفتاح مُطالَب به سلفاً: الحدث موجود ورسائله
+ * أُنشئت معه، فلا استحقاق ثانٍ. (والفهرس الفريد حزامٌ ثانٍ لو أخطأنا.)
+ */
+async function fanOut(
+  tx: DbTransaction,
+  recorded: { id: number | null; inserted: boolean },
+  patientId: number,
+  notificationType: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!recorded.inserted || recorded.id === null) return;
+  await enqueueForActiveContacts(tx, {
+    patientId,
+    patientEventId: recorded.id,
+    notificationType,
+    payload,
   });
 }

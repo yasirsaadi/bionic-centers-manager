@@ -103,6 +103,8 @@ async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await pool.query(`DELETE FROM audit_log WHERE entity_type IN ('patient_link_token','patient_contact') AND user_id = ${ADMIN}`);
   await pool.query(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
+  // الصادر يشير إلى الأحداث وجهات الاتصال معاً — يُحذف قبلهما.
+  await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
@@ -168,13 +170,22 @@ async function main() {
     check(typeof contacts[0].externalId === "string", "ونوعه نصّ لا رقم");
     same("٥. والصلة من التذكرة لا من تلغرام", contacts[0].relation, "guardian");
     same("والقناة telegram", contacts[0].channel, "telegram");
-    same("ورسالة نجاح واحدة", sent.length, 1);
-    same("بنصّها المعلَن", sent[0].text, MESSAGES.linked);
+    // **الترحيب صار عبر صندوق الصادر** (المرحلة ٢١٠) لا إرسالاً مباشراً،
+    // فيستفيد من إعادة المحاولة. فالمتوقَّع هنا صفٌّ مستحقّ لا رسالة فورية.
+    const { rows: queued } = await pool.query(
+      `SELECT notification_type, patient_event_id FROM patient_notification_deliveries WHERE patient_id = $1`, [p1]);
+    same("ورسالة ترحيب مستحقّة في الصادر", queued.map((q: any) => q.notification_type), ["link.welcome"]);
+    check(queued[0].patient_event_id === null, "وبلا حدث مريض مخترَع لها");
+    // والكبسة تُرسلها في الحال — فالنتيجة عند المريض واحدة.
+    await new Promise((r) => setTimeout(r, 400));
+    const welcomeText = sent.find((x) => x.text.includes("مرحباً بك"));
+    check(!!welcomeText, "ونصّ الترحيب وصل فعلاً", JSON.stringify(sent));
     // ولا تكشف الرسالة شيئاً.
     const p1s = String(p1), tid = String(tok.token.id);
-    check(!sent[0].text.includes(p1s) && !sent[0].text.includes(tid)
-      && !sent[0].text.includes("guardian") && !sent[0].text.includes(String(TG_ID)),
-      "ولا تحمل معرّف مريض ولا تذكرة ولا صلة ولا حساباً", sent[0].text);
+    const wt = welcomeText?.text ?? "";
+    check(!wt.includes(p1s) && !wt.includes(tid)
+      && !wt.includes("guardian") && !wt.includes(String(TG_ID)),
+      "ولا تحمل معرّف مريض ولا تذكرة ولا صلة ولا حساباً", wt);
 
     // والتذكرة استُهلكت بمَن استهلكها.
     const [used] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, tok.token.id));
@@ -187,6 +198,8 @@ async function main() {
     r = await post(PATIENT_WEBHOOK_PATH, update({ text: `/start ${tok.rawToken}`, fromId: TG_ID }), withSecret);
     same("٩. ⇒ 200 لا 500", r.status, 200);
     same("ولا جهة اتصال ثانية", (await listActiveContacts(p1)).length, 1);
+    same("ولا ترحيب ثانٍ في الصادر",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_notification_deliveries WHERE patient_id = $1`, [p1])).rows[0].n, 1);
     const { rows: totalRows } = await pool.query(
       `SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [p1]);
     same("ولا صفّ ثانٍ في الجدول إطلاقاً", totalRows[0].n, 1);

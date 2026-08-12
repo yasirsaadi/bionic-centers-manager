@@ -1,0 +1,224 @@
+// صندوق الصادر — بنية تحتية خالصة.
+//
+// ══ ما لا تعرفه هذه الوحدة ══════════════════════════════════════════════
+// لا تعرف التصنيع، ولا تلغرام، ولا نصّ رسالةٍ واحدة. تستحقّ صفوفاً،
+// وتُسلّمها لمن يرسل، وتسجّل ما جرى. النصوص في `render.ts`، والإرسال في
+// `dispatcher.ts`، والقناة في `patient_telegram/`.
+//
+// ══ ولماذا لا تكون داخل `events/store.ts` ═══════════════════════════════
+// تلك طبقة سفلية لا تكتب إلا في `patient_events` — يحرسه
+// `npm run test:events-purity`. فالاستحقاق يُنشأ من **الجسر** (وحدة تعرف
+// الطرفين) داخل معاملة الحدث نفسها، لا من داخل سجلّ الأحداث.
+//
+// ══ الاستحقاق داخل المعاملة، والإرسال خارجها ═══════════════════════════
+// الصفّ يُكتب مع الحدث في معاملة واحدة: فإمّا انتقلت المرحلة **وللمريض
+// رسالة مستحقّة**، وإمّا لم يقع شيء. ولا حالة ثالثة يكون فيها حدثٌ بلا
+// رسالة لجهةٍ كانت نشطة وقته.
+//
+// أما الإرسال فبعد `COMMIT` بمسافة: شبكةٌ داخل معاملة تُبقي أقفال صفوف
+// التصنيع مفتوحةً بطول مهلة تلغرام — وفشلُها كان سيتراجع عن نقل المرحلة.
+
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { db } from "../db";
+import {
+  patientContacts, patientNotificationDeliveries as PND,
+  type PatientNotificationDelivery,
+} from "@shared/schema";
+import type { DbTransaction } from "../events/store";
+
+/** القناة الوحيدة المدعومة للإرسال اليوم. */
+export const DELIVERY_CHANNEL = "telegram";
+
+export type DeliveryStatus = "pending" | "processing" | "sent" | "failed" | "skipped";
+
+/**
+ * رموز الفشل — **قائمة مغلقة**. نصّ الخطأ الخام ممنوع: خطأ الشبكة قد يحمل
+ * عنوان Bot API وفيه التوكن، فيستقرّ في الجدول ثم في النسخة الاحتياطية.
+ */
+export type DeliveryErrorCode =
+  | "telegram_timeout"
+  | "telegram_network"
+  | "telegram_api_error"
+  | "telegram_disabled"
+  | "render_failed";
+
+/**
+ * مهلة الحجز. عاملٌ مات وهو يرسل يترك صفّاً `processing`؛ بعد هذه المدّة
+ * يستردّه غيره. وهي أطول من مهلة الإرسال (١٠ ثوانٍ) بهامشٍ واسع كي لا
+ * يُنتزع صفٌّ من عاملٍ حيّ لا يزال ينتظر تلغرام.
+ */
+export const LEASE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * تباعد المحاولات: دقيقة · ٥ · ١٥ · ساعة · ٦ ساعات — ثم يثبت على الأخيرة.
+ *
+ * والثبات مقصود لا إهمال: عطلٌ طويل عند تلغرام أو حسابٌ حظر البوت لا يجوز
+ * أن يُسقط الرسالة نهائياً، ولا أن يُعاد كل دقيقة. ست ساعات تعني أربع
+ * محاولات في اليوم — تكفي للتعافي ولا تُثقل.
+ */
+export const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000];
+
+export function backoffFor(attemptCount: number): number {
+  const i = Math.min(Math.max(attemptCount - 1, 0), BACKOFF_MS.length - 1);
+  return BACKOFF_MS[i]!;
+}
+
+export interface EnqueueInput {
+  patientId: number;
+  /** فارغ لرسائل الربط — وهي ليست حدثاً في تاريخ المريض. */
+  patientEventId?: number | null;
+  notificationType: string;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * يستحقّ رسالةً **لكل جهة اتصال نشطة الآن** على هذه القناة.
+ *
+ * ── لا سجلّ رجعي ────────────────────────────────────────────────────────
+ * «النشطة الآن» هي كل القاعدة: مَن يربط حسابه اليوم لا يستلم أحداث الشهر
+ * الماضي، لأن صفوفها لم تُنشأ له أصلاً — لا لأن مرشِّحاً يستبعدها لاحقاً.
+ * الغياب هنا أمتن من الترشيح.
+ *
+ * ── والتكرار ممنوع مرّتين ───────────────────────────────────────────────
+ * `ON CONFLICT DO NOTHING` على فهرس (حدث، جهة)، ومعه امتناع المستدعي عن
+ * النداء حين لا يُدرَج الحدث أصلاً. فإعادة تشغيل مسارٍ ما لا تُنتج رسالة
+ * ثانية ولا خطأً.
+ */
+export async function enqueueForActiveContacts(
+  tx: DbTransaction,
+  input: EnqueueInput,
+): Promise<number> {
+  const contacts = await tx.select({ id: patientContacts.id })
+    .from(patientContacts)
+    .where(and(
+      eq(patientContacts.patientId, input.patientId),
+      eq(patientContacts.channel, DELIVERY_CHANNEL),
+      isNull(patientContacts.revokedAt),
+    ));
+  if (contacts.length === 0) return 0;
+
+  const rows = contacts.map((c) => ({
+    patientId: input.patientId,
+    patientEventId: input.patientEventId ?? null,
+    patientContactId: c.id,
+    channel: DELIVERY_CHANNEL,
+    notificationType: input.notificationType,
+    payload: input.payload ?? {},
+  }));
+
+  const inserted = await tx.insert(PND).values(rows)
+    .onConflictDoNothing()
+    .returning({ id: PND.id });
+  return inserted.length;
+}
+
+/** يستحقّ رسالةً لجهة اتصال **واحدة بعينها** — مسار الترحيل عند الربط. */
+export async function enqueueForContact(
+  runner: DbTransaction | typeof db,
+  input: EnqueueInput & { patientContactId: number },
+): Promise<number | null> {
+  const [row] = await (runner as any).insert(PND).values({
+    patientId: input.patientId,
+    patientEventId: input.patientEventId ?? null,
+    patientContactId: input.patientContactId,
+    channel: DELIVERY_CHANNEL,
+    notificationType: input.notificationType,
+    payload: input.payload ?? {},
+  }).onConflictDoNothing().returning({ id: PND.id });
+  return row?.id ?? null;
+}
+
+/**
+ * يحجز صفوفاً مستحقّة ويعيدها.
+ *
+ * ── لماذا `FOR UPDATE SKIP LOCKED` ──────────────────────────────────────
+ * عاملان يقرآن الطابور في اللحظة نفسها: بلا هذا يختاران الصفّ نفسه
+ * فتُرسَل الرسالة مرّتين. و`SKIP LOCKED` تجعل الثاني **يتخطّى** ما حجزه
+ * الأول بدل أن ينتظره — فلا ازدواج ولا توقّف.
+ *
+ * والحجز والاختيار في جملة واحدة: قراءةٌ ثم تحديثٌ منفصل هو check-then-act،
+ * وبينهما تسع نافذةٌ يقرأ فيها عاملٌ آخر الصفّ نفسه.
+ *
+ * ويشمل الاختيار **المحجوز المنسيّ**: صفٌّ `processing` مضى على ختمه أكثر
+ * من المهلة يعني عاملاً مات وهو يرسل — فيُستردّ بدل أن يعلق إلى الأبد.
+ */
+export async function claimDue(limit = 20): Promise<PatientNotificationDelivery[]> {
+  const staleBefore = new Date(Date.now() - LEASE_TIMEOUT_MS);
+  return await db.transaction(async (tx) => {
+    // القفل والتحديث في معاملة واحدة: القفل يصمد حتى الحفظ، فلا نافذة بين
+    // «اخترتُ» و«حجزتُ» يقرأ فيها عاملٌ آخر الصفّ نفسه.
+    const picked = await (tx as any).execute(sql`
+      SELECT id FROM patient_notification_deliveries
+       WHERE (status IN ('pending', 'failed') AND next_attempt_at <= NOW())
+          OR (status = 'processing' AND locked_at < ${staleBefore})
+       ORDER BY next_attempt_at
+       FOR UPDATE SKIP LOCKED
+       LIMIT ${limit}
+    `);
+    // `Number` مقصود: الـSQL الخام يعيد BIGINT نصّاً، وDrizzle يعيده رقماً.
+    // خلطهما كان يجعل المقارنة تفشل صامتةً.
+    const ids = ((picked.rows ?? []) as any[]).map((r) => Number(r.id));
+    if (ids.length === 0) return [];
+
+    // والتحديث بـDrizzle لا بالخام: فتعود الصفوف بأسمائها المعروفة وأنواعها
+    // الصحيحة (jsonb مفكوكاً، وBIGINT رقماً). صفوفٌ خام هنا كانت تجعل
+    // `patientContactId` غير معرَّف فتُخطّى كل رسالة بصمت.
+    return await tx.update(PND)
+      .set({ status: "processing", lockedAt: new Date(), updatedAt: new Date() })
+      .where(inArray(PND.id, ids))
+      .returning();
+  });
+}
+
+export async function markSent(id: number): Promise<void> {
+  await db.update(PND).set({
+    status: "sent", sentAt: new Date(), lockedAt: null,
+    lastErrorCode: null, updatedAt: new Date(),
+  }).where(eq(PND.id, id));
+}
+
+/** يُخطّى بلا محاولة أخرى — جهةٌ سُحبت مثلاً. ليس فشلاً فلا يُعاد. */
+export async function markSkipped(id: number, code?: DeliveryErrorCode | null): Promise<void> {
+  await db.update(PND).set({
+    status: "skipped", lockedAt: null,
+    lastErrorCode: code ?? null, updatedAt: new Date(),
+  }).where(eq(PND.id, id));
+}
+
+export async function markFailed(
+  id: number,
+  attemptCount: number,
+  code: DeliveryErrorCode,
+): Promise<void> {
+  const next = attemptCount + 1;
+  await db.update(PND).set({
+    status: "failed",
+    attemptCount: next,
+    nextAttemptAt: new Date(Date.now() + backoffFor(next)),
+    lockedAt: null,
+    lastErrorCode: code,
+    updatedAt: new Date(),
+  }).where(eq(PND.id, id));
+}
+
+/** جهة الاتصال **لحظة الإرسال** — لا نسخة مخزَّنة عنها في الصادر. */
+export async function contactForDelivery(contactId: number): Promise<
+  { id: number; channel: string; externalId: string; revokedAt: Date | null } | null
+> {
+  const [row] = await db.select({
+    id: patientContacts.id,
+    channel: patientContacts.channel,
+    externalId: patientContacts.externalId,
+    revokedAt: patientContacts.revokedAt,
+  }).from(patientContacts).where(eq(patientContacts.id, contactId)).limit(1);
+  return row ?? null;
+}
+
+/** للاختبارات والتشخيص — لا يُستدعى من مسار إنتاج. */
+export async function deliveriesForPatient(patientId: number): Promise<PatientNotificationDelivery[]> {
+  return db.select().from(PND).where(eq(PND.patientId, patientId)).orderBy(PND.id);
+}
+
+export { PND as deliveriesTable };
+export const DELIVERY_STATUSES: DeliveryStatus[] = ["pending", "processing", "sent", "failed", "skipped"];
+export { and, eq, inArray, isNull, lte, or };

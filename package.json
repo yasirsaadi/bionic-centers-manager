@@ -18,6 +18,7 @@
     "test:patient-identity": "tsx server/patient_contacts/identity.test.ts",
     "test:communication-api": "tsx server/patient_contacts/api.test.ts",
     "test:patient-telegram": "tsx server/patient_telegram/link.test.ts",
+    "test:notifications": "tsx server/patient_notifications/outbox.test.ts",
     "telegram:patient-webhook": "tsx scripts/patient_telegram_webhook.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",

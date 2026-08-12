@@ -29,6 +29,9 @@ import { createHash, timingSafeEqual } from "crypto";
 import { redeemLinkToken, LinkTokenError } from "../patient_contacts/store";
 import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
 import { sendMessage } from "./client";
+// الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
+import { enqueueLinkWelcome } from "../patient_notifications/welcome";
+import { nudgeDispatcher } from "../patient_notifications/dispatcher";
 
 export { PATIENT_WEBHOOK_PATH };
 const SECRET_HEADER = "x-telegram-bot-api-secret-token";
@@ -119,10 +122,10 @@ export function registerPatientTelegramWebhook(app: Express) {
       // فهو يتغيّر، ولا رقم هاتف — ولا ندّعي تحقّقاً لم يجرِ.
       const externalId = String(fromId);
 
-      let linked = false;
+      let linked: { contactId: number; patientId: number } | null = null;
       try {
-        await redeemLinkToken({ rawToken: payload, externalId });
-        linked = true;
+        const result = await redeemLinkToken({ rawToken: payload, externalId });
+        linked = { contactId: result.contact.id, patientId: result.contact.patientId };
       } catch (err) {
         if (!(err instanceof LinkTokenError)) throw err;
         // منتهية · مسحوبة · مستهلَكة · غير موجودة ⇒ نصٌّ واحد.
@@ -130,8 +133,21 @@ export function registerPatientTelegramWebhook(app: Express) {
         // وبلا 500، وبلا تغيير صلة — وهو المطلوب من إعادة المحاولة.
       }
 
-      // بعد القاعدة لا قبلها، وفشلُه لا يُلغي ما تمّ.
-      await sendMessage(chatId, linked ? MESSAGES.linked : MESSAGES.invalid);
+      if (linked === null) {
+        // لا جهة اتصال ⇒ لا صفّ صادر يُستحقّ له. الردّ مباشر.
+        await sendMessage(chatId, MESSAGES.invalid);
+        return res.json({ ok: true });
+      }
+
+      // **الترحيب عبر الصادر لا إرسالاً مباشراً**: فيستفيد من إعادة
+      // المحاولة كغيره، ومعه لقطةُ حالة الجهاز الآن — بلا سجلٍّ رجعي.
+      // وفشلُ أيٍّ من ذلك لا يمسّ ربطاً تمّ في القاعدة.
+      await enqueueLinkWelcome({
+        patientId: linked.patientId,
+        patientContactId: linked.contactId,
+      });
+      // كبسة كي يصل الترحيب في ثوانٍ لا في دقيقة. «أطلق وانسَ».
+      nudgeDispatcher();
       return res.json({ ok: true });
     } catch (err) {
       // خطأ غير متوقَّع (قاعدة بيانات مثلاً): **500 عمداً** كي يعيد تلغرام
