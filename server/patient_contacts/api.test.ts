@@ -39,6 +39,8 @@ const PORT = 6791;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-نقاط-التواصل";
 const ADMIN = 9701, MANAGER1 = 9702, MANAGER2 = 9703, RECEPTION = 9704, RECEPTION_NO = 9705;
+// دورٌ غير مؤهَّل يحمل canViewPatients — الحالة التي كان الحارس القديم يمرّرها.
+const OUTSIDER = 9706;
 
 const S = {
   admin:      { userId: ADMIN,     role: "admin",          isAdmin: true,  branchId: 0, accessibleBranches: [],  permissions: {} },
@@ -63,7 +65,7 @@ async function req(method: string, path: string, session: any, body?: any) {
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
-  await pool.query(`DELETE FROM audit_log WHERE entity_type IN ('patient_link_token','patient_contact') AND user_id IN (${[ADMIN, MANAGER1, MANAGER2, RECEPTION, RECEPTION_NO].join(",")})`);
+  await pool.query(`DELETE FROM audit_log WHERE entity_type IN ('patient_link_token','patient_contact') AND user_id IN (${[ADMIN, MANAGER1, MANAGER2, RECEPTION, RECEPTION_NO, OUTSIDER].join(",")})`);
   await pool.query(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
@@ -88,7 +90,7 @@ const REVOKE_CONTACT = (p: number, c: number) => `/api/patients/${p}/communicati
 async function main() {
   await pool.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await pool.query(`INSERT INTO branches (id,name) VALUES (2,'البصرة') ON CONFLICT DO NOTHING`);
-  for (const [id, role, branch] of [[ADMIN,"admin",1],[MANAGER1,"branch_manager",1],[MANAGER2,"branch_manager",2],[RECEPTION,"reception",1],[RECEPTION_NO,"reception",1]] as any[]) {
+  for (const [id, role, branch] of [[ADMIN,"admin",1],[MANAGER1,"branch_manager",1],[MANAGER2,"branch_manager",2],[RECEPTION,"reception",1],[RECEPTION_NO,"reception",1],[OUTSIDER,"therapist",1]] as any[]) {
     await pool.query(
       `INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
        VALUES ($1,$2,'x','موظّف',$3,$4,$5::jsonb,true) ON CONFLICT (id) DO NOTHING`,
@@ -132,6 +134,35 @@ async function main() {
     // ومَن لا يملك الوصول إلى المرضى لا يمرّ ولو كان في الفرع نفسه.
     r = await req("POST", ISSUE(p1), S.receptionNo, { channel: "telegram", relation: "self" });
     same("والاستقبال بلا صلاحية الوصول ⇒ 403", r.status, 403);
+
+    // ── الدور شرطٌ أوّل لا تعوّضه صلاحية قراءة ──────────────────────────
+    // `canViewPatients` يحملها الطبيب والمعالج والمحاسب وخبير الأطراف
+    // لأنهم يقرؤون الملفّ لعملهم. وإصدارُ رابطٍ يربط حساباً خارجياً بملفّ
+    // مريض عملٌ إداري لا سريري — فلا تفتحه صلاحيةُ القراءة لأيٍّ منهم.
+    console.log("\n── دورٌ غير مؤهَّل ومعه canViewPatients=true وفي الفرع نفسه ──");
+    for (const role of ["therapist", "doctor", "accountant", "prosthetics_expert"]) {
+      const S_other = {
+        userId: OUTSIDER, role, isAdmin: false, branchId: 1,
+        accessibleBranches: [1], permissions: { canViewPatients: true },
+      };
+      const issue = await req("POST", ISSUE(p1), S_other, { channel: "telegram", relation: "self" });
+      const read = await req("GET", STATUS(p1), S_other);
+      const revTok = await req("POST", REVOKE_TOKEN(p1, adminTokenId), S_other);
+      const revCon = await req("POST", REVOKE_CONTACT(p1, 1), S_other);
+      same(`«${role}» ممنوع من النقاط الأربع كلّها`,
+        [issue.status, read.status, revTok.status, revCon.status], [403, 403, 403, 403]);
+      check(!issue.json?.rawToken, `ولا نصّ خام لـ«${role}»`);
+    }
+    // والإثبات الحاسم: نفس المستخدم بنفس الصلاحية، والفارق الدور وحده.
+    const asTherapist = { userId: OUTSIDER, role: "therapist", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: { canViewPatients: true } };
+    const asReception = { ...asTherapist, role: "reception" };
+    const t1 = await req("GET", STATUS(p1), asTherapist);
+    const t2 = await req("GET", STATUS(p1), asReception);
+    same("فـ`canViewPatients` وحدها لا تمنح إدارة التواصل — الدور هو الفارق",
+      [t1.status, t2.status], [403, 200]);
+    // ولا التذكرة التي حاول إلغاءها مُسّت.
+    const [survived] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, adminTokenId));
+    check(survived.revokedAt === null, "ولم تُلمس تذكرةٌ في أي محاولة منها", String(survived.revokedAt));
     // ولا جلسة أصلاً ⇒ 401، فالحارس قبل كل شيء.
     const anon = await fetch(BASE + ISSUE(p1), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -304,6 +335,105 @@ async function main() {
     check(!allDump.includes(secret) && !allDump.includes(raw),
       "ولا سرّ في أيٍّ منها");
 
+    // ══ معرّفات المسار: أعداد صحيحة أو ٤٠٠ ═══════════════════════════════
+    // `Math.round` كانت تحوّل `…/1.7/revoke` إلى التذكرة **٢** — صفٌّ لم
+    // يطلبه أحد يُلغى بناءً على رقمٍ لم يُرسَل. فالجارُ هنا هو الضحيّة.
+    console.log("\n── معرّفات عشرية: ٤٠٠ ولا صفّ يُلمَس ──");
+    {
+      const pd = await mkPatient("مريض المعرّفات", 1);
+      const a = await createLinkToken({ patientId: pd, channel: "telegram", relation: "self" });
+      const b = await createLinkToken({ patientId: pd, channel: "telegram", relation: "guardian" });
+      // متتاليان: التقريب من `a.id + 0.7` كان يصيب `b` تماماً.
+      check(b.token.id === a.token.id + 1, "تذكرتان متجاورتان بالمعرّف", `${a.token.id}, ${b.token.id}`);
+
+      const decimal = await req("POST", REVOKE_TOKEN(pd, (a.token.id + 0.7) as any), S.admin);
+      same("المعرّف العشري ⇒ 400", decimal.status, 400);
+      const [neighbour] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, b.token.id));
+      check(neighbour.revokedAt === null, "**والجار الذي كان التقريب يصيبه لم يُمسّ**", String(neighbour.revokedAt));
+      const [self] = await db.select().from(patientLinkTokens).where(eq(patientLinkTokens.id, a.token.id));
+      check(self.revokedAt === null, "ولا التذكرة المقصودة نفسها", String(self.revokedAt));
+
+      for (const bad of ["1.2", "1.7", "0", "-1", "NaN", "Infinity", "abc", "1e999"]) {
+        const rr = await req("POST", REVOKE_TOKEN(pd, bad as any), S.admin);
+        same(`و«${bad}» ⇒ 400`, rr.status, 400);
+      }
+
+      // وجهة الاتصال بنفس القاعدة.
+      const cd = await redeemLinkToken({ rawToken: a.rawToken, externalId: "tg-dec-1" });
+      const decC = await req("POST", REVOKE_CONTACT(pd, (cd.contact.id + 0.5) as any), S.admin);
+      same("ومعرّف جهة اتصال عشري ⇒ 400", decC.status, 400);
+      const [contactStill] = await db.select().from(patientContacts).where(eq(patientContacts.id, cd.contact.id));
+      check(contactStill.revokedAt === null, "والجهة لم تُسحَب", String(contactStill.revokedAt));
+
+      // ومعرّف المريض نفسه: ٤٠٠ صراحةً لا ٤٠٤ يوحي بأن الرقم صالح.
+      const decP = await req("GET", `/api/patients/${pd + 0.5}/communication`, S.admin);
+      same("ومعرّف مريض عشري ⇒ 400", decP.status, 400);
+      // والصحيح يمرّ كالمعتاد — الصرامة لم تكسر الطريق السليم.
+      const okP = await req("GET", STATUS(pd), S.admin);
+      same("والصحيح يمرّ", okP.status, 200);
+    }
+
+    // ══ حاجب السجلّ: يحجب في كل عمق ويُبقي التواريخ ══════════════════════
+    console.log("\n── حاجب السجلّ ──");
+    {
+      same("النصّ الخام في المستوى الأول محجوب",
+        redactForLog({ rawToken: "SECRET", tokenId: 5 }),
+        { rawToken: "[محجوب]", tokenId: 5 });
+
+      // أعمق من ٦ — السقف القديم كان يُعيد ما تحته **كما هو**.
+      let deep: any = { rawToken: "DEEP-SECRET" };
+      for (let i = 0; i < 12; i++) deep = { level: i, inner: deep };
+      const deepOut = JSON.stringify(redactForLog(deep));
+      check(!deepOut.includes("DEEP-SECRET"), "والمدفون تحت ١٢ مستوى محجوب أيضاً", deepOut.slice(0, 200));
+      check(deepOut.includes("[محجوب]"), "وأثر الحجب ظاهر في العمق");
+
+      // داخل مصفوفات داخل كائنات.
+      const nested = { items: [{ a: 1 }, { creds: [{ tokenHash: "H1" }, { password: "P1" }] }] };
+      const nestedOut = JSON.stringify(redactForLog(nested));
+      check(!nestedOut.includes("H1") && !nestedOut.includes("P1"),
+        "والمصفوفات داخل الكائنات تُفحَص كذلك", nestedOut);
+      for (const key of ["rawToken", "tokenHash", "token_hash", "password", "passwordHash", "password_hash"]) {
+        const out = JSON.stringify(redactForLog({ deep: { deeper: { [key]: "X-SECRET" } } }));
+        check(!out.includes("X-SECRET"), `و«${key}» محجوب في العمق`, out);
+      }
+
+      // **التواريخ تبقى تواريخ**: تفكيكها كان يجعل كل تاريخ في كل سطر
+      // سجلّ `/api` يصير `{}` — والمواعيد والانتهاء والتسجيل كلّها تواريخ.
+      const when = new Date("2026-08-12T10:30:00.000Z");
+      same("والتاريخ يبقى بصيغته لا `{}`",
+        JSON.parse(JSON.stringify(redactForLog({ expiresAt: when }))),
+        { expiresAt: "2026-08-12T10:30:00.000Z" });
+      same("وداخل مصفوفة كذلك",
+        JSON.parse(JSON.stringify(redactForLog({ rows: [{ createdAt: when }] }))),
+        { rows: [{ createdAt: "2026-08-12T10:30:00.000Z" }] });
+      // والردّ الحقيقي للنقطة: تاريخ سليم ونصّ محجوب معاً.
+      const realShape = { tokenId: 1, rawToken: "R", channel: "telegram", relation: "self", expiresAt: when };
+      same("وردّ الإصدار الحقيقي: التاريخ سليم والنصّ محجوب",
+        JSON.parse(JSON.stringify(redactForLog(realShape))),
+        { tokenId: 1, rawToken: "[محجوب]", channel: "telegram", relation: "self", expiresAt: "2026-08-12T10:30:00.000Z" });
+
+      // ولا يُعدَّل الأصل — الاستجابة تُرسل إلى العميل كما بناها المسار.
+      const original: any = { rawToken: "KEEP-ME", nested: { password: "KEEP-TOO" }, at: when };
+      const snapshot = JSON.stringify(original);
+      redactForLog(original);
+      same("والكائن الأصلي لم يتغيّر", JSON.stringify(original), snapshot);
+      check(original.at instanceof Date, "وتاريخه ما زال Date لا نصّاً");
+
+      // والمرجع الدوري يُوقَف بلا انهيار — ولا يُفهَم توأمٌ جنباً إلى جنب دورةً.
+      const cyc: any = { name: "أ" }; cyc.self = cyc;
+      const cycOut = JSON.stringify(redactForLog(cyc));
+      check(cycOut.includes("مرجع دوري"), "والمرجع الدوري يُوقَف بعلامة", cycOut);
+      const shared = { v: 1 };
+      same("والكائن المشترك مرّتين ليس دورة",
+        redactForLog({ a: shared, b: shared }), { a: { v: 1 }, b: { v: 1 } });
+
+      // والسجلّ ما زال يمرّ عبر الحاجب — فحص ساكن، بلا إعادة تصميم.
+      const indexSrc = readFileSync(join(import.meta.dirname, "..", "index.ts"), "utf8");
+      check(/redactForLog\(capturedJsonResponse\)/.test(indexSrc),
+        "و`index.ts` ما زال يمرّر جسم الاستجابة عبر الحاجب");
+      check(/from "\.\/log_redaction"/.test(indexSrc), "ويستورده من وحدته");
+    }
+
     // ══ ٢٠. لا باب عامّ للاستهلاك ════════════════════════════════════════
     // فحص ساكن على **كل** ملفّ نقاط في الخادم: `redeemLinkToken` لا تُستدعى
     // من أي مسار HTTP. الدالّة داخلية حتى تُحسم معمارية القناة الخارجية.
@@ -342,7 +472,7 @@ async function main() {
   }
 
   await cleanup();
-  await pool.query(`DELETE FROM system_users WHERE id IN (${[ADMIN, MANAGER1, MANAGER2, RECEPTION, RECEPTION_NO].join(",")})`);
+  await pool.query(`DELETE FROM system_users WHERE id IN (${[ADMIN, MANAGER1, MANAGER2, RECEPTION, RECEPTION_NO, OUTSIDER].join(",")})`);
   console.log(failures === 0 ? "\n✅ all communication-api cases pass" : `\n❌ ${failures} case(s) failed`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);

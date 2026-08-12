@@ -70,15 +70,33 @@ function branchScope(req: Req): number[] | null {
 }
 
 /**
- * الدور المؤهَّل — قبل النظر في الفرع. الاستقبال يمرّ بصلاحية الوصول إلى
- * المرضى، وهي بعينها ما اشترطه المالك: «إذا كان لديه صلاحية الوصول إلى
- * المريض في فرعه».
+ * الدور المؤهَّل — قبل النظر في الفرع.
+ *
+ * ── العقد بالحرف ────────────────────────────────────────────────────────
+ *   admin           ⇒ مسموح، وفي كل الفروع.
+ *   branch_manager  ⇒ مسموح، ضمن فروعه.
+ *   reception       ⇒ مسموح **إن** حمل `canViewPatients`، وضمن فروعه.
+ *   وأي دورٍ آخر    ⇒ ممنوع، **ولو حمل `canViewPatients`**.
+ *
+ * ── ولماذا لا تكفي الصلاحية وحدها ───────────────────────────────────────
+ * `canViewPatients` تعني «يرى ملفّات المرضى»، ويحملها اليوم الطبيب
+ * والمعالج والمحاسب وخبير الأطراف — لأنهم يحتاجون قراءة الملفّ لعملهم. أما
+ * **إصدار رابطٍ يربط حساباً خارجياً بملفّ مريض** فعملٌ إداري لا سريري ولا
+ * محاسبي: مَن يقرأ الملفّ ليعالج ليس بالضرورة مَن يقرّر أن هذا الحساب يتبع
+ * هذا المريض. فالدور شرطٌ أوّل لا تعوّضه صلاحيةُ قراءة.
+ *
+ * وهي **قائمة بيضاء بالأدوار**: الدور الذي يُضاف بعد سنة يُمنع افتراضاً حتى
+ * يُذكر هنا صراحةً — والسهو يُغلق لا يُفتح.
  */
+const MANAGER_ROLE = "branch_manager";
+const RECEPTION_ROLE = "reception";
+
 function mayManageCommunication(req: Req): boolean {
   const s = getSession(req);
   if (s.isAdmin) return true;
-  if (s.role === "branch_manager") return true;
-  return Boolean(s.permissions?.canViewPatients);
+  if (s.role === MANAGER_ROLE) return true;
+  if (s.role === RECEPTION_ROLE) return Boolean(s.permissions?.canViewPatients);
+  return false;
 }
 
 interface ScopedPatient { id: number; branchId: number }
@@ -91,8 +109,10 @@ interface ScopedPatient { id: number; branchId: number }
  * يكتب الردّ بنفسه ويُرجع `null` عند المنع، فتبقى النقطة سطراً واحداً.
  */
 async function resolvePatient(req: Req, res: any): Promise<ScopedPatient | null> {
-  const patientId = Number(req.params.patientId);
-  if (!Number.isFinite(patientId) || patientId <= 0) {
+  // نفس الصرامة لمعرّف المريض: `/patients/5.5/...` طلبٌ خاطئ لا مريضٌ يُبحث
+  // عنه، فيُردّ ٤٠٠ صراحةً بدل ٤٠٤ يوحي بأن الرقم صالح والمريض غير موجود.
+  const patientId = pathId(req.params.patientId);
+  if (patientId === null) {
     res.status(400).json({ message: "معرّف مريض غير صالح" });
     return null;
   }
@@ -113,10 +133,21 @@ async function resolvePatient(req: Req, res: any): Promise<ScopedPatient | null>
   return { id: patientId, branchId: patient.branchId };
 }
 
-/** معرّف موجب من المسار، أو `null`. */
+/**
+ * معرّف من المسار: **عدد صحيح موجب أو لا شيء**.
+ *
+ * ولا تقريب إطلاقاً. `Math.round` كانت تحوّل `/link-tokens/1.7/revoke` إلى
+ * التذكرة **٢** — صفٌّ لم يطلبه أحد، يُلغى بناءً على رقمٍ لم يُرسَل. وطلبٌ
+ * بمعرّف غير صحيح خطأٌ في الطلب لا نيّةٌ تُخمَّن، فيُردّ ٤٠٠ ولا يُلمس صفّ.
+ *
+ * وهي مضبوطة على `0` و`-1` و`1.2` و`NaN` و`Infinity` و`""` وكلّها ترجع
+ * `null`. (و`Number.isInteger` تكفي وحدها عن `isFinite`: اللانهاية ليست
+ * صحيحة، والـNaN كذلك.)
+ */
 function pathId(raw: unknown): number | null {
+  if (typeof raw === "string" && raw.trim() === "") return null;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export function registerPatientCommunicationRoutes(app: Express, isAuthenticated: any) {

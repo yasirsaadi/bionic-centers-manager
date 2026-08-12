@@ -27,18 +27,52 @@ export const REDACTED_LOG_KEYS = new Set([
 
 export const REDACTION_MASK = "[محجوب]";
 
+/** ما يحلّ محلّ مرجعٍ يعود على نفسه — وحده يوقف النزول. */
+export const CYCLE_MARK = "[مرجع دوري]";
+
 /**
- * نسخة من القيمة صالحة للطباعة: كل حقل اسمه في القائمة تُستبدل قيمته.
+ * نسخة من القيمة صالحة للطباعة: كل حقل اسمه في القائمة تُستبدل قيمته،
+ * **مهما بلغ عمقه**.
  *
- * لا يُعدّل الأصل — الاستجابة تُرسل كما هي إلى العميل، والمحجوب هو ما
- * يُكتب في السجلّ وحده. والعمق محدود كي لا تدور بنيةٌ ذاتية المرجع.
+ * ── لا سقف للعمق ────────────────────────────────────────────────────────
+ * السقف الذي يُعيد ما تحته كما هو ليس تخفيفاً بل ثغرة: يكفي أن يقع السرّ
+ * تحته ليمرّ كاملاً — ورصُّ الردود المتداخلة ليس أمراً نادراً. فالنزول
+ * يكتمل دائماً، والذي يوقفه هو المرجع الدوري وحده، يُمسك بـ`WeakSet`
+ * على **المسار الحالي** لا على كل ما رُئي: بنيةٌ تشير إلى الكائن نفسه
+ * مرّتين جنباً إلى جنب ليست دورةً، والحذف بعد الفراغ يبقيها مقروءة.
+ *
+ * ── وما يُترك كما هو ────────────────────────────────────────────────────
+ * القيمة التي تحمل `toJSON` يعرف `JSON.stringify` كيف يكتبها، وأشهرها
+ * `Date`. وتفكيكها هنا كان يمحوها: `Object.entries(new Date())` مصفوفة
+ * فارغة، فكان كل تاريخ في كل سطر سجلّ `/api` يصير `{}` — ومواعيد
+ * التسليم والانتهاء والتسجيل كلّها تواريخ. فتُعاد كما هي ويكتبها
+ * `JSON.stringify` بصيغتها المعتادة.
+ *
+ * ── ولا يُعدّل الأصل ────────────────────────────────────────────────────
+ * الاستجابة تُرسل إلى العميل كما بناها المسار؛ المحجوب نسخةٌ للسجلّ وحده.
  */
-export function redactForLog(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map((v) => redactForLog(v, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = REDACTED_LOG_KEYS.has(k) ? REDACTION_MASK : redactForLog(v, depth + 1);
+export function redactForLog(value: unknown): unknown {
+  return redact(value, new WeakSet<object>());
+}
+
+function redact(value: unknown, path: WeakSet<object>): unknown {
+  if (value === null || typeof value !== "object") return value;
+
+  const obj = value as Record<string, unknown>;
+
+  // `Date` وأخواتها: تُكتب بـ`toJSON` لا بحقولها، فتُعاد كما هي.
+  if (typeof obj.toJSON === "function") return value;
+
+  if (path.has(obj)) return CYCLE_MARK;
+  path.add(obj);
+  try {
+    if (Array.isArray(value)) return value.map((v) => redact(v, path));
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = REDACTED_LOG_KEYS.has(k) ? REDACTION_MASK : redact(v, path);
+    }
+    return out;
+  } finally {
+    path.delete(obj);
   }
-  return out;
 }
