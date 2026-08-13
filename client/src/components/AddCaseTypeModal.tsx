@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
@@ -21,6 +21,18 @@ interface AddCaseTypeModalProps {
     isPhysiotherapy?: boolean | null;
     isMedicalSupport?: boolean | null;
   };
+  /**
+   * فتحٌ **موجَّه** من موزِّع الخدمات: النافذة تُدار من الخارج وتفتح على
+   * النوع المطلوب مباشرةً، بلا زرٍّ خاصّ بها.
+   *
+   * والمنطق واحد لا اثنان: لا شيء هنا يتفرّع على مصدر الفتح — النداء نفسه،
+   * والحمولة نفسها (`serviceCost: 0, paidNow: 0`)، والتحويل نفسه إلى صفحة
+   * الحقول الكاملة. المتغيّر هو **مَن يفتح** لا **ماذا يجري**.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialCaseType?: string;
+  hideTrigger?: boolean;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -34,9 +46,20 @@ const TYPE_LABELS: Record<string, string> = {
 // now needs a medical support), this dialog activates the new case type on
 // the SAME record — with expert assignment for manufacturing types, and an
 // optional cost + partial payment.
-export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
-  const [open, setOpen] = useState(false);
-  const [caseType, setCaseType] = useState<string>("");
+export function AddCaseTypeModal({
+  patient, open: openProp, onOpenChange, initialCaseType, hideTrigger,
+}: AddCaseTypeModalProps) {
+  const [openSelf, setOpenSelf] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openSelf;
+  const setOpen = (v: boolean) => { if (!controlled) setOpenSelf(v); onOpenChange?.(v); };
+  const [caseType, setCaseType] = useState<string>(initialCaseType ?? "");
+
+  // النوع الموجَّه يُثبَّت عند كل فتح: نافذةٌ أُغلقت ثم فُتحت على نوعٍ آخر
+  // كانت ستحمل اختيار المرّة السابقة.
+  useEffect(() => {
+    if (open && initialCaseType) setCaseType(initialCaseType);
+  }, [open, initialCaseType]);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -80,20 +103,24 @@ export function AddCaseTypeModal({ patient }: AddCaseTypeModalProps) {
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  function reset() { setCaseType(""); }
+  function reset() { setCaseType(initialCaseType ?? ""); }
 
   const canSubmit = !!caseType && !isPending;
 
+  // بلا نوعٍ ناقص لا شيء يُضاف — ويبقى هذا صحيحاً في الوضعين. والموزِّع
+  // يعطّل الخيار قبل ذلك، فلا يصل إلى هنا أصلاً.
   if (missingTypes.length === 0) return null;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); setOpen(v); }}>
+      {!hideTrigger && (
       <DialogTrigger asChild>
         <Button variant="outline" className="gap-2 border-teal-300 text-teal-700 hover:bg-teal-50" data-testid="button-add-case-type">
           <Layers className="w-4 h-4" />
           إضافة نوع حالة
         </Button>
       </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-[500px]" dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-xl text-primary">إضافة نوع حالة لنفس المريض</DialogTitle>

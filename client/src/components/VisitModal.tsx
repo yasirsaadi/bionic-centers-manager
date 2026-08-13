@@ -30,11 +30,15 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import { PlusCircle, Loader2, Calendar, Wrench } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { invalidatePatientData } from "@/lib/queryClient";
+import {
+  needsMaintenanceChoice, ownedDeviceTypes, resolveMaintenanceServiceType,
+  MAINTENANCE_TYPE_LABELS,
+} from "./patient_service_launcher_logic";
 
 interface VisitModalProps {
   patientId: number;
@@ -44,6 +48,19 @@ interface VisitModalProps {
   // these enable the "غرض الزيارة: صيانة" path (expert + delivery date).
   isAmputee?: boolean;
   isMedicalSupport?: boolean;
+  /**
+   * فتحٌ **موجَّه** من موزِّع الخدمات — على «صيانة» مباشرةً.
+   *
+   * والصيانة تبقى **هنا** عمداً: هي زيارةٌ وأمرُ صيانة وخبيرٌ وأجورٌ تُنشأ
+   * معاً في معاملة واحدة عبر `maintenance-visit`. تمريرها بـ`new-service`
+   * كان سيفصل المال عن أمره — والخادم يرفضها هناك أصلاً، وهو محقّ.
+   *
+   * وزرّ «تسجيل زيارة جديدة» يبقى كما كان: بلا `open` تعمل النافذة بزرّها.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialPurpose?: "visit" | "maintenance";
+  hideTrigger?: boolean;
 }
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -69,8 +86,14 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport }: VisitModalProps) {
-  const [open, setOpen] = useState(false);
+export function VisitModal({
+  patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport,
+  open: openProp, onOpenChange, initialPurpose, hideTrigger,
+}: VisitModalProps) {
+  const [openSelf, setOpenSelf] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openSelf;
+  const setOpen = (v: boolean) => { if (!controlled) setOpenSelf(v); onOpenChange?.(v); };
   const { mutate, isPending } = useAddVisit();
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -79,7 +102,9 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
 
   // Maintenance path — only offered to patients who own a device.
   const hasDevice = !!isAmputee || !!isMedicalSupport;
-  const [purpose, setPurpose] = useState<"visit" | "maintenance">("visit");
+  const [purpose, setPurpose] = useState<"visit" | "maintenance">(initialPurpose ?? "visit");
+  // أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد لا يُسأل.
+  const [maintServiceType, setMaintServiceType] = useState<string>("");
   const [maintCost, setMaintCost] = useState<number>(0);
   // Which of the patient's cases this visit belongs to. Multi-case patients
   // pick explicitly — the form used to FORCE a physio treatment type, so a
@@ -116,6 +141,11 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
     },
   });
 
+  // الغرض الموجَّه يُثبَّت عند كل فتح، لا مرّةً واحدة عند التركيب.
+  useEffect(() => {
+    if (open && initialPurpose) setPurpose(initialPurpose);
+  }, [open, initialPurpose]);
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -128,7 +158,8 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   });
 
   const resetAll = () => {
-    setPurpose("visit"); setExpertUserId(""); setExpectedDeliveryDate(""); setVisitCaseId(null); setMaintCost(0);
+    setPurpose(initialPurpose ?? "visit"); setExpertUserId(""); setExpectedDeliveryDate("");
+    setVisitCaseId(null); setMaintCost(0); setMaintServiceType("");
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
@@ -138,6 +169,10 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
   // has an open build, the server returns 409 and nothing is written.
   async function submitMaintenance(values: z.infer<typeof formSchema>) {
     if (!expertUserId) { toast({ title: "اختر الخبير المسؤول عن الصيانة", variant: "destructive" }); return; }
+    // مريضٌ يحمل طرفاً ومسنداً: النوع **قرارُ الموظّف** لا أوّلُ شرطٍ في
+    // تعبير. وبلا تحديدٍ لا يُبنى طلبٌ نعلم أن الخادم سيردّه.
+    const svc = resolveMaintenanceServiceType({ isAmputee, isMedicalSupport }, maintServiceType);
+    if (!svc) { toast({ title: "حدّد نوع الجهاز المراد صيانته", variant: "destructive" }); return; }
     setMaintPending(true);
     try {
       const res = await fetch("/api/manufacturing/maintenance-visit", {
@@ -146,6 +181,7 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
         credentials: "include",
         body: JSON.stringify({
           patientId, expertUserId: Number(expertUserId),
+          serviceType: svc,
           cost: maintCost,
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
         }),
@@ -189,12 +225,14 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetAll(); }}>
+      {!hideTrigger && (
       <DialogTrigger asChild>
         <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20" data-testid="button-add-visit">
           <PlusCircle className="w-4 h-4" />
           {t.modals.registerNewVisit}
         </Button>
       </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
           <DialogTitle className="font-display text-xl text-blue-600">{t.modals.visitReason}</DialogTitle>
@@ -312,6 +350,30 @@ export function VisitModal({ patientId, branchId, isPhysiotherapy, isAmputee, is
             {/* حقول الصيانة — الخبير فقط؛ تاريخ التسليم يحدّده الخبير عند أخذ القالب */}
             {purpose === "maintenance" && (
               <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                {/* أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد
+                    لا يرى هذا الحقل ولا يتغيّر عنده شيء. */}
+                {needsMaintenanceChoice({ isAmputee, isMedicalSupport }) && (
+                  <FormItem>
+                    <FormLabel>الجهاز المراد صيانته <span className="text-red-500">*</span></FormLabel>
+                    <div className="flex flex-wrap gap-2">
+                      {ownedDeviceTypes({ isAmputee, isMedicalSupport }).map((tpe) => (
+                        <Button
+                          key={tpe}
+                          type="button"
+                          size="sm"
+                          variant={maintServiceType === tpe ? "default" : "outline"}
+                          onClick={() => setMaintServiceType(tpe)}
+                          data-testid={`maintenance-service-${tpe}`}
+                        >
+                          {MAINTENANCE_TYPE_LABELS[tpe]}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      للمريض طرفٌ ومسند معاً — تُقيَّد الصيانة على الجهاز الذي تختاره.
+                    </p>
+                  </FormItem>
+                )}
                 <FormItem>
                   <FormLabel>الخبير المسؤول عن الصيانة <span className="text-red-500">*</span></FormLabel>
                   {experts.length === 0 ? (

@@ -41,6 +41,17 @@ interface NewServiceModalProps {
   branchId: number;
   currentTotalCost: number;
   isPhysiotherapy?: boolean;
+  /**
+   * فتحٌ **موجَّه** من موزِّع الخدمات، مع نوع الخدمة مختاراً سلفاً — فلا
+   * يُطلَب من الموظّف أن يعيد اختيار ما اختاره قبل سطر واحد.
+   *
+   * والقائمة تبقى ظاهرةً قابلةً للتغيير: التوجيه اختصارٌ لا حجْب.
+   * والمحاسبة والدفع والجلسات لم يُمَسّ منها شيء.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialServiceType?: string;
+  hideTrigger?: boolean;
 }
 
 interface TreatmentEntry {
@@ -75,8 +86,14 @@ const TREATMENT_PRICES: Record<string, number> = {
   "أبر صينية": 25000,
 };
 
-export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
-  const [open, setOpen] = useState(false);
+export function NewServiceModal({
+  patientId, branchId, currentTotalCost, isPhysiotherapy,
+  open: openProp, onOpenChange, initialServiceType, hideTrigger,
+}: NewServiceModalProps) {
+  const [openSelf, setOpenSelf] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openSelf;
+  const setOpen = (v: boolean) => { if (!controlled) setOpenSelf(v); onOpenChange?.(v); };
   // One token per opened form. The same click always carries the same token,
   // so a re-sent request is recognised and ignored by the server; a genuinely
   // new service means opening the form again, which mints a new token — so a
@@ -140,6 +157,12 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
       notes: "",
     },
   });
+
+  // نوع الخدمة الموجَّه يُثبَّت عند كل فتح — لا مرّةً واحدة: نافذةٌ أُغلقت
+  // ثم فُتحت على خدمة أخرى كانت ستحمل اختيار المرّة السابقة.
+  useEffect(() => {
+    if (open && initialServiceType) form.setValue("serviceType", initialServiceType);
+  }, [open, initialServiceType, form]);
 
   useEffect(() => {
     if (!isPhysiotherapy) return;
@@ -238,12 +261,14 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
         setOpen(next);
       }}
     >
+      {!hideTrigger && (
       <DialogTrigger asChild>
         <Button variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" data-testid="button-new-service">
           <RefreshCcw className="w-4 h-4" />
           {t.modals.addNewService}
         </Button>
       </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
           <DialogTitle className="font-display text-xl text-primary">{t.modals.addNewServiceForPatient}</DialogTitle>
@@ -257,7 +282,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t.modals.serviceType}</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-service-type">
                         <SelectValue placeholder={t.modals.selectServiceType} />
