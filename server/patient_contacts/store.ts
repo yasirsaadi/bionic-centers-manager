@@ -204,16 +204,31 @@ export interface RedeemResult {
  * ولا تُطبَّق. والتعديل في مكانه يمحو أن العلاقة كانت يوماً وصاية.
  * فالقديمة **تُختَم** والجديدة تُنشأ: صفّان، نشِطٌ واحد، وتاريخٌ كامل.
  */
-export async function redeemLinkToken(params: {
-  rawToken: string;
-  /** معرّف الحساب الخارجي — نصّ دائماً. */
-  externalId: string;
-}): Promise<RedeemResult> {
+export async function redeemLinkToken(
+  params: {
+    rawToken: string;
+    /** معرّف الحساب الخارجي — نصّ دائماً. */
+    externalId: string;
+  },
+  /**
+   * معاملة خارجية اختيارية.
+   *
+   * ── لماذا ───────────────────────────────────────────────────────────────
+   * الاستهلاك وحده ذرّي، لكن ما يتبعه ليس منه: مَن يربط حسابه يستحقّ رسالة
+   * ترحيب وحالةَ جهازه. فلو حُفظ الاستهلاك ثم فشل استحقاق الرسائل، لبقيت
+   * التذكرة مستهلَكة والجهة مربوطة **والترحيب ضائعاً إلى الأبد** — لا سبيل
+   * لإعادة توليده لأن التذكرة لا تُستهلَك مرّتين.
+   *
+   * فمرّر معاملتك ليقع الكلّ فيها: إمّا ربطٌ ورسائله، وإمّا لا شيء يُحفظ.
+   * والمستدعون القدامى الذين لا يمرّرون شيئاً يفتح لهم معاملته كما كان.
+   */
+  outerTx?: DbTransaction,
+): Promise<RedeemResult> {
   const externalId = String(params.externalId ?? "").trim();
   if (!externalId) throw new Error("redeemLinkToken: externalId is required");
   const tokenHash = hashToken(params.rawToken ?? "");
 
-  return await db.transaction(async (tx) => {
+  const run = async (tx: DbTransaction): Promise<RedeemResult> => {
     // القفل أولاً: من هنا حتى نهاية المعاملة لا يستطيع مستهلِكٌ آخر أن
     // يقرأ هذه التذكرة غير مستهلَكة.
     const [row] = await tx.select().from(patientLinkTokens)
@@ -287,7 +302,9 @@ export async function redeemLinkToken(params: {
     return superseded
       ? { contact, token, createdContact: true, supersededContact: superseded }
       : { contact, token, createdContact: true };
-  });
+  };
+
+  return outerTx ? await run(outerTx) : await db.transaction(run);
 }
 
 // ══ جهات الاتصال ═════════════════════════════════════════════════════════

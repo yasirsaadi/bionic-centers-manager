@@ -70,6 +70,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_pnd_event_contact
   ON patient_notification_deliveries (patient_event_id, patient_contact_id)
   WHERE patient_event_id IS NOT NULL;
 
+-- **ورسالةٌ واحدة من كل نوع ربط لكل جهة.** رسائل الربط بلا حدث، فالفهرس
+-- الأول لا يمسّها (وNULL لا تتصادم أصلاً). وبدون هذا كان ربطٌ ثانٍ لنفس
+-- الجهة يُنتج ترحيباً ثانياً ولقطةً ثانية.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pnd_contact_link_type
+  ON patient_notification_deliveries (patient_contact_id, notification_type)
+  WHERE patient_event_id IS NULL;
+
 -- طابور المستحقّ: ما ينتظر إرساله ووقته حان. جزئي فلا يحمل المرسَل
 -- والمتخطَّى — وهما الأغلبية بعد شهر.
 CREATE INDEX IF NOT EXISTS idx_pnd_due

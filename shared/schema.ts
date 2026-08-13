@@ -263,6 +263,11 @@ export const patientNotificationDeliveries = pgTable("patient_notification_deliv
   uniqueIndex("uq_pnd_event_contact")
     .on(t.patientEventId, t.patientContactId)
     .where(sql`patient_event_id IS NOT NULL`),
+  // ورسالةٌ واحدة من كل نوع ربط لكل جهة — رسائل الربط بلا حدث فلا يمسّها
+  // الفهرس الأول.
+  uniqueIndex("uq_pnd_contact_link_type")
+    .on(t.patientContactId, t.notificationType)
+    .where(sql`patient_event_id IS NULL`),
   index("idx_pnd_due").on(t.nextAttemptAt).where(sql`status IN ('pending', 'failed')`),
   index("idx_pnd_locked").on(t.lockedAt).where(sql`status = 'processing'`),
   index("idx_pnd_patient").on(t.patientId),

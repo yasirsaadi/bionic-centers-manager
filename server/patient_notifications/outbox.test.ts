@@ -10,8 +10,8 @@ import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import * as mfg from "../manufacturing/store";
 import { storage } from "../storage";
-import { createLinkToken, redeemLinkToken, revokeContact } from "../patient_contacts/store";
-import { enqueueLinkWelcome, currentDeviceSnapshot } from "./welcome";
+import { createLinkToken, redeemLinkToken, revokeContact, LinkTokenError } from "../patient_contacts/store";
+import { enqueueLinkWelcome, currentDeviceSnapshot, redeemAndWelcome } from "./welcome";
 import { renderNotification, LINK_NOTIFICATION_TYPES } from "./render";
 import { dispatchOnce } from "./dispatcher";
 import { claimDue, deliveriesForPatient, backoffFor, BACKOFF_MS } from "./outbox";
@@ -440,6 +440,114 @@ async function main() {
     let o12 = await mkOrder(p12, "maintenance");
     o12 = await mfg.updateStage({ order: o12, toStage: "maintenance_repair", performedBy: EXPERT });
     same("٣٠. أمر الصيانة لا يُنشئ صفّ صادر إطلاقاً", (await deliveriesForPatient(p12)).length, 0);
+
+    // ══ اللقطة تشمل الأمر الموقوف — لا `active` وحدها ════════════════════
+    // أمر البناء الحيّ قد يكون موقوفاً لانتظار مواد أو لسبب طبّي أو راجعاً
+    // لإعادة عمل. والجهاز في كلّها في الورشة وصاحبه ينتظره — فاشتراط
+    // `active` كان يحرم أكثر المنتظرين من لقطة حالتهم.
+    console.log("\n── لقطة الحالة لكل أمرٍ حيّ ──");
+    for (const [status, label] of [
+      ["waiting_materials", "انتظار مواد"],
+      ["medical_hold", "إيقاف طبّي"],
+      ["waiting_patient", "انتظار المريض"],
+      ["technical_rework", "إعادة عمل فنّي"],
+    ] as [string, string][]) {
+      const ph = await mkPatient(`مريض ${label}`);
+      const oh = await mkOrder(ph);
+      await pool.query(
+        `UPDATE prosthetic_work_orders SET status = $1, current_stage = 'manufacturing',
+             hold_reason_code = 'materials', hold_note = 'سبب داخلي لا يخرج' WHERE id = $2`,
+        [status, oh.id]);
+      const snapH = await currentDeviceSnapshot(ph);
+      check(snapH !== null, `«${label}» ⇒ للمريض لقطة حالة`, String(snapH));
+      same(`و مرحلتها الحالية`, snapH?.stage, "manufacturing");
+      same(`وبحقلين لا غير`, Object.keys(snapH ?? {}).sort(), ["expectedDeliveryDate", "stage"]);
+      const snapDump = JSON.stringify(snapH);
+      check(!snapDump.includes(status) && !snapDump.includes("materials") && !snapDump.includes("سبب"),
+        `**ولا حالة ولا سبب توقّف في لقطة «${label}»**`, snapDump);
+    }
+    // والمنتهي لا لقطة له.
+    for (const [status, label] of [["completed", "مكتمل"], ["cancelled", "ملغى"]] as [string, string][]) {
+      const pf = await mkPatient(`مريض ${label}`);
+      const of_ = await mkOrder(pf);
+      await pool.query(`UPDATE prosthetic_work_orders SET status = $1 WHERE id = $2`, [status, of_.id]);
+      same(`و«${label}» ⇒ لا لقطة`, await currentDeviceSnapshot(pf), null);
+    }
+
+    // ══ الربط ورسائله ذرّيان ═════════════════════════════════════════════
+    console.log("\n── الاستهلاك ورسائله: الكلّ أو لا شيء ──");
+    const pAtom = await mkPatient("مريض الذرّية");
+    let oAtom = await mkOrder(pAtom);
+    oAtom = await mfg.updateStage({ order: oAtom, toStage: "measurements", performedBy: EXPERT });
+    oAtom = await mfg.updateDeliveryDate({ order: oAtom, expectedDeliveryDate: "2027-01-15", performedBy: EXPERT });
+    await pool.query(`UPDATE prosthetic_work_orders SET status = 'waiting_materials' WHERE id = $1`, [oAtom.id]);
+    const tAtom = await createLinkToken({ patientId: pAtom, channel: "telegram", relation: "self" });
+
+    // نُجبر فشل الصادر بترِكر يرمي — فشلٌ حقيقي في القاعدة لا محاكاة.
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION _test_block_pnd() RETURNS trigger AS $fn$
+      BEGIN RAISE EXCEPTION 'forced outbox failure'; END; $fn$ LANGUAGE plpgsql;
+      CREATE TRIGGER _test_block_pnd BEFORE INSERT ON patient_notification_deliveries
+        FOR EACH ROW EXECUTE FUNCTION _test_block_pnd();
+    `);
+    let atomErr: any = null;
+    try { await redeemAndWelcome({ rawToken: tAtom.rawToken, externalId: "tg-atomic" }); }
+    catch (e) { atomErr = e; }
+    check(atomErr !== null, "٥. فشل الصادر يرمي — ولا يُبتلَع");
+    check(!(atomErr instanceof LinkTokenError), "وهو خطأ تقني لا رفض تذكرة");
+    // والتراجع كامل: لا جهة، ولا استهلاك، ولا صفّ.
+    same("**ولا جهة اتصال جديدة**",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [pAtom])).rows[0].n, 0);
+    const { rows: tokRow } = await pool.query(
+      `SELECT consumed_at, consumed_by_external_id FROM patient_link_tokens WHERE id = $1`, [tAtom.token.id]);
+    check(tokRow[0].consumed_at === null, "**والتذكرة غير مستهلَكة**", String(tokRow[0].consumed_at));
+    check(tokRow[0].consumed_by_external_id === null, "ولا مَن استهلكها");
+    same("ولا صفّ صادر", (await deliveriesForPatient(pAtom)).length, 0);
+
+    // ثم نرفع العائق ونعيد المحاولة — كما يفعل تلغرام بعد 500.
+    await pool.query(`DROP TRIGGER _test_block_pnd ON patient_notification_deliveries; DROP FUNCTION _test_block_pnd();`);
+    const retry = await redeemAndWelcome({ rawToken: tAtom.rawToken, externalId: "tg-atomic" });
+    check(retry.contactId > 0, "٦. وإعادة المحاولة تنجح على التذكرة نفسها");
+    same("وجهة اتصال واحدة",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1`, [pAtom])).rows[0].n, 1);
+    const { rows: tok2 } = await pool.query(
+      `SELECT consumed_at FROM patient_link_tokens WHERE id = $1`, [tAtom.token.id]);
+    check(tok2[0].consumed_at !== null, "والتذكرة استُهلكت مرّة واحدة");
+    const dAtom = await deliveriesForPatient(pAtom);
+    same("والرسائل الثلاث استُحقّت", dAtom.map((d) => d.notificationType).sort(),
+      [LINK_NOTIFICATION_TYPES.CURRENT_STAGE, LINK_NOTIFICATION_TYPES.DELIVERY_DATE, LINK_NOTIFICATION_TYPES.WELCOME].sort());
+    same("ولقطة المرحلة من أمرٍ موقوف",
+      (dAtom.find((d) => d.notificationType === LINK_NOTIFICATION_TYPES.CURRENT_STAGE)!.payload as any).stage,
+      "measurements");
+    same("والموعد", (dAtom.find((d) => d.notificationType === LINK_NOTIFICATION_TYPES.DELIVERY_DATE)!.payload as any),
+      { expectedDeliveryDate: "2027-01-15" });
+
+    // ══ ٧. إعادة ربط الجهة نفسها لا تُكرّر رسائل الربط ═══════════════════
+    const tAgain = await createLinkToken({ patientId: pAtom, channel: "telegram", relation: "self" });
+    await redeemAndWelcome({ rawToken: tAgain.rawToken, externalId: "tg-atomic" });
+    const dAgain = await deliveriesForPatient(pAtom);
+    same("٧. وربطٌ ثانٍ لنفس الجهة ⇒ لا رسائل ربط مكرَّرة", dAgain.length, 3);
+    same("واحدةٌ من كل نوع",
+      [...new Set(dAgain.map((d) => d.notificationType))].length, 3);
+    // والقاعدة نفسها ترفض التكرار.
+    let dupLink = false;
+    try {
+      await pool.query(
+        `INSERT INTO patient_notification_deliveries (patient_id, patient_contact_id, channel, notification_type)
+         VALUES ($1,$2,'telegram','link.welcome')`, [pAtom, retry.contactId]);
+    } catch { dupLink = true; }
+    check(dupLink, "والقاعدة ترفض ترحيباً ثانياً للجهة نفسها");
+
+    // ══ ٨. فشل تلغرام بعد الحفظ لا يتراجع عن شيء ═════════════════════════
+    sent = []; mode = "network";
+    await dispatchOnce(100);
+    const dAfterFail = await deliveriesForPatient(pAtom);
+    same("٨. الرسائل بقيت للمحاولة", dAfterFail.filter((d) => d.status === "failed").length, 3);
+    same("والجهة ما زالت مربوطة",
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM patient_contacts WHERE patient_id = $1 AND revoked_at IS NULL`, [pAtom])).rows[0].n, 1);
+    check((await pool.query(`SELECT consumed_at FROM patient_link_tokens WHERE id = $1`, [tAtom.token.id])).rows[0].consumed_at !== null,
+      "والتذكرة ما زالت مستهلَكة — لا تراجع");
+    mode = "ok";
 
     // ══ الحذف والدمج — القاعدة الملزمة في CLAUDE.md ══════════════════════
     // أي جدول جديد بمفتاح إلى `patients` يجب أن يدخل كاسكيد الحذف **ويُختبَر

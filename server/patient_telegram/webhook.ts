@@ -30,7 +30,7 @@ import { redeemLinkToken, LinkTokenError } from "../patient_contacts/store";
 import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
 import { sendMessage } from "./client";
 // الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
-import { enqueueLinkWelcome } from "../patient_notifications/welcome";
+import { redeemAndWelcome } from "../patient_notifications/welcome";
 import { nudgeDispatcher } from "../patient_notifications/dispatcher";
 
 export { PATIENT_WEBHOOK_PATH };
@@ -122,31 +122,30 @@ export function registerPatientTelegramWebhook(app: Express) {
       // فهو يتغيّر، ولا رقم هاتف — ولا ندّعي تحقّقاً لم يجرِ.
       const externalId = String(fromId);
 
-      let linked: { contactId: number; patientId: number } | null = null;
+      // **الاستهلاك ورسائله في معاملة واحدة.** تعثّرُ القاعدة يُرجِع
+      // الاستهلاك والجهة والصفوف معاً، فيعيد تلغرام المحاولة على تذكرةٍ
+      // ما زالت صالحة — بدل مريضٍ مربوط لا يصله شيء ولا أحد يعلم.
+      let linked = false;
       try {
-        const result = await redeemLinkToken({ rawToken: payload, externalId });
-        linked = { contactId: result.contact.id, patientId: result.contact.patientId };
+        await redeemAndWelcome({ rawToken: payload, externalId });
+        linked = true;
       } catch (err) {
+        // **الخطأ التقني يصعد** إلى المعالج الخارجي فيردّ 500 ويعيد تلغرام
+        // المحاولة. والمبتلَع هنا هو ما كان يصنع الضياع الصامت.
         if (!(err instanceof LinkTokenError)) throw err;
         // منتهية · مسحوبة · مستهلَكة · غير موجودة ⇒ نصٌّ واحد.
         // والمعاد إرساله من تلغرام يقع هنا بـ«مستهلَكة»: بلا صفٍّ ثانٍ،
         // وبلا 500، وبلا تغيير صلة — وهو المطلوب من إعادة المحاولة.
       }
 
-      if (linked === null) {
+      if (!linked) {
         // لا جهة اتصال ⇒ لا صفّ صادر يُستحقّ له. الردّ مباشر.
         await sendMessage(chatId, MESSAGES.invalid);
         return res.json({ ok: true });
       }
 
-      // **الترحيب عبر الصادر لا إرسالاً مباشراً**: فيستفيد من إعادة
-      // المحاولة كغيره، ومعه لقطةُ حالة الجهاز الآن — بلا سجلٍّ رجعي.
-      // وفشلُ أيٍّ من ذلك لا يمسّ ربطاً تمّ في القاعدة.
-      await enqueueLinkWelcome({
-        patientId: linked.patientId,
-        patientContactId: linked.contactId,
-      });
-      // كبسة كي يصل الترحيب في ثوانٍ لا في دقيقة. «أطلق وانسَ».
+      // كبسة كي يصل الترحيب في ثوانٍ لا في دقيقة. «أطلق وانسَ»، وبعد
+      // الحفظ لا قبله.
       nudgeDispatcher();
       return res.json({ ok: true });
     } catch (err) {

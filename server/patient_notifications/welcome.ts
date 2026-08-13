@@ -13,11 +13,24 @@
 //
 // ولذلك لا تُقرأ `patient_events` هنا إطلاقاً — يُقرأ **صفّ الأمر** وحده.
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { prostheticWorkOrders as WO } from "@shared/schema";
 import { enqueueForContact } from "./outbox";
 import { LINK_NOTIFICATION_TYPES } from "./render";
+import { redeemLinkToken } from "../patient_contacts/store";
+import type { DbTransaction } from "../events/store";
+
+/**
+ * الحالات التي تعني «انتهى» — وما عداها أمرٌ حيّ.
+ *
+ * **قائمة استبعاد لا قائمة قبول**: الأمر الحيّ قد يكون `active` أو
+ * `waiting_patient` أو `waiting_materials` أو `medical_hold` أو
+ * `technical_rework` — والجهاز في كلّها لا يزال في الورشة وصاحبه ينتظره.
+ * فاشتراط `active` وحدها كان يحرم أربعة أخماس المنتظرين من لقطة حالتهم.
+ * وحالةٌ تُضاف بعد سنة تُحسَب حيّةً افتراضاً، وهو الصواب هنا.
+ */
+const FINISHED_STATUSES = ["completed", "cancelled"];
 
 /** ما يجوز أن يعرفه المريض عن أمره الآن — ولا حرف زيادة. */
 export interface DeviceSnapshot {
@@ -36,15 +49,20 @@ export interface DeviceSnapshot {
  * نتيجة، ولا ملاحظات — والانتقاء هنا في الاستعلام نفسه لا في العرض،
  * فما لا يُقرأ لا يتسرّب.
  */
-export async function currentDeviceSnapshot(patientId: number): Promise<DeviceSnapshot | null> {
-  const [row] = await db.select({
+export async function currentDeviceSnapshot(
+  patientId: number,
+  runner: DbTransaction | typeof db = db,
+): Promise<DeviceSnapshot | null> {
+  const [row] = await (runner as any).select({
     stage: WO.currentStage,
     expectedDeliveryDate: WO.expectedDeliveryDate,
   }).from(WO)
     .where(and(
       eq(WO.patientId, patientId),
       eq(WO.purpose, "initial_build"),
-      eq(WO.status, "active"),
+      // حيٌّ = ليس منتهياً. والتوقّف وإعادة العمل حالتان حيّتان: الجهاز
+      // في مكانه والعمل عليه موقوف مؤقّتاً — والمريض أحوج ما يكون للقطته.
+      notInArray(WO.status, FINISHED_STATUSES),
     ))
     .orderBy(desc(WO.id))
     .limit(1);
@@ -64,43 +82,76 @@ export async function currentDeviceSnapshot(patientId: number): Promise<DeviceSn
  *
  * ولا ترمي: الربط نفسه نجح، وفشلُ استحقاق رسالةٍ بعده لا يجوز أن يُبطله.
  */
+export async function enqueueWelcomeIn(
+  tx: DbTransaction,
+  params: { patientId: number; patientContactId: number },
+): Promise<number> {
+  const { patientId, patientContactId } = params;
+  let queued = 0;
+
+  const welcome = await enqueueForContact(tx, {
+    patientId, patientContactId,
+    notificationType: LINK_NOTIFICATION_TYPES.WELCOME,
+  });
+  if (welcome !== null) queued++;
+
+  // اللقطة **داخل المعاملة نفسها**: فما يُقرأ هو ما يُستحقّ، بلا فجوة
+  // يتقدّم فيها الأمر بين القراءة والكتابة.
+  const snapshot = await currentDeviceSnapshot(patientId, tx);
+  if (!snapshot) return queued; // بلا أمر حيّ ⇒ الترحيب وحده
+
+  const stageRow = await enqueueForContact(tx, {
+    patientId, patientContactId,
+    notificationType: LINK_NOTIFICATION_TYPES.CURRENT_STAGE,
+    payload: { stage: snapshot.stage },
+  });
+  if (stageRow !== null) queued++;
+
+  if (snapshot.expectedDeliveryDate) {
+    const dateRow = await enqueueForContact(tx, {
+      patientId, patientContactId,
+      notificationType: LINK_NOTIFICATION_TYPES.DELIVERY_DATE,
+      payload: { expectedDeliveryDate: snapshot.expectedDeliveryDate },
+    });
+    if (dateRow !== null) queued++;
+  }
+  return queued;
+}
+
+/** معاملتها الخاصّة — لمسارٍ رُبِطت جهته سلفاً. **ولا تبتلع خطأً**. */
 export async function enqueueLinkWelcome(params: {
   patientId: number;
   patientContactId: number;
 }): Promise<number> {
-  const { patientId, patientContactId } = params;
-  let queued = 0;
-  try {
-    const welcome = await enqueueForContact(db, {
-      patientId, patientContactId,
-      notificationType: LINK_NOTIFICATION_TYPES.WELCOME,
-    });
-    if (welcome !== null) queued++;
+  return await db.transaction((tx) => enqueueWelcomeIn(tx, params));
+}
 
-    const snapshot = await currentDeviceSnapshot(patientId);
-    if (!snapshot) return queued; // بلا أمر تصنيع ⇒ الترحيب وحده
-
-    const stageRow = await enqueueForContact(db, {
-      patientId, patientContactId,
-      notificationType: LINK_NOTIFICATION_TYPES.CURRENT_STAGE,
-      payload: { stage: snapshot.stage },
-    });
-    if (stageRow !== null) queued++;
-
-    if (snapshot.expectedDeliveryDate) {
-      const dateRow = await enqueueForContact(db, {
-        patientId, patientContactId,
-        notificationType: LINK_NOTIFICATION_TYPES.DELIVERY_DATE,
-        payload: { expectedDeliveryDate: snapshot.expectedDeliveryDate },
-      });
-      if (dateRow !== null) queued++;
-    }
-    return queued;
-  } catch {
-    // لا نصّ خطأ: قد يحمل ما لا يجوز طبعه.
-    console.error("[patient-notifications] link welcome enqueue failed");
-    return queued;
-  }
+/**
+ * **الاستهلاك ورسائله في معاملة واحدة** — وهذا هو بيت القصيد.
+ *
+ * قبلها كان الاستهلاك يُحفظ ثم تُستحقّ الرسائل بعده. فلو تعثّرت القاعدة
+ * بينهما: التذكرة مستهلَكة، والجهة مربوطة، والـwebhook يردّ 200 —
+ * **والترحيب ولقطة الحالة ضائعان إلى الأبد**، لأن التذكرة لا تُستهلَك
+ * مرّتين فلا سبيل لإعادة توليدهما. عطلٌ عابر يُنتج مريضاً مربوطاً لا يصله
+ * شيء ولا أحد يعلم.
+ *
+ * الآن: إمّا الكلّ وإمّا لا شيء. وفشلُ الاستحقاق يُرجِع `consumed_at`
+ * والجهةَ الجديدة والصفوفَ معاً، فيعيد تلغرام المحاولة على تذكرةٍ ما زالت
+ * صالحة. **ولا خطأ يُبتلَع هنا** — الابتلاع هو ما كان يصنع الضياع الصامت.
+ *
+ * والإرسال يبقى خارجها بالكامل: لا شبكة داخل معاملة.
+ */
+export async function redeemAndWelcome(params: {
+  rawToken: string;
+  externalId: string;
+}): Promise<{ contactId: number; patientId: number; queued: number }> {
+  return await db.transaction(async (tx) => {
+    const result = await redeemLinkToken(params, tx);
+    const patientId = result.contact.patientId;
+    const contactId = result.contact.id;
+    const queued = await enqueueWelcomeIn(tx, { patientId, patientContactId: contactId });
+    return { contactId, patientId, queued };
+  });
 }
 
 export { isNull };
