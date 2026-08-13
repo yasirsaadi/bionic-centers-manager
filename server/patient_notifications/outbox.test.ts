@@ -390,7 +390,7 @@ async function main() {
     sent = []; mode = "ok";
     await dispatchOnce(100);
     const w = sent.filter((s) => s.chatId === "tg-1010").map((s) => s.text);
-    check(w.some((t) => t.includes("مرحباً بك في مجموعة مراكز بايونك")), "ونصّ الترحيب وصل", JSON.stringify(w));
+    check(w.some((t) => t === "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي. تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح."), "ونصّ الترحيب وصل بحرفه", JSON.stringify(w));
     check(w.some((t) => t === "حالة جهازك الحالية: أخذ وتجهيز القالب."), "ولقطة المرحلة", JSON.stringify(w));
     check(w.some((t) => t === "موعد التسليم المتوقع لجهازك: 25/12/2026."), "والموعد بصيغته", JSON.stringify(w));
 
