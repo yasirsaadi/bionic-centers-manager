@@ -36,6 +36,11 @@ const FINISHED_STATUSES = ["completed", "cancelled"];
 export interface DeviceSnapshot {
   stage: string;
   expectedDeliveryDate: string | null;
+  /**
+   * التصنيف العام وحده: `prosthetic | medical_support`. يُقرأ ليقول العارض
+   * «طرفك الصناعي» أو «مسندك الطبي» بدل «جهازك» — لا ليصف الجهاز.
+   */
+  serviceType: string;
 }
 
 /**
@@ -45,9 +50,10 @@ export interface DeviceSnapshot {
  * «حالة جهازك» بالمعنى الذي يفهمه المنتظِر. والملغى والمكتمل مستثنيان
  * كذلك — لقطةُ الحاضر لا معنى لها لأمرٍ انتهى.
  *
- * **ولا يُقرأ منه إلا حقلان.** لا حالة، ولا سبب توقّف، ولا خبير، ولا
+ * **ولا يُقرأ منه إلا ثلاثة حقول.** لا حالة، ولا سبب توقّف، ولا خبير، ولا
  * نتيجة، ولا ملاحظات — والانتقاء هنا في الاستعلام نفسه لا في العرض،
- * فما لا يُقرأ لا يتسرّب.
+ * فما لا يُقرأ لا يتسرّب. والثالث `serviceType` تصنيفٌ عام لا وصفُ جهاز:
+ * يميّز أيّ خيطٍ من خيطَي المريض هذا، ولا يقول عن الجهاز شيئاً.
  */
 export async function currentDeviceSnapshot(
   patientId: number,
@@ -56,6 +62,7 @@ export async function currentDeviceSnapshot(
   const [row] = await (runner as any).select({
     stage: WO.currentStage,
     expectedDeliveryDate: WO.expectedDeliveryDate,
+    serviceType: WO.serviceType,
   }).from(WO)
     .where(and(
       eq(WO.patientId, patientId),
@@ -70,6 +77,7 @@ export async function currentDeviceSnapshot(
   return {
     stage: row.stage,
     expectedDeliveryDate: row.expectedDeliveryDate ?? null,
+    serviceType: row.serviceType,
   };
 }
 
@@ -100,10 +108,12 @@ export async function enqueueWelcomeIn(
   const snapshot = await currentDeviceSnapshot(patientId, tx);
   if (!snapshot) return queued; // بلا أمر حيّ ⇒ الترحيب وحده
 
+  // والتصنيف مع كلٍّ منهما — بنفس عقد إشعارات المراحل تماماً، فلقطةُ الربط
+  // تقرأ كما تقرأ رسالةُ التحديث التي تليها ولا يختلف الخطاب على المريض.
   const stageRow = await enqueueForContact(tx, {
     patientId, patientContactId,
     notificationType: LINK_NOTIFICATION_TYPES.CURRENT_STAGE,
-    payload: { stage: snapshot.stage },
+    payload: { stage: snapshot.stage, serviceType: snapshot.serviceType },
   });
   if (stageRow !== null) queued++;
 
@@ -111,7 +121,10 @@ export async function enqueueWelcomeIn(
     const dateRow = await enqueueForContact(tx, {
       patientId, patientContactId,
       notificationType: LINK_NOTIFICATION_TYPES.DELIVERY_DATE,
-      payload: { expectedDeliveryDate: snapshot.expectedDeliveryDate },
+      payload: {
+        expectedDeliveryDate: snapshot.expectedDeliveryDate,
+        serviceType: snapshot.serviceType,
+      },
     });
     if (dateRow !== null) queued++;
   }

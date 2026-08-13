@@ -25,6 +25,12 @@
 //
 // ولذلك تُبنى الحمولة هنا حرفياً `{ stage }` ولا تُمرَّر من المستدعي: ما
 // لا يُمرَّر لا يتسرّب. ويحرسه `npm run test:manufacturing-events`.
+//
+// ── وحمولة **الإشعار** ليست حمولة الحدث ──────────────────────────────────
+// صفّ الصادر يحمل `serviceType` زيادةً، كي يعرف المريض أعن طرفه الصناعي
+// تتحدّث الرسالة أم عن مسنده الطبي — وهو تمييزٌ لا يُستغنى عنه لمن يحمل
+// أمرَين متوازيين. و`patient_events` **لا يتغيّر عقده**: مفتاحٌ واحد كما
+// كان. الفرق كلّه في `fanOut` أسفل الملفّ، وهناك شرحُه.
 
 import {
   PATIENT_EVENT_TYPES, eventDedupeKey, type PatientEventType,
@@ -69,6 +75,15 @@ export interface EventOrderRef {
   patientId: number;
   branchId: number | null;
   purpose?: string | null;
+  /**
+   * `prosthetic | medical_support` — **للإشعار وحده، لا لحمولة الحدث**.
+   *
+   * إلزاميّ لا اختياري: كل أمر تصنيع يحمله (`NOT NULL` في القاعدة)، ومسارُ
+   * إنشاءٍ ينساه كان سيُنتج رسائل «جهازك» صامتةً لا يكشفها شيء. فالنوع
+   * يمنع النسيان عند الترجمة، والاحتياط في العارض يبقى للصفوف القديمة
+   * وحدها — لا لمسارٍ حيّ يخطئ.
+   */
+  serviceType: string;
 }
 
 function isInitialBuild(order: EventOrderRef): boolean {
@@ -134,7 +149,7 @@ export async function recordStageEvent(
     // بلا فاعل: `actor_user_id` و`actor_name` يبقيان فارغين في الصفّ.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
-  await fanOut(tx, recorded, order.patientId, eventType, { stage });
+  await fanOut(tx, recorded, order, eventType, { stage });
 }
 
 /**
@@ -160,7 +175,7 @@ export async function recordOrderCreatedEvent(
     // بلا فاعل — كسابقتها.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
-  await fanOut(tx, recorded, order.patientId, eventType, { stage });
+  await fanOut(tx, recorded, order, eventType, { stage });
 }
 
 /**
@@ -194,7 +209,7 @@ export async function recordDeliveryDateEvent(
     visibility: "patient",
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
-  await fanOut(tx, recorded, order.patientId, eventType, { expectedDeliveryDate });
+  await fanOut(tx, recorded, order, eventType, { expectedDeliveryDate });
 }
 
 /**
@@ -203,19 +218,34 @@ export async function recordDeliveryDateEvent(
  *
  * و`inserted: false` تعني أن المفتاح مُطالَب به سلفاً: الحدث موجود ورسائله
  * أُنشئت معه، فلا استحقاق ثانٍ. (والفهرس الفريد حزامٌ ثانٍ لو أخطأنا.)
+ *
+ * ══ وهنا **وحده** يفترق العقدان ═════════════════════════════════════════
+ * حمولة الحدث تُحفظ كما بُنيت أعلاه — مفتاحٌ واحد لا غير. وحمولة الإشعار
+ * هي نفسها **زائداً `serviceType`**، تُضاف في هذا الموضع الوحيد ومن صفّ
+ * الأمر مباشرةً لا من المستدعي.
+ *
+ * والسبب أن العقدين مختلفان في طبيعتهما: `patient_events` سجلٌّ يبقى ويُقرأ
+ * بقنواتٍ لم تُبنَ بعد، فكل حقل فيه التزامٌ دائم وتوسيعه بلا حاجة تمديدٌ
+ * لسطح التسريب. أما صفّ الصادر فورقةُ إرسالٍ عمرها دقائق: يُصاغ منها نصّ
+ * ثم لا تُقرأ ثانيةً. فالتمييز الذي يحتاجه العارض يعيش حيث يُستهلك، لا في
+ * السجلّ الدائم.
+ *
+ * **ولا يُضاف غيره**: لا نوع الطرف، ولا نوع المسند، ولا موضع البتر، ولا
+ * تشخيص. والإضافة هنا لا عند المستدعي هي ما يجعل ذلك قابلاً للحراسة —
+ * لا يد لمستدعٍ في هذه الحمولة أصلاً.
  */
 async function fanOut(
   tx: DbTransaction,
   recorded: { id: number | null; inserted: boolean },
-  patientId: number,
+  order: EventOrderRef,
   notificationType: string,
-  payload: Record<string, unknown>,
+  eventPayload: Record<string, unknown>,
 ): Promise<void> {
   if (!recorded.inserted || recorded.id === null) return;
   await enqueueForActiveContacts(tx, {
-    patientId,
+    patientId: order.patientId,
     patientEventId: recorded.id,
     notificationType,
-    payload,
+    payload: { ...eventPayload, serviceType: order.serviceType },
   });
 }

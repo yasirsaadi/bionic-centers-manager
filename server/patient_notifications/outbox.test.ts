@@ -12,7 +12,7 @@ import * as mfg from "../manufacturing/store";
 import { storage } from "../storage";
 import { createLinkToken, redeemLinkToken, revokeContact, LinkTokenError } from "../patient_contacts/store";
 import { enqueueLinkWelcome, currentDeviceSnapshot, redeemAndWelcome } from "./welcome";
-import { renderNotification, LINK_NOTIFICATION_TYPES } from "./render";
+import { renderNotification, patientDeviceName, LINK_NOTIFICATION_TYPES } from "./render";
 import { dispatchOnce } from "./dispatcher";
 import { claimDue, deliveriesForPatient, backoffFor, BACKOFF_MS } from "./outbox";
 import { PATIENT_EVENT_TYPES } from "@shared/patient_events";
@@ -81,10 +81,10 @@ async function mkPatient(name: string): Promise<number> {
   return rows[0].id;
 }
 
-async function mkOrder(patientId: number, purpose = "initial_build"): Promise<any> {
+async function mkOrder(patientId: number, purpose = "initial_build", serviceType = "prosthetic"): Promise<any> {
   const { rows } = await pool.query<{ id: number }>(
     `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage, assigned_by)
-     VALUES ($1,1,$2,'prosthetic',$3,'active','order_received',$2) RETURNING id`, [patientId, EXPERT, purpose]);
+     VALUES ($1,1,$2,$4,$3,'active','order_received',$2) RETURNING id`, [patientId, EXPERT, purpose, serviceType]);
   await pool.query(
     `INSERT INTO prosthetic_work_history (work_order_id, action_type, from_stage, to_stage, performed_by)
      VALUES ($1,'created','order_received','order_received',$2)`, [rows[0].id, EXPERT]);
@@ -99,6 +99,13 @@ async function linkContact(patientId: number, tgId: string): Promise<number> {
 }
 
 const rowsFor = (list: any[], type: string) => list.filter((d) => d.notificationType === type);
+/**
+ * `jsonb` لا يحفظ ترتيب المفاتيح — يعيدها مرتَّبةً بطولها ثم بترتيب بايتاتها.
+ * فمقارنةٌ نصّية على الحمولة كانت تسقط بمفتاحٍ ثانٍ لا بخطأ. التسوية هنا
+ * تحكم على **المحتوى**، ويبقى انفراد المفاتيح محكوماً عليه صراحةً بجواره.
+ */
+const payloadOf = (p: unknown): Record<string, unknown> =>
+  Object.fromEntries(Object.entries((p ?? {}) as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 const texts = () => sent.map((s) => s.text);
 
 async function main() {
@@ -130,8 +137,11 @@ async function main() {
       [new Set(d1.map((d) => d.status)).size, new Set(d1.map((d) => d.channel)).size], [1, 1]);
     same("وكلٌّ مربوط بحدثه", d1.filter((d) => d.patientEventId !== null).length, 5);
     same("وكلٌّ لجهة الاتصال نفسها", new Set(d1.map((d) => d.patientContactId)).size, 1);
-    same("وحمولتها المرحلة وحدها",
-      [...new Set(d1.map((d) => Object.keys(d.payload as any).sort().join(",")))], ["stage"]);
+    // المرحلة **والتصنيف** — ولا ثالث. والتصنيف تمييزُ خيطٍ لا وصفُ جهاز.
+    same("وحمولتها المرحلة والتصنيف لا غير",
+      [...new Set(d1.map((d) => Object.keys(d.payload as any).sort().join(",")))], ["serviceType,stage"]);
+    same("والتصنيف من صفّ الأمر",
+      [...new Set(d1.map((d) => (d.payload as any).serviceType))], ["prosthetic"]);
     same("وبأنواعها الثلاثة",
       [...new Set(d1.map((d) => d.notificationType))].sort(),
       ["manufacturing.delivered", "manufacturing.ready_for_delivery", "manufacturing.stage_changed"]);
@@ -154,7 +164,7 @@ async function main() {
     });
     let dd = rowsFor(await deliveriesForPatient(p2), PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED);
     same("٧. أول تحديد للموعد ⇒ حدث وصفّ", dd.length, 1);
-    same("بحمولة الموعد وحده", dd[0].payload, { expectedDeliveryDate: "2026-09-15" });
+    same("بحمولة الموعد والتصنيف", payloadOf(dd[0].payload), { expectedDeliveryDate: "2026-09-15", serviceType: "prosthetic" });
 
     o2 = await mfg.updateDeliveryDate({
       order: o2, expectedDeliveryDate: "2026-10-01", performedBy: EXPERT,
@@ -166,7 +176,7 @@ async function main() {
     const ddDump = JSON.stringify(dd.map((d) => d.payload));
     check(!ddDump.includes("المواد") && !ddDump.includes("المورّد"), "٩. والسبب لا يدخل الحمولة", ddDump);
     same("ولا الموعد السابق ولا الفاعل",
-      [...new Set(dd.map((d) => Object.keys(d.payload as any).sort().join(",")))], ["expectedDeliveryDate"]);
+      [...new Set(dd.map((d) => Object.keys(d.payload as any).sort().join(",")))], ["expectedDeliveryDate,serviceType"]);
     // ومحفوظ داخلياً فعلاً.
     const { rows: hist } = await pool.query(
       `SELECT notes FROM prosthetic_work_history WHERE work_order_id = $1 AND action_type = 'date_change' ORDER BY id`, [created.id]);
@@ -179,7 +189,7 @@ async function main() {
     o3 = await mfg.updateStage({ order: o3, toStage: "measurements", performedBy: EXPERT, deliveryDate: "2026-11-20" });
     const dd3 = rowsFor(await deliveriesForPatient(p3), PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED);
     same("والالتزام الأول أثناء التقدّم ⇒ حدث موعد واحد", dd3.length, 1);
-    same("بموعده", dd3[0].payload, { expectedDeliveryDate: "2026-11-20" });
+    same("بموعده", payloadOf(dd3[0].payload), { expectedDeliveryDate: "2026-11-20", serviceType: "prosthetic" });
     // وتقدّمٌ ثانٍ بنفس الموعد لا يُصدر ثانياً (العمود لم يعد فارغاً).
     o3 = await mfg.updateStage({ order: o3, toStage: "mold", performedBy: EXPERT, deliveryDate: "2026-11-20" });
     same("ولا يتكرّر مع التقدّم التالي",
@@ -221,7 +231,7 @@ async function main() {
     const d5 = await deliveriesForPatient(p5);
     same("١٣. الرجوع يُنتج صفّاً واحداً", d5.length, beforeRework + 1);
     const back = d5[d5.length - 1];
-    same("لوجهته وحدها", back.payload, { stage: "manufacturing" });
+    same("لوجهته وحدها", payloadOf(back.payload), { serviceType: "prosthetic", stage: "manufacturing" });
     same("وبنوع «تغيّرت المرحلة»", back.notificationType, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED);
     const d5dump = JSON.stringify(d5);
     check(!d5dump.includes("fit_issue") && !d5dump.includes("القياس") && !d5dump.includes("rework"),
@@ -229,7 +239,7 @@ async function main() {
     // ونصّه يقول موضعه لا قصّته.
     same("ونصّه موضعُه الحالي لا رجوعه",
       renderNotification(back.notificationType, back.payload as any),
-      "تم تحديث حالة جهازك: التصنيع والتجهيز.");
+      "تم تحديث حالة طرفك الصناعي: التصنيع والتجهيز.");
 
     // ══ ١٤-١٥. الربط قبل الحدث وبعده ═════════════════════════════════════
     console.log("\n── مَن يستلم ومَن لا ──");
@@ -245,7 +255,7 @@ async function main() {
     o6 = await mfg.updateStage({ order: o6, toStage: "mold", performedBy: EXPERT });
     const d6 = await deliveriesForPatient(p6);
     same("١٥. والحدث التالي يصله", d6.length, 1);
-    same("بالمرحلة الجديدة", d6[0].payload, { stage: "mold" });
+    same("بالمرحلة الجديدة", payloadOf(d6[0].payload), { serviceType: "prosthetic", stage: "mold" });
 
     // ══ ٢٢. جهتان نشطتان ⇒ صفّان ═════════════════════════════════════════
     const c6b = await linkContact(p6, "tg-1006-b");
@@ -384,15 +394,16 @@ async function main() {
       [LINK_NOTIFICATION_TYPES.CURRENT_STAGE, LINK_NOTIFICATION_TYPES.DELIVERY_DATE, LINK_NOTIFICATION_TYPES.WELCOME].sort());
     same("٢٧. **ولا صفٌّ واحد من أحداث الماضي**", d10.filter((d) => d.patientEventId !== null).length, 0);
     const snap = await currentDeviceSnapshot(p10);
-    same("واللقطة حقلان لا غير", Object.keys(snap ?? {}).sort(), ["expectedDeliveryDate", "stage"]);
+    same("واللقطة ثلاثة حقول لا غير", Object.keys(snap ?? {}).sort(),
+      ["expectedDeliveryDate", "serviceType", "stage"]);
     same("بالمرحلة الحالية", snap?.stage, "mold");
 
     sent = []; mode = "ok";
     await dispatchOnce(100);
     const w = sent.filter((s) => s.chatId === "tg-1010").map((s) => s.text);
     check(w.some((t) => t === "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي. تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح."), "ونصّ الترحيب وصل بحرفه", JSON.stringify(w));
-    check(w.some((t) => t === "حالة جهازك الحالية: أخذ وتجهيز القالب."), "ولقطة المرحلة", JSON.stringify(w));
-    check(w.some((t) => t === "موعد التسليم المتوقع لجهازك: 25/12/2026."), "والموعد بصيغته", JSON.stringify(w));
+    check(w.some((t) => t === "حالة طرفك الصناعي الحالية: أخذ وتجهيز القالب."), "ولقطة المرحلة باسم الطرف", JSON.stringify(w));
+    check(w.some((t) => t === "موعد التسليم المتوقع لطرفك الصناعي: 25/12/2026."), "والموعد بصيغته", JSON.stringify(w));
 
     // ٢٦. ولا تفصيلة ممنوعة في اللقطة.
     const wDump = JSON.stringify(w) + JSON.stringify(d10.map((d) => d.payload));
@@ -461,7 +472,8 @@ async function main() {
       const snapH = await currentDeviceSnapshot(ph);
       check(snapH !== null, `«${label}» ⇒ للمريض لقطة حالة`, String(snapH));
       same(`و مرحلتها الحالية`, snapH?.stage, "manufacturing");
-      same(`وبحقلين لا غير`, Object.keys(snapH ?? {}).sort(), ["expectedDeliveryDate", "stage"]);
+      same(`وبثلاثة حقول لا غير`, Object.keys(snapH ?? {}).sort(),
+        ["expectedDeliveryDate", "serviceType", "stage"]);
       const snapDump = JSON.stringify(snapH);
       check(!snapDump.includes(status) && !snapDump.includes("materials") && !snapDump.includes("سبب"),
         `**ولا حالة ولا سبب توقّف في لقطة «${label}»**`, snapDump);
@@ -519,8 +531,8 @@ async function main() {
     same("ولقطة المرحلة من أمرٍ موقوف",
       (dAtom.find((d) => d.notificationType === LINK_NOTIFICATION_TYPES.CURRENT_STAGE)!.payload as any).stage,
       "measurements");
-    same("والموعد", (dAtom.find((d) => d.notificationType === LINK_NOTIFICATION_TYPES.DELIVERY_DATE)!.payload as any),
-      { expectedDeliveryDate: "2027-01-15" });
+    same("والموعد", payloadOf(dAtom.find((d) => d.notificationType === LINK_NOTIFICATION_TYPES.DELIVERY_DATE)!.payload),
+      { expectedDeliveryDate: "2027-01-15", serviceType: "prosthetic" });
 
     // ══ ٧. إعادة ربط الجهة نفسها لا تُكرّر رسائل الربط ═══════════════════
     const tAgain = await createLinkToken({ patientId: pAtom, channel: "telegram", relation: "self" });
@@ -548,6 +560,182 @@ async function main() {
     check((await pool.query(`SELECT consumed_at FROM patient_link_tokens WHERE id = $1`, [tAtom.token.id])).rows[0].consumed_at !== null,
       "والتذكرة ما زالت مستهلَكة — لا تراجع");
     mode = "ok";
+
+    // ══ تمييز الطرف الصناعي من المسند الطبي ══════════════════════════════
+    // «جهازك» كانت تكفي حين كان المرسَل إليه صنفاً واحداً. ومَن يحمل أمرَين
+    // متوازيين — طرفاً ومسنداً — كان يستلم رسالتين متطابقتين حرفياً لا
+    // يعرف أيّهما لأيّ. والقيم قيمُ النظام نفسها: `prosthetic` و
+    // `medical_support` كما في `service_type` و`case_type`، بلا رمزٍ مخترَع.
+    console.log("\n── الطرف الصناعي والمسند الطبي ──");
+
+    // ── (أ) مصفوفة النصوص كاملةً عبر العارض ────────────────────────────
+    // خالصة وسريعة، وتثبّت **الحرف** لكل (نوع × مرحلة × تصنيف): نصٌّ يُفحَص
+    // بالتضمين ينحرف بتعديلٍ عابر في وسطه ولا يكشفه شيء.
+    const T = (type: string, payload: Record<string, unknown>) =>
+      renderNotification(type, payload as any);
+    const OC = PATIENT_EVENT_TYPES.MANUFACTURING_ORDER_CREATED;
+    const ST = PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED;
+    const RF = PATIENT_EVENT_TYPES.MANUFACTURING_READY_FOR_DELIVERY;
+    const DV = PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERED;
+    const DD = PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED;
+    const PRO = "prosthetic", SUP = "medical_support";
+
+    same("المفردة نفسها: أطراف", patientDeviceName(PRO), "طرفك الصناعي");
+    same("المفردة نفسها: مساند", patientDeviceName(SUP), "مسندك الطبي");
+    same("والمجهول جهازك", patientDeviceName(undefined), "جهازك");
+    // `Orthosis` اسمٌ علميّ صحيح لكنه **ليس** قيمةً في هذا النظام: لو تسرّب
+    // رمزاً داخلياً لقرأه المريض «جهازك» ولم يعلم أحد أن التصنيف ضاع.
+    same("و«orthosis» ليست قيمةً معروفة هنا", patientDeviceName("orthosis"), "جهازك");
+
+    same("١. أطراف: فتح الأمر", T(OC, { stage: "order_received", serviceType: PRO }),
+      "تم استلام أمر تصنيع طرفك الصناعي وبدأت إجراءات العمل عليه. سنوافيك بتحديثات مراحل العمل عبر هذه القناة.");
+    same("٢. مساند: فتح الأمر", T(OC, { stage: "order_received", serviceType: SUP }),
+      "تم استلام أمر تصنيع مسندك الطبي وبدأت إجراءات العمل عليه. سنوافيك بتحديثات مراحل العمل عبر هذه القناة.");
+    // المركز مجموعةُ مراكز الوارث وبايونك — فلا يُنسَب أمرٌ إلى أحدهما.
+    check(!String(T(OC, { stage: "order_received", serviceType: PRO })).includes("مركز بايونك"),
+      "ولا يُسمّى مركزٌ بعينه في فتح الأمر");
+
+    same("٣. أطراف: القياسات", T(ST, { stage: "measurements", serviceType: PRO }),
+      "تم تحديث حالة طرفك الصناعي: القياسات والتقييم.");
+    same("٤. مساند: القياسات", T(ST, { stage: "measurements", serviceType: SUP }),
+      "تم تحديث حالة مسندك الطبي: القياسات والتقييم.");
+    same("٥. أطراف: القالب", T(ST, { stage: "mold", serviceType: PRO }),
+      "تم تحديث حالة طرفك الصناعي: أخذ وتجهيز القالب.");
+    same("٥.ب مساند: القالب (حين يمرّ به)", T(ST, { stage: "mold", serviceType: SUP }),
+      "تم تحديث حالة مسندك الطبي: أخذ وتجهيز القالب.");
+    same("٦. مساند: التصنيع", T(ST, { stage: "manufacturing", serviceType: SUP }),
+      "تم تحديث حالة مسندك الطبي: التصنيع والتجهيز.");
+    same("٦.ب أطراف: التصنيع", T(ST, { stage: "manufacturing", serviceType: PRO }),
+      "تم تحديث حالة طرفك الصناعي: التصنيع والتجهيز.");
+    same("٧. أطراف: جاهز للتجربة", T(RF, { stage: "ready_for_fitting", serviceType: PRO }),
+      "أصبح طرفك الصناعي جاهزاً للتجربة والتسليم. يرجى التواصل مع المركز لتنسيق موعدك.");
+    same("٨. مساند: جاهز للتجربة", T(RF, { stage: "ready_for_fitting", serviceType: SUP }),
+      "أصبح مسندك الطبي جاهزاً للتجربة والتسليم. يرجى التواصل مع المركز لتنسيق موعدك.");
+    same("٩. أطراف: التسليم", T(DV, { stage: "delivered", serviceType: PRO }),
+      "تم تسجيل تسليم طرفك الصناعي بنجاح. نتمنى لكم دوام الصحة والعافية.");
+    same("١٠. مساند: التسليم", T(DV, { stage: "delivered", serviceType: SUP }),
+      "تم تسجيل تسليم مسندك الطبي بنجاح. نتمنى لكم دوام الصحة والعافية.");
+    same("١١. أطراف: الموعد", T(DD, { expectedDeliveryDate: "2027-03-09", serviceType: PRO }),
+      "موعد التسليم المتوقع لطرفك الصناعي: 09/03/2027.");
+    same("١٢. مساند: الموعد", T(DD, { expectedDeliveryDate: "2027-03-09", serviceType: SUP }),
+      "موعد التسليم المتوقع لمسندك الطبي: 09/03/2027.");
+    same("١٣. الربط/المرحلة: أطراف", T(LINK_NOTIFICATION_TYPES.CURRENT_STAGE, { stage: "manufacturing", serviceType: PRO }),
+      "حالة طرفك الصناعي الحالية: التصنيع والتجهيز.");
+    same("١٤. الربط/المرحلة: مساند", T(LINK_NOTIFICATION_TYPES.CURRENT_STAGE, { stage: "manufacturing", serviceType: SUP }),
+      "حالة مسندك الطبي الحالية: التصنيع والتجهيز.");
+    same("١٥. الربط/الموعد: أطراف", T(LINK_NOTIFICATION_TYPES.DELIVERY_DATE, { expectedDeliveryDate: "2027-05-01", serviceType: PRO }),
+      "موعد التسليم المتوقع لطرفك الصناعي: 01/05/2027.");
+    same("١٦. الربط/الموعد: مساند", T(LINK_NOTIFICATION_TYPES.DELIVERY_DATE, { expectedDeliveryDate: "2027-05-01", serviceType: SUP }),
+      "موعد التسليم المتوقع لمسندك الطبي: 01/05/2027.");
+
+    // ١٧. **الحمولة القديمة** — صفوفٌ أُنشئت قبل اليوم لا تحمل التصنيف.
+    // فترجع إلى النصّ الآمن، و**لا تُرجِع `null`**: العائد `null` يعني عند
+    // العامل `render_failed` ⇒ `skipped`، فتُفقَد رسالةٌ صحيحة لأنها أقلّ
+    // تحديداً فقط. وهذا أسوأ من «جهازك» بما لا يُقاس.
+    same("١٧. قديمة بلا تصنيف: فتح الأمر", T(OC, { stage: "order_received" }),
+      "تم استلام أمر تصنيع جهازك وبدأت إجراءات العمل عليه. سنوافيك بتحديثات مراحل العمل عبر هذه القناة.");
+    same("وقديمة: مرحلة", T(ST, { stage: "mold" }), "تم تحديث حالة جهازك: أخذ وتجهيز القالب.");
+    same("وقديمة: جاهز للتجربة", T(RF, { stage: "ready_for_fitting" }),
+      "أصبح جهازك جاهزاً للتجربة والتسليم. يرجى التواصل مع المركز لتنسيق موعدك.");
+    same("وقديمة: تسليم", T(DV, { stage: "delivered" }), "تم تسجيل تسليم جهازك بنجاح. نتمنى لكم دوام الصحة والعافية.");
+    same("وقديمة: موعد", T(DD, { expectedDeliveryDate: "2026-02-01" }), "موعد التسليم المتوقع لجهازك: 01/02/2026.");
+    same("وقديمة: لقطة الربط", T(LINK_NOTIFICATION_TYPES.CURRENT_STAGE, { stage: "measurements" }),
+      "حالة جهازك الحالية: القياسات والتقييم.");
+    // وتصنيفٌ مجهولٌ تماماً يسلك مسلك الغائب لا مسلك الخطأ.
+    check(T(ST, { stage: "mold", serviceType: "something_new" }) !== null,
+      "وتصنيفٌ لا يُعرَف لا يُبطل الرسالة");
+
+    // ── (ب) مسارٌ حيّ لكلّ صنف ─────────────────────────────────────────
+    // المصفوفة أعلاه تثبت العارض. وهذا يثبت أن التصنيف **يصل** إليه من صفّ
+    // الأمر عبر المسار الحقيقي — وهو الوصل الذي ينكسر بصمت لو نُسي.
+    const pSup = await mkPatient("مريض المسند الطبي");
+    await linkContact(pSup, "tg-support-1");
+    let oSup = await mkOrder(pSup, "initial_build", SUP);
+    // مسار المساند المعروف: يتخطّى القالب. والتعديل نصوصٌ فقط — المراحل
+    // كما هي، والقفزة تبقى مشروعة ولا تُنتج حدث قالب.
+    for (const st of ["measurements", "manufacturing", "ready_for_fitting", "delivered"]) {
+      // الموعد يُلتزَم به عند بلوغ التصنيع — كما في المسار الحقيقي تماماً.
+      oSup = await mfg.updateStage({
+        order: oSup, toStage: st, performedBy: EXPERT,
+        deliveryDate: st === "manufacturing" ? "2027-04-10" : undefined,
+      });
+    }
+    const dSup = await deliveriesForPatient(pSup);
+    same("والمسند: التصنيف على كل صفوفه",
+      [...new Set(dSup.map((d) => (d.payload as any).serviceType))], [SUP]);
+    same("ولا صفّ بمرحلة القالب — المراحل لم تتغيّر",
+      dSup.filter((d) => (d.payload as any).stage === "mold").length, 0);
+
+    sent = []; mode = "ok";
+    await dispatchOnce(100);
+    const sup = sent.filter((s) => s.chatId === "tg-support-1").map((s) => s.text);
+    check(sup.includes("تم تحديث حالة مسندك الطبي: القياسات والتقييم."), "ووصلت باسم المسند: القياسات", JSON.stringify(sup));
+    check(sup.includes("تم تحديث حالة مسندك الطبي: التصنيع والتجهيز."), "والتصنيع", JSON.stringify(sup));
+    check(sup.includes("أصبح مسندك الطبي جاهزاً للتجربة والتسليم. يرجى التواصل مع المركز لتنسيق موعدك."), "وجاهز للتجربة", JSON.stringify(sup));
+    check(sup.includes("تم تسجيل تسليم مسندك الطبي بنجاح. نتمنى لكم دوام الصحة والعافية."), "والتسليم", JSON.stringify(sup));
+    check(sup.includes("موعد التسليم المتوقع لمسندك الطبي: 10/04/2027."), "والموعد", JSON.stringify(sup));
+    check(!sup.some((t) => t.includes("طرفك الصناعي")), "**ولا كلمة «طرفك الصناعي» لمريض مسند**", JSON.stringify(sup));
+
+    // والأطراف حيّاً كذلك — عبر مسار الإنشاء الحقيقي لا الحقن.
+    const pPro = await mkPatient("مريض الطرف الصناعي");
+    await linkContact(pPro, "tg-prosthetic-1");
+    const proOrder = await mfg.createWorkOrderForExisting({
+      patientId: pPro, branchId: 1, expertUserId: EXPERT, serviceType: PRO, assignedBy: MANAGER,
+    });
+    sent = [];
+    await dispatchOnce(100);
+    const pro = sent.filter((s) => s.chatId === "tg-prosthetic-1").map((s) => s.text);
+    check(pro.includes("تم استلام أمر تصنيع طرفك الصناعي وبدأت إجراءات العمل عليه. سنوافيك بتحديثات مراحل العمل عبر هذه القناة."),
+      "والأطراف حيّاً: فتح الأمر باسم الطرف", JSON.stringify(pro));
+    check(!pro.some((t) => t.includes("مسندك الطبي")), "ولا كلمة «مسندك الطبي» لمريض أطراف", JSON.stringify(pro));
+
+    // ١٩. **ولا تفصيلة جهاز في أي صفّ صادر** — التصنيف العام وحده.
+    const svcRows = [...dSup, ...(await deliveriesForPatient(pPro))];
+    same("١٩. مفاتيح الصادر من قائمة مغلقة",
+      [...new Set(svcRows.map((d) => Object.keys(d.payload as any).sort().join(",")))].sort(),
+      ["expectedDeliveryDate,serviceType", "serviceType,stage"]);
+    const svcDump = JSON.stringify(svcRows.map((d) => d.payload));
+    for (const forbidden of [
+      "supportType", "prostheticType", "amputationSite", "diagnosis",
+      "injury", "socket", "expertUserId", "cost",
+    ]) {
+      check(!svcDump.includes(forbidden), `ولا «${forbidden}» في الصادر`, svcDump.slice(0, 160));
+    }
+
+    // ١٧.ب والقديمة **تُرسَل فعلاً** لا تُخطّى — الحرف الأهمّ في الاحتياط.
+    await pool.query(
+      `INSERT INTO patient_notification_deliveries (patient_id, patient_contact_id, channel, notification_type, payload)
+       SELECT $1, id, 'telegram', 'manufacturing.stage_changed', '{"stage":"manufacturing"}'::jsonb
+         FROM patient_contacts WHERE patient_id = $1 AND revoked_at IS NULL LIMIT 1`, [pPro]);
+    sent = [];
+    await dispatchOnce(100);
+    const legacy = sent.filter((s) => s.chatId === "tg-prosthetic-1").map((s) => s.text);
+    check(legacy.includes("تم تحديث حالة جهازك: التصنيع والتجهيز."),
+      "١٧.ب صفٌّ قديم بلا تصنيف يُرسَل بـ«جهازك»", JSON.stringify(legacy));
+    same("ولم يُخطَّ بـrender_failed",
+      (await deliveriesForPatient(pPro)).filter((d) => d.lastErrorCode === "render_failed").length, 0);
+
+    // ١٨. **وعقد `patient_events` لم يتغيّر**: مفتاحٌ واحد يطابق نوعه، ولا
+    // `serviceType` فيه إطلاقاً. التمييز يعيش حيث يُستهلَك لا في السجلّ.
+    const svcEvents = await db.select().from(patientEvents).where(eq(patientEvents.patientId, pSup));
+    check(svcEvents.length >= 4, "للمسند أحداثه في السجلّ", String(svcEvents.length));
+    const evKeys = [...new Set(svcEvents.map((e) => Object.keys((e.payload ?? {}) as object).sort().join(",")))].sort();
+    same("١٨. حمولة الحدث مفتاحٌ واحد كما كانت", evKeys, ["expectedDeliveryDate", "stage"]);
+    check(!JSON.stringify(svcEvents.map((e) => e.payload)).includes("serviceType"),
+      "**ولا `serviceType` في سجلّ أحداث المريض**");
+
+    // ٢٠. **والصيانة لم تُمَسّ**: خارج نطاق الأحداث كلّها كما كانت.
+    const pMnt = await mkPatient("مريض الصيانة");
+    await linkContact(pMnt, "tg-maint-1");
+    const mnt = await mfg.createWorkOrderForExisting({
+      patientId: pMnt, branchId: 1, expertUserId: EXPERT, serviceType: PRO,
+      purpose: "maintenance", assignedBy: MANAGER,
+    });
+    await mfg.updateStage({
+      order: (await mfg.getRawOrder(mnt.id))!, toStage: "maintenance_cast_done", performedBy: EXPERT,
+    });
+    same("٢٠. الصيانة: لا صفّ صادر", (await deliveriesForPatient(pMnt)).length, 0);
+    same("ولا حدث مريض", (await db.select().from(patientEvents).where(eq(patientEvents.patientId, pMnt))).length, 0);
 
     // ══ الحذف والدمج — القاعدة الملزمة في CLAUDE.md ══════════════════════
     // أي جدول جديد بمفتاح إلى `patients` يجب أن يدخل كاسكيد الحذف **ويُختبَر
