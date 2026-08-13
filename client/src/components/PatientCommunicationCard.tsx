@@ -20,7 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
-import { MessageCircle, Copy, Check, ExternalLink, Link2, Loader2, ShieldOff, Clock } from "lucide-react";
+import { MessageCircle, Copy, Check, ExternalLink, Link2, Loader2, ShieldOff, Clock, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { classifyCommunicationError, hasNewContact } from "./patient_communication_logic";
 
 // ── المفردات ──────────────────────────────────────────────────────────────
 
@@ -113,7 +114,9 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
     retry: false, // 403 ليست عطلاً عابراً يُعاد
   });
 
-  const denied = (state.error as any)?.message?.startsWith?.("403");
+  // **أي فشل يُغلق البطاقة** — لا 403 وحده. وما دامت الحقيقة لم تصل، لا
+  // تُعرَض أزرارٌ تفترضها.
+  const failure = state.isError ? classifyCommunicationError(state.error) : null;
   const data = state.data;
   const activeTelegram = useMemo(
     () => (data?.activeContacts ?? []).filter((c) => c.channel === "telegram"),
@@ -124,18 +127,22 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
     [data],
   );
 
-  /** عدد الجهات النشطة وقت فتح النافذة — فيُعرف أن واحدة جديدة وصلت. */
-  const [baseline, setBaseline] = useState(0);
+  /**
+   * **معرّفات** الجهات النشطة وقت فتح النافذة — لا عددها.
+   * تغيّر الصلة يستبدل الجهة ولا يزيدها، فالعدد يبقى واحداً والربط نجح.
+   */
+  const [baselineIds, setBaselineIds] = useState<number[]>([]);
+  const currentIds = useMemo(() => activeTelegram.map((c) => c.id), [activeTelegram]);
   useEffect(() => {
-    if (dialogOpen && deepLink && !justLinked && activeTelegram.length > baseline) {
+    if (dialogOpen && deepLink && !justLinked && hasNewContact(baselineIds, currentIds)) {
       setJustLinked(true); // يوقف الاستطلاع (الشرط أعلاه) ويُظهر النجاح
       setDeepLink(null);   // **الرابط يُمحى فور نجاحه** — أدّى عمله
       toast({ title: "تم ربط Telegram بالمريض بنجاح." });
     }
-  }, [activeTelegram.length, baseline, dialogOpen, deepLink, justLinked, toast]);
+  }, [currentIds, baselineIds, dialogOpen, deepLink, justLinked, toast]);
 
   function openDialog() {
-    setBaseline(activeTelegram.length);
+    setBaselineIds(activeTelegram.map((c) => c.id));
     setRelation("self");
     setDeepLink(null);
     setCopied(false);
@@ -161,9 +168,21 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
       });
       return res.json();
     },
-    onSuccess: (payload: { telegramDeepLink?: string }) => {
+    onSuccess: async (payload: { tokenId?: number; telegramDeepLink?: string }) => {
       if (!payload.telegramDeepLink) {
-        // البوت غير مُعدّ على الخادم: التذكرة صدرت لكن لا رابط يُعرَض.
+        // **تذكرةٌ صدرت بلا رابط يُعرَض** — البوت غير مُعدّ على الخادم.
+        // تركُها يُبقي «رابطاً بانتظار المريض» لا وجود له، فيمنع إصدار
+        // غيره ويُربك الموظّف. فتُسحَب فوراً «بذل جهد»: فشلُ السحب لا
+        // يُخفي الخطأ الأصلي، والصفّ يبقى ظاهراً بزرّ إلغائه.
+        if (payload.tokenId) {
+          try {
+            await apiRequest(
+              "POST",
+              `/api/patients/${patientId}/communication/link-tokens/${payload.tokenId}/revoke`,
+            );
+          } catch { /* أفضل جهد — والبطاقة ستعرض المعلَّق وزرّ إلغائه */ }
+        }
+        queryClient.invalidateQueries({ queryKey: key });
         toast({
           title: "تعذّر إنشاء الرابط",
           description: "تكامل Telegram غير مُفعَّل على الخادم. راجع المسؤول.",
@@ -214,20 +233,34 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
     }
   }
 
-  // ── غير مخوَّل: بطاقة صامتة بلا أزرار ─────────────────────────────────
+  // ── فشل القراءة: بطاقة صامتة **بلا زرّ ربط ولا زرّ سحب** ──────────────
   // لا نُخفيها كلّياً كي لا يظنّ الموظّف أن الميزة غير موجودة، ولا نعرض
-  // زرّاً يُردّ من الخادم.
-  if (denied) {
+  // زرّاً يفترض حالةً لم تصل. وزرّ «إعادة المحاولة» للعطل العابر وحده —
+  // فالمنع وانتهاء الجلسة لا يُعالَجان بإعادة طلب.
+  if (failure) {
     return (
       <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50" data-testid="card-communication">
         <h3 className="font-bold text-lg flex items-center gap-2 text-sky-700 mb-4">
           <MessageCircle className="w-5 h-5" />
           تواصل المريض
         </h3>
-        <p className="text-sm text-muted-foreground flex items-center gap-2" data-testid="text-communication-denied">
-          <ShieldOff className="w-4 h-4" />
-          لا تملك صلاحية إدارة قنوات تواصل هذا المريض.
+        <p
+          className="text-sm text-muted-foreground flex items-center gap-2"
+          data-testid={`text-communication-${failure.kind}`}
+        >
+          <ShieldOff className="w-4 h-4 shrink-0" />
+          {failure.message}
         </p>
+        {failure.canRetry && (
+          <Button
+            variant="outline" size="sm" className="mt-3"
+            onClick={() => state.refetch()}
+            data-testid="button-retry-communication"
+          >
+            <RefreshCw className="w-4 h-4 ml-2" />
+            إعادة المحاولة
+          </Button>
+        )}
       </Card>
     );
   }
@@ -316,16 +349,25 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
           </div>
         ))}
 
-        <Button
-          onClick={openDialog}
-          variant={activeTelegram.length > 0 ? "outline" : "default"}
-          className="w-full"
-          disabled={state.isLoading}
-          data-testid="button-link-telegram"
-        >
-          <Link2 className="w-4 h-4 ml-2" />
-          {activeTelegram.length > 0 ? "ربط حساب آخر" : "ربط Telegram"}
-        </Button>
+        {/* رابطٌ معلَّق قائم ⇒ لا إصدار ثانٍ. تذكرتان حيّتان لمريض واحد
+            تُربكان الموظّف (أيّهما أعطيته؟) بلا فائدة — والمخرج إلغاء
+            القائم، وهو زرٌّ ظاهر فوق. */}
+        {pendingTelegram.length > 0 ? (
+          <p className="text-xs text-center text-muted-foreground" data-testid="text-pending-blocks-issue">
+            يوجد رابط ربط بانتظار المريض. ألغِه أولاً لإصدار رابط جديد.
+          </p>
+        ) : (
+          <Button
+            onClick={openDialog}
+            variant={activeTelegram.length > 0 ? "outline" : "default"}
+            className="w-full"
+            disabled={state.isLoading}
+            data-testid="button-link-telegram"
+          >
+            <Link2 className="w-4 h-4 ml-2" />
+            {activeTelegram.length > 0 ? "ربط حساب آخر" : "ربط Telegram"}
+          </Button>
+        )}
       </div>
 
       {/* ══ نافذة الإصدار ══════════════════════════════════════════════ */}

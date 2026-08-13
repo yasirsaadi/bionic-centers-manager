@@ -22,6 +22,7 @@ import { join } from "path";
 import { pool } from "../../../server/db";
 import { isAuthenticated } from "../../../server/replit_integrations/auth/replitAuth";
 import { registerPatientCommunicationRoutes } from "../../../server/patient_contacts/routes";
+import { classifyCommunicationError, hasNewContact } from "./patient_communication_logic";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -213,14 +214,14 @@ async function main() {
     console.log("\n── الصلاحية ──");
     r = await req("GET", COMM(p), S.therapist);
     same("١٣. الدور غير المؤهَّل ⇒ 403 من الخادم", r.status, 403);
-    check(/const denied = \(state\.error as any\)\?\.message\?\.startsWith\?\.\("403"\)/.test(SRC),
-      "والبطاقة تقرأ 403 وتعرض بطاقةً صامتة");
-    // والبطاقة الصامتة تُعاد **قبل** أي زرّ — فحصٌ على ترتيب الشيفرة.
-    const deniedAt = SRC.indexOf("if (denied)");
-    const buttonAt = SRC.indexOf("button-link-telegram");
+    // والبطاقة تُغلق على 403 كما على غيره — التفصيل في قسم «فشل القراءة».
+    check(classifyCommunicationError(new Error("403: غير مصرح")).kind === "denied",
+      "والبطاقة تصنّفه منعاً وتعرض بطاقةً صامتة");
+    const deniedAt = CODE.indexOf("if (failure)");
+    const buttonAt = CODE.indexOf("button-link-telegram");
     check(deniedAt > 0 && deniedAt < buttonAt, "وتُعاد قبل أي زرّ قابل للتنفيذ");
-    check(!SRC.slice(deniedAt, SRC.indexOf("</Card>", deniedAt)).includes("<Button"),
-      "**ولا زرّ واحد داخل بطاقة المنع**");
+    check(!/data-testid="button-(link-telegram|revoke)/.test(CODE.slice(deniedAt, CODE.indexOf("</Card>", deniedAt))),
+      "**ولا زرّ ربط ولا سحب داخل بطاقة المنع**");
 
     // ══ ١١-١٢ و١٦. ثوابت الأمان ══════════════════════════════════════════
     console.log("\n── ثوابت الأمان في شيفرة البطاقة ──");
@@ -242,6 +243,100 @@ async function main() {
     // ولا يُعرَض نصّاً مقروءاً — رمزاً ونسخاً فقط.
     check(!/\{deepLink\}</.test(SRC), "١١. ولا يُعرَض نصّ الرابط مقروءاً في الصفحة");
     check(/QRCodeSVG value=\{deepLink\}/.test(SRC), "بل رمزاً يُبنى منه");
+
+    // ══ ١-٣ (بلوكر): أي فشل يُغلق البطاقة، لا 403 وحده ═══════════════════
+    console.log("\n── فشل القراءة: مغلقٌ عند الشكّ ──");
+    const cases: [string, unknown, string, string, boolean][] = [
+      ["401", new Error("401: Unauthorized"), "unauthenticated", "انتهت الجلسة أو يلزم تسجيل الدخول من جديد.", false],
+      ["403", new Error("403: غير مصرح"), "denied", "لا تملك صلاحية إدارة قنوات تواصل هذا المريض.", false],
+      ["500", new Error("500: Internal Server Error"), "unknown", "تعذّر تحميل حالة تواصل المريض. أعد المحاولة.", true],
+      ["انقطاع شبكة", new TypeError("Failed to fetch"), "unknown", "تعذّر تحميل حالة تواصل المريض. أعد المحاولة.", true],
+      ["خطأ بلا نصّ", undefined, "unknown", "تعذّر تحميل حالة تواصل المريض. أعد المحاولة.", true],
+    ];
+    for (const [label, err, kind, message, canRetry] of cases) {
+      const info = classifyCommunicationError(err);
+      same(`«${label}» ⇒ تصنيفٌ ورسالةٌ وزرّ إعادة`, [info.kind, info.message, info.canRetry],
+        [kind, message, canRetry]);
+    }
+    // والبطاقة تُغلق على **أي** فشل — لا على 403 وحده.
+    check(/const failure = state\.isError \? classifyCommunicationError\(state\.error\) : null;/.test(CODE),
+      "١-٣. والبطاقة تُغلق على أي فشل لا على 403 وحده");
+    check(/if \(failure\) \{/.test(CODE), "وتُعاد بطاقة الفشل مبكّراً");
+    const failAt = CODE.indexOf("if (failure) {");
+    const linkBtnAt = CODE.indexOf("button-link-telegram");
+    const revokeBtnAt = CODE.indexOf("button-revoke-contact-");
+    check(failAt > 0 && failAt < linkBtnAt && failAt < revokeBtnAt,
+      "**وقبل زرّ الربط وزرّ السحب معاً**");
+    const failBlock = CODE.slice(failAt, CODE.indexOf("return (", linkBtnAt - 4000) > 0
+      ? CODE.indexOf("</Card>", failAt) : CODE.indexOf("</Card>", failAt));
+    check(!/button-link-telegram|button-revoke/.test(failBlock),
+      "ولا زرّ ربط ولا سحب داخل بطاقة الفشل", failBlock.slice(0, 120));
+    check(/failure\.canRetry &&/.test(CODE), "وزرّ إعادة المحاولة مشروطٌ بالعطل العابر وحده");
+
+    // ══ ٤-٦ (بلوكر): اكتشاف النجاح بالمعرّفات لا بالعدد ══════════════════
+    console.log("\n── اكتشاف الربط ──");
+    same("٥. زيادة العدد ⇒ نجاح", hasNewContact([10], [10, 11]), true);
+    // **الحالة الحاسمة**: تغيّر الصلة يستبدل الجهة، فالعدد يبقى واحداً.
+    same("٤. **تبديل المعرّف مع بقاء العدد ⇒ نجاح** (استبدال الصلة)", hasNewContact([10], [11]), true);
+    same("٦. وثبات المعرّفات ⇒ لا نجاح", hasNewContact([10], [10]), false);
+    same("ولا شيء من لا شيء", hasNewContact([], []), false);
+    same("وأولُ ربطٍ على الإطلاق ⇒ نجاح", hasNewContact([], [7]), true);
+    same("واختفاء جهة بلا جديدة ليس نجاحاً", hasNewContact([10, 11], [10]), false);
+    same("وتبديل واحدة من اثنتين ⇒ نجاح", hasNewContact([10, 11], [10, 12]), true);
+    // والبطاقة تستعملها فعلاً بالمعرّفات.
+    check(/hasNewContact\(baselineIds, currentIds\)/.test(CODE), "والبطاقة تقارن المعرّفات");
+    check(!/activeTelegram\.length > baseline\b/.test(CODE), "**ولا أثر لمقارنة الأعداد**");
+    check(/setBaselineIds\(activeTelegram\.map\(\(c\) => c\.id\)\)/.test(CODE),
+      "وتلتقط المعرّفات عند فتح النافذة");
+
+    // ══ ٧-٨ (بلوكر): تذكرةٌ بلا رابط تُسحَب فوراً ════════════════════════
+    console.log("\n── تذكرة بلا رابط ──");
+    const pOrphan = await mkPatient("مريض التكامل المعطَّل");
+    // نُعطِّل البوت كما لو أن الخادم بلا إعداد — فتصدر التذكرة بلا رابط.
+    const savedUser = process.env.PATIENT_TELEGRAM_BOT_USERNAME;
+    delete process.env.PATIENT_TELEGRAM_BOT_USERNAME;
+    const orphan = await req("POST", `${COMM(pOrphan)}/link-tokens`, S.admin,
+      { channel: "telegram", relation: "self" });
+    same("٧. الإصدار ينجح لكن بلا رابط عميق", [orphan.status, orphan.json.telegramDeepLink], [201, undefined]);
+    check(typeof orphan.json.tokenId === "number", "والردّ يحمل `tokenId` — وهو ما يُسحَب به");
+    same("والتذكرة معلَّقة فعلاً قبل السحب",
+      (await req("GET", COMM(pOrphan), S.admin)).json.pendingTokens.length, 1);
+    // البطاقة تسحبها بالمسار نفسه — ننفّذه هنا كما تفعل.
+    const revoked = await req("POST", `${COMM(pOrphan)}/link-tokens/${orphan.json.tokenId}/revoke`, S.admin);
+    same("والسحب بالنقطة القائمة ينجح", [revoked.status, revoked.json.revoked], [200, true]);
+    same("٨. **فلا يبقى رابط معلَّق مخفيّ**",
+      (await req("GET", COMM(pOrphan), S.admin)).json.pendingTokens.length, 0);
+    process.env.PATIENT_TELEGRAM_BOT_USERNAME = savedUser;
+    // والبطاقة تفعل ذلك في شيفرتها: سحبٌ ثم إبطالٌ ثم خطأ.
+    const issueBlock = CODE.slice(CODE.indexOf("const issue = useMutation"), CODE.indexOf("const revokeToken"));
+    check(/if \(!payload\.telegramDeepLink\)/.test(issueBlock), "والبطاقة تكشف غياب الرابط");
+    check(/link-tokens\/\$\{payload\.tokenId\}\/revoke/.test(issueBlock), "وتسحب التذكرة الصادرة");
+    check(/invalidateQueries/.test(issueBlock), "وتُبطل الاستعلام");
+    check(/variant: "destructive"/.test(issueBlock), "وتعرض خطأ التكامل");
+    check(!/setDeepLink\(payload/.test(issueBlock.slice(0, issueBlock.indexOf("return;"))),
+      "ولا تضع رابطاً غير موجود في الحالة");
+
+    // ══ ٩ (بلوكر): المعلَّق يمنع إصدار ثانٍ ══════════════════════════════
+    console.log("\n── المعلَّق يمنع الإصدار ──");
+    const pBlock = await mkPatient("مريض المنع");
+    await req("POST", `${COMM(pBlock)}/link-tokens`, S.admin, { channel: "telegram", relation: "self" });
+    same("٩. للمريض رابط معلَّق", (await req("GET", COMM(pBlock), S.admin)).json.pendingTokens.length, 1);
+    // **الشرط مربوط بالعنصر نفسه** — لا بأي ذكرٍ آخر لـ`pendingTelegram`
+    // (الشارة تستعمله أيضاً، فمطابقةٌ عامّة كانت تمرّ ولو أُزيل الحارس).
+    const gateRe = /\{pendingTelegram\.length > 0 \? \(\s*[\s\S]{0,200}?data-testid="text-pending-blocks-issue"/;
+    check(gateRe.test(CODE), "والبطاقة تستبدل زرّ الربط بنصّ التوجيه — بشرطٍ مربوط بالنصّ نفسه");
+    check(/يوجد رابط ربط بانتظار المريض\. ألغِه أولاً لإصدار رابط جديد\./.test(SRC),
+      "بالنصّ المطلوب حرفياً");
+    // والزرّ في الفرع الآخر وحده — فلا سبيل للضغط عليه والمعلَّق قائم.
+    const gateAt = CODE.search(gateRe);
+    const gate = gateAt >= 0 ? CODE.slice(gateAt, CODE.indexOf("</Dialog>")) : "";
+    const elseAt = gate.indexOf(") : (");
+    check(elseAt > 0 && gate.indexOf("button-link-telegram") > elseAt,
+      "**وزرّ الربط في فرع «لا معلَّق» وحده**");
+
+    // ══ ١٠. لا سرّ في الواجهة ════════════════════════════════════════════
+    check(!/rawToken/.test(CODE.replace(/payload\.telegramDeepLink/g, "")),
+      "١٠. ولا `rawToken` في شيفرة البطاقة إطلاقاً");
 
     // ══ ١٥. لا مساس بمسار التصنيع ════════════════════════════════════════
     check(!/manufacturing|work_order|workOrder/i.test(CODE), "١٥. ولا مساس بالتصنيع في شيفرة البطاقة");
