@@ -30,6 +30,7 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
+  patientNotificationDeliveries,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -901,6 +902,11 @@ export class DatabaseStorage implements IStorage {
       // NOTE: the append-only trigger guards UPDATE only, never DELETE —
       // guarding DELETE would have broken patient deletion for every user,
       // which this project has already lived through once.
+      // الصادر **قبل الأحداث وجهات الاتصال معاً**: يحمل مفتاحاً إلى كليهما،
+      // فحذف أيٍّ منهما قبله يكسر مفتاحه ويُسقط حذف المريض كلّه. (أمسكه
+      // اختبار الحذف الكامل في `test:notifications` — وهو سبب وجود القاعدة
+      // الملزمة في CLAUDE.md.)
+      await tx.delete(patientNotificationDeliveries).where(eq(patientNotificationDeliveries.patientId, id));
       await tx.delete(patientEvents).where(eq(patientEvents.patientId, id));
       // هوية التواصل (migration 047) — حذفٌ صريح لا كاسكيد صامت: القاعدة
       // الملزِمة في هذا المشروع أن كل جدول جديد يشير إلى `patients` يُضاف
@@ -1401,6 +1407,7 @@ export class DatabaseStorage implements IStorage {
       // ── هوية التواصل (migration 047) ─────────────────────────────────────
       // التذاكر تتبع المريض بلا تعقيد: بصمتها فريدة عالمياً فلا تتصادم.
       await repoint("patientLinkTokens", patientLinkTokens, patientLinkTokens.patientId);
+      await repoint("patientNotificationDeliveries", patientNotificationDeliveries, patientNotificationDeliveries.patientId);
       // أمّا جهات الاتصال فلها تصادم مشروع: الحساب نفسه مرتبطٌ ونشِط على
       // الملفّين. إعادة التوجيه وحدها كانت ستنتهك `uq_patient_contacts_active`
       // وتُسقط الدمج. المعالجة في وحدة التواصل حيث تُعرَف قيود الجدول:

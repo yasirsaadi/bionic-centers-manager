@@ -67,6 +67,8 @@ async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await pool.query(`DELETE FROM audit_log WHERE entity_type IN ('patient_link_token','patient_contact') AND user_id IN (${[ADMIN, MANAGER1, MANAGER2, RECEPTION, RECEPTION_NO, OUTSIDER].join(",")})`);
   await pool.query(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
+  // الصادر يشير إلى الأحداث وجهات الاتصال معاً — يُحذف قبلهما.
+  await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);

@@ -15,7 +15,7 @@ import {
 } from "@shared/schema";
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
-import { recordOrderCreatedEvent, recordStageEvent } from "./events";
+import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -669,12 +669,20 @@ export async function updateStage(params: {
     // في سجلّ المواعيد إطلاقاً، وبدا الأمر كأنّ موعده وُلد من العدم.
     // والخاسر في السباق يمضي في نقل المرحلة ولا يدّعي التزاماً ليس له.
     if (commitsDate) {
-      await tx.insert(WH).values({
+      const [dateRow] = await tx.insert(WH).values({
         workOrderId: order.id,
         actionType: "date_change",
         fromStage: toStage, toStage,
         notes: deliveryDateSetNote(params.deliveryDate!),
         performedBy: params.performedBy,
+      }).returning({ id: WH.id });
+      // ويستحقّ خبرَه كذلك — مرّةً واحدة. والسباق محسومٌ قبله: `commitsDate`
+      // لا تصدق إلا لمن وجد العمود فارغاً **تحت القفل**، فالخاسر لا يصل
+      // هنا أصلاً ولا يُصدر حدثاً ثانياً لموعدٍ لم يلتزم به.
+      await recordDeliveryDateEvent(tx, {
+        order: updated,
+        expectedDeliveryDate: params.deliveryDate!,
+        historyId: dateRow.id,
       });
     }
     return updated;
@@ -800,7 +808,7 @@ export async function updateDeliveryDate(params: {
     const [updated] = await tx.update(WO)
       .set({ expectedDeliveryDate, updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
-    await tx.insert(WH).values({
+    const [dateRow] = await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "date_change",
       // الموعد لا يحرّك المرحلة — والطرفان متساويان توثيقاً لذلك.
@@ -809,6 +817,14 @@ export async function updateDeliveryDate(params: {
       fromStage: live.currentStage, toStage: live.currentStage,
       notes,
       performedBy: params.performedBy,
+    }).returning({ id: WH.id });
+    // الحدث داخل المعاملة نفسها: الموعد وسطرُه وخبرُ المريض معاً أو لا شيء.
+    // ويشمل **أول تحديد** لا التغيير وحده — فمَن ينتظر جهازه يعنيه أن يعرف
+    // موعده أوّلَ ما يُحدَّد، لا حين يتغيّر فقط.
+    await recordDeliveryDateEvent(tx, {
+      order: updated,
+      expectedDeliveryDate,
+      historyId: dateRow.id,
     });
     return updated;
   });

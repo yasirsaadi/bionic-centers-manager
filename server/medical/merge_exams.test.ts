@@ -81,6 +81,8 @@ async function cleanup() {
   await pool.query(`DELETE FROM medical_exam_addenda WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`);
   await pool.query(`DELETE FROM medical_exam_revisions WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`);
   await pool.query(`DELETE FROM medical_exams WHERE patient_id IN (${ids})`);
+  // الصادر يشير إلى الأحداث وجهات الاتصال معاً — يُحذف قبلهما.
+  await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);

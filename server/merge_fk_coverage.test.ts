@@ -56,6 +56,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
   "patient_link_tokens.patient_id": "repoint — البصمة فريدة عالمياً فلا تتصادم",
   "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",
+  "patient_notification_deliveries.patient_id": "repoint — الصادر يتبع المريض، ولا تصادم فيه",
 
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",

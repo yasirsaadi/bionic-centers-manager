@@ -72,6 +72,15 @@ async function events(patientId: number) {
 async function mfgEvents(patientId: number) {
   return (await events(patientId)).filter((e) => e.eventType.startsWith("manufacturing."));
 }
+/**
+ * أحداث **المراحل** وحدها. حدث موعد التسليم صار يُصدَر كذلك (المرحلة 210)،
+ * وهو حدثٌ مشروع لكنه ليس انتقال مرحلة — فيُفصَل كي تبقى تأكيدات التسلسل
+ * تقيس ما وُضعت له.
+ */
+async function stageEvents(patientId: number) {
+  return (await mfgEvents(patientId))
+    .filter((e) => e.eventType !== "manufacturing.delivery_date_changed");
+}
 async function order(id: number) {
   const [o] = await db.select().from(WO).where(eq(WO.id, id));
   return o;
@@ -100,6 +109,8 @@ async function cleanup() {
   await pool.query(`DELETE FROM prosthetic_rework_events WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
   await pool.query(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
   await pool.query(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
+  // الصادر يشير إلى الأحداث وجهات الاتصال معاً — يُحذف قبلهما.
+  await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   // الزيارات قبل الحالات: `visits.case_id` مفتاح أجنبي على `patient_cases`.
@@ -153,12 +164,16 @@ async function main() {
     for (const [stage, type, body] of steps) {
       const r = await req("PATCH", `/api/manufacturing/orders/${wo1.id}/advance`, S.expert, body);
       same(`التقدّم إلى ${stage} نجح`, r.status, 200);
-      ev = await mfgEvents(p1);
+      ev = await stageEvents(p1);
       assertSafe(stage, ev[ev.length - 1], type, stage);
     }
-    same("ستّة أحداث لا أكثر — بلا ازدواج", (await mfgEvents(p1)).length, 6);
+    same("ستّة أحداث مراحل لا أكثر — بلا ازدواج", (await stageEvents(p1)).length, 6);
+    // والالتزام بالموعد عند القالب أصدر حدثه هو أيضاً — مرّةً واحدة.
+    const dateEvents = (await mfgEvents(p1)).filter((e) => e.eventType === "manufacturing.delivery_date_changed");
+    same("وحدث موعد تسليم واحد", dateEvents.length, 1);
+    same("بحمولة الموعد وحده", dateEvents[0].payload, { expectedDeliveryDate: "2026-12-01" });
     // «جاهز للتجربة» و«التسليم» لهما نوعاهما، فلا stage_changed مكرَّر معهما.
-    const types = (await mfgEvents(p1)).map((e) => e.eventType);
+    const types = (await stageEvents(p1)).map((e) => e.eventType);
     same("التسلسل بأنواعه", types, [
       "manufacturing.order_created",
       "manufacturing.stage_changed",
@@ -326,7 +341,7 @@ async function main() {
 
       let r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert, {});
       same("مساند: التقدّم إلى القياسات نجح", r.status, 200);
-      sev = await mfgEvents(ps);
+      sev = await stageEvents(ps);
       same("مساند: حدثان", sev.length, 2);
       assertSafe("مساند/القياسات", sev[1], "manufacturing.stage_changed", "measurements");
 
@@ -336,7 +351,7 @@ async function main() {
         { toStage: "manufacturing", expectedDeliveryDate: "2026-12-20" });
       same("مساند: القفز إلى التصنيع نجح", r.status, 200);
       same("مساند: والمرحلة صارت التصنيع", (await order(wos.id)).currentStage, "manufacturing");
-      sev = await mfgEvents(ps);
+      sev = await stageEvents(ps);
       same("مساند: حدث واحد للقفزة لا اثنان", sev.length, 3);
       assertSafe("مساند/التصنيع", sev[2], "manufacturing.stage_changed", "manufacturing");
 
@@ -348,16 +363,16 @@ async function main() {
       // إكمال المسار حتى التسليم — بنفس قاعدة الحمولة.
       r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert, {});
       same("مساند: جاهز للتجربة نجح", r.status, 200);
-      sev = await mfgEvents(ps);
+      sev = await stageEvents(ps);
       assertSafe("مساند/جاهز للتجربة", sev[3], "manufacturing.ready_for_delivery", "ready_for_fitting");
 
       r = await req("PATCH", `/api/manufacturing/orders/${wos.id}/advance`, S.expert,
         { finalResult: "first_fit_success" });
       same("مساند: التسليم نجح", r.status, 200);
-      sev = await mfgEvents(ps);
+      sev = await stageEvents(ps);
       assertSafe("مساند/التسليم", sev[4], "manufacturing.delivered", "delivered");
 
-      same("مساند: خمسة أحداث — واحد أقلّ من الأطراف لتخطّي القالب", sev.length, 5);
+      same("مساند: خمسة أحداث مراحل — واحد أقلّ من الأطراف لتخطّي القالب", sev.length, 5);
       same("مساند: التسلسل بأنواعه", sev.map((e) => e.eventType), [
         "manufacturing.order_created",
         "manufacturing.stage_changed",
@@ -379,11 +394,18 @@ async function main() {
     const all = (await db.select().from(patientEvents)
       .where(and(eq(patientEvents.sourceType, "work_order"), eq(patientEvents.visibility, "patient"))))
       .filter((e) => mine.some((m) => m.id === e.patientId));
+    // **مفتاح واحد لا غير، ومن قائمة مغلقة مربوطة بالنوع**: أحداث المراحل
+    // تحمل `stage`، وحدث الموعد يحمل `expectedDeliveryDate`. وأي مفتاح
+    // ثانٍ — أو مفتاح لا يطابق نوعه — تسريبٌ يُمسك هنا.
+    const ALLOWED_KEY: Record<string, string> = {
+      "manufacturing.delivery_date_changed": "expectedDeliveryDate",
+    };
     const bad = all.filter((e) => {
       const keys = Object.keys((e.payload ?? {}) as object);
-      return keys.length !== 1 || keys[0] !== "stage";
+      const expected = ALLOWED_KEY[e.eventType] ?? "stage";
+      return keys.length !== 1 || keys[0] !== expected;
     });
-    same("كل حدث موجَّه للمريض حمولته المرحلة وحدها", bad.map((b) => b.id), []);
+    same("كل حدث موجَّه للمريض حمولته مفتاحٌ واحد يطابق نوعه", bad.map((b) => b.id), []);
     // والصفّ نفسه: ولا واحدٌ منها يحمل فاعلاً.
     const withActor = all.filter((e) => e.actorUserId !== null || e.actorName !== null);
     same("ولا واحد منها يحمل فاعلاً", withActor.map((e) => e.id), []);

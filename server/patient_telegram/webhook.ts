@@ -29,6 +29,9 @@ import { createHash, timingSafeEqual } from "crypto";
 import { redeemLinkToken, LinkTokenError } from "../patient_contacts/store";
 import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
 import { sendMessage } from "./client";
+// الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
+import { redeemAndWelcome } from "../patient_notifications/welcome";
+import { nudgeDispatcher } from "../patient_notifications/dispatcher";
 
 export { PATIENT_WEBHOOK_PATH };
 const SECRET_HEADER = "x-telegram-bot-api-secret-token";
@@ -119,19 +122,31 @@ export function registerPatientTelegramWebhook(app: Express) {
       // فهو يتغيّر، ولا رقم هاتف — ولا ندّعي تحقّقاً لم يجرِ.
       const externalId = String(fromId);
 
+      // **الاستهلاك ورسائله في معاملة واحدة.** تعثّرُ القاعدة يُرجِع
+      // الاستهلاك والجهة والصفوف معاً، فيعيد تلغرام المحاولة على تذكرةٍ
+      // ما زالت صالحة — بدل مريضٍ مربوط لا يصله شيء ولا أحد يعلم.
       let linked = false;
       try {
-        await redeemLinkToken({ rawToken: payload, externalId });
+        await redeemAndWelcome({ rawToken: payload, externalId });
         linked = true;
       } catch (err) {
+        // **الخطأ التقني يصعد** إلى المعالج الخارجي فيردّ 500 ويعيد تلغرام
+        // المحاولة. والمبتلَع هنا هو ما كان يصنع الضياع الصامت.
         if (!(err instanceof LinkTokenError)) throw err;
         // منتهية · مسحوبة · مستهلَكة · غير موجودة ⇒ نصٌّ واحد.
         // والمعاد إرساله من تلغرام يقع هنا بـ«مستهلَكة»: بلا صفٍّ ثانٍ،
         // وبلا 500، وبلا تغيير صلة — وهو المطلوب من إعادة المحاولة.
       }
 
-      // بعد القاعدة لا قبلها، وفشلُه لا يُلغي ما تمّ.
-      await sendMessage(chatId, linked ? MESSAGES.linked : MESSAGES.invalid);
+      if (!linked) {
+        // لا جهة اتصال ⇒ لا صفّ صادر يُستحقّ له. الردّ مباشر.
+        await sendMessage(chatId, MESSAGES.invalid);
+        return res.json({ ok: true });
+      }
+
+      // كبسة كي يصل الترحيب في ثوانٍ لا في دقيقة. «أطلق وانسَ»، وبعد
+      // الحفظ لا قبله.
+      nudgeDispatcher();
       return res.json({ ok: true });
     } catch (err) {
       // خطأ غير متوقَّع (قاعدة بيانات مثلاً): **500 عمداً** كي يعيد تلغرام
