@@ -76,6 +76,7 @@ import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import PatientCommunicationCard from "@/components/PatientCommunicationCard";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1043,6 +1044,10 @@ export default function PatientDetails() {
               )}
             </div>
           </Card>
+
+          {/* قنوات تواصل المريض — الصلاحية يفرضها الخادم، والبطاقة تصمت
+              بلا أزرار حين يردّ 403. */}
+          <PatientCommunicationCard patientId={patient.id} />
         </div>
 
         {/* Right Column: Tabs (Payments, Documents) */}
