@@ -370,8 +370,33 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    const serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
-    if (!serviceType) return res.status(400).json({ error: "الصيانة لمرضى الأطراف والمساند فقط" });
+    // ── أيّ جهاز يُصان؟ ─────────────────────────────────────────────────
+    // كان السطر `isAmputee ? prosthetic : medical_support` — فمريضٌ يحمل
+    // **الاثنين** تُقيَّد صيانة مسنده على خيط الأطراف دائماً: أجورها تُنسَب
+    // لحالة الأطراف، وحارسُ «أمر نشط واحد لكل خدمة» يمنع صيانة المسند لأن
+    // للأطراف أمراً مفتوحاً. الأولوية الصامتة لم تكن قراراً، بل أول شرطٍ
+    // في تعبير ثلاثي.
+    //
+    // الآن: صاحب نوعٍ واحد يبقى تلقائياً كما كان — لا سؤال ولا تغيير سلوك.
+    // وصاحب الاثنين **يجب أن يُصرَّح** بنوعه، ويُتحقَّق أنه يملكه فعلاً.
+    // والصمت في حالة الاثنين يُردّ بـ400 لا يُخمَّن: التخمين هو العطب نفسه.
+    const owned = [
+      patient.isAmputee ? "prosthetic" : null,
+      patient.isMedicalSupport ? "medical_support" : null,
+    ].filter(Boolean) as ("prosthetic" | "medical_support")[];
+    if (owned.length === 0) return res.status(400).json({ error: "الصيانة لمرضى الأطراف والمساند فقط" });
+    const requestedService = strOrU(req.body?.serviceType);
+    let serviceType: "prosthetic" | "medical_support";
+    if (requestedService) {
+      if (!owned.includes(requestedService as any)) {
+        return res.status(400).json({ error: "هذا النوع غير مفعّل على ملف المريض" });
+      }
+      serviceType = requestedService as "prosthetic" | "medical_support";
+    } else if (owned.length === 1) {
+      serviceType = owned[0];
+    } else {
+      return res.status(400).json({ error: "المريض يحمل طرفاً ومسنداً — حدّد نوع الجهاز المراد صيانته" });
+    }
     if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });

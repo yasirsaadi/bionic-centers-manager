@@ -35,12 +35,23 @@ import { useState, useEffect } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
+import { nextSubmissionToken, mintSubmissionToken } from "./patient_service_launcher_logic";
 
 interface NewServiceModalProps {
   patientId: number;
   branchId: number;
   currentTotalCost: number;
-  isPhysiotherapy?: boolean;
+  /**
+   * فتحٌ **موجَّه** من موزِّع الخدمات، مع نوع الخدمة مختاراً سلفاً — فلا
+   * يُطلَب من الموظّف أن يعيد اختيار ما اختاره قبل سطر واحد.
+   *
+   * والقائمة تبقى ظاهرةً قابلةً للتغيير: التوجيه اختصارٌ لا حجْب.
+   * والمحاسبة والدفع والجلسات لم يُمَسّ منها شيء.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialServiceType?: string;
+  hideTrigger?: boolean;
 }
 
 interface TreatmentEntry {
@@ -75,8 +86,14 @@ const TREATMENT_PRICES: Record<string, number> = {
   "أبر صينية": 25000,
 };
 
-export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysiotherapy }: NewServiceModalProps) {
-  const [open, setOpen] = useState(false);
+export function NewServiceModal({
+  patientId, branchId, currentTotalCost,
+  open: openProp, onOpenChange, initialServiceType, hideTrigger,
+}: NewServiceModalProps) {
+  const [openSelf, setOpenSelf] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openSelf;
+  const setOpen = (v: boolean) => { if (!controlled) setOpenSelf(v); onOpenChange?.(v); };
   // One token per opened form. The same click always carries the same token,
   // so a re-sent request is recognised and ignored by the server; a genuinely
   // new service means opening the form again, which mints a new token — so a
@@ -141,8 +158,38 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     },
   });
 
+  /**
+   * **نوع الخدمة المختار هو ما يقرّر وضع الجلسات — لا ملفّ المريض.**
+   *
+   * كان القرار على `patient.isPhysiotherapy`، وهذا كان يصحّ حين كانت النافذة
+   * تُفتح من زرٍّ واحد لا يعرف ما سيُختار. أما الآن فمريضُ العلاج الطبيعي
+   * يختار «استشارة طبية» أو «خدمة أخرى» — فتُجبَر خدمتُه على أن تصير جلسات:
+   * يُطلَب منه نوع علاج، ويُحسَب سعرٌ بالجلسة، ويُرسَل `sessionCount`
+   * و`paymentTreatmentType`، ويُدفَع المبلغ كاملاً بلا خيار جزئي. استشارةٌ
+   * تُقيَّد جلساتٍ في خطّة العلاج — والعدّاد يقرأ شراءً لم يقع.
+   *
+   * والقاعدة الآن من الخدمة نفسها: «جلسات علاج إضافية» وحدها وضعُ جلسات،
+   * وما عداها خدمةٌ عادية مهما كان على ملفّ المريض.
+   */
+  const selectedServiceType = initialServiceType ?? form.watch("serviceType");
+  const isPhysioService = selectedServiceType === "additional_therapy";
+
+  // نوع الخدمة الموجَّه يُثبَّت عند كل فتح — لا مرّةً واحدة: نافذةٌ أُغلقت
+  // ثم فُتحت على خدمة أخرى كانت ستحمل اختيار المرّة السابقة.
   useEffect(() => {
-    if (!isPhysiotherapy) return;
+    if (open && initialServiceType) form.setValue("serviceType", initialServiceType);
+  }, [open, initialServiceType, form]);
+
+  // تذكرة الإرسال تتبع **حالة النافذة** لا حدثَ فتحها: الموزِّع يركّب هذه
+  // النافذة وهي مفتوحة أصلاً، فلا `onOpenChange` يقع — وكانت التذكرة تبقى
+  // فارغةً فيسقط منع التكرار بصمت في المسار الجديد وحده. والأثر يُطلَق عند
+  // كل تغيّر في `open` (والتركيب منه)، والدالّة الخالصة تضمن واحدةً لكل فتح.
+  useEffect(() => {
+    setSubmissionToken((prev) => nextSubmissionToken(prev, open, mintSubmissionToken));
+  }, [open]);
+
+  useEffect(() => {
+    if (!isPhysioService) return;
     if (manualCostOverride) return;
 
     const updatedEntries = treatmentEntries.map(entry => {
@@ -165,7 +212,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
     const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
     form.setValue("sessionCount", String(totalSessions));
-  }, [treatmentEntries, isPhysiotherapy, form, manualCostOverride]);
+  }, [treatmentEntries, isPhysioService, form, manualCostOverride]);
 
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
   const newTotal = currentTotalCost + serviceCostValue;
@@ -176,15 +223,15 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
   // (the common case) until the accountant/receptionist edits it down for a
   // partial payment. Physio keeps its per-session payment model untouched.
   useEffect(() => {
-    if (isPhysiotherapy !== false) return;
+    if (isPhysioService) return;
     if (paidNowOverride) return;
     form.setValue("paidNow", serviceCostValue ? String(serviceCostValue) : "");
-  }, [serviceCostValue, isPhysiotherapy, paidNowOverride, form]);
+  }, [serviceCostValue, isPhysioService, paidNowOverride, form]);
 
   function onSubmit(values: FormValues) {
     const serviceCost = Number(values.serviceCost) || 0;
     
-    if (isPhysiotherapy !== false) {
+    if (isPhysioService) {
       const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
       if (hasEmptyType) {
         toast({
@@ -196,7 +243,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     }
     
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
-    const hasMedicalConsultationOnly = isPhysiotherapy !== false && validEntries.length === 1 && validEntries[0].treatmentType === "استشارة طبية";
+    const hasMedicalConsultationOnly = isPhysioService && validEntries.length === 1 && validEntries[0].treatmentType === "استشارة طبية";
     if (!hasMedicalConsultationOnly && serviceCost <= 0) {
       toast({
         title: t.modals.costError,
@@ -208,42 +255,35 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
     
     // Physio keeps its per-session full payment; prosthetic/medical-support
     // records only the amount actually paid now (partial allowed).
-    const paidNow = isPhysiotherapy !== false
+    const paidNow = isPhysioService
       ? serviceCost
       : Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
 
     mutate({
-      serviceType: values.serviceType,
+      // الموجَّه يسود على حالة النموذج: القفل في الواجهة يمنع الالتباس،
+      // وهذا يمنع أن يُرسَل غيرُه مهما جرى للحالة بينهما.
+      serviceType: initialServiceType ?? values.serviceType,
       serviceCost,
       initialPayment: paidNow,
       notes: values.notes,
-      treatmentEntries: isPhysiotherapy !== false ? validEntries : undefined,
-      paymentTreatmentType: isPhysiotherapy !== false ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") : null,
-      sessionCount: isPhysiotherapy !== false ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) : null,
+      // الجلسات ووسمها وعددها **لخدمة الجلسات وحدها**. واستشارةٌ لمريض علاج
+      // كانت ترسلها كلّها فتُقيَّد في خطّته شراءٌ لم يقع.
+      treatmentEntries: isPhysioService ? validEntries : undefined,
+      paymentTreatmentType: isPhysioService ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") : null,
+      sessionCount: isPhysioService ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) : null,
     });
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Mint the token on OPEN, not on submit: a token created at submit time
-        // would be regenerated by a second click and defeat the whole guard.
-        if (next) {
-          setSubmissionToken(
-            (globalThis.crypto?.randomUUID?.() ??
-              `${Date.now()}-${Math.random().toString(36).slice(2)}`),
-          );
-        }
-        setOpen(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={setOpen}>
+      {!hideTrigger && (
       <DialogTrigger asChild>
         <Button variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" data-testid="button-new-service">
           <RefreshCcw className="w-4 h-4" />
           {t.modals.addNewService}
         </Button>
       </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-[500px] font-body" dir={dir}>
         <DialogHeader>
           <DialogTitle className="font-display text-xl text-primary">{t.modals.addNewServiceForPatient}</DialogTitle>
@@ -251,13 +291,32 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 mt-4">
+            {/* ── النوع الموجَّه **مقفل** ────────────────────────────────
+                الموزِّع طبّق شروط الأهلية قبل الفتح: «جلسات علاج إضافية»
+                معطَّلة لمريضٍ بلا علاج طبيعي مثلاً. وقائمةٌ قابلة للتغيير
+                هنا كانت طريقاً حول ذلك كلّه — يدخل الموظّف من «استشارة»
+                المتاحة دائماً ثم يبدّلها إلى ما مُنع منه. فالنوع يُعرَض
+                نصّاً لا يُختار، ويبقى ثابتاً طوال دورة النافذة.
+                (والحارس الحقيقي في الخادم — هذا يمنع الالتباس لا الاختراق.)
+                وبلا توجيه تبقى القائمة كما كانت للمسار المستقلّ. */}
+            {initialServiceType ? (
+              <FormItem>
+                <FormLabel>{t.modals.serviceType}</FormLabel>
+                <div
+                  className="h-10 flex items-center rounded-md border bg-slate-50 px-3 text-sm font-medium"
+                  data-testid="text-service-type-locked"
+                >
+                  {t.modals[(serviceTypes.find((x) => x.value === initialServiceType)?.labelKey) ?? "otherServiceLabel"]}
+                </div>
+              </FormItem>
+            ) : (
             <FormField
               control={form.control}
               name="serviceType"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t.modals.serviceType}</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-service-type">
                         <SelectValue placeholder={t.modals.selectServiceType} />
@@ -275,8 +334,9 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
                 </FormItem>
               )}
             />
+            )}
 
-            {isPhysiotherapy !== false && (
+            {isPhysioService && (
               <div className="space-y-3">
                 <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
                 {treatmentEntries.map((entry, index) => (
@@ -384,7 +444,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
 
             {/* Amount paid now — prosthetic / medical-support only. Any unpaid
                 remainder becomes a balance the accountant collects later. */}
-            {isPhysiotherapy === false && (
+            {!isPhysioService && (
               <FormField
                 control={form.control}
                 name="paidNow"
@@ -413,7 +473,7 @@ export function NewServiceModal({ patientId, branchId, currentTotalCost, isPhysi
             )}
 
             <div className="bg-slate-50 p-3 rounded-lg text-sm">
-              {isPhysiotherapy === false && (
+              {!isPhysioService && (
                 <div className="flex justify-between gap-2 text-amber-700 font-semibold mb-1">
                   <span>المتبقّي على المريض من هذه الخدمة</span>
                   <span className="font-mono">{remainingAfter.toLocaleString()} {t.patientDetails.currency}</span>

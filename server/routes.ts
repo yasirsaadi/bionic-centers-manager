@@ -2096,6 +2096,16 @@ export async function registerRoutes(
       const serviceLabel = serviceLabels[serviceType];
       if (!serviceLabel) return res.status(400).json({ message: "نوع الخدمة غير صالح" });
 
+      // «جلسات علاج إضافية» تفترض خطّة قائمة تُزاد عليها. ومريضٌ بلا حالة
+      // علاج طبيعي ليس له ما يُزاد: الجلسات تُقيَّد على حالةٍ لا وجود لها،
+      // وعدّاد الجلسات يقرأ شراءً لخيطٍ لم يُفتح. الموزِّع يعطّل الخيار في
+      // الواجهة — وهذا الحارس هو الذي يجعله ثابتاً في العمل لا في الشاشة:
+      // نداءٌ مباشر أو نافذةٌ قديمة لا يستطيعان تجاوزه.
+      // (والاستشارة و«خدمة أخرى» لا تشترطان شيئاً — لم تُمَسّا.)
+      if (serviceType === "additional_therapy" && !patient.isPhysiotherapy) {
+        return res.status(400).json({ message: "يجب تفعيل حالة العلاج الطبيعي للمريض أولاً" });
+      }
+
       const entries = Array.isArray(treatmentEntries)
         ? treatmentEntries.map((e: any) => ({
             treatmentType: typeof e?.treatmentType === "string" && e.treatmentType ? e.treatmentType : null,

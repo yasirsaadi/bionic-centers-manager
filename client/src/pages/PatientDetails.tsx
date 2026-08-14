@@ -6,7 +6,6 @@ import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrde
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
 import { PatientCaseChips, PatientCasePanel, type CaseRow } from "@/components/patient/PatientCasesTabs";
 import { MoneyInput } from "@/components/ui/money-input";
-import { AddCaseTypeModal } from "@/components/AddCaseTypeModal";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
@@ -70,7 +69,7 @@ import {
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
-import { NewServiceModal } from "@/components/NewServiceModal";
+import { PatientServiceLauncher } from "@/components/PatientServiceLauncher";
 import { PhysioPlanDialog } from "@/components/PhysioPlanDialog";
 import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -1071,16 +1070,15 @@ export default function PatientDetails() {
             </TabsList>
 
             <TabsContent value="visits" className="space-y-4">
+              {/* زرّان لا ثلاثة: الزيارة كما كانت، وباب واحد لكل ما عداها.
+                  «إضافة نوع حالة» لم يعد زرّاً مستقلّاً — صار خياراً داخل
+                  الموزِّع باسمه الذي يعرفه الموظّف («أطراف صناعية»…) بدل
+                  مصطلحٍ داخليّ لا يميّزه أحد عن «خدمة جديدة».
+                  والبوّابة كما كانت: `canAddPatients` بلا توسيع. */}
               {permissions.canAddPatients && (
               <div className="flex justify-end gap-2 mb-4 flex-wrap">
                 <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
-                <NewServiceModal
-                  patientId={patient.id}
-                  branchId={patient.branchId}
-                  currentTotalCost={patient.totalCost || 0}
-                  isPhysiotherapy={!!patient.isPhysiotherapy}
-                />
-                <AddCaseTypeModal patient={patient} />
+                <PatientServiceLauncher patient={patient} />
               </div>
               )}
 
