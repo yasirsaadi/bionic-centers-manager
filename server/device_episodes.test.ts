@@ -307,6 +307,129 @@ async function main() {
   same("ومعرّفات الحلقات لم تتغيّر",
     [sEp1, sEp2, sEpSup].every((id) => moved.some((e) => e.id === id)), true);
 
+
+  // ══ ١٨-٢٣. سلامة مرجعية مركّبة — لا خلط بين مريضين ════════════════════
+  // المفتاح المفرد يحرس الوجود لا الانتماء. والمركّب يطابق الزوج بأكمله.
+  console.log("\n── لا صفَّ لمريضٍ على حلقة مريضٍ آخر ──");
+  const pA = await mkPatient("المريض أ");
+  const pB = await mkPatient("المريض ب");
+  const cA = await mkCase(pA);
+  const cB = await mkCase(pB);
+  const eB = await mkEpisode(pB, cB, 1, "in_manufacturing");
+
+  // ١٨. الصحيح ما زال يعمل.
+  const eA = await mkEpisode(pA, cA, 1, "in_manufacturing");
+  check(eA > 0, "١٨. حلقةٌ بمريضها وخيطها الصحيحين تنجح");
+
+  // ١٩. حلقةٌ للمريض «أ» على خيط المريض «ب» ⇒ مرفوضة.
+  // بحالةٍ منتهية عمداً: خيط «ب» يحمل حلقةً مفتوحة، ولولا ذلك لسبق
+  // «uq_pde_case_open» المفتاحَ المركّب فقاس الاختبارُ قيداً آخر.
+  const crossCase = await refused(() => pool.query(
+    `INSERT INTO patient_device_episodes (patient_id, case_id, sequence_number, status)
+     VALUES ($1,$2,9,'delivered')`, [pA, cB]));
+  check(!!crossCase && /patient_case_fk|foreign key/.test(crossCase),
+    "١٩. **وحلقةٌ لمريضٍ على خيط مريضٍ آخر ترفضها القاعدة**", String(crossCase));
+
+  // ٢٠-٢٣. والتوابع الأربعة: صفٌّ للمريض «أ» على حلقة المريض «ب».
+  const crossChecks: [string, string, string][] = [
+    ["prosthetic_work_orders",
+     `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, assigned_by, device_episode_id) VALUES ($1,1,${EXPERT},'prosthetic','active','order_received',${EXPERT},$2)`,
+     "٢٠. أمر تصنيع"],
+    ["payments",
+     `INSERT INTO payments (patient_id, branch_id, amount, device_episode_id) VALUES ($1,1,1000,$2)`,
+     "٢١. دفعة"],
+    ["visits",
+     `INSERT INTO visits (patient_id, branch_id, device_episode_id) VALUES ($1,1,$2)`,
+     "٢٢. زيارة"],
+    ["cost_entries",
+     `INSERT INTO cost_entries (patient_id, branch_id, amount, source, device_episode_id) VALUES ($1,1,1000,'manual',$2)`,
+     "٢٣. قيد كلفة"],
+  ];
+  for (const [table, insert, label] of crossChecks) {
+    const bad = await refused(() => pool.query(insert, [pA, eB]));
+    check(!!bad && /patient_episode_fk|foreign key/.test(bad),
+      `${label} للمريض «أ» على حلقة «ب» ⇒ مرفوضة`, String(bad));
+    const good = await refused(() => pool.query(insert, [pA, eA]));
+    check(good === null, `وعلى حلقته هو ⇒ تنجح — ${table}`, String(good));
+  }
+  // والصفّ بلا حلقة يمرّ كما كان: MATCH SIMPLE لا تفحص حين يكون الطرف فارغاً.
+  const nullStill = await refused(() => pool.query(
+    `INSERT INTO payments (patient_id, branch_id, amount) VALUES ($1,1,1000)`, [pA]));
+  check(nullStill === null, "**والصفّ بلا حلقة يمرّ كما كان** — لا مساس بالقائم", String(nullStill));
+
+  // ══ ٢٤-٢٦. الدمج مع حلقتين مفتوحتين من النوع نفسه ═════════════════════
+  console.log("\n── الدمج: حلقتان مفتوحتان من النوع نفسه ──");
+  const dSrc = await mkPatient("مصدر بحلقة مفتوحة");
+  const dDst = await mkPatient("هدف بحلقة مفتوحة");
+  const dcSrc = await mkCase(dSrc, "prosthetic");
+  const dcDst = await mkCase(dDst, "prosthetic");
+  const dEpSrc = await mkEpisode(dSrc, dcSrc, 1, "in_manufacturing");
+  const dEpDst = await mkEpisode(dDst, dcDst, 1, "examined");
+  await pool.query(`UPDATE patients SET total_cost = 1000000 WHERE id = $1`, [dSrc]);
+  await pool.query(`UPDATE patients SET total_cost = 2000000 WHERE id = $1`, [dDst]);
+  await pool.query(`UPDATE patient_cases SET cost = 1000000 WHERE id = $1`, [dcSrc]);
+  await pool.query(`INSERT INTO payments (patient_id, branch_id, amount, case_id, device_episode_id) VALUES ($1,1,400000,$2,$3)`, [dSrc, dcSrc, dEpSrc]);
+  const { rows: dWo } = await pool.query<{ id: number }>(
+    `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, assigned_by, device_episode_id)
+     VALUES ($1,1,$2,'prosthetic','active','mold',$2,$3) RETURNING id`, [dSrc, EXPERT, dEpSrc]);
+
+  let dualErr: any = null;
+  try { await storage.mergePatients(dSrc, dDst); } catch (e) { dualErr = e; }
+  check(dualErr !== null, "٢٤. **الدمج مرفوض حين يحمل الملفّان جهازين قيد التنفيذ من النوع نفسه**");
+  check(String(dualErr?.message ?? "").includes("جهازين قيد التنفيذ"),
+    "برسالة عملٍ واضحة لا رسالة قاعدة بيانات", String(dualErr?.message));
+
+  // ٢٥. **ولا شيء تغيّر إطلاقاً** — المعاملة فشلت كاملةً قبل أي تعديل.
+  same("٢٥. الملفّان باقيان",
+    (await pool.query(`SELECT COUNT(*)::int AS n FROM patients WHERE id = ANY($1::int[])`, [[dSrc, dDst]])).rows[0].n, 2);
+  const epsAfter = await db.select().from(PDE).where(eq(PDE.patientId, dSrc));
+  same("وحلقة المصدر على مريضها وخيطها بتسلسلها",
+    epsAfter.map((e) => [e.id, e.patientId, e.caseId, e.sequenceNumber, e.status]),
+    [[dEpSrc, dSrc, dcSrc, 1, "in_manufacturing"]]);
+  same("وحلقة الهدف كما هي",
+    (await db.select().from(PDE).where(eq(PDE.patientId, dDst)))
+      .map((e) => [e.id, e.caseId, e.sequenceNumber, e.status]),
+    [[dEpDst, dcDst, 1, "examined"]]);
+  same("والكلف لم تتغيّر",
+    [(await storage.getPatient(dSrc))?.totalCost, (await storage.getPatient(dDst))?.totalCost],
+    [1000000, 2000000]);
+  same("وكلفة حالة المصدر كما هي",
+    (await db.select().from(patientCases).where(eq(patientCases.id, dcSrc)))[0].cost, 1000000);
+  same("والدفعة على مريضها وحلقتها",
+    (await db.select().from(payments).where(eq(payments.patientId, dSrc)))
+      .map((p) => [p.amount, p.caseId, p.deviceEpisodeId]), [[400000, dcSrc, dEpSrc]]);
+  same("وأمر التصنيع كما هو",
+    (await db.select().from(WO).where(eq(WO.id, dWo[0].id)))
+      .map((o) => [o.patientId, o.deviceEpisodeId, o.currentStage]), [[dSrc, dEpSrc, "mold"]]);
+
+  // ٢٦. ونوعان مختلفان ⇒ الدمج مسموح.
+  const xSrc = await mkPatient("مصدر بمسند مفتوح");
+  const xDst = await mkPatient("هدف بطرف مفتوح");
+  const xcSrc = await mkCase(xSrc, "medical_support");
+  const xcDst = await mkCase(xDst, "prosthetic");
+  await mkEpisode(xSrc, xcSrc, 1, "in_manufacturing");
+  await mkEpisode(xDst, xcDst, 1, "in_manufacturing");
+  let xErr: any = null;
+  try { await storage.mergePatients(xSrc, xDst); } catch (e) { xErr = e; }
+  check(xErr === null, "٢٦. ونوعان مختلفان (مسند + طرف) ⇒ الدمج مسموح", String(xErr));
+  same("وحلقتان على الهدف بخيطيهما",
+    (await db.select().from(PDE).where(eq(PDE.patientId, xDst))).length, 2);
+
+  // ٢٧. وهدفٌ مسلَّم + مصدرٌ مفتوح ⇒ مسموح وإعادة الترقيم تعمل.
+  const ySrc = await mkPatient("مصدر مفتوح");
+  const yDst = await mkPatient("هدف مسلَّم");
+  const ycSrc = await mkCase(ySrc, "prosthetic");
+  const ycDst = await mkCase(yDst, "prosthetic");
+  const yEpSrc = await mkEpisode(ySrc, ycSrc, 1, "in_manufacturing");
+  await mkEpisode(yDst, ycDst, 1, "delivered");
+  let yErr: any = null;
+  try { await storage.mergePatients(ySrc, yDst); } catch (e) { yErr = e; }
+  check(yErr === null, "٢٧. وهدفٌ مسلَّم + مصدرٌ مفتوح ⇒ مسموح", String(yErr));
+  same("والمنقولة أخذت التسلسل ٢",
+    (await db.select().from(PDE).where(eq(PDE.id, yEpSrc)))[0].sequenceNumber, 2);
+  same("وكلتاهما على خيط الهدف",
+    (await db.select().from(PDE).where(eq(PDE.caseId, ycDst))).length, 2);
+
   // ══ ١٧. ولا رقم تاريخي أُعيد حسابه ═══════════════════════════════════
   console.log("\n── لا ترحيل ولا مال ──");
   const { rows: anyEpisodeInProd } = await pool.query<{ n: number }>(

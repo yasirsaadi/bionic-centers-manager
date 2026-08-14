@@ -1283,6 +1283,34 @@ export class DatabaseStorage implements IStorage {
       const [target] = await tx.select().from(patients).where(eq(patients.id, targetId));
       if (!source || !target) throw new Error("أحد الملفين غير موجود");
 
+      // ══ حلقتان مفتوحتان من النوع نفسه — يُفحَص **قبل أي تعديل** ═════════
+      // `uq_pde_case_open` يسمح بشراءٍ مفتوحٍ واحد لكل خيط. فملفّان لكلٍّ
+      // منهما طرفٌ قيد التنفيذ يصطدمان لحظة نقل الحلقة — لكن الاصطدام يقع
+      // في **منتصف** الدمج، بعد أن حُرّكت الكلف وأُعيد توجيه الدفعات
+      // والزيارات. المعاملة تتراجع، نعم، لكن ما يصل الموظّف رسالةُ قاعدة
+      // بيانات لا تقول له ماذا يفعل.
+      //
+      // والقرار عملٌ لا تقنية: **لا تُلغى حلقة تلقائياً، ولا تُختار الأحدث،
+      // ولا تُدمج الحلقتان، ولا تُغيَّر حالة.** جهازان قيد التنفيذ لشخصٍ
+      // واحد واقعةٌ يحسمها بشرٌ لا خوارزمية — فيُردّ الدمج ويُقال السبب.
+      const openBoth = await tx.execute<{ case_type: string }>(sql`
+        SELECT tc.case_type
+          FROM patient_device_episodes se
+          JOIN patient_cases sc ON sc.id = se.case_id
+          JOIN patient_cases tc ON tc.patient_id = ${targetId} AND tc.case_type = sc.case_type
+          JOIN patient_device_episodes te ON te.case_id = tc.id
+         WHERE se.patient_id = ${sourceId}
+           AND se.status NOT IN ('delivered', 'cancelled')
+           AND te.status NOT IN ('delivered', 'cancelled')
+         LIMIT 1
+      `);
+      if ((openBoth.rows ?? []).length > 0) {
+        throw new Error(
+          "لا يمكن دمج الملفين لوجود جهازين قيد التنفيذ من النوع نفسه. "
+          + "أنهِ أو ألغِ إحدى الدورتين أولاً.",
+        );
+      }
+
       // Combine the two patients' per-case allocations. The per-case table
       // (patient_cases) references the source patient, and the source's
       // visits/payments point at ITS case rows — so before deleting the source

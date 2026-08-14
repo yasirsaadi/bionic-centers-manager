@@ -65,7 +65,14 @@ CREATE TABLE IF NOT EXISTS patient_device_episodes (
   -- الحالات الخمس، محروسةً في القاعدة لا في التطبيق: قيمةٌ مخترَعة من
   -- سكربت أو من Console تُردّ عند الكتابة لا تُكتشَف بعد شهر.
   CONSTRAINT patient_device_episodes_status_check
-    CHECK (status IN ('awaiting_exam', 'examined', 'in_manufacturing', 'delivered', 'cancelled'))
+    CHECK (status IN ('awaiting_exam', 'examined', 'in_manufacturing', 'delivered', 'cancelled')),
+
+  -- يقبله المفتاح المركّب في الجداول الأربعة التابعة. **قيدُ تفرّدٍ لا
+  -- فهرسَ تفرّد**: «drizzle-kit push» يضيف المفاتيح الأجنبية قبل أن ينشئ
+  -- الفهارس، فمفتاحٌ يشير إلى فهرسٍ لم يُنشأ بعد يسقط. والقيد داخل
+  -- «CREATE TABLE» يسبقها جميعاً. ولا يضيف شرطاً على البيانات: «id»
+  -- مفتاحٌ أساسي فالزوج فريدٌ حتماً.
+  CONSTRAINT uq_pde_id_patient UNIQUE (patient_id, id)
 );
 
 -- لا تسلسلان متطابقان في خيطٍ واحد.
@@ -156,4 +163,85 @@ END $$;
 -- وحذفُها هو الصواب لا إعلانُها: كل الصفوف القائمة «NULL»، ولا استعلام
 -- واحد يبحث بالحلقة بعد (هذه المرحلة أساسٌ بلا سلوك). فتأتي مع الاستعلام
 -- الذي يحتاجها، **معلَنةً في الموضعين معاً**.
+
+-- ══ سلامة مرجعية **مركّبة**: لا حلقةٌ لمريضٍ على خيط مريضٍ آخر ═══════════
+-- المفاتيح المفردة تحرس الوجود لا الانتماء: صفٌّ يحمل «patient_id» للمريض
+-- «أ» و«case_id» لخيط المريض «ب» يمرّ من كليهما — كلٌّ منهما صادق وحده،
+-- والكذبة في الجمع بينهما. وكذلك أمرُ تصنيعٍ للمريض «أ» يشير إلى حلقة
+-- المريض «ب»: ماله وتاريخه يذهبان إلى ملفٍّ ليس ملفَّه.
+--
+-- والحلّ في القاعدة لا في التطبيق: مفتاحٌ مركّب يطابق **الزوج** بأكمله.
+-- وPostgres يشترط فهرساً فريداً على الأعمدة المشار إليها، فيُضاف.
+--
+-- و«MATCH SIMPLE» (السلوك الافتراضي) هو ما يجعل هذا آمناً للصفوف القائمة:
+-- حين يكون «device_episode_id» فارغاً لا يُفحَص القيد إطلاقاً. فكل صفٍّ في
+-- الإنتاج اليوم — وكلّها فارغة — يمرّ بلا مساس، والفحص يبدأ مع أول ربط.
+
+DO $$
+BEGIN
+  -- يقبله المفتاح المركّب في «patient_device_episodes» — قيداً لا فهرساً،
+  -- للسبب نفسه المشروح داخل «CREATE TABLE» أعلاه.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_patient_cases_id_patient') THEN
+    ALTER TABLE patient_cases ADD CONSTRAINT uq_patient_cases_id_patient UNIQUE (patient_id, id);
+  END IF;
+
+  -- وقيدا الجدول نفسه يُضافان هنا أيضاً — لا تكراراً بل **اكتمالاً**:
+  -- «CREATE TABLE IF NOT EXISTS» يتخطّى الجدول كلّه إن وُجد، فقيودُه
+  -- الداخلية لا تُضاف أبداً على قاعدةٍ رأت نسخةً أسبق من هذه الهجرة —
+  -- ثم يسقط المفتاح المركّب على «no unique constraint matching given keys».
+  -- (وقع فعلاً على قاعدة الاختبار.) فتُذكَر هنا كي تتقارب الهجرة إلى الشكل
+  -- نفسه مهما كانت الحالة التي وجدتها.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_pde_id_patient') THEN
+    ALTER TABLE patient_device_episodes ADD CONSTRAINT uq_pde_id_patient UNIQUE (patient_id, id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'patient_device_episodes_status_check') THEN
+    ALTER TABLE patient_device_episodes ADD CONSTRAINT patient_device_episodes_status_check
+      CHECK (status IN ('awaiting_exam', 'examined', 'in_manufacturing', 'delivered', 'cancelled'));
+  END IF;
+
+  -- الحلقة وخيطها لمريضٍ واحد.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'patient_device_episodes_patient_case_fk') THEN
+    ALTER TABLE patient_device_episodes
+      ADD CONSTRAINT patient_device_episodes_patient_case_fk
+      FOREIGN KEY (patient_id, case_id) REFERENCES patient_cases (patient_id, id);
+  END IF;
+
+  -- والتوابع الأربعة: الصفّ وحلقتُه لمريضٍ واحد.
+  --
+  -- **ON UPDATE CASCADE** — لا ترفٌ بل ضرورة: الدمج ينقل الحلقة إلى الملفّ
+  -- الهدف بتغيير «patient_id» عليها، فلولا التتالي لبقي التابع مشيراً إلى
+  -- «(المصدر، الحلقة)» وهو زوجٌ لم يعد موجوداً — فيسقط الدمج في منتصفه.
+  -- والتتالي يجعل التابع **يتبع حلقته** إلى الملفّ الجديد، وهو المعنى نفسه
+  -- الذي كنّا سنكتبه بأيدينا. و«ON DELETE» يبقى NO ACTION: حذفُ حلقةٍ لها
+  -- تابع يجب أن يفشل، وذاك ما يفرض ترتيب «storage.deletePatient».
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'prosthetic_work_orders_patient_episode_fk') THEN
+    ALTER TABLE prosthetic_work_orders
+      ADD CONSTRAINT prosthetic_work_orders_patient_episode_fk
+      FOREIGN KEY (patient_id, device_episode_id) REFERENCES patient_device_episodes (patient_id, id) ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'cost_entries_patient_episode_fk') THEN
+    ALTER TABLE cost_entries
+      ADD CONSTRAINT cost_entries_patient_episode_fk
+      FOREIGN KEY (patient_id, device_episode_id) REFERENCES patient_device_episodes (patient_id, id) ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_patient_episode_fk') THEN
+    ALTER TABLE payments
+      ADD CONSTRAINT payments_patient_episode_fk
+      FOREIGN KEY (patient_id, device_episode_id) REFERENCES patient_device_episodes (patient_id, id) ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'visits_patient_episode_fk') THEN
+    ALTER TABLE visits
+      ADD CONSTRAINT visits_patient_episode_fk
+      FOREIGN KEY (patient_id, device_episode_id) REFERENCES patient_device_episodes (patient_id, id) ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+-- والمفاتيح المفردة تبقى **إضافةً لا بديلاً**: المركّب يحرس الانتماء،
+-- والمفرد يبقى تصريحاً مقروءاً عن العلاقة في المخطّط. ولا يتعارضان.
+--
+-- و«medical_exams.device_episode_id» يبقى بلا مفتاح — مفرداً ومركّباً معاً —
+-- للسبب نفسه: ترِكر الختم يرفض أي تعديل، وأي سلوك حذفٍ يُترجَم تعديلاً.
 `;
