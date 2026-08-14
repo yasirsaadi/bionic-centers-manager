@@ -137,7 +137,6 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           patientId={patient.id}
           branchId={patient.branchId}
           currentTotalCost={patient.totalCost || 0}
-          isPhysiotherapy={!!patient.isPhysiotherapy}
           open
           onOpenChange={closeFlow}
           initialServiceType={flow.serviceType}

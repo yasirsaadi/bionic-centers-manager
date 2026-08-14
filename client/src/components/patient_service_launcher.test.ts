@@ -20,6 +20,7 @@ import { join } from "path";
 import {
   launcherOptions, ownedDeviceTypes, needsMaintenanceChoice,
   resolveMaintenanceServiceType, FLOW_ENDPOINTS, GROUP_LABELS,
+  nextSubmissionToken, mintSubmissionToken,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
 
@@ -90,6 +91,7 @@ function main() {
   // ══ (ب) الموزِّع موزِّعٌ لا منفِّذ ══════════════════════════════════════
   console.log("\n── الموزِّع لا يحمل منطق عمل ──");
   const launcherCode = code(LAUNCHER);
+  const newServiceCode = code(NEW_SERVICE);
   for (const forbidden of ["fetch(", "apiRequest(", "useMutation", "/api/"]) {
     check(!launcherCode.includes(forbidden),
       `ولا «${forbidden}» في الموزِّع`, launcherCode.slice(0, 120));
@@ -266,6 +268,102 @@ function main() {
     (VISIT.match(/"\/api\/manufacturing\/maintenance-visit"/g) ?? []).length, 1);
   check(/serviceCost: 0, paidNow: 0/.test(code(ADD_CASE)),
     "١٩. و«إضافة نوع حالة» ما زالت ترسل صفراً — قرارٌ بلا مال");
+
+
+  // ══ تذكرة الإرسال: واحدة لكل فتح ═════════════════════════════════════
+  // العطب: التذكرة كانت تُسكّ في `onOpenChange(true)` وحده، والموزِّع يركّب
+  // النافذة **وهي مفتوحة أصلاً** فلا يقع الحدث — فتُرسَل فارغة، والخادم لا
+  // يطالب بشيء حين تكون فارغة، فيسقط منع التكرار بصمت في المسار الجديد.
+  console.log("\n── تذكرة الإرسال ──");
+  let minted = 0;
+  const mint = () => `tok-${++minted}`;
+
+  // ١. النافذة المُدارة تُركَّب مفتوحةً ⇒ تذكرةٌ من أول لحظة.
+  let tok = nextSubmissionToken("", true, mint);
+  check(tok !== "", "١. نافذةٌ رُكِّبت مفتوحةً ⇒ تذكرة غير فارغة", tok);
+  same("وسُكَّت مرّةً واحدة", minted, 1);
+
+  // ٢. الفتح نفسه مهما تكرّر التقييم ⇒ التذكرة نفسها، بلا سكٍّ ثانٍ.
+  const stable = [tok, nextSubmissionToken(tok, true, mint), nextSubmissionToken(tok, true, mint)];
+  same("٢. والفتح نفسه لا يولّد ثانيةً", [...new Set(stable)].length, 1);
+  same("ولا سكّ إضافي", minted, 1);
+
+  // ٣. إغلاقٌ ثم فتح ⇒ تذكرة **جديدة**، فلا تُعاد المستهلَكة.
+  const closed = nextSubmissionToken(tok, false, mint);
+  same("٣. والإغلاق يُفرغها", closed, "");
+  const reopened = nextSubmissionToken(closed, true, mint);
+  check(reopened !== "" && reopened !== tok, "وفتحٌ جديد ⇒ تذكرة جديدة", `${tok} → ${reopened}`);
+  same("سُكَّت مرّتين لا أكثر", minted, 2);
+  // ولا تُعاد المستهلَكة: الخادم يردّ «مسجَّلة سابقاً» على خدمةٍ حقيقية لو
+  // أُعيدت — فالتصفير عند الإغلاق ليس ترتيباً بل صحّةُ عمل.
+  same("والمغلقة تبقى فارغة مهما تكرّر التقييم",
+    [nextSubmissionToken("", false, mint), nextSubmissionToken("x", false, mint)], ["", ""]);
+  same("ولا سكّ في المغلقة", minted, 2);
+
+  // والسكّ الحقيقي يعطي قيمةً مفردة لا فارغة.
+  const real = [mintSubmissionToken(), mintSubmissionToken()];
+  check(real.every((x) => typeof x === "string" && x.length >= 8), "والسكّ الحقيقي يعطي معرّفاً", real.join(" "));
+  check(real[0] !== real[1], "ومفرداً في كل مرّة");
+
+  // والنافذة تستعملها فعلاً بأثرٍ على **حالة** الفتح لا على حدثه.
+  check(/useEffect\(\(\) => \{\s*setSubmissionToken\(\(prev\) => nextSubmissionToken\(prev, open, mintSubmissionToken\)\);/.test(newServiceCode),
+    "ونافذة الخدمة تسكّها بأثرٍ يتبع حالة الفتح", "");
+  check(!/if \(next\) \{[\s\S]{0,200}setSubmissionToken/.test(newServiceCode),
+    "**ولم يبقَ السكّ معلّقاً على حدث الفتح وحده**");
+
+  // ══ ٥-٩. وضع الجلسات يتبع **الخدمة** لا ملفّ المريض ══════════════════
+  console.log("\n── نوع الخدمة هو ما يقرّر وضع الجلسات ──");
+  check(/const isPhysioService = selectedServiceType === "additional_therapy";/.test(newServiceCode),
+    "٥. ووضع الجلسات معرَّف من نوع الخدمة");
+  check(!/isPhysiotherapy/.test(newServiceCode),
+    "**ولا أثر لـ`isPhysiotherapy` في منطق النافذة**",
+    (newServiceCode.match(/.*isPhysiotherapy.*/g) ?? []).join(" | "));
+  // والقيد على **نافذة الخدمة** وحدها: نافذة الزيارة تستعمل العلم لمنطقها
+  // هي (نوع العلاج في زيارة المراجعة) — وذاك استعمالٌ صحيح لم يُطلَب مسّه.
+  const newServiceUsage = launcherCode.match(/<NewServiceModal[\s\S]*?\/>/)?.[0] ?? "";
+  check(newServiceUsage.length > 40, "واستعمال نافذة الخدمة مقروء", newServiceUsage);
+  check(!/isPhysiotherapy/.test(newServiceUsage),
+    "ولا يمرّرها الموزِّع إليها — فلا علمَ يقرّر وضعاً", newServiceUsage);
+
+  // كل قرارٍ خاصّ بالجلسات صار على `isPhysioService` — ولا واحد بقي معلّقاً
+  // على علم المريض. والعدّ يمنع أن يُنسى أحدها في تعديلٍ لاحق.
+  const physioDecisions = (newServiceCode.match(/isPhysioService/g) ?? []).length;
+  check(physioDecisions >= 10, "٦-٨. وكل قرارات الجلسات تمرّ به", String(physioDecisions));
+  for (const gated of [
+    "treatmentEntries: isPhysioService ? validEntries : undefined",
+    "paymentTreatmentType: isPhysioService ?",
+    "sessionCount: isPhysioService ?",
+    "{isPhysioService && (",
+    "const paidNow = isPhysioService",
+  ]) {
+    check(newServiceCode.includes(gated), `و«${gated.slice(0, 42)}…» مشروطٌ بالخدمة`);
+  }
+
+  // ══ ١٠-١٢. النوع الموجَّه مقفل ═══════════════════════════════════════
+  console.log("\n── النوع الموجَّه لا يُبدَّل ──");
+  check(/\{initialServiceType \? \(/.test(newServiceCode),
+    "١٠. والموجَّه يُعرَض نصّاً لا قائمةً تُختار");
+  check(/data-testid="text-service-type-locked"/.test(newServiceCode),
+    "بعنصرٍ مقروء لا مُدخَل");
+  // والقائمة تبقى للمسار المستقلّ وحده.
+  check(/data-testid="select-service-type"/.test(newServiceCode),
+    "والقائمة باقية للمسار المستقلّ");
+  check(/serviceType: initialServiceType \?\? values\.serviceType/.test(newServiceCode),
+    "١١-١٢. **والمُرسَل هو الموجَّه لا حالة النموذج**");
+  check(/const selectedServiceType = initialServiceType \?\? form\.watch\("serviceType"\)/.test(newServiceCode),
+    "ووضع الجلسات يتبع الموجَّه كذلك");
+  // ١٥. والموزِّع ما زال يعطّل الجلسات الإضافية لمن لا علاج له — فالقفل
+  // يحرس ما تحرسه الأهلية، ولا يُغني أحدهما عن الآخر.
+  same("١٥. والموزِّع ما زال يعطّلها بلا علاج طبيعي",
+    opt(launcherOptions({}), "additional_therapy").disabled, true);
+
+  // ══ ١٣. والخادم لا يعتمد على الواجهة ═════════════════════════════════
+  check(/serviceType === "additional_therapy" && !patient\.isPhysiotherapy/.test(srv),
+    "١٣. وحارس الجلسات الإضافية في الخادم نفسه");
+  check(/يجب تفعيل حالة العلاج الطبيعي للمريض أولاً/.test(SERVER_ROUTES),
+    "برسالته الصريحة");
+  check(!/serviceType === "consultation" && !patient/.test(srv),
+    "ولم تُمَسّ الاستشارة و«خدمة أخرى» بشرطٍ جديد");
 
   console.log(failures === 0 ? "\n✅ all service-launcher cases pass" : `\n❌ ${failures} case(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
