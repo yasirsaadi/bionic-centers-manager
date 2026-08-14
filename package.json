@@ -35,7 +35,8 @@
     "test:merge-fk-coverage": "tsx server/merge_fk_coverage.test.ts",
     "test:maintenance-service": "tsx server/manufacturing/maintenance_service_type.test.ts",
     "test:service-launcher": "tsx client/src/components/patient_service_launcher.test.ts",
-    "test:new-service": "tsx server/new_service_guard.test.ts"
+    "test:new-service": "tsx server/new_service_guard.test.ts",
+    "test:device-episodes": "tsx server/device_episodes.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

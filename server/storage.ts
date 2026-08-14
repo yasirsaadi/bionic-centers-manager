@@ -3,7 +3,8 @@ import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
   anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog, journalLines,
   prostheticWorkOrders, prostheticWorkHistory, prostheticReworkEvents,
-  patientCases, type PatientCase,
+  patientCases,
+  patientDeviceEpisodes, type PatientCase,
   systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
@@ -862,9 +863,19 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(medicalExamRevisions).where(inArray(medicalExamRevisions.examId, examIds));
         await tx.delete(medicalExams).where(eq(medicalExams.patientId, id));
       }
-      // patient_cases must go AFTER payments/visits/exams (their case_id FKs
-      // point here) and BEFORE the patient row (its patient_id FK points there).
-      await tx.delete(patientCases).where(eq(patientCases.patientId, id));
+      // ══ سلسلة الحلقة (migration 049) — الترتيب هنا **ليس تفضيلاً** ══════
+      // بعد حلقات الأجهزة صارت السلسلة ثلاثية:
+      //     أمر التصنيع / قيد الكلفة  ⟶  الحلقة  ⟶  الحالة
+      // فكان `patient_cases` يُحذف قبل الأوامر والقيود، وذلك يعمل ما دامت
+      // الأوامر لا تشير إلى الحالات. الآن تشير إليها **بواسطة الحلقة**، فحذف
+      // الحالة أوّلاً يكسر مفتاح الحلقة ويُسقط حذف المريض كلّه — وهو العطب
+      // الذي عاشه هذا المشروع مرّة (كاسكيد الصادر في المرحلة ٢١٠).
+      //
+      // الترتيب الملزم: الدفعات والزيارات (تشيران إلى الحلقة) قبلُ ✅ ثم
+      // الأوامر ثم القيود ثم **الحلقات** ثم الحالات.
+      // (والمعاينة لا تحمل مفتاحاً إلى الحلقة — لقطةُ رقم — فموضعها حرّ،
+      //  ويبقى قبل الحالات لأن `case_id` فيها مفتاحٌ حقيقي.)
+
       // Manufacturing work orders (and their append-only history / rework) hold a
       // FK to the patient, so they must be removed for a full patient delete —
       // otherwise the delete fails. (The append-only rule protects a LIVE order's
@@ -878,6 +889,15 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
         await tx.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
       }
+      // Cost-ledger rows FK the patient (migration 033) and their money
+      // vanishes from every total with the row, so they go with it too.
+      // **ونُقلت إلى هنا** لأنها صارت تشير إلى الحلقة (049).
+      await tx.delete(costEntries).where(eq(costEntries.patientId, id));
+      // الحلقات: بعد كل ما يشير إليها، وقبل الحالات التي تشير هي إليها.
+      await tx.delete(patientDeviceEpisodes).where(eq(patientDeviceEpisodes.patientId, id));
+      // patient_cases must go AFTER payments/visits/exams (their case_id FKs
+      // point here), AFTER the device episodes, and BEFORE the patient row.
+      await tx.delete(patientCases).where(eq(patientCases.patientId, id));
       // Remaining FK holders that used to make the delete fail silently:
       // follow-up calls, treatment plans, and survey responses (+answers) go
       // with the patient; journal lines are ACCOUNTING history and must
@@ -893,9 +913,6 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
       }
       await tx.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
-      // Cost-ledger rows FK the patient (migration 033) and their money
-      // vanishes from every total with the row, so they go with it too.
-      await tx.delete(costEntries).where(eq(costEntries.patientId, id));
       // The event log FKs the patient (migration 044). It is the patient's own
       // narrative, so it goes with them. Nothing references patient_events, so
       // its position here is free — it only has to precede the patient row.
@@ -1299,6 +1316,31 @@ export class DatabaseStorage implements IStorage {
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
+
+        // ── حلقات الأجهزة (migration 049) ────────────────────────────────
+        // الحلقة تشير إلى الحالة، فحذف حالة المصدر أسفلُ يكسر مفتاحها ما لم
+        // تُنقَل. وتُنقَل **بمعرّفها هي** — لا يتغيّر `id` إطلاقاً — فكل ما
+        // يشير إليها (أوامر التصنيع، القيود، الدفعات، الزيارات، ومعاينتها
+        // بلقطة الرقم) يبقى صحيحاً بلا لمسة واحدة.
+        //
+        // والتسلسل يُعاد ترقيمه: خيط الهدف قد يحمل «#١» بالفعل، وفهرس
+        // `uq_pde_case_seq` يرفض ثانياً. فتُستأنف الأرقام بعد أقصى ما في
+        // الهدف، **بترتيب المصدر القديم** — فيبقى تاريخ المريض مقروءاً على
+        // ترتيبه لا مبعثراً.
+        const srcEpisodes = await tx.select().from(patientDeviceEpisodes)
+          .where(eq(patientDeviceEpisodes.caseId, sc.id))
+          .orderBy(patientDeviceEpisodes.sequenceNumber, patientDeviceEpisodes.id);
+        if (srcEpisodes.length > 0) {
+          const [maxRow] = await tx.select({ maxSeq: sql<number>`COALESCE(MAX(${patientDeviceEpisodes.sequenceNumber}), 0)` })
+            .from(patientDeviceEpisodes).where(eq(patientDeviceEpisodes.caseId, tc.id));
+          let next = Number(maxRow?.maxSeq ?? 0);
+          for (const ep of srcEpisodes) {
+            next += 1;
+            await tx.update(patientDeviceEpisodes)
+              .set({ patientId: targetId, caseId: tc.id, sequenceNumber: next, updatedAt: new Date() })
+              .where(eq(patientDeviceEpisodes.id, ep.id));
+          }
+        }
         caseRemap.push({ from: sc.id, to: tc.id });
       }
 
