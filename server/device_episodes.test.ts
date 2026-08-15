@@ -463,11 +463,18 @@ async function main() {
     }
   };
   for (const r of roots) walk(r);
+  //  الترحيل التاريخي (٠٥٠) كاتبٌ مشروع ووحيد: يعمل مرّةً عند الإقلاع
+  //  ثم لا يعود. المقصود هنا أن يبقى **مسار التشغيل** بلا كاتب — لا نقطة
+  //  REST ولا خدمة ولا زرّ — حتى تُفعَّل دورة الحياة في مرحلتها الخاصّة.
+  const BACKFILL = "server/migrations/050_device_episode_backfill.ts";
   const writers = files.filter((f) => {
     const src = readFileSync(f, "utf8");
     return /insert\(\s*patientDeviceEpisodes|INSERT INTO patient_device_episodes/i.test(src);
   });
-  same("**ولا كاتب واحد للحلقات في شيفرة الإنتاج** — أساسٌ بلا سلوك", writers, []);
+  same("**ولا كاتب للحلقات في مسار التشغيل** — الترحيل التاريخي وحده",
+    writers.filter((f) => f.replace(/\\/g, "/") !== BACKFILL), []);
+  check(writers.some((f) => f.replace(/\\/g, "/") === BACKFILL),
+    "   والترحيل التاريخي موجود فعلاً ككاتب وحيد", JSON.stringify(writers));
   const migrationText = readFileSync("server/migrations/049_patient_device_episodes.ts", "utf8");
   check(!/\bUPDATE\s+(payments|visits|cost_entries|patients|patient_cases|prosthetic_work_orders|medical_exams)\b/i.test(migrationText),
     "**والهجرة لا تحدّث صفّاً واحداً — لا مبلغ ولا ربط**");

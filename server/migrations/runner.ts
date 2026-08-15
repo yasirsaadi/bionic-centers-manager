@@ -48,6 +48,7 @@ import * as migration046 from "./046_manufacturing_legacy_catchup";
 import * as migration047 from "./047_patient_communication_identity";
 import * as migration048 from "./048_patient_notification_outbox";
 import * as migration049 from "./049_patient_device_episodes";
+import * as migration050 from "./050_device_episode_backfill";
 
 /**
  * Migration Runner
@@ -71,7 +72,7 @@ interface Migration {
 }
 
 // Ordered list of migrations. Add new ones at the end.
-const migrations: Migration[] = [migration001, migration002, migration003, migration004, migration005, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028, migration029, migration030, migration031, migration032, migration033, migration034, migration035, migration036, migration037, migration038, migration039, migration040, migration041, migration042, migration043, migration044, migration045, migration046, migration047, migration048, migration049];
+const migrations: Migration[] = [migration001, migration002, migration003, migration004, migration005, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028, migration029, migration030, migration031, migration032, migration033, migration034, migration035, migration036, migration037, migration038, migration039, migration040, migration041, migration042, migration043, migration044, migration045, migration046, migration047, migration048, migration049, migration050];
 
 async function runSqlMigration(migration: Migration): Promise<void> {
   const client = await pool.connect();
