@@ -71,6 +71,8 @@ async function cleanup() {
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
+  //  الأسماء البديلة (ترحيل ٠٥٢) — الدمج يُنشئها، وهي تشير إلى المريض.
+  await pool.query(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
 }
 
@@ -401,7 +403,12 @@ async function main() {
     sent = []; mode = "ok";
     await dispatchOnce(100);
     const w = sent.filter((s) => s.chatId === "tg-1010").map((s) => s.text);
-    check(w.some((t) => t === "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي. تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح."), "ونصّ الترحيب وصل بحرفه", JSON.stringify(w));
+    //  الترحيب يحمل **رمز المريض** منذ ترحيل ٠٥٢ — ونصّه الأول يبقى صدره.
+    //  (تفاصيلُ الرمز وصفوفُ الطابور القديمة في `test:patient-code-telegram`.)
+    check(w.some((t) =>
+      t.startsWith("مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي. تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح.")
+      && /\nرمز المريض الخاص بك: WB-[0-9]{5,}\n/.test(t)),
+      "ونصّ الترحيب وصل بحرفه ومعه رمز المريض", JSON.stringify(w));
     check(w.some((t) => t === "حالة طرفك الصناعي الحالية: أخذ وتجهيز القالب."), "ولقطة المرحلة باسم الطرف", JSON.stringify(w));
     check(w.some((t) => t === "موعد التسليم المتوقع لطرفك الصناعي: 25/12/2026."), "والموعد بصيغته", JSON.stringify(w));
 

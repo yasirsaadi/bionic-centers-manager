@@ -6,6 +6,7 @@ import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrde
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
 import { PatientCaseChips, PatientCasePanel, type CaseRow } from "@/components/patient/PatientCasesTabs";
 import { MoneyInput } from "@/components/ui/money-input";
+import { PatientCodeBadge } from "@/components/PatientCodeBadge";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
@@ -805,7 +806,12 @@ export default function PatientDetails() {
             <ArrowRight className="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
           </Button>
           <div className="min-w-0 flex-1">
-            <h1 className="text-xl md:text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
+            <div className="flex flex-wrap items-center gap-2 md:gap-3">
+              <h1 className="text-xl md:text-3xl font-display font-bold text-slate-900">{patient.name}</h1>
+              {/*  الهوية العلنية بجانب الاسم — هي ما يُقال ويُطبع ويُبحث به،
+                  أمّا رقم الصفّ الداخلي فيبقى داخلياً. */}
+              <PatientCodeBadge code={(patient as any).patientCode} />
+            </div>
             <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> {t.patientDetails.age}: {patient.age}</span>
               {patient.phone && (

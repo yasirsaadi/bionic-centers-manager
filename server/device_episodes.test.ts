@@ -87,6 +87,8 @@ async function cleanup() {
   await pool.query(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
+  //  الأسماء البديلة (ترحيل ٠٥٢) — الدمج يُنشئها، وهي تشير إلى المريض.
+  await pool.query(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
 }
 

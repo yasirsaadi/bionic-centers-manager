@@ -26,7 +26,9 @@
 
 import type { Express } from "express";
 import { createHash, timingSafeEqual } from "crypto";
-import { redeemLinkToken, LinkTokenError } from "../patient_contacts/store";
+import { redeemLinkToken, LinkTokenError, patientsForExternalId } from "../patient_contacts/store";
+// الرمز وحده — هذه الوحدة لا تعرف الملفّ ولا تقرأ منه شيئاً آخر.
+import { patientCodesFor } from "../patient_code/store";
 import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
 import { sendMessage } from "./client";
 // الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
@@ -41,6 +43,7 @@ export const MESSAGES = {
   linked: "تم ربط حساب Telegram بملف المريض بنجاح.",
   invalid: "رابط الربط غير صالح أو انتهت صلاحيته. يرجى طلب رابط جديد من المركز.",
   noPayload: "لبدء الربط، افتح رابط الربط الذي زوّدك به المركز.",
+  noLinkedPatient: "لا يوجد ملف مريض مرتبط بهذا الحساب حالياً. يرجى طلب رابط ربط جديد من المركز.",
 } as const;
 
 /**
@@ -75,6 +78,33 @@ export function parseStartPayload(text: unknown): string | null {
   return match[1] ?? "";
 }
 
+/**
+ * هل هي `/id` — أمرُ «ما رمز ملفّي؟».
+ *
+ * بلا وسائط إطلاقاً: `/id 5` ليست أمراً بل محاولةُ استعلامٍ عن ملفٍّ آخر،
+ * فتُتجاهَل صامتةً كأي أمرٍ مجهول. والهوية من تلغرام وحده على أي حال.
+ */
+export function isIdCommand(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  return /^\/id(?:@[A-Za-z0-9_]+)?$/.test(text.trim());
+}
+
+/**
+ * نصّ الردّ على `/id`.
+ *
+ * حسابٌ واحد قد يكون مربوطاً بأكثر من ملفّ مشروعاً (أبٌ يتابع ابنيه)، فكلّ
+ * الرموز الحالية تُعرَض. **ولا شيء غيرها**: لا اسم، ولا تشخيص، ولا جهاز،
+ * ولا مال، ولا هاتف، ولا رقم صفّ — فمن يصل إلى الحساب لا يصل إلى الملفّ.
+ *
+ * وبلا ربطٍ نشِط: نصٌّ عامّ واحد. لا يفرّق بين «لا حساب» و«حسابٌ سُحب
+ * ربطه» — الفرقُ في الردّ يجعل البوت أداةَ استكشاف، وعلاجُ الحالتين واحد.
+ */
+export function patientCodesMessage(codes: string[]): string {
+  if (codes.length === 0) return MESSAGES.noLinkedPatient;
+  if (codes.length === 1) return `رمز المريض الخاص بك: ${codes[0]}`;
+  return "رموز الملفّات المرتبطة بحسابك:\n" + codes.map((c) => `• ${c}`).join("\n");
+}
+
 export function registerPatientTelegramWebhook(app: Express) {
   console.log(patientBotStatusLine());
 
@@ -105,12 +135,23 @@ export function registerPatientTelegramWebhook(app: Express) {
       const fromId = from.id;
       if (typeof fromId !== "number" && typeof fromId !== "string") return res.json({ ok: true });
 
-      const payload = parseStartPayload(message.text);
-      if (payload === null) return res.json({ ok: true }); // أمرٌ آخر ⇒ تجاهل صامت
-
       const chatId = String(
         typeof chat.id === "number" || typeof chat.id === "string" ? chat.id : fromId,
       );
+
+      // ══ `/id` — رمزُ ملفّي ═══════════════════════════════════════════
+      // **الهوية من تلغرام وحده** (`message.from.id`)، لا من نصّ الرسالة:
+      // مَن يكتب رقم ملفٍّ آخر لا يحصل على شيء. والمسحوب ربطُه لا يُحتسب.
+      // ولا حدث مريض يُسجَّل: سؤالُ المريض عن رمزه ليس واقعةً في ملفّه.
+      if (isIdCommand(message.text)) {
+        const contacts = await patientsForExternalId("telegram", String(fromId));
+        const codes = await patientCodesFor(contacts.map((c) => c.patientId));
+        await sendMessage(chatId, patientCodesMessage(codes));
+        return res.json({ ok: true });
+      }
+
+      const payload = parseStartPayload(message.text);
+      if (payload === null) return res.json({ ok: true }); // أمرٌ آخر ⇒ تجاهل صامت
 
       if (payload === "") {
         await sendMessage(chatId, MESSAGES.noPayload);

@@ -43,6 +43,7 @@ import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
 import { aiChat, type ChatMessage } from "./ai/chat";
 import { resolveAiAccess } from "./ai/access";
+import { normalizePatientCode } from "@shared/patient_code";
 import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
@@ -1440,7 +1441,25 @@ export async function registerRoutes(
       const b = parseInt(String(req.query.branchId));
       if (Number.isFinite(b)) conditions.push(eq(patients.branchId, b));
     }
-    if (search) {
+    // ══ البحث برمز المريض (ترحيل ٠٥٢) ═════════════════════════════════
+    // الرمز مقصودٌ بذاته: مَن يكتب WB-01629 لا يريد اسماً يحوي هذا النصّ.
+    // فيُطبَّع أوّلاً (wb00042 · WB 00042 · ٠٠٠٤٢ ⟶ WB-00042)، ثمّ يُطابَق
+    // على الرمز الحالي **وعلى الأسماء البديلة** — فرمزُ ملفٍّ دُمج ما زال
+    // بيد صاحبه ويجب أن يصل إلى الملفّ الباقي.
+    //
+    // **ولا يتخطّى شيئاً من الحراسة**: الشرط يُضاف إلى نفس `conditions`
+    // التي تحمل تثبيت الفرع لغير المسؤول. فمعرفة الرمز لا تُخرج موظّفاً من
+    // فرعه — تماماً كالبحث بالاسم.
+    const codeSearch = search ? normalizePatientCode(search) : null;
+    if (codeSearch) {
+      conditions.push(sql`(
+        ${patients.patientCode} = ${codeSearch}
+        OR EXISTS (
+          SELECT 1 FROM patient_code_aliases a
+           WHERE a.code = ${codeSearch} AND a.patient_id = ${patients.id}
+        )
+      )`);
+    } else if (search) {
       // Searching intentionally ignores the date filter (and, for admins,
       // the branch filter) — same behaviour the registry always had.
       const like = `%${search}%`;
@@ -1465,7 +1484,8 @@ export async function registerRoutes(
     const [[{ count }], rows] = await Promise.all([
       db.select({ count: sql<number>`COUNT(*)::int` }).from(patients).where(where),
       db.select({
-        id: patients.id, name: patients.name, phone: patients.phone, age: patients.age,
+        id: patients.id, patientCode: patients.patientCode,
+        name: patients.name, phone: patients.phone, age: patients.age,
         branchId: patients.branchId, medicalCondition: patients.medicalCondition,
         isAmputee: patients.isAmputee, isPhysiotherapy: patients.isPhysiotherapy,
         isMedicalSupport: patients.isMedicalSupport, amputationSite: patients.amputationSite,
@@ -1909,6 +1929,21 @@ export async function registerRoutes(
       const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
+
+      // ══ الهوية العلنية ثابتة — ورفضٌ صريح ═══════════════════════════
+      // نقلُ رمزٍ بين ملفّين يقلب هويّتين معاً: ورقةٌ بيد مريضٍ تدلّ على
+      // غيره، ورسالةُ تلغرام تصل غير صاحبها. فالمحاولة تُردّ برسالتها بدل
+      // أن تُبتلع صامتة. ومَن يعيد إرسال الصفّ كما قرأه لا يُعطَّل عليه
+      // التعديل — الرفض للتغيير لا لوجود الحقل.
+      // (وطبقةُ `storage.updatePatient` ترمي أيضاً، فالمنادي الذي لا يمرّ
+      //  بهذه النقطة لا يفلت.)
+      if (patch.patientCode !== undefined
+        && String(patch.patientCode) !== existingPatient.patientCode) {
+        return res.status(400).json({
+          message: "رمز المريض ثابت ولا يقبل التعديل", field: "patientCode",
+        });
+      }
+      delete patch.patientCode;
 
       // Contact number rules on EDIT (deliberately gentler than on create — a
       // legacy patient may have no phone at all and must stay editable):
