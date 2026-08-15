@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -7,6 +8,7 @@ import { RefreshCcw } from "lucide-react";
 import { AddCaseTypeModal } from "./AddCaseTypeModal";
 import { NewServiceModal } from "./NewServiceModal";
 import { VisitModal } from "./VisitModal";
+import { NewDeviceEpisodeModal } from "./NewDeviceEpisodeModal";
 import {
   launcherOptions, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type ServiceFlow,
@@ -50,7 +52,14 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   /** المسار المفتوح الآن — واحدٌ لا أكثر. */
   const [flow, setFlow] = useState<ServiceFlow | null>(null);
 
-  const options = launcherOptions(patient);
+  // حلقات المريض — تُقرأ لتعطيل «جهاز جديد» بسببٍ مفهوم حين يكون له طلبٌ
+  // قائم. والخادم يبقى صاحب القرار: يردّ 409 على السباق مهما قالت الواجهة.
+  const { data: episodeData } = useQuery<{ episodes: { serviceType: string; status: string }[] }>({
+    queryKey: [`/api/patients/${patient.id}/device-episodes`],
+    enabled: Boolean(patient.isAmputee || patient.isMedicalSupport),
+  });
+
+  const options = launcherOptions({ ...patient, episodes: episodeData?.episodes ?? [] });
 
   function choose(option: LauncherOption) {
     if (option.disabled) return;
@@ -141,6 +150,15 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           onOpenChange={closeFlow}
           initialServiceType={flow.serviceType}
           hideTrigger
+        />
+      )}
+
+      {flow?.kind === "device_episode" && (
+        <NewDeviceEpisodeModal
+          patientId={patient.id}
+          serviceType={flow.serviceType}
+          open
+          onOpenChange={closeFlow}
         />
       )}
 

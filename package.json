@@ -39,7 +39,9 @@
     "test:device-episodes": "tsx server/device_episodes.test.ts",
     "test:episode-backfill": "tsx server/device_episode_backfill.test.ts",
     "test:episode-flow": "tsx server/device_episode_flow.test.ts",
-    "test:episode-manufacturing": "tsx server/device_episode_manufacturing.test.ts"
+    "test:episode-manufacturing": "tsx server/device_episode_manufacturing.test.ts",
+    "test:episode-integration": "tsx server/device_episode_integration.test.ts",
+    "test:migration-051": "tsx server/migration_051.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

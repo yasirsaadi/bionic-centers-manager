@@ -33,6 +33,9 @@ import { PlusCircle, Loader2, Calendar, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DeviceEpisodeSelect, useDeviceEpisodes, UNALLOCATED,
+} from "./DeviceEpisodeSelect";
 import { z } from "zod";
 import { invalidatePatientData } from "@/lib/queryClient";
 import {
@@ -106,6 +109,9 @@ export function VisitModal({
   // أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد لا يُسأل.
   const [maintServiceType, setMaintServiceType] = useState<string>("");
   const [maintCost, setMaintCost] = useState<number>(0);
+  /** الجهاز المقصود — بالصيانة أو بالزيارة العامّة. فارغٌ حتى يختار الموظّف. */
+  const [maintDevice, setMaintDevice] = useState<string>("");
+  const [visitDevice, setVisitDevice] = useState<string>("");
   // Which of the patient's cases this visit belongs to. Multi-case patients
   // pick explicitly — the form used to FORCE a physio treatment type, so a
   // prosthetic-related visit always landed under the physio case.
@@ -124,6 +130,22 @@ export function VisitModal({
   const selectedCase = patientCasesList.find((c) => c.id === visitCaseId) ?? null;
   const effectiveCase = selectedCase ?? patientCasesList.find((c) => c.caseType === "physiotherapy") ?? patientCasesList[0] ?? null;
   const isPhysioVisit = !multiCase ? isPhysiotherapy !== false : effectiveCase?.caseType === "physiotherapy";
+  // الصيانة تستهدف جهازاً **مسلَّماً** وحده: الجديد قيد التصنيع ليس محلّاً
+  // لصيانةٍ لم يُسلَّم بعد.
+  const maintSvc = resolveMaintenanceServiceType({ isAmputee, isMedicalSupport }, maintServiceType);
+  const { options: maintDevices, hasOptions: maintNeedsChoice } = useDeviceEpisodes(
+    patientId, purpose === "maintenance" ? (maintSvc as any) : null, ["delivered"],
+  );
+  // والزيارة العامّة تقبل أي جهازٍ قائم أو قيد الصنع — زياراتُ المتابعة
+  // تحدث أثناء التصنيع كما تحدث بعده.
+  const visitDeviceSvc = !isPhysioVisit && effectiveCase
+    && (effectiveCase.caseType === "prosthetic" || effectiveCase.caseType === "medical_support")
+    ? (effectiveCase.caseType as "prosthetic" | "medical_support") : null;
+  const { options: visitDevices, hasOptions: visitNeedsChoice } = useDeviceEpisodes(
+    patientId, purpose === "visit" ? visitDeviceSvc : null,
+    ["awaiting_exam", "examined", "in_manufacturing", "delivered"],
+  );
+
   const [expertUserId, setExpertUserId] = useState("");
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [maintPending, setMaintPending] = useState(false);
@@ -159,6 +181,7 @@ export function VisitModal({
 
   const resetAll = () => {
     setPurpose(initialPurpose ?? "visit"); setExpertUserId(""); setExpectedDeliveryDate("");
+    setMaintDevice(""); setVisitDevice("");
     setVisitCaseId(null); setMaintCost(0); setMaintServiceType("");
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
@@ -183,6 +206,11 @@ export function VisitModal({
           patientId, expertUserId: Number(expertUserId),
           serviceType: svc,
           cost: maintCost,
+          ...(maintNeedsChoice
+            ? (maintDevice === UNALLOCATED
+                ? { legacyUnrecordedDevice: true }
+                : maintDevice ? { deviceEpisodeId: Number(maintDevice) } : {})
+            : {}),
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
         }),
       });
@@ -214,6 +242,8 @@ export function VisitModal({
       treatmentType: isPhysioVisit ? (values.treatmentType || null) : null,
       caseId: effectiveCase?.id ?? null,
       customDate: values.customDate || null,
+      ...(visitNeedsChoice && visitDevice && visitDevice !== UNALLOCATED
+        ? { deviceEpisodeId: Number(visitDevice) } : {}),
     };
     mutate(submitData, {
       onSuccess: () => {
@@ -347,9 +377,36 @@ export function VisitModal({
               />
             )}
 
+            {/* زيارةٌ عامّة على حالة جهاز: أيّ جهازٍ تخصّ؟ اختياريّ — الزيارة
+                العامّة أو جهازُ الإرث يبقيان بلا هوية. */}
+            {purpose === "visit" && visitNeedsChoice && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <DeviceEpisodeSelect
+                  label="الجهاز الذي تخصّه الزيارة"
+                  options={visitDevices}
+                  value={visitDevice}
+                  onChange={setVisitDevice}
+                  unallocatedLabel="زيارة عامّة / جهاز قديم"
+                  testId="select-visit-device"
+                />
+              </div>
+            )}
+
             {/* حقول الصيانة — الخبير فقط؛ تاريخ التسليم يحدّده الخبير عند أخذ القالب */}
             {purpose === "maintenance" && (
               <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                {/* أيّ جهازٍ مسلَّم يُصان. والجديد قيد التصنيع لا يُعرَض:
+                    جهازٌ لم يُسلَّم بعد ليس محلّاً لصيانة. */}
+                {maintNeedsChoice && (
+                  <DeviceEpisodeSelect
+                    label="الجهاز المراد صيانته"
+                    options={maintDevices}
+                    value={maintDevice}
+                    onChange={setMaintDevice}
+                    unallocatedLabel="جهاز قديم غير مسجَّل"
+                    testId="select-maintenance-device"
+                  />
+                )}
                 {/* أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد
                     لا يرى هذا الحقل ولا يتغيّر عنده شيء. */}
                 {needsMaintenanceChoice({ isAmputee, isMedicalSupport }) && (

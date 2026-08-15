@@ -16,7 +16,9 @@ import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
 } from "../medical/store";
-import { getOpenDeviceEpisode, DeviceEpisodeError } from "../device_episodes/store";
+import {
+  getOpenDeviceEpisode, listDeliveredEpisodes, DeviceEpisodeError,
+} from "../device_episodes/store";
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
@@ -179,7 +181,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(400).json({ error: "تاريخ غير صالح" });
     }
     // Order purpose: a first build or a later maintenance episode.
-    const purpose = req.body?.purpose === "maintenance" ? "maintenance" : "initial_build";
+    // **الصيانة لها بابٌ واحد.** هذه النقطة تنشئ أمراً مجرَّداً: بلا جهازٍ
+    // مقصود، وبلا زيارة، وبلا أجرةٍ مقيَّدة. فقبولُها للصيانة يفتح طريقاً
+    // ثانياً يتجاوز النظام كلّه ويُنتج صيانةً بلا هوية ولا أثر مالي.
+    if (req.body?.purpose === "maintenance") {
+      return res.status(400).json({
+        error: "الصيانة تُفتح من «صيانة طرف/مسند» — فهي تسجّل الزيارة والأجور وتحدّد الجهاز",
+      });
+    }
+    const purpose = "initial_build" as const;
     if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) {
       return res.status(400).json({ error: "بيانات ناقصة" });
     }
@@ -199,10 +209,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per (patient, serviceType): block a second order of the
-    // SAME service while one is still open (completed/cancelled don't count).
-    if (await store.hasActiveOrder(patientId, serviceType)) {
-      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+    // بناءٌ أوليٌّ واحد مفتوح لكل (مريض، خدمة). وصيانةُ جهازٍ قديم لا
+    // تزاحمه: عملان على جهازين مختلفين.
+    if (await store.hasOpenOrder({ patientId, serviceType, purpose })) {
+      return res.status(409).json({
+        error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً",
+      });
     }
 
     // Workflow order: an INITIAL build needs the doctor's signed exam first —
@@ -216,22 +228,19 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // مباشرةً بلا بيعٍ ولا سعر، فلو مرّت ومريضُها يحمل حلقةً مفتوحة
     // لأنتجت أمراً يتيماً: تبقى الحلقة «مُعايَنة» للأبد، ويُصنَع الجهاز بلا
     // سعرٍ مقيَّد ولا هويّة. المسار الصحيح واحد — «تخصيص وإسناد خبير».
-    // والصيانة لا تُمَسّ: لها نقطتها وجهازها قائم.
-    if (purpose !== "maintenance") {
-      const live = await getOpenDeviceEpisode(patientId, serviceType);
-      if (live) {
-        return res.status(409).json({
-          error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
-        });
-      }
-      if (!(await hasSignedExam(patientId, serviceType))
-          && !(await isLegacyPatient(patientId))) {
-        return res.status(409).json({
-          error: serviceType === "prosthetic"
-            ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
-            : "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
-        });
-      }
+    const live = await getOpenDeviceEpisode(patientId, serviceType);
+    if (live) {
+      return res.status(409).json({
+        error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
+      });
+    }
+    if (!(await hasSignedExam(patientId, serviceType))
+        && !(await isLegacyPatient(patientId))) {
+      return res.status(409).json({
+        error: serviceType === "prosthetic"
+          ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
+          : "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
+      });
     }
 
     try {
@@ -240,7 +249,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-        `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
+        `إنشاء أمر تصنيع لمريض موجود #${patientId} للخبير #${expertUserId}`);
       res.status(201).json(order);
     } catch (err: any) {
       // حلقةٌ وُلدت بعد فحص النقطة — الجواب من داخل المعاملة، لا 500.
@@ -287,10 +296,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per (patient, serviceType) — a dual-flag patient may
-    // have a طرف order and a مسند order running in parallel; a second order
-    // of the SAME service is still blocked.
-    if (await store.hasActiveOrder(patientId, serviceType)) {
+    // بناءٌ أوليٌّ واحد مفتوح لكل (مريض، خدمة). وصيانةُ جهازٍ قديم لا
+    // تمنع بناء الجديد: عملان على جهازين مختلفين.
+    if (await store.hasOpenOrder({ patientId, serviceType, purpose: "initial_build" })) {
       return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
@@ -484,18 +492,27 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // transaction that opens the maintenance episode.
     const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
+    // أيّ جهازٍ يُصان — **يُحسَم داخل المعاملة** لا هنا. النقطة تمرّر ما
+    // اختاره الموظّف كما وصل، والطبقة تقفل وتتحقّق وتقرّر. فلا لقطةٌ تشيخ
+    // بين القراءة والكتابة.
     try {
       const order = await store.createMaintenanceOrderWithVisit({
         patientId, branchId: patient.branchId, serviceType, expertUserId,
         expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate, cost,
+        deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
+        legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
         `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
           + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`);
       res.status(201).json(order);
     } catch (err: any) {
+      // جهازٌ غير صالح للصيانة — جوابُ عملٍ من داخل المعاملة.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       if (err instanceof store.ActiveOrderError) {
-        return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+        return res.status(409).json({ error: "لدى المريض أمر صيانة نشط لهذا الجهاز — أكمِله أو ألغِه أولاً" });
       }
       throw err;
     }

@@ -42,6 +42,7 @@ import { recordOrderCreatedEvent } from "./manufacturing/events";
 import { mergeContactsInto } from "./patient_contacts/store";
 import {
   lockCaseAndReadOpenEpisode, markEpisodeInManufacturing, caseHasEpisodes,
+  resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
 import {
@@ -1131,10 +1132,12 @@ export class DatabaseStorage implements IStorage {
       // One active order per (patient, service) — enforced INSIDE the
       // transaction (plus the partial unique index from migration 021), so two
       // simultaneous clicks can't create duplicate orders.
+      // بناءٌ أوليٌّ واحد مفتوح — وصيانةُ جهازٍ قديم لا تزاحمه.
       const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
         .where(and(
           eq(prostheticWorkOrders.patientId, patientId),
           eq(prostheticWorkOrders.serviceType, serviceType),
+          sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
           sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
         )).limit(1);
       if (openWo.length > 0) throw new ActiveAssignmentError();
@@ -1765,7 +1768,40 @@ export class DatabaseStorage implements IStorage {
     // Simplified date filtering for report
     return await db.select().from(payments).where(eq(payments.branchId, branchId));
   }
+  /**
+   * دفعةٌ بهوية جهازٍ محسومةٍ **داخل معاملتها**.
+   *
+   * القرار والكتابة حدثٌ واحد: قفلُ الخيط ثم قراءة المرشّحين ثم الإدراج.
+   * فلا يمرّ تخصيصٌ متزامن بين «لا مرشّح» وبين كتابة دفعةٍ بلا هوية.
+   * والمحاسبة خارجها كما كانت — القيد اليومي يبقى حيث هو ولم يتغيّر.
+   */
+  async createPaymentAttributed(
+    insertPayment: InsertPayment,
+    attribution: {
+      serviceType: "prosthetic" | "medical_support";
+      requestedEpisodeId: unknown;
+      explicitLegacy: boolean;
+    },
+  ): Promise<Payment> {
+    return await db.transaction(async (tx) => {
+      const episodeId = await resolveDeviceTargetTx(tx, {
+        patientId: insertPayment.patientId as number,
+        serviceType: attribution.serviceType,
+        requestedEpisodeId: attribution.requestedEpisodeId,
+        explicitLegacy: attribution.explicitLegacy,
+        //  المال يُنسب لجهازٍ بيع فعلاً: قيد الصنع أو مسلَّم.
+        eligibleStatuses: ["in_manufacturing", "delivered"],
+        chooseMessage: "حدّد الجهاز الذي تخصّه الدفعة — أو اختر «رصيد جهاز قديم/غير مخصَّص»",
+      });
+      return await this.insertPaymentRow({ ...insertPayment, deviceEpisodeId: episodeId } as any, tx);
+    });
+  }
+
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
+    return await this.insertPaymentRow(insertPayment);
+  }
+
+  private async insertPaymentRow(insertPayment: InsertPayment, tx?: any): Promise<Payment> {
     let dateValue: Date;
     if (insertPayment.date) {
       const dateStr = String(insertPayment.date);
@@ -1788,7 +1824,7 @@ export class DatabaseStorage implements IStorage {
     if (paymentData.caseId == null && paymentData.patientId) {
       paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null });
     }
-    const [payment] = await db.insert(payments).values(paymentData).returning();
+    const [payment] = await (tx ?? db).insert(payments).values(paymentData).returning();
     return payment;
   }
   async deletePayment(id: number): Promise<void> {

@@ -18,7 +18,7 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
-  isDeviceServiceType, DeviceEpisodeError,
+  isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
 
 // Thrown when a maintenance order can't be opened because the patient still has
@@ -27,14 +27,76 @@ export class ActiveOrderError extends Error {
   constructor() { super("active order exists"); this.name = "ActiveOrderError"; }
 }
 
-// Does the patient have an open (not completed/cancelled) order for this
-// service? Targeted query — replaces the old "list every open order in the
-// system then scan" guard.
-export async function hasActiveOrder(patientId: number, serviceType: string): Promise<boolean> {
-  const rows = await db.select({ id: WO.id }).from(WO)
-    .where(and(eq(WO.patientId, patientId), eq(WO.serviceType, serviceType), notInArray(WO.status, ["completed", "cancelled"])))
-    .limit(1);
-  return rows.length > 0;
+/**
+ * هل يوجد أمرٌ مفتوح **يزاحم** هذا الأمر؟
+ *
+ * ══ لماذا صار السؤال بحسب الغرض والجهاز ═══════════════════════════════
+ * كان الحارس يسأل: «هل للمريض أمرٌ مفتوح من هذه الخدمة؟» — وكان صحيحاً
+ * يوم كان له جهازٌ واحد من كل نوع. أمّا اليوم فطرفٌ مسلَّم يحتاج صيانة
+ * وطرفٌ جديد قيد التصنيع عملان مستقلّان على جهازين مختلفين، ولا معنى
+ * لأن يمنع أحدهما الآخر.
+ *
+ * فالمزاحمة الحقيقية ثلاث لا أكثر:
+ *   - بناءٌ أوليٌّ يزاحم بناءً أولياً آخر لنفس (المريض، النوع).
+ *   - وصيانةُ جهازٍ مسجَّل تزاحم صيانةً أخرى **لذلك الجهاز بعينه**.
+ *   - وصيانةُ جهازٍ غير مسجَّل تزاحم مثيلتها لنفس (المريض، النوع)،
+ *     إذ لا هوية تفرّق بين جهازين لا حلقة لهما.
+ *
+ * والفهارس الثلاثة في ترحيل ٠٥١ تحرس الشروط نفسها في القاعدة، فهذا
+ * الفحص يعطي الرسالة والقاعدة تعطي الضمان.
+ */
+export async function hasOpenOrder(params: {
+  patientId: number;
+  serviceType: string;
+  purpose: "initial_build" | "maintenance";
+  /** للصيانة فقط: الجهاز المقصود. `null` = جهازٌ غير مسجَّل. */
+  deviceEpisodeId?: number | null;
+}): Promise<boolean> {
+  const rows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE status NOT IN ('completed', 'cancelled')
+       AND ${buildCompetitionFilter(params)}
+     LIMIT 1
+  `);
+  return (rows.rows ?? []).length > 0;
+}
+
+/** شرط المزاحمة — مشترَك بين الفحص المسبق والحارس داخل المعاملة. */
+function buildCompetitionFilter(params: {
+  patientId: number;
+  serviceType: string;
+  purpose: "initial_build" | "maintenance";
+  deviceEpisodeId?: number | null;
+}) {
+  if (params.purpose === "initial_build") {
+    return sql`patient_id = ${params.patientId}
+      AND service_type = ${params.serviceType}
+      AND COALESCE(purpose, 'initial_build') = 'initial_build'`;
+  }
+  if (params.deviceEpisodeId != null) {
+    return sql`purpose = 'maintenance' AND device_episode_id = ${params.deviceEpisodeId}`;
+  }
+  return sql`patient_id = ${params.patientId}
+    AND service_type = ${params.serviceType}
+    AND purpose = 'maintenance'
+    AND device_episode_id IS NULL`;
+}
+
+/** نفس الشرط، داخل معاملة المُستدعي. */
+export async function hasOpenOrderTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number; serviceType: string;
+    purpose: "initial_build" | "maintenance"; deviceEpisodeId?: number | null;
+  },
+): Promise<boolean> {
+  const rows = await tx.execute(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE status NOT IN ('completed', 'cancelled')
+       AND ${buildCompetitionFilter(params)}
+     LIMIT 1
+  `);
+  return (rows.rows ?? []).length > 0;
 }
 import {
   FIRST_STAGE, MAINTENANCE_DONE_STAGES, REWORK_TYPE, stagesForOrder,
@@ -210,10 +272,12 @@ export async function createWorkOrderForExisting(params: {
   return await db.transaction(async (tx) => {
     // In-tx per-service guard (backed by the partial unique index) — the
     // route's pre-check alone was a check-then-act race.
-    const open = await tx.select({ id: WO.id }).from(WO)
-      .where(and(eq(WO.patientId, params.patientId), eq(WO.serviceType, params.serviceType), notInArray(WO.status, ["completed", "cancelled"])))
-      .limit(1);
-    if (open.length > 0) throw new ActiveOrderError();
+    // المزاحمة بحسب الغرض — لا بحسب الخدمة وحدها. (هذه النقطة تنشئ صيانةً
+    // غير مسندة لجهازٍ بعينه، فتُقاس على مثيلتها غير المسندة.)
+    if (await hasOpenOrderTx(tx, {
+      patientId: params.patientId, serviceType: params.serviceType,
+      purpose, deviceEpisodeId: null,
+    })) throw new ActiveOrderError();
 
     // **ولا بناءٌ أوليّ يتيم.** فحص النقطة وحده check-then-act: بينه وبين
     // هنا قد تُفتح حلقة، فيُولَد أمرٌ بلا هوية وتبقى حلقةٌ مفتوحة بلا أمر.
@@ -282,15 +346,38 @@ export async function createMaintenanceOrderWithVisit(params: {
   // patients.total_cost, so it reaches totalRevenue, the section split, and
   // the patient's remaining — and payments are then collected as usual.
   cost: number;
+  /**
+   * الجهاز المقصود بالصيانة. `null` = جهازٌ قديم غير مسجَّل — وهو قرارُ
+   * موظّفٍ صريح لا افتراضٌ من الخادم. يُتحقَّق منه هنا داخل المعاملة مهما
+   * فحصته النقطة، فالمعرّف لا يُوثَق به قادماً من العميل.
+   */
+  deviceEpisodeId?: number | null;
+  /** إقرارٌ صريح بأن الجهاز المُصان قديمٌ غير مسجَّل. */
+  legacyUnrecordedDevice?: boolean;
 }): Promise<ProstheticWorkOrder> {
   return await db.transaction(async (tx) => {
-    // Per-service guard: a dual-flag patient's مسند maintenance shouldn't be
-    // blocked by an unrelated active طرف order.
-    const openOrders = await tx.select({ id: WO.id })
-      .from(WO)
-      .where(and(eq(WO.patientId, params.patientId), eq(WO.serviceType, params.serviceType), notInArray(WO.status, ["completed", "cancelled"])))
-      .limit(1);
-    if (openOrders.length > 0) throw new ActiveOrderError();
+    // **الهوية تُحسم هنا، لا في النقطة.** ما تقرؤه النقطة للعرض قد يشيخ:
+    // جهازٌ يُسلَّم بين قراءتها وكتابتنا يصير محلّاً للصيانة، فقرارُ «لا
+    // أجهزة مسجَّلة ⟶ صيانةٌ بلا هوية» المبنيّ على لقطةٍ بائتة يُنتج
+    // الصفَّ الملتبس نفسه. والقفل على صفّ الخيط يجعل الترتيب صريحاً.
+    const targetEpisodeId = isDeviceServiceType(params.serviceType)
+      ? await resolveDeviceTargetTx(tx, {
+          patientId: params.patientId,
+          serviceType: params.serviceType,
+          requestedEpisodeId: params.deviceEpisodeId,
+          explicitLegacy: params.legacyUnrecordedDevice === true,
+          //  الصيانة لجهازٍ **مسلَّم** وحده: ما لم يُسلَّم بعد ليس جهازاً يُصان.
+          eligibleStatuses: ["delivered"],
+          chooseMessage: "حدّد الجهاز المراد صيانته — أو اختر «جهاز قديم غير مسجَّل»",
+        })
+      : null;
+
+    // صيانةُ جهازٍ مسجَّل تُقاس على **ذلك الجهاز**، وغير المسجَّلة على
+    // (المريض، الخدمة). وبناءُ جهازٍ جديد لا يمنع صيانة القديم إطلاقاً.
+    if (await hasOpenOrderTx(tx, {
+      patientId: params.patientId, serviceType: params.serviceType,
+      purpose: "maintenance", deviceEpisodeId: targetEpisodeId,
+    })) throw new ActiveOrderError();
 
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,
@@ -302,6 +389,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       currentStage: firstStageFor(params.serviceType, "maintenance"),
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
+      deviceEpisodeId: targetEpisodeId,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,
@@ -328,6 +416,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       notes: params.cost > 0 ? `${params.visitNotes} — أجور الصيانة: ${params.cost.toLocaleString("en-US")} د.ع` : params.visitNotes,
       treatmentType: null,
       caseId,
+      deviceEpisodeId: targetEpisodeId,
       createdBy: params.assignedBy,
     });
 
@@ -347,6 +436,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       await tx.insert(costEntries).values({
         patientId: params.patientId, branchId: params.branchId,
         amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+        deviceEpisodeId: targetEpisodeId,
       });
     }
     return workOrder;

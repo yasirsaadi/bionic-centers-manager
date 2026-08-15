@@ -108,6 +108,180 @@ export async function getOpenDeviceEpisode(
   return row ? toView(row) : null;
 }
 
+/**
+ * الأجهزة **المسلَّمة** لهذه الخدمة — وهي وحدها محلٌّ للصيانة.
+ *
+ * فما لم يُسلَّم بعد (بانتظار معاينة، أو مُعايَن، أو قيد التصنيع) ليس جهازاً
+ * قائماً يُصان، والملغى ليس جهازاً أصلاً.
+ */
+export async function listDeliveredEpisodes(
+  patientId: number,
+  serviceType: DeviceServiceType,
+): Promise<DeviceEpisodeView[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${patientId}
+       AND pc.case_type = ${serviceType}
+       AND e.status = 'delivered'
+     ORDER BY e.sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toView);
+}
+
+/**
+ * الأجهزة التي يجوز أن يُنسَب إليها **مالٌ داخل** أو **زيارة**.
+ *
+ * `in_manufacturing` و`delivered`: جهازٌ بيع فعلاً — قائمٌ أو قيد الصنع.
+ * وما دونهما لم يُبَع بعد (`awaiting_exam` / `examined`) أو لم يعد
+ * موجوداً (`cancelled`)، فنسبةُ دفعةٍ إليه تنسب مالاً إلى لا شيء.
+ */
+export async function listPayableEpisodes(
+  patientId: number,
+  serviceType: DeviceServiceType,
+): Promise<DeviceEpisodeView[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${patientId}
+       AND pc.case_type = ${serviceType}
+       AND e.status IN ('in_manufacturing', 'delivered')
+     ORDER BY e.sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toView);
+}
+
+/**
+ * **حسمُ هوية الجهاز داخل المعاملة** — للدفعة وللصيانة معاً.
+ *
+ * ══ لماذا داخل المعاملة لا قبلها ════════════════════════════════════════
+ * قراءةٌ قبل المعاملة ترشيحٌ لا قرار: بينها وبين الكتابة قد يُخصَّص جهازٌ
+ * فيصير مؤهَّلاً (`examined → in_manufacturing`)، أو يُسلَّم فيصير محلّاً
+ * للصيانة، أو يُلغى فيخرج. فقرارُ «لا مرشّح ⟶ اكتب بلا هوية» المبنيّ على
+ * لقطةٍ بائتة يُنتج بالضبط الصفَّ الملتبس الذي وُجد هذا كلّه لمنعه.
+ *
+ * والقفل على **صفّ الخيط** — نقطة القفل نفسها التي يستعملها بدءُ الحلقة
+ * والتخصيص — يجعل الترتيب صريحاً لا عشوائياً: مَن ظفر بالقفل أوّلاً رأى
+ * حالةً مستقرّة، والثاني يرى نتيجته لا لقطةً قبلها.
+ *
+ * ══ والمعرّف الصريح لا يُتجاهَل أبداً ═══════════════════════════════════
+ * لو أرسل الطلب جهازاً بعينه فهو **قرارُ موظّف**: يُتحقَّق منه دائماً
+ * ويُردّ إن لم يصلح — ولا يُبتلع بصمت لمجرّد أن قائمة المرشّحين فارغة.
+ * ابتلاعُه يحوّل خطأً ظاهراً إلى صفٍّ صامتٍ بلا هوية.
+ */
+export async function resolveDeviceTargetTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    /** ما وصل في الطلب — أيّ شيء، ويُتحقَّق هنا. */
+    requestedEpisodeId: unknown;
+    /** إقرارٌ صريح بأن الجهاز قديم/غير مخصَّص. */
+    explicitLegacy: boolean;
+    /** الحالات التي تصلح لهذا الغرض: البيع شيء والصيانة شيء. */
+    eligibleStatuses: readonly string[];
+    /** رسالة الطلب حين يتعدّد المرشّحون ولا اختيار. */
+    chooseMessage: string;
+  },
+): Promise<number | null> {
+  const hasExplicit = params.requestedEpisodeId != null && params.requestedEpisodeId !== "";
+  if (hasExplicit && params.explicitLegacy) {
+    throw new DeviceEpisodeError("طلبٌ متناقض: جهازٌ محدَّد و«جهاز قديم» معاً", 400);
+  }
+
+  //  القفل أوّلاً — قبل أي قراءة يُبنى عليها قرار.
+  await tx.execute(sql`
+    SELECT id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+
+  if (hasExplicit) {
+    const wantId = Number(params.requestedEpisodeId);
+    if (!Number.isInteger(wantId) || wantId <= 0) {
+      throw new DeviceEpisodeError("معرّف جهاز غير صالح", 400);
+    }
+    const r = await tx.execute(sql`
+      SELECT e.status
+        FROM patient_device_episodes e
+        JOIN patient_cases pc
+          ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+         AND pc.case_type = ${params.serviceType}
+       WHERE e.id = ${wantId} AND e.patient_id = ${params.patientId}
+       FOR UPDATE OF e
+    `);
+    const row = (r.rows ?? [])[0];
+    if (!row) {
+      throw new DeviceEpisodeError("الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة", 400);
+    }
+    if (!params.eligibleStatuses.includes(String(row.status))) {
+      throw new DeviceEpisodeError("الجهاز المحدَّد ليس في حالة تقبل هذا التسجيل", 400);
+    }
+    return wantId;
+  }
+
+  if (params.explicitLegacy) return null;
+
+  // ══ لا اختيار: تُقفَل **كل** حلقات الخيط قبل الحكم ═══════════════════
+  // قفلُ الخيط وحده لا يكفي هنا: انتقالُ الحلقة إلى «مُسلَّمة» يجري بتحديثٍ
+  // على صفّ الحلقة نفسه ولا يمرّ بالخيط. فقارئٌ يرى «قيد التصنيع» ويقرّر
+  // «لا مرشّح ⟶ بلا هوية»، بينما تسليمٌ متزامن يُثبِّت «مُسلَّمة» قبله،
+  // يكتب صيانةً بلا هوية لجهازٍ صار مسجَّلاً وقت الكتابة.
+  //
+  // ولذلك تُقفَل الصفوف نفسها — **كلّها لا المؤهَّلة منها فقط**: الصفّ
+  // الذي لا يؤهّل الآن هو بعينه الذي قد يؤهّل بعد لحظة، وقفلُ المؤهَّل
+  // وحده يترك المتحوِّل بلا حراسة.
+  //
+  // فيصير الترتيب حتمياً لا توقيتياً:
+  //   • التسليم أوّلاً ⟶ نقرأ «مُسلَّمة» فنطلب اختيار الجهاز.
+  //   • نحن أوّلاً ⟶ نمسك القفل، فينتظر التسليم إلى ما بعد كتابتنا.
+  // ولا يمكن أن يُثبَّت تسليمٌ ثم تُكتب بعده صيانةٌ بلا هوية.
+  const locked = await tx.execute(sql`
+    SELECT e.id, e.status
+      FROM patient_device_episodes e
+      JOIN patient_cases pc
+        ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+       AND pc.case_type = ${params.serviceType}
+     WHERE e.patient_id = ${params.patientId}
+     FOR UPDATE OF e
+  `);
+  const eligible = (locked.rows ?? []).some(
+    (r: any) => params.eligibleStatuses.includes(String(r.status)),
+  );
+  if (eligible) throw new DeviceEpisodeError(params.chooseMessage, 400);
+  //  ولا حلقة أصلاً ⟶ قفل الخيط كافٍ: مَن يفتح حلقةً جديدة يمرّ به.
+  return null;
+}
+
+/**
+ * تحقّقٌ من انتماء جهازٍ لمريضٍ وخدمة — يُقرأ عبر الخيط فيُثبَت الزوج.
+ * `allowedStatuses` تحدّد ما يصلح للغرض: البيع شيء والزيارة شيء.
+ */
+export async function verifyEpisodeBelongs(
+  patientId: number,
+  episodeId: number,
+  serviceType: DeviceServiceType,
+  allowedStatuses: readonly string[],
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const r = await db.execute<{ status: string }>(sql`
+    SELECT e.status
+      FROM patient_device_episodes e
+      JOIN patient_cases pc
+        ON pc.id = e.case_id AND pc.patient_id = e.patient_id AND pc.case_type = ${serviceType}
+     WHERE e.id = ${episodeId} AND e.patient_id = ${patientId}
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return { ok: false, reason: "الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة" };
+  if (!allowedStatuses.includes(String(row.status))) {
+    return { ok: false, reason: "الجهاز المحدَّد ليس في حالة تقبل هذا التسجيل" };
+  }
+  return { ok: true };
+}
+
 /** كل حلقات المريض، مرتّبةً بالاختصاص ثم بالتسلسل. */
 export async function getDeviceEpisodesForPatient(
   patientId: number,
