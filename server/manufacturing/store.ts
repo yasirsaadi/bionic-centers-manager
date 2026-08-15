@@ -16,6 +16,10 @@ import {
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
+import {
+  syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
+  isDeviceServiceType, DeviceEpisodeError,
+} from "../device_episodes/store";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -210,6 +214,24 @@ export async function createWorkOrderForExisting(params: {
       .where(and(eq(WO.patientId, params.patientId), eq(WO.serviceType, params.serviceType), notInArray(WO.status, ["completed", "cancelled"])))
       .limit(1);
     if (open.length > 0) throw new ActiveOrderError();
+
+    // **ولا بناءٌ أوليّ يتيم.** فحص النقطة وحده check-then-act: بينه وبين
+    // هنا قد تُفتح حلقة، فيُولَد أمرٌ بلا هوية وتبقى حلقةٌ مفتوحة بلا أمر.
+    // القفل على صفّ الخيط — نقطة القفل نفسها التي يستعملها
+    // `startDeviceEpisode` — يجعل الطريقين متسلسلين: إمّا يسبق الأمر
+    // الحلقةَ فيمرّ، وإمّا تسبق الحلقةُ فتمنعه. ولا حالة نصفية.
+    // والصيانة خارج هذا كلّه: جهازها قائم ولا تفتح حلقة.
+    if (purpose === "initial_build" && isDeviceServiceType(params.serviceType)) {
+      const { episode } = await lockCaseAndReadOpenEpisode(tx, {
+        patientId: params.patientId, serviceType: params.serviceType,
+      });
+      if (episode) {
+        throw new DeviceEpisodeError(
+          "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة", 409,
+        );
+      }
+    }
+
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,
       branchId: params.branchId,
@@ -633,9 +655,12 @@ export async function updateStage(params: {
     if (commitsDate) patch.expectedDeliveryDate = params.deliveryDate;
     if (params.newStatus) patch.status = params.newStatus;
     if (params.clearHold) { patch.holdReasonCode = null; patch.holdNote = null; }
+    // ختمٌ واحد للحظة واحدة: تسليم الحلقة هو تسليم أمرها بعينه، فلو ولّد
+    // كلٌّ وقته لاختلف الرقمان بأجزاء الثانية وصار لكل جدولٍ روايةٌ.
+    const completedAt = new Date();
     if (delivered) {
       patch.status = "completed";
-      patch.completedAt = new Date();
+      patch.completedAt = completedAt;
       patch.holdReasonCode = null;
       patch.holdNote = null;
       patch.finalResult = params.finalResult ?? null;
@@ -643,10 +668,20 @@ export async function updateStage(params: {
     }
     if (maintenanceDone) {
       patch.status = "completed";
-      patch.completedAt = new Date();
+      patch.completedAt = completedAt;
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
+
+    // حلقةُ الجهاز تتبع أمرها إلى نهايته — في المعاملة نفسها. والحارسان
+    // (رابطٌ موجود، وغرضٌ بناءٌ أولي) داخل الدالّة، فالصيانة لا تُنهي
+    // حلقةً أبداً: جهازٌ يُصان جهازٌ قائم.
+    if (delivered) {
+      await syncEpisodeToOrderTerminalState(tx, updated, {
+        status: "delivered", at: completedAt,
+      });
+    }
+
     const [moved] = await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: delivered ? "delivered" : (params.actionType ?? "stage_change"),
@@ -969,9 +1004,19 @@ export async function cancelOrder(params: {
     // نتيجته من الأرقام. والمرحلة من الصفّ المقفول.
     const live = await lockOrder(tx, order.id);
     assertNotTerminal(live);
+    const cancelledAt = new Date();
     const [updated] = await tx.update(WO)
-      .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
+      .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: cancelledAt })
       .where(eq(WO.id, order.id)).returning();
+
+    // والإلغاء كذلك — بالختم نفسه. والسبب هو ملاحظة الإلغاء إن كتبها
+    // المدير، وإلّا يبقى فارغاً: لا يُشتقّ سببٌ من نصٍّ لم يُكتب له.
+    // ولا عكسٌ مالي هنا — تصحيح الحساب قرارٌ تجاري صريح لا أثرٌ جانبي.
+    await syncEpisodeToOrderTerminalState(tx, updated, {
+      status: "cancelled", at: cancelledAt,
+      reason: (params.note ?? "").trim() || null,
+    });
+
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "status_change",
