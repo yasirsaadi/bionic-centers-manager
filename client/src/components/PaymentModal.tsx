@@ -5,6 +5,10 @@ import { useAddPayment } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
 import {
+  DeviceEpisodeSelect, useDeviceEpisodes, UNALLOCATED,
+} from "./DeviceEpisodeSelect";
+import { deviceServiceOfPaymentType } from "@shared/device_attribution";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -116,6 +120,19 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   // a type is required on every payment (keeps every payment tagged).
   const showTreatmentSection = treatmentOptions.length > 0;
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
+  /** الجهاز الذي تخصّه الدفعة — فارغٌ حتى يختار الموظّف. */
+  const [deviceTarget, setDeviceTarget] = useState<string>("");
+
+  // خدمةُ الجهاز التي تمثّلها بنود هذه الدفعة، إن كانت دفعة جهاز أصلاً.
+  const deviceService = (() => {
+    const tags = treatmentEntries.map((e) => e.treatmentType).filter(Boolean).join("، ");
+    const svc = deviceServiceOfPaymentType(tags);
+    return svc === "prosthetic" || svc === "medical_support" ? svc : null;
+  })();
+  // ما يقبل المال: جهازٌ قيد التصنيع أو مسلَّم. وما لم يُبَع بعد لا يُدفَع له.
+  const { options: deviceOptions, hasOptions: needsDeviceChoice } = useDeviceEpisodes(
+    patientId, deviceService, ["in_manufacturing", "delivered"],
+  );
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const { mutate, isPending } = useAddPayment();
   const { toast } = useToast();
@@ -216,11 +233,20 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     // مباشرة مع وسم النوع — بدل حلقة الإدخالات التي تتجاهل المبلغ اليدوي.
     const sendEntries = showTreatmentSection && !hasManualType;
 
+    // هويةُ الجهاز: إمّا حلقةٌ بعينها وإمّا إقرارٌ صريح بأنها رصيدٌ قديم.
+    // والخادم يعيد فرض القاعدة نفسها، فهذا تيسيرٌ لا حراسة.
+    const deviceIdentity: Record<string, unknown> = {};
+    if (deviceService && needsDeviceChoice) {
+      if (deviceTarget === UNALLOCATED) deviceIdentity.unallocatedDeviceBalance = true;
+      else if (deviceTarget) deviceIdentity.deviceEpisodeId = Number(deviceTarget);
+    }
+
     mutate({
       ...values,
       date: submissionDate,
       paymentTreatmentType,
       sessionCount,
+      ...deviceIdentity,
       treatmentEntries: sendEntries ? validEntries : undefined,
     } as any, {
       onSuccess: () => {
@@ -228,6 +254,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
         form.reset();
         setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
         setManualCostOverride(false);
+        setDeviceTarget("");
       },
     });
   }
@@ -237,6 +264,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     if (!isOpen) {
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
+      setDeviceTarget("");
       form.reset();
     }
   };
@@ -382,6 +410,24 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
                     </Button>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* أيّ جهازٍ تخصّ هذه الدفعة؟ يظهر فقط حين يملك المريض أكثر من
+                احتمال — ومريضُ الإرث بلا أجهزة مسجَّلة لا يُسأل أصلاً. */}
+            {deviceService && needsDeviceChoice && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <DeviceEpisodeSelect
+                  label="الجهاز الذي تخصّه الدفعة"
+                  options={deviceOptions}
+                  value={deviceTarget}
+                  onChange={setDeviceTarget}
+                  unallocatedLabel="رصيد جهاز قديم / غير مخصَّص"
+                  testId="select-payment-device"
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  للمريض أكثر من جهاز من هذا النوع — حدّد أيّهما تخصّ الدفعة.
+                </p>
               </div>
             )}
 

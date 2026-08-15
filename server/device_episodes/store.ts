@@ -108,6 +108,78 @@ export async function getOpenDeviceEpisode(
   return row ? toView(row) : null;
 }
 
+/**
+ * الأجهزة **المسلَّمة** لهذه الخدمة — وهي وحدها محلٌّ للصيانة.
+ *
+ * فما لم يُسلَّم بعد (بانتظار معاينة، أو مُعايَن، أو قيد التصنيع) ليس جهازاً
+ * قائماً يُصان، والملغى ليس جهازاً أصلاً.
+ */
+export async function listDeliveredEpisodes(
+  patientId: number,
+  serviceType: DeviceServiceType,
+): Promise<DeviceEpisodeView[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${patientId}
+       AND pc.case_type = ${serviceType}
+       AND e.status = 'delivered'
+     ORDER BY e.sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toView);
+}
+
+/**
+ * الأجهزة التي يجوز أن يُنسَب إليها **مالٌ داخل** أو **زيارة**.
+ *
+ * `in_manufacturing` و`delivered`: جهازٌ بيع فعلاً — قائمٌ أو قيد الصنع.
+ * وما دونهما لم يُبَع بعد (`awaiting_exam` / `examined`) أو لم يعد
+ * موجوداً (`cancelled`)، فنسبةُ دفعةٍ إليه تنسب مالاً إلى لا شيء.
+ */
+export async function listPayableEpisodes(
+  patientId: number,
+  serviceType: DeviceServiceType,
+): Promise<DeviceEpisodeView[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${patientId}
+       AND pc.case_type = ${serviceType}
+       AND e.status IN ('in_manufacturing', 'delivered')
+     ORDER BY e.sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toView);
+}
+
+/**
+ * تحقّقٌ من انتماء جهازٍ لمريضٍ وخدمة — يُقرأ عبر الخيط فيُثبَت الزوج.
+ * `allowedStatuses` تحدّد ما يصلح للغرض: البيع شيء والزيارة شيء.
+ */
+export async function verifyEpisodeBelongs(
+  patientId: number,
+  episodeId: number,
+  serviceType: DeviceServiceType,
+  allowedStatuses: readonly string[],
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const r = await db.execute<{ status: string }>(sql`
+    SELECT e.status
+      FROM patient_device_episodes e
+      JOIN patient_cases pc
+        ON pc.id = e.case_id AND pc.patient_id = e.patient_id AND pc.case_type = ${serviceType}
+     WHERE e.id = ${episodeId} AND e.patient_id = ${patientId}
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return { ok: false, reason: "الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة" };
+  if (!allowedStatuses.includes(String(row.status))) {
+    return { ok: false, reason: "الجهاز المحدَّد ليس في حالة تقبل هذا التسجيل" };
+  }
+  return { ok: true };
+}
+
 /** كل حلقات المريض، مرتّبةً بالاختصاص ثم بالتسلسل. */
 export async function getDeviceEpisodesForPatient(
   patientId: number,

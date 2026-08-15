@@ -21,19 +21,28 @@ export type ServiceFlow =
   /** `POST /api/patients/:id/new-service` — قيدٌ مالي على خيطٍ قائم. */
   | { kind: "new_service"; serviceType: "additional_therapy" | "consultation" | "other" }
   /** `POST /api/manufacturing/maintenance-visit` — زيارة وأمر صيانة معاً. */
-  | { kind: "maintenance_visit" };
+  | { kind: "maintenance_visit" }
+  /** `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم. */
+  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
   case_type: "/api/patients/:id/add-case-type",
   new_service: "/api/patients/:id/new-service",
   maintenance_visit: "/api/manufacturing/maintenance-visit",
+  device_episode: "/api/patients/:patientId/device-episodes",
 };
 
 export interface PatientServiceFlags {
   isAmputee?: boolean | null;
   isMedicalSupport?: boolean | null;
   isPhysiotherapy?: boolean | null;
+  /**
+   * حلقات المريض. الحلقة المفتوحة وحدها تعطّل «جهاز جديد» — والمسلَّمة
+   * والملغاة **لا تعطّلانه**: أن يكون له جهازٌ سابق هو بالضبط سبب فتح
+   * الجديد، لا مانعه.
+   */
+  episodes?: { serviceType: string; status: string }[] | null;
 }
 
 export type LauncherGroup = "device" | "physio" | "other";
@@ -68,7 +77,43 @@ export const GROUP_LABELS: Record<LauncherGroup, string> = {
  * ليست بديلاً عنها (الخادم يرفض `new_prosthetic` أصلاً وهذا صواب)، فلا
  * يُفتَح لها باب جانبي هنا.
  */
-const DEVICE_EXISTS = "الخدمة موجودة على ملف المريض — والجهاز الجديد سيُتاح من مسار جهاز جديد";
+const DEVICE_EXISTS = "الخدمة موجودة على ملف المريض — لطلب جهاز جديد استعمل «جهاز جديد» أدناه";
+
+/** حالاتُ الحلقة المفتوحة ورسالةُ كلٍّ منها للموظّف. */
+const OPEN_EPISODE_REASON: Record<string, string> = {
+  awaiting_exam: "هناك طلب جهاز قائم بانتظار معاينة الطبيب",
+  examined: "هناك طلب جهاز مُعايَن بانتظار التخصيص وإسناد الخبير",
+  in_manufacturing: "هناك جهاز قيد التصنيع لهذه الخدمة",
+};
+
+/** الحلقة المفتوحة لهذه الخدمة إن وُجدت — المسلَّمة والملغاة ليستا مانعاً. */
+export function openEpisodeFor(
+  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
+): { serviceType: string; status: string } | null {
+  const list = Array.isArray(p.episodes) ? p.episodes : [];
+  return list.find((e) => e.serviceType === serviceType && e.status in OPEN_EPISODE_REASON) ?? null;
+}
+
+/** خيارُ «جهاز جديد» — يظهر فقط لمن يملك الخيط أصلاً. */
+function newDeviceOption(
+  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
+  hasCase: boolean, label: string,
+): LauncherOption {
+  const open = openEpisodeFor(p, serviceType);
+  return {
+    id: serviceType === "prosthetic" ? "new_prosthetic_device" : "new_support_device",
+    label,
+    description: "فتح طلب جهاز جديد على نفس الحالة — يبدأ بمعاينة الطبيب",
+    group: "device",
+    flow: { kind: "device_episode", serviceType },
+    disabled: !hasCase || open !== null,
+    disabledReason: !hasCase
+      ? "تُفتَح الحالة أولاً"
+      : open
+        ? OPEN_EPISODE_REASON[open.status]
+        : undefined,
+  };
+}
 
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
@@ -95,6 +140,8 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       disabled: hasSupport,
       disabledReason: hasSupport ? DEVICE_EXISTS : undefined,
     },
+    newDeviceOption(p, "prosthetic", hasProsthetic, "طرف صناعي جديد"),
+    newDeviceOption(p, "medical_support", hasSupport, "مسند طبي جديد"),
     {
       id: "maintenance",
       label: "صيانة طرف/مسند",

@@ -92,11 +92,18 @@ function main() {
   console.log("\n── الموزِّع لا يحمل منطق عمل ──");
   const launcherCode = code(LAUNCHER);
   const newServiceCode = code(NEW_SERVICE);
-  for (const forbidden of ["fetch(", "apiRequest(", "useMutation", "/api/"]) {
+  // **لا يكتب** — وهذا هو الثابت. صار يقرأ حلقات المريض ليعطّل «جهاز
+  // جديد» بسببٍ مفهوم بدل زرٍّ يفتح نافذةً لتنتهي برسالة خطأ؛ وقراءةٌ
+  // للعرض شيءٌ وتنفيذُ الخدمة شيءٌ آخر. فالممنوع هو الكتابة: لا طفرة،
+  // ولا `apiRequest`، ولا `fetch` يدوي.
+  for (const forbidden of ["fetch(", "apiRequest(", "useMutation"]) {
     check(!launcherCode.includes(forbidden),
       `ولا «${forbidden}» في الموزِّع`, launcherCode.slice(0, 120));
   }
-  for (const flow of ["AddCaseTypeModal", "NewServiceModal", "VisitModal"]) {
+  const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
+  same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض",
+    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
+  for (const flow of ["AddCaseTypeModal", "NewServiceModal", "VisitModal", "NewDeviceEpisodeModal"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);
   }
   check(/initialPurpose="maintenance"/.test(launcherCode),
@@ -105,21 +112,24 @@ function main() {
   // ══ خريطة الخيارات ⇒ المسارات ════════════════════════════════════════
   console.log("\n── خريطة الخيار إلى مساره ──");
   const fresh = launcherOptions({});
-  same("سبعة خيارات لا غير", fresh.map((o) => o.id), [
-    "prosthetic_case", "support_case", "maintenance",
+  same("تسعة خيارات لا غير", fresh.map((o) => o.id), [
+    "prosthetic_case", "support_case",
+    "new_prosthetic_device", "new_support_device", "maintenance",
     "physio_case", "additional_therapy", "consultation", "other",
   ]);
   same("وثلاث مجموعات بأسمائها", Object.keys(GROUP_LABELS), ["device", "physio", "other"]);
   same("والمجموعات كما طُلبت", fresh.map((o) => o.group),
-    ["device", "device", "device", "physio", "physio", "other", "other"]);
+    ["device", "device", "device", "device", "device", "physio", "physio", "other", "other"]);
   // **قائمة مغلقة**: ثلاث نقاط قائمة لا رابع، ولا «خدمة عامّة».
-  same("٢٠. ولا نقطة رابعة يذهب إليها الموزِّع",
+  // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
+  same("٢٠. ولا نقطة خامسة يذهب إليها الموزِّع",
     [...new Set(fresh.map((o) => o.flow.kind))].sort(),
-    ["case_type", "maintenance_visit", "new_service"]);
+    ["case_type", "device_episode", "maintenance_visit", "new_service"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
     "/api/manufacturing/maintenance-visit",
+    "/api/patients/:patientId/device-episodes",
   ]);
 
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.
@@ -164,11 +174,51 @@ function main() {
       `و«${opt(hasAll, id).label}» تقول سببها`, String(opt(hasAll, id).disabledReason));
   }
   for (const id of ["prosthetic_case", "support_case"]) {
-    check(!!opt(hasAll, id).disabledReason?.includes("مسار جهاز جديد"),
-      "والجهاز الجديد يُحال إلى مساره القادم لا إلى هذا الباب");
+    check(!!opt(hasAll, id).disabledReason?.includes("جهاز جديد"),
+      "وصاحبُ الحالة يُحال إلى «جهاز جديد» لا إلى بابٍ مغلق");
   }
   // ولا واحدٌ من المعطَّلات يحمل مساراً يُنفَّذ سهواً.
   same("والمعطَّل لا يُفتَح", hasAll.filter((o) => o.disabled && !o.disabledReason).length, 0);
+
+  // ══ «جهاز جديد» — الحلقة المفتوحة وحدها تمنعه ═════════════════════════
+  console.log("\n── جهاز جديد ──");
+  const withCase = { isAmputee: true } as any;
+  same("صاحبُ الحالة بلا حلقة ⟶ «طرف صناعي جديد» متاح",
+    opt(launcherOptions(withCase), "new_prosthetic_device").disabled, false);
+  same("ومَن لا حالة له ⟶ معطَّل بسببه",
+    opt(launcherOptions({}), "new_prosthetic_device").disabledReason, "تُفتَح الحالة أولاً");
+
+  for (const [status, reason] of [
+    ["awaiting_exam", "بانتظار معاينة الطبيب"],
+    ["examined", "بانتظار التخصيص"],
+    ["in_manufacturing", "قيد التصنيع"],
+  ] as const) {
+    const withOpen = launcherOptions({
+      isAmputee: true, episodes: [{ serviceType: "prosthetic", status }],
+    } as any);
+    const o = opt(withOpen, "new_prosthetic_device");
+    same(`وحلقةٌ «${status}» تمنع فتح جهازٍ ثانٍ`, o.disabled, true);
+    check(!!o.disabledReason?.includes(reason), "   وتقول السبب", String(o.disabledReason));
+  }
+
+  // **جوهر الميزة**: الجهاز المسلَّم لا يمنع الجديد — هو سببه لا مانعه.
+  for (const status of ["delivered", "cancelled"] as const) {
+    same(`وحلقةٌ «${status}» لا تمنع الجهاز التالي`,
+      opt(launcherOptions({
+        isAmputee: true, episodes: [{ serviceType: "prosthetic", status }],
+      } as any), "new_prosthetic_device").disabled, false);
+  }
+
+  // ولا تخلط الخدمتان: حلقةُ مسندٍ مفتوحة لا تمنع طرفاً جديداً.
+  const crossed = launcherOptions({
+    isAmputee: true, isMedicalSupport: true,
+    episodes: [{ serviceType: "medical_support", status: "in_manufacturing" }],
+  } as any);
+  same("وحلقةُ المسند لا تمنع الطرف الجديد", opt(crossed, "new_prosthetic_device").disabled, false);
+  same("وتمنع المسند الجديد وحده", opt(crossed, "new_support_device").disabled, true);
+  same("و«جهاز جديد» يذهب إلى نقطة الحلقات",
+    opt(crossed, "new_prosthetic_device").flow,
+    { kind: "device_episode", serviceType: "prosthetic" });
 
   // ٨.ب الجلسات الإضافية تحتاج علاجاً قائماً — والعكس بالعكس.
   same("٨.ب الجلسات الإضافية متاحة لصاحب العلاج", opt(hasAll, "additional_therapy").disabled, false);

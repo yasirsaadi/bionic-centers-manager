@@ -21,6 +21,10 @@ import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
+import {
+  listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
+} from "./device_episodes/store";
+import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import * as manufacturingStore from "./manufacturing/store";
@@ -96,6 +100,25 @@ const upload = multer({
     }
   })
 });
+
+
+/** نوعُ خدمةِ الجهاز من وسم الزيارة، إن كان وسمَ جهازٍ أصلاً. */
+function deviceServiceOfCaseType(treatmentType: unknown): "prosthetic" | "medical_support" | null {
+  const v = deviceServiceOfPaymentType(typeof treatmentType === "string" ? treatmentType : null);
+  return v === "prosthetic" || v === "medical_support" ? v : null;
+}
+
+/** وإلّا فمن خيط الزيارة نفسه — فأكثر الزيارات بلا وسم. */
+async function deviceServiceOfCaseId(
+  caseId: unknown, patientId: number,
+): Promise<"prosthetic" | "medical_support" | null> {
+  const id = Number(caseId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const [row] = await db.select({ caseType: patientCases.caseType }).from(patientCases)
+    .where(and(eq(patientCases.id, id), eq(patientCases.patientId, patientId)));
+  const t = row?.caseType;
+  return t === "prosthetic" || t === "medical_support" ? t : null;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -2434,7 +2457,10 @@ export async function registerRoutes(
 
   // Visits
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
-    const input = api.visits.create.input.parse(req.body);
+    // `deviceEpisodeId` حقلُ طلبٍ لا يُدرَج كما وصل: يُنزَع، ثم يُعاد بعد
+    // التحقّق من أن الجهاز يخصّ هذا المريض وهذه الخدمة.
+    const { deviceEpisodeId: requestedVisitEpisode, ...visitBody } = req.body ?? {};
+    const input = api.visits.create.input.parse(visitBody);
     
     const branchSession = (req.session as any).branchSession;
     let visitShift = branchSession?.shift;
@@ -2466,6 +2492,29 @@ export async function registerRoutes(
         .where(and(eq(patientCases.id, Number((input as any).caseId)), eq(patientCases.patientId, input.patientId)));
       if (!ownCase) (input as any).caseId = null;
     }
+
+    // ══ أيّ جهازٍ تخصّ هذه الزيارة؟ ═════════════════════════════════════
+    // اختياريّ عمداً: أكثر الزيارات عامّة، والموظّف يحدّد الجهاز حين يعنيه.
+    // لكن ما يُحدَّد يُتحقَّق منه — زيارةٌ معلّقة على جهاز مريضٍ آخر تفسد
+    // تاريخ الجهازين معاً.
+    if (requestedVisitEpisode != null && requestedVisitEpisode !== "") {
+      const wantId = Number(requestedVisitEpisode);
+      if (!Number.isFinite(wantId) || wantId <= 0) {
+        return res.status(400).json({ message: "معرّف جهاز غير صالح" });
+      }
+      const svc = deviceServiceOfCaseType((input as any).treatmentType)
+        ?? await deviceServiceOfCaseId((input as any).caseId, input.patientId);
+      if (!svc) {
+        return res.status(400).json({ message: "لا يمكن تحديد جهاز لزيارة ليست على حالة أطراف أو مساند" });
+      }
+      const check = await verifyEpisodeBelongs(
+        input.patientId, wantId, svc,
+        ["awaiting_exam", "examined", "in_manufacturing", "delivered"],
+      );
+      if (!check.ok) return res.status(400).json({ message: check.reason });
+      (input as any).deviceEpisodeId = wantId;
+    }
+    // لا اختيار ⟶ NULL: زيارةٌ عامّة أو جهازٌ قديم غير مسجَّل.
 
     const visit = await storage.createVisit(input);
 
@@ -2561,6 +2610,21 @@ export async function registerRoutes(
       return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
+
+    // ══ زيارةٌ مرتبطةٌ بجهاز لا يُنقَل وسمُها إلى خدمةٍ أخرى ═══════════════
+    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فإعادة وسم الزيارة إلى
+    // خدمةٍ أخرى تترك الرابط معلّقاً على جهازٍ من نوعٍ مختلف. يُردّ قبل أي
+    // كتابة، ولا يُمسَح الرابط ولا يُنقَل تلقائياً.
+    if (existing.deviceEpisodeId != null && treatmentType !== undefined) {
+      const nextSvc = deviceServiceOfCaseType(treatmentType);
+      const currentSvc = deviceServiceOfCaseType(existing.treatmentType);
+      if (nextSvc !== currentSvc) {
+        return res.status(409).json({
+          message: "هذه الزيارة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
+        });
+      }
+    }
+
     const updateData: any = { details, notes, treatmentType, sessionCount, cost };
 
     if (customDate !== undefined) {
@@ -2698,7 +2762,16 @@ export async function registerRoutes(
 
   // Payments
   app.post(api.payments.create.path, isAuthenticated, async (req, res) => {
-    const { treatmentEntries, ...bodyWithoutEntries } = req.body;
+    // ══ حقولٌ للطلب لا للجدول ═══════════════════════════════════════════
+    // تُنزَع قبل التحقّق والإدراج: `deviceEpisodeId` **لا يُقبل من العميل
+    // إطلاقاً** — يُحلّ في الخادم بعد التحقّق، وإلّا صار بالإمكان تعليق
+    // مالٍ على جهاز مريضٍ آخر بطلبٍ مصنوع يدوياً.
+    const {
+      treatmentEntries,
+      deviceEpisodeId: requestedEpisodeId,
+      unallocatedDeviceBalance,
+      ...bodyWithoutEntries
+    } = req.body ?? {};
     const input = api.payments.create.input.parse(bodyWithoutEntries);
     
     // Authorization: Only admin or branch_manager can set isFreeSessions to true
@@ -2724,12 +2797,59 @@ export async function registerRoutes(
     const userId = sessionInfo?.userId ?? null;
     const userName = sessionInfo?.displayName ?? null;
 
+    // ══ أيّ جهازٍ تخصّ هذه الدفعة؟ ═══════════════════════════════════════
+    // الوسم يقول الخدمة، والموظّف يقول الجهاز. فما دام للمريض جهازٌ واحد
+    // فقط من النوع لا فرق — لكنه اليوم قد يملك اثنين، ودفعةٌ بلا هوية
+    // تصير ديناً معلّقاً بين جهازين لا يُعرف صاحبه بعد شهر.
+    //
+    // ولا تخمين: إمّا جهازٌ محدَّد وإمّا إقرارٌ صريح بأنها «رصيد جهاز
+    // قديم/غير مخصَّص». والصمت يُردّ ٤٠٠ مع قائمة الأجهزة ليختار الموظّف.
+    const entriesArray = Array.isArray(treatmentEntries) ? treatmentEntries : [];
+    if (hasMixedDeviceEntries(entriesArray)) {
+      return res.status(400).json({
+        message: "دفعة الجهاز معاملةٌ لجهازٍ واحد — سجّل الجهاز في دفعة مستقلّة",
+      });
+    }
+    const taggedType = entriesArray.length > 0
+      ? entriesArray.map((e: any) => e?.treatmentType).filter(Boolean).join("، ")
+      : (input as any).paymentTreatmentType;
+    const deviceService = deviceServiceOfPaymentType(taggedType);
+    if (deviceService === "mixed") {
+      return res.status(400).json({
+        message: "دفعة الجهاز معاملةٌ لجهازٍ واحد — سجّل الجهاز في دفعة مستقلّة",
+      });
+    }
+
+    let resolvedEpisodeId: number | null = null;
+    if (deviceService) {
+      const payable = await listPayableEpisodes(input.patientId, deviceService);
+      if (payable.length > 0) {
+        const wantId = Number(requestedEpisodeId);
+        if (Number.isFinite(wantId) && wantId > 0) {
+          const check = await verifyEpisodeBelongs(
+            input.patientId, wantId, deviceService, ["in_manufacturing", "delivered"],
+          );
+          if (!check.ok) return res.status(400).json({ message: check.reason });
+          resolvedEpisodeId = wantId;
+        } else if (unallocatedDeviceBalance !== true) {
+          return res.status(400).json({
+            message: "حدّد الجهاز الذي تخصّه الدفعة — أو اختر «رصيد جهاز قديم/غير مخصَّص»",
+            devices: payable,
+          });
+        }
+        // unallocatedDeviceBalance ⟶ يبقى NULL بقرارٍ صريح.
+      }
+      // لا أجهزة مسجَّلة تقبل المال ⟶ السلوك القديم كما هو، بلا سؤال.
+    }
+    const deviceLink = resolvedEpisodeId === null ? {} : { deviceEpisodeId: resolvedEpisodeId };
+
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
       const results = [];
       for (const entry of treatmentEntries) {
         if (entry.cost > 0 || isFreeSessions) {
           const payment = await storage.createPayment({
             ...input,
+            ...deviceLink,
             amount: isFreeSessions ? 0 : entry.cost,
             notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
             paymentTreatmentType: entry.treatmentType,
@@ -2757,7 +2877,7 @@ export async function registerRoutes(
       // ينشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
       // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
       if (results.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
-        const payment = await storage.createPayment(input);
+        const payment = await storage.createPayment({ ...input, ...deviceLink });
         results.push(payment);
         if (payment.amount > 0) await createJournalForPayment(payment, userId);
         await logAudit({
@@ -2768,7 +2888,7 @@ export async function registerRoutes(
       }
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
-      const payment = await storage.createPayment(input);
+      const payment = await storage.createPayment({ ...input, ...deviceLink });
       if (!isFreeSessions && payment.amount > 0) {
         await createJournalForPayment(payment, userId);
       }
@@ -2828,6 +2948,21 @@ export async function registerRoutes(
     }
     const { sessionCount, paymentTreatmentType } = req.body;
     const [beforeInfo] = await db.select().from(payments).where(eq(payments.id, id));
+    const beforeLink = beforeInfo;
+    // ══ دفعةٌ مرتبطةٌ بجهاز لا يتغيّر وسمُها إلى خدمةٍ أخرى ══════════════
+    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فتحويل وسم الدفعة إلى
+    // خدمةٍ أخرى — أو إلى ما ليس جهازاً — يترك الرابط يشير إلى جهازٍ من
+    // نوعٍ مختلف: ليس حقلاً بائتاً بل مالاً منسوباً لجهازٍ لا يخصّه. ولا
+    // يُمسَح الرابط ولا يُنقَل تلقائياً — إعادة الإسناد قرارٌ إداري صريح.
+    if (beforeLink?.deviceEpisodeId != null && paymentTreatmentType !== undefined) {
+      const nextService = deviceServiceOfPaymentType(paymentTreatmentType);
+      const currentService = deviceServiceOfPaymentType(beforeLink.paymentTreatmentType);
+      if (nextService !== currentService) {
+        return res.status(409).json({
+          message: "هذه الدفعة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
+        });
+      }
+    }
     const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
     // Retagging moves the money between SECTIONS in the accounting split, so
     // it is audited like any other money-shape change.
@@ -2867,6 +3002,22 @@ export async function registerRoutes(
       }
     }
     const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions } = req.body;
+    const [beforeLink] = await db.select().from(payments).where(eq(payments.id, id));
+    if (!beforeLink) return res.status(404).json({ message: "الدفعة غير موجودة" });
+    // ══ دفعةٌ مرتبطةٌ بجهاز لا يتغيّر وسمُها إلى خدمةٍ أخرى ══════════════
+    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فتحويل وسم الدفعة إلى
+    // خدمةٍ أخرى — أو إلى ما ليس جهازاً — يترك الرابط يشير إلى جهازٍ من
+    // نوعٍ مختلف: ليس حقلاً بائتاً بل مالاً منسوباً لجهازٍ لا يخصّه. ولا
+    // يُمسَح الرابط ولا يُنقَل تلقائياً — إعادة الإسناد قرارٌ إداري صريح.
+    if (beforeLink?.deviceEpisodeId != null && paymentTreatmentType !== undefined) {
+      const nextService = deviceServiceOfPaymentType(paymentTreatmentType);
+      const currentService = deviceServiceOfPaymentType(beforeLink.paymentTreatmentType);
+      if (nextService !== currentService) {
+        return res.status(409).json({
+          message: "هذه الدفعة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
+        });
+      }
+    }
     const updateData: any = {};
     if (amount !== undefined) updateData.amount = amount;
     if (notes !== undefined) updateData.notes = notes || null;

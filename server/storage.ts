@@ -1131,10 +1131,12 @@ export class DatabaseStorage implements IStorage {
       // One active order per (patient, service) — enforced INSIDE the
       // transaction (plus the partial unique index from migration 021), so two
       // simultaneous clicks can't create duplicate orders.
+      // بناءٌ أوليٌّ واحد مفتوح — وصيانةُ جهازٍ قديم لا تزاحمه.
       const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
         .where(and(
           eq(prostheticWorkOrders.patientId, patientId),
           eq(prostheticWorkOrders.serviceType, serviceType),
+          sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
           sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
         )).limit(1);
       if (openWo.length > 0) throw new ActiveAssignmentError();

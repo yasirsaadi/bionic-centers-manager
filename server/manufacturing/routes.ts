@@ -16,7 +16,9 @@ import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
 } from "../medical/store";
-import { getOpenDeviceEpisode, DeviceEpisodeError } from "../device_episodes/store";
+import {
+  getOpenDeviceEpisode, listDeliveredEpisodes, DeviceEpisodeError,
+} from "../device_episodes/store";
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
@@ -199,10 +201,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per (patient, serviceType): block a second order of the
-    // SAME service while one is still open (completed/cancelled don't count).
-    if (await store.hasActiveOrder(patientId, serviceType)) {
-      return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+    // المزاحمة بحسب الغرض: بناءٌ أوليٌّ يزاحم بناءً مثله، وصيانةٌ غير
+    // مسجَّلة تزاحم مثيلتها — ولا يمنع أحدهما الآخر. (هذه النقطة لا تسند
+    // صيانةً لجهازٍ بعينه؛ تلك لها نقطتها.)
+    if (await store.hasOpenOrder({ patientId, serviceType, purpose, deviceEpisodeId: null })) {
+      return res.status(409).json({
+        error: purpose === "maintenance"
+          ? "لدى المريض أمر صيانة نشط لهذه الخدمة — أكمِله أو ألغِه أولاً"
+          : "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً",
+      });
     }
 
     // Workflow order: an INITIAL build needs the doctor's signed exam first —
@@ -287,10 +294,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
-    // One ACTIVE order per (patient, serviceType) — a dual-flag patient may
-    // have a طرف order and a مسند order running in parallel; a second order
-    // of the SAME service is still blocked.
-    if (await store.hasActiveOrder(patientId, serviceType)) {
+    // بناءٌ أوليٌّ واحد مفتوح لكل (مريض، خدمة). وصيانةُ جهازٍ قديم لا
+    // تمنع بناء الجديد: عملان على جهازين مختلفين.
+    if (await store.hasOpenOrder({ patientId, serviceType, purpose: "initial_build" })) {
       return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
     }
 
@@ -484,18 +490,46 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // transaction that opens the maintenance episode.
     const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
+    // ══ أيّ جهازٍ يُصان؟ ══════════════════════════════════════════════
+    // القاعدة نفسها التي حكمت اختيار نوع الخدمة أعلاه: ما كان واحداً يبقى
+    // تلقائياً، وما تعدّد **يُصرَّح به** ولا يُخمَّن. فمريضٌ بطرفين مسلَّمين
+    // لا يُقرَّر عنه أيّهما يُصان — التخمين هنا يعلّق أجور الصيانة وزيارتها
+    // على الجهاز الخطأ إلى الأبد.
+    const recorded = await listDeliveredEpisodes(patientId, serviceType);
+    const wantsLegacy = req.body?.legacyUnrecordedDevice === true;
+    const rawEpisodeId = Number(req.body?.deviceEpisodeId);
+    const hasEpisodeChoice = Number.isFinite(rawEpisodeId) && rawEpisodeId > 0;
+    let maintenanceEpisodeId: number | null = null;
+    if (recorded.length > 0) {
+      if (hasEpisodeChoice) {
+        maintenanceEpisodeId = rawEpisodeId;       // يُتحقَّق منه داخل المعاملة
+      } else if (!wantsLegacy) {
+        return res.status(400).json({
+          error: "حدّد الجهاز المراد صيانته — أو اختر «جهاز قديم غير مسجَّل»",
+          devices: recorded,
+        });
+      }
+      // wantsLegacy ⟶ يبقى NULL: قرارُ موظّفٍ صريح أن الجهاز خارج السجل.
+    }
+    // لا أجهزة مسجَّلة ⟶ السلوك القديم كما هو: صيانةٌ بلا هوية، بلا سؤال.
+
     try {
       const order = await store.createMaintenanceOrderWithVisit({
         patientId, branchId: patient.branchId, serviceType, expertUserId,
         expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate, cost,
+        deviceEpisodeId: maintenanceEpisodeId,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
         `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
           + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`);
       res.status(201).json(order);
     } catch (err: any) {
+      // جهازٌ غير صالح للصيانة — جوابُ عملٍ من داخل المعاملة.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       if (err instanceof store.ActiveOrderError) {
-        return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط بالفعل — أكمِله أو ألغِه أولاً" });
+        return res.status(409).json({ error: "لدى المريض أمر صيانة نشط لهذا الجهاز — أكمِله أو ألغِه أولاً" });
       }
       throw err;
     }
