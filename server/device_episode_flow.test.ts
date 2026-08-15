@@ -377,9 +377,11 @@ async function main() {
     //  يسمّي جهازاً واحداً على خيطٍ واحد ولا يتبعهما. فمعاينة «مساند» تشير
     //  إلى حلقة «أطراف» ليست حقلاً بائتاً بل سجلاً سريرياً كاذباً.
     console.log("\n── اختصاص المعاينة المرتبطة ──");
+    //  خيط «أطراف» وحده عمداً: لو نفّذ applyDecision أثره على الطلب المرفوض
+    //  لأنشأ خيط «مساند» جديداً ورفع علمه على المريض — تغييرٌ صارخ لا يمكن
+    //  أن يمرّ في المقارنة.
     const pV = await mkPatient("ص. تعديل معاينة مرتبطة");
     const cV = await mkCase(pV);
-    await mkCase(pV, "medical_support");
     const eV = await episodes.startDeviceEpisode({ patientId: pV, serviceType: "prosthetic", createdBy: MANAGER });
     const signV = await http("POST", `/api/medical/patients/${pV}/exams`, S.doctor, {
       caseType: "prosthetic", diagnosis: "تشخيص أوّل", prescription: { prostheticType: "فوق الركبة" },
@@ -394,23 +396,35 @@ async function main() {
     same("   والنسخة صارت ٢", revSame.body?.version, 2);
     same("   والتشخيص تحدَّث", revSame.body?.diagnosis, "تشخيص مصحَّح");
 
-    const revsBefore = await q<{ n: number }>(
-      `SELECT count(*)::int n FROM medical_exam_revisions WHERE exam_id=$1`, [signV.body.id]);
-    const examBefore = await q(`SELECT case_type, case_id, device_episode_id, version, diagnosis
-                                  FROM medical_exams WHERE id=$1`, [signV.body.id]);
-    const epBefore = await episodeRow(eV.id);
+    //  لقطة كاملة بـ`SELECT *` لكل ما قد يلمسه المسار المرفوض: صفّ المريض
+    //  بكل أعلامه وحقوله السريرية، وكل خيوطه، وكل حلقاته، والمعاينة ونسخها.
+    const snapAll = async () => ({
+      patient: await q(`SELECT * FROM patients WHERE id=$1`, [pV]),
+      cases: await q(`SELECT * FROM patient_cases WHERE patient_id=$1 ORDER BY id`, [pV]),
+      eps: await q(`SELECT * FROM patient_device_episodes WHERE patient_id=$1 ORDER BY id`, [pV]),
+      exam: await q(`SELECT * FROM medical_exams WHERE id=$1`, [signV.body.id]),
+      revs: await q(`SELECT * FROM medical_exam_revisions WHERE exam_id=$1 ORDER BY id`, [signV.body.id]),
+    });
+    const before = await snapAll();
+    same("   وللمريض خيطٌ واحد قبل الطلب المرفوض", before.cases.length, 1);
+
+    //  الوصفة تحمل مواصفات مساند حقيقية: لو نفّذ applyDecision لكتبها على
+    //  المريض وأنشأ خيطها ورفع علمها.
     const revSwitch = await http("PATCH", `/api/medical/exams/${signV.body.id}`, S.doctor, {
       caseType: "medical_support", diagnosis: "نقل الاختصاص",
+      prescription: { supportType: "مسند ظهر", injuryArea: "الظهر", injurySide: "يمين" },
     });
     same("ب. وتغيير الاختصاص على معاينة مرتبطة مرفوض بـ409", revSwitch.status, 409);
     check(/ألغِ طلب الجهاز/.test(revSwitch.body?.error ?? ""), "   برسالة تدلّ على المسار الصحيح", revSwitch.body?.error);
-    same("   ولا نسخة جديدة كُتبت",
-      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exam_revisions WHERE exam_id=$1`,
-        [signV.body.id]))[0].n, revsBefore[0].n);
-    same("   والمعاينة لم تتغيّر بحرف",
-      await q(`SELECT case_type, case_id, device_episode_id, version, diagnosis
-                 FROM medical_exams WHERE id=$1`, [signV.body.id]), examBefore);
-    same("   والحلقة لم تُمَسّ", await episodeRow(eV.id), epBefore);
+
+    const after = await snapAll();
+    same("   وصفّ المريض بكل أعلامه وحقوله كما هو بايتاً ببايت", after.patient, before.patient);
+    same("   ولم يُنشَأ خيط «مساند» — applyDecision لم ينفّذ أثره", after.cases, before.cases);
+    same("   والحلقات كما هي", after.eps, before.eps);
+    same("   والمعاينة لم تتغيّر بحرف", after.exam, before.exam);
+    same("   ولا نسخة جديدة كُتبت", after.revs, before.revs);
+    same("   وما زال خيطاً واحداً", after.cases.length, 1);
+    same("   وعلم «مساند» لم يُرفع", after.patient[0]?.is_medical_support ?? false, before.patient[0]?.is_medical_support ?? false);
 
     const pW = await mkPatient("ض. معاينة بلا حلقة");
     const cW = await mkCase(pW);

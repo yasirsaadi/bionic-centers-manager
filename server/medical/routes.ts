@@ -377,6 +377,22 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (!isMedicalSpecialty(caseType)) {
         return res.status(400).json({ error: "اختصاص المعاينة غير صالح" });
       }
+      // ══ REFUSE BEFORE ANYTHING WRITES ════════════════════════════════════
+      // `reviseExam` carries this same guard, but it runs too late to be the
+      // only one: `applyDecision` below writes the patient's device fields and
+      // its `patient_cases` row BEFORE the revision is attempted. A request
+      // destined for 409 would still have moved the patient's record — the
+      // refusal would be honest about the exam and silent about everything it
+      // had already changed.
+      //
+      // So the answer is given here, before the first write. The inner guard
+      // stays as defence for any other caller of `reviseExam`.
+      if (exam.deviceEpisodeId !== null && caseType !== exam.caseType) {
+        return res.status(409).json({
+          error: "لا يمكن تغيير اختصاص معاينة مرتبطة بجهاز — ألغِ طلب الجهاز وابدأ الطلب الصحيح",
+        });
+      }
+
       // The author must still hold the specialty they are moving the exam to;
       // a manager editing on someone's behalf is not bound by that.
       if (isAuthor && !isResponsibleManager) {
