@@ -243,6 +243,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         `إنشاء أمر ${purpose === "maintenance" ? "صيانة" : "تصنيع"} لمريض موجود #${patientId} للخبير #${expertUserId}`);
       res.status(201).json(order);
     } catch (err: any) {
+      // حلقةٌ وُلدت بعد فحص النقطة — الجواب من داخل المعاملة، لا 500.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       if (err instanceof store.ActiveOrderError || err?.code === "23505") {
         return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
       }

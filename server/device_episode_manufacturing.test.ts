@@ -380,6 +380,98 @@ async function main() {
     same("   وخيطٌ واحد", mI.cases[0]?.cost, 1_000_000);
     same("   والحلقة «قيد التصنيع»", (await epRow(eI))?.status, "in_manufacturing");
 
+    // ══ ظ. بيعان متزامنان على خيطين — لا فقدان تحديث ══════════════════
+    //  قفل الخيط يُسلسل حلقات النوع الواحد ولا يُسلسل نوعين: الطرف والمسند
+    //  يقفلان خيطين مختلفين ويتقدّمان معاً. فالكتابة المطلقة
+    //  «المقروء + الفرق» تجعل آخرَهما يمحو بيعَ الأول.
+    console.log("\n── بيعان متزامنان ──");
+    const pZ = await mkPatient("ظ. خيطان", 0);
+    await q(`UPDATE patients SET is_medical_support = true WHERE id=$1`, [pZ]);
+    const cZp = await mkCase(pZ, 0, "prosthetic");
+    const cZs = await mkCase(pZ, 0, "medical_support");
+    const eZp = await mkEpisode(pZ, cZp, 1, "examined", 0);
+    const eZs = await mkEpisode(pZ, cZs, 1, "examined", 0);
+    await mkExam(pZ, cZp, 1_000_000, eZp);
+    await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id,
+             doctor_name, diagnosis, prescription, device_cost, version, signed_at, device_episode_id)
+             VALUES ($1,$2,'medical_support',1,$3,'د. فلان','تشخيص','{}'::jsonb,$4,1,NOW(),$5)`,
+      [pZ, cZs, DOCTOR, 600_000, eZs]);
+
+    const bothSales = await Promise.all([
+      http("POST", `/api/patients/${pZ}/assign-manufacturing`, S.reception,
+        { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 }),
+      http("POST", `/api/patients/${pZ}/assign-manufacturing`, S.reception,
+        { expertUserId: EXPERT, serviceType: "medical_support", cost: 0 }),
+    ]);
+    same("ظ. البيعان نجحا معاً", bothSales.map((r) => r.status), [201, 201]);
+    const mZ = await money(pZ);
+    same("   **والمجموع ١٬٦٠٠٬٠٠٠ — لا بيع ضاع**", mZ.total, 1_600_000);
+    same("   وكل خيط بسعره",
+      mZ.cases.map((c: any) => [c.case_type, c.cost]),
+      [["medical_support", 600_000], ["prosthetic", 1_000_000]]);
+    same("   وكل حلقة بسعرها",
+      [(await epRow(eZp))?.agreed_cost, (await epRow(eZs))?.agreed_cost], [1_000_000, 600_000]);
+    same("   وقيدان اثنان لا أكثر", mZ.entries.length, 2);
+    same("   كلٌّ بفرق حلقته وموسومٌ بها",
+      mZ.entries.map((e: any) => [Number(e.amount), Number(e.device_episode_id)]).sort((a: any, b: any) => a[0] - b[0]),
+      [[600_000, eZs], [1_000_000, eZp]]);
+    same("   وأمران مرتبطان بحلقتيهما",
+      (await ordersOf(pZ)).map((o: any) => Number(o.device_episode_id)).sort((a: number, b: number) => a - b),
+      [eZp, eZs].sort((a, b) => a - b));
+
+    // ══ غ. القراءة البائتة «لا حلقة» لا تدخل المسار القديم ═════════════
+    //  المحاكاة دقيقة: نمرّر `deviceEpisodeId = null` (وهو ما تمرّره النقطة
+    //  حين تقرأ «لا حلقة») بينما حلقةٌ مفتوحة موجودة فعلاً وقت المعاملة.
+    console.log("\n── القراءة البائتة ──");
+    const pY = await mkPatient("غ. قراءة بائتة", 0);
+    const cY = await mkCase(pY, 0);
+    const eY = await mkEpisode(pY, cY, 1, "examined", 0);
+    await mkExam(pY, cY, 800_000, eY);
+    const beforeY = { money: await money(pY), ep: await epRow(eY), orders: await ordersOf(pY) };
+    const staleNull = await refused(() => storage.assignManufacturing({
+      patientId: pY, serviceType: "prosthetic", fields: {}, cost: 800_000,
+      expertUserId: EXPERT, assignedBy: MANAGER, deviceEpisodeId: null,
+    }));
+    same("غ. المسار القديم مرفوض ما دامت حلقةٌ مفتوحة", staleNull?.status, 409);
+    check(/حدّث الصفحة/.test(staleNull?.msg ?? ""), "   برسالة تدلّ على التحديث", staleNull?.msg);
+    same("   ولا أمر يتيم أُنشئ", await ordersOf(pY), beforeY.orders);
+    same("   ولا مال تحرّك", await money(pY), beforeY.money);
+    same("   ولا الحلقة تغيّرت", await epRow(eY), beforeY.ep);
+
+    //  ونفسه لنقطة الأمر العامة — الحارس داخل المعاملة لا في النقطة وحدها.
+    const staleGeneric = await refused(() => mfg.createWorkOrderForExisting({
+      patientId: pY, branchId: 1, serviceType: "prosthetic",
+      expertUserId: EXPERT, assignedBy: MANAGER, purpose: "initial_build",
+    }));
+    same("   وإنشاء الأمر العام مرفوض داخل المعاملة", staleGeneric?.status, 409);
+    same("   ولا أمر أُنشئ", (await ordersOf(pY)).length, 0);
+    //  والصيانة تمرّ كما هي — لا يحرسها هذا الحارس.
+    const mntOk = await mfg.createWorkOrderForExisting({
+      patientId: pY, branchId: 1, serviceType: "prosthetic",
+      expertUserId: EXPERT, assignedBy: MANAGER, purpose: "maintenance",
+    });
+    same("   والصيانة تمرّ بلا مساس", mntOk.purpose, "maintenance");
+    same("   والحلقة ما زالت مُعايَنة", (await epRow(eY))?.status, "examined");
+
+    //  السباق الحقيقي: إنشاء أمرٍ قديم مقابل بدء حلقة — لا حالة نصفية.
+    const pX2 = await mkPatient("ء. سباق حقيقي", 0);
+    const cX2 = await mkCase(pX2, 0);
+    const raced = await Promise.allSettled([
+      mfg.createWorkOrderForExisting({
+        patientId: pX2, branchId: 1, serviceType: "prosthetic",
+        expertUserId: EXPERT, assignedBy: MANAGER, purpose: "initial_build",
+      }),
+      episodes.startDeviceEpisode({ patientId: pX2, serviceType: "prosthetic", createdBy: MANAGER }),
+    ]);
+    const ordersX = await ordersOf(pX2);
+    const epsX = await q(`SELECT id, status FROM patient_device_episodes WHERE case_id=$1`, [cX2]);
+    const unlinkedBuild = ordersX.filter((o: any) => o.purpose === "initial_build" && o.device_episode_id === null);
+    const openEps = epsX.filter((e: any) => !["delivered", "cancelled"].includes(e.status));
+    check(!(unlinkedBuild.length > 0 && openEps.length > 0),
+      "ء. لا تجتمع حلقةٌ مفتوحة مع أمر بناءٍ يتيم أبداً",
+      `orders=${JSON.stringify(ordersX)} eps=${JSON.stringify(epsX)}`);
+    check(raced.some((r) => r.status === "fulfilled"), "   وأحد الطريقين نجح فعلاً");
+
     // ══ ي. التسليم ═════════════════════════════════════════════════════
     console.log("\n── نهاية الدورة ──");
     const moneyBeforeDeliver = await money(pB);

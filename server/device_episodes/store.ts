@@ -174,6 +174,26 @@ export async function startDeviceEpisode(params: {
       throw new DeviceEpisodeError("لدى المريض جهاز من هذا النوع قيد الإجراء بالفعل", 409);
     }
 
+    //  **والطرف الآخر من السباق نفسه.** أمرُ بناءٍ قديمٍ نشط — بلا حلقة —
+    //  يعني جهازاً يُصنَع الآن بالمسار القديم. ففتحُ حلقةٍ فوقه يُنتج
+    //  الحالة النصفية عينها التي يمنعها الحارس المقابل: جهازان قيد
+    //  الإجراء، أحدهما بهوية وأحدهما بلا. والقفل على الخيط أعلاه يجعل
+    //  الحسم للأسبق: مَن ظفر بالقفل أوّلاً مضى، والآخر يُردّ صراحةً.
+    const legacyBuild = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM prosthetic_work_orders
+       WHERE patient_id = ${patientId}
+         AND service_type = ${serviceType}
+         AND purpose = 'initial_build'
+         AND status NOT IN ('completed', 'cancelled')
+         AND device_episode_id IS NULL
+       LIMIT 1
+    `);
+    if ((legacyBuild.rows ?? []).length > 0) {
+      throw new DeviceEpisodeError(
+        "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه قبل بدء جهاز جديد", 409,
+      );
+    }
+
     const mx = await tx.execute<{ next: number }>(sql`
       SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
         FROM patient_device_episodes WHERE case_id = ${caseRow.id}
@@ -344,6 +364,55 @@ export async function lockOpenEpisodeForAssignment(
     serviceType: String(row.case_type),
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+  };
+}
+
+/**
+ * **نقطة القفل الموحّدة**: اقفل الخيط ثم اقرأ حلقته المفتوحة.
+ *
+ * ══ لماذا الخيط لا الحلقة ═══════════════════════════════════════════════
+ * قفل الحلقة يحرس حلقةً **موجودة**، وغيابُ صفٍّ لا يُقفَل. والسباق الذي
+ * يهمّنا هو بالضبط غيابها: قارئٌ رأى «لا حلقة» فمضى إلى المسار القديم،
+ * وبين قراءته وكتابته وُلدت حلقة. النتيجة أمرُ بناءٍ يتيم بلا هوية، وحلقةٌ
+ * مفتوحة لا أمر لها — نصفُ حالةٍ لا يُصلحها شيء بعد وقوعها.
+ *
+ * وصفّ الخيط **ثابت الوجود**: كل من يفتح حلقةً يمرّ به (`startDeviceEpisode`
+ * يقفله)، فقفله هنا يجعل الطريقين متسلسلين حقاً لا متجاورين.
+ *
+ * لا خيط ⟶ لا حلقة ممكنة: الحلقة تشترط خيطاً قائماً، فمن يفتحها يجد
+ * القفل بانتظاره.
+ */
+export async function lockCaseAndReadOpenEpisode(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { patientId: number; serviceType: DeviceServiceType },
+): Promise<{ caseId: number | null; episode: LockedEpisode | null }> {
+  const cs = await tx.execute(sql`
+    SELECT id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  if (!caseRow) return { caseId: null, episode: null };
+
+  const r = await tx.execute(sql`
+    SELECT id, case_id, patient_id, status, agreed_cost
+      FROM patient_device_episodes
+     WHERE case_id = ${caseRow.id}
+       AND status NOT IN ('delivered', 'cancelled')
+     LIMIT 1
+     FOR UPDATE
+  `);
+  const row = (r.rows ?? [])[0];
+  return {
+    caseId: Number(caseRow.id),
+    episode: row ? {
+      id: Number(row.id),
+      caseId: Number(row.case_id),
+      patientId: Number(row.patient_id),
+      serviceType: params.serviceType,
+      status: String(row.status),
+      agreedCost: Number(row.agreed_cost ?? 0),
+    } : null,
   };
 }
 

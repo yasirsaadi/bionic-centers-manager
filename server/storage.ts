@@ -41,7 +41,7 @@ import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import { mergeContactsInto } from "./patient_contacts/store";
 import {
-  lockOpenEpisodeForAssignment, markEpisodeInManufacturing, caseHasEpisodes,
+  lockCaseAndReadOpenEpisode, markEpisodeInManufacturing, caseHasEpisodes,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
 import {
@@ -1139,11 +1139,14 @@ export class DatabaseStorage implements IStorage {
         )).limit(1);
       if (openWo.length > 0) throw new ActiveAssignmentError();
 
-      // القفل والتحقّق قبل أي كتابة. الحلقة تُقرأ عبر خيطها فيُثبَت في
-      // استعلامٍ واحد أن الخيط لهذا المريض وأن نوعه هو نوع الخدمة.
-      let episode: LockedEpisode | null = null;
+      // ══ الوضع يُحسم **داخل** المعاملة، خلف قفل الخيط ═══════════════════
+      // قراءة النقطة ترشيحٌ لا قرار: بينها وبين هنا قد تُفتح حلقة. ولو
+      // مضينا على قراءةٍ بائتة تقول «لا حلقة» لأنشأنا أمر بناءٍ يتيماً
+      // بينما حلقةٌ مفتوحة تنتظره — نصفُ حالةٍ لا يُصلحها شيء بعد وقوعها.
+      // فالقفل على صفّ الخيط — نقطة القفل نفسها التي يستعملها
+      // `startDeviceEpisode` — هو ما يجعل الطريقين متسلسلين حقاً.
+      const { episode } = await lockCaseAndReadOpenEpisode(tx, { patientId, serviceType });
       if (wantEpisode !== null) {
-        episode = await lockOpenEpisodeForAssignment(tx, { patientId, serviceType });
         if (!episode || episode.id !== wantEpisode) {
           throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
         }
@@ -1152,6 +1155,11 @@ export class DatabaseStorage implements IStorage {
             "لا يمكن تخصيص الجهاز قبل معاينة الطبيب لهذا الطلب بالذات", 409,
           );
         }
+      } else if (episode) {
+        // حلقةٌ وُلدت بعد قراءة النقطة: المسار القديم لم يعد صالحاً.
+        throw new DeviceEpisodeError(
+          "تغيّرت حالة طلب الجهاز — حدّث الصفحة وأكمل الطلب الجديد", 409,
+        );
       }
 
       const [existingCase] = await tx.select().from(patientCases)
@@ -1186,11 +1194,24 @@ export class DatabaseStorage implements IStorage {
       // Update device fields + flag + total_cost.
       const patch: any = { ...fields };
       if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
-      patch.totalCost = Math.max(0, (existing.totalCost || 0) + totalDelta);
+      // ══ زيادةٌ ذرّية لا كتابةٌ مطلقة (المسار الجديد) ═══════════════════
+      // قفل الخيط يُسلسل حلقات النوع الواحد، ولا يُسلسل نوعين: طرفٌ ومسندٌ
+      // يُخصَّصان معاً يقفلان خيطين مختلفين ويتقدّمان جنباً إلى جنب. فلو
+      // كتب كلٌّ منهما `المقروء + فرقه` لمحا آخرُهما بيعَ الأول. القاعدة
+      // نفسها تجمع الآن، فلا قيمة مقروءة سلفاً تُكتب فوق قيمةٍ أحدث.
+      if (episode) {
+        patch.totalCost = sql`GREATEST(0, COALESCE(${patients.totalCost}, 0) + ${episodeDelta})`;
+      } else {
+        patch.totalCost = Math.max(0, (existing.totalCost || 0) + totalDelta);
+      }
       const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
       // Ledger the APPLIED delta (after the zero clamp), signed — a downward
       // re-pricing is a real negative cost event and must date-stamp too.
-      const appliedDelta = (patient.totalCost || 0) - (existing.totalCost || 0);
+      // وللجهاز الحيّ: فرقُ حلقته هو، لا فرقُ المجموع قبل/بعد — فذاك قد
+      // يحمل زيادةَ معاملةٍ متزامنة فيُنسب بيعُ جهازٍ إلى جهازٍ آخر.
+      const appliedDelta = episode
+        ? episodeDelta
+        : (patient.totalCost || 0) - (existing.totalCost || 0);
       if (appliedDelta !== 0) {
         await tx.insert(costEntries).values({
           patientId, branchId: existing.branchId, amount: appliedDelta,
@@ -1216,15 +1237,18 @@ export class DatabaseStorage implements IStorage {
       };
       const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
-      // الخيط تراكم: الجهاز الحيّ **يضيف** سعره ولا يستبدل ما قبله. أمّا
-      // المسار القديم فيكتب السعر كما كان يفعل دائماً.
-      const newCaseCost = episode ? oldCaseCost + episodeDelta : cost;
+      // الخيط تراكم: الجهاز الحيّ **يضيف** سعره ولا يستبدل ما قبله —
+      // وبالجمع في القاعدة للسبب نفسه أعلاه. أمّا المسار القديم فيكتب
+      // السعر كما كان يفعل دائماً.
+      const caseCostPatch = episode
+        ? sql`COALESCE(${patientCases.cost}, 0) + ${episodeDelta}`
+        : cost;
 
       let caseId: number;
       if (existingCase) {
         caseId = existingCase.id;
         // A human priced the device — 'manual' keeps the cost floor away.
-        await tx.update(patientCases).set({ cost: newCaseCost, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
+        await tx.update(patientCases).set({ cost: caseCostPatch as any, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
       } else {
         const [nc] = await tx.insert(patientCases).values({
           patientId, branchId: existing.branchId, caseType: serviceType, cost, details: cleanDetails, costSource: "manual",
