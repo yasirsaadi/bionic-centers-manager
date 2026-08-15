@@ -1,7 +1,10 @@
 // Floating AI assistant available on every page after the BranchGate.
-// Hidden when AI isn't configured server-side, or when the current user
-// lacks accounting permission (the only feature that exposes any
-// financial data through AI today).
+// Hidden only when AI isn't configured server-side.
+//
+// كان مخفيّاً عن كلّ من لا يملك المحاسبة، لأن جوابه كان يُبنى دائماً فوق
+// لقطةٍ مالية. وبعد أن صار للخادم وضعان منفصلان — عامٌّ بلا أي قراءة مالية،
+// ومالي للمصرَّح لهم — صار نافعاً لكلّ موظّف. والحجب هنا **عرضٌ لا حراسة**:
+// الخادم يقرّر وحده مَن تُبنى له لقطةٌ مالية، ولا يقرأ من العميل شيئاً.
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -12,18 +15,14 @@ import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
+import {
+  canOpenAssistant, introTextFor, scopeLabelFor, suggestionsFor,
+} from "@/components/ai_assistant_access";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
-
-const SUGGESTIONS = [
-  "كم بلغت الإيرادات هذا الشهر؟",
-  "ما أكبر بنود المصاريف؟",
-  "من المرضى الذين عليهم ذمم متأخّرة؟",
-  "ما رصيد القاصة اليوم؟",
-];
 
 export function AiChatDrawer() {
   const session = useBranchSession();
@@ -33,19 +32,16 @@ export function AiChatDrawer() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Hide entirely when AI isn't configured. The endpoint also checks
-  // permission, but doing it client-side too keeps the floating button
-  // from confusing users who can't use the feature anyway.
+  // Hide entirely when AI isn't configured — otherwise every authenticated
+  // employee gets the assistant. What it can SEE is decided server-side.
   const { data: aiStatus } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/ai/status"],
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
 
-  const canUse =
-    !!session &&
-    !!aiStatus?.enabled &&
-    (session.isAdmin || session.permissions?.canManageAccounting);
+  const canUse = canOpenAssistant(session, aiStatus?.enabled);
+  const suggestions = suggestionsFor(session);
 
   const askMutation = useMutation({
     mutationFn: async (history: ChatMessage[]) => {
@@ -115,10 +111,8 @@ export function AiChatDrawer() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">المساعد الذكي</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {session?.isAdmin
-                      ? "نطاق: كل الفروع"
-                      : `نطاق: ${session?.branchName ?? "فرعك"}`}
+                  <div className="text-xs text-muted-foreground truncate" data-testid="text-ai-scope">
+                    {scopeLabelFor(session)}
                   </div>
                 </div>
               </div>
@@ -137,12 +131,9 @@ export function AiChatDrawer() {
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
                 <div className="text-sm text-muted-foreground space-y-3">
-                  <p>
-                    اسألني عن إيرادات الفرع، المصاريف، الفواتير غير المدفوعة، أو رصيد القاصة.
-                    البيانات تُحدَّث لحظياً، ومحصورة بنطاقك.
-                  </p>
+                  <p data-testid="text-ai-intro">{introTextFor(session)}</p>
                   <div className="flex flex-wrap gap-2">
-                    {SUGGESTIONS.map((s) => (
+                    {suggestions.map((s) => (
                       <button
                         key={s}
                         type="button"

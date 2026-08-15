@@ -43,7 +43,10 @@
     "test:episode-integration": "tsx server/device_episode_integration.test.ts",
     "test:migration-051": "tsx server/migration_051.test.ts",
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
-    "test:registry-assignment-api": "tsx server/registry_assignment_api.test.ts"
+    "test:registry-assignment-api": "tsx server/registry_assignment_api.test.ts",
+    "test:ai-access": "tsx server/ai/access.test.ts",
+    "test:ai-confidentiality": "tsx server/ai_chat_confidentiality.test.ts",
+    "test:ai-ui": "tsx client/src/components/ai_assistant_access.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

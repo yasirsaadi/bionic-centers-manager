@@ -42,6 +42,7 @@ import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
 import { aiChat, type ChatMessage } from "./ai/chat";
+import { resolveAiAccess } from "./ai/access";
 import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
@@ -5659,18 +5660,17 @@ export async function registerRoutes(
     res.json({ category: result.value });
   });
 
-  // Conversational assistant. Takes the user's message history and returns
-  // an Arabic answer grounded in a fresh financial snapshot of the
-  // requester's branch (or all branches when admin). Snapshot is built
-  // server-side — clients never see raw financial data unless it surfaces
-  // through the assistant's reply.
+  // Conversational assistant — **one assistant, two server modes**.
+  //
+  // كلّ موظّف مصادَق يستعمله. لكنّ المال بابُه مغلق بنيوياً: مَن لا يملك
+  // `canUseFinance` يمرّ على المسار العام، فلا لقطةَ مالية تُبنى ولا تابعَ
+  // مالي في `storage` يُستدعى أصلاً — والمنع في الشيفرة لا في تعليمة
+  // الـprompt، فالنموذج لا يُفشي رقماً لم يصله.
+  //
+  // والهوية من الجلسة وحدها: `resolveAiAccess` لا يرى الطلب، فلا حقلٌ في
+  // جسمه ولا جملةٌ في رسالة المستخدم يمكن أن ترفع صلاحية.
   app.post("/api/ai/chat", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
-    const isAdmin = branchSession?.isAdmin;
-    const canAccess = isAdmin || branchSession?.permissions?.canManageAccounting;
-    if (!canAccess) {
-      return res.status(403).json({ error: "غير مصرح لك باستخدام المساعد الذكي" });
-    }
 
     const { messages } = req.body ?? {};
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -5683,15 +5683,38 @@ export async function registerRoutes(
       content: String(m.content ?? "").slice(0, 2000),
     }));
 
-    // Branch isolation: non-admins are pinned to their own branch.
-    const branchId = enforceBranchAccess(req);
+    // Branch isolation: the SAME accounting scope the rest of the system
+    // uses — non-admins are pinned to their own branch, and only an admin
+    // may narrow to a chosen one. A crafted branchId from a non-admin has
+    // no effect because enforceBranchAccess never reads it for them.
+    const scopeBranchId = enforceBranchAccess(req);
     let branchName: string | null = null;
-    if (branchId) {
+    if (scopeBranchId) {
       const branches = await storage.getBranches();
-      branchName = branches.find((b) => b.id === branchId)?.name ?? null;
+      branchName = branches.find((b) => b.id === scopeBranchId)?.name ?? null;
     }
 
-    const result = await aiChat({ branchId: branchId ?? null, branchName }, history);
+    const access = resolveAiAccess({ session: branchSession, branchName, scopeBranchId });
+
+    // أثرٌ صغير لكلّ طلب: مَن سأل، من أي فرع، بأي وضع، وهل مُنح المال.
+    // بلا نصّ السؤال وبلا نصّ الجواب — السجلّ للمساءلة لا للأرشفة.
+    logAudit({
+      entityType: "ai_chat",
+      entityId: access.userId ?? 0,
+      action: access.mode,
+      userId: access.userId,
+      userName: branchSession?.displayName ?? null,
+      branchId: access.branchId,
+      newValues: {
+        mode: access.mode,
+        financeAllowed: access.canUseFinance,
+        ...(access.financeScopeMissing ? { financeScopeMissing: true } : {}),
+      },
+      ipAddress: req.ip ?? null,
+      userAgent: req.get?.("user-agent") ?? null,
+    });
+
+    const result = await aiChat(access, history);
     if (!result.ok) {
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
       return res.status(status).json({ error: result.message, reason: result.reason });
