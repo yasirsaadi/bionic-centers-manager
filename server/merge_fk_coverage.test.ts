@@ -58,13 +58,29 @@ const MERGE_DECISIONS: Record<string, string> = {
   "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",
   "patient_notification_deliveries.patient_id": "repoint — الصادر يتبع المريض، ولا تصادم فيه",
 
+  "patient_device_episodes.patient_id": "repoint إلى الملف الهدف مع إعادة الترقيم",
+
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "payments.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
+  "patient_device_episodes.case_id": "remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل",
+
+  // ── تشير إلى patient_device_episodes.id (migration 049) ────────────────
+  // الحلقة تُنقَل **بمعرّفها** فلا يتغيّر `id`، ولذلك لا يحتاج أيٌّ من هذه
+  // الأربعة لمسة واحدة في الدمج. والقرار معلَن هنا كي لا يظنّ قارئٌ لاحقاً
+  // أنها نُسيت — «لا شيء» قرارٌ حين يُكتب، وسهوٌ حين يُسكت عنه.
+  "prosthetic_work_orders.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
+  "cost_entries.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
+  "payments.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
+  "visits.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
 };
 
-const PARENTS = ["patients", "patient_cases"];
+// و`medical_exams.device_episode_id` ليس مفتاحاً أجنبياً عمداً (لقطةُ رقم،
+// لأن الجدول مختوم بترِكر يرفض `ON DELETE SET NULL`) — فلا يظهر في فهرس
+// Postgres ولا يُذكَر أعلاه. وهو لا يحتاج نقلاً للسبب نفسه: المعرّف ثابت.
+
+const PARENTS = ["patients", "patient_cases", "patient_device_episodes"];
 
 let failures = 0;
 function fail(msg: string) { failures++; console.log(`❌ FAIL  ${msg}`); }

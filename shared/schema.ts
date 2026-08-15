@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -114,7 +114,85 @@ export const patientCases = pgTable("patient_cases", {
   // concurrent syncPatientCases runs duplicating a case. Also created by
   // migration 020 (after de-duplicating) for existing databases.
   uniqueIndex("uq_patient_cases_patient_type").on(t.patientId, t.caseType),
+  /**
+   * يقبله المفتاح المركّب في `patientDeviceEpisodes`.
+   *
+   * **قيدُ تفرّدٍ لا فهرسَ تفرّد**: `drizzle-kit push` يضيف المفاتيح الأجنبية
+   * **قبل** أن ينشئ الفهارس، فمفتاحٌ يشير إلى فهرسٍ لم يُنشأ بعد يسقط بـ
+   * «no unique constraint matching given keys». والقيد يُكتب داخل
+   * `CREATE TABLE` فيسبقها جميعاً. (وPostgres يبني له فهرساً ضمناً، فلا
+   * فرق في الأثر.)
+   *
+   * ولا يضيف شرطاً جديداً على البيانات — `id` مفتاحٌ أساسي أصلاً فالزوج
+   * فريدٌ حتماً.
+   */
+  unique("uq_patient_cases_id_patient").on(t.patientId, t.id),
 ]);
+
+// ── حلقات أجهزة المريض (migration 049) ──────────────────────────────────────
+// **عملية شراء جهاز واحد.** المريض يشتري طرفاً، يُصنَّع ويُسلَّم، ثم يعود بعد
+// سنتين ليشتري طرفاً آخر من النوع نفسه — و`patient_cases` خيطُ اختصاصٍ دائم
+// (صفٌّ واحد لكل نوع) لا يتّسع لشراءين، و`prosthetic_work_orders` مهمّةُ
+// تصنيع تبدأ بعد المعاينة والتخصيص. فالحلقة هي الكيان الذي **يبدأ قبلهما
+// وينتهي بعدهما**: من قرار الشراء إلى صيانةٍ بعد سنوات.
+//
+// والقسمة صارمة: الحلقة تملك **الشراء** (الهوية، التسلسل، الحالة، السعر
+// المتفق عليه)، وأمرُ التصنيع يملك **التنفيذ** (الخبير، المراحل، الموعد،
+// التسليم). ولا حقيقة مكرَّرة في الاثنين — فلا مصدر ثانٍ ينحرف.
+export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  // خيط الاختصاص. إلزامي: شراءٌ بلا خيط لا معنى له.
+  // و`serviceType` غير موجود عمداً — يُشتقّ من `patientCases.caseType`،
+  // والحالة واحدة لكل نوع فيكفي `caseId` لكل فهرس ولكل استعلام.
+  caseId: integer("case_id").references(() => patientCases.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  /** ترتيب الجهاز داخل خيطه: ١، ٢، ٣… فيُقال «طرف صناعي #٢» بلا حساب. */
+  sequenceNumber: integer("sequence_number").notNull(),
+  status: text("status").notNull().default("awaiting_exam"),
+  /**
+   * السعر المتفق عليه لهذا الجهاز وحده — لا مجموع الخيط.
+   * يبقى صفراً حتى تُبنى نقطة اعتماده («تخصيص») في مرحلة لاحقة.
+   */
+  agreedCost: integer("agreed_cost").notNull().default(0),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelReason: text("cancel_reason"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // الحالات الخمس محروسةً في القاعدة لا في التطبيق: قيمةٌ مخترَعة من سكربت
+  // أو من Console تُردّ عند الكتابة لا تُكتشَف بعد شهر.
+  check("patient_device_episodes_status_check",
+    sql`${t.status} IN ('awaiting_exam', 'examined', 'in_manufacturing', 'delivered', 'cancelled')`),
+  uniqueIndex("uq_pde_case_seq").on(t.caseId, t.sequenceNumber),
+  // **شراءٌ مفتوحٌ واحد لكل خيط** — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة.
+  uniqueIndex("uq_pde_case_open")
+    .on(t.caseId)
+    .where(sql`status NOT IN ('delivered', 'cancelled')`),
+  index("ix_pde_patient").on(t.patientId),
+  // يقبله المفتاح المركّب في الجداول الأربعة التابعة — قيداً لا فهرساً،
+  // للسبب نفسه المشروح على `patientCases`.
+  unique("uq_pde_id_patient").on(t.patientId, t.id),
+  /**
+   * **لا حلقةٌ لمريضٍ على خيط مريضٍ آخر.**
+   *
+   * المفتاحان المفردان يحرسان الوجود لا الانتماء: صفٌّ يحمل `patientId`
+   * للمريض «أ» و`caseId` لخيط المريض «ب» يمرّ من كليهما — كلٌّ منهما صادق
+   * وحده، والكذبة في الجمع بينهما. والمركّب يطابق **الزوج** بأكمله.
+   */
+  foreignKey({
+    name: "patient_device_episodes_patient_case_fk",
+    columns: [t.patientId, t.caseId],
+    foreignColumns: [patientCases.patientId, patientCases.id],
+  }),
+]);
+
+export const PATIENT_DEVICE_EPISODE_STATUSES = [
+  "awaiting_exam", "examined", "in_manufacturing", "delivered", "cancelled",
+] as const;
+export type PatientDeviceEpisodeStatus = (typeof PATIENT_DEVICE_EPISODE_STATUSES)[number];
 
 // ── سجل أحداث المريض (migration 044) ────────────────────────────────────────
 // سرد مشتقّ لما حدث للمريض عبر كل الأقسام — **وليس مصدر حقيقة لأي عملية
@@ -292,12 +370,35 @@ export const visits = pgTable("visits", {
   // Which case (physiotherapy / prosthetic / medical_support) this visit belongs
   // to. Nullable during the additive phase; backfilled best-effort.
   caseId: integer("case_id").references(() => patientCases.id),
+  /**
+   * حلقة الجهاز التي يخصّها هذا الصفّ (migration 049). فارغة لكل صفٍّ قائم،
+   * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
+   */
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
   // Soft delete. Reads always filter `deleted_at IS NULL` so the row
   // stays recoverable indefinitely. Hard deletes only happen during the
   // deletePatient cascade — the BEFORE DELETE trigger captures those
   // rows into `visits_forensic_log`.
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-});
+}, (t) => [
+  /**
+   * **لا صفَّ لمريضٍ على حلقة مريضٍ آخر** — سلامةٌ مرجعية مركّبة.
+   *
+   * المفتاح المفرد يحرس وجودَ الحلقة لا انتماءها: صفٌّ للمريض «أ» يشير إلى
+   * حلقة المريض «ب» يمرّ منه، فيذهب ماله وتاريخه إلى ملفٍّ ليس ملفَّه.
+   * والمركّب يطابق `(patient_id, id)` معاً فيُغلق الباب.
+   *
+   * و`MATCH SIMPLE` (السلوك الافتراضي) يجعله آمناً للصفوف القائمة: حين
+   * تكون الحلقة فارغة لا يُفحَص القيد إطلاقاً.
+   */
+  foreignKey({
+    name: "visits_patient_episode_fk",
+    columns: [t.patientId, t.deviceEpisodeId],
+    foreignColumns: [patientDeviceEpisodes.patientId, patientDeviceEpisodes.id],
+    // يتبع التابعُ حلقتَه حين تنتقل إلى ملفٍّ آخر في الدمج — ولولاه لسقط
+    // الدمج في منتصفه على زوجٍ لم يعد موجوداً. والحذف يبقى NO ACTION.
+  }).onUpdate("cascade"),
+]);
 
 // Captures every visit row that gets physically deleted, regardless of
 // source — app cascade, manual SQL from Neon Console, anything that
@@ -345,8 +446,31 @@ export const payments = pgTable("payments", {
   // payments, and an FK here would break that cascade order.
   visitId: integer("visit_id"),
   invoiceId: integer("invoice_id"),
+  /**
+   * حلقة الجهاز التي يخصّها هذا الصفّ (migration 049). فارغة لكل صفٍّ قائم،
+   * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
+   */
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
   date: timestamp("date").defaultNow(),
-});
+}, (t) => [
+  /**
+   * **لا صفَّ لمريضٍ على حلقة مريضٍ آخر** — سلامةٌ مرجعية مركّبة.
+   *
+   * المفتاح المفرد يحرس وجودَ الحلقة لا انتماءها: صفٌّ للمريض «أ» يشير إلى
+   * حلقة المريض «ب» يمرّ منه، فيذهب ماله وتاريخه إلى ملفٍّ ليس ملفَّه.
+   * والمركّب يطابق `(patient_id, id)` معاً فيُغلق الباب.
+   *
+   * و`MATCH SIMPLE` (السلوك الافتراضي) يجعله آمناً للصفوف القائمة: حين
+   * تكون الحلقة فارغة لا يُفحَص القيد إطلاقاً.
+   */
+  foreignKey({
+    name: "payments_patient_episode_fk",
+    columns: [t.patientId, t.deviceEpisodeId],
+    foreignColumns: [patientDeviceEpisodes.patientId, patientDeviceEpisodes.id],
+    // يتبع التابعُ حلقتَه حين تنتقل إلى ملفٍّ آخر في الدمج — ولولاه لسقط
+    // الدمج في منتصفه على زوجٍ لم يعد موجوداً. والحذف يبقى NO ACTION.
+  }).onUpdate("cascade"),
+]);
 
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
@@ -374,8 +498,31 @@ export const costEntries = pgTable("cost_entries", {
   // 'visit' | 'case_retired' | 'manual_edit'
   source: text("source").notNull(),
   notes: text("notes"),
+  /**
+   * حلقة الجهاز التي يخصّها هذا الصفّ (migration 049). فارغة لكل صفٍّ قائم،
+   * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
+   */
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => [
+  /**
+   * **لا صفَّ لمريضٍ على حلقة مريضٍ آخر** — سلامةٌ مرجعية مركّبة.
+   *
+   * المفتاح المفرد يحرس وجودَ الحلقة لا انتماءها: صفٌّ للمريض «أ» يشير إلى
+   * حلقة المريض «ب» يمرّ منه، فيذهب ماله وتاريخه إلى ملفٍّ ليس ملفَّه.
+   * والمركّب يطابق `(patient_id, id)` معاً فيُغلق الباب.
+   *
+   * و`MATCH SIMPLE` (السلوك الافتراضي) يجعله آمناً للصفوف القائمة: حين
+   * تكون الحلقة فارغة لا يُفحَص القيد إطلاقاً.
+   */
+  foreignKey({
+    name: "cost_entries_patient_episode_fk",
+    columns: [t.patientId, t.deviceEpisodeId],
+    foreignColumns: [patientDeviceEpisodes.patientId, patientDeviceEpisodes.id],
+    // يتبع التابعُ حلقتَه حين تنتقل إلى ملفٍّ آخر في الدمج — ولولاه لسقط
+    // الدمج في منتصفه على زوجٍ لم يعد موجوداً. والحذف يبقى NO ACTION.
+  }).onUpdate("cascade"),
+]);
 
 // Expenses table for accounting system
 export const expenses = pgTable("expenses", {
@@ -582,9 +729,32 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   finalResult: text("final_result"), // fabrication & fit outcome code (on delivery)
   finalNotes: text("final_notes"),
   assignedBy: integer("assigned_by").references(() => systemUsers.id),
+  /**
+   * حلقة الجهاز التي يخصّها هذا الصفّ (migration 049). فارغة لكل صفٍّ قائم،
+   * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
+   */
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  /**
+   * **لا صفَّ لمريضٍ على حلقة مريضٍ آخر** — سلامةٌ مرجعية مركّبة.
+   *
+   * المفتاح المفرد يحرس وجودَ الحلقة لا انتماءها: صفٌّ للمريض «أ» يشير إلى
+   * حلقة المريض «ب» يمرّ منه، فيذهب ماله وتاريخه إلى ملفٍّ ليس ملفَّه.
+   * والمركّب يطابق `(patient_id, id)` معاً فيُغلق الباب.
+   *
+   * و`MATCH SIMPLE` (السلوك الافتراضي) يجعله آمناً للصفوف القائمة: حين
+   * تكون الحلقة فارغة لا يُفحَص القيد إطلاقاً.
+   */
+  foreignKey({
+    name: "prosthetic_work_orders_patient_episode_fk",
+    columns: [t.patientId, t.deviceEpisodeId],
+    foreignColumns: [patientDeviceEpisodes.patientId, patientDeviceEpisodes.id],
+    // يتبع التابعُ حلقتَه حين تنتقل إلى ملفٍّ آخر في الدمج — ولولاه لسقط
+    // الدمج في منتصفه على زوجٍ لم يعد موجوداً. والحذف يبقى NO ACTION.
+  }).onUpdate("cascade"),
+]);
 
 export const prostheticWorkHistory = pgTable("prosthetic_work_history", {
   id: serial("id").primaryKey(),
@@ -965,6 +1135,14 @@ export const medicalExams = pgTable("medical_exams", {
   // A SNAPSHOT of the id, with no foreign key (migration 035 explains why:
   // an ON DELETE action is an UPDATE, and the seal-trigger refuses those).
   proposedExpertUserId: integer("proposed_expert_user_id"),
+  /**
+   * حلقة الجهاز التي تخصّها هذه المعاينة (migration 049).
+   *
+   * **بلا مفتاح أجنبي عمداً** — الجدول مختوم بترِكر `BEFORE UPDATE` يرفض أي
+   * تعديل لم يفتح الباب المراقَب، و`ON DELETE SET NULL` تعديلٌ فكان المفتاح
+   * سيجعل حذف حلقةٍ يفشل. نفس درس `proposedExpertUserId` حرفياً.
+   */
+  deviceEpisodeId: integer("device_episode_id"),
   // Version stamp. The live row is always the current version; every superseded
   // version is kept in `medicalExamRevisions`.
   version: integer("version").notNull().default(1),
