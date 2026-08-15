@@ -11,13 +11,23 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Stethoscope } from "lucide-react";
 import { invalidatePatientData } from "@/lib/queryClient";
+import { resolveDialogService } from "@/pages/patient_registry_assignment";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
 // patient agreed to buy, so reception records the specs + the agreed price and
 // assigns the expert — all in ONE step. No delivery date here (the expert
 // commits to it at the mold stage); the assignment date is automatic.
 interface Expert { id: number; displayName: string }
-type PatientLite = { id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null };
+type PatientLite = {
+  id: number; branchId: number; name: string;
+  isAmputee?: boolean | null; isMedicalSupport?: boolean | null;
+  /**
+   * الخدمات التي **ما زالت** قابلة للتخصيص — يحسبها السجلّ بطرح ما له
+   * أمرُ بناءٍ فعّال. فلا تُعرَض خدمةٌ أُسنِدت فعلاً، ولا يُطلَب اختيارٌ
+   * حين لا يبقى إلا واحدة. والخادم يبقى صاحب القرار على أي حال.
+   */
+  assignableServices?: ("prosthetic" | "medical_support")[];
+};
 
 
 export function AssignExpertDialog({ patient, open, onOpenChange }: {
@@ -42,12 +52,16 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   const [cost, setCost] = useState<number>(0);
   const [specs, setSpecs] = useState<Record<string, string>>({});
   // A patient can carry BOTH flags (طرف + مسند): the user must pick which
-  // service this تخصيص is for; single-flag patients skip the choice.
-  const dualFlag = !!patient?.isAmputee && !!patient?.isMedicalSupport;
+  // service this تخصيص is for; one remaining service skips the choice.
+  //  ما يقوله السجلّ يسود على الأعلام: مريضٌ يحمل الاثنين لكن أحدهما
+  //  مُسنَد فعلاً ليس صاحب اختيار — خدمةٌ واحدة بقيت له.
   const [serviceChoice, setServiceChoice] = useState<"prosthetic" | "medical_support" | null>(null);
-  const serviceType: "prosthetic" | "medical_support" = dualFlag
-    ? (serviceChoice ?? "prosthetic")
-    : (patient?.isMedicalSupport && !patient?.isAmputee ? "medical_support" : "prosthetic");
+  const { needsChoice: dualFlag, serviceType } = resolveDialogService({
+    offered: patient?.assignableServices,
+    isAmputee: patient?.isAmputee,
+    isMedicalSupport: patient?.isMedicalSupport,
+    choice: serviceChoice,
+  });
   const isSupport = serviceType === "medical_support";
   const specFields = isSupport ? SUPPORT_SPECS : PROSTHETIC_SPECS;
 

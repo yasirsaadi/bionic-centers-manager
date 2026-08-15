@@ -12,6 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download, UserCog } from "lucide-react";
 import { AssignExpertDialog } from "@/components/manufacturing/AssignExpertDialog";
+import {
+  assignableServices, assignmentBadgeLabel, visibleDecided,
+  type ActiveAssignment, type DeviceService,
+} from "./patient_registry_assignment";
 import { PhysioPricingDialog } from "@/components/PhysioPricingDialog";
 import { Activity } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -48,23 +52,35 @@ function getTodayDateString(): string {
 // full picture is visible straight from the search results.
 // `pending` lists the specialties whose case is active but has no signed exam
 // yet, so the doctor can spot who is waiting on THEM without opening a file.
-function CaseTypeBadges({ patient, labels, pending = [], decided = [] }: {
+function CaseTypeBadges({ patient, labels, pending = [], decided = [], assignments = [] }: {
   patient: { isAmputee: boolean | null; isPhysiotherapy: boolean | null; isMedicalSupport: boolean | null };
   labels: { amputee: string; physiotherapy: string; medicalSupport: string };
   pending?: string[];
   decided?: string[];
+  assignments?: ActiveAssignment[];
 }) {
   const types: { label: string; variant: "default" | "secondary" | "outline" }[] = [];
   if (patient.isAmputee) types.push({ label: labels.amputee, variant: "default" });
   if (patient.isPhysiotherapy) types.push({ label: labels.physiotherapy, variant: "secondary" });
   if (patient.isMedicalSupport) types.push({ label: labels.medicalSupport, variant: "outline" });
-  if (types.length === 0 && pending.length === 0 && decided.length === 0) {
+  if (types.length === 0 && pending.length === 0 && decided.length === 0 && assignments.length === 0) {
     return <span className="text-slate-400">-</span>;
   }
   return (
     <div className="flex flex-wrap gap-1 justify-end">
       {types.map((tp) => (
         <Badge key={tp.label} variant={tp.variant} className="font-normal text-xs shrink-0">{tp.label}</Badge>
+      ))}
+      {assignments.map((a) => (
+        <Badge
+          key={`assigned-${a.serviceType}`}
+          variant="outline"
+          className="font-normal text-xs shrink-0 bg-indigo-100 text-indigo-800 border-indigo-200"
+          title="أُسنِد الجهاز إلى خبير وبدأ التصنيع"
+          data-testid={`badge-assigned-${a.serviceType}`}
+        >
+          {assignmentBadgeLabel(a)}
+        </Badge>
       ))}
       {decided.map((c) => (
         <Badge
@@ -110,7 +126,7 @@ export default function PatientsList() {
   // needs canAddPatients — view-only users don't get the button.
   const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
     || !!permissions.canAddPatients);
-  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null } | null>(null);
+  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null; assignableServices?: DeviceService[] } | null>(null);
   // «الكلفة والجلسات» — post-exam physiotherapy pricing (same gate: it writes).
   const [physioPricingPatient, setPhysioPricingPatient] = useState<{ id: number; name: string } | null>(null);
   // «كتابة معاينة» straight from the registry row. The doctor searching a name
@@ -216,6 +232,8 @@ export default function PatientsList() {
     isMedicalSupport: boolean | null; amputationSite: string | null; supportType: string | null;
     diseaseType: string | null; patientClassification: string | null; totalCost: number | null;
     createdAt: string | null; totalPaid: number;
+    /** أوامر البناء الأولي الفعّالة — واحدٌ لكل خدمة على الأكثر. */
+    activeDeviceAssignments?: ActiveAssignment[];
   }
   interface RegistryResponse {
     total: number; page: number; pageSize: number;
@@ -272,10 +290,17 @@ export default function PatientsList() {
     [...(pendingByPatient[patientId] ?? []), ...(optionalByPatient[patientId] ?? [])]
       .find((c) => mySpecialties.includes(c as any)) ?? null;
 
-  // تخصيص requires a SIGNED device exam — the workflow gate the server also
-  // enforces. `decided` already carries exactly that signal.
-  const hasDeviceExam = (patientId: number) =>
-    (decidedByPatient[patientId] ?? []).some((t) => t === "prosthetic" || t === "medical_support");
+  // الخدمات القابلة للتخصيص لهذا المريض الآن — **لكل خدمة على حدة**، فمريضٌ
+  // أُسنِد طرفُه وبقي مسندُه ينتظر يبقى زرُّه ظاهراً لمسنده وحده.
+  //
+  // شرطان: معاينةٌ موقّعة لتلك الخدمة (`decided` — وهو نفس ما يفرضه الخادم)
+  // أو إعفاءٌ تاريخي، **وألّا يكون لها أمر بناءٍ فعّال أصلاً**.
+  const assignableFor = (patient: RegistryRow): DeviceService[] =>
+    assignableServices({
+      patient,
+      decided: decidedByPatient[patient.id] ?? [],
+      legacyExempt: isLegacyPatientRow(patient),
+    });
 
   const openExamFor = (patient: { id: number; name: string }) => {
     const specialty = examableSpecialty(patient.id);
@@ -582,7 +607,7 @@ export default function PatientsList() {
                           </span>
                           <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
                         </div>
-                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={decidedByPatient[patient.id] ?? []} />
+                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-1 mb-2">
                         {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
@@ -592,8 +617,8 @@ export default function PatientsList() {
                           {formatDateTimeIraq(patient.createdAt)}
                         </span>
                         <div className="flex items-center gap-1">
-                          {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (hasDeviceExam(patient.id) || isLegacyPatientRow(patient)) && (
-                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
+                          {canAssignExpert && assignableFor(patient).length > 0 && (
+                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport, assignableServices: assignableFor(patient) })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
                               <UserCog className="w-3.5 h-3.5" />
                               تخصيص
                             </Button>
@@ -664,7 +689,7 @@ export default function PatientsList() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={decidedByPatient[patient.id] ?? []} />
+                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
                         </TableCell>
                         <TableCell className="text-slate-600">
                           {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
@@ -684,8 +709,8 @@ export default function PatientsList() {
                                 كتابة معاينة
                               </Button>
                             )}
-                            {canAssignExpert && (patient.isAmputee || patient.isMedicalSupport) && (hasDeviceExam(patient.id) || isLegacyPatientRow(patient)) && (
-                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
+                            {canAssignExpert && assignableFor(patient).length > 0 && (
+                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport, assignableServices: assignableFor(patient) })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
                                 <UserCog className="w-4 h-4" />
                                 تخصيص وإسناد خبير
                               </Button>
