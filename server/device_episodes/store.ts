@@ -226,21 +226,34 @@ export async function resolveDeviceTargetTx(
 
   if (params.explicitLegacy) return null;
 
-  //  لا اختيار: يُسأل الموظّف متى وُجد ما يُختار منه، ويمضي المسار القديم
-  //  متى لم يوجد.
-  const eligible = await tx.execute(sql`
-    SELECT e.id
+  // ══ لا اختيار: تُقفَل **كل** حلقات الخيط قبل الحكم ═══════════════════
+  // قفلُ الخيط وحده لا يكفي هنا: انتقالُ الحلقة إلى «مُسلَّمة» يجري بتحديثٍ
+  // على صفّ الحلقة نفسه ولا يمرّ بالخيط. فقارئٌ يرى «قيد التصنيع» ويقرّر
+  // «لا مرشّح ⟶ بلا هوية»، بينما تسليمٌ متزامن يُثبِّت «مُسلَّمة» قبله،
+  // يكتب صيانةً بلا هوية لجهازٍ صار مسجَّلاً وقت الكتابة.
+  //
+  // ولذلك تُقفَل الصفوف نفسها — **كلّها لا المؤهَّلة منها فقط**: الصفّ
+  // الذي لا يؤهّل الآن هو بعينه الذي قد يؤهّل بعد لحظة، وقفلُ المؤهَّل
+  // وحده يترك المتحوِّل بلا حراسة.
+  //
+  // فيصير الترتيب حتمياً لا توقيتياً:
+  //   • التسليم أوّلاً ⟶ نقرأ «مُسلَّمة» فنطلب اختيار الجهاز.
+  //   • نحن أوّلاً ⟶ نمسك القفل، فينتظر التسليم إلى ما بعد كتابتنا.
+  // ولا يمكن أن يُثبَّت تسليمٌ ثم تُكتب بعده صيانةٌ بلا هوية.
+  const locked = await tx.execute(sql`
+    SELECT e.id, e.status
       FROM patient_device_episodes e
       JOIN patient_cases pc
         ON pc.id = e.case_id AND pc.patient_id = e.patient_id
        AND pc.case_type = ${params.serviceType}
      WHERE e.patient_id = ${params.patientId}
-       AND e.status IN (${sql.join(params.eligibleStatuses.map((s) => sql`${s}`), sql`, `)})
-     LIMIT 1
+     FOR UPDATE OF e
   `);
-  if ((eligible.rows ?? []).length > 0) {
-    throw new DeviceEpisodeError(params.chooseMessage, 400);
-  }
+  const eligible = (locked.rows ?? []).some(
+    (r: any) => params.eligibleStatuses.includes(String(r.status)),
+  );
+  if (eligible) throw new DeviceEpisodeError(params.chooseMessage, 400);
+  //  ولا حلقة أصلاً ⟶ قفل الخيط كافٍ: مَن يفتح حلقةً جديدة يمرّ به.
   return null;
 }
 

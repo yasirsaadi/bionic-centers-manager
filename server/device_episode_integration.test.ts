@@ -19,10 +19,11 @@
 
 import express from "express";
 import { createServer } from "http";
-import { pool } from "./db";
+import { pool, db } from "./db";
 import { registerRoutes } from "./routes";
 import * as episodes from "./device_episodes/store";
 import * as mfg from "./manufacturing/store";
+import { resolveDeviceTargetTx } from "./device_episodes/store";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -468,6 +469,68 @@ async function main() {
     same("   وبعده: صار جهازٌ مسلَّم ⟶ صيانةٌ بلا هدف تُردّ", maintAfterDeliver.status, 400);
     same("   ولا أمر صيانةٍ ثانٍ",
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pRaceM]))[0].n, 1);
+
+    // ══════════ سباقٌ حقيقي: التسليم مقابل صيانةٍ بلا هدف ═════════════
+    // ليس «قبل ثم بعد» — بل معاملتان مفتوحتان معاً وحاجزٌ صريح بينهما.
+    // المطلوب إثباتُ استحالةِ: تسليمٌ يُثبَّت، ثم تُكتب بعده صيانةٌ بلا
+    // هوية لأن قارئها رأى لقطةً أقدم.
+    console.log("\n── سباق حقيقي: التسليم مقابل الصيانة ──");
+    const pTrue = await mkPatient("سباق حقيقي", 0);
+    const cTrue = await mkCase(pTrue, 0);
+    const eTrue = await mkEpisode(pTrue, cTrue, 1, "in_manufacturing", 0);
+    const oTrue = await q<{ id: number }>(
+      `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+         purpose, status, current_stage, device_episode_id)
+       VALUES ($1,1,$2,'prosthetic','initial_build','active','ready_for_fitting',$3) RETURNING id`,
+      [pTrue, EXPERT, eTrue]);
+
+    let decided!: () => void, allowCommit!: () => void;
+    const reachedDecision = new Promise<void>((r) => { decided = r; });
+    const mayCommit = new Promise<void>((r) => { allowCommit = r; });
+    let deliveryFinished = false;
+
+    //  (أ) القارئ: يحسم بلا هدف ثم **يبقي معاملته مفتوحة** ممسكاً بالقفل.
+    const resolverTx = db.transaction(async (tx) => {
+      const target = await resolveDeviceTargetTx(tx as any, {
+        patientId: pTrue, serviceType: "prosthetic",
+        requestedEpisodeId: null, explicitLegacy: false,
+        eligibleStatuses: ["delivered"],
+        chooseMessage: "choose",
+      });
+      decided();
+      await mayCommit;
+      return target;
+    });
+    await reachedDecision;
+
+    //  (ب) التسليم الحقيقي — كاتب الإنتاج نفسه — يبدأ الآن.
+    const deliveryTx = (async () => {
+      await mfg.updateStage({
+        order: (await mfg.getRawOrder(Number(oTrue[0].id))) as any,
+        toStage: "delivered", finalResult: "success", performedBy: MANAGER,
+      });
+      deliveryFinished = true;
+    })();
+
+    //  مهلةٌ كافية ليكمل التسليم لو لم يكن محجوزاً بقفلٍ حقيقي.
+    await new Promise((r) => setTimeout(r, 400));
+    check(!deliveryFinished,
+      "٧. التسليم محجوزٌ بقفل الحلقة الذي يمسكه القارئ", `finished=${deliveryFinished}`);
+    same("   والحلقة ما زالت «قيد التصنيع» قبل إفراج القارئ",
+      (await epRow(eTrue))?.status, "in_manufacturing");
+
+    allowCommit();
+    const resolvedTarget = await resolverTx;
+    same("   وقرارُ القارئ «بلا هوية» — وكان صادقاً وقت اتّخاذه", resolvedTarget, null);
+    await deliveryTx;
+    same("   ثم أُثبِت التسليم بعده", (await epRow(eTrue))?.status, "delivered");
+
+    //  والاتجاه المعاكس: بعد أن استقرّ التسليم، صيانةٌ بلا هدف تُردّ.
+    const afterTrue = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
+      cost: 0, notes: "بعد التسليم",
+    });
+    same("   وبعد استقراره: صيانةٌ بلا هدف تُردّ ٤٠٠", afterTrue.status, 400);
 
     // ══════════ التاريخ ══════════════════════════════════════════════
     console.log("\n── التاريخ ──");
