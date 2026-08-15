@@ -156,6 +156,95 @@ export async function listPayableEpisodes(
 }
 
 /**
+ * **حسمُ هوية الجهاز داخل المعاملة** — للدفعة وللصيانة معاً.
+ *
+ * ══ لماذا داخل المعاملة لا قبلها ════════════════════════════════════════
+ * قراءةٌ قبل المعاملة ترشيحٌ لا قرار: بينها وبين الكتابة قد يُخصَّص جهازٌ
+ * فيصير مؤهَّلاً (`examined → in_manufacturing`)، أو يُسلَّم فيصير محلّاً
+ * للصيانة، أو يُلغى فيخرج. فقرارُ «لا مرشّح ⟶ اكتب بلا هوية» المبنيّ على
+ * لقطةٍ بائتة يُنتج بالضبط الصفَّ الملتبس الذي وُجد هذا كلّه لمنعه.
+ *
+ * والقفل على **صفّ الخيط** — نقطة القفل نفسها التي يستعملها بدءُ الحلقة
+ * والتخصيص — يجعل الترتيب صريحاً لا عشوائياً: مَن ظفر بالقفل أوّلاً رأى
+ * حالةً مستقرّة، والثاني يرى نتيجته لا لقطةً قبلها.
+ *
+ * ══ والمعرّف الصريح لا يُتجاهَل أبداً ═══════════════════════════════════
+ * لو أرسل الطلب جهازاً بعينه فهو **قرارُ موظّف**: يُتحقَّق منه دائماً
+ * ويُردّ إن لم يصلح — ولا يُبتلع بصمت لمجرّد أن قائمة المرشّحين فارغة.
+ * ابتلاعُه يحوّل خطأً ظاهراً إلى صفٍّ صامتٍ بلا هوية.
+ */
+export async function resolveDeviceTargetTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    /** ما وصل في الطلب — أيّ شيء، ويُتحقَّق هنا. */
+    requestedEpisodeId: unknown;
+    /** إقرارٌ صريح بأن الجهاز قديم/غير مخصَّص. */
+    explicitLegacy: boolean;
+    /** الحالات التي تصلح لهذا الغرض: البيع شيء والصيانة شيء. */
+    eligibleStatuses: readonly string[];
+    /** رسالة الطلب حين يتعدّد المرشّحون ولا اختيار. */
+    chooseMessage: string;
+  },
+): Promise<number | null> {
+  const hasExplicit = params.requestedEpisodeId != null && params.requestedEpisodeId !== "";
+  if (hasExplicit && params.explicitLegacy) {
+    throw new DeviceEpisodeError("طلبٌ متناقض: جهازٌ محدَّد و«جهاز قديم» معاً", 400);
+  }
+
+  //  القفل أوّلاً — قبل أي قراءة يُبنى عليها قرار.
+  await tx.execute(sql`
+    SELECT id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+
+  if (hasExplicit) {
+    const wantId = Number(params.requestedEpisodeId);
+    if (!Number.isInteger(wantId) || wantId <= 0) {
+      throw new DeviceEpisodeError("معرّف جهاز غير صالح", 400);
+    }
+    const r = await tx.execute(sql`
+      SELECT e.status
+        FROM patient_device_episodes e
+        JOIN patient_cases pc
+          ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+         AND pc.case_type = ${params.serviceType}
+       WHERE e.id = ${wantId} AND e.patient_id = ${params.patientId}
+       FOR UPDATE OF e
+    `);
+    const row = (r.rows ?? [])[0];
+    if (!row) {
+      throw new DeviceEpisodeError("الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة", 400);
+    }
+    if (!params.eligibleStatuses.includes(String(row.status))) {
+      throw new DeviceEpisodeError("الجهاز المحدَّد ليس في حالة تقبل هذا التسجيل", 400);
+    }
+    return wantId;
+  }
+
+  if (params.explicitLegacy) return null;
+
+  //  لا اختيار: يُسأل الموظّف متى وُجد ما يُختار منه، ويمضي المسار القديم
+  //  متى لم يوجد.
+  const eligible = await tx.execute(sql`
+    SELECT e.id
+      FROM patient_device_episodes e
+      JOIN patient_cases pc
+        ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+       AND pc.case_type = ${params.serviceType}
+     WHERE e.patient_id = ${params.patientId}
+       AND e.status IN (${sql.join(params.eligibleStatuses.map((s) => sql`${s}`), sql`, `)})
+     LIMIT 1
+  `);
+  if ((eligible.rows ?? []).length > 0) {
+    throw new DeviceEpisodeError(params.chooseMessage, 400);
+  }
+  return null;
+}
+
+/**
  * تحقّقٌ من انتماء جهازٍ لمريضٍ وخدمة — يُقرأ عبر الخيط فيُثبَت الزوج.
  * `allowedStatuses` تحدّد ما يصلح للغرض: البيع شيء والزيارة شيء.
  */

@@ -18,7 +18,7 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
-  isDeviceServiceType, DeviceEpisodeError,
+  isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
 
 // Thrown when a maintenance order can't be opened because the patient still has
@@ -352,33 +352,25 @@ export async function createMaintenanceOrderWithVisit(params: {
    * فحصته النقطة، فالمعرّف لا يُوثَق به قادماً من العميل.
    */
   deviceEpisodeId?: number | null;
+  /** إقرارٌ صريح بأن الجهاز المُصان قديمٌ غير مسجَّل. */
+  legacyUnrecordedDevice?: boolean;
 }): Promise<ProstheticWorkOrder> {
   return await db.transaction(async (tx) => {
-    // التحقّق من الجهاز المقصود قبل أي كتابة: أن يوجد، وأن يخصّ هذا
-    // المريض، وأن يكون خيطه من نوع الخدمة المطلوبة، وأن يكون **مسلَّماً**.
-    // فما لم يُسلَّم بعد ليس محلّاً للصيانة أصلاً.
-    let targetEpisodeId: number | null = null;
-    if (params.deviceEpisodeId != null) {
-      const ep = await tx.execute<{ id: number; status: string }>(sql`
-        SELECT e.id, e.status
-          FROM patient_device_episodes e
-          JOIN patient_cases pc
-            ON pc.id = e.case_id
-           AND pc.patient_id = e.patient_id
-           AND pc.case_type = ${params.serviceType}
-         WHERE e.id = ${params.deviceEpisodeId}
-           AND e.patient_id = ${params.patientId}
-         FOR UPDATE OF e
-      `);
-      const row = (ep.rows ?? [])[0];
-      if (!row) {
-        throw new DeviceEpisodeError("الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة", 400);
-      }
-      if (String(row.status) !== "delivered") {
-        throw new DeviceEpisodeError("الصيانة لجهازٍ مسلَّم فقط — هذا الجهاز لم يُسلَّم بعد", 400);
-      }
-      targetEpisodeId = Number(row.id);
-    }
+    // **الهوية تُحسم هنا، لا في النقطة.** ما تقرؤه النقطة للعرض قد يشيخ:
+    // جهازٌ يُسلَّم بين قراءتها وكتابتنا يصير محلّاً للصيانة، فقرارُ «لا
+    // أجهزة مسجَّلة ⟶ صيانةٌ بلا هوية» المبنيّ على لقطةٍ بائتة يُنتج
+    // الصفَّ الملتبس نفسه. والقفل على صفّ الخيط يجعل الترتيب صريحاً.
+    const targetEpisodeId = isDeviceServiceType(params.serviceType)
+      ? await resolveDeviceTargetTx(tx, {
+          patientId: params.patientId,
+          serviceType: params.serviceType,
+          requestedEpisodeId: params.deviceEpisodeId,
+          explicitLegacy: params.legacyUnrecordedDevice === true,
+          //  الصيانة لجهازٍ **مسلَّم** وحده: ما لم يُسلَّم بعد ليس جهازاً يُصان.
+          eligibleStatuses: ["delivered"],
+          chooseMessage: "حدّد الجهاز المراد صيانته — أو اختر «جهاز قديم غير مسجَّل»",
+        })
+      : null;
 
     // صيانةُ جهازٍ مسجَّل تُقاس على **ذلك الجهاز**، وغير المسجَّلة على
     // (المريض، الخدمة). وبناءُ جهازٍ جديد لا يمنع صيانة القديم إطلاقاً.

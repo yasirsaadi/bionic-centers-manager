@@ -96,6 +96,14 @@ async function mkEpisode(patientId: number, caseId: number, seq: number, status:
     [patientId, caseId, seq, status, agreedCost, MANAGER]);
   return r[0].id;
 }
+async function mkExam(patientId: number, caseId: number, deviceCost: number | null, episodeId: number | null) {
+  const r = await q<{ id: number }>(
+    `INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name,
+       diagnosis, prescription, device_cost, version, signed_at, device_episode_id)
+     VALUES ($1,$2,'prosthetic',1,$3,'د. فلان','تشخيص','{}'::jsonb,$4,1,NOW(),$5) RETURNING id`,
+    [patientId, caseId, DOCTOR, deviceCost, episodeId]);
+  return r[0].id;
+}
 async function epRow(id: number) {
   const [r] = await q(`SELECT id, status, agreed_cost, delivered_at FROM patient_device_episodes WHERE id=$1`, [id]);
   return r ?? null;
@@ -276,8 +284,8 @@ async function main() {
     const noTarget = await pay2({});
     same("أ. جهازان مؤهَّلان ودفعةٌ بلا اختيار ⟶ مرفوضة", noTarget.status, 400);
     check(/حدّد الجهاز/.test(noTarget.body?.message ?? ""), "   برسالة تدلّ على الاختيار", noTarget.body?.message);
-    check(Array.isArray(noTarget.body?.devices) && noTarget.body.devices.length === 2,
-      "   ومعها قائمة الأجهزة", JSON.stringify(noTarget.body?.devices?.length));
+    same("   ولا دفعةَ كُتبت",
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND amount=100000`, [P]))[0].n, 0);
 
     const okTarget = await pay2({ deviceEpisodeId: dev2 });
     same("ب. واختيارُ جهازٍ بعينه ⟶ مرتبطة به", [okTarget.status, okTarget.body?.deviceEpisodeId], [201, dev2]);
@@ -364,6 +372,102 @@ async function main() {
         patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
         notes: "صيانة ملغى", deviceEpisodeId: cancelledEp,
       })).status, 400);
+
+    // ══════════ المعرّف الصريح لا يُتجاهَل أبداً ═══════════════════════
+    // قائمةُ المرشّحين الفارغة ليست إذناً بابتلاع اختيارِ الموظّف: معرّفٌ
+    // أُرسل صراحةً يُتحقَّق منه دائماً، ويُردّ إن لم يصلح.
+    console.log("\n── المعرّف الصريح لا يُتجاهَل ──");
+    //  برصيدٍ حقيقي عمداً: بلا كلفةٍ يردّ الحارسُ القديم الدفعةَ لانعدام
+    //  المتبقّي، فيمرّ الاختبار لسببٍ غير الذي وُضع له.
+    const pOnlyCancelled = await mkPatient("ملغىً وحده", 500_000);
+    const cOC = await mkCase(pOnlyCancelled, 500_000);
+    const epOC = await mkEpisode(pOnlyCancelled, cOC, 1, "cancelled", 0);
+    const payBefore = (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pOnlyCancelled]))[0].n;
+    const explicitCancelled = await http("POST", `/api/payments`, S.reception, {
+      patientId: pOnlyCancelled, branchId: 1, amount: 100_000,
+      paymentTreatmentType: "أطراف صناعية", deviceEpisodeId: epOC,
+    });
+    same("١. جهازٌ ملغى وهو الوحيد ⟶ الدفعة تُردّ ٤٠٠", explicitCancelled.status, 400);
+    same("   ولا دفعةَ كُتبت",
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pOnlyCancelled]))[0].n, payBefore);
+
+    const pOnlyMfg = await mkPatient("قيد التصنيع وحده");
+    const cOM = await mkCase(pOnlyMfg, 0);
+    const epOM = await mkEpisode(pOnlyMfg, cOM, 1, "in_manufacturing", 0);
+    const beforeM = await q(`SELECT
+        (SELECT count(*)::int FROM prosthetic_work_orders WHERE patient_id=$1) AS wo,
+        (SELECT count(*)::int FROM visits WHERE patient_id=$1) AS vis,
+        (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ce,
+        (SELECT COALESCE(total_cost,0) FROM patients WHERE id=$1) AS total`, [pOnlyMfg]);
+    const explicitMfg = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic",
+      cost: 50_000, notes: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
+    });
+    same("٢. وجهازٌ قيد التصنيع كهدف صيانة ⟶ يُردّ ٤٠٠", explicitMfg.status, 400);
+    const afterM = await q(`SELECT
+        (SELECT count(*)::int FROM prosthetic_work_orders WHERE patient_id=$1) AS wo,
+        (SELECT count(*)::int FROM visits WHERE patient_id=$1) AS vis,
+        (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ce,
+        (SELECT COALESCE(total_cost,0) FROM patients WHERE id=$1) AS total`, [pOnlyMfg]);
+    same("   ولا أمر ولا زيارة ولا قيد ولا حركة مالية", afterM, beforeM);
+
+    same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
+      (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
+        notes: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
+      })).status, 400);
+
+    // ══════════ الصيانة لها بابٌ واحد ═════════════════════════════════
+    console.log("\n── باب الصيانة الوحيد ──");
+    const pGen = await mkPatient("باب الصيانة");
+    await mkCase(pGen, 0);
+    const genericMaint = await http("POST", `/api/manufacturing/orders`, S.manager, {
+      patientId: pGen, serviceType: "prosthetic", expertUserId: EXPERT, purpose: "maintenance",
+    });
+    check(genericMaint.status === 400 || genericMaint.status === 409,
+      "٤. النقطة العامّة لم تعد تنشئ صيانة", String(genericMaint.status));
+    check(/صيانة طرف\/مسند/.test(genericMaint.body?.error ?? ""),
+      "   وتدلّ على المسار الوحيد", genericMaint.body?.error);
+    same("   ولا أمر أُنشئ", (await ordersOf(pGen)).length, 0);
+
+    // ══════════ السباق: القرار داخل المعاملة ══════════════════════════
+    console.log("\n── السباق ──");
+    // الدفعة: التخصيص يسبق فيجعل الحلقة مؤهَّلة، فدفعةٌ بلا هدف تُردّ —
+    // ولا تمرّ بلا هوية اعتماداً على قراءةٍ سابقة للتخصيص.
+    const pRace = await mkPatient("سباق الدفعة", 1_000_000);
+    const cRace = await mkCase(pRace, 1_000_000);
+    const eRace = await mkEpisode(pRace, cRace, 1, "examined", 0);
+    await mkExam(pRace, cRace, 800_000, eRace);
+    same("٥. قبل التخصيص: لا مرشّح ⟶ دفعةٌ بلا هوية مسموحة (المسار القديم)",
+      (await http("POST", `/api/payments`, S.reception, {
+        patientId: pRace, branchId: 1, amount: 10_000, paymentTreatmentType: "أطراف صناعية",
+      })).body?.deviceEpisodeId, null);
+    await http("POST", `/api/patients/${pRace}/assign-manufacturing`, S.reception,
+      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 });
+    const afterAssign = await http("POST", `/api/payments`, S.reception, {
+      patientId: pRace, branchId: 1, amount: 10_000, paymentTreatmentType: "أطراف صناعية",
+    });
+    same("   وبعده: صار مرشّحاً ⟶ الدفعة بلا هدف تُردّ", afterAssign.status, 400);
+    same("   ولا دفعةَ بلا هوية بعد التخصيص",
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND device_episode_id IS NULL`, [pRace]))[0].n, 1);
+
+    // الصيانة: التسليم يسبق فتصير أجهزةٌ مسلَّمة موجودة، فصيانةٌ بلا هدف تُردّ.
+    const pRaceM = await mkPatient("سباق الصيانة");
+    const cRaceM = await mkCase(pRaceM, 0);
+    same("٦. قبل التسليم: لا جهاز مسجَّل ⟶ صيانةٌ بلا هدف مسموحة",
+      (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+        patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
+        cost: 0, notes: "صيانة إرث",
+      })).status, 201);
+    await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
+    await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
+    const maintAfterDeliver = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
+      cost: 0, notes: "صيانة بعد التسليم",
+    });
+    same("   وبعده: صار جهازٌ مسلَّم ⟶ صيانةٌ بلا هدف تُردّ", maintAfterDeliver.status, 400);
+    same("   ولا أمر صيانةٍ ثانٍ",
+      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pRaceM]))[0].n, 1);
 
     // ══════════ التاريخ ══════════════════════════════════════════════
     console.log("\n── التاريخ ──");

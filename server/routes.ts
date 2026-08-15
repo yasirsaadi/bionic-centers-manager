@@ -25,6 +25,7 @@ import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
 } from "./device_episodes/store";
 import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
+import { DeviceEpisodeError } from "./device_episodes/store";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import * as manufacturingStore from "./manufacturing/store";
@@ -2820,36 +2821,27 @@ export async function registerRoutes(
       });
     }
 
-    let resolvedEpisodeId: number | null = null;
-    if (deviceService) {
-      const payable = await listPayableEpisodes(input.patientId, deviceService);
-      if (payable.length > 0) {
-        const wantId = Number(requestedEpisodeId);
-        if (Number.isFinite(wantId) && wantId > 0) {
-          const check = await verifyEpisodeBelongs(
-            input.patientId, wantId, deviceService, ["in_manufacturing", "delivered"],
-          );
-          if (!check.ok) return res.status(400).json({ message: check.reason });
-          resolvedEpisodeId = wantId;
-        } else if (unallocatedDeviceBalance !== true) {
-          return res.status(400).json({
-            message: "حدّد الجهاز الذي تخصّه الدفعة — أو اختر «رصيد جهاز قديم/غير مخصَّص»",
-            devices: payable,
-          });
+    // القرار والكتابة معاً داخل معاملة واحدة (انظر `createPaymentAttributed`).
+    // فما يُقرَّر هنا لا يُبنى على لقطةٍ قد تشيخ قبل الإدراج.
+    const attribution = deviceService
+      ? {
+          serviceType: deviceService,
+          requestedEpisodeId: requestedEpisodeId,
+          explicitLegacy: unallocatedDeviceBalance === true,
         }
-        // unallocatedDeviceBalance ⟶ يبقى NULL بقرارٍ صريح.
-      }
-      // لا أجهزة مسجَّلة تقبل المال ⟶ السلوك القديم كما هو، بلا سؤال.
-    }
-    const deviceLink = resolvedEpisodeId === null ? {} : { deviceEpisodeId: resolvedEpisodeId };
+      : null;
+    const writePayment = (values: any) => attribution
+      ? storage.createPaymentAttributed(values, attribution)
+      : storage.createPayment(values);
+
+    try {
 
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
       const results = [];
       for (const entry of treatmentEntries) {
         if (entry.cost > 0 || isFreeSessions) {
-          const payment = await storage.createPayment({
+          const payment = await writePayment({
             ...input,
-            ...deviceLink,
             amount: isFreeSessions ? 0 : entry.cost,
             notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
             paymentTreatmentType: entry.treatmentType,
@@ -2877,7 +2869,7 @@ export async function registerRoutes(
       // ينشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
       // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
       if (results.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
-        const payment = await storage.createPayment({ ...input, ...deviceLink });
+        const payment = await writePayment({ ...input });
         results.push(payment);
         if (payment.amount > 0) await createJournalForPayment(payment, userId);
         await logAudit({
@@ -2888,7 +2880,7 @@ export async function registerRoutes(
       }
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
-      const payment = await storage.createPayment({ ...input, ...deviceLink });
+      const payment = await writePayment({ ...input });
       if (!isFreeSessions && payment.amount > 0) {
         await createJournalForPayment(payment, userId);
       }
@@ -2903,6 +2895,13 @@ export async function registerRoutes(
         userAgent: req.get("user-agent") ?? null,
       });
       res.status(201).json(payment);
+    }
+    } catch (err: any) {
+      // هوية جهازٍ غير صالحة — جوابُ عملٍ من داخل المعاملة، لا 500.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ message: err.message });
+      }
+      throw err;
     }
   });
 
