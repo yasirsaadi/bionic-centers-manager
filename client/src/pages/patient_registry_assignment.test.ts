@@ -1,0 +1,146 @@
+// حالةُ إسناد الخبير في سجلّ المرضى — منطقٌ خالص، بلا قاعدة بيانات.
+// `npm run test:registry-assignment`.
+//
+// ══ ما يحرسه ═══════════════════════════════════════════════════════════
+// (١) **الحالة لكل خدمة على حدة، لا عَلَمٌ واحد للمريض**: مريضٌ أُسنِد
+//     طرفُه وبقي مسندُه ينتظر يبقى زرُّه ظاهراً لمسنده وحده. هذا هو
+//     الخطأ الوحيد الذي لا يُغتفَر هنا.
+// (٢) **الصيانة ليست إسناداً**: خبيرُ الصيانة يعمل على جهازٍ قائم، فلا
+//     يخفي زرَّ تخصيص جهازٍ يُبنى ولا يقول «تم إسناد الطرف».
+// (٣) **المنتهي لا يُحتسب**: أمرٌ سُلّم أو أُلغي ليس إسناداً قائماً.
+// (٤) **الإعفاء التاريخي يرفع شرط المعاينة لا شرط الأمر**.
+// (٥) **«تم تحديد» لا يبقى بعد التخصيص**: الحالة الأحدث تسود.
+//
+// ملاحظة صريحة: احتساب الصيانة والمنتهي يُصفَّى في **الخادم** (استعلام
+// السجلّ يشترط `initial_build` وغير المنتهي)، فما يصل هنا مصفّىً أصلاً.
+// والحالتان مُختبَرتان في الخادم أيضاً — انظر `test:registry-assignment-api`.
+
+import {
+  assignableServices, assignedServices, assignmentBadgeLabel, assignmentFor,
+  ownedDeviceServices, resolveDialogService, visibleDecided, type ActiveAssignment,
+} from "./patient_registry_assignment";
+
+let failures = 0;
+function check(cond: boolean, msg: string, detail = "") {
+  if (!cond) failures++;
+  console.log(`${cond ? "✅" : "❌ FAIL"}  ${msg}${cond ? "" : `\n      ${detail}`}`);
+}
+function same(msg: string, got: unknown, expected: unknown) {
+  check(JSON.stringify(got) === JSON.stringify(expected), msg,
+    `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
+}
+
+const assign = (serviceType: string, expertName: string | null = "أحمد"): ActiveAssignment => ({
+  serviceType, workOrderId: 1, deviceEpisodeId: 7, expertUserId: 5,
+  expertName, status: "active", currentStage: "order_received",
+});
+
+// ══ أ. مريضٌ عادي: معاينة موقّعة بلا أمر ══════════════════════════════
+console.log("\n── قابلية التخصيص ──");
+const plainProsthetic = { id: 1, isAmputee: true, activeDeviceAssignments: [] };
+same("أ. طرفٌ قرّره الطبيب ولا أمر له ⟶ قابل للتخصيص",
+  assignableServices({ patient: plainProsthetic, decided: ["prosthetic"], legacyExempt: false }),
+  ["prosthetic"]);
+same("   وبلا قرار الطبيب ⟶ غير قابل",
+  assignableServices({ patient: plainProsthetic, decided: [], legacyExempt: false }), []);
+
+// ══ ب. بعد التخصيص ═══════════════════════════════════════════════════
+const assignedProsthetic = {
+  id: 2, isAmputee: true, activeDeviceAssignments: [assign("prosthetic")],
+};
+same("ب. وبعد إنشاء أمر البناء ⟶ لم يعد قابلاً",
+  assignableServices({ patient: assignedProsthetic, decided: ["prosthetic"], legacyExempt: false }), []);
+same("   والشارة تحمل اسم الخبير",
+  assignmentBadgeLabel(assign("prosthetic")), "تم إسناد الطرف — أحمد");
+same("   وبلا اسمٍ تبقى مفهومة",
+  assignmentBadgeLabel(assign("prosthetic", null)), "تم إسناد الطرف");
+same("   والمسند بصيغته",
+  assignmentBadgeLabel(assign("medical_support")), "تم إسناد المسند — أحمد");
+same("   ونوعٌ غير معروف يقع على النصّ العام",
+  assignmentBadgeLabel(assign("physiotherapy", null)), "تم إسناد الخبير");
+
+// ══ ج. الإعفاء التاريخي ══════════════════════════════════════════════
+console.log("\n── الإعفاء التاريخي ──");
+const legacyPlain = { id: 3, isAmputee: true, activeDeviceAssignments: [] };
+same("ج. القديم بلا معاينة ⟶ قابل للتخصيص كما كان",
+  assignableServices({ patient: legacyPlain, decided: [], legacyExempt: true }), ["prosthetic"]);
+const legacyAssigned = {
+  id: 4, isAmputee: true, activeDeviceAssignments: [assign("prosthetic")],
+};
+same("   **لكن أمراً فعّالاً يمنعه — الإعفاء يرفع شرط المعاينة لا شرط الأمر**",
+  assignableServices({ patient: legacyAssigned, decided: [], legacyExempt: true }), []);
+
+// ══ د. المريض ذو الخدمتين — الحالة الحرجة ════════════════════════════
+console.log("\n── الخدمتان معاً ──");
+const dual = {
+  id: 5, isAmputee: true, isMedicalSupport: true,
+  activeDeviceAssignments: [assign("prosthetic")],
+};
+same("د. الطرف مُسنَد والمسند قرّره الطبيب ⟶ **المسند وحده يبقى قابلاً**",
+  assignableServices({ patient: dual, decided: ["prosthetic", "medical_support"], legacyExempt: false }),
+  ["medical_support"]);
+same("   والطرف يظهر مُسنَداً", assignedServices(dual), ["prosthetic"]);
+same("   وإسناده مقروء", assignmentFor(dual, "prosthetic")?.expertName, "أحمد");
+same("   ولا إسناد للمسند", assignmentFor(dual, "medical_support"), null);
+same("   والنافذة لا تعرض الطرف ثانيةً",
+  assignableServices({ patient: dual, decided: ["prosthetic", "medical_support"], legacyExempt: false })
+    .includes("prosthetic"), false);
+
+const dualBoth = {
+  id: 6, isAmputee: true, isMedicalSupport: true,
+  activeDeviceAssignments: [assign("prosthetic"), assign("medical_support")],
+};
+same("   وحين يُسنَد الاثنان لا يبقى شيء",
+  assignableServices({ patient: dualBoth, decided: ["prosthetic", "medical_support"], legacyExempt: false }), []);
+
+const dualNone = { id: 7, isAmputee: true, isMedicalSupport: true, activeDeviceAssignments: [] };
+same("   وحين لا يُسنَد أيّهما يبقى الاثنان",
+  assignableServices({ patient: dualNone, decided: ["prosthetic", "medical_support"], legacyExempt: false }),
+  ["prosthetic", "medical_support"]);
+
+// ══ هـ. الخدمة غير المملوكة لا تُعرَض ═══════════════════════════════════
+same("هـ. وما لا يملكه المريض لا يُعرَض ولو قرّره الطبيب",
+  assignableServices({ patient: plainProsthetic, decided: ["prosthetic", "medical_support"], legacyExempt: false }),
+  ["prosthetic"]);
+same("   والملكية تُقرأ من الأعلام", ownedDeviceServices(dual), ["prosthetic", "medical_support"]);
+
+// ══ و. «تم تحديد» لا يبقى بعد التخصيص ════════════════════════════════
+console.log("\n── الحالة الأحدث تسود ──");
+same("و. الطرف المُسنَد يسقط من «تم تحديد»",
+  visibleDecided(dual, ["prosthetic", "medical_support"]), ["medical_support"]);
+same("   وغير المُسنَد يبقى", visibleDecided(dualNone, ["prosthetic", "medical_support"]),
+  ["prosthetic", "medical_support"]);
+same("   والعلاج الطبيعي لا يتأثّر", visibleDecided(dual, ["physiotherapy"]), ["physiotherapy"]);
+
+// ══ ز. نافذة «تخصيص وإسناد خبير»: متى تسأل ═══════════════════════════
+console.log("\n── النافذة ──");
+const dlg = (o: any) => {
+  const r = resolveDialogService(o);
+  return [r.needsChoice, r.serviceType];
+};
+same("ز. خدمتان باقيتان ⟶ تسأل، وتبدأ بالطرف",
+  dlg({ offered: ["prosthetic", "medical_support"], isAmputee: true, isMedicalSupport: true }),
+  [true, "prosthetic"]);
+same("   وباختيار الموظّف تتبعه",
+  dlg({ offered: ["prosthetic", "medical_support"], isAmputee: true, isMedicalSupport: true, choice: "medical_support" }),
+  [true, "medical_support"]);
+same("   **وخدمةٌ واحدة باقية ⟶ لا سؤال، وتفتح عليها**",
+  dlg({ offered: ["medical_support"], isAmputee: true, isMedicalSupport: true }),
+  [false, "medical_support"]);
+same("   ولو كان الباقي هو الطرف",
+  dlg({ offered: ["prosthetic"], isAmputee: true, isMedicalSupport: true }), [false, "prosthetic"]);
+same("   والمسند وحده كما كان",
+  dlg({ offered: ["medical_support"], isAmputee: false, isMedicalSupport: true }), [false, "medical_support"]);
+same("   وبلا قائمةٍ محسوبة تعود للأعلام كسابق عهدها",
+  dlg({ isAmputee: true, isMedicalSupport: true }), [true, "prosthetic"]);
+same("   والمسند وحده بلا قائمة",
+  dlg({ isAmputee: false, isMedicalSupport: true }), [false, "medical_support"]);
+
+// ══ ح. مدخلاتٌ ناقصة لا تُسقط الصفحة ══════════════════════════════════
+same("ح. وغياب القائمة يُقرأ كلا إسناد", assignedServices({ id: 8, isAmputee: true }), []);
+same("   والتخصيص يبقى محكوماً بقرار الطبيب",
+  assignableServices({ patient: { id: 8, isAmputee: true }, decided: ["prosthetic"], legacyExempt: false }),
+  ["prosthetic"]);
+
+console.log(`\n${failures === 0 ? "✅ all registry-assignment cases pass" : `❌ ${failures} case(s) failed`}`);
+process.exit(failures === 0 ? 0 : 1);

@@ -1488,6 +1488,43 @@ export async function registerRoutes(
       for (const r of sums.rows as any[]) paidByPatient.set(Number(r.patient_id), Number(r.total));
     }
 
+    // ══ إسنادُ الخبير الفعّال لأجهزة هذه الصفحة ═══════════════════════
+    // استعلامٌ واحد إضافي لمرضى الصفحة الظاهرة — لا واحدٌ لكل صفّ.
+    //
+    // و**البناء الأولي وحده**: أمرُ الصيانة له خبيرٌ أيضاً، لكنه عملٌ على
+    // جهازٍ قائم لا إسنادُ تصنيعٍ لجهازٍ يُبنى. فاحتسابُه هنا كان سيخفي زرَّ
+    // التخصيص عن مريضٍ ينتظره، ويقول «تم إسناد الطرف» لطرفٍ لم يُسنَد.
+    //
+    // والمنتهي لا يُحتسب: أمرٌ سُلّم أو أُلغي ليس إسناداً قائماً.
+    const assignmentsByPatient = new Map<number, any[]>();
+    if (ids.length > 0) {
+      const assigns = await db.execute(sql`
+        SELECT wo.id, wo.patient_id, wo.service_type, wo.device_episode_id,
+               wo.expert_user_id, wo.status, wo.current_stage,
+               u.display_name AS expert_name
+          FROM prosthetic_work_orders wo
+          LEFT JOIN system_users u ON u.id = wo.expert_user_id
+         WHERE wo.patient_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+           AND wo.status NOT IN ('completed', 'cancelled')
+           AND COALESCE(wo.purpose, 'initial_build') = 'initial_build'
+         ORDER BY wo.id
+      `);
+      for (const r of assigns.rows as any[]) {
+        const pid = Number(r.patient_id);
+        const list = assignmentsByPatient.get(pid) ?? [];
+        list.push({
+          serviceType: String(r.service_type),
+          workOrderId: Number(r.id),
+          deviceEpisodeId: r.device_episode_id === null ? null : Number(r.device_episode_id),
+          expertUserId: r.expert_user_id === null ? null : Number(r.expert_user_id),
+          expertName: r.expert_name ?? null,
+          status: String(r.status),
+          currentStage: String(r.current_stage),
+        });
+        assignmentsByPatient.set(pid, list);
+      }
+    }
+
     // Tab-badge counts: patients in the selected branch scope, and of those,
     // patients with a visit on the selected day — independent of the search.
     const badgeConds: any[] = [];
@@ -1516,7 +1553,11 @@ export async function registerRoutes(
       total: Number(count),
       page, pageSize,
       counts: { branch: Number(branchCount), date: Number((dateCountRow as any)[0]?.count ?? 0) },
-      rows: rows.map((r) => ({ ...r, totalPaid: paidByPatient.get(r.id) ?? 0 })),
+      rows: rows.map((r) => ({
+        ...r,
+        totalPaid: paidByPatient.get(r.id) ?? 0,
+        activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
+      })),
     });
   });
 
