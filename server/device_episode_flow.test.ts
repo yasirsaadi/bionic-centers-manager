@@ -372,6 +372,109 @@ async function main() {
     same("   ولم تُنشئ حلقة من تلقائها",
       (await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [pN]))[0].n, 0);
 
+    // ══ تعديل معاينة مرتبطة لا يغيّر اختصاصها ══════════════════════════
+    //  التعديل يعيد كتابة caseType ويعيد حلّ caseId — لكنّ deviceEpisodeId
+    //  يسمّي جهازاً واحداً على خيطٍ واحد ولا يتبعهما. فمعاينة «مساند» تشير
+    //  إلى حلقة «أطراف» ليست حقلاً بائتاً بل سجلاً سريرياً كاذباً.
+    console.log("\n── اختصاص المعاينة المرتبطة ──");
+    const pV = await mkPatient("ص. تعديل معاينة مرتبطة");
+    const cV = await mkCase(pV);
+    await mkCase(pV, "medical_support");
+    const eV = await episodes.startDeviceEpisode({ patientId: pV, serviceType: "prosthetic", createdBy: MANAGER });
+    const signV = await http("POST", `/api/medical/patients/${pV}/exams`, S.doctor, {
+      caseType: "prosthetic", diagnosis: "تشخيص أوّل", prescription: { prostheticType: "فوق الركبة" },
+    });
+    same("والمعاينة ارتبطت بحلقتها", signV.body?.deviceEpisodeId, eV.id);
+
+    const revSame = await http("PATCH", `/api/medical/exams/${signV.body.id}`, S.doctor, {
+      caseType: "prosthetic", diagnosis: "تشخيص مصحَّح", prescription: { prostheticType: "فوق الركبة" },
+    });
+    same("أ. التعديل بنفس الاختصاص ينجح", revSame.status, 200);
+    same("   والرابط بالجهاز كما هو", revSame.body?.deviceEpisodeId, eV.id);
+    same("   والنسخة صارت ٢", revSame.body?.version, 2);
+    same("   والتشخيص تحدَّث", revSame.body?.diagnosis, "تشخيص مصحَّح");
+
+    const revsBefore = await q<{ n: number }>(
+      `SELECT count(*)::int n FROM medical_exam_revisions WHERE exam_id=$1`, [signV.body.id]);
+    const examBefore = await q(`SELECT case_type, case_id, device_episode_id, version, diagnosis
+                                  FROM medical_exams WHERE id=$1`, [signV.body.id]);
+    const epBefore = await episodeRow(eV.id);
+    const revSwitch = await http("PATCH", `/api/medical/exams/${signV.body.id}`, S.doctor, {
+      caseType: "medical_support", diagnosis: "نقل الاختصاص",
+    });
+    same("ب. وتغيير الاختصاص على معاينة مرتبطة مرفوض بـ409", revSwitch.status, 409);
+    check(/ألغِ طلب الجهاز/.test(revSwitch.body?.error ?? ""), "   برسالة تدلّ على المسار الصحيح", revSwitch.body?.error);
+    same("   ولا نسخة جديدة كُتبت",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exam_revisions WHERE exam_id=$1`,
+        [signV.body.id]))[0].n, revsBefore[0].n);
+    same("   والمعاينة لم تتغيّر بحرف",
+      await q(`SELECT case_type, case_id, device_episode_id, version, diagnosis
+                 FROM medical_exams WHERE id=$1`, [signV.body.id]), examBefore);
+    same("   والحلقة لم تُمَسّ", await episodeRow(eV.id), epBefore);
+
+    const pW = await mkPatient("ض. معاينة بلا حلقة");
+    const cW = await mkCase(pW);
+    await mkCase(pW, "medical_support");
+    const exW = await http("POST", `/api/medical/patients/${pW}/exams`, S.doctor, {
+      caseType: "prosthetic", diagnosis: "بلا جهاز",
+    });
+    same("ج. ومعاينةٌ بلا حلقة تُنقَل بين الاختصاصات كما كانت",
+      (await http("PATCH", `/api/medical/exams/${exW.body.id}`, S.doctor, {
+        caseType: "medical_support", diagnosis: "بعد النقل",
+      })).status, 200);
+    same("   واختصاصها تغيّر فعلاً",
+      (await q(`SELECT case_type FROM medical_exams WHERE id=$1`, [exW.body.id]))[0].case_type,
+      "medical_support");
+
+    // ══ شارة «تم تحديد» تتبع الحلقة لا التاريخ ═════════════════════════
+    console.log("\n── شارة «تم تحديد» ──");
+    const decided = async (patientId: number, caseType = "prosthetic") =>
+      (await medical.getDecidedExams([1])).some(
+        (r) => r.patientId === patientId && r.caseType === caseType);
+
+    //  د. نمط ٠٥٠: حلقة تاريخية مسلَّمة بلا معاينة مرتبطة ⟶ السلوك القديم
+    const pD1 = await mkPatient("د. نمط ٠٥٠");
+    const cD1 = await mkCase(pD1);
+    await mkHistoricalEpisode(pD1, cD1, 1, "delivered");
+    await mkExam(pD1, cD1);                       // معاينة قديمة بلا ربط
+    same("د. حلقة ٠٥٠ التاريخية + معاينة غير مرتبطة ⟶ «تم تحديد» كما كان",
+      await decided(pD1), true);
+
+    //  هـ. حلقة جديدة منتظرة + معاينة قديمة ⟶ ليست محدَّدة
+    const pD2 = await mkPatient("هـ. منتظرة + معاينة قديمة");
+    const cD2 = await mkCase(pD2);
+    await mkExam(pD2, cD2);
+    await episodes.startDeviceEpisode({ patientId: pD2, serviceType: "prosthetic", createdBy: MANAGER });
+    same("هـ. حلقة منتظرة + معاينة قديمة ⟶ ليست محدَّدة", await decided(pD2), false);
+
+    //  و/ز. معاينة مرتبطة ⟶ محدَّدة، وبعد الإلغاء ⟶ لا
+    const pD3 = await mkPatient("و. مرتبطة ثم ملغاة");
+    const cD3 = await mkCase(pD3);
+    const eD3 = await episodes.startDeviceEpisode({ patientId: pD3, serviceType: "prosthetic", createdBy: MANAGER });
+    await http("POST", `/api/medical/patients/${pD3}/exams`, S.doctor, {
+      caseType: "prosthetic", diagnosis: "قرار الجهاز",
+    });
+    same("و. حلقة `examined` بمعاينتها ⟶ محدَّدة", await decided(pD3), true);
+    await episodes.cancelPreManufacturingDeviceEpisode({
+      patientId: pD3, episodeId: eD3.id, reason: "اعتذر المريض" });
+    same("ز. وبعد إلغائها ⟶ لم تعد محدَّدة رغم بقاء معاينتها", await decided(pD3), false);
+
+    //  ح. حلقة سُلّمت ومعاينتها مرتبطة ⟶ ليست محدَّدة (لا جهاز قيد الطلب)
+    const pD4 = await mkPatient("ح. مرتبطة ثم مسلَّمة");
+    const cD4 = await mkCase(pD4);
+    const eD4 = await episodes.startDeviceEpisode({ patientId: pD4, serviceType: "prosthetic", createdBy: MANAGER });
+    await http("POST", `/api/medical/patients/${pD4}/exams`, S.doctor, {
+      caseType: "prosthetic", diagnosis: "قرار الجهاز",
+    });
+    await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW() WHERE id=$1`, [eD4.id]);
+    same("ح. حلقة مسلَّمة بمعاينة مرتبطة ⟶ ليست محدَّدة", await decided(pD4), false);
+
+    //  ط. خيط لم يدخل النظام الجديد إطلاقاً ⟶ السلوك القديم
+    const pD5 = await mkPatient("ط. بلا حلقات إطلاقاً");
+    const cD5 = await mkCase(pD5);
+    await mkExam(pD5, cD5);
+    same("ط. خيط بلا حلقات ⟶ «تم تحديد» بالسلوك القديم", await decided(pD5), true);
+
     // ══ ر/ش/ت/ث. الإلغاء قبل التصنيع ═══════════════════════════════════
     console.log("\n── الإلغاء قبل التصنيع ──");
     const pR = await mkPatient("ر. إلغاء منتظرة");

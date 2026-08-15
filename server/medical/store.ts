@@ -28,7 +28,9 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
-import { claimAwaitingEpisodeForExam, markEpisodeExamined } from "../device_episodes/store";
+import {
+  claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
+} from "../device_episodes/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -409,6 +411,28 @@ export async function reviseExam(
     const [current] = await tx.select().from(EX).where(eq(EX.id, examId));
     if (!current) throw new Error("المعاينة غير موجودة");
 
+    // ══ A LINKED EXAM MAY NOT CHANGE SPECIALTY ═══════════════════════════
+    // Below, `caseType` is rewritten and `caseId` re-resolved for the new
+    // specialty — but `deviceEpisodeId` is not, and cannot be: it names ONE
+    // physical device on ONE thread. Letting the type change would leave a
+    // medical_support exam still pointing at a prosthetic episode, which is
+    // not a stale field but a false clinical record — and the column carries
+    // no foreign key (the 028 seal trigger forbids the SET NULL one needs),
+    // so nothing downstream would catch it.
+    //
+    // Refused BEFORE the revision row is written and before any UPDATE, so a
+    // rejected edit leaves no trace at all. And refused rather than repaired:
+    // silently clearing the link, moving the exam to another episode, or
+    // cancelling the device would each be this code guessing at a decision
+    // that belongs to a human. The doctor cancels the wrong device request
+    // and starts the right one.
+    if (current.deviceEpisodeId !== null && values.caseType !== current.caseType) {
+      throw new DeviceEpisodeError(
+        "لا يمكن تغيير اختصاص معاينة مرتبطة بجهاز — ألغِ طلب الجهاز وابدأ الطلب الصحيح",
+        409,
+      );
+    }
+
     await tx.insert(REV).values({
       examId: current.id,
       version: current.version,
@@ -695,16 +719,32 @@ export async function getDecidedExams(
           )})`;
 
   // ══ "تم تحديد" must describe the device in hand ══════════════════════
-  // While an episode is OPEN, that episode alone answers the question: it is
-  // decided once it reaches `examined`, and an exam from a previous device
-  // says nothing about this one. Reception reads this badge as its cue to
-  // assign an expert and take payment, so letting a years-old exam answer
-  // for a brand-new device would invite exactly the wrong action.
+  // Reception reads this badge as its cue to assign an expert and take money,
+  // so it must answer for the CURRENT device — never for a previous one.
   //
-  // With NO open episode there is no new device to speak of, and the old
-  // signal stands unchanged — including for the historical episodes created
-  // by migration 050, whose devices were delivered long ago and whose badge
-  // must not disappear.
+  // Once a thread has entered the episode-aware flow, the episodes are the
+  // whole truth: `examined` means decided, and anything else — awaiting,
+  // in manufacturing, cancelled, delivered — does not. A cancelled request
+  // whose exam still sits in the table must NOT keep telling reception to
+  // collect payment for a device nobody is building.
+  //
+  // The marker for "this thread entered the new flow" is an exam actually
+  // LINKED to one of its episodes — not the mere existence of an episode.
+  // Migration 050 created 102 historical episodes and deliberately linked no
+  // exams to them; treating those as new-flow threads would strip the badge
+  // from devices delivered years ago. So a thread with episodes but no
+  // linked exam keeps the old signal exactly as it was.
+  const episodeAware = sql`EXISTS (
+    SELECT 1 FROM medical_exams m2
+      JOIN patient_device_episodes e2 ON e2.id = m2.device_episode_id
+     WHERE e2.case_id = pc.id)`;
+  const openExamined = sql`EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.case_id = pc.id AND e.status = 'examined')`;
+  const noOpenEpisode = sql`NOT EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.case_id = pc.id AND e.status NOT IN ('delivered', 'cancelled'))`;
+
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT DISTINCT me.patient_id, me.case_type
     FROM medical_exams me
@@ -713,13 +753,8 @@ export async function getDecidedExams(
       ON pc.patient_id = me.patient_id AND pc.case_type = me.case_type
     WHERE ${scoped}
       AND (
-        pc.id IS NULL
-        OR NOT EXISTS (
-          SELECT 1 FROM patient_device_episodes e
-           WHERE e.case_id = pc.id AND e.status NOT IN ('delivered', 'cancelled'))
-        OR EXISTS (
-          SELECT 1 FROM patient_device_episodes e
-           WHERE e.case_id = pc.id AND e.status = 'examined')
+        ${openExamined}
+        OR (${noOpenEpisode} AND NOT ${episodeAware})
       )
   `);
 

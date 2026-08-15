@@ -23,6 +23,7 @@
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import { DeviceEpisodeError } from "../device_episodes/store";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -440,6 +441,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       res.json({ ...updated, switchNote: applied.switchNote ?? null });
     } catch (err: any) {
+      // A refused edit is a business answer, not a server fault: the doctor
+      // must read WHY and what to do instead, not a bare 500.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       console.error("[medical] PATCH exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر تعديل المعاينة" });
     }
