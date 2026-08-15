@@ -1,5 +1,4 @@
-// Conversational AI assistant — answers ad-hoc questions about the
-// branch's financial state in Arabic.
+// Conversational AI assistant — answers ad-hoc questions in Arabic.
 //
 // Architecture choice: snapshot-in-prompt rather than tool-use.
 // We pre-compute a compact JSON summary of the branch's data
@@ -12,9 +11,21 @@
 // only what we put in the snapshot. For the kinds of questions the
 // manager actually asks ("how much did we spend this month?", "who
 // hasn't paid yet?", "what's the busiest service?") that's plenty.
+//
+// ══ وضعان، لا مساعدان ═══════════════════════════════════════════════════
+// المساعد واحدٌ في الواجهة، لكنّ مساره في الخادم مساران **منفصلان بنيوياً**:
+//
+//   عام    — لكلّ موظّف مصادَق. يشرح النظام ومساراته، و`buildSnapshot`
+//            **لا يُستدعى إطلاقاً**. فلا رقمَ مالياً يصل النموذج أصلاً.
+//   مالي   — للمسؤول ولمن يملك `canManageAccounting`. سلوكُه كما كان حرفياً.
+//
+// والفصل في **الشيفرة** لا في التعليمات: تعليمةٌ في الـprompt تقول «لا تُفشِ
+// الأرقام» ليست حراسة — النموذج قد يخالفها، والسجلّ قد يتسرّب. أمّا رقمٌ لم
+// يُقرأ من القاعدة فلا سبيل إلى إفشائه.
 
 import { storage } from "../storage";
 import { safeAiComplete, type AiResult } from "./provider";
+import type { AiAccessContext, AiMode } from "./access";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -175,15 +186,85 @@ const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدار
 
 الـ snapshot الذي تعمل عليه يُحدَّث كل دقائق، وهو محصور بالفرع الذي يطّلع عليه المستخدم.`;
 
+// نظام المساعد العام — لكلّ موظّف مصادَق، وبلا رقمٍ واحد من القاعدة.
+//
+// ما يعرفه مكتوبٌ هنا: مسارات العمل كما بناها النظام فعلاً. وما لا يعرفه
+// يقوله صراحةً — فالموظّف الذي يسمع «لا أستطيع قراءة السجلّ الحيّ بعد»
+// يذهب إلى الصفحة الصحيحة، أمّا الذي يسمع رقماً مخترعاً فيبني عليه قراراً.
+const GENERAL_SYSTEM_PROMPT = `أنت المساعد الداخلي لنظام إدارة مراكز «وارث/بايونيك» للأطراف الصناعية والعلاج الطبيعي في العراق.
+دورك: مساعدة موظّفي المراكز على فهم النظام وإنجاز عملهم فيه.
+
+ما تعرفه وتشرحه:
+- مسار المريض: التسجيل في الاستقبال ⟶ معاينة الطبيب ⟶ التخصيص والتسعير ⟶ التصنيع أو الجلسات.
+- المعاينة: يوقّعها الطبيب في اختصاصه (أطراف صناعية / مساند طبية / علاج طبيعي)، وتحمل التشخيص والوصفة، وتُقفل بعد التوقيع فلا تُمحى — والتصحيح يكون بنسخةٍ جديدة أو بملحق.
+- التخصيص وإسناد الخبير: بعد المعاينة يُدخل موظّف الاستعلامات المواصفات والكلفة ويُسنِد الخبير، فيبدأ أمر التصنيع.
+- مراحل التصنيع: استلام الأمر ⟶ القياسات ⟶ القالب ⟶ التصنيع ⟶ جاهز للتجربة ⟶ التسليم.
+- الصيانة: تُفتح على جهازٍ مسلَّم سابقاً من نافذة الصيانة، ولها مسارها المستقلّ عن بناء جهازٍ جديد، ويمكن أن تجري بالتوازي معه.
+- العلاج الطبيعي: تُحدَّد أنواع الجلسات وعددها، وتُحتسب الجلسات المشتراة مقابل الزيارات.
+- التنقّل في النظام والمساعدة العامة على استعمال الشاشات.
+
+قواعد الإجابة:
+- أجب بالعربية الفصحى البسيطة، بإيجاز: ٢-٤ جمل عادةً.
+- **لا تذكر أي مبلغ أو رقم مالي إطلاقاً**، ولا تخمّن أرقاماً من أي نوع.
+- لا تخترع أسماء مرضى ولا أرقام فواتير ولا أرقام أوامر.
+- ليست لديك في هذا الوضع قدرةُ قراءة السجلّ الحيّ. فإن سُئلت عن بياناتٍ فعلية — مريضٌ بعينه، عدد زيارات، حالة أمر تصنيع، أي مبلغ — قل صراحةً إنك لا تستطيع قراءتها الآن وإن القراءة الحيّة ستتمّ عبر أدوات النظام المصرَّح بها، ثمّ دُلّ المستخدم على الشاشة التي تعرضها.
+- الأسئلة المالية (الوارد، المصاريف، الذمم، القاصة، الفواتير) خارج صلاحيتك: اعتذر بلطف واذكر أنها متاحة لمن يملك صلاحية المحاسبة، بلا ذكر أي رقم.`;
+
+/** ما يُرسَل فعلاً إلى المزوّد — يُبنى مرّةً ويُستعمل في الوضعين. */
+function conversationText(history: ChatMessage[]): string {
+  // Flatten the conversation history into a single user turn — provider
+  // currently exposes only single-shot user prompts. For multi-turn
+  // continuity we replay prior assistant replies as part of the user
+  // text so the model has the full context.
+  return history
+    .map((m) => (m.role === "user" ? `سؤال المستخدم: ${m.content}` : `إجابتك السابقة: ${m.content}`))
+    .join("\n\n");
+}
+
+/**
+ * المُكمِّل المحقون — `safeAiComplete` افتراضاً.
+ *
+ * وجودُه ليس للاختبار وحده: هو الحدّ الذي يجعل «ما يُرسَل إلى النموذج»
+ * قيمةً يمكن فحصها، بدل أن يكون أثراً جانبياً لا يُرى. والاختبار يستعمله
+ * ليثبت أن نصّ الوضع العام لا يحمل لقطةً مالية إطلاقاً.
+ */
+export type Completer = typeof safeAiComplete;
+
+export interface ChatOutcome {
+  reply: string;
+  /** يبقى للتوافق: تاريخ اللقطة في الوضع المالي، و`null` في العام. */
+  snapshotAt: string | null;
+  mode: AiMode;
+}
+
+/**
+ * المساعد بمسارَيه.
+ *
+ * **الفرع الأول في الدالّة هو الحراسة**: مَن ليس وضعُه `financial` لا يمرّ
+ * على `buildSnapshot` ولا على أي تابع مالي في `storage`.
+ */
 export async function aiChat(
-  scope: ChatScope,
-  history: ChatMessage[]
-): Promise<AiResult<{ reply: string; snapshotAt: string }>> {
+  access: AiAccessContext,
+  history: ChatMessage[],
+  complete: Completer = safeAiComplete,
+): Promise<AiResult<ChatOutcome>> {
   if (history.length === 0 || history[history.length - 1].role !== "user") {
     return { ok: false, reason: "unknown", message: "آخر رسالة يجب أن تكون من المستخدم" };
   }
 
-  const snapshot = await buildSnapshot(scope);
+  if (access.mode !== "financial") {
+    const result = await complete({
+      system: GENERAL_SYSTEM_PROMPT,
+      user: conversationText(history),
+      model: "haiku",
+      maxTokens: 600,
+    });
+    if (!result.ok) return result;
+    return { ok: true, value: { reply: result.value, snapshotAt: null, mode: "general" } };
+  }
+
+  //  النطاق من الجلسة: غير المسؤول مثبَّتٌ على فرعه، والمسؤول على ما اختاره.
+  const snapshot = await buildSnapshot({ branchId: access.branchId, branchName: access.branchName });
   const snapshotJson = JSON.stringify(snapshot, null, 2);
 
   // The system block contains: instructions + snapshot. Both are stable
@@ -196,17 +277,9 @@ export async function aiChat(
 ${snapshotJson}
 \`\`\``;
 
-  // Flatten the conversation history into a single user turn — provider
-  // currently exposes only single-shot user prompts. For multi-turn
-  // continuity we replay prior assistant replies as part of the user
-  // text so the model has the full context.
-  const conversationText = history
-    .map((m) => (m.role === "user" ? `سؤال المستخدم: ${m.content}` : `إجابتك السابقة: ${m.content}`))
-    .join("\n\n");
-
-  const result = await safeAiComplete({
+  const result = await complete({
     system: systemText,
-    user: conversationText,
+    user: conversationText(history),
     model: "haiku",
     maxTokens: 600,
   });
@@ -214,6 +287,6 @@ ${snapshotJson}
   if (!result.ok) return result;
   return {
     ok: true,
-    value: { reply: result.value, snapshotAt: snapshot.generatedAt },
+    value: { reply: result.value, snapshotAt: snapshot.generatedAt, mode: "financial" },
   };
 }
