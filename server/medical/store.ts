@@ -28,6 +28,9 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
+import {
+  claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
+} from "../device_episodes/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -67,7 +70,29 @@ export async function getExam(id: number): Promise<MedicalExam | undefined> {
   return row;
 }
 
-/** Sign a new exam. The only write path that exists for this table. */
+/**
+ * Sign a new exam. The only write path that exists for this table.
+ *
+ * ══ Binding the exam to the device it is about ═════════════════════════
+ * When the patient has an OPEN device episode still `awaiting_exam`, this
+ * exam is the one that episode was waiting for: the row records which
+ * device it examined, and the episode advances to `examined`. Both writes
+ * live in ONE transaction — an exam claiming an episode that never moved,
+ * or an episode marked examined with no exam behind it, would each be a
+ * silent lie in a clinical record.
+ *
+ * The episode is locked (`FOR UPDATE`) before it is read, so two doctors
+ * signing at once cannot both claim the same one.
+ *
+ * Deliberately NOT automatic in reverse: an exam never CREATES an episode.
+ * Most exams are ordinary follow-ups, not device purchases — minting a
+ * device request from every consultation would fabricate demand.
+ *
+ * `medical_exams.device_episode_id` carries no foreign key on purpose (the
+ * 028 seal trigger rejects the SET NULL that a FK would need), so the
+ * patient/case match is verified HERE, in code. The absence of a database
+ * constraint is exactly why this check may not be skipped.
+ */
 export async function createExam(values: {
   patientId: number;
   caseId: number | null;
@@ -84,8 +109,80 @@ export async function createExam(values: {
   plan: string | null;
   notes: string | null;
 }): Promise<MedicalExam> {
-  const [row] = await db.insert(EX).values(values).returning();
-  return row;
+  const isDevice = values.caseType === "prosthetic" || values.caseType === "medical_support";
+
+  return await db.transaction(async (tx) => {
+    let episodeId: number | null = null;
+
+    if (isDevice && values.caseId !== null) {
+      episodeId = await claimAwaitingEpisodeForExam(tx, {
+        patientId: values.patientId, caseId: values.caseId,
+      });
+    }
+
+    const [row] = await tx
+      .insert(EX)
+      .values({ ...values, deviceEpisodeId: episodeId })
+      .returning();
+
+    if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
+
+    return row;
+  });
+}
+
+// ── episode-aware readers (PR #217) ─────────────────────────────────────────
+// The old helpers answer "has this PATIENT been examined for this specialty",
+// which was right while a patient could only ever have one device per thread.
+// It is wrong the moment he returns for a second one: an exam from two years
+// ago would unlock manufacturing for a device nobody has looked at.
+//
+// These read ONE episode's own exam and nothing else — no fallback to
+// (patient, caseType), because a fallback is precisely the bug. The old
+// helpers stay for now; the current workflow still runs on them and is
+// switched over in the next PR.
+
+/** Has THIS device been examined? */
+export async function hasSignedExamForEpisode(episodeId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ id: EX.id })
+    .from(EX)
+    .where(eq(EX.deviceEpisodeId, episodeId))
+    .limit(1);
+  return !!row;
+}
+
+/** THIS device's proposed price, from its own exam only. */
+export async function latestDeviceCostForEpisode(episodeId: number): Promise<number | null> {
+  const [exam] = await db
+    .select({ deviceCost: EX.deviceCost })
+    .from(EX)
+    .where(eq(EX.deviceEpisodeId, episodeId))
+    .orderBy(desc(EX.signedAt), desc(EX.id))
+    .limit(1);
+  return typeof exam?.deviceCost === "number" && exam.deviceCost > 0 ? exam.deviceCost : null;
+}
+
+/** THIS device's prescribed specs, from its own exam only. */
+export async function prescribedSpecsForEpisode(
+  episodeId: number,
+  caseType: MedicalSpecialty,
+): Promise<Record<string, string>> {
+  const [exam] = await db
+    .select({ prescription: EX.prescription })
+    .from(EX)
+    .where(eq(EX.deviceEpisodeId, episodeId))
+    .orderBy(desc(EX.signedAt), desc(EX.id))
+    .limit(1);
+  const rx = exam?.prescription;
+  if (!rx || typeof rx !== "object") return {};
+  const fields = caseType === "prosthetic" ? PROSTHETIC_SPECS : SUPPORT_SPECS;
+  const out: Record<string, string> = {};
+  for (const f of fields) {
+    const v = (rx as Record<string, unknown>)[f.key];
+    if (typeof v === "string" && v.trim()) out[f.key] = v.trim();
+  }
+  return out;
 }
 
 /**
@@ -314,6 +411,28 @@ export async function reviseExam(
     const [current] = await tx.select().from(EX).where(eq(EX.id, examId));
     if (!current) throw new Error("المعاينة غير موجودة");
 
+    // ══ A LINKED EXAM MAY NOT CHANGE SPECIALTY ═══════════════════════════
+    // Below, `caseType` is rewritten and `caseId` re-resolved for the new
+    // specialty — but `deviceEpisodeId` is not, and cannot be: it names ONE
+    // physical device on ONE thread. Letting the type change would leave a
+    // medical_support exam still pointing at a prosthetic episode, which is
+    // not a stale field but a false clinical record — and the column carries
+    // no foreign key (the 028 seal trigger forbids the SET NULL one needs),
+    // so nothing downstream would catch it.
+    //
+    // Refused BEFORE the revision row is written and before any UPDATE, so a
+    // rejected edit leaves no trace at all. And refused rather than repaired:
+    // silently clearing the link, moving the exam to another episode, or
+    // cancelling the device would each be this code guessing at a decision
+    // that belongs to a human. The doctor cancels the wrong device request
+    // and starts the right one.
+    if (current.deviceEpisodeId !== null && values.caseType !== current.caseType) {
+      throw new DeviceEpisodeError(
+        "لا يمكن تغيير اختصاص معاينة مرتبطة بجهاز — ألغِ طلب الجهاز وابدأ الطلب الصحيح",
+        409,
+      );
+    }
+
     await tx.insert(REV).values({
       examId: current.id,
       version: current.version,
@@ -537,7 +656,32 @@ export async function getPendingExams(
   // amber "waiting" badge or blocks anybody. Only the device specialties keep
   // the obligation, because there تخصيص genuinely cannot proceed without it.
   const isExempt = sql`(${isLegacy} OR pc.case_type = 'physiotherapy')`;
-  const legacyFilter = legacyOnly ? isExempt : sql`NOT ${isExempt}`;
+
+  // ══ A NEW DEVICE IS ALWAYS WAITING ═══════════════════════════════════
+  // An open episode still `awaiting_exam` means the patient asked for a
+  // device NOW. Nothing about his past excuses that exam: not an exam from
+  // two years ago, not a device already delivered, not «مريض قديم», not a
+  // pre-go-live file. The legacy exemption forgave the RETROACTIVE exam for
+  // devices fitted under the old workflow — it cannot forgive one for a
+  // device requested today, or the doctor would be asked to approve
+  // manufacturing he never looked at.
+  const awaitingEpisode = sql`EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.case_id = pc.id AND e.status = 'awaiting_exam')`;
+  // The old path stays EXACTLY as it was, but only for threads that carry no
+  // episode at all. A thread whose episodes are all delivered/cancelled is
+  // settled: its devices were handled, and it must not drag the patient back
+  // into the queue.
+  const noEpisodes = sql`NOT EXISTS (
+    SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)`;
+  const neverExamined = sql`NOT EXISTS (
+    SELECT 1 FROM medical_exams me
+     WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type)`;
+
+  const legacyPath = sql`(${noEpisodes} AND ${legacyOnly ? isExempt : sql`NOT ${isExempt}`} AND ${neverExamined})`;
+  // The optional list is for the exempt only; a mandatory awaiting-exam
+  // episode belongs in the amber queue, never in the quiet one.
+  const filter = legacyOnly ? legacyPath : sql`(${awaitingEpisode} OR ${legacyPath})`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
@@ -545,12 +689,7 @@ export async function getPendingExams(
     JOIN patients p ON p.id = pc.patient_id
     WHERE pc.status = 'active'
       AND ${scoped}
-      AND ${legacyFilter}
-      AND NOT EXISTS (
-        SELECT 1 FROM medical_exams me
-        WHERE me.patient_id = pc.patient_id
-          AND me.case_type = pc.case_type
-      )
+      AND ${filter}
   `);
 
   return (rows.rows ?? []).map((r) => ({
@@ -579,11 +718,44 @@ export async function getDecidedExams(
             sql`, `,
           )})`;
 
+  // ══ "تم تحديد" must describe the device in hand ══════════════════════
+  // Reception reads this badge as its cue to assign an expert and take money,
+  // so it must answer for the CURRENT device — never for a previous one.
+  //
+  // Once a thread has entered the episode-aware flow, the episodes are the
+  // whole truth: `examined` means decided, and anything else — awaiting,
+  // in manufacturing, cancelled, delivered — does not. A cancelled request
+  // whose exam still sits in the table must NOT keep telling reception to
+  // collect payment for a device nobody is building.
+  //
+  // The marker for "this thread entered the new flow" is an exam actually
+  // LINKED to one of its episodes — not the mere existence of an episode.
+  // Migration 050 created 102 historical episodes and deliberately linked no
+  // exams to them; treating those as new-flow threads would strip the badge
+  // from devices delivered years ago. So a thread with episodes but no
+  // linked exam keeps the old signal exactly as it was.
+  const episodeAware = sql`EXISTS (
+    SELECT 1 FROM medical_exams m2
+      JOIN patient_device_episodes e2 ON e2.id = m2.device_episode_id
+     WHERE e2.case_id = pc.id)`;
+  const openExamined = sql`EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.case_id = pc.id AND e.status = 'examined')`;
+  const noOpenEpisode = sql`NOT EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.case_id = pc.id AND e.status NOT IN ('delivered', 'cancelled'))`;
+
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT DISTINCT me.patient_id, me.case_type
     FROM medical_exams me
     JOIN patients p ON p.id = me.patient_id
+    LEFT JOIN patient_cases pc
+      ON pc.patient_id = me.patient_id AND pc.case_type = me.case_type
     WHERE ${scoped}
+      AND (
+        ${openExamined}
+        OR (${noOpenEpisode} AND NOT ${episodeAware})
+      )
   `);
 
   return (rows.rows ?? []).map((r) => ({
@@ -646,23 +818,38 @@ export async function getWorklist(
     SELECT pc.patient_id, p.name AS patient_name, p.phone,
            COALESCE(pc.branch_id, p.branch_id) AS branch_id,
            b.name AS branch_name,
-           pc.case_type, pc.created_at AS waiting_since
+           pc.case_type,
+           -- A device request starts waiting when it was OPENED, not when the
+           -- specialty thread was first created years earlier.
+           COALESCE(ep.created_at, pc.created_at) AS waiting_since
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
     LEFT JOIN branches b ON b.id = COALESCE(pc.branch_id, p.branch_id)
+    -- At most one row can join: uq_pde_case_open permits a single non-terminal
+    -- episode per thread, so a returning patient appears ONCE, never twice.
+    LEFT JOIN patient_device_episodes ep
+      ON ep.case_id = pc.id AND ep.status = 'awaiting_exam'
     WHERE pc.status = 'active'
       AND ${scoped}
-      AND ${notLegacyWl}
       AND pc.case_type IN (${sql.join(
         specialties.map((s) => sql`${s}`),
         sql`, `,
       )})
-      AND NOT EXISTS (
-        SELECT 1 FROM medical_exams me
-        WHERE me.patient_id = pc.patient_id
-          AND me.case_type = pc.case_type
+      AND (
+        -- A device requested now is on the doctor's list whoever the patient
+        -- is — legacy or not, examined before or not.
+        ep.id IS NOT NULL
+        OR (
+          NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+          AND ${notLegacyWl}
+          AND NOT EXISTS (
+            SELECT 1 FROM medical_exams me
+            WHERE me.patient_id = pc.patient_id
+              AND me.case_type = pc.case_type
+          )
+        )
       )
-    ORDER BY pc.created_at ASC
+    ORDER BY waiting_since ASC
   `);
 
   return (rows.rows ?? []).map((r) => ({
@@ -697,19 +884,31 @@ export async function branchNames(): Promise<Record<number, string>> {
   return out;
 }
 
-/** Which specialties of THIS patient are still waiting for a first exam. */
+/** Which specialties of THIS patient are still waiting for an exam. */
 export async function getPendingForPatient(patientId: number): Promise<string[]> {
-  // A legacy patient waits on no one — same exemption as the branch-wide maps.
-  if (await isLegacyPatient(patientId)) return [];
+  // The legacy exemption is evaluated INSIDE the query now, not as an early
+  // return. Returning [] up front was the bug: it answered "waits on no one"
+  // before ever looking at whether the patient had just requested a new
+  // device — and a new device is never exempt, whoever asked for it.
+  const legacy = await isLegacyPatient(patientId);
   const rows = await db.execute<{ case_type: string }>(sql`
     SELECT pc.case_type
     FROM patient_cases pc
     WHERE pc.patient_id = ${patientId}
       AND pc.status = 'active'
-      AND NOT EXISTS (
-        SELECT 1 FROM medical_exams me
-        WHERE me.patient_id = pc.patient_id
-          AND me.case_type = pc.case_type
+      AND (
+        EXISTS (
+          SELECT 1 FROM patient_device_episodes e
+           WHERE e.case_id = pc.id AND e.status = 'awaiting_exam')
+        OR (
+          ${!legacy}
+          AND NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM medical_exams me
+            WHERE me.patient_id = pc.patient_id
+              AND me.case_type = pc.case_type
+          )
+        )
       )
   `);
   return (rows.rows ?? []).map((r) => String(r.case_type));

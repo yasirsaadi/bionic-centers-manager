@@ -23,6 +23,7 @@
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import { DeviceEpisodeError } from "../device_episodes/store";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -376,6 +377,22 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (!isMedicalSpecialty(caseType)) {
         return res.status(400).json({ error: "اختصاص المعاينة غير صالح" });
       }
+      // ══ REFUSE BEFORE ANYTHING WRITES ════════════════════════════════════
+      // `reviseExam` carries this same guard, but it runs too late to be the
+      // only one: `applyDecision` below writes the patient's device fields and
+      // its `patient_cases` row BEFORE the revision is attempted. A request
+      // destined for 409 would still have moved the patient's record — the
+      // refusal would be honest about the exam and silent about everything it
+      // had already changed.
+      //
+      // So the answer is given here, before the first write. The inner guard
+      // stays as defence for any other caller of `reviseExam`.
+      if (exam.deviceEpisodeId !== null && caseType !== exam.caseType) {
+        return res.status(409).json({
+          error: "لا يمكن تغيير اختصاص معاينة مرتبطة بجهاز — ألغِ طلب الجهاز وابدأ الطلب الصحيح",
+        });
+      }
+
       // The author must still hold the specialty they are moving the exam to;
       // a manager editing on someone's behalf is not bound by that.
       if (isAuthor && !isResponsibleManager) {
@@ -440,6 +457,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       res.json({ ...updated, switchNote: applied.switchNote ?? null });
     } catch (err: any) {
+      // A refused edit is a business answer, not a server fault: the doctor
+      // must read WHY and what to do instead, not a bare 500.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       console.error("[medical] PATCH exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر تعديل المعاينة" });
     }
