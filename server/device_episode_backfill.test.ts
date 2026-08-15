@@ -13,16 +13,19 @@
 //     والتخمين في سجلّ دائم أسوأ من الفراغ.
 // (٤) **لم يتحرّك دينار**: لقطة قبل/بعد لكلّ من total_cost وكلف الحالات
 //     ومجاميع الدفعات والقيود وأعدادها — متطابقة حرفياً.
-// (٥) **الصيانة تُربَط بدليل تسليم قاطع فقط**: بناءٌ مكتمل، بختم زمني
-//     موجود، سابقٍ للصيانة، ووحيد. وما عداه يبقى فارغاً عمداً.
-// (٦) **المعاينة المختومة لم تُمَسّ سريرياً**: عمود ربط إداري واحد تغيّر،
-//     وكل حقل طبّي وتوقيع ونسخة كما كان بايتاً ببايت.
+// (٥) **لا إسناد تاريخي خارج أوامر البناء**: الترحيل يكتب عمود الربط على
+//     أوامر البناء الأولي وحدها. الصيانة والمعاينة والدفعة والزيارة وقيد
+//     الكلفة تبقى كلّها NULL — في العيّنة وفي القاعدة كلّها.
+// (٦) **الختم السريري لم يُفتح أصلاً**: صفّ المعاينة مقارنٌ بايتاً ببايت
+//     بما فيه عمود الربط، وتحقّقٌ نصّي أن allow_exam_edit لا يَرِد في
+//     نصّ الترحيل إطلاقاً.
 // (٧) **idempotent فعلاً**: تشغيل الـ SQL نفسه مرّتين لا يكرّر حلقة ولا
 //     يغيّر تسلسلاً ولا رابطاً ولا حالة ولا مبلغاً.
 //
-// ══ وما لا يفعله ═══════════════════════════════════════════════════════
-// لا يربط دفعةً ولا زيارةً ولا قيد كلفة — تبقى كلّها NULL عمداً، والاختبار
-// يثبت بقاءها كذلك.
+// ══ لماذا لا إسناد تاريخي ══════════════════════════════════════════════
+// قياس الإنتاج أظهر ٤٢ أمر صيانة بلا أيّ بناء سابق — دليلٌ موجب على أجهزة
+// إرث حقيقية لم تُسجَّل قطّ. فبناءٌ مكتمل وحيد قبل صيانةٍ ما لا يثبت أنها
+// تخصّه؛ القرينة الزمنية ترجيحٌ لا برهان، ولا تُثبَّت في سجلّ دائم.
 
 import { pool } from "./db";
 import { sql as MIGRATION_050, name as MIGRATION_NAME } from "./migrations/050_device_episode_backfill";
@@ -264,7 +267,8 @@ async function main() {
 
   const examBefore = await q(`SELECT id, patient_id, case_id, case_type, doctor_id, doctor_name,
       chief_complaint, clinical_findings, diagnosis, plan, notes, prescription, device_cost,
-      proposed_expert_user_id, version, edited_at, edited_by, edited_by_name, signed_at, created_at
+      proposed_expert_user_id, version, edited_at, edited_by, edited_by_name, signed_at, created_at,
+      device_episode_id
       FROM medical_exams WHERE id = ANY($1::int[]) ORDER BY id`, [[xO, xP]]);
 
   const before = await moneySnapshot();
@@ -327,43 +331,58 @@ async function main() {
   same("ي. بناء بلا حالة ⟶ لا حلقة", eJ[0]?.n, 0);
   same("   والأمر يبقى بلا ربط", await orderEpisode(oJ), null);
 
+  //  ك — حلقة البناء تُنشأ لمريض له صيانة أيضاً، وسعرها يبقى صفراً حتى
+  //  حين يجمع خيطُه سعر الجهاز وأجر الصيانة في رقم واحد.
   const eK = await episodesOf(cK);
-  same("ك. الصيانة الموثّقة ترتبط بحلقة جهازها", await orderEpisode(oKm), eK[0]?.id);
-  same("   وسعر الحلقة صفر رغم أن الخيط يجمع ١٬٠٠٠٬٠٠٠ جهازاً + ٥٠٬٠٠٠ صيانةً",
+  same("ك. حلقة البناء أُنشئت لمريض له صيانة", eK.length, 1);
+  same("   وسعرها صفر رغم أن الخيط يجمع ١٬٠٠٠٬٠٠٠ جهازاً + ٥٠٬٠٠٠ صيانةً",
     eK[0]?.agreed_cost, 0);
+  same("   وحلقة البناء بلا ختم تسليم أُنشئت كذلك", (await episodesOf(cL)).length, 1);
+  same("   وحلقتا البناء لمريض المرشّحَين أُنشئتا", (await episodesOf(cM)).length, 2);
 
-  same("ل. صيانة بناؤها بلا ختم تسليم ⟶ لا ربط", await orderEpisode(oLm), null);
-  same("   وحلقة بنائها أُنشئت رغم ذلك", (await episodesOf(cL)).length, 1);
-  same("م. صيانة بمرشّحَين ⟶ لا ربط", await orderEpisode(oMm), null);
-  same("   وحلقتا بنائها أُنشئتا", (await episodesOf(cM)).length, 2);
-  same("ن. صيانة بلا بناء سابق ⟶ لا ربط", await orderEpisode(oNm), null);
+  // ══ لا إسناد تاريخي خارج أوامر البناء ════════════════════════════════
+  //  ٤٢ أمر صيانة في الإنتاج بلا أيّ بناء سابق ⇒ أجهزة إرث حقيقية غير
+  //  مسجَّلة. فالقرينة الزمنية ترجيحٌ لا برهان، ولا تُثبَّت في سجلّ دائم.
+  console.log("\n── لا إسناد تاريخي خارج أوامر البناء ──");
+  same("ل. الصيانة الموثّقة زمنياً تبقى فارغة", await orderEpisode(oKm), null);
+  same("م. والصيانة بلا ختم تسليم فارغة", await orderEpisode(oLm), null);
+  same("ن. والصيانة بمرشّحَين فارغة", await orderEpisode(oMm), null);
+  same("س. والصيانة بلا بناء سابق فارغة", await orderEpisode(oNm), null);
+
+  const mnt = await q(`SELECT count(*)::int AS n FROM prosthetic_work_orders
+                        WHERE purpose <> 'initial_build' AND device_episode_id IS NOT NULL`);
+  same("ع. ولا أمر واحد بغرضٍ غير البناء رُبِط بحلقة — في القاعدة كلّها", mnt[0]?.n, 0);
 
   const xOrow = await q(`SELECT device_episode_id FROM medical_exams WHERE id = $1`, [xO]);
-  const eO = await episodesOf(cO);
-  same("س. معاينة على خيط بحلقة واحدة ⟶ مرتبطة", xOrow[0]?.device_episode_id, eO[0]?.id);
   const xProw = await q(`SELECT device_episode_id FROM medical_exams WHERE id = $1`, [xP]);
-  same("ع. معاينة على خيط بحلقتين ⟶ تبقى فارغة", xProw[0]?.device_episode_id, null);
+  same("ف. المعاينة على خيط بحلقة واحدة تبقى فارغة", xOrow[0]?.device_episode_id, null);
+  same("ص. والمعاينة على خيط بحلقتين تبقى فارغة", xProw[0]?.device_episode_id, null);
+  const exAll = await q(`SELECT count(*)::int AS n FROM medical_exams WHERE device_episode_id IS NOT NULL`);
+  same("ق. ولا معاينة واحدة رُبِطت — في القاعدة كلّها", exAll[0]?.n, 0);
 
-  // ف — الختم السريري لم يُمَسّ
+  //  الختم السريري لم يُمَسّ — بما فيه عمود الربط نفسه هذه المرّة.
   const examAfter = await q(`SELECT id, patient_id, case_id, case_type, doctor_id, doctor_name,
       chief_complaint, clinical_findings, diagnosis, plan, notes, prescription, device_cost,
-      proposed_expert_user_id, version, edited_at, edited_by, edited_by_name, signed_at, created_at
+      proposed_expert_user_id, version, edited_at, edited_by, edited_by_name, signed_at, created_at,
+      device_episode_id
       FROM medical_exams WHERE id = ANY($1::int[]) ORDER BY id`, [[xO, xP]]);
-  same("ف. كل حقل سريري في المعاينة المختومة كما كان", examAfter, examBefore);
+  same("ر. صفّ المعاينة المختوم كما كان بايتاً ببايت", examAfter, examBefore);
   const revs = await q(`SELECT count(*)::int AS n FROM medical_exam_revisions WHERE exam_id = ANY($1::int[])`,
     [[xO, xP]]);
   same("   ولم تُنشأ نسخة مراجعة", revs[0]?.n, 0);
   const sealed = await q(`SELECT current_setting('app.allow_exam_edit', true) AS v`);
-  check(sealed[0]?.v !== "on", "   والباب المراقَب لم يبقَ مفتوحاً بعد الترحيل", String(sealed[0]?.v));
+  check(sealed[0]?.v !== "on", "   والباب المراقَب مغلق", String(sealed[0]?.v));
+  check(!/allow_exam_edit/.test(MIGRATION_050),
+    "   **ولا يَرِد allow_exam_edit في نصّ الترحيل إطلاقاً** — الختم لا يُفتح");
 
-  // ق/ر/ش — المال والزيارات بلا ربط
+  // ش/ت/ث — المال والزيارات بلا ربط
   const unlinked = await q(`SELECT
       (SELECT count(*)::int FROM payments     WHERE device_episode_id IS NOT NULL) AS pay,
       (SELECT count(*)::int FROM visits       WHERE device_episode_id IS NOT NULL) AS vis,
       (SELECT count(*)::int FROM cost_entries WHERE device_episode_id IS NOT NULL) AS ce`);
-  same("ق. لا دفعة مرتبطة بحلقة", unlinked[0]?.pay, 0);
-  same("ر. لا زيارة مرتبطة بحلقة", unlinked[0]?.vis, 0);
-  same("ش. لا قيد كلفة مرتبط بحلقة", unlinked[0]?.ce, 0);
+  same("ش. لا دفعة مرتبطة بحلقة", unlinked[0]?.pay, 0);
+  same("ت. لا زيارة مرتبطة بحلقة", unlinked[0]?.vis, 0);
+  same("ث. لا قيد كلفة مرتبط بحلقة", unlinked[0]?.ce, 0);
 
   // ══════════════ لم يتحرّك دينار ═══════════════════════════════════════
   console.log("\n── إثبات أن المال لم يتحرّك ──");
@@ -429,15 +448,27 @@ async function main() {
   same("والمعاينة المختومة سليمة بعد التشغيلين", examAfter2, examBefore2);
 
   // ══════════════ الصفوف الباقية فارغة عمداً ════════════════════════════
-  console.log("\n── ما بقي فارغاً عمداً ──");
+  //  الجرد النهائي: الترحيل يكتب في عمود ربط واحد لا غير — على أوامر
+  //  البناء الأولي وحدها. وكل ما عداه في القاعدة كلّها يبقى فارغاً.
+  console.log("\n── الجرد النهائي: ما كُتب وما بقي فارغاً ──");
   const nulls = await q(`SELECT
-      (SELECT count(*)::int FROM prosthetic_work_orders WHERE purpose='maintenance'
-        AND device_episode_id IS NULL)                                    AS mnt_null,
-      (SELECT count(*)::int FROM prosthetic_work_orders WHERE purpose='maintenance'
-        AND device_episode_id IS NOT NULL)                                AS mnt_linked,
-      (SELECT count(*)::int FROM medical_exams WHERE device_episode_id IS NULL) AS exam_null`);
-  check((nulls[0]?.mnt_linked ?? 0) >= 1, "صيانة واحدة على الأقل ارتبطت (الموثّقة)", JSON.stringify(nulls[0]));
-  check((nulls[0]?.mnt_null ?? 0) >= 3, "وثلاث صيانات على الأقل بقيت فارغة عمداً", JSON.stringify(nulls[0]));
+      (SELECT count(*)::int FROM prosthetic_work_orders WHERE purpose = 'initial_build'
+        AND device_episode_id IS NOT NULL)                                       AS build_linked,
+      (SELECT count(*)::int FROM prosthetic_work_orders WHERE purpose <> 'initial_build'
+        AND device_episode_id IS NOT NULL)                                       AS other_linked,
+      (SELECT count(*)::int FROM prosthetic_work_orders WHERE purpose = 'maintenance'
+        AND device_episode_id IS NOT NULL)                                       AS mnt_linked,
+      (SELECT count(*)::int FROM medical_exams WHERE device_episode_id IS NOT NULL) AS exam_linked,
+      (SELECT count(*)::int FROM payments      WHERE device_episode_id IS NOT NULL) AS pay_linked,
+      (SELECT count(*)::int FROM visits        WHERE device_episode_id IS NOT NULL) AS vis_linked,
+      (SELECT count(*)::int FROM cost_entries  WHERE device_episode_id IS NOT NULL) AS ce_linked`);
+  check((nulls[0]?.build_linked ?? 0) > 0, "أوامر البناء الأولي مرتبطة فعلاً", JSON.stringify(nulls[0]));
+  same("**والصيانة كلّها فارغة**", nulls[0]?.mnt_linked, 0);
+  same("**وكل أمر بغرضٍ غير البناء فارغ**", nulls[0]?.other_linked, 0);
+  same("**والمعاينات كلّها فارغة**", nulls[0]?.exam_linked, 0);
+  same("**والدفعات كلّها فارغة**", nulls[0]?.pay_linked, 0);
+  same("**والزيارات كلّها فارغة**", nulls[0]?.vis_linked, 0);
+  same("**وقيود الكلف كلّها فارغة**", nulls[0]?.ce_linked, 0);
 
   if (alreadyApplied.length === 0) {
     await q(`INSERT INTO _migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, [MIGRATION_NAME]);
