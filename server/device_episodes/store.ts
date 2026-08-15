@@ -1,0 +1,313 @@
+// حلقات أجهزة المريض — طبقة البيانات الوحيدة.
+//
+// **كل SQL يخصّ الحلقات يمرّ من هنا.** لا استعلام حلقةٍ في routes ولا في
+// storage.ts: الحلقة كيانٌ له ثوابت دقيقة (شراءٌ مفتوحٌ واحد لكل خيط،
+// وتسلسلٌ لا يتكرّر، وحالاتٌ خمس بانتقالات محدودة)، وتوزيعُ حراستها على
+// عدّة ملفات هو كيف تنحرف الثوابت بصمت.
+//
+// ══ ما تملكه الحلقة ═════════════════════════════════════════════════════
+// **الشراء**: هوية الجهاز، وترتيبه في خيطه، وحالته، وسعره المتفق عليه.
+// أمّا **التنفيذ** — الخبير والمراحل والموعد والتسليم — فيملكه أمر التصنيع.
+// ولا حقيقة مكرّرة بين الاثنين.
+//
+// ══ حدود هذه المرحلة ════════════════════════════════════════════════════
+// تنتهي عند: حلقة `awaiting_exam` ⟶ معاينة مرتبطة ⟶ حلقة `examined`.
+// لا مال، ولا أمر تصنيع، ولا صيانة. `agreedCost` يبقى صفراً حتى تُبنى نقطة
+// اعتماده في المرحلة التالية.
+
+import { db } from "../db";
+import { sql } from "drizzle-orm";
+import {
+  patientDeviceEpisodes as PDE,
+  type PatientDeviceEpisodeStatus,
+} from "@shared/schema";
+
+/** الاختصاصان اللذان يُشترى فيهما جهاز. العلاج الطبيعي لا حلقة له. */
+export const DEVICE_SERVICE_TYPES = ["prosthetic", "medical_support"] as const;
+export type DeviceServiceType = (typeof DEVICE_SERVICE_TYPES)[number];
+
+export function isDeviceServiceType(v: unknown): v is DeviceServiceType {
+  return typeof v === "string" && (DEVICE_SERVICE_TYPES as readonly string[]).includes(v);
+}
+
+/** الحالات التي تعني «الشراء ما زال جارياً». مطابقة لشرط uq_pde_case_open. */
+export const OPEN_STATUSES: PatientDeviceEpisodeStatus[] = [
+  "awaiting_exam", "examined", "in_manufacturing",
+];
+
+/** الحالات التي يجوز الإلغاء منها: ما قبل التصنيع فقط. */
+export const CANCELLABLE_STATUSES: PatientDeviceEpisodeStatus[] = ["awaiting_exam", "examined"];
+
+/**
+ * خطأ عملٍ لا خطأ نظام: يحمل رمز HTTP الصحيح ورسالةً عربية للمستخدم.
+ * فتردّ النقطة 409 على «جهاز قيد الإجراء» بدل 500 يخفي السبب.
+ */
+export class DeviceEpisodeError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "DeviceEpisodeError";
+    this.status = status;
+  }
+}
+
+export interface DeviceEpisodeView {
+  id: number;
+  caseId: number;
+  serviceType: string;
+  sequenceNumber: number;
+  status: string;
+  agreedCost: number;
+  branchId: number | null;
+  createdAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+}
+
+const iso = (v: unknown): string | null =>
+  v === null || v === undefined ? null : new Date(v as any).toISOString();
+
+function toView(r: Record<string, any>): DeviceEpisodeView {
+  return {
+    id: Number(r.id),
+    caseId: Number(r.case_id),
+    serviceType: String(r.service_type),
+    sequenceNumber: Number(r.sequence_number),
+    status: String(r.status),
+    agreedCost: Number(r.agreed_cost ?? 0),
+    branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
+    createdAt: iso(r.created_at),
+    deliveredAt: iso(r.delivered_at),
+    cancelledAt: iso(r.cancelled_at),
+    cancelReason: r.cancel_reason ?? null,
+  };
+}
+
+/**
+ * الحلقة المفتوحة لهذا (المريض، نوع الخدمة) إن وُجدت.
+ *
+ * `serviceType` يُشتقّ من `patient_cases.case_type` ولا يُخزَّن على الحلقة —
+ * مصدر حقيقة واحد، فلا نسختان تنحرفان.
+ */
+export async function getOpenDeviceEpisode(
+  patientId: number,
+  serviceType: DeviceServiceType,
+): Promise<DeviceEpisodeView | null> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.patient_id = ${patientId}
+       AND pc.case_type = ${serviceType}
+       AND e.status NOT IN ('delivered', 'cancelled')
+     LIMIT 1
+  `);
+  const row = (r.rows ?? [])[0];
+  return row ? toView(row) : null;
+}
+
+/** كل حلقات المريض، مرتّبةً بالاختصاص ثم بالتسلسل. */
+export async function getDeviceEpisodesForPatient(
+  patientId: number,
+): Promise<DeviceEpisodeView[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.patient_id = ${patientId}
+     ORDER BY pc.case_type ASC, e.sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toView);
+}
+
+/**
+ * بدء جهاز جديد على خيط قائم.
+ *
+ * ══ الحماية من السباق ═════════════════════════════════════════════════
+ * طلبان متزامنان لنفس المريض والنوع كانا سيقرآن `MAX(sequence)+1` نفسه
+ * فينشئان حلقتين برقمٍ واحد. الحلّ قفلٌ حقيقي على **صفّ الخيط**
+ * (`SELECT ... FOR UPDATE` على `patient_cases`): كل شيء بعده — فحص
+ * المفتوحة، وحساب التسلسل، والإدراج — يجري متسلسلاً لا متوازياً.
+ *
+ * والخيط هو نقطة القفل الصحيحة لأنه ثابت الوجود: القفل على «الحلقة
+ * المفتوحة» يفشل حين لا توجد واحدة، وهي بالضبط حالة السباق.
+ *
+ * وخلف القفل يقف فهرسان في القاعدة نفسها — `uq_pde_case_open` و
+ * `uq_pde_case_seq` — فحتى لو أُلغي القفل يوماً تبقى الثوابت محروسة.
+ */
+export async function startDeviceEpisode(params: {
+  patientId: number;
+  serviceType: DeviceServiceType;
+  createdBy: number | null;
+}): Promise<DeviceEpisodeView> {
+  const { patientId, serviceType, createdBy } = params;
+
+  return await db.transaction(async (tx) => {
+    const pat = await tx.execute<{ id: number; branch_id: number | null }>(sql`
+      SELECT id, branch_id FROM patients WHERE id = ${patientId}
+    `);
+    const patient = (pat.rows ?? [])[0];
+    if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
+
+    //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
+    const cs = await tx.execute<{ id: number; branch_id: number | null }>(sql`
+      SELECT id, branch_id FROM patient_cases
+       WHERE patient_id = ${patientId} AND case_type = ${serviceType}
+       FOR UPDATE
+    `);
+    const caseRow = (cs.rows ?? [])[0];
+    if (!caseRow) {
+      throw new DeviceEpisodeError(
+        "لا توجد حالة من هذا النوع على ملف المريض — أضف نوع الحالة أولاً", 400,
+      );
+    }
+
+    const open = await tx.execute<{ id: number; status: string }>(sql`
+      SELECT id, status FROM patient_device_episodes
+       WHERE case_id = ${caseRow.id} AND status NOT IN ('delivered', 'cancelled')
+       LIMIT 1
+    `);
+    if ((open.rows ?? []).length > 0) {
+      throw new DeviceEpisodeError("لدى المريض جهاز من هذا النوع قيد الإجراء بالفعل", 409);
+    }
+
+    const mx = await tx.execute<{ next: number }>(sql`
+      SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+        FROM patient_device_episodes WHERE case_id = ${caseRow.id}
+    `);
+    const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+
+    const ins = await tx.execute<Record<string, any>>(sql`
+      INSERT INTO patient_device_episodes
+        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+         created_by, created_at, updated_at)
+      VALUES (${patientId}, ${caseRow.id}, ${caseRow.branch_id ?? patient.branch_id ?? null},
+              ${nextSeq}, 'awaiting_exam', 0, ${createdBy}, NOW(), NOW())
+      RETURNING id, case_id, sequence_number, status, agreed_cost, branch_id,
+                created_at, delivered_at, cancelled_at, cancel_reason
+    `);
+    const row = (ins.rows ?? [])[0];
+    return toView({ ...row, service_type: serviceType });
+  });
+}
+
+/**
+ * إلغاء حلقة **قبل التصنيع**.
+ *
+ * بدونه تبقى الحلقة المفتوحة حاجزاً دائماً: مريضٌ غيّر رأيه بعد طلب الجهاز
+ * يُقفل خيطه للأبد، ولا سبيل لبدء جهازٍ آخر عليه أبداً.
+ *
+ * والإلغاء بعد بدء التصنيع **ليس هنا**: هناك أمرُ عملٍ حقيقي بمراحله
+ * وخبيره، وإلغاؤه قرارُ تصنيعٍ يُتَّخذ من الأمر نفسه ثم يُغلق الحلقة —
+ * لا العكس. فهذه النقطة ترفض `in_manufacturing` صراحةً.
+ */
+export async function cancelPreManufacturingDeviceEpisode(params: {
+  patientId: number;
+  episodeId: number;
+  reason: string;
+}): Promise<DeviceEpisodeView> {
+  const { patientId, episodeId } = params;
+  const reason = (params.reason ?? "").trim();
+  if (!reason) throw new DeviceEpisodeError("سبب الإلغاء إلزامي", 400);
+
+  return await db.transaction(async (tx) => {
+    const cur = await tx.execute<{ id: number; status: string; patient_id: number }>(sql`
+      SELECT id, status, patient_id FROM patient_device_episodes
+       WHERE id = ${episodeId} FOR UPDATE
+    `);
+    const ep = (cur.rows ?? [])[0];
+    if (!ep) throw new DeviceEpisodeError("الحلقة غير موجودة", 404);
+    //  الانتماء يُتحقَّق في الشيفرة لا في المسار وحده: معرّفٌ من ملف مريض
+    //  آخر لا يجوز أن يُلغى لمجرّد أنه ورد في عنوان صحيح.
+    if (Number(ep.patient_id) !== patientId) {
+      throw new DeviceEpisodeError("الحلقة لا تخصّ هذا المريض", 404);
+    }
+
+    const status = String(ep.status);
+    if (status === "in_manufacturing") {
+      throw new DeviceEpisodeError(
+        "الجهاز دخل التصنيع — يُلغى من أمر التصنيع نفسه لا من هنا", 409,
+      );
+    }
+    if (!CANCELLABLE_STATUSES.includes(status as PatientDeviceEpisodeStatus)) {
+      throw new DeviceEpisodeError("الحلقة في حالة نهائية ولا تُلغى", 409);
+    }
+
+    const upd = await tx.execute<Record<string, any>>(sql`
+      UPDATE patient_device_episodes
+         SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = ${reason},
+             updated_at = NOW()
+       WHERE id = ${episodeId}
+      RETURNING id, case_id, sequence_number, status, agreed_cost, branch_id,
+                created_at, delivered_at, cancelled_at, cancel_reason
+    `);
+    const row = (upd.rows ?? [])[0];
+    const ct = await tx.execute<{ case_type: string }>(sql`
+      SELECT case_type FROM patient_cases WHERE id = ${row.case_id}
+    `);
+    return toView({ ...row, service_type: (ct.rows ?? [])[0]?.case_type ?? "" });
+  });
+}
+
+// ── الربط بالمعاينة ─────────────────────────────────────────────────────
+// الدالّتان التاليتان تأخذان معاملةً جاهزة (`tx`) بدل أن تفتحا واحدة: توقيع
+// المعاينة وتحريك الحلقة **حدثٌ واحد** لا حدثان متجاوران. فتبقى كتابة
+// الحلقات كلّها في هذا الملف، ويبقى التزامن بيد المُستدعي.
+
+/**
+ * احجز الحلقة المنتظرة لهذا (المريض، الخيط) إن وُجدت.
+ *
+ * المطابقة على **الزوج** لا على أحد طرفيه: `caseId` صحيحٌ وحده لا يثبت أن
+ * الخيط يخصّ هذا المريض، والكذبة تكون في الجمع بينهما. و
+ * `medical_exams.device_episode_id` بلا مفتاح أجنبي عمداً — ترِكر الختم
+ * (028) يرفض الـ SET NULL الذي يحتاجه المفتاح — فغياب حارس القاعدة هو
+ * بالضبط ما يجعل هذا الفحص غير قابل للتخطّي.
+ *
+ * والقفل (`FOR UPDATE`) يمنع طبيبين يوقّعان معاً من حجز الحلقة نفسها.
+ */
+export async function claimAwaitingEpisodeForExam(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { patientId: number; caseId: number },
+): Promise<number | null> {
+  const found = await tx.execute(sql`
+    SELECT id FROM patient_device_episodes
+     WHERE case_id = ${params.caseId}
+       AND patient_id = ${params.patientId}
+       AND status = 'awaiting_exam'
+     LIMIT 1
+     FOR UPDATE
+  `);
+  const row = (found.rows ?? [])[0];
+  return row ? Number(row.id) : null;
+}
+
+/** حرّك الحلقة إلى «مُعايَنة» داخل معاملة المُستدعي. */
+export async function markEpisodeExamined(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeId: number,
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'examined', updated_at = NOW()
+     WHERE id = ${episodeId} AND status = 'awaiting_exam'
+  `);
+}
+
+/** حلقة بمعرّفها مع نوع خدمتها — للتحقّق والعرض. */
+export async function getDeviceEpisode(episodeId: number): Promise<
+  (DeviceEpisodeView & { patientId: number }) | null
+> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.patient_id, e.case_id, pc.case_type AS service_type, e.sequence_number,
+           e.status, e.agreed_cost, e.branch_id, e.created_at, e.delivered_at,
+           e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.id = ${episodeId}
+  `);
+  const row = (r.rows ?? [])[0];
+  return row ? { ...toView(row), patientId: Number(row.patient_id) } : null;
+}

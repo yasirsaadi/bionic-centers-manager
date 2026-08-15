@@ -463,18 +463,30 @@ async function main() {
     }
   };
   for (const r of roots) walk(r);
-  //  الترحيل التاريخي (٠٥٠) كاتبٌ مشروع ووحيد: يعمل مرّةً عند الإقلاع
-  //  ثم لا يعود. المقصود هنا أن يبقى **مسار التشغيل** بلا كاتب — لا نقطة
-  //  REST ولا خدمة ولا زرّ — حتى تُفعَّل دورة الحياة في مرحلتها الخاصّة.
-  const BACKFILL = "server/migrations/050_device_episode_backfill.ts";
+  //  **كتابة الحلقات مركزية.** كاتبان مشروعان لا ثالث لهما: الترحيل
+  //  التاريخي (٠٥٠) الذي يعمل مرّةً عند الإقلاع، وطبقة البيانات المخصّصة.
+  //  للحلقة ثوابت دقيقة — شراءٌ مفتوحٌ واحد لكل خيط، وتسلسلٌ لا يتكرّر،
+  //  وحالاتٌ خمس بانتقالات محدودة — وتوزيعُ حراستها على routes متعدّدة هو
+  //  كيف تنحرف الثوابت بصمت. فأي SQL يكتب الجدول من مكانٍ آخر يسقط هنا.
+  const ALLOWED_WRITERS = [
+    //  الترحيل التاريخي — يعمل مرّةً عند الإقلاع ثم لا يعود.
+    "server/migrations/050_device_episode_backfill.ts",
+    //  طبقة البيانات المخصّصة — كل كتابةٍ حيّة تمرّ منها.
+    "server/device_episodes/store.ts",
+    //  كاسكيد دمج الملفّين: ينقل الحلقات بمعرّفاتها ويعيد ترقيم تسلسلها
+    //  داخل معاملة الدمج نفسها، فلا يمكن استخراجه إلى نداءٍ مستقل بلا
+    //  كسر ذرّيّة الدمج. استثناءٌ مسمّى بحدوده، لا ثغرة مفتوحة.
+    "server/storage.ts",
+  ];
   const writers = files.filter((f) => {
     const src = readFileSync(f, "utf8");
-    return /insert\(\s*patientDeviceEpisodes|INSERT INTO patient_device_episodes/i.test(src);
+    return /insert\(\s*patientDeviceEpisodes|update\(\s*patientDeviceEpisodes|(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+patient_device_episodes/i.test(src);
   });
-  same("**ولا كاتب للحلقات في مسار التشغيل** — الترحيل التاريخي وحده",
-    writers.filter((f) => f.replace(/\\/g, "/") !== BACKFILL), []);
-  check(writers.some((f) => f.replace(/\\/g, "/") === BACKFILL),
-    "   والترحيل التاريخي موجود فعلاً ككاتب وحيد", JSON.stringify(writers));
+  const norm = (f: string) => f.replace(/\\/g, "/");
+  same("**كتابة الحلقات محصورة في طبقتها** — لا SQL حلقاتٍ في routes ولا في storage",
+    writers.map(norm).filter((f) => !ALLOWED_WRITERS.includes(f)), []);
+  same("   والكاتبان المشروعان موجودان فعلاً",
+    writers.map(norm).filter((f) => ALLOWED_WRITERS.includes(f)).sort(), [...ALLOWED_WRITERS].sort());
   const migrationText = readFileSync("server/migrations/049_patient_device_episodes.ts", "utf8");
   check(!/\bUPDATE\s+(payments|visits|cost_entries|patients|patient_cases|prosthetic_work_orders|medical_exams)\b/i.test(migrationText),
     "**والهجرة لا تحدّث صفّاً واحداً — لا مبلغ ولا ربط**");

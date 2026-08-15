@@ -20,6 +20,7 @@ import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
+import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import * as manufacturingStore from "./manufacturing/store";
@@ -6330,6 +6331,10 @@ export async function registerRoutes(
 
   // Register doctor medical-examination routes (معاينة الطبيب)
   registerMedicalRoutes(app, isAuthenticated);
+
+  // Device episodes (حلقات أجهزة المريض): start a new device on an existing
+  // specialty thread, list them, cancel one before manufacturing begins.
+  registerDeviceEpisodeRoutes(app, isAuthenticated);
 
   // Register patient communication link-token routes (روابط تواصل المريض).
   // Staff-facing only: issue / list / revoke. There is deliberately NO public
