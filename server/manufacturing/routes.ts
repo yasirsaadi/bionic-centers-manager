@@ -12,7 +12,11 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs } from "../medical/store";
+import {
+  hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
+  hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
+} from "../medical/store";
+import { getOpenDeviceEpisode, DeviceEpisodeError } from "../device_episodes/store";
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
@@ -207,14 +211,27 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // Legacy patients (registered before the exam system) are exempt: their
     // devices were prescribed under the old workflow, and holding routine
     // work hostage to a retroactive exam served no one.
-    if (purpose !== "maintenance"
-        && !(await hasSignedExam(patientId, serviceType))
-        && !(await isLegacyPatient(patientId))) {
-      return res.status(409).json({
-        error: serviceType === "prosthetic"
-          ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
-          : "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
-      });
+    //
+    // **ولا يُلتفّ على الجهاز الحيّ من هنا.** هذه النقطة تنشئ بناءً أولياً
+    // مباشرةً بلا بيعٍ ولا سعر، فلو مرّت ومريضُها يحمل حلقةً مفتوحة
+    // لأنتجت أمراً يتيماً: تبقى الحلقة «مُعايَنة» للأبد، ويُصنَع الجهاز بلا
+    // سعرٍ مقيَّد ولا هويّة. المسار الصحيح واحد — «تخصيص وإسناد خبير».
+    // والصيانة لا تُمَسّ: لها نقطتها وجهازها قائم.
+    if (purpose !== "maintenance") {
+      const live = await getOpenDeviceEpisode(patientId, serviceType);
+      if (live) {
+        return res.status(409).json({
+          error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
+        });
+      }
+      if (!(await hasSignedExam(patientId, serviceType))
+          && !(await isLegacyPatient(patientId))) {
+        return res.status(409).json({
+          error: serviceType === "prosthetic"
+            ? "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
+            : "لا يمكن بدء التصنيع قبل معاينة الطبيب — المريض بانتظار معاينة مساند طبية",
+        });
+      }
     }
 
     try {
@@ -280,8 +297,32 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // endpoint, /api/manufacturing/maintenance-visit.)
     // Legacy patients (registered before the exam system) are exempt — see
     // the identical rule on the orders endpoint above.
+    // ══ وضعان ═════════════════════════════════════════════════════════
+    // حلقةٌ مفتوحة ⟶ جهازٌ حيّ له هويّته: كل ما يُقرأ يُقرأ منها هي.
+    // لا حلقة ⟶ المسار القديم بحرفه، فأغلب المرضى عليه.
+    //
+    // والحلقة يحلّها الخادم من (المريض، نوع الخدمة) — ولا يُقبل معرّف من
+    // العميل إطلاقاً، وإلّا صار بالإمكان توجيه بيعٍ إلى حلقة غير التي
+    // فحصها الطبيب.
+    const liveEpisode = await getOpenDeviceEpisode(patientId, serviceType);
+
     const legacyExempt = await isLegacyPatient(patientId);
-    if (!legacyExempt && !(await hasSignedExam(patientId, serviceType))) {
+    if (liveEpisode) {
+      // الإعفاء التاريخي **لا يسري هنا**: مريضٌ قديم طلب جهازاً جديداً
+      // صراحةً يمرّ بمعاينة ذلك الجهاز، وإلّا خصّصنا جهازاً لم يره طبيب.
+      if (liveEpisode.status !== "examined") {
+        return res.status(409).json({
+          error: liveEpisode.status === "awaiting_exam"
+            ? "الجهاز الجديد بانتظار معاينة الطبيب — لا يمكن تخصيصه بعد"
+            : "طلب الجهاز ليس في حالة تسمح بالتخصيص",
+        });
+      }
+      if (!(await hasSignedExamForEpisode(liveEpisode.id))) {
+        return res.status(409).json({
+          error: "لا توجد معاينة موقّعة لهذا الطلب بالذات — يفحصه الطبيب أولاً",
+        });
+      }
+    } else if (!legacyExempt && !(await hasSignedExam(patientId, serviceType))) {
       return res.status(409).json({
         error: serviceType === "prosthetic"
           ? "لا يمكن تخصيص خبير قبل معاينة الطبيب — المريض بانتظار معاينة أطراف صناعية"
@@ -302,8 +343,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       || s.role === "doctor" || Boolean(s.permissions?.canWriteMedicalExam);
     const fields: any = {};
     // Legacy patients have no doctor decision to protect: reception completes
-    // the specs directly, exactly as the pre-exam workflow always worked.
-    if (mayWriteClinical || legacyExempt) {
+    // the specs directly, exactly as the pre-exam workflow always worked —
+    // but a live episode HAS a decision, so the exemption stops there.
+    if (mayWriteClinical || (legacyExempt && !liveEpisode)) {
       for (const f of allowed) if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
     }
 
@@ -314,9 +356,18 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // override is theirs to answer for in the audit log.
     let effectiveCost = cost;
     if (!mayWriteClinical) {
-      const proposed = await latestDeviceCost(patientId, serviceType);
+      // سعرُ **هذا الجهاز** من معاينته هو، لا أحدثُ سعرٍ للمريض في هذا
+      // الاختصاص: جهازٌ سابق بسعرٍ آخر لا يسعّر الجديد.
+      const proposed = liveEpisode
+        ? await latestDeviceCostForEpisode(liveEpisode.id)
+        : await latestDeviceCost(patientId, serviceType);
       if (proposed !== null) {
         effectiveCost = proposed;
+      } else if (liveEpisode) {
+        // ولا رجوع إلى سعرٍ قديم حين تسكت معاينة هذا الطلب.
+        return res.status(409).json({
+          error: "لم يحدّد الطبيب كلفة هذا الجهاز في معاينته — تُستكمل في المعاينة أو يعتمد المدير التخصيص",
+        });
       } else if (!legacyExempt) {
         return res.status(409).json({
           error: "لم يحدّد الطبيب كلفة الجهاز في المعاينة — تُستكمل الكلفة في المعاينة أو يعتمد المدير التخصيص",
@@ -326,11 +377,14 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       // there is no exam proposal to confirm, exactly as before the system.
     }
     // The doctor's signed specs are not anyone's to change: whatever the
-    // latest exam prescribes overrides the request body, field by field.
+    // exam prescribes overrides the request body, field by field — and for a
+    // live device it is THAT device's exam, never an older one.
     // Failure to read the exam must not block the assignment — it degrades to
     // trusting the (already role-filtered) body.
     try {
-      Object.assign(fields, await prescribedSpecs(patientId, serviceType));
+      Object.assign(fields, liveEpisode
+        ? await prescribedSpecsForEpisode(liveEpisode.id, serviceType)
+        : await prescribedSpecs(patientId, serviceType));
     } catch (err) {
       console.error("[manufacturing] reading prescribed specs failed:", err);
     }
@@ -338,11 +392,17 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     try {
       const { workOrderId } = await storage.assignManufacturing({
         patientId, serviceType, fields, cost: effectiveCost, expertUserId, assignedBy: s.userId ?? null,
+        deviceEpisodeId: liveEpisode?.id ?? null,
       });
       await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
         `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${effectiveCost}${mayWriteClinical ? "" : " — سعر الطبيب المعتمد"})`);
       res.status(201).json({ ok: true, workOrderId });
     } catch (err: any) {
+      // The episode re-check under the row lock: a concurrent click already
+      // took this device into manufacturing. A business answer, not a fault.
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       // In-tx guard or the partial unique index: someone beat us to it.
       if (err?.name === "ActiveAssignmentError" || err?.code === "23505") {
         return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
