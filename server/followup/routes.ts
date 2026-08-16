@@ -20,7 +20,7 @@ import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
-import { canApprove, canRecordFollowup } from "@shared/followup";
+import { canApprove, canRecordFollowup, canViewFollowup } from "@shared/followup";
 
 type Req = any;
 
@@ -96,6 +96,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
 
   // ── قراءة: متابعات مريض + تاريخها ────────────────────────────────────
   app.get("/api/followups/patient/:patientId", isAuthenticated, async (req: Req, res) => {
+    //  ملفُّ المتابعة يحمل السعر المعتمد وهاتفَ المريض وسببَ تردّده — فقراءتُه
+    //  لمسؤولي المتابعة وحدهم. وخبيرُ الأطراف والمحاسب خارجها.
+    if (!canViewFollowup(getSession(req))) return res.status(403).json({ error: "غير مصرح" });
     const patientId = Number(req.params.patientId);
     if (!Number.isFinite(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
     const patient = await storage.getPatient(patientId);
@@ -114,6 +117,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
 
   // ── شاشة «متابعة ما بعد المعاينة» ────────────────────────────────────
   app.get("/api/followups", isAuthenticated, async (req: Req, res) => {
+    if (!canViewFollowup(getSession(req))) return res.status(403).json({ error: "غير مصرح" });
     const rows = await store.listFollowups({
       scope: branchScope(req),
       filter: typeof req.query.filter === "string" ? req.query.filter : "all",
@@ -236,6 +240,38 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
+  // ── اختيار الخبير — **عملُ الاستعلامات، وقبل التصنيع** ───────────────
+  //  الطبيب اقترحه في معاينته، والفرع يقرّر. ولا تصنيعَ يبدأ من هنا.
+  app.post("/api/followups/:id/expert", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    const expertUserId = Number(req.body?.expertUserId);
+    if (!Number.isFinite(expertUserId)) {
+      return res.status(400).json({ error: "معرّف الخبير مطلوب" });
+    }
+    const patient = await storage.getPatient(f.patientId);
+    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+    //  نفس تحقّق «تخصيص»: فعّالٌ وفي فرع المريض — لا قائمة خبراء ثانية.
+    const v = await validateExpert(expertUserId, patient.branchId);
+    if (!v.ok) return res.status(400).json({ error: v.reason });
+    try {
+      const updated = await store.selectExpert({
+        followupId: f.id, expertUserId, actor: actorOf(req),
+      });
+      await logAudit({
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
+        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: { selectedExpertUserId: f.selectedExpertUserId },
+        newValues: { selectedExpertUserId: expertUserId },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `اختيار خبير لمتابعة #${f.id}: #${f.selectedExpertUserId ?? "—"} ⟶ #${expertUserId}`,
+      });
+      res.json(updated);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
   // ── طلب تعديل السعر — **اقتراحٌ لا تعديل** ───────────────────────────
   app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
@@ -308,19 +344,25 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const f = await loadInScope(req, res);
     if (!f) return;
 
-    const expertUserId = Number(req.body?.expertUserId);
-    if (!Number.isFinite(expertUserId)) {
-      return res.status(400).json({ error: "اختيار الخبير مطلوب لبدء التصنيع" });
-    }
-    //  الخبير يُتحقَّق بنفس قائمة «تخصيص» — فرع المريض وفعّالٌ فيه.
+    // ══ الخبير **لا يُقبل من الطلب إطلاقاً** ═══════════════════════════
+    // اختيارُه عملُ الاستعلامات، والمعتمِد يعتمد ما اختاروه. فلو قُرئ رقمٌ
+    // من الجسم لصار الاعتماد باباً خلفياً يسند الجهاز لخبيرٍ لم يقرّره
+    // أحد. والمخزن يقرأه من الصفّ تحت القفل، وهنا لا يُقرأ الحقل أصلاً —
+    // فما لا يُقرأ لا يُهرَّب.
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    const v = await validateExpert(expertUserId, patient.branchId);
+    if (f.selectedExpertUserId === null) {
+      return res.status(409).json({
+        error: "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء",
+      });
+    }
+    //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع منذ اختياره.
+    const v = await validateExpert(f.selectedExpertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
     try {
       const out = await store.approvePurchase({
-        followupId: f.id, expertUserId, note: str(req.body?.note), actor: actorOf(req),
+        followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
       });
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",

@@ -42,7 +42,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-متابعة-ما-بعد-المعاينة";
 const ADMIN = 9861, RECV = 9862, MGR = 9863, DOC = 9864, DOC2 = 9865;
 const EXPERT = 9866, RECV_B2 = 9867, DOC_B2 = 9868;
-const ALL_USERS = [ADMIN, RECV, MGR, DOC, DOC2, EXPERT, RECV_B2, DOC_B2];
+const EXPERT2 = 9869, ACCT = 9870, PHYSIO = 9871;
+const ALL_USERS = [ADMIN, RECV, MGR, DOC, DOC2, EXPERT, RECV_B2, DOC_B2,
+  EXPERT2, ACCT, PHYSIO];
 
 const S = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -63,6 +65,16 @@ const S = {
     displayName: "استعلامات ٢", permissions: { canViewPatients: true, canAddPatients: true } },
   docB2: { userId: DOC_B2, role: "doctor", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "د. الفرع ٢", permissions: { canViewPatients: true, canWriteMedicalExam: true } },
+  expert2: { userId: EXPERT2, role: "prosthetics_expert", isAdmin: false, branchId: 1,
+    accessibleBranches: [1], displayName: "الخبير الثاني", permissions: {} },
+  //  **يحملان `canAddPatients`** عمداً: البوّابة بالدور لا بالقدرة، وهذان
+  //  هما مَن كانت القدرةُ وحدها تفتح لهما ملفّ المتابعة.
+  acct: { userId: ACCT, role: "accountant", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "المحاسب",
+    permissions: { canViewPatients: true, canAddPatients: true, canManageAccounting: true } },
+  physio: { userId: PHYSIO, role: "therapist", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "مُدخِل الجلسات",
+    permissions: { canViewPatients: true, canEditPatients: true, canEnterSessions: true } },
 };
 
 async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
@@ -156,6 +168,9 @@ async function main() {
     [EXPERT, "prosthetics_expert", "الخبير", 1, "[]"],
     [RECV_B2, "reception", "استعلامات ٢", 2, "[]"],
     [DOC_B2, "doctor", "د. الفرع ٢", 2, '["prosthetic"]'],
+    [EXPERT2, "prosthetics_expert", "الخبير الثاني", 1, "[]"],
+    [ACCT, "accountant", "المحاسب", 1, "[]"],
+    [PHYSIO, "therapist", "مُدخِل الجلسات", 1, "[]"],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true,$7::jsonb)
@@ -289,19 +304,20 @@ async function main() {
       (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [p1])).length, 0);
 
     same("١١. **الاستعلامات لا يعتمد الشراء**",
-      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.recv,
-        { expertUserId: EXPERT })).status, 403);
+      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.recv, {})).status, 403);
     same("١٢. **ومديرُ الفرع لا يعتمد الشراء**",
-      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.mgr,
-        { expertUserId: EXPERT })).status, 403);
+      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.mgr, {})).status, 403);
+
+    //  والخبير يختاره الاستعلامات قبل الاعتماد — لا يُسأل عنه الطبيب.
+    same("     (الاستعلامات تختار الخبير)",
+      (await http("POST", `/api/followups/${f1.id}/expert`, S.recv,
+        { expertUserId: EXPERT })).status, 200);
 
     // ══ ١٥. الضغطة المزدوجة ═══════════════════════════════════════════
     //  اعتمادان **متزامنان** — وأحدهما فقط يجوز أن يُنشئ أمراً.
     const [a1, a2] = await Promise.all([
-      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc,
-        { expertUserId: EXPERT }),
-      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc2,
-        { expertUserId: EXPERT }),
+      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc, {}),
+      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc2, {}),
     ]);
     const okCount = [a1, a2].filter((r) => r.status === 200).length;
     same("١٣. **طبيبٌ يعتمد الشراء** — واحدٌ فقط نجح", okCount, 1);
@@ -345,13 +361,80 @@ async function main() {
     check(typeof mgrTotal.body?.costNote === "string",
       "   ويُبلَّغ بأن الكلفة لم تُعدَّل — لا إسقاطٌ صامت", JSON.stringify(mgrTotal.body?.costNote));
 
-    //  و«تخصيص» نفسها: مديرٌ يمرّر رقماً آخر ⟶ يُحجَز السعر المعتمد.
-    const mgrAssign = await http("POST", `/api/patients/${p2}/assign-manufacturing`, S.mgr,
-      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 111_111 });
-    same("   و«تخصيص» بسعرٍ مخالف ⟶ يُقبل الطلب", mgrAssign.status, 201);
-    same("   **لكن المحجوز هو السعر المعتمد لا ما أرسله**",
-      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [p2]))[0].total_cost),
-      900_000);
+    //  والمسؤولُ العام **ليس مستثنى**: صلاحيةُ الاعتماد لا تعني تخطّي التاريخ.
+    const admCase = await http("PATCH", `/api/patients/${p2}/cases/${c2}`, S.admin, { cost: 400_000 });
+    same("ب٤. **والمسؤول العام كذلك لا يعدّل كلفة الحالة مباشرةً**", admCase.status, 409);
+    const admTotal = await http("PUT", `/api/patients/${p2}`, S.admin,
+      { name: `${MARK} الالتفاف`, totalCost: 400_000, branchId: 1 });
+    same("   **ولا `total_cost` من «تعديل مريض»**",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [p2]))[0].total_cost), 0);
+    check(typeof admTotal.body?.costNote === "string",
+      "   ويُبلَّغ صراحةً — لا إسقاطٌ صامت", JSON.stringify(admTotal.body?.costNote));
+
+    //  …لكنه يستطيع بالطريق الرسمي، والتاريخ يحفظ القيمتين.
+    const admReq = await http("POST", `/api/followups/${f2.id}/price-request`, S.admin,
+      { proposedPrice: 400_000, reason: "price" });
+    same("   والمسؤول **يستطيع** بالطريق الرسمي: يطلب…", admReq.status, 200);
+    const admDecide = await http("POST", `/api/price-requests/${admReq.body.requestId}/decide`,
+      S.admin, { decision: "approve" });
+    same("   …ويعتمد بنفسه", [admDecide.status, admDecide.body?.followup?.approvedPrice],
+      [200, 400_000]);
+    const f2hist = await followupOf(p2);
+    const admEv = (f2hist?.events ?? []).find((e: any) => e.eventType === "price_approved");
+    same("   **والتاريخ يحفظ القديم والجديد**",
+      [admEv?.payload?.oldPrice, admEv?.payload?.newApprovedPrice], [900_000, 400_000]);
+
+    // ══ ب١. لا تجاوز لاعتماد الشراء من النقاط القديمة ══════════════════
+    console.log("\n── لا تجاوز من النقاط القديمة ──");
+    const bypassBody = { expertUserId: EXPERT, serviceType: "prosthetic", cost: 111_111 };
+    //  الثلاثةُ الأُوَل تصل النقطتين فعلاً، فيوقفها حارسُ المتابعة بـ409.
+    //  والطبيبُ لا يصلهما أصلاً (403 من التخويل القائم) — والنتيجة واحدة:
+    //  لا بناءَ يبدأ من خارج المسار، والاختبار يفرّق بين الطبقتين لا يخلطهما.
+    for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr],
+      ["المسؤول العام", S.admin]] as any[]) {
+      same(`ب١. **${who} لا يبدأ تصنيعاً من «تخصيص» ومتابعةٌ حيّة**`,
+        (await http("POST", `/api/patients/${p2}/assign-manufacturing`, sess, bypassBody)).status,
+        409);
+      same(`     ولا من /api/manufacturing/orders`,
+        (await http("POST", "/api/manufacturing/orders", sess,
+          { patientId: p2, ...bypassBody })).status, 409);
+    }
+    const docBypass = [
+      (await http("POST", `/api/patients/${p2}/assign-manufacturing`, S.doc, bypassBody)).status,
+      (await http("POST", "/api/manufacturing/orders", S.doc, { patientId: p2, ...bypassBody })).status,
+    ];
+    check(docBypass.every((st) => st === 403 || st === 409),
+      "ب١. **والطبيبُ كذلك لا يبدأ منهما** (يُردّ بالتخويل القائم أصلاً)",
+      JSON.stringify(docBypass));
+    same("     **ولا أمرَ تصنيعٍ وُلد من أيٍّ منها**",
+      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [p2])).length, 0);
+    same("     ولا كلفةَ تحرّكت",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [p2]))[0].total_cost), 0);
+
+    //  والمسارُ الوحيد يعمل: خبير ⟶ قبول ⟶ اعتماد.
+    await http("POST", `/api/followups/${f2.id}/expert`, S.recv, { expertUserId: EXPERT });
+    await http("POST", `/api/followups/${f2.id}/accept-price`, S.recv, {});
+    const onlyPath = await http("POST", `/api/followups/${f2.id}/approve-purchase`, S.doc, {});
+    same("     **والمسار الرسمي وحده يُنشئ البناء**", onlyPath.status, 200);
+    const p2orders = await q(
+      `SELECT id, expert_user_id FROM prosthetic_work_orders WHERE patient_id = $1`, [p2]);
+    same("     أمرٌ واحد بالسعر المعتمد",
+      [p2orders.length,
+        Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [p2]))[0].total_cost)],
+      [1, 400_000]);
+
+    //  ومريضٌ **بلا متابعة حيّة** يبقى على سلوكه القديم حرفاً بحرف.
+    const pLegacy = await mkPatient("بلا متابعة");
+    await mkCase(pLegacy);
+    await q(`INSERT INTO medical_exams (patient_id, case_type, branch_id, doctor_id,
+               doctor_name, diagnosis, prescription, device_cost, version, signed_at)
+             VALUES ($1,'prosthetic',1,$2,'د. قديم','تشخيص','{}'::jsonb,250000,1,NOW())`,
+      [pLegacy, DOC]);
+    same("     (ولا متابعةَ لهذا — كُتبت المعاينة مباشرةً)",
+      (await q(`SELECT 1 FROM post_exam_followups WHERE patient_id=$1`, [pLegacy])).length, 0);
+    same("ب١. **ومريضٌ بلا متابعة حيّة يبقى على المسار القديم**",
+      (await http("POST", `/api/patients/${pLegacy}/assign-manufacturing`, S.recv,
+        { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 201);
 
     // ══ ١٧–١٩. الإغلاق وإعادة الفتح ═══════════════════════════════════
     console.log("\n── الإغلاق وإعادة الفتح ──");
@@ -457,8 +540,7 @@ async function main() {
       (await http("POST", `/api/followups/${fB2.id}/defer`, S.recv,
         { reason: "needs_time", noScheduledFollowUp: true })).status, 403);
     same("   وطبيبُ بغداد لا يعتمد شراء ذي قار",
-      (await http("POST", `/api/followups/${fB2.id}/approve-purchase`, S.doc,
-        { expertUserId: EXPERT })).status, 403);
+      (await http("POST", `/api/followups/${fB2.id}/approve-purchase`, S.doc, {})).status, 403);
     const listRecv = (await http("GET", "/api/followups", S.recv)).body ?? [];
     check(!listRecv.some((r: any) => r.patientId === pB2),
       "   **وشاشةُ المتابعة لا تعبر الفرع**", JSON.stringify(listRecv.map((r: any) => r.patientId)));
@@ -526,6 +608,101 @@ async function main() {
     same("   والمدير يبقى قادراً (مخرج الإدارة)",
       (await http("PATCH", `/api/manufacturing/orders/${woId}/reassign`, S.mgr,
         { newExpertUserId: EXPERT, reason: "قرار إداري" })).status, 200);
+
+    // ══ ب٢. الخبير: اقتراحُ الطبيب يُبذَر، والاستعلامات تقرّر ═════════
+    console.log("\n── الخبير ──");
+    const pExp = await mkPatient("الخبير");
+    await mkCase(pExp);
+    await http("POST", `/api/medical/patients/${pExp}/exams`, S.doc, {
+      caseType: "prosthetic", diagnosis: "بتر", deviceCost: 700_000,
+      prescription: {}, proposedExpertUserId: EXPERT,
+    });
+    const fExp = await followupOf(pExp);
+    same("ب٢. **خبيرُ الطبيب المقترَح يُبذَر في المتابعة**",
+      fExp?.selectedExpertUserId, EXPERT);
+    check(typeof fExp?.selectedExpertName === "string",
+      "     ويصل الواجهة باسمه لا برقمه", JSON.stringify(fExp?.selectedExpertName));
+
+    const chg = await http("POST", `/api/followups/${fExp.id}/expert`, S.recv,
+      { expertUserId: EXPERT2 });
+    same("     **والاستعلامات تغيّره**",
+      [chg.status, chg.body?.selectedExpertUserId], [200, EXPERT2]);
+    same("     **ولا تصنيعَ بدأ بالتغيير**",
+      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pExp])).length, 0);
+    const fExpEv = await followupOf(pExp);
+    const expEv = (fExpEv?.events ?? []).find((e: any) => e.eventType === "expert_selected");
+    same("     والحدث يحفظ القديم والجديد",
+      [expEv?.payload?.oldExpertUserId, expEv?.payload?.newExpertUserId], [EXPERT, EXPERT2]);
+    same("     وخبيرٌ من فرعٍ آخر يُردّ",
+      (await http("POST", `/api/followups/${fExp.id}/expert`, S.recv,
+        { expertUserId: DOC_B2 })).status, 400);
+
+    await http("POST", `/api/followups/${fExp.id}/accept-price`, S.recv, {});
+    //  **الاعتماد لا يقبل خبيراً من الجسم**: يُهرَّب EXPERT فيُتجاهَل.
+    const smuggle = await http("POST", `/api/followups/${fExp.id}/approve-purchase`, S.doc,
+      { expertUserId: EXPERT });
+    same("ب٢. اعتماد الشراء نجح", smuggle.status, 200);
+    const expOrder = await q(
+      `SELECT expert_user_id FROM prosthetic_work_orders WHERE patient_id=$1`, [pExp]);
+    same("     **والمُسنَد هو المحفوظ لا المهرَّب في الطلب**",
+      Number(expOrder[0].expert_user_id), EXPERT2);
+    same("     وبعد التحويل لا يُغيَّر الخبير من المتابعة",
+      (await http("POST", `/api/followups/${fExp.id}/expert`, S.recv,
+        { expertUserId: EXPERT })).status, 409);
+
+    //  ومتابعةٌ بلا خبير: الاعتماد يُردّ ويطلب اختياره.
+    const pNoExp = await mkPatient("بلا خبير");
+    await mkCase(pNoExp);
+    await signExam(pNoExp, S.doc, { deviceCost: 300_000 });
+    const fNoExp = await followupOf(pNoExp);
+    same("     (بلا خبيرٍ مقترَح)", fNoExp?.selectedExpertUserId, null);
+    await http("POST", `/api/followups/${fNoExp.id}/accept-price`, S.recv, {});
+    const noExpApprove = await http("POST", `/api/followups/${fNoExp.id}/approve-purchase`,
+      S.doc, {});
+    same("ب٢. **ولا اعتمادَ بلا خبيرٍ مختار**", noExpApprove.status, 409);
+    same("     ولا أمرَ وُلد",
+      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pNoExp])).length, 0);
+
+    // ══ ب٣. قراءةُ المتابعة لمسؤوليها وحدهم ═══════════════════════════
+    console.log("\n── مَن يقرأ المتابعة ──");
+    for (const [who, sess] of [["خبير الأطراف", S.expert], ["المحاسب", S.acct],
+      ["مُدخِل الجلسات", S.physio]] as any[]) {
+      same(`ب٣. **${who} لا يقرأ لوحة المتابعة**`,
+        (await http("GET", "/api/followups", sess)).status, 403);
+      same(`     ولا ملفَّ متابعةِ مريض`,
+        (await http("GET", `/api/followups/patient/${pExp}`, sess)).status, 403);
+    }
+    for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr],
+      ["الطبيب", S.doc], ["المسؤول", S.admin]] as any[]) {
+      same(`     و${who} يقرأ ضمن نطاقه`,
+        (await http("GET", "/api/followups", sess)).status, 200);
+    }
+
+    // ══ ب٥. ليست كلُّ معاينةٍ نيّةَ شراء ══════════════════════════════
+    console.log("\n── المعاينة الروتينية ──");
+    const pRoutine = await mkPatient("الروتيني");
+    const cRoutine = await mkCase(pRoutine);
+    //  جهازٌ سُلّم له سابقاً — أمرُ بناءٍ مكتمل في تاريخه.
+    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id,
+               service_type, purpose, status, current_stage)
+             VALUES ($1,1,$2,'prosthetic','initial_build','completed','delivered')`,
+      [pRoutine, EXPERT]);
+    await signExam(pRoutine, S.doc, { deviceCost: 800_000 });
+    same("ب٥. **معاينةٌ روتينية لمريضٍ له جهازٌ سابق ⟶ لا متابعةَ بيع**",
+      (await q(`SELECT 1 FROM post_exam_followups WHERE patient_id=$1`, [pRoutine])).length, 0);
+
+    //  …حتى يفتح الاستعلامات حلقةً صراحةً، فتُفتح متابعةٌ لها.
+    const ep = await http("POST", `/api/patients/${pRoutine}/device-episodes`, S.recv,
+      { serviceType: "prosthetic" });
+    check(ep.status === 200 || ep.status === 201,
+      "     (وفُتحت حلقةُ جهازٍ جديد صراحةً)", JSON.stringify({ s: ep.status, b: ep.body }));
+    await signExam(pRoutine, S.doc, { deviceCost: 950_000 });
+    const fRoutine = await followupOf(pRoutine);
+    same("ب٥. **وبعد فتح الحلقة، معاينتُها تفتح متابعة**",
+      [fRoutine?.status, fRoutine?.approvedPrice],
+      ["awaiting_patient_decision", 950_000]);
+    same("     ومربوطةٌ بالحلقة نفسها",
+      Number(fRoutine?.deviceEpisodeId) > 0, true);
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

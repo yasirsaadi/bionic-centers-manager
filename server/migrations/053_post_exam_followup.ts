@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS post_exam_followups (
   approved_price         INTEGER NOT NULL DEFAULT 0,
   -- 'exam' = سعر الطبيب كما وقّعه · 'approved_change' = تعديلٌ اعتُمد.
   price_source           TEXT NOT NULL DEFAULT 'exam',
+  -- ══ الخبير المختار — يُبذَر من اقتراح الطبيب ويبقى مرناً ══════════════
+  -- الطبيب **يقترح** الخبير في معاينته (ترحيل ٠٣٥)، والاستعلامات تُبقيه أو
+  -- تغيّره قبل بدء العمل. فحفظُه هنا يُبقي تلك المرونة كما هي بدل أن يُسأل
+  -- الطبيبُ عنه مرّةً ثانية لحظة الاعتماد — وهو ليس قراره أصلاً.
+  --
+  -- لقطةُ رقم بلا مفتاح أجنبي عمداً: حسابٌ يُحذف يترك رقماً يُقرأ بلا اسم
+  -- ويختار الموظّف من القائمة الحيّة — نفس درس proposed_expert_user_id.
+  selected_expert_user_id INTEGER,
   next_follow_up_at      TIMESTAMPTZ,
   -- استثناءٌ صريح: «لا موعد متابعة» قرارٌ مُتَّخذ لا حقلٌ مُهمَل.
   no_scheduled_follow_up BOOLEAN NOT NULL DEFAULT FALSE,

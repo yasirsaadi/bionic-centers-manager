@@ -10,7 +10,8 @@
 // **القاعدة نفسها** صحيحة قبل أن يستعملها أيٌّ منهما.
 
 import {
-  allowedActions, canApprove, canRecordFollowup, isFollowupReason, isTerminal,
+  allowedActions, canApprove, canRecordFollowup, canViewFollowup,
+  isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
 } from "./followup";
 
@@ -30,6 +31,14 @@ const doc = { role: "doctor", isAdmin: false, permissions: { canWriteMedicalExam
 const docCap = { role: "reception", isAdmin: false, permissions: { canWriteMedicalExam: true } };
 const admin = { role: "admin", isAdmin: true, permissions: {} };
 const expert = { role: "prosthetics_expert", isAdmin: false, permissions: {} };
+//  **يحملان `canAddPatients`/`canEditPatients`** عمداً: البوّابة بالدور لا
+//  بالقدرة، وهذان هما مَن كانت القدرةُ وحدها تفتح لهما ملفّ المتابعة.
+const accountant2 = { role: "accountant", isAdmin: false,
+  permissions: { canAddPatients: true, canManageAccounting: true } };
+const physioStaff = { role: "therapist", isAdmin: false,
+  permissions: { canEditPatients: true, canEnterSessions: true } };
+const expertWithAdd = { role: "prosthetics_expert", isAdmin: false,
+  permissions: { canAddPatients: true } };
 
 // ══ أ. مَن يتابع ═══════════════════════════════════════════════════════
 console.log("\n── مَن يسجّل المتابعة ──");
@@ -39,6 +48,22 @@ same("   والطبيب", canRecordFollowup(doc), true);
 same("   والمسؤول", canRecordFollowup(admin), true);
 same("   **والخبير الصِرف لا** — منفّذٌ لا متابِع", canRecordFollowup(expert), false);
 same("   وبلا جلسة ⟶ لا", canRecordFollowup(null), false);
+
+// ══ أ٢. القراءة بالدور لا بالقدرة ═════════════════════════════════════
+//  ملفُّ المتابعة يحمل السعر المعتمد وهاتفَ المريض وسببَ تردّده. وكانت
+//  `canAddPatients` وحدها تفتحه — وهي تُمنح لحساباتٍ لا شأن لها بالمتابعة.
+console.log("\n── مَن يقرأ ──");
+same("أ٢. الأربعة يقرأون",
+  [recv, mgr, doc, admin].map(canViewFollowup), [true, true, true, true]);
+same("   **والمحاسبُ لا يقرأ ولو حمل `canAddPatients`**",
+  canViewFollowup(accountant2), false);
+same("   **ولا مُدخِلُ الجلسات ولو حمل `canEditPatients`**",
+  canViewFollowup(physioStaff), false);
+same("   **ولا خبيرُ الأطراف ولو حملها**", canViewFollowup(expertWithAdd), false);
+same("   وبلا جلسة ⟶ لا", canViewFollowup(null), false);
+same("   **والقراءة والكتابة بوّابةٌ واحدة**",
+  [accountant2, physioStaff, expertWithAdd, recv, mgr, doc, admin]
+    .filter((w) => canViewFollowup(w) !== canRecordFollowup(w)), []);
 
 // ══ ب. مَن يعتمد — القاعدة الحاسمة ═════════════════════════════════════
 console.log("\n── مَن يعتمد ──");

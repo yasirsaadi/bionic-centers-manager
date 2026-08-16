@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ClipboardCheck, Loader2, CircleDollarSign, CalendarClock, XCircle, RotateCcw,
+  ClipboardCheck, Loader2, CircleDollarSign, CalendarClock, XCircle, RotateCcw, UserCog,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,10 @@ interface Followup {
   status: FollowupStatus;
   approvedPrice: number;
   priceSource: string;
+  selectedExpertUserId: number | null;
+  selectedExpertName: string | null;
+  examDoctorName: string | null;
+  examSignedAt: string | null;
   nextFollowUpAt: string | null;
   noScheduledFollowUp: boolean;
   lastReason: string | null;
@@ -99,7 +103,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: dialog === "approve_purchase",
+    //  تُقرأ دائماً: الاستعلامات تغيّر الخبير من البطاقة نفسها.
+    enabled: true,
   });
 
   const active = (followups ?? [])[0] ?? null;
@@ -162,6 +167,12 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
           <Field label="الخدمة" value={SERVICE_LABELS[active.serviceType] ?? active.serviceType} />
+          <Field label="طبيب المعاينة" value={active.examDoctorName ?? "—"} />
+          <Field label="تاريخ المعاينة" value={fmt(active.examSignedAt)} />
+          <Field label="الخبير"
+            value={active.selectedExpertName
+              ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}
+            hint={active.selectedExpertName ? undefined : "يختاره الاستعلامات"} />
           <Field label="السعر المعتمد"
             value={`${active.approvedPrice.toLocaleString()} د.ع`}
             hint={active.priceSource === "approved_change" ? "بعد تعديلٍ معتمد" : "من المعاينة"} />
@@ -259,6 +270,16 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             <Button size="sm" disabled={busy}
               onClick={() => setDialog("approve_purchase")} data-testid="button-approve-purchase">
               اعتماد الشراء وبدء التصنيع
+            </Button>
+          )}
+          {/*  الخبير اختيارُ الاستعلامات — يُغيَّر ما دامت المتابعة حيّة. */}
+          {actions.length > 0 && active.status !== "closed_without_purchase"
+            && active.status !== "converted" && (
+            <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => { setExpertId(String(active.selectedExpertUserId ?? "")); setDialog("expert"); }}
+              data-testid="button-select-expert">
+              <UserCog className="h-4 w-4" />
+              {active.selectedExpertUserId ? "تغيير الخبير" : "اختيار الخبير"}
             </Button>
           )}
           {actions.includes("reopen") && (
@@ -400,19 +421,19 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── اعتماد الشراء ── */}
-      <Dialog open={dialog === "approve_purchase"} onOpenChange={(o) => !o && reset()}>
+      {/* ── اختيار الخبير — بلا أي تصنيع ── */}
+      <Dialog open={dialog === "expert"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>اعتماد الشراء وبدء التصنيع</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>الخبير المسؤول</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              الاعتماد يفتح أمر التصنيع بالمسار الرسمي نفسه.
+              اقترحه الطبيب في المعاينة، ولك إبقاؤه أو تغييره. الاختيار
+              <b> لا يبدأ تصنيعاً</b> — التصنيع يبدأ باعتماد الشراء.
             </p>
             <div>
-              <Label>الخبير المسؤول</Label>
+              <Label>الخبير</Label>
               <Select value={expertId} onValueChange={setExpertId}>
-                <SelectTrigger data-testid="select-purchase-expert">
+                <SelectTrigger data-testid="select-followup-expert">
                   <SelectValue placeholder="اختر الخبير" />
                 </SelectTrigger>
                 <SelectContent>
@@ -424,10 +445,44 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !expertId} data-testid="button-confirm-approve-purchase"
-              onClick={() => submit(`/api/followups/${active.id}/approve-purchase`, {
+            <Button disabled={busy || !expertId} data-testid="button-confirm-expert"
+              onClick={() => submit(`/api/followups/${active.id}/expert`, {
                 expertUserId: Number(expertId),
               })}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── اعتماد الشراء ── */}
+      <Dialog open={dialog === "approve_purchase"} onOpenChange={(o) => !o && reset()}>
+        <DialogContent dir="rtl">
+          <DialogHeader><DialogTitle>اعتماد الشراء وبدء التصنيع</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
+              الاعتماد يفتح أمر التصنيع بالمسار الرسمي نفسه.
+            </p>
+            {/*  الخبير **يُعرَض ولا يُختار هنا**: اختياره عملُ الاستعلامات،
+                والمعتمِد يعتمد ما اختاروه. والخادم يقرأه من الصفّ لا من
+                الطلب، فلا يُرسَل أصلاً. */}
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
+              data-testid="text-purchase-expert">
+              <span className="text-muted-foreground">الخبير المسؤول: </span>
+              <b>{active.selectedExpertName
+                ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}</b>
+            </div>
+            {active.selectedExpertUserId === null && (
+              <p className="text-sm text-destructive" data-testid="text-expert-required">
+                لا يمكن اعتماد الشراء قبل أن يختار الاستعلامات خبيراً.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button disabled={busy || active.selectedExpertUserId === null}
+              data-testid="button-confirm-approve-purchase"
+              onClick={() => submit(`/api/followups/${active.id}/approve-purchase`, {})}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "اعتماد وبدء التصنيع"}
             </Button>
           </DialogFooter>

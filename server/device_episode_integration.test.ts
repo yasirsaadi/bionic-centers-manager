@@ -217,10 +217,23 @@ async function main() {
     same("   ومرتبطة بالجهاز الجديد", exam.body?.deviceEpisodeId, dev2);
     same("   والحلقة صارت «مُعايَنة»", (await epRow(dev2))?.status, "examined");
 
-    // ٣. الاستعلامات تخصّص وتُسند الخبير.
-    const assign = await http("POST", `/api/patients/${P}/assign-manufacturing`, S.reception,
-      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 });
-    same("٣. التخصيص نجح", assign.status, 201);
+    // ٣. البيع يمرّ بمتابعة ما بعد المعاينة (ترحيل ٠٥٣).
+    //
+    //    توقيعُ المعاينة صار يفتح متابعةً لهذا الجهاز، وبابُ «تخصيص» المباشر
+    //    يُغلق ما دامت حيّة: البيع يمرّ بموافقة المريض ثم باعتماد طبيبٍ أو
+    //    مسؤول. والخطواتُ الثلاث أدناه هي المسار الرسمي الجديد — وما بعدها
+    //    من تأكيداتٍ لم يتغيّر حرفاً، لأن الاعتماد ينادي
+    //    `assignManufacturing` نفسها.
+    const fu = (await http("GET", `/api/followups/patient/${P}`, S.reception)).body?.[0];
+    same("٣. المتابعة فُتحت بسعر المعاينة",
+      [fu?.status, fu?.approvedPrice], ["awaiting_patient_decision", 1_500_000]);
+    same("   وبابُ «تخصيص» المباشر مغلق ما دامت حيّة",
+      (await http("POST", `/api/patients/${P}/assign-manufacturing`, S.reception,
+        { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 409);
+    await http("POST", `/api/followups/${fu.id}/expert`, S.reception, { expertUserId: EXPERT });
+    await http("POST", `/api/followups/${fu.id}/accept-price`, S.reception, {});
+    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.doctor, {});
+    same("   واعتمادُ الطبيب بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],
       ["in_manufacturing", 1_500_000]);

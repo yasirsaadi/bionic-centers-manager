@@ -154,6 +154,9 @@ export async function createExam(values: {
             branchId: values.branchId,
             serviceType: values.caseType as "prosthetic" | "medical_support",
             deviceCost: values.deviceCost,
+            //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
+            //  تغيّره. فلا يُسأل الطبيبُ عنه ثانيةً لحظة اعتماد الشراء.
+            proposedExpertUserId: values.proposedExpertUserId,
             actor: { userId: values.doctorId, userName: values.doctorName },
           });
         });

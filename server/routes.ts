@@ -1723,10 +1723,13 @@ export async function registerRoutes(
     // حالةُ جهازٍ تحت متابعةٍ حيّة سعرُها ما اعتمده الطبيب. ومديرُ الفرع
     // **ليس مستثنى**: هذه النقطة كانت بابَه المباشر إلى الرقم، فلو بقيت
     // مفتوحة لصار طلبُ التعديل واعتمادُه زينةً تُتجاوَز بضغطة.
-    // والمسؤول العام مستثنًى لأنه أحدُ معتمِدَي السعر أصلاً.
+    //
+    // **ولا المسؤولُ العام مستثنى.** أن يملك صلاحية الاعتماد لا يعني أن
+    // يتخطّى التاريخ: التعديل من هنا يترك الرقم يقفز بلا «كان كذا فصار
+    // كذا» ولا مَن اعتمده. فليعتمد من بابه — الباب مفتوح له، وأثرُه يبقى.
     const caseRow = (await storage.getCasesByPatientId(patientId))
       .find((c: any) => c.id === caseId);
-    if (!isAdmin && caseRow
+    if (caseRow
       && (caseRow.caseType === "prosthetic" || caseRow.caseType === "medical_support")
       && await followupStore.hasActiveFollowup({
         patientId, serviceType: caseRow.caseType as "prosthetic" | "medical_support",
@@ -1953,11 +1956,12 @@ export async function registerRoutes(
 
       // ══ ولا التفاف من هنا أيضاً (ترحيل ٠٥٣) ═══════════════════════════
       // `total_cost` هو ما يبتلع سعر الجهاز في النهاية، فبابُ «تعديل مريض»
-      // كان طريقاً ثانياً إليه لمدير الفرع. ومريضٌ تحت متابعةٍ حيّة سعرُه
-      // معتمَد — فيُسقَط الحقل بدل أن يُردّ الطلب كلّه: التعديل الإداري
-      // (الاسم، الهاتف، العنوان) يبقى مفتوحاً كما كان، والمال وحده يُحمى.
-      // والمسؤول العام مستثنًى لأنه أحدُ معتمِدَي السعر.
-      if (patch.totalCost !== undefined && !branchSession?.isAdmin) {
+      // كان طريقاً ثانياً إليه. ومريضٌ تحت متابعةٍ حيّة سعرُه معتمَد —
+      // فيُسقَط الحقل بدل أن يُردّ الطلب كلّه: التعديل الإداري (الاسم،
+      // الهاتف، العنوان) يبقى مفتوحاً كما كان، والمال وحده يُحمى.
+      //
+      // **ولا استثناءَ للمسؤول** — للسبب نفسه أعلاه: التاريخ لا يُتجاوَز.
+      if (patch.totalCost !== undefined) {
         const guarded = await Promise.all(
           (["prosthetic", "medical_support"] as const).map((t) =>
             followupStore.hasActiveFollowup({ patientId: id, serviceType: t })),

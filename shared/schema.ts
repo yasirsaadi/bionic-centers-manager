@@ -1402,6 +1402,16 @@ export const postExamFollowups = pgTable("post_exam_followups", {
    */
   approvedPrice: integer("approved_price").notNull().default(0),
   priceSource: text("price_source").notNull().default("exam"), // exam | approved_change
+  /**
+   * الخبير المختار لهذا الجهاز — **يُبذَر من اقتراح الطبيب ويبقى مرناً**.
+   *
+   * الطبيب يقترحه في معاينته (ترحيل ٠٣٥)، والاستعلامات تُبقيه أو تغيّره قبل
+   * بدء العمل. فسؤالُ الطبيبِ عنه مرّةً ثانية لحظة اعتماد الشراء كان يكسر
+   * تقسيمَ العمل القائم: الخبيرُ اختيارُ الاستعلامات لا قرارُ الطبيب.
+   *
+   * لقطةُ رقم بلا مفتاح أجنبي — نفس درس `proposedExpertUserId`.
+   */
+  selectedExpertUserId: integer("selected_expert_user_id"),
   nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
   /** استثناءٌ صريح: «لا موعد متابعة» قرارٌ مُتَّخذ لا حقلٌ مُهمَل. */
   noScheduledFollowUp: boolean("no_scheduled_follow_up").notNull().default(false),

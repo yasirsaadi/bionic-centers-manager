@@ -46,6 +46,7 @@ export interface FollowupRow {
   status: FollowupStatus;
   approvedPrice: number;
   priceSource: string;
+  selectedExpertUserId: number | null;
   nextFollowUpAt: string | null;
   noScheduledFollowUp: boolean;
   lastReason: string | null;
@@ -70,6 +71,8 @@ const toRow = (r: any): FollowupRow => ({
   status: r.status,
   approvedPrice: Number(r.approved_price ?? 0),
   priceSource: r.price_source,
+  selectedExpertUserId: r.selected_expert_user_id === null ? null
+    : Number(r.selected_expert_user_id),
   nextFollowUpAt: r.next_follow_up_at ?? null,
   noScheduledFollowUp: Boolean(r.no_scheduled_follow_up),
   lastReason: r.last_reason ?? null,
@@ -84,7 +87,8 @@ const toRow = (r: any): FollowupRow => ({
 });
 
 const SELECT_COLS = sql`id, patient_id, case_id, device_episode_id, medical_exam_id, branch_id,
-  service_type, status, approved_price, price_source, next_follow_up_at,
+  service_type, status, approved_price, price_source, selected_expert_user_id,
+  next_follow_up_at,
   no_scheduled_follow_up, last_reason, last_note, last_contact_at, closed_reason,
   closed_at, converted_at, converted_work_order_id, created_at, updated_at`;
 
@@ -142,8 +146,22 @@ async function lockFollowup(
  *
  * **ولا يبدأ تصنيعاً ولا يغيّر حالة الحلقة ولا يلمس المعاينة.**
  *
- * ويُتخطّى صامتاً حين يكون الجهاز قد بيع فعلاً (`in_manufacturing` أو
- * `delivered`): متابعةُ قرارِ شراءٍ وقع أصلاً لغوٌ يشوّش الطوابير.
+ * ══ وليست كلُّ معاينةِ جهازٍ نيّةَ شراء ═══════════════════════════════════
+ * النظام يسمح بمعاينةٍ روتينية لمريضٍ يحمل جهازاً سُلّم له سابقاً — فحصُ
+ * ملاءمة، أو شكوى، أو متابعةٌ سريرية. وفتحُ «متابعة قرار شراء» لكل معاينةٍ
+ * كان سيملأ طوابير الاستعلامات بمرضى لا يشترون شيئاً، فيُبتلع فيها مَن
+ * ينتظر فعلاً.
+ *
+ * فالقاعدة حالتان لا واحدة:
+ *   (أ) معاينةٌ **طالبت بحلقةِ جهازٍ تنتظر الفحص** ⟶ متابعةٌ لذلك الجهاز،
+ *       فالحلقة نفسها إعلانُ نيّةِ شراءٍ صريح سجّله الاستعلامات.
+ *   (ب) بلا حلقة ⟶ **الجهاز الأول وحده**: مريضٌ لم يسبق له أمرُ بناءٍ
+ *       أوّليّ قطّ في هذه الخدمة. ومَن له أمرٌ سابق — **أيّاً كانت حالته،
+ *       مكتملاً أو ملغى** — معاينتُه الجديدة روتينٌ سريري حتى يفتح
+ *       الاستعلامات حلقةً صراحةً.
+ *
+ * ولذلك يُفحص التاريخ كلّه لا الأوامر الفعّالة وحدها: أمرٌ **مكتمل** دليلُ
+ * جهازٍ مسلَّم — وهو بالضبط المريض الذي لا يجوز أن تُفتح له متابعةُ بيع.
  */
 export async function ensureFollowupForSignedExam(tx: any, params: {
   patientId: number;
@@ -153,24 +171,24 @@ export async function ensureFollowupForSignedExam(tx: any, params: {
   branchId: number | null;
   serviceType: "prosthetic" | "medical_support";
   deviceCost: number | null;
+  proposedExpertUserId?: number | null;
   actor: Actor;
 }): Promise<number | null> {
   const { patientId, deviceEpisodeId, serviceType } = params;
 
-  // الجهاز الذي دخل التصنيع أو سُلّم: القرار اتُّخذ، فلا متابعةَ قرار.
   if (deviceEpisodeId !== null) {
+    // الجهاز الذي دخل التصنيع أو سُلّم: القرار اتُّخذ، فلا متابعةَ قرار.
     const ep = await tx.execute(sql`
       SELECT status FROM patient_device_episodes WHERE id = ${deviceEpisodeId}
     `);
     const st = String((ep.rows ?? [])[0]?.status ?? "");
     if (st === "in_manufacturing" || st === "delivered" || st === "cancelled") return null;
   } else {
-    // المسار القديم (بلا حلقة): أمرُ بناءٍ فعّالٌ قائم يعني أن البيع تمّ.
+    // بلا حلقة: **أيُّ أمرِ بناءٍ في التاريخ** يجعلها معاينةً روتينية.
     const wo = await tx.execute(sql`
       SELECT 1 FROM prosthetic_work_orders
        WHERE patient_id = ${patientId} AND service_type = ${serviceType}
          AND COALESCE(purpose, 'initial_build') = 'initial_build'
-         AND status NOT IN ('completed', 'cancelled')
        LIMIT 1
     `);
     if ((wo.rows ?? []).length > 0) return null;
@@ -178,14 +196,18 @@ export async function ensureFollowupForSignedExam(tx: any, params: {
 
   const seedPrice = typeof params.deviceCost === "number" && params.deviceCost > 0
     ? params.deviceCost : 0;
+  //  خبيرُ الطبيب المقترَح يُبذَر هنا — والاستعلامات تُبقيه أو تغيّره.
+  const seedExpert = typeof params.proposedExpertUserId === "number"
+    ? params.proposedExpertUserId : null;
 
   const ins = await tx.execute(sql`
     INSERT INTO post_exam_followups
       (patient_id, case_id, device_episode_id, medical_exam_id, branch_id,
-       service_type, status, approved_price, price_source, created_by)
+       service_type, status, approved_price, price_source,
+       selected_expert_user_id, created_by)
     VALUES (${patientId}, ${params.caseId}, ${deviceEpisodeId}, ${params.medicalExamId},
             ${params.branchId}, ${serviceType}, 'awaiting_patient_decision',
-            ${seedPrice}, 'exam', ${params.actor.userId})
+            ${seedPrice}, 'exam', ${seedExpert}, ${params.actor.userId})
     ON CONFLICT DO NOTHING
     RETURNING id
   `);
@@ -195,7 +217,10 @@ export async function ensureFollowupForSignedExam(tx: any, params: {
   await appendEvent(tx, {
     followupId: Number(created.id), patientId, branchId: params.branchId,
     eventType: "followup_created", toStatus: "awaiting_patient_decision",
-    payload: { serviceType, approvedPrice: seedPrice, medicalExamId: params.medicalExamId },
+    payload: {
+      serviceType, approvedPrice: seedPrice, medicalExamId: params.medicalExamId,
+      proposedExpertUserId: seedExpert,
+    },
     actor: params.actor,
   });
   return Number(created.id);
@@ -209,14 +234,42 @@ export async function getFollowup(id: number): Promise<FollowupRow | null> {
   return row ? toRow(row) : null;
 }
 
-/** متابعاتُ مريضٍ واحد — للبطاقة في صفحة المريض. الحيّة أولاً. */
-export async function getFollowupsForPatient(patientId: number): Promise<FollowupRow[]> {
+/**
+ * متابعاتُ مريضٍ واحد — للبطاقة في صفحة المريض. الحيّة أولاً.
+ *
+ * ومعها **لقطاتُ العرض**: طبيبُ المعاينة وتاريخُها واسمُ الخبير المختار.
+ * تُقرأ هنا بـjoin واحد بدل ثلاثة طلبات من الواجهة — وأسماءٌ لا أرقام،
+ * فالموظّف يقرأ «د. فلان» لا `#9864`.
+ */
+export async function getFollowupsForPatient(patientId: number): Promise<
+  (FollowupRow & {
+    examDoctorName: string | null;
+    examSignedAt: string | null;
+    selectedExpertName: string | null;
+  })[]
+> {
   const r = await db.execute(sql`
-    SELECT ${SELECT_COLS} FROM post_exam_followups
-     WHERE patient_id = ${patientId}
-     ORDER BY (status NOT IN ('closed_without_purchase','converted')) DESC, id DESC
+    SELECT f.id, f.patient_id, f.case_id, f.device_episode_id, f.medical_exam_id,
+           f.branch_id, f.service_type, f.status, f.approved_price, f.price_source,
+           f.selected_expert_user_id, f.next_follow_up_at, f.no_scheduled_follow_up,
+           f.last_reason, f.last_note, f.last_contact_at, f.closed_reason,
+           f.closed_at, f.converted_at, f.converted_work_order_id,
+           f.created_at, f.updated_at,
+           e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
+           u.display_name AS selected_expert_name
+      FROM post_exam_followups f
+      LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
+      LEFT JOIN system_users u ON u.id = f.selected_expert_user_id
+     WHERE f.patient_id = ${patientId}
+     ORDER BY (f.status NOT IN ('closed_without_purchase','converted')) DESC, f.id DESC
   `);
-  return (r.rows ?? []).map(toRow);
+  return (r.rows ?? []).map((x: any) => ({
+    ...toRow(x),
+    examDoctorName: x.exam_doctor_name ?? null,
+    examSignedAt: x.exam_signed_at ?? null,
+    //  حسابٌ حُذف يترك رقماً بلا اسم — فيظهر الرقم ويختار الموظّف من جديد.
+    selectedExpertName: x.selected_expert_name ?? null,
+  }));
 }
 
 export async function getEvents(followupId: number): Promise<any[]> {
@@ -505,6 +558,48 @@ export async function reopen(params: {
   });
 }
 
+// ── الخبير ───────────────────────────────────────────────────────────────
+
+/**
+ * يغيّر الخبير المختار — **قبل التحويل فقط، وبلا أي تصنيع**.
+ *
+ * الاستعلامات صاحبة هذا الاختيار كما كانت دائماً: الطبيب يقترح والموظّف
+ * يقرّر. ولذلك يُسمح به في كل حالةٍ حيّة — حتى وهي بانتظار اعتماد الشراء —
+ * فقد يكون الخبير المقترَح في إجازة والقرار قرارُ الفرع.
+ *
+ * وبعد `converted` **لا يُغيَّر من هنا**: صار للجهاز أمرُ تصنيعٍ حقيقي،
+ * وتحويلُ خبيره قرارُ تصنيعٍ يمرّ بنقطة إعادة الإسناد بحُرّاسها هي.
+ */
+export async function selectExpert(params: {
+  followupId: number; expertUserId: number; actor: Actor;
+}): Promise<FollowupRow> {
+  return await db.transaction(async (tx) => {
+    const cur = await lockFollowup(tx, params.followupId, [
+      "awaiting_patient_decision", "follow_up", "price_approval_pending",
+      "price_approved_waiting_patient", "purchase_approval_pending",
+    ]);
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET selected_expert_user_id = ${params.expertUserId}, updated_at = NOW()
+       WHERE id = ${params.followupId} AND status = ${cur.status}
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "expert_selected", fromStatus: cur.status, toStatus: cur.status,
+      //  القيمتان معاً: «كان فلاناً فصار فلاناً» يُقرأ من سطرٍ واحد.
+      payload: {
+        oldExpertUserId: cur.selectedExpertUserId,
+        newExpertUserId: params.expertUserId,
+      },
+      actor: params.actor,
+    });
+    return toRow(row);
+  });
+}
+
 // ── السعر ────────────────────────────────────────────────────────────────
 
 /**
@@ -655,12 +750,22 @@ export async function decidePriceChange(params: {
  * فلو سقطت الأولى يوماً بقيت الثانية تمنع أمرين.
  */
 export async function approvePurchase(params: {
-  followupId: number; expertUserId: number; note?: string | null; actor: Actor;
+  followupId: number; note?: string | null; actor: Actor;
 }): Promise<{ followup: FollowupRow; workOrderId: number }> {
   return await db.transaction(async (tx) => {
     const cur = await lockFollowup(tx, params.followupId, ["purchase_approval_pending"]);
     if (cur.approvedPrice <= 0) {
       throw new FollowupError("لا يوجد سعر معتمد — لا يُعتمد شراءٌ بلا سعر", 409);
+    }
+
+    // ══ الخبير يُقرأ من الصفّ **تحت القفل** لا من الطلب ═════════════════
+    // اختيارُ الخبير عملُ الاستعلامات، والمعتمِد يعتمد ما اختاروه لا ما
+    // يرسله متصفّحه. فلو قُبل رقمٌ من الجسم لصار الاعتماد باباً خلفياً
+    // يسند الجهاز لخبيرٍ لم يقرّره أحد — وهذا ما يمنعه هذا السطر.
+    const expertUserId = cur.selectedExpertUserId;
+    if (expertUserId === null) {
+      throw new FollowupError(
+        "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء", 409);
     }
 
     //  سجلُّ الاعتماد يُكتب **قبل** البيع وفي معاملته: فلا أمرُ تصنيعٍ
@@ -671,7 +776,7 @@ export async function approvePurchase(params: {
       toStatus: "converted", note: params.note ?? null,
       payload: {
         approvedPrice: cur.approvedPrice, priceSource: cur.priceSource,
-        expertUserId: params.expertUserId,
+        expertUserId,
       },
       actor: params.actor,
     });
@@ -682,7 +787,7 @@ export async function approvePurchase(params: {
       serviceType: cur.serviceType,
       fields: {},
       cost: cur.approvedPrice,
-      expertUserId: params.expertUserId,
+      expertUserId,
       assignedBy: params.actor.userId,
       deviceEpisodeId: cur.deviceEpisodeId,
       tx,

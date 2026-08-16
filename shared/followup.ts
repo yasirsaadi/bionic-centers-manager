@@ -71,17 +71,42 @@ export interface FollowupSessionLike {
 }
 
 /**
- * مَن يتابع المريض — **مسؤوليةُ فرعٍ لا مِلكُ موظّف**.
+ * مسؤولو المتابعة — **الأدوار الأربعة وحدها**.
+ *
+ * ══ لماذا الدور لا القدرة ═══════════════════════════════════════════════
+ * `canAddPatients` تُمنح لحساباتٍ كثيرة لأسبابٍ لا علاقة لها بالمتابعة —
+ * محاسبٌ يسجّل مريضاً، أو مُدخِل جلسات. فجعلُها بوّابةً كان يفتح ملفّ
+ * المتابعة (السعر المعتمد، هاتفُ المريض، سببُ ترّدده، ملاحظاتُ المفاوضة)
+ * لمن لا شأن له به. والقاعدة هنا **بالدور**: مَن يتابع المريض فعلاً.
+ *
+ * وخبيرُ الأطراف خارجها: هو المنفّذ لا المتابِع، ومحجوبٌ مالياً في كل
+ * النظام — فلا تصير المتابعة قناته الجانبية إلى الأسعار.
+ */
+function isFollowupActor(s: FollowupSessionLike | null | undefined): boolean {
+  if (s?.isAdmin === true) return true;
+  if (s?.role === "branch_manager" || s?.role === "reception") return true;
+  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+}
+
+/**
+ * مَن **يقرأ** ملفّ المتابعة — نفس الأربعة.
+ *
+ * القراءة هنا ليست أخفّ من الكتابة: الملفّ يحمل السعر المعتمد وسببَ تردّد
+ * المريض وهاتفَه. فبوّابةٌ واحدة للاثنين، والفرق في الفعل لا في مَن يدخل.
+ */
+export function canViewFollowup(s: FollowupSessionLike | null | undefined): boolean {
+  return isFollowupActor(s);
+}
+
+/**
+ * مَن يسجّل قرار المريض — **مسؤوليةُ فرعٍ لا مِلكُ موظّف**.
  *
  * فلا «مالك متابعة» إلزامي: مَن ردّ على الهاتف يسجّل. والتدقيق يحفظ الفاعل
  * في كلّ حدث، فالمسؤولية معروفة بلا أن تُحتكَر المتابعة بموظّفٍ إن غاب
  * تجمّد ملفّ المريض.
  */
 export function canRecordFollowup(s: FollowupSessionLike | null | undefined): boolean {
-  if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager" || s?.role === "reception") return true;
-  if (s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true) return true;
-  return s?.permissions?.canAddPatients === true || s?.permissions?.canEditPatients === true;
+  return isFollowupActor(s);
 }
 
 /**
