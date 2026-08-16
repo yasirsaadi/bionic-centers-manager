@@ -21,6 +21,7 @@ export interface BranchSessionLike {
   role?: string | null;
   isAdmin?: boolean | null;
   branchId?: number | null;
+  accessibleBranches?: number[] | null;
   permissions?: Record<string, any> | null;
 }
 
@@ -40,6 +41,42 @@ export interface AiAccessContext {
   mode: AiMode;
   /** صاحب صلاحيةٍ بلا فرعٍ مصادَق — يُحوَّل إلى العام بدل توسيع نطاقه. */
   financeScopeMissing: boolean;
+  /**
+   * فروعُ العمل — **غير النطاق المالي**.
+   *
+   * `null` = كل الفروع (المسؤول). ومصفوفةٌ فارغة = لا شيء (فتُصفَّر القراءة
+   * بدل أن تنفتح). وهذا ما يقرّر أي مريضٍ يراه المساعد أصلاً.
+   */
+  operationalBranches: number[] | null;
+}
+
+/**
+ * فروعُ العمل من الجلسة — **نفس قاعدة `branchScope` في نقاط المعاينة
+ * والتصنيع حرفياً**، لا نسخةٌ أوسع منها.
+ *
+ * والفصل عن النطاق المالي مقصود: موظّف الاستقبال يرى مرضى فرعه ولا يرى
+ * ديناراً واحداً، والمحاسب قد يرى مال فرعه دون أن يتّسع نطاقه التشغيلي.
+ * فخلطُهما كان سيجعل منح أحدهما منحاً للآخر.
+ */
+export function operationalBranchesOf(
+  session: BranchSessionLike | null | undefined,
+): number[] | null {
+  if (session?.isAdmin === true) return null;
+  const list = Array.isArray(session?.accessibleBranches)
+    ? session!.accessibleBranches.filter((b): b is number => typeof b === "number")
+    : [];
+  if (list.length > 0) return list;
+  return typeof session?.branchId === "number" && session.branchId ? [session.branchId] : [];
+}
+
+/** هل يقع هذا الفرع داخل نطاق العمل. */
+export function branchInOperationalScope(
+  access: Pick<AiAccessContext, "operationalBranches">,
+  branchId: number | null | undefined,
+): boolean {
+  if (access.operationalBranches === null) return true;
+  if (typeof branchId !== "number") return false;
+  return access.operationalBranches.includes(branchId);
 }
 
 /** القاعدة وحدها، معزولةً كما نصّ عليها القرار. */
@@ -85,5 +122,6 @@ export function resolveAiAccess(params: {
     canUseFinance,
     mode: canUseFinance && !financeScopeMissing ? "financial" : "general",
     financeScopeMissing,
+    operationalBranches: operationalBranchesOf(session),
   };
 }
