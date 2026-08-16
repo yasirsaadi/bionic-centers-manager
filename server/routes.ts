@@ -21,6 +21,8 @@ import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
+import { registerFollowupRoutes } from "./followup/routes";
+import * as followupStore from "./followup/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
 } from "./device_episodes/store";
@@ -1717,6 +1719,23 @@ export async function registerRoutes(
     const cost = Number(req.body?.cost);
     if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ message: "قيمة غير صالحة" });
 
+    // ══ لا التفاف على اعتماد السعر (ترحيل ٠٥٣) ═══════════════════════════
+    // حالةُ جهازٍ تحت متابعةٍ حيّة سعرُها ما اعتمده الطبيب. ومديرُ الفرع
+    // **ليس مستثنى**: هذه النقطة كانت بابَه المباشر إلى الرقم، فلو بقيت
+    // مفتوحة لصار طلبُ التعديل واعتمادُه زينةً تُتجاوَز بضغطة.
+    // والمسؤول العام مستثنًى لأنه أحدُ معتمِدَي السعر أصلاً.
+    const caseRow = (await storage.getCasesByPatientId(patientId))
+      .find((c: any) => c.id === caseId);
+    if (!isAdmin && caseRow
+      && (caseRow.caseType === "prosthetic" || caseRow.caseType === "medical_support")
+      && await followupStore.hasActiveFollowup({
+        patientId, serviceType: caseRow.caseType as "prosthetic" | "medical_support",
+      })) {
+      return res.status(409).json({
+        message: "سعر هذا الجهاز معتمد من الطبيب — التعديل يمرّ بطلب تعديل سعر يعتمده طبيب أو المسؤول العام",
+      });
+    }
+
     const updated = await storage.updateCaseCost(patientId, caseId, Math.round(cost));
     if (!updated) return res.status(404).json({ message: "الحالة غير موجودة" });
     await logAudit({
@@ -1908,6 +1927,8 @@ export async function registerRoutes(
   });
 
   app.put(api.patients.update.path, isAuthenticated, async (req, res) => {
+    //  يُبلَّغ في الرد: حقلٌ يُسقَط صامتاً يجعل المستخدم يظنّ أنه عدّل.
+    let costLockedByFollowup = false;
     try {
       const id = Number(req.params.id);
       const ctx = getUserContext(req);
@@ -1929,6 +1950,23 @@ export async function registerRoutes(
       const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
+
+      // ══ ولا التفاف من هنا أيضاً (ترحيل ٠٥٣) ═══════════════════════════
+      // `total_cost` هو ما يبتلع سعر الجهاز في النهاية، فبابُ «تعديل مريض»
+      // كان طريقاً ثانياً إليه لمدير الفرع. ومريضٌ تحت متابعةٍ حيّة سعرُه
+      // معتمَد — فيُسقَط الحقل بدل أن يُردّ الطلب كلّه: التعديل الإداري
+      // (الاسم، الهاتف، العنوان) يبقى مفتوحاً كما كان، والمال وحده يُحمى.
+      // والمسؤول العام مستثنًى لأنه أحدُ معتمِدَي السعر.
+      if (patch.totalCost !== undefined && !branchSession?.isAdmin) {
+        const guarded = await Promise.all(
+          (["prosthetic", "medical_support"] as const).map((t) =>
+            followupStore.hasActiveFollowup({ patientId: id, serviceType: t })),
+        );
+        if (guarded.some(Boolean)) {
+          delete patch.totalCost;
+          costLockedByFollowup = true;
+        }
+      }
 
       // ══ الهوية العلنية ثابتة — ورفضٌ صريح ═══════════════════════════
       // نقلُ رمزٍ بين ملفّين يقلب هويّتين معاً: ورقةٌ بيد مريضٍ تدلّ على
@@ -1971,7 +2009,12 @@ export async function registerRoutes(
       }
 
       const patient = await storage.updatePatient(id, patch);
-      res.json(patient);
+      res.json(costLockedByFollowup
+        ? {
+          ...patient,
+          costNote: "لم تُعدَّل الكلفة: سعر الجهاز معتمد من الطبيب — التعديل يمرّ بطلب تعديل سعر يعتمده طبيب أو المسؤول العام",
+        }
+        : patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       throw err;
@@ -6592,6 +6635,10 @@ export async function registerRoutes(
   // Device episodes (حلقات أجهزة المريض): start a new device on an existing
   // specialty thread, list them, cancel one before manufacturing begins.
   registerDeviceEpisodeRoutes(app, isAuthenticated);
+
+  // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
+  // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.
+  registerFollowupRoutes(app, isAuthenticated);
 
   // Register patient communication link-token routes (روابط تواصل المريض).
   // Staff-facing only: issue / list / revoke. There is deliberately NO public

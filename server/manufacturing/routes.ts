@@ -12,6 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
@@ -367,7 +368,24 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // and the admin may still override (negotiations happen), and that
     // override is theirs to answer for in the audit log.
     let effectiveCost = cost;
-    if (!mayWriteClinical) {
+
+    // ══ السعرُ المعتمد يسبق الجميع — بما فيهم المدير (ترحيل ٠٥٣) ═══════
+    // متابعةٌ حيّة تعني أن هذا الجهاز تحت طبقة الاعتماد: سعرُه ما اعتمده
+    // الطبيب، سواءٌ كان سعر معاينته الأصلي أو تعديلاً اعتُمد بعد مساومة.
+    //
+    // وفرضُه هنا هو ما يجعل الاعتماد **ذا أثر**: بدونه كان أول حفظِ تخصيص
+    // من مديرٍ يكتب رقماً آخر فيتجاوز الطبيبَ والتاريخَ معاً — وهو بالضبط
+    // الالتفاف الذي تحرسه هذه المرحلة. ومديرُ الفرع **ليس مستثنى**: السعر
+    // قرارٌ وقّعه الطبيب، وتعديلُه يمرّ بطلبٍ يعتمده طبيبٌ أو المسؤول.
+    //
+    // ولا يمسّ المرضى القدامى ولا العلاج الطبيعي: مَن لا متابعةَ حيّة له
+    // يمرّ بالمنطق القائم أدناه حرفاً بحرف.
+    const approvedPrice = await followupStore.approvedPriceFor({
+      patientId, serviceType, deviceEpisodeId: liveEpisode?.id ?? null,
+    });
+    if (approvedPrice !== null) {
+      effectiveCost = approvedPrice;
+    } else if (!mayWriteClinical) {
       // سعرُ **هذا الجهاز** من معاينته هو، لا أحدثُ سعرٍ للمريض في هذا
       // الاختصاص: جهازٌ سابق بسعرٍ آخر لا يسعّر الجديد.
       const proposed = liveEpisode

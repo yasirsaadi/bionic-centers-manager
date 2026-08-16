@@ -53,7 +53,9 @@
     "test:patient-code-telegram": "tsx server/patient_code_telegram.test.ts",
     "test:patient-code-ui": "tsx client/src/pages/patient_code_ui.test.ts",
     "test:ai-tools": "tsx server/ai_tools.test.ts",
-    "test:ai-live": "tsx server/ai_live_assistant.test.ts"
+    "test:ai-live": "tsx server/ai_live_assistant.test.ts",
+    "test:followup": "tsx server/post_exam_followup.test.ts",
+    "test:followup-rules": "tsx shared/followup.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -157,6 +157,11 @@ async function cleanup() {
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
+  //  متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) تشير إلى الحلقة — فتسبقها هنا
+  //  كما تسبقها في كاسكيد `storage.deletePatient`.
+  await q(`DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM price_change_requests WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM post_exam_followups WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
