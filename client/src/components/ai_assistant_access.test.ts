@@ -15,8 +15,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   canOpenAssistant, DOCTOR_SUGGESTIONS, EXPERT_SUGGESTIONS, FINANCE_SUGGESTIONS,
-  GENERAL_SUGGESTIONS, introTextFor, RECEPTION_SUGGESTIONS, scopeLabelFor,
-  sessionHasFinance, suggestionsFor,
+  GENERAL_SUGGESTIONS, introTextFor, PHYSIO_SUGGESTIONS, RECEPTION_SUGGESTIONS,
+  scopeLabelFor, sessionHasFinance, suggestionsFor,
 } from "./ai_assistant_access";
 
 let failures = 0;
@@ -34,6 +34,10 @@ const doctor = { isAdmin: false, role: "doctor", branchName: "بغداد", permi
 const expert = { isAdmin: false, role: "prosthetics_expert", branchName: "ذي قار", permissions: { canWorkAsExpert: true } };
 const accountant = { isAdmin: false, branchName: "بغداد", permissions: { canManageAccounting: true } };
 const admin = { isAdmin: true, branchName: null, permissions: { canManageAccounting: true } };
+//  مُدخِل الجلسات — **القدرة الحقيقية `canEnterSessions`**، وهي نفس شرط
+//  الطابور في الخادم. ومديرُ الفرع يحملها ضمناً كما هناك.
+const sessionEntry = { isAdmin: false, role: "reception", branchName: "بغداد", permissions: { canViewPatients: true, canEnterSessions: true } };
+const manager = { isAdmin: false, role: "branch_manager", branchName: "بغداد", permissions: {} };
 
 // ══ أ. مَن يرى الزرّ ═══════════════════════════════════════════════════
 console.log("\n── الظهور ──");
@@ -85,6 +89,34 @@ same("   ولا سؤالُ الأوامر على غير الخبير",
   suggestionsFor(doctor).includes(EXPERT_SUGGESTIONS[0]), false);
 same("   ولا تكرارَ في القائمة",
   (() => { const l = suggestionsFor(admin); return l.length - new Set(l).size; })(), 0);
+
+// ══ ج3. مثالُ العلاج الطبيعي — **مُدرَجٌ لا معلَّق** ═══════════════════
+//  كان الثابت مصدَّراً ولا يصل إليه أحد، فيبدو المثال موجوداً وهو ميّت.
+//  والشرط هنا **نفس شرط الطابور في الخادم حرفياً**
+//  (`canEnterSessions ∨ admin ∨ branch_manager`)، فلا يُعرَض سؤالٌ يُردّ
+//  ولا يُحرَم منه مَن يستطيع جوابه.
+console.log("\n── مثال العلاج الطبيعي ──");
+check(suggestionsFor(sessionEntry).includes(PHYSIO_SUGGESTIONS[0]),
+  "   **مُدخِل الجلسات يرى مثال العلاج الطبيعي** — فالثابت مُدرَجٌ فعلاً",
+  JSON.stringify(suggestionsFor(sessionEntry)));
+same("   ومديرُ الفرع كذلك",
+  suggestionsFor(manager).includes(PHYSIO_SUGGESTIONS[0]), true);
+same("   والمسؤول كذلك",
+  suggestionsFor(admin).includes(PHYSIO_SUGGESTIONS[0]), true);
+same("   **وموظّفٌ بلا `canEnterSessions` لا يراه** (الخادم يردّه)",
+  suggestionsFor(staff).includes(PHYSIO_SUGGESTIONS[0]), false);
+same("   ولا الطبيبُ ولا الخبير",
+  [doctor, expert].map((s) => suggestionsFor(s).includes(PHYSIO_SUGGESTIONS[0])), [false, false]);
+same("   ولا مالَ فيه", /إيراد|مصاريف|ذمم|القاصة|كلفة|دينار/.test(PHYSIO_SUGGESTIONS[0]), false);
+//  وكلُّ ثابتٍ مصدَّر يجب أن يصل إلى مستعمِلٍ واحدٍ على الأقلّ — وإلّا كرّرنا
+//  العلّة نفسها في المثال التالي.
+same("   **ولا ثابتَ أمثلةٍ معلَّق بلا مستعمِل**",
+  [DOCTOR_SUGGESTIONS, EXPERT_SUGGESTIONS, RECEPTION_SUGGESTIONS, PHYSIO_SUGGESTIONS,
+    FINANCE_SUGGESTIONS, GENERAL_SUGGESTIONS]
+    .filter((list) => !list.every((s) =>
+      [staff, doctor, expert, accountant, admin, sessionEntry, manager]
+        .some((who) => suggestionsFor(who).includes(s)))),
+  []);
 
 // ══ د. النصوص ═════════════════════════════════════════════════════════
 console.log("\n── النصوص ──");

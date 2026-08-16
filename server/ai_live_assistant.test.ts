@@ -199,6 +199,47 @@ async function main() {
     await chat(access(S.acc), ask(`كم دفع ${pFar.patient_code}؟`));
     same("   **ولا يقرأ مال فرعٍ آخر**", typeof lastResults()[0]?.error, "string");
 
+    // ══ ج2. المالُ عند الطلب لا مع كلّ رمز ═══════════════════════════
+    //  كان نصّ النظام يأمر المحاسب بنداء الأداتين معاً على كلّ رمزٍ يُذكَر،
+    //  فسؤالٌ تشغيليّ بحت («ما مرحلته؟») كان يفتح ملفَّه المالي بلا داعٍ.
+    //  والمُثبَت هنا شيئان: أنّ **النصّ** صار يأمر بالانتقاء، وأنّ **الخادم**
+    //  لا يقرأ ديناراً ما لم تُنادَ الأداة المالية بذاتها — ولو كانت معروضة.
+    console.log("\n── المال عند الطلب ──");
+    check(/patient_lookup \*\*وحدها\*\*/.test(seen[0].system),
+      "ج2. نصّ المحاسب يأمر بـ`patient_lookup` وحدها للسؤال التشغيلي",
+      seen[0].system.slice(0, 200));
+    check(!/الأداتين معاً|كلتيهما|دائماً/.test(seen[0].system),
+      "   ولم يبقَ أمرٌ بنداء الاثنتين دائماً");
+
+    resetFin();
+    runScript([
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "مرحلته: القياسات." },
+    ]);
+    const opAsk: any = await chat(access(S.acc), ask(`ما مرحلة تصنيع ${p1.patient_code}؟`));
+    same("أ. **سؤالٌ تشغيليّ عن رمزٍ ⟶ `patient_finance` لم تُنفَّذ إطلاقاً**",
+      opAsk.value.tools, { names: ["patient_lookup"], count: 1 });
+    //  والقياس على **ملفّ المريض** بالتحديد: `getPaymentsByPatientId` لا
+    //  يناديها إلّا `patient_finance`. أمّا لقطةُ الفرع الإجمالية فتُبنى
+    //  لكلّ طلبٍ ماليّ منذ PR #221 وهي باقيةٌ كما هي — ليست ملفَّ مريض.
+    same("   **ولا قراءةَ ملفٍّ ماليّ لمريض — والأداة معروضةٌ له**",
+      finCalls.filter((m) => m === "getPaymentsByPatientId"), []);
+    check(!/\b(totalCost|totalPaid|remaining)\b/.test(JSON.stringify(lastResults())),
+      "   ولا مبلغَ وصل النموذج", JSON.stringify(lastResults()).slice(0, 200));
+
+    resetFin();
+    runScript([
+      { toolCalls: [{ name: "patient_finance", input: { patientCode: p1.patient_code } }] },
+      { text: "المتبقّي 700,000 د.ع." },
+    ]);
+    const moneyAsk: any = await chat(access(S.acc), ask(`كم المتبقّي على ${p1.patient_code}؟`));
+    same("ب. **وسؤالٌ ماليّ عن نفس الرمز ⟶ تُنفَّذ فعلاً**",
+      moneyAsk.value.tools, { names: ["patient_finance"], count: 1 });
+    same("   **وملفُّه الماليّ قُرئ هذه المرّة** — فالفرق حقيقيّ لا لفظيّ",
+      finCalls.filter((m) => m === "getPaymentsByPatientId").length, 1);
+    same("   وبأرقامها الصحيحة",
+      [lastResults()[0]?.totalPaid, lastResults()[0]?.remaining], [300_000, 700_000]);
+
     // ══ د. ادّعاء الصلاحية في النصّ ═════════════════════════════════
     console.log("\n── الادّعاء ──");
     resetFin();

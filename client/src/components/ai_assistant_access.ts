@@ -39,7 +39,7 @@ export const GENERAL_SUGGESTIONS = [
 export const DOCTOR_SUGGESTIONS = ["من المرضى الذين ينتظرون معاينتي؟"];
 export const EXPERT_SUGGESTIONS = ["ما أوامر التصنيع المسندة إليّ؟"];
 export const RECEPTION_SUGGESTIONS = ["من ينتظر معاينة أو تخصيص خبير؟"];
-export const PHYSIO_SUGGESTIONS = ["ما حالة جلسات العلاج الطبيعي في فرعي؟"];
+export const PHYSIO_SUGGESTIONS = ["من مرضى العلاج الطبيعي النشطون في فرعي؟"];
 
 /** نفس أعلام النظام الحيّة — لا أدوارٌ مخترَعة. */
 const isDoctor = (s?: AiSessionLike | null) =>
@@ -50,6 +50,12 @@ const isPureExpert = (s?: AiSessionLike | null) => s?.role === "prosthetics_expe
 const isReceptionish = (s?: AiSessionLike | null) =>
   s?.isAdmin === true || s?.role === "branch_manager" || s?.role === "reception"
   || s?.permissions?.canAddPatients === true;
+//  **الصلاحية الحقيقية لا دورٌ مخترَع**: النظام ليس فيه «موظّف علاج طبيعي»،
+//  وإنّما `canEnterSessions` — مَن يُدخل الجلسات. وهي نفس شرط الطابور في
+//  الخادم، فلا يُعرَض اقتراحٌ يُردّ.
+const entersSessions = (s?: AiSessionLike | null) =>
+  s?.isAdmin === true || s?.role === "branch_manager"
+  || s?.permissions?.canEnterSessions === true;
 
 /** أمثلةٌ مالية — لا تُعرض إلّا لمن يستطيع الجواب عنها فعلاً. */
 export const FINANCE_SUGGESTIONS = [
@@ -71,6 +77,7 @@ export function suggestionsFor(session: AiSessionLike | null | undefined): strin
   if (isDoctor(session)) out.push(...DOCTOR_SUGGESTIONS);
   if (worksAsExpert(session)) out.push(...EXPERT_SUGGESTIONS);
   if (isReceptionish(session)) out.push(...RECEPTION_SUGGESTIONS);
+  if (entersSessions(session)) out.push(...PHYSIO_SUGGESTIONS);
   if (sessionHasFinance(session)) out.push(...FINANCE_SUGGESTIONS);
   //  الخبيرُ الصِرف لا يرى طوابير الفرع، فلا يُقترح عليه «ما مهامي» العامّ
   //  مرّتين — اقتراحُه الخاصّ يكفيه.

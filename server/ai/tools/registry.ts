@@ -32,6 +32,9 @@ import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
 
+/** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
+const DEVICE_SERVICES = ["prosthetic", "medical_support"];
+
 /** أقصى عدد عناصر في أي قائمة تصل النموذج. */
 export const MAX_LIST_ITEMS = 20;
 
@@ -182,14 +185,58 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
     .where(and(eq(visits.patientId, patientId), isNull(visits.deletedAt)))
     .orderBy(desc(visits.visitDate)).limit(3);
 
-  // ── العلاج الطبيعي: عدّاد الجلسات (تشغيليّ لا ماليّ) ──────────────────
+  // ── العلاج الطبيعي ────────────────────────────────────────────────────
+  //
+  //  **الجلسات تُعدّ من زيارات خيط العلاج الطبيعي وحده.** كان العدّ يشمل
+  //  كلَّ زيارات المريض، فمريضُ طرفٍ وعلاجٍ معاً تُحسب له زياراتُ قياس
+  //  الطرف وصيانته جلساتِ علاجٍ طبيعي — رقمٌ خاطئ يبني عليه الموظّف قراراً.
+  //  والفصل بالحالة (`case_id`) هو ما يفعله التطبيق نفسه في صفحة المريض.
+  //
+  //  والاستثناءان من قاعدة الصفحة نفسها: «خدمة جديدة» قيدٌ مالي لا جلسة،
+  //  و«استشارة طبية» ليست جلسةَ علاج.
+  //
+  //  **وبلا «المشتراة» و«المتبقّية» عمداً**: احتسابُهما في التطبيق يمرّ عبر
+  //  كلفة الحالة ودفعات المريض (`resolvePurchasedSessions`) — أي عبر المال.
+  //  فإخراجُهما هنا كان يعني قراءةً مالية لموظّفٍ لا يملكها، وإعادةَ حسابٍ
+  //  ثانٍ قد يخالف الصفحة. فيُعرَض **المنفَّذ** وحده، وهو تشغيليٌّ خالص.
   let physio: Record<string, unknown> | null = null;
   if (p.isPhysiotherapy) {
-    const [used] = await db.select({ n: sql<number>`COUNT(*)::int` })
-      .from(visits).where(and(eq(visits.patientId, patientId), isNull(visits.deletedAt)));
+    const [physioCase] = await db.select({ id: patientCases.id })
+      .from(patientCases)
+      .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")))
+      .limit(1);
+
+    const rows = physioCase
+      ? await db.select({
+        treatmentType: visits.treatmentType, visitDate: visits.visitDate,
+        details: visits.details, notes: visits.notes,
+      }).from(visits).where(and(
+        eq(visits.patientId, patientId),
+        eq(visits.caseId, physioCase.id),
+        isNull(visits.deletedAt),
+      )).orderBy(desc(visits.visitDate))
+      : [];
+
+    const sessions = rows.filter((v) => {
+      const isServiceVisit = v.details === "خدمة جديدة"
+        || (typeof v.notes === "string" && v.notes.startsWith("خدمة جديدة:"));
+      const isConsultation = v.treatmentType === "استشارة طبية";
+      return !isServiceVisit && !isConsultation;
+    });
+
+    const byType: Record<string, number> = {};
+    for (const v of sessions) {
+      const t = (v.treatmentType || "").trim() || "غير محدّد";
+      byType[t] = (byType[t] ?? 0) + 1;
+    }
+
     physio = {
-      plan: p.treatmentType ?? null,
-      visitsRecorded: Number(used?.n ?? 0),
+      prescribedPlan: p.treatmentType ?? null,
+      sessionsCompleted: sessions.length,
+      sessionsCompletedByType: byType,
+      lastSessionDate: sessions[0]?.visitDate
+        ? new Date(sessions[0].visitDate).toISOString().slice(0, 10) : null,
+      note: "المشتراة والمتبقّية بيانات مالية — تُعرض في صفحة المريض لمن يملك صلاحيتها.",
     };
   }
 
@@ -309,7 +356,11 @@ async function patientFinance(access: AiAccessContext, input: any): Promise<Tool
   const [row] = await db.select({ branchId: patients.branchId, totalCost: patients.totalCost })
     .from(patients).where(eq(patients.id, hit.patientId));
   if (!row) return denied(NOT_FOUND);
-  if (!access.isAdmin && access.branchId !== null && row.branchId !== access.branchId) {
+  //  **النطاق المالي يُطبَّق على المسؤول أيضاً.** فالمسؤول الذي ضيّق نطاقه
+  //  إلى فرعٍ بعينه (كما تفعل نقطة المحادثة المالية) لا يقرأ مال فرعٍ آخر
+  //  من هنا — وإلّا صارت الأداة بابَ التفافٍ على تضييقٍ اختاره بنفسه.
+  //  و`branchId === null` تعني «كل الفروع» وهي حال المسؤول بلا اختيار.
+  if (access.branchId !== null && row.branchId !== access.branchId) {
     return denied(NOT_FOUND);
   }
 
@@ -421,9 +472,54 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
       total: pending.length,
       items: await codesFor(uniq(pending.map((r) => r.patientId))),
     };
+
+    //  ══ «بانتظار تخصيص خبير» — **لكل خدمة، ومطروحاً منها المُسنَد** ══
+    //  إشارةُ الطبيب «تم تحديد» تعني أن دور الاستعلامات جاء. لكنها تبقى
+    //  على الملفّ بعد التخصيص أيضاً، فعرضُها كما هي يُبقي مريضاً في الطابور
+    //  إلى الأبد وقد بدأ جهازُه يُصنَّع (نفس علّة PR #220 في السجلّ).
+    //
+    //  والطرح **لكل خدمة على حدة**: مَن أُسنِد طرفُه وبقي مسندُه ينتظر يبقى
+    //  في الطابور بمسنده وحده. وإخفاؤه كلّه لأن أحد خيطيه بدأ خطأٌ فادح.
+    //
+    //  والعلاج الطبيعي خارج هذا الطابور أصلاً: لا خبيرَ يُسنَد له.
+    const decidedDevice = decided.filter((r) => DEVICE_SERVICES.includes(r.caseType));
+    const assignedPairs = new Set<string>();
+    if (decidedDevice.length > 0) {
+      const assigned = await db.select({
+        patientId: prostheticWorkOrders.patientId,
+        serviceType: prostheticWorkOrders.serviceType,
+      }).from(prostheticWorkOrders).where(and(
+        inArray(prostheticWorkOrders.patientId, uniq(decidedDevice.map((r) => r.patientId))),
+        sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+        //  البناءُ الأولي وحده. والصيانةُ عملٌ على جهازٍ قائم، فلا تُخرج
+        //  خدمةً من طابور التخصيص — ولا COALESCE يُفلت صفّاً قديماً.
+        sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
+      ));
+      for (const a of assigned) assignedPairs.add(`${a.patientId}:${a.serviceType}`);
+    }
+    const stillAwaiting = decidedDevice.filter(
+      (r) => !assignedPairs.has(`${r.patientId}:${r.caseType}`));
+
+    const codeByPatient = new Map<number, { patientCode: string; name: string }>();
+    {
+      const ids = uniq(stillAwaiting.map((r) => r.patientId)).slice(0, MAX_LIST_ITEMS);
+      const rows = ids.length
+        ? await db.select({ id: patients.id, code: patients.patientCode, name: patients.name })
+          .from(patients).where(inArray(patients.id, ids))
+        : [];
+      for (const r of rows) codeByPatient.set(r.id, { patientCode: r.code, name: r.name });
+    }
     out.awaitingExpertAssignment = {
-      total: decided.length,
-      items: await codesFor(uniq(decided.map((r) => r.patientId))),
+      total: stillAwaiting.length,
+      //  صفٌّ لكل (مريض، خدمة) — فالمريض ذو الخيطين يظهر بخدمته المنتظرة.
+      items: stillAwaiting.slice(0, MAX_LIST_ITEMS)
+        .map((r) => ({
+          patientCode: codeByPatient.get(r.patientId)?.patientCode ?? null,
+          name: codeByPatient.get(r.patientId)?.name ?? null,
+          serviceType: r.caseType,
+        }))
+        .filter((i) => i.patientCode !== null),
+      ...(stillAwaiting.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
     };
 
     const activeOrders = await db.select({
@@ -440,6 +536,35 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
       activeMaintenance: activeOrders.filter((o) => o.purpose === "maintenance").length,
       readyForFitting: activeOrders.filter((o) => o.currentStage === "ready_for_fitting").length,
     };
+
+    //  ══ طابور العلاج الطبيعي — **بالفرع لا بالموظّف** ══════════════════
+    //  لا يوجد في النظام إسنادُ معالجٍ بعينه لمريض: `canEnterSessions` تُدخل
+    //  الجلسات، و`treatment_plans` خطّةُ مريضٍ لا ملكيّةُ موظّف. فاختراعُ
+    //  «مرضاي» كان سيقسّم عملاً لا يقسّمه النظام أصلاً — والطابور بالفرع هو
+    //  ما تعرضه الشاشات فعلاً.
+    if (access.permissions?.canEnterSessions === true || access.isAdmin || isManager(access)) {
+      const activePhysio = await db.select({
+        code: patients.patientCode, name: patients.name,
+      }).from(patients)
+        .innerJoin(patientCases, and(
+          eq(patientCases.patientId, patients.id),
+          eq(patientCases.caseType, "physiotherapy"),
+          eq(patientCases.status, "active"),
+        ))
+        .where(and(
+          eq(patients.isPhysiotherapy, true),
+          scope === null ? sql`TRUE`
+            : scope.length === 0 ? sql`FALSE`
+              : inArray(patients.branchId, scope),
+        ))
+        .orderBy(desc(patients.id));
+      out.physiotherapy = {
+        activePatients: activePhysio.length,
+        items: activePhysio.slice(0, MAX_LIST_ITEMS)
+          .map((r) => ({ patientCode: r.code, name: r.name })),
+        ...(activePhysio.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
+      };
+    }
   }
 
   return { ok: true, data: out };
