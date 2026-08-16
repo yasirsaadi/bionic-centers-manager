@@ -24,6 +24,11 @@ export const users = pgTable("users", {
 
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
+  // الهوية العلنية الدائمة (migration 052): WB-01629. تُطبع وتُقال وتُرسَل
+  // عبر تلغرام ويُبحَث بها. تولّدها القاعدة من تسلسل مخصَّص ولا يختارها
+  // عميل، ولا تتغيّر أبداً بعد الإنشاء — ولا تُشتقّ من أي بيانٍ للمريض.
+  // و`id` يبقى المفتاح الداخلي لكلّ الصلات؛ هذا للبشر لا للجداول.
+  patientCode: text("patient_code").notNull(),
   name: text("name").notNull(),
   // رقم الاتصال الأساسي — بالمريض أو بالمسؤول عنه (طفل برقم أبيه مثلاً).
   // `phone` هو ما كتبه الموظف حرفياً ولا يُمسّ؛ الأعمدة الثلاثة تحته
@@ -208,6 +213,18 @@ export type PatientDeviceEpisodeStatus = (typeof PATIENT_DEVICE_EPISODE_STATUSES
 // المراقَب `app.allow_event_edit`، ومستعمِله الوحيد المشروع هو إعادة توجيه
 // الأحداث في `mergePatients`. و`DELETE` يبقى مسموحاً لأن كاسكيد حذف المريض
 // يحتاجه.
+// رموزُ ملفّاتٍ دُمجت (migration 052) — تبقى حيّةً تشير إلى الملفّ الباقي.
+//
+// الرمز قد يكون طُبع أو أُرسل عبر تلغرام أو قيل للمريض قبل الدمج. فلو مات
+// بموت صفّه لصار بيد المريض ورقةٌ لا تدلّ على شيء. والرمز مفتاحٌ أوّلي هنا،
+// فتفرّده عبر الجدولين مضمونٌ بنيوياً لا بفحصٍ في التطبيق.
+export const patientCodeAliases = pgTable("patient_code_aliases", {
+  code: text("code").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reason: text("reason").notNull().default("merge"),
+});
+
 export const patientEvents = pgTable("patient_events", {
   // BIGSERIAL: ينمو مع كل زيارة ودفعة ومرحلة تصنيع، فحدّ الـ32-بت قريب
   // على مدى سنوات. `mode: "number"` آمن حتى 2^53، وهو أبعد من أي أفق.
@@ -795,7 +812,10 @@ export const customStats = pgTable("custom_stats", {
 });
 
 export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
-export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true }).extend({
+//  `patientCode` مُسقَطٌ من العقد عمداً (ترحيل ٠٥٢): الهوية العلنية يولّدها
+//  الخادم/القاعدة ولا يختارها عميل. وإسقاطُها هنا يجعل قيمةً ملفَّقة في جسم
+//  الطلب لا تصل النوعَ أصلاً — قبل أن تصل أي حراسة في التطبيق.
+export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true, patientCode: true }).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true }).extend({

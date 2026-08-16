@@ -49,6 +49,9 @@ async function cleanup() {
     `DELETE FROM cost_entries WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await pool.query(
     `DELETE FROM patient_cases WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
+  //  الأسماء البديلة (ترحيل ٠٥٢) — الدمج يُنشئها، وهي تشير إلى المريض.
+  await pool.query(
+    `DELETE FROM patient_code_aliases WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await pool.query(`DELETE FROM patients WHERE referral_source = $1`, [MARK]);
 }
 

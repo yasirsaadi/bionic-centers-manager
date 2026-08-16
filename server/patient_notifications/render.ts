@@ -23,6 +23,7 @@
 // وتفصيلُه في `patientDeviceName` أسفل الملفّ.
 
 import { PATIENT_EVENT_TYPES } from "@shared/patient_events";
+import { isCanonicalPatientCode } from "@shared/patient_code";
 
 /**
  * أنواع لا تقابلها أحداث في تاريخ المريض.
@@ -102,6 +103,22 @@ const WELCOME_TEXT =
   "تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح.";
 
 /**
+ * الترحيب — ومعه رمزُ المريض إن حملته الحمولة (ترحيل ٠٥٢).
+ *
+ * **والصفوف القديمة تبقى تُعرَض**: طابورُ الصادر قد يحمل ترحيباً استُحقّ
+ * قبل هذه الميزة، بلا حمولة إطلاقاً. فغيابُ الرمز يعيد النصّ الأول كما
+ * كان — لا فراغاً ولا «undefined» في رسالةٍ تصل مريضاً.
+ *
+ * ولا يُقبل إلا رمزٌ قانوني: حمولةٌ مشوّهة تُهمَل بصمت بدل أن تُطبع كما هي.
+ */
+function welcomeText(payload: Record<string, unknown>): string {
+  const code = payload.patientCode;
+  if (!isCanonicalPatientCode(code)) return WELCOME_TEXT;
+  return `${WELCOME_TEXT}\nرمز المريض الخاص بك: ${code}\n`
+    + "احتفظ بهذا الرمز لاستخدامه عند مراجعة المركز.";
+}
+
+/**
  * «أين جهازك الآن» بصيغةٍ واحدة لكل المراحل — لقطةُ حاضرٍ لا خبرُ تغيّر.
  * تُستعمل عند الربط، وللمرحلة الأولى حين يُصحَّح أمرٌ راجعاً إليها.
  */
@@ -159,7 +176,7 @@ export function renderNotification(
       return deliveryDateText(p);
 
     case LINK_NOTIFICATION_TYPES.WELCOME:
-      return WELCOME_TEXT;
+      return welcomeText(p);
 
     // لقطة الحالة عند الربط: **حالة** لا **تحديث** — المريض لم يتغيّر عنده
     // شيء الآن، هو فقط يرى أين وصل. فصيغتها ثابتة لكل المراحل.

@@ -19,6 +19,7 @@ import { prostheticWorkOrders as WO } from "@shared/schema";
 import { enqueueForContact } from "./outbox";
 import { LINK_NOTIFICATION_TYPES } from "./render";
 import { redeemLinkToken } from "../patient_contacts/store";
+import { patientCodeOf } from "../patient_code/store";
 import type { DbTransaction } from "../events/store";
 
 /**
@@ -97,9 +98,15 @@ export async function enqueueWelcomeIn(
   const { patientId, patientContactId } = params;
   let queued = 0;
 
+  // الرمز **داخل المعاملة نفسها** — كاللقطة تماماً: ما يُقرأ هو ما يُستحقّ.
+  // ولا يُرسَل معه شيء آخر: لا مال ولا تشخيص ولا جهاز ولا خبير ولا رقم صفّ.
+  // وصفٌّ قديم بلا حمولة يبقى يُعرَض بنصّه الأول — العارض يحتمل غيابه.
+  const patientCode = await patientCodeOf(patientId, tx);
+
   const welcome = await enqueueForContact(tx, {
     patientId, patientContactId,
     notificationType: LINK_NOTIFICATION_TYPES.WELCOME,
+    ...(patientCode ? { payload: { patientCode } } : {}),
   });
   if (welcome !== null) queued++;
 

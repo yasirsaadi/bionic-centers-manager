@@ -227,7 +227,9 @@ export default function PatientsList() {
   };
 
   interface RegistryRow {
-    id: number; name: string; phone: string | null; age: string; branchId: number;
+    id: number;
+    /** الهوية العلنية الدائمة (ترحيل ٠٥٢) — WB-01629. */
+    patientCode: string; name: string; phone: string | null; age: string; branchId: number;
     medicalCondition: string; isAmputee: boolean | null; isPhysiotherapy: boolean | null;
     isMedicalSupport: boolean | null; amputationSite: string | null; supportType: string | null;
     diseaseType: string | null; patientClassification: string | null; totalCost: number | null;
@@ -361,6 +363,7 @@ export default function PatientsList() {
       const remaining = (patient.totalCost || 0) - totalPaid;
       return {
         "#": index + 1,
+        "كود المريض": patient.patientCode ?? "",
         "الاسم": patient.name,
         "الهاتف": patient.phone || "",
         "العمر": patient.age,
@@ -417,6 +420,7 @@ export default function PatientsList() {
           <thead>
             <tr>
               <th>#</th>
+              <th>كود المريض</th>
               <th>الاسم</th>
               <th>الهاتف</th>
               <th>العمر</th>
@@ -435,6 +439,7 @@ export default function PatientsList() {
               return `
               <tr>
                 <td>${index + 1}</td>
+                <td>${patient.patientCode ?? "-"}</td>
                 <td>${patient.name}</td>
                 <td>${patient.phone || "-"}</td>
                 <td>${patient.age}</td>
@@ -605,7 +610,15 @@ export default function PatientsList() {
                           <span className="text-xs font-mono text-slate-400 bg-slate-100 rounded px-1.5 py-0.5 shrink-0">
                             {startIndex + index + 1}
                           </span>
-                          <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
+                            <div
+                              className="text-xs font-mono text-slate-500"
+                              data-testid={`patient-code-${patient.id}`}
+                            >
+                              {patient.patientCode}
+                            </div>
+                          </div>
                         </div>
                         <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
                       </div>
@@ -679,7 +692,15 @@ export default function PatientsList() {
                           {startIndex + index + 1}
                         </TableCell>
                         <TableCell className="font-medium text-slate-900 py-4">
-                          {patient.name}
+                          <div>{patient.name}</div>
+                          {/*  الهوية العلنية: صغيرةٌ لكنها ظاهرة، وبخطٍّ ثابت
+                              العرض كي تُقرأ رقماً رقماً على الهاتف. */}
+                          <div
+                            className="text-xs font-mono text-slate-500 mt-0.5"
+                            data-testid={`patient-code-${patient.id}`}
+                          >
+                            {patient.patientCode}
+                          </div>
                         </TableCell>
                         <TableCell className="text-slate-600">{patient.age}</TableCell>
                         <TableCell>

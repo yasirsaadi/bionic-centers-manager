@@ -31,7 +31,7 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
-  patientNotificationDeliveries,
+  patientNotificationDeliveries, patientCodeAliases,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -40,6 +40,7 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import { mergeContactsInto } from "./patient_contacts/store";
+import { aliasCodesOnMerge } from "./patient_code/store";
 import {
   lockCaseAndReadOpenEpisode, markEpisodeInManufacturing, caseHasEpisodes,
   resolveDeviceTargetTx,
@@ -729,6 +730,13 @@ export class DatabaseStorage implements IStorage {
 
     const valuesToInsert: any = { ...patientData };
 
+    // ══ الهوية العلنية تولد في القاعدة، لا في الطلب (ترحيل ٠٥٢) ═══════
+    // يُحذف الحقل دائماً — فيسري افتراضُ العمود
+    // (nextval على التسلسل المخصَّص) ذرّياً. وهو ما يجعل إدراجين متزامنين
+    // لا يمكن أن يلتقيا على رمز، ويجعل قيمةً ملفَّقة في جسم الطلب بلا أثر
+    // حتى لو تجاوزت عقدَ zod. نفس نمط الأعمدة المشتقّة من الهاتف تحته.
+    delete valuesToInsert.patientCode;
+
     // نقطة الخنق الوحيدة لتطبيع رقم الاتصال عند الإنشاء. الأعمدة الثلاثة
     // المشتقّة تُكتب من الدالّة دائماً — فقيمة يرسلها العميل لأيٍّ منها
     // تُستبدَل هنا ولا تصل القاعدة. `phone` يُحفظ كما كُتب بعد قصّ الأطراف.
@@ -790,6 +798,20 @@ export class DatabaseStorage implements IStorage {
     // strip, a body carrying `phoneStatus: "ok"` with no `phone` would mark a
     // garbage number as clean.
     const patch: any = { ...updates };
+
+    // ══ الهوية العلنية لا تُعدَّل — ورفضٌ صريح لا تجاهلٌ صامت ══════════
+    // نقلُ رمزٍ بين ملفّين يقلب هويّتين معاً: ورقةُ مريضٍ تدلّ على غيره،
+    // ورسالةُ تلغرام تصل غير صاحبها. فالمحاولة تُردّ بنصّها لا تُبتلع —
+    // ومَن يعيد إرسال الصفّ كما قرأه (بنفس الرمز) لا يُعطَّل عليه التعديل.
+    if (patch.patientCode !== undefined) {
+      const [row] = await db.select({ patientCode: patients.patientCode })
+        .from(patients).where(eq(patients.id, id));
+      if (row && String(patch.patientCode) !== row.patientCode) {
+        throw new Error("رمز المريض ثابت ولا يقبل التعديل");
+      }
+      delete patch.patientCode;
+    }
+
     delete patch.phoneE164;
     delete patch.phoneCountry;
     delete patch.phoneStatus;
@@ -935,6 +957,10 @@ export class DatabaseStorage implements IStorage {
       // هنا بيده، فنسيانُه يُكشَف باختبار حذفٍ حقيقي لا بعطلٍ عند مستخدم.
       await tx.delete(patientLinkTokens).where(eq(patientLinkTokens.patientId, id));
       await tx.delete(patientContacts).where(eq(patientContacts.patientId, id));
+      // الأسماء البديلة (migration 052) — بنفس القاعدة الملزِمة. وحذفٌ لا
+      // إبقاء: ملفٌّ حُذف حقاً لا يبقى رمزٌ يدلّ عليه. والتسلسل لا يرجع،
+      // فلا يُعاد الرمز المحذوف لمريضٍ آخر أبداً.
+      await tx.delete(patientCodeAliases).where(eq(patientCodeAliases.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
     });
   }
@@ -1649,6 +1675,13 @@ export class DatabaseStorage implements IStorage {
         patch.phoneCountry = n.country;
         patch.phoneStatus = n.status;
       }
+      // الهوية العلنية: الهدف يحتفظ برمزه، ورمزُ المصدر يصير اسماً بديلاً
+      // له (مع أسماء المصدر البديلة إن كان قد دُمج فيه ملفٌّ قبلاً). فورقةٌ
+      // بيد المريض أو رسالةٌ في تلغرام تحمل الرمز القديم تبقى تدلّ عليه.
+      // **قبل حذف صفّ المصدر** — منه يُقرأ الرمز. وداخل المعاملة نفسها:
+      // إمّا يحلّ الرمزان معاً وإمّا لا يتغيّر شيء.
+      await aliasCodesOnMerge(tx as any, sourceId, targetId);
+
       const [patient] = await tx.update(patients)
         .set(patch)
         .where(eq(patients.id, targetId))
