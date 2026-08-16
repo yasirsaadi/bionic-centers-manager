@@ -43,6 +43,18 @@ export function AiChatDrawer() {
   const canUse = canOpenAssistant(session, aiStatus?.enabled);
   const suggestions = suggestionsFor(session);
 
+  // ══ كلُّ فتحةٍ محادثةٌ جديدة ═══════════════════════════════════════════
+  // كانت المحادثة تبقى بعد الإغلاق، فيفتح الموظّف المساعد بعد ساعة فيجد
+  // كلاماً عن مريضٍ آخر — والمساعد صار يقرأ ملفّات حيّة، فبقاءُ سياقٍ قديم
+  // يجعله يجيب عن غير مَن أمامه. والتنظيف **عند الإغلاق** لا عند الفتح، كي
+  // لا يبقى محتوى مريضٍ في الذاكرة بعد أن أغلق الموظّف النافذة.
+  // (بلا تخزينٍ في المتصفّح ولا في القاعدة — لا شيء يُحفظ أصلاً.)
+  const closeDrawer = () => {
+    setOpen(false);
+    setMessages([]);
+    setDraft("");
+  };
+
   const askMutation = useMutation({
     mutationFn: async (history: ChatMessage[]) => {
       const res = await apiRequest("POST", "/api/ai/chat", { messages: history });
@@ -100,7 +112,7 @@ export function AiChatDrawer() {
         >
           <div
             className="absolute inset-0 bg-black/30"
-            onClick={() => setOpen(false)}
+            onClick={closeDrawer}
             aria-hidden
           />
           <Card className="relative ml-0 mr-0 sm:ml-auto sm:mr-0 sm:my-0 w-full sm:w-[440px] sm:max-w-[440px] sm:h-screen sm:rounded-none rounded-t-2xl sm:rounded-tl-none flex flex-col shadow-2xl !bg-white">
@@ -120,7 +132,7 @@ export function AiChatDrawer() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setOpen(false)}
+                onClick={closeDrawer}
                 aria-label="إغلاق"
                 data-testid="button-close-ai-chat"
               >

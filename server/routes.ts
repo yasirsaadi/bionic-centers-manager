@@ -5731,8 +5731,14 @@ export async function registerRoutes(
 
     const access = resolveAiAccess({ session: branchSession, branchName, scopeBranchId });
 
-    // أثرٌ صغير لكلّ طلب: مَن سأل، من أي فرع، بأي وضع، وهل مُنح المال.
-    // بلا نصّ السؤال وبلا نصّ الجواب — السجلّ للمساءلة لا للأرشفة.
+    const result = await aiChat(access, history);
+
+    // أثرٌ صغير لكلّ طلب: مَن سأل، من أي فرع، بأي وضع، وهل مُنح المال،
+    // وأسماءُ الأدوات التي نُفِّذت وعددُها. **ولا وسائطَ ولا نتائج ولا رمزَ
+    // مريض ولا اسمَ ولا تشخيصَ ولا نصَّ سؤالٍ ولا جواب** — السجلّ للمساءلة
+    // لا للأرشفة، وأرشفةُ محتوى العيادة في سجلّ تدقيقٍ تسريبٌ بابٌ آخر.
+    // (يُكتب بعد النداء ليحمل الأدوات؛ وهو «أطلق وانسَ» فلا يؤخّر الردّ.)
+    const toolNames = result.ok ? (result.value.tools?.names ?? []) : [];
     logAudit({
       entityType: "ai_chat",
       entityId: access.userId ?? 0,
@@ -5744,12 +5750,14 @@ export async function registerRoutes(
         mode: access.mode,
         financeAllowed: access.canUseFinance,
         ...(access.financeScopeMissing ? { financeScopeMissing: true } : {}),
+        ...(toolNames.length
+          ? { toolNames: toolNames.filter((n, i) => toolNames.indexOf(n) === i), toolCount: toolNames.length }
+          : {}),
       },
       ipAddress: req.ip ?? null,
       userAgent: req.get?.("user-agent") ?? null,
     });
 
-    const result = await aiChat(access, history);
     if (!result.ok) {
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
       return res.status(status).json({ error: result.message, reason: result.reason });

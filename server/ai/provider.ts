@@ -150,3 +150,101 @@ export async function safeAiComplete(
     return { ok: false, reason: "unknown", message: "خطأ غير متوقع" };
   }
 }
+
+// ══ مسارٌ ثانٍ: استكمالٌ بأدوات ═══════════════════════════════════════════
+//
+// **`aiComplete` أعلاه لم تُمَسّ.** تصنيفُ المصاريف وشرحُ الشذوذ والتقريرُ
+// الشهري والتدقيقُ الذكي وردُّ الاستبيان وتلميحاتُ المصاريف كلّها تمرّ بها
+// كما كانت، بنفس التوقيع ونفس السلوك. وما تحت هذا السطر مسارٌ منفصل
+// للمساعد المحادثي وحده — إضافةٌ لا إعادةَ كتابة.
+//
+// والحلقة هنا **لا تنفّذ أداةً بنفسها**: تُرجع طلب النموذج إلى المنادي،
+// وهو مَن يتحقّق ويُنفّذ. فالمزوّد يبقى جاهلاً بالصلاحيات وبالقاعدة، والحراسة
+// في مكانٍ واحدٍ يُختبَر.
+
+export interface AiToolSpec {
+  name: string;
+  description: string;
+  /** JSON Schema كما تطلبه واجهة Anthropic. */
+  input_schema: Record<string, unknown>;
+}
+
+export type AiConversationBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: any }
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+
+export interface AiTurn {
+  role: "user" | "assistant";
+  content: string | AiConversationBlock[];
+}
+
+export interface AiToolCall {
+  id: string;
+  name: string;
+  input: any;
+}
+
+export interface AiToolStep {
+  /** نصُّ النموذج في هذه الجولة (قد يكون فارغاً حين يطلب أداةً فقط). */
+  text: string;
+  /** ما طلبه من أدوات — فارغةٌ تعني أنه انتهى. */
+  toolCalls: AiToolCall[];
+  /** كتلُ الردّ كما هي، لتُعاد إلى المحادثة في الجولة التالية. */
+  blocks: AiConversationBlock[];
+}
+
+/**
+ * جولةٌ واحدة مع النموذج، بأدوات.
+ *
+ * تُرجع ما قاله وما طلبه. والمنادي يقرّر: يُنفّذ المسموح، ويُعيد النتائج
+ * `tool_result`، وينادي مرّةً أخرى — أو يتوقّف.
+ */
+export async function aiToolStep(params: {
+  system: string;
+  messages: AiTurn[];
+  tools: AiToolSpec[];
+  model?: AiModel;
+  maxTokens?: number;
+}): Promise<AiToolStep> {
+  const client = getClient();
+  if (!client) throw new AiUnavailableError("ANTHROPIC_API_KEY is not configured");
+
+  const response = await client.messages.create({
+    model: params.model === "sonnet" ? MODEL_SONNET : MODEL_HAIKU,
+    max_tokens: params.maxTokens ?? 800,
+    system: [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }],
+    tools: params.tools as any,
+    messages: params.messages as any,
+  });
+
+  const blocks: AiConversationBlock[] = [];
+  const toolCalls: AiToolCall[] = [];
+  let text = "";
+  for (const b of response.content) {
+    if (b.type === "text") {
+      text += b.text;
+      blocks.push({ type: "text", text: b.text });
+    } else if (b.type === "tool_use") {
+      toolCalls.push({ id: b.id, name: b.name, input: b.input });
+      blocks.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
+    }
+  }
+  return { text: text.trim(), toolCalls, blocks };
+}
+
+/** نفس تصنيف الأخطاء الذي يستعمله `safeAiComplete` — بلا تكرار للمنطق. */
+export function classifyAiError(err: unknown): AiResult<never> {
+  if (err instanceof AiUnavailableError) {
+    return { ok: false, reason: "disabled", message: "خدمة الذكاء الاصطناعي غير مفعّلة" };
+  }
+  if (err instanceof Anthropic.RateLimitError) {
+    return { ok: false, reason: "rate_limit", message: "تجاوز حدّ الطلبات، حاول بعد قليل" };
+  }
+  if (err instanceof Anthropic.APIError) {
+    console.error(`[ai] Anthropic API error ${err.status}:`, err.message);
+    return { ok: false, reason: "api_error", message: "خطأ في خدمة الذكاء الاصطناعي" };
+  }
+  console.error("[ai] unexpected error:", err);
+  return { ok: false, reason: "unknown", message: "خطأ غير متوقع" };
+}
