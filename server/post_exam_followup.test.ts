@@ -704,6 +704,88 @@ async function main() {
     same("     ومربوطةٌ بالحلقة نفسها",
       Number(fRoutine?.deviceEpisodeId) > 0, true);
 
+    // ══ ج١. الملفُّ المغلق لا يفتح النقاط القديمة ══════════════════════
+    console.log("\n── المغلق لا يتجاوز الاعتماد ──");
+    const pShut = await mkPatient("المغلق ثم العائد");
+    await mkCase(pShut);
+    await signExam(pShut, S.doc, { deviceCost: 600_000 });
+    const fShut = await followupOf(pShut);
+    await http("POST", `/api/followups/${fShut.id}/close`, S.recv,
+      { reason: "not_interested_now" });
+    same("(أُغلق بلا شراء)", (await followupOf(pShut))?.status, "closed_without_purchase");
+
+    const shutBody = { expertUserId: EXPERT, serviceType: "prosthetic", cost: 500_000 };
+    for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr],
+      ["المسؤول العام", S.admin]] as any[]) {
+      same(`ج١. **${who}: «تخصيص» على ملفٍّ مغلق ⟶ يُردّ**`,
+        (await http("POST", `/api/patients/${pShut}/assign-manufacturing`, sess, shutBody)).status,
+        409);
+      same(`     ولا من /api/manufacturing/orders`,
+        (await http("POST", "/api/manufacturing/orders", sess,
+          { patientId: pShut, ...shutBody })).status, 409);
+    }
+    const shutRes = await http("POST", `/api/patients/${pShut}/assign-manufacturing`,
+      S.recv, shutBody);
+    check(String(shutRes.body?.error ?? "").includes("أعِد فتحه"),
+      "     والرسالة تدلّ على إعادة الفتح لا «ممنوع» عامّة",
+      JSON.stringify(shutRes.body?.error));
+    same("     **ولا أمرَ تصنيعٍ وُلد**",
+      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pShut])).length, 0);
+    same("     ولا كلفةَ تحرّكت",
+      [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pShut]))[0].total_cost),
+        (await q(`SELECT 1 FROM cost_entries WHERE patient_id=$1`, [pShut])).length], [0, 0]);
+
+    //  والعودة الصحيحة: إعادة فتح ⟶ خبير ⟶ قبول ⟶ اعتماد.
+    await http("POST", `/api/followups/${fShut.id}/reopen`, S.recv,
+      { toStatus: "awaiting_patient_decision" });
+    await http("POST", `/api/followups/${fShut.id}/expert`, S.recv, { expertUserId: EXPERT });
+    await http("POST", `/api/followups/${fShut.id}/accept-price`, S.recv, {});
+    const shutApprove = await http("POST", `/api/followups/${fShut.id}/approve-purchase`,
+      S.doc, {});
+    same("ج١. **والمسار الرسمي بعد إعادة الفتح ينجح**", shutApprove.status, 200);
+    same("     بأمرٍ واحد وبالسعر المعتمد",
+      [(await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pShut])).length,
+        Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pShut]))[0].total_cost)],
+      [1, 600_000]);
+    //  وبعد التحويل لا يحكم الحارسُ شيئاً — الجهاز مرّ رسمياً وانتهى.
+    same("     **و`converted` لا تحكم بعدها**",
+      (await http("POST", `/api/patients/${pShut}/assign-manufacturing`, S.recv, shutBody)).status,
+      409);
+    check(!String((await http("POST", `/api/patients/${pShut}/assign-manufacturing`,
+      S.recv, shutBody)).body?.error ?? "").includes("متابعة"),
+      "     (والردّ من حارس «أمرٌ نشط» القائم لا من حارس المتابعة)", "");
+
+    // ══ ج٢. إغلاق الملفّ **إلغاءٌ لا رفضُ سعر** ════════════════════════
+    console.log("\n── الإلغاء ليس رفضاً ──");
+    for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr]] as any[]) {
+      const pC = await mkPatient(`إلغاء ${who}`);
+      await mkCase(pC);
+      await signExam(pC, S.doc, { deviceCost: 450_000 });
+      const fC = await followupOf(pC);
+      const rq = await http("POST", `/api/followups/${fC.id}/price-request`, sess,
+        { proposedPrice: 300_000, reason: "price" });
+      same(`   (${who} طلب تعديلاً)`, rq.status, 200);
+      await http("POST", `/api/followups/${fC.id}/close`, sess, { reason: "chose_other_center" });
+      const row = (await q(`SELECT status, decided_by, decision_note
+                              FROM price_change_requests WHERE id=$1`, [rq.body.requestId]))[0];
+      same(`ج٢. **${who} يُغلق ⟶ الطلب \`cancelled\` لا \`rejected\`**`, row.status, "cancelled");
+      same(`     والمُلغي مسجَّل`, Number(row.decided_by), sess.userId);
+      check(String(row.decision_note ?? "").includes("إغلاق"),
+        "     ومعه سببُ الإلغاء", String(row.decision_note));
+      const fCev = await followupOf(pC);
+      check(eventTypes(fCev).includes("price_request_cancelled"),
+        "     وحدثُ الإلغاء مسجَّل", JSON.stringify(eventTypes(fCev)));
+      check(!eventTypes(fCev).includes("price_rejected"),
+        "     **ولا حدثَ رفضٍ إطلاقاً**", JSON.stringify(eventTypes(fCev)));
+    }
+    //  و`rejected` لا يخرج إلّا من نقطة القرار بيد طبيبٍ أو مسؤول.
+    const rejRows = await q(`SELECT r.decided_by FROM price_change_requests r
+      JOIN patients p ON p.id = r.patient_id
+      WHERE p.referral_source = $1 AND r.status = 'rejected'`, [MARK]);
+    same("ج٢. **وكلُّ `rejected` قرارُ معتمِد** — لا استقبالٍ ولا مدير",
+      rejRows.filter((r: any) => ![DOC, DOC2, ADMIN].includes(Number(r.decided_by))), []);
+    check(rejRows.length > 0, "     (ووُجد رفضٌ حقيقي في المجموعة)", String(rejRows.length));
+
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");
     const pDel = await mkPatient("للحذف");

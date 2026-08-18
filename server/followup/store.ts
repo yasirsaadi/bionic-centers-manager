@@ -373,6 +373,59 @@ export async function hasActiveFollowup(params: {
   return (r.rows ?? []).length > 0;
 }
 
+/**
+ * هل تحكم طبقةُ الاعتماد **محاولةَ الشراء الجارية** لهذا الجهاز؟
+ *
+ * ══ لماذا ليست `hasActiveFollowup` ═════════════════════════════════════
+ * تلك تسأل «هل ثمّة مفاوضةٌ حيّة» — وهو السؤال الصحيح لحماية السعر. أمّا
+ * هنا فالسؤال «هل يجوز بدء بناءٍ من نقطةٍ قديمة»، وجوابُه يختلف في حالةٍ
+ * واحدة حاسمة: **`closed_without_purchase`**.
+ *
+ * إغلاقٌ بلا شراء يعني أن المريض **لم يشترِ**. فاعتبارُه «غير حيّ» كان
+ * يفتح النقطتين القديمتين من جديد: يغلق الموظّف الملفّ ثم يبدأ بناءً
+ * مباشرةً بلا موافقة مريضٍ ولا اعتماد طبيب — أي أن الإغلاق نفسه يصير
+ * مفتاح التجاوز. والعودة الصحيحة: إعادةُ فتحٍ ⟶ قبول ⟶ اعتماد.
+ *
+ * و`converted` وحدها لا تحكم: ذلك الجهاز مرّ بالمسار الرسمي فعلاً وانتهى.
+ *
+ * ══ ولماذا ليست «أيُّ متابعةٍ تاريخية تمنع للأبد» ═══════════════════════
+ * تلك قاعدةٌ ساذجة تحبس المريض إلى الأبد: مَن أُغلق ملفّه سنة ٢٠٢٤ لا يجوز
+ * أن يُمنع جهازُه المستقلّ سنة ٢٠٢٦. فالحكم **لمحاولة الشراء الجارية
+ * وحدها**:
+ *   • جهازٌ حيٌّ له حلقة ⟶ تحكمه متابعةُ **تلك الحلقة** لا غير.
+ *   • ولا حلقة ⟶ تحكمه **أحدثُ متابعةٍ بلا حلقة** لهذا الخيط.
+ * فمريضٌ أُغلق ملفّه القديم ثم فتح الاستعلامات له حلقةَ جهازٍ جديد يخرج من
+ * حكم القديمة فوراً — والحلقة نفسها هي إعلانُ المحاولة الجديدة.
+ *
+ * ومريضٌ **بلا متابعةٍ قطّ** لا تحكمه هذه الطبقة أصلاً: يمرّ بمساره القديم
+ * حرفاً بحرف.
+ */
+export async function purchaseGovernedByFollowup(params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  /** الحلقة الحيّة إن وُجدت — يحلّها المُستدعي، ولا تُقرأ من العميل. */
+  deviceEpisodeId: number | null;
+}): Promise<{ governed: boolean; status: string | null }> {
+  const r = params.deviceEpisodeId !== null
+    ? await db.execute(sql`
+        SELECT status FROM post_exam_followups
+         WHERE patient_id = ${params.patientId}
+           AND device_episode_id = ${params.deviceEpisodeId}
+         ORDER BY id DESC LIMIT 1
+      `)
+    : await db.execute(sql`
+        SELECT status FROM post_exam_followups
+         WHERE patient_id = ${params.patientId}
+           AND service_type = ${params.serviceType}
+           AND device_episode_id IS NULL
+         ORDER BY id DESC LIMIT 1
+      `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return { governed: false, status: null };
+  const status = String(row.status);
+  return { governed: status !== "converted", status };
+}
+
 // ── الانتقالات ───────────────────────────────────────────────────────────
 
 /** تأجيل: سببٌ منظَّم + موعدٌ أو استثناءٌ صريح. */
@@ -489,14 +542,36 @@ export async function closeWithoutPurchase(params: {
       "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
       "price_approval_pending", "purchase_approval_pending",
     ]);
-    //  طلبُ سعرٍ معلَّق يُغلق معها، وإلّا بقي معلَّقاً على متابعةٍ ميّتة.
-    await tx.execute(sql`
+    // ══ الطلب المعلَّق يُلغى **ولا يُرفض** ═══════════════════════════════
+    // «مرفوض» حكمٌ على السعر لا يملكه إلا طبيبٌ أو مسؤول. وكان الإغلاق
+    // يسمه `rejected` ويضع الاستعلامات أو مديرَ الفرع في `decided_by` —
+    // فيظهر في التاريخ موظّفٌ ردَّ سعراً ليست له صلاحية ردّه، وهو خرقٌ
+    // للقاعدة في السجلّ نفسه لا في الواجهة فقط.
+    //
+    // فـ`cancelled` أثرُ إغلاق الملفّ، و`rejected` يبقى **حصراً** من
+    // `decidePriceChange` بيد مَن يعتمد. والمُلغي مسجَّلٌ بمن هو ولماذا.
+    const cancelled = await tx.execute<{ id: number; current_price: number; proposed_price: number }>(sql`
       UPDATE price_change_requests
-         SET status = 'rejected', decided_at = NOW(), decided_by = ${params.actor.userId},
+         SET status = 'cancelled', decided_at = NOW(), decided_by = ${params.actor.userId},
              decided_by_name = ${params.actor.userName},
-             decision_note = 'أُغلق ملفّ المتابعة'
+             decision_note = 'أُلغي تلقائياً بإغلاق ملفّ المتابعة بلا شراء'
        WHERE followup_id = ${params.followupId} AND status = 'pending'
+      RETURNING id, current_price, proposed_price
     `);
+    for (const req of (cancelled.rows ?? [])) {
+      await appendEvent(tx, {
+        followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+        eventType: "price_request_cancelled", fromStatus: cur.status,
+        toStatus: "closed_without_purchase", reason: params.reason,
+        note: "أُلغي بإغلاق ملفّ المتابعة — لا يُعدّ رفضاً للسعر",
+        payload: {
+          requestId: Number(req.id),
+          currentPrice: Number(req.current_price),
+          proposedPrice: Number(req.proposed_price),
+        },
+        actor: params.actor,
+      });
+    }
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET status = 'closed_without_purchase', closed_reason = ${params.reason},

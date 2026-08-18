@@ -25,7 +25,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  allowedActions, FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
+  allowedActions, canSelectExpert,
+  FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
@@ -272,9 +273,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               اعتماد الشراء وبدء التصنيع
             </Button>
           )}
-          {/*  الخبير اختيارُ الاستعلامات — يُغيَّر ما دامت المتابعة حيّة. */}
-          {actions.length > 0 && active.status !== "closed_without_purchase"
-            && active.status !== "converted" && (
+          {/*  الخبير اختيارُ الاستعلامات — بصلاحية المتابعة لا بقائمة
+              الأزرار: قائمتُها تفرغ في حالتَي الاعتماد، والخبير يبقى
+              اختيارَها هناك. */}
+          {canSelectExpert(session as any, active.status) && (
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => { setExpertId(String(active.selectedExpertUserId ?? "")); setDialog("expert"); }}
               data-testid="button-select-expert">

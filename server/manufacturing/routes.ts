@@ -40,6 +40,19 @@ function getSession(req: Req) {
   };
 }
 
+/**
+ * رسالةُ الردّ حين تحكم طبقةُ الاعتماد محاولةَ الشراء.
+ *
+ * الملفُّ المغلق يحتاج **إعادة فتح** أوّلاً، وغيرُه يحتاج اعتماد الشراء.
+ * فالرسالة تدلّ على الخطوة التالية بعينها بدل «ممنوع» عامّة يقف عندها
+ * الموظّف لا يعرف ما يفعل.
+ */
+function bypassMessage(status: string | null): string {
+  return status === "closed_without_purchase"
+    ? "ملفّ متابعة هذا المريض مغلق بلا شراء — أعِد فتحه من بطاقة «قرار المريض بعد المعاينة» ثم سجّل موافقته ليعتمد الطبيب الشراء"
+    : "لهذا المريض متابعةُ ما بعد المعاينة — يُعتمد الشراء من بطاقة «قرار المريض بعد المعاينة» ليبدأ التصنيع";
+}
+
 export function registerManufacturingRoutes(app: Express, isAuthenticated: any) {
   // A PURE expert: their primary job is expert. Drives the restrictions
   // (financial lock-out, "experts use the order page", hidden dashboard).
@@ -236,13 +249,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     //
     // **ولا استثناءَ لأحد، ولا للمسؤول**: صلاحيةُ الاعتماد لا تعني تخطّي
     // المسار، فمَن يملك الاعتماد يعتمد من بابه ويترك أثره.
-    if (await followupStore.hasActiveFollowup({ patientId, serviceType })) {
-      return res.status(409).json({
-        error: "لهذا المريض متابعةُ ما بعد المعاينة — يُعتمد الشراء من بطاقة «قرار المريض بعد المعاينة» ليبدأ التصنيع",
-      });
-    }
-
+    //  الحلقة تُحلّ **قبل** الحارس: حكمُ الطبقة على محاولة الشراء الجارية،
+    //  وهويّتها هي الحلقة حين توجد.
     const live = await getOpenDeviceEpisode(patientId, serviceType);
+    const gov = await followupStore.purchaseGovernedByFollowup({
+      patientId, serviceType, deviceEpisodeId: live?.id ?? null,
+    });
+    if (gov.governed) {
+      return res.status(409).json({ error: bypassMessage(gov.status) });
+    }
     if (live) {
       return res.status(409).json({
         error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
@@ -337,13 +352,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     //
     // **ولا استثناءَ لأحد، ولا للمسؤول**: صلاحيةُ الاعتماد لا تعني تخطّي
     // المسار، فمَن يملك الاعتماد يعتمد من بابه ويترك أثره.
-    if (await followupStore.hasActiveFollowup({ patientId, serviceType })) {
-      return res.status(409).json({
-        error: "لهذا المريض متابعةُ ما بعد المعاينة — يُعتمد الشراء من بطاقة «قرار المريض بعد المعاينة» ليبدأ التصنيع",
-      });
-    }
-
     const liveEpisode = await getOpenDeviceEpisode(patientId, serviceType);
+    const governed = await followupStore.purchaseGovernedByFollowup({
+      patientId, serviceType, deviceEpisodeId: liveEpisode?.id ?? null,
+    });
+    if (governed.governed) {
+      return res.status(409).json({ error: bypassMessage(governed.status) });
+    }
 
     const legacyExempt = await isLegacyPatient(patientId);
     if (liveEpisode) {

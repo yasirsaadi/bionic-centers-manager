@@ -9,8 +9,10 @@
 // والاختبار الحيّ على النقاط (`test:followup`) يحرس الخادم. وهذا يحرس أن
 // **القاعدة نفسها** صحيحة قبل أن يستعملها أيٌّ منهما.
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
-  allowedActions, canApprove, canRecordFollowup, canViewFollowup,
+  allowedActions, canApprove, canRecordFollowup, canSelectExpert, canViewFollowup,
   isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
 } from "./followup";
@@ -112,6 +114,33 @@ same("ط. **مسحُ الحالات كلّها: لا زرَّ اعتمادٍ ل�
       allowedActions(who, st).filter((a) => approvalButtons.includes(a)))),
   []);
 
+// ══ ط٢. زرُّ الخبير لا يتبع طولَ قائمة الأزرار ═════════════════════════
+//  كان مربوطاً بـ`actions.length > 0`، فاختفى عن الاستعلامات في حالتَي
+//  الاعتماد لأن قائمتَهما فارغة هناك — وهما الحالتان اللتان يلزم فيهما
+//  اختيارُ الخبير أكثر ما يلزم: البيع على وشك أن يُعتمد.
+console.log("\n── زرّ الخبير ──");
+const LIVE = ["awaiting_patient_decision", "follow_up", "price_approval_pending",
+  "price_approved_waiting_patient", "purchase_approval_pending"] as const;
+
+same("ط٢. **الاستقبال يختار الخبير في الحالات الحيّة الخمس**",
+  LIVE.filter((st) => !canSelectExpert(recv, st)), []);
+same("   **وفي `price_approval_pending` تحديداً — وقائمةُ أزراره فارغة**",
+  [canSelectExpert(recv, "price_approval_pending"),
+    allowedActions(recv, "price_approval_pending").length], [true, 0]);
+same("   **وفي `purchase_approval_pending` كذلك**",
+  [canSelectExpert(recv, "purchase_approval_pending"),
+    allowedActions(recv, "purchase_approval_pending").length], [true, 0]);
+same("   ومديرُ الفرع والطبيبُ والمسؤول كذلك",
+  [mgr, doc, admin].flatMap((w) => LIVE.filter((st) => !canSelectExpert(w, st))), []);
+same("   **ولا يظهر في النهائيّتين**",
+  [recv, mgr, doc, admin].flatMap((w) =>
+    ["closed_without_purchase", "converted"].filter((st) => canSelectExpert(w, st))), []);
+same("   **ولا لخبير الأطراف ولا للمحاسب** — ليسا من مسؤولي المتابعة",
+  [expert, accountant2, physioStaff].flatMap((w) =>
+    LIVE.filter((st) => canSelectExpert(w, st))), []);
+same("   وبلا جلسة ⟶ لا",
+  LIVE.filter((st) => canSelectExpert(null, st)), []);
+
 // ══ ي. الأسباب ═════════════════════════════════════════════════════════
 console.log("\n── الأسباب ──");
 same("ي. الأسباب الإحدى عشر المطلوبة موجودة", FOLLOWUP_REASONS.length, 11);
@@ -123,6 +152,18 @@ same("   وسببٌ مخترَع يُردّ", isFollowupReason("whatever"), fals
 same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_salary_or_finance"), true);
 same("ك. النهائيّتان اثنتان لا غير",
   FOLLOWUP_STATUSES.filter(isTerminal), ["closed_without_purchase", "converted"]);
+
+// ══ ط٣. والبطاقةُ تستعمل البوّابة فعلاً ═══════════════════════════════
+//  القاعدة الصحيحة لا تنفع إن بقيت الواجهة على الشرط القديم. والعقد على
+//  المصدر لا على الرسم — لا مشغّل DOM هنا.
+console.log("\n── عقد البطاقة ──");
+const cardSrc = readFileSync(
+  join(import.meta.dirname, "../client/src/components/PostExamDecisionCard.tsx"), "utf8");
+check(cardSrc.includes("canSelectExpert(session as any, active.status)"),
+  "ط٣. **زرُّ الخبير مربوطٌ بـ`canSelectExpert`**");
+check(!/actions\.length > 0[\s\S]{0,600}button-select-expert/.test(cardSrc),
+  "   **ولم يبقَ شرطُ `actions.length` عليه**");
+check(cardSrc.includes("button-select-expert"), "   والزرّ موجود");
 
 console.log(`\n${failures === 0 ? "✅ all followup-rule cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

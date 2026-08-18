@@ -1499,7 +1499,13 @@ export const priceChangeRequests = pgTable("price_change_requests", {
   proposedPrice: integer("proposed_price").notNull(),
   reason: text("reason").notNull(),
   note: text("note"),
-  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  /**
+   * `approved`/`rejected` **قرارُ طبيبٍ أو مسؤول حصراً**، و`cancelled` أثرُ
+   * إغلاق ملفّ المتابعة. والفصل مقصود: «مرفوض» حكمٌ على السعر لا يملكه من
+   * لا يعتمده، فلو وُسم به إغلاقُ الاستعلامات لظهر موظّفٌ رافضاً سعراً
+   * ليست له صلاحية ردّه.
+   */
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
   requestedBy: integer("requested_by"),
   requestedByName: text("requested_by_name"),
   requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1509,7 +1515,7 @@ export const priceChangeRequests = pgTable("price_change_requests", {
   decisionNote: text("decision_note"),
 }, (t) => [
   check("price_change_requests_status_check",
-    sql`${t.status} IN ('pending', 'approved', 'rejected')`),
+    sql`${t.status} IN ('pending', 'approved', 'rejected', 'cancelled')`),
   check("price_change_requests_price_check",
     sql`${t.proposedPrice} >= 0 AND ${t.currentPrice} >= 0`),
   // **طلبٌ معلَّقٌ واحد لكل متابعة** — فلا يعتمد طبيبان طلبين متناقضين معاً.

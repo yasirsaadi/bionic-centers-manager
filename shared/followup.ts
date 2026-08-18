@@ -125,6 +125,27 @@ export function canApprove(s: FollowupSessionLike | null | undefined): boolean {
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
 }
 
+/**
+ * هل يجوز لهذه الجلسة اختيار/تغيير الخبير على متابعةٍ في هذه الحالة؟
+ *
+ * ══ لماذا لا تُشتقّ من `allowedActions` ═════════════════════════════════
+ * كانت الواجهة تعرض زرّ الخبير حين `actions.length > 0` — فاختفى عن
+ * الاستعلامات في `price_approval_pending` و`purchase_approval_pending`
+ * لأن قائمتَهما فارغة هناك (الاعتماد للطبيب). فتجمّد اختيارُ الخبير في
+ * الحالتين اللتين هو فيهما ألزمُ ما يكون: البيع على وشك أن يُعتمد، ولا
+ * خبيرَ محفوظ — والخادم يقبل التغيير أصلاً.
+ *
+ * فالبوّابة **صلاحيةُ المتابعة نفسها + حياةُ الملفّ**، لا قائمةُ الأزرار.
+ * وهي مطابقةٌ حرفياً لما تقبله نقطة `POST /api/followups/:id/expert`.
+ */
+export function canSelectExpert(
+  s: FollowupSessionLike | null | undefined, status: string,
+): boolean {
+  //  والمنتهيتان خارجها: المُحوَّل صار له أمرُ تصنيعٍ يُحوَّل خبيرُه من
+  //  نقطة إعادة الإسناد بحُرّاسها، والمغلق لا شيء يُسنَد فيه.
+  return canRecordFollowup(s) && !isTerminal(status);
+}
+
 /** الأزرار المسموحة لهذه الجلسة على متابعةٍ في هذه الحالة. */
 export function allowedActions(
   s: FollowupSessionLike | null | undefined, status: string,

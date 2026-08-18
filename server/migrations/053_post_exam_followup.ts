@@ -183,6 +183,9 @@ CREATE TABLE IF NOT EXISTS price_change_requests (
   proposed_price    INTEGER NOT NULL,
   reason            TEXT NOT NULL,
   note              TEXT,
+  -- pending ⟶ approved | rejected بقرار طبيبٍ أو مسؤول **حصراً**،
+  -- أو ⟶ cancelled حين يُغلق ملفّ المتابعة. والفرق ليس لفظياً: «مرفوض»
+  -- حكمٌ على السعر لا يملكه إلا مَن يعتمده، و«ملغى» أثرٌ لإغلاق الملفّ.
   status            TEXT NOT NULL DEFAULT 'pending',
   requested_by      INTEGER,
   requested_by_name TEXT,
@@ -199,7 +202,7 @@ BEGIN
     SELECT 1 FROM pg_constraint WHERE conname = 'price_change_requests_status_check'
   ) THEN
     ALTER TABLE price_change_requests ADD CONSTRAINT price_change_requests_status_check
-      CHECK (status IN ('pending', 'approved', 'rejected'));
+      CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled'));
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'price_change_requests_price_check'
