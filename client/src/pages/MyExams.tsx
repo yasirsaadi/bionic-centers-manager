@@ -102,9 +102,11 @@ export default function MyExams() {
       .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [rows]);
 
-  //  الاختصاص والفرع يُرشَّحان هنا، والصلةُ والانتظار في `rankWorklist` —
-  //  الصلةُ أوّلاً والانتظارُ كاسرَ تعادل. القاعدة خارج المكوّن لأنها تُكسَر
-  //  بإعادة ترتيب سطرين، واختبارُها يجب أن يختبرها هي لا نسخةً منها.
+  //  الاختصاص والفرع يُرشَّحان هنا، والترتيبُ كلّه في `rankWorklist`:
+  //  بلا بحثٍ الاختصاصُ ثمّ الانتظار، ومع البحث الصلةُ ثمّ الانتظار.
+  //  و**قبل التقطيع** في الحالتين، فهو ما يقرّر مَن يقع في أي صفحة.
+  //  القاعدة خارج المكوّن لأنها تُكسَر بإعادة ترتيب سطرين، واختبارُها يجب
+  //  أن يختبرها هي لا نسخةً منها.
   const filtered = useMemo(() => rankWorklist(
     rows
       .filter((r) => (only ? r.caseType === only : true))
@@ -117,6 +119,7 @@ export default function MyExams() {
         name: r.patientName, phone: r.phone,
         patientCode: r.patientCode, aliasCodes: r.aliasCodes,
       }),
+      specialtyOf: (r) => r.caseType,
     },
   ), [rows, search, only, onlyBranch, order]);
 
@@ -128,8 +131,9 @@ export default function MyExams() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  // One page of the WHOLE queue (owner's choice): ten patients per page
-  // whatever their specialty, with the specialty headings kept over each run.
+  //  صفحةٌ من القائمة كلّها لا من كل اختصاصٍ على حدة: عشرةٌ في الصفحة،
+  //  وعناوينُ الأقسام تبقى فوق كل مقطع. والترتيب حُسم في `rankWorklist`
+  //  قبل هذا السطر، فالتقطيع لا يقرّر شيئاً — ينفّذ فقط.
   const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   // Grouped by specialty so a two-specialty doctor reads two queues, not one
@@ -150,10 +154,12 @@ export default function MyExams() {
     for (const r of filtered) {
       totalByType[r.caseType] = (totalByType[r.caseType] ?? 0) + 1;
     }
-    //  ترتيبُ الأقسام هو ترتيبُ الأزرار نفسه — لا ترتيبُ ظهورها في الصفحة.
-    //  ومحلُّ الترتيب هنا **بعد التقطيع**: الشريحة `pageRows` تبقى كما هي
-    //  حرفاً بحرف (نفس المرضى ونفس ترتيب الانتظار داخل كل اختصاص)، ولا
-    //  يتغيّر إلّا تسلسلُ العناوين الثلاثة فوقها.
+    //  ترتيبُ الأقسام هو ترتيبُ الأزرار نفسه.
+    //  وهو هنا **بعد التقطيع** عمداً: الشريحة `pageRows` لا تُمَسّ — نفس
+    //  المرضى ونفس ترتيبهم — ولا يتغيّر إلّا تسلسلُ العناوين فوقها.
+    //  وبلا بحثٍ تكون الشريحة مرتَّبةً بالاختصاص أصلاً (من `rankWorklist`)
+    //  فلا يفعل هذا السطر شيئاً؛ ومع البحث تحكم الصلةُ الصفوفَ ويبقى هذا
+    //  السطر ليقرأ الطبيبُ عناوين ثابتة لا متبدّلة.
     return sortBySpecialty(Object.keys(byType), (t) => t).map((caseType) => ({
       caseType,
       list: byType[caseType],

@@ -83,19 +83,29 @@ sortBySpecialty(waiting, (r) => r.caseType);
 same("   ولا تُعدَّل القائمة الأصلية (مصفوفة react-query مشتركة)",
   waiting.map((r) => r.id), original.map((r) => r.id));
 
-// ══ د. الصفحة نفسها لا تتغيّر ══════════════════════════════════════════
-// المطلوب صراحةً: لا تغيير في الترقيم ولا في حجم الصفحة. فالترتيب يقع على
-// مفاتيح الأقسام **بعد** `slice`، ولو وقع قبلها لتبدّل ساكنو الصفحة الأولى.
+// ══ د. والترتيب قبل التقطيع هو ما يملأ الصفحات ═════════════════════════
+// قرارُ المالك (٢٠٢٦-٠٨-١٨): الطبيب يشتغل على قسمٍ حتى يفرغ منه، فترتيبُ
+// الاختصاص يجب أن يقرّر **مَن يقع في أي صفحة** لا أن يرتّب عناوين ما وقع
+// فيها. فيُرتَّب قبل `slice` حين لا بحث.
+//
+// وأمّا **مع البحث** فالصلة تحكم وحدها والاختصاص لا يدخل — وذاك مُختبَرٌ
+// سلوكياً في `npm run test:worklist-order` على الدالّة نفسها.
 console.log("\n── الترقيم ──");
 const PAGE = 3;
-const pageBefore = waiting.slice(0, PAGE).map((r) => r.id);
-const groupKeys = sortBySpecialty(
-  Array.from(new Set(waiting.slice(0, PAGE).map((r) => r.caseType))), (t) => t);
-same("د. ساكنو الصفحة الأولى كما هم", pageBefore, [1, 2, 3]);
-same("   وعناوينها بالترتيب الثابت", groupKeys, ["prosthetic", "physiotherapy"]);
-//  والدليل المضادّ: لو رُتّبت القائمة كلّها أوّلاً لتبدّل ساكنو الصفحة.
-same("   ولو رُتّبت القائمة قبل التقطيع لتبدّلوا (وهذا ما لم نفعله)",
-  sortBySpecialty(waiting, (r) => r.caseType).slice(0, PAGE).map((r) => r.id), [2, 5, 4]);
+const ordered = sortBySpecialty(waiting, (r) => r.caseType).map((r) => r.id);
+same("د. الترتيب الكامل: الأطراف ثمّ المساند ثمّ العلاج", ordered, [2, 5, 4, 1, 3, 6]);
+same("   فالصفحة الأولى أطرافٌ ومساند لا خليطٌ عشوائي",
+  ordered.slice(0, PAGE), [2, 5, 4]);
+same("   والثانية بقيّةُ العلاج الطبيعي", ordered.slice(PAGE), [1, 3, 6]);
+//  والدليل المضادّ: بلا ترتيبٍ قبل التقطيع تختلط الأقسام في الصفحة الواحدة.
+const rawPage = waiting.slice(0, PAGE).map((r) => r.caseType);
+check(new Set(rawPage).size > 1,
+  "   ولولا الترتيب قبل التقطيع لاختلطت الأقسام في الصفحة (وهذا ما أُصلح)",
+  JSON.stringify(rawPage));
+//  وعناوينُ الأقسام تبقى مرتَّبةً بعد التقطيع أيضاً — للحالتين معاً.
+same("   وعناوين الصفحة بالترتيب الثابت",
+  sortBySpecialty(Array.from(new Set(rawPage)), (t) => t),
+  ["prosthetic", "physiotherapy"]);
 
 // ══ هـ. الصفحة موصولةٌ فعلاً بالمساعد الواحد ═══════════════════════════
 // قاعدةٌ مكتوبةٌ ولا أحد يناديها = لا شيء. والمطلوب كان «دالّة/ثابت مشترك
@@ -114,13 +124,28 @@ check((src.match(/sortBySpecialty\(/g) || []).length === 2,
 //  ولا مقارنةَ اختصاصٍ يدوية بقيت في الصفحة.
 check(!/caseType[^\n]*(localeCompare|indexOf\(\s*\[)/.test(src),
   "   ولا مقارنةَ اختصاصٍ يدوية");
-//  والشريحة تبقى قبل التجميع لا بعده — فلا يتحرّك الترقيم.
+
+//  والترتيبُ الثالث — الذي يملأ الصفحات — في `rankWorklist`، وهو ينادي
+//  المساعدَ نفسه لا ترتيباً مكتوباً باليد.
+const orderSrc = readFileSync(
+  join(process.cwd(), "client/src/pages/my_exams_order.ts"), "utf8");
+check(/import \{ sortBySpecialty \} from "@shared\/medical"/.test(orderSrc),
+  "   وترتيبُ الصفوف نفسه يستورد المساعد ذاته");
+check(/if \(!opts\.search\.trim\(\)\) return sortBySpecialty\(/.test(orderSrc),
+  "   ويطبّقه **حين لا بحث فقط** — فلا يدفع الاختصاصُ شيئاً فوق الصلة");
+check(/return filterAndRank\(byWaiting, opts\.search/.test(orderSrc),
+  "   ومع البحث تحكم الصلةُ وحدها");
+check(/const filtered = useMemo\(\(\) => rankWorklist\(/.test(src),
+  "   و«معايناتي» تنادي ذلك الترتيب قبل التقطيع");
+
+//  والشريحة تبقى قبل تجميع العناوين لا بعده.
 const sliceAt = src.indexOf("const pageRows = filtered.slice(");
 const groupAt = src.indexOf("return sortBySpecialty(Object.keys(byType)");
 check(sliceAt !== -1 && groupAt !== -1 && sliceAt < groupAt,
   "   والتقطيع يسبق ترتيبَ الأقسام");
-check(!/filtered[\s\S]{0,40}sortBySpecialty/.test(src),
-  "   ولا تُرتَّب `filtered` بالاختصاص (كان سيقلب الترقيم)");
+//  و`filtered` تُملأ من `rankWorklist` وحدها — لا ترتيبَ يُضاف فوقها هنا.
+check(/const filtered = useMemo\(\(\) => rankWorklist\([\s\S]{0,600}?\), \[rows, search/.test(src),
+  "   و`filtered` ناتجُ ذلك الترتيب لا شيءَ فوقه");
 
 console.log(`\n${failures === 0 ? "✅ all specialty-order cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);
