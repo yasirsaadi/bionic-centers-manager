@@ -21,6 +21,7 @@
 // instead of at their next login.
 
 import type { Express } from "express";
+import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { DeviceEpisodeError } from "../device_episodes/store";
@@ -532,7 +533,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const specialties = await store.doctorSpecialties(userId);
       if (specialties.length === 0) return res.json({ rows: [], specialties: [] });
       const rows = await store.getWorklist(specialties, branchScope(req));
-      res.json({ rows, specialties });
+      //  الأسماء البديلة دفعةً واحدة لصفوف هذه القائمة — والقائمة نفسها مرّت
+      //  بـ`branchScope` أعلاه، فلا يتّسع نطاقٌ بإرفاق رمزٍ لمريضٍ فيها.
+      const aliasByPatient = await aliasCodesByPatient(rows.map((r) => r.patientId));
+      res.json({
+        rows: rows.map((r) => (aliasByPatient.has(r.patientId)
+          ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : r)),
+        specialties,
+      });
     } catch (err: any) {
       console.error("[medical] GET worklist failed:", err);
       res.status(500).json({ error: "تعذّر تحميل قائمة المعاينات" });

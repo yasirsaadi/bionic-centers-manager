@@ -15,6 +15,7 @@ import {
 } from "@shared/schema";
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+import { buildPatientSearch, trigramReady } from "../patient_search/sql";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
@@ -494,11 +495,13 @@ function orderConditions(f: OrderFilters) {
   if (f.status) c.push(eq(WO.status, f.status));
   if (f.completed === true) c.push(eq(WO.status, "completed"));
   if (f.completed === false) c.push(sql`${WO.status} <> 'completed'`);
-  // Arabic-normalized match (ة↔ه, أ/إ/آ↔ا, ى↔ي) so spelling variants of the
-  // same name still match.
+  // ══ البحث — نفس عقد سجلّ المرضى ═══════════════════════════════════════
+  // كان هنا تطبيعٌ ثالثٌ مستقلّ: `translate(name,'أإآةى','اااهي') ILIKE`.
+  // فالموظّف يكتب «احمذ» بخطأ حرفٍ فلا يجد شيئاً هنا ويجده في السجلّ،
+  // ويكتب رمز المريض فلا يجد، ويكتب «٠٧٧٠» فلا يجد. وصار المصدر واحداً:
+  // نفس الشرط ونفس السلّم ونفس الفهارس (ترحيل ٠٥٤).
   if (f.search && f.search.trim()) {
-    const like = "%" + f.search.trim() + "%";
-    c.push(sql`translate(${patients.name}, 'أإآةى', 'اااهي') ILIKE translate(${like}, 'أإآةى', 'اااهي')`);
+    c.push(buildPatientSearch(f.search, { trigram: trigramReady() }).where);
   }
   return c;
 }

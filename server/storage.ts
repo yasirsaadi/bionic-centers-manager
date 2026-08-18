@@ -3044,7 +3044,9 @@ export class DatabaseStorage implements IStorage {
   // Handled-episode history, enriched with patient name + author name via
   // joins (no N+1). Branch-scoped: pass undefined for admin (all branches).
   async getFollowUpHistory(branchId?: number): Promise<
-    (FollowUpCall & { patientName: string | null; createdByName: string | null })[]
+    (FollowUpCall & {
+      patientName: string | null; patientCode: string | null; createdByName: string | null;
+    })[]
   > {
     const branchClause = branchId ? eq(followUpCalls.branchId, branchId) : sql`TRUE`;
     return await db
@@ -3058,6 +3060,8 @@ export class DatabaseStorage implements IStorage {
         createdAt: followUpCalls.createdAt,
         updatedAt: followUpCalls.updatedAt,
         patientName: patients.name,
+        //  رمزُ المريض الحالي — الجدول موصولٌ أصلاً، فلا استعلامَ إضافي.
+        patientCode: patients.patientCode,
         createdByName: systemUsers.displayName,
       })
       .from(followUpCalls)

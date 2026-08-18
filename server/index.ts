@@ -5,6 +5,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
 import { runMigrations } from "./migrations/runner";
+import { warmTrigramCache } from "./patient_search/sql";
+import { db } from "./db";
 // سجلّ الطلبات يطبع جسم كل استجابة /api؛ هذا يحجب الأسرار عنه بالاسم.
 import { redactForLog } from "./log_redaction";
 import { startNotificationDispatcher } from "./patient_notifications/dispatcher";
@@ -87,6 +89,10 @@ app.use((req, res, next) => {
   // Run database migrations before registering routes.
   // Safe: idempotent, additive-only, tracks applied migrations.
   await runMigrations();
+
+  //  هل امتداد pg_trgm موجود — يُسأل مرّةً هنا فيعرفه كلُّ مسار بحثٍ بعدها
+  //  بلا استعلامٍ إضافي (ترحيل ٠٥٤ قد يفشل في إنشائه ويمضي عمداً).
+  await warmTrigramCache(db);
 
   await registerRoutes(httpServer, app);
 

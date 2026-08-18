@@ -60,6 +60,36 @@ export const SPECIALTY_COLORS: Record<
   },
 };
 
+/**
+ * ترتيبُ الاختصاصات الثابت: أطراف صناعية · مساند طبية · علاج طبيعي.
+ *
+ * وهو ترتيب `MEDICAL_SPECIALTIES` نفسه مشتقّاً منه لا مكتوباً ثانيةً — فقائمة
+ * الاختصاصات مصدرُ الحقيقة، وإن تغيّرت تغيّر العرض معها بلا ملفٍّ منسيّ.
+ *
+ * ══ ولماذا ترتيبٌ ثابت أصلاً ═══════════════════════════════════════════
+ * ما يصل من الخادم مرتَّبٌ بما تصادف: مفاتيحُ كائنٍ، أو أقدمُ انتظارٍ أوّلاً.
+ * فالطبيبُ ذو اختصاصين يرى «علاج طبيعي» فوق «أطراف» اليوم وتحتها غداً، بلا
+ * سببٍ يفهمه — والعينُ التي تعوّدت مكاناً تقرأ أسرع ممّا تقرأ ترتيباً صحيحاً
+ * متبدّلاً.
+ *
+ * وما ليس اختصاصاً معروفاً يذهب إلى الآخر لا إلى الأوّل: قيمةٌ غريبة لا
+ * تتصدّر شاشةَ عمل.
+ */
+export function specialtyOrder(value: string | null | undefined): number {
+  const i = (MEDICAL_SPECIALTIES as readonly string[]).indexOf(String(value));
+  return i === -1 ? MEDICAL_SPECIALTIES.length : i;
+}
+
+/**
+ * يرتّب نسخةً من القائمة بالاختصاص الثابت — **بلا مساسٍ بترتيب ما داخله**.
+ *
+ * `Array.prototype.sort` مستقرٌّ في كل محرّكٍ حديث، فالمتساوون في الاختصاص
+ * يبقون على ترتيبهم الوارد (الأحدث/الأقدم انتظاراً كما اختار الطبيب).
+ */
+export function sortBySpecialty<T>(items: T[], of: (item: T) => string | null | undefined): T[] {
+  return [...items].sort((a, b) => specialtyOrder(of(a)) - specialtyOrder(of(b)));
+}
+
 export function specialtyLabel(value: string | null | undefined): string {
   return isMedicalSpecialty(value) ? SPECIALTY_LABELS[value] : (value ?? "—");
 }

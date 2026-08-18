@@ -23,6 +23,8 @@ export interface ReminderItem {
   patientId: number;
   name: string;
   phone: string | null;
+  /** الرمز العلني الدائم — يُبحث به في شاشة المتابعات كما في السجلّ. */
+  patientCode: string | null;
   branchId: number;
   branchName?: string;
   lastVisitDate: string; // ISO
@@ -53,6 +55,7 @@ export async function computeActiveReminders(branchId?: number): Promise<Reminde
       patientId: patients.id,
       name: patients.name,
       phone: patients.phone,
+      patientCode: patients.patientCode,
       branchId: patients.branchId,
       lastVisit: sql<string>`MAX(${visits.visitDate})`,
     })
@@ -62,7 +65,8 @@ export async function computeActiveReminders(branchId?: number): Promise<Reminde
       and(eq(visits.patientId, patients.id), isNull(visits.deletedAt))
     )
     .where(and(...conditions))
-    .groupBy(patients.id, patients.name, patients.phone, patients.branchId);
+    .groupBy(patients.id, patients.name, patients.phone, patients.patientCode,
+             patients.branchId);
 
   // Keep only patients stopped for >= STOP_DAYS.
   const stopped = rows
@@ -96,6 +100,7 @@ export async function computeActiveReminders(branchId?: number): Promise<Reminde
       patientId: r.patientId,
       name: r.name,
       phone: r.phone,
+      patientCode: r.patientCode,
       branchId: r.branchId,
       branchName: nameByBranch.get(r.branchId),
       lastVisitDate: new Date(r.lastVisit).toISOString(),

@@ -9,11 +9,15 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeArabic } from "@/lib/utils";
+import { filterAndRank } from "@shared/patient_search";
 
 interface Branch { id: number; name: string; }
 interface PatientLite {
   id: number; name: string; branchId: number; isAmputee?: boolean; isMedicalSupport?: boolean;
+  phone?: string | null;
+  /** الرمز الحالي ورموزُ ملفّاتٍ دُمجت فيه — من `/api/patients` دفعةً واحدة. */
+  patientCode?: string | null;
+  aliasCodes?: string[];
 }
 
 // Dialog for admin / branch manager to open a work order for an EXISTING
@@ -42,8 +46,13 @@ export function CreateOrderDialog({
 
   // Only prosthetic / medical-support patients are eligible.
   const eligible = useMemo(
-    () => patients.filter((p) => (p.isAmputee || p.isMedicalSupport)
-      && (!search.trim() || normalizeArabic(p.name).includes(normalizeArabic(search.trim())))),
+    () => filterAndRank(
+      patients.filter((p) => p.isAmputee || p.isMedicalSupport),
+      search, (p) => ({
+        name: p.name, phone: p.phone,
+        patientCode: p.patientCode, aliasCodes: p.aliasCodes,
+      }),
+    ),
     [patients, search],
   );
   const selectedPatient = patients.find((p) => String(p.id) === patientId);

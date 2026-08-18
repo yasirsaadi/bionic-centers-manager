@@ -9,12 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
-import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel } from "@shared/medical";
+import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
+import { rankWorklist } from "./my_exams_order";
 
 interface WorklistRow {
   patientId: number;
   patientName: string;
   phone: string | null;
+  /** الرمز العلني الحالي، ورموزُ ملفّاتٍ دُمجت فيه — كلاهما من النقطة. */
+  patientCode: string | null;
+  aliasCodes?: string[];
   branchId: number | null;
   branchName: string | null;
   caseType: string;
@@ -71,7 +75,13 @@ export default function MyExams() {
   });
 
   const rows = data?.rows ?? [];
-  const specialties = data?.specialties ?? [];
+  //  ترتيبٌ واحدٌ ثابت لأزرار الترشيح ولعناوين الأقسام معاً — أطراف صناعية
+  //  ثمّ مساند طبية ثمّ علاج طبيعي. وهو مشتقٌّ من `MEDICAL_SPECIALTIES` لا
+  //  مكتوبٌ هنا، فلا ينحرف موضعان عن بعضهما.
+  const specialties = useMemo(
+    () => sortBySpecialty(data?.specialties ?? [], (s) => s),
+    [data?.specialties],
+  );
 
   // The branches actually present in this doctor's queue — derived from the
   // rows rather than the branch table, so the picker never offers a centre
@@ -92,19 +102,26 @@ export default function MyExams() {
       .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [rows]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim();
-    const base = rows
+  //  الاختصاص والفرع يُرشَّحان هنا، والترتيبُ كلّه في `rankWorklist`:
+  //  بلا بحثٍ الاختصاصُ ثمّ الانتظار، ومع البحث الصلةُ ثمّ الانتظار.
+  //  و**قبل التقطيع** في الحالتين، فهو ما يقرّر مَن يقع في أي صفحة.
+  //  القاعدة خارج المكوّن لأنها تُكسَر بإعادة ترتيب سطرين، واختبارُها يجب
+  //  أن يختبرها هي لا نسخةً منها.
+  const filtered = useMemo(() => rankWorklist(
+    rows
       .filter((r) => (only ? r.caseType === only : true))
-      .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true))
-      .filter((r) => (q ? r.patientName.includes(q) || (r.phone ?? "").includes(q) : true));
-    // Sort a COPY: `rows` is react-query's cached array.
-    return [...base].sort((a, b) => {
-      const ta = a.waitingSince ? new Date(a.waitingSince).getTime() : 0;
-      const tb = b.waitingSince ? new Date(b.waitingSince).getTime() : 0;
-      return order === "newest" ? tb - ta : ta - tb;
-    });
-  }, [rows, search, only, onlyBranch, order]);
+      .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true)),
+    {
+      order,
+      waitingOf: (r) => r.waitingSince,
+      search,
+      toPatient: (r) => ({
+        name: r.patientName, phone: r.phone,
+        patientCode: r.patientCode, aliasCodes: r.aliasCodes,
+      }),
+      specialtyOf: (r) => r.caseType,
+    },
+  ), [rows, search, only, onlyBranch, order]);
 
   // Any change to search / specialty / order / page size sends us back to
   // page 1 — otherwise a narrowed list can leave you stranded on an empty page.
@@ -114,8 +131,9 @@ export default function MyExams() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  // One page of the WHOLE queue (owner's choice): ten patients per page
-  // whatever their specialty, with the specialty headings kept over each run.
+  //  صفحةٌ من القائمة كلّها لا من كل اختصاصٍ على حدة: عشرةٌ في الصفحة،
+  //  وعناوينُ الأقسام تبقى فوق كل مقطع. والترتيب حُسم في `rankWorklist`
+  //  قبل هذا السطر، فالتقطيع لا يقرّر شيئاً — ينفّذ فقط.
   const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   // Grouped by specialty so a two-specialty doctor reads two queues, not one
@@ -136,7 +154,13 @@ export default function MyExams() {
     for (const r of filtered) {
       totalByType[r.caseType] = (totalByType[r.caseType] ?? 0) + 1;
     }
-    return Object.keys(byType).map((caseType) => ({
+    //  ترتيبُ الأقسام هو ترتيبُ الأزرار نفسه.
+    //  وهو هنا **بعد التقطيع** عمداً: الشريحة `pageRows` لا تُمَسّ — نفس
+    //  المرضى ونفس ترتيبهم — ولا يتغيّر إلّا تسلسلُ العناوين فوقها.
+    //  وبلا بحثٍ تكون الشريحة مرتَّبةً بالاختصاص أصلاً (من `rankWorklist`)
+    //  فلا يفعل هذا السطر شيئاً؛ ومع البحث تحكم الصلةُ الصفوفَ ويبقى هذا
+    //  السطر ليقرأ الطبيبُ عناوين ثابتة لا متبدّلة.
+    return sortBySpecialty(Object.keys(byType), (t) => t).map((caseType) => ({
       caseType,
       list: byType[caseType],
       total: totalByType[caseType] ?? byType[caseType].length,

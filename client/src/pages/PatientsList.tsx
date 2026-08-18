@@ -1,5 +1,6 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Link, useSearch, useLocation } from "wouter";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { 
   Table, 
   TableBody, 
@@ -212,11 +213,8 @@ export default function PatientsList() {
   // Server-side registry: search, filters, pagination and payment totals all
   // run in SQL — the browser receives ONE small page instead of every patient
   // with all their visits and payments. This is what makes the registry fast.
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 350);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
+  //  التهدئة من `use-debounced-search` — نفس المهلة في كل شاشةٍ تسأل الخادم.
+  const debouncedSearch = useDebouncedSearch(searchTerm);
 
   const buildRegistryParams = (page: number, size: number) => {
     const p = new URLSearchParams({ page: String(page), pageSize: String(size) });
