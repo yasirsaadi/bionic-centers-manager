@@ -52,6 +52,8 @@ async function req(method: string, path: string, session: any, body?: any) {
 // suite passes exactly once per database and then fails on its own leftovers.
 async function clearSeededOrders() {
   const P = "(1,2,3,5)";
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await pool.query(`DELETE FROM medical_review_requests WHERE patient_id IN ${P}`);
   await pool.query(`DELETE FROM prosthetic_rework_events WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN ${P})`);
   await pool.query(`DELETE FROM prosthetic_work_history  WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN ${P})`);
   await pool.query(`DELETE FROM prosthetic_work_orders WHERE patient_id IN ${P}`);

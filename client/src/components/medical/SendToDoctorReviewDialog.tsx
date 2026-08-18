@@ -14,7 +14,7 @@ import { ClipboardCheck, Zap, Stethoscope } from "lucide-react";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_KINDS, REVIEW_KIND_LABELS, REVIEW_PATH_HINTS, REVIEW_PATH_LABELS,
-  REVIEW_STATUS_LABELS, type ReviewKind, type ReviewPath,
+  REVIEW_STATUS_LABELS, requiresFullPath, type ReviewKind, type ReviewPath,
 } from "@shared/medical_review";
 import { formatDateTimeIraq } from "@/lib/utils";
 
@@ -50,6 +50,11 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
   const [kind, setKind] = useState<ReviewKind>("maintenance");
   const [note, setNote] = useState("");
 
+  //  الجهازُ الجديد لا يكون سريعاً — تُقفَل البطاقة ويُثبَّت المسار. والخادم
+  //  وقيدُ القاعدة يردّان التركيبة على أي حال؛ هذا يمنع ضغطةً تنتهي بخطأ.
+  const forcedFull = requiresFullPath(kind);
+  const effectivePath: ReviewPath = forcedFull ? "full" : path;
+
   const { data: history = [] } = useQuery<ReviewRow[]>({
     queryKey: ["/api/medical-review/patients", patientId, "requests"],
     queryFn: async () => {
@@ -69,7 +74,7 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
         headers: { "content-type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          patientId, serviceType, requestedPath: path, reviewKind: kind,
+          patientId, serviceType, requestedPath: effectivePath, reviewKind: kind,
           receptionNote: note.trim() || null,
         }),
       });
@@ -122,10 +127,11 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
             {(["quick", "full"] as ReviewPath[]).map((p) => (
               <button
                 key={p} type="button" onClick={() => setPath(p)}
+                disabled={forcedFull && p === "quick"}
                 data-testid={`review-path-${p}`}
                 className={`text-right rounded-lg border p-3 transition ${
-                  path === p ? "border-primary bg-primary/5" : "border-muted hover:border-primary/40"
-                }`}
+                  effectivePath === p ? "border-primary bg-primary/5" : "border-muted hover:border-primary/40"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 <div className="flex items-center gap-1.5 font-medium text-sm">
                   {p === "quick" ? <Zap className="w-4 h-4" /> : <Stethoscope className="w-4 h-4" />}
@@ -149,6 +155,12 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
               </SelectContent>
             </Select>
           </div>
+
+          {forcedFull && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 leading-relaxed">
+              طلبُ جهازٍ جديد يستوجب معاينةً طبية كاملة — لا موافقة سريعة.
+            </p>
+          )}
 
           <div>
             <Label className="text-xs">ملاحظة للطبيب (اختيارية)</Label>

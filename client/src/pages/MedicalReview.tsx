@@ -145,7 +145,14 @@ export default function MedicalReview() {
           <ClipboardCheck className="w-5 h-5 text-primary" /> مراجعة الطبيب
         </h1>
         <p className="text-xs text-muted-foreground mt-1">
-          طلبات الأطراف الصناعية والمساند الطبية التي أرسلها الاستقبال — الأقدم أولاً.
+          طلباتُ الأطراف الصناعية والمساند الطبية التي صنّفها الاستقبال
+          <span className="font-medium"> «موافقة سريعة» </span>— الأقدم أولاً.
+        </p>
+        {/* وأين ذهب الباقي: ما صُنِّف «معاينة كاملة» ليس هنا، وطلبُ الجهاز
+            الجديد لا يكون سريعاً أصلاً — فمكانُهما «معايناتي». */}
+        <p className="text-[11px] text-muted-foreground mt-1">
+          أمّا ما صُنِّف «معاينة كاملة» — وكلُّ طلبِ جهازٍ جديد — فيصلك في
+          <span className="font-medium"> «معايناتي» </span>مباشرةً، وينتهي بتوقيع معاينة.
         </p>
       </div>
 

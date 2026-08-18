@@ -716,26 +716,32 @@ export async function getPendingExams(
     SELECT 1 FROM medical_exams me
      WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type)`;
 
-  // ══ إحالةُ الطبيب من المراجعة (ترحيل ٠٥٥) ═══════════════════════════
-  // نفس منطق قائمة العمل: قرارُ الطبيب «معاينة كاملة» يُلزِم مهما كان
-  // تصنيفُ المريض أو تاريخُه. ويخرج بتوقيع معاينةٍ **بعد** الإحالة.
-  const escalatedReview = sql`EXISTS (
+  // ══ المنتظِرُ معاينةً كاملة من المراجعة (ترحيل ٠٥٥) ══════════════════
+  // بابان يلتقيان هنا: ما **أرسله الاستقبال كاملاً** من أوّله (جهازٌ جديد،
+  // تغيّرٌ سريري)، وما **أحاله الطبيب** بعد نظرةٍ سريعة. وكلاهما يُلزِم مهما
+  // كان تصنيفُ المريض أو تاريخُه — لا «مريض قديم» ولا معاينةٌ قديمة تُسقطه.
+  //
+  // والخروج بتوقيع معاينةٍ **بعد** لحظة الطلب: `COALESCE` يختار لحظةَ
+  // الإحالة إن وُجدت وإلّا لحظةَ الإنشاء. فمعاينةٌ **سابقة** لا تكتم طلباً
+  // لاحقاً — وهذا هو الثابت الذي جاء الشرط ليحرسه.
+  const awaitingExamReview = sql`EXISTS (
     SELECT 1 FROM medical_review_requests r
      WHERE r.patient_id = pc.patient_id
        AND r.service_type = pc.case_type
-       AND r.status = 'escalated'
+       AND (r.status = 'escalated'
+            OR (r.status = 'pending' AND r.requested_path = 'full'))
        AND NOT EXISTS (
          SELECT 1 FROM medical_exams me2
           WHERE me2.patient_id = r.patient_id
             AND me2.case_type = r.service_type
-            AND me2.created_at >= r.decided_at))`;
+            AND me2.created_at >= COALESCE(r.decided_at, r.created_at)))`;
   const legacyPath = sql`(${noEpisodes} AND ${legacyOnly ? isExempt : sql`NOT ${isExempt}`} AND ${neverExamined})`;
   // The optional list is for the exempt only; a mandatory awaiting-exam
   // episode belongs in the amber queue, never in the quiet one.
-  //  والمُحال يقع في الطابور الإلزامي دائماً — لا في القائمة الهادئة.
+  //  والمنتظِرُ معاينةً كاملة يقع في الطابور الإلزامي دائماً — لا في الهادئة.
   const filter = legacyOnly
-    ? sql`(${legacyPath} AND NOT ${escalatedReview})`
-    : sql`(${awaitingEpisode} OR ${escalatedReview} OR ${legacyPath})`;
+    ? sql`(${legacyPath} AND NOT ${awaitingExamReview})`
+    : sql`(${awaitingEpisode} OR ${awaitingExamReview} OR ${legacyPath})`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
@@ -898,21 +904,23 @@ export async function getWorklist(
         -- A device requested now is on the doctor's list whoever the patient
         -- is — legacy or not, examined before or not.
         ep.id IS NOT NULL
-        -- ══ إحالةُ الطبيب من المراجعة (ترحيل ٠٥٥) ═════════════════════
-        -- الطبيب نفسه قال «هذه تحتاج معاينة كاملة»، فلا استثناءَ يعلو على
-        -- قراره: لا «مريض قديم»، ولا خيطٌ بلا حلقة، ولا معاينةٌ قديمة.
-        -- والشرط أن **لا معاينةَ بعد الإحالة** — فالطلب يخرج من الطابور
-        -- بتوقيع المعاينة لا بوجود واحدةٍ من قبل.
+        -- ══ المنتظِرُ معاينةً كاملة من المراجعة (ترحيل ٠٥٥) ═══════════
+        -- بابان: ما أرسله الاستقبال **كاملاً** من أوّله، وما أحاله الطبيب
+        -- بعد نظرةٍ سريعة. ولا استثناءَ يعلو على أيّهما: لا «مريض قديم»،
+        -- ولا خيطٌ بلا حلقة، ولا معاينةٌ قديمة.
+        -- والشرط أن **لا معاينةَ بعد لحظة الطلب** — فيخرج بتوقيع معاينةٍ
+        -- جديدة لا بوجود واحدةٍ من قبل.
         OR EXISTS (
           SELECT 1 FROM medical_review_requests r
            WHERE r.patient_id = pc.patient_id
              AND r.service_type = pc.case_type
-             AND r.status = 'escalated'
+             AND (r.status = 'escalated'
+                  OR (r.status = 'pending' AND r.requested_path = 'full'))
              AND NOT EXISTS (
                SELECT 1 FROM medical_exams me2
                 WHERE me2.patient_id = r.patient_id
                   AND me2.case_type = r.service_type
-                  AND me2.created_at >= r.decided_at
+                  AND me2.created_at >= COALESCE(r.decided_at, r.created_at)
              )
         )
         OR (

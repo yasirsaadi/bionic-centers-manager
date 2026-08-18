@@ -21,6 +21,7 @@ import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
 import { registerMedicalReviewRoutes } from "./medical_review/routes";
+import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/routing";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import * as followupStore from "./followup/store";
@@ -2544,11 +2545,24 @@ export async function registerRoutes(
         performedBy: branchSession?.userId ?? null,
       });
 
+      // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
+      //  فتحُ خيطِ أطرافٍ أو مساندَ يعني أن المريض صار يحتاج جهازاً من هذا
+      //  النوع — ولا جهازَ بلا معاينةٍ كاملة. فالتوجيه جزءٌ من الخدمة لا
+      //  زرٌّ يُتذكَّر لاحقاً، **ويشمل المريض القديم**: تصنيفُه يرفع الإلزام
+      //  عن الانتظار التلقائي، ولا يمنع طلباً صرّح به الاستقبال.
+      //  والعلاج الطبيعي يخرج صامتاً — `reviewServiceOfCaseType` تُرجع null.
+      const caseRouting = await routeServiceToDoctorReview(req, {
+        patientId, caseType,
+        reviewKind: "new_device", requestedPath: "full",
+        receptionNote: req.body?.reviewNote ?? null,
+      });
+
       await logAudit({
         entityType: "patient", entityId: patientId, action: "update",
         userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
         branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `إضافة نوع حالة: ${caseType}${workOrderId ? ` مع أمر تصنيع #${workOrderId}` : ""}`,
+        notes: `إضافة نوع حالة: ${caseType}${workOrderId ? ` مع أمر تصنيع #${workOrderId}` : ""}`
+          + (caseRouting.request ? ` — طلب مراجعة #${caseRouting.request.id} (معاينة كاملة)` : ""),
       });
       if (workOrderId) {
         await logAudit({
@@ -2559,7 +2573,10 @@ export async function registerRoutes(
         });
       }
 
-      res.json({ success: true, patient: updated, workOrderId });
+      res.json({
+        success: true, patient: updated, workOrderId,
+        reviewRequestId: caseRouting.request?.id ?? null,
+      });
     } catch (err: any) {
       console.error("Error adding case type:", err);
       res.status(500).json({ message: err?.message || "حدث خطأ أثناء إضافة نوع الحالة" });
@@ -2656,6 +2673,28 @@ export async function registerRoutes(
 
     const visit = await storage.createVisit(input);
 
+    // ── توجيهُ زيارةِ الجهاز إلى الطبيب (ترحيل ٠٥٥) ────────────────────
+    //  زيارةُ أطرافٍ أو مساندَ — تعديلاً كانت أو متابعةً — قرارٌ سريريٌّ
+    //  محتمل، فتذهب إلى الطبيب بتصنيف الاستقبال. **والعلاج الطبيعي لا
+    //  يمرّ من هنا إطلاقاً**: الخيط يُقرأ من `case_id` الذي حسمته
+    //  `createVisit`، فزيارةُ علاجٍ طبيعي تُرجع `null` وتخرج صامتة.
+    //
+    //  والقراءة **بعد** الإنشاء لا قبله: `createVisit` هي التي تحسم الخيط
+    //  حين لا يرسله العميل، فقراءةُ الدخل وحده كانت ستُخطئ نصف الزيارات.
+    const visitService = deviceServiceOfCaseType((input as any).treatmentType)
+      ?? await deviceServiceOfCaseId(visit.caseId, visit.patientId);
+    let visitRouting: { created: boolean; request: { id: number } | null } = { created: false, request: null };
+    if (visitService) {
+      const cls = classifyFromBody(req.body, "follow_up");
+      visitRouting = await routeServiceToDoctorReview(req, {
+        patientId: visit.patientId, caseType: visitService,
+        reviewKind: cls.reviewKind, requestedPath: cls.requestedPath,
+        receptionNote: cls.receptionNote ?? (input as any).notes ?? null,
+        visitId: visit.id,
+        deviceEpisodeId: (visit as any).deviceEpisodeId ?? null,
+      });
+    }
+
     // Audit log so visit creation counts on the employee accuracy
     // panel — receptionists do most of these.
     await logAudit({
@@ -2667,6 +2706,7 @@ export async function registerRoutes(
       branchId: visit.branchId,
       ipAddress: req.ip ?? null,
       userAgent: req.get("user-agent") ?? null,
+      notes: visitRouting.request ? `طلب مراجعة #${visitRouting.request.id}` : undefined,
     });
 
     if (input.cost && input.cost > 0) {

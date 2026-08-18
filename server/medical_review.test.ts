@@ -205,8 +205,17 @@ async function main() {
 
     const qd = await queue(S.doc1);
     const ids = (qd.body?.rows ?? []).map((x: any) => x.patientId);
-    check([newPros, pastPros, newSup, pastSup].every((p) => ids.includes(p)),
-      "   والأربعة في طابور الطبيب", JSON.stringify(ids));
+    //  السريعان في طابور القرار السريع — الجديدُ منهما والقديم سواء.
+    check([pastPros, pastSup].every((p) => ids.includes(p)),
+      "   والسريعان في طابور القرار السريع", JSON.stringify(ids));
+    //  **والكاملان ليسا فيه**: لا يُعرَض زرُّ «موافقة» على حالةٍ قيل عنها
+    //  إنها تحتاج فحصاً — بل تذهب إلى طابور المعاينة القائم مباشرةً.
+    same("   **والكاملان ليسا فيه إطلاقاً**",
+      [newPros, newSup].some((p) => ids.includes(p)), false);
+    const wl1 = await http("GET", "/api/medical/worklist", S.doc1);
+    const wlPairs = (wl1.body?.rows ?? []).map((x: any) => `${x.patientId}:${x.caseType}`);
+    check(wlPairs.includes(`${newPros}:prosthetic`) && wlPairs.includes(`${newSup}:medical_support`),
+      "   **والكاملان في طابور المعاينة القائم مباشرةً**", JSON.stringify(wlPairs));
     same("   والطبيبُ مخوَّلٌ للقرار", qd.body?.canDecide, true);
 
     // ══ ٢. بطاقةُ القرار تحمل ما يكفي ═════════════════════════════════
@@ -239,8 +248,10 @@ async function main() {
       ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.id === r2.body.id), false);
     //  والتدقيق يحمله.
     const audit = await q(
-      `SELECT action FROM audit_log WHERE entity_type='medical_review_request' AND entity_id=$1
-       ORDER BY id`, [r2.body.id]);
+      `SELECT action FROM (
+         SELECT action, id FROM audit_log
+          WHERE entity_type='medical_review_request' AND entity_id=$1
+          ORDER BY id DESC LIMIT 2) t ORDER BY id`, [r2.body.id]);
     same("   وسجلُّ التدقيق يحمل الإنشاء والقرار",
       audit.map((a: any) => a.action), ["create", "update"]);
 
@@ -264,17 +275,24 @@ async function main() {
       JSON.stringify(pend.body?.pending?.[String(pastSup)]));
 
     // ══ ٥. الإعادة إلى الاستقبال ══════════════════════════════════════
+    //  قرارٌ سريع، فمحلُّه طلبٌ سريع. والمريضُ مستقلٌّ كي لا يزاحم طلبَ غيره
+    //  على فهرس التفرّد الجزئي.
     console.log("\n── ٥. إعادةٌ إلى الاستقبال ──");
-    const ret = await decide(S.doc1, r3.body.id, "return_to_reception", "وضّح الشكوى");
+    const retPat = await mk("سعاد المُعادة", { support: true });
+    const rRet = await createReq(S.recv1, {
+      patientId: retPat, serviceType: "medical_support",
+      requestedPath: "quick", reviewKind: "follow_up",
+    });
+    const ret = await decide(S.doc1, rRet.body.id, "return_to_reception", "وضّح الشكوى");
     same("٥. القرار يُقبل", ret.status, 200);
     same("   والحالة إعادة", ret.body?.status, "returned");
     same("   وخرج من الطابور",
-      ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.id === r3.body.id), false);
-    same("   **ولا معاينةً كُتبت**", await examCount(newSup), 0);
+      ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.id === rRet.body.id), false);
+    same("   **ولا معاينةً كُتبت**", await examCount(retPat), 0);
     //  والاستقبال يُرسل من جديد بعد التوضيح — فالإعادة ليست طريقاً مسدوداً.
     const again = await createReq(S.recv1, {
-      patientId: newSup, serviceType: "medical_support",
-      requestedPath: "full", reviewKind: "new_device", receptionNote: "الشكوى: ألم",
+      patientId: retPat, serviceType: "medical_support",
+      requestedPath: "quick", reviewKind: "follow_up", receptionNote: "الشكوى: ألم",
     });
     same("   والاستقبال يُرسل من جديد", again.status, 201);
 
@@ -467,6 +485,165 @@ async function main() {
     same("   وهي حالةُ أطرافِ الملفّ الباقي",
       Number((await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`,
         [mDst]))[0].id), remapped);
+
+    // ══ ١٦. الجهازُ الجديد لا يكون سريعاً أبداً ════════════════════════
+    //  قراره سريريٌّ كامل — قياسٌ ومواصفةٌ وتقديرُ حال. فالتركيبة مرفوضة في
+    //  الشيفرة **وفي القاعدة**، والثاني هو الحارس الحقيقي.
+    console.log("\n── ١٦. جهازٌ جديد ⟶ كامل حتماً ──");
+    const ndPat = await mk("حسن الجهاز الجديد", { prosthetic: true });
+    const ndBad = await createReq(S.recv1, {
+      patientId: ndPat, serviceType: "prosthetic",
+      requestedPath: "quick", reviewKind: "new_device",
+    });
+    same("١٦. **جهازٌ جديد بمسارٍ سريع يُردّ**", ndBad.status, 400);
+    same("   ولا صفَّ كُتب",
+      Number((await q(`SELECT COUNT(*)::int c FROM medical_review_requests WHERE patient_id=$1`,
+        [ndPat]))[0].c), 0);
+    let ndDbRejected = false;
+    try {
+      await q(`INSERT INTO medical_review_requests
+                 (patient_id, service_type, requested_path, review_kind)
+               VALUES ($1,'prosthetic','quick','new_device')`, [ndPat]);
+    } catch { ndDbRejected = true; }
+    check(ndDbRejected, "   **والقاعدة ترفضها بقيد CHECK لا الشيفرة وحدها**");
+    const ndGood = await createReq(S.recv1, {
+      patientId: ndPat, serviceType: "prosthetic",
+      requestedPath: "full", reviewKind: "new_device",
+    });
+    same("   وبالمسار الكامل يُقبل", ndGood.status, 201);
+
+    // ══ ١٧. المسارُ الكامل لا يُقرَّر عليه قراراً سريعاً ═══════════════
+    //  ليس في الطابور السريع، ولا يُقبل عليه قرار ولو لُفّق معرّفُه — الحجب
+    //  في الطبقة لا في الشاشة.
+    console.log("\n── ١٧. لا موافقةَ سريعة على الكامل ──");
+    same("١٧. **لا يظهر في الطابور السريع**",
+      ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.id === ndGood.body.id), false);
+    same("   **ولا يُقبل عليه «موافقة»**",
+      (await decide(S.doc1, ndGood.body.id, "approve")).status, 400);
+    same("   ولا «إحالة» ولا «إعادة» — نهايتُه توقيعٌ لا قرار",
+      (await decide(S.doc1, ndGood.body.id, "require_full_exam")).status, 400);
+    same("   وبقي معلَّقاً كما هو",
+      (await q(`SELECT status FROM medical_review_requests WHERE id=$1`, [ndGood.body.id]))[0].status,
+      "pending");
+    const ndWl = await http("GET", "/api/medical/worklist", S.doc1);
+    check((ndWl.body?.rows ?? []).some((x: any) => x.patientId === ndPat && x.caseType === "prosthetic"),
+      "   **ومكانُه طابور المعاينة الكاملة**",
+      JSON.stringify((ndWl.body?.rows ?? []).map((x: any) => [x.patientId, x.caseType])));
+
+    // ══ ١٨. توقيعُ المعاينة يُنهي المنتظِر ويحرّر الطريق ═══════════════
+    console.log("\n── ١٨. التوقيع يُغلق الانتظار ──");
+    const signed = await http("POST", `/api/medical/patients/${ndPat}/exams`, S.doc1, {
+      caseType: "prosthetic", chiefComplaint: "بتر تحت الركبة", diagnosis: "جاهز لطرف",
+    });
+    check(signed.status === 200 || signed.status === 201,
+      "١٨. المعاينة تُوقَّع", String(signed.status));
+    const closed = (await q(`SELECT status, exam_id FROM medical_review_requests WHERE id=$1`,
+      [ndGood.body.id]))[0];
+    same("   **والطلبُ يُغلَق بها لا يبقى معلَّقاً للأبد**", closed.status, "examined");
+    check(closed.exam_id !== null, "   ومعاينتُه مربوطة به");
+    const afterSign = await http("GET", "/api/medical/worklist", S.doc1);
+    same("   وخرج من طابور المعاينة",
+      (afterSign.body?.rows ?? []).some((x: any) => x.patientId === ndPat && x.caseType === "prosthetic"),
+      false);
+    //  وهذا هو مربطُ الفرس: الطلبُ المعلَّق أبداً كان سيحجز فهرسَ التفرّد.
+    const ndLater = await createReq(S.recv1, {
+      patientId: ndPat, serviceType: "prosthetic", requestedPath: "quick", reviewKind: "follow_up",
+    });
+    same("   **ويُقبل طلبٌ لاحقٌ لنفس المريض والاختصاص**", ndLater.status, 201);
+
+    // ══ ١٩. التوجيه التلقائي — «إضافة نوع حالة» ════════════════════════
+    //  لا زرَّ يُتذكَّر: الخدمةُ نفسها تُنشئ الطلب.
+    console.log("\n── ١٩. توجيهٌ تلقائي: إضافة نوع حالة ──");
+    const autoCase = await mk("ليث النوع الجديد", { physio: true });
+    const addCase = await http("POST", `/api/patients/${autoCase}/add-case-type`, S.recv1, {
+      caseType: "amputee",
+    });
+    same("١٩. إضافةُ حالة أطراف تنجح", addCase.status, 200);
+    const acReq = (await q(`SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoCase]));
+    same("   **وطلبُ المراجعة أُنشئ معها بلا زرٍّ إضافي**", acReq.length, 1);
+    same("   بمسارٍ كامل", acReq[0].requested_path, "full");
+    same("   وسببٍ «جهاز جديد»", acReq[0].review_kind, "new_device");
+    same("   ومصنّفُه هو الموظّف", Number(acReq[0].created_by), RECV1);
+    same("   والنقطة تُرجع رقمَه للواجهة", addCase.body?.reviewRequestId, Number(acReq[0].id));
+    //  والعلاجُ الطبيعي لا يُوجَّه — أُضيف لهذا المريض أعلاه بلا طلب.
+    const physioAdd = await http("POST", `/api/patients/${autoCase}/add-case-type`, S.recv1, {
+      caseType: "physiotherapy",
+    });
+    same("   **وإضافةُ علاجٍ طبيعي لا تُنشئ طلباً إطلاقاً**",
+      physioAdd.status === 409 || physioAdd.body?.reviewRequestId === null, true);
+    same("   والعدد ما زال واحداً",
+      Number((await q(`SELECT COUNT(*)::int c FROM medical_review_requests WHERE patient_id=$1`,
+        [autoCase]))[0].c), 1);
+
+    // ══ ٢٠. التوجيه التلقائي — «جهاز جديد» (حلقة) ══════════════════════
+    console.log("\n── ٢٠. توجيهٌ تلقائي: جهاز جديد ──");
+    //  مريضٌ **قديم** عمداً: هو مَن كان يسقط من كل القوائم.
+    const autoEp = await mk("جبار القديم العائد", {
+      prosthetic: true, classification: "past", createdDaysAgo: 1200,
+    });
+    const epRes = await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1, {
+      serviceType: "prosthetic",
+    });
+    same("٢٠. بدءُ جهازٍ جديد ينجح", epRes.status, 201);
+    const epReq = (await q(`SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoEp]));
+    same("   **وطلبُ المراجعة أُنشئ مع الحلقة**", epReq.length, 1);
+    same("   مربوطاً بالحلقة نفسها", Number(epReq[0].device_episode_id), Number(epRes.body?.id));
+    same("   بمسارٍ كامل حتماً", epReq[0].requested_path, "full");
+    const epWl = await http("GET", "/api/medical/worklist", S.doc1);
+    check((epWl.body?.rows ?? []).some((x: any) => x.patientId === autoEp),
+      "   **والمريضُ القديم يدخل طابور المعاينة رغم قِدَمه**");
+    //  ومحاولةٌ ثانية على نفس الحلقة لا تُنشئ بطاقةً ثانية (الخادم يردّ 409
+    //  على الحلقة المفتوحة أصلاً، والحارس هنا للتوثيق).
+    same("   ولا حلقةَ ثانية مفتوحة",
+      (await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1,
+        { serviceType: "prosthetic" })).status, 409);
+
+    // ══ ٢١. التوجيه التلقائي — الصيانة والزيارة ════════════════════════
+    console.log("\n── ٢١. توجيهٌ تلقائي: صيانة وزيارة ──");
+    const autoMaint = await mk("رحيم الصيانة التلقائية", {
+      prosthetic: true, classification: "past", createdDaysAgo: 800,
+    });
+    const mvRes = await http("POST", "/api/manufacturing/maintenance-visit", S.recv1, {
+      patientId: autoMaint, expertUserId: EXPERT, serviceType: "prosthetic",
+      cost: 0, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
+      reviewPath: "quick", reviewKind: "maintenance", reviewNote: "يشكو صريراً",
+    });
+    same("٢١. فتحُ الصيانة ينجح", mvRes.status, 201);
+    const mvReq = (await q(`SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoMaint]));
+    same("   **وطلبُ المراجعة أُنشئ مع أمر الصيانة**", mvReq.length, 1);
+    same("   مربوطاً بأمره", Number(mvReq[0].work_order_id), Number(mvRes.body?.id));
+    same("   بتصنيف الموظّف", mvReq[0].requested_path, "quick");
+    same("   وملاحظتِه", mvReq[0].reception_note, "يشكو صريراً");
+    check(((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.patientId === autoMaint),
+      "   **والصيانةُ تصل الطبيب — وكانت لا تصله إطلاقاً**");
+
+    //  وزيارةُ الجهاز العادية كذلك.
+    const visitRes = await http("POST", "/api/visits", S.recv1, {
+      patientId: autoMaint, branchId: 1, notes: "متابعة",
+      caseId: Number((await q(
+        `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`,
+        [autoMaint]))[0].id),
+      reviewPath: "full", reviewKind: "adjustment", reviewNote: "تغيّر قياس",
+    });
+    same("   وزيارةُ الجهاز تُسجَّل", visitRes.status, 201);
+    const vReq = (await q(
+      `SELECT * FROM medical_review_requests WHERE patient_id=$1 AND visit_id=$2`,
+      [autoMaint, visitRes.body?.id]));
+    same("   **وطلبُ مراجعةٍ أُنشئ معها مربوطاً بالزيارة**", vReq.length, 1);
+    same("   بتصنيف الموظّف «كامل»", vReq[0].requested_path, "full");
+    same("   ولا يظهر في الطابور السريع",
+      ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.id === Number(vReq[0].id)), false);
+
+    //  **والعلاج الطبيعي لا يُوجَّه من الزيارة إطلاقاً.**
+    const phyVisitPat = await mk("سناء العلاج", { physio: true });
+    const phyVisit = await http("POST", "/api/visits", S.recv1, {
+      patientId: phyVisitPat, branchId: 1, treatmentType: "روبوت", sessionCount: 1,
+      reviewPath: "quick", reviewKind: "follow_up",
+    });
+    same("   وزيارةُ العلاج الطبيعي تُسجَّل كما كانت", phyVisit.status, 201);
+    same("   **ولا طلبَ مراجعةٍ لها ولو أُرسل التصنيف**",
+      Number((await q(`SELECT COUNT(*)::int c FROM medical_review_requests WHERE patient_id=$1`,
+        [phyVisitPat]))[0].c), 0);
   } finally {
     await cleanup();
     //  صفوفُ التدقيق تشير إلى المستخدم، وهي تاريخٌ يبقى — فتُفصَل لا تُحذف.

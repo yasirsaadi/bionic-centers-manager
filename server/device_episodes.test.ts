@@ -74,6 +74,8 @@ async function mkEpisode(
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await pool.query(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);

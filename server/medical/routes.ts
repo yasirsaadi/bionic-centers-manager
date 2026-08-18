@@ -25,7 +25,7 @@ import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { DeviceEpisodeError } from "../device_episodes/store";
-import { linkExamToEscalated } from "../medical_review/store";
+import { closeRequestsAwaitingExam } from "../medical_review/store";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -337,16 +337,17 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
       });
 
-      //  ربطُ الطلب المُحال بمعاينته (ترحيل ٠٥٥) — حقلُ قراءةٍ لا أكثر،
-      //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ أحال الطبيبُ ⟶ عاين.
+      //  إغلاقُ ما كان ينتظر هذه المعاينة (ترحيل ٠٥٥): المُرسَل كاملاً من
+      //  الاستقبال والمُحال من طبيبٍ سواء — كلاهما ينتهي بتوقيعٍ لا بقرار.
+      //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ انتظر ⟶ عاين.
       //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
       //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
       try {
-        await linkExamToEscalated({
+        await closeRequestsAwaitingExam({
           patientId, serviceType: caseType, examId: exam.id,
         });
       } catch (linkErr) {
-        console.error("[medical] linking exam to escalated review failed:", linkErr);
+        console.error("[medical] closing review requests after exam failed:", linkErr);
       }
 
       // `switchNote` is surfaced, not swallowed: when the superseded case could

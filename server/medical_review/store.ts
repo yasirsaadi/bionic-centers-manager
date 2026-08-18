@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   isReviewServiceType, isReviewKind, isReviewPath, isReviewDecision,
-  STATUS_AFTER,
+  isPathAllowedForKind, STATUS_AFTER,
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 
@@ -114,6 +114,10 @@ export async function createReviewRequest(params: {
   }
   if (!isReviewPath(requestedPath)) throw new ReviewError("مسار المراجعة غير صالح", 400);
   if (!isReviewKind(reviewKind)) throw new ReviewError("سبب الزيارة غير صالح", 400);
+  //  الجهازُ الجديد لا يكون سريعاً — هنا وفي قيد القاعدة معاً.
+  if (!isPathAllowedForKind(reviewKind, requestedPath)) {
+    throw new ReviewError("طلبُ جهازٍ جديد يستوجب معاينةً طبية كاملة", 400);
+  }
 
   return await db.transaction(async (tx) => {
     const pat = await tx.execute<{ id: number; branch_id: number | null }>(sql`
@@ -183,10 +187,80 @@ export async function createReviewRequest(params: {
 }
 
 /**
- * قرارُ الطبيب — **مرّةً واحدة، ومن داخل نطاقه**.
+ * توجيهُ خدمةٍ فعلية إلى الطبيب — **الباب الذي تناديه المسارات القائمة**.
+ *
+ * ══ العطبُ الذي يغلقه ══════════════════════════════════════════════════
+ * أوّلُ تنفيذٍ جعل الإرسالَ زرّاً في صفحة المريض. وهذا يعني أن وصولَ الحالة
+ * إلى الطبيب يتوقّف على **أن يتذكّر الموظّف** فتحَ صفحةٍ أخرى بعد أن أنهى
+ * عمله. وما يعتمد على التذكّر لا يقع: الملفُّ الذي لا يُرسَل لا يُرى، ومَن
+ * لا يُرى لا يُعالَج. فصار التوجيهُ جزءاً من الخدمة نفسها — تُفتح حالةٌ أو
+ * يُطلَب جهازٌ أو تُفتح صيانةٌ أو تُسجَّل زيارةُ جهاز، فيُنشأ الطلب معها.
+ *
+ * ══ ولماذا لا يفشل ══════════════════════════════════════════════════════
+ * **مُتسامحةٌ مع التكرار عمداً**: طلبٌ معلَّقٌ يغطّي الحدثَ نفسه ⇒ يُعاد كما
+ * هو بلا ثانٍ. فضغطتان لا تصنعان بطاقتين، وإعادةُ محاولةٍ بعد انقطاع شبكة
+ * لا تُفشل خدمةً نجحت. وما عدا التكرار يُرمى إلى المنادي ليقرّر.
+ */
+export async function ensureReviewRouting(params: {
+  patientId: number;
+  serviceType: string;
+  reviewKind: string;
+  requestedPath: string;
+  receptionNote?: unknown;
+  deviceEpisodeId?: number | null;
+  workOrderId?: number | null;
+  visitId?: number | null;
+  createdBy: number | null;
+  branchIds: number[] | null;
+}): Promise<{ created: boolean; request: ReviewRow | null }> {
+  //  حارسٌ صامت: العلاج الطبيعي (أو أي نوعٍ آخر) لا يُوجَّه ولا يُخطئ.
+  if (!isReviewServiceType(params.serviceType)) return { created: false, request: null };
+  try {
+    return { created: true, request: await createReviewRequest(params) };
+  } catch (err) {
+    if (err instanceof ReviewError && err.status === 409) {
+      const existing = await findPendingReview(params);
+      if (existing) return { created: false, request: existing };
+    }
+    throw err;
+  }
+}
+
+/** الطلبُ المعلَّق الذي يغطّي هذا الحدث بعينه — مرآةُ فهارس التفرّد الجزئية. */
+async function findPendingReview(params: {
+  patientId: number; serviceType: string;
+  deviceEpisodeId?: number | null; workOrderId?: number | null; visitId?: number | null;
+}): Promise<ReviewRow | null> {
+  const episodeId = numOrNull(params.deviceEpisodeId);
+  const orderId = numOrNull(params.workOrderId);
+  const visitId = numOrNull(params.visitId);
+  const anchor = episodeId !== null
+    ? sql`r.device_episode_id = ${episodeId}`
+    : orderId !== null
+      ? sql`r.work_order_id = ${orderId}`
+      : visitId !== null
+        ? sql`r.visit_id = ${visitId}`
+        : sql`r.device_episode_id IS NULL AND r.work_order_id IS NULL AND r.visit_id IS NULL
+              AND r.patient_id = ${params.patientId} AND r.service_type = ${params.serviceType}`;
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT r.* FROM medical_review_requests r
+     WHERE r.status = 'pending' AND ${anchor}
+     LIMIT 1
+  `);
+  const row = (rows.rows ?? [])[0];
+  return row ? toRow(row) : null;
+}
+
+/**
+ * قرارُ الطبيب — **مرّةً واحدة، ومن داخل نطاقه، وعلى المسار السريع وحده**.
  *
  * الحسمُ في `WHERE status = 'pending'`: طبيبان ضغطا معاً فأحدهما يكتب
  * والآخر يُردّ ٤٠٩ بلا أن يدوس قراراً قائماً.
+ *
+ * **وطلبُ المسار الكامل لا يُقرَّر هنا إطلاقاً**: هو في طابور المعاينة لا في
+ * طابور القرار السريع، ونهايتُه توقيعُ معاينةٍ لا ضغطةُ زرّ. والحجبُ في
+ * الطبقة لا في الواجهة: طلبٌ ملفَّق بمعرّفٍ صحيح يُردّ كما تُردّ ضغطةٌ في
+ * شاشةٍ لا تعرضه أصلاً.
  *
  * **ولا يُكتب هنا في `medical_exams` حرف.** «معاينة كاملة» تعني أن الملفّ
  * يدخل طابورَ المعاينة القائم بحرفه — لا أن نصنع له معاينةً هنا.
@@ -203,14 +277,21 @@ export async function decideReviewRequest(params: {
   const nextStatus = STATUS_AFTER[decision];
 
   return await db.transaction(async (tx) => {
-    const cur = await tx.execute<{ id: number; branch_id: number | null; status: string }>(sql`
-      SELECT id, branch_id, status FROM medical_review_requests
+    const cur = await tx.execute<{
+      id: number; branch_id: number | null; status: string; requested_path: string;
+    }>(sql`
+      SELECT id, branch_id, status, requested_path FROM medical_review_requests
        WHERE id = ${requestId} FOR UPDATE
     `);
     const row = (cur.rows ?? [])[0];
     if (!row) throw new ReviewError("طلب المراجعة غير موجود", 404);
     if (branchIds !== null && !branchIds.includes(Number(row.branch_id))) {
       throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
+    }
+    if (row.requested_path === "full") {
+      throw new ReviewError(
+        "هذا الطلب على مسار المعاينة الكاملة — يُنجَز بتوقيع معاينة لا بقرار سريع", 400,
+      );
     }
     if (row.status !== "pending") {
       throw new ReviewError("تمّ البتّ في هذا الطلب بالفعل", 409);
@@ -231,10 +312,14 @@ export async function decideReviewRequest(params: {
 }
 
 /**
- * طابورُ الطبيب — المعلَّق في نطاقه، الأقدمُ انتظاراً أوّلاً.
+ * طابورُ القرار السريع — المعلَّقُ **السريع** في نطاقه، الأقدمُ أوّلاً.
  *
- * **ولا استثناءَ للمريض القديم ولا للصيانة**: كلُّ طلبٍ أنشأه الاستقبال يظهر.
- * فهذا الطابور هو بالضبط ما وُجد ليصلح الإقصاءَين.
+ * **ولا استثناءَ للمريض القديم ولا للصيانة**: كلُّ طلبٍ سريعٍ أنشأه الاستقبال
+ * يظهر. فهذا الطابور هو بالضبط ما وُجد ليصلح الإقصاءَين.
+ *
+ * **وطلبُ المسار الكامل لا يظهر هنا بحال**: مكانُه طابور المعاينة القائم،
+ * وعرضُه هنا كان سيضع تحت يد الطبيب زرَّ «موافقة» على حالةٍ قيل عنها إنها
+ * تحتاج فحصاً — وهو بالضبط ما يمنعه هذا الشرط.
  *
  * والاختصاصات تُرشَّح في **الخادم**: طبيبُ الأطراف لا يرى طلبَ مساند.
  */
@@ -280,7 +365,7 @@ export async function listPendingReviews(params: {
          WHERE me.patient_id = r.patient_id AND me.case_type = r.service_type
          ORDER BY me.created_at DESC LIMIT 1
       ) le ON TRUE
-     WHERE r.status = 'pending'
+     WHERE r.status = 'pending' AND r.requested_path = 'quick'
        AND ${scopeClause(branchIds, "r.branch_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
      ORDER BY r.created_at ASC
@@ -305,23 +390,31 @@ export async function listReviewsForPatient(
 }
 
 /**
- * ربطُ الطلب المُحال بالمعاينة التي أُنجزت بعده.
+ * إغلاقُ ما كان ينتظر معاينةً، بالمعاينة التي وُقّعت للتوّ.
  *
- * تُنادى بعد توقيع معاينةٍ فيصير التسلسل مقروءاً: صُنِّف ⟶ أُحيل ⟶ عُوين.
- * **ولا تُغيّر حالةً ولا تفتح باباً**: حقلُ ربطٍ للقراءة وحده، وفشلُه لا
- * يجوز أن يُسقط توقيعَ سجلٍّ سريري — فالمنادي يبتلع خطأه عمداً.
+ * تُنادى بعد توقيع معاينةٍ فيصير التسلسل مقروءاً: صُنِّف ⟶ انتظر ⟶ عُوين.
+ * وتشمل الحالتين اللتين تنتظران التوقيع: **المُرسَل كاملاً** من الاستقبال،
+ * و**المُحال** من طبيبٍ نظر نظرةً سريعة.
+ *
+ * ولماذا يُغلَق لا يُترك معلَّقاً: الطلبُ المعلَّق يحجز فهرسَ التفرّد الجزئي،
+ * فمريضٌ عاد بعد أشهرٍ لجهازٍ ثانٍ كان يُردّ بـ«له طلبٌ معلَّقٌ بالفعل» عن
+ * طلبٍ أُنجز في حينه. والإغلاق بالحالة `examined` لا بقرارٍ سريع — لأن الذي
+ * أنهاه توقيعُ سجلٍّ سريري لا ضغطةُ زرّ.
+ *
+ * **وفشلُها لا يجوز أن يُسقط توقيعَ سجلٍّ سريري** — فالمنادي يبتلع خطأه
+ * عمداً، وقائمةُ العمل تصحّح نفسها على أي حال: شرطُ «لا معاينةَ بعد الطلب»
+ * يُخرج المريض منها ولو بقي الصفُّ معلَّقاً.
  */
-export async function linkExamToEscalated(params: {
+export async function closeRequestsAwaitingExam(params: {
   patientId: number; serviceType: string; examId: number;
 }): Promise<void> {
   if (!isReviewServiceType(params.serviceType)) return;
   await db.execute(sql`
     UPDATE medical_review_requests
-       SET exam_id = ${params.examId}, updated_at = NOW()
+       SET exam_id = ${params.examId}, status = 'examined', updated_at = NOW()
      WHERE patient_id = ${params.patientId}
        AND service_type = ${params.serviceType}
-       AND status = 'escalated'
-       AND exam_id IS NULL
+       AND (status = 'escalated' OR (status = 'pending' AND requested_path = 'full'))
   `);
 }
 

@@ -102,6 +102,8 @@ function update(opts: {
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await pool.query(`DELETE FROM audit_log WHERE entity_type IN ('patient_link_token','patient_contact') AND user_id = ${ADMIN}`);
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await pool.query(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
   // الصادر يشير إلى الأحداث وجهات الاتصال معاً — يُحذف قبلهما.
   await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);

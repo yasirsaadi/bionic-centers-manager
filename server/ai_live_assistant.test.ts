@@ -106,6 +106,8 @@ async function mkPatient(name: string, branchId: number, totalCost = 0) {
 }
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);

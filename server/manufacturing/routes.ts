@@ -25,6 +25,7 @@ import {
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
   MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
+import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 
 type Req = any;
 
@@ -561,10 +562,24 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
         legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
       });
+      // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ──────────────────────────
+      //  **الصيانة كانت لا تصل الطبيب إطلاقاً** — لا حلقةَ جديدة تُنشأ ولا
+      //  خيطَ ينفتح، فلا شيء يضع المريض في قائمة أحد. وهي أكثر ما يعود به
+      //  المريض. فتُوجَّه الآن مع أمرها، بتصنيف الاستقبال: أكثرُها روتينيٌّ
+      //  فمسارُه سريع، وما فيه جرحٌ أو ألمٌ أو تغيّرُ قياس يختاره الموظّف
+      //  «معاينة كاملة» فيذهب إلى طابور المعاينة مباشرةً.
+      const mCls = classifyFromBody(req.body, "maintenance");
+      const routing = await routeServiceToDoctorReview(req, {
+        patientId, caseType: serviceType,
+        reviewKind: mCls.reviewKind, requestedPath: mCls.requestedPath,
+        receptionNote: mCls.receptionNote ?? visitNotes,
+        workOrderId: order.id,
+      });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
         `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
-          + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`);
-      res.status(201).json(order);
+          + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`
+          + (routing.request ? ` — طلب مراجعة #${routing.request.id}` : ""));
+      res.status(201).json({ ...order, reviewRequestId: routing.request?.id ?? null });
     } catch (err: any) {
       // جهازٌ غير صالح للصيانة — جوابُ عملٍ من داخل المعاملة.
       if (err instanceof DeviceEpisodeError) {

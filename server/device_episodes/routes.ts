@@ -14,6 +14,7 @@
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { routeServiceToDoctorReview } from "../medical_review/routing";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 
@@ -116,6 +117,19 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         patientId, serviceType, createdBy: session.userId,
       });
 
+      // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
+      //  **جهازٌ جديد ⟶ معاينةٌ كاملة، بلا استثناء ولا خيارٍ للموظّف.**
+      //  والطلب مربوطٌ بالحلقة نفسها لا بالمريض وحده، فمريضٌ فتح جهازين في
+      //  اختصاصين مختلفين له طلبان يقرأ الطبيبُ فرقَهما.
+      //  ويشمل **المريض القديم**: استثناؤه يرفع الإلزام عن الانتظار
+      //  التلقائي، ولا يُخرجه من طلبٍ صرّح به الاستقبال بفعله.
+      const routing = await routeServiceToDoctorReview(req, {
+        patientId, caseType: serviceType,
+        reviewKind: "new_device", requestedPath: "full",
+        receptionNote: req.body?.reviewNote ?? null,
+        deviceEpisodeId: episode.id,
+      });
+
       await logAudit({
         entityType: "patient_device_episode",
         entityId: episode.id,
@@ -126,10 +140,11 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         newValues: episode,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `بدء جهاز جديد #${episode.sequenceNumber} للمريض ${patient.name ?? patientId}`,
+        notes: `بدء جهاز جديد #${episode.sequenceNumber} للمريض ${patient.name ?? patientId}`
+          + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),
       });
 
-      res.status(201).json(episode);
+      res.status(201).json({ ...episode, reviewRequestId: routing.request?.id ?? null });
     } catch (err) {
       fail(res, err, "تعذّر بدء الجهاز");
     }

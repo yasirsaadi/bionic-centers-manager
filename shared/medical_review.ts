@@ -29,6 +29,10 @@ export const isReviewServiceType = (v: unknown): v is ReviewServiceType =>
  * **والاستقبال هو المصنِّف لا الخبير**: الخبير يُسأل خارج المسار حين يشكّ
  * الموظّف، لكنّ التصنيف قرارُ الاستقبال ومسؤوليّتُه — فلا ينتظر الملفُّ
  * خبيراً مشغولاً ليبدأ طريقه إلى الطبيب.
+ *
+ * **وهما طابوران لا وسمان**: `quick` يذهب إلى طابور القرار السريع، و`full`
+ * يذهب إلى **طابور المعاينة الكاملة القائم مباشرةً** — فلا تُعرَض بطاقةُ
+ * «موافقة» على حالةٍ قيل عنها إنها تحتاج فحصاً.
  */
 export const REVIEW_PATHS = ["quick", "full"] as const;
 export type ReviewPath = (typeof REVIEW_PATHS)[number];
@@ -66,7 +70,7 @@ export const isReviewPath = (v: unknown): v is ReviewPath =>
 // ── الحالات والقرارات ────────────────────────────────────────────────────
 
 export const REVIEW_STATUSES = [
-  "pending", "approved", "escalated", "returned",
+  "pending", "approved", "escalated", "returned", "examined",
 ] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
@@ -75,6 +79,7 @@ export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
   approved: "موافقة طبية",
   escalated: "أُحيل إلى معاينة كاملة",
   returned: "أُعيد إلى الاستقبال",
+  examined: "أُنجزت المعاينة",
 };
 
 /** قرارُ الطبيب الثلاثي. */
@@ -101,6 +106,34 @@ export const STATUS_AFTER: Record<ReviewDecision, ReviewStatus> = {
 
 /** المنتهية: لا قرارَ ثانٍ عليها، ويُنشئ الاستقبالُ طلباً جديداً إن لزم. */
 export const isDecided = (s: string): boolean => s !== "pending";
+
+// ── أيُّ طلبٍ يذهب إلى أيّ طابور ─────────────────────────────────────────
+
+/**
+ * **الجهازُ الجديد لا يكون سريعاً أبداً.**
+ *
+ * جهازٌ جديد يعني قراراً سريرياً كاملاً: قياسٌ ومواصفةٌ وتقديرُ حال. فحتى
+ * لو صنّفه الموظّف «سريعاً» يُردّ — في الشيفرة **وفي قيد `CHECK` بالقاعدة
+ * معاً**، فلا نقطةٌ منسيّة ولا سكربتٌ مباشر يفتح الباب.
+ */
+export const requiresFullPath = (kind: string): boolean => kind === "new_device";
+
+/** التركيبة المرفوضة: جهازٌ جديد بمسارٍ سريع. */
+export const isPathAllowedForKind = (kind: string, path: string): boolean =>
+  !(requiresFullPath(kind) && path === "quick");
+
+/**
+ * هل ينتظر هذا الطلبُ **معاينةً كاملة**؟
+ *
+ * حالتان تلتقيان في طابورٍ واحد: ما أرسله الاستقبالُ كاملاً من أوّله، وما
+ * أحاله الطبيبُ بعد نظرةٍ سريعة. وكلاهما ينتهي بتوقيعٍ لا بقرارٍ سريع.
+ */
+export const isAwaitingFullExam = (status: string, path: string): boolean =>
+  status === "escalated" || (status === "pending" && path === "full");
+
+/** هل يظهر في **طابور القرار السريع**؟ المعلَّقُ السريعُ وحده. */
+export const isInQuickQueue = (status: string, path: string): boolean =>
+  status === "pending" && path === "quick";
 
 // ── الصلاحيات ────────────────────────────────────────────────────────────
 

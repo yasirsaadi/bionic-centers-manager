@@ -38,6 +38,8 @@ import {
 } from "./DeviceEpisodeSelect";
 import { z } from "zod";
 import { invalidatePatientData } from "@/lib/queryClient";
+import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
+import type { ReviewKind, ReviewPath } from "@shared/medical_review";
 import {
   needsMaintenanceChoice, ownedDeviceTypes, resolveMaintenanceServiceType,
   MAINTENANCE_TYPE_LABELS,
@@ -150,6 +152,15 @@ export function VisitModal({
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [maintPending, setMaintPending] = useState(false);
 
+  // ── تصنيفُ الاستقبال لمراجعة الطبيب (ترحيل ٠٥٥) ──────────────────────
+  //  يُطرَح داخل النموذج لأن ما يُترَك لزرٍّ في شاشةٍ أخرى لا يقع. والصيانة
+  //  خاصّةً كانت لا تصل الطبيب إطلاقاً — وهي أكثر ما يعود به المريض.
+  const [reviewPath, setReviewPath] = useState<ReviewPath>("quick");
+  const [reviewKind, setReviewKind] = useState<ReviewKind>("maintenance");
+  const [reviewNote, setReviewNote] = useState("");
+  /** خدمةُ جهاز؟ الصيانة دائماً، والزيارة حين يكون خيطُها أطرافاً أو مساند. */
+  const needsReview = purpose === "maintenance" || visitDeviceSvc !== null;
+
   // Do NOT swallow fetch errors as an empty list — a transient 403/500 would
   // otherwise be cached as "no experts" and block the maintenance path. Throw
   // so React Query records it as an error we can surface.
@@ -183,6 +194,8 @@ export function VisitModal({
     setPurpose(initialPurpose ?? "visit"); setExpertUserId(""); setExpectedDeliveryDate("");
     setMaintDevice(""); setVisitDevice("");
     setVisitCaseId(null); setMaintCost(0); setMaintServiceType("");
+    setReviewPath("quick"); setReviewNote("");
+    setReviewKind(initialPurpose === "maintenance" ? "maintenance" : "follow_up");
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
@@ -212,6 +225,7 @@ export function VisitModal({
                 : maintDevice ? { deviceEpisodeId: Number(maintDevice) } : {})
             : {}),
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
+          reviewPath, reviewKind, reviewNote: reviewNote.trim() || undefined,
         }),
       });
       if (!res.ok) {
@@ -244,6 +258,8 @@ export function VisitModal({
       customDate: values.customDate || null,
       ...(visitNeedsChoice && visitDevice && visitDevice !== UNALLOCATED
         ? { deviceEpisodeId: Number(visitDevice) } : {}),
+      //  التصنيف يُرسَل مع زيارة الجهاز وحدها — والعلاج الطبيعي لا يحمله.
+      ...(visitDeviceSvc ? { reviewPath, reviewKind, reviewNote: reviewNote.trim() || undefined } : {}),
     };
     mutate(submitData, {
       onSuccess: () => {
@@ -455,6 +471,16 @@ export function VisitModal({
                   ستُفتح حلقة صيانة مستقلّة بخبيرها — يحدّد الخبير تاريخ التسليم عند أخذ القالب. إن كان للمريض أمر صيانة/بناء جارٍ لنفس الخدمة لم يُسلَّم، تُمنع حتى يكتمل.
                 </p>
               </div>
+            )}
+
+            {/* تصنيفُ الاستقبال — لخدمات الأجهزة وحدها. والعلاج الطبيعي لا
+                يراه إطلاقاً، فمسارُه لم يتغيّر بحرف. */}
+            {needsReview && (
+              <ReviewPathPicker
+                path={reviewPath} onPathChange={setReviewPath}
+                kind={reviewKind} onKindChange={setReviewKind}
+                note={reviewNote} onNoteChange={setReviewNote}
+              />
             )}
 
             <Button type="submit" className="w-full h-11 text-base font-semibold bg-blue-600 hover:bg-blue-700" disabled={isPending || maintPending}>
