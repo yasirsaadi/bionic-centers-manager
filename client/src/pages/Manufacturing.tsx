@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useBranchSession } from "@/components/BranchGate";
@@ -83,6 +84,8 @@ export default function Manufacturing() {
   const accessible = session?.accessibleBranches ?? [];
 
   const [search, setSearch] = useState("");
+  //  البحث يقع في الخادم، فيُهدَّأ بنفس مهلة سجلّ المرضى.
+  const debouncedSearch = useDebouncedSearch(search);
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [stageFilter, setStageFilter] = useState<string>("all");
@@ -98,14 +101,14 @@ export default function Manufacturing() {
   // Build the server query string from active filters.
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    if (search.trim()) p.set("search", search.trim());
+    if (debouncedSearch) p.set("search", debouncedSearch);
     if (serviceFilter !== "all") p.set("serviceType", serviceFilter);
     if (stageFilter !== "all") p.set("stage", stageFilter);
     if (statusFilter !== "all") p.set("status", statusFilter);
     if (branchFilter !== "all") p.set("branchId", branchFilter);
     if (!isExpert && expertFilter !== "all") p.set("expertUserId", expertFilter);
     return p.toString();
-  }, [search, serviceFilter, stageFilter, statusFilter, branchFilter, expertFilter, isExpert]);
+  }, [debouncedSearch, serviceFilter, stageFilter, statusFilter, branchFilter, expertFilter, isExpert]);
 
   const endpoint = isExpert ? "/api/manufacturing/my-orders" : "/api/manufacturing/orders";
   const { data: orders = [], isLoading } = useQuery<OrderCard[]>({

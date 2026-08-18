@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { filterAndRank, normalizeSearchText } from "@shared/patient_search";
 import { useParams, useLocation, Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -81,12 +82,15 @@ export default function BranchDetails() {
 
   const basePatients = viewMode === "date" ? dateFilteredPatients : branchPatients;
   
-  const searchResults = searchTerm.trim() 
-    ? branchPatients.filter(p => 
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.medicalCondition.includes(searchTerm) ||
-        (p.phone && p.phone.includes(searchTerm))
-      )
+  //  الاسم والهاتف والرمز بعقد `shared/patient_search.ts`. و«الحالة المرضية»
+  //  تبقى مبحوثاً فيها كما كانت — فمن اعتاد كتابة «بتر» هنا لا يفقد بحثه —
+  //  لكن بالتطبيع نفسه لا بمقارنةٍ خام.
+  const searchResults = searchTerm.trim()
+    ? filterAndRank(branchPatients, searchTerm,
+        (p) => ({ name: p.name, phone: p.phone, patientCode: (p as any).patientCode }))
+        .concat(branchPatients.filter((p) =>
+          normalizeSearchText(p.medicalCondition).includes(normalizeSearchText(searchTerm))))
+        .filter((p, i, all) => all.findIndex((o) => o.id === p.id) === i)
     : basePatients;
 
   const totalPatients = searchResults.length;

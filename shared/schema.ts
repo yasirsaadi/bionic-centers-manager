@@ -39,6 +39,21 @@ export const patients = pgTable("patients", {
   phoneE164: text("phone_e164"),       // +9647701234567 — مفتاح المطابقة وكشف التكرار
   phoneCountry: text("phone_country"), // IQ | TR | ISO أخرى | INTL
   phoneStatus: text("phone_status"),   // ok | needs_review
+
+  // ══ أعمدةُ البحث المشتقّة (migration 054) ════════════════════════════
+  // `GENERATED ALWAYS … STORED`: تحسبها القاعدة عند كل كتابة، فلا تُدرَج ولا
+  // تُحدَّث من التطبيق أبداً — ولذلك تُسقطها `createInsertSchema` تلقائياً.
+  //
+  // **ولماذا عمودٌ لا فهرسُ تعبير**: فهرسُ التعبير كان يُسرّع الترشيح ثمّ
+  // يعيد استدعاء المطبِّع لكل صفٍّ عند إعادة الفحص والترتيب — قياسٌ على
+  // ٦٠٬٠٠٠ صفّ: ١٢٤٤ مللي ثانية. والعمود المخزَّن ٣٠. والفرقُ ليس تحسيناً
+  // تجميلياً: هو الفرق بين `Bitmap Index Scan` و`Parallel Seq Scan`.
+  //
+  // مصدرُهما `patient_search_norm` و`patient_digits_only`، وهما مطابقتان
+  // خطوةً بخطوة لـ`shared/patient_search.ts` — واختبارٌ يحرس التطابق.
+  nameNorm: text("name_norm").generatedAlwaysAs(sql`patient_search_norm(name)`),
+  phoneDigits: text("phone_digits").generatedAlwaysAs(sql`patient_digits_only(phone)`),
+  codeDigits: text("code_digits").generatedAlwaysAs(sql`patient_digits_only(patient_code)`),
   address: text("address"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
   // كيف عرف «الشخص الآخر» بالمركز — يُملأ فقط حين تكون الجهة «من شخص آخر».

@@ -24,6 +24,9 @@ import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import * as followupStore from "./followup/store";
 import {
+  buildPatientSearch, hasTrigram, searchTieBreaker,
+} from "./patient_search/sql";
+import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
 } from "./device_episodes/store";
 import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
@@ -1452,26 +1455,24 @@ export async function registerRoutes(
     // **ولا يتخطّى شيئاً من الحراسة**: الشرط يُضاف إلى نفس `conditions`
     // التي تحمل تثبيت الفرع لغير المسؤول. فمعرفة الرمز لا تُخرج موظّفاً من
     // فرعه — تماماً كالبحث بالاسم.
-    const codeSearch = search ? normalizePatientCode(search) : null;
-    if (codeSearch) {
-      conditions.push(sql`(
-        ${patients.patientCode} = ${codeSearch}
-        OR EXISTS (
-          SELECT 1 FROM patient_code_aliases a
-           WHERE a.code = ${codeSearch} AND a.patient_id = ${patients.id}
-        )
-      )`);
-    } else if (search) {
-      // Searching intentionally ignores the date filter (and, for admins,
-      // the branch filter) — same behaviour the registry always had.
-      const like = `%${search}%`;
-      // Arabic-normalized name match: ة↔ه, أ/إ/آ↔ا, ى↔ي on BOTH sides, so
-      // searching "عطية" finds a patient stored as "عطيه" (and vice versa).
-      conditions.push(sql`(
-        translate(${patients.name}, 'أإآةى', 'اااهي') ILIKE translate(${like}, 'أإآةى', 'اااهي')
-        OR ${patients.phone} LIKE ${like}
-        OR ${patients.medicalCondition} LIKE ${like}
-      )`);
+    // ══ البحث الموحَّد (ترحيل ٠٥٤) ═════════════════════════════════════
+    // كان ثلاثة مسارات لا واحد: الرمز وحده، ثم `ILIKE` بتطبيعٍ جزئي، ثم لا
+    // شيء. فالموظّف يكتب «احمذ» فلا يجد «أحمد»، ويكتب «٠٧٧٠» فلا يجد شيئاً.
+    //
+    // والآن شرطٌ واحد ورتبةٌ واحدة — **بنفس سلّم `shared/patient_search.ts`**
+    // فما يتصدّر هنا يتصدّر في القوائم المحمَّلة في المتصفّح.
+    //
+    // **ولا يتخطّى شيئاً من الحراسة**: يُضاف إلى نفس `conditions` التي تحمل
+    // تثبيت الفرع لغير المسؤول. فمعرفةُ الرمز أو الاسم لا تُخرج موظّفاً من
+    // فرعه — تماماً كما كان.
+    let searchRank: any = null;
+    let searchTie: any = null;
+    if (search) {
+      const trigram = await hasTrigram(db);
+      const built = buildPatientSearch(search, { trigram });
+      conditions.push(built.where);
+      searchRank = built.rank;
+      searchTie = searchTieBreaker(search, { trigram });
     } else if (visitDate) {
       // Patients who had a (non-deleted) visit on that Baghdad calendar day.
       conditions.push(sql`EXISTS (
@@ -1495,7 +1496,11 @@ export async function registerRoutes(
         patientClassification: patients.patientClassification, totalCost: patients.totalCost,
         createdAt: patients.createdAt,
       }).from(patients).where(where)
-        .orderBy(sql`${patients.createdAt} DESC NULLS LAST`)
+        //  عند البحث: الأدقّ أوّلاً ثم الأقرب تشابهاً ثم الأحدث.
+        //  وبلا بحث: **ترتيب السجلّ كما كان حرفاً بحرف** — الأحدث أوّلاً.
+        .orderBy(...(searchRank
+          ? [sql`${searchRank} ASC`, searchTie, sql`${patients.createdAt} DESC NULLS LAST`]
+          : [sql`${patients.createdAt} DESC NULLS LAST`]))
         .limit(pageSize).offset((page - 1) * pageSize),
     ]);
 

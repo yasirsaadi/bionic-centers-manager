@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ClipboardCheck, Send, BarChart3, Users, TrendingUp, Search, Eye, Calendar, Sparkles, Loader2, FileDown } from "lucide-react";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useState, useMemo } from "react";
 import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -94,6 +95,8 @@ function AddSurveyTab() {
   const isAdmin = branchSession?.isAdmin ?? false;
 
   const [searchTerm, setSearchTerm] = useState("");
+  //  كانت هذه الشاشة بلا تهدئةٍ إطلاقاً: طلبٌ إلى الخادم لكل حرفٍ يُكتب.
+  const debouncedSearch = useDebouncedSearch(searchTerm);
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [answers, setAnswers] = useState<Record<number, number>>({});
@@ -104,10 +107,10 @@ function AddSurveyTab() {
   // (the reason this page was slow to open). The registry pins non-admins to
   // their own branch server-side, so no client filtering is needed either.
   const { data: registry, isLoading: patientsLoading } = useQuery<{ rows: Patient[] }>({
-    queryKey: ["/api/patients/registry", "survey-picker", searchTerm],
+    queryKey: ["/api/patients/registry", "survey-picker", debouncedSearch],
     queryFn: async () => {
       const params = new URLSearchParams({ page: "1", pageSize: "50" });
-      if (searchTerm.trim()) params.set("search", searchTerm.trim());
+      if (debouncedSearch) params.set("search", debouncedSearch);
       const res = await fetch(`/api/patients/registry?${params.toString()}`, { credentials: "include" });
       if (!res.ok) return { rows: [] };
       return res.json();

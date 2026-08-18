@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeArabic } from "@/lib/utils";
+import { filterAndRank } from "@shared/patient_search";
 import { GitMerge, Loader2, AlertTriangle } from "lucide-react";
 
 interface PatientLite { id: number; name: string; branchId: number; createdAt?: string | null; }
@@ -72,9 +72,10 @@ export function MergePatientDialog({
   };
 
   const candidates = useMemo(
-    () => patients
-      .filter((p) => p.id !== patientId)
-      .filter((p) => !search.trim() || normalizeArabic(p.name).includes(normalizeArabic(search.trim())))
+    () => filterAndRank(
+      patients.filter((p) => p.id !== patientId),
+      search, (p) => ({ name: p.name, phone: (p as any).phone, patientCode: (p as any).patientCode }),
+    )
       .sort((a, b) => {
         // Exact same-name matches first (the actual duplicates), then oldest first.
         const aExact = a.name.trim() === patientName.trim() ? 0 : 1;

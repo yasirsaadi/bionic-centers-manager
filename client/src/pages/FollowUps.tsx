@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
-import { normalizeArabic } from "@/lib/utils";
+import { filterAndRank } from "@shared/patient_search";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -180,32 +180,25 @@ export default function FollowUps() {
     },
   });
 
-  const q = normalizeArabic(search.trim());
+  const q = search.trim();
   const branchId = branchFilter === "all" ? null : Number(branchFilter);
 
-  // Active list: filter by branch (admin) + search (name or phone),
-  // Arabic-normalized so ة/ه etc. variants still match.
+  //  البحث بعقد `shared/patient_search.ts` — نفس التطبيع ونفس السلّم الذي
+  //  يعمل به سجلّ المرضى، فالاسم الذي يُوجد هناك يُوجد هنا. والفرع يُرشَّح
+  //  أوّلاً كما كان، فالبحث لا يوسّع نطاقاً.
   const filteredActive = useMemo(
-    () =>
-      reminders.filter((r) => {
-        if (branchId !== null && r.branchId !== branchId) return false;
-        if (!q) return true;
-        return (
-          normalizeArabic(r.name).includes(q) ||
-          (r.phone ?? "").includes(q)
-        );
-      }),
+    () => filterAndRank(
+      reminders.filter((r) => branchId === null || r.branchId === branchId),
+      q, (r) => ({ name: r.name, phone: r.phone }),
+    ),
     [reminders, branchId, q]
   );
 
-  // History list: filter by branch (admin) + search (patient name).
   const filteredHistory = useMemo(
-    () =>
-      history.filter((h) => {
-        if (branchId !== null && h.branchId !== branchId) return false;
-        if (!q) return true;
-        return normalizeArabic(h.patientName ?? "").includes(q);
-      }),
+    () => filterAndRank(
+      history.filter((h) => branchId === null || h.branchId === branchId),
+      q, (h) => ({ name: h.patientName }),
+    ),
     [history, branchId, q]
   );
 

@@ -95,13 +95,11 @@ export function toEnglishDigits(str: string): string {
   return result;
 }
 
-// Arabic-normalized comparison: unifies ة/ه, أ/إ/آ/ا, ى/ي and strips
-// diacritics so spelling variants of the same name match in searches.
-export function normalizeArabic(s: string): string {
-  return (s || "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي")
-    .replace(/[ً-ْٰ]/g, "")
-    .toLowerCase();
-}
+// ══ قاعدةُ التطبيع صارت واحدةً للنظام كلّه ═════════════════════════════
+// كانت هنا قاعدةٌ ثالثة (ة/ه · أإآ/ا · ى/ي · التشكيل) تنقصها التطويلُ وصورُ
+// الألف الأخرى والمسافاتُ المكرّرة والأرقامُ الهندية، وتختلف عمّا في SQL —
+// فالاسم يُوجد في شاشةٍ ولا يُوجد في أخرى. والقاعدة الآن في
+// `shared/patient_search.ts` ومعها دالّةُ القاعدة المطابقة لها (ترحيل ٠٥٤).
+//
+// وتبقى هذه اسماً ثانياً لها لا قاعدةً ثانية — فما استوردها قديماً لا ينكسر.
+export { normalizeSearchText as normalizeArabic } from "@shared/patient_search";

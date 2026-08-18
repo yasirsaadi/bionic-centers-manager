@@ -10,6 +10,7 @@ import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRigh
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
+import { filterAndRank } from "@shared/patient_search";
 
 interface WorklistRow {
   patientId: number;
@@ -99,11 +100,15 @@ export default function MyExams() {
   }, [rows]);
 
   const filtered = useMemo(() => {
-    const q = search.trim();
-    const base = rows
-      .filter((r) => (only ? r.caseType === only : true))
-      .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true))
-      .filter((r) => (q ? r.patientName.includes(q) || (r.phone ?? "").includes(q) : true));
+    //  البحث بعقد `shared/patient_search.ts` — كان `includes` خاماً هنا، فمن
+    //  كتب «احمد» لم يجد «أحمد» ومن كتب «٠٧٧٠» لم يجد شيئاً. والترتيب بعده
+    //  يبقى بالانتظار كما هو (الأحدث/الأقدم) لا بالصلة.
+    const base = filterAndRank(
+      rows
+        .filter((r) => (only ? r.caseType === only : true))
+        .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true)),
+      search, (r) => ({ name: r.patientName, phone: r.phone }),
+    );
     // Sort a COPY: `rows` is react-query's cached array.
     return [...base].sort((a, b) => {
       const ta = a.waitingSince ? new Date(a.waitingSince).getTime() : 0;
