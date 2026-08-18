@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
-import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel } from "@shared/medical";
+import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
 
 interface WorklistRow {
   patientId: number;
@@ -71,7 +71,13 @@ export default function MyExams() {
   });
 
   const rows = data?.rows ?? [];
-  const specialties = data?.specialties ?? [];
+  //  ترتيبٌ واحدٌ ثابت لأزرار الترشيح ولعناوين الأقسام معاً — أطراف صناعية
+  //  ثمّ مساند طبية ثمّ علاج طبيعي. وهو مشتقٌّ من `MEDICAL_SPECIALTIES` لا
+  //  مكتوبٌ هنا، فلا ينحرف موضعان عن بعضهما.
+  const specialties = useMemo(
+    () => sortBySpecialty(data?.specialties ?? [], (s) => s),
+    [data?.specialties],
+  );
 
   // The branches actually present in this doctor's queue — derived from the
   // rows rather than the branch table, so the picker never offers a centre
@@ -136,7 +142,11 @@ export default function MyExams() {
     for (const r of filtered) {
       totalByType[r.caseType] = (totalByType[r.caseType] ?? 0) + 1;
     }
-    return Object.keys(byType).map((caseType) => ({
+    //  ترتيبُ الأقسام هو ترتيبُ الأزرار نفسه — لا ترتيبُ ظهورها في الصفحة.
+    //  ومحلُّ الترتيب هنا **بعد التقطيع**: الشريحة `pageRows` تبقى كما هي
+    //  حرفاً بحرف (نفس المرضى ونفس ترتيب الانتظار داخل كل اختصاص)، ولا
+    //  يتغيّر إلّا تسلسلُ العناوين الثلاثة فوقها.
+    return sortBySpecialty(Object.keys(byType), (t) => t).map((caseType) => ({
       caseType,
       list: byType[caseType],
       total: totalByType[caseType] ?? byType[caseType].length,

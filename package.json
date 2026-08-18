@@ -55,7 +55,8 @@
     "test:ai-tools": "tsx server/ai_tools.test.ts",
     "test:ai-live": "tsx server/ai_live_assistant.test.ts",
     "test:followup": "tsx server/post_exam_followup.test.ts",
-    "test:followup-rules": "tsx shared/followup.test.ts"
+    "test:followup-rules": "tsx shared/followup.test.ts",
+    "test:specialty-order": "tsx shared/specialty_order.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
