@@ -12,7 +12,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  allowedActions, canApprove, canRecordFollowup, canSelectExpert, canViewFollowup,
+  allowedActions, canApprove, canConfirmPurchase, canRecordFollowup, canSelectExpert, canViewFollowup,
   isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
 } from "./followup";
@@ -79,28 +79,52 @@ same("   وبلا جلسة ⟶ لا", canApprove(null), false);
 same("   والغموض يُقرأ «لا»",
   canApprove({ permissions: { canWriteMedicalExam: 1 } } as any), false);
 
+// ══ ب٢. مَن يؤكّد الشراء — بوّابةٌ مستقلّةٌ أوسع ═══════════════════════
+//  «اشترى» تسجيلُ واقعةٍ لا اعتماد، فبوّابتُها الفرعُ لا الطبيب. وفصلُها
+//  عن `canApprove` مقصود: تعديلُ السعر يبقى للطبيب والمسؤول وحدهما.
+console.log("\n── مَن يؤكّد الشراء ──");
+same("ب٢. **الاستقبال يؤكّد الشراء**", canConfirmPurchase(recv), true);
+same("   ومديرُ الفرع", canConfirmPurchase(mgr), true);
+same("   والطبيب", canConfirmPurchase(doc), true);
+same("   ومَن يحمل `canWriteMedicalExam`", canConfirmPurchase(docCap), true);
+same("   والمسؤول العام", canConfirmPurchase(admin), true);
+same("ب٣. **والخبيرُ لا** — محجوبٌ مالياً في كل النظام", canConfirmPurchase(expert), false);
+same("   وبلا جلسة ⟶ لا", canConfirmPurchase(null), false);
+//  والفرقُ بين البوّابتين مُثبَتٌ لا موصوف: مديرُ الفرع يبيع ولا يعتمد سعراً.
+same("ب٤. **مديرُ الفرع: يبيع ولا يعتمد سعراً**",
+  [canConfirmPurchase(mgr), canApprove(mgr)], [true, false]);
+
 // ══ ج. الأزرار بحسب الحالة ═════════════════════════════════════════════
 console.log("\n── الأزرار ──");
 same("د. بانتظار قرار المريض: الاستقبال يرى الأربعة",
   allowedActions(recv, "awaiting_patient_decision").sort(),
-  ["accept_price", "close", "defer", "request_price_change"]);
+  ["close", "confirm_purchase", "defer", "request_price_change"]);
+same("   **ومديرُ الفرع يرى الأربعة نفسها** — يبيع في فرعه",
+  allowedActions(mgr, "awaiting_patient_decision").sort(),
+  ["close", "confirm_purchase", "defer", "request_price_change"]);
 same("هـ. **بانتظار اعتماد السعر: الاستقبال بلا زرّ**",
   allowedActions(recv, "price_approval_pending"), []);
 same("   **ومديرُ الفرع كذلك بلا زرّ**",
   allowedActions(mgr, "price_approval_pending"), []);
 same("   والطبيب يرى الاعتماد والرفض",
   allowedActions(doc, "price_approval_pending").sort(), ["approve_price", "reject_price"]);
-same("و. بعد اعتماد السعر: الاستعلامات يسجّل موافقة المريض",
-  allowedActions(recv, "price_approved_waiting_patient").includes("patient_accepted_new_price"), true);
-same("   **ولا زرَّ اعتمادٍ للطبيب هنا** — الدور دورُ المتابِع",
+same("و. بعد اعتماد السعر: الاستعلامات يشتري مباشرةً",
+  allowedActions(recv, "price_approved_waiting_patient").includes("confirm_purchase"), true);
+same("   **ولا زرَّ اعتمادٍ لأحدٍ هنا** — الدور دورُ المتابِع",
   allowedActions(doc, "price_approved_waiting_patient").includes("approve_purchase"), false);
-same("ز. **بانتظار اعتماد الشراء: الاستقبال والمدير بلا زرّ**",
-  [allowedActions(recv, "purchase_approval_pending"),
-    allowedActions(mgr, "purchase_approval_pending")], [[], []]);
-same("   والطبيب وحده يرى «اعتماد الشراء»",
-  allowedActions(doc, "purchase_approval_pending"), ["approve_purchase"]);
-same("   والمسؤول كذلك",
-  allowedActions(admin, "purchase_approval_pending"), ["approve_purchase"]);
+
+// ══ ز. الحالةُ الملغاة — توافقٌ رجعي لا مسارٌ حيّ ══════════════════════
+//  كانت «بانتظار اعتماد الشراء» تُفرِغ يدَ الاستقبال تماماً: قائمةٌ خالية،
+//  والملفُّ واقفٌ حتى يفرغ طبيبٌ لضغطةٍ لا قرارَ سريرياً فيها. والصفوف
+//  المحتجزة فيها من قبلُ صارت **قابلةً للعمل فوراً**.
+same("ز. **الصفُّ المحتجز: الاستقبال يؤكّده ويغلقه**",
+  allowedActions(recv, "purchase_approval_pending").sort(), ["close", "confirm_purchase"]);
+same("   ومديرُ الفرع كذلك",
+  allowedActions(mgr, "purchase_approval_pending").sort(), ["close", "confirm_purchase"]);
+same("   **ولا زرَّ «اعتماد شراء» لأحد — لا طبيبٍ ولا مسؤول**",
+  [allowedActions(doc, "purchase_approval_pending").includes("approve_purchase"),
+    allowedActions(admin, "purchase_approval_pending").includes("approve_purchase")],
+  [false, false]);
 same("ح. المغلق يُعاد فتحه",
   allowedActions(recv, "closed_without_purchase"), ["reopen"]);
 same("   **والمُحوَّل لا زرَّ له إطلاقاً** — انتهى إلى التصنيع",
@@ -112,6 +136,18 @@ same("ط. **مسحُ الحالات كلّها: لا زرَّ اعتمادٍ ل�
   FOLLOWUP_STATUSES.flatMap((st) =>
     [recv, mgr, expert].flatMap((who) =>
       allowedActions(who, st).filter((a) => approvalButtons.includes(a)))),
+  []);
+//  و`approve_purchase` **لم يبقَ في المفردات إطلاقاً** — لا لطبيبٍ ولا
+//  لمسؤول. فالمسحُ أعلاه يحرس مَن لا يعتمد، وهذا يحرس أن الفعل نفسه زال.
+same("ط٠. **ولا وجودَ لـ`approve_purchase` في أي حالةٍ لأي أحد**",
+  FOLLOWUP_STATUSES.flatMap((st) =>
+    [recv, mgr, expert, doc, docCap, admin].flatMap((who) =>
+      allowedActions(who, st).filter((a) => a === "approve_purchase"))),
+  []);
+//  وخبيرُ الأطراف لا يبيع: محجوبٌ مالياً في كل النظام.
+same("ط١. **والخبيرُ لا يؤكّد شراءً في أي حالة**",
+  FOLLOWUP_STATUSES.flatMap((st) =>
+    allowedActions(expert, st).filter((a) => a === "confirm_purchase")),
   []);
 
 // ══ ط٢. زرُّ الخبير لا يتبع طولَ قائمة الأزرار ═════════════════════════
@@ -127,9 +163,14 @@ same("ط٢. **الاستقبال يختار الخبير في الحالات ا�
 same("   **وفي `price_approval_pending` تحديداً — وقائمةُ أزراره فارغة**",
   [canSelectExpert(recv, "price_approval_pending"),
     allowedActions(recv, "price_approval_pending").length], [true, 0]);
-same("   **وفي `purchase_approval_pending` كذلك**",
+//  و`purchase_approval_pending` لم تبقَ خاليةَ الأزرار بعد التبسيط، فمثالُ
+//  «قائمةٌ فارغة وزرُّ خبيرٍ حاضر» صار `price_approval_pending` وحدها. لكنّ
+//  اختيارَ الخبير يبقى متاحاً فيها **وهو ألزمُ ما يكون**: البيع على وشك أن
+//  يُؤكَّد، والخبيرُ شرطُه.
+same("   **وفي `purchase_approval_pending` الخبيرُ متاحٌ وشرطٌ للتأكيد**",
   [canSelectExpert(recv, "purchase_approval_pending"),
-    allowedActions(recv, "purchase_approval_pending").length], [true, 0]);
+    allowedActions(recv, "purchase_approval_pending").includes("confirm_purchase")],
+  [true, true]);
 same("   ومديرُ الفرع والطبيبُ والمسؤول كذلك",
   [mgr, doc, admin].flatMap((w) => LIVE.filter((st) => !canSelectExpert(w, st))), []);
 same("   **ولا يظهر في النهائيّتين**",

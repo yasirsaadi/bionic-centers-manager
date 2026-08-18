@@ -45,7 +45,9 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: "awaiting_patient_decision", label: "بانتظار قرار المريض" },
   { key: "price_approval_pending", label: "بانتظار اعتماد السعر" },
   { key: "price_approved_waiting_patient", label: "بانتظار تأكيد المريض بعد التعديل" },
-  { key: "purchase_approval_pending", label: "بانتظار اعتماد الشراء" },
+  //  مرشِّحٌ للصفوف المحتجزة من قبل التبسيط — تُفتَح وتُؤكَّد بضغطة. ولا
+  //  يدخلها ملفٌّ جديد بعد اليوم.
+  { key: "purchase_approval_pending", label: "محتجز قبل التبسيط" },
   { key: "follow_up", label: "مؤجَّل" },
   { key: "closed_without_purchase", label: "مغلق بدون شراء" },
 ];
@@ -62,7 +64,8 @@ const STATUS_TONE: Record<string, string> = {
   follow_up: "bg-amber-50 text-amber-700",
   price_approval_pending: "bg-blue-100 text-blue-800",
   price_approved_waiting_patient: "bg-violet-100 text-violet-800",
-  purchase_approval_pending: "bg-blue-100 text-blue-800",
+  //  كهرمانيّ لا أزرق: صار انتظارَ فعلٍ من الفرع لا اعتماداً من طبيب.
+  purchase_approval_pending: "bg-amber-100 text-amber-800",
   closed_without_purchase: "bg-gray-100 text-gray-600",
   converted: "bg-green-100 text-green-800",
 };
@@ -93,7 +96,7 @@ export default function PostExamFollowups() {
   });
 
   const { data: approvals } = useQuery<{
-    priceApprovals: any[]; purchaseApprovals: any[]; mayApprove: boolean;
+    priceApprovals: any[]; mayApprove: boolean;
   }>({
     queryKey: ["/api/followups/approvals"],
     queryFn: async () => {
@@ -104,8 +107,9 @@ export default function PostExamFollowups() {
   });
 
   const mayApprove = canApprove(session as any);
-  const pendingMine = (approvals?.priceApprovals?.length ?? 0)
-    + (approvals?.purchaseApprovals?.length ?? 0);
+  //  تعديلاتُ السعر وحدها. وخرج منها «اعتماد الشراء»: تأكيدُ الشراء صار
+  //  عملَ الاستقبال ومدير الفرع، فلا يقف عليه طبيب.
+  const pendingMine = approvals?.priceApprovals?.length ?? 0;
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -118,7 +122,8 @@ export default function PostExamFollowups() {
         </p>
       </div>
 
-      {/* «بانتظار موافقتي» — للطبيب والمسؤول وحدهما */}
+      {/* «بانتظار موافقتي» — للطبيب والمسؤول وحدهما، **وتعديلاتُ السعر
+          وحدها**: تأكيدُ الشراء لم يعد اعتماداً ولا يظهر هنا. */}
       {mayApprove && pendingMine > 0 && (
         <Card className="border-blue-200 bg-blue-50/40" data-testid="card-my-approvals">
           <CardHeader className="pb-3">
@@ -139,21 +144,6 @@ export default function PostExamFollowups() {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {a.currentPrice?.toLocaleString()} ⟶ {a.proposedPrice?.toLocaleString()} د.ع
-                  </div>
-                </div>
-              </Link>
-            ))}
-            {(approvals?.purchaseApprovals ?? []).map((a: any) => (
-              <Link key={`b${a.followupId}`} href={`/patients/${a.patientId}`}>
-                <div className="flex items-center justify-between rounded-md border bg-white px-3 py-2 text-sm cursor-pointer hover:bg-muted/40"
-                  data-testid={`row-approval-purchase-${a.followupId}`}>
-                  <div>
-                    <span className="font-medium">{a.patientName}</span>
-                    <span className="text-muted-foreground mx-2">{a.patientCode}</span>
-                    <Badge variant="outline" className="text-xs">اعتماد شراء</Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {a.approvedPrice?.toLocaleString()} د.ع
                   </div>
                 </div>
               </Link>

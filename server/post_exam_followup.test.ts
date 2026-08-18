@@ -295,32 +295,34 @@ async function main() {
       Number((await q(`SELECT device_cost FROM medical_exams WHERE patient_id = $1 ORDER BY id LIMIT 1`, [p1]))[0].device_cost),
       1_500_000);
 
-    // ══ ١٠. موافقةُ المريض ⟶ بانتظار اعتماد الشراء فقط ════════════════
-    console.log("\n── موافقة المريض ثم اعتماد الشراء ──");
-    const accepted = await http("POST", `/api/followups/${f1.id}/accept-price`, S.recv, {});
-    same("١٠. موافقةُ المريض ⟶ «بانتظار اعتماد الشراء» **فقط**",
-      accepted.body?.status, "purchase_approval_pending");
-    same("   **ولا تصنيعَ بدأ**",
+    // ══ ١٠. الخبيرُ شرطٌ، ثم يؤكّد الموظّف فيقع البيع ═════════════════
+    console.log("\n── تأكيد الشراء من الاستقبال مباشرةً ──");
+    //  بلا خبير: يُردّ برسالةٍ تقول ما يُفعَل، ولا تصنيعَ يبدأ.
+    const noExpertYet = await http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.recv, {});
+    same("١٠. **بلا خبيرٍ لا يُؤكَّد الشراء**", noExpertYet.status, 409);
+    same("    ولا أمرَ وُلد",
       (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [p1])).length, 0);
 
-    same("١١. **الاستعلامات لا يعتمد الشراء**",
-      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.recv, {})).status, 403);
-    same("١٢. **ومديرُ الفرع لا يعتمد الشراء**",
-      (await http("POST", `/api/followups/${f1.id}/approve-purchase`, S.mgr, {})).status, 403);
-
-    //  والخبير يختاره الاستعلامات قبل الاعتماد — لا يُسأل عنه الطبيب.
-    same("     (الاستعلامات تختار الخبير)",
+    same("١١. (الاستعلامات تختار الخبير)",
       (await http("POST", `/api/followups/${f1.id}/expert`, S.recv,
         { expertUserId: EXPERT })).status, 200);
 
-    // ══ ١٥. الضغطة المزدوجة ═══════════════════════════════════════════
-    //  اعتمادان **متزامنان** — وأحدهما فقط يجوز أن يُنشئ أمراً.
+    // ══ ١٢. السعرُ لا يُهرَّب من جسم الطلب ═════════════════════════════
+    //  الخادم يقرأ `approved_price` من الصفّ تحت القفل، فرقمٌ في الجسم
+    //  يُتجاهَل كأنه لم يُرسَل.
+    const smuggledPrice = await http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.recv,
+      { approvedPrice: 1, cost: 1, price: 1, expertUserId: EXPERT2 });
+    same("١٢. تأكيدُ الاستعلامات ينجح **بلا اعتمادِ أحد**", smuggledPrice.status, 200);
+
+    // ══ ١٣. الضغطة المزدوجة ═══════════════════════════════════════════
+    //  تأكيدان **متزامنان** — وأحدهما فقط يجوز أن يُنشئ أمراً. والأوّل وقع
+    //  أعلاه، فهذان يصطدمان بـ`converted` ويُردّان.
     const [a1, a2] = await Promise.all([
-      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc, {}),
-      http("POST", `/api/followups/${f1.id}/approve-purchase`, S.doc2, {}),
+      http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.recv, {}),
+      http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.mgr, {}),
     ]);
-    const okCount = [a1, a2].filter((r) => r.status === 200).length;
-    same("١٣. **طبيبٌ يعتمد الشراء** — واحدٌ فقط نجح", okCount, 1);
+    const okCount = [smuggledPrice, a1, a2].filter((r) => r.status === 200).length;
+    same("١٣. **الاستقبال يؤكّد الشراء** — واحدٌ فقط نجح", okCount, 1);
     check([a1, a2].some((r) => r.status === 409),
       "١٥. **والثاني رُدّ بتعارضٍ صريح لا بصمت**",
       JSON.stringify([a1.status, a2.status]));
@@ -338,8 +340,10 @@ async function main() {
     same("   وقيدُ الكلفة كُتب بالسعر المعتمد",
       Number((await q(`SELECT COALESCE(SUM(amount),0)::int s FROM cost_entries WHERE patient_id = $1`, [p1]))[0].s),
       1_200_000);
-    check(eventTypes(f1c).includes("purchase_approved") && eventTypes(f1c).includes("converted"),
-      "   وسجلُّ الاعتماد والتحويل موجودان معاً", JSON.stringify(eventTypes(f1c)));
+    check(eventTypes(f1c).includes("purchase_confirmed") && eventTypes(f1c).includes("converted"),
+      "   وسجلُّ التأكيد والتحويل موجودان معاً", JSON.stringify(eventTypes(f1c)));
+    same("   **والخبيرُ هو المحفوظ لا ما هُرِّب في الجسم**",
+      Number(orders[0].expert_user_id), EXPERT);
 
     // ══ ٢٢. النقطة القديمة لا تلتفّ على الاعتماد ══════════════════════
     console.log("\n── لا التفاف على الاعتماد ──");
@@ -411,11 +415,14 @@ async function main() {
     same("     ولا كلفةَ تحرّكت",
       Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [p2]))[0].total_cost), 0);
 
-    //  والمسارُ الوحيد يعمل: خبير ⟶ قبول ⟶ اعتماد.
+    //  والمسارُ الوحيد يعمل: خبير ⟶ تأكيدُ الاستقبال. **بلا طبيبٍ ولا مسؤول.**
     await http("POST", `/api/followups/${f2.id}/expert`, S.recv, { expertUserId: EXPERT });
-    await http("POST", `/api/followups/${f2.id}/accept-price`, S.recv, {});
-    const onlyPath = await http("POST", `/api/followups/${f2.id}/approve-purchase`, S.doc, {});
-    same("     **والمسار الرسمي وحده يُنشئ البناء**", onlyPath.status, 200);
+    const onlyPath = await http("POST", `/api/followups/${f2.id}/confirm-purchase`, S.recv, {});
+    same("     **والمسار الرسمي وحده يُنشئ البناء** — بضغطة الاستقبال", onlyPath.status, 200);
+    same("     ولم يمرّ بحالة اعتمادٍ إطلاقاً",
+      (await q(`SELECT 1 FROM post_exam_followup_events
+                 WHERE followup_id = $1 AND to_status = 'purchase_approval_pending'`,
+      [f2.id])).length, 0);
     const p2orders = await q(
       `SELECT id, expert_user_id FROM prosthetic_work_orders WHERE patient_id = $1`, [p2]);
     same("     أمرٌ واحد بالسعر المعتمد",
@@ -539,8 +546,10 @@ async function main() {
     same("   ولا يسجّل عليها قراراً",
       (await http("POST", `/api/followups/${fB2.id}/defer`, S.recv,
         { reason: "needs_time", noScheduledFollowUp: true })).status, 403);
-    same("   وطبيبُ بغداد لا يعتمد شراء ذي قار",
-      (await http("POST", `/api/followups/${fB2.id}/approve-purchase`, S.doc, {})).status, 403);
+    same("   **واستعلاماتُ بغداد لا تؤكّد شراء ذي قار**",
+      (await http("POST", `/api/followups/${fB2.id}/confirm-purchase`, S.recv, {})).status, 403);
+    same("   ولا مديرُ فرعها",
+      (await http("POST", `/api/followups/${fB2.id}/confirm-purchase`, S.mgr, {})).status, 403);
     const listRecv = (await http("GET", "/api/followups", S.recv)).body ?? [];
     check(!listRecv.some((r: any) => r.patientId === pB2),
       "   **وشاشةُ المتابعة لا تعبر الفرع**", JSON.stringify(listRecv.map((r: any) => r.patientId)));
@@ -552,9 +561,12 @@ async function main() {
     const qDoc = (await http("GET", "/api/followups/approvals", S.doc)).body;
     same("طابورُ الطبيب مفتوح", qDoc?.mayApprove, true);
     const qMgr = (await http("GET", "/api/followups/approvals", S.mgr)).body;
-    same("**وطابورُ مديرِ الفرع فارغٌ — لا يعتمد شيئاً**",
-      [qMgr?.mayApprove, qMgr?.priceApprovals?.length, qMgr?.purchaseApprovals?.length],
-      [false, 0, 0]);
+    same("**وطابورُ مديرِ الفرع فارغٌ — لا يعتمد سعراً**",
+      [qMgr?.mayApprove, qMgr?.priceApprovals?.length], [false, 0]);
+    //  **والشراءُ لم يعد فيه إطلاقاً**: خرج من طابور الاعتماد، فلا مهامَّ
+    //  روتينية تُغرق شاشة الطبيب. والحقلُ نفسه لم يعد يُرجَع.
+    same("**ولا حقلَ «اعتماد شراء» في الطابور أصلاً**",
+      Object.prototype.hasOwnProperty.call(qDoc ?? {}, "purchaseApprovals"), false);
 
     // ══ رفضُ السعر لا يترك حالةً ميتة ═════════════════════════════════
     console.log("\n── رفض تعديل السعر ──");
@@ -735,13 +747,12 @@ async function main() {
       [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pShut]))[0].total_cost),
         (await q(`SELECT 1 FROM cost_entries WHERE patient_id=$1`, [pShut])).length], [0, 0]);
 
-    //  والعودة الصحيحة: إعادة فتح ⟶ خبير ⟶ قبول ⟶ اعتماد.
+    //  والعودة الصحيحة: إعادة فتح ⟶ خبير ⟶ تأكيد.
     await http("POST", `/api/followups/${fShut.id}/reopen`, S.recv,
       { toStatus: "awaiting_patient_decision" });
     await http("POST", `/api/followups/${fShut.id}/expert`, S.recv, { expertUserId: EXPERT });
-    await http("POST", `/api/followups/${fShut.id}/accept-price`, S.recv, {});
-    const shutApprove = await http("POST", `/api/followups/${fShut.id}/approve-purchase`,
-      S.doc, {});
+    const shutApprove = await http("POST", `/api/followups/${fShut.id}/confirm-purchase`,
+      S.recv, {});
     same("ج١. **والمسار الرسمي بعد إعادة الفتح ينجح**", shutApprove.status, 200);
     same("     بأمرٍ واحد وبالسعر المعتمد",
       [(await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pShut])).length,
@@ -785,6 +796,148 @@ async function main() {
     same("ج٢. **وكلُّ `rejected` قرارُ معتمِد** — لا استقبالٍ ولا مدير",
       rejRows.filter((r: any) => ![DOC, DOC2, ADMIN].includes(Number(r.decided_by))), []);
     check(rejRows.length > 0, "     (ووُجد رفضٌ حقيقي في المجموعة)", String(rejRows.length));
+
+    // ══ ٢٧. مديرُ الفرع يؤكّد الشراء مباشرةً ══════════════════════════
+    //  كان مستثنى صراحةً من `canApprove`، فكان أعجزَ من أن يبيع في فرعه.
+    console.log("\n── تبسيطُ ما بعد المعاينة ──");
+    const pMgr = await mkPatient("بيعُ المدير");
+    await mkCase(pMgr);
+    await signExam(pMgr, S.doc, { deviceCost: 700_000 });
+    const fMgr = await followupOf(pMgr);
+    same("٢٧. الحالةُ الأولى «بانتظار قرار المريض»", fMgr?.status, "awaiting_patient_decision");
+    await http("POST", `/api/followups/${fMgr.id}/expert`, S.mgr, { expertUserId: EXPERT });
+    const mgrBuy = await http("POST", `/api/followups/${fMgr.id}/confirm-purchase`, S.mgr, {});
+    same("   **ومديرُ الفرع يؤكّد الشراء ويبدأ التصنيع**", mgrBuy.status, 200);
+    same("   والمتابعة `converted` بأمرها", 
+      [mgrBuy.body?.followup?.status, typeof mgrBuy.body?.workOrderId], ["converted", "number"]);
+    //  **والمالُ قُيِّد في اللحظة نفسها** — لا يوم الاعتماد.
+    same("   **والكلفةُ قُيِّدت فوراً على المريض**",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pMgr]))[0].total_cost),
+      700_000);
+    same("   وقيدُ الكلفة كُتب بمصدره القائم",
+      (await q(`SELECT amount::int a, source FROM cost_entries WHERE patient_id = $1`, [pMgr]))
+        .map((r: any) => [Number(r.a), r.source]),
+      [[700_000, "assign_manufacturing"]]);
+    same("   **ولا حالةَ اعتمادٍ مرّ بها الملفّ**",
+      (await q(`SELECT 1 FROM post_exam_followup_events
+                 WHERE followup_id = $1 AND to_status = 'purchase_approval_pending'`,
+      [fMgr.id])).length, 0);
+
+    // ══ ٢٨. البابُ الوحيد إلى الحالة الملغاة هو النقطةُ المتروكة ══════
+    //  لا يُثبَت هذا بعدّ الصفوف — النقطةُ المتروكة `/accept-price` باقيةٌ
+    //  للتوافق وتُنادى في أقسامٍ أخرى. فيُثبَت **بالباب**: كلُّ حدثٍ وجهتُه
+    //  تلك الحالة نوعُه `patient_accepted_price` وحده، أي أنه جاء من النقطة
+    //  القديمة صراحةً. فلا مسارٌ حيٌّ يقود إليها بعد اليوم.
+    const gates = await q(`SELECT DISTINCT e.event_type FROM post_exam_followup_events e
+      JOIN patients p ON p.id = e.patient_id
+      WHERE p.referral_source = $1 AND e.to_status = 'purchase_approval_pending'`, [MARK]);
+    same("٢٨. **ولا بابَ إلى حالة الاعتماد الملغاة سوى النقطة المتروكة**",
+      gates.map((r: any) => r.event_type).sort(), ["patient_accepted_price"]);
+
+    // ══ ٢٩. الخبيرُ المعطَّل أو من فرعٍ آخر يمنع التأكيد ═══════════════
+    const pBadExp = await mkPatient("خبيرٌ غير صالح");
+    await mkCase(pBadExp);
+    await signExam(pBadExp, S.doc, { deviceCost: 400_000 });
+    const fBad = await followupOf(pBadExp);
+    same("٢٩. مَن ليس خبيراً يُردّ عند الاختيار",
+      (await http("POST", `/api/followups/${fBad.id}/expert`, S.recv,
+        { expertUserId: ACCT })).status, 400);
+    //  والخبيرُ الصحيح يُختار، ثم يُعطَّل حسابُه **بعد** الاختيار.
+    same("   والخبيرُ الصحيح يُختار", 
+      (await http("POST", `/api/followups/${fBad.id}/expert`, S.recv,
+        { expertUserId: EXPERT })).status, 200);
+    await q(`UPDATE system_users SET is_active = false WHERE id = $1`, [EXPERT]);
+    const staleExp = await http("POST", `/api/followups/${fBad.id}/confirm-purchase`, S.recv, {});
+    same("   **وخبيرٌ عُطّل بعد اختياره يمنع التأكيد**", staleExp.status, 400);
+    same("   ولا أمرَ وُلد ولا كلفةَ قُيِّدت",
+      [(await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [pBadExp])).length,
+        Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pBadExp]))[0].total_cost)],
+      [0, 0]);
+    await q(`UPDATE system_users SET is_active = true WHERE id = $1`, [EXPERT]);
+
+    // ══ ٣٠. الصفُّ المحتجز قبل التبسيط يصير قابلاً للعمل ══════════════
+    //  يُصنَع بالمسار القديم نفسه (`/accept-price` الباقية للتوافق) — فهو
+    //  بالضبط ما تحمله القاعدة اليوم من ملفّاتٍ حبستها البوّابة الملغاة.
+    const pStuck = await mkPatient("محتجزٌ قبل التبسيط");
+    await mkCase(pStuck);
+    await signExam(pStuck, S.doc, { deviceCost: 850_000 });
+    const fStuck = await followupOf(pStuck);
+    await http("POST", `/api/followups/${fStuck.id}/expert`, S.recv, { expertUserId: EXPERT });
+    const legacyAccept = await http("POST", `/api/followups/${fStuck.id}/accept-price`, S.recv, {});
+    same("٣٠. (صفٌّ محتجزٌ بالحالة الملغاة)", legacyAccept.body?.status, "purchase_approval_pending");
+    const stuckBuy = await http("POST", `/api/followups/${fStuck.id}/confirm-purchase`, S.recv, {});
+    same("   **والاستقبال يستأنفه بضغطةٍ واحدة بلا ترحيلِ بيانات**", stuckBuy.status, 200);
+    same("   فيتحوّل كغيره ومالُه يُقيَّد",
+      [stuckBuy.body?.followup?.status,
+        Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pStuck]))[0].total_cost)],
+      ["converted", 850_000]);
+    //  **وتاريخُه محفوظٌ كاملاً** — بحدث الحالة القديمة وحدثِ التأكيد الجديد.
+    const fStuckEnd = await followupOf(pStuck);
+    check(eventTypes(fStuckEnd).includes("patient_accepted_price")
+      && eventTypes(fStuckEnd).includes("purchase_confirmed"),
+    "   وتاريخُه كاملٌ: الحدثُ القديم والجديد معاً", JSON.stringify(eventTypes(fStuckEnd)));
+
+    // ══ ٣١. بعد اعتماد السعر يشتري الاستقبال مباشرةً ══════════════════
+    const pDisc = await mkPatient("بعد التخفيض");
+    await mkCase(pDisc);
+    await signExam(pDisc, S.doc, { deviceCost: 1_000_000 });
+    const fDisc = await followupOf(pDisc);
+    await http("POST", `/api/followups/${fDisc.id}/expert`, S.recv, { expertUserId: EXPERT });
+    const discReq = await http("POST", `/api/followups/${fDisc.id}/price-request`, S.recv,
+      { proposedPrice: 750_000, reason: "price" });
+    same("٣١. طلبُ التخفيض يُقبل من الاستقبال", discReq.status, 200);
+    //  **وسلطةُ اعتماد السعر لم تتغيّر بحرف**: مديرُ الفرع يُردّ كما كان.
+    same("   **ومديرُ الفرع لا يعتمد السعر — كما كان**",
+      (await http("POST", `/api/price-requests/${discReq.body.requestId}/decide`, S.mgr,
+        { decision: "approve" })).status, 403);
+    const discOk = await http("POST", `/api/price-requests/${discReq.body.requestId}/decide`,
+      S.doc, { decision: "approve" });
+    same("   والطبيبُ يعتمده", 
+      [discOk.status, discOk.body?.followup?.status, discOk.body?.followup?.approvedPrice],
+      [200, "price_approved_waiting_patient", 750_000]);
+    //  ثم يعود القرار للاستقبال — بلا عودةٍ إلى الطبيب.
+    const discBuy = await http("POST", `/api/followups/${fDisc.id}/confirm-purchase`, S.recv, {});
+    same("   **ثم يشتري الاستقبالُ مباشرةً بالسعر المعتمد الجديد**",
+      [discBuy.status, discBuy.body?.followup?.status], [200, "converted"]);
+    same("   والمقيَّد هو السعرُ المعتمد لا الأصلي",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pDisc]))[0].total_cost),
+      750_000);
+
+    // ══ ٣٢. أمرُ تصنيعٍ متعارضٌ يمنع التحويل ══════════════════════════
+    const pConf = await mkPatient("تعارضُ التصنيع");
+    await mkCase(pConf);
+    await signExam(pConf, S.doc, { deviceCost: 600_000 });
+    const fConf = await followupOf(pConf);
+    await http("POST", `/api/followups/${fConf.id}/expert`, S.recv, { expertUserId: EXPERT });
+    //  أمرُ بناءٍ فعّالٌ يُزرَع من خارج المسار — كما لو سبق بيعٌ آخر.
+    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id,
+               service_type, purpose, status, current_stage)
+             VALUES ($1,1,$2,'prosthetic','initial_build','active','order_received')`,
+    [pConf, EXPERT]);
+    const conflict = await http("POST", `/api/followups/${fConf.id}/confirm-purchase`, S.recv, {});
+    same("٣٢. **أمرُ بناءٍ فعّالٌ يمنع التأكيد**", conflict.status, 409);
+    same("   ولا كلفةَ تحرّكت",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pConf]))[0].total_cost), 0);
+    same("   والمتابعة بقيت حيّةً كما هي",
+      (await followupOf(pConf))?.status, "awaiting_patient_decision");
+
+    // ══ ٣٣. العلاجُ الطبيعي لم يتغيّر بحرف ═══════════════════════════
+    const pPhy = await mkPatient("العلاج الطبيعي");
+    await q(`UPDATE patients SET is_amputee=false, is_physiotherapy=true WHERE id=$1`, [pPhy]);
+    await mkCase(pPhy, 1, "physiotherapy");
+    //  اختصاصُ الطبيب يُوسَّع مؤقّتاً ليوقّع معاينةَ علاجٍ طبيعي — الحارس
+    //  القائم يمنع التوقيع خارج الاختصاص، وليس هو محلَّ الاختبار هنا.
+    await q(`UPDATE system_users SET medical_specialties =
+               '["prosthetic","medical_support","physiotherapy"]'::jsonb WHERE id = $1`, [DOC]);
+    const phyExam = await signExam(pPhy, S.doc, { caseType: "physiotherapy", deviceCost: 0 });
+    await q(`UPDATE system_users SET medical_specialties =
+               '["prosthetic","medical_support"]'::jsonb WHERE id = $1`, [DOC]);
+    check(phyExam.status === 200 || phyExam.status === 201,
+      "٣٣. معاينةُ العلاج الطبيعي تُوقَّع كما كانت", String(phyExam.status));
+    same("   **ولا متابعةَ قرارِ شراءٍ تُفتح لها إطلاقاً**",
+      (await q(`SELECT 1 FROM post_exam_followups WHERE patient_id = $1`, [pPhy])).length, 0);
+    same("   ولا كلفةَ تحرّكت",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pPhy]))[0].total_cost), 0);
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

@@ -496,10 +496,16 @@ export async function recordContact(params: {
 }
 
 /**
- * «وافق المريض على السعر المعتمد» ⟶ بانتظار اعتماد الشراء.
+ * «وافق المريض على السعر المعتمد» ⟶ `purchase_approval_pending`.
  *
- * **ولا يبدأ تصنيعاً**: موافقةُ المريض ليست اعتماداً، والاعتماد لطبيبٍ
- * أو مسؤول. وهذا هو الفصل الذي تقوم عليه الميزة كلّها.
+ * ══ مسارٌ متروك — للتوافق الرجعي وحده ═════════════════════════════════
+ * **لا تناديه الواجهة بعد اليوم**، وبابُ العمل صار `confirmPurchase`:
+ * الموظّف يسجّل الشراء فيقع البيع في الحال. وهذه تبقى لأن نافذةً مفتوحةً
+ * منذ ما قبل النشر قد تُرسل إليها، ولأن حذفها كان سيكسر عميلاً قديماً بلا
+ * فائدة.
+ *
+ * وما تُنتجه **ليس طريقاً مسدوداً**: `purchase_approval_pending` صارت
+ * ضمن `CONFIRMABLE`، فالموظّف يستأنف منها بضغطةٍ واحدة.
  */
 export async function recordPatientAcceptedPrice(params: {
   followupId: number; note?: string | null; actor: Actor;
@@ -807,30 +813,52 @@ export async function decidePriceChange(params: {
   });
 }
 
-// ── اعتماد الشراء ────────────────────────────────────────────────────────
+// ── تأكيد الشراء ─────────────────────────────────────────────────────────
+
+/** الحالاتُ الحيّة التي يجوز فيها تأكيد الشراء. */
+const CONFIRMABLE: FollowupStatus[] = [
+  "awaiting_patient_decision",
+  "follow_up",
+  "price_approved_waiting_patient",
+  //  توافقٌ رجعي: صفوفٌ احتُجزت قبل هذا التبسيط تُستأنف من مكانها.
+  "purchase_approval_pending",
+];
 
 /**
- * اعتمادُ الشراء — **طبيبٌ أو مسؤول**، وهو ما يبدأ البيع فعلاً.
+ * تأكيدُ الشراء — **الاستقبال ومديرُ الفرع**، وهو ما يبدأ البيع فعلاً.
  *
- * ══ لماذا معاملةٌ واحدة ═══════════════════════════════════════════════
- * `converted` بلا تصنيع كذبةٌ في الشاشة، وتصنيعٌ بلا سجلِّ اعتماد ثقبٌ في
- * التدقيق. فالاثنان في معاملةٍ واحدة: تمرَّر إلى `storage.assignManufacturing`
- * نفسها — الباب القائم الوحيد للبيع — فينجحان معاً أو لا يبقى منهما شيء.
+ * ══ ما تغيّر ولماذا ══════════════════════════════════════════════════
+ * كان الطريق خطوتين: يسجّل الموظّف موافقة المريض ⟶ `purchase_approval_pending`،
+ * ثم يعتمدها طبيبٌ أو مسؤول ⟶ `converted`. والخطوة الثانية كانت **تصنيفاً
+ * خاطئاً**: المريض قَبِل السعر المعتمد نفسه بلا تغيير حرف، فلا شيء
+ * يُعتمَد — إنما تُسجَّل واقعة. وثمنُها كان: ملفٌّ واقفٌ بلا زرٍّ بيد
+ * الموظّف، ودفعةٌ تُردّ لأن الكلفة لم تُقيَّد بعد.
+ *
+ * فصارت خطوةً واحدة من الحالة الحيّة مباشرةً إلى `converted`.
+ *
+ * ══ وما لم يتغيّر — وهو الأهمّ ═══════════════════════════════════════
+ * • **السعر يُقرأ من الصفّ تحت القفل** لا من الطلب. فلا يُهرَّب رقم.
+ * • **الخبير كذلك**: يُقرأ من `selected_expert_user_id` لا من الجسم.
+ * • **الباب واحد**: `storage.assignManufacturing` بمعاملة المُستدعي — لا
+ *   مسارَ تصنيعٍ ثانٍ يُكتب هنا.
+ * • **الذرّية**: `converted` بلا تصنيع كذبةٌ في الشاشة، وتصنيعٌ بلا سجلٍّ
+ *   ثقبٌ في التدقيق. فينجحان معاً أو لا يبقى منهما شيء.
  *
  * ══ وطبقتا حمايةٍ من الضغطة المزدوجة ══════════════════════════════════
- * ١. قفلُ المتابعة + شرطُ `purchase_approval_pending`: الثاني ينتظر الأول
- *    ثم يقرأ `converted` فيُردّ بـ409.
+ * ١. قفلُ المتابعة + شرطُ الحالة: الثاني ينتظر الأول ثم يقرأ `converted`
+ *    فيُردّ بـ409.
  * ٢. وحارسُ `assignManufacturing` القائم (فحصٌ داخل المعاملة + الفهرس
  *    الجزئي من ترحيل ٠٢١/٠٥١): أمرُ بناءٍ فعّالٌ واحد لكل (مريض، خدمة).
  * فلو سقطت الأولى يوماً بقيت الثانية تمنع أمرين.
  */
-export async function approvePurchase(params: {
+export async function confirmPurchase(params: {
   followupId: number; note?: string | null; actor: Actor;
 }): Promise<{ followup: FollowupRow; workOrderId: number }> {
   return await db.transaction(async (tx) => {
-    const cur = await lockFollowup(tx, params.followupId, ["purchase_approval_pending"]);
+    const cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
     if (cur.approvedPrice <= 0) {
-      throw new FollowupError("لا يوجد سعر معتمد — لا يُعتمد شراءٌ بلا سعر", 409);
+      throw new FollowupError(
+        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُعتمد تعديلٌ للسعر", 409);
     }
 
     // ══ الخبير يُقرأ من الصفّ **تحت القفل** لا من الطلب ═════════════════
@@ -843,11 +871,16 @@ export async function approvePurchase(params: {
         "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء", 409);
     }
 
-    //  سجلُّ الاعتماد يُكتب **قبل** البيع وفي معاملته: فلا أمرُ تصنيعٍ
+    //  سجلُّ التأكيد يُكتب **قبل** البيع وفي معاملته: فلا أمرُ تصنيعٍ
     //  يوجد يوماً بلا السطر الذي يفسّر لماذا وُجد.
+    //
+    //  ونوعُ الحدث جديد (`purchase_confirmed`) ولا يُعاد استعمال
+    //  `purchase_approved`: القديم يعني «اعتمده طبيب»، والجديد يعني «سجّله
+    //  الموظّف». وخلطُهما تحت اسمٍ واحد كان سيجعل تاريخ ما قبل التبسيط
+    //  يُقرأ كتاريخ ما بعده. والصفوف القديمة تبقى باسمها كما كُتبت.
     await appendEvent(tx, {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-      eventType: "purchase_approved", fromStatus: "purchase_approval_pending",
+      eventType: "purchase_confirmed", fromStatus: cur.status,
       toStatus: "converted", note: params.note ?? null,
       payload: {
         approvedPrice: cur.approvedPrice, priceSource: cur.priceSource,
@@ -871,8 +904,9 @@ export async function approvePurchase(params: {
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET status = 'converted', converted_at = NOW(),
-             converted_work_order_id = ${workOrderId}, updated_at = NOW()
-       WHERE id = ${cur.id} AND status = 'purchase_approval_pending'
+             converted_work_order_id = ${workOrderId},
+             last_contact_at = NOW(), last_note = ${params.note ?? null}, updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status}
       RETURNING ${SELECT_COLS}
     `);
     const row = (upd.rows ?? [])[0];
@@ -880,7 +914,7 @@ export async function approvePurchase(params: {
 
     await appendEvent(tx, {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-      eventType: "converted", fromStatus: "purchase_approval_pending",
+      eventType: "converted", fromStatus: cur.status,
       toStatus: "converted",
       payload: { workOrderId, approvedPrice: cur.approvedPrice },
       actor: params.actor,
@@ -948,9 +982,15 @@ export async function listFollowups(params: {
   }));
 }
 
-/** «بانتظار موافقتي» — للطبيب والمسؤول. السعرُ والشراءُ معاً. */
+/**
+ * «بانتظار موافقتي» — للطبيب والمسؤول. **تعديلاتُ السعر وحدها**.
+ *
+ * وكانت تحمل معها طابورَ «اعتماد الشراء»: مهامٌّ روتينية لا قرارَ سريرياً
+ * فيها، تُغرق شاشة الطبيب وتحبس الفرع حتى يفرغ لها. فخرجت — والاعتماد
+ * الباقي اعتمادٌ حقيقي: رقمٌ وقّعه الطبيب يُطلب تغييرُه.
+ */
 export async function listPendingApprovals(scope: number[] | null): Promise<{
-  priceApprovals: any[]; purchaseApprovals: any[];
+  priceApprovals: any[];
 }> {
   const prices = await db.execute(sql`
     SELECT f.id AS followup_id, f.patient_id, f.service_type, f.branch_id, f.approved_price,
@@ -964,18 +1004,6 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
      WHERE r.status = 'pending' AND ${scopeClause(scope)}
      ORDER BY r.requested_at ASC LIMIT 200
   `);
-  const purchases = await db.execute(sql`
-    SELECT f.id AS followup_id, f.patient_id, f.service_type, f.branch_id, f.approved_price,
-           f.price_source, f.last_contact_at, f.updated_at,
-           p.name AS patient_name, p.patient_code, b.name AS branch_name,
-           e.doctor_name AS exam_doctor_name
-      FROM post_exam_followups f
-      JOIN patients p ON p.id = f.patient_id
-      LEFT JOIN branches b ON b.id = f.branch_id
-      LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
-     WHERE f.status = 'purchase_approval_pending' AND ${scopeClause(scope)}
-     ORDER BY f.updated_at ASC LIMIT 200
-  `);
   return {
     priceApprovals: (prices.rows ?? []).map((x: any) => ({
       followupId: Number(x.followup_id), requestId: Number(x.request_id),
@@ -986,14 +1014,6 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
       currentPrice: Number(x.current_price), proposedPrice: Number(x.proposed_price),
       reason: x.reason, note: x.note, requestedByName: x.requested_by_name,
       requestedAt: x.requested_at,
-    })),
-    purchaseApprovals: (purchases.rows ?? []).map((x: any) => ({
-      followupId: Number(x.followup_id), patientId: Number(x.patient_id),
-      patientCode: x.patient_code, patientName: x.patient_name,
-      branchId: x.branch_id === null ? null : Number(x.branch_id),
-      branchName: x.branch_name, serviceType: x.service_type,
-      approvedPrice: Number(x.approved_price ?? 0), priceSource: x.price_source,
-      examDoctorName: x.exam_doctor_name, waitingSince: x.updated_at,
     })),
   };
 }
