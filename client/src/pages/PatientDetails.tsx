@@ -9,6 +9,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { PatientCodeBadge } from "@/components/PatientCodeBadge";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
+import { SendToDoctorReviewDialog } from "@/components/medical/SendToDoctorReviewDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { resolvePurchasedSessions } from "@shared/pricing";
@@ -874,7 +875,18 @@ export default function PatientDetails() {
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">
           <PatientWorkOrderCard patientId={patient.id} />
-          <StartManufacturingDialog patient={patient} />
+          <div className="flex flex-wrap gap-2 items-center">
+            <StartManufacturingDialog patient={patient} />
+            {/*  بابُ الاستقبال إلى الطبيب — للأطراف والمساند وحدهما.
+                والعلاج الطبيعي لا يمرّ من هنا إطلاقاً (شرط الإظهار نفسه). */}
+            <SendToDoctorReviewDialog
+              patientId={patient.id}
+              services={[
+                patient.isAmputee ? "prosthetic" as const : null,
+                patient.isMedicalSupport ? "medical_support" as const : null,
+              ].filter(Boolean) as ("prosthetic" | "medical_support")[]}
+            />
+          </div>
         </div>
       )}
 

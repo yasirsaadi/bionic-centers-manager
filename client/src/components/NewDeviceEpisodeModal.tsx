@@ -80,6 +80,11 @@ export function NewDeviceEpisodeModal({
             <span className="block text-xs">
               الخطوة التالية معاينة الطبيب، ثم تُحدَّد الكلفة والخبير في «تخصيص وإسناد خبير».
             </span>
+            {/* التوجيه يقع مع الحفظ لا بزرٍّ لاحق — والسطر يقول ذلك صراحةً
+                كي لا يبحث الموظّف عن خطوةٍ ليست عليه. */}
+            <span className="block text-xs text-primary">
+              ويُرسَل طلبُ معاينةٍ كاملة إلى الطبيب تلقائياً مع الحفظ — لا حاجة لخطوة أخرى.
+            </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="gap-2">

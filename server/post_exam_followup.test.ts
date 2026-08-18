@@ -134,6 +134,8 @@ const eventTypes = (f: any) => (f?.events ?? []).map((e: any) => e.eventType);
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM price_change_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM post_exam_followups WHERE patient_id IN (${ids})`);

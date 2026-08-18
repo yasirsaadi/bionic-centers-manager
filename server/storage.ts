@@ -872,6 +872,15 @@ export class DatabaseStorage implements IStorage {
       // طبقةُ قرارٍ لا تاريخَ مالياً: تُحذف مع المريض ولا تمنع حذفه.
       // (القاعدة الملزمة في CLAUDE.md بعد حادثة «فشل في حذف المريض»:
       //  كل جدولٍ جديد بمفتاحٍ إلى المريض أو توابعه يُضاف هنا ويُختبَر.)
+      // ══ طلباتُ مراجعة الطبيب (ترحيل ٠٥٥) — قبل كلّ مراسيها ═══════════
+      // الصفّ يشير إلى المريض والحالة والحلقة وأمر التصنيع والزيارة
+      // والمعاينة معاً، فلا موضع له إلّا قبلها جميعاً. وهو طبقةُ قرارٍ لا
+      // تاريخَ مالياً: يُحذف مع المريض ولا يمنع حذفه.
+      // (القاعدة الملزمة في CLAUDE.md: كل جدولٍ جديد بمفتاحٍ إلى المريض أو
+      //  توابعه يُضاف هنا ويُختبَر بحذفٍ حقيقي على Postgres محلي.)
+      await tx.execute(sql`
+        DELETE FROM medical_review_requests WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followup_events WHERE patient_id = ${id}
       `);
@@ -1578,6 +1587,52 @@ export class DatabaseStorage implements IStorage {
       `);
       await tx.execute(sql`
         UPDATE price_change_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+
+      // ── مراجعةُ الطبيب للأطراف والمساند (ترحيل ٠٥٥) ──────────────────────
+      // تشير إلى الحالة، فتُرمَّم مثل الزيارات والدفعات قبل حذف حالة المصدر.
+      //
+      // **ومراسي الحدث الثلاث لا تحتاج لمسة**: الحلقة وأمرُ التصنيع والزيارة
+      // كلٌّ منها يُنقَل بمعرّفه هو فلا يتغيّر الرقم — فلا يمكن أن تتصادم
+      // فهارسُ التفرّد الثلاثة المبنيّة عليها عند الدمج.
+      //
+      // **ويبقى تصادمٌ واحدٌ مشروع**: `uq_mrr_pending_bare` يسمح بطلبٍ معلَّقٍ
+      // واحدٍ بلا مرساة لكلّ (مريض، اختصاص)، وكلا الملفّين قد يحمل واحداً
+      // للاختصاص نفسه. فإعادةُ التوجيه وحدها كانت ستنتهك الفهرس وتُسقط الدمج
+      // — نفس علّة `post_exam_followups` و`patient_contacts` حرفياً. فطلبُ
+      // المصدر **يُعاد إلى الاستقبال قبل نقله**: ينتقل محفوظاً كتاريخٍ كامل،
+      // والمعلَّق يبقى واحداً.
+      //
+      // و`decided_by` تبقى فارغة عمداً: الإغلاق إداريٌّ لا قرارَ طبيبٍ فيه،
+      // ونصُّ الملاحظة يقولها صراحةً كي لا يُقرأ بعد سنةٍ كأنّ طبيباً ردّه.
+      for (const { from, to } of caseRemap) {
+        // مقيَّدٌ بـ `patient_id` للمصدر كالمعاينة: صفٌّ غيرُ متّسق تاريخياً
+        // (طلبُ مريضٍ ثالث يحمل هذه الحالة) لا يُنقَل صامتاً إلى الهدف.
+        await tx.execute(sql`
+          UPDATE medical_review_requests SET case_id = ${to}, updated_at = NOW()
+           WHERE case_id = ${from} AND patient_id = ${sourceId}
+        `);
+      }
+      await tx.execute(sql`
+        UPDATE medical_review_requests s
+           SET status = 'returned', decision = 'return_to_reception', decided_at = NOW(),
+               doctor_note = 'أُعيد تلقائياً عند دمج الملفّين — الطلب المعلَّق على الملفّ الباقي هو الحيّ',
+               updated_at = NOW()
+         WHERE s.patient_id = ${sourceId}
+           AND s.status = 'pending'
+           AND s.device_episode_id IS NULL AND s.work_order_id IS NULL AND s.visit_id IS NULL
+           AND EXISTS (
+             SELECT 1 FROM medical_review_requests t
+              WHERE t.patient_id = ${targetId}
+                AND t.service_type = s.service_type
+                AND t.status = 'pending'
+                AND t.device_episode_id IS NULL AND t.work_order_id IS NULL AND t.visit_id IS NULL
+           )
+      `);
+      await tx.execute(sql`
+        UPDATE medical_review_requests
+           SET patient_id = ${targetId}, updated_at = NOW()
+         WHERE patient_id = ${sourceId}
       `);
 
       // Medical exams are the THIRD table pointing at patient_cases.id — the

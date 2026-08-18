@@ -76,6 +76,8 @@ async function mkOrder(patientId: number, purpose: string, episodeId: number | n
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);

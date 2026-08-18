@@ -32,6 +32,8 @@ const EXPERT = 9401;
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await pool.query(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await pool.query(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);

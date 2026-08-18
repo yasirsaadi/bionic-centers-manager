@@ -102,6 +102,8 @@ async function http(method: string, path: string, session: any, body?: any) {
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+  //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
+  await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM follow_up_calls WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM medical_exam_addenda WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`);
