@@ -358,9 +358,93 @@ async function main() {
     same("   وبتطبيعٍ لم يكن له من قبل («ركبه» بالهاء)",
       (await search(S.recv1, "ركبه")).names.includes("مصطفى حيدر وادي"), true);
 
+    // ══ ك٣. البحث التدريجي بالرمز — البادئة وهي تُكتب ══════════════════
+    // العطبُ: البحث لم يكن يعرف الرمزَ إلّا مكتملاً، فكلُّ ما دون خمس خاناتٍ
+    // صار بحثَ اسم. يكتب الموظّف W ثمّ B ثمّ - ثمّ 0 فلا يرى شيئاً.
+    console.log("\n── ١٣. البادئة التدريجية ──");
+    //  رموزٌ مضبوطة يدوياً: الاختبار عن البادئة، فلا يصحّ أن يعتمد على
+    //  ما يعطيه التسلسل يوم التشغيل.
+    const setCode = (id: number, c: string) =>
+      q(`UPDATE patients SET patient_code=$2 WHERE id=$1`, [id, c]);
+    await setCode(A, "WB-02119");   // فرع ١
+    await setCode(B, "WB-02110");   // فرع ١
+    await setCode(C, "WB-09090");   // فرع ١ — لا يبدأ بـWB-02
+    await setCode(F, "WB-02777");   // **فرع ٢** — بادئةٌ مطابقة، وخارج النطاق
+    //  واسمٌ يحوي الحرفين، برمزٍ بعيد عن البادئة.
+    const WBNAME = await mk("عيادة WB الطبية", "07766667777");
+    await setCode(WBNAME, "WB-71234");
+    //  ورمزٌ قديم بعد دمج، ببادئةٍ مطابقة، على مريضٍ رمزُه الحالي بعيد.
+    await q(`INSERT INTO patient_code_aliases (code, patient_id) VALUES ($1,$2)
+             ON CONFLICT (code) DO UPDATE SET patient_id = EXCLUDED.patient_id`,
+      ["WB-02900", C]);
+
+    const codes = async (term: string) => {
+      const r = await http("GET",
+        `/api/patients/registry?search=${encodeURIComponent(term)}&pageSize=50`, S.recv1);
+      return (r.body?.rows ?? []).map((row: any) => String(row.patientCode));
+    };
+
+    same("١٣. «WB» تعرض مرضى الرموز",
+      (await codes("WB")).includes("WB-02119"), true);
+    same("   و«WB-» كذلك", (await codes("WB-")).includes("WB-02119"), true);
+    same("   و«W» وحدها", (await codes("W")).includes("WB-02119"), true);
+    //  «WB-0» تضمّ مرضى القاعدة القدامى ذوي الرموز الصغيرة أيضاً، وهذا
+    //  صحيح — فيُتحقَّق من الخاصّية لا من قائمةٍ حرفية.
+    const wb0 = await codes("WB-0");
+    check(wb0.every((c) => c.startsWith("WB-0")),
+      "   و«WB-0»: كلُّ ما تُرجعه يبدأ بها فعلاً", JSON.stringify(wb0));
+    check(["WB-02110", "WB-02119", "WB-09090"].every((c) => wb0.includes(c)),
+      "   وفيها الثلاثة المتوقّعة", JSON.stringify(wb0));
+    check(!wb0.includes("WB-71234"), "   ولا رمزَ خارج البادئة");
+    same("   **و«WB-02» تجد WB-02119**", await codes("WB-02"),
+      ["WB-02110", "WB-02119", "WB-09090"]);
+    same("   و«WB-021» تضيّق أكثر", await codes("WB-021"), ["WB-02110", "WB-02119"]);
+    same("   و«WB-0211» كذلك", await codes("WB-0211"), ["WB-02110", "WB-02119"]);
+    same("   و«wb02» بلا شَرطة", await codes("wb02"),
+      ["WB-02110", "WB-02119", "WB-09090"]);
+    same("   و«WB-٠٢» بالأرقام العربية", await codes("WB-٠٢"),
+      ["WB-02110", "WB-02119", "WB-09090"]);
+
+    console.log("\n── ١٤. ترتيبُ البادئة ──");
+    same("١٤. الرمز الكامل يتصدّر ولو شاركه غيرُه البادئة",
+      (await codes("WB-02119"))[0], "WB-02119");
+    //  والاسم البديل الكامل يسبق بادئةَ الرمز الحالي.
+    same("   والاسم البديل الكامل يتصدّر كذلك",
+      (await codes("WB-02900"))[0], "WB-09090");
+    //  و«WB-029» تدخل WB-09090 ببادئة اسمه البديل وحدها — بعد كل حاملي
+    //  البادئة في رمزهم الحالي (ولا حاملَ لها هنا).
+    same("   وبادئةُ الاسم البديل تُدخل صاحبها", await codes("WB-029"), ["WB-09090"]);
+    //  والترتيب داخل البادئة بالرمز لا بتاريخ التسجيل.
+    same("   والترتيب داخل البادئة بالرمز صعوداً",
+      await codes("WB-021"), ["WB-02110", "WB-02119"]);
+
+    console.log("\n── ١٥. ما لا يجب أن يظهر ──");
+    same("١٥. **رمزُ فرعٍ آخر لا يظهر ولو طابقت بادئتُه**",
+      (await codes("WB-02")).includes("WB-02777"), false);
+    same("   وموظّفُ فرع ٢ يراه وحده",
+      (await http("GET", "/api/patients/registry?search=WB-02&pageSize=50", S.recv2))
+        .body?.rows?.map((r: any) => r.patientCode), ["WB-02777"]);
+    same("   **والاسمُ الذي يحوي WB لا يظهر ببادئةٍ لا يحملها رمزُه**",
+      (await codes("WB-02")).includes("WB-71234"), false);
+    same("   ولا يظهر باسمه حين يكون البحث بادئةَ رمز",
+      (await codes("WB-71")), ["WB-71234"]);
+    same("   ورمزٌ لا وجود له لا يُرجع شيئاً", await codes("WB-88"), []);
+    //  ولا تقريبَ في عالم الرموز: WB-02118 لا تجد WB-02119.
+    same("   ولا تسامحَ مع الخطأ في الرمز", await codes("WB-02118"), []);
+
+    console.log("\n── ١٦. والبحث بالاسم والهاتف لم يتغيّر ──");
+    same("١٦. الاسم كما كان",
+      (await search(S.recv1, "احمد")).names.includes("أحمد علي حسن"), true);
+    same("   والهاتف كما كان",
+      (await search(S.recv1, "0770 123-4567")).names, ["أحمد علي حسن"]);
+    same("   والخطأ المطبعي كما كان",
+      (await search(S.recv1, "احمذ")).names.includes("أحمد علي حسن"), true);
+    same("   ورقمُ الرمز وحده بلا WB كما كان",
+      (await codes("02119")), ["WB-02119"]);
+
     // ══ ل. المكتوب رموزاً بلا حرفٍ ولا رقم ═══════════════════════════
-    console.log("\n── ١٣. مُدخلٌ فارغ المعنى ──");
-    same("١٣. «---» لا تُرجع السجلّ كلّه",
+    console.log("\n── ١٧. مُدخلٌ فارغ المعنى ──");
+    same("١٧. «---» لا تُرجع السجلّ كلّه",
       (await search(S.recv1, "---")).names, []);
     same("   ولا «؟؟»", (await search(S.recv1, "؟؟")).names, []);
   } finally {
