@@ -65,11 +65,19 @@ const MERGE_DECISIONS: Record<string, string> = {
   //  الرمز القديم تبقى تدلّ على الملفّ الباقي. والهدف يحتفظ برمزه.
   "patient_code_aliases.patient_id": "repoint + إضافة رمز المصدر اسماً بديلاً للهدف",
 
+  //  متابعةُ ما بعد المعاينة (ترحيل ٠٥٣). التصادم مشروع — كلا الملفّين قد
+  //  يحمل متابعةً حيّةً للخدمة نفسها — فمتابعة المصدر تُغلق قبل نقلها،
+  //  تماماً كجهة اتصال المصدر. والتاريخ ينتقل كاملاً.
+  "post_exam_followups.patient_id": "إغلاق متابعة المصدر المتصادمة ثم repoint — حيّةٌ واحدة والتاريخ محفوظ",
+  "post_exam_followup_events.patient_id": "repoint — التاريخ يتبع المريض بلا تصادم",
+  "price_change_requests.patient_id": "repoint — الطلبات تتبع المريض بلا تصادم",
+
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "payments.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
   "patient_device_episodes.case_id": "remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل",
+  "post_exam_followups.case_id": "remap من حالة المصدر إلى حالة الهدف",
 
   // ── تشير إلى patient_device_episodes.id (migration 049) ────────────────
   // الحلقة تُنقَل **بمعرّفها** فلا يتغيّر `id`، ولذلك لا يحتاج أيٌّ من هذه
@@ -79,6 +87,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "cost_entries.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
   "payments.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
   "visits.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
+  "post_exam_followups.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
 };
 
 // و`medical_exams.device_episode_id` ليس مفتاحاً أجنبياً عمداً (لقطةُ رقم،

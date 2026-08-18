@@ -1368,3 +1368,163 @@ export type SessionCount = typeof sessionCounts.$inferSelect;
 export type InsertSessionCount = z.infer<typeof insertSessionCountSchema>;
 export type MonthlyTarget = typeof monthlyTargets.$inferSelect;
 export type InsertMonthlyTarget = z.infer<typeof insertMonthlyTargetSchema>;
+
+// ── متابعةُ ما بعد المعاينة (migration 053) ─────────────────────────────────
+// **الطبقة بين قرار الطبيب وبدء التصنيع.** المريض يوقّع طبيبُه المعاينة ثم
+// يذهب ليفكّر: يستشير أهله، ينتظر راتباً، يساوم، يقارن مركزاً بآخر. وهذا
+// الفراغ كان لا يُرى في النظام إطلاقاً — فمريضٌ عاين ولم يشترِ يختفي من كل
+// شاشة، ولا أحد يعرف أنه ينتظر ولا لماذا.
+//
+// والطبقة **فوق** الدورة القائمة لا داخلها: لا تلمس المعاينة ولا الحالة ولا
+// الحلقة ولا أوامر التصنيع. والبيع حين يُعتمد يمرّ من بابه الوحيد القائم
+// («تخصيص») — فلا منطقَ تصنيعٍ مكرّر هنا.
+export const postExamFollowups = pgTable("post_exam_followups", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  caseId: integer("case_id").references(() => patientCases.id),
+  /** الحلقة إن وُجدت — وأغلب المرضى بلا حلقة (تُنشأ عند «طلب جهاز جديد» فقط). */
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
+  /**
+   * لقطةُ رقم **بلا مفتاح أجنبي عمداً**: `medical_exams` مختوم بترِكر
+   * `BEFORE UPDATE`، و`ON DELETE SET NULL` تعديلٌ كان سيجعل حذف معاينةٍ
+   * يفشل. نفس درس `proposedExpertUserId` و`patientEvents.caseId` حرفياً.
+   */
+  medicalExamId: integer("medical_exam_id"),
+  branchId: integer("branch_id").references(() => branches.id),
+  serviceType: text("service_type").notNull(), // prosthetic | medical_support
+  status: text("status").notNull().default("awaiting_patient_decision"),
+  /**
+   * السعرُ المعتمد تجارياً الآن.
+   *
+   * يُبذَر من كلفة المعاينة ولا يتغيّر إلا باعتماد طبيب/مسؤول لطلبِ تعديل.
+   * والمعاينة تبقى مختومةً بسعرها الأصلي — فالتاريخ محفوظ بالبناء لا بالنيّة.
+   * وهذا هو الرقم الذي يحجزه «تخصيص» عند اعتماد الشراء.
+   */
+  approvedPrice: integer("approved_price").notNull().default(0),
+  priceSource: text("price_source").notNull().default("exam"), // exam | approved_change
+  /**
+   * الخبير المختار لهذا الجهاز — **يُبذَر من اقتراح الطبيب ويبقى مرناً**.
+   *
+   * الطبيب يقترحه في معاينته (ترحيل ٠٣٥)، والاستعلامات تُبقيه أو تغيّره قبل
+   * بدء العمل. فسؤالُ الطبيبِ عنه مرّةً ثانية لحظة اعتماد الشراء كان يكسر
+   * تقسيمَ العمل القائم: الخبيرُ اختيارُ الاستعلامات لا قرارُ الطبيب.
+   *
+   * لقطةُ رقم بلا مفتاح أجنبي — نفس درس `proposedExpertUserId`.
+   */
+  selectedExpertUserId: integer("selected_expert_user_id"),
+  nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+  /** استثناءٌ صريح: «لا موعد متابعة» قرارٌ مُتَّخذ لا حقلٌ مُهمَل. */
+  noScheduledFollowUp: boolean("no_scheduled_follow_up").notNull().default(false),
+  lastReason: text("last_reason"),
+  lastNote: text("last_note"),
+  lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
+  closedReason: text("closed_reason"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  convertedAt: timestamp("converted_at", { withTimezone: true }),
+  /** أمرُ التصنيع الذي وُلد عن اعتماد الشراء — إثباتُ أن التحويل تمّ فعلاً. */
+  convertedWorkOrderId: integer("converted_work_order_id"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("post_exam_followups_status_check", sql`${t.status} IN (
+    'awaiting_patient_decision', 'follow_up', 'price_approval_pending',
+    'price_approved_waiting_patient', 'purchase_approval_pending',
+    'closed_without_purchase', 'converted')`),
+  check("post_exam_followups_service_check",
+    sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
+  check("post_exam_followups_price_source_check",
+    sql`${t.priceSource} IN ('exam', 'approved_change')`),
+  // «مؤجَّل» بلا موعدٍ ولا استثناءٍ صريح حالةٌ ميتة: لا تُقال للموظّف ولا
+  // تظهر في طابور. فالقاعدة ترفضها بدل أن تُخزَّن ثم تُنسى.
+  check("post_exam_followups_followup_date_check", sql`
+    ${t.status} <> 'follow_up'
+    OR ${t.nextFollowUpAt} IS NOT NULL
+    OR ${t.noScheduledFollowUp} = TRUE`),
+  // ══ متابعةٌ حيّةٌ واحدة لكل جهاز — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة ══
+  // نفس نمط `uq_pde_case_open`، وهو ما يجعل الإنشاء idempotent بنيوياً:
+  // ضغطتان متزامنتان تُنتجان صفّاً واحداً لأن الثانية تصطدم بالفهرس.
+  uniqueIndex("uq_pef_active_episode").on(t.deviceEpisodeId).where(sql`
+    device_episode_id IS NOT NULL
+    AND status NOT IN ('closed_without_purchase', 'converted')`),
+  uniqueIndex("uq_pef_active_legacy").on(t.patientId, t.serviceType).where(sql`
+    device_episode_id IS NULL
+    AND status NOT IN ('closed_without_purchase', 'converted')`),
+  index("ix_pef_patient").on(t.patientId),
+  index("ix_pef_branch_status").on(t.branchId, t.status),
+  index("ix_pef_due").on(t.nextFollowUpAt).where(sql`next_follow_up_at IS NOT NULL`),
+]);
+
+export const POST_EXAM_FOLLOWUP_STATUSES = [
+  "awaiting_patient_decision", "follow_up", "price_approval_pending",
+  "price_approved_waiting_patient", "purchase_approval_pending",
+  "closed_without_purchase", "converted",
+] as const;
+export type PostExamFollowupStatus = (typeof POST_EXAM_FOLLOWUP_STATUSES)[number];
+
+/** التاريخ — يُلحَق به ولا يُعاد كتابته. إعادةُ الفتح حدثٌ جديد لا تصحيحُ قديم. */
+export const postExamFollowupEvents = pgTable("post_exam_followup_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  followupId: integer("followup_id").references(() => postExamFollowups.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  eventType: text("event_type").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  reason: text("reason"),
+  note: text("note"),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  actorUserId: integer("actor_user_id"),
+  /** لقطة الاسم — يبقى السطر مقروءاً بعد حذف الحساب. */
+  actorName: text("actor_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("ix_pefe_followup").on(t.followupId, t.createdAt.desc()),
+  index("ix_pefe_patient").on(t.patientId, t.createdAt.desc()),
+]);
+
+/**
+ * طلبُ تعديل السعر — يقترحه المتابِع، ويعتمده طبيبٌ أو مسؤول.
+ *
+ * مديرُ الفرع **ليس منهما** عمداً: السعر قرارٌ طبّي-تجاري وقّعه الطبيب،
+ * فمن يعتمد تعديله طبيبٌ أو المسؤول العام لا مديرُ الفرع.
+ */
+export const priceChangeRequests = pgTable("price_change_requests", {
+  id: serial("id").primaryKey(),
+  followupId: integer("followup_id").references(() => postExamFollowups.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  /** لقطةُ السعر المعتمد لحظةَ الطلب — فلا يُقرأ التاريخ من حاضرٍ تغيّر. */
+  currentPrice: integer("current_price").notNull(),
+  proposedPrice: integer("proposed_price").notNull(),
+  reason: text("reason").notNull(),
+  note: text("note"),
+  /**
+   * `approved`/`rejected` **قرارُ طبيبٍ أو مسؤول حصراً**، و`cancelled` أثرُ
+   * إغلاق ملفّ المتابعة. والفصل مقصود: «مرفوض» حكمٌ على السعر لا يملكه من
+   * لا يعتمده، فلو وُسم به إغلاقُ الاستعلامات لظهر موظّفٌ رافضاً سعراً
+   * ليست له صلاحية ردّه.
+   */
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+}, (t) => [
+  check("price_change_requests_status_check",
+    sql`${t.status} IN ('pending', 'approved', 'rejected', 'cancelled')`),
+  check("price_change_requests_price_check",
+    sql`${t.proposedPrice} >= 0 AND ${t.currentPrice} >= 0`),
+  // **طلبٌ معلَّقٌ واحد لكل متابعة** — فلا يعتمد طبيبان طلبين متناقضين معاً.
+  // الحارس البنيوي الذي يسند القفل التصريحي في طبقة التطبيق.
+  uniqueIndex("uq_pcr_one_pending").on(t.followupId).where(sql`status = 'pending'`),
+  index("ix_pcr_branch_status").on(t.branchId, t.status),
+  index("ix_pcr_patient").on(t.patientId),
+]);
+
+export type PostExamFollowup = typeof postExamFollowups.$inferSelect;
+export type PostExamFollowupEvent = typeof postExamFollowupEvents.$inferSelect;
+export type PriceChangeRequest = typeof priceChangeRequests.$inferSelect;

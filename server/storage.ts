@@ -39,6 +39,7 @@ import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
+import type { DbTransaction as DbTransactionLike } from "./events/store";
 import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
 import {
@@ -865,6 +866,22 @@ export class DatabaseStorage implements IStorage {
     // 017) would leave the patient stripped of payments/visits/documents but
     // still present — irreversible partial destruction.
     await db.transaction(async (tx) => {
+      // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) — **أوّلاً** ═══════════════
+      // الجداول الثلاثة تشير إلى `patients` و`patient_cases`
+      // و`patient_device_episodes` معاً، فلا موضع لها إلا قبل ثلاثتها. وهي
+      // طبقةُ قرارٍ لا تاريخَ مالياً: تُحذف مع المريض ولا تمنع حذفه.
+      // (القاعدة الملزمة في CLAUDE.md بعد حادثة «فشل في حذف المريض»:
+      //  كل جدولٍ جديد بمفتاحٍ إلى المريض أو توابعه يُضاف هنا ويُختبَر.)
+      await tx.execute(sql`
+        DELETE FROM post_exam_followup_events WHERE patient_id = ${id}
+      `);
+      await tx.execute(sql`
+        DELETE FROM price_change_requests WHERE patient_id = ${id}
+      `);
+      await tx.execute(sql`
+        DELETE FROM post_exam_followups WHERE patient_id = ${id}
+      `);
+
       const patientInvoices = await tx.select({ id: invoices.id }).from(invoices).where(eq(invoices.patientId, id));
       for (const inv of patientInvoices) {
         await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, inv.id));
@@ -1148,10 +1165,20 @@ export class DatabaseStorage implements IStorage {
     assignedBy: number | null;
     /** الحلقة الحيّة، يحلّها الخادم — لا يُقبل معرّف من العميل. */
     deviceEpisodeId?: number | null;
+    /**
+     * معاملةُ المُستدعي، إن كان البيع جزءاً من عمليةٍ أكبر.
+     *
+     * اعتمادُ الشراء في «متابعة ما بعد المعاينة» يجب أن ينتج الأمرَ وسجلَّ
+     * الاعتماد **معاً أو لا شيء**: `converted` بلا تصنيع كذبة، وتصنيعٌ بلا
+     * سجلِّ اعتماد ثقبٌ في التدقيق. فيمرّر مُستدعيه معاملته فيصيران حدثاً
+     * واحداً — **بلا نسخ منطق التصنيع، وبلا تغيّرٍ لأي مُستدعٍ قائم**:
+     * مَن لا يمرّر شيئاً يفتح معاملته كما كان دائماً.
+     */
+    tx?: DbTransactionLike;
   }): Promise<{ patient: Patient; workOrderId: number; deviceEpisodeId: number | null }> {
     const { patientId, serviceType, fields, cost, expertUserId, assignedBy } = params;
     const wantEpisode = params.deviceEpisodeId ?? null;
-    const result = await db.transaction(async (tx) => {
+    const body = async (tx: any) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
 
@@ -1316,8 +1343,8 @@ export class DatabaseStorage implements IStorage {
         order: wo, stage: FIRST_STAGE, historyId: created.id,
       });
       return { patient, workOrderId: wo.id, deviceEpisodeId: episode?.id ?? null };
-    });
-    return result;
+    };
+    return params.tx ? await body(params.tx) : await db.transaction(body);
   }
 
   // ADMIN-ONLY case-type deletion («حذف نوع حالة») — also the cleaner for
@@ -1501,6 +1528,57 @@ export class DatabaseStorage implements IStorage {
         }
         caseRemap.push({ from: sc.id, to: tc.id });
       }
+
+      // ── متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ──────────────────────────────
+      // تشير إلى الحالة، فتُرمَّم مثل الزيارات والدفعات قبل حذف حالة المصدر.
+      //
+      // **والتصادم مشروع**: كلا الملفّين قد يحمل متابعةً حيّةً للخدمة نفسها،
+      // وإعادةُ التوجيه وحدها كانت ستنتهك `uq_pef_active_legacy` وتُسقط
+      // الدمج — نفس علّة `patient_contacts` حرفياً. فمتابعةُ المصدر تُغلق
+      // **قبل** نقلها: تُنقل محفوظةً كتاريخ كامل، والحيّة تبقى واحدة.
+      // والإغلاق يُلحق حدثه كي لا يظهر السطر مغلقاً بلا سبب.
+      for (const { from, to } of caseRemap) {
+        await tx.execute(sql`
+          UPDATE post_exam_followups SET case_id = ${to} WHERE case_id = ${from}
+        `);
+      }
+      const collided = await tx.execute<{ id: number; branch_id: number | null }>(sql`
+        SELECT s.id, s.branch_id FROM post_exam_followups s
+         WHERE s.patient_id = ${sourceId}
+           AND s.status NOT IN ('closed_without_purchase', 'converted')
+           AND EXISTS (
+             SELECT 1 FROM post_exam_followups t
+              WHERE t.patient_id = ${targetId}
+                AND t.service_type = s.service_type
+                AND t.status NOT IN ('closed_without_purchase', 'converted')
+           )
+      `);
+      for (const row of (collided.rows ?? [])) {
+        await tx.execute(sql`
+          UPDATE post_exam_followups
+             SET status = 'closed_without_purchase', closed_reason = 'other',
+                 closed_at = NOW(), last_note = 'أُغلقت تلقائياً عند دمج الملفّين',
+                 updated_at = NOW()
+           WHERE id = ${row.id}
+        `);
+        await tx.execute(sql`
+          INSERT INTO post_exam_followup_events
+            (followup_id, patient_id, branch_id, event_type, to_status, reason, note, payload)
+          VALUES (${row.id}, ${sourceId}, ${row.branch_id}, 'closed_without_purchase',
+                  'closed_without_purchase', 'other',
+                  'أُغلقت تلقائياً عند دمج الملفّين — متابعة الملفّ الباقي هي الحيّة',
+                  ${JSON.stringify({ mergedInto: targetId })}::jsonb)
+        `);
+      }
+      await tx.execute(sql`
+        UPDATE post_exam_followups SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+      await tx.execute(sql`
+        UPDATE post_exam_followup_events SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+      await tx.execute(sql`
+        UPDATE price_change_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
 
       // Medical exams are the THIRD table pointing at patient_cases.id — the
       // other two (visits, payments) are re-pointed just above, and this one

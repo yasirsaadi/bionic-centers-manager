@@ -12,6 +12,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
@@ -37,6 +38,19 @@ function getSession(req: Req) {
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
     permissions: s?.permissions ?? {},
   };
+}
+
+/**
+ * رسالةُ الردّ حين تحكم طبقةُ الاعتماد محاولةَ الشراء.
+ *
+ * الملفُّ المغلق يحتاج **إعادة فتح** أوّلاً، وغيرُه يحتاج اعتماد الشراء.
+ * فالرسالة تدلّ على الخطوة التالية بعينها بدل «ممنوع» عامّة يقف عندها
+ * الموظّف لا يعرف ما يفعل.
+ */
+function bypassMessage(status: string | null): string {
+  return status === "closed_without_purchase"
+    ? "ملفّ متابعة هذا المريض مغلق بلا شراء — أعِد فتحه من بطاقة «قرار المريض بعد المعاينة» ثم سجّل موافقته ليعتمد الطبيب الشراء"
+    : "لهذا المريض متابعةُ ما بعد المعاينة — يُعتمد الشراء من بطاقة «قرار المريض بعد المعاينة» ليبدأ التصنيع";
 }
 
 export function registerManufacturingRoutes(app: Express, isAuthenticated: any) {
@@ -228,7 +242,22 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // مباشرةً بلا بيعٍ ولا سعر، فلو مرّت ومريضُها يحمل حلقةً مفتوحة
     // لأنتجت أمراً يتيماً: تبقى الحلقة «مُعايَنة» للأبد، ويُصنَع الجهاز بلا
     // سعرٍ مقيَّد ولا هويّة. المسار الصحيح واحد — «تخصيص وإسناد خبير».
+    // ══ لا التفافَ على اعتماد الشراء (ترحيل ٠٥٣) ═══════════════════════
+    // متابعةٌ حيّة تعني أن هذا الجهاز تحت طبقة الاعتماد: بيعُه يمرّ بموافقة
+    // المريض ثم باعتماد طبيبٍ أو المسؤول. وبدء بناءٍ من هنا كان يُنتج
+    // تصنيعاً بلا اعتماد وبلا سجلٍّ يفسّره — أي إلغاءَ الطبقة كلّها بضغطة.
+    //
+    // **ولا استثناءَ لأحد، ولا للمسؤول**: صلاحيةُ الاعتماد لا تعني تخطّي
+    // المسار، فمَن يملك الاعتماد يعتمد من بابه ويترك أثره.
+    //  الحلقة تُحلّ **قبل** الحارس: حكمُ الطبقة على محاولة الشراء الجارية،
+    //  وهويّتها هي الحلقة حين توجد.
     const live = await getOpenDeviceEpisode(patientId, serviceType);
+    const gov = await followupStore.purchaseGovernedByFollowup({
+      patientId, serviceType, deviceEpisodeId: live?.id ?? null,
+    });
+    if (gov.governed) {
+      return res.status(409).json({ error: bypassMessage(gov.status) });
+    }
     if (live) {
       return res.status(409).json({
         error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
@@ -316,7 +345,20 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // والحلقة يحلّها الخادم من (المريض، نوع الخدمة) — ولا يُقبل معرّف من
     // العميل إطلاقاً، وإلّا صار بالإمكان توجيه بيعٍ إلى حلقة غير التي
     // فحصها الطبيب.
+    // ══ لا التفافَ على اعتماد الشراء (ترحيل ٠٥٣) ═══════════════════════
+    // متابعةٌ حيّة تعني أن هذا الجهاز تحت طبقة الاعتماد: بيعُه يمرّ بموافقة
+    // المريض ثم باعتماد طبيبٍ أو المسؤول. وبدء بناءٍ من هنا كان يُنتج
+    // تصنيعاً بلا اعتماد وبلا سجلٍّ يفسّره — أي إلغاءَ الطبقة كلّها بضغطة.
+    //
+    // **ولا استثناءَ لأحد، ولا للمسؤول**: صلاحيةُ الاعتماد لا تعني تخطّي
+    // المسار، فمَن يملك الاعتماد يعتمد من بابه ويترك أثره.
     const liveEpisode = await getOpenDeviceEpisode(patientId, serviceType);
+    const governed = await followupStore.purchaseGovernedByFollowup({
+      patientId, serviceType, deviceEpisodeId: liveEpisode?.id ?? null,
+    });
+    if (governed.governed) {
+      return res.status(409).json({ error: bypassMessage(governed.status) });
+    }
 
     const legacyExempt = await isLegacyPatient(patientId);
     if (liveEpisode) {
@@ -367,7 +409,24 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // and the admin may still override (negotiations happen), and that
     // override is theirs to answer for in the audit log.
     let effectiveCost = cost;
-    if (!mayWriteClinical) {
+
+    // ══ السعرُ المعتمد يسبق الجميع — بما فيهم المدير (ترحيل ٠٥٣) ═══════
+    // متابعةٌ حيّة تعني أن هذا الجهاز تحت طبقة الاعتماد: سعرُه ما اعتمده
+    // الطبيب، سواءٌ كان سعر معاينته الأصلي أو تعديلاً اعتُمد بعد مساومة.
+    //
+    // وفرضُه هنا هو ما يجعل الاعتماد **ذا أثر**: بدونه كان أول حفظِ تخصيص
+    // من مديرٍ يكتب رقماً آخر فيتجاوز الطبيبَ والتاريخَ معاً — وهو بالضبط
+    // الالتفاف الذي تحرسه هذه المرحلة. ومديرُ الفرع **ليس مستثنى**: السعر
+    // قرارٌ وقّعه الطبيب، وتعديلُه يمرّ بطلبٍ يعتمده طبيبٌ أو المسؤول.
+    //
+    // ولا يمسّ المرضى القدامى ولا العلاج الطبيعي: مَن لا متابعةَ حيّة له
+    // يمرّ بالمنطق القائم أدناه حرفاً بحرف.
+    const approvedPrice = await followupStore.approvedPriceFor({
+      patientId, serviceType, deviceEpisodeId: liveEpisode?.id ?? null,
+    });
+    if (approvedPrice !== null) {
+      effectiveCost = approvedPrice;
+    } else if (!mayWriteClinical) {
       // سعرُ **هذا الجهاز** من معاينته هو، لا أحدثُ سعرٍ للمريض في هذا
       // الاختصاص: جهازٌ سابق بسعرٍ آخر لا يسعّر الجديد.
       const proposed = liveEpisode

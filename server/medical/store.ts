@@ -31,6 +31,7 @@ import { storage } from "../storage";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
 } from "../device_episodes/store";
+import { ensureFollowupForSignedExam } from "../followup/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -126,6 +127,43 @@ export async function createExam(values: {
       .returning();
 
     if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
+
+    // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ═══════════════════════════
+    // الطبيب قرّر، والمريض لم يقرّر بعد. فتُفتح متابعةٌ بحالة «بانتظار قرار
+    // المريض» **في معاملة التوقيع نفسها**: معاينةٌ موقّعة بلا متابعة تعني
+    // مريضاً يختفي من كل شاشة، وهو بالضبط الفراغ الذي بُنيت له الميزة.
+    //
+    // **ولا تبدأ تصنيعاً ولا تغيّر الحلقة ولا تلمس المعاينة**: الحلقة تبقى
+    // `examined` كما حرّكها السطر أعلاه، والبيع يمرّ من «تخصيص» وحده.
+    //
+    // idempotent بالبناء: التكرار يصطدم بفهرس التفرّد الجزئي فيُبتلع.
+    //
+    // وفشلُها لا يجوز أن يُسقط توقيع سجلٍّ سريري — الطبيب وقّع، والمتابعة
+    // طبقةٌ تجارية فوقه. **وداخل نقطة حفظ لا مجرّد `try`**: خطأٌ في معاملة
+    // Postgres يُفسدها كلّها، فالتقاطُه وحده كان سيجعل COMMIT يتحوّل إلى
+    // ROLLBACK — فتضيع المعاينة صامتةً وهو أسوأ ما نحرس منه. والنقطة تحصر
+    // الأثر في هذه الكتلة وتُبقي المعاملة صالحة.
+    if (isDevice) {
+      try {
+        await tx.transaction(async (inner: any) => {
+          await ensureFollowupForSignedExam(inner, {
+            patientId: values.patientId,
+            caseId: values.caseId,
+            deviceEpisodeId: episodeId,
+            medicalExamId: row.id,
+            branchId: values.branchId,
+            serviceType: values.caseType as "prosthetic" | "medical_support",
+            deviceCost: values.deviceCost,
+            //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
+            //  تغيّره. فلا يُسأل الطبيبُ عنه ثانيةً لحظة اعتماد الشراء.
+            proposedExpertUserId: values.proposedExpertUserId,
+            actor: { userId: values.doctorId, userName: values.doctorName },
+          });
+        });
+      } catch (err) {
+        console.error("[medical] فتح متابعة ما بعد المعاينة فشل:", err);
+      }
+    }
 
     return row;
   });

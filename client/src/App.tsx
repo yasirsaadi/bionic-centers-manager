@@ -40,6 +40,7 @@ const SessionAnalytics = lazy(() => import("@/pages/SessionAnalytics"));
 const FollowUps = lazy(() => import("@/pages/FollowUps"));
 const Manufacturing = lazy(() => import("@/pages/Manufacturing"));
 const MyExams = lazy(() => import("@/pages/MyExams"));
+const PostExamFollowups = lazy(() => import("@/pages/PostExamFollowups"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 
@@ -128,6 +129,7 @@ function Router() {
             <Route path="/patients/:id/edit" component={EditPatient} />
             <Route path="/patients/:id" component={PatientDetails} />
             <Route path="/follow-ups" component={FollowUps} />
+            <Route path="/post-exam-followups" component={PostExamFollowups} />
             <Route path="/my-exams" component={MyExams} />
             <Route path="/manufacturing" component={Manufacturing} />
             <Route path="/manufacturing/orders/:id" component={ManufacturingOrder} />

@@ -77,6 +77,7 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import PatientCommunicationCard from "@/components/PatientCommunicationCard";
+import { PostExamDecisionCard } from "@/components/PostExamDecisionCard";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -885,6 +886,12 @@ export default function PatientDetails() {
           patientName={patient.name}
           branchName={branches?.find((b) => b.id === patient.branchId)?.name ?? null}
         />
+      </div>
+
+      {/*  قرارُ المريض بعد المعاينة — تحت السجلّ السريري مباشرةً، فالقرار
+          يُقرأ في سياق ما قرّره الطبيب. والبطاقة تختفي وحدها حين لا متابعة. */}
+      <div className="mb-6">
+        <PostExamDecisionCard patientId={patient.id} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
