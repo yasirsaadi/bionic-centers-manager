@@ -25,7 +25,9 @@ const code = (rel: string) =>
 // ══ أ. القوائم المحمَّلة في المتصفّح ⟶ filterAndRank ═══════════════════
 console.log("\n── القوائم في الذاكرة ──");
 const IN_MEMORY: [string, string][] = [
-  ["client/src/pages/MyExams.tsx", "قائمة عمل الطبيب"],
+  //  «معايناتي» تنادي `rankWorklist` الذي ينادي `filterAndRank` — طبقةٌ
+  //  واحدة لا قاعدةٌ ثانية، ومنطقُها مُختبَرٌ في `my_exams_order.test.ts`.
+  ["client/src/pages/my_exams_order.ts", "قائمة عمل الطبيب"],
   ["client/src/pages/FollowUps.tsx", "المتابعات"],
   ["client/src/pages/BranchDetails.tsx", "تفاصيل الفرع"],
   ["client/src/components/MergePatientDialog.tsx", "دمج ملفّين"],
@@ -36,6 +38,41 @@ for (const [file, label] of IN_MEMORY) {
   check(/from "@shared\/patient_search"/.test(src) && /filterAndRank\(/.test(src),
     `أ. ${label} ترشّح بـfilterAndRank`);
 }
+check(/import \{ rankWorklist \} from ".\/my_exams_order"/.test(read("client/src/pages/MyExams.tsx")),
+  "أ. و«معايناتي» موصولةٌ بترتيبها المُختبَر");
+
+// ══ أ٢. والرمزُ والاسمُ البديل يصلان الشاشةَ فعلاً ══════════════════════
+// العقد يعرف `patientCode`/`aliasCodes`، لكن معرفتَه لا تنفع إن لم تمرّرهما
+// الشاشة. والحمولةُ نفسها مُختبَرةٌ حيّاً في `npm run test:search-surfaces`.
+console.log("\n── الرمز والاسم البديل في كل شاشة ──");
+const PASSES_CODES: [string, string][] = [
+  ["client/src/pages/MyExams.tsx", "قائمة عمل الطبيب"],
+  ["client/src/pages/FollowUps.tsx", "المتابعات"],
+  ["client/src/pages/BranchDetails.tsx", "تفاصيل الفرع"],
+  ["client/src/components/MergePatientDialog.tsx", "دمج ملفّين"],
+  ["client/src/components/manufacturing/CreateOrderDialog.tsx", "إنشاء أمر تصنيع"],
+];
+for (const [file, label] of PASSES_CODES) {
+  const src = code(file);
+  check(/patientCode:/.test(src) && /aliasCodes:/.test(src),
+    `أ٢. ${label} تمرّر الرمز والأسماء البديلة`);
+}
+//  والمتابعات تمرّرهما في القائمتين معاً — النشطة وسجلّ المكالمات.
+check((code("client/src/pages/FollowUps.tsx").match(/aliasCodes:/g) || []).length >= 2,
+  "   والمتابعات في قائمتيها معاً");
+
+// ══ أ٣. والخادمُ يرسلهما دفعةً واحدة ═══════════════════════════════════
+console.log("\n── لا N+1 ──");
+const BATCHED: [string, string][] = [
+  ["server/routes.ts", "سجلّ المرضى الكامل والمتابعات"],
+  ["server/medical/routes.ts", "قائمة عمل الطبيب"],
+];
+for (const [file, label] of BATCHED) {
+  check(/aliasCodesByPatient\(/.test(code(file)),
+    `أ٣. ${label} تجلبها بالمساعد الدفعيّ`);
+}
+check(/ANY\(\$\{idArray\}::int\[\]\)/.test(read("server/patient_code/store.ts")),
+  "   والمساعد يمرّر المفاتيح مصفوفةً واحدة لا قائمةَ متغيّرات");
 
 // ══ ب. الشاشات المدعومة بالخادم ⟶ تهدئةٌ واحدة ═════════════════════════
 console.log("\n── التهدئة ──");

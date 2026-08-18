@@ -10,12 +10,15 @@ import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRigh
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
-import { filterAndRank } from "@shared/patient_search";
+import { rankWorklist } from "./my_exams_order";
 
 interface WorklistRow {
   patientId: number;
   patientName: string;
   phone: string | null;
+  /** الرمز العلني الحالي، ورموزُ ملفّاتٍ دُمجت فيه — كلاهما من النقطة. */
+  patientCode: string | null;
+  aliasCodes?: string[];
   branchId: number | null;
   branchName: string | null;
   caseType: string;
@@ -99,23 +102,23 @@ export default function MyExams() {
       .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [rows]);
 
-  const filtered = useMemo(() => {
-    //  البحث بعقد `shared/patient_search.ts` — كان `includes` خاماً هنا، فمن
-    //  كتب «احمد» لم يجد «أحمد» ومن كتب «٠٧٧٠» لم يجد شيئاً. والترتيب بعده
-    //  يبقى بالانتظار كما هو (الأحدث/الأقدم) لا بالصلة.
-    const base = filterAndRank(
-      rows
-        .filter((r) => (only ? r.caseType === only : true))
-        .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true)),
-      search, (r) => ({ name: r.patientName, phone: r.phone }),
-    );
-    // Sort a COPY: `rows` is react-query's cached array.
-    return [...base].sort((a, b) => {
-      const ta = a.waitingSince ? new Date(a.waitingSince).getTime() : 0;
-      const tb = b.waitingSince ? new Date(b.waitingSince).getTime() : 0;
-      return order === "newest" ? tb - ta : ta - tb;
-    });
-  }, [rows, search, only, onlyBranch, order]);
+  //  الاختصاص والفرع يُرشَّحان هنا، والصلةُ والانتظار في `rankWorklist` —
+  //  الصلةُ أوّلاً والانتظارُ كاسرَ تعادل. القاعدة خارج المكوّن لأنها تُكسَر
+  //  بإعادة ترتيب سطرين، واختبارُها يجب أن يختبرها هي لا نسخةً منها.
+  const filtered = useMemo(() => rankWorklist(
+    rows
+      .filter((r) => (only ? r.caseType === only : true))
+      .filter((r) => (onlyBranch != null ? r.branchId === onlyBranch : true)),
+    {
+      order,
+      waitingOf: (r) => r.waitingSince,
+      search,
+      toPatient: (r) => ({
+        name: r.patientName, phone: r.phone,
+        patientCode: r.patientCode, aliasCodes: r.aliasCodes,
+      }),
+    },
+  ), [rows, search, only, onlyBranch, order]);
 
   // Any change to search / specialty / order / page size sends us back to
   // page 1 — otherwise a narrowed list can leave you stranded on an empty page.

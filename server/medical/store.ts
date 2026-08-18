@@ -806,6 +806,10 @@ export interface WorklistRow {
   patientId: number;
   patientName: string;
   phone: string | null;
+  /** الرمز العلني الدائم — الطبيب يبحث برمزٍ كما يبحث باسم. */
+  patientCode: string | null;
+  /** رموزُ ملفّاتٍ دُمجت في هذا الملفّ — تُرفَق في النقطة دفعةً واحدة. */
+  aliasCodes?: string[];
   branchId: number | null;
   branchName: string | null;
   caseType: string;
@@ -848,12 +852,13 @@ export async function getWorklist(
     patient_id: number;
     patient_name: string;
     phone: string | null;
+    patient_code: string | null;
     branch_id: number | null;
     branch_name: string | null;
     case_type: string;
     waiting_since: string | null;
   }>(sql`
-    SELECT pc.patient_id, p.name AS patient_name, p.phone,
+    SELECT pc.patient_id, p.name AS patient_name, p.phone, p.patient_code,
            COALESCE(pc.branch_id, p.branch_id) AS branch_id,
            b.name AS branch_name,
            pc.case_type,
@@ -894,6 +899,7 @@ export async function getWorklist(
     patientId: Number(r.patient_id),
     patientName: String(r.patient_name ?? ""),
     phone: r.phone ?? null,
+    patientCode: r.patient_code ? String(r.patient_code) : null,
     branchId: r.branch_id === null ? null : Number(r.branch_id),
     branchName: r.branch_name ?? null,
     caseType: String(r.case_type),

@@ -86,8 +86,10 @@ export default function BranchDetails() {
   //  تبقى مبحوثاً فيها كما كانت — فمن اعتاد كتابة «بتر» هنا لا يفقد بحثه —
   //  لكن بالتطبيع نفسه لا بمقارنةٍ خام.
   const searchResults = searchTerm.trim()
-    ? filterAndRank(branchPatients, searchTerm,
-        (p) => ({ name: p.name, phone: p.phone, patientCode: (p as any).patientCode }))
+    ? filterAndRank(branchPatients, searchTerm, (p) => ({
+        name: p.name, phone: p.phone,
+        patientCode: (p as any).patientCode, aliasCodes: (p as any).aliasCodes,
+      }))
         .concat(branchPatients.filter((p) =>
           normalizeSearchText(p.medicalCondition).includes(normalizeSearchText(searchTerm))))
         .filter((p, i, all) => all.findIndex((o) => o.id === p.id) === i)

@@ -107,6 +107,54 @@ export async function patientCodeOf(
   return row?.patient_code ? String(row.patient_code) : null;
 }
 
+/**
+ * الأسماءُ البديلة لمجموعة مرضى — **استعلامٌ واحد مهما كان عددهم**.
+ *
+ * ══ لماذا دفعةً واحدة ═══════════════════════════════════════════════════
+ * كلُّ شاشةٍ فيها بحثٌ عن مريض تحتاج الأسماء البديلة كي يجد الموظّف ملفّاً
+ * دُمج برمزه القديم. ونداءُ نقطةٍ لكلّ صفّ كان سيصير N+1 على قائمةٍ فيها
+ * آلاف المرضى — فالجواب يُجلب مرّةً لكلّ القائمة ويُوزَّع في الذاكرة.
+ *
+ * و`= ANY($1::int[])` لا `IN (...)`: قائمةُ آلافٍ في `IN` تصير آلافَ
+ * متغيّرات ربطٍ في استعلامٍ واحد، وحدُّ Postgres ٦٥٥٣٥.
+ *
+ * ══ ولا يوسّع نطاقاً ════════════════════════════════════════════════════
+ * **المفاتيح تأتي من المنادي**، وهو لا يعطي إلّا ما مرّ بحراسته أصلاً
+ * (تثبيت الفرع، صلاحية عرض المرضى). فهذه الدالّة لا تقرأ مريضاً لم يُقرأ،
+ * ولا تعرف فرعاً ولا مستخدماً — تماماً كباني شرط البحث.
+ *
+ * والاسمُ البديل **معرّفٌ لا مفتاح**: يُستعمل ليجد الموظّفُ ملفّاً هو مخوَّلٌ
+ * برؤيته أصلاً، ولا يمنحه شيئاً لم يكن يملكه.
+ */
+export async function aliasCodesByPatient(
+  patientIds: number[],
+  runner: DbTransaction | typeof db = db,
+): Promise<Map<number, string[]>> {
+  const out = new Map<number, string[]>();
+  if (patientIds.length === 0) return out;
+  //  التفرّد يقلّص الاستعلام حين تتكرّر المفاتيح (سجلّ مكالماتٍ لمريضٍ واحد).
+  //  والمصفوفة تُمرَّر **نصّاً واحداً** لا قائمةَ متغيّرات: قالبُ drizzle
+  //  يفكّ المصفوفة إلى `(a, b, c)` — وهو سجلٌّ لا يُحوَّل إلى `int[]` —
+  //  فيُبنى الحرفيّ `{1,2,3}` ويُربط متغيّراً واحداً ويُصبّ. و`Number` تجعل
+  //  الحقن مستحيلاً حتى لو تسرّب النصّ يوماً خارج الربط.
+  const ids = Array.from(new Set(patientIds.map((n) => Number(n))))
+    .filter((n) => Number.isFinite(n));
+  if (ids.length === 0) return out;
+  const idArray = `{${ids.join(",")}}`;
+  const res = await (runner as any).execute(sql`
+    SELECT code, patient_id FROM patient_code_aliases
+     WHERE patient_id = ANY(${idArray}::int[])
+     ORDER BY code
+  `);
+  for (const r of (res.rows ?? []) as any[]) {
+    const pid = Number(r.patient_id);
+    const arr = out.get(pid);
+    if (arr) arr.push(String(r.code));
+    else out.set(pid, [String(r.code)]);
+  }
+  return out;
+}
+
 /** رموزُ عدّة مرضى — للردّ على `/id` حين يكون الحساب مربوطاً بأكثر من ملفّ. */
 export async function patientCodesFor(
   patientIds: number[],

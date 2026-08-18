@@ -14,6 +14,10 @@ import { filterAndRank } from "@shared/patient_search";
 interface Branch { id: number; name: string; }
 interface PatientLite {
   id: number; name: string; branchId: number; isAmputee?: boolean; isMedicalSupport?: boolean;
+  phone?: string | null;
+  /** الرمز الحالي ورموزُ ملفّاتٍ دُمجت فيه — من `/api/patients` دفعةً واحدة. */
+  patientCode?: string | null;
+  aliasCodes?: string[];
 }
 
 // Dialog for admin / branch manager to open a work order for an EXISTING
@@ -44,7 +48,10 @@ export function CreateOrderDialog({
   const eligible = useMemo(
     () => filterAndRank(
       patients.filter((p) => p.isAmputee || p.isMedicalSupport),
-      search, (p) => ({ name: p.name, phone: (p as any).phone, patientCode: (p as any).patientCode }),
+      search, (p) => ({
+        name: p.name, phone: p.phone,
+        patientCode: p.patientCode, aliasCodes: p.aliasCodes,
+      }),
     ),
     [patients, search],
   );

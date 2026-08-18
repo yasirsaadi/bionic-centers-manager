@@ -15,7 +15,13 @@ import { useToast } from "@/hooks/use-toast";
 import { filterAndRank } from "@shared/patient_search";
 import { GitMerge, Loader2, AlertTriangle } from "lucide-react";
 
-interface PatientLite { id: number; name: string; branchId: number; createdAt?: string | null; }
+interface PatientLite {
+  id: number; name: string; branchId: number; createdAt?: string | null;
+  phone?: string | null;
+  /** الرمز الحالي ورموزُ ملفّاتٍ دُمجت فيه — من `/api/patients` دفعةً واحدة. */
+  patientCode?: string | null;
+  aliasCodes?: string[];
+}
 interface Branch { id: number; name: string; }
 
 function fmtDate(d: string | Date | null | undefined): string {
@@ -74,7 +80,10 @@ export function MergePatientDialog({
   const candidates = useMemo(
     () => filterAndRank(
       patients.filter((p) => p.id !== patientId),
-      search, (p) => ({ name: p.name, phone: (p as any).phone, patientCode: (p as any).patientCode }),
+      search, (p) => ({
+        name: p.name, phone: p.phone,
+        patientCode: p.patientCode, aliasCodes: p.aliasCodes,
+      }),
     )
       .sort((a, b) => {
         // Exact same-name matches first (the actual duplicates), then oldest first.

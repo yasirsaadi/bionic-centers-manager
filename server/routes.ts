@@ -26,6 +26,7 @@ import * as followupStore from "./followup/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
+import { aliasCodesByPatient } from "./patient_code/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
 } from "./device_episodes/store";
@@ -1394,10 +1395,13 @@ export async function registerRoutes(
     const patients = await storage.getPatients(branchId);
     const patientIds = patients.map(p => p.id);
 
-    // Batch-fetch visits and payments to avoid N+1 queries
-    const [allVisits, allPayments] = await Promise.all([
+    // Batch-fetch visits, payments and merge aliases to avoid N+1 queries.
+    // الأسماءُ البديلة تُجلب لمفاتيح هذه القائمة وحدها — وهي ما مرّ بتثبيت
+    // الفرع أعلاه، فلا يتّسع نطاقٌ ولا يُقرأ مريضٌ لم يُقرأ.
+    const [allVisits, allPayments, aliasByPatient] = await Promise.all([
       storage.getVisitsByPatientIds(patientIds),
       storage.getPaymentsByPatientIds(patientIds),
+      aliasCodesByPatient(patientIds),
     ]);
 
     const visitsByPatient = new Map<number, typeof allVisits>();
@@ -1418,6 +1422,9 @@ export async function registerRoutes(
       ...patient,
       visits: visitsByPatient.get(patient.id) || [],
       payments: paymentsByPatient.get(patient.id) || [],
+      //  يُحذف الحقل حين لا أسماء بديلة — والغالبية كذلك، فلا يثقل الردّ.
+      ...(aliasByPatient.has(patient.id)
+        ? { aliasCodes: aliasByPatient.get(patient.id) } : {}),
     }));
 
     res.json(patientsWithRelations);
@@ -6144,7 +6151,14 @@ export async function registerRoutes(
     }
     const branchId = enforceBranchAccess(req);
     const reminders = await computeActiveReminders(branchId);
-    res.json(reminders);
+    //  الرمز الحالي يأتي من الصفّ نفسه، والأسماء البديلة دفعةً واحدة —
+    //  فيبحث الموظّف هنا برمزٍ كما يبحث في السجلّ.
+    const aliasByPatient = await aliasCodesByPatient(reminders.map((r) => r.patientId));
+    res.json(reminders.map((r) => ({
+      ...r,
+      ...(aliasByPatient.has(r.patientId)
+        ? { aliasCodes: aliasByPatient.get(r.patientId) } : {}),
+    })));
   });
 
   // Handled history (reviewable record of logged calls).
@@ -6157,7 +6171,12 @@ export async function registerRoutes(
     }
     const branchId = isAdmin ? undefined : branchSession?.branchId ?? undefined;
     const list = await storage.getFollowUpHistory(branchId);
-    res.json(list);
+    const aliasByPatient = await aliasCodesByPatient(list.map((r) => r.patientId));
+    res.json(list.map((r) => ({
+      ...r,
+      ...(aliasByPatient.has(r.patientId)
+        ? { aliasCodes: aliasByPatient.get(r.patientId) } : {}),
+    })));
   });
 
   // Logs a call outcome → marks the current stop-episode handled. The anchor

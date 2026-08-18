@@ -58,7 +58,9 @@
     "test:followup-rules": "tsx shared/followup.test.ts",
     "test:specialty-order": "tsx shared/specialty_order.test.ts",
     "test:patient-search": "tsx server/patient_search.test.ts",
-    "test:search-wiring": "tsx client/src/patient_search_wiring.test.ts"
+    "test:search-wiring": "tsx client/src/patient_search_wiring.test.ts",
+    "test:search-surfaces": "tsx server/patient_search_surfaces.test.ts",
+    "test:worklist-order": "tsx client/src/pages/my_exams_order.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

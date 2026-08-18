@@ -43,6 +43,9 @@ interface ReminderItem {
   patientId: number;
   name: string;
   phone: string | null;
+  /** الرمز الحالي ورموزُ ملفّاتٍ دُمجت فيه — كلاهما من النقطة دفعةً واحدة. */
+  patientCode: string | null;
+  aliasCodes?: string[];
   branchId: number;
   branchName?: string;
   lastVisitDate: string;
@@ -60,6 +63,8 @@ interface FollowUpHistoryRow {
   createdAt: string;
   updatedAt: string;
   patientName: string | null;
+  patientCode: string | null;
+  aliasCodes?: string[];
   createdByName: string | null;
 }
 
@@ -189,7 +194,10 @@ export default function FollowUps() {
   const filteredActive = useMemo(
     () => filterAndRank(
       reminders.filter((r) => branchId === null || r.branchId === branchId),
-      q, (r) => ({ name: r.name, phone: r.phone }),
+      q, (r) => ({
+        name: r.name, phone: r.phone,
+        patientCode: r.patientCode, aliasCodes: r.aliasCodes,
+      }),
     ),
     [reminders, branchId, q]
   );
@@ -197,7 +205,10 @@ export default function FollowUps() {
   const filteredHistory = useMemo(
     () => filterAndRank(
       history.filter((h) => branchId === null || h.branchId === branchId),
-      q, (h) => ({ name: h.patientName }),
+      q, (h) => ({
+        name: h.patientName,
+        patientCode: h.patientCode, aliasCodes: h.aliasCodes,
+      }),
     ),
     [history, branchId, q]
   );
