@@ -16,6 +16,8 @@
 // والتشكيلُ والتطويل، والمسافاتُ المكرّرة، والأرقامُ الهندية. ولا شيء
 // أبعد — لا حذفَ همزاتٍ داخلية ولا توحيدَ حروفٍ متقاربة صوتياً.
 
+import { parsePatientCodeQuery } from "./patient_code";
+
 // ── الأرقام ──────────────────────────────────────────────────────────────
 // العربية-الهندية (٠-٩) والفارسية (۰-۹) ⟶ ASCII. الموظّف قد يكتب رقم
 // الهاتف بأي لوحة مفاتيح، والرمز `WB-٠٠٠٤٢` يجب أن يجد `WB-00042`.
@@ -77,13 +79,18 @@ export function digitsOnly(input: string | null | undefined): string {
 export const RANK = {
   CODE_EXACT: 1,
   ALIAS_EXACT: 2,
-  PHONE_EXACT: 3,
-  NAME_EXACT: 4,
-  NAME_PREFIX: 5,
-  TOKEN_PREFIX: 6,
-  ID_PREFIX: 7,
-  SUBSTRING: 8,
-  FUZZY: 9,
+  //  بادئتا الرمز — لا تُسنَدان إلّا حين يبدأ المكتوب بـWB صراحةً، وحينها
+  //  لا شيءَ غيرهما في النتيجة أصلاً. فموضعُهما هنا يعبّر عن الترتيب
+  //  المطلوب داخل ذلك العالم المغلق: الحاليُّ قبل البديل.
+  CODE_PREFIX: 3,
+  ALIAS_PREFIX: 4,
+  PHONE_EXACT: 5,
+  NAME_EXACT: 6,
+  NAME_PREFIX: 7,
+  TOKEN_PREFIX: 8,
+  ID_PREFIX: 9,
+  SUBSTRING: 10,
+  FUZZY: 11,
 } as const;
 
 export type Rank = (typeof RANK)[keyof typeof RANK];
@@ -188,13 +195,32 @@ export function matchPatient(
   const code = normalizeSearchText(patient.patientCode);
   const aliases = (patient.aliasCodes ?? []).map((c) => normalizeSearchText(c));
 
-  //  ١-٣: المطابقات التامّة على المعرّفات. الرمز يُقارن بصيغتيه — كما
-  //  كُتب، وبأرقامه وحدها — فيُقبل «42» لمن رمزه WB-00042 إن ساوى رقمه.
-  if (code && (q === code || (qDigits && digitsOnly(code) === qDigits && qDigits.length >= 4))) {
+  //  ══ بدأ المكتوب بـWB ⟶ عالمُ الرموز وحده ══════════════════════════
+  //  الرمزُ الكامل ثمّ الاسمُ البديل الكامل ثمّ بادئةُ الحالي ثمّ بادئةُ
+  //  البديل. **ولا اسمَ ولا هاتفَ ولا تقريب**: مَن كتب WB يقصد رمزاً، ولو
+  //  فُتح البابُ لغيره لظهر اسمٌ فيه هذان الحرفان فوق رمزٍ يطابق.
+  const cq = parsePatientCodeQuery(query);
+  if (cq.explicit) {
+    const up = (v: string | null | undefined) => String(v ?? "").toUpperCase();
+    const myCode = up(patient.patientCode);
+    const myAliases = (patient.aliasCodes ?? []).map(up).filter(Boolean);
+    if (cq.full && myCode === cq.full) return { rank: RANK.CODE_EXACT, tie: 0 };
+    if (cq.full && myAliases.includes(cq.full)) return { rank: RANK.ALIAS_EXACT, tie: 0 };
+    //  كسرُ التعادل بطول الرمز ثمّ بترتيبه، فالأقصر والأصغر أوّلاً — وهو
+    //  ما يتوقّعه مَن يتصفّح بادئةً.
+    if (myCode.startsWith(cq.prefix)) return { rank: RANK.CODE_PREFIX, tie: myCode.length };
+    const hit = myAliases.filter((a) => a.startsWith(cq.prefix)).sort()[0];
+    if (hit) return { rank: RANK.ALIAS_PREFIX, tie: hit.length };
+    return null;
+  }
+
+  //  ١-٢: المطابقات التامّة على المعرّفات بأرقامها — «02119» بلا WB لمن
+  //  رمزه WB-02119. (والصيغة التي تحمل WB مرّت بالمسار أعلاه.)
+  if (code && qDigits && digitsOnly(code) === qDigits && qDigits.length >= 4) {
     return { rank: RANK.CODE_EXACT, tie: 0 };
   }
   for (const a of aliases) {
-    if (a && (q === a || (qDigits && digitsOnly(a) === qDigits && qDigits.length >= 4))) {
+    if (a && qDigits && digitsOnly(a) === qDigits && qDigits.length >= 4) {
       return { rank: RANK.ALIAS_EXACT, tie: 0 };
     }
   }

@@ -313,6 +313,33 @@ async function main() {
     const [, bulkQueries] = await countAliasQueries(() => aliasCodesByPatient(bulk));
     same("   و٥٠٠٠ مفتاح ⟶ استعلامٌ واحد أيضاً", bulkQueries, 1);
 
+    // ══ ٦ب. البادئة التدريجية في القوائم المحمَّلة ════════════════════
+    // نفس دلالة الخادم في المتصفّح: العقد واحد، فالنتيجة واحدة.
+    console.log("\n── ٦ب. بادئةُ الرمز في الذاكرة ──");
+    const wlRows2: any[] = (await http("GET", "/api/medical/worklist", S.doc1)).body?.rows ?? [];
+    const byPrefix = (term: string) => filterAndRank(wlRows2, term, (r: any) => ({
+      name: r.patientName, phone: r.phone,
+      patientCode: r.patientCode, aliasCodes: r.aliasCodes,
+    })).map((r: any) => r.patientId);
+    const pfxOf = (code: string, n: number) => code.slice(0, n);
+    same("٦ب. «WB» تعرض كلّ ذوي الرموز في القائمة",
+      byPrefix("WB").length, wlRows2.length);
+    check(byPrefix(pfxOf(A.code, 6)).includes(A.id),
+      "   وبادئةُ ستّ محارف تجد صاحبها", `${pfxOf(A.code, 6)} → ${byPrefix(pfxOf(A.code, 6))}`);
+    check(byPrefix(pfxOf(A.code, 7)).includes(A.id), "   وسبعةٌ كذلك");
+    same("   والرمز الكامل يتصدّر", byPrefix(A.code)[0], A.id);
+    check(byPrefix(OLD_A.slice(0, 6)).includes(A.id),
+      "   **وبادئةُ الاسم البديل تجد الملفّ الباقي**");
+    same("   والرمز الكامل البديل كذلك", byPrefix(OLD_A), [A.id]);
+    //  (بادئةٌ قصيرة يتشاركها الاسمان البديلان عمداً — فالتمييز بالرمز
+    //   الكامل، والحجبُ الحقيقي أن X ليس في القائمة أصلاً.)
+    same("   ورمزُ فرعٍ آخر الكامل لا يجد شيئاً", byPrefix(OLD_X), []);
+    check(!byPrefix("WB").includes(X.id),
+      "   ومريضُ فرع ٢ ليس في نتائج البادئة إطلاقاً");
+    //  ولا اسمَ يتسلّل إلى عالم الرموز.
+    same("   ولا يُطابَق اسمٌ حين يبدأ المكتوب بـWB",
+      byPrefix("WB-88").length, 0);
+
     // ══ ٧. الرمزُ لا يمنح شيئاً — النقطة نفسها لا تُفتح ════════════════
     console.log("\n── ٧. الاسم البديل ليس تصريحاً ──");
     const stolen = await http("GET", `/api/patients/${X.id}`, S.recv1);
