@@ -197,10 +197,20 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {pendingRequest && ` — المقترح ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
           </p>
         )}
-        {active.status === "purchase_approval_pending" && actions.length === 0 && (
-          <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800"
-            data-testid="text-awaiting-purchase-approval">
-            بانتظار اعتماد الشراء من الطبيب أو المسؤول العام
+        {/*  صفٌّ محتجزٌ من قبل التبسيط — يُستأنف بضغطةٍ واحدة لا بانتظارِ أحد. */}
+        {active.status === "purchase_approval_pending" && actions.includes("confirm_purchase") && (
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            data-testid="text-legacy-purchase-pending">
+            هذا الملفّ سُجِّل قبل التبسيط بحالة «بانتظار اعتماد الشراء» — لم يعد
+            يحتاج اعتماداً. أكّد الشراء ليبدأ التصنيع، أو أغلقه إن عدل المريض.
+          </p>
+        )}
+
+        {/*  الخبير شرطُ البدء لا شرطُ العرض: يُقال صراحةً وزرُّه تحته. */}
+        {actions.includes("confirm_purchase") && active.selectedExpertUserId === null && (
+          <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700"
+            data-testid="text-expert-required">
+            اختر الخبير المسؤول أولاً — ثم يصير «اشترى — بدء التصنيع» متاحاً.
           </p>
         )}
 
@@ -219,18 +229,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {actions.includes("accept_price") && (
-            <Button size="sm" disabled={busy}
-              onClick={() => submit(`/api/followups/${active.id}/accept-price`, {})}
-              data-testid="button-accept-price">
-              وافق على الشراء
-            </Button>
-          )}
-          {actions.includes("patient_accepted_new_price") && (
-            <Button size="sm" disabled={busy}
-              onClick={() => submit(`/api/followups/${active.id}/accept-price`, {})}
-              data-testid="button-patient-accepted-new-price">
-              المريض وافق على السعر الجديد
+          {/*  فعلٌ واحد: يشتري المريض فيبدأ التصنيع في الحال — بلا خطوةِ
+              اعتمادٍ بينهما ولا انتظارِ أحد. والخبيرُ شرطُه، فيُعطَّل بلا
+              ضغطةٍ تنتهي برسالة خطأ. */}
+          {actions.includes("confirm_purchase") && (
+            <Button size="sm" disabled={busy || active.selectedExpertUserId === null}
+              onClick={() => setDialog("confirm_purchase")}
+              data-testid="button-confirm-purchase">
+              اشترى — بدء التصنيع
             </Button>
           )}
           {actions.includes("defer") && (
@@ -242,7 +248,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           {actions.includes("close") && (
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => setDialog("close")} data-testid="button-close-followup">
-              <XCircle className="h-4 w-4" /> لا يريد الشراء حالياً
+              <XCircle className="h-4 w-4" /> لم يشترِ
             </Button>
           )}
           {actions.includes("request_price_change") && (
@@ -266,12 +272,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 رفض التعديل
               </Button>
             </>
-          )}
-          {actions.includes("approve_purchase") && (
-            <Button size="sm" disabled={busy}
-              onClick={() => setDialog("approve_purchase")} data-testid="button-approve-purchase">
-              اعتماد الشراء وبدء التصنيع
-            </Button>
           )}
           {/*  الخبير اختيارُ الاستعلامات — بصلاحية المتابعة لا بقائمة
               الأزرار: قائمتُها تفرغ في حالتَي الاعتماد، والخبير يبقى
@@ -457,18 +457,17 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── اعتماد الشراء ── */}
-      <Dialog open={dialog === "approve_purchase"} onOpenChange={(o) => !o && reset()}>
+      {/* ── تأكيد الشراء ── */}
+      <Dialog open={dialog === "confirm_purchase"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>اعتماد الشراء وبدء التصنيع</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              الاعتماد يفتح أمر التصنيع بالمسار الرسمي نفسه.
+              يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
             </p>
-            {/*  الخبير **يُعرَض ولا يُختار هنا**: اختياره عملُ الاستعلامات،
-                والمعتمِد يعتمد ما اختاروه. والخادم يقرأه من الصفّ لا من
-                الطلب، فلا يُرسَل أصلاً. */}
+            {/*  الخبير **يُعرَض ولا يُختار هنا**: له نقطتُه وتدقيقُه. والخادم
+                يقرأه من الصفّ لا من الطلب، فلا يُرسَل أصلاً. والسعرُ كذلك. */}
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
               data-testid="text-purchase-expert">
               <span className="text-muted-foreground">الخبير المسؤول: </span>
@@ -476,16 +475,16 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}</b>
             </div>
             {active.selectedExpertUserId === null && (
-              <p className="text-sm text-destructive" data-testid="text-expert-required">
-                لا يمكن اعتماد الشراء قبل أن يختار الاستعلامات خبيراً.
+              <p className="text-sm text-destructive" data-testid="text-expert-required-dialog">
+                اختر الخبير المسؤول أولاً.
               </p>
             )}
           </div>
           <DialogFooter>
             <Button disabled={busy || active.selectedExpertUserId === null}
-              data-testid="button-confirm-approve-purchase"
-              onClick={() => submit(`/api/followups/${active.id}/approve-purchase`, {})}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "اعتماد وبدء التصنيع"}
+              data-testid="button-confirm-purchase-submit"
+              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {})}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "تأكيد وبدء التصنيع"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -502,7 +501,10 @@ const EVENT_LABELS: Record<string, string> = {
   price_approved: "اعتُمد تعديل السعر",
   price_rejected: "رُفض تعديل السعر",
   patient_accepted_price: "وافق المريض على السعر",
-  purchase_approved: "اعتُمد الشراء",
+  purchase_confirmed: "أكّد الموظّف الشراء",
+  //  اسمٌ تاريخي: صفوفُ ما قبل التبسيط حين كان الطبيب يعتمد. يبقى كي
+  //  تُقرأ كما كُتبت لا كما صارت.
+  purchase_approved: "اعتُمد الشراء (قبل التبسيط)",
   converted: "تحوّل إلى تصنيع",
   closed_without_purchase: "أُغلق بدون شراء",
   reopened: "أُعيد فتحه",

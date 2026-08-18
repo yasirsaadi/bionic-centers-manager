@@ -3,12 +3,16 @@
 // ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
 //
 //   تسجيلُ قرار المريض والمتابعة  — استقبال · مدير فرع · طبيب · مسؤول
+//   **تأكيدُ الشراء وبدءُ التصنيع** — استقبال · مدير فرع · طبيب · مسؤول
 //   اعتمادُ/رفضُ تعديل السعر      — **طبيبٌ مخوَّل أو مسؤول حصراً**
-//   اعتمادُ الشراء                — **طبيبٌ مخوَّل أو مسؤول حصراً**
 //
-// ومديرُ الفرع **يتابع ولا يعتمد** عمداً: السعر قرارٌ وقّعه الطبيب في سجلٍّ
-// سريري، فمن يعتمد تعديله طبيبٌ لا إداريّ. وهذا الفرق هو جوهر الميزة —
-// ولذلك يُفحص في الخادم على كل كتابة، فإخفاءُ زرٍّ في الواجهة عرضٌ لا حراسة.
+// والفرقُ بين السطرين الأوّلين والثالث هو كلّ شيء: **«اشترى» تسجيلُ واقعة**
+// وقعت أمام الموظّف بالسعر المعتمد نفسه، فلا سلطةَ تُستأذَن لها. أمّا
+// **تعديلُ السعر فاعتماد**: رقمٌ وقّعه الطبيب يُطلب تغييرُه، فيلزم مَن يملك
+// تغييره — ومديرُ الفرع ليس منهم عمداً.
+//
+// وكان تأكيدُ الشراء في الصفّ الثالث خطأً، فحبَس الفرعَ كلَّه بانتظار ضغطةٍ
+// لا قرارَ سريرياً فيها. وهذا ما صُحِّح.
 //
 // وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل يعتمد، وإلّا
 // تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
@@ -20,7 +24,9 @@ import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
-import { canApprove, canRecordFollowup, canViewFollowup } from "@shared/followup";
+import {
+  canApprove, canConfirmPurchase, canRecordFollowup, canViewFollowup,
+} from "@shared/followup";
 
 type Req = any;
 
@@ -125,12 +131,14 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     res.json(rows);
   });
 
-  // ── «بانتظار موافقتي» — للطبيب والمسؤول ──────────────────────────────
+  // ── «بانتظار موافقتي» — **تعديلاتُ السعر وحدها** ─────────────────────
+  //  وخرج منها طابورُ «اعتماد الشراء»: مهامٌّ روتينية لا قرارَ سريرياً فيها
+  //  كانت تُغرق شاشة الطبيب وتحبس الفرع. والباقي اعتمادٌ حقيقي.
   app.get("/api/followups/approvals", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     if (!canApprove(s)) {
       //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يعتمد.
-      return res.json({ priceApprovals: [], purchaseApprovals: [], mayApprove: false });
+      return res.json({ priceApprovals: [], mayApprove: false });
     }
     const out = await store.listPendingApprovals(branchScope(req));
     res.json({ ...out, mayApprove: true });
@@ -174,8 +182,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── «وافق المريض على السعر» ⟶ بانتظار اعتماد الشراء ──────────────────
-  //  **ولا يبدأ تصنيعاً**: موافقةُ المريض ليست اعتماداً.
+  // ── «وافق المريض على السعر» ⟶ `purchase_approval_pending` ────────────
+  //  **مسارٌ متروك — للتوافق الرجعي وحده.** لا تناديه الواجهة بعد اليوم،
+  //  وبابُ العمل صار `/confirm-purchase`. وتبقى هنا كي لا تنكسر نافذةٌ
+  //  مفتوحةٌ منذ ما قبل النشر — وما تُنتجه قابلٌ للاستئناف بضغطةٍ واحدة.
   app.post("/api/followups/:id/accept-price", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
@@ -332,44 +342,45 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── اعتماد الشراء — **طبيب أو مسؤول حصراً**، وهو ما يبدأ البيع ────────
-  //  ينادي `storage.assignManufacturing` في معاملةٍ واحدة مع سجلّ الاعتماد.
-  app.post("/api/followups/:id/approve-purchase", isAuthenticated, async (req: Req, res) => {
+  // ── تأكيد الشراء وبدء التصنيع — **الاستقبال ومدير الفرع** ────────────
+  //  ينادي `storage.assignManufacturing` في معاملةٍ واحدة مع سجلّ التأكيد.
+  //  ولا مسارَ تصنيعٍ ثانٍ: الباب هو الباب، والمتغيّر حارسُه وحده.
+  async function confirmPurchaseHandler(req: Req, res: any) {
     const s = getSession(req);
-    if (!canApprove(s)) {
-      return res.status(403).json({
-        error: "اعتماد الشراء للطبيب المخوَّل أو المسؤول العام حصراً",
-      });
+    if (!canConfirmPurchase(s)) {
+      return res.status(403).json({ error: "غير مصرح" });
     }
     const f = await loadInScope(req, res);
     if (!f) return;
 
     // ══ الخبير **لا يُقبل من الطلب إطلاقاً** ═══════════════════════════
-    // اختيارُه عملُ الاستعلامات، والمعتمِد يعتمد ما اختاروه. فلو قُرئ رقمٌ
-    // من الجسم لصار الاعتماد باباً خلفياً يسند الجهاز لخبيرٍ لم يقرّره
-    // أحد. والمخزن يقرأه من الصفّ تحت القفل، وهنا لا يُقرأ الحقل أصلاً —
-    // فما لا يُقرأ لا يُهرَّب.
+    // اختيارُه فعلٌ مستقلٌّ له نقطتُه وتدقيقُه. فلو قُرئ رقمٌ من الجسم لصار
+    // تأكيدُ الشراء باباً خلفياً يسند الجهاز لخبيرٍ لم يُختَر صراحةً.
+    // والمخزن يقرأه من الصفّ تحت القفل، وهنا لا يُقرأ الحقل أصلاً —
+    // فما لا يُقرأ لا يُهرَّب. والسعرُ كذلك: لا يُقرأ من الطلب هنا ولا هناك.
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
     if (f.selectedExpertUserId === null) {
       return res.status(409).json({
-        error: "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء",
+        error: "اختر الخبير المسؤول أولاً ثم أكّد الشراء",
       });
     }
-    //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع منذ اختياره.
+    //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع أو عُطّل حسابُه
+    //  منذ اختياره.
     const v = await validateExpert(f.selectedExpertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
     try {
-      const out = await store.approvePurchase({
+      const out = await store.confirmPurchase({
         followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
       });
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",
         userId: s.userId, userName: s.userName, branchId: f.branchId,
-        newValues: { workOrderId: out.workOrderId, approvedPrice: f.approvedPrice },
+        oldValues: { status: f.status },
+        newValues: { status: "converted", workOrderId: out.workOrderId, approvedPrice: f.approvedPrice },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `اعتماد الشراء لمتابعة #${f.id} بسعر ${f.approvedPrice.toLocaleString()} د.ع — أمر تصنيع #${out.workOrderId}`,
+        notes: `تأكيد الشراء لمتابعة #${f.id} بسعر ${f.approvedPrice.toLocaleString()} د.ع — أمر تصنيع #${out.workOrderId}`,
       });
       res.json(out);
     } catch (e) {
@@ -385,7 +396,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       }
       throw e;
     }
-  });
+  }
+
+  app.post("/api/followups/:id/confirm-purchase", isAuthenticated, confirmPurchaseHandler);
+  //  الاسمُ القديم يبقى مسنَداً إلى المعالج نفسه: نافذةٌ مفتوحةٌ منذ ما قبل
+  //  النشر تصيبه، ولا يجوز أن تُردّ بـ404 وهي تفعل الصواب.
+  app.post("/api/followups/:id/approve-purchase", isAuthenticated, confirmPurchaseHandler);
 }
 
 /** يعيد استعمال تحقّق «تخصيص» نفسه — لا قائمة خبراء ثانية تنحرف عنها. */

@@ -23,7 +23,8 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   follow_up: "مؤجَّل — متابعة",
   price_approval_pending: "بانتظار اعتماد السعر",
   price_approved_waiting_patient: "بانتظار تأكيد المريض بعد تعديل السعر",
-  purchase_approval_pending: "بانتظار اعتماد الشراء",
+  //  توافقٌ رجعي: لا يدخلها ملفٌّ جديد، والصفوف المحتجزة تُؤكَّد بضغطة.
+  purchase_approval_pending: "محتجز قبل التبسيط — أكّد الشراء",
   closed_without_purchase: "مغلق بدون شراء",
   converted: "تحوّل إلى تصنيع",
 };
@@ -110,7 +111,7 @@ export function canRecordFollowup(s: FollowupSessionLike | null | undefined): bo
 }
 
 /**
- * مَن يعتمد السعر أو الشراء — **طبيبٌ مخوَّل أو المسؤول العام حصراً**.
+ * مَن يعتمد **تعديل السعر** — طبيبٌ مخوَّل أو المسؤول العام حصراً.
  *
  * ومديرُ الفرع **ليس منهما عمداً**: السعر قرارٌ وقّعه الطبيب في سجلٍّ سريري،
  * فمن يعتمد تعديله طبيبٌ لا إداريّ. وهذا هو الفرق الذي تحرسه هذه الدالّة —
@@ -118,10 +119,42 @@ export function canRecordFollowup(s: FollowupSessionLike | null | undefined): bo
  *
  * وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل في الفرع
  * يعتمد، وإلّا تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+ *
+ * ══ ولم تعد تحكم الشراء ═══════════════════════════════════════════════
+ * كانت تحرس بوّابتين: تعديلَ السعر **وتأكيدَ الشراء**. والثانية كانت خطأً
+ * في التصنيف لا في الصلاحية — انظر `canConfirmPurchase` أدناه.
  */
 export function canApprove(s: FollowupSessionLike | null | undefined): boolean {
   if (s?.isAdmin === true) return true;
   //  المقارنة صريحة: صلاحيةٌ غامضة القيمة تُقرأ «لا».
+  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+}
+
+/**
+ * مَن يؤكّد أن **المريض اشترى** فيبدأ التصنيع — الاستقبال ومديرُ الفرع
+ * والطبيبُ والمسؤول.
+ *
+ * ══ لماذا فُصلت عن `canApprove` ════════════════════════════════════════
+ * لأن الفعلين مختلفان في طبيعتهما لا في درجتهما. **تعديلُ السعر اعتماد**:
+ * رقمٌ وقّعه الطبيب يُطلب تغييرُه، فيلزم مَن يملك تغييره. أمّا **«اشترى»
+ * فتسجيلُ واقعة**: المريض وقف أمام الموظّف وقال نعم بالسعر المعتمد نفسه،
+ * بلا تغيير حرف. ولا سلطةَ تُستأذَن لتسجيل ما وقع.
+ *
+ * وخلطُهما كلّف عملياً: كان الموظّف يسجّل موافقة المريض فيقف الملفّ عند
+ * «بانتظار اعتماد الشراء» بلا زرٍّ واحد بيده، حتى يفرغ طبيبٌ لضغطة لا
+ * قرارَ سريرياً فيها. والمريضُ ينتظر، **ودفعتُه تُردّ** لأن كلفته لم
+ * تُقيَّد بعد.
+ *
+ * **والسعر لا يزال محروساً**: مَن يريد سعراً آخر يمرّ بطلب تعديلٍ يعتمده
+ * `canApprove`. فالمفتوح هو تسجيلُ البيع بالسعر المعتمد، لا تغييرُه.
+ *
+ * وهي **دالّةٌ مستقلّة لا اسمٌ ثانٍ** لـ`canRecordFollowup`: تطابقُهما اليوم
+ * مصادفةٌ في القيمة لا في المعنى، وربطُهما كان سيجعل أيَّ تضييقٍ لاحقٍ على
+ * التسجيل يغلق البيع معه بلا أن ينتبه أحد.
+ */
+export function canConfirmPurchase(s: FollowupSessionLike | null | undefined): boolean {
+  if (s?.isAdmin === true) return true;
+  if (s?.role === "reception" || s?.role === "branch_manager") return true;
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
 }
 
@@ -146,24 +179,38 @@ export function canSelectExpert(
   return canRecordFollowup(s) && !isTerminal(status);
 }
 
-/** الأزرار المسموحة لهذه الجلسة على متابعةٍ في هذه الحالة. */
+/**
+ * الأزرار المسموحة لهذه الجلسة على متابعةٍ في هذه الحالة.
+ *
+ * والمسارُ اليومي **ثلاثةُ أفعالٍ وبابٌ للسعر**: اشترى · لم يشترِ · يحتاج
+ * متابعة · طلبُ تعديل سعر. لا خطوةَ اعتمادٍ بينها ولا انتظارَ أحد.
+ */
 export function allowedActions(
   s: FollowupSessionLike | null | undefined, status: string,
 ): string[] {
   const out: string[] = [];
   const mayRecord = canRecordFollowup(s);
   const mayApprove = canApprove(s);
+  const mayConfirm = canConfirmPurchase(s);
 
   if (status === "awaiting_patient_decision" || status === "follow_up") {
-    if (mayRecord) out.push("accept_price", "defer", "close", "request_price_change");
+    if (mayConfirm) out.push("confirm_purchase");
+    if (mayRecord) out.push("defer", "close", "request_price_change");
   } else if (status === "price_approval_pending") {
     //  المتابِع يرى «بانتظار الاعتماد» ولا زرّ له — والطبيب/المسؤول يقرّر.
     if (mayApprove) out.push("approve_price", "reject_price");
   } else if (status === "price_approved_waiting_patient") {
-    //  اعتمادُ الطبيب للتخفيض **ليس شراءً**: يبقى أن يوافق المريض فعلاً.
-    if (mayRecord) out.push("patient_accepted_new_price", "defer", "close");
+    //  اعتمادُ الطبيب للتخفيض **ليس شراءً**: يبقى أن يوافق المريض فعلاً —
+    //  ثم يؤكّده الموظّف مباشرةً بلا عودةٍ إلى الطبيب.
+    if (mayConfirm) out.push("confirm_purchase");
+    if (mayRecord) out.push("defer", "close");
   } else if (status === "purchase_approval_pending") {
-    if (mayApprove) out.push("approve_purchase");
+    // ══ توافقٌ رجعي لا مسارٌ حيّ ═══════════════════════════════════════
+    // لا يدخلها ملفٌّ جديد بعد اليوم. والصفوف المحتجزة فيها من قبلُ تصير
+    // **قابلةً للعمل فوراً** بيد الاستقبال: يؤكّد الشراء فتتحوّل كغيرها،
+    // أو يغلقها إن عدل المريض. بلا ترحيلِ بيانات ولا إعادةِ كتابة تاريخ.
+    if (mayConfirm) out.push("confirm_purchase");
+    if (mayRecord) out.push("close");
   } else if (status === "closed_without_purchase") {
     if (mayRecord) out.push("reopen");
   }
