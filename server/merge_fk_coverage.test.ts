@@ -72,12 +72,18 @@ const MERGE_DECISIONS: Record<string, string> = {
   "post_exam_followup_events.patient_id": "repoint — التاريخ يتبع المريض بلا تصادم",
   "price_change_requests.patient_id": "repoint — الطلبات تتبع المريض بلا تصادم",
 
+  //  مراجعةُ الطبيب (ترحيل ٠٥٥). التصادم الوحيد الممكن هو الطلب المعلَّق بلا
+  //  مرساة: `uq_mrr_pending_bare` معلَّقٌ واحد لكل (مريض، اختصاص). فطلب
+  //  المصدر يُعاد إلى الاستقبال قبل نقله، والتاريخ ينتقل كاملاً.
+  "medical_review_requests.patient_id": "إعادة طلب المصدر المعلَّق المتصادم ثم repoint — معلَّقٌ واحد والتاريخ محفوظ",
+
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "payments.case_id": "remap من حالة المصدر إلى حالة الهدف",
   "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
   "patient_device_episodes.case_id": "remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل",
   "post_exam_followups.case_id": "remap من حالة المصدر إلى حالة الهدف",
+  "medical_review_requests.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف",
 
   // ── تشير إلى patient_device_episodes.id (migration 049) ────────────────
   // الحلقة تُنقَل **بمعرّفها** فلا يتغيّر `id`، ولذلك لا يحتاج أيٌّ من هذه
@@ -88,6 +94,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "payments.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
   "visits.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
   "post_exam_followups.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
+  "medical_review_requests.device_episode_id": "لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر",
 };
 
 // و`medical_exams.device_episode_id` ليس مفتاحاً أجنبياً عمداً (لقطةُ رقم،

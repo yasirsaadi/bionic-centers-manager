@@ -1385,6 +1385,50 @@ export type MonthlyTarget = typeof monthlyTargets.$inferSelect;
 export type InsertMonthlyTarget = z.infer<typeof insertMonthlyTargetSchema>;
 
 // ── متابعةُ ما بعد المعاينة (migration 053) ─────────────────────────────────
+// ══ طلبُ مراجعة الطبيب — أطراف ومساند فقط (migration 055) ═══════════════
+// **بابٌ ثانٍ إلى الطبيب، أخفُّ من المعاينة ولا يحلّ محلّها.** قبله كان
+// البابُ واحداً — سجلٌّ سريريٌّ مختوم — فكلُّ ما لا يستحقّه مرّ بلا طبيب:
+// الصيانة الروتينية، والتعديل الصغير، والمريض القديم العائد الذي كان النظام
+// يُخرجه من الطابور صراحةً.
+//
+// والاستقبال يصنّف (سريع | كامل)، والطبيب يقرّر (موافقة | معاينة كاملة |
+// إعادة). والموافقة السريعة **ليست معاينة**: لا تدخل تسلسل المعاينات ولا
+// تُطفئ وسمَ الانتظار ولا تُقرأ بعد سنواتٍ كأنّ طبيباً فحص المريض يومها.
+//
+// والصفُّ يحمل **مرساةَ الحدث** حين توجد — حلقةَ الجهاز أو أمرَ الصيانة أو
+// الزيارة — فطلبان لجهازين مختلفين ليسا طلباً واحداً.
+export const medicalReviewRequests = pgTable("medical_review_requests", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  /** prosthetic | medical_support — والعلاج الطبيعي مرفوضٌ بقيد CHECK. */
+  serviceType: text("service_type").notNull(),
+  caseId: integer("case_id").references(() => patientCases.id),
+  branchId: integer("branch_id").references(() => branches.id),
+  //  المرساة: واحدةٌ منها على الأكثر في العادة، وقد تخلو جميعاً لطلبٍ عن
+  //  الملفّ عامّةً — وذلك مشروع لكنّه ليس الحالة الافتراضية.
+  deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
+  workOrderId: integer("work_order_id").references(() => prostheticWorkOrders.id),
+  visitId: integer("visit_id").references(() => visits.id),
+  /** تصنيفُ الاستقبال: quick | full. */
+  requestedPath: text("requested_path").notNull(),
+  /** سببُ الزيارة: new_device | maintenance | adjustment | follow_up | other. */
+  reviewKind: text("review_kind").notNull(),
+  receptionNote: text("reception_note"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** pending | approved | escalated | returned. */
+  status: text("status").notNull().default("pending"),
+  /** approve | require_full_exam | return_to_reception. */
+  decision: text("decision"),
+  decidedBy: integer("decided_by").references(() => systemUsers.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  doctorNote: text("doctor_note"),
+  /** المعاينة التي أُنجزت بعد الإحالة، إن أُنجزت — لقطةُ ربطٍ للقراءة. */
+  examId: integer("exam_id").references(() => medicalExams.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type MedicalReviewRequest = typeof medicalReviewRequests.$inferSelect;
+
 // **الطبقة بين قرار الطبيب وبدء التصنيع.** المريض يوقّع طبيبُه المعاينة ثم
 // يذهب ليفكّر: يستشير أهله، ينتظر راتباً، يساوم، يقارن مركزاً بآخر. وهذا
 // الفراغ كان لا يُرى في النظام إطلاقاً — فمريضٌ عاين ولم يشترِ يختفي من كل

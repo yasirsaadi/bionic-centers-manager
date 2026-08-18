@@ -716,10 +716,26 @@ export async function getPendingExams(
     SELECT 1 FROM medical_exams me
      WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type)`;
 
+  // ══ إحالةُ الطبيب من المراجعة (ترحيل ٠٥٥) ═══════════════════════════
+  // نفس منطق قائمة العمل: قرارُ الطبيب «معاينة كاملة» يُلزِم مهما كان
+  // تصنيفُ المريض أو تاريخُه. ويخرج بتوقيع معاينةٍ **بعد** الإحالة.
+  const escalatedReview = sql`EXISTS (
+    SELECT 1 FROM medical_review_requests r
+     WHERE r.patient_id = pc.patient_id
+       AND r.service_type = pc.case_type
+       AND r.status = 'escalated'
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_exams me2
+          WHERE me2.patient_id = r.patient_id
+            AND me2.case_type = r.service_type
+            AND me2.created_at >= r.decided_at))`;
   const legacyPath = sql`(${noEpisodes} AND ${legacyOnly ? isExempt : sql`NOT ${isExempt}`} AND ${neverExamined})`;
   // The optional list is for the exempt only; a mandatory awaiting-exam
   // episode belongs in the amber queue, never in the quiet one.
-  const filter = legacyOnly ? legacyPath : sql`(${awaitingEpisode} OR ${legacyPath})`;
+  //  والمُحال يقع في الطابور الإلزامي دائماً — لا في القائمة الهادئة.
+  const filter = legacyOnly
+    ? sql`(${legacyPath} AND NOT ${escalatedReview})`
+    : sql`(${awaitingEpisode} OR ${escalatedReview} OR ${legacyPath})`;
 
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
@@ -882,6 +898,23 @@ export async function getWorklist(
         -- A device requested now is on the doctor's list whoever the patient
         -- is — legacy or not, examined before or not.
         ep.id IS NOT NULL
+        -- ══ إحالةُ الطبيب من المراجعة (ترحيل ٠٥٥) ═════════════════════
+        -- الطبيب نفسه قال «هذه تحتاج معاينة كاملة»، فلا استثناءَ يعلو على
+        -- قراره: لا «مريض قديم»، ولا خيطٌ بلا حلقة، ولا معاينةٌ قديمة.
+        -- والشرط أن **لا معاينةَ بعد الإحالة** — فالطلب يخرج من الطابور
+        -- بتوقيع المعاينة لا بوجود واحدةٍ من قبل.
+        OR EXISTS (
+          SELECT 1 FROM medical_review_requests r
+           WHERE r.patient_id = pc.patient_id
+             AND r.service_type = pc.case_type
+             AND r.status = 'escalated'
+             AND NOT EXISTS (
+               SELECT 1 FROM medical_exams me2
+                WHERE me2.patient_id = r.patient_id
+                  AND me2.case_type = r.service_type
+                  AND me2.created_at >= r.decided_at
+             )
+        )
         OR (
           NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
           AND ${notLegacyWl}

@@ -25,6 +25,7 @@ import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { DeviceEpisodeError } from "../device_episodes/store";
+import { linkExamToEscalated } from "../medical_review/store";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -335,6 +336,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         userAgent: req.get("user-agent") ?? null,
         notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
       });
+
+      //  ربطُ الطلب المُحال بمعاينته (ترحيل ٠٥٥) — حقلُ قراءةٍ لا أكثر،
+      //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ أحال الطبيبُ ⟶ عاين.
+      //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
+      //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
+      try {
+        await linkExamToEscalated({
+          patientId, serviceType: caseType, examId: exam.id,
+        });
+      } catch (linkErr) {
+        console.error("[medical] linking exam to escalated review failed:", linkErr);
+      }
 
       // `switchNote` is surfaced, not swallowed: when the superseded case could
       // not be retired (it already carries a work order or tagged payments) the

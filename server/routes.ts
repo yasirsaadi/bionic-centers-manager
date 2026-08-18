@@ -20,6 +20,7 @@ import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
+import { registerMedicalReviewRoutes } from "./medical_review/routes";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import * as followupStore from "./followup/store";
@@ -6659,6 +6660,7 @@ export async function registerRoutes(
 
   // Register doctor medical-examination routes (معاينة الطبيب)
   registerMedicalRoutes(app, isAuthenticated);
+  registerMedicalReviewRoutes(app, isAuthenticated);
 
   // Device episodes (حلقات أجهزة المريض): start a new device on an existing
   // specialty thread, list them, cancel one before manufacturing begins.
