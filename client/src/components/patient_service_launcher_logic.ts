@@ -14,14 +14,21 @@
 // القائمة تبقى كما هي بحدودها وتحقّقاتها ومحاسبتها، وكلّ خيار يذهب إلى
 // نقطته الصحيحة — ولا نقطة «خدمة عامّة» تجمعها.
 
+import type { Department } from "@shared/service_taxonomy";
+import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+
 /** المسارات الثلاثة القائمة — **لا رابع**. */
 export type ServiceFlow =
   /** `POST /api/patients/:id/add-case-type` — قرارٌ بلا مال ولا أمر تصنيع. */
   | { kind: "case_type"; caseType: "amputee" | "medical_support" | "physiotherapy" }
   /** `POST /api/patients/:id/new-service` — قيدٌ مالي على خيطٍ قائم. */
   | { kind: "new_service"; serviceType: "additional_therapy" | "consultation" | "other" }
-  /** `POST /api/manufacturing/maintenance-visit` — زيارة وأمر صيانة معاً. */
-  | { kind: "maintenance_visit" }
+  /**
+   * `POST /api/manufacturing/maintenance-visit` — زيارة وأمر صيانة معاً.
+   * و`serviceType` يضبط النافذة على جهاز القسم الذي اختير منه — والخادم
+   * يبقى صاحب القرار: يتحقّق أن المريض يملك النوع فعلاً.
+   */
+  | { kind: "maintenance_visit"; serviceType: "prosthetic" | "medical_support" }
   /** `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم. */
   | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" };
 
@@ -45,7 +52,16 @@ export interface PatientServiceFlags {
   episodes?: { serviceType: string; status: string }[] | null;
 }
 
-export type LauncherGroup = "device" | "physio" | "other";
+/**
+ * مجموعاتُ الموزِّع — **هي الأقسامُ الثلاثة نفسها، لا غير**.
+ *
+ * كان ثلاثةً من نوعٍ آخر: «خدمات الأجهزة» تجمع الطرفَ والمسندَ في واحد،
+ * و«العلاج الطبيعي»، و«خدمات أخرى» تعيش خارج التصنيف كلّه — فالاستشارةُ
+ * لا تنتمي إلى قسم، ومديرُ المساند لا يرى بابَه مستقلاً.
+ *
+ * والآن الأسماءُ هي `Department` حرفياً، فلا خريطةَ بين الشاشة والتقرير.
+ */
+export type LauncherGroup = Department;
 
 export interface LauncherOption {
   id: string;
@@ -59,11 +75,7 @@ export interface LauncherOption {
   disabledReason?: string;
 }
 
-export const GROUP_LABELS: Record<LauncherGroup, string> = {
-  device: "خدمات الأجهزة",
-  physio: "العلاج الطبيعي",
-  other: "خدمات أخرى",
-};
+export const GROUP_LABELS: Record<LauncherGroup, string> = DEPARTMENT_LABELS;
 
 /**
  * **حالةٌ قائمة لا تُنشأ ثانيةً.**
@@ -104,7 +116,7 @@ function newDeviceOption(
     id: serviceType === "prosthetic" ? "new_prosthetic_device" : "new_support_device",
     label,
     description: "فتح طلب جهاز جديد على نفس الحالة — يبدأ بمعاينة الطبيب",
-    group: "device",
+    group: serviceType,
     flow: { kind: "device_episode", serviceType },
     disabled: !hasCase || open !== null,
     disabledReason: !hasCase
@@ -115,18 +127,36 @@ function newDeviceOption(
   };
 }
 
+/** خيارُ الصيانة لقسمٍ بعينه — يظهر لمن يملك جهازَ ذلك القسم. */
+function maintenanceOption(
+  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
+  hasCase: boolean, label: string,
+): LauncherOption {
+  return {
+    id: serviceType === "prosthetic" ? "maintenance_prosthetic" : "maintenance_support",
+    label,
+    description: "فتح زيارة وأمر صيانة",
+    group: serviceType,
+    flow: { kind: "maintenance_visit", serviceType },
+    disabled: !hasCase,
+    disabledReason: hasCase ? undefined
+      : serviceType === "prosthetic"
+        ? "لا يوجد طرف صناعي على ملف المريض"
+        : "لا يوجد مسند طبي على ملف المريض",
+  };
+}
+
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
   const hasSupport = Boolean(p.isMedicalSupport);
   const hasPhysio = Boolean(p.isPhysiotherapy);
-  const hasDevice = hasProsthetic || hasSupport;
 
   return [
     {
       id: "prosthetic_case",
       label: "أطراف صناعية",
       description: "إضافة حالة أطراف للمريض",
-      group: "device",
+      group: "prosthetic",
       flow: { kind: "case_type", caseType: "amputee" },
       disabled: hasProsthetic,
       disabledReason: hasProsthetic ? DEVICE_EXISTS : undefined,
@@ -135,27 +165,27 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       id: "support_case",
       label: "مساند طبية",
       description: "إضافة حالة مساند للمريض",
-      group: "device",
+      group: "medical_support",
       flow: { kind: "case_type", caseType: "medical_support" },
       disabled: hasSupport,
       disabledReason: hasSupport ? DEVICE_EXISTS : undefined,
     },
     newDeviceOption(p, "prosthetic", hasProsthetic, "طرف صناعي جديد"),
     newDeviceOption(p, "medical_support", hasSupport, "مسند طبي جديد"),
-    {
-      id: "maintenance",
-      label: "صيانة طرف/مسند",
-      description: "فتح زيارة وأمر صيانة",
-      group: "device",
-      flow: { kind: "maintenance_visit" },
-      disabled: !hasDevice,
-      disabledReason: hasDevice ? undefined : "لا يوجد طرف أو مسند على ملف المريض",
-    },
+    //  ══ الصيانةُ تُنسَب لقسم جهازها ══════════════════════════════════
+    //  كانت بنداً واحداً تحت «خدمات الأجهزة»، فلا يعرف الناظرُ أيَّ قسمٍ
+    //  تخصّ. والآن بندٌ تحت كلّ قسمٍ يملكه المريض، يحمل نوعَه معه.
+    //
+    //  **والاختيارُ الآمن القائم محفوظ**: صاحبُ النوعين تُفتح له نافذتُه
+    //  مضبوطةً على ما اختاره من القائمة لا مخمَّنةً، والخادمُ يعيد التحقّق
+    //  من أن المريض يملك النوع فعلاً كما كان.
+    maintenanceOption(p, "prosthetic", hasProsthetic, "صيانة طرف صناعي"),
+    maintenanceOption(p, "medical_support", hasSupport, "صيانة مسند طبي"),
     {
       id: "physio_case",
       label: "علاج طبيعي",
       description: "إضافة حالة علاج طبيعي للمريض",
-      group: "physio",
+      group: "physiotherapy",
       flow: { kind: "case_type", caseType: "physiotherapy" },
       disabled: hasPhysio,
       // مَن له علاجٌ قائم لا يحتاج حالةً ثانية بل جلساتٍ عليها — والرسالة
@@ -166,7 +196,7 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       id: "additional_therapy",
       label: "جلسات علاج طبيعي إضافية",
       description: "زيادة جلسات على خطة العلاج القائمة",
-      group: "physio",
+      group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "additional_therapy" },
       disabled: !hasPhysio,
       disabledReason: hasPhysio ? undefined : "تُفتَح حالة علاج طبيعي أولاً",
@@ -175,7 +205,7 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       id: "consultation",
       label: "استشارة طبية",
       description: "تسجيل استشارة على ملف المريض",
-      group: "other",
+      group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "consultation" },
       disabled: false,
     },
@@ -183,7 +213,7 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       id: "other",
       label: "خدمة أخرى",
       description: "خدمة لا مسار خاصّ لها",
-      group: "other",
+      group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "other" },
       disabled: false,
     },

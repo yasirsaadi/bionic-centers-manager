@@ -179,6 +179,20 @@ interface AccountingSummary {
     shared: { expenses: number };
     unclassified: { revenue: number; paid: number };
   };
+  /** الأقسامُ الثلاثة كلٌّ على حدة — والمساندُ لم تعد مبتلعةً في «أجهزة». */
+  byDepartment?: {
+    prosthetic: { revenue: number; paid: number };
+    medical_support: { revenue: number; paid: number };
+    physiotherapy: { revenue: number; paid: number };
+    /** أجهزةٌ قديمة مؤكَّدة لم يُثبَت نوعُها — مبيعاتٌ فقط. */
+    legacyDevicesUnsplit?: { revenue: number };
+    unclassified: { revenue: number; paid: number };
+  };
+  rollups?: {
+    devicesCombined: { revenue: number; paid: number };
+    classifiedTotal: { revenue: number; paid: number };
+    grandTotal: { revenue: number; paid: number };
+  };
 }
 
 interface Debtor {
@@ -3303,6 +3317,87 @@ export default function Accounting() {
                 figures are never affected — the split is purely a detail view.
                 Net per section = وارد − صرف مباشر. المصاريف «المشتركة» تظهر
                 منفصلة ولا تُخصم من قسم بعينه. */}
+            {/* ══ الأقسامُ الثلاثة ═══════════════════════════════════════
+                كان القسمان «أجهزة» و«علاج طبيعي»، فمديرُ المساند لا يعرف
+                كم باع قسمُه. والآن ثلاثةٌ مفصولة، وتجميعان مشتقّان.
+
+                و«الوارد» و«المبيعات» **عمودان لا واحد**: الأول نقدٌ وصل
+                والثاني كلفةٌ قُيِّدت، وكانا يُسمَّيان باسمٍ واحد. */}
+            {summary?.byDepartment && summary?.rollups && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-base font-semibold">الأقسام السريرية الثلاثة</h3>
+                </div>
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-sm" data-testid="table-departments">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="p-2 text-right font-medium">القسم</th>
+                        <th className="p-2 text-right font-medium">الوارد (المقبوض)</th>
+                        <th className="p-2 text-right font-medium">المبيعات (كلفة مسجَّلة)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const bd = summary.byDepartment!;
+                        const ru = summary.rollups!;
+                        const legacy = bd.legacyDevicesUnsplit?.revenue || 0;
+                        const uncl = bd.unclassified;
+                        const gap = legacy !== 0 || (uncl.revenue || 0) !== 0 || (uncl.paid || 0) !== 0;
+                        type R = { key: string; title: string; d: { revenue: number; paid: number | null };
+                                   strong?: boolean; warn?: boolean };
+                        const rows: R[] = [
+                          { key: "prosthetic", title: "الأطراف الصناعية", d: bd.prosthetic },
+                          { key: "medical_support", title: "المساند الطبية", d: bd.medical_support },
+                        ];
+                        //  مالُ أجهزةٍ **مؤكَّد** لم يُثبَت نوعُه — قديمٌ حصراً. يُعرَض قبل
+                        //  المجموع مباشرة فيرى القارئ لماذا يزيد على الصفّين فوقه، ولا
+                        //  يُقسَّم بالتخمين ولا يُدسّ في العلاج الطبيعي. و«المقبوض» له —
+                        //  لأن `payments.case_id` مملوءةٌ منذ الطور الثالث فلا نظير له.
+                        if (legacy !== 0) {
+                          rows.push({ key: "legacy-devices", title: "أجهزة قديمة — غير مقسَّمة",
+                            d: { revenue: legacy, paid: null }, warn: true });
+                        }
+                        rows.push(
+                          { key: "devices-combined", title: "مجموع الأجهزة", d: ru.devicesCombined, strong: true },
+                          { key: "physiotherapy", title: "العلاج الطبيعي", d: bd.physiotherapy },
+                        );
+                        //  «المعروف» و«غير المبوَّب» يظهران فقط حين يوجد فرق — وإلّا
+                        //  فصفّان مكرّران يشوّشان بلا أن يضيفا.
+                        if (gap) {
+                          rows.push({ key: "classified-total", title: "مجموع الأقسام المعروفة", d: ru.classifiedTotal });
+                          rows.push({ key: "unclassified", title: "غير مبوَّب — بيانات قديمة", d: uncl, warn: true });
+                        }
+                        //  والإجماليُّ العام هو المرجع: كلُّ المال بلا استثناء، وهو
+                        //  وحده ما يُطرح منه المصروف. لا يُنقَص بمشكلة تبويب.
+                        rows.push({ key: "grand-total", title: "الإجمالي العام (كل المال)", d: ru.grandTotal, strong: true });
+                        return rows.map(({ key, title, d, strong, warn }) => (
+                          <tr key={key}
+                            className={`border-t ${strong ? "bg-muted/20 font-semibold" : ""} ${warn ? "text-amber-700" : ""}`}
+                            data-testid={`dept-row-${key}`}>
+                            <td className="p-2">{title}</td>
+                            <td className={`p-2 tabular-nums ${warn ? "" : "text-green-700"}`}>
+                              {d.paid === null ? "—" : formatNumberOnly(d.paid || 0)}
+                            </td>
+                            <td className={`p-2 tabular-nums ${warn ? "" : "text-muted-foreground"}`}>
+                              {formatNumberOnly(d.revenue || 0)}
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+                {(summary.byDepartment.legacyDevicesUnsplit?.revenue || 0) !== 0 && (
+                  <p className="text-xs text-muted-foreground" data-testid="note-legacy-devices">
+                    «أجهزة قديمة — غير مقسَّمة»: مبيعاتٌ سُجِّلت قبل ربط القيد بحالته،
+                    نعلم يقيناً أنها أجهزة ولا نعلم أطرافاً هي أم مساند — فلا تُقسَّم بالتخمين.
+                  </p>
+                )}
+              </div>
+            )}
+
             {summary?.bySection && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">

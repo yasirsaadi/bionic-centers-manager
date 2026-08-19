@@ -38,6 +38,9 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { AmiriRegular } from "@/lib/amiri-font";
 import ArabicReshaper from "arabic-reshaper";
+import {
+  departmentsOfPatient, isPatientClassification, UNSPECIFIED_CLASSIFICATION_LABEL,
+} from "@shared/service_taxonomy";
 
 type PatientWithRelations = Patient & { visits?: Visit[], payments?: Payment[] };
 
@@ -421,18 +424,35 @@ export default function Statistics() {
 
     const totalPatients = timeFilteredPatients.length;
     const totalNewPatients = newClassifiedPatients.length;
-    // A patient may carry MORE than one case type (e.g. physio + medical
-    // support on the same record). Count him in every type he has — but the
-    // patient totals above still count him once. The `!isAmputee &&
-    // !isMedicalSupport` fallback keeps legacy rows (no flags set) counted
-    // as physiotherapy.
-    const isPhysio = (p: any) => p.isPhysiotherapy || (!p.isAmputee && !p.isMedicalSupport);
-    const amputeeCount = timeFilteredPatients.filter(p => p.isAmputee).length;
-    const physioCount = timeFilteredPatients.filter(isPhysio).length;
-    const medicalSupportCount = timeFilteredPatients.filter(p => p.isMedicalSupport).length;
-    const newAmputeeCount = newClassifiedPatients.filter(p => p.isAmputee).length;
-    const newPhysioCount = newClassifiedPatients.filter(isPhysio).length;
-    const newMedicalSupportCount = newClassifiedPatients.filter(p => p.isMedicalSupport).length;
+    // ══ الانتماءُ بالدليل لا بالاستنتاج ═══════════════════════════════
+    // كان هنا: «بلا علمِ أطرافٍ وبلا علمِ مساند ⟹ علاجٌ طبيعي». فمريضٌ لم
+    // يُصنَّف بعد — أو أُنشئ ملفُّه ولم تُفتح له حالةٌ قطّ — كان يُحتسَب في
+    // قسمٍ لم يدخله، فيتضخّم رقمُ العلاج الطبيعي بمن ليسوا منه.
+    //
+    // **والقاعدة الآن: علمٌ صريح أو حالةٌ فعلية.** ومَن لا دليلَ له لا
+    // يُحتسَب في أيّ قسم، ويظهر عددُه وحده مشكلةَ جودةِ بيانات.
+    //
+    // ومريضٌ يحمل أكثر من قسمٍ يُحتسب في كلٍّ منها — والإجماليُّ يعدّه
+    // مرّةً واحدة كما كان، فلا ازدواجَ في المجموع.
+    const deptsOf = (p: any) => departmentsOfPatient({
+      isAmputee: p.isAmputee, isMedicalSupport: p.isMedicalSupport,
+      isPhysiotherapy: p.isPhysiotherapy,
+      //  `caseTypes` تصل من `/api/patients` — والعلمُ وحده لا يكفي دليلاً:
+      //  حالةٌ تُخلَق أيضاً من أمر تصنيع أو دفعةٍ موسومة.
+      caseTypes: Array.isArray(p.caseTypes) ? p.caseTypes : null,
+    });
+    const inDept = (d: string) => (p: any) => deptsOf(p).includes(d as any);
+    const amputeeCount = timeFilteredPatients.filter(inDept("prosthetic")).length;
+    const physioCount = timeFilteredPatients.filter(inDept("physiotherapy")).length;
+    const medicalSupportCount = timeFilteredPatients.filter(inDept("medical_support")).length;
+    const newAmputeeCount = newClassifiedPatients.filter(inDept("prosthetic")).length;
+    const newPhysioCount = newClassifiedPatients.filter(inDept("physiotherapy")).length;
+    const newMedicalSupportCount = newClassifiedPatients.filter(inDept("medical_support")).length;
+    //  مَن لا قسمَ له إطلاقاً — يُعرَض ولا يُنسَب.
+    const noDepartmentCount = timeFilteredPatients.filter((p) => deptsOf(p).length === 0).length;
+    //  ومَن تركت صفوفُهم التصنيفَ فارغاً — بُعدٌ آخر، ولا يُخمَّن.
+    const unspecifiedClassificationCount = timeFilteredPatients.filter(
+      (p: any) => !isPatientClassification(p.patientClassification)).length;
 
     // Calculate payments filtered by payment date (from all patients in branch)
     const allPaymentsInRange = filteredPatients.flatMap(p => 
@@ -470,7 +490,9 @@ export default function Statistics() {
     const classificationDistribution = [
       { name: t.patientForm.newPatient, value: classificationNewCount, color: '#10b981' },
       { name: t.patientForm.pastPatient, value: classificationPastCount, color: '#f59e0b' },
-      { name: t.statistics.notSpecified, value: classificationUnsetCount, color: '#94a3b8' },
+      //  ليست تصنيفاً ثالثاً: صفوفٌ قديمة تركت العمود فارغاً. والكتابةُ
+      //  الجديدة تُلزَم بأحد الاثنين في الخادم وفي النموذج معاً.
+      { name: UNSPECIFIED_CLASSIFICATION_LABEL, value: classificationUnsetCount, color: '#94a3b8' },
     ].filter(item => item.value > 0);
 
     const branchDistribution = branches?.map(branch => ({
@@ -650,6 +672,10 @@ export default function Statistics() {
       amputeeCount,
       physioCount,
       medicalSupportCount,
+      //  مشكلتا جودةِ بياناتٍ تُعرَضان ولا تُخمَّنان: مريضٌ بلا قسم، وصفٌّ
+      //  تُرك تصنيفُه فارغاً. وهما بُعدان مختلفان لا يُخلطان.
+      noDepartmentCount,
+      unspecifiedClassificationCount,
       allTimeRevenue: displayRevenue,
       allTimePaid: displayPaid,
       allTimeRemaining: displayRemaining,
@@ -1483,6 +1509,37 @@ export default function Statistics() {
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {/*  ══ جودةُ البيانات — ما لا يُخمَّن يُعَدّ ═══════════════════════
+              رقمان لا يُصلحان أنفسَهما بالصمت: مريضٌ لا دليلَ على قسمه،
+              وصفٌّ تُرك تصنيفُه فارغاً. وكلاهما كان مخفياً — الأول يُدسّ في
+              العلاج الطبيعي، والثاني يظهر خياراً ثالثاً اسمُه «غير محدد».
+              وهما **بُعدان مختلفان** لا يُجمعان، ولا يُملأ أيٌّ منهما بأثرٍ
+              رجعيّ: التصحيحُ يكون على الملفّ بيدِ مَن يعرفه. */}
+          {(stats.noDepartmentCount > 0 || stats.unspecifiedClassificationCount > 0) && (
+            <Card className="border-amber-200 bg-amber-50/40" data-testid="card-data-quality">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2 text-amber-800">
+                  <ClipboardCheck className="w-5 h-5" />
+                  بيانات تحتاج استكمالاً
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-6 text-sm">
+                {stats.noDepartmentCount > 0 && (
+                  <div data-testid="stat-no-department">
+                    <div className="text-2xl font-bold text-amber-800">{stats.noDepartmentCount}</div>
+                    <div className="text-amber-700">مريض بلا قسم — لا علمَ ولا حالة</div>
+                  </div>
+                )}
+                {stats.unspecifiedClassificationCount > 0 && (
+                  <div data-testid="stat-unspecified-classification">
+                    <div className="text-2xl font-bold text-amber-800">{stats.unspecifiedClassificationCount}</div>
+                    <div className="text-amber-700">{UNSPECIFIED_CLASSIFICATION_LABEL} — جديد أو قديم</div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

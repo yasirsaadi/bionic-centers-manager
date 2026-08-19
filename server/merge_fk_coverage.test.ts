@@ -83,6 +83,9 @@ const MERGE_DECISIONS: Record<string, string> = {
   "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
   "patient_device_episodes.case_id": "remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل",
   "post_exam_followups.case_id": "remap من حالة المصدر إلى حالة الهدف",
+  //  دفترُ الكلف (ترحيل ٠٥٦): القسمُ هو نوعُ الحالة، فالقيدُ يُرمَّم إليها
+  //  **قبل** حذف حالات المصدر — و`ON DELETE SET NULL` شبكةُ أمانٍ لا خطّة.
+  "cost_entries.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف، قبل الحذف",
   "medical_review_requests.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف",
 
   // ── تشير إلى patient_device_episodes.id (migration 049) ────────────────

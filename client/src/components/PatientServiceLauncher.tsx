@@ -45,7 +45,8 @@ interface PatientServiceLauncherProps {
   };
 }
 
-const GROUP_ORDER: LauncherGroup[] = ["device", "physio", "other"];
+//  ترتيبُ الأقسام الثلاثة على الشاشة — **ولا رابعَ بعدها**.
+const GROUP_ORDER: LauncherGroup[] = ["prosthetic", "medical_support", "physiotherapy"];
 
 export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -172,6 +173,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           open
           onOpenChange={closeFlow}
           initialPurpose="maintenance"
+          initialMaintServiceType={flow.serviceType}
           hideTrigger
         />
       )}
