@@ -2,20 +2,21 @@
 //
 // ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
 //
-//   تسجيلُ قرار المريض والمتابعة  — استقبال · مدير فرع · طبيب · مسؤول
-//   **تأكيدُ الشراء وبدءُ التصنيع** — استقبال · مدير فرع · طبيب · مسؤول
-//   اعتمادُ/رفضُ تعديل السعر      — **طبيبٌ مخوَّل أو مسؤول حصراً**
+//   **قراءةُ الملفّ**            — استقبال · مدير فرع · **طبيب** · مسؤول
+//   المتابعة التجارية            — استقبال · مدير فرع · مسؤول
+//   (تأجيل · إغلاق · إعادة فتح · تواصل · إسناد خبير · تأكيد شراء)
+//   تحديدُ السعر التجاري         — **مدير الفرع في فرعه** · مسؤول
+//   إشارةُ «يرغب بالشراء الآن»   — **طبيبٌ مخوَّل** · مسؤول
+//   حسمُ طلبِ سعرٍ قديمٍ معلَّق    — طبيبٌ مخوَّل · مسؤول (توافقٌ رجعي)
 //
-// والفرقُ بين السطرين الأوّلين والثالث هو كلّ شيء: **«اشترى» تسجيلُ واقعة**
-// وقعت أمام الموظّف بالسعر المعتمد نفسه، فلا سلطةَ تُستأذَن لها. أمّا
-// **تعديلُ السعر فاعتماد**: رقمٌ وقّعه الطبيب يُطلب تغييرُه، فيلزم مَن يملك
-// تغييره — ومديرُ الفرع ليس منهم عمداً.
+// **والقاعدةُ في سطر**: الطبيبُ يملك القرار السريري، والفرعُ يملك القرار
+// التجاري. فالطبيبُ يقرأ الملفَّ كلَّه ويرفع إشارةً واحدة — ولا يؤجّل ولا
+// يغلق ولا يسنِد خبيراً ولا يؤكّد شراءً ولا يسعّر. وكانت البوّابةُ واحدةً
+// لكلّ مَن يلمس الملفّ، فورث الطبيبُ أفعالاً تجاريةً لم يقرّر أحدٌ أن
+// تكون له.
 //
-// وكان تأكيدُ الشراء في الصفّ الثالث خطأً، فحبَس الفرعَ كلَّه بانتظار ضغطةٍ
-// لا قرارَ سريرياً فيها. وهذا ما صُحِّح.
-//
-// وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل يعتمد، وإلّا
-// تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+// وليس تضييقاً عليه بل **رفعُ عبء**: «لم يشترِ» قرارٌ يحتاج مَن كلّم
+// المريضَ وسمع سببَه، لا مَن رآه في العيادة قبل أسبوعين.
 //
 // ونطاقُ الفرع مفروضٌ في كل نقطة: يُقرأ فرع المتابعة من صفّها لا من الطلب.
 
@@ -25,7 +26,7 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import {
-  canConfirmPurchase, canDecideLegacyPriceRequest, canRecordFollowup,
+  canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
 
@@ -75,6 +76,16 @@ function fail(res: any, err: unknown): boolean {
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
+
+/**
+ * رسالةُ الردّ حين يطرق الطبيبُ باباً تجارياً.
+ *
+ * **تقول ما يستطيعه لا ما يُمنَع منه**: طبيبٌ يقرأ «غير مصرح» عارية يظنّ
+ * حسابَه معطّلاً ويتّصل بالدعم. وهذه تقول له أين موقعُه من المسار.
+ */
+const COMMERCIAL_ONLY =
+  "المتابعة التجارية للاستقبال ومدير الفرع — وللطبيب قراءةُ الملفّ "
+  + "وإشارةُ «المريض يرغب بالشراء الآن»";
 
 export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   /**
@@ -149,7 +160,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── تأجيل ────────────────────────────────────────────────────────────
   app.post("/api/followups/:id/defer", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -174,7 +185,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── تسجيل تواصل بلا تغيير حالة ───────────────────────────────────────
   app.post("/api/followups/:id/contact", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -190,7 +201,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  مفتوحةٌ منذ ما قبل النشر — وما تُنتجه قابلٌ للاستئناف بضغطةٍ واحدة.
   app.post("/api/followups/:id/accept-price", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -210,7 +221,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── إغلاق بلا شراء ───────────────────────────────────────────────────
   app.post("/api/followups/:id/close", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -231,7 +242,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── إعادة الفتح — حدثٌ جديد لا تصحيحُ قديم ───────────────────────────
   app.post("/api/followups/:id/reopen", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     const to = req.body?.toStatus === "follow_up" ? "follow_up" : "awaiting_patient_decision";
@@ -256,7 +267,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  الطبيب اقترحه في معاينته، والفرع يقرّر. ولا تصنيعَ يبدأ من هنا.
   app.post("/api/followups/:id/expert", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     const expertUserId = Number(req.body?.expertUserId);
@@ -409,8 +420,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  ولا مسارَ تصنيعٍ ثانٍ: الباب هو الباب، والمتغيّر حارسُه وحده.
   async function confirmPurchaseHandler(req: Req, res: any) {
     const s = getSession(req);
+    //  **والطبيبُ يُردّ هنا صراحةً**: هذه الضغطة تفتح أمرَ تصنيعٍ وتقيّد
+    //  كلفةً — فعلٌ تشغيليٌّ ماليّ لا سريريّ.
     if (!canConfirmPurchase(s)) {
-      return res.status(403).json({ error: "غير مصرح" });
+      return res.status(403).json({ error: COMMERCIAL_ONLY });
     }
     const f = await loadInScope(req, res);
     if (!f) return;

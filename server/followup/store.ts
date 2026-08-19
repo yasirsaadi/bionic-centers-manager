@@ -709,10 +709,10 @@ export async function selectExpert(params: {
 // ── إشارةُ الطبيب ────────────────────────────────────────────────────────
 
 /** الحالاتُ الحيّة التي تُرفع فيها الراية — والمنتهيتان خارجها بداهةً. */
+//  **هي الحالاتُ الحيّة الثلاث بعينها** التي تعرض فيها `allowedActions`
+//  الزرّ — فلا يقبل الخادمُ ما لا تعرضه الشاشة ولا العكس.
 const SIGNALABLE: FollowupStatus[] = [
-  "awaiting_patient_decision", "follow_up",
-  "price_approval_pending", "price_approved_waiting_patient",
-  "purchase_approval_pending",
+  "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
 ];
 
 /**

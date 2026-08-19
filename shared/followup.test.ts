@@ -12,7 +12,8 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  allowedActions, canApprove, canConfirmPurchase, canDecideLegacyPriceRequest,
+  allowedActions, canActCommercially, canApprove, canConfirmPurchase,
+  canDecideLegacyPriceRequest,
   canRecordFollowup, canSelectExpert, canSetCommercialPrice,
   canSignalPurchaseInterest, canViewFollowup,
   computeCommercialPrice, isFollowupReason, isTerminal,
@@ -33,7 +34,11 @@ function same(msg: string, got: unknown, expected: unknown) {
 const recv = { role: "reception", isAdmin: false, permissions: { canAddPatients: true } };
 const mgr = { role: "branch_manager", isAdmin: false, permissions: {} };
 const doc = { role: "doctor", isAdmin: false, permissions: { canWriteMedicalExam: true } };
+//  **دورُه استقبال** يحمل قدرةً سريرية: يبقى تجارياً لأن الدورَ هو الحَكَم.
 const docCap = { role: "reception", isAdmin: false, permissions: { canWriteMedicalExam: true } };
+//  **ودورُه سريريٌّ بحت** يحمل القدرة: يوقّع ويشير ولا يعمل تجارياً.
+const clinicalOnly = { role: "therapist", isAdmin: false,
+  permissions: { canWriteMedicalExam: true } };
 const admin = { role: "admin", isAdmin: true, permissions: {} };
 const expert = { role: "prosthetics_expert", isAdmin: false, permissions: {} };
 //  **يحملان `canAddPatients`/`canEditPatients`** عمداً: البوّابة بالدور لا
@@ -45,14 +50,25 @@ const physioStaff = { role: "therapist", isAdmin: false,
 const expertWithAdd = { role: "prosthetics_expert", isAdmin: false,
   permissions: { canAddPatients: true } };
 
-// ══ أ. مَن يتابع ═══════════════════════════════════════════════════════
-console.log("\n── مَن يسجّل المتابعة ──");
-same("أ. الاستقبال يتابع", canRecordFollowup(recv), true);
-same("   ومديرُ الفرع", canRecordFollowup(mgr), true);
-same("   والطبيب", canRecordFollowup(doc), true);
-same("   والمسؤول", canRecordFollowup(admin), true);
-same("   **والخبير الصِرف لا** — منفّذٌ لا متابِع", canRecordFollowup(expert), false);
-same("   وبلا جلسة ⟶ لا", canRecordFollowup(null), false);
+// ══ أ. مَن يعمل تجارياً ═════════════════════════════════════════════════
+//  **الطبيبُ خارجها**: يقرأ الملفَّ كلَّه ولا يؤجّل ولا يغلق ولا يسنِد
+//  خبيراً ولا يؤكّد شراءً. وكانت بوّابةً واحدةً لكلّ مَن يلمس الملفّ.
+console.log("\n── مَن يعمل تجارياً ──");
+same("أ. الاستقبال يتابع تجارياً", canActCommercially(recv), true);
+same("   ومديرُ الفرع", canActCommercially(mgr), true);
+same("   والمسؤول", canActCommercially(admin), true);
+same("أ٠. **والطبيبُ لا** — قرارُه سريريّ لا تجاري", canActCommercially(doc), false);
+same("   **ولا مَن دورُه سريريٌّ بحت** — القدرةُ السريرية لا تفتح باباً تجارياً",
+  canActCommercially(clinicalOnly), false);
+//  **والدورُ هو الحَكَم لا القدرة**: موظّفُ استقبالٍ يوقّع معايناتٍ يبقى
+//  تجارياً بدوره، ولا تسحب منه القدرةُ السريريةُ عملَه اليومي.
+same("أ٠ب. **ومَن دورُه استقبالٌ ويحمل القدرة يبقى تجارياً** — الدورُ يقرّر",
+  canActCommercially(docCap), true);
+same("   **والخبير الصِرف لا** — منفّذٌ لا متابِع", canActCommercially(expert), false);
+same("   وبلا جلسة ⟶ لا", canActCommercially(null), false);
+same("   والاسمُ القديم مطابقٌ للجديد — لا بوّابتان",
+  [recv, mgr, doc, docCap, admin, expert]
+    .filter((w) => canRecordFollowup(w) !== canActCommercially(w)), []);
 
 // ══ أ٢. القراءة بالدور لا بالقدرة ═════════════════════════════════════
 //  ملفُّ المتابعة يحمل السعر المعتمد وهاتفَ المريض وسببَ تردّده. وكانت
@@ -66,9 +82,15 @@ same("   **ولا مُدخِلُ الجلسات ولو حمل `canEditPatients`*
   canViewFollowup(physioStaff), false);
 same("   **ولا خبيرُ الأطراف ولو حملها**", canViewFollowup(expertWithAdd), false);
 same("   وبلا جلسة ⟶ لا", canViewFollowup(null), false);
-same("   **والقراءة والكتابة بوّابةٌ واحدة**",
-  [accountant2, physioStaff, expertWithAdd, recv, mgr, doc, admin]
-    .filter((w) => canViewFollowup(w) !== canRecordFollowup(w)), []);
+//  **والقراءةُ أوسعُ من الكتابة عمداً**: الطبيبُ يرى ولا يكتب. وهو الفرقُ
+//  كلُّه — فحجبُ القراءة عنه كان سيجعله يسأل الاستعلامات عن نتيجة قرارٍ بدأه.
+same("أ٣. **والطبيبُ يقرأ ولا يعمل تجارياً**",
+  [canViewFollowup(doc), canActCommercially(doc)], [true, false]);
+same("   ومَن دورُه سريريٌّ بحت كذلك",
+  [canViewFollowup(clinicalOnly), canActCommercially(clinicalOnly)], [true, false]);
+same("   **ومَن لا يقرأ لا يكتب** — الحجبُ لا ثغرةَ فيه",
+  [accountant2, physioStaff, expertWithAdd]
+    .filter((w) => canViewFollowup(w) || canActCommercially(w)), []);
 
 // ══ ب. مَن يعتمد — القاعدة الحاسمة ═════════════════════════════════════
 console.log("\n── مَن يعتمد ──");
@@ -88,9 +110,13 @@ same("   والغموض يُقرأ «لا»",
 console.log("\n── مَن يؤكّد الشراء ──");
 same("ب٢. **الاستقبال يؤكّد الشراء**", canConfirmPurchase(recv), true);
 same("   ومديرُ الفرع", canConfirmPurchase(mgr), true);
-same("   والطبيب", canConfirmPurchase(doc), true);
-same("   ومَن يحمل `canWriteMedicalExam`", canConfirmPurchase(docCap), true);
 same("   والمسؤول العام", canConfirmPurchase(admin), true);
+//  **والطبيبُ لا**: هذه الضغطة تفتح أمرَ تصنيعٍ وتقيّد كلفةً على حساب
+//  المريض — فعلٌ تشغيليٌّ ماليّ لا سريريّ.
+same("ب٢ب. **والطبيبُ لا يؤكّد الشراء** — الضغطةُ تفتح تصنيعاً وتقيّد مالاً",
+  canConfirmPurchase(doc), false);
+same("   ولا مَن دورُه سريريٌّ بحت", canConfirmPurchase(clinicalOnly), false);
+same("   **ومَن دورُه استقبالٌ يبقى يؤكّد** — الدورُ يقرّر", canConfirmPurchase(docCap), true);
 same("ب٣. **والخبيرُ لا** — محجوبٌ مالياً في كل النظام", canConfirmPurchase(expert), false);
 same("   وبلا جلسة ⟶ لا", canConfirmPurchase(null), false);
 //  والفرقُ بين البوّابتين مُثبَتٌ لا موصوف: مديرُ الفرع يبيع ولا يعتمد سعراً.
@@ -111,9 +137,26 @@ same("   **ومديرُ الفرع يرى معها تحديدَ السعر**",
   allowedActions(mgr, "awaiting_patient_decision").sort(),
   ["close", "confirm_purchase", "defer", "set_commercial_price"]);
 //  والطبيبُ يرى **إشارةَ التسليم** — ولا يسعّر ولا يبيع بقرارٍ تجاري.
-same("   **والطبيب يرى إشارةَ الرغبة ولا يسعّر**",
-  allowedActions(doc, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "signal_purchase_interest"]);
+//  **والطبيبُ يرى إشارتَه وحدها** — لا تأجيلَ ولا إغلاقَ ولا شراء.
+same("   **والطبيب يرى إشارتَه وحدها لا غير**",
+  allowedActions(doc, "awaiting_patient_decision"), ["signal_purchase_interest"]);
+same("   وكذلك في «مؤجَّل» و«بانتظار تأكيد المريض»",
+  [allowedActions(doc, "follow_up"),
+    allowedActions(doc, "price_approved_waiting_patient")],
+  [["signal_purchase_interest"], ["signal_purchase_interest"]]);
+//  **ولا فعلَ تجارياً واحداً في أيّ حالةٍ حيّة** — القائمةُ كلُّها تُفحَص.
+const COMMERCIAL_ACTIONS = ["confirm_purchase", "defer", "close", "reopen",
+  "set_commercial_price"];
+same("   **ولا فعلَ تجارياً واحداً للطبيب في أيّ حالة**",
+  FOLLOWUP_STATUSES.flatMap((st) =>
+    allowedActions(doc, st).filter((a) => COMMERCIAL_ACTIONS.includes(a))
+      .map((a) => `${st}:${a}`)),
+  []);
+same("   ولا لمن دورُه سريريٌّ بحت",
+  FOLLOWUP_STATUSES.flatMap((st) =>
+    allowedActions(clinicalOnly, st).filter((a) => COMMERCIAL_ACTIONS.includes(a))
+      .map((a) => `${st}:${a}`)),
+  []);
 same("   **ولا زرَّ «طلب تعديل سعر» لأحدٍ إطلاقاً** — لم يعد الطريقُ طلباً",
   [recv, mgr, doc, admin]
     .filter((x) => allowedActions(x, "awaiting_patient_decision").includes("request_price_change")),
@@ -188,8 +231,14 @@ same("   **وفي `purchase_approval_pending` الخبيرُ متاحٌ وشرط
   [canSelectExpert(recv, "purchase_approval_pending"),
     allowedActions(recv, "purchase_approval_pending").includes("confirm_purchase")],
   [true, true]);
-same("   ومديرُ الفرع والطبيبُ والمسؤول كذلك",
-  [mgr, doc, admin].flatMap((w) => LIVE.filter((st) => !canSelectExpert(w, st))), []);
+same("   ومديرُ الفرع والمسؤول كذلك",
+  [mgr, admin].flatMap((w) => LIVE.filter((st) => !canSelectExpert(w, st))), []);
+//  **والطبيبُ لا يسنِد خبيراً**: مَن يركّب الجهاز ومتى يفرغ له قرارٌ
+//  تشغيليٌّ يعرفه الفرعُ لا العيادة.
+same("   **والطبيبُ لا يسنِد خبيراً في أيّ حالة**",
+  LIVE.filter((st) => canSelectExpert(doc, st)), []);
+same("   ولا مَن دورُه سريريٌّ بحت",
+  LIVE.filter((st) => canSelectExpert(clinicalOnly, st)), []);
 same("   **ولا يظهر في النهائيّتين**",
   [recv, mgr, doc, admin].flatMap((w) =>
     ["closed_without_purchase", "converted"].filter((st) => canSelectExpert(w, st))), []);
