@@ -434,6 +434,92 @@ export class DatabaseStorage implements IStorage {
     return out;
   }
 
+  /**
+   * حالةُ العلاج الطبيعي — تُقرأ إن وُجدت و**تُفتح إن لم توجد**.
+   *
+   * ══ لماذا الفتحُ لا البحثُ وحده ═══════════════════════════════════════
+   * الاستشارةُ و«الخدمة الأخرى» والجلساتُ الإضافية **علاجٌ طبيعي بحكم
+   * التصنيف**. وكان القيدُ يُحَلّ بـ`resolveCaseId` العامّة، فترجع أوّلَ
+   * حالةٍ للمريض بترتيبها (أطراف ثمّ مساند ثمّ علاج) — فمريضُ أطرافٍ يشتري
+   * استشارةً تُقيَّد استشارتُه **على قسم الأطراف**، ومريضٌ بلا حالةٍ يُنتج
+   * قيداً بلا قسمٍ إطلاقاً. كلاهما كذبٌ على التقرير.
+   *
+   * فالحلُّ أن يوجد الخيطُ **قبل أن يتحرّك دينار**: حالةٌ صريحة بكلفةِ صفر،
+   * تُملأ بالمال بعدها. ولا يُسقَط شيءٌ من حالاته الأخرى ولا يُمَسّ.
+   *
+   * ══ والعلمُ يُرفع معها ════════════════════════════════════════════════
+   * `isPhysiotherapy` ليس زينة: `syncPatientCases` تشتقّ الحالاتِ منه،
+   * والموزِّعُ يفتح «جلسات إضافية» به، و«الكلفة والجلسات» ترفضه بدونه.
+   * فحالةٌ بلا علمٍ تصنع مريضاً نصفَه في القسم ونصفَه خارجه.
+   *
+   * ══ ولا كلفةَ تُخترع ═══════════════════════════════════════════════════
+   * `cost: 0` و`costSource: 'auto'` — **نفسُ ما تنشئه `syncPatientCases`
+   * حرفاً** لو كان العلم مرفوعاً منذ البدء. فأرضيّةُ الكلفة وحاملُها
+   * وكلُّ ما يليها يتصرّف كما يتصرّف مع أيّ مريض علاجٍ طبيعي، ولا ديناميّةَ
+   * جديدة تدخل النظام من هذا الباب.
+   *
+   * والقفلُ الاستشاري + `onConflictDoNothing` + إعادةُ القراءة: نداءان
+   * متزامنان يخرجان بنفس الحالة الواحدة لا بحالتين.
+   */
+  async ensurePhysiotherapyCase(patientId: number): Promise<number | null> {
+    return await db.transaction(async (tx) => {
+      //  نفسُ قفل `syncPatientCases` (919) — فلا يتسابق الفتحُ مع مزامنةٍ
+      //  جارية على المريض نفسه.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+      const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      if (!p) return null;
+
+      const [existing] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId),
+          eq(patientCases.caseType, "physiotherapy")));
+      if (existing) {
+        //  حالةٌ قائمة والعلمُ منخفض (ملفٌّ قديم) — يُرفع فيتّسق الاثنان.
+        if (!p.isPhysiotherapy) {
+          await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
+        }
+        return existing.id;
+      }
+
+      const clean = (o: Record<string, any>) =>
+        Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+      await tx.insert(patientCases).values({
+        patientId, branchId: p.branchId, caseType: "physiotherapy",
+        cost: 0, costSource: "auto",
+        //  نفسُ حقول `syncPatientCases` لحالة العلاج الطبيعي.
+        details: clean({
+          diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea,
+          injuries: p.injuries, treatmentType: p.treatmentType,
+        }),
+      }).onConflictDoNothing();
+      await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
+
+      //  إعادةُ القراءة لا `returning()`: مع `onConflictDoNothing` يرجع
+      //  الإدراجُ المتخطّى صفراً، والقارئُ يريد المعرّف الحيّ لا العدم.
+      const [created] = await tx.select({ id: patientCases.id }).from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId),
+          eq(patientCases.caseType, "physiotherapy")));
+      return created?.id ?? null;
+    });
+  }
+
+  /**
+   * زيادةُ كلفةِ حالةٍ **بمعرّفها** لا باستنتاجٍ من وسمٍ نصّي.
+   *
+   * `addToCaseCost` تحلّ الحالةَ من الوسم، وهو الصواب حين يكون الوسمُ هو
+   * كلَّ ما نملك. أمّا حين يكون القسمُ محسوماً بالتصنيف (استشارةٌ ⟶ علاجٌ
+   * طبيعي) فالاستنتاجُ يفتح بابَ الخطأ بلا حاجة. و`patientId` في الشرط كي
+   * لا تُعدَّل حالةُ مريضٍ آخر بمعرّفٍ مغلوط.
+   */
+  async addToCaseCostById(patientId: number, caseId: number, amount: number): Promise<void> {
+    if (!(amount > 0)) return;
+    const [c] = await db.select().from(patientCases)
+      .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)));
+    if (!c) return;
+    await db.update(patientCases)
+      .set({ cost: (c.cost || 0) + amount, updatedAt: new Date() })
+      .where(eq(patientCases.id, caseId));
+  }
+
   // Set a case's cost. Scoped by patientId so a case can never be edited under
   // the wrong patient. Never touches patient.total_cost (reports unaffected).
   // Marks the cost 'manual' so the automatic cost floor never overrides it.
@@ -2326,12 +2412,15 @@ export class DatabaseStorage implements IStorage {
       prosthetic: { revenue: number; paid: number };
       medical_support: { revenue: number; paid: number };
       physiotherapy: { revenue: number; paid: number };
-      /** ما لم تحسمه علاقةٌ مهيكلة — يُعرَض ولا يُوزَّع. */
+      /** مالُ أجهزةٍ مؤكَّد لم يُثبَت نوعُه — قديمٌ حصراً، ومبيعاتٌ فقط. */
+      legacyDevicesUnsplit: { revenue: number };
+      /** ما لم تحسمه علاقةٌ ولا مصدرٌ قاطع — يُعرَض ولا يُوزَّع. */
       unclassified: { revenue: number; paid: number };
     };
-    /** تجميعان مشتقّان — الأطراف+المساند، والإجمالي العام. */
+    /** تجميعاتٌ مشتقّة — انظر `DepartmentRollups` لمعنى كلٍّ منها. */
     rollups: {
       devicesCombined: { revenue: number; paid: number };
+      classifiedTotal: { revenue: number; paid: number };
       grandTotal: { revenue: number; paid: number };
     };
     expensesBySection: {
@@ -2437,22 +2526,49 @@ export class DatabaseStorage implements IStorage {
       .where(paidWhere)
       .groupBy(patientCases.caseType);
 
-    // ══ المبيعات بالقسم — من حالة القيد (ترحيل ٠٥٦) ═════════════════════
-    //  كان التبويبُ بـ`source`، وهو لا يفرّق طرفاً من مسند: «تخصيص»
-    //  و«صيانة» تقعان في القسمين معاً. فصار من `case_id` — نفسِ العلاقة
-    //  التي يقرأ منها المقبوضُ أعلاه، فلا ينحرف النصفان.
+    // ══ المبيعات بالقسم — سلَّمُ أدلّةٍ من الأقوى إلى الأضعف ═══════════════
     //
-    //  والقيدُ الذي لا يحمل حالةً (قديمٌ قبل الترحيل، أو عكسٌ إداري لحالةٍ
-    //  سُحبت) **لا يُخمَّن**: يسقط في «غير مبوَّب» ويُعرَض كذلك.
-    const revenueByDept = await db
-      .select({
-        dept: patientCases.caseType,
-        total: sql<string>`COALESCE(SUM(${costEntries.amount}), 0)`,
-      })
-      .from(costEntries)
-      .innerJoin(patientCases, eq(costEntries.caseId, patientCases.id))
-      .where(revWhereFlow)
-      .groupBy(patientCases.caseType);
+    //  ١) **`case_id`** (ترحيل ٠٥٦) — العلاقةُ المهيكلة نفسُها التي يقرأ منها
+    //     المقبوضُ أعلاه، فلا ينحرف النصفان. هذه سلطةُ كلّ صفٍّ جديد.
+    //
+    //  ٢) **`device_episode_id`** — والحلقةُ تحمل `case_id` غيرَ فارغ بحكم
+    //     المخطّط، فتحسم الطرفَ من المسند **يقيناً** لصفٍّ قديمٍ لا يحمل
+    //     حالة. دليلٌ بنيويّ لا تخمين.
+    //
+    //  ٣) **مصادرُ العلاج الطبيعي القاطعة** — `physio_pricing` و
+    //     `session_backfill` لا تقعان إلّا فيه، فهي حاسمةٌ بذاتها.
+    //
+    //  ٤) **مصادرُ الأجهزة القاطعة** — «تخصيص» و«صيانة»: نعلم يقيناً أنها
+    //     **مالُ أجهزة**، ولا نعلم أطرافاً هي أم مساند. فتُجمَع في
+    //     `legacy_devices` **ولا تُقسَّم بالتخمين ولا تُدسّ في العلاج
+    //     الطبيعي**. وهذا ما كان `main` يعدّه «أجهزة» قبل هذه المرحلة، فتبقى
+    //     قيمتُه هي هي — والتوافقُ الرجعي في **الأرقام** لا في شكل JSON وحده.
+    //
+    //  ٥) وما لا يحسمه شيءٌ من ذلك يبقى **غير مبوَّبٍ ظاهراً**.
+    //
+    //  ولا مطابقةَ نصٍّ حرّ في أيّ درجة، ولا استنتاجٌ من أعلام المريض.
+    const bRevBranch = branchId ? sql` AND e.branch_id = ${branchId}` : sql``;
+    const bRevStart = rangeStart ? sql` AND e.created_at >= ${rangeStart}` : sql``;
+    const bRevEnd = endExclusive ? sql` AND e.created_at < ${endExclusive}` : sql``;
+    const revenueRowsRaw = await db.execute<{ bucket: string; total: string }>(sql`
+      SELECT CASE
+               WHEN e.case_id IS NOT NULL AND c.case_type IS NOT NULL THEN c.case_type
+               WHEN e.device_episode_id IS NOT NULL AND ec.case_type IS NOT NULL THEN ec.case_type
+               WHEN e.source IN ('physio_pricing', 'session_backfill') THEN 'physiotherapy'
+               WHEN e.source IN ('assign_manufacturing', 'maintenance') THEN 'legacy_devices'
+               ELSE 'unclassified'
+             END AS bucket,
+             COALESCE(SUM(e.amount), 0)::bigint AS total
+        FROM cost_entries e
+        LEFT JOIN patient_cases c ON c.id = e.case_id
+        LEFT JOIN patient_device_episodes pe ON pe.id = e.device_episode_id
+        LEFT JOIN patient_cases ec ON ec.id = pe.case_id
+       WHERE TRUE${bRevBranch}${bRevStart}${bRevEnd}
+       GROUP BY 1
+    `);
+    const revenueByDept = (revenueRowsRaw.rows ?? []).map((r: any) => ({
+      dept: String(r.bucket), total: String(r.total),
+    }));
 
     // Expenses per section (NULL/legacy → shared).
     const expWhere = expenseConditions.length > 0 ? and(...expenseConditions) : sql`TRUE`;
@@ -2471,11 +2587,17 @@ export class DatabaseStorage implements IStorage {
     const prostheticRevenue = byDept(revenueByDept, "prosthetic");
     const supportRevenue = byDept(revenueByDept, "medical_support");
     const physioRevenue = byDept(revenueByDept, "physiotherapy");
+    //  مالُ أجهزةٍ **مؤكَّد** لم يُثبت نوعُه — قديمٌ بلا حالةٍ ولا حلقة.
+    //  يُعرَض صفّاً مستقلاً ولا يُقسَّم بين الطرف والمسند بالتخمين.
+    const legacyDevicesRevenue = byDept(revenueByDept, "legacy_devices");
     const prostheticPaid = byDept(paidByDept, "prosthetic");
     const supportPaid = byDept(paidByDept, "medical_support");
     const physioPaid = byDept(paidByDept, "physiotherapy");
-    //  التجميعُ للتوافق الرجعي، ومصدرُه القسمان لا دلوٌ مستقلّ.
-    const deviceRevenue = prostheticRevenue + supportRevenue;
+    //  «الأجهزة» بالمعنى الذي كان يقوله `main` حرفاً: المُثبَتان + المؤكَّدُ
+    //  غيرُ المقسَّم. فقيمةُ `bySection.devices` لا تتراجع بهذه المرحلة.
+    const deviceRevenue = prostheticRevenue + supportRevenue + legacyDevicesRevenue;
+    //  والمقبوضُ لا سلَّمَ له: `payments.case_id` مملوءةٌ منذ الطور الثالث،
+    //  فتفصيلُه الثلاثيّ يجمع بالضبط ما كان `main` يعدّه «أجهزة» و«علاجاً».
     const devicePaid = prostheticPaid + supportPaid;
     // Any expense row whose section is neither 'prosthetic' nor 'physio'
     // (i.e. 'shared', NULL, or anything unexpected) reconciles into shared, so
@@ -2493,6 +2615,8 @@ export class DatabaseStorage implements IStorage {
       prosthetic: { revenue: prostheticRevenue, paid: prostheticPaid },
       medical_support: { revenue: supportRevenue, paid: supportPaid },
       physiotherapy: { revenue: physioRevenue, paid: physioPaid },
+      /** مالُ أجهزةٍ مؤكَّد لم يُثبَت نوعُه — مبيعاتٌ فقط، وقديمٌ حصراً. */
+      legacyDevicesUnsplit: { revenue: legacyDevicesRevenue },
       unclassified,
     };
     const summaryRollups = rollups(byDepartment);

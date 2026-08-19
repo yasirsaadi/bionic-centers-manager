@@ -52,7 +52,13 @@ same("   وكلاهما قسمٌ رسمي قائمٌ بذاته",
 same("   والعلاجُ الطبيعي ليس منهما", isDeviceDepartment("physiotherapy"), false);
 //  ولا يظهر «devices» بين الأقسام في أي ترتيبِ عرض — إنما بين التجميعات.
 same("   وترتيبُ العرض يفصل القسمَ عن التجميع", [...REPORT_ROW_ORDER],
-  ["prosthetic", "medical_support", "devicesCombined", "physiotherapy", "grandTotal"]);
+  ["prosthetic", "medical_support", "legacyDevicesUnsplit", "devicesCombined",
+    "physiotherapy", "classifiedTotal", "unclassified", "grandTotal"]);
+//  والقديمُ غيرُ المقسَّم **قبل** المجموع مباشرة: فيرى القارئ لماذا يزيد
+//  المجموعُ على الصفّين فوقه ولا يظنّ الحسابَ مكسوراً.
+check(REPORT_ROW_ORDER.indexOf("legacyDevicesUnsplit") < REPORT_ROW_ORDER.indexOf("devicesCombined"),
+  "   والقديمُ غيرُ المقسَّم يسبق مجموعَ الأجهزة", REPORT_ROW_ORDER.join(" · "));
+same("   **وهو ليس قسماً رابعاً**", isDepartment("legacyDevicesUnsplit"), false);
 
 // ══ ج. الأنواعُ الفرعية للعلاج الطبيعي ══════════════════════════════════
 console.log("\n── أنواعُ العلاج الطبيعي الفرعية ──");
@@ -126,7 +132,7 @@ same("   ويصالِح المجموعَ إلى الدينار",
      - (b.prosthetic.paid + b.medical_support.paid + b.physiotherapy.paid
         + b.unclassified.paid)],
   [0, 0]);
-same("ل. **وغيرُ المبوَّب خارج تجميع الأجهزة** — تجميعُ قسمين معروفين",
+same("ل. **وغيرُ المبوَّب خارج تجميع الأجهزة** — تجميعُ ما نعرفه أجهزةً",
   r.devicesCombined.revenue, b.prosthetic.revenue + b.medical_support.revenue);
 //  و«المقبوض» و«المبيعات» رقمان مستقلّان لا يُشتقّ أحدهما من الآخر.
 check(r.grandTotal.paid !== r.grandTotal.revenue,
@@ -135,6 +141,37 @@ check(r.grandTotal.paid !== r.grandTotal.revenue,
 //  وغيرُ المبوَّب يبقى ظاهراً — لا يُدسّ في العلاج الطبيعي.
 same("ن. **وغيرُ المبوَّب يبقى ظاهراً بذاته**",
   [b.unclassified.revenue, b.unclassified.paid], [50_000, 25_000]);
+same("س. و«مجموعُ المعروف» = الأقسامُ الثلاثة وحدها",
+  r.classifiedTotal, { revenue: 1_550_000, paid: 775_000 });
+check(r.classifiedTotal.paid < r.grandTotal.paid,
+  "   **وهو أصغرُ من الإجمالي بمقدار ما لم يُحسَم** — والفرقُ قياسُ المشكلة",
+  `${r.classifiedTotal.paid} < ${r.grandTotal.paid}`);
+
+// ══ و.٢ الأجهزةُ القديمة غيرُ المقسَّمة ═════════════════════════════════
+//  مالُ أجهزةٍ **مؤكَّد** لم يُثبَت أطرافاً هو أم مساند. الحارسُ الحاسم أنه
+//  يدخل مجموعَ الأجهزة والإجماليَّ العام، **ولا يدخل قسماً بعينه ولا
+//  «مجموعَ المعروف»** — فلا يُقسَّم بالتخمين ولا يُنقِص المالَ الحقيقي.
+console.log("\n── الأجهزة القديمة غير المقسَّمة ──");
+const bLegacy: DepartmentBreakdown = { ...b, legacyDevicesUnsplit: { revenue: 700_000 } };
+const rl = rollups(bLegacy);
+same("ع. **يدخل مجموعَ الأجهزة** — فقيمةُ «الأجهزة» لا تتراجع",
+  rl.devicesCombined.revenue, r.devicesCombined.revenue + 700_000);
+same("   **ولا يُنسَب لأحد القسمين**",
+  [bLegacy.prosthetic.revenue, bLegacy.medical_support.revenue],
+  [b.prosthetic.revenue, b.medical_support.revenue]);
+same("   **ولا يُدسّ في العلاج الطبيعي**",
+  bLegacy.physiotherapy.revenue, b.physiotherapy.revenue);
+same("   **ولا يدخل «مجموعَ المعروف»** — لأن قسمَه غيرُ معروف",
+  rl.classifiedTotal, r.classifiedTotal);
+same("ف. **ويدخل الإجماليَّ العام** — المالُ الحقيقي لا يُنقَص بمشكلة تبويب",
+  rl.grandTotal.revenue, r.grandTotal.revenue + 700_000);
+same("   ولا مقبوضَ له: لا نظيرَ له في الدفعات فلا يُدَّعى قياسٌ لم يقع",
+  rl.grandTotal.paid, r.grandTotal.paid);
+//  والمصالحةُ الكاملة إلى الدينار مع وجوده.
+same("ص. **والمصالحةُ تامّةٌ إلى الدينار مع وجوده**",
+  rl.grandTotal.revenue
+    - (bLegacy.prosthetic.revenue + bLegacy.medical_support.revenue
+       + bLegacy.physiotherapy.revenue + 700_000 + bLegacy.unclassified.revenue), 0);
 
 // ══ ز. أقسامُ المريض بالدليل ═══════════════════════════════════════════
 console.log("\n── انتماءُ المريض ──");

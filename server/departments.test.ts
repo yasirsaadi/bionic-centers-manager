@@ -179,18 +179,68 @@ async function main() {
       .map((r: any) => r.case_type);
     same("   **وكلتاهما مبوَّبةٌ علاجاً طبيعياً — لا «غير مبوَّب»**",
       newSvcRows, ["physiotherapy", "physiotherapy"]);
-    //  ومريضُ الأطراف الذي يشتري استشارةً: القيدُ يتبع المال حيث ذهب —
-    //  حالةُ أطرافه، وهي التي ارتفعت كلفتُها. رقمُ التقرير ورقمُ الحالة
-    //  يقولان الشيء نفسه، ولا يقول القسمُ شيئاً والكلفةُ شيئاً آخر.
+    // ══ ٢ب. الخيطُ يُفتح قبل المال ═══════════════════════════════════════
+    //  **مريضُ أطرافٍ يشتري استشارة**: الاستشارةُ علاجٌ طبيعي بحكم التصنيف،
+    //  فتُفتح له حالةُ علاجٍ طبيعي **قبل أن يتحرّك دينار** ويُقيَّد المال
+    //  عليها وحدها. وحالةُ أطرافه لا تُمسّ. وكان القيدُ قبلَ هذا يُحَلّ
+    //  بترتيبٍ عامّ فيقع **على قسم الأطراف** — استشارةٌ تُحسَب بيعَ أطراف.
+    console.log("\n── ٢ب. الخيطُ يُفتح قبل المال ──");
+    const proCostBefore = Number((await q(
+      `SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pPro]))[0].cost);
     const consOnPro = await http("POST", `/api/patients/${pPro}/new-service`, S.recv,
-      { serviceType: "consultation", serviceCost: 25_000, paidAmount: 0 });
+      { serviceType: "consultation", serviceCost: 25_000, paidAmount: 0, initialPayment: 25_000 });
     check(consOnPro.status === 200 || consOnPro.status === 201,
-      "   واستشارةٌ لمريض أطراف تُسجَّل", String(consOnPro.status));
-    same("   **وقيدُها يتبع الحالة التي استقبلت كلفتَها — لا «غير مبوَّب»**",
+      "٢ب. استشارةٌ لمريض أطرافٍ فقط تُسجَّل", String(consOnPro.status));
+    same("   **وتُفتح له حالةُ علاجٍ طبيعي**", consOnPro.body?.openedPhysiotherapyCase, true);
+    same("   **وقيدُها علاجٌ طبيعي لا أطراف**",
       (await q(`SELECT c.case_type FROM cost_entries e
                   LEFT JOIN patient_cases c ON c.id = e.case_id
                  WHERE e.patient_id = $1 AND e.source = 'new_service'`, [pPro]))
-        .map((r: any) => r.case_type), ["prosthetic"]);
+        .map((r: any) => r.case_type), ["physiotherapy"]);
+    same("   **وحالةُ أطرافه لم تُمَسّ كلفتُها**",
+      Number((await q(`SELECT cost FROM patient_cases
+                        WHERE patient_id=$1 AND case_type='prosthetic'`, [pPro]))[0].cost),
+      proCostBefore);
+    //  **الأربعةُ على حالةٍ واحدة**: القيدُ والكلفةُ والزيارةُ والدفعة.
+    const physioCaseOfPro = Number((await q(
+      `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='physiotherapy'`, [pPro]))[0].id);
+    same("   **والزيارةُ والدفعةُ على الحالة نفسها**", [
+      (await q(`SELECT case_id FROM visits WHERE patient_id=$1 AND details='خدمة جديدة'`, [pPro]))
+        .map((r: any) => Number(r.case_id)),
+      (await q(`SELECT case_id FROM payments WHERE patient_id=$1 AND notes LIKE 'استشارة%'`, [pPro]))
+        .map((r: any) => Number(r.case_id)),
+    ], [[physioCaseOfPro], [physioCaseOfPro]]);
+    same("   وكلفةُ حالة العلاج الطبيعي هي المبلغ بعينه",
+      Number((await q(`SELECT cost FROM patient_cases WHERE id=$1`, [physioCaseOfPro]))[0].cost), 25_000);
+
+    //  **مريضُ مساندَ فقط يشتري «خدمة أخرى»** — نفسُ القاعدة، ولا يُنسَب
+    //  دينارٌ منها للمساند.
+    const supCostBefore = Number((await q(
+      `SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`, [pSup]))[0].cost);
+    const otherOnSup = await http("POST", `/api/patients/${pSup}/new-service`, S.recv,
+      { serviceType: "other", serviceCost: 30_000, paidAmount: 0 });
+    check(otherOnSup.status === 200 || otherOnSup.status === 201,
+      "٢ج. «خدمة أخرى» لمريض مساندَ فقط تُسجَّل", String(otherOnSup.status));
+    same("   **وقيدُها علاجٌ طبيعي لا مساند**",
+      (await q(`SELECT c.case_type FROM cost_entries e
+                  LEFT JOIN patient_cases c ON c.id = e.case_id
+                 WHERE e.patient_id = $1 AND e.source = 'new_service'`, [pSup]))
+        .map((r: any) => r.case_type), ["physiotherapy"]);
+    same("   **وحالةُ مسنده لم تُمَسّ كلفتُها**",
+      Number((await q(`SELECT cost FROM patient_cases
+                        WHERE patient_id=$1 AND case_type='medical_support'`, [pSup]))[0].cost),
+      supCostBefore);
+
+    //  **ومريضٌ بلا أيّ حالة**: الخيطُ يُفتح أولاً، فلا قيدَ غيرَ مبوَّب.
+    const pBare = await mk("بلا حالة");
+    const consBare = await http("POST", `/api/patients/${pBare}/new-service`, S.recv,
+      { serviceType: "consultation", serviceCost: 15_000, paidAmount: 0 });
+    check(consBare.status === 200 || consBare.status === 201,
+      "٢د. استشارةٌ لمريضٍ بلا حالةٍ إطلاقاً تُسجَّل", String(consBare.status));
+    same("   **وحالةُ العلاج الطبيعي أُنشئت قبل المال**", await deptOfEntries(pBare),
+      [["physiotherapy", "new_service", 15_000]]);
+    same("   **والعلمُ يُرفع معها فيتّسق الملفّ**",
+      (await q(`SELECT is_physiotherapy FROM patients WHERE id=$1`, [pBare]))[0].is_physiotherapy, true);
 
     // ══ ٣. الصيانةُ تُبوَّب على قسم جهازها ══════════════════════════════
     console.log("\n── ٣. الصيانة ──");
@@ -247,17 +297,17 @@ async function main() {
     const acct = await storage.getAccountingSummary(1, TODAY, TODAY, { baghdadDays: true });
     const d = acct.byDepartment;
     same("٥. **الأطرافُ قسمٌ مستقلّ**",
-      [d.prosthetic.revenue, d.prosthetic.paid], [1_600_000, 490_000]);
+      [d.prosthetic.revenue, d.prosthetic.paid], [1_575_000, 490_000]);
     same("   **والمساندُ قسمٌ مستقلّ لا يُجمع معه**",
       [d.medical_support.revenue, d.medical_support.paid], [400_000, 100_000]);
     same("   والعلاجُ الطبيعي ثالثُها",
-      [d.physiotherapy.revenue, d.physiotherapy.paid], [400_000, 275_000]);
+      [d.physiotherapy.revenue, d.physiotherapy.paid], [470_000, 300_000]);
     same("   **ومريضُ القسمين يقع نصفُه هنا ونصفُه هناك — لا مضاعفةَ**",
       await deptOfEntries(pBoth),
       [["prosthetic", "add_case_type", 500_000], ["medical_support", "add_case_type", 150_000]]);
     same("٦. **والأطراف+المساند = جمعُ القسمين**",
       acct.rollups.devicesCombined,
-      { revenue: 1_600_000 + 400_000, paid: 590_000 });
+      { revenue: 1_575_000 + 400_000, paid: 590_000 });
     //  المصالحةُ إلى الدينار مع الأرقام المرجعية — شرطُ صحّة التقسيم.
     same("٧. **والإجماليُّ يصالِح المرجعَ إلى الدينار**",
       [acct.rollups.grandTotal.revenue - acct.totalRevenue,
@@ -280,15 +330,100 @@ async function main() {
     same("   ويبقى الإجماليُّ مصالِحاً",
       acct2.rollups.grandTotal.revenue - acct2.totalRevenue, 0);
 
+    // ══ ٦ب. سلَّمُ الأدلّة على القديم ═══════════════════════════════════
+    //  **صفوفُ ما قبل ترحيل ٠٥٦ كلُّها `case_id IS NULL`.** فلو قرأ التقسيمُ
+    //  `case_id` وحده لانهار كلُّ تبويبٍ تاريخيّ كان `main` يقوله صحيحاً
+    //  وصار «غير مبوَّب» — تراجعٌ لا تحسين. فالسلَّم يحفظه بدليلٍ مهيكل:
+    //    ٢) حلقةُ الجهاز ⟶ الطرفُ أو المسندُ **يقيناً**
+    //    ٣) مصدرُ علاجٍ قاطع ⟶ علاجٌ طبيعي
+    //    ٤) مصدرُ أجهزةٍ قاطع بلا إثباتِ نوع ⟶ **أجهزةٌ غير مقسَّمة**
+    //    ٥) وما عدا ذلك ⟶ غيرُ مبوَّبٍ ظاهراً
+    console.log("\n── ٦ب. سلَّمُ الأدلّة على القديم ──");
+    const pHist = await mk("تاريخيّ");
+    //  حلقةُ جهازٍ حقيقية على حالة مساند — دليلٌ بنيويٌّ يحسم النوع.
+    await http("POST", `/api/patients/${pHist}/add-case-type`, S.recv,
+      { caseType: "medical_support", serviceCost: 0 });
+    const histSupCase = Number((await q(
+      `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`, [pHist]))[0].id);
+    const histEpisode = Number((await q(
+      `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status)
+       VALUES ($1,$2,1,1,'delivered') RETURNING id`, [pHist, histSupCase]))[0].id);
+    //  والصفوفُ تُزرَع **بلا `case_id`** — تماماً كصفوف ما قبل الترحيل.
+    const seedLegacy = async (source: string, amount: number, episodeId: number | null = null) =>
+      q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, device_episode_id, case_id)
+         VALUES ($1,1,$2,$3,$4,NULL)`, [pHist, amount, source, episodeId]);
+    await seedLegacy("physio_pricing", 200_000);
+    await seedLegacy("session_backfill", 50_000);
+    await seedLegacy("assign_manufacturing", 800_000, histEpisode); // نوعُه مُثبَت
+    await seedLegacy("assign_manufacturing", 600_000);              // مؤكَّدٌ غيرُ مُثبَت
+    await seedLegacy("maintenance", 40_000);                        // مؤكَّدٌ غيرُ مُثبَت
+    await seedLegacy("opening", 33_000);                            // غامضٌ فعلاً
+
+    const acct3 = await storage.getAccountingSummary(1, TODAY, TODAY, { baghdadDays: true });
+    const dd = (k: keyof typeof acct3.byDepartment) =>
+      (acct3.byDepartment[k] as any).revenue - (acct2.byDepartment[k] as any).revenue;
+    same("١٠. **تاريخُ العلاج الطبيعي القاطع يبقى علاجاً طبيعياً**",
+      dd("physiotherapy"), 250_000);
+    same("١١. **وحلقةُ الجهاز تحسم النوع يقيناً** — مساندُ لا «أجهزة»",
+      [dd("prosthetic"), dd("medical_support")], [0, 800_000]);
+    same("١٢. **ومالُ الأجهزة المؤكَّد بلا إثباتِ نوعٍ يبقى أجهزةً غير مقسَّمة**",
+      dd("legacyDevicesUnsplit"), 640_000);
+    same("   **ولا يُقسَّم بين الطرف والمسند بالتخمين**",
+      [dd("prosthetic"), dd("medical_support")], [0, 800_000]);
+    same("   **ولا يُدسّ في العلاج الطبيعي**", dd("physiotherapy"), 250_000);
+    same("١٣. **والغامضُ فعلاً يبقى غيرَ مبوَّبٍ ظاهراً**", dd("unclassified"), 33_000);
+    //  والقيمةُ الرجعية: «الأجهزة» في الشكل القديم = ما كان `main` يعدّه
+    //  أجهزةً (تخصيص + صيانة) وقد بقي كاملاً، والتوافقُ في **الرقم**.
+    same("١٤. **و`bySection.devices` لا تتراجع قيمتُها**",
+      acct3.bySection.devices.revenue - acct2.bySection.devices.revenue,
+      800_000 + 600_000 + 40_000);
+    same("   و`bySection.physio` كذلك",
+      acct3.bySection.physio.revenue - acct2.bySection.physio.revenue, 250_000);
+    same("١٥. **والإجماليُّ المرجعي يصالِح إلى الدينار مع كلّ ذلك**",
+      [acct3.rollups.grandTotal.revenue - acct3.totalRevenue,
+        acct3.rollups.grandTotal.paid - acct3.totalPaid], [0, 0]);
+    //  «المعروف» أصغرُ من الإجمالي بمقدار غير المحسوم — والفرقُ قياسُ المشكلة.
+    same("١٦. **و«مجموع المعروف» أصغرُ بمقدار غير المحسوم بالضبط**",
+      acct3.rollups.grandTotal.revenue - acct3.rollups.classifiedTotal.revenue,
+      acct3.byDepartment.legacyDevicesUnsplit.revenue + acct3.byDepartment.unclassified.revenue);
+    same("   **ومجموعُ الأجهزة يضمّ غيرَ المقسَّم** فلا تتراجع قيمتُه",
+      acct3.rollups.devicesCombined.revenue,
+      acct3.byDepartment.prosthetic.revenue + acct3.byDepartment.medical_support.revenue
+        + acct3.byDepartment.legacyDevicesUnsplit.revenue);
+
+    //  **ونقدٌ حقيقيّ بلا تبويب**: دفعةٌ قديمة بلا حالةٍ ولا وسم. وجودُها
+    //  شرطُ اختبارِ الصافي أدناه — بدونها يتساوى «المعروف» بالمرجع فيمرّ
+    //  الخطأُ مختبئاً خلف تساوٍ عارض.
+    await q(`INSERT INTO payments (patient_id, branch_id, case_id, amount, notes,
+                                   payment_treatment_type)
+             VALUES ($1,1,NULL,$2,'دفعة قديمة بلا تبويب',NULL)`, [pLegacy, 120_000]);
+    const acctGap = await storage.getAccountingSummary(1, TODAY, TODAY, { baghdadDays: true });
+    same("١٦ب. **ونقدٌ مقبوضٌ بلا تبويب يظهر «غير مبوَّب» ولا يُنسَب لقسم**",
+      acctGap.byDepartment.unclassified.paid - acct3.byDepartment.unclassified.paid, 120_000);
+    check(acctGap.rollups.classifiedTotal.paid < acctGap.rollups.grandTotal.paid,
+      "   **فيفترق «المعروف» عن المرجع** — وهذا ما يجعل حارسَ الصافي ذا معنى",
+      `${acctGap.rollups.classifiedTotal.paid} < ${acctGap.rollups.grandTotal.paid}`);
+
     // ══ ٧. التقريرُ اليومي: تاريخٌ ونطاقُ فرع ══════════════════════════
     console.log("\n── ٧. التقرير اليومي ──");
     const rep = await http("GET", `/api/reports/daily-patient-report?date=${TODAY}`, S.admin);
     same("١٠. التقريرُ يُرجع جدولَ الزيارات وملخّصَه المالي",
       [rep.status, Array.isArray(rep.body?.visits), typeof rep.body?.financial],
       [200, true, "object"]);
+    const acctAll = await storage.getAccountingSummary(undefined, TODAY, TODAY, { baghdadDays: true });
     same("   وأرقامُه من مصدر الحقيقة نفسه",
-      rep.body?.financial?.rollups?.grandTotal?.paid,
-      (await storage.getAccountingSummary(undefined, TODAY, TODAY, { baghdadDays: true })).rollups.grandTotal.paid);
+      rep.body?.financial?.rollups?.grandTotal?.paid, acctAll.rollups.grandTotal.paid);
+    //  **الصافي النقدي من الإجماليّ المرجعي لا من «المعروف»**: مالٌ قُبض
+    //  فعلاً لا يُحذف من الصافي لأن تبويبَه ناقص — وإلّا عرضت الشاشة رقماً
+    //  أصغرَ من الحقيقة وبدا الفرعُ خاسراً بمشكلةِ بيانات.
+    same("١٠ب. **الصافي النقدي = كلُّ المقبوض − المصاريف**",
+      rep.body?.financial?.netCash,
+      acctAll.rollups.grandTotal.paid - acctAll.totalExpenses);
+    same("   وكلُّ المقبوض = المرجعُ نفسه بلا نقصان",
+      acctAll.rollups.grandTotal.paid, acctAll.totalPaid);
+    check(acctAll.rollups.classifiedTotal.paid <= acctAll.rollups.grandTotal.paid,
+      "   و«المعروف» لا يتجاوز المرجع أبداً",
+      `${acctAll.rollups.classifiedTotal.paid} vs ${acctAll.rollups.grandTotal.paid}`);
     //  يومٌ آخر ⟶ أرقامٌ أخرى: التاريخُ محترَم لا مُهمَل.
     const other日 = "2001-01-02";
     const repOld = await http("GET", `/api/reports/daily-patient-report?date=${other日}`, S.admin);
@@ -345,8 +480,50 @@ async function main() {
       (await q(`SELECT patient_classification FROM patients WHERE id=$1`, [pNull]))[0]
         .patient_classification, null);
 
-    // ══ ٨ب. الانتماءُ بالدليل: الحالةُ تتكلّم ولو صمتَ العلم ════════════
-    console.log("\n── ٨ب. أقسامُ المريض بالدليل ──");
+    // ══ ٨ب. التصنيفُ على **التعديل** ═══════════════════════════════════
+    //  الإنشاءُ يُلزم، والتعديلُ يحرس ما بُني — وإلّا فُتح بابٌ خلفيّ يفرّغ
+    //  كلَّ ما ألزمناه به.
+    console.log("\n── ٨ب. التصنيف على التعديل ──");
+    const classOf = async (id: number) =>
+      (await q(`SELECT patient_classification c FROM patients WHERE id=$1`, [id]))[0].c;
+    const pClass = Number(okNew.body?.id);
+    const edit = (id: number, body: any) => http("PUT", `/api/patients/${id}`, S.admin, body);
+
+    same("١٥أ. **«جديد ⟶ قديم» تصحيحٌ مشروع**",
+      (await edit(pClass, { patientClassification: "past" })).status, 200);
+    same("   والقيمةُ حُفظت فعلاً", await classOf(pClass), "past");
+    same("   **و«قديم ⟶ جديد» كذلك**",
+      (await edit(pClass, { patientClassification: "new" })).status, 200);
+    same("   والقيمةُ حُفظت فعلاً", await classOf(pClass), "new");
+
+    same("١٥ب. **ولا يُمحى تصنيفٌ قائم**",
+      (await edit(pClass, { patientClassification: "" })).status, 400);
+    same("   ولا بـ`null`", (await edit(pClass, { patientClassification: null })).status, 400);
+    same("   **والقيمةُ لم تتغيّر بعد الرفض**", await classOf(pClass), "new");
+    same("١٥ج. **وقيمةٌ مخترَعة تُردّ ولو كانت غير فارغة**",
+      (await edit(pClass, { patientClassification: "غير محدد" })).status, 400);
+    same("   ولا `unspecified`",
+      (await edit(pClass, { patientClassification: "unspecified" })).status, 400);
+    same("   **والقيمةُ لم تتغيّر بعد الرفض**", await classOf(pClass), "new");
+
+    //  والملفُّ القديم الفارغ: النموذجُ الكامل يعيد إرسال الحقل فارغاً،
+    //  فلو رددنا الطلب لتعذّر تعديلُ هاتفٍ على آلاف الملفات القديمة.
+    same("١٥د. **وملفٌّ قديم فارغُ التصنيف يُعدَّل بلا إجبار**",
+      (await edit(pNull, { phone: "07701112233", patientClassification: "" })).status, 200);
+    same("   **والفراغُ بقي فراغاً — لا يُخمَّن**", await classOf(pNull), null);
+    same("   والتعديلُ المطلوب نُفِّذ فعلاً",
+      (await q(`SELECT phone FROM patients WHERE id=$1`, [pNull]))[0].phone, "07701112233");
+    same("   وتعديلٌ لا يذكر الحقل أصلاً يمرّ كذلك",
+      (await edit(pNull, { address: "عنوانٌ ما" })).status, 200);
+    same("   والفراغُ ما زال فراغاً", await classOf(pNull), null);
+    same("١٥هـ. **وقيمةٌ صحيحة صريحة تُصنِّف الملفَّ القديم أخيراً**",
+      (await edit(pNull, { patientClassification: "past" })).status, 200);
+    same("   والقيمةُ حُفظت", await classOf(pNull), "past");
+    same("   **وبعدها لا تُمحى** — صار له تصنيفٌ يُحرَس",
+      (await edit(pNull, { patientClassification: "" })).status, 400);
+
+    // ══ ٨ج. الانتماءُ بالدليل: الحالةُ تتكلّم ولو صمتَ العلم ════════════
+    console.log("\n── ٨ج. أقسامُ المريض بالدليل ──");
     //  حالةٌ تُخلَق أيضاً من أمر تصنيع أو دفعةٍ موسومة (`case_signals`)، فمريضٌ
     //  بلا أعلام قد يحمل حالةً حقيقية. وعَدُّه «بلا قسم» إنذارُ جودةٍ كاذب —
     //  ولذلك تُرسِل `/api/patients` أنواعَ الحالات لا الأعلامَ وحدها.
@@ -355,7 +532,7 @@ async function main() {
              VALUES ($1,'medical_support','active')`, [pCaseOnly]);
     const list = await http("GET", "/api/patients", S.admin);
     const rowCaseOnly = (list.body ?? []).find((p: any) => p.id === pCaseOnly);
-    same("١٥ب. **`/api/patients` تُرسل أنواعَ الحالات دليلاً للقسم**",
+    same("١٥و. **`/api/patients` تُرسل أنواعَ الحالات دليلاً للقسم**",
       rowCaseOnly?.caseTypes, ["medical_support"]);
     same("   ولا علمَ واحدٌ مرفوع — فالأعلامُ وحدها كانت ستقول «بلا قسم»",
       [rowCaseOnly?.isAmputee, rowCaseOnly?.isMedicalSupport, rowCaseOnly?.isPhysiotherapy],

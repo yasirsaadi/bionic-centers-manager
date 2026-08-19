@@ -45,10 +45,13 @@ interface DailyReportResponse {
       prosthetic: DepartmentMoneyRow;
       medical_support: DepartmentMoneyRow;
       physiotherapy: DepartmentMoneyRow;
+      /** أجهزةٌ قديمة مؤكَّدة لم يُثبَت نوعُها — مبيعاتٌ فقط. */
+      legacyDevicesUnsplit: { revenue: number };
       unclassified: DepartmentMoneyRow;
     };
     rollups: {
       devicesCombined: DepartmentMoneyRow;
+      classifiedTotal: DepartmentMoneyRow;
       grandTotal: DepartmentMoneyRow;
     };
     expenses: number;
@@ -64,18 +67,31 @@ type DailyFinancial = NonNullable<DailyReportResponse["financial"]>;
  * والورقةُ المطبوعة تُوقَّع وتُحفظ — فخلافُها للشاشة أسوأُ من غيابها.
  */
 function financialRows(f: DailyFinancial) {
-  const rows: { key: string; label: string; m: DepartmentMoneyRow; strong?: boolean }[] = [
+  type Row = { key: string; label: string; m: { revenue: number; paid: number | null }; strong?: boolean };
+  const legacy = f.byDepartment.legacyDevicesUnsplit?.revenue || 0;
+  const unclassified = f.byDepartment.unclassified;
+  const rows: Row[] = [
     { key: "prosthetic", label: DEPARTMENT_LABELS.prosthetic, m: f.byDepartment.prosthetic },
     { key: "medical_support", label: DEPARTMENT_LABELS.medical_support, m: f.byDepartment.medical_support },
+  ];
+  //  قبل مجموع الأجهزة مباشرة، فيرى القارئ لماذا يزيد المجموعُ على الصفّين
+  //  فوقه. و`paid: null` لا صفر: لا نظيرَ له في المقبوض، والصفرُ ادّعاءُ قياس.
+  if (legacy !== 0) {
+    rows.push({ key: "legacyDevicesUnsplit", label: REPORT_ROW_LABELS.legacyDevicesUnsplit,
+      m: { revenue: legacy, paid: null } });
+  }
+  rows.push(
     { key: "devices", label: DEVICES_ROLLUP_LABEL, m: f.rollups.devicesCombined, strong: true },
     { key: "physiotherapy", label: DEPARTMENT_LABELS.physiotherapy, m: f.byDepartment.physiotherapy },
-    { key: "grand", label: GRAND_TOTAL_LABEL, m: f.rollups.grandTotal, strong: true },
-  ];
-  const unclassified = f.byDepartment.unclassified;
-  //  يظهر فقط حين يوجد — ولا يُدسّ في العلاج الطبيعي حين يوجد.
-  if ((unclassified.revenue || 0) !== 0 || (unclassified.paid || 0) !== 0) {
+  );
+  //  «مجموع الأقسام المعروفة» يُعرَض فقط حين يختلف عن الإجمالي — وإلّا
+  //  فهو صفٌّ مكرَّر يشوّش بلا أن يضيف.
+  const hasGap = legacy !== 0 || (unclassified.revenue || 0) !== 0 || (unclassified.paid || 0) !== 0;
+  if (hasGap) {
+    rows.push({ key: "classifiedTotal", label: REPORT_ROW_LABELS.classifiedTotal, m: f.rollups.classifiedTotal });
     rows.push({ key: "unclassified", label: REPORT_ROW_LABELS.unclassified, m: unclassified });
   }
+  rows.push({ key: "grand", label: GRAND_TOTAL_LABEL, m: f.rollups.grandTotal, strong: true });
   return rows;
 }
 
@@ -92,7 +108,8 @@ function financialRows(f: DailyFinancial) {
 function DailyFinancialSummary({ f, isAr }: {
   f: DailyFinancial; isAr: boolean;
 }) {
-  const money = (n: number) => `${(n || 0).toLocaleString("en-US")} ${isAr ? "د.ع" : "IQD"}`;
+  const money = (n: number | null) =>
+    n === null ? "—" : `${(n || 0).toLocaleString("en-US")} ${isAr ? "د.ع" : "IQD"}`;
   const rows = financialRows(f);
 
   return (
@@ -108,11 +125,12 @@ function DailyFinancialSummary({ f, isAr }: {
             </tr>
           </thead>
           <tbody>
-            {/*  غيرُ المبوَّب صفٌّ كبقيتها ويُلوَّن كهرمانياً: مشكلةُ جودةِ
-                بياناتٍ مرئية خيرٌ من رقمِ قسمٍ يكذب. */}
+            {/*  الصفوفُ غيرُ المحسومة كهرمانية: مشكلةُ جودةِ بياناتٍ مرئية
+                خيرٌ من رقمِ قسمٍ يكذب. */}
             {rows.map((r) => (
               <tr key={r.key}
-                className={`border-t ${r.strong ? "font-semibold" : ""} ${r.key === "unclassified" ? "text-amber-700" : ""}`}
+                className={`border-t ${r.strong ? "font-semibold" : ""} ${
+                  r.key === "unclassified" || r.key === "legacyDevicesUnsplit" ? "text-amber-700" : ""}`}
                 data-testid={`row-daily-${r.key}`}>
                 <td className="p-2">{r.label}</td>
                 <td className="p-2" data-testid={`paid-${r.key}`}>{money(r.m.paid)}</td>
@@ -268,9 +286,10 @@ export default function DailyPatientReport() {
     //  ورقةٌ ثانية للملخّص المالي لا أعمدةٌ مُقحَمة في جدول الزيارات:
     //  الجدولُ صفٌّ لكلّ زيارة، والملخّصُ صفٌّ لكلّ قسم — خلطهما يفسدهما معاً.
     if (financial) {
+      //  خليةٌ فارغة لا صفر حين لا مقبوضَ يُقاس أصلاً (الأجهزة القديمة).
       const summarySheet = financialRows(financial).map((r) => ({
         [labels.department]: r.label,
-        [labels.paidColumn]: r.m.paid || 0,
+        [labels.paidColumn]: r.m.paid === null ? ("" as unknown as number) : (r.m.paid || 0),
         [labels.revenueColumn]: r.m.revenue || 0,
       }));
       summarySheet.push({
@@ -325,8 +344,10 @@ export default function DailyPatientReport() {
       <th>${esc(labels.department)}</th><th>${esc(labels.paidColumn)}</th><th>${esc(labels.revenueColumn)}</th>
     </tr></thead>
     <tbody>${financialRows(financial).map((r) =>
-        `<tr class="${r.strong ? "strong" : ""}${r.key === "unclassified" ? " warn" : ""}">
-        <td>${esc(r.label)}</td><td>${esc(fmt(r.m.paid))}</td><td>${esc(fmt(r.m.revenue))}</td></tr>`).join("")}
+        `<tr class="${r.strong ? "strong" : ""}${
+          r.key === "unclassified" || r.key === "legacyDevicesUnsplit" ? " warn" : ""}">
+        <td>${esc(r.label)}</td><td>${esc(r.m.paid === null ? "—" : fmt(r.m.paid))}</td>
+        <td>${esc(fmt(r.m.revenue))}</td></tr>`).join("")}
     </tbody>
   </table>
   <p class="totals">${esc(labels.expenses)}: <b>${esc(fmt(financial.expenses))}</b>

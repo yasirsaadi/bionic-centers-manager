@@ -2045,6 +2045,39 @@ export async function registerRoutes(
         }
       }
 
+      // ══ تصنيفُ المريض على التعديل — نفسُ منطق رقم الاتصال أعلاه ═══════
+      //  الإنشاءُ يُلزم بأحد الاثنين. والتعديلُ يحرس ما بُني:
+      //
+      //  • **قيمةٌ صحيحة تُقبل دائماً** — «جديد ⇄ قديم» تصحيحٌ مشروع،
+      //    ولملفٍّ قديمٍ فارغ هي الطريقُ الوحيد ليُصنَّف أخيراً.
+      //  • **وقيمةٌ مخترَعة تُردّ** — ولو كانت غير فارغة: «غير محدَّد» وصفُ
+      //    فراغٍ لا خيارٌ ثالث، وقبولُها يجعلها فئةً بحكم الأمر الواقع.
+      //  • **ولا يُمحى تصنيفٌ قائم** — كما لا يُمحى رقمُ اتصالٍ مسجَّل.
+      //  • **والملفُّ القديم الفارغ لا يُجبَر**: النموذج الكامل يعيد إرسال
+      //    الحقل فارغاً، فلو رددنا الطلب لتعذّر تعديلُ هاتفٍ أو عنوان على
+      //    آلاف الملفات القديمة. يُسقَط الحقل ويبقى الفراغ فراغاً — لا
+      //    يُخمَّن ولا يمنع عملاً لا علاقة له به.
+      if (patch.patientClassification !== undefined) {
+        const typedClass = String(patch.patientClassification ?? "").trim();
+        const hadValidClass = isPatientClassification(existingPatient.patientClassification);
+        if (!typedClass) {
+          if (hadValidClass) {
+            return res.status(400).json({
+              message: "لا يمكن إزالة تصنيف المريض — اختر «جديد» أو «قديم»",
+              field: "patientClassification",
+            });
+          }
+          delete patch.patientClassification;
+        } else if (!isPatientClassification(typedClass)) {
+          return res.status(400).json({
+            message: "تصنيف المريض يجب أن يكون «جديد» أو «قديم»",
+            field: "patientClassification",
+          });
+        } else {
+          patch.patientClassification = typedClass;
+        }
+      }
+
       const patient = await storage.updatePatient(id, patch);
       res.json(costLockedByFollowup
         ? {
@@ -2311,20 +2344,33 @@ export async function registerRoutes(
             treatmentType: e.treatmentType ?? "", sessionCount: e.sessionCount,
           }))) }
         : {};
-      // ══ قسمُ «خدمة جديدة» (ترحيل ٠٥٦) ═══════════════════════════════
+      // ══ قسمُ «خدمة جديدة» — علاجٌ طبيعي بحكم التصنيف ═══════════════════
       //  الأنواعُ الثلاثة الباقية في هذه النقطة — جلساتٌ إضافية · استشارة ·
-      //  خدمة أخرى — **كلُّها علاجٌ طبيعي** بقيمةٍ مهيكلة تُقرأ من الطلب،
-      //  لا بمطابقةِ نصٍّ حرّ. والاستشارةُ منها، وهي التي كانت بلا قسم.
+      //  خدمة أخرى — **كلُّها علاجٌ طبيعي**، تحسمها خريطةٌ مهيكلة على نوع
+      //  الخدمة لا مطابقةُ نصٍّ حرّ.
       //
-      //  **والقيدُ يتبع المال حيث ذهب**: حالةُ العلاج الطبيعي إن وُجدت، وإلّا
-      //  فالحالةُ التي تستقبل الكلفة فعلاً أدناه. وهذا عينُ ما يفعله
-      //  `addToCaseCost` بـ`resolveCaseId` — فيُنادى هو نفسُه ولا تُكتب قاعدةٌ
-      //  ثانية تنحرف عنه، فيقول التقريرُ قسماً وترتفع كلفةُ قسمٍ آخر.
-      const nsCaseId = NEW_SERVICE_DEPARTMENT[String(serviceType)]
-        ? await storage.resolveCaseId(patientId, {
-            tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null,
-          })
+      //  **والخيطُ يُفتح قبل أن يتحرّك دينار.** كان الحلُّ بـ`resolveCaseId`
+      //  العامّة فترجع أوّلَ حالةٍ للمريض: مريضُ أطرافٍ يشتري استشارةً
+      //  تُقيَّد **على قسم الأطراف**، ومريضٌ بلا حالةٍ يُنتج قيداً بلا قسم.
+      //  والآن حالةُ العلاج الطبيعي موجودةٌ يقيناً قبل أوّل كتابةٍ مالية،
+      //  **ومعرّفُها هو المستعمَل في الأربعة كلّها**: قيدُ الكلفة، وكلفةُ
+      //  الحالة، والزيارة، والدفعة. فلا يقول أحدُها قسماً ويقول الآخرُ غيرَه.
+      //
+      //  ولا تُمَسّ حالاتُه الأخرى: الأطرافُ تبقى أطرافاً بكلفتها كما هي.
+      const nsDepartment = NEW_SERVICE_DEPARTMENT[String(serviceType)] ?? null;
+      //  هل كان الخيطُ مفتوحاً قبلنا؟ يُقرأ **قبل** الفتح كي يُذكَر في التدقيق
+      //  ويُخبَر به الموظّف — فتحُ قسمٍ للمريض حدثٌ يُعلَن لا أثرٌ صامت.
+      const hadPhysioBefore = Boolean(patient.isPhysiotherapy)
+        || (await storage.getCasesByPatientId(patientId)).some((c: any) => c.caseType === "physiotherapy");
+      const nsCaseId = nsDepartment === "physiotherapy"
+        ? await storage.ensurePhysiotherapyCase(patientId)
         : null;
+      const openedPhysioCase = nsDepartment === "physiotherapy" && !hadPhysioBefore;
+      if (nsDepartment === "physiotherapy" && nsCaseId === null) {
+        //  تعذّر فتحُ الخيط ⟹ **لا مال يُكتب**. قيدٌ بلا قسمٍ من مسارٍ يومي
+        //  هو بالضبط ما جاء هذا الإصلاح يمنعه، فالفشلُ الصريح خيرٌ منه.
+        return res.status(500).json({ message: "تعذّر فتح حالة العلاج الطبيعي — لم تُسجَّل الخدمة" });
+      }
       await storage.updatePatient(
         patientId, { totalCost: newTotalCost, ...planPatch } as any, "new_service", nsCaseId,
       );
@@ -2332,11 +2378,13 @@ export async function registerRoutes(
       // Keep the per-case split in step: the same amount the aggregate just
       // gained is added onto the case(s) the service belongs to — otherwise
       // sum(case costs) permanently diverges from total_cost.
+      //  **بالمعرّف لا بالوسم**: القسمُ محسومٌ أعلاه، فحلُّه ثانيةً من نصٍّ
+      //  حرّ يفتح بابَ خطأٍ بلا حاجة — وكان يفتحه فعلاً.
       if (entries) {
         let distributed = 0;
         for (const entry of entries) {
           if (entry.cost > 0) {
-            await storage.addToCaseCost(patientId, { tag: entry.treatmentType, treatmentType: entry.treatmentType }, entry.cost);
+            await storage.addToCaseCostById(patientId, nsCaseId!, entry.cost);
             distributed += entry.cost;
           }
         }
@@ -2345,22 +2393,22 @@ export async function registerRoutes(
         // (the form lets a human override it). Booking only the lines left the
         // remainder on the patient and on NO case, so sum(cases) fell short of
         // total_cost permanently — exactly the 25,000 gap the owner found on
-        // امل عويز, reproduced 1:1 before this fix. The remainder follows the
-        // service's own treatment tag, like the single-entry branch below.
+        // امل عويز, reproduced 1:1 before this fix.
         const remainder = serviceCost - distributed;
-        if (remainder > 0) {
-          await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, remainder);
-        }
+        if (remainder > 0) await storage.addToCaseCostById(patientId, nsCaseId!, remainder);
       } else {
-        await storage.addToCaseCost(patientId, { tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null }, serviceCost);
+        await storage.addToCaseCostById(patientId, nsCaseId!, serviceCost);
       }
 
       // Create payment records and visit records - either from treatmentEntries or single entry
       if (entries) {
         for (const entry of entries) {
+          //  `caseId` صريحة في الزيارة والدفعة معاً: بدونها يعيد كلٌّ منهما
+          //  الحلَّ من وسمه فينتهيان إلى حالتين مختلفتين لخدمةٍ واحدة.
           await storage.createVisit({
             patientId,
             branchId: patient.branchId,
+            caseId: nsCaseId!,
             treatmentType: entry.treatmentType,
             details: "خدمة جديدة",
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة) (تكلفة: ${entry.cost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
@@ -2370,6 +2418,7 @@ export async function registerRoutes(
             await storage.createPayment({
               patientId,
               branchId: patient.branchId,
+              caseId: nsCaseId!,
               amount: entry.cost,
               notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
               paymentTreatmentType: entry.treatmentType,
@@ -2381,6 +2430,7 @@ export async function registerRoutes(
         await storage.createVisit({
           patientId,
           branchId: patient.branchId,
+          caseId: nsCaseId!,
           treatmentType: paymentTreatmentType || null,
           details: "خدمة جديدة",
           notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
@@ -2394,6 +2444,7 @@ export async function registerRoutes(
           await storage.createPayment({
             patientId,
             branchId: patient.branchId,
+            caseId: nsCaseId!,
             amount: paidNow,
             notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: paymentTreatmentType || null,
@@ -2406,10 +2457,11 @@ export async function registerRoutes(
         entityType: "patient", entityId: patientId, action: "update",
         userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
         branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`,
+        notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`
+          + `${openedPhysioCase ? " — وفُتحت حالة علاج طبيعي للمريض" : ""}`,
       });
 
-      res.json({ success: true, newTotalCost });
+      res.json({ success: true, newTotalCost, openedPhysiotherapyCase: openedPhysioCase });
     } catch (err) {
       console.error("Error adding new service:", err);
       res.status(500).json({ message: "حدث خطأ أثناء إضافة الخدمة" });

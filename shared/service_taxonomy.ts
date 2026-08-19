@@ -143,15 +143,38 @@ export interface DepartmentBreakdown {
   prosthetic: DepartmentMoney;
   medical_support: DepartmentMoney;
   physiotherapy: DepartmentMoney;
-  /** ما لم تحسمه علاقةٌ مهيكلة — يُعرَض ولا يُوزَّع. */
+  /**
+   * مالُ أجهزةٍ **مؤكَّد** لم يُثبَت أطرافاً هو أم مساند — قديمٌ حصراً
+   * (قيدٌ بلا حالةٍ ولا حلقةِ جهاز، مصدرُه «تخصيص» أو «صيانة»).
+   *
+   * يُعرَض صفّاً مستقلاً و**لا يُقسَّم بالتخمين ولا يُدسّ في العلاج
+   * الطبيعي**. ومبيعاتٌ فقط: `payments.case_id` مملوءةٌ منذ الطور الثالث
+   * فلا نظيرَ له في المقبوض، وكتابةُ `paid: 0` كانت ستدّعي قياساً لم يقع.
+   */
+  legacyDevicesUnsplit?: { revenue: number };
+  /** ما لم تحسمه علاقةٌ مهيكلة ولا مصدرٌ قاطع — يُعرَض ولا يُوزَّع. */
   unclassified: DepartmentMoney;
 }
 
-/** التجميعان المشتقّان — يُحسبان ولا يُخزَّنان. */
+/** التجميعاتُ المشتقّة — تُحسب ولا تُخزَّن. */
 export interface DepartmentRollups {
-  /** الأطراف + المساند. **ليس قسماً**. */
+  /**
+   * **مالُ الأجهزة كلُّه**: الطرفُ + المسندُ + المؤكَّدُ غيرُ المقسَّم.
+   * **ليس قسماً** — ولا يُصنَّف به صفّ. وهو عينُ ما كان `bySection.devices`
+   * يقوله قبل هذه المرحلة، فالقيمةُ لا تتراجع.
+   */
   devicesCombined: DepartmentMoney;
-  /** الأقسام الثلاثة + غير المبوَّب — يطابق الإجماليَّ المرجعي. */
+  /**
+   * **الأقسامُ الثلاثة وحدها** — ما نعرف قسمَه يقيناً.
+   * أصغرُ من `grandTotal` بمقدار القديمِ غيرِ المحسوم، والفرقُ هو **قياسُ
+   * المشكلة** لا نقصٌ في المال.
+   */
+  classifiedTotal: DepartmentMoney;
+  /**
+   * **الإجماليُّ المرجعي** — كلُّ المال: المصنَّفُ وغيرُ المقسَّم وغيرُ
+   * المبوَّب. يطابق `totalRevenue` و`totalPaid` إلى الدينار، **وهو وحده**
+   * ما يُطرح منه المصروف لحساب الصافي النقدي.
+   */
   grandTotal: DepartmentMoney;
 }
 
@@ -161,30 +184,44 @@ const add = (a: DepartmentMoney, b: DepartmentMoney): DepartmentMoney => ({
 });
 
 /**
- * التجميعان من التفصيل.
+ * التجميعاتُ من التفصيل.
  *
  * **وغيرُ المبوَّب داخلٌ في الإجمالي العام** عمداً: الإجماليُّ يجب أن يطابق
  * مجموعَ الدفتر والمدفوعات إلى الدينار، وإخراجُه منه كان سيجعل الشاشة
- * تعرض رقماً أصغر من الحقيقة — أي تُخفي المشكلة بدل أن تُظهرها.
- * وهو **خارج `devicesCombined`** لأن ذاك تجميعُ قسمين معروفين بعينهما.
+ * تعرض رقماً أصغر من الحقيقة — أي تُخفي المشكلة بدل أن تُظهرها، وتُنقص
+ * الصافيَ النقدي بمالٍ قُبض فعلاً.
+ *
+ * ولذلك فُصل `classifiedTotal` عنه: مَن يريد «ما نعرف قسمَه» يقرأه صريحاً،
+ * ولا يُنتَزع الفرقُ من الإجمالي فيختفي.
  */
 export function rollups(b: DepartmentBreakdown): DepartmentRollups {
-  const devicesCombined = add(b.prosthetic, b.medical_support);
+  const exactDevices = add(b.prosthetic, b.medical_support);
+  const legacyDevices = { revenue: b.legacyDevicesUnsplit?.revenue ?? 0, paid: 0 };
+  const classifiedTotal = add(exactDevices, b.physiotherapy);
   return {
-    devicesCombined,
-    grandTotal: add(add(devicesCombined, b.physiotherapy), b.unclassified),
+    devicesCombined: add(exactDevices, legacyDevices),
+    classifiedTotal,
+    grandTotal: add(add(classifiedTotal, legacyDevices), b.unclassified),
   };
 }
 
-/** صفوفُ العرض بترتيبها الثابت: الأقسامُ الثلاثة ثم التجميعان. */
-export const REPORT_ROW_ORDER: readonly (Department | "devicesCombined" | "grandTotal")[] = [
-  "prosthetic", "medical_support", "devicesCombined", "physiotherapy", "grandTotal",
+/**
+ * صفوفُ العرض بترتيبها الثابت.
+ *
+ * والقديمُ غيرُ المقسَّم **قبل** مجموع الأجهزة مباشرة: فيرى القارئ لماذا
+ * يزيد المجموعُ على الصفّين فوقه، ولا يظنّ الحسابَ مكسوراً.
+ */
+export const REPORT_ROW_ORDER: readonly string[] = [
+  "prosthetic", "medical_support", "legacyDevicesUnsplit", "devicesCombined",
+  "physiotherapy", "classifiedTotal", "unclassified", "grandTotal",
 ] as const;
 
 export const REPORT_ROW_LABELS: Record<string, string> = {
   ...DEPARTMENT_LABELS,
   devicesCombined: DEVICES_ROLLUP_LABEL,
+  classifiedTotal: "مجموع الأقسام المعروفة",
   grandTotal: GRAND_TOTAL_LABEL,
+  legacyDevicesUnsplit: "أجهزة قديمة — غير مقسَّمة",
   unclassified: "غير مبوَّب — بيانات قديمة",
 };
 

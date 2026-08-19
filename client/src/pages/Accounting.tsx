@@ -184,10 +184,13 @@ interface AccountingSummary {
     prosthetic: { revenue: number; paid: number };
     medical_support: { revenue: number; paid: number };
     physiotherapy: { revenue: number; paid: number };
+    /** أجهزةٌ قديمة مؤكَّدة لم يُثبَت نوعُها — مبيعاتٌ فقط. */
+    legacyDevicesUnsplit?: { revenue: number };
     unclassified: { revenue: number; paid: number };
   };
   rollups?: {
     devicesCombined: { revenue: number; paid: number };
+    classifiedTotal: { revenue: number; paid: number };
     grandTotal: { revenue: number; paid: number };
   };
 }
@@ -3336,33 +3339,62 @@ export default function Accounting() {
                       </tr>
                     </thead>
                     <tbody>
-                      {[
-                        { key: "prosthetic", title: "الأطراف الصناعية", d: summary.byDepartment.prosthetic },
-                        { key: "medical_support", title: "المساند الطبية", d: summary.byDepartment.medical_support },
-                        { key: "devices-combined", title: "الأطراف + المساند", d: summary.rollups.devicesCombined, strong: true },
-                        { key: "physiotherapy", title: "العلاج الطبيعي", d: summary.byDepartment.physiotherapy },
-                        { key: "grand-total", title: "الإجمالي العام", d: summary.rollups.grandTotal, strong: true },
-                      ].map(({ key, title, d, strong }) => (
-                        <tr key={key} className={strong ? "border-t bg-muted/20 font-semibold" : "border-t"}
-                          data-testid={`dept-row-${key}`}>
-                          <td className="p-2">{title}</td>
-                          <td className="p-2 tabular-nums text-green-700">{formatNumberOnly(d.paid || 0)}</td>
-                          <td className="p-2 tabular-nums text-muted-foreground">{formatNumberOnly(d.revenue || 0)}</td>
-                        </tr>
-                      ))}
-                      {/*  غيرُ المبوَّب يُعرَض صراحةً — مشكلةُ جودةِ بياناتٍ
-                          مرئية، لا مبلغٌ يُدسّ في قسمٍ فيكذب رقمُه. */}
-                      {((summary.byDepartment.unclassified.paid || 0) !== 0
-                        || (summary.byDepartment.unclassified.revenue || 0) !== 0) && (
-                        <tr className="border-t text-amber-700" data-testid="dept-row-unclassified">
-                          <td className="p-2">غير مبوَّب — بيانات قديمة</td>
-                          <td className="p-2 tabular-nums">{formatNumberOnly(summary.byDepartment.unclassified.paid || 0)}</td>
-                          <td className="p-2 tabular-nums">{formatNumberOnly(summary.byDepartment.unclassified.revenue || 0)}</td>
-                        </tr>
-                      )}
+                      {(() => {
+                        const bd = summary.byDepartment!;
+                        const ru = summary.rollups!;
+                        const legacy = bd.legacyDevicesUnsplit?.revenue || 0;
+                        const uncl = bd.unclassified;
+                        const gap = legacy !== 0 || (uncl.revenue || 0) !== 0 || (uncl.paid || 0) !== 0;
+                        type R = { key: string; title: string; d: { revenue: number; paid: number | null };
+                                   strong?: boolean; warn?: boolean };
+                        const rows: R[] = [
+                          { key: "prosthetic", title: "الأطراف الصناعية", d: bd.prosthetic },
+                          { key: "medical_support", title: "المساند الطبية", d: bd.medical_support },
+                        ];
+                        //  مالُ أجهزةٍ **مؤكَّد** لم يُثبَت نوعُه — قديمٌ حصراً. يُعرَض قبل
+                        //  المجموع مباشرة فيرى القارئ لماذا يزيد على الصفّين فوقه، ولا
+                        //  يُقسَّم بالتخمين ولا يُدسّ في العلاج الطبيعي. و«المقبوض» له —
+                        //  لأن `payments.case_id` مملوءةٌ منذ الطور الثالث فلا نظير له.
+                        if (legacy !== 0) {
+                          rows.push({ key: "legacy-devices", title: "أجهزة قديمة — غير مقسَّمة",
+                            d: { revenue: legacy, paid: null }, warn: true });
+                        }
+                        rows.push(
+                          { key: "devices-combined", title: "مجموع الأجهزة", d: ru.devicesCombined, strong: true },
+                          { key: "physiotherapy", title: "العلاج الطبيعي", d: bd.physiotherapy },
+                        );
+                        //  «المعروف» و«غير المبوَّب» يظهران فقط حين يوجد فرق — وإلّا
+                        //  فصفّان مكرّران يشوّشان بلا أن يضيفا.
+                        if (gap) {
+                          rows.push({ key: "classified-total", title: "مجموع الأقسام المعروفة", d: ru.classifiedTotal });
+                          rows.push({ key: "unclassified", title: "غير مبوَّب — بيانات قديمة", d: uncl, warn: true });
+                        }
+                        //  والإجماليُّ العام هو المرجع: كلُّ المال بلا استثناء، وهو
+                        //  وحده ما يُطرح منه المصروف. لا يُنقَص بمشكلة تبويب.
+                        rows.push({ key: "grand-total", title: "الإجمالي العام (كل المال)", d: ru.grandTotal, strong: true });
+                        return rows.map(({ key, title, d, strong, warn }) => (
+                          <tr key={key}
+                            className={`border-t ${strong ? "bg-muted/20 font-semibold" : ""} ${warn ? "text-amber-700" : ""}`}
+                            data-testid={`dept-row-${key}`}>
+                            <td className="p-2">{title}</td>
+                            <td className={`p-2 tabular-nums ${warn ? "" : "text-green-700"}`}>
+                              {d.paid === null ? "—" : formatNumberOnly(d.paid || 0)}
+                            </td>
+                            <td className={`p-2 tabular-nums ${warn ? "" : "text-muted-foreground"}`}>
+                              {formatNumberOnly(d.revenue || 0)}
+                            </td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
+                {(summary.byDepartment.legacyDevicesUnsplit?.revenue || 0) !== 0 && (
+                  <p className="text-xs text-muted-foreground" data-testid="note-legacy-devices">
+                    «أجهزة قديمة — غير مقسَّمة»: مبيعاتٌ سُجِّلت قبل ربط القيد بحالته،
+                    نعلم يقيناً أنها أجهزة ولا نعلم أطرافاً هي أم مساند — فلا تُقسَّم بالتخمين.
+                  </p>
+                )}
               </div>
             )}
 
