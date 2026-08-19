@@ -20,7 +20,8 @@ import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
 import {
-  isFollowupReason, isTerminal, type FollowupReason, type FollowupStatus,
+  computeDiscount, isDiscountReason, isFollowupReason, isSelfDecision, isTerminal,
+  type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
@@ -291,18 +292,40 @@ export async function getEvents(followupId: number): Promise<any[]> {
 export async function getPriceRequests(followupId: number): Promise<any[]> {
   const r = await db.execute(sql`
     SELECT id, current_price, proposed_price, reason, note, status,
+           discount_mode, discount_value, discount_amount,
            requested_by, requested_by_name, requested_at,
            decided_by, decided_by_name, decided_at, decision_note
       FROM price_change_requests WHERE followup_id = ${followupId} ORDER BY id DESC
   `);
-  return (r.rows ?? []).map((p: any) => ({
+  return (r.rows ?? []).map(mapRequestRow);
+}
+
+/**
+ * صفُّ طلبٍ للعرض — **و`isLegacyPriceChange` تُحسَب هنا مرّةً واحدة**.
+ *
+ * الواجهةُ تحتاج أن تميّز «خصماً» من «تعديل سعرٍ قديم»، والفرقُ الحاسم هو
+ * `discount_mode`: لم يكن العمود موجوداً قبل ترحيل ٠٥٧، فكلُّ صفٍّ فارغِه
+ * سابقٌ له بالضرورة. واشتقاقُها هنا يمنع كلَّ شاشةٍ من اختراع قاعدتها.
+ */
+function mapRequestRow(p: any) {
+  const mode = p.discount_mode === null || p.discount_mode === undefined
+    ? null : String(p.discount_mode);
+  return {
     id: Number(p.id), currentPrice: Number(p.current_price),
     proposedPrice: Number(p.proposed_price), reason: p.reason, note: p.note,
-    status: p.status, requestedBy: p.requested_by === null ? null : Number(p.requested_by),
+    status: p.status,
+    discountMode: mode,
+    discountValue: p.discount_value === null || p.discount_value === undefined
+      ? null : Number(p.discount_value),
+    discountAmount: p.discount_amount === null || p.discount_amount === undefined
+      ? null : Number(p.discount_amount),
+    /** صفٌّ سابقٌ لترحيل ٠٥٧ — يُعرَض «تعديل سعر (سجلّ قديم)» ولا يُخمَّن. */
+    isLegacyPriceChange: mode === null,
+    requestedBy: p.requested_by === null ? null : Number(p.requested_by),
     requestedByName: p.requested_by_name, requestedAt: p.requested_at,
     decidedBy: p.decided_by === null ? null : Number(p.decided_by),
     decidedByName: p.decided_by_name, decidedAt: p.decided_at, decisionNote: p.decision_note,
-  }));
+  };
 }
 
 /**
@@ -314,10 +337,12 @@ export async function getPriceRequests(followupId: number): Promise<any[]> {
 export async function getPriceRequestById(id: number): Promise<{
   id: number; followupId: number; branchId: number | null;
   currentPrice: number; proposedPrice: number; status: string;
+  /** صاحبُ الطلب — تُفحص به قاعدةُ «لا يعتمد أحدٌ طلبَ نفسه» قبل أي كتابة. */
+  requestedBy: number | null;
 } | null> {
   const r = await db.execute(sql`
     SELECT r.id, r.followup_id, r.current_price, r.proposed_price, r.status,
-           f.branch_id
+           r.requested_by, f.branch_id
       FROM price_change_requests r
       JOIN post_exam_followups f ON f.id = r.followup_id
      WHERE r.id = ${id}
@@ -329,6 +354,7 @@ export async function getPriceRequestById(id: number): Promise<{
     branchId: row.branch_id === null ? null : Number(row.branch_id),
     currentPrice: Number(row.current_price), proposedPrice: Number(row.proposed_price),
     status: String(row.status),
+    requestedBy: row.requested_by === null ? null : Number(row.requested_by),
   };
 }
 
@@ -556,24 +582,35 @@ export async function closeWithoutPurchase(params: {
     //
     // فـ`cancelled` أثرُ إغلاق الملفّ، و`rejected` يبقى **حصراً** من
     // `decidePriceChange` بيد مَن يعتمد. والمُلغي مسجَّلٌ بمن هو ولماذا.
-    const cancelled = await tx.execute<{ id: number; current_price: number; proposed_price: number }>(sql`
+    const cancelled = await tx.execute<any>(sql`
       UPDATE price_change_requests
          SET status = 'cancelled', decided_at = NOW(), decided_by = ${params.actor.userId},
              decided_by_name = ${params.actor.userName},
              decision_note = 'أُلغي تلقائياً بإغلاق ملفّ المتابعة بلا شراء'
        WHERE followup_id = ${params.followupId} AND status = 'pending'
-      RETURNING id, current_price, proposed_price
+      RETURNING id, current_price, proposed_price,
+                discount_mode, discount_value, discount_amount
     `);
     for (const req of (cancelled.rows ?? [])) {
+      //  اسمُ الحدث يتبع **نوعَ الصفّ نفسه** لا تاريخَ اليوم: صفٌّ خصمٍ
+      //  يُلغى `discount_cancelled`، وصفٌّ قديمٌ معلَّق منذ ما قبل ٠٥٧ يبقى
+      //  `price_request_cancelled` بلغته. فلا يُقرأ تاريخٌ بمصطلحٍ لم يكن.
+      const isDiscount = req.discount_mode !== null && req.discount_mode !== undefined;
       await appendEvent(tx, {
         followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-        eventType: "price_request_cancelled", fromStatus: cur.status,
+        eventType: isDiscount ? "discount_cancelled" : "price_request_cancelled",
+        fromStatus: cur.status,
         toStatus: "closed_without_purchase", reason: params.reason,
-        note: "أُلغي بإغلاق ملفّ المتابعة — لا يُعدّ رفضاً للسعر",
+        note: "أُلغي بإغلاق ملفّ المتابعة — لا يُعدّ رفضاً",
         payload: {
           requestId: Number(req.id),
           currentPrice: Number(req.current_price),
           proposedPrice: Number(req.proposed_price),
+          discountMode: req.discount_mode ?? null,
+          discountValue: req.discount_value === null || req.discount_value === undefined
+            ? null : Number(req.discount_value),
+          discountAmount: req.discount_amount === null || req.discount_amount === undefined
+            ? null : Number(req.discount_amount),
         },
         actor: params.actor,
       });
@@ -681,42 +718,63 @@ export async function selectExpert(params: {
   });
 }
 
-// ── السعر ────────────────────────────────────────────────────────────────
+// ── الخصم ────────────────────────────────────────────────────────────────
 
 /**
- * طلبُ تعديل السعر — **اقتراحٌ لا تعديل**. السعر المعتمد لا يتحرّك بعدُ.
+ * طلبُ خصم — **اقتراحٌ لا تعديل**. لا دينارَ يتحرّك من هنا.
+ *
+ * ══ ما لا يلمسه هذا الفعل ══════════════════════════════════════════════
+ * `approved_price` · كلفةُ المريض · كلفةُ الحالة · `cost_entries` ·
+ * الدفعات · أوامرُ التصنيع · حالةُ حلقة الجهاز. **ولا واحدٌ منها.** ما
+ * يكتبه صفُّ طلبٍ وحالةُ انتظارٍ على المتابعة، ولا شيء غير ذلك.
+ *
+ * ولذلك «توجيهُ الطبيب» يُسجَّل سبباً ولا يُغني عن اعتماد: لو حرّك رقماً
+ * لصار كلُّ خصمٍ يمرّ بجملةٍ شفهية لا أثرَ لها.
+ *
+ * ══ والحساب من `shared/followup.ts` ════════════════════════════════════
+ * الموظّفُ يُدخل مبلغاً أو نسبة، والدالّةُ المشتركة تحسب وتتحقّق — نفسُها
+ * التي تعاين بها الواجهةُ حيّاً. فما تمنعه الشاشة يمنعه الخادم بالحرف،
+ * ولا يمرّ نداءٌ مباشر بما لا يمرّ من النموذج.
  *
  * والتفرّد الجزئي (`uq_pcr_one_pending`) يمنع طلبين معلّقين على متابعةٍ
- * واحدة، فلا يعتمد طبيبان طلبين متناقضين في اللحظة نفسها.
+ * واحدة، فلا يُعتمَد طلبان متناقضان في اللحظة نفسها.
  */
-export async function requestPriceChange(params: {
-  followupId: number; proposedPrice: number; reason: string;
+export async function requestDiscount(params: {
+  followupId: number; mode: string; value: number; reason: string;
   note?: string | null; actor: Actor;
 }): Promise<{ followup: FollowupRow; requestId: number }> {
-  const proposed = Math.round(Number(params.proposedPrice));
-  if (!Number.isFinite(proposed) || proposed < 0) {
-    throw new FollowupError("السعر المقترح غير صالح", 400);
+  //  السببُ إلزاميّ **ومن القائمة**: نصٌّ حرّ يجعل التقرير غيرَ قابلٍ للجمع.
+  if (!isDiscountReason(params.reason)) {
+    throw new FollowupError("سبب الخصم مطلوب — اختر سبباً من القائمة", 400);
   }
-  const reason = (params.reason ?? "").trim();
-  if (!reason) throw new FollowupError("سبب طلب تعديل السعر مطلوب", 400);
+  const reason = params.reason;
 
   return await db.transaction(async (tx) => {
     const cur = await lockFollowup(tx, params.followupId, [
       "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
     ]);
+    //  **الحسابُ تحت القفل على السعر المقفول**: لو حُسب قبله لأمكن أن
+    //  يُعتمد خصمٌ نُسب إلى سعرٍ تغيّر بينهما.
+    const calc = computeDiscount({
+      currentPrice: cur.approvedPrice, mode: params.mode, value: params.value,
+    });
+    if (!calc.ok) throw new FollowupError(calc.error ?? "قيمة الخصم غير صالحة", 400);
+
     let ins;
     try {
       ins = await tx.execute(sql`
         INSERT INTO price_change_requests
           (followup_id, patient_id, branch_id, current_price, proposed_price,
+           discount_mode, discount_value, discount_amount,
            reason, note, status, requested_by, requested_by_name)
         VALUES (${cur.id}, ${cur.patientId}, ${cur.branchId}, ${cur.approvedPrice},
-                ${proposed}, ${reason}, ${params.note ?? null}, 'pending',
+                ${calc.finalPrice}, ${params.mode}, ${params.value}, ${calc.discountAmount},
+                ${reason}, ${params.note ?? null}, 'pending',
                 ${params.actor.userId}, ${params.actor.userName})
         RETURNING id
       `);
     } catch (e: any) {
-      if (e?.code === "23505") throw new FollowupError("يوجد طلب تعديل سعر معلَّق بالفعل", 409);
+      if (e?.code === "23505") throw new FollowupError("يوجد طلب خصم معلَّق بالفعل", 409);
       throw e;
     }
     const requestId = Number((ins.rows ?? [])[0].id);
@@ -730,9 +788,15 @@ export async function requestPriceChange(params: {
     if (!row) throw new FollowupError(CONFLICT, 409);
     await appendEvent(tx, {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-      eventType: "price_change_requested", fromStatus: cur.status,
+      //  نوعٌ جديد ولا يُعاد استعمال `price_change_requested`: القديم يعني
+      //  «طُلب تغييرُ سعر» وقد يكون رفعاً، والجديد يعني «طُلب خصم» حصراً.
+      eventType: "discount_requested", fromStatus: cur.status,
       toStatus: "price_approval_pending", reason, note: params.note ?? null,
-      payload: { requestId, currentPrice: cur.approvedPrice, proposedPrice: proposed },
+      payload: {
+        requestId, currentPrice: cur.approvedPrice, proposedPrice: calc.finalPrice,
+        discountMode: params.mode, discountValue: params.value,
+        discountAmount: calc.discountAmount, discountPercentage: calc.percentage,
+      },
       actor: params.actor,
     });
     return { followup: toRow(row), requestId };
@@ -740,29 +804,41 @@ export async function requestPriceChange(params: {
 }
 
 /**
- * اعتمادُ التعديل أو رفضه — **طبيبٌ أو مسؤول** (تفرضه النقطة).
+ * اعتمادُ الخصم أو رفضه — **مخوَّلٌ غيرُ صاحب الطلب** (تفرضه النقطة والقفل).
  *
- * والاعتماد **لا يعني شراءً**: ينقل إلى «بانتظار تأكيد المريض»، فيبقى أن
- * يوافق المريض فعلاً على السعر الجديد. والرفض يعيد المتابعة إلى حالةٍ حيّة
- * يستطيع فيها الموظّف قبول السعر الحالي أو التأجيل أو الإغلاق — لا حالةً
- * ميّتة لا مخرج منها.
+ * والاعتماد **لا يعني شراءً**: ينقل إلى «بانتظار قرار المريض»، فيبقى أن
+ * يوافق المريض فعلاً على السعر الجديد ثم يؤكّده الموظّف مباشرةً. والرفض
+ * يعيد المتابعة إلى حالةٍ حيّة يستطيع فيها الموظّف قبول السعر الحالي أو
+ * التأجيل أو الإغلاق — لا حالةً ميّتة لا مخرج منها.
  *
  * والسعرُ القديم **لا يُمحى**: لقطتُه في الطلب، وقيمتاه في الحدث.
+ *
+ * ══ ومنعُ اعتماد النفس **تحت القفل** ═══════════════════════════════════
+ * النقطةُ تفحصه أيضاً قبل الدخول، وهذا الفحصُ الثاني ليس تكراراً: هو
+ * الوحيد الذي يقرأ `requested_by` **من الصفّ المقفول**، فلا يعتمد على
+ * قراءةٍ سابقة قد تكون تغيّرت، ولا على معرّفٍ مرَّ عبر الطلب. ومنادٍ
+ * داخليٌّ لا يمرّ بالنقطة يصطدم به كذلك.
  */
-export async function decidePriceChange(params: {
+export async function decideDiscount(params: {
   requestId: number; decision: "approve" | "reject";
   note?: string | null; actor: Actor;
 }): Promise<{ followup: FollowupRow; requestId: number }> {
   return await db.transaction(async (tx) => {
     // القفلُ على الطلب أوّلاً: هو محلّ السباق (اعتمادان، أو اعتمادٌ ورفض).
     const rq = await tx.execute(sql`
-      SELECT id, followup_id, status, current_price, proposed_price
+      SELECT id, followup_id, status, current_price, proposed_price,
+             discount_mode, discount_value, discount_amount, requested_by
         FROM price_change_requests WHERE id = ${params.requestId} FOR UPDATE
     `);
     const req = (rq.rows ?? [])[0];
-    if (!req) throw new FollowupError("طلب تعديل السعر غير موجود", 404);
+    if (!req) throw new FollowupError("طلب الخصم غير موجود", 404);
     if (String(req.status) !== "pending") {
       throw new FollowupError("هذا الطلب حُسم بالفعل بواسطة مستخدم آخر. حدّث الصفحة.", 409);
+    }
+    const requestedBy = req.requested_by === null ? null : Number(req.requested_by);
+    if (isSelfDecision(requestedBy, params.actor.userId)) {
+      throw new FollowupError(
+        "لا يمكنك اعتماد أو رفض طلب خصم قدّمتَه بنفسك — يقرّره مخوَّلٌ آخر", 403);
     }
     const followupId = Number(req.followup_id);
     const proposed = Number(req.proposed_price);
@@ -797,15 +873,23 @@ export async function decidePriceChange(params: {
 
     await appendEvent(tx, {
       followupId, patientId: cur.patientId, branchId: cur.branchId,
-      eventType: approving ? "price_approved" : "price_rejected",
+      //  نوعان جديدان — والقديمان (`price_approved`/`price_rejected`) يبقيان
+      //  على صفوفهما كما كُتبا. فتاريخُ ما قبل الخصم يُقرأ بلغته.
+      eventType: approving ? "discount_approved" : "discount_rejected",
       fromStatus: "price_approval_pending", toStatus: nextStatus,
       note: params.note ?? null,
-      //  القيمتان معاً في الحدث: «كان كذا فصار كذا» يُقرأ من سطرٍ واحد.
+      //  الأرقامُ كلُّها في الحدث: «كان كذا، خُصم كذا، فصار كذا» من سطرٍ واحد.
       payload: {
         requestId: params.requestId,
         oldPrice: cur.approvedPrice,
         newApprovedPrice: approving ? proposed : cur.approvedPrice,
         proposedPrice: proposed,
+        discountMode: req.discount_mode ?? null,
+        discountValue: req.discount_value === null || req.discount_value === undefined
+          ? null : Number(req.discount_value),
+        discountAmount: req.discount_amount === null || req.discount_amount === undefined
+          ? null : Number(req.discount_amount),
+        requestedBy: requestedBy,
       },
       actor: params.actor,
     });
@@ -996,7 +1080,8 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
     SELECT f.id AS followup_id, f.patient_id, f.service_type, f.branch_id, f.approved_price,
            p.name AS patient_name, p.patient_code, b.name AS branch_name,
            r.id AS request_id, r.current_price, r.proposed_price, r.reason,
-           r.note, r.requested_by_name, r.requested_at
+           r.note, r.requested_by, r.requested_by_name, r.requested_at,
+           r.discount_mode, r.discount_value, r.discount_amount
       FROM price_change_requests r
       JOIN post_exam_followups f ON f.id = r.followup_id
       JOIN patients p ON p.id = f.patient_id
@@ -1012,7 +1097,18 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
       branchId: x.branch_id === null ? null : Number(x.branch_id),
       branchName: x.branch_name, serviceType: x.service_type,
       currentPrice: Number(x.current_price), proposedPrice: Number(x.proposed_price),
-      reason: x.reason, note: x.note, requestedByName: x.requested_by_name,
+      reason: x.reason, note: x.note,
+      discountMode: x.discount_mode ?? null,
+      discountValue: x.discount_value === null || x.discount_value === undefined
+        ? null : Number(x.discount_value),
+      discountAmount: x.discount_amount === null || x.discount_amount === undefined
+        ? null : Number(x.discount_amount),
+      //  صفٌّ سابقٌ للترحيل — البطاقة تسمّيه «تعديل سعر (سجلّ قديم)».
+      isLegacyPriceChange: x.discount_mode === null || x.discount_mode === undefined,
+      //  **صاحبُ الطلب يصل للواجهة** كي تُخفي أزرارَ قراره عنه — والخادمُ
+      //  يمنعه على كلّ حال، فهذا إزالةُ زرٍّ لا حراسة.
+      requestedBy: x.requested_by === null ? null : Number(x.requested_by),
+      requestedByName: x.requested_by_name,
       requestedAt: x.requested_at,
     })),
   };

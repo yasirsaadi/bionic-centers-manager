@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, numeric, jsonb, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -1570,10 +1570,14 @@ export const postExamFollowupEvents = pgTable("post_exam_followup_events", {
 ]);
 
 /**
- * طلبُ تعديل السعر — يقترحه المتابِع، ويعتمده طبيبٌ أو مسؤول.
+ * طلبُ الخصم — يقترحه المتابِع، ويعتمده مخوَّلٌ **غيرُه** (ترحيل ٠٥٧).
  *
- * مديرُ الفرع **ليس منهما** عمداً: السعر قرارٌ طبّي-تجاري وقّعه الطبيب،
- * فمن يعتمد تعديله طبيبٌ أو المسؤول العام لا مديرُ الفرع.
+ * الاسمُ يبقى `price_change_requests` عمداً: الجدولُ نفسُه يحمل التاريخ
+ * كلَّه، وإعادةُ تسميته كانت ستقطع صفوفاً قائمة عن اسمها بلا مكسب.
+ *
+ * والمعتمِدون: المسؤول العام · مديرُ الفرع · الطبيبُ المخوَّل — لأن الخصمَ
+ * قرارٌ **تجاري** لا سريري (`canApproveDiscount` في `shared/followup.ts`).
+ * **ولا يعتمد أحدٌ طلبَ نفسه**، ويُفرَض ذلك في الخادم على `requested_by`.
  */
 export const priceChangeRequests = pgTable("price_change_requests", {
   id: serial("id").primaryKey(),
@@ -1582,7 +1586,26 @@ export const priceChangeRequests = pgTable("price_change_requests", {
   branchId: integer("branch_id"),
   /** لقطةُ السعر المعتمد لحظةَ الطلب — فلا يُقرأ التاريخ من حاضرٍ تغيّر. */
   currentPrice: integer("current_price").notNull(),
+  /** السعرُ النهائي بعد الخصم. */
   proposedPrice: integer("proposed_price").notNull(),
+  /**
+   * **ما الذي طُلب فعلاً** (ترحيل ٠٥٧) — `amount` أو `percentage`.
+   *
+   * الرقمان أعلاه يقولان «كان كذا فصار كذا» ولا يقولان أهو «اخصم ٢٠٠ ألف»
+   * أم «اخصم ٢٠٪». وفارغٌ في كلّ صفٍّ سابق للترحيل، فيُقرأ ذلك «تعديل سعر
+   * — سجلّ قديم» ولا يُخمَّن.
+   */
+  discountMode: text("discount_mode"),
+  /** القيمةُ كما أدخلها الموظّف: ديناراً أو نسبةً مئوية. */
+  discountValue: numeric("discount_value", { precision: 14, scale: 2 }),
+  /**
+   * الخصمُ بالدينار.
+   *
+   * مشتقٌّ رياضياً من العمودين أعلاه، ومخزَّنٌ للقراءة — **وقيدُ الترحيل
+   * يمنعه من مخالفتهما**: `discount_amount = current_price - proposed_price`.
+   * فلا نسخةَ ثانية تنحرف عن أصلها.
+   */
+  discountAmount: integer("discount_amount"),
   reason: text("reason").notNull(),
   note: text("note"),
   /**
@@ -1604,6 +1627,27 @@ export const priceChangeRequests = pgTable("price_change_requests", {
     sql`${t.status} IN ('pending', 'approved', 'rejected', 'cancelled')`),
   check("price_change_requests_price_check",
     sql`${t.proposedPrice} >= 0 AND ${t.currentPrice} >= 0`),
+  //  مرآةُ ترحيل ٠٥٧ حرفاً — كي لا تفترق قاعدةُ `db:push` عن الإنتاج.
+  check("price_change_requests_discount_mode_check",
+    sql`${t.discountMode} IS NULL OR ${t.discountMode} IN ('amount', 'percentage')`),
+  /**
+   * دلالةُ الخصم كاملةً في قيدٍ واحد — **والصفُّ القديم معفيٌّ صراحةً**:
+   * عمودُ النوع فارغٌ فيه فالشرطُ يصدق بلا أن يُطالَب بشيء.
+   *
+   * وهو ما يجعل «خصمٌ فقط» قاعدةً في القاعدة لا في الشيفرة وحدها: رفعُ
+   * سعرٍ متنكّرٍ في هيئة خصم يُردّ ولو تسلّل من نداءٍ مباشر.
+   */
+  check("price_change_requests_discount_shape_check", sql`
+    ${t.discountMode} IS NULL
+    OR (
+      ${t.discountValue} IS NOT NULL AND ${t.discountValue} > 0
+      AND ${t.discountAmount} IS NOT NULL AND ${t.discountAmount} > 0
+      AND ${t.proposedPrice} > 0
+      AND ${t.proposedPrice} < ${t.currentPrice}
+      AND ${t.discountAmount} = ${t.currentPrice} - ${t.proposedPrice}
+      AND (${t.discountMode} <> 'percentage' OR ${t.discountValue} < 100)
+    )
+  `),
   // **طلبٌ معلَّقٌ واحد لكل متابعة** — فلا يعتمد طبيبان طلبين متناقضين معاً.
   // الحارس البنيوي الذي يسند القفل التصريحي في طبقة التطبيق.
   uniqueIndex("uq_pcr_one_pending").on(t.followupId).where(sql`status = 'pending'`),

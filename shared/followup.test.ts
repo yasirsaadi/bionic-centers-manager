@@ -12,7 +12,10 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  allowedActions, canApprove, canConfirmPurchase, canRecordFollowup, canSelectExpert, canViewFollowup,
+  allowedActions, canApprove, canApproveDiscount, canConfirmPurchase, canRecordFollowup,
+  canSelectExpert, canViewFollowup, computeDiscount, isSelfDecision,
+  DISCOUNT_MODES, DISCOUNT_MODE_LABELS, DISCOUNT_REASONS, DISCOUNT_REASON_LABELS,
+  isDiscountMode, isDiscountReason,
   isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
 } from "./followup";
@@ -67,17 +70,47 @@ same("   **والقراءة والكتابة بوّابةٌ واحدة**",
   [accountant2, physioStaff, expertWithAdd, recv, mgr, doc, admin]
     .filter((w) => canViewFollowup(w) !== canRecordFollowup(w)), []);
 
-// ══ ب. مَن يعتمد — القاعدة الحاسمة ═════════════════════════════════════
-console.log("\n── مَن يعتمد ──");
-same("ب. **الطبيب يعتمد**", canApprove(doc), true);
-same("   ومَن يحمل `canWriteMedicalExam` وإن كان دورُه غيرَ الطبّ", canApprove(docCap), true);
-same("   والمسؤول العام", canApprove(admin), true);
-same("ج. **ومديرُ الفرع لا يعتمد** — هذه هي القاعدة كلّها", canApprove(mgr), false);
-same("   ولا الاستقبال", canApprove(recv), false);
-same("   ولا الخبير", canApprove(expert), false);
-same("   وبلا جلسة ⟶ لا", canApprove(null), false);
+// ══ ب. مَن يعتمد الخصم — القاعدة الحاسمة ═══════════════════════════════
+//  **الخصمُ قرارٌ تجاري لا سريري**: الطبيبُ حدّد الجهازَ وسعرَه في سجلٍّ
+//  مختوم، و«نبيعه بأقلّ» مسؤوليةُ مَن يدير الفرعَ ويحاسَب على إيراده.
+//  فدخل مديرُ الفرع، وبقي الطبيبُ لأن كثيراً من الخصومات يقترحها هو.
+console.log("\n── مَن يعتمد الخصم ──");
+same("ب. **الطبيب يعتمد الخصم**", canApproveDiscount(doc), true);
+same("   ومَن يحمل `canWriteMedicalExam` وإن كان دورُه غيرَ الطبّ",
+  canApproveDiscount(docCap), true);
+same("   والمسؤول العام", canApproveDiscount(admin), true);
+same("   **ومديرُ الفرع** — وهذا ما تغيّر", canApproveDiscount(mgr), true);
+same("ج. **والاستقبال لا يعتمد** — يطلب ولا يقرّر", canApproveDiscount(recv), false);
+same("   **ولا المحاسب**", canApproveDiscount(accountant2), false);
+same("   **ولا المعالج/مُدخِل الجلسات**", canApproveDiscount(physioStaff), false);
+same("   **ولا خبيرُ الأطراف** — محجوبٌ مالياً في كل النظام",
+  canApproveDiscount(expert), false);
+same("   وبلا جلسة ⟶ لا", canApproveDiscount(null), false);
 same("   والغموض يُقرأ «لا»",
-  canApprove({ permissions: { canWriteMedicalExam: 1 } } as any), false);
+  canApproveDiscount({ permissions: { canWriteMedicalExam: 1 } } as any), false);
+//  والاستقبالُ يطلب — فالطلبُ والاعتمادُ بوّابتان لا واحدة.
+same("ج٢. **والاستقبال يطلب الخصم** — الطلبُ لا يحتاج سلطةَ الاعتماد",
+  [canRecordFollowup(recv), canApproveDiscount(recv)], [true, false]);
+
+// ══ ب٠. لا يعتمد أحدٌ طلبَ نفسه ════════════════════════════════════════
+console.log("\n── منعُ اعتماد النفس ──");
+same("ب٠. **صاحبُ الطلب هو المعتمِد ⟶ ممنوع**", isSelfDecision(7, 7), true);
+same("   ومخوَّلٌ آخر ⟶ مسموح", isSelfDecision(7, 9), false);
+same("   وطلبٌ قديمٌ بلا صاحب ⟶ لا مانع", isSelfDecision(null, 9), false);
+same("   وفاعلٌ بلا معرّف ⟶ لا مانع", isSelfDecision(7, null), false);
+same("   ولا يُخلَط الصفرُ بالفراغ", isSelfDecision(0, 0), true);
+//  **والمنعُ يشمل الرفضَ كالاعتماد**: المطلوب رأيٌ ثانٍ لا نتيجةٌ بعينها.
+same("ب٠ب. **ومَن طلب لا يرى زرَّ اعتمادٍ ولا زرَّ رفض**",
+  allowedActions({ ...mgr, userId: 7 } as any, "price_approval_pending", 7), []);
+same("   ومخوَّلٌ آخر يراهما",
+  allowedActions({ ...mgr, userId: 9 } as any, "price_approval_pending", 7).sort(),
+  ["approve_discount", "reject_discount"]);
+
+// ══ ب٠ج. الاسمُ القديم باقٍ ولا يُنادى ═════════════════════════════════
+//  `canApprove` تبقى للتوافق ولا تُستعمل في مسارٍ حيّ. والفرقُ بينها وبين
+//  الجديدة مُثبَتٌ لا موصوف: مديرُ الفرع.
+same("ب٠ج. **والاسمُ القديم لم يتغيّر سلوكُه** — لا يُصلَح ولا يُنادى",
+  [canApprove(mgr), canApproveDiscount(mgr)], [false, true]);
 
 // ══ ب٢. مَن يؤكّد الشراء — بوّابةٌ مستقلّةٌ أوسع ═══════════════════════
 //  «اشترى» تسجيلُ واقعةٍ لا اعتماد، فبوّابتُها الفرعُ لا الطبيب. وفصلُها
@@ -91,24 +124,30 @@ same("   والمسؤول العام", canConfirmPurchase(admin), true);
 same("ب٣. **والخبيرُ لا** — محجوبٌ مالياً في كل النظام", canConfirmPurchase(expert), false);
 same("   وبلا جلسة ⟶ لا", canConfirmPurchase(null), false);
 //  والفرقُ بين البوّابتين مُثبَتٌ لا موصوف: مديرُ الفرع يبيع ولا يعتمد سعراً.
-same("ب٤. **مديرُ الفرع: يبيع ولا يعتمد سعراً**",
-  [canConfirmPurchase(mgr), canApprove(mgr)], [true, false]);
+same("ب٤. **مديرُ الفرع: يبيع ويعتمد الخصم في فرعه**",
+  [canConfirmPurchase(mgr), canApproveDiscount(mgr)], [true, true]);
+//  والخبيرُ خارج الاثنتين معاً.
+same("ب٥. **والخبير: لا يبيع ولا يعتمد**",
+  [canConfirmPurchase(expert), canApproveDiscount(expert)], [false, false]);
 
 // ══ ج. الأزرار بحسب الحالة ═════════════════════════════════════════════
 console.log("\n── الأزرار ──");
 same("د. بانتظار قرار المريض: الاستقبال يرى الأربعة",
   allowedActions(recv, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "request_price_change"]);
+  ["close", "confirm_purchase", "defer", "request_discount"]);
 same("   **ومديرُ الفرع يرى الأربعة نفسها** — يبيع في فرعه",
   allowedActions(mgr, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "request_price_change"]);
-same("هـ. **بانتظار اعتماد السعر: الاستقبال بلا زرّ**",
+  ["close", "confirm_purchase", "defer", "request_discount"]);
+same("هـ. **بانتظار اعتماد الخصم: الاستقبال بلا زرّ**",
   allowedActions(recv, "price_approval_pending"), []);
-same("   **ومديرُ الفرع كذلك بلا زرّ**",
-  allowedActions(mgr, "price_approval_pending"), []);
-same("   والطبيب يرى الاعتماد والرفض",
-  allowedActions(doc, "price_approval_pending").sort(), ["approve_price", "reject_price"]);
-same("و. بعد اعتماد السعر: الاستعلامات يشتري مباشرةً",
+same("   **ومديرُ الفرع يرى الاعتماد والرفض** — وهذا ما تغيّر",
+  allowedActions(mgr, "price_approval_pending").sort(),
+  ["approve_discount", "reject_discount"]);
+same("   والطبيب كذلك",
+  allowedActions(doc, "price_approval_pending").sort(),
+  ["approve_discount", "reject_discount"]);
+same("   **ولا الخبير**", allowedActions(expert, "price_approval_pending"), []);
+same("و. بعد اعتماد الخصم: الاستعلامات يشتري مباشرةً",
   allowedActions(recv, "price_approved_waiting_patient").includes("confirm_purchase"), true);
 same("   **ولا زرَّ اعتمادٍ لأحدٍ هنا** — الدور دورُ المتابِع",
   allowedActions(doc, "price_approved_waiting_patient").includes("approve_purchase"), false);
@@ -194,6 +233,61 @@ same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_sa
 same("ك. النهائيّتان اثنتان لا غير",
   FOLLOWUP_STATUSES.filter(isTerminal), ["closed_without_purchase", "converted"]);
 
+// ══ ل. حسابُ الخصم وحدودُه — **قاعدةٌ واحدة للشاشة وللخادم** ═══════════
+console.log("\n── حساب الخصم ──");
+const D = (currentPrice: number, mode: string, value: number) =>
+  computeDiscount({ currentPrice, mode, value });
+
+same("ل. مبلغٌ صحيح: مليونٌ ناقص ٢٠٠ ألف",
+  (({ ok, discountAmount, finalPrice, percentage }) =>
+    ({ ok, discountAmount, finalPrice, percentage }))(D(1_000_000, "amount", 200_000)),
+  { ok: true, discountAmount: 200_000, finalPrice: 800_000, percentage: 20 });
+same("   ونسبةٌ صحيحة: ٢٠٪ من مليون",
+  (({ ok, discountAmount, finalPrice }) => ({ ok, discountAmount, finalPrice }))(
+    D(1_000_000, "percentage", 20)),
+  { ok: true, discountAmount: 200_000, finalPrice: 800_000 });
+same("   **والنهائيُّ = الأصلي − الخصم بالضبط** ولو كسَرت النسبةُ الدينار",
+  (() => { const r = D(999_999, "percentage", 33.33);
+    return r.ok && r.finalPrice === 999_999 - r.discountAmount; })(), true);
+
+//  ══ الحدود — كلُّها تُردّ ══
+same("م. **رفعُ السعر ليس خصماً**", D(1_000_000, "amount", -50_000).ok, false);
+same("   والصفرُ يُردّ", D(1_000_000, "amount", 0).ok, false);
+same("   والسالبُ يُردّ", D(1_000_000, "percentage", -5).ok, false);
+same("   ومبلغٌ يساوي السعر يُردّ", D(1_000_000, "amount", 1_000_000).ok, false);
+same("   ومبلغٌ يفوق السعر يُردّ", D(1_000_000, "amount", 1_200_000).ok, false);
+same("   **ونسبةُ ١٠٠٪ تُردّ** — جهازٌ مجّاني قرارٌ آخر",
+  D(1_000_000, "percentage", 100).ok, false);
+same("   ونسبةٌ فوق المئة تُردّ", D(1_000_000, "percentage", 150).ok, false);
+same("   و٩٩٫٩٩٪ تُقبل — الحدُّ عند المئة لا قبلها", D(1_000_000, "percentage", 99.99).ok, true);
+same("   و`NaN` يُردّ", D(1_000_000, "amount", Number.NaN).ok, false);
+same("   و`Infinity` يُردّ", D(1_000_000, "amount", Number.POSITIVE_INFINITY).ok, false);
+same("   ومبلغٌ كسريٌّ يُردّ — الدينارُ صحيح", D(1_000_000, "amount", 1500.5).ok, false);
+same("   ونوعٌ مخترَع يُردّ", D(1_000_000, "flat", 100).ok, false);
+same("ن. **وسعرٌ معتمدٌ صفرٌ لا يُخصَم منه**", D(0, "amount", 100).ok, false);
+same("   ولا سعرٌ سالب", D(-5, "amount", 1).ok, false);
+//  نسبةٌ تُقرَّب إلى صفرٍ تُردّ صراحةً ولا تمرّ خصماً بلا أثر.
+same("س. **ونسبةٌ تتلاشى بالتقريب تُردّ**", D(10, "percentage", 0.001).ok, false);
+//  وكلُّ ردٍّ يحمل رسالةً عربية — الشاشةُ تعرضها والخادمُ يُرجعها.
+same("ع. وكلُّ رفضٍ برسالةٍ عربية",
+  [D(1_000_000, "amount", 0), D(1_000_000, "percentage", 100), D(0, "amount", 1)]
+    .filter((r) => !r.error), []);
+
+// ══ ف. أسبابُ الخصم وأنواعُه ═══════════════════════════════════════════
+console.log("\n── أسباب الخصم ──");
+same("ف. الأسبابُ السبعة المطلوبة", DISCOUNT_REASONS.length, 7);
+same("   وكلٌّ منها بعنوانٍ عربي",
+  DISCOUNT_REASONS.filter((r) => !DISCOUNT_REASON_LABELS[r]), []);
+same("   والسبعةُ هي المطلوبة بأسمائها", [...DISCOUNT_REASONS],
+  ["doctor_instruction", "patient_negotiation", "financial_hardship",
+    "competitor_price", "management_exception", "campaign_or_offer", "other"]);
+same("   وسببٌ مخترَع يُردّ", isDiscountReason("because"), false);
+same("   **وسببُ التأجيل ليس سببَ خصم**" , isDiscountReason("needs_time"), false);
+same("ص. والنوعان اثنان لا غير", [...DISCOUNT_MODES], ["amount", "percentage"]);
+same("   وكلٌّ بعنوانٍ عربي",
+  DISCOUNT_MODES.filter((m) => !DISCOUNT_MODE_LABELS[m]), []);
+same("   ونوعٌ مخترَع يُردّ", isDiscountMode("free"), false);
+
 // ══ ط٣. والبطاقةُ تستعمل البوّابة فعلاً ═══════════════════════════════
 //  القاعدة الصحيحة لا تنفع إن بقيت الواجهة على الشرط القديم. والعقد على
 //  المصدر لا على الرسم — لا مشغّل DOM هنا.
@@ -205,6 +299,26 @@ check(cardSrc.includes("canSelectExpert(session as any, active.status)"),
 check(!/actions\.length > 0[\s\S]{0,600}button-select-expert/.test(cardSrc),
   "   **ولم يبقَ شرطُ `actions.length` عليه**");
 check(cardSrc.includes("button-select-expert"), "   والزرّ موجود");
+
+//  ══ والبطاقةُ صارت بطاقةَ خصم ══
+check(cardSrc.includes("طلب خصم") && !cardSrc.includes("طلب تعديل السعر</"),
+  "ط٤. **العنوانُ صار «طلب خصم»**");
+check(cardSrc.includes("button-request-discount"), "   وزرُّ الطلب باسمه");
+check(cardSrc.includes("button-approve-discount") && cardSrc.includes("button-reject-discount"),
+  "   وزرّا «اعتماد الخصم» و«رفض الخصم»");
+//  **المعاينةُ الحيّة من دالّة الخادم نفسِها** — لا حسابَ ثانٍ في الشاشة.
+check(cardSrc.includes("computeDiscount({"),
+  "ط٥. **والمعاينةُ تنادي `computeDiscount` المشتركة**");
+check(!/finalPrice\s*=\s*[^;]*-\s*discount/i.test(cardSrc.replace(/computeDiscount[\s\S]{0,200}/g, "")),
+  "   ولا تحسب الشاشةُ السعرَ النهائي بنفسها");
+//  وأزرارُ القرار تُخفى عن صاحب الطلب — والخادمُ يمنعه على كلّ حال.
+check(cardSrc.includes("pendingRequest?.requestedBy"),
+  "ط٦. **وأزرارُ القرار تُخفى عن صاحب الطلب**");
+check(cardSrc.includes("text-self-decision-blocked"),
+  "   ويُقال له لماذا صراحةً");
+//  والصفُّ القديم يُسمّى باسمه ولا يُخفى.
+check(cardSrc.includes("isLegacyPriceChange"),
+  "ط٧. **والسجلُّ القديم يُعرَض ويُسمّى «تعديل سعر»**");
 
 console.log(`\n${failures === 0 ? "✅ all followup-rule cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

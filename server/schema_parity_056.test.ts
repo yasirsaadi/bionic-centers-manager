@@ -33,6 +33,7 @@
 import { execFileSync } from "child_process";
 import { Client } from "pg";
 import * as migration056 from "./migrations/056_cost_entry_department";
+import * as migration057 from "./migrations/057_discount_requests";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -79,6 +80,21 @@ SELECT jsonb_build_object(
        AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a
                               WHERE a.attrelid = 'cost_entries'::regclass
                                 AND a.attname = 'case_id')]::smallint[]
+  ),
+  'discount_columns', (
+    SELECT jsonb_object_agg(a.attname,
+             jsonb_build_object('data_type', format_type(a.atttypid, a.atttypmod),
+                                'not_null', a.attnotnull))
+      FROM pg_attribute a
+     WHERE a.attrelid = 'price_change_requests'::regclass
+       AND a.attname IN ('discount_mode', 'discount_value', 'discount_amount')
+       AND NOT a.attisdropped
+  ),
+  'discount_checks', (
+    SELECT jsonb_object_agg(c.conname, pg_get_constraintdef(c.oid))
+      FROM pg_constraint c
+     WHERE c.conrelid = 'price_change_requests'::regclass AND c.contype = 'c'
+       AND c.conname LIKE '%discount%'
   ),
   'index', (
     SELECT jsonb_build_object(
@@ -171,6 +187,29 @@ async function main() {
           WHERE conrelid = 'cost_entries'::regclass AND contype = 'f'
             AND conname = 'cost_entries_case_id_fkey'`)).rows[0].n;
       same("   ولم يتضاعف المفتاحُ بالإعادة", dup, 1);
+
+      // ══ وترحيل ٠٥٧ بنفس الطريقة ════════════════════════════════════
+      await c.query(`ALTER TABLE price_change_requests
+        DROP CONSTRAINT IF EXISTS price_change_requests_discount_shape_check,
+        DROP CONSTRAINT IF EXISTS price_change_requests_discount_mode_check`);
+      await c.query(`ALTER TABLE price_change_requests
+        DROP COLUMN IF EXISTS discount_mode,
+        DROP COLUMN IF EXISTS discount_value,
+        DROP COLUMN IF EXISTS discount_amount`);
+      const before57 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_attribute
+          WHERE attrelid = 'price_change_requests'::regclass
+            AND attname LIKE 'discount%' AND NOT attisdropped`)).rows[0].n;
+      same("٣ب. **والجدولُ عاد إلى ما قبل ٠٥٧** — لا أعمدةَ خصم", before57, 0);
+      await c.query(migration057.sql);
+      check(true, "   تطبيقُ الترحيل ٠٥٧ نجح");
+      await c.query(migration057.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const dup57 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_constraint
+          WHERE conrelid = 'price_change_requests'::regclass AND contype = 'c'
+            AND conname LIKE '%discount%'`)).rows[0].n;
+      same("   والقيدان اثنان لا أربعة بعد الإعادة", dup57, 2);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -195,6 +234,11 @@ async function main() {
       fromSchema.index?.columns, fromMigrations.index?.columns);
     same("٧. **وشرطُ الفهرس الجزئي متطابق**",
       fromSchema.index?.predicate, fromMigrations.index?.predicate);
+    //  ══ وترحيل ٠٥٧: الأعمدةُ الثلاثة والقيدان ══
+    same("٧ب. **وأعمدةُ الخصم الثلاثة متطابقة نوعاً وقابليةَ فراغ**",
+      fromSchema.discount_columns, fromMigrations.discount_columns);
+    same("٧ج. **وقيدا الخصم متطابقان نصّاً**",
+      fromSchema.discount_checks, fromMigrations.discount_checks);
 
     //  ولا يكفي التطابق: قد تتّفقان على الخطأ. فالقيمُ تُثبَّت صراحةً.
     console.log("\n── ٤. والقيمُ هي المقصودة لا مجرّد متساوية ──");
@@ -214,6 +258,25 @@ async function main() {
         === "case_id IS NOT NULL",
       "١٢. **وشرطُه `case_id IS NOT NULL`** — جزئيٌّ لا كامل",
       String(fromMigrations.index?.predicate));
+    //  ══ والقيمُ المقصودة في ٠٥٧ كذلك ══
+    //  عمودٌ عمودٌ لا كائناً كاملاً: `jsonb_object_agg` لا يضمن ترتيبَ
+    //  المفاتيح، ومقارنةُ النصّ كانت ستسقط على ترتيبٍ لا على قيمة.
+    const dcol = (n: string) => {
+      const c = (fromMigrations.discount_columns ?? {})[n] ?? {};
+      return [c.data_type, c.not_null];
+    };
+    same("١٢ب. الأعمدةُ الثلاثة بأنواعها وكلُّها تقبل الفراغ",
+      [dcol("discount_mode"), dcol("discount_value"), dcol("discount_amount")],
+      [["text", false], ["numeric(14,2)", false], ["integer", false]]);
+    same("١٢ج. والقيدان موجودان بالاسمين",
+      Object.keys(fromMigrations.discount_checks ?? {}).sort(),
+      ["price_change_requests_discount_mode_check",
+        "price_change_requests_discount_shape_check"]);
+    //  **والصفُّ القديم معفيٌّ صراحةً** — الشرطُ يبدأ بـ`discount_mode IS NULL`.
+    check(String(fromMigrations.discount_checks?.price_change_requests_discount_shape_check ?? "")
+        .includes("discount_mode IS NULL"),
+      "١٢د. **والقيدُ يعفي الصفَّ القديم صراحةً**",
+      String(fromMigrations.discount_checks?.price_change_requests_discount_shape_check));
 
     // ══ ٥. والسلوكُ الحيّ يطابق ما وُعد ════════════════════════════════
     //  التعريفُ وحده لا يكفي دليلاً: يُنفَّذ الحذفُ فعلاً على القاعدتين.

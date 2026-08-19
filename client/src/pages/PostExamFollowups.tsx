@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS, canApprove,
+  FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS, canApproveDiscount,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
@@ -43,7 +43,7 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: "due_today", label: "متابعة اليوم" },
   { key: "overdue", label: "متأخّر عن المتابعة" },
   { key: "awaiting_patient_decision", label: "بانتظار قرار المريض" },
-  { key: "price_approval_pending", label: "بانتظار اعتماد السعر" },
+  { key: "price_approval_pending", label: "بانتظار اعتماد الخصم" },
   { key: "price_approved_waiting_patient", label: "بانتظار تأكيد المريض بعد التعديل" },
   //  مرشِّحٌ للصفوف المحتجزة من قبل التبسيط — تُفتَح وتُؤكَّد بضغطة. ولا
   //  يدخلها ملفٌّ جديد بعد اليوم.
@@ -106,10 +106,15 @@ export default function PostExamFollowups() {
     },
   });
 
-  const mayApprove = canApprove(session as any);
-  //  تعديلاتُ السعر وحدها. وخرج منها «اعتماد الشراء»: تأكيدُ الشراء صار
-  //  عملَ الاستقبال ومدير الفرع، فلا يقف عليه طبيب.
-  const pendingMine = approvals?.priceApprovals?.length ?? 0;
+  const mayApprove = canApproveDiscount(session as any);
+  //  طلباتُ الخصم وحدها. وخرج منها «اعتماد الشراء»: تأكيدُ الشراء صار
+  //  عملَ الاستقبال ومدير الفرع، فلا يقف عليه أحد.
+  //
+  //  **وطلبُ المستخدم نفسِه يخرج من طابوره**: لا يعتمده ولا يرفضه، فإبقاؤه
+  //  في «بانتظار موافقتي» عدَدٌ يكذب — يراه ولا يستطيع إنهاءه أبداً.
+  const myApprovals = (approvals?.priceApprovals ?? []).filter(
+    (a: any) => !(typeof a.requestedBy === "number" && a.requestedBy === (session as any)?.userId));
+  const pendingMine = myApprovals.length;
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -122,8 +127,9 @@ export default function PostExamFollowups() {
         </p>
       </div>
 
-      {/* «بانتظار موافقتي» — للطبيب والمسؤول وحدهما، **وتعديلاتُ السعر
-          وحدها**: تأكيدُ الشراء لم يعد اعتماداً ولا يظهر هنا. */}
+      {/* «بانتظار موافقتي» — للمسؤول ومدير الفرع والطبيب المخوَّل،
+          **وطلباتُ الخصم وحدها**: تأكيدُ الشراء لم يعد اعتماداً ولا يظهر
+          هنا ولا يعود. */}
       {mayApprove && pendingMine > 0 && (
         <Card className="border-blue-200 bg-blue-50/40" data-testid="card-my-approvals">
           <CardHeader className="pb-3">
@@ -133,16 +139,25 @@ export default function PostExamFollowups() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {(approvals?.priceApprovals ?? []).map((a: any) => (
+            {myApprovals.map((a: any) => (
               <Link key={`p${a.requestId}`} href={`/patients/${a.patientId}`}>
                 <div className="flex items-center justify-between rounded-md border bg-white px-3 py-2 text-sm cursor-pointer hover:bg-muted/40"
                   data-testid={`row-approval-price-${a.requestId}`}>
                   <div>
                     <span className="font-medium">{a.patientName}</span>
                     <span className="text-muted-foreground mx-2">{a.patientCode}</span>
-                    <Badge variant="outline" className="text-xs">تعديل سعر</Badge>
+                    {/*  الصفُّ القديم يُسمّى باسمه — لا يُخفى ولا يُقرأ خصماً. */}
+                    <Badge variant="outline" className="text-xs">
+                      {a.isLegacyPriceChange ? "تعديل سعر (قديم)" : "خصم"}
+                    </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
+                    {a.discountAmount !== null && a.discountAmount !== undefined && (
+                      <span className="ml-2">
+                        خصم {a.discountAmount.toLocaleString()} د.ع
+                        {a.discountMode === "percentage" && ` (${a.discountValue}٪)`}
+                      </span>
+                    )}
                     {a.currentPrice?.toLocaleString()} ⟶ {a.proposedPrice?.toLocaleString()} د.ع
                   </div>
                 </div>

@@ -3,21 +3,30 @@
 // ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
 //
 //   تسجيلُ قرار المريض والمتابعة  — استقبال · مدير فرع · طبيب · مسؤول
+//   **طلبُ خصم**                  — استقبال · مدير فرع · طبيب · مسؤول
+//   **اعتمادُ/رفضُ الخصم**         — مسؤول · مدير فرع · طبيبٌ مخوَّل
+//                                    **وليس صاحبَ الطلب**
 //   **تأكيدُ الشراء وبدءُ التصنيع** — استقبال · مدير فرع · طبيب · مسؤول
-//   اعتمادُ/رفضُ تعديل السعر      — **طبيبٌ مخوَّل أو مسؤول حصراً**
 //
-// والفرقُ بين السطرين الأوّلين والثالث هو كلّ شيء: **«اشترى» تسجيلُ واقعة**
-// وقعت أمام الموظّف بالسعر المعتمد نفسه، فلا سلطةَ تُستأذَن لها. أمّا
-// **تعديلُ السعر فاعتماد**: رقمٌ وقّعه الطبيب يُطلب تغييرُه، فيلزم مَن يملك
-// تغييره — ومديرُ الفرع ليس منهم عمداً.
+// والفرقُ بين الطلب والاعتماد هو كلّ شيء: **الطلبُ اقتراح** لا يحرّك ديناراً
+// — لا سعراً معتمداً ولا كلفةَ مريض ولا قيدَ دفتر ولا أمرَ تصنيع. أمّا
+// **الاعتمادُ فقرار** يجعل السعرَ المعتمد هو المخفَّض.
 //
-// وكان تأكيدُ الشراء في الصفّ الثالث خطأً، فحبَس الفرعَ كلَّه بانتظار ضغطةٍ
-// لا قرارَ سريرياً فيها. وهذا ما صُحِّح.
+// و**«اشترى» تسجيلُ واقعة** وقعت أمام الموظّف بالسعر المعتمد نفسه بلا تغيير
+// حرف، فلا سلطةَ تُستأذَن لها ولا خطوةَ «اعتماد شراء» في النظام إطلاقاً.
 //
-// وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل يعتمد، وإلّا
-// تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+// ودخل مديرُ الفرع في الاعتماد لأن **الخصم قرارٌ تجاري لا سريري**: الطبيبُ
+// حدّد الجهازَ وسعرَه في سجلٍّ مختوم، و«نبيعه بأقلّ» مسؤوليةُ مَن يدير
+// الفرعَ ويحاسَب على إيراده. وحصرُه بالطبيب كان يعطّل الفرعَ على مكالمة.
 //
-// ونطاقُ الفرع مفروضٌ في كل نقطة: يُقرأ فرع المتابعة من صفّها لا من الطلب.
+// **ولا يعتمد أحدٌ طلبَ نفسه** — ولا يرفضه: المطلوب رأيٌ ثانٍ لا نتيجةٌ
+// بعينها. ويُفحص من `requested_by` المحفوظ، هنا وتحت القفل في المخزن معاً.
+//
+// وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي مخوَّلٍ في الفرع يعتمد،
+// وإلّا تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+//
+// ونطاقُ الفرع مفروضٌ في كل نقطة: يُقرأ فرع المتابعة من صفّها لا من الطلب —
+// وهو ما يحدّ مديرَ الفرع والطبيبَ بفروعهما، والمسؤولُ وحده يتجاوزه.
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -25,7 +34,8 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import {
-  canApprove, canConfirmPurchase, canRecordFollowup, canViewFollowup,
+  canApproveDiscount, canConfirmPurchase, canRecordFollowup, canViewFollowup,
+  isSelfDecision,
 } from "@shared/followup";
 
 type Req = any;
@@ -131,12 +141,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     res.json(rows);
   });
 
-  // ── «بانتظار موافقتي» — **تعديلاتُ السعر وحدها** ─────────────────────
-  //  وخرج منها طابورُ «اعتماد الشراء»: مهامٌّ روتينية لا قرارَ سريرياً فيها
-  //  كانت تُغرق شاشة الطبيب وتحبس الفرع. والباقي اعتمادٌ حقيقي.
+  // ── «بانتظار موافقتي» — **طلباتُ الخصم وحدها** ───────────────────────
+  //  ولا اعتمادَ شراءٍ فيها ولا يعود: مهامٌّ روتينية لا قرارَ فيها كانت
+  //  تُغرق الشاشة وتحبس الفرع. والباقي اعتمادٌ حقيقي على المال.
   app.get("/api/followups/approvals", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canApprove(s)) {
+    if (!canApproveDiscount(s)) {
       //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يعتمد.
       return res.json({ priceApprovals: [], mayApprove: false });
     }
@@ -282,15 +292,17 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── طلب تعديل السعر — **اقتراحٌ لا تعديل** ───────────────────────────
-  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+  // ── طلبُ خصم — **اقتراحٌ لا تعديل، ولا دينارَ يتحرّك** ────────────────
+  async function discountRequestHandler(req: Req, res: any) {
     const s = getSession(req);
     if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
-      const out = await store.requestPriceChange({
-        followupId: f.id, proposedPrice: Number(req.body?.proposedPrice),
+      const out = await store.requestDiscount({
+        followupId: f.id,
+        mode: String(req.body?.discountMode ?? ""),
+        value: Number(req.body?.discountValue),
         reason: String(req.body?.reason ?? ""), note: str(req.body?.note),
         actor: actorOf(req),
       });
@@ -298,34 +310,48 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         entityType: "price_change_request", entityId: out.requestId, action: "create",
         userId: s.userId, userName: s.userName, branchId: f.branchId,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `طلب تعديل سعر لمتابعة #${f.id}: ${f.approvedPrice.toLocaleString()} ⟶ ${Number(req.body?.proposedPrice).toLocaleString()} د.ع`,
+        notes: `طلب خصم لمتابعة #${f.id}: ${f.approvedPrice.toLocaleString()} د.ع ⟶ `
+          + `${out.followup.approvedPrice.toLocaleString()} د.ع معتمد حالياً (بانتظار الاعتماد)`,
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }
-  });
+  }
+  app.post("/api/followups/:id/discount-request", isAuthenticated, discountRequestHandler);
+  //  الاسمُ القديم يبقى مسنَداً إلى المعالج نفسه — نافذةٌ مفتوحةٌ منذ ما قبل
+  //  النشر تصيبه، ولا يجوز أن تُردّ بـ404 وهي تفعل الصواب.
+  app.post("/api/followups/:id/price-request", isAuthenticated, discountRequestHandler);
 
-  // ── اعتماد/رفض تعديل السعر — **طبيب أو مسؤول حصراً** ─────────────────
-  app.post("/api/price-requests/:requestId/decide", isAuthenticated, async (req: Req, res) => {
+  // ── اعتماد/رفض الخصم — **مخوَّلٌ غيرُ صاحب الطلب** ────────────────────
+  async function decideDiscountHandler(req: Req, res: any) {
     const s = getSession(req);
-    //  الحارس أوّلاً وقبل أي قراءة: مديرُ الفرع يُردّ هنا صراحةً.
-    if (!canApprove(s)) {
+    //  الحارس أوّلاً وقبل أي قراءة: الاستقبالُ والمحاسبُ والخبير يُردّون هنا.
+    if (!canApproveDiscount(s)) {
       return res.status(403).json({
-        error: "اعتماد تعديل السعر للطبيب المخوَّل أو المسؤول العام حصراً",
+        error: "اعتماد الخصم للمسؤول العام أو مدير الفرع أو الطبيب المخوَّل",
       });
     }
     const requestId = Number(req.params.requestId);
     if (!Number.isFinite(requestId)) return res.status(400).json({ error: "معرّف غير صالح" });
     const decision = req.body?.decision === "approve" ? "approve" : "reject";
 
-    //  نطاق الفرع يُفحص من متابعة الطلب — قبل أي كتابة.
+    //  نطاق الفرع يُفحص من متابعة الطلب — قبل أي كتابة. وهو ما يحدّ مديرَ
+    //  الفرع والطبيبَ بفروعهما، والمسؤولُ العام وحده يتجاوزه.
     const reqs = await store.getPriceRequestById(requestId);
-    if (!reqs) return res.status(404).json({ error: "طلب تعديل السعر غير موجود" });
+    if (!reqs) return res.status(404).json({ error: "طلب الخصم غير موجود" });
     if (!canReachBranch(req, reqs.branchId)) {
       return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
+    // ══ ولا يعتمد أحدٌ طلبَ نفسه ═══════════════════════════════════════
+    //  يُردّ هنا برسالةٍ صريحة قبل فتح المعاملة — والمخزنُ يفحصها ثانيةً
+    //  تحت القفل على الصفّ نفسه، فمنادٍ لا يمرّ بهذه النقطة يصطدم بها.
+    if (isSelfDecision(reqs.requestedBy, s.userId)) {
+      return res.status(403).json({
+        error: "لا يمكنك اعتماد أو رفض طلب خصم قدّمتَه بنفسك — يقرّره مخوَّلٌ آخر",
+      });
+    }
 
     try {
-      const out = await store.decidePriceChange({
+      const out = await store.decideDiscount({
         requestId, decision, note: str(req.body?.note), actor: actorOf(req),
       });
       await logAudit({
@@ -335,12 +361,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         newValues: { approvedPrice: out.followup.approvedPrice, decision },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         notes: decision === "approve"
-          ? `اعتماد تعديل السعر #${requestId}: ${reqs.currentPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
-          : `رفض تعديل السعر #${requestId} — السعر المعتمد بقي ${out.followup.approvedPrice.toLocaleString()} د.ع`,
+          ? `اعتماد خصم #${requestId}: ${reqs.currentPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
+          : `رفض خصم #${requestId} — السعر المعتمد بقي ${out.followup.approvedPrice.toLocaleString()} د.ع`,
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }
-  });
+  }
+  app.post("/api/discount-requests/:requestId/decide", isAuthenticated, decideDiscountHandler);
+  //  الاسمُ القديم — للنوافذ المفتوحة، بنفس الحارس تماماً.
+  app.post("/api/price-requests/:requestId/decide", isAuthenticated, decideDiscountHandler);
 
   // ── تأكيد الشراء وبدء التصنيع — **الاستقبال ومدير الفرع** ────────────
   //  ينادي `storage.assignManufacturing` في معاملةٍ واحدة مع سجلّ التأكيد.

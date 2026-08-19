@@ -1,9 +1,12 @@
 // بطاقةُ «قرار المريض بعد المعاينة» في صفحة المريض.
 //
-// ══ الأزرار تتبع الصلاحية والحالة معاً ══════════════════════════════════
-// الاستعلامات يرى «بانتظار اعتماد السعر» بلا زرّ، والطبيبُ يرى «اعتماد /
-// رفض». وهذا **عرضٌ لا حراسة**: الخادم يفحص كلّ كتابة مهما أظهرت الواجهة —
-// و`allowedActions` مشتركةٌ بينهما فلا تنحرف قاعدةٌ عن قاعدة.
+// ══ الأزرار تتبع الصلاحية والحالة والطالبَ معاً ═════════════════════════
+// الاستعلامات يرى «بانتظار اعتماد الخصم» بلا زرّ، والمخوَّلُ يرى «اعتماد /
+// رفض» — **إلّا إن كان هو مَن طلب**، فالطلبُ يحتاج رأياً ثانياً.
+//
+// وهذا كلُّه **عرضٌ لا حراسة**: الخادم يفحص كلّ كتابة مهما أظهرت الواجهة،
+// و`allowedActions` و`computeDiscount` مشتركتان بينهما فلا تنحرف قاعدةٌ
+// عن قاعدة ولا يعرض النموذجُ رقماً يخالف ما سيُحسب هناك.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,9 +28,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  allowedActions, canSelectExpert,
+  allowedActions, canSelectExpert, computeDiscount,
+  DISCOUNT_MODES, DISCOUNT_MODE_LABELS, DISCOUNT_REASONS, DISCOUNT_REASON_LABELS,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
-  type FollowupReason, type FollowupStatus,
+  type DiscountMode, type DiscountReason, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
 interface Followup {
@@ -85,7 +89,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [note, setNote] = useState("");
   const [nextDate, setNextDate] = useState(defaultNextDate());
   const [noSchedule, setNoSchedule] = useState(false);
-  const [proposedPrice, setProposedPrice] = useState("");
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("amount");
+  const [discountValue, setDiscountValue] = useState("");
+  const [discountReason, setDiscountReason] = useState<DiscountReason>("patient_negotiation");
   const [expertId, setExpertId] = useState("");
 
   const { data: followups, isLoading } = useQuery<Followup[]>({
@@ -111,7 +117,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const active = (followups ?? [])[0] ?? null;
 
   const reset = () => {
-    setDialog(null); setNote(""); setProposedPrice(""); setExpertId("");
+    setDialog(null); setNote(""); setExpertId("");
+    setDiscountMode("amount"); setDiscountValue(""); setDiscountReason("patient_negotiation");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
   };
 
@@ -147,9 +154,20 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   }
   if (!active) return null;
 
-  const actions = allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
+  //  صاحبُ الطلب يُمرَّر فتُخفى أزرارُ قراره عنه — والخادمُ يمنعه على كل حال.
+  const actions = allowedActions(session as any, active.status, pendingRequest?.requestedBy ?? null);
+  const isOwnPending = Boolean(pendingRequest
+    && typeof pendingRequest.requestedBy === "number"
+    && pendingRequest.requestedBy === (session as any)?.userId);
   const busy = act.isPending;
+
+  //  المعاينةُ الحيّة للخصم — **نفسُ دالّة الخادم**، فما تعرضه الشاشة هو
+  //  ما سيُحسب هناك بالضبط ولا رقمَ يفاجئ الموظّف بعد الإرسال.
+  const preview = computeDiscount({
+    currentPrice: active.approvedPrice, mode: discountMode,
+    value: Number(discountValue),
+  });
 
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
@@ -176,7 +194,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             hint={active.selectedExpertName ? undefined : "يختاره الاستعلامات"} />
           <Field label="السعر المعتمد"
             value={`${active.approvedPrice.toLocaleString()} د.ع`}
-            hint={active.priceSource === "approved_change" ? "بعد تعديلٍ معتمد" : "من المعاينة"} />
+            hint={active.priceSource === "approved_change" ? "بعد خصمٍ معتمد" : "من المعاينة"} />
           <Field label="آخر تواصل" value={fmt(active.lastContactAt)} />
           <Field label="المتابعة القادمة"
             value={active.noScheduledFollowUp ? "بلا موعد" : fmt(active.nextFollowUpAt)} />
@@ -193,8 +211,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         {active.status === "price_approval_pending" && actions.length === 0 && (
           <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800"
             data-testid="text-awaiting-price-approval">
-            بانتظار اعتماد السعر من الطبيب أو المسؤول العام
-            {pendingRequest && ` — المقترح ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
+            بانتظار اعتماد الخصم من المسؤول أو مدير الفرع أو الطبيب المخوَّل
+            {pendingRequest && ` — السعر بعد الخصم ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
           </p>
         )}
         {/*  صفٌّ محتجزٌ من قبل التبسيط — يُستأنف بضغطةٍ واحدة لا بانتظارِ أحد. */}
@@ -214,16 +232,43 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           </p>
         )}
 
-        {pendingRequest && actions.includes("approve_price") && (
-          <div className="rounded-md border border-blue-200 bg-blue-50/60 px-3 py-2 text-sm">
-            <div className="font-medium">طلب تعديل سعر</div>
+        {/*  بطاقةُ الطلب المعلَّق — تُعرَض لكلّ من يرى الملفّ، بأزرارٍ لمن
+            يقرّر وبلا أزرارٍ لغيره. وصاحبُ الطلب يراها كذلك ويُقال له
+            صراحةً لماذا لا زرَّ له. */}
+        {pendingRequest && (
+          <div className="rounded-md border border-blue-200 bg-blue-50/60 px-3 py-2 text-sm"
+            data-testid="card-pending-discount">
+            <div className="font-medium">
+              {pendingRequest.isLegacyPriceChange ? "طلب تعديل سعر (سجلّ قديم)" : "طلب خصم"}
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-3">
+              <span className="text-muted-foreground">السعر الأصلي:{" "}
+                <b className="text-foreground">{pendingRequest.currentPrice?.toLocaleString()} د.ع</b></span>
+              {pendingRequest.discountAmount !== null
+                && pendingRequest.discountAmount !== undefined && (
+                <span className="text-muted-foreground">الخصم:{" "}
+                  <b className="text-foreground" data-testid="text-pending-discount-amount">
+                    {pendingRequest.discountAmount.toLocaleString()} د.ع</b>
+                  {pendingRequest.discountMode === "percentage"
+                    && ` (${pendingRequest.discountValue}٪)`}</span>
+              )}
+              <span className="text-muted-foreground">السعر النهائي:{" "}
+                <b className="text-foreground" data-testid="text-pending-final-price">
+                  {pendingRequest.proposedPrice?.toLocaleString()} د.ع</b></span>
+            </div>
             <div className="text-muted-foreground text-xs mt-1">
-              {pendingRequest.currentPrice?.toLocaleString()} ⟶ {pendingRequest.proposedPrice?.toLocaleString()} د.ع
-              {" — "}{FOLLOWUP_REASON_LABELS[pendingRequest.reason as FollowupReason] ?? pendingRequest.reason}
+              {(pendingRequest.isLegacyPriceChange
+                ? (FOLLOWUP_REASON_LABELS[pendingRequest.reason as FollowupReason] ?? pendingRequest.reason)
+                : (DISCOUNT_REASON_LABELS[pendingRequest.reason as DiscountReason] ?? pendingRequest.reason))}
               {pendingRequest.requestedByName && ` · طلبه ${pendingRequest.requestedByName}`}
             </div>
             {pendingRequest.note && (
               <div className="text-muted-foreground text-xs mt-1">{pendingRequest.note}</div>
+            )}
+            {isOwnPending && (
+              <p className="mt-1 text-xs text-amber-700" data-testid="text-self-decision-blocked">
+                لا يمكنك اعتماد أو رفض طلبٍ قدّمتَه بنفسك — يقرّره مخوَّلٌ آخر.
+              </p>
             )}
           </div>
         )}
@@ -251,25 +296,25 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <XCircle className="h-4 w-4" /> لم يشترِ
             </Button>
           )}
-          {actions.includes("request_price_change") && (
+          {actions.includes("request_discount") && (
             <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => setDialog("price")} data-testid="button-request-price-change">
-              <CircleDollarSign className="h-4 w-4" /> طلب تعديل السعر
+              onClick={() => setDialog("discount")} data-testid="button-request-discount">
+              <CircleDollarSign className="h-4 w-4" /> طلب خصم
             </Button>
           )}
-          {actions.includes("approve_price") && pendingRequest && (
+          {actions.includes("approve_discount") && pendingRequest && (
             <>
               <Button size="sm" disabled={busy}
-                onClick={() => submit(`/api/price-requests/${pendingRequest.id}/decide`,
+                onClick={() => submit(`/api/discount-requests/${pendingRequest.id}/decide`,
                   { decision: "approve" })}
-                data-testid="button-approve-price">
-                اعتماد السعر الجديد
+                data-testid="button-approve-discount">
+                اعتماد الخصم
               </Button>
               <Button size="sm" variant="outline" disabled={busy}
-                onClick={() => submit(`/api/price-requests/${pendingRequest.id}/decide`,
+                onClick={() => submit(`/api/discount-requests/${pendingRequest.id}/decide`,
                   { decision: "reject" })}
-                data-testid="button-reject-price">
-                رفض التعديل
+                data-testid="button-reject-discount">
+                رفض الخصم
               </Button>
             </>
           )}
@@ -380,42 +425,82 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── طلب تعديل السعر ── */}
-      <Dialog open={dialog === "price"} onOpenChange={(o) => !o && reset()}>
+      {/* ── طلب خصم ── */}
+      <Dialog open={dialog === "discount"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>طلب تعديل السعر</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>طلب خصم</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد الآن: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              الطلب لا يغيّر السعر — يعتمده طبيبٌ أو المسؤول العام.
+              الطلب <b>لا يغيّر السعر ولا يحرّك ديناراً</b> — يعتمده المسؤول
+              أو مدير الفرع أو الطبيب المخوَّل، ولا يعتمده مَن قدّمه.
             </p>
-            <div>
-              <Label>السعر المقترح (د.ع)</Label>
-              <Input type="number" value={proposedPrice}
-                onChange={(e) => setProposedPrice(e.target.value)}
-                data-testid="input-proposed-price" />
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
+              data-testid="text-discount-original-price">
+              <span className="text-muted-foreground">السعر الأصلي: </span>
+              <b>{active.approvedPrice.toLocaleString()} د.ع</b>
             </div>
             <div>
-              <Label>السبب</Label>
-              <Select value={reason} onValueChange={(v) => setReason(v as FollowupReason)}>
-                <SelectTrigger data-testid="select-price-reason"><SelectValue /></SelectTrigger>
+              <Label>نوع الخصم</Label>
+              <Select value={discountMode} onValueChange={(v) => setDiscountMode(v as DiscountMode)}>
+                <SelectTrigger data-testid="select-discount-mode"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {FOLLOWUP_REASONS.map((r) => (
-                    <SelectItem key={r} value={r}>{FOLLOWUP_REASON_LABELS[r]}</SelectItem>
+                  {DISCOUNT_MODES.map((m) => (
+                    <SelectItem key={m} value={m}>{DISCOUNT_MODE_LABELS[m]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
+              <Label>{discountMode === "percentage" ? "نسبة الخصم (٪)" : "مبلغ الخصم (د.ع)"}</Label>
+              <Input type="number" value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                data-testid="input-discount-value" />
+            </div>
+            {/*  النتيجةُ حيّةً — ورسالةُ الرفض هي رسالةُ الخادم نفسُها. */}
+            {discountValue !== "" && (
+              preview.ok ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-sm"
+                  data-testid="text-discount-preview">
+                  <div>الخصم: <b>{preview.discountAmount.toLocaleString()} د.ع</b>
+                    {" "}({preview.percentage}٪)</div>
+                  <div>السعر بعد الخصم: <b data-testid="text-discount-final">
+                    {preview.finalPrice.toLocaleString()} د.ع</b></div>
+                </div>
+              ) : (
+                <p className="text-sm text-destructive" data-testid="text-discount-error">
+                  {preview.error}
+                </p>
+              )
+            )}
+            <div>
+              <Label>السبب</Label>
+              <Select value={discountReason}
+                onValueChange={(v) => setDiscountReason(v as DiscountReason)}>
+                <SelectTrigger data-testid="select-discount-reason"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DISCOUNT_REASONS.map((r) => (
+                    <SelectItem key={r} value={r}>{DISCOUNT_REASON_LABELS[r]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {discountReason === "doctor_instruction" && (
+                <p className="mt-1 text-[11px] text-muted-foreground"
+                  data-testid="text-doctor-instruction-note">
+                  توجيهُ الطبيب سببٌ موثَّق — ويبقى الطلب بانتظار اعتماد مخوَّل.
+                </p>
+              )}
+            </div>
+            <div>
               <Label>ملاحظة (اختياري)</Label>
               <Input value={note} onChange={(e) => setNote(e.target.value)}
-                data-testid="input-price-note" />
+                data-testid="input-discount-note" />
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !proposedPrice} data-testid="button-submit-price-request"
-              onClick={() => submit(`/api/followups/${active.id}/price-request`, {
-                proposedPrice: Number(proposedPrice), reason, note: note || undefined,
+            <Button disabled={busy || !preview.ok} data-testid="button-submit-discount-request"
+              onClick={() => submit(`/api/followups/${active.id}/discount-request`, {
+                discountMode, discountValue: Number(discountValue),
+                reason: discountReason, note: note || undefined,
               })}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "إرسال الطلب"}
             </Button>
@@ -463,8 +548,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
+                {active.priceSource === "approved_change" ? "السعر المعتمد بعد الخصم: " : "السعر المعتمد: "}
+              <b data-testid="text-purchase-approved-price">
+                {active.approvedPrice.toLocaleString()} د.ع</b>.
+              يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض بهذا المبلغ بعينه.
             </p>
             {/*  الخبير **يُعرَض ولا يُختار هنا**: له نقطتُه وتدقيقُه. والخادم
                 يقرأه من الصفّ لا من الطلب، فلا يُرسَل أصلاً. والسعرُ كذلك. */}
@@ -497,9 +584,15 @@ const EVENT_LABELS: Record<string, string> = {
   followup_created: "فُتحت المتابعة",
   patient_deferred: "أجّل المريض",
   contact_recorded: "تواصل",
-  price_change_requested: "طُلب تعديل السعر",
-  price_approved: "اعتُمد تعديل السعر",
-  price_rejected: "رُفض تعديل السعر",
+  //  الأربعةُ الجديدة، ثم القديمةُ بلغتها — فتُقرأ الصفوفُ كما كُتبت.
+  discount_requested: "طُلب خصم",
+  discount_approved: "اعتُمد الخصم",
+  discount_rejected: "رُفض الخصم",
+  discount_cancelled: "أُلغي طلب الخصم (إغلاق الملفّ)",
+  price_change_requested: "طُلب تعديل السعر (سجلّ قديم)",
+  price_approved: "اعتُمد تعديل السعر (سجلّ قديم)",
+  price_rejected: "رُفض تعديل السعر (سجلّ قديم)",
+  price_request_cancelled: "أُلغي طلب تعديل السعر (سجلّ قديم)",
   patient_accepted_price: "وافق المريض على السعر",
   purchase_confirmed: "أكّد الموظّف الشراء",
   //  اسمٌ تاريخي: صفوفُ ما قبل التبسيط حين كان الطبيب يعتمد. يبقى كي
