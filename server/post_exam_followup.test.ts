@@ -42,9 +42,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-متابعة-ما-بعد-المعاينة";
 const ADMIN = 9861, RECV = 9862, MGR = 9863, DOC = 9864, DOC2 = 9865;
 const EXPERT = 9866, RECV_B2 = 9867, DOC_B2 = 9868;
-const EXPERT2 = 9869, ACCT = 9870, PHYSIO = 9871, MGR_B2 = 9872;
+const EXPERT2 = 9869, ACCT = 9870, PHYSIO = 9871, MGR_B2 = 9872, ADMIN_DOC = 9873;
 const ALL_USERS = [ADMIN, RECV, MGR, DOC, DOC2, EXPERT, RECV_B2, DOC_B2,
-  EXPERT2, ACCT, PHYSIO, MGR_B2];
+  EXPERT2, ACCT, PHYSIO, MGR_B2, ADMIN_DOC];
 
 const S = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -69,6 +69,12 @@ const S = {
   mgrB2: { userId: MGR_B2, role: "branch_manager", isAdmin: false, branchId: 2,
     accessibleBranches: [2], displayName: "مدير الفرع ٢",
     permissions: { canViewPatients: true, canAddPatients: true } },
+  //  **دورُه «طبيب» و`isAdmin` صحيح**: سلطةُ المسؤول تسبق الدور في كلّ
+  //  بوّابة — وهذا ما يُثبَت لا ما يُفترَض.
+  adminDoc: { userId: ADMIN_DOC, role: "doctor", isAdmin: true, branchId: 1,
+    accessibleBranches: [1, 2], displayName: "المسؤول الطبيب",
+    permissions: { canViewPatients: true, canAddPatients: true,
+      canWriteMedicalExam: true, canDeletePatients: true } },
   expert2: { userId: EXPERT2, role: "prosthetics_expert", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "الخبير الثاني", permissions: {} },
   //  **يحملان `canAddPatients`** عمداً: البوّابة بالدور لا بالقدرة، وهذان
@@ -178,6 +184,7 @@ async function main() {
     [ACCT, "accountant", "المحاسب", 1, "[]"],
     [PHYSIO, "therapist", "مُدخِل الجلسات", 1, "[]"],
     [MGR_B2, "branch_manager", "مدير الفرع ٢", 2, "[]"],
+    [ADMIN_DOC, "doctor", "المسؤول الطبيب", 1, '["prosthetic","medical_support"]'],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true,$7::jsonb)
@@ -777,12 +784,9 @@ async function main() {
         { expertUserId: DOC_B2 })).status, 400);
 
     await http("POST", `/api/followups/${fExp.id}/accept-price`, S.recv, {});
-    //  **والطبيبُ يُردّ على الاسم القديم كما يُردّ على الجديد**: البابُ
-    //  واحدٌ والحارسُ واحد، فلا يبقى للاسم المهجور ثغرةٌ لا يراها أحد.
-    same("ب٢أ. **والطبيبُ لا يؤكّد الشراء ولو من الاسم القديم**",
-      (await http("POST", `/api/followups/${fExp.id}/approve-purchase`, S.doc, {})).status, 403);
     //  **الاعتماد لا يقبل خبيراً من الجسم**: يُهرَّب EXPERT فيُتجاهَل.
-    const smuggle = await http("POST", `/api/followups/${fExp.id}/approve-purchase`, S.recv,
+    //  والطبيبُ المخوَّل يُقبل هنا كما يُقبل الاستقبال — مرونةٌ لا تبعيّة.
+    const smuggle = await http("POST", `/api/followups/${fExp.id}/approve-purchase`, S.doc,
       { expertUserId: EXPERT });
     same("ب٢. اعتماد الشراء نجح", smuggle.status, 200);
     const expOrder = await q(
@@ -1210,9 +1214,9 @@ async function main() {
       WHERE p.referral_source = $1 AND f.status = 'price_approval_pending'`, [MARK]);
     same("   **ولا ملفَّ عالقٍ في «بانتظار اعتماد السعر»**", liveLegacyStatus.length, 0);
 
-    // ══ ٤٠. **الطبيبُ يقرأ ولا يعمل تجارياً — في الخادم لا في الشاشة** ══
-    console.log("\n── حدود الطبيب التجارية ──");
-    const pDocLimit = await mkPatient("حدودُ الطبيب");
+    // ══ ٤٠. **الطبيبُ يستطيع ولا يُطلَب منه** ═════════════════════════
+    console.log("\n── مشاركةُ الطبيب: اختياريةٌ لا إلزامية ──");
+    const pDocLimit = await mkPatient("مشاركةُ الطبيب");
     await mkCase(pDocLimit);
     await signExam(pDocLimit, S.doc, { deviceCost: 800_000 });
     const fDL = await followupOf(pDocLimit);
@@ -1224,88 +1228,143 @@ async function main() {
     same("    ويقرأ الطابور كذلك",
       (await http("GET", "/api/followups", S.doc)).status, 200);
 
-    //  ── وإشارتُه وحدها مفتوحة ──
+    //  ── وإشارتُه ──
     same("٤١. **وإشارةُ الرغبة مفتوحةٌ له**",
       (await http("POST", `/api/followups/${fDL.id}/purchase-interest`, S.doc, {})).status, 200);
 
-    //  ── وكلُّ بابٍ تجاريّ مغلقٌ في وجهه ــ **بنداءٍ مباشر لا بإخفاء زرّ** ──
-    const beforeDoc = await moneyOf(pDocLimit);
-    const statusBeforeDoc = (await followupOf(pDocLimit))?.status;
-    const docDenied: Array<[string, string, any]> = [
-      ["تأجيل", `/api/followups/${fDL.id}/defer`, { reason: "needs_time", noScheduledFollowUp: true }],
-      ["إغلاق «لم يشترِ»", `/api/followups/${fDL.id}/close`, { reason: "chose_other_center" }],
-      ["تسجيل تواصل", `/api/followups/${fDL.id}/contact`, { note: "اتصلتُ به" }],
-      ["إسناد خبير", `/api/followups/${fDL.id}/expert`, { expertUserId: EXPERT }],
-      ["تحديد السعر", `/api/followups/${fDL.id}/commercial-price`, { finalPrice: 1, reason: "x" }],
-      ["تأكيد الشراء", `/api/followups/${fDL.id}/confirm-purchase`, {}],
-      ["تأكيد الشراء (الاسم القديم)", `/api/followups/${fDL.id}/approve-purchase`, {}],
-      ["قبول السعر (مسار قديم)", `/api/followups/${fDL.id}/accept-price`, {}],
-    ];
-    for (const [label, path, body] of docDenied) {
-      const r = await http("POST", path, S.doc, body);
-      same(`٤٢. **الطبيبُ يُردّ: ${label}**`, r.status, 403);
-    }
-    //  **ولا أثرَ لأيٍّ من تلك المحاولات**: لا حالةَ ولا سعرَ ولا مال.
-    same("    **ولا أثرَ لأيٍّ منها إطلاقاً**", await moneyOf(pDocLimit), beforeDoc);
-    same("    ولا الحالةُ تبدّلت ولا السعر",
-      [(await followupOf(pDocLimit))?.status, (await followupOf(pDocLimit))?.approvedPrice],
-      [statusBeforeDoc, 800_000]);
-    //  والرسالةُ تقول **ما يستطيعه** لا «غير مصرح» عارية.
-    const denyMsg = String((await http("POST", `/api/followups/${fDL.id}/close`, S.doc,
-      { reason: "other" })).body?.error ?? "");
-    check(denyMsg.includes("استقبال") && denyMsg.includes("قراءة"),
-      "    ورسالتُه تقول ما يستطيعه لا ما يُمنَع منه", denyMsg);
-
-    //  ── وإعادةُ الفتح كذلك: يُغلقه الاستقبال ثم يُردّ الطبيبُ عن فتحه ──
-    await http("POST", `/api/followups/${fDL.id}/close`, S.recv, { reason: "needs_time" });
-    same("٤٣. **والطبيبُ لا يعيد فتح ملفٍّ مغلق**",
+    //  ── وكلُّ الأفعال التشغيلية مفتوحةٌ له **إن حضر** ──
+    same("٤٢. **والطبيبُ يسجّل تواصلاً**",
+      (await http("POST", `/api/followups/${fDL.id}/contact`, S.doc,
+        { note: "كلّمتُه بنفسي" })).status, 200);
+    same("    **ويؤجّل**",
+      (await http("POST", `/api/followups/${fDL.id}/defer`, S.doc,
+        { reason: "needs_time", noScheduledFollowUp: true })).status, 200);
+    same("    **ويسنِد خبيراً**",
+      (await http("POST", `/api/followups/${fDL.id}/expert`, S.doc,
+        { expertUserId: EXPERT })).status, 200);
+    same("    **ويغلق «لم يشترِ»**",
+      (await http("POST", `/api/followups/${fDL.id}/close`, S.doc,
+        { reason: "chose_other_center" })).status, 200);
+    same("    **ويعيد الفتح**",
       (await http("POST", `/api/followups/${fDL.id}/reopen`, S.doc,
-        { toStatus: "awaiting_patient_decision" })).status, 403);
-    same("    والاستقبالُ يفتحه",
-      (await http("POST", `/api/followups/${fDL.id}/reopen`, S.recv,
         { toStatus: "awaiting_patient_decision" })).status, 200);
 
-    //  ── والاستقبالُ ومديرُ الفرع يعملان كلَّ ذلك ──
-    same("٤٤. **والاستقبالُ يعمل تجارياً كاملاً**",
-      [(await http("POST", `/api/followups/${fDL.id}/contact`, S.recv, { note: "اتصال" })).status,
-        (await http("POST", `/api/followups/${fDL.id}/expert`, S.recv,
-          { expertUserId: EXPERT })).status,
-        (await http("POST", `/api/followups/${fDL.id}/defer`, S.recv,
-          { reason: "needs_time", noScheduledFollowUp: true })).status],
-      [200, 200, 200]);
-    same("    **ومديرُ الفرع يسعّر ويبيع**",
-      [(await http("POST", `/api/followups/${fDL.id}/commercial-price`, S.mgr,
-        { finalPrice: 700_000, reason: "مفاوضة" })).status,
-        (await http("POST", `/api/followups/${fDL.id}/confirm-purchase`, S.mgr, {})).status],
-      [200, 200]);
-    same("    والمقيَّد سعرُ المدير",
+    //  ── **والسعرُ وحده خارجَه**: قرارُ «بكم نبيع» لمن يدير الفرع ──
+    const beforeDocPrice = await moneyOf(pDocLimit);
+    same("٤٣. **ولا يحدّد السعر التجاري** — ولو كان مخوَّلاً سريرياً",
+      (await http("POST", `/api/followups/${fDL.id}/commercial-price`, S.doc,
+        { finalPrice: 500_000, reason: "أراه مناسباً" })).status, 403);
+    same("    ولا شيءَ تحرّك بمحاولته",
+      [(await followupOf(pDocLimit))?.approvedPrice,
+        (await followupOf(pDocLimit))?.priceSource], [800_000, "exam"]);
+    same("    ولا ديناراً", await moneyOf(pDocLimit), beforeDocPrice);
+    const denyMsg = String((await http("POST", `/api/followups/${fDL.id}/commercial-price`,
+      S.doc, { finalPrice: 500_000, reason: "x" })).body?.error ?? "");
+    check(denyMsg.includes("مدير") && denyMsg.includes("مسؤول"),
+      "    ورسالتُه تقول مَن يملكه", denyMsg);
+
+    //  ── ويؤكّد الشراء ويبدأ التصنيع ──
+    same("٤٤. **ويؤكّد الشراء فيبدأ التصنيع**",
+      (await http("POST", `/api/followups/${fDL.id}/confirm-purchase`, S.doc, {})).status, 200);
+    same("    والمقيَّد سعرُ المعاينة كما هو",
       Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pDocLimit]))[0].total_cost),
-      700_000);
+      800_000);
 
-    //  ── والمسؤولُ العام يحتفظ بكلّ شيء ──
-    const pAdm = await mkPatient("سلطةُ المسؤول");
-    await mkCase(pAdm);
-    await signExam(pAdm, S.doc, { deviceCost: 500_000 });
-    const fAdm = await followupOf(pAdm);
-    same("٤٥. **والمسؤولُ العام يحتفظ بسلطته التشغيلية كاملة**",
-      [(await http("POST", `/api/followups/${fAdm.id}/contact`, S.admin, { note: "x" })).status,
-        (await http("POST", `/api/followups/${fAdm.id}/expert`, S.admin,
-          { expertUserId: EXPERT })).status,
-        (await http("POST", `/api/followups/${fAdm.id}/commercial-price`, S.admin,
-          { finalPrice: 450_000, reason: "قرار المسؤول" })).status,
-        (await http("POST", `/api/followups/${fAdm.id}/purchase-interest`, S.admin, {})).status,
-        (await http("POST", `/api/followups/${fAdm.id}/confirm-purchase`, S.admin, {})).status],
-      [200, 200, 200, 200, 200]);
+    // ══ ٤٥. **ولا حالةَ تنتظر طبيباً — المسارُ كاملاً بلا طبيب** ═══════
+    //  البرهانُ العملي: مريضٌ يمرّ من التوقيع إلى التصنيع ولا يلمس ملفَّه
+    //  طبيبٌ **بعد المعاينة إطلاقاً**. فمشاركتُه أعلاه مرونةٌ لا تبعيّة.
+    console.log("\n── المسار كاملاً بلا طبيب ──");
+    const pNoDoc = await mkPatient("بلا طبيبٍ بعد المعاينة");
+    await mkCase(pNoDoc);
+    await signExam(pNoDoc, S.doc, { deviceCost: 900_000 });
+    const fND = await followupOf(pNoDoc);
+    const noDocSteps: Array<[string, any, string, any]> = [
+      ["تسجيل تواصل", S.recv, `/api/followups/${fND.id}/contact`, { note: "اتصال" }],
+      ["تأجيل", S.recv, `/api/followups/${fND.id}/defer`,
+        { reason: "needs_time", noScheduledFollowUp: true }],
+      ["إغلاق", S.recv, `/api/followups/${fND.id}/close`, { reason: "needs_time" }],
+      ["إعادة فتح", S.recv, `/api/followups/${fND.id}/reopen`,
+        { toStatus: "awaiting_patient_decision" }],
+      ["إسناد خبير", S.recv, `/api/followups/${fND.id}/expert`, { expertUserId: EXPERT }],
+      ["تحديد السعر", S.mgr, `/api/followups/${fND.id}/commercial-price`,
+        { finalPrice: 820_000, reason: "مفاوضة" }],
+      ["تأكيد الشراء", S.recv, `/api/followups/${fND.id}/confirm-purchase`, {}],
+    ];
+    for (const [label, sess, path, body] of noDocSteps) {
+      same(`٤٥. **${label} — بيد الفرع وحده**`,
+        (await http("POST", path, sess, body)).status, 200);
+    }
+    same("    **والملفُّ وصل التصنيع ولم يلمسه طبيبٌ بعد المعاينة**",
+      (await followupOf(pNoDoc))?.status, "converted");
+    //  **ولا حدثَ واحدٍ فاعلُه طبيبٌ بعد فتح المتابعة** — الدليلُ في الدفتر.
+    //  و`followup_created` مستثنىً: هو أثرُ توقيع المعاينة نفسِها، والتوقيعُ
+    //  عملٌ سريريٌّ لا تجاريّ — وهو المكانُ الوحيد الذي يلزم فيه الطبيب.
+    const noDocActors = (await q(
+      `SELECT DISTINCT actor_user_id FROM post_exam_followup_events
+        WHERE patient_id = $1 AND actor_user_id IS NOT NULL
+          AND event_type <> 'followup_created'`, [pNoDoc]))
+      .map((r: any) => Number(r.actor_user_id));
+    same("    **ولا فاعلَ طبيبٍ في أيّ حدثٍ تجاريّ**",
+      noDocActors.filter((id: number) => [DOC, DOC2, ADMIN_DOC].includes(id)), []);
+    check(noDocActors.length > 0, "    (والأحداثُ التجارية وقعت فعلاً)",
+      JSON.stringify(noDocActors));
+    same("    والمقيَّد سعرُ المدير",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pNoDoc]))[0].total_cost),
+      820_000);
 
-    //  ── والطبيبُ يحسم الطلبَ القديم كما كان — الاستثناءُ الوحيد ──
-    const legDoc = await mkLegacyPending("استثناءُ الطبيب", 400_000, 350_000);
-    same("٤٦. **والطبيبُ يحسم الطلبَ القديم** — الاستثناءُ الوحيد الباقي",
-      (await http("POST", `/api/price-requests/${legDoc.requestId}/decide`, S.doc,
+    // ══ ٤٦. **سلطةُ المسؤول تسبق الدور** ══════════════════════════════
+    //  حسابٌ دورُه «طبيب» و`isAdmin` صحيح: يمرّ من كلّ باب — ومنها التسعير
+    //  الذي يُردّ عنه الطبيبُ العاديّ. فالفرقُ `isAdmin` وحده لا اسمُ الدور.
+    console.log("\n── سلطةُ المسؤول تسبق الدور ──");
+    const pAdmDoc = await mkPatient("المسؤول الطبيب");
+    await mkCase(pAdmDoc);
+    await signExam(pAdmDoc, S.doc, { deviceCost: 600_000 });
+    const fAD = await followupOf(pAdmDoc);
+    same("٤٦. **يقرأ**",
+      (await http("GET", `/api/followups/patient/${pAdmDoc}`, S.adminDoc)).status, 200);
+    const admDocSteps: Array<[string, string, any]> = [
+      ["يرفع الإشارة", `/api/followups/${fAD.id}/purchase-interest`, {}],
+      ["يسجّل تواصلاً", `/api/followups/${fAD.id}/contact`, { note: "اتصال" }],
+      ["يؤجّل", `/api/followups/${fAD.id}/defer`,
+        { reason: "needs_time", noScheduledFollowUp: true }],
+      ["يغلق", `/api/followups/${fAD.id}/close`, { reason: "needs_time" }],
+      ["يعيد الفتح", `/api/followups/${fAD.id}/reopen`,
+        { toStatus: "awaiting_patient_decision" }],
+      ["يسنِد خبيراً", `/api/followups/${fAD.id}/expert`, { expertUserId: EXPERT }],
+      //  **وهذا هو الفرقُ**: الطبيبُ العاديّ يُردّ عنه، وهذا يمرّ بسلطته.
+      ["**يحدّد السعر**", `/api/followups/${fAD.id}/commercial-price`,
+        { finalPrice: 550_000, reason: "قرار المسؤول" }],
+      ["يؤكّد الشراء", `/api/followups/${fAD.id}/confirm-purchase`, {}],
+    ];
+    for (const [label, path, body] of admDocSteps) {
+      same(`    ${label}`, (await http("POST", path, S.adminDoc, body)).status, 200);
+    }
+    same("    والمقيَّد سعرُه هو",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pAdmDoc]))[0].total_cost),
+      550_000);
+    //  ويحسم الطلبَ القديم كذلك — فلا بابَ في هذا المسار يُغلق دونه.
+    const legAdmDoc = await mkLegacyPending("سلطةُ المسؤول الطبيب", 400_000, 350_000);
+    same("    **ويحسم الطلبَ القديم**",
+      (await http("POST", `/api/price-requests/${legAdmDoc.requestId}/decide`, S.adminDoc,
         { decision: "approve" })).status, 200);
-    const legAdmRow = await mkLegacyPending("استثناءُ المسؤول", 400_000, 350_000);
-    same("    والمسؤولُ كذلك",
-      (await http("POST", `/api/price-requests/${legAdmRow.requestId}/decide`, S.admin,
-        { decision: "reject" })).status, 200);
+
+    // ══ ٤٧. والاستقبالُ ومديرُ الفرع كما هما ══════════════════════════
+    const pRoles = await mkPatient("أدوارُ الفرع");
+    await mkCase(pRoles);
+    await signExam(pRoles, S.doc, { deviceCost: 700_000 });
+    const fR = await followupOf(pRoles);
+    same("٤٧. **والاستقبالُ لا يحدّد السعر**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.recv,
+        { finalPrice: 600_000, reason: "x" })).status, 403);
+    same("    **ومديرُ الفرع يحدّده في فرعه**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.mgr,
+        { finalPrice: 600_000, reason: "مفاوضة" })).body?.followup?.approvedPrice, 600_000);
+    same("    **ومديرُ فرعٍ آخر يُردّ**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.mgrB2,
+        { finalPrice: 500_000, reason: "x" })).status, 403);
+    await http("POST", `/api/followups/${fR.id}/expert`, S.recv, { expertUserId: EXPERT });
+    same("    **والاستقبالُ يؤكّد الشراء**",
+      (await http("POST", `/api/followups/${fR.id}/confirm-purchase`, S.recv, {})).status, 200);
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

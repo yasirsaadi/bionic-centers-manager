@@ -234,12 +234,11 @@ async function main() {
         { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 409);
     await http("POST", `/api/followups/${fu.id}/expert`, S.reception, { expertUserId: EXPERT });
     await http("POST", `/api/followups/${fu.id}/accept-price`, S.reception, {});
-    //  **والاستقبالُ هو مَن يؤكّد** بعد فصل الصلاحيات: البيعُ فعلٌ تجاريّ،
-    //  والطبيبُ يُردّ عنه ولو ناداه بالاسم القديم.
-    same("   **والطبيبُ لا يؤكّد الشراء**",
-      (await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.doctor, {})).status, 403);
-    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.reception, {});
-    same("   وتأكيدُ الاستقبال بدأ التصنيع", assign.status, 200);
+    //  والطبيبُ المخوَّل **يستطيع** أن يؤكّد إن حضر — ولا يُطلَب منه ذلك:
+    //  الاستقبالُ ومديرُ الفرع يُتمّان المسارَ وحدهما (مُثبَتٌ في
+    //  `test:followup`).
+    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.doctor, {});
+    same("   وتأكيدُ الشراء بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],
       ["in_manufacturing", 1_500_000]);
