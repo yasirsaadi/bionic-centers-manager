@@ -410,19 +410,125 @@ async function main() {
         ["converted", 0, "approved_change"]);
     }
 
+    // ══ ٦ج. المعاينةُ بلا كلفة — الاستعلامات يُدخل السعر الأصلي ════════
+    console.log("\n── (٦ج) سكتت المعاينة: أولُ سعرٍ ليس خصماً ──");
     {
-      //  **والحارسُ العامّ لم يضعف**: مريضٌ بلا كلفةٍ في معاينته سعرُه صفرٌ
-      //  يعني «غير مسعَّر». وتأكيدُ شرائه بلا إعلان تبرّعٍ يجب أن يبقى
-      //  مردوداً — وإلّا لمرّ كلُّ ملفٍّ لم يُسعَّر بعدُ إلى التصنيع مجّاناً.
+      //  **والصفرُ يبقى «غير مسعَّر»**: تأكيدُ شراءٍ بلا رقمٍ يُردّ — لكنّ
+      //  الردَّ صار يدلّ على الحلّ بدل أن يوقف المريض على مدير الفرع.
       const p = await mkPatient("طرفٌ بلا كلفة");
       await mkCase(p);
       await signExam(p, S.doc, { deviceCost: undefined });
       const f = await followupOf(p);
-      same("١٧ج. معاينةٌ بلا كلفة ⟶ سعرٌ صفر «غير مسعَّر»", f.approvedPrice, 0);
+      //  **وسعرُ الطبيب لا يُستبدَل بالصمت**: رقمٌ في الطلب لملفٍّ له سعرٌ
+      //  موقَّع يُتجاهَل تماماً — التخفيضُ بابُه الخصم لا هذا الحقل.
+      const priced = await mkPatient("طرفٌ بسعر الطبيب");
+      await mkCase(priced);
+      await signExam(priced, S.doc, { deviceCost: 2_000_000 });
+      const pf = await followupOf(priced);
+      await http("POST", `/api/followups/${pf.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const forged = await http("POST", `/api/followups/${pf.id}/confirm-purchase`, S.recv, {
+        originalPrice: 900_000,
+      });
+      same("١٧ب٢. **سعرٌ في الطلب لملفٍّ مسعَّرٍ يُتجاهَل**", forged.status, 200);
+      const pm = await money(priced);
+      same("   والبيعُ تمّ بسعر الطبيب لا بالمهرَّب",
+        [pm.totalCost, pm.ledger], [2_000_000, 2_000_000]);
+      same("   والمصدرُ ما زال «من المعاينة»",
+        [(await followupOf(priced)).approvedPrice, (await followupOf(priced)).priceSource],
+        [2_000_000, "exam"]);
+
+      same("١٧ج. معاينةٌ بلا كلفة ⟶ سعرٌ صفر «غير مسعَّر»",
+        [f.approvedPrice, f.priceSource], [0, "exam"]);
       await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
       const bare = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
-      same("١٧د. **وتأكيدُ الشراء بلا سعرٍ معتمد ما زال مردوداً**", bare.status, 409);
+      same("١٧د. **وتأكيدُ الشراء بلا سعرٍ يُردّ** — ولا يُفترَض صفراً", bare.status, 400);
+      check(/السعر الأصلي/.test(String(bare.body?.error ?? "")),
+        "   والردُّ يدلّ على الحلّ: أدخل السعر الأصلي", JSON.stringify(bare.body));
       same("   ولا أمرَ تصنيعٍ وُلد", (await money(p)).orders, 0);
+
+      //  **وصفرٌ صريحٌ يُردّ كذلك**: «مجّاني» لا يُبنى على سعرٍ مجهول.
+      const zero = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        originalPrice: 0,
+      });
+      same("١٧هـ. **وسعرٌ أصليٌّ صفر يُردّ** — لا يصير تبرّعاً", zero.status, 400);
+      const freeOnUnknown = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        originalPrice: 0, discount: { isFree: true, reason: "humanitarian" },
+      });
+      same("   **ولا مربّعُ المجّاني يحوّل المجهولَ تبرّعاً**", freeOnUnknown.status, 400);
+      same("   ولا صفَّ خصمٍ خلّفه",
+        (await q(`SELECT count(*)::int n FROM service_discount_requests WHERE patient_id=$1`, [p]))[0].n, 0);
+
+      //  ══ **وأولُ سعرٍ يمرّ بلا اعتماد** — هو السعرُ الطبيعي لا تخفيضٌ ══
+      const ok = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        originalPrice: 3_000_000,
+      });
+      same("١٧و. **الاستعلامات يُدخل السعر الأصلي فيتمّ البيع فوراً**",
+        [ok.status, ok.body?.pendingApproval], [200, undefined]);
+      const m = await money(p);
+      same("   والمال كُتب مرّةً واحدة: أمرٌ وكلفةٌ وقيد",
+        [m.orders, m.totalCost, m.ledger], [1, 3_000_000, 3_000_000]);
+      same("   وحالةُ الجهاز تحمله",
+        Number((await q(`SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`,
+          [p]))[0].cost), 3_000_000);
+      const done = await followupOf(p);
+      same("   **والسجلُّ يقول مَن أدخله** — لا يُنسَب لمدير الفرع",
+        [done.status, done.approvedPrice, done.priceSource],
+        ["converted", 3_000_000, "reception_set"]);
+      same("   ولا طلبَ خصمٍ أُنشئ",
+        (await q(`SELECT count(*)::int n FROM service_discount_requests WHERE patient_id=$1`, [p]))[0].n, 0);
+    }
+    {
+      //  وبعد أن يصير للجهاز سعرٌ موجب: تخفيضُه خصمٌ يمرّ بالاعتماد.
+      const p = await mkPatient("طرفٌ بلا كلفة ثم خصم");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: undefined });
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        originalPrice: 3_000_000,
+        discount: { finalPrice: 2_500_000, reason: "negotiation" },
+      });
+      same("١٧ز. **سعرٌ أصليٌّ جديد مع خصم ⟶ الخصمُ وحده ينتظر**",
+        [r.status, r.body?.pendingApproval], [200, true]);
+      const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`,
+        [r.body?.discountRequestId]))[0];
+      same("   والفرقُ ٥٠٠ ألف على أصلٍ ٣ ملايين",
+        [Number(row.original_price), Number(row.proposed_final_price), Number(row.discount_amount)],
+        [3_000_000, 2_500_000, 500_000]);
+      const m0 = await money(p);
+      same("   ولا مالَ تحرّك بعد", [m0.orders, m0.totalCost, m0.ledger], [0, 0, 0]);
+      //  **لكنّ السعر الأصلي ثُبّت** — فهو حقيقةٌ تجارية لا خصم.
+      same("   والسعرُ الأصليُّ مثبَّتٌ على الصفّ",
+        [(await followupOf(p)).approvedPrice, (await followupOf(p)).priceSource],
+        [3_000_000, "reception_set"]);
+      same("١٧ح. والاعتمادُ يُتمّ البيع بالسعر المخفَّض",
+        (await http("POST", `/api/discounts/${row.id}/decide`, S.mgr, { decision: "approve" })).status, 200);
+      const m = await money(p);
+      same("   الأمرُ واحدٌ والكلفةُ المخفَّضة",
+        [m.orders, m.totalCost, m.ledger], [1, 2_500_000, 2_500_000]);
+    }
+    {
+      //  **والتبرّعُ على سعرٍ اسميٍّ أدخله الاستعلامات**.
+      const p = await mkPatient("طرفٌ بلا كلفة ثم تبرّع");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: undefined });
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.mgr, {
+        originalPrice: 3_000_000,
+        discount: { isFree: true, reason: "humanitarian" },
+      });
+      same("١٧ط. **تبرّعٌ بجهازٍ سعرُه الاسميّ من الاستعلامات**",
+        [r.status, r.body?.discountStatus], [200, "approved"]);
+      const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`,
+        [r.body?.discountRequestId]))[0];
+      same("   الاسميُّ ٣ ملايين والنهائيُّ صفر والنسبة ١٠٠٪",
+        [Number(row.original_price), Number(row.approved_final_price),
+          Number(row.discount_percentage), row.is_free],
+        [3_000_000, 0, 100, true]);
+      const m = await money(p);
+      same("   **والجهاز يُصنَّع فعلاً بلا إيرادٍ ولا دَين**",
+        [m.orders, m.totalCost, m.ledger, m.payments], [1, 0, 0, 0]);
     }
 
     // ══ ٦ب. المساند — بابُ «تخصيص» للمريض القديم ══════════════════════
@@ -742,6 +848,139 @@ async function main() {
       const rows = await q(`SELECT status FROM service_discount_requests WHERE patient_id=$1 ORDER BY id`, [b]);
       same("   والطلبان انتقلا، والمعلَّقُ واحد",
         [rows.length, rows.filter((r: any) => r.status === "pending").length], [2, 1]);
+    }
+
+    // ══ ١٤ب. الفشلُ والاستئناف — «معتمَد» يعني «نُفِّذ» ════════════════
+    console.log("\n── (١٤ب) الفشلُ بين الحسم والتنفيذ ──");
+    {
+      //  **فشلٌ حقيقيّ لا محقون**: أمرُ بناءٍ فعّالٌ سابق يجعل
+      //  `assignManufacturing` ترمي `ActiveAssignmentError` **داخل** معاملة
+      //  الاعتماد. فما يُختبَر هو ما يقع إنتاجاً حين يسبقنا أحدٌ إلى الأمر.
+      const p = await mkPatient("طرفٌ يفشل تنفيذه");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 2_000_000 });
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const req = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        discount: { finalPrice: 1_500_000, reason: "negotiation" },
+      });
+      const id = req.body?.discountRequestId;
+      same("٥١. طلبُ خصمٍ معلَّق", req.body?.pendingApproval, true);
+
+      //  حاجزُ الفشل: أمرُ بناءٍ فعّال يسبق الاعتماد.
+      const blocker = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders
+           (patient_id, branch_id, expert_user_id, service_type, status, current_stage,
+            assigned_by, purpose)
+         VALUES ($1, 1, $2, 'prosthetic', 'active', 'measurement', $3, 'initial_build')
+         RETURNING id`, [p, EXPERT, ADMIN]);
+
+      const boom = await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" });
+      same("٥٢. **الاعتمادُ يفشل حين يفشل التنفيذ** — ولا يُعلَن نجاحاً", boom.status, 409);
+
+      const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`, [id]))[0];
+      same("٥٣. **والطلبُ ما زال معلَّقاً** — لم يخرج من الطابور ولم يُختَم",
+        [row.status, row.approved_final_price, row.applied_at, row.decided_by],
+        ["pending", null, null, null]);
+      same("   ويُرى في طابور الاعتماد كما كان",
+        ((await http("GET", "/api/discounts", S.mgr)).body?.requests ?? [])
+          .filter((x: any) => x.id === id).length, 1);
+
+      //  **ولا سعرٌ مخفَّضٌ مكتوبٌ على المتابعة**: هذا هو الالتفاف الذي
+      //  كان ممكناً — يُكتب ١٬٥٠٠٬٠٠٠ ثم يفشل البيع، فيؤكّد الاستعلامات
+      //  الشراءَ بالمسار العادي ويأخذ الخصمَ بلا اعتماد.
+      const stillF = await followupOf(p);
+      same("٥٤. **ولا أثرَ للسعر المخفَّض على المتابعة** — لا التفافَ ممكن",
+        [stillF.approvedPrice, stillF.priceSource, stillF.status],
+        [2_000_000, "exam", "awaiting_patient_decision"]);
+      const m0 = await money(p);
+      same("٥٥. ولا كلفةَ ولا قيدَ ولا دفعة",
+        [m0.totalCost, m0.ledger, m0.payments], [0, 0, 0]);
+      same("   والأمرُ الفعّال هو الحاجزُ وحده لا أمرٌ ثانٍ", m0.orders, 1);
+
+      //  ولو حاول الاستعلامات إتمامَ البيع الآن، يمضي بالسعر **الأصلي**.
+      //  (يفشل هنا لأن الحاجز قائم — والمقصود أن السعر لم يتغيّر.)
+      same("٥٦. ومحاولةُ البيع العادي تمرّ بالسعر الأصلي لا المخفَّض",
+        Number((await q(`SELECT approved_price FROM post_exam_followups WHERE id=$1`, [f.id]))[0].approved_price),
+        2_000_000);
+
+      // ══ الإعادةُ بعد زوال العطب تكمل **مرّةً واحدة** ══════════════════
+      await q(`UPDATE prosthetic_work_orders SET status='cancelled' WHERE id=$1`, [blocker[0].id]);
+      const retry = await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" });
+      same("٥٧. **والإعادةُ بعد زوال العطب تنجح**", retry.status, 200);
+      const m = await money(p);
+      same("٥٨. **ومرّةً واحدة بالضبط**: أمرٌ حيٌّ واحد وكلفةٌ واحدة",
+        [m.totalCost, m.ledger], [1_500_000, 1_500_000]);
+      same("   وقيدُ الدفتر سطرٌ واحد",
+        (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n, 1);
+      same("   وأمرُ بناءٍ فعّالٌ واحد (والملغى باقٍ تاريخاً)",
+        (await q(`SELECT count(*)::int n FROM prosthetic_work_orders
+                   WHERE patient_id=$1 AND status NOT IN ('cancelled','completed')`, [p]))[0].n, 1);
+      const fin = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`, [id]))[0];
+      same("٥٩. **والصفُّ صار معتمَداً ومختوماً معاً**",
+        [fin.status, Number(fin.approved_final_price), fin.applied_at !== null],
+        ["approved", 1_500_000, true]);
+      same("   وثالثةٌ تُردّ", 
+        (await http("POST", `/api/discounts/${id}/decide`, S.admin, { decision: "approve" })).status, 409);
+    }
+    {
+      //  **وفشلٌ حقيقيٌّ في مسار العلاج الطبيعي**: كلفةٌ تتجاوز حدَّ العدد
+      //  الصحيح عند جمعها على كلفة المريض ⟶ خطأُ Postgres **داخل** معاملة
+      //  الاعتماد. فيُختبَر القسمُ الآخر بنفس الصرامة.
+      const p = await mkPatient("علاجٌ يفشل تنفيذه", { device: false, physio: true });
+      await mkCase(p, 1, "physiotherapy");
+      await q(`UPDATE patients SET total_cost = 2000000000 WHERE id = $1`, [p]);
+      const req = await http("POST", `/api/patients/${p}/price-physio`, S.recv, {
+        entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
+        discount: { finalPrice: 400_000, reason: "negotiation" },
+      });
+      const id = req.body?.discountRequestId;
+      same("٦٠. طلبُ خصمٍ معلَّق على علاجٍ طبيعي", req.body?.pendingApproval, true);
+      //  رفعُ الكلفة المعتمدة إلى ما يفيض عند الجمع.
+      await q(`UPDATE service_discount_requests
+                  SET original_price = 2100000000, proposed_final_price = 2000000000,
+                      discount_amount = 100000000, discount_percentage = 4.76
+                WHERE id = $1`, [id]);
+      const boom = await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" });
+      check(boom.status >= 400,
+        "٦١. **الاعتمادُ يفشل حين يفشل التسعير**", JSON.stringify(boom));
+      const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`, [id]))[0];
+      same("٦٢. **والطلبُ ما زال معلَّقاً بلا ختم**",
+        [row.status, row.applied_at], ["pending", null]);
+      same("٦٣. ولا كلفةَ ولا قيدَ ولا خطّةَ جلسات",
+        [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n,
+          await plan(p)],
+        [2000000000, 0, null]);
+      //  وإعادةٌ بمبلغٍ سليم تكمل مرّةً واحدة.
+      await q(`UPDATE patients SET total_cost = 0 WHERE id = $1`, [p]);
+      await q(`UPDATE service_discount_requests
+                  SET original_price = 500000, proposed_final_price = 400000,
+                      discount_amount = 100000, discount_percentage = 20
+                WHERE id = $1`, [id]);
+      same("٦٤. **والإعادةُ تنجح مرّةً واحدة**",
+        (await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" })).status, 200);
+      same("   بكلفةٍ واحدة وقيدٍ واحد",
+        [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n],
+        [400_000, 1]);
+      same("   وجلساتُ الخطّة عشر لا عشرون", await plan(p), [["روبوت", 10]]);
+    }
+    {
+      //  ══ **والحالةُ المشلولة لا يمكن أن توجد** — والقاعدةُ تقولها ══════
+      //  «معتمَدٌ بلا لحظةِ تنفيذ» كان الشكلَ الذي يخفي خدمةً لم تقع. فحتى
+      //  نداءٌ مباشر من محرّر SQL يُردّ.
+      let raised = "";
+      try {
+        await q(`INSERT INTO service_discount_requests
+                   (patient_id, branch_id, department, original_price, proposed_final_price,
+                    discount_amount, discount_percentage, is_free, reason, status,
+                    approved_final_price, decided_at)
+                 VALUES ($1, 1, 'physiotherapy', 500000, 400000, 100000, 20, false,
+                         'humanitarian', 'approved', 400000, NOW())`, [devPatient]);
+      } catch (e: any) { raised = String(e?.constraint ?? e?.message ?? ""); }
+      check(/decision_check/.test(raised),
+        "٦٥. **صفٌّ «معتمَد» بلا لحظةِ تنفيذ مستحيلٌ بنيوياً**", raised);
     }
 
     // ══ ١٥. طلباتُ المريض تُقرأ في ملفّه ══════════════════════════════

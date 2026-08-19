@@ -35,6 +35,7 @@ import { Client } from "pg";
 import * as migration056 from "./migrations/056_cost_entry_department";
 import * as migration057 from "./migrations/057_commercial_price";
 import * as migration058 from "./migrations/058_service_discounts";
+import * as migration059 from "./migrations/059_reception_initial_price";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -319,6 +320,40 @@ async function main() {
         `SELECT COUNT(*)::int n FROM pg_constraint
           WHERE conrelid = 'service_discount_requests'::regclass AND contype = 'c'`)).rows[0].n;
       same("   والقيودُ خمسةٌ لا عشرة بعد الإعادة", dup58, 5);
+
+      // ══ وترحيل ٠٥٩: يوسّع مصدرَ السعر ويشدّ قيدَ ٠٥٨ ═════════════════
+      //  يُردّ القيدُ إلى صيغة ٠٥٧ (ثلاث قيم) وقيدُ ٠٥٨ إلى صيغته الأولى
+      //  (بلا شرط لحظةِ التنفيذ) — وهذا حالُ قاعدةٍ ركّبت ٠٥٨ قبل شدّه.
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_price_source_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        ADD CONSTRAINT post_exam_followups_price_source_check
+        CHECK (price_source IN ('exam', 'manager_set', 'approved_change'))`);
+      await c.query(`ALTER TABLE service_discount_requests
+        DROP CONSTRAINT IF EXISTS service_discount_requests_decision_check`);
+      await c.query(`ALTER TABLE service_discount_requests
+        ADD CONSTRAINT service_discount_requests_decision_check
+        CHECK (status <> 'approved'
+               OR (approved_final_price IS NOT NULL AND decided_at IS NOT NULL))`);
+
+      await c.query(migration059.sql);
+      check(true, "٣هـ. تطبيقُ الترحيل ٠٥٩ نجح");
+      await c.query(migration059.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const src59 = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'post_exam_followups_price_source_check'
+            AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
+      check(String(src59).includes("reception_set"),
+        "   **ومصدرُ السعر اتّسع لأول سعرٍ من الاستعلامات**", src59);
+      //  **والشدُّ يتقارب على قاعدةٍ ركّبت ٠٥٨ قبله** — وهو لبُّ ٠٥٩:
+      //  المُشغِّل يتخطّى ترحيلاً طُبِّق باسمه، فلا يكفي تعديلُ ملفّ ٠٥٨.
+      const dec59 = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'service_discount_requests_decision_check'
+            AND conrelid = 'service_discount_requests'::regclass`)).rows[0].d;
+      check(String(dec59).includes("applied_at IS NOT NULL"),
+        "   **وقيدُ «معتمَدٌ يعني نُفِّذ» شُدَّ على قاعدةٍ سبقته**", dec59);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -430,6 +465,13 @@ async function main() {
       [true, true]);
     check(String(pending.columns ?? "").includes("context_ref"),
       "     على (مريض، قسم، مرجع)", String(pending.columns));
+    const dec = String(fromMigrations.sdr_checks?.service_discount_requests_decision_check ?? "");
+    check(dec.includes("applied_at IS NOT NULL"),
+      "٢٢ب. **و«معتمَد» يعني «نُفِّذ»**: لا صفَّ معتمَدٍ بلا لحظةِ تنفيذ", dec);
+    const src = String(fromMigrations.pef_checks?.post_exam_followups_price_source_check ?? "");
+    check(["exam", "manager_set", "approved_change", "reception_set"].every((v) => src.includes(v)),
+      "٢٢ج. **ومصدرُ السعر أربعةٌ في القاعدة** — ومنها أولُ سعرٍ من الاستعلامات", src);
+
     same("٢٣. **وعَلَمُ الاعتماد منطقيٌّ افتراضُه false** — لا يُمنَح بالصمت",
       [fromMigrations.approve_flag?.data_type,
         String(fromMigrations.approve_flag?.default ?? "")],

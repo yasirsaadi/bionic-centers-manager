@@ -543,7 +543,7 @@ export async function recordPatientAcceptedPrice(params: {
     ]);
     if (cur.approvedPrice <= 0) {
       throw new FollowupError(
-        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يضعه مدير الفرع", 409);
+        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
     }
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
@@ -884,12 +884,14 @@ export async function setCommercialPrice(params: {
 export async function setApprovedPriceForDiscount(params: {
   followupId: number; finalPrice: number; expertUserId?: number | null;
   actor: Actor;
+  /** معاملةُ المُستدعي — اعتمادُ الخصم يكتب السعرَ ويبيع في حدثٍ واحد. */
+  tx?: any;
 }): Promise<FollowupRow> {
   const price = Number(params.finalPrice);
   if (!Number.isInteger(price) || price < 0) {
     throw new FollowupError("السعر المعتمد غير صالح", 400);
   }
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
     //  خبيرُ الطلب إن وُجد، وإلّا فالمختارُ سابقاً كما هو — **ولا يُمحى**.
     const expertUserId = params.expertUserId ?? cur.selectedExpertUserId;
@@ -917,7 +919,63 @@ export async function setApprovedPriceForDiscount(params: {
       actor: params.actor,
     });
     return toRow(row);
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
+ * **أولُ سعرٍ للجهاز حين سكتت المعاينة** — يكتبه الاستعلامات، بلا اعتماد.
+ *
+ * ══ لماذا ليس خصماً ولا قرارَ مدير ═══════════════════════════════════════
+ * الطبيبُ **قد** يكتب كلفةَ الجهاز في معاينته، وقد يتركها. وحين يتركها لم
+ * يكن للجهاز سعرٌ أصليٌّ قطّ — فأولُ رقمٍ يُكتب ليس تخفيضاً لشيء، بل هو
+ * **إعلانُ السعر الطبيعي** نفسه. وإيقافُ البيع على مدير الفرع لأن الطبيب
+ * نسي حقلاً عقوبةٌ للمريض على سهوٍ لا شأن له به.
+ *
+ * ══ والحارسُ في الشرط لا في الدور ═══════════════════════════════════════
+ * تعمل **فقط حين يكون السعر المعتمد صفراً** — أي «غير مسعَّر». فمتى وُجد
+ * سعرٌ موجب (من المعاينة أو من مديرٍ أو من أوّل كتابةٍ كهذه) صار تخفيضُه
+ * خصماً يمرّ ببابه. فلا تصير هذه النقطةُ باباً خلفياً لخفض سعرٍ قائم.
+ *
+ * ولا دينارَ يتحرّك هنا: رقمٌ ينتظر تأكيدَ الشراء كسعر المعاينة تماماً.
+ */
+export async function setInitialCommercialPrice(params: {
+  followupId: number; originalPrice: number; actor: Actor; tx?: any;
+}): Promise<FollowupRow> {
+  const price = Number(params.originalPrice);
+  if (!Number.isInteger(price) || price <= 0) {
+    throw new FollowupError("السعر الأصلي يجب أن يكون مبلغاً موجباً بالدينار الصحيح", 400);
+  }
+  const body = async (tx: any) => {
+    const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  **الشرطُ يُفحَص تحت القفل**: بين قراءة الشاشة وهذه اللحظة قد يكون
+    //  مديرٌ سعّره، فلا يُكتب فوق سعرٍ صار موجباً.
+    if (cur.approvedPrice > 0) {
+      throw new FollowupError(
+        "لهذا الجهاز سعر معتمد بالفعل — تخفيضه يمرّ بطلب خصم، ورفعه لمدير الفرع", 409);
+    }
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${price}, price_source = 'reception_set',
+             last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status} AND approved_price <= 0
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "initial_price_set", fromStatus: cur.status, toStatus: cur.status,
+      payload: {
+        previousPrice: cur.approvedPrice, finalPrice: price,
+        previousPriceSource: cur.priceSource,
+        setByUserId: params.actor.userId, setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+    return toRow(row);
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 /**
@@ -1044,12 +1102,17 @@ export async function confirmPurchase(params: {
    * أُسقط لعاد كلُّ ملفٍّ لم يُسعَّر بعدُ يمرّ إلى التصنيع بلا سعر.
    */
   allowFreeDonation?: boolean;
+  /**
+   * معاملةُ المُستدعي — اعتمادُ الخصم يقرّر ويبيع في **معاملةٍ واحدة**، فلا
+   * تبقى لحظةٌ يكون فيها الطلبُ «معتمَداً» والبيعُ لم يقع.
+   */
+  tx?: any;
 }): Promise<{ followup: FollowupRow; workOrderId: number }> {
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
     if (cur.approvedPrice <= 0 && params.allowFreeDonation !== true) {
       throw new FollowupError(
-        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يضعه مدير الفرع", 409);
+        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
     }
     //  وحتى مع الإذن: **سالبٌ لا يمرّ**. التبرّعُ صفرٌ لا خصمٌ فوق السعر.
     if (cur.approvedPrice < 0) {
@@ -1115,7 +1178,8 @@ export async function confirmPurchase(params: {
       actor: params.actor,
     });
     return { followup: toRow(row), workOrderId };
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ── الطوابير ─────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ import {
   ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
   discountBlocked, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -138,11 +139,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const active = (followups ?? [])[0] ?? null;
 
   const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
+  //  السعرُ الأصلي حين سكتت المعاينة — يكتبه الاستعلامات مرّةً واحدة.
+  const [firstPrice, setFirstPrice] = useState<number>(0);
 
   const reset = () => {
     setDialog(null); setNote(""); setFinalPrice(""); setPriceReason(""); setExpertId("");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
-    setDiscount(EMPTY_DISCOUNT);
+    setDiscount(EMPTY_DISCOUNT); setFirstPrice(0);
   };
 
   const act = useMutation({
@@ -189,6 +192,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const busy = act.isPending;
   //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
   //  فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
+  //  **السعرُ المرجعيّ للنافذة**: المحفوظ على الصفّ إن وُجد، وإلّا ما
+  //  يكتبه الاستعلامات الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
+  const needsFirstPrice = active.approvedPrice <= 0;
+  const originalPrice = needsFirstPrice ? firstPrice : active.approvedPrice;
+
   const preview = computeCommercialPrice({
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
   });
@@ -583,8 +591,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
+              {needsFirstPrice
+                ? <>لم يحدّد الطبيب كلفة الجهاز — أدخل السعر الأصلي أدناه.</>
+                : <>السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.</>}
+              {" "}يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
             </p>
             {/*  الخبير **يُعرَض ولا يُختار هنا**: له نقطتُه وتدقيقُه. والخادم
                 يقرأه من الصفّ لا من الطلب، فلا يُرسَل أصلاً. والسعرُ كذلك. */}
@@ -600,22 +610,41 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               </p>
             )}
 
+            {/*  **السعرُ الأصلي حين سكتت المعاينة** — ليس خصماً ولا يحتاج
+                اعتماداً: الطبيبُ ترك الحقلَ فارغاً، وأولُ رقمٍ يُكتب هو
+                السعرُ الطبيعي نفسه. */}
+            {needsFirstPrice && (
+              <div className="space-y-1" data-testid="first-price-block">
+                <Label className="text-sm font-semibold">
+                  السعر الأصلي <span className="text-destructive">*</span>
+                </Label>
+                <MoneyInput value={firstPrice} onValueChange={setFirstPrice}
+                  placeholder="0" data-testid="input-first-price" />
+                <p className="text-xs text-muted-foreground">
+                  لم يحدّد الطبيب كلفة الجهاز في المعاينة — أدخل السعر الطبيعي.
+                  <b> لا يحتاج اعتماداً</b>؛ الاعتماد للخصم وحده.
+                </p>
+              </div>
+            )}
+
             {/*  والخصمُ هنا **لا يمرّ إلى التصنيع مباشرةً**: يُنشئ طلباً
                 يعتمده المسؤولُ أو مديرُ الفرع، ولا يبدأ شيءٌ قبله. */}
-            {active.approvedPrice > 0 && (
-              <ServiceDiscountFields originalPrice={active.approvedPrice}
+            {originalPrice > 0 && (
+              <ServiceDiscountFields originalPrice={originalPrice}
                 value={discount} onChange={setDiscount} testIdPrefix="purchase-discount" />
             )}
           </div>
           <DialogFooter>
             <Button disabled={busy || active.selectedExpertUserId === null
-              || discountBlocked(discount, active.approvedPrice)}
+              || originalPrice <= 0 || discountBlocked(discount, originalPrice)}
               data-testid="button-confirm-purchase-submit"
-              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`,
-                hasDiscount(discount, active.approvedPrice)
-                  ? { discount: discountPayload(discount) } : {})}>
+              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {
+                ...(needsFirstPrice ? { originalPrice: firstPrice } : {}),
+                ...(hasDiscount(discount, originalPrice)
+                  ? { discount: discountPayload(discount) } : {}),
+              })}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" />
-                : hasDiscount(discount, active.approvedPrice) ? "إرسال للاعتماد"
+                : hasDiscount(discount, originalPrice) ? "إرسال للاعتماد"
                   : "تأكيد وبدء التصنيع"}
             </Button>
           </DialogFooter>

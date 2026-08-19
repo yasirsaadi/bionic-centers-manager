@@ -160,17 +160,29 @@ BEGIN
       );
   END IF;
 
-  -- **ومعتمَدٌ بلا سعرٍ معتمَد ولا مَن اعتمده لا يوجد.**
+  -- **و«معتمَد» يعني «نُفِّذ» — بنيوياً لا اصطلاحاً.**
+  --
+  -- صفٌّ معتمَدٌ بلا لحظةِ تنفيذ كان يعني: قرارٌ اتُّخذ وخدمةٌ لم تقع،
+  -- وقد **خرج من الطابور** فلا يراه أحدٌ ولا يُستأنف. فالقيدُ يجعله
+  -- مستحيلاً: الحسمُ والتنفيذُ والختم في معاملةٍ واحدة، ومن كتب غيرَ ذلك
+  -- — ولو من محرّر SQL — رُدّ.
+  --
+  -- والفحصُ بالنصّ لا بالاسم: قاعدةٌ تحمل الصيغةَ الأقدم (بلا شرط لحظةِ
+  -- التنفيذ) **تتقارب** إلى هذه، فلا تُترك أضيقَ لأن الاسم موجود.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conname = 'service_discount_requests_decision_check'
        AND conrelid = 'service_discount_requests'::regclass
+       AND pg_get_constraintdef(oid) LIKE '%applied_at IS NOT NULL%'
   ) THEN
+    ALTER TABLE service_discount_requests
+      DROP CONSTRAINT IF EXISTS service_discount_requests_decision_check;
     ALTER TABLE service_discount_requests
       ADD CONSTRAINT service_discount_requests_decision_check
       CHECK (
         status <> 'approved'
-        OR (approved_final_price IS NOT NULL AND decided_at IS NOT NULL)
+        OR (approved_final_price IS NOT NULL AND decided_at IS NOT NULL
+            AND applied_at IS NOT NULL)
       );
   END IF;
 END

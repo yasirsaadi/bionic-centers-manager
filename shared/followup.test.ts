@@ -344,10 +344,10 @@ same("ن. **لا فعلَ اعتمادٍ منقرضاً يظهر لأي دورٍ
     allowedActions(who, st).filter((a) => FORBIDDEN.includes(a)).map((a) => `${st}:${a}`))),
   []);
 
-// ══ س. مصدرُ السعر — ثلاثةٌ ونصٌّ واحدٌ لكلٍّ ═══════════════════════════
+// ══ س. مصدرُ السعر — أربعةٌ ونصٌّ واحدٌ لكلٍّ ═══════════════════════════
 console.log("\n── مصدر السعر ──");
-same("س. القيمُ الثلاث بأسمائها", [...PRICE_SOURCES],
-  ["exam", "manager_set", "approved_change"]);
+same("س. القيمُ الأربع بأسمائها", [...PRICE_SOURCES],
+  ["exam", "manager_set", "approved_change", "reception_set"]);
 same("   والمعاينةُ «من المعاينة»", priceSourceLabel("exam"), "السعر المعتمد من المعاينة");
 same("   **ومَن حدّده مديرُ الفرع يُقال باسمه**",
   priceSourceLabel("manager_set"), "السعر المعتمد حدّده مدير الفرع");
@@ -356,9 +356,15 @@ same("   **والقديمُ لا يُنسَب إلى مدير الفرع**",
   priceSourceLabel("approved_change"), "السعر المعتمد بعد تعديل سعر سابق");
 check(!priceSourceShort("approved_change").includes("مدير"),
   "   ولا ترد «مدير» في نصّ القديم إطلاقاً", priceSourceShort("approved_change"));
+//  **وأولُ سعرٍ يُنسَب لمن أدخله**: الطبيبُ ترك الحقل فارغاً، فأدخله
+//  الاستعلامات — ونسبتُه إلى مدير الفرع كانت ستكذب على قارئ السجلّ.
+same("   **وأولُ سعرٍ يُنسَب إلى الاستعلامات لا إلى المدير**",
+  priceSourceLabel("reception_set"), "السعر المعتمد أدخله الاستعلامات");
+check(!priceSourceShort("reception_set").includes("مدير"),
+  "   ولا ترد «مدير» في نصّه إطلاقاً", priceSourceShort("reception_set"));
 same("   والمختصرُ جزءٌ من الكامل — نصٌّ واحد لا نصّان",
   PRICE_SOURCES.map((v) => priceSourceLabel(v) === `السعر المعتمد ${priceSourceShort(v)}`),
-  [true, true, true]);
+  [true, true, true, true]);
 same("   وقيمةٌ لا تُعرَف تُقرأ «من المعاينة» ولا تُخترَع لها عبارة",
   [priceSourceShort("junk"), priceSourceShort(null)], ["من المعاينة", "من المعاينة"]);
 

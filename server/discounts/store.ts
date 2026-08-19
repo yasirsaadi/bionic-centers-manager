@@ -227,9 +227,31 @@ export async function requestDiscount(params: {
  * `confirmPurchase` أو `pricePhysiotherapy`. فالكلفةُ وقيدُ الدفتر وأمرُ
  * التصنيع وخطّةُ الجلسات كلُّها تُكتب بالشيفرة المُجرَّبة نفسها.
  *
+ * ══ **«معتمَد» يعني «نُفِّذ» — معاملةٌ واحدة لا اثنتان** ══════════════════
+ * كان الحسمُ يُثبَّت في معاملةٍ ثم يُنفَّذ المسارُ بعدها ثم يُختَم
+ * `applied_at`. وبين كلّ خطوتين كانت هناك لحظةُ سقوطٍ تترك النظام كاذباً:
+ *   • سقوطٌ بعد الحسم وقبل التنفيذ ⟶ صفٌّ يقول «معتمَد» بلا خدمةٍ وقعت،
+ *     **وقد خرج من الطابور** فلا يراه أحد ولا يُستأنف.
+ *   • سقوطٌ بعد التنفيذ وقبل الختم ⟶ خدمةٌ وقعت بلا ختم، وإعادةٌ لاحقة
+ *     تُنشئ أمرَ تصنيعٍ ثانياً لبيعٍ واحد.
+ *   • وفي مسار الجهاز أسوأ: `setApprovedPriceForDiscount` كانت تكتب السعرَ
+ *     المخفَّض على المتابعة **قبل** `confirmPurchase`؛ فلو فشل البيعُ بقي
+ *     السعرُ المخفَّض مكتوباً، فيؤكّد الاستعلامات الشراء بالمسار العادي
+ *     ويأخذ الخصمَ بلا اعتماد — التفافٌ كامل على الطبقة.
+ *
+ * فصارت الخطواتُ الثلاث **معاملةً واحدة**: القفل، والتنفيذ، والختم. لا
+ * تنجح إلّا معاً، ولا تسقط إلّا معاً. والسقوطُ أينما وقع يعيد الصفَّ
+ * `pending` كما كان — في الطابور، بلا أثرٍ ماليّ، قابلاً للإعادة.
+ *
+ * **والقاعدةُ تحرس هذا بنيوياً**: قيدُ `decision_check` يرفض صفّاً
+ * `approved` بلا `applied_at`. فالحالةُ المشلولة لا يمكن أن توجد ولو
+ * كتبها نداءٌ مباشر من محرّر SQL.
+ *
  * ══ والاعتمادُ المزدوج يُنفَّذ مرّةً واحدة ═══════════════════════════════
- * القفلُ على الصفّ ثم شرطُ `status = 'pending'` في التحديث: مَن وصل ثانياً
- * يقرأ `approved` فيُردّ بـ409 — فلا أمرا تصنيعٍ لبيعٍ واحد.
+ * القفلُ على الصفّ ثم شرطا `status = 'pending' AND applied_at IS NULL` في
+ * التحديث: مَن وصل ثانياً يقرأ `approved` فيُردّ بـ409 — فلا أمرا تصنيعٍ
+ * لبيعٍ واحد. والمفتاحُ هنا هو **رقمُ الطلب نفسه**: صفٌّ واحد لا يُنفَّذ
+ * إلّا مرّة، فالإعادةُ بعد فشلٍ عابر تكمل تماماً مرّةً واحدة.
  *
  * ══ والرفضُ لا يُنشئ ديناراً ═══════════════════════════════════════════
  * المريضُ قد لا يكون وافق على السعر الأصلي أصلاً. فالرفضُ يعيد الخدمةَ إلى
@@ -244,10 +266,10 @@ export async function decideDiscount(params: {
   isFree?: boolean;
   note?: string | null; actor: Actor;
 }): Promise<{ request: DiscountRow; applied: any }> {
-  //  المعاملةُ تحسم الصفَّ أوّلاً، ثم يُنفَّذ المسارُ القائم بعدها بمعاملته
-  //  الخاصّة: `assignManufacturing` و`pricePhysiotherapy` يفتحان معاملاتهما،
-  //  وتعشيشُهما داخل هذه كان سيقفل الصفوفَ نفسها مرّتين.
-  const locked = await db.transaction(async (tx) => {
+  //  **معاملةٌ واحدة**: القفلُ والتنفيذُ والختم. والمساراتُ القائمة كلُّها
+  //  تقبل معاملةَ مُستدعيها (`tx`) فتنضمّ إليها بدل أن تفتح معاملاتها —
+  //  وهو النمطُ الذي بُني له `assignManufacturing.tx` أصلاً منذ ٠٥٣.
+  return await db.transaction(async (tx) => {
     const cur = await tx.execute(sql`
       SELECT ${COLS} FROM service_discount_requests
        WHERE id = ${params.requestId} FOR UPDATE
@@ -270,7 +292,7 @@ export async function decideDiscount(params: {
       `);
       const out = (upd.rows ?? [])[0];
       if (!out) throw new DiscountError(CONFLICT, 409);
-      return { req: toRow(out), approvedPrice: null as number | null };
+      return { request: toRow(out), applied: null };
     }
 
     // ══ «تعديل واعتماد»: السعرُ يُعاد حسابُه بالقاعدة نفسها ══════════════
@@ -289,6 +311,12 @@ export async function decideDiscount(params: {
         400);
     }
 
+    // ══ التنفيذُ **قبل** الختم وفي معاملته ═════════════════════════════
+    //  لو سقط هنا رجعت المعاملةُ كلُّها: الصفُّ `pending` كما كان، ولا
+    //  سعرٌ كُتب على المتابعة، ولا أمرُ تصنيعٍ وُلد، ولا دينارٌ قُيِّد.
+    const applied = await applyApproved(req, calc.finalPrice, params.actor, tx);
+
+    //  والختمُ في النداء نفسه الذي يقول «معتمَد» — لا بعده.
     const upd = await tx.execute(sql`
       UPDATE service_discount_requests
          SET status = 'approved', decided_at = NOW(), decided_by = ${params.actor.userId},
@@ -299,24 +327,15 @@ export async function decideDiscount(params: {
              proposed_final_price = ${calc.finalPrice},
              discount_amount = ${calc.discountAmount},
              discount_percentage = ${calc.discountPercentage},
-             reason = ${calc.isFree ? FREE_DONATION_REASON : req.reason}
-       WHERE id = ${params.requestId} AND status = 'pending'
+             reason = ${calc.isFree ? FREE_DONATION_REASON : req.reason},
+             applied_at = NOW()
+       WHERE id = ${params.requestId} AND status = 'pending' AND applied_at IS NULL
       RETURNING ${COLS}
     `);
     const out = (upd.rows ?? [])[0];
     if (!out) throw new DiscountError(CONFLICT, 409);
-    return { req: toRow(out), approvedPrice: calc.finalPrice };
+    return { request: toRow(out), applied };
   });
-
-  if (locked.approvedPrice === null) return { request: locked.req, applied: null };
-
-  // ══ وهنا يُنادى المسارُ القائم — **بالسعر المعتمد من الصفّ** ══════════
-  const applied = await applyApproved(locked.req, locked.approvedPrice, params.actor);
-  await db.execute(sql`
-    UPDATE service_discount_requests SET applied_at = NOW()
-     WHERE id = ${locked.req.id} AND applied_at IS NULL
-  `);
-  return { request: { ...locked.req, appliedAt: new Date().toISOString() }, applied };
 }
 
 /**
@@ -334,7 +353,7 @@ export async function decideDiscount(params: {
  * يُصنَّع وجلساتٌ تُشترى — وقيمتُها المالية صفر. لا دفعةَ ملفَّقة تُنشأ.
  */
 async function applyApproved(
-  req: DiscountRow, finalPrice: number, actor: Actor,
+  req: DiscountRow, finalPrice: number, actor: Actor, tx: any,
 ): Promise<any> {
   const payload = (req.payload ?? {}) as DiscountPayload;
 
@@ -351,7 +370,7 @@ async function applyApproved(
     //  والكلفةُ هي **المعتمَدة** لا المحسوبةُ من الجدول: هذا هو الخصمُ نفسُه.
     //  ويبقى `physioEntryCost` مرجعَ السعر الأصلي في نقطة الطلب.
     const patient = await storage.pricePhysiotherapy(req.patientId, {
-      entries, totalCost: finalPrice, totalSessions, treatmentType: typesJoined,
+      entries, totalCost: finalPrice, totalSessions, treatmentType: typesJoined, tx,
     });
     return { kind: "physiotherapy", totalCost: finalPrice, totalSessions, patient };
   }
@@ -362,10 +381,10 @@ async function applyApproved(
     //  — فلا رقمَ يمرّ عبر جسم الطلب في أي خطوة.
     await followupStore.setApprovedPriceForDiscount({
       followupId: payload.followupId, finalPrice,
-      expertUserId: payload.expertUserId ?? null, actor,
+      expertUserId: payload.expertUserId ?? null, actor, tx,
     });
     const out = await followupStore.confirmPurchase({
-      followupId: payload.followupId, actor,
+      followupId: payload.followupId, actor, tx,
       //  **الصفرُ يُقبل هنا وحده**: تبرّعٌ معتمَد صراحةً — والحارسُ العامّ
       //  «لا سعر معتمد» يبقى قائماً لكلّ نداءٍ آخر.
       allowFreeDonation: req.isFree,
@@ -389,6 +408,7 @@ async function applyApproved(
     expertUserId: payload.expertUserId as number,
     assignedBy: actor.userId,
     deviceEpisodeId: live?.id ?? null,
+    tx,
   });
   return { kind: "device", workOrderId: out.workOrderId };
 }

@@ -97,7 +97,9 @@ export const isFollowupReason = (v: unknown): v is FollowupReason =>
 // ── مصدرُ السعر المعتمد ──────────────────────────────────────────────────
 //
 // **مَن قال هذا الرقم** — سؤالٌ يبقى بعد أن يُنسى كلُّ شيء آخر.
-export const PRICE_SOURCES = ["exam", "manager_set", "approved_change"] as const;
+export const PRICE_SOURCES = [
+  "exam", "manager_set", "approved_change", "reception_set",
+] as const;
 export type PriceSource = (typeof PRICE_SOURCES)[number];
 
 export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
@@ -106,6 +108,10 @@ export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
   //  توافقٌ رجعي: اعتمادٌ حُسم بالمسار القديم. **ولا يُسمّى «مدير الفرع»**
   //  لأن مَن اعتمده يومَها كان طبيباً أو مسؤولاً.
   approved_change: "بعد تعديل سعر سابق",
+  //  **أولُ سعرٍ حين سكتت المعاينة** — أدخله الاستعلامات، وليس خصماً ولا
+  //  قرارَ مدير. وله اسمُه هو: خلطُه بـ`manager_set` كان سيجعل السجلّ
+  //  ينسب إلى المدير رقماً لم يره.
+  reception_set: "أدخله الاستعلامات",
 };
 
 export const isPriceSource = (v: unknown): v is PriceSource =>
@@ -118,6 +124,24 @@ export function priceSourceShort(v: unknown): string {
 /** العبارةُ الكاملة — **مشتقّةٌ لا مكرَّرة**، فلا تنحرف نسختان. */
 export function priceSourceLabel(v: unknown): string {
   return `السعر المعتمد ${priceSourceShort(v)}`;
+}
+
+/**
+ * **مَن يُدخل أولَ سعرٍ للجهاز حين سكتت المعاينة.**
+ *
+ * كلُّ مَن يُتمّ البيع — استقبالٌ ومديرٌ وطبيبٌ مخوَّل ومسؤول. لأن هذا ليس
+ * تخفيضاً ولا قراراً مالياً استثنائياً، بل **إعلانُ السعر الطبيعي** الذي
+ * تركه الطبيبُ فارغاً. وإيقافُ المريض على مدير الفرع لسهوِ حقلٍ في المعاينة
+ * عقوبةٌ له على ما لا شأن له به.
+ *
+ * **والحارسُ الحقيقيّ في الخادم شرطٌ لا دور**: لا تُقبل الكتابة إلّا حين
+ * يكون السعر المعتمد **صفراً**. فمتى وُجد سعرٌ موجب صار تخفيضُه خصماً يمرّ
+ * ببابه، ورفعُه قرارَ مديرٍ يمرّ بـ`canSetCommercialPrice`.
+ */
+export function canSetInitialCommercialPrice(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  return canConfirmPurchase(s);
 }
 
 // ── السعر التجاري ────────────────────────────────────────────────────────

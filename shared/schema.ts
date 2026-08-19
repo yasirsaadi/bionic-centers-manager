@@ -1544,8 +1544,10 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     'closed_without_purchase', 'converted')`),
   check("post_exam_followups_service_check",
     sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
+  //  `reception_set` (ترحيل ٠٥٩): أولُ سعرٍ حين سكتت المعاينة — يُدخله
+  //  الاستعلامات وليس خصماً ولا قرارَ مدير، فله اسمُه هو في السجلّ.
   check("post_exam_followups_price_source_check",
-    sql`${t.priceSource} IN ('exam', 'manager_set', 'approved_change')`),
+    sql`${t.priceSource} IN ('exam', 'manager_set', 'approved_change', 'reception_set')`),
   // **والرايةُ لا تُرفع بلا صاحب**: الزمنُ والفاعل يمتلئان معاً أو يبقيان
   // فارغين معاً. رايةٌ بلا مَن رفعها سطرٌ لا يُسأل عنه أحد.
   check("post_exam_followups_purchase_interest_check", sql`
@@ -1703,9 +1705,12 @@ export const serviceDiscountRequests = pgTable("service_discount_requests", {
   check("service_discount_requests_approved_check", sql`
     ${t.approvedFinalPrice} IS NULL
     OR (${t.approvedFinalPrice} >= 0 AND ${t.approvedFinalPrice} <= ${t.originalPrice})`),
+  //  **و«معتمَد» يعني «نُفِّذ»**: الحسمُ والتنفيذُ والختم معاملةٌ واحدة،
+  //  فصفٌّ معتمَدٌ بلا لحظةِ تنفيذ حالةٌ مشلولة **لا يمكن أن توجد**.
   check("service_discount_requests_decision_check", sql`
     ${t.status} <> 'approved'
-    OR (${t.approvedFinalPrice} IS NOT NULL AND ${t.decidedAt} IS NOT NULL)`),
+    OR (${t.approvedFinalPrice} IS NOT NULL AND ${t.decidedAt} IS NOT NULL
+        AND ${t.appliedAt} IS NOT NULL)`),
   // **طلبٌ معلَّقٌ واحدٌ لكل خدمة** — حارسٌ بنيويّ لا قاعدةٌ في الشيفرة.
   uniqueIndex("uq_sdr_one_pending")
     .on(t.patientId, t.department, sql`COALESCE(context_ref, '')`)

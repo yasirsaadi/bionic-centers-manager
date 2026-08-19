@@ -738,8 +738,19 @@ export class DatabaseStorage implements IStorage {
     totalCost: number;
     totalSessions: number;
     treatmentType: string;
+    /**
+     * معاملةُ المُستدعي، إن كان التسعير جزءاً من عمليةٍ أكبر.
+     *
+     * اعتمادُ خصمٍ على علاجٍ طبيعي يجب أن ينتج **قرارَ الاعتماد والتسعيرَ
+     * معاً أو لا شيء**: صفُّ خصمٍ يقول «معتمَد» بلا كلفةٍ كُتبت كذبةٌ في
+     * الشاشة، وكلفةٌ كُتبت بلا صفٍّ يفسّرها ثقبٌ في التدقيق. فيمرّر
+     * مُستدعيه معاملته فيصيران حدثاً واحداً — **بلا نسخ منطق التسعير،
+     * وبلا تغيّرٍ لأي مُستدعٍ قائم**: مَن لا يمرّر شيئاً يفتح معاملته
+     * كما كان دائماً.
+     */
+    tx?: DbTransactionLike;
   }): Promise<Patient> {
-    return await db.transaction(async (tx) => {
+    const body = async (tx: any) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
       // Remember HOW MANY sessions were sold, not just their price (036). The
@@ -759,7 +770,7 @@ export class DatabaseStorage implements IStorage {
           .select({ type: payments.paymentTreatmentType, n: payments.sessionCount })
           .from(payments)
           .where(eq(payments.patientId, patientId));
-        const legacy = priorPayments
+        const legacy = (priorPayments as { type: string | null; n: number | null }[])
           .filter((r) => (r.n ?? 0) > 0)
           .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
@@ -794,7 +805,8 @@ export class DatabaseStorage implements IStorage {
         }).onConflictDoNothing();
       }
       return updated;
-    });
+    };
+    return params.tx ? await body(params.tx) : await db.transaction(body);
   }
 
   // Add a service's price onto the case it belongs to (resolved from its
