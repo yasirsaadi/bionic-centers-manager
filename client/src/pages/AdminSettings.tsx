@@ -1373,6 +1373,7 @@ export default function AdminSettings() {
     // `defaultPermissions[role]`, so switching a user's role never silently
     // grants or revokes the right to sign clinical records.
     canWriteMedicalExam: false,
+    canApproveDiscount: false,
     medicalSpecialties: [] as string[],
     language: "ar",
   });
@@ -1518,6 +1519,7 @@ export default function AdminSettings() {
       canViewSessionsReport: false,
       canWorkAsExpert: false,
       canWriteMedicalExam: false,
+      canApproveDiscount: false,
       medicalSpecialties: [] as string[],
       language: "ar",
     });
@@ -1563,6 +1565,7 @@ export default function AdminSettings() {
       canViewSessionsReport: (user as any).canViewSessionsReport ?? false,
       canWorkAsExpert: (user as any).canWorkAsExpert ?? false,
       canWriteMedicalExam: (user as any).canWriteMedicalExam ?? false,
+      canApproveDiscount: (user as any).canApproveDiscount ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
         ? ((user as any).medicalSpecialties as string[])
         : [],
@@ -3147,6 +3150,32 @@ export default function AdminSettings() {
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* اعتمادُ الخصم والتبرّع — **عَلَمٌ ماليٌّ لا سريريّ**.
+                    ولذلك لا يتبع دورَ الطبيب كما يتبعه العَلَمُ أعلاه: مديرُ
+                    الفرع والمسؤولُ يعتمدان بسلطتهما، وهذا المفتاح لتخويلِ
+                    مَن دورُه شيءٌ آخر — طبيبٌ مسؤولٌ عن قسمٍ مثلاً. */}
+                <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="canApproveDiscount"
+                      checked={userFormData.canApproveDiscount}
+                      onCheckedChange={(checked) =>
+                        setUserFormData(prev => ({ ...prev, canApproveDiscount: checked }))
+                      }
+                      data-testid="switch-canApproveDiscount"
+                    />
+                    <Label htmlFor="canApproveDiscount" className="text-sm font-semibold">
+                      يعتمد الخصومات والخدمات المجّانية
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    الخصم قرار <b>مالي</b> لا سريري، فلا يُمنح لكل طبيب. المسؤول
+                    العام ومدير الفرع يعتمدان في نطاقهما تلقائياً؛ هذا المفتاح
+                    لتخويل موظّف بعينه دورُه شيء آخر. ومَن يحمله يعتمد خصمَ فرعه
+                    فقط.
+                  </p>
                 </div>
               </div>
             </div>

@@ -36,6 +36,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
+  discountBlocked, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
+import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
@@ -133,9 +137,12 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
 
   const active = (followups ?? [])[0] ?? null;
 
+  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
+
   const reset = () => {
     setDialog(null); setNote(""); setFinalPrice(""); setPriceReason(""); setExpertId("");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
+    setDiscount(EMPTY_DISCOUNT);
   };
 
   const act = useMutation({
@@ -143,12 +150,19 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       const res = await apiRequest("POST", path, body);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
       qc.invalidateQueries({ queryKey: ["/api/followups"] });
       qc.invalidateQueries({ queryKey: ["/api/followups/approvals"] });
       qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
-      toast({ title: "تمّ الحفظ" });
+      qc.invalidateQueries({ queryKey: ["/api/discounts"] });
+      qc.invalidateQueries({ queryKey: [`/api/discounts/patient/${patientId}`] });
+      toast(data?.pendingApproval
+        ? {
+          title: "أُرسل طلب الخصم للاعتماد",
+          description: "لم يبدأ التصنيع ولم تُقيَّد كلفة — يبدأ فور اعتماد المسؤول أو مدير الفرع.",
+        }
+        : { title: "تمّ الحفظ" });
       reset();
     },
     onError: (err: any) => {
@@ -585,12 +599,24 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 اختر الخبير المسؤول أولاً.
               </p>
             )}
+
+            {/*  والخصمُ هنا **لا يمرّ إلى التصنيع مباشرةً**: يُنشئ طلباً
+                يعتمده المسؤولُ أو مديرُ الفرع، ولا يبدأ شيءٌ قبله. */}
+            {active.approvedPrice > 0 && (
+              <ServiceDiscountFields originalPrice={active.approvedPrice}
+                value={discount} onChange={setDiscount} testIdPrefix="purchase-discount" />
+            )}
           </div>
           <DialogFooter>
-            <Button disabled={busy || active.selectedExpertUserId === null}
+            <Button disabled={busy || active.selectedExpertUserId === null
+              || discountBlocked(discount, active.approvedPrice)}
               data-testid="button-confirm-purchase-submit"
-              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {})}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "تأكيد وبدء التصنيع"}
+              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`,
+                hasDiscount(discount, active.approvedPrice)
+                  ? { discount: discountPayload(discount) } : {})}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" />
+                : hasDiscount(discount, active.approvedPrice) ? "إرسال للاعتماد"
+                  : "تأكيد وبدء التصنيع"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -80,6 +80,7 @@ import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import PatientCommunicationCard from "@/components/PatientCommunicationCard";
 import { PostExamDecisionCard } from "@/components/PostExamDecisionCard";
+import { PendingDiscountBanner } from "@/components/PendingDiscountBanner";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -897,6 +898,12 @@ export default function PatientDetails() {
           patientName={patient.name}
           branchName={branches?.find((b) => b.id === patient.branchId)?.name ?? null}
         />
+      </div>
+
+      {/*  وخصمٌ ينتظر الاعتماد يُقال **قبل** كلّ شيء: هو تفسيرُ سكونِ الملفّ
+          (لا كلفة ولا تصنيع)، ولولاه لأعاد الموظّف الإدخال ظنّاً أن حفظه ضاع. */}
+      <div className="mb-4">
+        <PendingDiscountBanner patientId={patient.id} />
       </div>
 
       {/*  قرارُ المريض بعد المعاينة — تحت السجلّ السريري مباشرةً، فالقرار

@@ -42,6 +42,7 @@ const Manufacturing = lazy(() => import("@/pages/Manufacturing"));
 const MyExams = lazy(() => import("@/pages/MyExams"));
 const MedicalReview = lazy(() => import("@/pages/MedicalReview"));
 const PostExamFollowups = lazy(() => import("@/pages/PostExamFollowups"));
+const DiscountApprovals = lazy(() => import("@/pages/DiscountApprovals"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 
@@ -131,6 +132,7 @@ function Router() {
             <Route path="/patients/:id" component={PatientDetails} />
             <Route path="/follow-ups" component={FollowUps} />
             <Route path="/post-exam-followups" component={PostExamFollowups} />
+            <Route path="/discount-approvals" component={DiscountApprovals} />
             <Route path="/my-exams" component={MyExams} />
             <Route path="/medical-review" component={MedicalReview} />
             <Route path="/manufacturing" component={Manufacturing} />

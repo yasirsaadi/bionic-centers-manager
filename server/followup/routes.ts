@@ -29,6 +29,8 @@ import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
+import * as discountStore from "../discounts/store";
+import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
 
@@ -460,6 +462,59 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     //  منذ اختياره.
     const v = await validateExpert(f.selectedExpertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
+
+    // ══ خصمٌ أو تبرّع؟ ⟶ بابُ الاعتماد. وإلّا فالمسارُ كما هو حرفاً ══════
+    // **والسعرُ الأصلي هو `f.approvedPrice`** — المقروءُ من صفّ المتابعة، أي
+    // ما وقّعه الطبيبُ في معاينته أو قرّره مديرُ الفرع. ولا رقمَ من الطلب.
+    //
+    // ولا يتحوّل الملفُّ ولا يُنشأ أمرُ تصنيعٍ ولا تُقيَّد كلفةٌ قبل الاعتماد:
+    // `confirmPurchase` تُنادى من `applyApproved` وحدها بعده.
+    const dsc = req.body?.discount;
+    const wantsFree = dsc?.isFree === true;
+    const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+      && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== f.approvedPrice;
+    if (wantsFree || wantsCut) {
+      try {
+        const out = await discountStore.submitDiscount({
+          patientId: f.patientId, department: f.serviceType as any,
+          branchId: f.branchId, contextRef: `followup:${f.id}`,
+          originalPrice: f.approvedPrice,
+          finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+          isFree: wantsFree,
+          reason: String(dsc?.reason ?? ""), note: str(dsc?.note),
+          payload: { followupId: f.id, expertUserId: f.selectedExpertUserId },
+          actor: actorOf(req),
+          actorMayApprove: mayApproveDiscountHere(req, f.branchId),
+        });
+        await logAudit({
+          entityType: "service_discount", entityId: out.request.id,
+          action: out.status === "approved" ? "update" : "create",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          newValues: {
+            patientId: f.patientId, followupId: f.id,
+            department: f.serviceType, status: out.request.status,
+          },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: discountAuditNote(out.request,
+            out.status === "approved" ? "طلب واعتماد" : "طلب"),
+        });
+        return res.json({
+          ok: true, pendingApproval: out.status === "pending",
+          discountRequestId: out.request.id, discountStatus: out.request.status,
+          workOrderId: out.applied?.workOrderId ?? null,
+          followup: out.applied?.followup ?? f,
+        });
+      } catch (e: any) {
+        if (e?.name === "DiscountError") return res.status(e.status).json({ error: e.message });
+        if (fail(res, e)) return;
+        if (e?.name === "ActiveAssignmentError" || e?.code === "23505") {
+          return res.status(409).json({
+            error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — حدّث الصفحة",
+          });
+        }
+        throw e;
+      }
+    }
 
     try {
       const out = await store.confirmPurchase({

@@ -9,6 +9,10 @@ import { Plus, X, Stethoscope } from "lucide-react";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, type PhysioEntry } from "@shared/pricing";
 import { api } from "@shared/routes";
 import { invalidatePatientData } from "@/lib/queryClient";
+import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
+  discountBlocked, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
 
 // Post-exam physiotherapy pricing («الكلفة والجلسات») — the physio mirror of
 // the أطراف/مساند تخصيص step: the patient was registered without a cost; after
@@ -25,6 +29,7 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [rows, setRows] = useState<Row[]>([{ treatmentType: "", sessionCount: 0 }]);
+  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
 
   const total = rows.reduce((s, r) => s + physioEntryCost(r), 0);
   const validRows = rows.filter((r) => r.treatmentType && (r.sessionCount > 0 || r.treatmentType === "استشارة طبية"));
@@ -57,20 +62,36 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
     if (open && prescribed.length > 0 && untouched) setRows(prescribed);
   }, [open, rxExam?.id, prescribed.length]);
 
-  function reset() { setRows([{ treatmentType: "", sessionCount: 0 }]); }
+  function reset() {
+    setRows([{ treatmentType: "", sessionCount: 0 }]);
+    setDiscount(EMPTY_DISCOUNT);
+  }
 
   const save = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/patients/${patient!.id}/price-physio`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ entries: validRows.map((r) => ({ ...r, sessionCount: r.treatmentType === "استشارة طبية" ? 1 : r.sessionCount })) }),
+        body: JSON.stringify({
+          entries: validRows.map((r) => ({ ...r, sessionCount: r.treatmentType === "استشارة طبية" ? 1 : r.sessionCount })),
+          //  **بلا خصمٍ لا يُرسَل الحقل أصلاً** — فالمسارُ الأغلب يمرّ كما كان
+          //  تماماً، بلا صفٍّ ولا طابورٍ ولا انتظار.
+          ...(hasDiscount(discount, total) ? { discount: discountPayload(discount) } : {}),
+        }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر الحفظ"); }
       return res.json();
     },
     onSuccess: (data) => {
       invalidatePatientData(queryClient, patient!.id);
-      toast({ title: "تم تسعير العلاج", description: `الكلفة المضافة: ${(data.totalCost || 0).toLocaleString()} د.ع` });
+      queryClient.invalidateQueries({ queryKey: ["/api/discounts"] });
+      if (data.pendingApproval) {
+        toast({
+          title: "أُرسل طلب الخصم للاعتماد",
+          description: "لم تُسجَّل الكلفة بعد — تُنفَّذ الخدمة فور اعتماد المسؤول أو مدير الفرع.",
+        });
+      } else {
+        toast({ title: "تم تسعير العلاج", description: `الكلفة المضافة: ${(data.totalCost || 0).toLocaleString()} د.ع` });
+      }
       reset();
       onOpenChange(false);
     },
@@ -143,11 +164,20 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
             <span>إجمالي الكلفة المضافة</span>
             <span className="font-mono">{total.toLocaleString()} د.ع</span>
           </div>
+
+          {total > 0 && (
+            <ServiceDiscountFields originalPrice={total} value={discount}
+              onChange={setDiscount} testIdPrefix="physio-discount" />
+          )}
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => save.mutate()} disabled={validRows.length === 0 || save.isPending} data-testid="physio-save">
-            {save.isPending ? "جارٍ الحفظ…" : "حفظ الكلفة والجلسات"}
+          <Button onClick={() => save.mutate()}
+            disabled={validRows.length === 0 || save.isPending || discountBlocked(discount, total)}
+            data-testid="physio-save">
+            {save.isPending ? "جارٍ الحفظ…"
+              : hasDiscount(discount, total) ? "إرسال للاعتماد"
+                : "حفظ الكلفة والجلسات"}
           </Button>
         </DialogFooter>
       </DialogContent>

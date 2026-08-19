@@ -12,6 +12,10 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Stethoscope } from "lucide-react";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolveDialogService } from "@/pages/patient_registry_assignment";
+import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
+  discountBlocked, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
 // patient agreed to buy, so reception records the specs + the agreed price and
@@ -56,6 +60,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   //  ما يقوله السجلّ يسود على الأعلام: مريضٌ يحمل الاثنين لكن أحدهما
   //  مُسنَد فعلاً ليس صاحب اختيار — خدمةٌ واحدة بقيت له.
   const [serviceChoice, setServiceChoice] = useState<"prosthetic" | "medical_support" | null>(null);
+  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
   const { needsChoice: dualFlag, serviceType } = resolveDialogService({
     offered: patient?.assignableServices,
     isAmputee: patient?.isAmputee,
@@ -153,21 +158,42 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
     setExpertUserId((prev) => prev ?? proposedExpertId);
   }, [open, rxExam?.id, serviceType, proposedExpertId]);
 
-  function resetState() { setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null); }
+  function resetState() {
+    setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null);
+    setDiscount(EMPTY_DISCOUNT);
+  }
+
+  //  **السعرُ الأصلي هو ما سيحسبه الخادم**: سعرُ الطبيب لمن لا يكتب سريرياً،
+  //  والمكتوبُ في الحقل لمن يكتب. فالفرقُ المعروض هو الفرقُ المحفوظ.
+  const originalPrice = (canEditClinicalDetails || legacyOpen)
+    ? cost : (proposedCost ?? 0);
 
   const assign = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/patients/${patient!.id}/assign-manufacturing`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ expertUserId, cost, serviceType, ...specs }),
+        body: JSON.stringify({
+          expertUserId, cost, serviceType, ...specs,
+          //  بلا خصمٍ لا يُرسَل الحقل — فالتخصيصُ المعتاد يمرّ كما كان تماماً.
+          ...(hasDiscount(discount, originalPrice)
+            ? { discount: discountPayload(discount) } : {}),
+        }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || e.message || "تعذّر التخصيص"); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidatePatientData(queryClient, patient!.id);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
-      toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
+      queryClient.invalidateQueries({ queryKey: ["/api/discounts"] });
+      if (data?.pendingApproval) {
+        toast({
+          title: "أُرسل طلب الخصم للاعتماد",
+          description: "لم يبدأ التصنيع ولم تُسجَّل كلفة — يبدأ فور اعتماد المسؤول أو مدير الفرع.",
+        });
+      } else {
+        toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
+      }
       resetState();
       onOpenChange(false);
     },
@@ -322,11 +348,17 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
               </p>
             )}
           </div>
+
+          {originalPrice > 0 && (
+            <ServiceDiscountFields originalPrice={originalPrice} value={discount}
+              onChange={setDiscount} testIdPrefix="assign-discount" />
+          )}
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending} data-testid="button-confirm-assign-expert">
-            {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending || discountBlocked(discount, originalPrice)} data-testid="button-confirm-assign-expert">
+            {assign.isPending ? "جارٍ الحفظ…"
+              : hasDiscount(discount, originalPrice) ? "إرسال للاعتماد" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>
       </DialogContent>
