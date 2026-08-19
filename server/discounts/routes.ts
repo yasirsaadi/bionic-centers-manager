@@ -13,7 +13,6 @@
 // يعتمد خصمَ فرعٍ آخر ولو ورد المعرّف صحيحاً.
 
 import type { Express } from "express";
-import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { DiscountError } from "./store";
 import {
@@ -138,6 +137,9 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
     }
 
     try {
+      //  **سطرُ التدقيق يُمرَّر ولا يُكتب هنا**: يكتبه المخزن داخل معاملة
+      //  الحسم نفسها. فلا لحظةَ يكون فيها المالُ قد تحرّك والإذنُ بلا أثر،
+      //  ولا رسالةَ «لم يتغيّر شيء» تُقال بعد أن تغيّر.
       const out = await store.decideDiscount({
         requestId: id, decision,
         finalPrice: decision === "approve" ? finalPrice : null,
@@ -145,22 +147,10 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
         isFree: req.body?.isFree === true,
         note: str(req.body?.note),
         actor: { userId: s.userId, userName: s.userName },
-      });
-      await logAudit({
-        entityType: "service_discount", entityId: id,
-        action: "update", userId: s.userId, userName: s.userName,
-        branchId: out.request.branchId,
-        oldValues: {
-          status: existing.status, proposedFinalPrice: existing.proposedFinalPrice,
-          isFree: existing.isFree,
+        audit: {
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          note: (row, d) => discountAuditNote(row, d === "approve" ? "اعتماد" : "رفض"),
         },
-        newValues: {
-          status: out.request.status, approvedFinalPrice: out.request.approvedFinalPrice,
-          isFree: out.request.isFree, patientId: out.request.patientId,
-          department: out.request.department,
-        },
-        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: discountAuditNote(out.request, decision === "approve" ? "اعتماد" : "رفض"),
       });
       res.json(out);
     } catch (e) {

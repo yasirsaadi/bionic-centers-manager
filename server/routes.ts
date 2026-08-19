@@ -2558,17 +2558,25 @@ export async function registerRoutes(
             payload: { entries },
             actor: { userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null },
             actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+            //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا كلفةٌ
+            //  تُقيَّد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+            audit: {
+              ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+              note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+            },
           });
-          await logAudit({
-            entityType: "service_discount", entityId: out.request.id,
-            action: out.status === "approved" ? "update" : "create",
-            userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-            branchId: patient.branchId, ipAddress: req.ip ?? null,
-            userAgent: req.get("user-agent") ?? null,
-            newValues: { patientId, department: "physiotherapy", status: out.request.status },
-            notes: discountAuditNote(out.request,
-              out.status === "approved" ? "طلب واعتماد" : "طلب"),
-          });
+          //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
+          if (out.status === "pending") {
+            await logAudit({
+              entityType: "service_discount", entityId: out.request.id,
+              action: "create",
+              userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+              branchId: patient.branchId, ipAddress: req.ip ?? null,
+              userAgent: req.get("user-agent") ?? null,
+              newValues: { patientId, department: "physiotherapy", status: out.request.status },
+              notes: discountAuditNote(out.request, "طلب"),
+            });
+          }
           return res.json({
             ok: true, pendingApproval: out.status === "pending",
             discountRequestId: out.request.id, discountStatus: out.request.status,

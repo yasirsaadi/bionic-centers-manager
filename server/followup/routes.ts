@@ -516,19 +516,28 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           payload: { followupId: f.id, expertUserId: f.selectedExpertUserId },
           actor: actorOf(req),
           actorMayApprove: mayApproveDiscountHere(req, f.branchId),
-        });
-        await logAudit({
-          entityType: "service_discount", entityId: out.request.id,
-          action: out.status === "approved" ? "update" : "create",
-          userId: s.userId, userName: s.userName, branchId: f.branchId,
-          newValues: {
-            patientId: f.patientId, followupId: f.id,
-            department: f.serviceType, status: out.request.status,
+          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا يُعتمد
+          //  خصمٌ ويتحرّك مالٌ بإذنٍ لا أثرَ له.
+          audit: {
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            note: (row) => discountAuditNote(row, "طلب واعتماد"),
           },
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: discountAuditNote(out.request,
-            out.status === "approved" ? "طلب واعتماد" : "طلب"),
         });
+        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك، فسطرُه أفضلُ جهدٍ
+        //  كبقيّة النظام — ولا يستطيع أن يُفشل ما نجح.
+        if (out.status === "pending") {
+          await logAudit({
+            entityType: "service_discount", entityId: out.request.id,
+            action: "create",
+            userId: s.userId, userName: s.userName, branchId: f.branchId,
+            newValues: {
+              patientId: f.patientId, followupId: f.id,
+              department: f.serviceType, status: out.request.status,
+            },
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            notes: discountAuditNote(out.request, "طلب"),
+          });
+        }
         return res.json({
           ok: true, pendingApproval: out.status === "pending",
           discountRequestId: out.request.id, discountStatus: out.request.status,

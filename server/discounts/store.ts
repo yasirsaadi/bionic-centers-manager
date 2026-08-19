@@ -10,6 +10,7 @@
 
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import * as followupStore from "../followup/store";
 import {
@@ -258,6 +259,13 @@ export async function requestDiscount(params: {
  * الاستعلامات: يبيع بالسعر الأصلي إن رضي المريض، أو يطلب خصماً آخر، أو
  * يغلق بلا شراء.
  */
+export interface DecisionAudit {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  /** يُبنى من الصفّ المحسوم — تمرّره النقطةُ دالّةً لتقرأ القيم النهائية. */
+  note: (row: DiscountRow, decision: "approve" | "reject") => string;
+}
+
 export async function decideDiscount(params: {
   requestId: number; decision: "approve" | "reject";
   /** «تعديل واعتماد»: سعرٌ يخالف المقترح. */
@@ -265,6 +273,15 @@ export async function decideDiscount(params: {
   /** ولا يصير صفراً تبرّعاً إلّا بعلمٍ صريح من المعتمِد نفسه. */
   isFree?: boolean;
   note?: string | null; actor: Actor;
+  /**
+   * **سطرُ التدقيق يُكتب داخل المعاملة** — لا بعدها.
+   *
+   * «مَن أذن بهذا الخصم ومتى» ليس زينةً بل هو الإذنُ نفسه. فلو كُتب بعد
+   * الالتزام لأمكن أن يتحرّك المال بإذنٍ لا أثرَ له؛ ولو فشلت كتابتُه
+   * فأُبلغ المستخدم «لم يتغيّر شيء» لكانت الرسالةُ كذباً يدفعه إلى إعادةِ
+   * عمليةٍ نجحت. فصار السطرُ جزءاً من الحزمة: ينجح معها أو تسقط معه.
+   */
+  audit: DecisionAudit;
 }): Promise<{ request: DiscountRow; applied: any }> {
   //  **معاملةٌ واحدة**: القفلُ والتنفيذُ والختم. والمساراتُ القائمة كلُّها
   //  تقبل معاملةَ مُستدعيها (`tx`) فتنضمّ إليها بدل أن تفتح معاملاتها —
@@ -292,7 +309,9 @@ export async function decideDiscount(params: {
       `);
       const out = (upd.rows ?? [])[0];
       if (!out) throw new DiscountError(CONFLICT, 409);
-      return { request: toRow(out), applied: null };
+      const rejected = toRow(out);
+      await writeDecisionAudit(tx, req, rejected, "reject", params);
+      return { request: rejected, applied: null };
     }
 
     // ══ «تعديل واعتماد»: السعرُ يُعاد حسابُه بالقاعدة نفسها ══════════════
@@ -334,7 +353,37 @@ export async function decideDiscount(params: {
     `);
     const out = (upd.rows ?? [])[0];
     if (!out) throw new DiscountError(CONFLICT, 409);
-    return { request: toRow(out), applied };
+    const approved = toRow(out);
+    //  **وسطرُ التدقيق في الحزمة نفسها**: بعد الختم وقبل الالتزام. فلو
+    //  سقط سقط كلُّ شيء معه — ولا يُقال للمستخدم «لم يتغيّر شيء» وقد تغيّر.
+    await writeDecisionAudit(tx, req, approved, "approve", params);
+    return { request: approved, applied };
+  });
+}
+
+/** سطرُ تدقيق القرار — **بمعاملة الحسم**، فلا يُبتلع خطؤه. */
+async function writeDecisionAudit(
+  tx: any, before: DiscountRow, after: DiscountRow,
+  decision: "approve" | "reject",
+  params: { actor: Actor; audit: DecisionAudit },
+): Promise<void> {
+  await logAudit({
+    entityType: "service_discount", entityId: after.id, action: "update",
+    userId: params.actor.userId, userName: params.actor.userName,
+    branchId: after.branchId,
+    oldValues: {
+      status: before.status, proposedFinalPrice: before.proposedFinalPrice,
+      isFree: before.isFree,
+    },
+    newValues: {
+      status: after.status, approvedFinalPrice: after.approvedFinalPrice,
+      isFree: after.isFree, patientId: after.patientId,
+      department: after.department, appliedAt: after.appliedAt,
+    },
+    ipAddress: params.audit.ipAddress ?? null,
+    userAgent: params.audit.userAgent ?? null,
+    notes: params.audit.note(after, decision),
+    tx,
   });
 }
 
@@ -439,6 +488,8 @@ export async function submitDiscount(params: {
    * الفرع معاً — فمديرُ فرعٍ آخر ليس مخوَّلاً هنا ولو حمل الدور.
    */
   actorMayApprove: boolean;
+  /** يُمرَّر إلى الاعتماد المباشر فيُكتب سطرُه داخل معاملته. */
+  audit: DecisionAudit;
 }): Promise<{
   status: "pending" | "approved"; request: DiscountRow;
   calc: ServiceDiscount; applied: any;
@@ -450,6 +501,7 @@ export async function submitDiscount(params: {
   const out = await decideDiscount({
     requestId: request.id, decision: "approve",
     note: "اعتماد مباشر — المُرسِل مخوَّل بالاعتماد", actor: params.actor,
+    audit: params.audit,
   });
   return { status: "approved", request: out.request, calc, applied: out.applied };
 }

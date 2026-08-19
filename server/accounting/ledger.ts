@@ -482,6 +482,24 @@ export async function getBalanceSheet(filters: {
 
 // ==================== سجل التدقيق ====================
 
+/**
+ * سطرُ التدقيق — **بوضعين، والفرقُ بينهما مقصود**.
+ *
+ * ══ بلا معاملة (الوضعُ التاريخي، وكلُّ المُستدعين عليه) ═════════════════
+ * كتابةٌ مستقلّة **يُبتلع خطؤها**: العمليةُ الأساسية وقعت وانتهت، وإفشالُها
+ * لأن سطرَ تدقيقٍ لم يُكتب عقوبةٌ أشدّ من الجُرم. يُسجَّل الخطأ في السجلّ
+ * ويمضي.
+ *
+ * ══ ومع معاملة المُستدعي — **لا يُبتلع شيء** ════════════════════════════
+ * حين تُمرَّر `tx` يصير سطرُ التدقيق **جزءاً من العملية نفسها**: ينجحان
+ * معاً أو يسقطان معاً. وهذا ما تحتاجه العمليات التي يكون فيها السطرُ نفسُه
+ * جزءاً من صحّة القرار — اعتمادُ خصمٍ يحرّك مالاً مثلاً: «مَن أذن ومتى»
+ * ليس زينةً بل هو الإذن.
+ *
+ * **والابتلاعُ هنا كان سيكون كذبةً من نوعٍ آخر**: مالٌ تحرّك بإذنٍ لا أثر
+ * له. فالمقايضة معكوسة: هناك نحمي العملية من التدقيق، وهنا نحمي التدقيق
+ * بالعملية.
+ */
 export async function logAudit(params: {
   entityType: string;
   entityId: number;
@@ -494,21 +512,29 @@ export async function logAudit(params: {
   ipAddress?: string | null;
   userAgent?: string | null;
   notes?: string | null;
+  /** معاملةُ المُستدعي — يصير السطرُ جزءاً منها، وخطؤه يُسقطها. */
+  tx?: any;
 }): Promise<void> {
+  const values = {
+    entityType: params.entityType,
+    entityId: params.entityId,
+    action: params.action,
+    userId: params.userId ?? null,
+    userName: params.userName ?? null,
+    branchId: params.branchId ?? null,
+    oldValues: params.oldValues ? JSON.stringify(params.oldValues) : null,
+    newValues: params.newValues ? JSON.stringify(params.newValues) : null,
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
+    notes: params.notes ?? null,
+  };
+  if (params.tx) {
+    //  **بلا try**: الخطأ يجب أن يصعد فيُسقط معاملة المُستدعي.
+    await params.tx.insert(auditLog).values(values);
+    return;
+  }
   try {
-    await db.insert(auditLog).values({
-      entityType: params.entityType,
-      entityId: params.entityId,
-      action: params.action,
-      userId: params.userId ?? null,
-      userName: params.userName ?? null,
-      branchId: params.branchId ?? null,
-      oldValues: params.oldValues ? JSON.stringify(params.oldValues) : null,
-      newValues: params.newValues ? JSON.stringify(params.newValues) : null,
-      ipAddress: params.ipAddress ?? null,
-      userAgent: params.userAgent ?? null,
-      notes: params.notes ?? null,
-    });
+    await db.insert(auditLog).values(values);
   } catch (err) {
     // لا نُفشل العملية الأساسية لو فشل الـ audit log
     console.error("[audit] failed to log:", err);

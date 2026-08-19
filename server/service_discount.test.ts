@@ -70,6 +70,12 @@ const S = {
     permissions: { canViewPatients: true, canAddPatients: true } },
   docB2: { userId: DOC_B2, role: "doctor", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "د. الفرع ٢", permissions: { canViewPatients: true, canWriteMedicalExam: true } },
+  //  **معتمِدٌ بحسابٍ لا وجود له** — يمرّ ببوّابة الاعتماد، لكنّ سطرَ
+  //  التدقيق يصطدم بمفتاح `audit_log.user_id` الأجنبي. فشلٌ **حقيقيّ**
+  //  في كتابة التدقيق وحدها، بلا حقنٍ ولا شيفرةِ اختبارٍ في الإنتاج.
+  ghost: { userId: 999_997, role: "admin", isAdmin: true, branchId: 1,
+    accessibleBranches: [1, 2], displayName: "شبح",
+    permissions: { canViewPatients: true, canAddPatients: true } },
 };
 
 async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
@@ -983,6 +989,140 @@ async function main() {
         "٦٥. **صفٌّ «معتمَد» بلا لحظةِ تنفيذ مستحيلٌ بنيوياً**", raised);
     }
 
+    // ══ ١٤ج. فشلُ التدقيق يُسقط كلَّ شيء — ولا يكذب ═══════════════════
+    console.log("\n── (١٤ج) سطرُ التدقيق داخل المعاملة ──");
+    {
+      //  جهاز: طلبُ خصمٍ معلَّق، ثم اعتمادٌ بحسابٍ لا وجود له.
+      const p = await mkPatient("طرفٌ يفشل تدقيقه");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 2_000_000 });
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const req = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
+        discount: { finalPrice: 1_400_000, reason: "negotiation" },
+      });
+      const id = req.body?.discountRequestId;
+      same("٦٦. طلبُ خصمٍ معلَّق على جهاز", req.body?.pendingApproval, true);
+
+      const boom = await http("POST", `/api/discounts/${id}/decide`, S.ghost, { decision: "approve" });
+      check(boom.status >= 400,
+        "٦٧. **فشلُ سطرِ التدقيق يُفشل الاعتماد كلَّه**", JSON.stringify(boom));
+
+      const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`, [id]))[0];
+      same("٦٨. **والطلبُ ما زال معلَّقاً بلا ختم**",
+        [row.status, row.approved_final_price, row.applied_at], ["pending", null, null]);
+      const done = await followupOf(p);
+      same("٦٩. **ولا متابعةٌ تحوّلت ولا سعرٌ مخفَّضٌ كُتب**",
+        [done.status, done.approvedPrice, done.priceSource],
+        ["awaiting_patient_decision", 2_000_000, "exam"]);
+      const m0 = await money(p);
+      same("٧٠. ولا أمرَ تصنيعٍ ولا كلفةَ مريضٍ ولا قيد",
+        [m0.orders, m0.totalCost, m0.ledger], [0, 0, 0]);
+      same("   ولا كلفةَ على حالة الجهاز",
+        Number((await q(`SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`,
+          [p]))[0].cost), 0);
+      //  **ولا سطرَ اعتمادٍ يتيمٌ بقي**: سطرُ «طلب» يبقى — فالطلبُ وقع فعلاً
+      //  ولا مالَ فيه. أمّا سطرُ الاعتماد فيرجع مع المعاملة كما يرجع المال.
+      same("٧١. **ولا سطرَ اعتمادٍ يتيمٌ بقي** — والطلبُ يبقى مسجَّلاً",
+        [(await q(`SELECT count(*)::int n FROM audit_log
+                    WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+          [id]))[0].n,
+          (await q(`SELECT count(*)::int n FROM audit_log
+                     WHERE entity_type='service_discount' AND entity_id=$1 AND action='create'`,
+            [id]))[0].n],
+        [0, 1]);
+
+      // ══ والإعادةُ بحسابٍ حقيقيّ تنجح **مرّةً واحدة** ═══════════════════
+      same("٧٢. **والإعادةُ بمعتمِدٍ حقيقيّ تنجح**",
+        (await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" })).status, 200);
+      const m = await money(p);
+      same("   الأمرُ واحدٌ والكلفةُ المعتمَدة",
+        [m.orders, m.totalCost, m.ledger], [1, 1_400_000, 1_400_000]);
+      same("٧٣. **وسطرُ تدقيقِ الاعتماد واحدٌ بالضبط**",
+        (await q(`SELECT count(*)::int n FROM audit_log
+                   WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+          [id]))[0].n, 1);
+      same("٧٤. **وإعادةٌ ثالثة تُردّ ولا تكتب شيئاً**",
+        (await http("POST", `/api/discounts/${id}/decide`, S.admin, { decision: "approve" })).status, 409);
+      same("   والسطرُ ما زال واحداً والأمرُ واحداً",
+        [(await q(`SELECT count(*)::int n FROM audit_log
+                    WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+          [id]))[0].n, (await money(p)).orders], [1, 1]);
+    }
+    {
+      //  علاجٌ طبيعي: نفسُ الإثبات على القسم الآخر.
+      const p = await mkPatient("علاجٌ يفشل تدقيقه", { device: false, physio: true });
+      await mkCase(p, 1, "physiotherapy");
+      const req = await http("POST", `/api/patients/${p}/price-physio`, S.recv, {
+        entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
+        discount: { finalPrice: 350_000, reason: "humanitarian" },
+      });
+      const id = req.body?.discountRequestId;
+      same("٧٥. طلبُ خصمٍ معلَّق على علاجٍ طبيعي", req.body?.pendingApproval, true);
+      const boom = await http("POST", `/api/discounts/${id}/decide`, S.ghost, { decision: "approve" });
+      check(boom.status >= 400, "٧٦. **فشلُ التدقيق يُفشل الاعتماد**", JSON.stringify(boom));
+      same("٧٧. **والطلبُ معلَّقٌ ولا كلفةَ ولا قيدَ ولا خطّة**",
+        [(await q(`SELECT status FROM service_discount_requests WHERE id=$1`, [id]))[0].status,
+          Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n,
+          await plan(p)],
+        ["pending", 0, 0, null]);
+      same("٧٨. **والإعادةُ تنجح مرّةً واحدة**",
+        (await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" })).status, 200);
+      same("   بكلفةٍ واحدة وخطّةٍ لا تتضاعف وسطرِ تدقيقٍ واحد",
+        [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          await plan(p),
+          (await q(`SELECT count(*)::int n FROM audit_log
+                     WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+            [id]))[0].n],
+        [350_000, [["روبوت", 10]], 1]);
+    }
+    {
+      //  ══ والاعتمادُ المباشر (المخوَّل يخصم بنفسه) بنفس الضمانة ═══════
+      const p = await mkPatient("علاجٌ باعتمادٍ مباشرٍ يفشل تدقيقه",
+        { device: false, physio: true });
+      await mkCase(p, 1, "physiotherapy");
+      const boom = await http("POST", `/api/patients/${p}/price-physio`, S.ghost, {
+        entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
+        discount: { finalPrice: 400_000, reason: "administrative_instruction" },
+      });
+      check(boom.status >= 400,
+        "٧٩. **الاعتمادُ المباشر يفشل حين يفشل تدقيقُه**", JSON.stringify(boom));
+      same("٨٠. **ولا كلفةَ ولا قيدَ ولا خطّة**",
+        [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n,
+          await plan(p)],
+        [0, 0, null]);
+      //  **والصفُّ يبقى معلَّقاً في الطابور** — لا يضيع الطلب.
+      const rows = await q(`SELECT status FROM service_discount_requests WHERE patient_id=$1`, [p]);
+      same("٨١. **والطلبُ باقٍ معلَّقاً — لا يضيع بفشل تدقيقه**",
+        [rows.length, rows[0]?.status], [1, "pending"]);
+      //  ويعتمده مديرُ الفرع فيمضي مرّةً واحدة.
+      const rid = (await q(`SELECT id FROM service_discount_requests WHERE patient_id=$1`, [p]))[0].id;
+      same("٨٢. ويعتمده مديرُ الفرع فيمضي",
+        (await http("POST", `/api/discounts/${rid}/decide`, S.mgr, { decision: "approve" })).status, 200);
+      same("   بكلفةٍ واحدة وسطرِ تدقيقٍ واحد",
+        [Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost),
+          (await q(`SELECT count(*)::int n FROM audit_log
+                     WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+            [rid]))[0].n],
+        [400_000, 1]);
+    }
+    {
+      //  **والاعتمادُ الناجح المباشر يكتب سطراً واحداً** — لا صفرَ ولا اثنين.
+      const p = await mkPatient("علاجٌ باعتمادٍ مباشرٍ ناجح", { device: false, physio: true });
+      await mkCase(p, 1, "physiotherapy");
+      const r = await http("POST", `/api/patients/${p}/price-physio`, S.mgr, {
+        entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
+        discount: { finalPrice: 400_000, reason: "administrative_instruction" },
+      });
+      same("٨٣. اعتمادٌ مباشرٌ ناجح", [r.status, r.body?.discountStatus], [200, "approved"]);
+      same("   **وسطرُ تدقيقه واحدٌ بالضبط**",
+        (await q(`SELECT count(*)::int n FROM audit_log
+                   WHERE entity_type='service_discount' AND entity_id=$1 AND action='update'`,
+          [r.body?.discountRequestId]))[0].n, 1);
+    }
+
     // ══ ١٥. طلباتُ المريض تُقرأ في ملفّه ══════════════════════════════
     console.log("\n── (١٥) الشارةُ في ملفّ المريض ──");
     {
@@ -1001,6 +1141,8 @@ async function main() {
     //  العزل (خبيرٌ إضافيٌّ في فرعٍ يقرؤه ذاك). وسجلُّ تدقيقها يُمسح أوّلاً
     //  لأنه يشير إليها — وهي صفوفٌ خلّفها هذا الاختبار وحده.
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [ALL]);
+    await q(`DELETE FROM audit_log WHERE entity_type = 'service_discount'
+              AND entity_id NOT IN (SELECT id FROM service_discount_requests)`);
     await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [ALL]);
     httpServer.close();
     await pool.end();

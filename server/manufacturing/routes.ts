@@ -495,10 +495,18 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           payload: { expertUserId, fields, serviceType },
           actor: discountActor(req),
           actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا أمرُ تصنيعٍ
+          //  يُولَد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+          audit: {
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+          },
         });
-        await audit(req, "service_discount", out.request.id,
-          out.status === "approved" ? "update" : "create", patient.branchId,
-          discountAuditNote(out.request, out.status === "approved" ? "طلب واعتماد" : "طلب"));
+        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
+        if (out.status === "pending") {
+          await audit(req, "service_discount", out.request.id, "create", patient.branchId,
+            discountAuditNote(out.request, "طلب"));
+        }
         return res.status(out.status === "approved" ? 201 : 202).json({
           ok: true, pendingApproval: out.status === "pending",
           discountRequestId: out.request.id, discountStatus: out.request.status,
