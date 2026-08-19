@@ -272,11 +272,47 @@ async function main() {
       Object.keys(fromMigrations.discount_checks ?? {}).sort(),
       ["price_change_requests_discount_mode_check",
         "price_change_requests_discount_shape_check"]);
-    //  **والصفُّ القديم معفيٌّ صراحةً** — الشرطُ يبدأ بـ`discount_mode IS NULL`.
-    check(String(fromMigrations.discount_checks?.price_change_requests_discount_shape_check ?? "")
-        .includes("discount_mode IS NULL"),
-      "١٢د. **والقيدُ يعفي الصفَّ القديم صراحةً**",
-      String(fromMigrations.discount_checks?.price_change_requests_discount_shape_check));
+    // ══ ١٢د. والصفُّ القديم **بأعمدته الثلاثة فارغةً معاً** ═══════════
+    //  لا بعمود النوع وحده: لولا ذلك لكفى تفريغُه كي يتنكّر صفٌّ نصفُ ممتلئ
+    //  في هيئة سجلٍّ قديم فيحمل مبلغَ خصمٍ لا يفحصه أحد.
+    const shapeDef = String(
+      fromMigrations.discount_checks?.price_change_requests_discount_shape_check ?? "");
+    //  الأقواسُ تُزال قبل المقارنة: Postgres يعيد صياغةَ التعبير بأقواسٍ
+    //  حول كلّ شرط، والمقارنةُ على المعنى لا على شكل الطباعة.
+    const shapeNorm = shapeDef.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+    check(shapeNorm.includes("discount_mode IS NULL AND discount_value IS NULL"
+        + " AND discount_amount IS NULL"),
+      "١٢د. **والفرعُ القديم يشترط الأعمدةَ الثلاثة فارغةً معاً**", shapeNorm);
+    check(shapeNorm.includes("discount_amount = current_price - proposed_price"),
+      "   والفرعُ الجديد يربط المبلغَ بفرق السعرين", shapeNorm);
+    check(shapeNorm.includes("proposed_price < current_price"),
+      "   **ويمنع رفعَ السعر في القاعدة نفسها**", shapeNorm);
+
+    // ══ ١٢هـ. والقيدُ يعمل حيّاً على القاعدتين ═════════════════════════
+    //  التعريفُ وحده لا يكفي دليلاً — يُنفَّذ الإدراجُ فعلاً.
+    for (const [label, db] of [["المخطّط", SCHEMA_DB], ["الترحيلات", MIGR_DB]] as const) {
+      await withClient(adminUrl(db), async (c) => {
+        const ins = async (cols: string, vals: string) => {
+          try {
+            await c.query(`INSERT INTO price_change_requests
+                             (followup_id, patient_id, branch_id, reason, status, ${cols})
+                           VALUES (0, 0, 1, 'other', 'cancelled', ${vals})`);
+            return true;
+          } catch (e: any) {
+            //  خطأُ المفتاح الأجنبي يعني أن القيدَ مرّ — نفصله عن خطأ الشكل.
+            return !String(e?.message ?? "").includes("discount_shape");
+          }
+        };
+        same(`١٢هـ. **صفٌّ قديمٌ ثلاثتُه فارغة يمرّ** (${label})`,
+          await ins("current_price, proposed_price", "500000, 600000"), true);
+        same(`     **ونصفُ ممتلئٍ يُردّ** (${label})`,
+          await ins("current_price, proposed_price, discount_amount", "500000, 400000, 100000"),
+          false);
+        same(`     وخصمٌ كاذبٌ يُردّ (${label})`,
+          await ins("current_price, proposed_price, discount_mode, discount_value, discount_amount",
+            "500000, 400000, 'amount', 100000, 7"), false);
+      });
+    }
 
     // ══ ٥. والسلوكُ الحيّ يطابق ما وُعد ════════════════════════════════
     //  التعريفُ وحده لا يكفي دليلاً: يُنفَّذ الحذفُ فعلاً على القاعدتين.

@@ -12,8 +12,9 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  allowedActions, canApprove, canApproveDiscount, canConfirmPurchase, canRecordFollowup,
-  canSelectExpert, canViewFollowup, computeDiscount, isSelfDecision,
+  allowedActions, canApprove, canApproveDiscount, canApproveLegacyPriceChange,
+  canConfirmPurchase, canDecidePriceRequest, canRecordFollowup,
+  canSelectExpert, canViewFollowup, computeDiscount, discountReasonFromLegacy, isSelfDecision,
   DISCOUNT_MODES, DISCOUNT_MODE_LABELS, DISCOUNT_REASONS, DISCOUNT_REASON_LABELS,
   isDiscountMode, isDiscountReason,
   isFollowupReason, isTerminal,
@@ -109,8 +110,59 @@ same("   ومخوَّلٌ آخر يراهما",
 // ══ ب٠ج. الاسمُ القديم باقٍ ولا يُنادى ═════════════════════════════════
 //  `canApprove` تبقى للتوافق ولا تُستعمل في مسارٍ حيّ. والفرقُ بينها وبين
 //  الجديدة مُثبَتٌ لا موصوف: مديرُ الفرع.
-same("ب٠ج. **والاسمُ القديم لم يتغيّر سلوكُه** — لا يُصلَح ولا يُنادى",
+same("ب٠ج. **والاسمُ القديم لم يتغيّر سلوكُه**",
   [canApprove(mgr), canApproveDiscount(mgr)], [false, true]);
+
+// ══ ب٠د. الصفُّ القديم يُحكَم بقانون يومه ══════════════════════════════
+//  صفٌّ بلا `discount_mode` قد يكون **رفعَ سعر**. وسلطةُ الخصم وُسِّعت
+//  لمديرِ الفرع لأن الخصمَ قرارٌ تجاري؛ ورفعُ سعرٍ وقّعه طبيبٌ ليس كذلك،
+//  فلا يجوز أن يصير قابلاً للاعتماد بيدٍ لم تكن تملكه لحظةَ تقديمه.
+console.log("\n── سلطةُ الصفّ القديم ──");
+same("ب٠د. **الطبيبُ والمسؤول يقرّران القديم**",
+  [canApproveLegacyPriceChange(doc), canApproveLegacyPriceChange(docCap),
+    canApproveLegacyPriceChange(admin)], [true, true, true]);
+same("   **ومديرُ الفرع لا** — وهذا هو الفرقُ كلُّه",
+  canApproveLegacyPriceChange(mgr), false);
+same("   ولا الاستقبال ولا الخبير ولا المحاسب",
+  [canApproveLegacyPriceChange(recv), canApproveLegacyPriceChange(expert),
+    canApproveLegacyPriceChange(accountant2)], [false, false, false]);
+//  **والفرقُ بين البوّابتين مُثبَتٌ لا موصوف**.
+same("ب٠هـ. **مديرُ الفرع: يقرّر الخصمَ ولا يقرّر القديم**",
+  [canDecidePriceRequest({ session: mgr, isLegacy: false }),
+    canDecidePriceRequest({ session: mgr, isLegacy: true })], [true, false]);
+same("   والطبيبُ يقرّر الاثنين",
+  [canDecidePriceRequest({ session: doc, isLegacy: false }),
+    canDecidePriceRequest({ session: doc, isLegacy: true })], [true, true]);
+//  **ومنعُ اعتماد النفس للخصم وحده** — لا يُطبَّق رجعياً على صفٍّ قديم.
+same("ب٠و. **ومنعُ اعتماد النفس يخصّ الخصمَ وحده**", [
+  canDecidePriceRequest({ session: { ...doc, userId: 7 } as any, isLegacy: false, requestedByUserId: 7 }),
+  canDecidePriceRequest({ session: { ...doc, userId: 7 } as any, isLegacy: true, requestedByUserId: 7 }),
+], [false, true]);
+//  وأسماءُ الأفعال تتبع نوعَ الصفّ فلا تقول الشاشةُ «خصم» لتعديلٍ عامّ.
+same("ب٠ز. **وأزرارُ الصفّ القديم بأسمائها القديمة**",
+  allowedActions(doc, "price_approval_pending", { isLegacy: true }).sort(),
+  ["approve_price", "reject_price"]);
+same("   وأزرارُ الخصم بأسمائها الجديدة",
+  allowedActions(doc, "price_approval_pending", { isLegacy: false }).sort(),
+  ["approve_discount", "reject_discount"]);
+same("   **ومديرُ الفرع بلا زرٍّ على القديم**",
+  allowedActions(mgr, "price_approval_pending", { isLegacy: true }), []);
+
+// ══ ب٠ح. ترجمةُ سببِ النافذة القديمة — حتميةٌ ولا تُخمِّن ═══════════════
+console.log("\n── ترجمةُ السبب القديم ──");
+same("ب٠ح. «السعر» ⟶ مفاوضة المريض", discountReasonFromLegacy("price"), "patient_negotiation");
+same("   و«يقارن خيارات» ⟶ سعر منافس",
+  discountReasonFromLegacy("comparing_options"), "competitor_price");
+same("   و«بانتظار الراتب» ⟶ حالة مادّية",
+  discountReasonFromLegacy("waiting_salary_or_finance"), "financial_hardship");
+same("   **وما لا يقابله شيءٌ ⟶ «سبب آخر»** لا تخمينَ أدقّ منه",
+  [discountReasonFromLegacy("health_condition"), discountReasonFromLegacy("cannot_reach"),
+    discountReasonFromLegacy(""), discountReasonFromLegacy(null)],
+  ["other", "other", "other", "other"]);
+same("   **وسببُ خصمٍ صحيحٌ يمرّ كما هو** — لعميلٍ نصفِ محدَّث",
+  discountReasonFromLegacy("campaign_or_offer"), "campaign_or_offer");
+same("   وكلُّ مخرجاتها أسبابُ خصمٍ صحيحة",
+  [...FOLLOWUP_REASONS].map(discountReasonFromLegacy).filter((r) => !isDiscountReason(r)), []);
 
 // ══ ب٢. مَن يؤكّد الشراء — بوّابةٌ مستقلّةٌ أوسع ═══════════════════════
 //  «اشترى» تسجيلُ واقعةٍ لا اعتماد، فبوّابتُها الفرعُ لا الطبيب. وفصلُها
@@ -312,8 +364,15 @@ check(cardSrc.includes("computeDiscount({"),
 check(!/finalPrice\s*=\s*[^;]*-\s*discount/i.test(cardSrc.replace(/computeDiscount[\s\S]{0,200}/g, "")),
   "   ولا تحسب الشاشةُ السعرَ النهائي بنفسها");
 //  وأزرارُ القرار تُخفى عن صاحب الطلب — والخادمُ يمنعه على كلّ حال.
-check(cardSrc.includes("pendingRequest?.requestedBy"),
+check(cardSrc.includes("requestedByUserId: pendingRequest?.requestedBy"),
   "ط٦. **وأزرارُ القرار تُخفى عن صاحب الطلب**");
+//  **ونوعُ الصفّ يُمرَّر معه** — وإلّا عرضت الشاشةُ زرَّ خصمٍ لصفٍّ قديم.
+check(cardSrc.includes("isLegacy: Boolean(pendingRequest?.isLegacyPriceChange)"),
+  "ط٦ب. **ونوعُ الصفّ يُمرَّر إلى `allowedActions`**");
+check(cardSrc.includes("اعتماد تعديل السعر") && cardSrc.includes("رفض تعديل السعر"),
+  "   وأزرارُ الصفّ القديم بأسمائها القديمة");
+check(cardSrc.includes("text-legacy-authority"),
+  "   ويُقال فيه صراحةً أن سلطتَه أضيق");
 check(cardSrc.includes("text-self-decision-blocked"),
   "   ويُقال له لماذا صراحةً");
 //  والصفُّ القديم يُسمّى باسمه ولا يُخفى.

@@ -155,8 +155,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   if (!active) return null;
 
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
-  //  صاحبُ الطلب يُمرَّر فتُخفى أزرارُ قراره عنه — والخادمُ يمنعه على كل حال.
-  const actions = allowedActions(session as any, active.status, pendingRequest?.requestedBy ?? null);
+  //  نوعُ الصفّ وصاحبُه يُمرَّران معاً: الصفُّ القديم بسلطته القديمة (ولا
+  //  زرَّ لمدير الفرع عليه)، وصفُّ الخصم بسلطته الجديدة وبمنع اعتماد النفس.
+  //  والخادمُ يفرض ذلك كلَّه — وهذا إخفاءُ عرضٍ لا حراسة.
+  const actions = allowedActions(session as any, active.status, {
+    isLegacy: Boolean(pendingRequest?.isLegacyPriceChange),
+    requestedByUserId: pendingRequest?.requestedBy ?? null,
+  });
   const isOwnPending = Boolean(pendingRequest
     && typeof pendingRequest.requestedBy === "number"
     && pendingRequest.requestedBy === (session as any)?.userId);
@@ -211,7 +216,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         {active.status === "price_approval_pending" && actions.length === 0 && (
           <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800"
             data-testid="text-awaiting-price-approval">
-            بانتظار اعتماد الخصم من المسؤول أو مدير الفرع أو الطبيب المخوَّل
+            {pendingRequest?.isLegacyPriceChange
+              ? "بانتظار اعتماد تعديل السعر من الطبيب المخوَّل أو المسؤول العام"
+              : "بانتظار اعتماد الخصم من المسؤول أو مدير الفرع أو الطبيب المخوَّل"}
             {pendingRequest && ` — السعر بعد الخصم ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
           </p>
         )}
@@ -265,9 +272,15 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {pendingRequest.note && (
               <div className="text-muted-foreground text-xs mt-1">{pendingRequest.note}</div>
             )}
-            {isOwnPending && (
+            {isOwnPending && !pendingRequest.isLegacyPriceChange && (
               <p className="mt-1 text-xs text-amber-700" data-testid="text-self-decision-blocked">
                 لا يمكنك اعتماد أو رفض طلبٍ قدّمتَه بنفسك — يقرّره مخوَّلٌ آخر.
+              </p>
+            )}
+            {/*  والصفُّ القديم يُقال فيه صراحةً لماذا سلطتُه أضيق. */}
+            {pendingRequest.isLegacyPriceChange && (
+              <p className="mt-1 text-xs text-amber-700" data-testid="text-legacy-authority">
+                سجلٌّ سابق لنظام الخصومات — يعتمده الطبيب المخوَّل أو المسؤول العام حصراً.
               </p>
             )}
           </div>
@@ -302,19 +315,24 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <CircleDollarSign className="h-4 w-4" /> طلب خصم
             </Button>
           )}
-          {actions.includes("approve_discount") && pendingRequest && (
+          {/*  زرّان بأسماءِ نوعِ الصفّ: «الخصم» للجديد، و«تعديل السعر»
+              للقديم — فلا يُسمّى تعديلٌ عامّ خصماً على الشاشة. */}
+          {(actions.includes("approve_discount") || actions.includes("approve_price"))
+            && pendingRequest && (
             <>
               <Button size="sm" disabled={busy}
                 onClick={() => submit(`/api/discount-requests/${pendingRequest.id}/decide`,
                   { decision: "approve" })}
-                data-testid="button-approve-discount">
-                اعتماد الخصم
+                data-testid={actions.includes("approve_price")
+                  ? "button-approve-price" : "button-approve-discount"}>
+                {actions.includes("approve_price") ? "اعتماد تعديل السعر" : "اعتماد الخصم"}
               </Button>
               <Button size="sm" variant="outline" disabled={busy}
                 onClick={() => submit(`/api/discount-requests/${pendingRequest.id}/decide`,
                   { decision: "reject" })}
-                data-testid="button-reject-discount">
-                رفض الخصم
+                data-testid={actions.includes("approve_price")
+                  ? "button-reject-price" : "button-reject-discount"}>
+                {actions.includes("approve_price") ? "رفض تعديل السعر" : "رفض الخصم"}
               </Button>
             </>
           )}

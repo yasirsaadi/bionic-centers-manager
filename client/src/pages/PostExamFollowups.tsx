@@ -146,9 +146,11 @@ export default function PostExamFollowups() {
                   <div>
                     <span className="font-medium">{a.patientName}</span>
                     <span className="text-muted-foreground mx-2">{a.patientCode}</span>
-                    {/*  الصفُّ القديم يُسمّى باسمه — لا يُخفى ولا يُقرأ خصماً. */}
+                    {/*  الصفُّ القديم يُسمّى باسمه — لا يُخفى ولا يُقرأ خصماً.
+                        ولا يظهر لمدير الفرع أصلاً: الخادمُ يستثنيه من طابوره
+                        لأنه لا يملك اعتمادَه. */}
                     <Badge variant="outline" className="text-xs">
-                      {a.isLegacyPriceChange ? "تعديل سعر (قديم)" : "خصم"}
+                      {a.isLegacyPriceChange ? "تعديل سعر (سجلّ قديم)" : "خصم"}
                     </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">

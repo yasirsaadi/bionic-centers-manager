@@ -107,6 +107,33 @@ export const DISCOUNT_MODE_LABELS: Record<DiscountMode, string> = {
 export const isDiscountMode = (v: unknown): v is DiscountMode =>
   typeof v === "string" && (DISCOUNT_MODES as readonly string[]).includes(v);
 
+/**
+ * ترجمةُ سببِ المتابعة القديم إلى سببِ خصم — **لنافذةٍ مفتوحةٍ قبل النشر**.
+ *
+ * صفحةٌ لم تُحدَّث ترسل سبباً من مفردات التأجيل (`FOLLOWUP_REASONS`) لأن
+ * ذلك كان ما تعرضه. فيُترجَم **حتمياً** لا عشوائياً، **والأصلُ يُحفظ** في
+ * حمولة الحدث وفي الملاحظة معاً — فلا يضيع ما قاله الموظّف فعلاً.
+ *
+ * وما لا يقابله شيءٌ بعينه يقع في `other`: تخمينُ سببٍ أدقّ من نصٍّ لا
+ * يحمله كذبٌ على التقرير.
+ */
+export const LEGACY_REASON_TO_DISCOUNT: Record<string, DiscountReason> = {
+  price: "patient_negotiation",
+  not_convinced: "patient_negotiation",
+  comparing_options: "competitor_price",
+  chose_other_center: "competitor_price",
+  waiting_salary_or_finance: "financial_hardship",
+};
+
+export function discountReasonFromLegacy(v: unknown): DiscountReason {
+  //  سببُ خصمٍ صحيحٌ يمرّ كما هو: عميلٌ نصفُ محدَّث قد يرسله.
+  if (isDiscountReason(v)) return v;
+  if (typeof v === "string" && LEGACY_REASON_TO_DISCOUNT[v]) {
+    return LEGACY_REASON_TO_DISCOUNT[v];
+  }
+  return "other";
+}
+
 export interface DiscountComputation {
   ok: boolean;
   /** رسالةُ الرفض بالعربية — تُعرض في النموذج وتُرجعها النقطة نفسها. */
@@ -285,14 +312,56 @@ export function isSelfDecision(
 }
 
 /**
- * مَن يعتمد **تعديل السعر** — الاسمُ القديم، ويبقى للتوافق الرجعي.
+ * مَن يعتمد **تعديلَ سعرٍ قديماً** — طبيبٌ مخوَّل أو المسؤول العام حصراً.
  *
- * @deprecated استعمل `canApproveDiscount`. لم يُحذَف كي لا ينكسر قارئٌ
- * خارجي، ولا يُنادى في مسارٍ حيّ بعد اليوم.
+ * ══ لماذا بقيت هذه القاعدة حيّةً ولم تُوحَّد ═════════════════════════════
+ * الصفُّ الذي `discount_mode` فيه فارغ **سابقٌ لهذه المرحلة**، وقد يكون
+ * تعديلاً عامّاً — بل **رفعَ سعر**. وسلطةُ الخصم وُسِّعت لمديرِ الفرع لأن
+ * الخصمَ قرارٌ تجاري؛ أمّا رفعُ سعرٍ وقّعه طبيبٌ فليس كذلك، ولا يجوز أن
+ * يصير قابلاً للاعتماد بيدٍ لم تكن تملكه لحظةَ تقديمه.
+ *
+ * فالقاعدةُ تُقرأ **من نوع الصفّ لا من تاريخ اليوم**: صفٌّ قديمٌ يُحكَم
+ * بقانون يومه، وصفُّ خصمٍ بقانونه. ولا صفَّ قديمٌ جديد يُخلَق بعد اليوم،
+ * فهذا مسارٌ ينقرض بانقراض ما بقي معلَّقاً منه.
+ *
+ * وهي بالحرف ما كانت عليه `canApprove` قبل هذه المرحلة.
  */
-export function canApprove(s: FollowupSessionLike | null | undefined): boolean {
+export function canApproveLegacyPriceChange(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
   if (s?.isAdmin === true) return true;
+  //  المقارنة صريحة: صلاحيةٌ غامضة القيمة تُقرأ «لا».
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+}
+
+/**
+ * الاسمُ القديم — مُبقىً للتوافق، ومطابقٌ لـ`canApproveLegacyPriceChange`.
+ *
+ * @deprecated استعمل `canApproveDiscount` للخصم الجديد، أو
+ * `canApproveLegacyPriceChange` للصفوف القديمة. والاسمُ العاري لا يقول
+ * ماذا يُعتمَد — وهذا ما جعله يحمل بوّابتين معاً من قبل.
+ */
+export const canApprove = canApproveLegacyPriceChange;
+
+/**
+ * مَن يقرّر **هذا الطلب بعينه** — تُقرأ من نوع الصفّ لا من تاريخ اليوم.
+ *
+ * نقطةُ الحقيقة الواحدة التي تنادِيها الواجهةُ والخادم معاً، فلا تعرض
+ * الشاشةُ زرّاً يردّه الخادم ولا العكس.
+ *
+ * @param isLegacy الصفُّ بلا `discount_mode` — سابقٌ لهذه المرحلة.
+ * @param requestedByUserId صاحبُ الطلب. **يُطبَّق على الجديد وحده**: منعُ
+ *   اعتماد النفس قاعدةٌ وُضعت الآن، وتطبيقُها بأثرٍ رجعيّ على صفٍّ قديم
+ *   قد يجمّده إلى الأبد إن كان طالبُه هو المخوَّل الوحيد في فرعه.
+ */
+export function canDecidePriceRequest(params: {
+  session: FollowupSessionLike | null | undefined;
+  isLegacy: boolean;
+  requestedByUserId?: number | null;
+}): boolean {
+  if (params.isLegacy) return canApproveLegacyPriceChange(params.session);
+  return canApproveDiscount(params.session)
+    && !isSelfDecision(params.requestedByUserId, params.session?.userId);
 }
 
 /**
@@ -350,18 +419,23 @@ export function canSelectExpert(
  * والمسارُ اليومي **ثلاثةُ أفعالٍ وبابٌ للخصم**: اشترى · لم يشترِ · يحتاج
  * متابعة · طلبُ خصم. لا خطوةَ اعتمادِ شراءٍ بينها ولا انتظارَ أحد.
  *
- * @param requestedByUserId صاحبُ الطلب المعلَّق إن وُجد — فتُخفى أزرارُ
- *   القرار عنه. والخادمُ يفرض المنعَ نفسَه، وهذا إخفاءُ عرضٍ لا حراسة.
+ * @param pending الطلبُ المعلَّق إن وُجد — نوعُه وصاحبُه. فأزرارُ القرار
+ *   تتبع **نوع الصفّ**: صفٌّ قديم بسلطته القديمة، وصفُّ خصمٍ بسلطته
+ *   الجديدة وبمنع اعتماد النفس. والخادمُ يفرض ذلك كلَّه، وهذا عرضٌ لا حراسة.
  */
 export function allowedActions(
   s: FollowupSessionLike | null | undefined, status: string,
-  requestedByUserId?: number | null,
+  pending?: { isLegacy?: boolean; requestedByUserId?: number | null } | number | null,
 ): string[] {
+  //  توافقٌ مع النداء القديم الذي كان يمرّر رقمَ الطالب مباشرةً.
+  const p = typeof pending === "number" || pending === null || pending === undefined
+    ? { isLegacy: false, requestedByUserId: pending ?? null }
+    : pending;
   const out: string[] = [];
   const mayRecord = canRecordFollowup(s);
-  //  ومَن طلب لا يقرّر — لا اعتماداً ولا رفضاً.
-  const mayDecide = canApproveDiscount(s)
-    && !isSelfDecision(requestedByUserId, s?.userId);
+  const mayDecide = canDecidePriceRequest({
+    session: s, isLegacy: Boolean(p.isLegacy), requestedByUserId: p.requestedByUserId,
+  });
   const mayConfirm = canConfirmPurchase(s);
 
   if (status === "awaiting_patient_decision" || status === "follow_up") {
@@ -369,7 +443,12 @@ export function allowedActions(
     if (mayRecord) out.push("defer", "close", "request_discount");
   } else if (status === "price_approval_pending") {
     //  المتابِع يرى «بانتظار الاعتماد» ولا زرّ له — والمخوَّلُ يقرّر.
-    if (mayDecide) out.push("approve_discount", "reject_discount");
+    //  والفعلان يحملان اسمَ نوعِ الصفّ، فلا تقول الشاشةُ «خصم» لتعديلٍ عامّ.
+    if (mayDecide) {
+      out.push(...(p.isLegacy
+        ? ["approve_price", "reject_price"]
+        : ["approve_discount", "reject_discount"]));
+    }
   } else if (status === "price_approved_waiting_patient") {
     //  اعتمادُ الطبيب للتخفيض **ليس شراءً**: يبقى أن يوافق المريض فعلاً —
     //  ثم يؤكّده الموظّف مباشرةً بلا عودةٍ إلى الطبيب.

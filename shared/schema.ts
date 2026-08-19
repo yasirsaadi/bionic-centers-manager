@@ -1631,16 +1631,25 @@ export const priceChangeRequests = pgTable("price_change_requests", {
   check("price_change_requests_discount_mode_check",
     sql`${t.discountMode} IS NULL OR ${t.discountMode} IN ('amount', 'percentage')`),
   /**
-   * دلالةُ الخصم كاملةً في قيدٍ واحد — **والصفُّ القديم معفيٌّ صراحةً**:
-   * عمودُ النوع فارغٌ فيه فالشرطُ يصدق بلا أن يُطالَب بشيء.
+   * **صفٌّ إمّا قديمٌ تماماً وإمّا خصمٌ تامّ — ولا ثالثَ بينهما.**
+   *
+   * والفرعُ الأول يشترط **الأعمدةَ الثلاثة فارغةً معاً** لا عمودَ النوع
+   * وحده: لولا ذلك لكفى `discount_mode = NULL` كي يتنكّر صفٌّ نصفُ ممتلئ
+   * في هيئة سجلٍّ قديم، فيحمل مبلغَ خصمٍ لا يطابق فرقَ السعرين ولا يفحصه
+   * أحد. والصفوفُ التاريخية تمرّ لأن أعمدتها الثلاثة `NULL` كلُّها.
    *
    * وهو ما يجعل «خصمٌ فقط» قاعدةً في القاعدة لا في الشيفرة وحدها: رفعُ
    * سعرٍ متنكّرٍ في هيئة خصم يُردّ ولو تسلّل من نداءٍ مباشر.
    */
   check("price_change_requests_discount_shape_check", sql`
-    ${t.discountMode} IS NULL
+    (
+      ${t.discountMode} IS NULL
+      AND ${t.discountValue} IS NULL
+      AND ${t.discountAmount} IS NULL
+    )
     OR (
-      ${t.discountValue} IS NOT NULL AND ${t.discountValue} > 0
+      ${t.discountMode} IN ('amount', 'percentage')
+      AND ${t.discountValue} IS NOT NULL AND ${t.discountValue} > 0
       AND ${t.discountAmount} IS NOT NULL AND ${t.discountAmount} > 0
       AND ${t.proposedPrice} > 0
       AND ${t.proposedPrice} < ${t.currentPrice}

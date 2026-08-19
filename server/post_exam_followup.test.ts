@@ -293,21 +293,44 @@ async function main() {
         Number(savedReq.current_price), Number(savedReq.proposed_price)],
       ["amount", 300_000, 300_000, 1_500_000, 1_200_000]);
 
-    // ══ ٤د. الحدود — يفرضها الخادمُ لا النموذج ═══════════════════════
+    // ══ ٤د. الحدود — **كلُّ حالةٍ على متابعةٍ نظيفةٍ خاصّةٍ بها** ═══════
+    //  الصيغةُ الأولى كانت ترسل المحاولاتِ إلى متابعةٍ عليها طلبٌ معلَّق
+    //  وتقبل ٤٠٠ أو ٤٠٩ — فكان الردّ قد يأتي من حارس «طلبٌ معلَّق بالفعل»
+    //  لا من حدود الخصم، **والاختبارُ يمرّ بلا أن يثبت شيئاً**. فصار لكلّ
+    //  حالةٍ ملفُّها الخالي، والمطلوبُ ٤٠٠ بعينها، ويُثبَت بعدها أن لا صفَّ
+    //  كُتب ولا ديناراً تحرّك.
+    const badPrice = 900_000;
     const bad = async (label: string, body: any) => {
-      //  كلُّ محاولةٍ على متابعةٍ نظيفة كي لا يخلطها «طلبٌ معلَّق».
-      const r = await disc(S.recv, body, f1.id);
-      check(r.status === 400 || r.status === 409, label, `status=${r.status}`);
+      const pB = await mkPatient(`حدٌّ ${label.slice(0, 24)}`);
+      await mkCase(pB);
+      await signExam(pB, S.doc, { deviceCost: badPrice });
+      const fB = await followupOf(pB);
+      const r = await disc(S.recv, body, fB.id);
+      same(label, r.status, 400);
+      //  ولا أثرَ لأيّ نوع: لا طلبَ ولا سعرَ متحرّك ولا مالَ ولا أمر.
+      same(`     (ولا أثرَ لها إطلاقاً)`, [
+        (await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [fB.id])).length,
+        Number((await q(`SELECT approved_price FROM post_exam_followups WHERE id=$1`, [fB.id]))[0].approved_price),
+        (await q(`SELECT 1 FROM cost_entries WHERE patient_id=$1`, [pB])).length,
+        (await q(`SELECT 1 FROM payments WHERE patient_id=$1`, [pB])).length,
+        (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pB])).length,
+        (await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [fB.id]))[0].status,
+      ], [0, badPrice, 0, 0, 0, "awaiting_patient_decision"]);
     };
-    await bad("٤د. **رفعُ السعر يُردّ**", { discountMode: "amount", discountValue: -100_000, reason: "other" });
-    await bad("   والصفرُ يُردّ", { discountMode: "amount", discountValue: 0, reason: "other" });
-    await bad("   ومبلغٌ يساوي السعر يُردّ", { discountMode: "amount", discountValue: 1_500_000, reason: "other" });
-    await bad("   ونسبةُ ١٠٠٪ تُردّ", { discountMode: "percentage", discountValue: 100, reason: "other" });
-    await bad("   ونسبةٌ سالبة تُردّ", { discountMode: "percentage", discountValue: -5, reason: "other" });
-    await bad("   وقيمةٌ غير رقمية تُردّ", { discountMode: "amount", discountValue: "abc", reason: "other" });
-    await bad("   ونوعٌ مخترَع يُردّ", { discountMode: "flat", discountValue: 10, reason: "other" });
-    await bad("   **وسببٌ خارج القائمة يُردّ**", { discountMode: "amount", discountValue: 10_000, reason: "لأني أريد" });
-    await bad("   وبلا سبب يُردّ", { discountMode: "amount", discountValue: 10_000 });
+    await bad("٤د. **قيمةٌ سالبة تُردّ**", { discountMode: "amount", discountValue: -100_000, reason: "other" });
+    await bad("والصفرُ يُردّ", { discountMode: "amount", discountValue: 0, reason: "other" });
+    await bad("ومبلغٌ يساوي السعر يُردّ", { discountMode: "amount", discountValue: badPrice, reason: "other" });
+    await bad("ومبلغٌ يفوق السعر يُردّ", { discountMode: "amount", discountValue: badPrice + 1, reason: "other" });
+    await bad("ونسبةُ ١٠٠٪ تُردّ", { discountMode: "percentage", discountValue: 100, reason: "other" });
+    await bad("ونسبةٌ فوق المئة تُردّ", { discountMode: "percentage", discountValue: 150, reason: "other" });
+    await bad("ونسبةٌ سالبة تُردّ", { discountMode: "percentage", discountValue: -5, reason: "other" });
+    await bad("وقيمةٌ غير رقمية تُردّ", { discountMode: "amount", discountValue: "abc", reason: "other" });
+    await bad("ومبلغٌ كسريّ يُردّ", { discountMode: "amount", discountValue: 1500.5, reason: "other" });
+    await bad("ونوعٌ مخترَع يُردّ", { discountMode: "flat", discountValue: 10, reason: "other" });
+    await bad("وبلا نوعٍ يُردّ", { discountValue: 10_000, reason: "other" });
+    await bad("**وسببٌ خارج القائمة يُردّ**", { discountMode: "amount", discountValue: 10_000, reason: "لأني أريد" });
+    await bad("وبلا سبب يُردّ", { discountMode: "amount", discountValue: 10_000 });
+    await bad("**وسببُ تأجيلٍ ليس سببَ خصم**", { discountMode: "amount", discountValue: 10_000, reason: "needs_time" });
 
     same("   **وطلبٌ ثانٍ معلَّق يُردّ**",
       (await disc(S.recv, { discountMode: "amount", discountValue: 100_000, reason: "other" })).status, 409);
@@ -1222,6 +1245,175 @@ async function main() {
       [newRow?.isLegacyPriceChange, newRow?.discountMode, newRow?.discountValue,
         newRow?.discountAmount, newRow?.proposedPrice],
       [false, "percentage", 5, 20_000, 380_000]);
+
+    // ══ ٣٥. الصفُّ القديم يُحكَم بقانون يومه ═══════════════════════════
+    console.log("\n── الصفُّ القديم ──");
+    //  صفّان قديمان: أحدهما خفضٌ والآخر **رفعُ سعر** — وهو بالضبط ما لا
+    //  يجوز أن يصير قابلاً للاعتماد بيدٍ لم تكن تملكه لحظةَ تقديمه.
+    const mkLegacyPending = async (label: string, price: number, proposed: number) => {
+      const pG = await mkPatient(`قديمٌ معلَّق ${label}`);
+      await mkCase(pG);
+      await signExam(pG, S.doc, { deviceCost: price });
+      const fG = await followupOf(pG);
+      const id = Number((await q(
+        `INSERT INTO price_change_requests
+           (followup_id, patient_id, branch_id, current_price, proposed_price, reason,
+            status, requested_by, requested_by_name)
+         VALUES ($1,$2,1,$3,$4,'price','pending',$5,'موظّف قديم') RETURNING id`,
+        [fG.id, pG, price, proposed, RECV]))[0].id);
+      await q(`UPDATE post_exam_followups SET status='price_approval_pending' WHERE id=$1`, [fG.id]);
+      return { patientId: pG, followupId: fG.id, requestId: id };
+    };
+    const legDown = await mkLegacyPending("خفض", 1_000_000, 800_000);
+    const legUp = await mkLegacyPending("رفع", 1_000_000, 1_300_000);
+
+    same("٣٥. **الصفُّ القديم يُقرأ قديماً لا خصماً**",
+      (await q(`SELECT discount_mode, discount_value, discount_amount
+                  FROM price_change_requests WHERE id=$1`, [legUp.requestId]))[0],
+      { discount_mode: null, discount_value: null, discount_amount: null });
+
+    //  ── السلطةُ القديمة بحرفها ──
+    same("٣٦. **ومديرُ الفرع لا يعتمد صفّاً قديماً** — ولا حتى الخافض",
+      (await http("POST", `/api/discount-requests/${legDown.requestId}/decide`, S.mgr,
+        { decision: "approve" })).status, 403);
+    const upByMgr = await http("POST", `/api/discount-requests/${legUp.requestId}/decide`, S.mgr,
+      { decision: "approve" });
+    same("   **ولا الرافعَ إطلاقاً** — وهذا هو الخطرُ بعينه", upByMgr.status, 403);
+    check(String(upByMgr.body?.error ?? "").includes("قديم"),
+      "   ورسالتُه تقول لماذا", String(upByMgr.body?.error));
+    same("   ولا يرفضه مديرُ الفرع كذلك",
+      (await http("POST", `/api/discount-requests/${legUp.requestId}/decide`, S.mgr,
+        { decision: "reject" })).status, 403);
+    same("   ولا الاستقبال ولا الخبير", [
+      (await http("POST", `/api/discount-requests/${legUp.requestId}/decide`, S.recv,
+        { decision: "approve" })).status,
+      (await http("POST", `/api/discount-requests/${legUp.requestId}/decide`, S.expert,
+        { decision: "approve" })).status,
+    ], [403, 403]);
+    same("   **والسعرُ لم يتحرّك بكلّ تلك المحاولات**",
+      Number((await q(`SELECT approved_price FROM post_exam_followups WHERE id=$1`,
+        [legUp.followupId]))[0].approved_price), 1_000_000);
+
+    //  ── والطبيبُ والمسؤولُ يقرّرانه، وأحداثُه بلغتها القديمة ──
+    const legDoc = await http("POST", `/api/discount-requests/${legDown.requestId}/decide`,
+      S.doc, { decision: "approve" });
+    same("٣٧. **والطبيبُ المخوَّل يقرّره** — كما كان قبل هذه المرحلة",
+      [legDoc.status, legDoc.body?.followup?.approvedPrice], [200, 800_000]);
+    const legEvents = eventTypes(await followupOf(legDown.patientId));
+    check(legEvents.includes("price_approved"),
+      "   **وحدثُه `price_approved` لا `discount_approved`**", JSON.stringify(legEvents));
+    check(!legEvents.includes("discount_approved"),
+      "   ولا حدثَ خصمٍ إطلاقاً", JSON.stringify(legEvents));
+    const legAdm = await http("POST", `/api/discount-requests/${legUp.requestId}/decide`,
+      S.admin, { decision: "reject" });
+    same("٣٨. **والمسؤولُ يقرّره كذلك**", legAdm.status, 200);
+    const legUpEvents = eventTypes(await followupOf(legUp.patientId));
+    check(legUpEvents.includes("price_rejected") && !legUpEvents.includes("discount_rejected"),
+      "   **وحدثُ رفضِه `price_rejected`**", JSON.stringify(legUpEvents));
+
+    //  ── وطابورُ مديرِ الفرع لا يحمل القديم ──
+    const legQ = await mkLegacyPending("للطابور", 700_000, 900_000);
+    const qMgr2 = (await http("GET", "/api/followups/approvals", S.mgr)).body;
+    const qDoc2 = (await http("GET", "/api/followups/approvals", S.doc)).body;
+    const hasIn = (body: any, id: number) =>
+      (body?.priceApprovals ?? []).some((a: any) => a.requestId === id);
+    same("٣٩. **وطابورُ مديرِ الفرع يستثني القديم**", hasIn(qMgr2, legQ.requestId), false);
+    same("   **وطابورُ الطبيب يحمله**", hasIn(qDoc2, legQ.requestId), true);
+    same("   والعلَمُ يُقال للواجهة صراحةً",
+      [qMgr2?.mayDecideLegacy, qDoc2?.mayDecideLegacy], [false, true]);
+
+    //  ── ولا يُطبَّق منعُ اعتماد النفس بأثرٍ رجعيّ ──
+    //  الطبيبُ نفسُه هو مَن قدّم هذا الصفَّ القديم — ويقرّره، لأن القاعدة
+    //  لم تكن قائمةً يومَ قُدّم، وتطبيقُها رجعياً قد يجمّده إلى الأبد.
+    const legSelf = await mkLegacyPending("طلبه الطبيب", 500_000, 450_000);
+    await q(`UPDATE price_change_requests SET requested_by=$1 WHERE id=$2`, [DOC, legSelf.requestId]);
+    same("٤٠. **ولا يُطبَّق منعُ اعتماد النفس على صفٍّ قديم**",
+      (await http("POST", `/api/discount-requests/${legSelf.requestId}/decide`, S.doc,
+        { decision: "approve" })).status, 200);
+
+    // ══ ٤١. النافذةُ القديمة — مُحوِّلٌ حقيقي ══════════════════════════
+    console.log("\n── النافذة القديمة ──");
+    const pOldWin = await mkPatient("نافذةٌ قديمة");
+    await mkCase(pOldWin);
+    await signExam(pOldWin, S.doc, { deviceCost: 1_000_000 });
+    const fOldWin = await followupOf(pOldWin);
+    //  **الحمولةُ القديمة حرفاً** كما ترسلها صفحةُ `main` قبل النشر.
+    const staleOk = await http("POST", `/api/followups/${fOldWin.id}/price-request`, S.recv,
+      { proposedPrice: 820_000, reason: "price", note: "ساوم" });
+    same("٤١. **الحمولةُ القديمة تُقبل وتُحوَّل** — لا 400 «نوع الخصم مطلوب»",
+      staleOk.status, 200);
+    const staleRow = (await q(
+      `SELECT discount_mode, discount_value::float v, discount_amount, current_price,
+              proposed_price, reason, note
+         FROM price_change_requests WHERE id=$1`, [staleOk.body.requestId]))[0];
+    same("   **وصارت خصماً مهيكلاً بالمبلغ**",
+      [staleRow.discount_mode, Number(staleRow.v), Number(staleRow.discount_amount),
+        Number(staleRow.current_price), Number(staleRow.proposed_price)],
+      ["amount", 180_000, 180_000, 1_000_000, 820_000]);
+    same("   **والسببُ القديم تُرجم حتمياً** — «السعر» ⟶ مفاوضة المريض",
+      staleRow.reason, "patient_negotiation");
+    check(String(staleRow.note ?? "").includes("price"),
+      "   **والأصلُ محفوظٌ في الملاحظة** — لا يضيع ما قاله الموظّف",
+      String(staleRow.note));
+    const staleEv = (await followupOf(pOldWin))?.events
+      ?.find((e: any) => e.eventType === "discount_requested");
+    same("   **وفي حمولة الحدث كذلك، مع وسم المسار**",
+      [staleEv?.payload?.legacyReason, staleEv?.payload?.staleClient], ["price", true]);
+
+    //  ── ولا يُبعَث رفعُ السعر من قبرِه ──
+    const pOldUp = await mkPatient("نافذةٌ قديمة ترفع");
+    await mkCase(pOldUp);
+    await signExam(pOldUp, S.doc, { deviceCost: 600_000 });
+    const fOldUp = await followupOf(pOldUp);
+    for (const [label, proposed] of [["يفوق", 700_000], ["يساوي", 600_000]] as any[]) {
+      const r = await http("POST", `/api/followups/${fOldUp.id}/price-request`, S.recv,
+        { proposedPrice: proposed, reason: "price" });
+      same(`٤٢. **وسعرٌ ${label} المعتمد يُردّ** — لا رفعَ بعد اليوم`, r.status, 400);
+      //  والرسالةُ تقول **ما تغيّر وماذا يفعل** — لا «قيمة غير صالحة» عارية.
+      //  فالموظّف أمام نافذةٍ قديمة لا يعرف أن القاعدة تبدّلت تحته.
+      check(String(r.body?.error ?? "").includes("حدّث الصفحة")
+        && String(r.body?.error ?? "").includes("خصم"),
+        `     ورسالتُه تقول ما تغيّر وتطلب تحديث الصفحة`, String(r.body?.error));
+    }
+    same("   **ولا صفَّ طلبٍ كُتب بالمحاولتين**",
+      (await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [fOldUp.id])).length, 0);
+    same("   ولا السعرُ تحرّك ولا الحالة",
+      [Number((await q(`SELECT approved_price FROM post_exam_followups WHERE id=$1`,
+        [fOldUp.id]))[0].approved_price),
+        (await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [fOldUp.id]))[0].status],
+      [600_000, "awaiting_patient_decision"]);
+    //  وسببٌ قديمٌ لا يقابله شيءٌ بعينه يقع في «سبب آخر» لا يُخمَّن.
+    const staleOther = await http("POST", `/api/followups/${fOldUp.id}/price-request`, S.recv,
+      { proposedPrice: 500_000, reason: "health_condition" });
+    same("٤٣. **وسببٌ لا يقابله شيء يقع في «سبب آخر»**",
+      [staleOther.status,
+        (await q(`SELECT reason FROM price_change_requests WHERE id=$1`,
+          [staleOther.body.requestId]))[0].reason],
+      [200, "other"]);
+
+    // ══ ٤٤. والقاعدةُ تسدّ ثغرةَ الصفّ نصفِ الممتلئ ════════════════════
+    console.log("\n── شكلُ الصفّ في القاعدة ──");
+    const shape = async (label: string, cols: string, vals: string, shouldPass: boolean) => {
+      let ok = true;
+      try {
+        await q(`INSERT INTO price_change_requests
+                   (followup_id, patient_id, branch_id, reason, status, ${cols})
+                 VALUES ($1,$2,1,'other','cancelled',${vals})`, [fOldUp.id, pOldUp]);
+      } catch { ok = false; }
+      same(label, ok, shouldPass);
+    };
+    await shape("٤٤. **صفٌّ قديمٌ بأعمدةٍ ثلاثةٍ فارغة يمرّ**",
+      "current_price, proposed_price", "500000, 600000", true);
+    await shape("   **ونوعٌ فارغٌ مع مبلغِ خصمٍ يُردّ** — لا تنكُّرَ بالفراغ",
+      "current_price, proposed_price, discount_amount", "500000, 400000, 100000", false);
+    await shape("   ونوعٌ فارغٌ مع قيمةِ خصمٍ يُردّ",
+      "current_price, proposed_price, discount_value", "500000, 400000, 100000", false);
+    await shape("   **وخصمٌ تامٌّ صحيح يمرّ**",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "500000, 400000, 'amount', 100000, 100000", true);
+    await shape("   **وخصمٌ كاذبٌ يُردّ** — مبلغُه يخالف فرقَ السعرين",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "500000, 400000, 'amount', 100000, 7", false);
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

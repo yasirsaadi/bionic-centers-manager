@@ -34,8 +34,8 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import {
-  canApproveDiscount, canConfirmPurchase, canRecordFollowup, canViewFollowup,
-  isSelfDecision,
+  canApproveDiscount, canApproveLegacyPriceChange, canConfirmPurchase,
+  canDecidePriceRequest, canRecordFollowup, canViewFollowup, isSelfDecision,
 } from "@shared/followup";
 
 type Req = any;
@@ -150,8 +150,11 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يعتمد.
       return res.json({ priceApprovals: [], mayApprove: false });
     }
-    const out = await store.listPendingApprovals(branchScope(req));
-    res.json({ ...out, mayApprove: true });
+    //  **مديرُ الفرع يرى الخصومَ وحدها**: الصفوفُ القديمة قد تكون رفعَ سعر
+    //  لا يملك اعتمادَه، فإبقاؤها في طابوره عدَدٌ يراه ولا يستطيع إنهاءه.
+    const out = await store.listPendingApprovals(
+      branchScope(req), canApproveLegacyPriceChange(s));
+    res.json({ ...out, mayApprove: true, mayDecideLegacy: canApproveLegacyPriceChange(s) });
   });
 
   // ── تأجيل ────────────────────────────────────────────────────────────
@@ -317,37 +320,83 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   }
   app.post("/api/followups/:id/discount-request", isAuthenticated, discountRequestHandler);
-  //  الاسمُ القديم يبقى مسنَداً إلى المعالج نفسه — نافذةٌ مفتوحةٌ منذ ما قبل
-  //  النشر تصيبه، ولا يجوز أن تُردّ بـ404 وهي تفعل الصواب.
-  app.post("/api/followups/:id/price-request", isAuthenticated, discountRequestHandler);
+
+  // ── النقطةُ القديمة — **مُحوِّلٌ لا اسمٌ ثانٍ** ───────────────────────
+  //  صفحةٌ فُتحت قبل النشر ترسل `{ proposedPrice, reason, note }` بمفردات
+  //  التأجيل. وإسنادُها إلى معالج الخصم كان **توافقاً مزعوماً**: الحقولُ
+  //  تختلف، فكلُّ طلبٍ منها كان سيُردّ بـ400 «نوع الخصم مطلوب».
+  //
+  //  فهي مُحوِّلٌ حقيقي: يقرأ السعرَ النهائي، ويحسب الفرقَ **على السعر
+  //  المقفول** في المخزن، ويكتب خصماً مهيكلاً بالمبلغ. **ولا يُبعث رفعُ
+  //  السعر من قبرِه**: طلبٌ يساوي السعر أو يفوقه يُردّ برسالةٍ تقول للموظّف
+  //  ما الذي تغيّر وتطلب تحديثَ الصفحة.
+  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    if (req.body?.proposedPrice === undefined || req.body?.proposedPrice === null) {
+      return res.status(400).json({ error: "السعر المقترح مطلوب" });
+    }
+    try {
+      const out = await store.requestDiscount({
+        followupId: f.id,
+        legacyProposedPrice: Number(req.body.proposedPrice),
+        reason: String(req.body?.reason ?? ""), note: str(req.body?.note),
+        actor: actorOf(req),
+      });
+      await logAudit({
+        entityType: "price_change_request", entityId: out.requestId, action: "create",
+        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `طلب خصم (من نافذة قديمة) لمتابعة #${f.id}: `
+          + `${f.approvedPrice.toLocaleString()} ⟶ ${Number(req.body.proposedPrice).toLocaleString()} د.ع`,
+      });
+      res.json(out);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
 
   // ── اعتماد/رفض الخصم — **مخوَّلٌ غيرُ صاحب الطلب** ────────────────────
   async function decideDiscountHandler(req: Req, res: any) {
     const s = getSession(req);
-    //  الحارس أوّلاً وقبل أي قراءة: الاستقبالُ والمحاسبُ والخبير يُردّون هنا.
-    if (!canApproveDiscount(s)) {
-      return res.status(403).json({
-        error: "اعتماد الخصم للمسؤول العام أو مدير الفرع أو الطبيب المخوَّل",
-      });
-    }
     const requestId = Number(req.params.requestId);
     if (!Number.isFinite(requestId)) return res.status(400).json({ error: "معرّف غير صالح" });
     const decision = req.body?.decision === "approve" ? "approve" : "reject";
 
-    //  نطاق الفرع يُفحص من متابعة الطلب — قبل أي كتابة. وهو ما يحدّ مديرَ
-    //  الفرع والطبيبَ بفروعهما، والمسؤولُ العام وحده يتجاوزه.
+    //  الصفُّ يُقرأ **قبل** الحارس: السلطةُ تتبع نوعَه لا تاريخَ اليوم.
     const reqs = await store.getPriceRequestById(requestId);
     if (!reqs) return res.status(404).json({ error: "طلب الخصم غير موجود" });
-    if (!canReachBranch(req, reqs.branchId)) {
-      return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
-    }
-    // ══ ولا يعتمد أحدٌ طلبَ نفسه ═══════════════════════════════════════
-    //  يُردّ هنا برسالةٍ صريحة قبل فتح المعاملة — والمخزنُ يفحصها ثانيةً
-    //  تحت القفل على الصفّ نفسه، فمنادٍ لا يمرّ بهذه النقطة يصطدم بها.
-    if (isSelfDecision(reqs.requestedBy, s.userId)) {
+
+    // ══ سلطةٌ بحسب نوع الصفّ ═══════════════════════════════════════════
+    //  صفٌّ بلا `discount_mode` سابقٌ لهذه المرحلة، وقد يكون **رفعَ سعر**.
+    //  فيُحكَم بقانون يومه: طبيبٌ مخوَّل أو المسؤول حصراً — ومديرُ الفرع
+    //  يُردّ عنه كما كان يُردّ قبل هذه المرحلة تماماً.
+    if (!canDecidePriceRequest({
+      session: s, isLegacy: reqs.isLegacy, requestedByUserId: reqs.requestedBy,
+    })) {
+      //  ورسالةٌ تقول **لماذا** لا «غير مصرح» عارية.
+      if (reqs.isLegacy && !canApproveLegacyPriceChange(s)) {
+        return res.status(403).json({
+          error: "هذا سجلّ تعديل سعر قديم — يعتمده الطبيب المخوَّل أو المسؤول العام حصراً",
+        });
+      }
+      if (!canApproveDiscount(s)) {
+        return res.status(403).json({
+          error: "اعتماد الخصم للمسؤول العام أو مدير الفرع أو الطبيب المخوَّل",
+        });
+      }
+      // ══ ولا يعتمد أحدٌ طلبَ نفسه ═══════════════════════════════════
+      //  يُردّ هنا برسالةٍ صريحة قبل فتح المعاملة — والمخزنُ يفحصها ثانيةً
+      //  تحت القفل على الصفّ نفسه، فمنادٍ لا يمرّ بهذه النقطة يصطدم بها.
       return res.status(403).json({
         error: "لا يمكنك اعتماد أو رفض طلب خصم قدّمتَه بنفسك — يقرّره مخوَّلٌ آخر",
       });
+    }
+
+    //  نطاق الفرع يُفحص من متابعة الطلب — قبل أي كتابة. وهو ما يحدّ مديرَ
+    //  الفرع والطبيبَ بفروعهما، والمسؤولُ العام وحده يتجاوزه.
+    if (!canReachBranch(req, reqs.branchId)) {
+      return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
 
     try {
