@@ -33,6 +33,7 @@
 import { execFileSync } from "child_process";
 import { Client } from "pg";
 import * as migration056 from "./migrations/056_cost_entry_department";
+import * as migration057 from "./migrations/057_commercial_price";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -79,6 +80,38 @@ SELECT jsonb_build_object(
        AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a
                               WHERE a.attrelid = 'cost_entries'::regclass
                                 AND a.attname = 'case_id')]::smallint[]
+  ),
+  'interest_columns', (
+    SELECT jsonb_object_agg(a.attname,
+             jsonb_build_object('data_type', format_type(a.atttypid, a.atttypmod),
+                                'not_null', a.attnotnull))
+      FROM pg_attribute a
+     WHERE a.attrelid = 'post_exam_followups'::regclass
+       AND a.attname IN ('purchase_interest_at', 'purchase_interest_by',
+                         'purchase_interest_by_name')
+       AND NOT a.attisdropped
+  ),
+  'pef_checks', (
+    SELECT jsonb_object_agg(c.conname, pg_get_constraintdef(c.oid))
+      FROM pg_constraint c
+     WHERE c.conrelid = 'post_exam_followups'::regclass AND c.contype = 'c'
+       AND c.conname IN ('post_exam_followups_price_source_check',
+                         'post_exam_followups_purchase_interest_check')
+  ),
+  'interest_index', (
+    SELECT jsonb_build_object(
+             'name', ci.relname,
+             'columns', (
+               SELECT jsonb_agg(att.attname ORDER BY k.ord)
+                 FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute att
+                   ON att.attrelid = i.indrelid AND att.attnum = k.attnum),
+             'is_unique', i.indisunique,
+             'predicate', pg_get_expr(i.indpred, i.indrelid))
+      FROM pg_index i
+      JOIN pg_class ci ON ci.oid = i.indexrelid
+     WHERE i.indrelid = 'post_exam_followups'::regclass
+       AND ci.relname = 'ix_pef_purchase_interest'
   ),
   'index', (
     SELECT jsonb_build_object(
@@ -171,6 +204,63 @@ async function main() {
           WHERE conrelid = 'cost_entries'::regclass AND contype = 'f'
             AND conname = 'cost_entries_case_id_fkey'`)).rows[0].n;
       same("   ولم يتضاعف المفتاحُ بالإعادة", dup, 1);
+
+      // ══ وترحيل ٠٥٧ بنفس الطريقة ════════════════════════════════════
+      await c.query(`DROP INDEX IF EXISTS ix_pef_purchase_interest`);
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_purchase_interest_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP COLUMN IF EXISTS purchase_interest_at,
+        DROP COLUMN IF EXISTS purchase_interest_by,
+        DROP COLUMN IF EXISTS purchase_interest_by_name`);
+      //  **وقيدُ مصدرِ السعر يُردّ إلى صيغة ٠٥٣ بقيمتيه**: هذا هو حالُ
+      //  الإنتاج قبل ٠٥٧ بالضبط، وبه وحده يصير «توسيعُ القيد» سؤالاً
+      //  حقيقياً لا تحصيلَ حاصلٍ من قاعدةٍ بُنيت واسعةً من أولها.
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_price_source_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        ADD CONSTRAINT post_exam_followups_price_source_check
+        CHECK (price_source IN ('exam', 'approved_change'))`);
+      const before57 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_attribute
+          WHERE attrelid = 'post_exam_followups'::regclass
+            AND attname LIKE 'purchase_interest%' AND NOT attisdropped`)).rows[0].n;
+      same("٣ب. **والجدولُ عاد إلى ما قبل ٠٥٧** — لا أعمدةَ راية", before57, 0);
+      const srcBefore = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'post_exam_followups_price_source_check'
+            AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
+      same("   **وقيدُ مصدر السعر عاد إلى قيمتين**",
+        String(srcBefore).includes("manager_set"), false);
+
+      await c.query(migration057.sql);
+      check(true, "   تطبيقُ الترحيل ٠٥٧ نجح");
+      await c.query(migration057.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const dup57 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_constraint
+          WHERE conrelid = 'post_exam_followups'::regclass AND contype = 'c'
+            AND conname IN ('post_exam_followups_price_source_check',
+                            'post_exam_followups_purchase_interest_check')`)).rows[0].n;
+      same("   والقيدان اثنان لا أربعة بعد الإعادة", dup57, 2);
+
+      // ══ ٣ج. **وقاعدةٌ تحمل صيغةً أقدم تتقارب إليها** ═════════════════
+      //  idempotent لا تعني «آمنَ الإعادة» وحدها بل **واحديّةَ النتيجة**:
+      //  قاعدةُ تطويرٍ عليها قيدٌ أضيق يجب أن تصير كالإنتاج، لا أن تُترك
+      //  كما هي لأن اسمَ القيد موجود. وهذا ما كان سيقع لو اكتفى الفحصُ
+      //  بوجود الاسم.
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_price_source_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        ADD CONSTRAINT post_exam_followups_price_source_check
+        CHECK (price_source IN ('exam'))`);
+      await c.query(migration057.sql);
+      const converged = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'post_exam_followups_price_source_check'
+            AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
+      same("٣ج. **وصيغةٌ أقدم من القيد يُعاد بناؤها** — تقارُبٌ لا مجرّد أمانٍ",
+        String(converged).includes("manager_set"), true);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -195,6 +285,16 @@ async function main() {
       fromSchema.index?.columns, fromMigrations.index?.columns);
     same("٧. **وشرطُ الفهرس الجزئي متطابق**",
       fromSchema.index?.predicate, fromMigrations.index?.predicate);
+    // ══ وترحيل ٠٥٧: أعمدةُ الراية والقيدان والفهرس ══
+    same("٧ب. **وأعمدةُ الراية الثلاثة متطابقة نوعاً وقابليةَ فراغ**",
+      fromSchema.interest_columns, fromMigrations.interest_columns);
+    same("٧ج. **وقيدا المتابعة متطابقان نصّاً**",
+      fromSchema.pef_checks, fromMigrations.pef_checks);
+    same("٧د. **وفهرسُ الراية الجزئي متطابق**",
+      [fromSchema.interest_index?.name, fromSchema.interest_index?.columns,
+        fromSchema.interest_index?.predicate],
+      [fromMigrations.interest_index?.name, fromMigrations.interest_index?.columns,
+        fromMigrations.interest_index?.predicate]);
 
     //  ولا يكفي التطابق: قد تتّفقان على الخطأ. فالقيمُ تُثبَّت صراحةً.
     console.log("\n── ٤. والقيمُ هي المقصودة لا مجرّد متساوية ──");
@@ -207,6 +307,29 @@ async function main() {
     //  `confdeltype`: 'n' = SET NULL · 'a' = NO ACTION · 'c' = CASCADE.
     same("١٠. **و`ON DELETE SET NULL` في القاعدتين معاً**",
       [fromSchema.fk?.on_delete, fromMigrations.fk?.on_delete], ["n", "n"]);
+    //  ولا يكفي التطابق هنا كذلك: القيمُ المقصودة تُثبَّت صراحةً.
+    const icol = (n: string) => {
+      const c = (fromMigrations.interest_columns ?? {})[n] ?? {};
+      return [c.data_type, c.not_null];
+    };
+    same("١٠ب. أعمدةُ الراية بأنواعها وكلُّها تقبل الفراغ",
+      [icol("purchase_interest_at"), icol("purchase_interest_by"),
+        icol("purchase_interest_by_name")],
+      [["timestamp with time zone", false], ["integer", false], ["text", false]]);
+    const srcDef = String(
+      fromMigrations.pef_checks?.post_exam_followups_price_source_check ?? "");
+    check(["exam", "manager_set", "approved_change"].every((v) => srcDef.includes(v)),
+      "١٠ج. **ومصدرُ السعر ثلاثةٌ في القاعدة**", srcDef);
+    check(String(fromSchema.pef_checks?.post_exam_followups_price_source_check ?? "")
+      .includes("manager_set"), "     وفي المبنيّة من المخطّط كذلك",
+      String(fromSchema.pef_checks?.post_exam_followups_price_source_check));
+    same("١٠د. والفهرسُ على عمود الزمن وحده وغيرُ فريد",
+      [fromMigrations.interest_index?.columns, fromMigrations.interest_index?.is_unique],
+      [["purchase_interest_at"], false]);
+    check(String(fromMigrations.interest_index?.predicate ?? "")
+      .replace(/[()]/g, " ").replace(/\s+/g, " ").trim() === "purchase_interest_at IS NOT NULL",
+      "     **وشرطُه جزئيٌّ على المرفوعة وحدها**",
+      String(fromMigrations.interest_index?.predicate));
     same("١١. والفهرسُ على `case_id` وحده وغيرُ فريد",
       [fromMigrations.index?.columns, fromMigrations.index?.is_unique],
       [["case_id"], false]);
@@ -245,6 +368,34 @@ async function main() {
         const row = (await c.query(`SELECT case_id, amount FROM cost_entries WHERE id=$1`, [eid])).rows[0];
         same(`   **والقيدُ باقٍ بمبلغه وقسمُه صار NULL** (${label})`,
           [row?.case_id, Number(row?.amount)], [null, 500000]);
+
+        // ══ ١٤. وقيودُ ٠٥٧ تعمل حيّاً — التعريفُ وحده لا يكفي دليلاً ══
+        //  الصفُّ يُمسَح بعد كلّ محاولة: فهرسُ «متابعةٌ حيّةٌ واحدة لكل جهاز»
+        //  (٠٥٣) كان سيردّ الثانيةَ لسببٍ لا علاقة له بما نقيسه هنا.
+        const insFollowup = async (cols: string, vals: string) => {
+          try {
+            await c.query(`INSERT INTO post_exam_followups
+                             (patient_id, service_type, status, ${cols})
+                           VALUES (${pid}, 'prosthetic', 'awaiting_patient_decision', ${vals})`);
+            await c.query(`DELETE FROM post_exam_followups WHERE patient_id = ${pid}`);
+            return true;
+          } catch { return false; }
+        };
+        same(`١٤. **مصدرُ السعر الثلاثة تمرّ** (${label})`,
+          [await insFollowup("price_source", "'exam'"),
+            await insFollowup("price_source", "'manager_set'"),
+            await insFollowup("price_source", "'approved_change'")],
+          [true, true, true]);
+        same(`    **وقيمةٌ رابعة تُردّ** (${label})`,
+          await insFollowup("price_source", "'whatever'"), false);
+        //  **والرايةُ لا تُرفع بلا صاحب** — ولا صاحبَ بلا زمن.
+        same(`    **ورايةٌ بلا صاحبٍ تُردّ** (${label})`,
+          await insFollowup("purchase_interest_at", "NOW()"), false);
+        same(`    وصاحبٌ بلا زمنٍ يُردّ (${label})`,
+          await insFollowup("purchase_interest_by", "1"), false);
+        same(`    **والاثنان معاً يمرّان** (${label})`,
+          await insFollowup("purchase_interest_at, purchase_interest_by", "NOW(), 1"), true);
+        await c.query(`DELETE FROM post_exam_followups WHERE patient_id = ${pid}`);
       });
     }
   } finally {

@@ -25,7 +25,8 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import {
-  canApprove, canConfirmPurchase, canRecordFollowup, canViewFollowup,
+  canConfirmPurchase, canDecideLegacyPriceRequest, canRecordFollowup,
+  canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
 
 type Req = any;
@@ -131,17 +132,18 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     res.json(rows);
   });
 
-  // ── «بانتظار موافقتي» — **تعديلاتُ السعر وحدها** ─────────────────────
-  //  وخرج منها طابورُ «اعتماد الشراء»: مهامٌّ روتينية لا قرارَ سريرياً فيها
-  //  كانت تُغرق شاشة الطبيب وتحبس الفرع. والباقي اعتمادٌ حقيقي.
+  // ── «بانتظار موافقتي» — **بقايا المسار القديم وحدها** ────────────────
+  //  لم يعد شيءٌ يدخل هذا الطابور: تغييرُ السعر صار قرارَ مديرِ الفرع لا
+  //  طلباً. فهو يفرغ ولا يمتلئ، ويبقى كي لا يتجمّد ما كان معلَّقاً لحظةَ
+  //  النشر. وحين يفرغ يختفي من الشاشة من تلقائه.
   app.get("/api/followups/approvals", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canApprove(s)) {
-      //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يعتمد.
+    if (!canDecideLegacyPriceRequest(s)) {
+      //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يحسم.
       return res.json({ priceApprovals: [], mayApprove: false });
     }
     const out = await store.listPendingApprovals(branchScope(req));
-    res.json({ ...out, mayApprove: true });
+    res.json({ ...out, mayApprove: true, legacyOnly: true });
   });
 
   // ── تأجيل ────────────────────────────────────────────────────────────
@@ -282,35 +284,95 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── طلب تعديل السعر — **اقتراحٌ لا تعديل** ───────────────────────────
-  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+  // ── إشارةُ الطبيب «المريض يرغب بالشراء الآن» — **تسليمٌ لا بيع** ──────
+  //  لا حالةَ تتغيّر ولا ديناراً يتحرّك: رايةٌ ترفع الملفَّ إلى رأس طابور
+  //  الاستعلامات. وتركُها **لا يعني أن المريض رفض**.
+  app.post("/api/followups/:id/purchase-interest", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canSignalPurchaseInterest(s)) {
+      return res.status(403).json({
+        error: "إشارة رغبة الشراء يرفعها الطبيب المخوَّل أو المسؤول العام",
+      });
+    }
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
-      const out = await store.requestPriceChange({
-        followupId: f.id, proposedPrice: Number(req.body?.proposedPrice),
-        reason: String(req.body?.reason ?? ""), note: str(req.body?.note),
+      const out = await store.signalPurchaseInterest({
+        followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
+      });
+      //  والضغطةُ المكرّرة لا تُنتج سطرَ تدقيقٍ ثانياً كما لا تُنتج حدثاً.
+      if (!out.alreadySignaled) {
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `إشارة رغبة الشراء لمتابعة #${f.id} — بلا أثرٍ مالي`,
+        });
+      }
+      res.json(out);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ── تحديدُ السعر التجاري — **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ──────
+  //  الطبيبُ يملك القرار السريري، والفرعُ يملك القرار التجاري. فلا صفَّ
+  //  طلبٍ يُنشأ ولا حالةَ انتظارٍ تُحتجَز ولا طابورَ يمتلئ.
+  app.post("/api/followups/:id/commercial-price", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canSetCommercialPrice(s)) {
+      return res.status(403).json({
+        error: "تحديد السعر النهائي لمدير الفرع أو المسؤول العام — الاستقبال يبيع بالسعر المحفوظ",
+      });
+    }
+    //  ونطاقُ الفرع يُقرأ من صفّ المتابعة: مديرُ فرعٍ آخر يُردّ هنا.
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    if (req.body?.finalPrice === undefined || req.body?.finalPrice === null) {
+      return res.status(400).json({ error: "السعر النهائي مطلوب" });
+    }
+    try {
+      const out = await store.setCommercialPrice({
+        followupId: f.id, finalPrice: Number(req.body.finalPrice),
+        reason: str(req.body?.reason), note: str(req.body?.note),
         actor: actorOf(req),
       });
+      const c = out.change;
       await logAudit({
-        entityType: "price_change_request", entityId: out.requestId, action: "create",
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
         userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: { approvedPrice: c.previousPrice, priceSource: f.priceSource },
+        newValues: {
+          approvedPrice: c.finalPrice, priceSource: "manager_set",
+          difference: c.difference, percentageDifference: c.percentageDifference,
+          reason: str(req.body?.reason), note: str(req.body?.note),
+        },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `طلب تعديل سعر لمتابعة #${f.id}: ${f.approvedPrice.toLocaleString()} ⟶ ${Number(req.body?.proposedPrice).toLocaleString()} د.ع`,
+        notes: c.changed
+          ? `تحديد السعر التجاري لمتابعة #${f.id}: ${c.previousPrice.toLocaleString()} ⟶ ${c.finalPrice.toLocaleString()} د.ع (${c.difference > 0 ? "+" : ""}${c.difference.toLocaleString()}، ${c.percentageDifference}٪)`
+          : `تثبيت السعر التجاري لمتابعة #${f.id} كما هو: ${c.finalPrice.toLocaleString()} د.ع`,
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── اعتماد/رفض تعديل السعر — **طبيب أو مسؤول حصراً** ─────────────────
+  // ── الطلبُ القديم — **بابٌ مغلق، ومعه الطريق** ───────────────────────
+  //  لا يُنشأ طلبُ تعديل سعرٍ جديد بعد اليوم. والنافذةُ المفتوحة منذ ما قبل
+  //  النشر تُردّ برسالةٍ تقول **ما تغيّر ومَن يفعلها الآن** — لا 404 عارية
+  //  ولا صمتٌ يجعل الموظّف يظنّ النظامَ معطّلاً.
+  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+    return res.status(400).json({
+      error: "لم يعد تغييرُ السعر طلباً يُعتمَد — يحدّده مديرُ الفرع مباشرة. حدّث الصفحة.",
+    });
+  });
+
+  // ── حسمُ طلبٍ قديمٍ معلَّق — **توافقٌ رجعي حتى ينفد** ─────────────────
+  //  يُحسَم بقانون يومه: طبيبٌ مخوَّل أو المسؤول. ومديرُ الفرع يُردّ عنه كما
+  //  كان يُردّ — فقد يكون رفعَ سعرٍ وقّع الطبيبُ على أصله.
   app.post("/api/price-requests/:requestId/decide", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     //  الحارس أوّلاً وقبل أي قراءة: مديرُ الفرع يُردّ هنا صراحةً.
-    if (!canApprove(s)) {
+    if (!canDecideLegacyPriceRequest(s)) {
       return res.status(403).json({
-        error: "اعتماد تعديل السعر للطبيب المخوَّل أو المسؤول العام حصراً",
+        error: "هذا طلبٌ قديم — يحسمه الطبيب المخوَّل أو المسؤول العام حصراً",
       });
     }
     const requestId = Number(req.params.requestId);

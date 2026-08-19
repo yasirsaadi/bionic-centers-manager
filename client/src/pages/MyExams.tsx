@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft } from "lucide-react";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
@@ -391,6 +391,8 @@ export default function MyExams() {
         </>
       )}
 
+      <RecentPurchases />
+
       {target && (
         <NewExamDialog
           patientId={target.patientId}
@@ -402,5 +404,94 @@ export default function MyExams() {
         />
       )}
     </div>
+  );
+}
+
+interface PurchaseRow {
+  followupId: number;
+  patientId: number;
+  patientName: string;
+  patientCode: string | null;
+  branchName: string | null;
+  caseType: string;
+  finalPrice: number;
+  examDeviceCost: number | null;
+  priceSource: string;
+  purchasedAt: string | null;
+  confirmedByName: string | null;
+  priceSetByName: string | null;
+}
+
+/**
+ * **مرضاي الذين اشتروا مؤخّراً — قراءةٌ محضة، بلا فعلٍ مطلوب.**
+ *
+ * ══ لماذا هنا لا في صندوق تنبيهات ══════════════════════════════════════
+ * لا بنيةَ تنبيهاتٍ داخلية في هذا النظام، وبناءُ واحدةٍ لأجل سطرٍ يُقرأ
+ * مرّةً في اليوم كلفةٌ لا تُسترَدّ. فالمعلومة توضَع **حيث يقف الطبيب أصلاً**:
+ * أسفل قائمة عمله. لا صندوقَ يُقرأ ولا رايةَ تُطفأ ولا زرَّ يُضغَط.
+ *
+ * وحين لا يكون هناك بيعٌ حديث **لا تظهر البطاقة إطلاقاً**: لا تُشغل مكاناً
+ * لتقول «لا شيء».
+ */
+function RecentPurchases() {
+  const { data } = useQuery<{ rows: PurchaseRow[] }>({
+    queryKey: ["/api/medical/recent-purchases"],
+    queryFn: async () => {
+      const res = await fetch("/api/medical/recent-purchases", { credentials: "include" });
+      if (!res.ok) return { rows: [] };
+      return res.json();
+    },
+  });
+  const rows = data?.rows ?? [];
+  if (rows.length === 0) return null;
+
+  return (
+    <Card className="mt-8" data-testid="card-recent-purchases">
+      <CardContent className="p-4">
+        <h2 className="text-sm font-bold flex items-center gap-2 mb-1">
+          <ShoppingBag className="w-4 h-4 text-green-600" /> مرضاي الذين اشتروا مؤخراً
+        </h2>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          للعلم فقط — لا إجراء مطلوب منك. السعر التجاري قرارُ الفرع.
+        </p>
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.followupId}
+              className="rounded-md border px-3 py-2 text-xs"
+              data-testid={`row-recent-purchase-${r.followupId}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Link href={`/patients/${r.patientId}`}>
+                  <span className="font-medium text-sm cursor-pointer hover:underline">
+                    {r.patientName}
+                  </span>
+                </Link>
+                <span className="font-medium" data-testid={`text-purchase-price-${r.followupId}`}>
+                  {r.finalPrice.toLocaleString()} د.ع
+                </span>
+              </div>
+              <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                <span>{specialtyLabel(r.caseType)}</span>
+                {r.branchName && <span>{r.branchName}</span>}
+                {r.purchasedAt && <span>{formatDateTimeIraq(r.purchasedAt)}</span>}
+                {r.confirmedByName && <span>أكّد الشراء: {r.confirmedByName}</span>}
+                {/*  **ولا يُذكَر إلّا إن غُيِّر فعلاً**: بيعٌ بسعر المعاينة بلا
+                    تدخّلٍ لا يحمل هذا السطر أصلاً. */}
+                {r.priceSetByName && (
+                  <span data-testid={`text-price-setter-${r.followupId}`}>
+                    حدّد السعر: {r.priceSetByName}
+                  </span>
+                )}
+                {/*  وسعرُ معاينته هو، فيرى الفرقَ بلا حساب — ولا يُطلَب منه شيء. */}
+                {r.examDeviceCost !== null && r.examDeviceCost !== r.finalPrice && (
+                  <span data-testid={`text-exam-price-${r.followupId}`}>
+                    سعر المعاينة كان: {r.examDeviceCost.toLocaleString()} د.ع
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

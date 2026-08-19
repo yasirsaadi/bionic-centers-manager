@@ -1,14 +1,21 @@
 // بطاقةُ «قرار المريض بعد المعاينة» في صفحة المريض.
 //
 // ══ الأزرار تتبع الصلاحية والحالة معاً ══════════════════════════════════
-// الاستعلامات يرى «بانتظار اعتماد السعر» بلا زرّ، والطبيبُ يرى «اعتماد /
-// رفض». وهذا **عرضٌ لا حراسة**: الخادم يفحص كلّ كتابة مهما أظهرت الواجهة —
+// الاستعلامات يرى «اشترى» و«لم يشترِ» و«متابعة»، ومديرُ الفرع يرى معها
+// «تحديد السعر النهائي»، والطبيبُ يرى «المريض يرغب بالشراء الآن» وحدها.
+//
+// **ولا زرَّ اعتمادٍ لأحد** في المسار الحيّ: القرارُ التجاري لمديرِ الفرع
+// يُحفظ في اللحظة، والشراءُ تسجيلُ واقعةٍ لا استئذان. وما بقي من أزرار
+// الاعتماد فلصفوفٍ معلَّقةٍ من المسار القديم حتى تنفد.
+//
+// وهذا **عرضٌ لا حراسة**: الخادم يفحص كلّ كتابة مهما أظهرت الواجهة —
 // و`allowedActions` مشتركةٌ بينهما فلا تنحرف قاعدةٌ عن قاعدة.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardCheck, Loader2, CircleDollarSign, CalendarClock, XCircle, RotateCcw, UserCog,
+  HandCoins,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  allowedActions, canSelectExpert,
+  allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
@@ -36,6 +43,8 @@ interface Followup {
   status: FollowupStatus;
   approvedPrice: number;
   priceSource: string;
+  purchaseInterestAt: string | null;
+  purchaseInterestByName: string | null;
   selectedExpertUserId: number | null;
   selectedExpertName: string | null;
   examDoctorName: string | null;
@@ -85,7 +94,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [note, setNote] = useState("");
   const [nextDate, setNextDate] = useState(defaultNextDate());
   const [noSchedule, setNoSchedule] = useState(false);
-  const [proposedPrice, setProposedPrice] = useState("");
+  const [finalPrice, setFinalPrice] = useState("");
+  const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
 
   const { data: followups, isLoading } = useQuery<Followup[]>({
@@ -111,7 +121,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const active = (followups ?? [])[0] ?? null;
 
   const reset = () => {
-    setDialog(null); setNote(""); setProposedPrice(""); setExpertId("");
+    setDialog(null); setNote(""); setFinalPrice(""); setPriceReason(""); setExpertId("");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
   };
 
@@ -150,6 +160,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const actions = allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
+  //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
+  //  فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
+  const preview = computeCommercialPrice({
+    previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
+  });
 
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
@@ -174,9 +189,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             value={active.selectedExpertName
               ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}
             hint={active.selectedExpertName ? undefined : "يختاره الاستعلامات"} />
+          {/*  والنصُّ من `shared/followup` وحدها — لا استنتاجَ في الشاشة. */}
           <Field label="السعر المعتمد"
             value={`${active.approvedPrice.toLocaleString()} د.ع`}
-            hint={active.priceSource === "approved_change" ? "بعد تعديلٍ معتمد" : "من المعاينة"} />
+            hint={priceSourceShort(active.priceSource)} />
           <Field label="آخر تواصل" value={fmt(active.lastContactAt)} />
           <Field label="المتابعة القادمة"
             value={active.noScheduledFollowUp ? "بلا موعد" : fmt(active.nextFollowUpAt)} />
@@ -189,11 +205,21 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           )}
         </div>
 
-        {/* ما ينتظره غيرُك — يُقال بلا زرّ */}
+        {/*  **رايةُ الطبيب** — تُقرأ في رأس البطاقة كما تُقرأ في رأس الطابور. */}
+        {active.purchaseInterestAt && (
+          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800"
+            data-testid="text-purchase-interest">
+            🟢 المريض أبدى رغبته بالشراء الآن
+            {active.purchaseInterestByName && ` — سجّلها ${active.purchaseInterestByName}`}
+            {` (${fmt(active.purchaseInterestAt)})`}
+          </p>
+        )}
+
+        {/*  صفٌّ معلَّقٌ من المسار القديم — يُقال بلا زرّ لمن لا يحسمه. */}
         {active.status === "price_approval_pending" && actions.length === 0 && (
           <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800"
             data-testid="text-awaiting-price-approval">
-            بانتظار اعتماد السعر من الطبيب أو المسؤول العام
+            طلبٌ قديمٌ معلَّق — يحسمه الطبيب المخوَّل أو المسؤول العام
             {pendingRequest && ` — المقترح ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
           </p>
         )}
@@ -251,25 +277,37 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <XCircle className="h-4 w-4" /> لم يشترِ
             </Button>
           )}
-          {actions.includes("request_price_change") && (
+          {/*  **قرارُ مديرِ الفرع لا طلبٌ يُرسَل**: يفتح النافذة ويكتب الرقم
+              فيصير هو السعر — بلا اعتمادٍ ولا انتظار. */}
+          {actions.includes("set_commercial_price") && (
             <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => setDialog("price")} data-testid="button-request-price-change">
-              <CircleDollarSign className="h-4 w-4" /> طلب تعديل السعر
+              onClick={() => { setFinalPrice(String(active.approvedPrice)); setDialog("price"); }}
+              data-testid="button-set-commercial-price">
+              <CircleDollarSign className="h-4 w-4" /> تحديد السعر النهائي
             </Button>
           )}
+          {/*  **إشارةُ تسليمٍ لا بيع**: زرٌّ واحد للطبيب، ولا يظهر بعد رفعها. */}
+          {actions.includes("signal_purchase_interest") && !active.purchaseInterestAt && (
+            <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => submit(`/api/followups/${active.id}/purchase-interest`, {})}
+              data-testid="button-signal-purchase-interest">
+              <HandCoins className="h-4 w-4" /> المريض يرغب بالشراء الآن
+            </Button>
+          )}
+          {/*  توافقٌ رجعي: حسمُ طلبٍ قديمٍ معلَّق. لا يُنشأ مثلُه بعد اليوم. */}
           {actions.includes("approve_price") && pendingRequest && (
             <>
               <Button size="sm" disabled={busy}
                 onClick={() => submit(`/api/price-requests/${pendingRequest.id}/decide`,
                   { decision: "approve" })}
                 data-testid="button-approve-price">
-                اعتماد السعر الجديد
+                اعتماد الطلب القديم
               </Button>
               <Button size="sm" variant="outline" disabled={busy}
                 onClick={() => submit(`/api/price-requests/${pendingRequest.id}/decide`,
                   { decision: "reject" })}
                 data-testid="button-reject-price">
-                رفض التعديل
+                رفض الطلب القديم
               </Button>
             </>
           )}
@@ -380,31 +418,53 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── طلب تعديل السعر ── */}
+      {/* ── تحديد السعر النهائي — قرارٌ يُحفظ في الحال ── */}
       <Dialog open={dialog === "price"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>طلب تعديل السعر</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>تحديد السعر التجاري النهائي</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد الآن: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              الطلب لا يغيّر السعر — يعتمده طبيبٌ أو المسؤول العام.
+              السعر الحالي: <b>{active.approvedPrice.toLocaleString()} د.ع</b>{" "}
+              ({priceSourceShort(active.priceSource)}).
+              قرارُك يُحفظ فوراً بلا اعتمادٍ من أحد — <b>ولا يقيّد كلفةً ولا
+              يبدأ تصنيعاً</b>. المال يتحرّك حين يؤكّد الموظّف الشراء.
             </p>
             <div>
-              <Label>السعر المقترح (د.ع)</Label>
-              <Input type="number" value={proposedPrice}
-                onChange={(e) => setProposedPrice(e.target.value)}
-                data-testid="input-proposed-price" />
+              <Label>السعر النهائي (د.ع)</Label>
+              <Input type="number" value={finalPrice}
+                onChange={(e) => setFinalPrice(e.target.value)}
+                data-testid="input-final-price" />
             </div>
+            {/*  والفرقُ يُعرَض حيّاً — ولا تحسبه الشاشةُ بنفسها. */}
+            {finalPrice !== "" && (
+              preview.ok ? (
+                <div className="rounded-md bg-muted/50 px-3 py-2 text-sm" data-testid="text-price-preview">
+                  {preview.changed ? (
+                    <>
+                      <div>الفرق: <b data-testid="text-price-difference">
+                        {preview.difference > 0 ? "+" : ""}{preview.difference.toLocaleString()} د.ع</b>
+                        {" "}({preview.percentageDifference > 0 ? "+" : ""}{preview.percentageDifference}٪)</div>
+                      <div className="text-muted-foreground text-xs mt-0.5">
+                        {preview.difference < 0 ? "تخفيض عن السعر الحالي" : "زيادة عن السعر الحالي"}
+                      </div>
+                    </>
+                  ) : (
+                    <div data-testid="text-price-unchanged">السعر كما هو — تثبيتٌ بلا تغيير</div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-destructive" data-testid="text-price-error">{preview.error}</p>
+              )
+            )}
             <div>
-              <Label>السبب</Label>
-              <Select value={reason} onValueChange={(v) => setReason(v as FollowupReason)}>
-                <SelectTrigger data-testid="select-price-reason"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {FOLLOWUP_REASONS.map((r) => (
-                    <SelectItem key={r} value={r}>{FOLLOWUP_REASON_LABELS[r]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>
+                السبب {preview.ok && preview.changed
+                  ? <span className="text-destructive">(مطلوب)</span>
+                  : <span className="text-muted-foreground">(غير مطلوب — السعر لم يتغيّر)</span>}
+              </Label>
+              <Input value={priceReason} onChange={(e) => setPriceReason(e.target.value)}
+                placeholder="مثال: مفاوضة المريض · حالة مادّية · سعر منافس"
+                data-testid="input-price-reason" />
             </div>
             <div>
               <Label>ملاحظة (اختياري)</Label>
@@ -413,11 +473,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !proposedPrice} data-testid="button-submit-price-request"
-              onClick={() => submit(`/api/followups/${active.id}/price-request`, {
-                proposedPrice: Number(proposedPrice), reason, note: note || undefined,
+            <Button data-testid="button-submit-commercial-price"
+              disabled={busy || !preview.ok || (preview.changed && !priceReason.trim())}
+              onClick={() => submit(`/api/followups/${active.id}/commercial-price`, {
+                finalPrice: Number(finalPrice),
+                reason: priceReason.trim() || undefined,
+                note: note || undefined,
               })}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "إرسال الطلب"}
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ السعر النهائي"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -430,7 +493,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               اقترحه الطبيب في المعاينة، ولك إبقاؤه أو تغييره. الاختيار
-              <b> لا يبدأ تصنيعاً</b> — التصنيع يبدأ باعتماد الشراء.
+              <b> لا يبدأ تصنيعاً</b> — التصنيع يبدأ بتأكيد الشراء.
             </p>
             <div>
               <Label>الخبير</Label>
@@ -497,9 +560,15 @@ const EVENT_LABELS: Record<string, string> = {
   followup_created: "فُتحت المتابعة",
   patient_deferred: "أجّل المريض",
   contact_recorded: "تواصل",
-  price_change_requested: "طُلب تعديل السعر",
-  price_approved: "اعتُمد تعديل السعر",
-  price_rejected: "رُفض تعديل السعر",
+  //  **القرارُ التجاري الحيّ** — مديرُ الفرع يحدّد السعر مباشرةً.
+  commercial_price_set: "حُدِّد السعر التجاري",
+  //  إشارةُ تسليمٍ من الطبيب — بلا أثرٍ مالي.
+  purchase_interest_signaled: "أبدى المريض رغبته بالشراء",
+  //  أسماءٌ تاريخية: طلبُ تعديلِ سعرٍ من المسار القديم. تبقى كي تُقرأ كما
+  //  كُتبت لا كما صارت — ولا يُنشأ مثلُها بعد اليوم.
+  price_change_requested: "طُلب تعديل السعر (قبل التبسيط)",
+  price_approved: "اعتُمد تعديل السعر (قبل التبسيط)",
+  price_rejected: "رُفض تعديل السعر (قبل التبسيط)",
   patient_accepted_price: "وافق المريض على السعر",
   purchase_confirmed: "أكّد الموظّف الشراء",
   //  اسمٌ تاريخي: صفوفُ ما قبل التبسيط حين كان الطبيب يعتمد. يبقى كي

@@ -561,6 +561,32 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     }
   });
 
+  // ── مرضى الطبيب الذين اشتروا مؤخّراً — **قراءةٌ محضة** ───────────────────
+  //
+  // لا بنيةَ تنبيهاتٍ داخلية في هذا النظام (تلغرام للمالك، وصندوقُ رسائلِ
+  // المرضى — وكلاهما لغير هذا الغرض)، وبناءُ واحدةٍ لأجل سطرٍ يُقرأ مرّةً في
+  // اليوم كلفةٌ لا تُسترَدّ. فالمعلومة تُوضَع **حيث يقف الطبيب أصلاً**:
+  // قائمةُ عمله. لا صندوقَ يُقرأ ولا رايةَ تُطفأ ولا فعلَ مطلوب.
+  //
+  // **والفلترةُ في الخادم**: `doctor_id` من المعاينة الموقَّعة، ثم نطاقُ
+  // الفرع فوقه. فلا يرى طبيبٌ بيعَ زميلِه ولا مرضى فرعٍ لا يصله.
+  app.get("/api/medical/recent-purchases", isAuthenticated, async (req: Req, res) => {
+    try {
+      const { userId } = getSession(req);
+      //  والصلاحيةُ تُقرأ من القاعدة لا من الجلسة — كبقيّة نقاط المعاينة.
+      const specialties = await store.doctorSpecialties(userId);
+      if (specialties.length === 0 || userId === null) return res.json({ rows: [] });
+      const followupStore = await import("../followup/store");
+      const rows = await followupStore.recentPurchasesForDoctor({
+        doctorUserId: userId, scope: branchScope(req),
+      });
+      res.json({ rows });
+    } catch (err: any) {
+      console.error("[medical] GET recent-purchases failed:", err);
+      res.status(500).json({ error: "تعذّر تحميل قائمة المشتريات الأخيرة" });
+    }
+  });
+
   // ── Pending-exam signal for the patients list ────────────────────────────
   // Returns one entry per patient who still has an unexamined active case, so
   // each doctor can see who is waiting on THEIR specialty.

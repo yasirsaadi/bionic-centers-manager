@@ -21,13 +21,29 @@ export type FollowupStatus = (typeof FOLLOWUP_STATUSES)[number];
 export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   awaiting_patient_decision: "بانتظار قرار المريض",
   follow_up: "مؤجَّل — متابعة",
-  price_approval_pending: "بانتظار اعتماد السعر",
+  //  ══ الحالتان التاليتان **توافقٌ رجعي لا مسارٌ حيّ** ══════════════════
+  //  لا يدخلهما ملفٌّ جديد بعد اليوم: تغييرُ السعر التجاري صار قراراً
+  //  مباشراً لمدير الفرع لا طلباً يُعتمَد. والصفوف المحتجزة فيهما تُحسَم
+  //  بمسارها القديم حتى تنفد — بلا ترحيلِ بياناتٍ ولا إعادةِ كتابة تاريخ.
+  price_approval_pending: "محتجز قبل التبسيط — بانتظار اعتماد السعر",
   price_approved_waiting_patient: "بانتظار تأكيد المريض بعد تعديل السعر",
-  //  توافقٌ رجعي: لا يدخلها ملفٌّ جديد، والصفوف المحتجزة تُؤكَّد بضغطة.
   purchase_approval_pending: "محتجز قبل التبسيط — أكّد الشراء",
   closed_without_purchase: "مغلق بدون شراء",
   converted: "تحوّل إلى تصنيع",
 };
+
+/**
+ * الحالاتُ التي لم يعد يدخلها ملفٌّ جديد — **قراءةٌ وحسمٌ لا إنشاء**.
+ *
+ * تُستعمل للعرض («محتجز قبل التبسيط») وللاختبار الذي يمنع عودتها. ولا
+ * تُحذف من `FOLLOWUP_STATUSES`: صفوفٌ حيّة تحملها اليوم، وحذفُها من القائمة
+ * كان سيجعل الشاشة تعجز عن تسميتها.
+ */
+export const LEGACY_ONLY_STATUSES: FollowupStatus[] = [
+  "price_approval_pending",
+  "price_approved_waiting_patient",
+  "purchase_approval_pending",
+];
 
 /** الحالتان النهائيّتان — لا متابعةَ بعدهما إلّا بإعادة فتح. */
 export const TERMINAL_STATUSES: FollowupStatus[] = ["closed_without_purchase", "converted"];
@@ -60,6 +76,90 @@ export const FOLLOWUP_REASON_LABELS: Record<FollowupReason, string> = {
 
 export const isFollowupReason = (v: unknown): v is FollowupReason =>
   typeof v === "string" && (FOLLOWUP_REASONS as readonly string[]).includes(v);
+
+// ── مصدرُ السعر المعتمد ──────────────────────────────────────────────────
+//
+// **مَن قال هذا الرقم** — سؤالٌ يبقى بعد أن يُنسى كلُّ شيء آخر.
+export const PRICE_SOURCES = ["exam", "manager_set", "approved_change"] as const;
+export type PriceSource = (typeof PRICE_SOURCES)[number];
+
+export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
+  exam: "من المعاينة",
+  manager_set: "حدّده مدير الفرع",
+  //  توافقٌ رجعي: اعتمادٌ حُسم بالمسار القديم. **ولا يُسمّى «مدير الفرع»**
+  //  لأن مَن اعتمده يومَها كان طبيباً أو مسؤولاً.
+  approved_change: "بعد تعديل سعر سابق",
+};
+
+export const isPriceSource = (v: unknown): v is PriceSource =>
+  typeof v === "string" && (PRICE_SOURCES as readonly string[]).includes(v);
+
+/** «بعد الخصم» ونحوه — وقيمةٌ لا تُعرَف تُقرأ «من المعاينة» ولا تُخترَع. */
+export function priceSourceShort(v: unknown): string {
+  return PRICE_SOURCE_SHORT[isPriceSource(v) ? v : "exam"];
+}
+/** العبارةُ الكاملة — **مشتقّةٌ لا مكرَّرة**، فلا تنحرف نسختان. */
+export function priceSourceLabel(v: unknown): string {
+  return `السعر المعتمد ${priceSourceShort(v)}`;
+}
+
+// ── السعر التجاري ────────────────────────────────────────────────────────
+
+export interface CommercialPriceChange {
+  ok: boolean;
+  /** رسالةُ الرفض بالعربية — تُعرض في النموذج وتُرجعها النقطة نفسها. */
+  error?: string;
+  previousPrice: number;
+  finalPrice: number;
+  /** موجبٌ إن ارتفع، سالبٌ إن انخفض — والصفرُ يعني «لم يتغيّر». */
+  difference: number;
+  /** نسبةُ الفرق إلى السعر السابق، بمنزلتين. صفرٌ إن كان السابق صفراً. */
+  percentageDifference: number;
+  /** هل تغيّر فعلاً؟ وهو ما يجعل السببَ إلزامياً. */
+  changed: boolean;
+}
+
+/**
+ * تحقّقُ السعر التجاري وحسابُ فرقه — **قاعدةٌ واحدة للشاشة وللخادم**.
+ *
+ * ══ لماذا لا حدَّ أعلى ولا أدنى غيرَ الصفر ══════════════════════════════
+ * لأن هذا **قرارٌ تجاري لا حسابٌ رياضي**. مريضٌ عاد بعد سنةٍ والأسعار
+ * تغيّرت فيها مرّتين: سعرُه اليوم قد يفوق ما قالته معاينتُه القديمة، وليس
+ * في ذلك خطأ. وحدُّ «أقلَّ من المعاينة» كان سيمنع بيعاً مشروعاً ويدفع
+ * الموظّف إلى الالتفاف — والالتفافُ لا يُدقَّق.
+ *
+ * فالحدُّ الوحيد أن يكون موجباً بالدينار الصحيح: صفرٌ يجعل «تخصيص» يحجز
+ * بيعاً بلا مال، وكسرُ الدينار لا مكان له في نظامٍ كلُّ أعمدته صحيحة.
+ *
+ * ══ ولماذا السبب إلزاميٌّ عند التغيير وحده ══════════════════════════════
+ * تأكيدُ السعر كما هو ليس قراراً يُبرَّر. أمّا تغييرُه فمال، ومَن يقرأ
+ * الصفَّ بعد سنة يحتاج أن يعرف لماذا — لا أن يستنتج.
+ */
+export function computeCommercialPrice(params: {
+  previousPrice: number; finalPrice: number;
+}): CommercialPriceChange {
+  const previous = Number(params.previousPrice);
+  const nil: CommercialPriceChange = {
+    ok: false, previousPrice: Number.isFinite(previous) ? previous : 0,
+    finalPrice: 0, difference: 0, percentageDifference: 0, changed: false,
+  };
+  const final = Number(params.finalPrice);
+  if (!Number.isFinite(final)) return { ...nil, error: "السعر النهائي غير صالح" };
+  if (!Number.isInteger(final)) {
+    return { ...nil, error: "السعر النهائي يجب أن يكون بالدينار الصحيح" };
+  }
+  if (final <= 0) return { ...nil, error: "السعر النهائي يجب أن يكون أكبر من صفر" };
+
+  const difference = final - previous;
+  return {
+    ok: true, previousPrice: previous, finalPrice: final, difference,
+    //  والقسمةُ على صفرٍ لا تُنتج `Infinity` في سجلٍّ يُقرأ: سعرٌ سابقٌ صفرٌ
+    //  يعني «لم يُسعَّر بعد»، ونسبةُ الفرق إليه بلا معنى فتبقى صفراً.
+    percentageDifference: previous > 0
+      ? Math.round((difference / previous) * 10000) / 100 : 0,
+    changed: difference !== 0,
+  };
+}
 
 // ── الصلاحيات ────────────────────────────────────────────────────────────
 
@@ -111,24 +211,76 @@ export function canRecordFollowup(s: FollowupSessionLike | null | undefined): bo
 }
 
 /**
- * مَن يعتمد **تعديل السعر** — طبيبٌ مخوَّل أو المسؤول العام حصراً.
+ * مَن يحدّد **السعر التجاري النهائي** — مديرُ الفرع في فرعه، والمسؤول العام.
  *
- * ومديرُ الفرع **ليس منهما عمداً**: السعر قرارٌ وقّعه الطبيب في سجلٍّ سريري،
- * فمن يعتمد تعديله طبيبٌ لا إداريّ. وهذا هو الفرق الذي تحرسه هذه الدالّة —
- * والخادم يعيد فحصه على كل كتابة، فسحبُ الصلاحية يسري فوراً.
+ * ══ القاعدةُ التي يقوم عليها هذا كلُّه ═══════════════════════════════════
+ * **الطبيبُ يملك القرار السريري، والفرعُ يملك القرار التجاري.**
  *
- * وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل في الفرع
- * يعتمد، وإلّا تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+ * الطبيبُ حدّد الجهازَ وسعرَه المرجعيّ في سجلٍّ مختوم — وذلك عملُه وانتهى.
+ * أمّا «بكم نبيعه لهذا المريض اليوم» فمسؤوليةُ مَن يدير الفرع ويحاسَب على
+ * إيراده. وقرارُه **هو** التخويل: لا طلبَ يُقدَّم ولا اعتمادَ يُنتظَر ولا
+ * طابورَ يمتلئ. فما كان ثلاث خطواتٍ وشخصين صار خطوةً وشخصاً واحداً.
  *
- * ══ ولم تعد تحكم الشراء ═══════════════════════════════════════════════
- * كانت تحرس بوّابتين: تعديلَ السعر **وتأكيدَ الشراء**. والثانية كانت خطأً
- * في التصنيف لا في الصلاحية — انظر `canConfirmPurchase` أدناه.
+ * ══ ولماذا لا الاستقبال ════════════════════════════════════════════════
+ * لأن الاستقبال **ينفّذ** البيع بالسعر المحفوظ ولا يضعه. وهذا هو الفصل
+ * الوحيد الباقي في المسار — وهو الفصل الذي يهمّ فعلاً.
+ *
+ * **والنطاقُ الجغرافي ليس هنا**: يفرضه `canReachBranch` في النقطة من صفّ
+ * المتابعة نفسه لا من الطلب، فمديرُ فرعٍ آخر يُردّ ولو كان مديراً.
  */
-export function canApprove(s: FollowupSessionLike | null | undefined): boolean {
+export function canSetCommercialPrice(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return s?.role === "branch_manager";
+}
+
+/**
+ * مَن يرفع إشارة **«المريض يرغب بالشراء الآن»** — الطبيبُ والمسؤول.
+ *
+ * ══ إشارةُ تسليمٍ لا قرارُ بيع ══════════════════════════════════════════
+ * الطبيبُ يخرج من غرفته وقد قال المريضُ أمامه «أريده اليوم». فبدل أن يمشي
+ * إلى الاستعلامات أو يُنسى الأمر، يضغط زرّاً واحداً يرفع رايةً على الملفّ.
+ *
+ * **ولا يفعل شيئاً آخر إطلاقاً**: لا يسجّل بيعاً ولا يحرّك سعراً ولا يقيّد
+ * كلفةً ولا يفتح تصنيعاً ولا يقبض ديناراً. وتركُه — وهو الأغلب — **لا يعني
+ * أن المريض رفض**: يعني أن لا إشارةَ رُفعت، والملفّ يبقى «بانتظار قرار
+ * المريض» كما كان. فلا صمتَ يُقرأ رفضاً.
+ */
+export function canSignalPurchaseInterest(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+}
+
+/**
+ * مَن يحسم **طلبَ تعديل سعرٍ قديماً معلَّقاً** — طبيبٌ مخوَّل أو المسؤول.
+ *
+ * ══ توافقٌ رجعي لا مسارٌ حيّ ════════════════════════════════════════════
+ * لا يُنشأ طلبٌ جديد بعد اليوم: تغييرُ السعر صار قراراً مباشراً لمدير
+ * الفرع. لكنّ صفوفاً معلَّقةً قد تكون قائمةً لحظةَ النشر، ولا يجوز أن
+ * تتجمّد. فتُحسَم **بقانون يومها**: مَن كان يملك اعتمادها يملكه، ومديرُ
+ * الفرع يُردّ عنها كما كان يُردّ — لأنها قد تكون **رفعَ سعرٍ** وقّع الطبيبُ
+ * على أصله.
+ *
+ * وهو مسارٌ ينقرض بانقراض ما بقي معلَّقاً منه.
+ */
+export function canDecideLegacyPriceRequest(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
   if (s?.isAdmin === true) return true;
   //  المقارنة صريحة: صلاحيةٌ غامضة القيمة تُقرأ «لا».
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
 }
+
+/**
+ * الاسمُ القديم — مُبقىً للتوافق ومطابقٌ لـ`canDecideLegacyPriceRequest`.
+ *
+ * @deprecated السعرُ التجاري صار `canSetCommercialPrice`. وهذا الاسمُ العاري
+ * لا يقول ماذا يُعتمَد — وهو ما جعله يحمل بوّابتين معاً من قبل.
+ */
+export const canApprove = canDecideLegacyPriceRequest;
 
 /**
  * مَن يؤكّد أن **المريض اشترى** فيبدأ التصنيع — الاستقبال ومديرُ الفرع
@@ -182,28 +334,39 @@ export function canSelectExpert(
 /**
  * الأزرار المسموحة لهذه الجلسة على متابعةٍ في هذه الحالة.
  *
- * والمسارُ اليومي **ثلاثةُ أفعالٍ وبابٌ للسعر**: اشترى · لم يشترِ · يحتاج
- * متابعة · طلبُ تعديل سعر. لا خطوةَ اعتمادٍ بينها ولا انتظارَ أحد.
+ * ══ المسارُ اليومي — **فعلان وقرارٌ تجاري** ═════════════════════════════
+ *   الاستقبال: اشترى · لم يشترِ · يحتاج متابعة
+ *   مديرُ الفرع: **تحديد السعر النهائي** (قرارٌ لا طلب)
+ *   الطبيب: إشارةُ «يرغب بالشراء الآن» (تسليمٌ لا بيع)
+ *
+ * **ولا خطوةَ اعتمادٍ بينها ولا انتظارَ أحد.** لا اعتمادَ شراء، ولا اعتمادَ
+ * خصم، ولا طابورَ موافقات.
  */
 export function allowedActions(
   s: FollowupSessionLike | null | undefined, status: string,
 ): string[] {
   const out: string[] = [];
   const mayRecord = canRecordFollowup(s);
-  const mayApprove = canApprove(s);
+  const mayDecideLegacy = canDecideLegacyPriceRequest(s);
   const mayConfirm = canConfirmPurchase(s);
+  const maySetPrice = canSetCommercialPrice(s);
+  const maySignal = canSignalPurchaseInterest(s);
 
   if (status === "awaiting_patient_decision" || status === "follow_up") {
     if (mayConfirm) out.push("confirm_purchase");
-    if (mayRecord) out.push("defer", "close", "request_price_change");
+    if (mayRecord) out.push("defer", "close");
+    if (maySetPrice) out.push("set_commercial_price");
+    if (maySignal) out.push("signal_purchase_interest");
   } else if (status === "price_approval_pending") {
-    //  المتابِع يرى «بانتظار الاعتماد» ولا زرّ له — والطبيب/المسؤول يقرّر.
-    if (mayApprove) out.push("approve_price", "reject_price");
+    // ══ توافقٌ رجعي: صفٌّ معلَّقٌ من المسار القديم ══════════════════════
+    //  يُحسَم بقانون يومه — ولا يُنشأ مثلُه بعد اليوم.
+    if (mayDecideLegacy) out.push("approve_price", "reject_price");
   } else if (status === "price_approved_waiting_patient") {
-    //  اعتمادُ الطبيب للتخفيض **ليس شراءً**: يبقى أن يوافق المريض فعلاً —
-    //  ثم يؤكّده الموظّف مباشرةً بلا عودةٍ إلى الطبيب.
+    //  اعتمادٌ قديمٌ حُسم: يبقى أن يوافق المريض فعلاً، ثم يؤكّده الموظّف
+    //  مباشرةً بلا عودةٍ إلى أحد.
     if (mayConfirm) out.push("confirm_purchase");
     if (mayRecord) out.push("defer", "close");
+    if (maySetPrice) out.push("set_commercial_price");
   } else if (status === "purchase_approval_pending") {
     // ══ توافقٌ رجعي لا مسارٌ حيّ ═══════════════════════════════════════
     // لا يدخلها ملفٌّ جديد بعد اليوم. والصفوف المحتجزة فيها من قبلُ تصير
@@ -211,7 +374,10 @@ export function allowedActions(
     // أو يغلقها إن عدل المريض. بلا ترحيلِ بيانات ولا إعادةِ كتابة تاريخ.
     if (mayConfirm) out.push("confirm_purchase");
     if (mayRecord) out.push("close");
+    if (maySetPrice) out.push("set_commercial_price");
   } else if (status === "closed_without_purchase") {
+    //  **ومَن أغلقه يفتحه**: مريضٌ عاد بعد شهرين لا يحتاج طبيباً ليعود إلى
+    //  الطابور التجاري — يحتاج موظّفاً يضغط «إعادة فتح».
     if (mayRecord) out.push("reopen");
   }
   return out;
