@@ -33,6 +33,7 @@ import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
 } from "./device_episodes/store";
 import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
+import { NEW_SERVICE_DEPARTMENT, isPatientClassification } from "@shared/service_taxonomy";
 import { DeviceEpisodeError } from "./device_episodes/store";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
@@ -1400,10 +1401,13 @@ export async function registerRoutes(
     // Batch-fetch visits, payments and merge aliases to avoid N+1 queries.
     // الأسماءُ البديلة تُجلب لمفاتيح هذه القائمة وحدها — وهي ما مرّ بتثبيت
     // الفرع أعلاه، فلا يتّسع نطاقٌ ولا يُقرأ مريضٌ لم يُقرأ.
-    const [allVisits, allPayments, aliasByPatient] = await Promise.all([
+    const [allVisits, allPayments, aliasByPatient, caseTypesByPatient] = await Promise.all([
       storage.getVisitsByPatientIds(patientIds),
       storage.getPaymentsByPatientIds(patientIds),
       aliasCodesByPatient(patientIds),
+      //  دليلُ الانتماء للقسم. الأعلامُ وحدها تُخطئ: حالةٌ تُخلَق أيضاً من
+      //  أمر تصنيع أو دفعةٍ موسومة، فمريضٌ بلا أعلامٍ قد يحمل حالةً حقيقية.
+      storage.getCaseTypesByPatientIds(patientIds),
     ]);
 
     const visitsByPatient = new Map<number, typeof allVisits>();
@@ -1424,6 +1428,7 @@ export async function registerRoutes(
       ...patient,
       visits: visitsByPatient.get(patient.id) || [],
       payments: paymentsByPatient.get(patient.id) || [],
+      caseTypes: caseTypesByPatient.get(patient.id) || [],
       //  يُحذف الحقل حين لا أسماء بديلة — والغالبية كذلك، فلا يثقل الردّ.
       ...(aliasByPatient.has(patient.id)
         ? { aliasCodes: aliasByPatient.get(patient.id) } : {}),
@@ -1804,6 +1809,20 @@ export async function registerRoutes(
       }
       if (!branchId || branchId === 0) {
         return res.status(400).json({ message: "يجب اختيار الفرع" });
+      }
+
+      // ══ تصنيفُ المريض إلزاميّ للكتابة الجديدة ═══════════════════════
+      //  كان العمود يُترك فارغاً فتنشأ فئةٌ ثالثة بحكم الأمر الواقع:
+      //  «غير محدَّد» تكبر مع كل تسجيل، فلا يعرف التقريرُ جديداً من قديم.
+      //  **والقيمتان اثنتان لا ثالثة لهما**، والحارس هنا في الخادم لا في
+      //  النموذج وحده — فطلبٌ يتجاوز الواجهة يُردّ كما تُردّ ضغطةٌ فيها.
+      //
+      //  ولا يمسّ هذا صفّاً قائماً: الصفوفُ القديمة الفارغة تبقى كما هي
+      //  وتُعرَض «غير محدَّد — بيانات قديمة» حتى تُنظَّف يدوياً.
+      if (!isPatientClassification(req.body?.patientClassification)) {
+        return res.status(400).json({
+          message: "يجب تحديد تصنيف المريض: جديد أو قديم",
+        });
       }
 
       // The amputation/device details are the doctor's decision. Only
@@ -2292,7 +2311,23 @@ export async function registerRoutes(
             treatmentType: e.treatmentType ?? "", sessionCount: e.sessionCount,
           }))) }
         : {};
-      await storage.updatePatient(patientId, { totalCost: newTotalCost, ...planPatch } as any, "new_service");
+      // ══ قسمُ «خدمة جديدة» (ترحيل ٠٥٦) ═══════════════════════════════
+      //  الأنواعُ الثلاثة الباقية في هذه النقطة — جلساتٌ إضافية · استشارة ·
+      //  خدمة أخرى — **كلُّها علاجٌ طبيعي** بقيمةٍ مهيكلة تُقرأ من الطلب،
+      //  لا بمطابقةِ نصٍّ حرّ. والاستشارةُ منها، وهي التي كانت بلا قسم.
+      //
+      //  **والقيدُ يتبع المال حيث ذهب**: حالةُ العلاج الطبيعي إن وُجدت، وإلّا
+      //  فالحالةُ التي تستقبل الكلفة فعلاً أدناه. وهذا عينُ ما يفعله
+      //  `addToCaseCost` بـ`resolveCaseId` — فيُنادى هو نفسُه ولا تُكتب قاعدةٌ
+      //  ثانية تنحرف عنه، فيقول التقريرُ قسماً وترتفع كلفةُ قسمٍ آخر.
+      const nsCaseId = NEW_SERVICE_DEPARTMENT[String(serviceType)]
+        ? await storage.resolveCaseId(patientId, {
+            tag: paymentTreatmentType ?? null, treatmentType: paymentTreatmentType ?? null,
+          })
+        : null;
+      await storage.updatePatient(
+        patientId, { totalCost: newTotalCost, ...planPatch } as any, "new_service", nsCaseId,
+      );
 
       // Keep the per-case split in step: the same amount the aggregate just
       // gained is added onto the case(s) the service belongs to — otherwise
@@ -2713,7 +2748,11 @@ export async function registerRoutes(
       const patient = await storage.getPatient(input.patientId);
       if (patient) {
         const newTotalCost = (patient.totalCost || 0) + input.cost;
-        await storage.updatePatient(patient.id, { totalCost: newTotalCost }, "visit");
+        //  قسمُ كلفةِ الزيارة هو حالةُ الزيارة بعينها (ترحيل ٠٥٦) — وقد
+        //  حسمتها `createVisit` أعلاه، فلا تُستنتج من أعلام المريض.
+        await storage.updatePatient(
+          patient.id, { totalCost: newTotalCost }, "visit", visit.caseId ?? null,
+        );
 
         const visitPayment = await storage.createPayment({
           patientId: input.patientId,
@@ -3939,7 +3978,48 @@ export async function registerRoutes(
         };
       });
 
-      res.json(rows);
+      // ══ الملخّصُ المالي لليوم ═══════════════════════════════════════
+      //  **لا حسابَ يُعاد هنا ولا في صفحة React.** يُنادى مصدرُ الحقيقة
+      //  المحاسبي نفسه بنفس اليوم ونفس نطاق الفرع — فرقمُ التقرير اليومي
+      //  ورقمُ صفحة المحاسبة يخرجان من دالّةٍ واحدة ولا يفترقان أبداً.
+      //
+      //  والنطاق مطابقٌ لجدول الزيارات أعلاه حرفاً: `effectiveBranchId`
+      //  نفسها، و`dateParam` نفسه (أو يومُ بغداد الحالي حين يُترك فارغاً).
+      const reportDay = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
+        ? dateParam
+        : new Date(Date.now() + BAGHDAD_OFFSET_MS).toISOString().split("T")[0];
+
+      //  **والمال محجوبٌ بنفس بوّابته القائمة.** جدولُ الزيارات نقطةٌ يقرأها
+      //  كلُّ موظّف (`isAuthenticated`)، فإلحاقُ المال بها بلا شرطٍ كان
+      //  سيفتح أرقامَ الأقسام للاستقبال — ولخبير الأطراف المحجوب مالياً في
+      //  كلّ النظام — من بابٍ خلفيّ. فالشرطُ هو شرطُ صفحة المحاسبة عينُه
+      //  (`canManageAccounting`)، ولا دورَ جديدٌ يُخترع هنا. ومَن لا يملكه
+      //  يأخذ `financial: null` ويبقى جدولُ زياراته كما كان بلا نقصان.
+      const canSeeMoney = Boolean(isAdmin || branchSession?.permissions?.canManageAccounting);
+
+      //  **بحدود يوم بغداد** — نفسِ حدود جدول الزيارات أعلاه بالضبط. ولو
+      //  حُسب بـUTC لاختلف النطاقان ثلاثَ ساعات، فظهرت زيارةٌ بلا مالها.
+      const acct = canSeeMoney
+        ? await storage.getAccountingSummary(
+            effectiveBranchId ?? undefined, reportDay, reportDay, { baghdadDays: true },
+          )
+        : null;
+
+      res.json({
+        date: reportDay,
+        branchId: effectiveBranchId,
+        visits: rows,
+        //  **المقبوض والمبيعات منفصلان** ولا يُسمَّيان «وارداً» معاً:
+        //  `paid` نقدٌ وصل، و`revenue` كلفةٌ قُيِّدت. وخلطُهما هو العطبُ
+        //  الذي جاء هذا التقسيم يصلحه.
+        financial: acct ? {
+          byDepartment: acct.byDepartment,
+          rollups: acct.rollups,
+          expenses: acct.totalExpenses,
+          //  الصافي النقدي — نفس تعريف صفحة المحاسبة.
+          netCash: acct.rollups.grandTotal.paid - acct.totalExpenses,
+        } : null,
+      });
     } catch (error) {
       console.error("Daily patient report error:", error);
       res.status(500).json({ message: "خطأ في جلب تقرير المرضى اليومي" });

@@ -65,6 +65,12 @@ interface VisitModalProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   initialPurpose?: "visit" | "maintenance";
+  /**
+   * نوعُ الجهاز المراد صيانته حين يُفتح من قسمٍ بعينه في موزِّع الخدمات.
+   * **ضبطٌ للنافذة لا تجاوزٌ للحارس**: `resolveMaintenanceServiceType` تبقى
+   * ترفض ما لا يملكه المريض، والخادم يعيد التحقّق بعدها.
+   */
+  initialMaintServiceType?: "prosthetic" | "medical_support";
   hideTrigger?: boolean;
 }
 
@@ -93,7 +99,7 @@ function getTodayDate(): string {
 
 export function VisitModal({
   patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport,
-  open: openProp, onOpenChange, initialPurpose, hideTrigger,
+  open: openProp, onOpenChange, initialPurpose, initialMaintServiceType, hideTrigger,
 }: VisitModalProps) {
   const [openSelf, setOpenSelf] = useState(false);
   const controlled = openProp !== undefined;
@@ -109,7 +115,7 @@ export function VisitModal({
   const hasDevice = !!isAmputee || !!isMedicalSupport;
   const [purpose, setPurpose] = useState<"visit" | "maintenance">(initialPurpose ?? "visit");
   // أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد لا يُسأل.
-  const [maintServiceType, setMaintServiceType] = useState<string>("");
+  const [maintServiceType, setMaintServiceType] = useState<string>(initialMaintServiceType ?? "");
   const [maintCost, setMaintCost] = useState<number>(0);
   /** الجهاز المقصود — بالصيانة أو بالزيارة العامّة. فارغٌ حتى يختار الموظّف. */
   const [maintDevice, setMaintDevice] = useState<string>("");
@@ -177,7 +183,9 @@ export function VisitModal({
   // الغرض الموجَّه يُثبَّت عند كل فتح، لا مرّةً واحدة عند التركيب.
   useEffect(() => {
     if (open && initialPurpose) setPurpose(initialPurpose);
-  }, [open, initialPurpose]);
+    //  ونوعُ الجهاز يُثبَّت عند كل فتح كذلك، فالموزِّع يُركّب النافذة مفتوحةً.
+    if (open && initialMaintServiceType) setMaintServiceType(initialMaintServiceType);
+  }, [open, initialPurpose, initialMaintServiceType]);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -193,7 +201,10 @@ export function VisitModal({
   const resetAll = () => {
     setPurpose(initialPurpose ?? "visit"); setExpertUserId(""); setExpectedDeliveryDate("");
     setMaintDevice(""); setVisitDevice("");
-    setVisitCaseId(null); setMaintCost(0); setMaintServiceType("");
+    //  يعود إلى ما فُتحت به لا إلى الفراغ — نافذةُ «صيانة مسند» تُعاد
+    //  ضبطاً على المسند، وإلّا سألت صاحبَ النوعين سؤالاً سبق أن أجابه.
+    setMaintServiceType(initialMaintServiceType ?? "");
+    setVisitCaseId(null); setMaintCost(0);
     setReviewPath("quick"); setReviewNote("");
     setReviewKind(initialPurpose === "maintenance" ? "maintenance" : "follow_up");
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });

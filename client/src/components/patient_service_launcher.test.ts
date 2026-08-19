@@ -112,14 +112,32 @@ function main() {
   // ══ خريطة الخيارات ⇒ المسارات ════════════════════════════════════════
   console.log("\n── خريطة الخيار إلى مساره ──");
   const fresh = launcherOptions({});
-  same("تسعة خيارات لا غير", fresh.map((o) => o.id), [
+  //  عشرةٌ الآن لا تسعة: الصيانةُ صارت بنداً لكلّ قسمِ جهاز، فيعرف
+  //  الناظرُ أيَّ جهازٍ يصون قبل أن يفتح النافذة.
+  same("عشرة خيارات لا غير", fresh.map((o) => o.id), [
     "prosthetic_case", "support_case",
-    "new_prosthetic_device", "new_support_device", "maintenance",
+    "new_prosthetic_device", "new_support_device",
+    "maintenance_prosthetic", "maintenance_support",
     "physio_case", "additional_therapy", "consultation", "other",
   ]);
-  same("وثلاث مجموعات بأسمائها", Object.keys(GROUP_LABELS), ["device", "physio", "other"]);
-  same("والمجموعات كما طُلبت", fresh.map((o) => o.group),
-    ["device", "device", "device", "device", "device", "physio", "physio", "other", "other"]);
+  // ══ ثلاثةُ أقسامٍ لا رابع ═════════════════════════════════════════════
+  //  «خدمات أخرى» زالت: الاستشارةُ والخدمةُ الأخرى والجلساتُ الإضافية
+  //  كلُّها علاجٌ طبيعي تنظيمياً ومالياً، فلا مجموعةَ تعيش خارج التصنيف.
+  same("وثلاثةُ أقسامٍ بأسمائها الرسمية", Object.keys(GROUP_LABELS),
+    ["prosthetic", "medical_support", "physiotherapy"]);
+  same("**ولا مجموعةَ رابعة إطلاقاً**",
+    [...new Set(fresh.map((o) => o.group))].sort(),
+    ["medical_support", "physiotherapy", "prosthetic"]);
+  same("والمجموعات كما طُلبت", fresh.map((o) => o.group), [
+    "prosthetic", "medical_support",
+    "prosthetic", "medical_support",
+    "prosthetic", "medical_support",
+    "physiotherapy", "physiotherapy", "physiotherapy", "physiotherapy",
+  ]);
+  //  وكلُّ خدمةٍ غيرِ جهازٍ تقع تحت العلاج الطبيعي — لا واحدةَ خارجه.
+  same("**وكلُّ ما ليس جهازاً فهو علاجٌ طبيعي**",
+    fresh.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
+    ["physiotherapy", "physiotherapy", "physiotherapy"]);
   // **قائمة مغلقة**: ثلاث نقاط قائمة لا رابع، ولا «خدمة عامّة».
   // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
   same("٢٠. ولا نقطة خامسة يذهب إليها الموزِّع",
@@ -154,8 +172,11 @@ function main() {
     [opt(fresh, "consultation").disabled, opt(fresh, "other").disabled], [false, false]);
 
   // ١١. الصيانة **لا تمرّ بـ`new-service` إطلاقاً**.
+  //  وبندُ كلّ قسمٍ يحمل نوعَ جهازه معه، فتُفتح النافذة مضبوطةً لا مخمَّنة.
   same("١١. الصيانة ⇒ maintenance-visit لا new-service",
-    opt(fresh, "maintenance").flow, { kind: "maintenance_visit" });
+    [opt(fresh, "maintenance_prosthetic").flow, opt(fresh, "maintenance_support").flow],
+    [{ kind: "maintenance_visit", serviceType: "prosthetic" },
+      { kind: "maintenance_visit", serviceType: "medical_support" }]);
   const serviceTypes = fresh.filter((o) => o.flow.kind === "new_service")
     .map((o) => (o.flow as any).serviceType).sort();
   same("وأنواع new-service ثلاثة لا رابع لها",
@@ -244,8 +265,14 @@ function main() {
   same("١٨. ونوعٌ لا يملكه ⇒ لا يُرسَل", resolveMaintenanceServiceType(PRO, "medical_support"), null);
   same("وقيمةٌ مخترَعة ⇒ لا تُرسَل", resolveMaintenanceServiceType(DUAL, "orthosis"), null);
   same("وبلا جهاز ⇒ لا صيانة", resolveMaintenanceServiceType(NONE), null);
-  same("والصيانة معطَّلة لمن لا جهاز له", opt(launcherOptions(NONE), "maintenance").disabled, true);
-  same("ومتاحة لصاحب الجهاز", opt(launcherOptions(PRO), "maintenance").disabled, false);
+  same("والصيانة معطَّلة لمن لا جهاز له",
+    [opt(launcherOptions(NONE), "maintenance_prosthetic").disabled,
+      opt(launcherOptions(NONE), "maintenance_support").disabled], [true, true]);
+  //  وصاحبُ الطرف يرى صيانةَ طرفه متاحةً وصيانةَ المسند معطَّلة — فالنسبةُ
+  //  إلى القسم صارت مرئيةً قبل الضغط لا بعده.
+  same("ومتاحة لصاحب الجهاز في قسمه وحده",
+    [opt(launcherOptions(PRO), "maintenance_prosthetic").disabled,
+      opt(launcherOptions(PRO), "maintenance_support").disabled], [false, true]);
   same("وما يملكه يُقرأ بترتيبٍ ثابت", ownedDeviceTypes(DUAL), ["prosthetic", "medical_support"]);
 
   // والنافذة تسأل فعلاً وترسل النوع — لا تكتفي بالمنطق.

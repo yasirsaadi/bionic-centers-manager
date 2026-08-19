@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Building2, ArrowRight, UserPlus, Users, Banknote, CalendarDays, Search, Eye, ChevronRight, ChevronLeft, Calendar } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
+import { PatientDepartmentBadges, usePatientDepartmentText } from "@/components/PatientDepartmentBadges";
 import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
@@ -39,6 +40,7 @@ export default function BranchDetails() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { t } = useTranslation();
+  const departmentText = usePatientDepartmentText();
   const dir = t.dir;
   const branchId = Number(id);
   const [viewMode, setViewMode] = useState<"date" | "all">("date");
@@ -294,9 +296,7 @@ export default function BranchDetails() {
                           </p>
                         </div>
                       </div>
-                      <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs shrink-0">
-                        {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-                      </Badge>
+                      <PatientDepartmentBadges patient={patient} className="font-normal text-xs shrink-0" />
                     </div>
                     {patient.patientClassification && (
                       <Badge variant="outline" className="text-xs mt-1 self-start">
@@ -336,7 +336,7 @@ export default function BranchDetails() {
                           <div>
                             <h4 className="font-bold text-slate-800">{patient.name}</h4>
                             <p className="text-sm text-muted-foreground">
-                              {patient.age} {t.patients.years} - {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
+                              {patient.age} {t.patients.years} - {departmentText(patient)}
                             </p>
                           </div>
                         </div>
@@ -345,9 +345,7 @@ export default function BranchDetails() {
                             <Calendar className="w-4 h-4" />
                             <span>{formatDateTimeIraq(patient.createdAt)}</span>
                           </div>
-                          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
-                            {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-                          </Badge>
+                          <PatientDepartmentBadges patient={patient} />
                           {patient.patientClassification && (
                             <Badge variant="outline" className="text-xs">
                               {patient.patientClassification === "new" ? t.patientForm.newPatient : t.patientForm.pastPatient}

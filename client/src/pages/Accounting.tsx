@@ -179,6 +179,17 @@ interface AccountingSummary {
     shared: { expenses: number };
     unclassified: { revenue: number; paid: number };
   };
+  /** الأقسامُ الثلاثة كلٌّ على حدة — والمساندُ لم تعد مبتلعةً في «أجهزة». */
+  byDepartment?: {
+    prosthetic: { revenue: number; paid: number };
+    medical_support: { revenue: number; paid: number };
+    physiotherapy: { revenue: number; paid: number };
+    unclassified: { revenue: number; paid: number };
+  };
+  rollups?: {
+    devicesCombined: { revenue: number; paid: number };
+    grandTotal: { revenue: number; paid: number };
+  };
 }
 
 interface Debtor {
@@ -3303,6 +3314,58 @@ export default function Accounting() {
                 figures are never affected — the split is purely a detail view.
                 Net per section = وارد − صرف مباشر. المصاريف «المشتركة» تظهر
                 منفصلة ولا تُخصم من قسم بعينه. */}
+            {/* ══ الأقسامُ الثلاثة ═══════════════════════════════════════
+                كان القسمان «أجهزة» و«علاج طبيعي»، فمديرُ المساند لا يعرف
+                كم باع قسمُه. والآن ثلاثةٌ مفصولة، وتجميعان مشتقّان.
+
+                و«الوارد» و«المبيعات» **عمودان لا واحد**: الأول نقدٌ وصل
+                والثاني كلفةٌ قُيِّدت، وكانا يُسمَّيان باسمٍ واحد. */}
+            {summary?.byDepartment && summary?.rollups && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-base font-semibold">الأقسام السريرية الثلاثة</h3>
+                </div>
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-sm" data-testid="table-departments">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="p-2 text-right font-medium">القسم</th>
+                        <th className="p-2 text-right font-medium">الوارد (المقبوض)</th>
+                        <th className="p-2 text-right font-medium">المبيعات (كلفة مسجَّلة)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { key: "prosthetic", title: "الأطراف الصناعية", d: summary.byDepartment.prosthetic },
+                        { key: "medical_support", title: "المساند الطبية", d: summary.byDepartment.medical_support },
+                        { key: "devices-combined", title: "الأطراف + المساند", d: summary.rollups.devicesCombined, strong: true },
+                        { key: "physiotherapy", title: "العلاج الطبيعي", d: summary.byDepartment.physiotherapy },
+                        { key: "grand-total", title: "الإجمالي العام", d: summary.rollups.grandTotal, strong: true },
+                      ].map(({ key, title, d, strong }) => (
+                        <tr key={key} className={strong ? "border-t bg-muted/20 font-semibold" : "border-t"}
+                          data-testid={`dept-row-${key}`}>
+                          <td className="p-2">{title}</td>
+                          <td className="p-2 tabular-nums text-green-700">{formatNumberOnly(d.paid || 0)}</td>
+                          <td className="p-2 tabular-nums text-muted-foreground">{formatNumberOnly(d.revenue || 0)}</td>
+                        </tr>
+                      ))}
+                      {/*  غيرُ المبوَّب يُعرَض صراحةً — مشكلةُ جودةِ بياناتٍ
+                          مرئية، لا مبلغٌ يُدسّ في قسمٍ فيكذب رقمُه. */}
+                      {((summary.byDepartment.unclassified.paid || 0) !== 0
+                        || (summary.byDepartment.unclassified.revenue || 0) !== 0) && (
+                        <tr className="border-t text-amber-700" data-testid="dept-row-unclassified">
+                          <td className="p-2">غير مبوَّب — بيانات قديمة</td>
+                          <td className="p-2 tabular-nums">{formatNumberOnly(summary.byDepartment.unclassified.paid || 0)}</td>
+                          <td className="p-2 tabular-nums">{formatNumberOnly(summary.byDepartment.unclassified.revenue || 0)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {summary?.bySection && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">

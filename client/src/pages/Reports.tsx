@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import { api } from "@shared/routes";
 import type { Branch } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
+import { PatientDepartmentBadges } from "@/components/PatientDepartmentBadges";
 import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 
@@ -179,9 +180,7 @@ function DaySummaryCard({ summary, isExpanded, onToggle }: {
                         <td className="p-3 text-sm text-muted-foreground">{idx + 1}</td>
                         <td className="p-3 font-medium text-slate-800">{patient.name}</td>
                         <td className="p-3">
-                          <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"}>
-                            {patient.isAmputee ? t.reports.amputee : patient.isMedicalSupport ? t.reports.medicalSupport : t.reports.physiotherapy}
-                          </Badge>
+                          <PatientDepartmentBadges patient={patient} />
                         </td>
                         <td className="p-3 text-sm text-slate-700">{patient.visitReason || '-'}</td>
                         <td className={`p-3 ${dir === "rtl" ? "text-left" : "text-right"} font-mono font-bold text-slate-800`}>

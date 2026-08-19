@@ -5,6 +5,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
 import { PatientCaseChips, PatientCasePanel, type CaseRow } from "@/components/patient/PatientCasesTabs";
+import { PatientDepartmentBadges } from "@/components/PatientDepartmentBadges";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PatientCodeBadge } from "@/components/PatientCodeBadge";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
@@ -847,9 +848,7 @@ export default function PatientDetails() {
           {patientCasesList.length > 0 ? (
             <PatientCaseChips cases={patientCasesList} selectedId={selectedCaseId} onSelect={setSelectedCaseId} />
           ) : (
-            <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto">
-              {patient.isAmputee ? t.patients.amputee : patient.isMedicalSupport ? t.patients.medicalSupportLabel : t.patients.physiotherapy}
-            </Badge>
+            <PatientDepartmentBadges patient={patient} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto" />
           )}
           {(() => {
             const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;

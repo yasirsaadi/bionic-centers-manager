@@ -8,6 +8,7 @@ import { Building2, MapPin, Users, ArrowLeft, ArrowRight, Search, Eye, X } from 
 import { AdminGate } from "@/components/AdminGate";
 import { useState, useMemo } from "react";
 import type { Branch, Patient, Visit } from "@shared/schema";
+import { PatientDepartmentBadges } from "@/components/PatientDepartmentBadges";
 import { useTranslation } from "@/i18n/LanguageContext";
 
 type PatientWithVisits = Patient & { visits?: Visit[] };
@@ -36,6 +37,7 @@ export default function Branches() {
     const rawName = branches?.find(b => b.id === branchId)?.name || "-";
     return (t.branches as Record<string, string>)[rawName] || rawName;
   };
+
 
   const searchResults = useMemo(() => {
     if (!searchTerm.trim() || !allPatients) return [];
@@ -125,9 +127,7 @@ export default function Branches() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant={patient.isAmputee ? "default" : patient.isMedicalSupport ? "outline" : "secondary"} className="font-normal text-xs">
-                              {patient.isAmputee ? t.branchesPage.amputee : patient.isMedicalSupport ? t.branchesPage.medicalSupport : t.branchesPage.physiotherapy}
-                            </Badge>
+                            <PatientDepartmentBadges patient={patient} className="font-normal text-xs" />
                             <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 gap-1 h-8 text-xs">
                               <Eye className="w-3.5 h-3.5" />
                               {t.branchesPage.view}

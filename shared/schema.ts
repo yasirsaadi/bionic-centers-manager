@@ -535,6 +535,15 @@ export const costEntries = pgTable("cost_entries", {
    * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
    */
   deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
+  /**
+   * حالةُ المريض التي يخصّها هذا القيد (ترحيل ٠٥٦) — **وهي قسمُه**.
+   *
+   * القسمُ لا يُخزَّن نصّاً: `patient_cases.case_type` هو القسم، فالرابطُ
+   * يُبقي مصدرَ الحقيقة واحداً ولا ينحرف عنه صفٌّ يوماً. وفارغةٌ لكلّ صفٍّ
+   * كُتب قبل الترحيل، ولمعاملةٍ إدارية لا تخصّ قسماً بعينه — ويظهر ذلك
+   * «غير مبوَّب» في التقرير بدل أن يُخمَّن.
+   */
+  caseId: integer("case_id").references(() => patientCases.id),
   createdAt: timestamp("created_at").defaultNow(),
 }, (t) => [
   /**

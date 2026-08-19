@@ -438,6 +438,9 @@ export async function createMaintenanceOrderWithVisit(params: {
         patientId: params.patientId, branchId: params.branchId,
         amount: params.cost, source: "maintenance", notes: "أجور صيانة",
         deviceEpisodeId: targetEpisodeId,
+        //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي
+        //  نفسها التي رُفعت كلفتُها سطرين أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
+        caseId: deviceCase?.id ?? null,
       });
     }
     return workOrder;
