@@ -370,12 +370,14 @@ async function main() {
     // ══ ١٣. إشارةُ الطبيب — **تسليمٌ لا بيع** ══════════════════════════
     console.log("\n── إشارة رغبة الشراء ──");
     const beforeSignal = await moneyOf(p1);
-    same("١٣. **الاستقبال لا يرفع الإشارة** — إشارةُ تسليمٍ من غرفة الطبيب",
-      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.recv, {})).status, 403);
-    same("    ولا مديرُ الفرع",
-      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.mgr, {})).status, 403);
+    //  **قرارُ المريض يسجّله مَن سمعه**: الطبيبُ وهو يخرج من غرفته، أو
+    //  الاستعلامات وقد وقف المريضُ أمامه بعدها — ولا يُشترط أحدٌ بعينه.
+    same("١٣. **والخبيرُ لا يسجّله** — ليس من مسؤولي المتابعة",
+      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.expert, {})).status, 403);
+    same("    ولا المحاسب",
+      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.acct, {})).status, 403);
     const signal = await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.doc, {});
-    same("١٤. **والطبيبُ يرفعها**", signal.status, 200);
+    same("١٤. **والطبيبُ يسجّله**", signal.status, 200);
     same("    والرايةُ محفوظةٌ بصاحبها",
       [Boolean(signal.body?.followup?.purchaseInterestAt),
         signal.body?.followup?.purchaseInterestByName], [true, "د. المعاين"]);
@@ -386,7 +388,8 @@ async function main() {
       [statusBeforePrice, 1_200_000, "manager_set"]);
     same("    والمالُ ساكنٌ تماماً", await moneyOf(p1), beforeSignal);
     //  والضغطةُ المكرّرة لا تُنتج حدثاً ثانياً ولا تنسبها إلى آخر مَن مرّ.
-    const signalAgain = await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.doc2, {});
+    //  **والاستقبالُ يسجّله أيضاً** — لكنّ الرايةَ مرفوعةٌ فلا تُنسَب إليه.
+    const signalAgain = await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.recv, {});
     same("١٦. **والضغطةُ المكرّرة لا تُنشئ حدثاً ثانياً**",
       [signalAgain.status, signalAgain.body?.alreadySignaled,
         signalAgain.body?.followup?.purchaseInterestByName],
@@ -1365,6 +1368,84 @@ async function main() {
     await http("POST", `/api/followups/${fR.id}/expert`, S.recv, { expertUserId: EXPERT });
     same("    **والاستقبالُ يؤكّد الشراء**",
       (await http("POST", `/api/followups/${fR.id}/confirm-purchase`, S.recv, {})).status, 200);
+
+    // ══ ٤٨. **قرارُ المريض: مَن سجّله يبقى مقروءاً** ══════════════════
+    console.log("\n── قرارُ المريض وأثرُه المقروء ──");
+    //  ── «اشترى» من الاستقبال: قرارٌ بلا مال ──
+    const pRecvBuy = await mkPatient("اشترى بالاستقبال");
+    await mkCase(pRecvBuy);
+    await signExam(pRecvBuy, S.doc, { deviceCost: 500_000 });
+    const fRB = await followupOf(pRecvBuy);
+    const beforeRB = await moneyOf(pRecvBuy);
+    const rbSignal = await http("POST", `/api/followups/${fRB.id}/purchase-interest`, S.recv, {});
+    same("٤٨. **الاستقبالُ يسجّل «اشترى»**",
+      [rbSignal.status, rbSignal.body?.followup?.purchaseInterestByName], [200, "استعلامات"]);
+    same("    **ولا مالَ ولا تصنيعَ ولا خبيرَ تحرّك**",
+      [await moneyOf(pRecvBuy), rbSignal.body?.followup?.selectedExpertUserId],
+      [beforeRB, null]);
+    same("    والحالةُ كما هي — قرارٌ لا بيع",
+      rbSignal.body?.followup?.status, "awaiting_patient_decision");
+
+    //  ── «لم يشترِ»: السببُ إلزاميٌّ والملاحظةُ اختيارية ──
+    const pNoBuy = await mkPatient("لم يشترِ بالاستقبال");
+    await mkCase(pNoBuy);
+    await signExam(pNoBuy, S.doc, { deviceCost: 700_000 });
+    const fNB = await followupOf(pNoBuy);
+    same("٤٩. **وبلا سببٍ يُردّ**",
+      (await http("POST", `/api/followups/${fNB.id}/close`, S.recv, {})).status, 400);
+    same("    وسببٌ مخترَعٌ يُردّ",
+      (await http("POST", `/api/followups/${fNB.id}/close`, S.recv,
+        { reason: "لأني أريد" })).status, 400);
+    const nbClosed = await http("POST", `/api/followups/${fNB.id}/close`, S.recv,
+      { reason: "price", note: "سيستشير عائلته" });
+    same("    **والسببُ من القائمة يُقبل ومعه ملاحظة**",
+      [nbClosed.status, nbClosed.body?.status, nbClosed.body?.closedReason],
+      [200, "closed_without_purchase", "price"]);
+
+    //  ── **ويبقى مقروءاً في ملفّ المريض**: السبب والملاحظة ومَن ومتى ──
+    const nbRow = (await http("GET", `/api/followups/patient/${pNoBuy}`, S.recv)).body?.[0];
+    same("٥٠. **النتيجةُ والسببُ والملاحظةُ ومَن سجّلها — كلُّها في الملفّ**",
+      [nbRow?.status, nbRow?.closedReason, nbRow?.closedNote ?? nbRow?.lastNote,
+        nbRow?.closedByName],
+      ["closed_without_purchase", "price", "سيستشير عائلته", "استعلامات"]);
+    check(Boolean(nbRow?.closedEventAt), "    ومعها وقتُها", String(nbRow?.closedEventAt));
+    //  **والملاحظةُ لا تختفي بعد الإغلاق** — الحدثُ يحملها والصفُّ كذلك.
+    check(String(nbRow?.lastNote ?? "") === "سيستشير عائلته",
+      "    **والملاحظةُ باقيةٌ على الصفّ أيضاً**", String(nbRow?.lastNote));
+    //  والطبيبُ يسجّلها كذلك — اختياراً لا واجباً.
+    const pDocNo = await mkPatient("لم يشترِ بالطبيب");
+    await mkCase(pDocNo);
+    await signExam(pDocNo, S.doc, { deviceCost: 400_000 });
+    const fDN = await followupOf(pDocNo);
+    same("٥١. **والطبيبُ يسجّل «لم يشترِ» كذلك**",
+      (await http("POST", `/api/followups/${fDN.id}/close`, S.doc,
+        { reason: "not_convinced", note: "غيّر رأيه" })).status, 200);
+    same("    وتُنسَب إليه هو",
+      (await http("GET", `/api/followups/patient/${pDocNo}`, S.recv)).body?.[0]?.closedByName,
+      "د. المعاين");
+
+    // ══ ٥٢. **البابُ المكرَّر مُخفى** — خريطةُ الخدمات المحكومة ═══════════
+    const governed = (await http("GET", "/api/followups/governed", S.recv)).body?.governed ?? {};
+    check(Array.isArray(governed[pRecvBuy]) && governed[pRecvBuy].includes("prosthetic"),
+      "٥٢. **الخدمةُ الحيّة تظهر محكومةً** — فيُخفى «تخصيص» عنها",
+      JSON.stringify(governed[pRecvBuy]));
+    //  **والمغلقُ لا يحكم شيئاً**: بابُ التخصيص القديم يعود مشروعاً له.
+    same("    **والمغلقُ يخرج من الخريطة** — بابُه القديم يعود مشروعاً",
+      governed[pNoBuy] ?? [], []);
+    same("    والخبيرُ لا يقرأ الخريطة إطلاقاً",
+      (await http("GET", "/api/followups/governed", S.expert)).body?.governed, {});
+
+    // ══ ٥٣. **ومرشِّحاتُ الشاشة الحيّة تعمل** ═════════════════════════
+    const wants = (await http("GET", "/api/followups?filter=wants_purchase", S.recv)).body ?? [];
+    check(wants.some((r: any) => r.patientId === pRecvBuy),
+      "٥٣. **مرشِّح «يرغب بالشراء» يحمل مَن سجّل قراره**",
+      JSON.stringify(wants.map((r: any) => r.patientId)));
+    check(!wants.some((r: any) => r.patientId === pNoBuy),
+      "    ولا يحمل مَن أُغلق ملفُّه", "");
+    const legacyRows = (await http("GET", "/api/followups?filter=legacy", S.admin)).body ?? [];
+    same("    **ومرشِّحُ «حالات قديمة» يحمل الموروثةَ وحدها**",
+      legacyRows.filter((r: any) => !["price_approval_pending",
+        "price_approved_waiting_patient", "purchase_approval_pending"].includes(r.status)), []);
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

@@ -49,6 +49,9 @@ interface Followup {
   priceSource: string;
   purchaseInterestAt: string | null;
   purchaseInterestByName: string | null;
+  closedByName: string | null;
+  closedEventAt: string | null;
+  closedNote: string | null;
   selectedExpertUserId: number | null;
   selectedExpertName: string | null;
   examDoctorName: string | null;
@@ -81,6 +84,12 @@ const STATUS_TONE: Record<string, string> = {
 
 const fmt = (v: string | null) =>
   v ? new Date(v).toLocaleDateString("ar-IQ", { year: "numeric", month: "2-digit", day: "2-digit" }) : "—";
+/** «متى» سؤالٌ عن اللحظة لا عن اليوم وحده — فالساعةُ معه. */
+const fmtDateTime = (v: string | null) =>
+  v ? new Date(v).toLocaleString("ar-IQ", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  }) : "—";
 
 /** موعدٌ افتراضي مقترَح — أسبوعٌ من اليوم. والمستخدم يغيّره كما يشاء. */
 function defaultNextDate(): string {
@@ -213,10 +222,40 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         {active.purchaseInterestAt && (
           <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800"
             data-testid="text-purchase-interest">
-            🟢 المريض أبدى رغبته بالشراء الآن
+            🟢 اشترى — المريض قرّر الإكمال، ينتظر إتمام البيع
             {active.purchaseInterestByName && ` — سجّلها ${active.purchaseInterestByName}`}
             {` (${fmt(active.purchaseInterestAt)})`}
           </p>
+        )}
+
+        {/*  **النتيجةُ تبقى مقروءةً بعد الإغلاق** — بسببها وملاحظتها ومَن
+            سجّلها ومتى. والملاحظةُ لا تختفي: هي في الحدث وفي الصفّ معاً. */}
+        {active.status === "closed_without_purchase" && (
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+            data-testid="card-closed-decision">
+            <div className="font-medium text-gray-800">لم يشترِ</div>
+            <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              <div data-testid="text-closed-reason">
+                السبب: <b className="text-foreground">{active.closedReason
+                  ? FOLLOWUP_REASON_LABELS[active.closedReason as FollowupReason]
+                    ?? active.closedReason
+                  : "—"}</b>
+              </div>
+              {(active.closedNote || active.lastNote) && (
+                <div data-testid="text-closed-note">
+                  الملاحظة: <b className="text-foreground">{active.closedNote || active.lastNote}</b>
+                </div>
+              )}
+              {active.closedByName && (
+                <div data-testid="text-closed-by">
+                  سجّلها: <b className="text-foreground">{active.closedByName}</b>
+                </div>
+              )}
+              <div data-testid="text-closed-at">
+                التاريخ: {fmtDateTime(active.closedEventAt ?? active.lastContactAt)}
+              </div>
+            </div>
+          </div>
         )}
 
         {/*  صفٌّ معلَّقٌ من المسار القديم — يُقال بلا زرّ لمن لا يحسمه. */}
@@ -295,7 +334,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => submit(`/api/followups/${active.id}/purchase-interest`, {})}
               data-testid="button-signal-purchase-interest">
-              <HandCoins className="h-4 w-4" /> المريض يرغب بالشراء الآن
+              <HandCoins className="h-4 w-4" /> اشترى — يرغب بإكمال البيع
             </Button>
           )}
           {/*  توافقٌ رجعي: حسمُ طلبٍ قديمٍ معلَّق. لا يُنشأ مثلُه بعد اليوم. */}

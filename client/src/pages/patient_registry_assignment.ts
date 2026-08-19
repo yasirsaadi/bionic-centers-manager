@@ -66,11 +66,30 @@ export function assignableServices(params: {
   patient: RegistryPatientLike;
   decided: string[];
   legacyExempt: boolean;
+  /**
+   * الخدماتُ التي يحكمها **ملفُّ متابعةٍ حيّ** لهذا المريض.
+   *
+   * ══ البابُ المكرَّر الذي يغلقه ═════════════════════════════════════════
+   * مريضٌ وقّع الطبيبُ معاينته يفتح له ملفُّ متابعةٍ يحكم بيعَه، والخادم
+   * يردّ «تخصيص» المباشر ما دام حيّاً. وكان الزرُّ يظهر رغم ذلك — فيضغطه
+   * الموظّف ويُردّ بـ409. **بابان ظاهران وأحدُهما ينتهي دائماً بخطأ.**
+   *
+   * فيُخفى هنا، ويبقى المسارُ الصحيح وحده مرئياً: بطاقةُ «قرار المريض بعد
+   * المعاينة» في صفحة المريض.
+   *
+   * **والبابُ القديم يبقى مشروعاً حيث لا متابعةَ تحكمه**: المريضُ القديم
+   * المُعفى، ومَن أُغلق ملفُّه، ومَن لا معاينةَ له أصلاً.
+   */
+  governed?: string[] | null;
 }): DeviceService[] {
   const owned = ownedDeviceServices(params.patient);
   const taken = assignedServices(params.patient);
+  const governed = params.governed ?? [];
   return owned.filter((s) => {
     if (taken.includes(s)) return false;
+    //  والإخفاءُ يسبق الإعفاء: مريضٌ قديمٌ فُتحت له متابعةٌ حيّة يُحكَم
+    //  بها هو الآخر — الحارسُ في الخادم لا يستثني القدامى.
+    if (governed.includes(s)) return false;
     return params.legacyExempt || params.decided.includes(s);
   });
 }

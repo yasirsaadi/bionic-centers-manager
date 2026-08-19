@@ -136,6 +136,17 @@ export default function PatientsList() {
   const { specialties: mySpecialties } = useDoctorGrant();
   const [examPatient, setExamPatient] = useState<{ id: number; name: string; specialty: string } | null>(null);
   
+  //  الخدماتُ التي يحكمها ملفُّ متابعةٍ حيّ — تُخفي بابَ «تخصيص» المكرَّر.
+  const { data: governedData } = useQuery<{ governed: Record<number, string[]> }>({
+    queryKey: ["/api/followups/governed"],
+    queryFn: async () => {
+      const res = await fetch("/api/followups/governed", { credentials: "include" });
+      if (!res.ok) return { governed: {} };
+      return res.json();
+    },
+  });
+  const governedByPatient = governedData?.governed ?? {};
+
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -300,6 +311,10 @@ export default function PatientsList() {
       patient,
       decided: decidedByPatient[patient.id] ?? [],
       legacyExempt: isLegacyPatientRow(patient),
+      //  **بابٌ واحد لا بابان**: خدمةٌ يحكمها ملفُّ متابعةٍ حيّ تُباع من
+      //  بطاقة «قرار المريض بعد المعاينة»، والخادمُ يردّ «تخصيص» المباشر
+      //  عليها. فيُخفى الزرُّ بدل أن يُضغط ويُردّ.
+      governed: governedByPatient[patient.id] ?? [],
     });
 
   const openExamFor = (patient: { id: number; name: string }) => {

@@ -157,6 +157,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     res.json({ ...out, mayApprove: true, legacyOnly: true });
   });
 
+  // ── الخدماتُ التي يحكمها ملفُّ متابعةٍ حيّ — **لإخفاء الباب المكرَّر** ──
+  //  سجلُّ المرضى يسأل هذه أوّلاً فلا يعرض «تخصيص وإسناد خبير» لخدمةٍ
+  //  سيردّها الخادم. وهي **قراءةٌ محضة**: الحارسُ في `assign-manufacturing`
+  //  لم يُمسّ، وهذا إخفاءُ زرٍّ لا استبدالُ حراسة.
+  app.get("/api/followups/governed", isAuthenticated, async (req: Req, res) => {
+    if (!canViewFollowup(getSession(req))) return res.json({ governed: {} });
+    res.json({ governed: await store.governedServices(branchScope(req)) });
+  });
+
   // ── تأجيل ────────────────────────────────────────────────────────────
   app.post("/api/followups/:id/defer", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
