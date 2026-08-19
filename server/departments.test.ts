@@ -354,6 +354,11 @@ async function main() {
          VALUES ($1,1,$2,$3,$4,NULL)`, [pHist, amount, source, episodeId]);
     await seedLegacy("physio_pricing", 200_000);
     await seedLegacy("session_backfill", 50_000);
+    //  **و`new_service` قاطعةٌ بحكم التاريخ**: PR #172 حصر النقطةَ في
+    //  ثلاثةِ أنواعٍ كلُّها علاجٌ طبيعي (٢٠٢٦-٠٧-٢٨ ٠٤:٥٠)، وأُنشئ جدولُ
+    //  `cost_entries` نفسُه بعده بسبع ساعاتٍ ونصف (١٢:٢٠). فلا صفَّ
+    //  `new_service` واحدٌ في الدفتر كُتب قبل الحصر — لا ترجيحَ بل يقين.
+    await seedLegacy("new_service", 120_000);
     await seedLegacy("assign_manufacturing", 800_000, histEpisode); // نوعُه مُثبَت
     await seedLegacy("assign_manufacturing", 600_000);              // مؤكَّدٌ غيرُ مُثبَت
     await seedLegacy("maintenance", 40_000);                        // مؤكَّدٌ غيرُ مُثبَت
@@ -363,22 +368,26 @@ async function main() {
     const dd = (k: keyof typeof acct3.byDepartment) =>
       (acct3.byDepartment[k] as any).revenue - (acct2.byDepartment[k] as any).revenue;
     same("١٠. **تاريخُ العلاج الطبيعي القاطع يبقى علاجاً طبيعياً**",
-      dd("physiotherapy"), 250_000);
+      dd("physiotherapy"), 370_000);
+    same("   **و`new_service` القديمةُ منه** — ١٢٠ ألفاً لا تسقط في المجهول",
+      dd("physiotherapy") - 250_000, 120_000);
     same("١١. **وحلقةُ الجهاز تحسم النوع يقيناً** — مساندُ لا «أجهزة»",
       [dd("prosthetic"), dd("medical_support")], [0, 800_000]);
     same("١٢. **ومالُ الأجهزة المؤكَّد بلا إثباتِ نوعٍ يبقى أجهزةً غير مقسَّمة**",
       dd("legacyDevicesUnsplit"), 640_000);
     same("   **ولا يُقسَّم بين الطرف والمسند بالتخمين**",
       [dd("prosthetic"), dd("medical_support")], [0, 800_000]);
-    same("   **ولا يُدسّ في العلاج الطبيعي**", dd("physiotherapy"), 250_000);
+    same("   **ولا يُدسّ في العلاج الطبيعي**", dd("physiotherapy"), 370_000);
+    //  **والغامضُ وحده** — و`new_service` ليست منه بعد اليوم: ٣٣ ألفاً
+    //  للقيد الافتتاحي فقط، ولو تسرّبت الخدمةُ الجديدة إليه لصار ١٥٣.
     same("١٣. **والغامضُ فعلاً يبقى غيرَ مبوَّبٍ ظاهراً**", dd("unclassified"), 33_000);
     //  والقيمةُ الرجعية: «الأجهزة» في الشكل القديم = ما كان `main` يعدّه
     //  أجهزةً (تخصيص + صيانة) وقد بقي كاملاً، والتوافقُ في **الرقم**.
     same("١٤. **و`bySection.devices` لا تتراجع قيمتُها**",
       acct3.bySection.devices.revenue - acct2.bySection.devices.revenue,
       800_000 + 600_000 + 40_000);
-    same("   و`bySection.physio` كذلك",
-      acct3.bySection.physio.revenue - acct2.bySection.physio.revenue, 250_000);
+    same("   **و`bySection.physio` تزيد بالخدمة الجديدة القديمة**",
+      acct3.bySection.physio.revenue - acct2.bySection.physio.revenue, 370_000);
     same("١٥. **والإجماليُّ المرجعي يصالِح إلى الدينار مع كلّ ذلك**",
       [acct3.rollups.grandTotal.revenue - acct3.totalRevenue,
         acct3.rollups.grandTotal.paid - acct3.totalPaid], [0, 0]);
@@ -390,6 +399,28 @@ async function main() {
       acct3.rollups.devicesCombined.revenue,
       acct3.byDepartment.prosthetic.revenue + acct3.byDepartment.medical_support.revenue
         + acct3.byDepartment.legacyDevicesUnsplit.revenue);
+
+    // ══ ٦ج. ترتيبُ السلَّم يُختبَر بصفٍّ يناقض نفسه ═══════════════════
+    //  **صفُّ `new_service` على حالة أطراف صريحة.** المصدرُ يقول «علاجٌ
+    //  طبيعي» و`case_id` يقول «أطراف» — والرتبةُ الأولى تسبق الثالثة،
+    //  فالحالةُ تفوز. وبلا هذا الاختبار قد يُعاد ترتيبُ الشروط يوماً فتغلب
+    //  قاعدةُ المصدر على علاقةٍ صريحة **ويُساء تبويبُ كلّ صفٍّ جديد**.
+    console.log("\n── ٦ج. ترتيبُ السلَّم ──");
+    const proCaseOfHist = Number((await q(
+      `INSERT INTO patient_cases (patient_id, branch_id, case_type, status, cost)
+       VALUES ($1,1,'prosthetic','active',0) RETURNING id`, [pHist]))[0].id);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id)
+             VALUES ($1,1,$2,'new_service',$3)`, [pHist, 77_000, proCaseOfHist]);
+    const acct4 = await storage.getAccountingSummary(1, TODAY, TODAY, { baghdadDays: true });
+    same("١٧. **`case_id` يسبق المصدر** — الحالةُ الصريحة تفوز",
+      acct4.byDepartment.prosthetic.revenue - acct3.byDepartment.prosthetic.revenue, 77_000);
+    same("   **ولا يُنسَب للعلاج الطبيعي رغم أن مصدرَه `new_service`**",
+      acct4.byDepartment.physiotherapy.revenue, acct3.byDepartment.physiotherapy.revenue);
+    same("   ويبقى الإجماليُّ مصالِحاً إلى الدينار",
+      [acct4.rollups.grandTotal.revenue - acct4.totalRevenue,
+        acct4.rollups.grandTotal.paid - acct4.totalPaid], [0, 0]);
+    //  وحلقةُ الجهاز (الرتبة الثانية) تسبق المصدرَ كذلك — مُثبَتٌ أعلاه في
+    //  ١١: صفُّ `assign_manufacturing` بحلقةٍ صار مساندَ بعينه لا «أجهزة».
 
     //  **ونقدٌ حقيقيّ بلا تبويب**: دفعةٌ قديمة بلا حالةٍ ولا وسم. وجودُها
     //  شرطُ اختبارِ الصافي أدناه — بدونها يتساوى «المعروف» بالمرجع فيمرّ

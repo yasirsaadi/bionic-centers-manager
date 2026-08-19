@@ -2509,10 +2509,9 @@ export class DatabaseStorage implements IStorage {
     // ---- revenue-stream breakdown (reconciles to the grand totals) ---------
     // Paid per bucket = payments IN THE RANGE tagged to a case of that bucket
     // (case_id NULL rows land in the "unclassified" remainder). Revenue per
-    // bucket = the range's cost-ledger entries mapped by SOURCE — تخصيص and
-    // maintenance are device money, physio pricing and the session backfill
-    // are physio money; ambiguous sources (registration, opening, …) stay in
-    // the remainder rather than being guessed.
+    // bucket = the evidence ladder below — case_id first, then the device
+    // episode, then the deterministic sources; ambiguous sources (registration,
+    // opening, …) stay in the remainder rather than being guessed.
     // ══ المقبوض بالقسم — من حالة الدفعة نفسها ═══════════════════════════
     //  `payments.case_id` علاقةٌ مهيكلة قائمة منذ الطور الثالث، ونوعُ الحالة
     //  **هو** القسم. فلا مطابقةَ نصٍّ ولا استنتاجٌ من أعلام المريض.
@@ -2536,7 +2535,19 @@ export class DatabaseStorage implements IStorage {
     //     حالة. دليلٌ بنيويّ لا تخمين.
     //
     //  ٣) **مصادرُ العلاج الطبيعي القاطعة** — `physio_pricing` و
-    //     `session_backfill` لا تقعان إلّا فيه، فهي حاسمةٌ بذاتها.
+    //     `session_backfill` و`new_service`.
+    //
+    //     والأخيرةُ قاطعةٌ **بحكم التاريخ لا بالاستنتاج**: PR #172 حصر
+    //     `POST /api/patients/:id/new-service` في ثلاثةِ أنواعٍ لا رابعَ لها
+    //     (جلساتٌ إضافية · استشارة · خدمة أخرى) وردّ الصيانةَ والطرفَ
+    //     الجديد والتعديلَ برسالةٍ تدلّ على مسارها. وكلُّها علاجٌ طبيعي في
+    //     التصنيف القانوني.
+    //
+    //     **والتسلسلُ الزمني يجعلها يقيناً لا ترجيحاً**: دُمج #172 في
+    //     ٢٠٢٦-٠٧-٢٨ الساعة ٠٤:٥٠ بغداد، وأنشأ ترحيلُ ٠٣٣ جدولَ
+    //     `cost_entries` نفسَه في ١٢:٢٠ من اليوم ذاته — بعده بسبع ساعات
+    //     ونصف. **فلا صفَّ `new_service` واحدٌ في الدفتر كُتب قبل الحصر**،
+    //     ولا يمكن لصفٍّ فيه أن يحمل نوعاً غير الثلاثة.
     //
     //  ٤) **مصادرُ الأجهزة القاطعة** — «تخصيص» و«صيانة»: نعلم يقيناً أنها
     //     **مالُ أجهزة**، ولا نعلم أطرافاً هي أم مساند. فتُجمَع في
@@ -2554,7 +2565,8 @@ export class DatabaseStorage implements IStorage {
       SELECT CASE
                WHEN e.case_id IS NOT NULL AND c.case_type IS NOT NULL THEN c.case_type
                WHEN e.device_episode_id IS NOT NULL AND ec.case_type IS NOT NULL THEN ec.case_type
-               WHEN e.source IN ('physio_pricing', 'session_backfill') THEN 'physiotherapy'
+               WHEN e.source IN ('physio_pricing', 'session_backfill', 'new_service')
+                 THEN 'physiotherapy'
                WHEN e.source IN ('assign_manufacturing', 'maintenance') THEN 'legacy_devices'
                ELSE 'unclassified'
              END AS bucket,
