@@ -42,9 +42,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-متابعة-ما-بعد-المعاينة";
 const ADMIN = 9861, RECV = 9862, MGR = 9863, DOC = 9864, DOC2 = 9865;
 const EXPERT = 9866, RECV_B2 = 9867, DOC_B2 = 9868;
-const EXPERT2 = 9869, ACCT = 9870, PHYSIO = 9871;
+const EXPERT2 = 9869, ACCT = 9870, PHYSIO = 9871, MGR_B2 = 9872, ADMIN_DOC = 9873;
 const ALL_USERS = [ADMIN, RECV, MGR, DOC, DOC2, EXPERT, RECV_B2, DOC_B2,
-  EXPERT2, ACCT, PHYSIO];
+  EXPERT2, ACCT, PHYSIO, MGR_B2, ADMIN_DOC];
 
 const S = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -65,6 +65,16 @@ const S = {
     displayName: "استعلامات ٢", permissions: { canViewPatients: true, canAddPatients: true } },
   docB2: { userId: DOC_B2, role: "doctor", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "د. الفرع ٢", permissions: { canViewPatients: true, canWriteMedicalExam: true } },
+  //  مديرُ فرعٍ آخر — ليُثبَت أن السلطة التجارية محدودةٌ بفرعها.
+  mgrB2: { userId: MGR_B2, role: "branch_manager", isAdmin: false, branchId: 2,
+    accessibleBranches: [2], displayName: "مدير الفرع ٢",
+    permissions: { canViewPatients: true, canAddPatients: true } },
+  //  **دورُه «طبيب» و`isAdmin` صحيح**: سلطةُ المسؤول تسبق الدور في كلّ
+  //  بوّابة — وهذا ما يُثبَت لا ما يُفترَض.
+  adminDoc: { userId: ADMIN_DOC, role: "doctor", isAdmin: true, branchId: 1,
+    accessibleBranches: [1, 2], displayName: "المسؤول الطبيب",
+    permissions: { canViewPatients: true, canAddPatients: true,
+      canWriteMedicalExam: true, canDeletePatients: true } },
   expert2: { userId: EXPERT2, role: "prosthetics_expert", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "الخبير الثاني", permissions: {} },
   //  **يحملان `canAddPatients`** عمداً: البوّابة بالدور لا بالقدرة، وهذان
@@ -173,6 +183,8 @@ async function main() {
     [EXPERT2, "prosthetics_expert", "الخبير الثاني", 1, "[]"],
     [ACCT, "accountant", "المحاسب", 1, "[]"],
     [PHYSIO, "therapist", "مُدخِل الجلسات", 1, "[]"],
+    [MGR_B2, "branch_manager", "مدير الفرع ٢", 2, "[]"],
+    [ADMIN_DOC, "doctor", "المسؤول الطبيب", 1, '["prosthetic","medical_support"]'],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true,$7::jsonb)
@@ -250,52 +262,138 @@ async function main() {
     same("   والاستثناءُ الصريح يُقبل",
       [noSched.status, noSched.body?.noScheduledFollowUp], [200, true]);
 
-    // ══ ٤. السعر: مَن يطلب ومَن يعتمد ═════════════════════════════════
-    console.log("\n── تعديل السعر ──");
-    const pr = await http("POST", `/api/followups/${f1.id}/price-request`, S.recv, {
-      proposedPrice: 1_200_000, reason: "price", note: "ساوم على السعر",
+    // ══ ٤. السعر التجاري: **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ════════
+    console.log("\n── السعر التجاري ──");
+    //  لقطةُ المال **قبل** أي تسعير — فيُقارَن بها بعده.
+    const moneyOf = async (pid: number) => ({
+      totalCost: Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost),
+      caseCost: Number((await q(`SELECT COALESCE(SUM(cost),0) c FROM patient_cases WHERE patient_id=$1`, [pid]))[0].c),
+      entries: (await q(`SELECT 1 FROM cost_entries WHERE patient_id=$1`, [pid])).length,
+      payments: (await q(`SELECT 1 FROM payments WHERE patient_id=$1`, [pid])).length,
+      orders: (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pid])).length,
     });
-    same("٤. الاستعلامات **يطلب** تعديل السعر", pr.status, 200);
-    same("   والحالة «بانتظار اعتماد السعر»", pr.body?.followup?.status, "price_approval_pending");
-    same("   **والسعر المعتمد لم يتحرّك بعد**", pr.body?.followup?.approvedPrice, 1_500_000);
-    const reqId = pr.body?.requestId;
+    const beforePrice = await moneyOf(p1);
+    const statusBeforePrice = (await followupOf(p1))?.status;
 
-    same("   **وطلبٌ ثانٍ معلَّق يُردّ**",
-      (await http("POST", `/api/followups/${f1.id}/price-request`, S.recv,
-        { proposedPrice: 1_000_000, reason: "price" })).status, 409);
+    // ── مَن لا يسعّر ──
+    same("٤. **الاستعلامات لا يحدّد السعر** — ينفّذ البيع ولا يضع سعره",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.recv,
+        { finalPrice: 1_200_000, reason: "ساوم" })).status, 403);
+    same("   **ولا الطبيب** — قرارُه سريريّ لا تجاري",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.doc,
+        { finalPrice: 1_200_000, reason: "ساوم" })).status, 403);
+    same("   ولا الخبير ولا المحاسب",
+      [(await http("POST", `/api/followups/${f1.id}/commercial-price`, S.expert,
+        { finalPrice: 1_200_000, reason: "ساوم" })).status,
+        (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.acct,
+          { finalPrice: 1_200_000, reason: "ساوم" })).status], [403, 403]);
+    same("٥. **ومديرُ فرعٍ آخر لا يحدّده** — السلطةُ محدودةٌ بفرعها",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgrB2,
+        { finalPrice: 1_200_000, reason: "ساوم" })).status, 403);
+    same("   **ولا شيءَ تحرّك بكلّ تلك المحاولات**",
+      [(await followupOf(p1))?.approvedPrice, (await followupOf(p1))?.priceSource],
+      [1_500_000, "exam"]);
 
-    same("٥. **الاستعلامات لا يعتمد السعر**",
-      (await http("POST", `/api/price-requests/${reqId}/decide`, S.recv,
-        { decision: "approve" })).status, 403);
-    same("٦. **ومديرُ الفرع لا يعتمد السعر**",
-      (await http("POST", `/api/price-requests/${reqId}/decide`, S.mgr,
-        { decision: "approve" })).status, 403);
-    same("   ولا الخبير",
-      (await http("POST", `/api/price-requests/${reqId}/decide`, S.expert,
-        { decision: "approve" })).status, 403);
+    // ── حدودُ القيمة ──
+    same("٦. **والسببُ إلزاميٌّ عند التغيير**",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+        { finalPrice: 1_200_000 })).status, 400);
+    same("   والصفرُ والسالبُ يُردّان",
+      [(await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+        { finalPrice: 0, reason: "x" })).status,
+        (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+          { finalPrice: -5, reason: "x" })).status], [400, 400]);
+    same("   وكسرُ الدينار يُردّ",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+        { finalPrice: 1_200_000.5, reason: "x" })).status, 400);
+    same("   **ولا صفَّ طلبٍ كُتب بأيٍّ من ذلك** — لم يعد الطريقُ طلباً",
+      (await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [f1.id])).length, 0);
 
-    //  والاعتماد لطبيبٍ **غير المعاين** — عمداً.
-    const approve = await http("POST", `/api/price-requests/${reqId}/decide`, S.doc2,
-      { decision: "approve", note: "موافق" });
-    same("٧. **طبيبٌ آخر بنفس الاختصاص يعتمد** — لا حكرَ على المعاين", approve.status, 200);
-    same("   والسعرُ المعتمد صار الجديد",
-      [approve.body?.followup?.approvedPrice, approve.body?.followup?.priceSource],
-      [1_200_000, "approved_change"]);
-    same("٩. **والاعتماد ليس شراءً**: «بانتظار تأكيد المريض»",
-      approve.body?.followup?.status, "price_approved_waiting_patient");
-    same("   **ولا أمرَ تصنيعٍ وُلد باعتماد السعر**",
-      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [p1])).length, 0);
+    // ── والقرار يُحفظ في اللحظة ──
+    const setPrice = await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+      { finalPrice: 1_200_000, reason: "ساوم المريض على السعر", note: "دفعة أولى نقداً" });
+    same("٧. **مديرُ الفرع يحدّده — ويُحفظ فوراً بلا اعتمادِ أحد**", setPrice.status, 200);
+    same("   والسعرُ صار الجديد ومصدرُه «حدّده مدير الفرع»",
+      [setPrice.body?.followup?.approvedPrice, setPrice.body?.followup?.priceSource],
+      [1_200_000, "manager_set"]);
+    //  **والحالةُ لا تتغيّر**: لا انتظارَ اعتمادٍ ولا طابور.
+    same("٨. **والحالةُ كما كانت** — لا حالةَ انتظارِ اعتمادٍ تُخلَق",
+      setPrice.body?.followup?.status, statusBeforePrice);
+    same("   **ولا صفَّ طلبِ سعرٍ وُلد إطلاقاً**",
+      (await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [f1.id])).length, 0);
+    //  **ولا دينارَ تحرّك**: التسعير قرارٌ لا قيدٌ مالي.
+    same("٩. **ولا دينارَ تحرّك بالتسعير** — لا كلفةَ ولا قيدَ ولا دفعةَ ولا أمر",
+      await moneyOf(p1), beforePrice);
 
     const f1b = await followupOf(p1);
-    const approvedEvent = (f1b?.events ?? []).find((e: any) => e.eventType === "price_approved");
-    same("٨. **والسعرُ القديم محفوظٌ في التاريخ**",
-      [approvedEvent?.payload?.oldPrice, approvedEvent?.payload?.newApprovedPrice],
-      [1_500_000, 1_200_000]);
-    same("   ولقطتُه في الطلب أيضاً",
-      (f1b?.priceRequests ?? [])[0]?.currentPrice, 1_500_000);
-    same("   ومعاينةُ الطبيب **بقيت بسعرها الأصلي مختومة**",
+    const priceEvent = (f1b?.events ?? []).find((e: any) => e.eventType === "commercial_price_set");
+    same("١٠. **والحدثُ يحمل كلَّ ما يحتاجه المراجع**",
+      [priceEvent?.payload?.previousPrice, priceEvent?.payload?.finalPrice,
+        priceEvent?.payload?.difference, priceEvent?.payload?.percentageDifference,
+        priceEvent?.payload?.changed],
+      [1_500_000, 1_200_000, -300_000, -20, true]);
+    same("    ومعه مَن قرّره ولماذا",
+      [priceEvent?.payload?.setByUserId, priceEvent?.actorName, priceEvent?.reason],
+      [MGR, "مدير الفرع", "ساوم المريض على السعر"]);
+    same("    ومعاينةُ الطبيب **بقيت بسعرها الأصلي مختومة**",
       Number((await q(`SELECT device_cost FROM medical_exams WHERE patient_id = $1 ORDER BY id LIMIT 1`, [p1]))[0].device_cost),
       1_500_000);
+    //  **والزيادةُ مسموحة**: مريضٌ عاد والأسعار تغيّرت — ثم يُعاد إلى ما نريد.
+    same("١١. **والزيادةُ مسموحة** — قرارٌ تجاريّ لا حدَّ أعلى له",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+        { finalPrice: 1_900_000, reason: "تغيّرت الأسعار" })).status, 200);
+    same("    والمسؤولُ العام يحدّده كذلك",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.admin,
+        { finalPrice: 1_200_000, reason: "إعادة إلى المتّفق" })).body?.followup?.approvedPrice,
+      1_200_000);
+    same("    **وتثبيتُ السعر كما هو يُقبل بلا سبب** — ليس قراراً يُبرَّر",
+      (await http("POST", `/api/followups/${f1.id}/commercial-price`, S.mgr,
+        { finalPrice: 1_200_000 })).status, 200);
+
+    // ══ ١٢. **وبابُ الطلب القديم مغلق** ═══════════════════════════════
+    const oldPath = await http("POST", `/api/followups/${f1.id}/price-request`, S.recv,
+      { proposedPrice: 900_000, reason: "price" });
+    same("١٢. **نقطةُ الطلب القديمة تُردّ** — لا يُنشأ طلبٌ جديد بعد اليوم",
+      oldPath.status, 400);
+    check(String(oldPath.body?.error ?? "").includes("مدير"),
+      "    برسالةٍ تقول مَن يفعلها الآن", String(oldPath.body?.error));
+    same("    ولا صفَّ كُتب ولا سعرَ تحرّك",
+      [(await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [f1.id])).length,
+        (await followupOf(p1))?.approvedPrice], [0, 1_200_000]);
+    //  ويُردّ لمديرِ الفرع كذلك: البابُ مغلقٌ على الجميع لا على دورٍ بعينه.
+    same("    **ويُردّ لمديرِ الفرع والمسؤول كذلك** — الباب مغلقٌ لا مقيَّد",
+      [(await http("POST", `/api/followups/${f1.id}/price-request`, S.mgr,
+        { proposedPrice: 900_000, reason: "price" })).status,
+        (await http("POST", `/api/followups/${f1.id}/price-request`, S.admin,
+          { proposedPrice: 900_000, reason: "price" })).status], [400, 400]);
+
+    // ══ ١٣. إشارةُ الطبيب — **تسليمٌ لا بيع** ══════════════════════════
+    console.log("\n── إشارة رغبة الشراء ──");
+    const beforeSignal = await moneyOf(p1);
+    same("١٣. **الاستقبال لا يرفع الإشارة** — إشارةُ تسليمٍ من غرفة الطبيب",
+      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.recv, {})).status, 403);
+    same("    ولا مديرُ الفرع",
+      (await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.mgr, {})).status, 403);
+    const signal = await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.doc, {});
+    same("١٤. **والطبيبُ يرفعها**", signal.status, 200);
+    same("    والرايةُ محفوظةٌ بصاحبها",
+      [Boolean(signal.body?.followup?.purchaseInterestAt),
+        signal.body?.followup?.purchaseInterestByName], [true, "د. المعاين"]);
+    //  **ولا شيءَ آخر تغيّر إطلاقاً**.
+    same("١٥. **ولا حالةَ تغيّرت ولا سعرَ تحرّك ولا ديناراً تقيّد**",
+      [signal.body?.followup?.status, signal.body?.followup?.approvedPrice,
+        signal.body?.followup?.priceSource],
+      [statusBeforePrice, 1_200_000, "manager_set"]);
+    same("    والمالُ ساكنٌ تماماً", await moneyOf(p1), beforeSignal);
+    //  والضغطةُ المكرّرة لا تُنتج حدثاً ثانياً ولا تنسبها إلى آخر مَن مرّ.
+    const signalAgain = await http("POST", `/api/followups/${f1.id}/purchase-interest`, S.doc2, {});
+    same("١٦. **والضغطةُ المكرّرة لا تُنشئ حدثاً ثانياً**",
+      [signalAgain.status, signalAgain.body?.alreadySignaled,
+        signalAgain.body?.followup?.purchaseInterestByName],
+      [200, true, "د. المعاين"]);
+    same("    وحدثُ الإشارة واحدٌ في التاريخ",
+      eventTypes(await followupOf(p1))
+        .filter((t: string) => t === "purchase_interest_signaled").length, 1);
 
     // ══ ١٠. الخبيرُ شرطٌ، ثم يؤكّد الموظّف فيقع البيع ═════════════════
     console.log("\n── تأكيد الشراء من الاستقبال مباشرةً ──");
@@ -377,18 +475,15 @@ async function main() {
     check(typeof admTotal.body?.costNote === "string",
       "   ويُبلَّغ صراحةً — لا إسقاطٌ صامت", JSON.stringify(admTotal.body?.costNote));
 
-    //  …لكنه يستطيع بالطريق الرسمي، والتاريخ يحفظ القيمتين.
-    const admReq = await http("POST", `/api/followups/${f2.id}/price-request`, S.admin,
-      { proposedPrice: 400_000, reason: "price" });
-    same("   والمسؤول **يستطيع** بالطريق الرسمي: يطلب…", admReq.status, 200);
-    const admDecide = await http("POST", `/api/price-requests/${admReq.body.requestId}/decide`,
-      S.admin, { decision: "approve" });
-    same("   …ويعتمد بنفسه", [admDecide.status, admDecide.body?.followup?.approvedPrice],
-      [200, 400_000]);
+    //  …لكنه يستطيع بالطريق الرسمي — **خطوةً واحدة الآن لا خطوتين**.
+    const admSet = await http("POST", `/api/followups/${f2.id}/commercial-price`, S.admin,
+      { finalPrice: 400_000, reason: "تسعير المسؤول" });
+    same("   والمسؤول **يستطيع** بالطريق الرسمي — بخطوةٍ واحدة",
+      [admSet.status, admSet.body?.followup?.approvedPrice], [200, 400_000]);
     const f2hist = await followupOf(p2);
-    const admEv = (f2hist?.events ?? []).find((e: any) => e.eventType === "price_approved");
+    const admEv = (f2hist?.events ?? []).find((e: any) => e.eventType === "commercial_price_set");
     same("   **والتاريخ يحفظ القديم والجديد**",
-      [admEv?.payload?.oldPrice, admEv?.payload?.newApprovedPrice], [900_000, 400_000]);
+      [admEv?.payload?.previousPrice, admEv?.payload?.finalPrice], [900_000, 400_000]);
 
     // ══ ب١. لا تجاوز لاعتماد الشراء من النقاط القديمة ══════════════════
     console.log("\n── لا تجاوز من النقاط القديمة ──");
@@ -570,29 +665,66 @@ async function main() {
     same("**ولا حقلَ «اعتماد شراء» في الطابور أصلاً**",
       Object.prototype.hasOwnProperty.call(qDoc ?? {}, "purchaseApprovals"), false);
 
-    // ══ رفضُ السعر لا يترك حالةً ميتة ═════════════════════════════════
-    console.log("\n── رفض تعديل السعر ──");
-    const p5 = await mkPatient("المرفوض");
-    await mkCase(p5);
-    await signExam(p5, S.doc, { deviceCost: 500_000 });
-    const f5 = await followupOf(p5);
-    const pr5 = await http("POST", `/api/followups/${f5.id}/price-request`, S.recv,
-      { proposedPrice: 100_000, reason: "price" });
-    const rej = await http("POST", `/api/price-requests/${pr5.body.requestId}/decide`, S.doc,
+    // ══ الطلبُ القديم المعلَّق — **يُحسَم ولا يُنشَأ** ═══════════════════
+    //  توافقٌ رجعي: صفوفٌ كانت معلَّقةً لحظةَ النشر لا يجوز أن تتجمّد. تُصنَع
+    //  هنا **في القاعدة مباشرةً** لأن نقطة إنشائها أُغلقت — وهذا هو الحال
+    //  الذي يجده النظامُ على الإنتاج بالضبط.
+    console.log("\n── طلبٌ قديمٌ معلَّق ──");
+    const mkLegacyPending = async (label: string, price: number, proposed: number) => {
+      const pG = await mkPatient(`قديمٌ معلَّق ${label}`);
+      await mkCase(pG);
+      await signExam(pG, S.doc, { deviceCost: price });
+      const fG = await followupOf(pG);
+      const id = Number((await q<{ id: number }>(
+        `INSERT INTO price_change_requests
+           (followup_id, patient_id, branch_id, current_price, proposed_price, reason,
+            status, requested_by, requested_by_name)
+         VALUES ($1,$2,1,$3,$4,'price','pending',$5,'موظّف قديم') RETURNING id`,
+        [fG.id, pG, price, proposed, RECV]))[0].id);
+      await q(`UPDATE post_exam_followups SET status='price_approval_pending' WHERE id=$1`, [fG.id]);
+      return { patientId: pG, followupId: fG.id, requestId: id };
+    };
+    const leg = await mkLegacyPending("للرفض", 500_000, 100_000);
+    same("**والاستقبالُ لا يحسمه**",
+      (await http("POST", `/api/price-requests/${leg.requestId}/decide`, S.recv,
+        { decision: "approve" })).status, 403);
+    //  **ومديرُ الفرع كذلك**: قد يكون رفعَ سعرٍ وقّع الطبيبُ على أصله، فيُحكَم
+    //  بقانون يومه لا بسلطته التجارية الجديدة.
+    same("**ومديرُ الفرع لا يحسمه** — يُحكَم بقانون يومه",
+      (await http("POST", `/api/price-requests/${leg.requestId}/decide`, S.mgr,
+        { decision: "approve" })).status, 403);
+    const rej = await http("POST", `/api/price-requests/${leg.requestId}/decide`, S.doc,
       { decision: "reject", note: "تخفيضٌ كبير" });
     same("الرفضُ يُقبل من الطبيب", rej.status, 200);
     same("   **والسعر المعتمد لم يتغيّر**", rej.body?.followup?.approvedPrice, 500_000);
     same("   **والحالة حيّةٌ لا ميتة**", rej.body?.followup?.status, "awaiting_patient_decision");
-    const afterReject = await http("POST", `/api/followups/${f5.id}/accept-price`, S.recv, {});
-    same("   فيستطيع الموظّف قبول السعر الحالي بعده",
-      [afterReject.status, afterReject.body?.status], [200, "purchase_approval_pending"]);
-    const f5ev = await followupOf(p5);
+    const f5ev = await followupOf(leg.patientId);
     check(eventTypes(f5ev).includes("price_rejected"),
       "   والرفضُ مسجَّل في التاريخ", JSON.stringify(eventTypes(f5ev)));
+    //  **والسجلُّ التاريخي يبقى مقروءاً** — لا يُمحى ولا يُعاد كتابتُه.
+    same("   **وصفُّ الطلب باقٍ مقروءاً بحالته**",
+      (await q<{ status: string }>(`SELECT status FROM price_change_requests WHERE id=$1`,
+        [leg.requestId]))[0].status, "rejected");
+    check(((await followupOf(leg.patientId))?.priceRequests ?? []).length === 1,
+      "   ويصل الواجهةَ مع الملفّ كما كان");
 
     same("**واعتمادُ طلبٍ حُسم يُردّ بتعارض**",
-      (await http("POST", `/api/price-requests/${pr5.body.requestId}/decide`, S.doc,
+      (await http("POST", `/api/price-requests/${leg.requestId}/decide`, S.doc,
         { decision: "approve" })).status, 409);
+
+    //  والاعتمادُ نفسُه يبقى عاملاً — والصفُّ يمضي إلى «بانتظار تأكيد المريض».
+    const legOk = await mkLegacyPending("للاعتماد", 800_000, 600_000);
+    const legApprove = await http("POST", `/api/price-requests/${legOk.requestId}/decide`,
+      S.doc, { decision: "approve" });
+    same("**واعتمادُ القديم يبقى عاملاً**",
+      [legApprove.status, legApprove.body?.followup?.approvedPrice,
+        legApprove.body?.followup?.priceSource, legApprove.body?.followup?.status],
+      [200, 600_000, "approved_change", "price_approved_waiting_patient"]);
+    //  **ومديرُ الفرع يسعّر فوقه**: الملفُّ لا يبقى أسيرَ مسارٍ انقرض.
+    same("   **ومديرُ الفرع يسعّره بعدها مباشرة**",
+      (await http("POST", `/api/followups/${legOk.followupId}/commercial-price`, S.mgr,
+        { finalPrice: 650_000, reason: "اتّفاق نهائي" })).body?.followup?.priceSource,
+      "manager_set");
 
     // ══ ٢٥. لا backfill تاريخي ════════════════════════════════════════
     console.log("\n── لا backfill ──");
@@ -653,6 +785,7 @@ async function main() {
 
     await http("POST", `/api/followups/${fExp.id}/accept-price`, S.recv, {});
     //  **الاعتماد لا يقبل خبيراً من الجسم**: يُهرَّب EXPERT فيُتجاهَل.
+    //  والطبيبُ المخوَّل يُقبل هنا كما يُقبل الاستقبال — مرونةٌ لا تبعيّة.
     const smuggle = await http("POST", `/api/followups/${fExp.id}/approve-purchase`, S.doc,
       { expertUserId: EXPERT });
     same("ب٢. اعتماد الشراء نجح", smuggle.status, 200);
@@ -672,7 +805,7 @@ async function main() {
     same("     (بلا خبيرٍ مقترَح)", fNoExp?.selectedExpertUserId, null);
     await http("POST", `/api/followups/${fNoExp.id}/accept-price`, S.recv, {});
     const noExpApprove = await http("POST", `/api/followups/${fNoExp.id}/approve-purchase`,
-      S.doc, {});
+      S.recv, {});
     same("ب٢. **ولا اعتمادَ بلا خبيرٍ مختار**", noExpApprove.status, 409);
     same("     ولا أمرَ وُلد",
       (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pNoExp])).length, 0);
@@ -770,17 +903,17 @@ async function main() {
 
     // ══ ج٢. إغلاق الملفّ **إلغاءٌ لا رفضُ سعر** ════════════════════════
     console.log("\n── الإلغاء ليس رفضاً ──");
+    //  والطلبُ المعلَّق هنا **قديمٌ من القاعدة**: لم يعد يُنشأ من نقطة، لكن
+    //  إغلاقَ ملفٍّ يحمله يجب أن يبقى إلغاءً لا رفضاً.
     for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr]] as any[]) {
-      const pC = await mkPatient(`إلغاء ${who}`);
-      await mkCase(pC);
-      await signExam(pC, S.doc, { deviceCost: 450_000 });
-      const fC = await followupOf(pC);
-      const rq = await http("POST", `/api/followups/${fC.id}/price-request`, sess,
-        { proposedPrice: 300_000, reason: "price" });
-      same(`   (${who} طلب تعديلاً)`, rq.status, 200);
+      const rq = await mkLegacyPending(`إلغاء ${who}`, 450_000, 300_000);
+      const pC = rq.patientId;
+      const fC = { id: rq.followupId };
+      same(`   (طلبٌ قديمٌ معلَّق على ملفّ ${who})`,
+        (await q(`SELECT 1 FROM price_change_requests WHERE id=$1`, [rq.requestId])).length, 1);
       await http("POST", `/api/followups/${fC.id}/close`, sess, { reason: "chose_other_center" });
       const row = (await q(`SELECT status, decided_by, decision_note
-                              FROM price_change_requests WHERE id=$1`, [rq.body.requestId]))[0];
+                              FROM price_change_requests WHERE id=$1`, [rq.requestId]))[0];
       same(`ج٢. **${who} يُغلق ⟶ الطلب \`cancelled\` لا \`rejected\`**`, row.status, "cancelled");
       same(`     والمُلغي مسجَّل`, Number(row.decided_by), sess.userId);
       check(String(row.decision_note ?? "").includes("إغلاق"),
@@ -879,31 +1012,44 @@ async function main() {
       && eventTypes(fStuckEnd).includes("purchase_confirmed"),
     "   وتاريخُه كاملٌ: الحدثُ القديم والجديد معاً", JSON.stringify(eventTypes(fStuckEnd)));
 
-    // ══ ٣١. بعد اعتماد السعر يشتري الاستقبال مباشرةً ══════════════════
+    // ══ ٣١. **المسارُ اليومي كاملاً في خطوتين** ═══════════════════════
+    //  مديرُ الفرع يسعّر ⟶ الاستقبال يبيع. لا ثالثَ بينهما.
+    console.log("\n── المسار اليومي كاملاً ──");
     const pDisc = await mkPatient("بعد التخفيض");
     await mkCase(pDisc);
     await signExam(pDisc, S.doc, { deviceCost: 1_000_000 });
     const fDisc = await followupOf(pDisc);
     await http("POST", `/api/followups/${fDisc.id}/expert`, S.recv, { expertUserId: EXPERT });
-    const discReq = await http("POST", `/api/followups/${fDisc.id}/price-request`, S.recv,
-      { proposedPrice: 750_000, reason: "price" });
-    same("٣١. طلبُ التخفيض يُقبل من الاستقبال", discReq.status, 200);
-    //  **وسلطةُ اعتماد السعر لم تتغيّر بحرف**: مديرُ الفرع يُردّ كما كان.
-    same("   **ومديرُ الفرع لا يعتمد السعر — كما كان**",
-      (await http("POST", `/api/price-requests/${discReq.body.requestId}/decide`, S.mgr,
-        { decision: "approve" })).status, 403);
-    const discOk = await http("POST", `/api/price-requests/${discReq.body.requestId}/decide`,
-      S.doc, { decision: "approve" });
-    same("   والطبيبُ يعتمده", 
-      [discOk.status, discOk.body?.followup?.status, discOk.body?.followup?.approvedPrice],
-      [200, "price_approved_waiting_patient", 750_000]);
-    //  ثم يعود القرار للاستقبال — بلا عودةٍ إلى الطبيب.
+    const discSet = await http("POST", `/api/followups/${fDisc.id}/commercial-price`, S.mgr,
+      { finalPrice: 750_000, reason: "مفاوضة المريض" });
+    same("٣١. **مديرُ الفرع يسعّر — والحالةُ لا تنتقل إلى انتظار**",
+      [discSet.status, discSet.body?.followup?.approvedPrice,
+        discSet.body?.followup?.status],
+      [200, 750_000, "awaiting_patient_decision"]);
+    same("   **ولا كلفةَ قُيّدت بالتسعير**",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pDisc]))[0].total_cost), 0);
+    //  ثم يشتري الاستقبالُ **في الحال** — بلا اعتمادٍ من أحد.
     const discBuy = await http("POST", `/api/followups/${fDisc.id}/confirm-purchase`, S.recv, {});
-    same("   **ثم يشتري الاستقبالُ مباشرةً بالسعر المعتمد الجديد**",
+    same("   **ثم يشتري الاستقبالُ مباشرةً بالسعر المحفوظ**",
       [discBuy.status, discBuy.body?.followup?.status], [200, "converted"]);
-    same("   والمقيَّد هو السعرُ المعتمد لا الأصلي",
+    same("   والمقيَّد هو السعرُ النهائي لا سعرُ المعاينة",
       Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pDisc]))[0].total_cost),
       750_000);
+    //  **والمالُ كلُّه بالسعر النهائي**: كلفةُ الحالة والقيدُ وأمرُ التصنيع.
+    same("   **وكلفةُ الحالة والقيدُ بالسعر نفسه، وأمرُ التصنيع واحد**",
+      [Number((await q(`SELECT COALESCE(SUM(cost),0) c FROM patient_cases WHERE patient_id=$1`,
+        [pDisc]))[0].c),
+        Number((await q(`SELECT COALESCE(SUM(amount),0) a FROM cost_entries WHERE patient_id=$1`,
+          [pDisc]))[0].a),
+        (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pDisc])).length],
+      [750_000, 750_000, 1]);
+    //  **ولا اعتمادَ بعد أن قال المريضُ نعم**: لا صفَّ طلبٍ ولا حالةَ انتظار.
+    same("   **ولا صفَّ طلبِ سعرٍ في المسار كلِّه**",
+      (await q(`SELECT 1 FROM price_change_requests WHERE patient_id=$1`, [pDisc])).length, 0);
+    check(!eventTypes(await followupOf(pDisc)).some((t: string) =>
+      ["price_change_requested", "price_approved", "purchase_approved"].includes(t)),
+      "   **ولا حدثَ اعتمادٍ واحدٍ في تاريخه**",
+      JSON.stringify(eventTypes(await followupOf(pDisc))));
 
     // ══ ٣٢. أمرُ تصنيعٍ متعارضٌ يمنع التحويل ══════════════════════════
     const pConf = await mkPatient("تعارضُ التصنيع");
@@ -941,15 +1087,295 @@ async function main() {
     same("   ولا كلفةَ تحرّكت",
       Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pPhy]))[0].total_cost), 0);
 
+    // ══ ٣٤. **البيعُ بلا تدخّلٍ أصلاً** — أبسطُ حالةٍ وأكثرُها وقوعاً ═══
+    console.log("\n── البيع بالسعر كما هو ──");
+    const pPlain = await mkPatient("بلا تفاوض");
+    await mkCase(pPlain);
+    await signExam(pPlain, S.doc, { deviceCost: 640_000 });
+    const fPlain = await followupOf(pPlain);
+    same("٣٤. المعاينةُ الموقَّعة تفتح «بانتظار قرار المريض»",
+      [fPlain?.status, fPlain?.approvedPrice, fPlain?.priceSource],
+      ["awaiting_patient_decision", 640_000, "exam"]);
+    await http("POST", `/api/followups/${fPlain.id}/expert`, S.recv, { expertUserId: EXPERT });
+    const plainBuy = await http("POST", `/api/followups/${fPlain.id}/confirm-purchase`, S.recv, {});
+    same("   **والاستقبالُ يبيع في الحال بالسعر كما هو** — بلا تسعيرٍ ولا اعتماد",
+      [plainBuy.status, plainBuy.body?.followup?.status], [200, "converted"]);
+    same("   والمقيَّد سعرُ المعاينة بعينه",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pPlain]))[0].total_cost),
+      640_000);
+
+    // ══ ٣٥. **صمتُ الطبيب ليس رفضاً** ═════════════════════════════════
+    const pSilent = await mkPatient("لم يشر الطبيب");
+    await mkCase(pSilent);
+    await signExam(pSilent, S.doc, { deviceCost: 300_000 });
+    const fSilent = await followupOf(pSilent);
+    same("٣٥. **طبيبٌ لم يرفع إشارةً: الملفُّ حيٌّ لا مرفوض**",
+      [fSilent?.status, fSilent?.purchaseInterestAt, fSilent?.closedReason],
+      ["awaiting_patient_decision", null, null]);
+    check(!eventTypes(fSilent).includes("closed_without_purchase"),
+      "   **ولا حدثَ إغلاقٍ اختُرع من صمته**", JSON.stringify(eventTypes(fSilent)));
+    same("   وأزرارُ الاستقبال كاملةٌ عليه",
+      (await http("POST", `/api/followups/${fSilent.id}/expert`, S.recv,
+        { expertUserId: EXPERT })).status, 200);
+
+    // ══ ٣٦. **المريضُ العائد — بلا معاينةٍ جديدة** ════════════════════
+    console.log("\n── المريض العائد ──");
+    const pBack = await mkPatient("عاد بعد شهرين");
+    await mkCase(pBack);
+    await signExam(pBack, S.doc, { deviceCost: 900_000 });
+    const fBack = await followupOf(pBack);
+    await http("POST", `/api/followups/${fBack.id}/purchase-interest`, S.doc, {});
+    //  أُغلق: «اختار مركزاً آخر».
+    same("٣٦. أُغلق بلا شراء",
+      (await http("POST", `/api/followups/${fBack.id}/close`, S.recv,
+        { reason: "chose_other_center" })).body?.status, "closed_without_purchase");
+    //  ثم عاد — **والاستقبالُ يفتحه، لا الطبيب**.
+    const backReopen = await http("POST", `/api/followups/${fBack.id}/reopen`, S.recv,
+      { toStatus: "awaiting_patient_decision", note: "عاد المريض" });
+    same("   **والاستقبالُ يعيد فتحه** — لا بوّابةَ طبيبٍ لمرور الوقت",
+      [backReopen.status, backReopen.body?.status], [200, "awaiting_patient_decision"]);
+    //  **والرايةُ القديمة تُنزَع**: رغبةٌ قالها قبل شهرين لا ترفعه إلى الرأس.
+    same("   **ورايةُ الرغبة القديمة تُنزَع** — دورةٌ جديدة تبدأ نظيفة",
+      [backReopen.body?.purchaseInterestAt, backReopen.body?.purchaseInterestByName], [null, null]);
+    //  ثم يسعّره المدير بسعر اليوم ويبيعه الاستقبال — **ولا معاينةَ ثانية**.
+    const examsBefore = (await q(`SELECT 1 FROM medical_exams WHERE patient_id=$1`, [pBack])).length;
+    same("   ومديرُ الفرع يسعّره بسعر اليوم",
+      (await http("POST", `/api/followups/${fBack.id}/commercial-price`, S.mgr,
+        { finalPrice: 1_050_000, reason: "تغيّرت الأسعار منذ معاينته" }))
+        .body?.followup?.approvedPrice, 1_050_000);
+    await http("POST", `/api/followups/${fBack.id}/expert`, S.recv, { expertUserId: EXPERT });
+    const backBuy = await http("POST", `/api/followups/${fBack.id}/confirm-purchase`, S.recv, {});
+    same("   **ويشتري بلا معاينةٍ جديدة**",
+      [backBuy.status, backBuy.body?.followup?.status], [200, "converted"]);
+    same("   **ولا معاينةَ ثانيةً وُلدت** — المعاينةُ في تاريخه وكفى",
+      (await q(`SELECT 1 FROM medical_exams WHERE patient_id=$1`, [pBack])).length, examsBefore);
+    same("   والمقيَّد سعرُ اليوم",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pBack]))[0].total_cost),
+      1_050_000);
+
+    // ══ ٣٧. **والطبيبُ يُطلَب حين يبدأ مسارٌ سريريٌّ صراحةً** ═══════════
+    //  جهازٌ آخر = خيطٌ سريريٌّ آخر: حالةٌ جديدة بلا معاينة **تُقفَل** حتى
+    //  يفحصها الطبيب. فالبوّابة سريريةٌ حين تكون سريريةً حقّاً — لا زمنية.
+    //  والمقابلُ: مريضٌ **بلا معاينةٍ أصلاً** يُقفَل عليه الطريق حتى يفحصه
+    //  الطبيب. فالبوّابةُ قائمةٌ حيث يجب — عند بدء خيطٍ سريريٍّ جديد.
+    const pFresh = await mkPatient("خيطٌ سريريٌّ جديد");
+    await mkCase(pFresh);
+    const freshTry = await http("POST", `/api/patients/${pFresh}/assign-manufacturing`, S.recv,
+      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 100_000 });
+    check(freshTry.status >= 400,
+      "٣٧. **مريضٌ بلا معاينة: التخصيصُ مقفل** — البوّابةُ سريريةٌ لا زمنية",
+      JSON.stringify({ status: freshTry.status, body: freshTry.body }));
+    check(String(freshTry.body?.error ?? "").includes("معاين"),
+      "   **والسببُ يُقال صراحةً: لا معاينة**", String(freshTry.body?.error));
+    same("   ولا أمرَ وُلد",
+      (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pFresh])).length, 0);
+
+    // ══ ٣٨. **معلومةُ الطبيب بعد البيع — قراءةٌ بلا فعل** ══════════════
+    console.log("\n── ما يصل الطبيب بعد البيع ──");
+    const mine = await http("GET", "/api/medical/recent-purchases", S.doc);
+    const mineRows: any[] = mine.body?.rows ?? [];
+    const backRow = mineRows.find((r: any) => r.patientId === pBack);
+    same("٣٨. **الطبيبُ يرى مريضَه الذي اشترى**", mine.status, 200);
+    check(Boolean(backRow), "   والصفُّ موجود", JSON.stringify(mineRows.map((r) => r.patientId)));
+    same("   ومعه السعرُ النهائي ومَن حدّده ومَن أكّد الشراء",
+      [backRow?.finalPrice, backRow?.priceSetByName, backRow?.confirmedByName],
+      [1_050_000, "مدير الفرع", "استعلامات"]);
+    same("   **وسعرُ معاينته هو** — فيرى الفرقَ بلا حساب", backRow?.examDeviceCost, 900_000);
+    //  **وطبيبٌ آخر لا يرى مرضى زميله**: الفلترةُ على `doctor_id` في الخادم.
+    const notMine: any[] = (await http("GET", "/api/medical/recent-purchases", S.doc2)).body?.rows ?? [];
+    same("   **وطبيبٌ آخر لا يرى مرضى زميله**",
+      notMine.filter((r: any) => r.patientId === pBack).length, 0);
+    //  **ومَن ليس طبيباً لا يرى شيئاً** — والقائمةُ فارغةٌ لا 403.
+    same("   ومَن ليس طبيباً يرى قائمةً فارغة",
+      [((await http("GET", "/api/medical/recent-purchases", S.recv)).body?.rows ?? []).length,
+        ((await http("GET", "/api/medical/recent-purchases", S.expert)).body?.rows ?? []).length],
+      [0, 0]);
+    //  **ولا فعلَ مطلوب**: النقطةُ قراءةٌ محضة، والكتابةُ عليها غيرُ موجودة.
+    same("   **ولا كتابةَ على هذه النقطة إطلاقاً**",
+      (await http("POST", "/api/medical/recent-purchases", S.doc, {})).status, 404);
+
+    // ══ ٣٩. **ولا اعتمادَ جديدٍ في المجموعة كلِّها** ═══════════════════
+    //  لا نقطةَ خصمٍ ولا طابورَ اعتمادِ خصم — والنقاطُ المخترَعة تُردّ ٤٠٤.
+    for (const path of ["discount-request", "request-discount", "approve-purchase-request"]) {
+      same(`٣٩. **لا نقطةَ «${path}»**`,
+        (await http("POST", `/api/followups/${fPlain.id}/${path}`, S.admin, {})).status, 404);
+    }
+    same("   **ولا طابورَ اعتمادِ خصم**",
+      (await http("GET", "/api/discount-requests", S.admin)).status, 404);
+    //  **ولا صفَّ طلبِ سعرٍ وُلد في المجموعة كلِّها من نقطةٍ** — كلُّ ما فيها
+    //  زُرع في القاعدة عمداً لاختبار التوافق الرجعي.
+    const newRequests = await q(`SELECT r.id FROM price_change_requests r
+      JOIN patients p ON p.id = r.patient_id
+      WHERE p.referral_source = $1 AND r.requested_by_name <> 'موظّف قديم'`, [MARK]);
+    same("   **ولا طلبَ سعرٍ أنشأته نقطةٌ في المجموعة كلِّها**", newRequests.length, 0);
+    //  ولا حالةَ `price_approval_pending` دخلها ملفٌّ من مسارٍ حيّ.
+    const liveLegacyStatus = await q(`SELECT f.id FROM post_exam_followups f
+      JOIN patients p ON p.id = f.patient_id
+      WHERE p.referral_source = $1 AND f.status = 'price_approval_pending'`, [MARK]);
+    same("   **ولا ملفَّ عالقٍ في «بانتظار اعتماد السعر»**", liveLegacyStatus.length, 0);
+
+    // ══ ٤٠. **الطبيبُ يستطيع ولا يُطلَب منه** ═════════════════════════
+    console.log("\n── مشاركةُ الطبيب: اختياريةٌ لا إلزامية ──");
+    const pDocLimit = await mkPatient("مشاركةُ الطبيب");
+    await mkCase(pDocLimit);
+    await signExam(pDocLimit, S.doc, { deviceCost: 800_000 });
+    const fDL = await followupOf(pDocLimit);
+
+    //  ── القراءةُ مفتوحةٌ له كاملةً ──
+    const docRead = await http("GET", `/api/followups/patient/${pDocLimit}`, S.doc);
+    same("٤٠. **الطبيبُ يقرأ ملفَّ المتابعة** — بالسعر والتاريخ",
+      [docRead.status, (docRead.body ?? [])[0]?.approvedPrice], [200, 800_000]);
+    same("    ويقرأ الطابور كذلك",
+      (await http("GET", "/api/followups", S.doc)).status, 200);
+
+    //  ── وإشارتُه ──
+    same("٤١. **وإشارةُ الرغبة مفتوحةٌ له**",
+      (await http("POST", `/api/followups/${fDL.id}/purchase-interest`, S.doc, {})).status, 200);
+
+    //  ── وكلُّ الأفعال التشغيلية مفتوحةٌ له **إن حضر** ──
+    same("٤٢. **والطبيبُ يسجّل تواصلاً**",
+      (await http("POST", `/api/followups/${fDL.id}/contact`, S.doc,
+        { note: "كلّمتُه بنفسي" })).status, 200);
+    same("    **ويؤجّل**",
+      (await http("POST", `/api/followups/${fDL.id}/defer`, S.doc,
+        { reason: "needs_time", noScheduledFollowUp: true })).status, 200);
+    same("    **ويسنِد خبيراً**",
+      (await http("POST", `/api/followups/${fDL.id}/expert`, S.doc,
+        { expertUserId: EXPERT })).status, 200);
+    same("    **ويغلق «لم يشترِ»**",
+      (await http("POST", `/api/followups/${fDL.id}/close`, S.doc,
+        { reason: "chose_other_center" })).status, 200);
+    same("    **ويعيد الفتح**",
+      (await http("POST", `/api/followups/${fDL.id}/reopen`, S.doc,
+        { toStatus: "awaiting_patient_decision" })).status, 200);
+
+    //  ── **والسعرُ وحده خارجَه**: قرارُ «بكم نبيع» لمن يدير الفرع ──
+    const beforeDocPrice = await moneyOf(pDocLimit);
+    same("٤٣. **ولا يحدّد السعر التجاري** — ولو كان مخوَّلاً سريرياً",
+      (await http("POST", `/api/followups/${fDL.id}/commercial-price`, S.doc,
+        { finalPrice: 500_000, reason: "أراه مناسباً" })).status, 403);
+    same("    ولا شيءَ تحرّك بمحاولته",
+      [(await followupOf(pDocLimit))?.approvedPrice,
+        (await followupOf(pDocLimit))?.priceSource], [800_000, "exam"]);
+    same("    ولا ديناراً", await moneyOf(pDocLimit), beforeDocPrice);
+    const denyMsg = String((await http("POST", `/api/followups/${fDL.id}/commercial-price`,
+      S.doc, { finalPrice: 500_000, reason: "x" })).body?.error ?? "");
+    check(denyMsg.includes("مدير") && denyMsg.includes("مسؤول"),
+      "    ورسالتُه تقول مَن يملكه", denyMsg);
+
+    //  ── ويؤكّد الشراء ويبدأ التصنيع ──
+    same("٤٤. **ويؤكّد الشراء فيبدأ التصنيع**",
+      (await http("POST", `/api/followups/${fDL.id}/confirm-purchase`, S.doc, {})).status, 200);
+    same("    والمقيَّد سعرُ المعاينة كما هو",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pDocLimit]))[0].total_cost),
+      800_000);
+
+    // ══ ٤٥. **ولا حالةَ تنتظر طبيباً — المسارُ كاملاً بلا طبيب** ═══════
+    //  البرهانُ العملي: مريضٌ يمرّ من التوقيع إلى التصنيع ولا يلمس ملفَّه
+    //  طبيبٌ **بعد المعاينة إطلاقاً**. فمشاركتُه أعلاه مرونةٌ لا تبعيّة.
+    console.log("\n── المسار كاملاً بلا طبيب ──");
+    const pNoDoc = await mkPatient("بلا طبيبٍ بعد المعاينة");
+    await mkCase(pNoDoc);
+    await signExam(pNoDoc, S.doc, { deviceCost: 900_000 });
+    const fND = await followupOf(pNoDoc);
+    const noDocSteps: Array<[string, any, string, any]> = [
+      ["تسجيل تواصل", S.recv, `/api/followups/${fND.id}/contact`, { note: "اتصال" }],
+      ["تأجيل", S.recv, `/api/followups/${fND.id}/defer`,
+        { reason: "needs_time", noScheduledFollowUp: true }],
+      ["إغلاق", S.recv, `/api/followups/${fND.id}/close`, { reason: "needs_time" }],
+      ["إعادة فتح", S.recv, `/api/followups/${fND.id}/reopen`,
+        { toStatus: "awaiting_patient_decision" }],
+      ["إسناد خبير", S.recv, `/api/followups/${fND.id}/expert`, { expertUserId: EXPERT }],
+      ["تحديد السعر", S.mgr, `/api/followups/${fND.id}/commercial-price`,
+        { finalPrice: 820_000, reason: "مفاوضة" }],
+      ["تأكيد الشراء", S.recv, `/api/followups/${fND.id}/confirm-purchase`, {}],
+    ];
+    for (const [label, sess, path, body] of noDocSteps) {
+      same(`٤٥. **${label} — بيد الفرع وحده**`,
+        (await http("POST", path, sess, body)).status, 200);
+    }
+    same("    **والملفُّ وصل التصنيع ولم يلمسه طبيبٌ بعد المعاينة**",
+      (await followupOf(pNoDoc))?.status, "converted");
+    //  **ولا حدثَ واحدٍ فاعلُه طبيبٌ بعد فتح المتابعة** — الدليلُ في الدفتر.
+    //  و`followup_created` مستثنىً: هو أثرُ توقيع المعاينة نفسِها، والتوقيعُ
+    //  عملٌ سريريٌّ لا تجاريّ — وهو المكانُ الوحيد الذي يلزم فيه الطبيب.
+    const noDocActors = (await q(
+      `SELECT DISTINCT actor_user_id FROM post_exam_followup_events
+        WHERE patient_id = $1 AND actor_user_id IS NOT NULL
+          AND event_type <> 'followup_created'`, [pNoDoc]))
+      .map((r: any) => Number(r.actor_user_id));
+    same("    **ولا فاعلَ طبيبٍ في أيّ حدثٍ تجاريّ**",
+      noDocActors.filter((id: number) => [DOC, DOC2, ADMIN_DOC].includes(id)), []);
+    check(noDocActors.length > 0, "    (والأحداثُ التجارية وقعت فعلاً)",
+      JSON.stringify(noDocActors));
+    same("    والمقيَّد سعرُ المدير",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pNoDoc]))[0].total_cost),
+      820_000);
+
+    // ══ ٤٦. **سلطةُ المسؤول تسبق الدور** ══════════════════════════════
+    //  حسابٌ دورُه «طبيب» و`isAdmin` صحيح: يمرّ من كلّ باب — ومنها التسعير
+    //  الذي يُردّ عنه الطبيبُ العاديّ. فالفرقُ `isAdmin` وحده لا اسمُ الدور.
+    console.log("\n── سلطةُ المسؤول تسبق الدور ──");
+    const pAdmDoc = await mkPatient("المسؤول الطبيب");
+    await mkCase(pAdmDoc);
+    await signExam(pAdmDoc, S.doc, { deviceCost: 600_000 });
+    const fAD = await followupOf(pAdmDoc);
+    same("٤٦. **يقرأ**",
+      (await http("GET", `/api/followups/patient/${pAdmDoc}`, S.adminDoc)).status, 200);
+    const admDocSteps: Array<[string, string, any]> = [
+      ["يرفع الإشارة", `/api/followups/${fAD.id}/purchase-interest`, {}],
+      ["يسجّل تواصلاً", `/api/followups/${fAD.id}/contact`, { note: "اتصال" }],
+      ["يؤجّل", `/api/followups/${fAD.id}/defer`,
+        { reason: "needs_time", noScheduledFollowUp: true }],
+      ["يغلق", `/api/followups/${fAD.id}/close`, { reason: "needs_time" }],
+      ["يعيد الفتح", `/api/followups/${fAD.id}/reopen`,
+        { toStatus: "awaiting_patient_decision" }],
+      ["يسنِد خبيراً", `/api/followups/${fAD.id}/expert`, { expertUserId: EXPERT }],
+      //  **وهذا هو الفرقُ**: الطبيبُ العاديّ يُردّ عنه، وهذا يمرّ بسلطته.
+      ["**يحدّد السعر**", `/api/followups/${fAD.id}/commercial-price`,
+        { finalPrice: 550_000, reason: "قرار المسؤول" }],
+      ["يؤكّد الشراء", `/api/followups/${fAD.id}/confirm-purchase`, {}],
+    ];
+    for (const [label, path, body] of admDocSteps) {
+      same(`    ${label}`, (await http("POST", path, S.adminDoc, body)).status, 200);
+    }
+    same("    والمقيَّد سعرُه هو",
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pAdmDoc]))[0].total_cost),
+      550_000);
+    //  ويحسم الطلبَ القديم كذلك — فلا بابَ في هذا المسار يُغلق دونه.
+    const legAdmDoc = await mkLegacyPending("سلطةُ المسؤول الطبيب", 400_000, 350_000);
+    same("    **ويحسم الطلبَ القديم**",
+      (await http("POST", `/api/price-requests/${legAdmDoc.requestId}/decide`, S.adminDoc,
+        { decision: "approve" })).status, 200);
+
+    // ══ ٤٧. والاستقبالُ ومديرُ الفرع كما هما ══════════════════════════
+    const pRoles = await mkPatient("أدوارُ الفرع");
+    await mkCase(pRoles);
+    await signExam(pRoles, S.doc, { deviceCost: 700_000 });
+    const fR = await followupOf(pRoles);
+    same("٤٧. **والاستقبالُ لا يحدّد السعر**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.recv,
+        { finalPrice: 600_000, reason: "x" })).status, 403);
+    same("    **ومديرُ الفرع يحدّده في فرعه**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.mgr,
+        { finalPrice: 600_000, reason: "مفاوضة" })).body?.followup?.approvedPrice, 600_000);
+    same("    **ومديرُ فرعٍ آخر يُردّ**",
+      (await http("POST", `/api/followups/${fR.id}/commercial-price`, S.mgrB2,
+        { finalPrice: 500_000, reason: "x" })).status, 403);
+    await http("POST", `/api/followups/${fR.id}/expert`, S.recv, { expertUserId: EXPERT });
+    same("    **والاستقبالُ يؤكّد الشراء**",
+      (await http("POST", `/api/followups/${fR.id}/confirm-purchase`, S.recv, {})).status, 200);
+
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");
     const pDel = await mkPatient("للحذف");
     await mkCase(pDel);
     await signExam(pDel, S.doc, { deviceCost: 300_000 });
     const fDel = await followupOf(pDel);
-    await http("POST", `/api/followups/${fDel.id}/price-request`, S.recv,
-      { proposedPrice: 200_000, reason: "price" });
-    check(fDel !== null, "(مريضٌ بمتابعةٍ وطلبِ سعرٍ وأحداث)", "");
+    await http("POST", `/api/followups/${fDel.id}/commercial-price`, S.mgr,
+      { finalPrice: 200_000, reason: "خصم" });
+    await http("POST", `/api/followups/${fDel.id}/purchase-interest`, S.doc, {});
+    check(fDel !== null, "(مريضٌ بمتابعةٍ وتسعيرٍ وإشارةٍ وأحداث)", "");
     const del = await http("DELETE", `/api/patients/${pDel}`, S.admin);
     check(del.status === 200 || del.status === 204,
       "٢٦. **حذفُ مريضٍ بمتابعةٍ كاملة ينجح** — الكاسكيد يشملها",

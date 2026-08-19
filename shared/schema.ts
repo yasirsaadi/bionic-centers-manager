@@ -1487,7 +1487,24 @@ export const postExamFollowups = pgTable("post_exam_followups", {
    * وهذا هو الرقم الذي يحجزه «تخصيص» عند اعتماد الشراء.
    */
   approvedPrice: integer("approved_price").notNull().default(0),
-  priceSource: text("price_source").notNull().default("exam"), // exam | approved_change
+  /**
+   * **مَن قال هذا الرقم** (ترحيل ٠٥٧) — ثلاثةٌ لا اثنان.
+   *
+   * `exam` سعرُ المعاينة · `manager_set` **حدّده مديرُ الفرع مباشرة** ·
+   * `approved_change` اعتمادٌ حُسم بالمسار القديم (توافقٌ رجعي، وقد يكون
+   * رفعَ سعرٍ اعتمده طبيب). والأخيرة لا تُعاد كتابتُها: تعني ما كانت تعنيه.
+   */
+  priceSource: text("price_source").notNull().default("exam"),
+  /**
+   * إشارةُ الطبيب «المريض يرغب بالشراء الآن» (ترحيل ٠٥٧) — **رايةٌ لا حالة**.
+   *
+   * تُرفع على ملفٍّ يبقى في حالته، فتركُها **لا يعني رفضاً**: الصمتُ صمت.
+   * و`purchaseInterestBy` لقطةُ رقمٍ بلا مفتاح أجنبي ومعها الاسم — حسابٌ
+   * يُحذف يترك رقماً لا يُفسَّر، والاسمُ يبقى مقروءاً.
+   */
+  purchaseInterestAt: timestamp("purchase_interest_at", { withTimezone: true }),
+  purchaseInterestBy: integer("purchase_interest_by"),
+  purchaseInterestByName: text("purchase_interest_by_name"),
   /**
    * الخبير المختار لهذا الجهاز — **يُبذَر من اقتراح الطبيب ويبقى مرناً**.
    *
@@ -1520,7 +1537,12 @@ export const postExamFollowups = pgTable("post_exam_followups", {
   check("post_exam_followups_service_check",
     sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
   check("post_exam_followups_price_source_check",
-    sql`${t.priceSource} IN ('exam', 'approved_change')`),
+    sql`${t.priceSource} IN ('exam', 'manager_set', 'approved_change')`),
+  // **والرايةُ لا تُرفع بلا صاحب**: الزمنُ والفاعل يمتلئان معاً أو يبقيان
+  // فارغين معاً. رايةٌ بلا مَن رفعها سطرٌ لا يُسأل عنه أحد.
+  check("post_exam_followups_purchase_interest_check", sql`
+    (${t.purchaseInterestAt} IS NULL AND ${t.purchaseInterestBy} IS NULL)
+    OR (${t.purchaseInterestAt} IS NOT NULL AND ${t.purchaseInterestBy} IS NOT NULL)`),
   // «مؤجَّل» بلا موعدٍ ولا استثناءٍ صريح حالةٌ ميتة: لا تُقال للموظّف ولا
   // تظهر في طابور. فالقاعدة ترفضها بدل أن تُخزَّن ثم تُنسى.
   check("post_exam_followups_followup_date_check", sql`
@@ -1537,6 +1559,9 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     device_episode_id IS NULL
     AND status NOT IN ('closed_without_purchase', 'converted')`),
   index("ix_pef_patient").on(t.patientId),
+  //  طابورُ الاستعلامات يُرتَّب بالرايات أوّلاً — جزئيٌّ على المرفوعة وحدها.
+  index("ix_pef_purchase_interest").on(t.purchaseInterestAt)
+    .where(sql`purchase_interest_at IS NOT NULL`),
   index("ix_pef_branch_status").on(t.branchId, t.status),
   index("ix_pef_due").on(t.nextFollowUpAt).where(sql`next_follow_up_at IS NOT NULL`),
 ]);

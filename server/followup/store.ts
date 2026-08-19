@@ -20,7 +20,8 @@ import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
 import {
-  isFollowupReason, isTerminal, type FollowupReason, type FollowupStatus,
+  computeCommercialPrice, isFollowupReason, isTerminal,
+  type CommercialPriceChange, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
@@ -56,6 +57,10 @@ export interface FollowupRow {
   closedAt: string | null;
   convertedAt: string | null;
   convertedWorkOrderId: number | null;
+  /** رايةُ الطبيب «يرغب بالشراء الآن» — `null` تعني «لا إشارة» لا «رفض». */
+  purchaseInterestAt: string | null;
+  purchaseInterestBy: number | null;
+  purchaseInterestByName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,6 +87,10 @@ const toRow = (r: any): FollowupRow => ({
   closedAt: r.closed_at ?? null,
   convertedAt: r.converted_at ?? null,
   convertedWorkOrderId: r.converted_work_order_id === null ? null : Number(r.converted_work_order_id),
+  purchaseInterestAt: r.purchase_interest_at ?? null,
+  purchaseInterestBy: r.purchase_interest_by === null || r.purchase_interest_by === undefined
+    ? null : Number(r.purchase_interest_by),
+  purchaseInterestByName: r.purchase_interest_by_name ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -90,7 +99,9 @@ const SELECT_COLS = sql`id, patient_id, case_id, device_episode_id, medical_exam
   service_type, status, approved_price, price_source, selected_expert_user_id,
   next_follow_up_at,
   no_scheduled_follow_up, last_reason, last_note, last_contact_at, closed_reason,
-  closed_at, converted_at, converted_work_order_id, created_at, updated_at`;
+  closed_at, converted_at, converted_work_order_id,
+  purchase_interest_at, purchase_interest_by, purchase_interest_by_name,
+  created_at, updated_at`;
 
 export interface Actor {
   userId: number | null;
@@ -254,6 +265,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            f.selected_expert_user_id, f.next_follow_up_at, f.no_scheduled_follow_up,
            f.last_reason, f.last_note, f.last_contact_at, f.closed_reason,
            f.closed_at, f.converted_at, f.converted_work_order_id,
+           f.purchase_interest_at, f.purchase_interest_by, f.purchase_interest_by_name,
            f.created_at, f.updated_at,
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
            u.display_name AS selected_expert_name
@@ -601,9 +613,20 @@ export async function closeWithoutPurchase(params: {
 /**
  * إعادةُ الفتح — **حدثٌ جديد لا تصحيحُ قديم**.
  *
- * الصفّ نفسه يعود حيّاً وتبقى أحداثه كلّها، ويُلحق به `reopened`. ولا
- * معاينةَ تنتهي صلاحيتها: مريضٌ عاد بعد سنة معاينتُه القديمة في تاريخه،
- * والطبيب وحده يقرّر إن كان يحتاج معاينةً جديدة بمساره القائم.
+ * الصفّ نفسه يعود حيّاً وتبقى أحداثه كلّها، ويُلحق به `reopened`.
+ *
+ * ══ ولا بوّابةَ طبيبٍ هنا — وهذا مقصود ══════════════════════════════════
+ * مريضٌ لم يشترِ في آذار وعاد في أيّار **لا يحتاج معاينةً جديدة لأن الوقت
+ * مرّ**. معاينتُه في تاريخه، والجهازُ هو الجهاز. فالموظّف يعيد فتح الملفّ،
+ * ومديرُ الفرع يحدّث السعر إن تغيّر، والاستقبال يبيع. ولا مرحلةَ زمنيةٍ
+ * تُسقِط قراراً سريرياً صحيحاً.
+ *
+ * وإن كان هناك **سببٌ سريريّ فعلي** — جهازٌ آخر، أو حالةٌ تبدّلت — فذلك
+ * مسارٌ سريريٌّ يبدأ صراحةً بمعاينةٍ جديدة، لا بابٌ يفتحه مرورُ الأيام.
+ *
+ * **ورايةُ «يرغب بالشراء الآن» تُنزَع**: دورةٌ جديدة تبدأ بلا إشارةٍ من
+ * دورةٍ انتهت — وإلّا ظهر الملفُّ في رأس طابور الاستعلامات برغبةٍ قالها
+ * المريضُ قبل شهرين وعدل عنها.
  */
 export async function reopen(params: {
   followupId: number; toStatus: "awaiting_patient_decision" | "follow_up";
@@ -622,6 +645,8 @@ export async function reopen(params: {
          SET status = ${params.toStatus}, closed_reason = NULL, closed_at = NULL,
              next_follow_up_at = ${params.toStatus === "follow_up" ? next : null}::timestamptz,
              no_scheduled_follow_up = ${params.toStatus === "follow_up" ? noSchedule : false},
+             purchase_interest_at = NULL, purchase_interest_by = NULL,
+             purchase_interest_by_name = NULL,
              last_note = ${params.note ?? null}, updated_at = NOW()
        WHERE id = ${params.followupId} AND status = 'closed_without_purchase'
       RETURNING ${SELECT_COLS}
@@ -681,61 +706,147 @@ export async function selectExpert(params: {
   });
 }
 
-// ── السعر ────────────────────────────────────────────────────────────────
+// ── إشارةُ الطبيب ────────────────────────────────────────────────────────
+
+/** الحالاتُ الحيّة التي تُرفع فيها الراية — والمنتهيتان خارجها بداهةً. */
+//  **هي الحالاتُ الحيّة الثلاث بعينها** التي تعرض فيها `allowedActions`
+//  الزرّ — فلا يقبل الخادمُ ما لا تعرضه الشاشة ولا العكس.
+const SIGNALABLE: FollowupStatus[] = [
+  "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
+];
 
 /**
- * طلبُ تعديل السعر — **اقتراحٌ لا تعديل**. السعر المعتمد لا يتحرّك بعدُ.
+ * «المريض يرغب بالشراء الآن» — **رايةُ تسليمٍ إلى الاستعلامات**.
  *
- * والتفرّد الجزئي (`uq_pcr_one_pending`) يمنع طلبين معلّقين على متابعةٍ
- * واحدة، فلا يعتمد طبيبان طلبين متناقضين في اللحظة نفسها.
+ * ══ ولا تفعل شيئاً غير ذلك ══════════════════════════════════════════════
+ * لا حالةَ تتغيّر · لا سعرَ يتحرّك · لا كلفةَ تُقيَّد · لا تصنيعَ يبدأ · لا
+ * دفعةَ تُنشأ. الملفُّ يبقى **بانتظار قرار المريض** كما كان، ويظهر في
+ * طابور الاستعلامات مرفوعَ الراية فيُتَّصَل به أوّلاً.
+ *
+ * ══ ولماذا لا تُرفع مرّتين ═════════════════════════════════════════════
+ * الضغطةُ المكرّرة **لا تُنشئ حدثاً ثانياً** ولا تغيّر صاحبَ الراية: أوّلُ
+ * مَن رفعها هو مَن رفعها. فلا يمتلئ التاريخ بضجيجِ نقرات، ولا ينسب
+ * السجلُّ الإشارةَ إلى آخر مَن مرّ عليها.
+ *
+ * وتُنزَع عند إعادة الفتح: دورةٌ تجاريةٌ جديدة تبدأ بلا رايةٍ من دورةٍ
+ * انتهت قبل شهرين.
  */
-export async function requestPriceChange(params: {
-  followupId: number; proposedPrice: number; reason: string;
-  note?: string | null; actor: Actor;
-}): Promise<{ followup: FollowupRow; requestId: number }> {
-  const proposed = Math.round(Number(params.proposedPrice));
-  if (!Number.isFinite(proposed) || proposed < 0) {
-    throw new FollowupError("السعر المقترح غير صالح", 400);
-  }
-  const reason = (params.reason ?? "").trim();
-  if (!reason) throw new FollowupError("سبب طلب تعديل السعر مطلوب", 400);
-
+export async function signalPurchaseInterest(params: {
+  followupId: number; note?: string | null; actor: Actor;
+}): Promise<{ followup: FollowupRow; alreadySignaled: boolean }> {
   return await db.transaction(async (tx) => {
-    const cur = await lockFollowup(tx, params.followupId, [
-      "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
-    ]);
-    let ins;
-    try {
-      ins = await tx.execute(sql`
-        INSERT INTO price_change_requests
-          (followup_id, patient_id, branch_id, current_price, proposed_price,
-           reason, note, status, requested_by, requested_by_name)
-        VALUES (${cur.id}, ${cur.patientId}, ${cur.branchId}, ${cur.approvedPrice},
-                ${proposed}, ${reason}, ${params.note ?? null}, 'pending',
-                ${params.actor.userId}, ${params.actor.userName})
-        RETURNING id
-      `);
-    } catch (e: any) {
-      if (e?.code === "23505") throw new FollowupError("يوجد طلب تعديل سعر معلَّق بالفعل", 409);
-      throw e;
+    const cur = await lockFollowup(tx, params.followupId, SIGNALABLE);
+    //  مرفوعةٌ من قبل: تُعاد كما هي بلا حدثٍ ثانٍ — idempotent صريحة.
+    if (cur.purchaseInterestAt !== null) {
+      return { followup: cur, alreadySignaled: true };
     }
-    const requestId = Number((ins.rows ?? [])[0].id);
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
-         SET status = 'price_approval_pending', last_contact_at = NOW(), updated_at = NOW()
+         SET purchase_interest_at = NOW(),
+             purchase_interest_by = ${params.actor.userId},
+             purchase_interest_by_name = ${params.actor.userName},
+             updated_at = NOW()
        WHERE id = ${cur.id} AND status = ${cur.status}
+         AND purchase_interest_at IS NULL
       RETURNING ${SELECT_COLS}
     `);
     const row = (upd.rows ?? [])[0];
     if (!row) throw new FollowupError(CONFLICT, 409);
     await appendEvent(tx, {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-      eventType: "price_change_requested", fromStatus: cur.status,
-      toStatus: "price_approval_pending", reason, note: params.note ?? null,
-      payload: { requestId, currentPrice: cur.approvedPrice, proposedPrice: proposed },
+      //  **والحالةُ لا تتغيّر**: `fromStatus === toStatus` عمداً، فالحدث
+      //  يقول «وقع شيء» لا «انتقل الملفّ».
+      eventType: "purchase_interest_signaled",
+      fromStatus: cur.status, toStatus: cur.status, note: params.note ?? null,
+      payload: { approvedPrice: cur.approvedPrice, priceSource: cur.priceSource },
       actor: params.actor,
     });
-    return { followup: toRow(row), requestId };
+    return { followup: toRow(row), alreadySignaled: false };
+  });
+}
+
+// ── السعر التجاري ────────────────────────────────────────────────────────
+
+/** الحالاتُ الحيّة التي يُحدَّد فيها السعر التجاري. */
+const PRICEABLE: FollowupStatus[] = [
+  "awaiting_patient_decision", "follow_up",
+  //  توافقٌ رجعي: صفوفٌ حُسمت أو احتُجزت بالمسار القديم يبقى الفرعُ قادراً
+  //  على تسعيرها — وإلّا تجمّدت بانتظار مسارٍ لم يعد قائماً.
+  "price_approved_waiting_patient", "purchase_approval_pending",
+];
+
+/**
+ * **تحديدُ السعر التجاري النهائي — قرارٌ لا طلب.**
+ *
+ * ══ ما زال ══════════════════════════════════════════════════════════════
+ * صفُّ طلبٍ يُنشأ · حالةٌ `price_approval_pending` تُحتجز · طابورٌ ينتظر
+ * طبيباً · واعتمادٌ يُضغط. كلُّ ذلك كان يقف بين المريض وقرارٍ **تجاريّ**
+ * اتّخذه مديرُ الفرع أصلاً في المكالمة نفسها.
+ *
+ * ══ وما بقي ═════════════════════════════════════════════════════════════
+ * كتابةٌ واحدةٌ تحت القفل: `approved_price` و`price_source = manager_set`.
+ * وحدثٌ واحد يحمل **كلّ ما يحتاجه المراجع بعد سنة**: السعرين والفرقَ
+ * ونسبتَه والسببَ والملاحظةَ والفاعلَ ورقمَه واسمَه وزمنَه. ولا جدولَ
+ * ثانٍ: `post_exam_followup_events` هو دفترُ هذا الملفّ منذ ٠٥٣، وحقيقةٌ
+ * ماليةٌ ثانيةٌ تنحرف عن الأولى يوماً.
+ *
+ * ══ ولا دينارَ يتحرّك هنا ═══════════════════════════════════════════════
+ * **لا كلفةَ مريض ولا كلفةَ حالة ولا قيدَ دفتر ولا دفعةَ ولا أمرَ تصنيع.**
+ * السعرُ رقمٌ محفوظٌ ينتظر أن يقول المريضُ نعم؛ وحين يقولها يؤكّد الموظّف
+ * الشراءَ فيصير الرقمُ مالاً — في تلك اللحظة وحدها.
+ */
+export async function setCommercialPrice(params: {
+  followupId: number; finalPrice: number; reason?: string | null;
+  note?: string | null; actor: Actor;
+}): Promise<{ followup: FollowupRow; change: CommercialPriceChange }> {
+  const reason = (params.reason ?? "").trim();
+  return await db.transaction(async (tx) => {
+    const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+
+    //  **الحسابُ تحت القفل على السعر المقفول**: لو حُسب قبله لأمكن أن
+    //  يُسجَّل فرقٌ نُسب إلى سعرٍ تغيّر بينهما.
+    const change = computeCommercialPrice({
+      previousPrice: cur.approvedPrice, finalPrice: Number(params.finalPrice),
+    });
+    if (!change.ok) throw new FollowupError(change.error ?? "السعر غير صالح", 400);
+    //  والسببُ إلزاميٌّ **عند التغيير وحده**: تأكيدُ الرقم كما هو ليس قراراً
+    //  يُبرَّر، وتغييرُه مالٌ يُسأل عنه.
+    if (change.changed && !reason) {
+      throw new FollowupError("سبب تغيير السعر مطلوب", 400);
+    }
+
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${change.finalPrice},
+             price_source = 'manager_set',
+             last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status}
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      //  نوعٌ جديد ولا يُعاد استعمال `price_approved`: القديم يعني «اعتمده
+      //  طبيبٌ بعد طلب»، والجديد يعني «قرّره مديرُ الفرع». وخلطُهما تحت اسمٍ
+      //  واحد كان سيجعل تاريخ ما قبل التبسيط يُقرأ كتاريخ ما بعده.
+      eventType: "commercial_price_set",
+      fromStatus: cur.status, toStatus: cur.status,
+      reason: reason || null, note: params.note ?? null,
+      payload: {
+        previousPrice: change.previousPrice,
+        finalPrice: change.finalPrice,
+        difference: change.difference,
+        percentageDifference: change.percentageDifference,
+        changed: change.changed,
+        previousPriceSource: cur.priceSource,
+        setByUserId: params.actor.userId,
+        setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+    return { followup: toRow(row), change };
   });
 }
 
@@ -956,6 +1067,7 @@ export async function listFollowups(params: {
            f.approved_price, f.price_source, f.next_follow_up_at,
            f.no_scheduled_follow_up, f.last_reason, f.last_note, f.last_contact_at,
            f.closed_reason, f.created_at,
+           f.purchase_interest_at, f.purchase_interest_by_name,
            p.name AS patient_name, p.patient_code, p.phone,
            b.name AS branch_name,
            e.signed_at AS exam_signed_at, e.doctor_name AS exam_doctor_name
@@ -965,6 +1077,9 @@ export async function listFollowups(params: {
       LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
      WHERE ${scopeClause(params.scope)} AND ${filterClause}
      ORDER BY
+       --  **الرايةُ ترفع الملفَّ إلى الرأس**: مريضٌ قال للطبيب «أريده
+       --  اليوم» يُتَّصَل به قبل مَن ينتظر موعدَ متابعةٍ بعد أسبوع.
+       CASE WHEN f.purchase_interest_at IS NULL THEN 1 ELSE 0 END,
        CASE WHEN f.next_follow_up_at IS NULL THEN 1 ELSE 0 END,
        f.next_follow_up_at ASC, f.id DESC
      LIMIT 500
@@ -978,6 +1093,8 @@ export async function listFollowups(params: {
     nextFollowUpAt: x.next_follow_up_at, noScheduledFollowUp: Boolean(x.no_scheduled_follow_up),
     lastReason: x.last_reason, lastNote: x.last_note, lastContactAt: x.last_contact_at,
     closedReason: x.closed_reason, createdAt: x.created_at,
+    purchaseInterestAt: x.purchase_interest_at ?? null,
+    purchaseInterestByName: x.purchase_interest_by_name ?? null,
     examSignedAt: x.exam_signed_at, examDoctorName: x.exam_doctor_name,
   }));
 }
@@ -1016,6 +1133,81 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
       requestedAt: x.requested_at,
     })),
   };
+}
+
+/**
+ * **مرضى هذا الطبيب الذين اشتروا مؤخّراً — قراءةٌ محضة، بلا فعلٍ مطلوب.**
+ *
+ * ══ لماذا لا نظامَ تنبيهاتٍ عامّ ═══════════════════════════════════════
+ * في الريبو قناتان: تلغرام للمالك، وصندوقُ رسائلِ المرضى. وليست فيه بنيةُ
+ * تنبيهاتٍ داخلية للموظّفين — وبناءُ واحدةٍ لأجل سطرٍ يقرأه الطبيب مرّةً
+ * في اليوم كلفةٌ لا تُسترَدّ. فالمعلومة تُوضَع **حيث يقف الطبيب أصلاً**:
+ * قائمةُ عمله. لا صندوقَ يُقرأ ولا رايةَ تُطفأ ولا شيءَ يُضغط.
+ *
+ * وكلُّ سطرٍ يجيب عن أسئلته الأربعة: **مَن اشترى · ماذا · بكم · ومَن حدّد
+ * ذلك السعر**. فإن رأى رقماً يخالف ما كتبه في معاينته عرف مَن يسأل — بلا
+ * أن يملك حقَّ الاعتراض عليه، لأن القرار التجاري ليس قراره.
+ *
+ * والفاعلان يُقرآن من **دفتر الأحداث** لا من أعمدةٍ جديدة: `converted` لا
+ * يحمل مَن أكّده، والحدثُ يحمله. فلا عمودَ يُضاف ليكرّر ما هو مكتوب.
+ */
+export async function recentPurchasesForDoctor(params: {
+  doctorUserId: number; scope: number[] | null; days?: number; limit?: number;
+}): Promise<any[]> {
+  const days = Number.isFinite(params.days) ? Number(params.days) : 30;
+  const limit = Number.isFinite(params.limit) ? Number(params.limit) : 50;
+  const r = await db.execute(sql`
+    SELECT f.id, f.patient_id, f.service_type, f.branch_id, f.approved_price,
+           f.price_source, f.converted_at, f.converted_work_order_id,
+           p.name AS patient_name, p.patient_code,
+           b.name AS branch_name,
+           e.case_type, e.device_cost AS exam_device_cost,
+           conf.actor_name AS confirmed_by_name,
+           pset.actor_name AS price_set_by_name,
+           pset.created_at AS price_set_at,
+           pset.payload AS price_payload
+      FROM post_exam_followups f
+      JOIN medical_exams e ON e.id = f.medical_exam_id
+      JOIN patients p ON p.id = f.patient_id
+      LEFT JOIN branches b ON b.id = f.branch_id
+      LEFT JOIN LATERAL (
+        SELECT actor_name FROM post_exam_followup_events
+         WHERE followup_id = f.id
+           AND event_type IN ('purchase_confirmed', 'purchase_approved')
+         ORDER BY id DESC LIMIT 1
+      ) conf ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT actor_name, created_at, payload FROM post_exam_followup_events
+         WHERE followup_id = f.id AND event_type = 'commercial_price_set'
+         ORDER BY id DESC LIMIT 1
+      ) pset ON TRUE
+     WHERE e.doctor_id = ${params.doctorUserId}
+       AND f.status = 'converted'
+       AND f.converted_at IS NOT NULL
+       AND f.converted_at >= NOW() - (${days} || ' days')::interval
+       AND ${scopeClause(params.scope)}
+     ORDER BY f.converted_at DESC
+     LIMIT ${limit}
+  `);
+  return (r.rows ?? []).map((x: any) => ({
+    followupId: Number(x.id), patientId: Number(x.patient_id),
+    patientName: x.patient_name, patientCode: x.patient_code,
+    branchId: x.branch_id === null ? null : Number(x.branch_id),
+    branchName: x.branch_name,
+    serviceType: x.service_type, caseType: x.case_type,
+    finalPrice: Number(x.approved_price ?? 0), priceSource: x.price_source,
+    //  سعرُ المعاينة كما وقّعه هو — فيرى الفرقَ بلا حساب.
+    examDeviceCost: x.exam_device_cost === null || x.exam_device_cost === undefined
+      ? null : Number(x.exam_device_cost),
+    purchasedAt: x.converted_at, workOrderId: x.converted_work_order_id === null
+      ? null : Number(x.converted_work_order_id),
+    confirmedByName: x.confirmed_by_name ?? null,
+    //  **ولا يُذكَر مَن حدّد السعر إلّا إن حُدِّد فعلاً**: ملفٌّ بيع بسعر
+    //  المعاينة بلا تدخّل يبقى حقلُه فارغاً لا «—» ملفَّقاً.
+    priceSetByName: x.price_set_by_name ?? null,
+    priceSetAt: x.price_set_at ?? null,
+    priceChange: x.price_payload ?? null,
+  }));
 }
 
 export { isTerminal };

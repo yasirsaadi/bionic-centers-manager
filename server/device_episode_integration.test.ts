@@ -234,8 +234,11 @@ async function main() {
         { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 409);
     await http("POST", `/api/followups/${fu.id}/expert`, S.reception, { expertUserId: EXPERT });
     await http("POST", `/api/followups/${fu.id}/accept-price`, S.reception, {});
+    //  والطبيبُ المخوَّل **يستطيع** أن يؤكّد إن حضر — ولا يُطلَب منه ذلك:
+    //  الاستقبالُ ومديرُ الفرع يُتمّان المسارَ وحدهما (مُثبَتٌ في
+    //  `test:followup`).
     const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.doctor, {});
-    same("   واعتمادُ الطبيب بدأ التصنيع", assign.status, 200);
+    same("   وتأكيدُ الشراء بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],
       ["in_manufacturing", 1_500_000]);

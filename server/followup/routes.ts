@@ -2,20 +2,21 @@
 //
 // ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
 //
-//   تسجيلُ قرار المريض والمتابعة  — استقبال · مدير فرع · طبيب · مسؤول
-//   **تأكيدُ الشراء وبدءُ التصنيع** — استقبال · مدير فرع · طبيب · مسؤول
-//   اعتمادُ/رفضُ تعديل السعر      — **طبيبٌ مخوَّل أو مسؤول حصراً**
+//   قراءةُ الملفّ                — استقبال · مدير فرع · طبيب · مسؤول
+//   المتابعة التجارية            — استقبال · مدير فرع · **طبيبٌ مخوَّل** · مسؤول
+//   (تأجيل · إغلاق · إعادة فتح · تواصل · إسناد خبير · تأكيد شراء)
+//   **تحديدُ السعر التجاري**     — **مدير الفرع في فرعه** · مسؤول — ولا غير
+//   إشارةُ «يرغب بالشراء الآن»   — طبيبٌ مخوَّل · مسؤول
+//   حسمُ طلبِ سعرٍ قديمٍ معلَّق    — طبيبٌ مخوَّل · مسؤول (توافقٌ رجعي)
 //
-// والفرقُ بين السطرين الأوّلين والثالث هو كلّ شيء: **«اشترى» تسجيلُ واقعة**
-// وقعت أمام الموظّف بالسعر المعتمد نفسه، فلا سلطةَ تُستأذَن لها. أمّا
-// **تعديلُ السعر فاعتماد**: رقمٌ وقّعه الطبيب يُطلب تغييرُه، فيلزم مَن يملك
-// تغييره — ومديرُ الفرع ليس منهم عمداً.
+// **والقاعدةُ في سطر**: الطبيبُ **يستطيع ولا يُطلَب منه**. يشارك في العمل
+// التشغيلي إن حضر — مريضٌ واقفٌ أمامه والاستعلامات مشغول — **ولا حالةَ في
+// هذا المسار تنتظره**: الاستقبالُ ومديرُ الفرع يُتمّان كلَّ شيءٍ وحدهما.
 //
-// وكان تأكيدُ الشراء في الصفّ الثالث خطأً، فحبَس الفرعَ كلَّه بانتظار ضغطةٍ
-// لا قرارَ سريرياً فيها. وهذا ما صُحِّح.
+// والسعرُ التجاري وحده خارجَه: «بكم نبيع» قرارُ مَن يدير الفرع ويحاسَب على
+// إيراده. وطبيبٌ يحمل `isAdmin` يسعّر — **بسلطته لا بدوره**.
 //
-// وليس شرطاً أن يكون **طبيب المعاينة نفسه**: أي طبيبٍ مخوَّل يعتمد، وإلّا
-// تجمّد ملفّ المريض حتى يعود زميلٌ من إجازته.
+// **وسلطةُ المسؤول تُفحَص أوّلاً** في كل بوّابة، فلا يقيّدها دورٌ عاديّ.
 //
 // ونطاقُ الفرع مفروضٌ في كل نقطة: يُقرأ فرع المتابعة من صفّها لا من الطلب.
 
@@ -25,7 +26,8 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import {
-  canApprove, canConfirmPurchase, canRecordFollowup, canViewFollowup,
+  canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
+  canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
 
 type Req = any;
@@ -74,6 +76,16 @@ function fail(res: any, err: unknown): boolean {
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
+
+/**
+ * رسالةُ الردّ لمن ليس من مسؤولي المتابعة.
+ *
+ * **تقول مَن يفعلها لا «غير مصرح» عارية**: مَن يقرأ ردّاً عارياً يظنّ حسابَه
+ * معطّلاً ويتّصل بالدعم. وهي تصيب المحاسبَ والمعالجَ وخبيرَ الأطراف —
+ * أمّا الطبيبُ المخوَّل فيمرّ.
+ */
+const COMMERCIAL_ONLY =
+  "متابعة ما بعد المعاينة للاستقبال ومدير الفرع والطبيب المخوَّل والمسؤول العام";
 
 export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   /**
@@ -131,23 +143,24 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     res.json(rows);
   });
 
-  // ── «بانتظار موافقتي» — **تعديلاتُ السعر وحدها** ─────────────────────
-  //  وخرج منها طابورُ «اعتماد الشراء»: مهامٌّ روتينية لا قرارَ سريرياً فيها
-  //  كانت تُغرق شاشة الطبيب وتحبس الفرع. والباقي اعتمادٌ حقيقي.
+  // ── «بانتظار موافقتي» — **بقايا المسار القديم وحدها** ────────────────
+  //  لم يعد شيءٌ يدخل هذا الطابور: تغييرُ السعر صار قرارَ مديرِ الفرع لا
+  //  طلباً. فهو يفرغ ولا يمتلئ، ويبقى كي لا يتجمّد ما كان معلَّقاً لحظةَ
+  //  النشر. وحين يفرغ يختفي من الشاشة من تلقائه.
   app.get("/api/followups/approvals", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canApprove(s)) {
-      //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يعتمد.
+    if (!canDecideLegacyPriceRequest(s)) {
+      //  قائمةٌ فارغة لا 403: الشاشة تُعرض للجميع وتخلو لمن لا يحسم.
       return res.json({ priceApprovals: [], mayApprove: false });
     }
     const out = await store.listPendingApprovals(branchScope(req));
-    res.json({ ...out, mayApprove: true });
+    res.json({ ...out, mayApprove: true, legacyOnly: true });
   });
 
   // ── تأجيل ────────────────────────────────────────────────────────────
   app.post("/api/followups/:id/defer", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -172,7 +185,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── تسجيل تواصل بلا تغيير حالة ───────────────────────────────────────
   app.post("/api/followups/:id/contact", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -188,7 +201,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  مفتوحةٌ منذ ما قبل النشر — وما تُنتجه قابلٌ للاستئناف بضغطةٍ واحدة.
   app.post("/api/followups/:id/accept-price", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -208,7 +221,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── إغلاق بلا شراء ───────────────────────────────────────────────────
   app.post("/api/followups/:id/close", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -229,7 +242,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── إعادة الفتح — حدثٌ جديد لا تصحيحُ قديم ───────────────────────────
   app.post("/api/followups/:id/reopen", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     const to = req.body?.toStatus === "follow_up" ? "follow_up" : "awaiting_patient_decision";
@@ -254,7 +267,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  الطبيب اقترحه في معاينته، والفرع يقرّر. ولا تصنيعَ يبدأ من هنا.
   app.post("/api/followups/:id/expert", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
     const expertUserId = Number(req.body?.expertUserId);
@@ -282,35 +295,95 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── طلب تعديل السعر — **اقتراحٌ لا تعديل** ───────────────────────────
-  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+  // ── إشارةُ الطبيب «المريض يرغب بالشراء الآن» — **تسليمٌ لا بيع** ──────
+  //  لا حالةَ تتغيّر ولا ديناراً يتحرّك: رايةٌ ترفع الملفَّ إلى رأس طابور
+  //  الاستعلامات. وتركُها **لا يعني أن المريض رفض**.
+  app.post("/api/followups/:id/purchase-interest", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canRecordFollowup(s)) return res.status(403).json({ error: "غير مصرح" });
+    if (!canSignalPurchaseInterest(s)) {
+      return res.status(403).json({
+        error: "إشارة رغبة الشراء يرفعها الطبيب المخوَّل أو المسؤول العام",
+      });
+    }
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
-      const out = await store.requestPriceChange({
-        followupId: f.id, proposedPrice: Number(req.body?.proposedPrice),
-        reason: String(req.body?.reason ?? ""), note: str(req.body?.note),
+      const out = await store.signalPurchaseInterest({
+        followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
+      });
+      //  والضغطةُ المكرّرة لا تُنتج سطرَ تدقيقٍ ثانياً كما لا تُنتج حدثاً.
+      if (!out.alreadySignaled) {
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `إشارة رغبة الشراء لمتابعة #${f.id} — بلا أثرٍ مالي`,
+        });
+      }
+      res.json(out);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ── تحديدُ السعر التجاري — **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ──────
+  //  الطبيبُ يملك القرار السريري، والفرعُ يملك القرار التجاري. فلا صفَّ
+  //  طلبٍ يُنشأ ولا حالةَ انتظارٍ تُحتجَز ولا طابورَ يمتلئ.
+  app.post("/api/followups/:id/commercial-price", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canSetCommercialPrice(s)) {
+      return res.status(403).json({
+        error: "تحديد السعر النهائي لمدير الفرع أو المسؤول العام — الاستقبال يبيع بالسعر المحفوظ",
+      });
+    }
+    //  ونطاقُ الفرع يُقرأ من صفّ المتابعة: مديرُ فرعٍ آخر يُردّ هنا.
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    if (req.body?.finalPrice === undefined || req.body?.finalPrice === null) {
+      return res.status(400).json({ error: "السعر النهائي مطلوب" });
+    }
+    try {
+      const out = await store.setCommercialPrice({
+        followupId: f.id, finalPrice: Number(req.body.finalPrice),
+        reason: str(req.body?.reason), note: str(req.body?.note),
         actor: actorOf(req),
       });
+      const c = out.change;
       await logAudit({
-        entityType: "price_change_request", entityId: out.requestId, action: "create",
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
         userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: { approvedPrice: c.previousPrice, priceSource: f.priceSource },
+        newValues: {
+          approvedPrice: c.finalPrice, priceSource: "manager_set",
+          difference: c.difference, percentageDifference: c.percentageDifference,
+          reason: str(req.body?.reason), note: str(req.body?.note),
+        },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `طلب تعديل سعر لمتابعة #${f.id}: ${f.approvedPrice.toLocaleString()} ⟶ ${Number(req.body?.proposedPrice).toLocaleString()} د.ع`,
+        notes: c.changed
+          ? `تحديد السعر التجاري لمتابعة #${f.id}: ${c.previousPrice.toLocaleString()} ⟶ ${c.finalPrice.toLocaleString()} د.ع (${c.difference > 0 ? "+" : ""}${c.difference.toLocaleString()}، ${c.percentageDifference}٪)`
+          : `تثبيت السعر التجاري لمتابعة #${f.id} كما هو: ${c.finalPrice.toLocaleString()} د.ع`,
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── اعتماد/رفض تعديل السعر — **طبيب أو مسؤول حصراً** ─────────────────
+  // ── الطلبُ القديم — **بابٌ مغلق، ومعه الطريق** ───────────────────────
+  //  لا يُنشأ طلبُ تعديل سعرٍ جديد بعد اليوم. والنافذةُ المفتوحة منذ ما قبل
+  //  النشر تُردّ برسالةٍ تقول **ما تغيّر ومَن يفعلها الآن** — لا 404 عارية
+  //  ولا صمتٌ يجعل الموظّف يظنّ النظامَ معطّلاً.
+  app.post("/api/followups/:id/price-request", isAuthenticated, async (req: Req, res) => {
+    return res.status(400).json({
+      error: "لم يعد تغييرُ السعر طلباً يُعتمَد — يحدّده مديرُ الفرع مباشرة. حدّث الصفحة.",
+    });
+  });
+
+  // ── حسمُ طلبٍ قديمٍ معلَّق — **توافقٌ رجعي حتى ينفد** ─────────────────
+  //  يُحسَم بقانون يومه: طبيبٌ مخوَّل أو المسؤول. ومديرُ الفرع يُردّ عنه كما
+  //  كان يُردّ — فقد يكون رفعَ سعرٍ وقّع الطبيبُ على أصله.
   app.post("/api/price-requests/:requestId/decide", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     //  الحارس أوّلاً وقبل أي قراءة: مديرُ الفرع يُردّ هنا صراحةً.
-    if (!canApprove(s)) {
+    if (!canDecideLegacyPriceRequest(s)) {
       return res.status(403).json({
-        error: "اعتماد تعديل السعر للطبيب المخوَّل أو المسؤول العام حصراً",
+        error: "هذا طلبٌ قديم — يحسمه الطبيب المخوَّل أو المسؤول العام حصراً",
       });
     }
     const requestId = Number(req.params.requestId);
@@ -342,13 +415,22 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── تأكيد الشراء وبدء التصنيع — **الاستقبال ومدير الفرع** ────────────
+  // ── تأكيد الشراء وبدء التصنيع ────────────────────────────────────────
+  //  **الاستقبالُ ومديرُ الفرع والطبيبُ المخوَّل والمسؤول العام.**
+  //
+  //  ومشاركةُ الطبيب هنا **اختيارٌ لا واجب**: يسجّلها إن وقف المريضُ أمامه
+  //  والاستعلامات مشغول، ولا يقف عليه بيعٌ أبداً — الاستقبالُ ومديرُ الفرع
+  //  يُتمّان المسارَ وحدهما، ولا حالةَ فيه تنتظر طبيباً.
+  //
+  //  **وسلطةُ المسؤول تسبق الدور**: `canConfirmPurchase` تفحص `isAdmin`
+  //  أوّلاً، فحسابٌ دورُه عاديٌّ ويحمل السلطة يمرّ بها لا بدوره.
+  //
   //  ينادي `storage.assignManufacturing` في معاملةٍ واحدة مع سجلّ التأكيد.
   //  ولا مسارَ تصنيعٍ ثانٍ: الباب هو الباب، والمتغيّر حارسُه وحده.
   async function confirmPurchaseHandler(req: Req, res: any) {
     const s = getSession(req);
     if (!canConfirmPurchase(s)) {
-      return res.status(403).json({ error: "غير مصرح" });
+      return res.status(403).json({ error: COMMERCIAL_ONLY });
     }
     const f = await loadInScope(req, res);
     if (!f) return;

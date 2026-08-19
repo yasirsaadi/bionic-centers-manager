@@ -1,8 +1,11 @@
 // شاشةُ «متابعة ما بعد المعاينة».
 //
 // الطوابيرُ التي كانت غير موجودة: مريضٌ عاين ولم يشترِ كان يختفي من كل شاشة.
-// وهنا يظهر — بمن ينتظر قرارَه، ومن فات موعدُ متابعته، ومن ينتظر اعتماد
-// طبيبٍ لسعرٍ أو لشراء.
+// وهنا يظهر — بمن ينتظر قرارَه، ومن فات موعدُ متابعته، **ومن قال للطبيب
+// إنه يريده اليوم**.
+//
+// ولا طابورَ اعتمادٍ حيّاً: تغييرُ السعر صار قرارَ مديرِ الفرع، والشراءُ
+// تسجيلَ واقعة. وما بقي من «بانتظار موافقتي» فبقايا معلَّقةٌ حتى تنفد.
 //
 // **والنطاق يفرضه الخادم**: هذه الشاشة تعرض ما يصلها، ولا تصفّي بالفرع بنفسها.
 
@@ -15,8 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS, canApprove,
-  type FollowupReason, type FollowupStatus,
+  FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS, canDecideLegacyPriceRequest,
+  priceSourceShort, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
 interface Row {
@@ -36,6 +39,8 @@ interface Row {
   closedReason: string | null;
   examSignedAt: string | null;
   examDoctorName: string | null;
+  purchaseInterestAt: string | null;
+  purchaseInterestByName: string | null;
 }
 
 const FILTERS: Array<{ key: string; label: string }> = [
@@ -43,7 +48,8 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: "due_today", label: "متابعة اليوم" },
   { key: "overdue", label: "متأخّر عن المتابعة" },
   { key: "awaiting_patient_decision", label: "بانتظار قرار المريض" },
-  { key: "price_approval_pending", label: "بانتظار اعتماد السعر" },
+  //  مرشِّحان لبقايا المسار القديم — لا يدخلهما ملفٌّ جديد بعد اليوم.
+  { key: "price_approval_pending", label: "طلب سعر قديم معلَّق" },
   { key: "price_approved_waiting_patient", label: "بانتظار تأكيد المريض بعد التعديل" },
   //  مرشِّحٌ للصفوف المحتجزة من قبل التبسيط — تُفتَح وتُؤكَّد بضغطة. ولا
   //  يدخلها ملفٌّ جديد بعد اليوم.
@@ -106,9 +112,9 @@ export default function PostExamFollowups() {
     },
   });
 
-  const mayApprove = canApprove(session as any);
-  //  تعديلاتُ السعر وحدها. وخرج منها «اعتماد الشراء»: تأكيدُ الشراء صار
-  //  عملَ الاستقبال ومدير الفرع، فلا يقف عليه طبيب.
+  const mayApprove = canDecideLegacyPriceRequest(session as any);
+  //  **بقايا المسار القديم وحدها**: لا يُنشأ طلبٌ جديد بعد اليوم، فهذا
+  //  الطابور يفرغ ولا يمتلئ — ويختفي من الشاشة حين يفرغ.
   const pendingMine = approvals?.priceApprovals?.length ?? 0;
 
   return (
@@ -122,13 +128,13 @@ export default function PostExamFollowups() {
         </p>
       </div>
 
-      {/* «بانتظار موافقتي» — للطبيب والمسؤول وحدهما، **وتعديلاتُ السعر
-          وحدها**: تأكيدُ الشراء لم يعد اعتماداً ولا يظهر هنا. */}
+      {/* «طلبات قديمة معلَّقة» — للطبيب والمسؤول وحدهما. لا يُنشأ جديدٌ
+          فيها، وتختفي البطاقة كلُّها حين تنفد. */}
       {mayApprove && pendingMine > 0 && (
         <Card className="border-blue-200 bg-blue-50/40" data-testid="card-my-approvals">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
-              بانتظار موافقتي
+              طلبات سعر قديمة معلَّقة
               <Badge className="bg-blue-600">{pendingMine}</Badge>
             </CardTitle>
           </CardHeader>
@@ -140,7 +146,7 @@ export default function PostExamFollowups() {
                   <div>
                     <span className="font-medium">{a.patientName}</span>
                     <span className="text-muted-foreground mx-2">{a.patientCode}</span>
-                    <Badge variant="outline" className="text-xs">تعديل سعر</Badge>
+                    <Badge variant="outline" className="text-xs">طلب قديم</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {a.currentPrice?.toLocaleString()} ⟶ {a.proposedPrice?.toLocaleString()} د.ع
@@ -149,7 +155,8 @@ export default function PostExamFollowups() {
               </Link>
             ))}
             <p className="text-xs text-muted-foreground pt-1">
-              الاعتماد يتمّ من بطاقة «قرار المريض بعد المعاينة» في صفحة المريض.
+              طلباتٌ قُدّمت قبل التبسيط. تُحسَم من بطاقة «قرار المريض بعد
+              المعاينة» في صفحة المريض. والسعرُ اليوم يحدّده مديرُ الفرع مباشرة.
             </p>
           </CardContent>
         </Card>
@@ -191,6 +198,7 @@ export default function PostExamFollowups() {
                     <th className="px-3 py-2 text-right">الفرع</th>
                     <th className="px-3 py-2 text-right">تاريخ المعاينة</th>
                     <th className="px-3 py-2 text-right">الحالة</th>
+                    <th className="px-3 py-2 text-right">السعر</th>
                     <th className="px-3 py-2 text-right">السبب</th>
                     <th className="px-3 py-2 text-right">آخر تواصل</th>
                     <th className="px-3 py-2 text-right">المتابعة القادمة</th>
@@ -202,7 +210,16 @@ export default function PostExamFollowups() {
                     <tr key={r.id} className="border-t hover:bg-muted/30"
                       data-testid={`row-followup-${r.id}`}>
                       <td className="px-3 py-2 font-mono text-xs">{r.patientCode ?? "—"}</td>
-                      <td className="px-3 py-2 font-medium">{r.patientName}</td>
+                      <td className="px-3 py-2 font-medium">
+                        {/*  **الرايةُ أوّلَ ما يُقرأ** — والخادمُ يرفع صاحبها
+                            إلى رأس الطابور، فلا يبحث عنه أحد. */}
+                        {r.purchaseInterestAt && (
+                          <span className="ml-1" title={`يرغب بالشراء الآن${
+                            r.purchaseInterestByName ? ` — ${r.purchaseInterestByName}` : ""}`}
+                            data-testid={`badge-interest-${r.id}`}>🟢</span>
+                        )}
+                        {r.patientName}
+                      </td>
                       <td className="px-3 py-2">{SERVICE_LABELS[r.serviceType] ?? r.serviceType}</td>
                       <td className="px-3 py-2 text-muted-foreground">{r.branchName ?? "—"}</td>
                       <td className="px-3 py-2 text-muted-foreground">{fmtDate(r.examSignedAt)}</td>
@@ -210,6 +227,17 @@ export default function PostExamFollowups() {
                         <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_TONE[r.status] ?? ""}`}>
                           {FOLLOWUP_STATUS_LABELS[r.status] ?? r.status}
                         </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">
+                        {r.approvedPrice > 0 ? (
+                          <>
+                            <span className="font-medium">{r.approvedPrice.toLocaleString()}</span>
+                            <span className="text-muted-foreground"> د.ع</span>
+                            <div className="text-[11px] text-muted-foreground">
+                              {priceSourceShort(r.priceSource)}
+                            </div>
+                          </>
+                        ) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="px-3 py-2 text-muted-foreground text-xs">
                         {r.closedReason

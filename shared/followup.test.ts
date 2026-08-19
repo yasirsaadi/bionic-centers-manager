@@ -12,9 +12,13 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  allowedActions, canApprove, canConfirmPurchase, canRecordFollowup, canSelectExpert, canViewFollowup,
-  isFollowupReason, isTerminal,
+  allowedActions, canActCommercially, canApprove, canConfirmPurchase,
+  canDecideLegacyPriceRequest,
+  canRecordFollowup, canSelectExpert, canSetCommercialPrice,
+  canSignalPurchaseInterest, canViewFollowup,
+  computeCommercialPrice, isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
+  LEGACY_ONLY_STATUSES, PRICE_SOURCES, priceSourceLabel, priceSourceShort,
 } from "./followup";
 
 let failures = 0;
@@ -30,8 +34,16 @@ function same(msg: string, got: unknown, expected: unknown) {
 const recv = { role: "reception", isAdmin: false, permissions: { canAddPatients: true } };
 const mgr = { role: "branch_manager", isAdmin: false, permissions: {} };
 const doc = { role: "doctor", isAdmin: false, permissions: { canWriteMedicalExam: true } };
+//  **دورُه استقبال** يحمل قدرةً سريرية: يبقى تجارياً لأن الدورَ هو الحَكَم.
 const docCap = { role: "reception", isAdmin: false, permissions: { canWriteMedicalExam: true } };
+//  **ودورُه سريريٌّ بحت** يحمل القدرة: يوقّع ويشير ولا يعمل تجارياً.
+const clinicalOnly = { role: "therapist", isAdmin: false,
+  permissions: { canWriteMedicalExam: true } };
 const admin = { role: "admin", isAdmin: true, permissions: {} };
+//  **دورُه «طبيب» و`isAdmin` صحيح**: سلطةُ المسؤول تُفحَص أوّلاً في كلّ
+//  بوّابة، فلا يقيّده دورُه العاديّ — ولا بوّابةَ تخصّه باسم دوره.
+const adminDoc = { role: "doctor", isAdmin: true,
+  permissions: { canWriteMedicalExam: true } };
 const expert = { role: "prosthetics_expert", isAdmin: false, permissions: {} };
 //  **يحملان `canAddPatients`/`canEditPatients`** عمداً: البوّابة بالدور لا
 //  بالقدرة، وهذان هما مَن كانت القدرةُ وحدها تفتح لهما ملفّ المتابعة.
@@ -42,14 +54,22 @@ const physioStaff = { role: "therapist", isAdmin: false,
 const expertWithAdd = { role: "prosthetics_expert", isAdmin: false,
   permissions: { canAddPatients: true } };
 
-// ══ أ. مَن يتابع ═══════════════════════════════════════════════════════
-console.log("\n── مَن يسجّل المتابعة ──");
-same("أ. الاستقبال يتابع", canRecordFollowup(recv), true);
-same("   ومديرُ الفرع", canRecordFollowup(mgr), true);
-same("   والطبيب", canRecordFollowup(doc), true);
-same("   والمسؤول", canRecordFollowup(admin), true);
-same("   **والخبير الصِرف لا** — منفّذٌ لا متابِع", canRecordFollowup(expert), false);
-same("   وبلا جلسة ⟶ لا", canRecordFollowup(null), false);
+// ══ أ. مَن يعمل تجارياً — **يستطيع ولا يُطلَب منه** ══════════════════════
+//  الطبيبُ المخوَّل داخلها: يسدّ فراغاً حين يقف المريضُ أمامه والاستعلامات
+//  مشغول. **ولا حالةَ تنتظره**: الاستقبالُ ومديرُ الفرع يُتمّان كلَّ شيء.
+console.log("\n── مَن يعمل تجارياً ──");
+same("أ. الاستقبال يتابع تجارياً", canActCommercially(recv), true);
+same("   ومديرُ الفرع", canActCommercially(mgr), true);
+same("   والمسؤول", canActCommercially(admin), true);
+same("أ٠. **والطبيبُ المخوَّل كذلك** — مرونةٌ تشغيلية لا تبعيّة",
+  canActCommercially(doc), true);
+same("   ومَن يحمل القدرة السريرية وإن كان دورُه غيرَ الطبّ",
+  [canActCommercially(clinicalOnly), canActCommercially(docCap)], [true, true]);
+same("   **والخبير الصِرف لا** — منفّذٌ لا متابِع", canActCommercially(expert), false);
+same("   وبلا جلسة ⟶ لا", canActCommercially(null), false);
+same("   والاسمُ القديم مطابقٌ للجديد — لا بوّابتان",
+  [recv, mgr, doc, docCap, admin, expert]
+    .filter((w) => canRecordFollowup(w) !== canActCommercially(w)), []);
 
 // ══ أ٢. القراءة بالدور لا بالقدرة ═════════════════════════════════════
 //  ملفُّ المتابعة يحمل السعر المعتمد وهاتفَ المريض وسببَ تردّده. وكانت
@@ -63,9 +83,9 @@ same("   **ولا مُدخِلُ الجلسات ولو حمل `canEditPatients`*
   canViewFollowup(physioStaff), false);
 same("   **ولا خبيرُ الأطراف ولو حملها**", canViewFollowup(expertWithAdd), false);
 same("   وبلا جلسة ⟶ لا", canViewFollowup(null), false);
-same("   **والقراءة والكتابة بوّابةٌ واحدة**",
-  [accountant2, physioStaff, expertWithAdd, recv, mgr, doc, admin]
-    .filter((w) => canViewFollowup(w) !== canRecordFollowup(w)), []);
+same("   **ومَن لا يقرأ لا يكتب** — الحجبُ لا ثغرةَ فيه",
+  [accountant2, physioStaff, expertWithAdd]
+    .filter((w) => canViewFollowup(w) || canActCommercially(w)), []);
 
 // ══ ب. مَن يعتمد — القاعدة الحاسمة ═════════════════════════════════════
 console.log("\n── مَن يعتمد ──");
@@ -85,28 +105,51 @@ same("   والغموض يُقرأ «لا»",
 console.log("\n── مَن يؤكّد الشراء ──");
 same("ب٢. **الاستقبال يؤكّد الشراء**", canConfirmPurchase(recv), true);
 same("   ومديرُ الفرع", canConfirmPurchase(mgr), true);
-same("   والطبيب", canConfirmPurchase(doc), true);
-same("   ومَن يحمل `canWriteMedicalExam`", canConfirmPurchase(docCap), true);
 same("   والمسؤول العام", canConfirmPurchase(admin), true);
+//  **والطبيبُ المخوَّل كذلك** — إن حضر. ولا يقف عليه بيعٌ أبداً.
+same("ب٢ب. **والطبيبُ المخوَّل يؤكّد إن حضر** — ولا يُنتظَر",
+  [canConfirmPurchase(doc), canConfirmPurchase(clinicalOnly),
+    canConfirmPurchase(docCap)], [true, true, true]);
 same("ب٣. **والخبيرُ لا** — محجوبٌ مالياً في كل النظام", canConfirmPurchase(expert), false);
 same("   وبلا جلسة ⟶ لا", canConfirmPurchase(null), false);
 //  والفرقُ بين البوّابتين مُثبَتٌ لا موصوف: مديرُ الفرع يبيع ولا يعتمد سعراً.
-same("ب٤. **مديرُ الفرع: يبيع ولا يعتمد سعراً**",
-  [canConfirmPurchase(mgr), canApprove(mgr)], [true, false]);
+//  **والقاعدةُ كلُّها في سطرٍ واحد**: مديرُ الفرع يبيع **ويسعّر**، ولا
+//  يحسم طلباً قديماً — فذاك اعتمادٌ وقّع الطبيبُ على أصله.
+same("ب٤. **مديرُ الفرع: يبيع ويسعّر ولا يحسم القديم**",
+  [canConfirmPurchase(mgr), canSetCommercialPrice(mgr), canDecideLegacyPriceRequest(mgr)],
+  [true, true, false]);
 
 // ══ ج. الأزرار بحسب الحالة ═════════════════════════════════════════════
 console.log("\n── الأزرار ──");
-same("د. بانتظار قرار المريض: الاستقبال يرى الأربعة",
+//  **الاستقبال ينفّذ ولا يسعّر**: ثلاثةُ أفعالٍ لا رابعَ لها.
+same("د. بانتظار قرار المريض: الاستقبال يرى الثلاثة",
   allowedActions(recv, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "request_price_change"]);
-same("   **ومديرُ الفرع يرى الأربعة نفسها** — يبيع في فرعه",
+  ["close", "confirm_purchase", "defer"]);
+//  ومديرُ الفرع يرى معها **قرارَه التجاري** — لا طلباً يرسله.
+same("   **ومديرُ الفرع يرى معها تحديدَ السعر**",
   allowedActions(mgr, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "request_price_change"]);
-same("هـ. **بانتظار اعتماد السعر: الاستقبال بلا زرّ**",
+  ["close", "confirm_purchase", "defer", "set_commercial_price"]);
+//  والطبيبُ يرى **إشارةَ التسليم** — ولا يسعّر ولا يبيع بقرارٍ تجاري.
+//  **والطبيبُ المخوَّل يرى التشغيليَّ ومعه إشارتُه — ولا يرى التسعير.**
+same("   **والطبيب يرى الأفعالَ التشغيلية ومعها إشارتُه**",
+  allowedActions(doc, "awaiting_patient_decision").sort(),
+  ["close", "confirm_purchase", "defer", "signal_purchase_interest"]);
+//  **والسعرُ وحده خارجَه** — في كلّ حالةٍ بلا استثناء.
+same("   **ولا يرى تحديدَ السعر في أيّ حالة**",
+  FOLLOWUP_STATUSES.filter((st) =>
+    allowedActions(doc, st).includes("set_commercial_price")), []);
+same("   ولا مَن دورُه سريريٌّ بحت",
+  FOLLOWUP_STATUSES.filter((st) =>
+    allowedActions(clinicalOnly, st).includes("set_commercial_price")), []);
+same("   **ولا زرَّ «طلب تعديل سعر» لأحدٍ إطلاقاً** — لم يعد الطريقُ طلباً",
+  [recv, mgr, doc, admin]
+    .filter((x) => allowedActions(x, "awaiting_patient_decision").includes("request_price_change")),
+  []);
+same("هـ. **الطلبُ القديم المعلَّق: الاستقبال بلا زرّ**",
   allowedActions(recv, "price_approval_pending"), []);
-same("   **ومديرُ الفرع كذلك بلا زرّ**",
+same("   **ومديرُ الفرع كذلك بلا زرّ عليه** — يُحكَم بقانون يومه",
   allowedActions(mgr, "price_approval_pending"), []);
-same("   والطبيب يرى الاعتماد والرفض",
+same("   والطبيب يحسمه اعتماداً أو رفضاً",
   allowedActions(doc, "price_approval_pending").sort(), ["approve_price", "reject_price"]);
 same("و. بعد اعتماد السعر: الاستعلامات يشتري مباشرةً",
   allowedActions(recv, "price_approved_waiting_patient").includes("confirm_purchase"), true);
@@ -119,8 +162,9 @@ same("   **ولا زرَّ اعتمادٍ لأحدٍ هنا** — الدور د�
 //  المحتجزة فيها من قبلُ صارت **قابلةً للعمل فوراً**.
 same("ز. **الصفُّ المحتجز: الاستقبال يؤكّده ويغلقه**",
   allowedActions(recv, "purchase_approval_pending").sort(), ["close", "confirm_purchase"]);
-same("   ومديرُ الفرع كذلك",
-  allowedActions(mgr, "purchase_approval_pending").sort(), ["close", "confirm_purchase"]);
+same("   ومديرُ الفرع كذلك، ومعه تسعيرُه",
+  allowedActions(mgr, "purchase_approval_pending").sort(),
+  ["close", "confirm_purchase", "set_commercial_price"]);
 same("   **ولا زرَّ «اعتماد شراء» لأحد — لا طبيبٍ ولا مسؤول**",
   [allowedActions(doc, "purchase_approval_pending").includes("approve_purchase"),
     allowedActions(admin, "purchase_approval_pending").includes("approve_purchase")],
@@ -205,6 +249,178 @@ check(cardSrc.includes("canSelectExpert(session as any, active.status)"),
 check(!/actions\.length > 0[\s\S]{0,600}button-select-expert/.test(cardSrc),
   "   **ولم يبقَ شرطُ `actions.length` عليه**");
 check(cardSrc.includes("button-select-expert"), "   والزرّ موجود");
+
+// ══ ش. **سلطةُ المسؤول تسبق الدور — في كلّ بوّابة** ═════════════════════
+console.log("\n── سلطةُ المسؤول ──");
+const EVERY_GATE: Array<[string, (x: any) => boolean]> = [
+  ["قراءة", canViewFollowup],
+  ["عملٌ تجاري", canActCommercially],
+  ["تأكيد الشراء", canConfirmPurchase],
+  ["تحديد السعر", canSetCommercialPrice],
+  ["إشارة الرغبة", canSignalPurchaseInterest],
+  ["حسم القديم", canDecideLegacyPriceRequest],
+];
+same("ش. **حسابٌ دورُه «طبيب» و`isAdmin` صحيح يمرّ من كلّ بوّابة**",
+  EVERY_GATE.filter(([, gate]) => !gate(adminDoc)).map(([n]) => n), []);
+//  **والدورُ العاديُّ وحده لا يفتح التسعير** — فالفرقُ بينهما مُثبَتٌ لا موصوف.
+same("   **والفرقُ هو `isAdmin` وحده**: نفسُ الدور بلا سلطةٍ لا يسعّر",
+  [canSetCommercialPrice(doc), canSetCommercialPrice(adminDoc)], [false, true]);
+same("   ويرى تحديدَ السعر في الأزرار كذلك",
+  allowedActions(adminDoc, "awaiting_patient_decision").sort(),
+  ["close", "confirm_purchase", "defer", "set_commercial_price",
+    "signal_purchase_interest"]);
+same("   ويسنِد الخبير في كلّ حالةٍ حيّة",
+  LIVE.filter((st) => !canSelectExpert(adminDoc, st)), []);
+
+// ══ ت. **ولا حالةَ تنتظر طبيباً** — أهمُّ ما يُثبَت هنا ═════════════════
+//  الطبيبُ يستطيع، ولا يُطلَب. فالبرهانُ أن الاستقبالَ ومديرَ الفرع يريان
+//  فعلاً واحداً على الأقلّ في كلّ حالةٍ حيّة — فلا يقف ملفٌّ بلا يدٍ تحرّكه.
+console.log("\n── لا حالةَ تنتظر طبيباً ──");
+const NON_TERMINAL = FOLLOWUP_STATUSES.filter((st) => st !== "converted");
+same("ت. **الاستقبالُ يملك فعلاً في كلّ حالةٍ حيّة إلّا الطلبَ القديم**",
+  NON_TERMINAL.filter((st) => allowedActions(recv, st).length === 0),
+  ["price_approval_pending"]);
+same("   ومديرُ الفرع كذلك",
+  NON_TERMINAL.filter((st) => allowedActions(mgr, st).length === 0),
+  ["price_approval_pending"]);
+//  و`price_approval_pending` **لا يدخلها ملفٌّ جديد** (بقايا المسار القديم)،
+//  فالمسارُ الحيُّ كلُّه بيد الفرع من أوّله إلى آخره.
+same("   **والحالةُ الوحيدة التي تنتظر مخوَّلاً منقرضةٌ لا تُنشَأ**",
+  LEGACY_ONLY_STATUSES.includes("price_approval_pending"), true);
+//  **وكلُّ فعلٍ في المسار الحيّ يملكه الفرعُ بلا طبيب** — واحداً واحداً.
+const LIVE_ACTIONS = ["confirm_purchase", "defer", "close", "reopen",
+  "set_commercial_price"];
+same("   **وكلُّ فعلٍ حيٍّ يملكه الاستقبالُ أو مديرُ الفرع بلا طبيب**",
+  LIVE_ACTIONS.filter((a) => !FOLLOWUP_STATUSES.some((st) =>
+    allowedActions(recv, st).includes(a) || allowedActions(mgr, st).includes(a))),
+  []);
+//  **والطبيبُ لا يملك فعلاً حصرياً واحداً** غير إشارته الاختيارية وحسمِ
+//  القديم — فلا شيءَ في المسار الحيّ يمرّ به وحده.
+const docExclusive = FOLLOWUP_STATUSES.flatMap((st) =>
+  allowedActions(doc, st).filter((a) =>
+    !allowedActions(recv, st).includes(a) && !allowedActions(mgr, st).includes(a))
+    .map((a) => `${st}:${a}`));
+same("   **ولا فعلَ حصريٌّ للطبيب إلّا إشارتُه وحسمُ القديم**",
+  docExclusive.filter((x) => !x.endsWith(":signal_purchase_interest")
+    && !x.endsWith(":approve_price") && !x.endsWith(":reject_price")),
+  []);
+
+// ══ ل. **القرارُ التجاري: مَن يملكه ومَن لا** ═══════════════════════════
+console.log("\n── القرار التجاري ──");
+same("ل. **مديرُ الفرع والمسؤول يحدّدان السعر**",
+  [canSetCommercialPrice(mgr), canSetCommercialPrice(admin)], [true, true]);
+same("   **والاستقبال لا** — ينفّذ البيع ولا يضع سعره",
+  canSetCommercialPrice(recv), false);
+same("   **ولا الطبيب** — قرارُه سريريّ لا تجاري",
+  canSetCommercialPrice(doc), false);
+same("   ولا جلسةَ فارغة", [canSetCommercialPrice(null), canSetCommercialPrice(undefined)],
+  [false, false]);
+
+same("م. **إشارةُ الرغبة للطبيب والمسؤول**",
+  [canSignalPurchaseInterest(doc), canSignalPurchaseInterest(admin)], [true, true]);
+same("   ولا للاستقبال ولا لمدير الفرع — إشارةُ تسليمٍ من غرفة الطبيب",
+  [canSignalPurchaseInterest(recv), canSignalPurchaseInterest(mgr)], [false, false]);
+
+// ══ ن. **ولا اعتمادَ شراءٍ ولا اعتمادَ خصمٍ في أي حالة لأي دور** ═════════
+const EVERY_ROLE = [recv, mgr, doc, admin];
+const FORBIDDEN = [
+  "approve_purchase", "request_purchase_approval",
+  "request_discount", "approve_discount", "reject_discount",
+  "request_price_change",
+];
+same("ن. **لا فعلَ اعتمادٍ منقرضاً يظهر لأي دورٍ في أي حالة**",
+  FOLLOWUP_STATUSES.flatMap((st) => EVERY_ROLE.flatMap((who) =>
+    allowedActions(who, st).filter((a) => FORBIDDEN.includes(a)).map((a) => `${st}:${a}`))),
+  []);
+
+// ══ س. مصدرُ السعر — ثلاثةٌ ونصٌّ واحدٌ لكلٍّ ═══════════════════════════
+console.log("\n── مصدر السعر ──");
+same("س. القيمُ الثلاث بأسمائها", [...PRICE_SOURCES],
+  ["exam", "manager_set", "approved_change"]);
+same("   والمعاينةُ «من المعاينة»", priceSourceLabel("exam"), "السعر المعتمد من المعاينة");
+same("   **ومَن حدّده مديرُ الفرع يُقال باسمه**",
+  priceSourceLabel("manager_set"), "السعر المعتمد حدّده مدير الفرع");
+//  والقديمُ **لا يُنسَب إلى مدير الفرع**: مَن اعتمده يومَها كان طبيباً.
+same("   **والقديمُ لا يُنسَب إلى مدير الفرع**",
+  priceSourceLabel("approved_change"), "السعر المعتمد بعد تعديل سعر سابق");
+check(!priceSourceShort("approved_change").includes("مدير"),
+  "   ولا ترد «مدير» في نصّ القديم إطلاقاً", priceSourceShort("approved_change"));
+same("   والمختصرُ جزءٌ من الكامل — نصٌّ واحد لا نصّان",
+  PRICE_SOURCES.map((v) => priceSourceLabel(v) === `السعر المعتمد ${priceSourceShort(v)}`),
+  [true, true, true]);
+same("   وقيمةٌ لا تُعرَف تُقرأ «من المعاينة» ولا تُخترَع لها عبارة",
+  [priceSourceShort("junk"), priceSourceShort(null)], ["من المعاينة", "من المعاينة"]);
+
+// ══ ع. حسابُ السعر التجاري — حدُّه الوحيد أنه موجبٌ صحيح ════════════════
+console.log("\n── حساب السعر التجاري ──");
+const P = (previousPrice: number, finalPrice: number) =>
+  computeCommercialPrice({ previousPrice, finalPrice });
+same("ع. التخفيض: مليونٌ ⟶ ٨٠٠ ألف",
+  (({ ok, difference, percentageDifference, changed }) =>
+    ({ ok, difference, percentageDifference, changed }))(P(1_000_000, 800_000)),
+  { ok: true, difference: -200_000, percentageDifference: -20, changed: true });
+//  **والزيادةُ مسموحة**: مريضٌ عاد بعد سنةٍ والأسعار تغيّرت — وليس في ذلك خطأ.
+same("   **والزيادةُ مسموحة** — مريضٌ عاد بعد سنة",
+  (({ ok, difference, percentageDifference }) => ({ ok, difference, percentageDifference }))(
+    P(1_000_000, 1_250_000)),
+  { ok: true, difference: 250_000, percentageDifference: 25 });
+same("   والتثبيتُ بلا تغيير يُقبل ويُعلَم أنه لم يتغيّر",
+  (({ ok, changed, difference }) => ({ ok, changed, difference }))(P(500_000, 500_000)),
+  { ok: true, changed: false, difference: 0 });
+same("ف. **والصفرُ يُردّ** — بيعٌ بلا مال",
+  [P(1_000_000, 0).ok, P(1_000_000, -5).ok], [false, false]);
+same("   وكسرُ الدينار يُردّ", P(1_000_000, 800_000.5).ok, false);
+same("   و`NaN` و`Infinity` يُردّان",
+  [P(1_000_000, Number.NaN).ok, P(1_000_000, Number.POSITIVE_INFINITY).ok], [false, false]);
+same("   **ولا حدَّ أعلى** — عشرةُ أضعافٍ تُقبل، فالقرار تجاريّ",
+  P(100_000, 1_000_000).ok, true);
+same("   وسعرٌ سابقٌ صفرٌ لا يُنتج نسبةً بلا معنى",
+  (({ ok, percentageDifference, difference }) => ({ ok, percentageDifference, difference }))(
+    P(0, 750_000)),
+  { ok: true, percentageDifference: 0, difference: 750_000 });
+same("ص. وكلُّ رفضٍ برسالةٍ عربية",
+  [P(1_000_000, 0), P(1_000_000, -1), P(1_000_000, 1.5)].filter((r) => !r.error), []);
+
+// ══ ق. الحالاتُ المنقرضة تُقرأ ولا تُنشَأ ══════════════════════════════
+same("ق. الثلاثُ الموروثةُ معلَّمةٌ صراحةً", [...LEGACY_ONLY_STATUSES],
+  ["price_approval_pending", "price_approved_waiting_patient", "purchase_approval_pending"]);
+same("   وكلٌّ منها بعنوانٍ عربي يُقرأ",
+  LEGACY_ONLY_STATUSES.filter((s) => !FOLLOWUP_STATUS_LABELS[s]), []);
+
+// ══ ر. والبطاقةُ تستعمل العقدَ الجديد فعلاً ═════════════════════════════
+console.log("\n── عقد البطاقة التجاري ──");
+check(cardSrc.includes("button-set-commercial-price")
+  && cardSrc.includes("/commercial-price"),
+  "ر. **زرُّ تحديد السعر ونقطتُه في البطاقة**");
+check(cardSrc.includes("button-signal-purchase-interest")
+  && cardSrc.includes("/purchase-interest"),
+  "   وزرُّ إشارةِ الرغبة ونقطتُه");
+//  **والشاشةُ لا تُلزِم الطبيبَ بشيء**: لا نصَّ يقول «على الطبيب» أو
+//  «بانتظار الطبيب» أو «يجب على الطبيب». مشاركتُه اختيارٌ لا واجب.
+const obligation = (cardSrc.match(/.*(على الطبيب|بانتظار الطبيب|يجب على|الطبيب يجب).*/g) ?? []);
+check(obligation.length === 0,
+  "ر٢. **ولا نصَّ يُلزِم الطبيبَ بفعلٍ في الشاشة**", obligation.join("\n"));
+//  والأزرارُ كلُّها مشتقّةٌ من `allowedActions` — فلا شرطَ دورٍ مكتوبٌ فيها.
+check(!/role\s*===\s*["']doctor["']/.test(cardSrc),
+  "   **ولا تفحص الشاشةُ الدورَ بنفسها** — القاعدةُ في المشتركة وحدها",
+  (cardSrc.match(/.*role\s*===.*/g) ?? []).join("\n"));
+//  **ولا نافذةَ طلبٍ باقية**: نقطةُ **إنشاء** الطلب لم تعد تُنادى من الشاشة.
+//  و`/price-requests/:id/decide` تبقى — هي حسمُ ما بقي معلَّقاً لا إنشاءُ جديد.
+check(!/\/price-request(?!s)/.test(cardSrc),
+  "   **ولا تنشئ البطاقةُ طلبَ سعرٍ جديداً إطلاقاً**",
+  (cardSrc.match(/.*price-request(?!s).*/g) ?? []).join("\n"));
+check(cardSrc.includes("/price-requests/"),
+  "   وتبقى نقطةُ حسمِ الطلب القديم — كي لا يتجمّد ما بقي معلَّقاً");
+check(cardSrc.includes("computeCommercialPrice({"),
+  "   والفرقُ يُحسب بالدالّة المشتركة لا في الشاشة");
+check(cardSrc.includes("priceSourceShort(active.priceSource)")
+  && !/approved_change/.test(cardSrc),
+  "   ونصُّ مصدرِ السعر من المشتركة — بلا استنتاجٍ في الشاشة",
+  (cardSrc.match(/.*approved_change.*/g) ?? []).join("\n"));
+//  ولا نصَّ حيّاً يقول إن الشراء يحتاج اعتماداً.
+const purchaseApproval = (cardSrc.match(/.*اعتماد الشراء.*/g) ?? []);
+check(purchaseApproval.every((l) => l.includes("قبل التبسيط")),
+  "   **ولا يقول شيءٌ حيٌّ «اعتماد الشراء»**", purchaseApproval.join("\n"));
 
 console.log(`\n${failures === 0 ? "✅ all followup-rule cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);
