@@ -64,7 +64,10 @@
     "test:medical-review": "tsx server/medical_review.test.ts",
     "test:taxonomy": "tsx shared/service_taxonomy.test.ts",
     "test:departments": "tsx server/departments.test.ts",
-    "test:schema-parity": "tsx server/schema_parity_056.test.ts"
+    "test:schema-parity": "tsx server/schema_parity_056.test.ts",
+    "test:discount-rules": "tsx shared/discount.test.ts",
+    "test:discount": "tsx server/service_discount.test.ts",
+    "test:discount-ui": "tsx client/src/components/service_discount_ui.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

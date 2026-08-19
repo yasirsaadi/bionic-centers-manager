@@ -34,6 +34,8 @@ import { execFileSync } from "child_process";
 import { Client } from "pg";
 import * as migration056 from "./migrations/056_cost_entry_department";
 import * as migration057 from "./migrations/057_commercial_price";
+import * as migration058 from "./migrations/058_service_discounts";
+import * as migration059 from "./migrations/059_reception_initial_price";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -127,6 +129,46 @@ SELECT jsonb_build_object(
       JOIN pg_class ci ON ci.oid = i.indexrelid
      WHERE i.indrelid = 'cost_entries'::regclass
        AND ci.relname = 'ix_cost_entries_case'
+  ),
+  -- ══ ترحيل ٠٥٨: جدولُ الخصم بأعمدته وقيوده وفهارسه، والعَلَمُ على الحساب ══
+  'sdr_columns', (
+    SELECT jsonb_object_agg(a.attname,
+             jsonb_build_object('data_type', format_type(a.atttypid, a.atttypmod),
+                                'not_null', a.attnotnull))
+      FROM pg_attribute a
+     WHERE a.attrelid = 'service_discount_requests'::regclass
+       AND a.attnum > 0 AND NOT a.attisdropped
+  ),
+  'sdr_checks', (
+    SELECT jsonb_object_agg(c.conname, pg_get_constraintdef(c.oid))
+      FROM pg_constraint c
+     WHERE c.conrelid = 'service_discount_requests'::regclass AND c.contype = 'c'
+  ),
+  'sdr_fk', (
+    SELECT jsonb_build_object(
+             'target_table', c.confrelid::regclass::text,
+             'on_delete', c.confdeltype)
+      FROM pg_constraint c
+     WHERE c.conrelid = 'service_discount_requests'::regclass AND c.contype = 'f'
+  ),
+  'sdr_indexes', (
+    SELECT jsonb_object_agg(ci.relname, jsonb_build_object(
+             'columns', pg_get_indexdef(i.indexrelid),
+             'is_unique', i.indisunique,
+             'predicate', pg_get_expr(i.indpred, i.indrelid)))
+      FROM pg_index i
+      JOIN pg_class ci ON ci.oid = i.indexrelid
+     WHERE i.indrelid = 'service_discount_requests'::regclass
+  ),
+  'approve_flag', (
+    SELECT jsonb_build_object(
+             'data_type', format_type(a.atttypid, a.atttypmod),
+             'not_null', a.attnotnull,
+             'default', pg_get_expr(d.adbin, d.adrelid))
+      FROM pg_attribute a
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+     WHERE a.attrelid = 'system_users'::regclass
+       AND a.attname = 'can_approve_discount' AND NOT a.attisdropped
   )
 ) AS facts`;
 
@@ -261,6 +303,57 @@ async function main() {
             AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
       same("٣ج. **وصيغةٌ أقدم من القيد يُعاد بناؤها** — تقارُبٌ لا مجرّد أمانٍ",
         String(converged).includes("manager_set"), true);
+
+      // ══ وترحيل ٠٥٨ بنفس الطريقة ════════════════════════════════════
+      //  الجدولُ كلُّه يُسقَط والعَلَمُ يُنزَع، فتعود القاعدةُ إلى ما قبل ٠٥٨.
+      await c.query(`DROP TABLE IF EXISTS service_discount_requests`);
+      await c.query(`ALTER TABLE system_users DROP COLUMN IF EXISTS can_approve_discount`);
+      const before58 = (await c.query(
+        `SELECT to_regclass('service_discount_requests') IS NULL AS gone`)).rows[0].gone;
+      same("٣د. **والقاعدةُ عادت إلى ما قبل ٠٥٨** — لا جدولَ خصم", before58, true);
+
+      await c.query(migration058.sql);
+      check(true, "   تطبيقُ الترحيل ٠٥٨ نجح");
+      await c.query(migration058.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const dup58 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_constraint
+          WHERE conrelid = 'service_discount_requests'::regclass AND contype = 'c'`)).rows[0].n;
+      same("   والقيودُ خمسةٌ لا عشرة بعد الإعادة", dup58, 5);
+
+      // ══ وترحيل ٠٥٩: يوسّع مصدرَ السعر ويشدّ قيدَ ٠٥٨ ═════════════════
+      //  يُردّ القيدُ إلى صيغة ٠٥٧ (ثلاث قيم) وقيدُ ٠٥٨ إلى صيغته الأولى
+      //  (بلا شرط لحظةِ التنفيذ) — وهذا حالُ قاعدةٍ ركّبت ٠٥٨ قبل شدّه.
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_price_source_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        ADD CONSTRAINT post_exam_followups_price_source_check
+        CHECK (price_source IN ('exam', 'manager_set', 'approved_change'))`);
+      await c.query(`ALTER TABLE service_discount_requests
+        DROP CONSTRAINT IF EXISTS service_discount_requests_decision_check`);
+      await c.query(`ALTER TABLE service_discount_requests
+        ADD CONSTRAINT service_discount_requests_decision_check
+        CHECK (status <> 'approved'
+               OR (approved_final_price IS NOT NULL AND decided_at IS NOT NULL))`);
+
+      await c.query(migration059.sql);
+      check(true, "٣هـ. تطبيقُ الترحيل ٠٥٩ نجح");
+      await c.query(migration059.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const src59 = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'post_exam_followups_price_source_check'
+            AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
+      check(String(src59).includes("reception_set"),
+        "   **ومصدرُ السعر اتّسع لأول سعرٍ من الاستعلامات**", src59);
+      //  **والشدُّ يتقارب على قاعدةٍ ركّبت ٠٥٨ قبله** — وهو لبُّ ٠٥٩:
+      //  المُشغِّل يتخطّى ترحيلاً طُبِّق باسمه، فلا يكفي تعديلُ ملفّ ٠٥٨.
+      const dec59 = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'service_discount_requests_decision_check'
+            AND conrelid = 'service_discount_requests'::regclass`)).rows[0].d;
+      check(String(dec59).includes("applied_at IS NOT NULL"),
+        "   **وقيدُ «معتمَدٌ يعني نُفِّذ» شُدَّ على قاعدةٍ سبقته**", dec59);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -330,6 +423,60 @@ async function main() {
       .replace(/[()]/g, " ").replace(/\s+/g, " ").trim() === "purchase_interest_at IS NOT NULL",
       "     **وشرطُه جزئيٌّ على المرفوعة وحدها**",
       String(fromMigrations.interest_index?.predicate));
+    // ══ ترحيل ٠٥٨: جدولُ الخصم ═══════════════════════════════════════
+    console.log("\n── ٥. جدولُ الخصم (٠٥٨) ──");
+    same("١٣. **أعمدةُ جدول الخصم متطابقة نوعاً وقابليةَ فراغ**",
+      fromSchema.sdr_columns, fromMigrations.sdr_columns);
+    same("١٤. **وقيودُه الخمسة متطابقة نصّاً**",
+      fromSchema.sdr_checks, fromMigrations.sdr_checks);
+    same("١٥. **ومفتاحُه إلى المريض متطابق**",
+      fromSchema.sdr_fk, fromMigrations.sdr_fk);
+    same("١٦. **وفهارسُه الأربعة متطابقة**",
+      fromSchema.sdr_indexes, fromMigrations.sdr_indexes);
+    same("١٧. **وعَلَمُ الاعتماد على الحساب متطابق**",
+      fromSchema.approve_flag, fromMigrations.approve_flag);
+
+    //  ولا يكفي التطابق هنا كذلك: القيمُ المقصودة تُثبَّت صراحةً.
+    const sdrCol = (n: string) => {
+      const c = (fromMigrations.sdr_columns ?? {})[n] ?? {};
+      return [c.data_type, c.not_null];
+    };
+    same("١٨. أعمدةُ المال صحيحةٌ إلزامية، والنسبةُ بمنزلتين",
+      [sdrCol("original_price"), sdrCol("proposed_final_price"),
+        sdrCol("discount_amount"), sdrCol("discount_percentage")],
+      [["integer", true], ["integer", true], ["integer", true], ["numeric(5,2)", true]]);
+    same("   وعَلَمُ المجّانية إلزاميّ",
+      sdrCol("is_free"), ["boolean", true]);
+    same("   والسعرُ المعتمد ولحظةُ التنفيذ يقبلان الفراغ",
+      [sdrCol("approved_final_price"), sdrCol("applied_at")],
+      [["integer", false], ["timestamp with time zone", false]]);
+    const shape = String(fromMigrations.sdr_checks?.service_discount_requests_shape_check ?? "");
+    //  **التكافؤُ التامّ هو لبُّ الترحيل**: مجّانيٌّ ⟺ صفر.
+    check(shape.replace(/\s+/g, " ").includes("is_free = (proposed_final_price = 0)"),
+      "١٩. **والقاعدةُ تُلزم: مجّانيٌّ ⟺ صفر** — تكافؤٌ لا شرطٌ في الشيفرة", shape);
+    check(shape.includes("original_price > 0"),
+      "٢٠. **وسعرٌ أصليٌّ صفر مرفوض** — «غير مسعَّر» لا يُخصَم منه", shape);
+    check(shape.replace(/\s+/g, " ").includes("discount_amount = (original_price - proposed_final_price)")
+      || shape.replace(/\s+/g, " ").includes("discount_amount = original_price - proposed_final_price"),
+      "٢١. وفرقٌ لا يطابق مصدرَه مرفوض", shape);
+    const pending = (fromMigrations.sdr_indexes ?? {}).uq_sdr_one_pending ?? {};
+    same("٢٢. **وفهرسُ «معلَّقٌ واحد» فريدٌ وجزئيّ**",
+      [pending.is_unique, String(pending.predicate ?? "").includes("pending")],
+      [true, true]);
+    check(String(pending.columns ?? "").includes("context_ref"),
+      "     على (مريض، قسم، مرجع)", String(pending.columns));
+    const dec = String(fromMigrations.sdr_checks?.service_discount_requests_decision_check ?? "");
+    check(dec.includes("applied_at IS NOT NULL"),
+      "٢٢ب. **و«معتمَد» يعني «نُفِّذ»**: لا صفَّ معتمَدٍ بلا لحظةِ تنفيذ", dec);
+    const src = String(fromMigrations.pef_checks?.post_exam_followups_price_source_check ?? "");
+    check(["exam", "manager_set", "approved_change", "reception_set"].every((v) => src.includes(v)),
+      "٢٢ج. **ومصدرُ السعر أربعةٌ في القاعدة** — ومنها أولُ سعرٍ من الاستعلامات", src);
+
+    same("٢٣. **وعَلَمُ الاعتماد منطقيٌّ افتراضُه false** — لا يُمنَح بالصمت",
+      [fromMigrations.approve_flag?.data_type,
+        String(fromMigrations.approve_flag?.default ?? "")],
+      ["boolean", "false"]);
+
     same("١١. والفهرسُ على `case_id` وحده وغيرُ فريد",
       [fromMigrations.index?.columns, fromMigrations.index?.is_unique],
       [["case_id"], false]);

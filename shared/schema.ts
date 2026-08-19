@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -1099,6 +1099,14 @@ export const systemUsers = pgTable("system_users", {
   // primary role. Grants the right to SIGN clinical records — nothing else can
   // write them, not even an admin without this flag.
   canWriteMedicalExam: boolean("can_write_medical_exam").default(false),
+  /**
+   * اعتمادُ الخصم والتبرّع (ترحيل ٠٥٨) — **قرارٌ ماليٌّ لا سريري**.
+   *
+   * لا يُمنَح لكلّ من دورُه «طبيب»: التنازلُ عن الإيراد ليس قراراً طبّياً.
+   * ومَن أراد تخويلَ طبيبٍ بعينه يرفع له هذا العَلَم صراحةً. والمسؤولُ
+   * ومديرُ الفرع يحملانه ضمناً بسلطتيهما.
+   */
+  canApproveDiscount: boolean("can_approve_discount").default(false),
   // Which specialties this doctor may sign for: a subset of
   // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
   // so granting the flag without a specialty is a no-op by design.
@@ -1536,8 +1544,10 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     'closed_without_purchase', 'converted')`),
   check("post_exam_followups_service_check",
     sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
+  //  `reception_set` (ترحيل ٠٥٩): أولُ سعرٍ حين سكتت المعاينة — يُدخله
+  //  الاستعلامات وليس خصماً ولا قرارَ مدير، فله اسمُه هو في السجلّ.
   check("post_exam_followups_price_source_check",
-    sql`${t.priceSource} IN ('exam', 'manager_set', 'approved_change')`),
+    sql`${t.priceSource} IN ('exam', 'manager_set', 'approved_change', 'reception_set')`),
   // **والرايةُ لا تُرفع بلا صاحب**: الزمنُ والفاعل يمتلئان معاً أو يبقيان
   // فارغين معاً. رايةٌ بلا مَن رفعها سطرٌ لا يُسأل عنه أحد.
   check("post_exam_followups_purchase_interest_check", sql`
@@ -1639,3 +1649,72 @@ export const priceChangeRequests = pgTable("price_change_requests", {
 export type PostExamFollowup = typeof postExamFollowups.$inferSelect;
 export type PostExamFollowupEvent = typeof postExamFollowupEvents.$inferSelect;
 export type PriceChangeRequest = typeof priceChangeRequests.$inferSelect;
+
+// ══ طلباتُ الخصم والتبرّع — **جدولٌ واحد للأقسام الثلاثة** (ترحيل ٠٥٨) ══
+//
+// **جدولُ إذنٍ وتدقيق لا جدولُ مال.** لا يحمل رصيداً ولا يُجمَع منه إيراد؛
+// وحين يُعتمد الطلب يُنادى المسارُ القائم نفسه (`confirmPurchase` للأجهزة
+// و`pricePhysiotherapy` للعلاج الطبيعي) فيكتب المالَ حيث كان يكتبه دائماً.
+// والسعرُ المعتمد هنا هو الرقمُ الذي يُمرَّر إلى ذلك المسار، لا أكثر.
+export const serviceDiscountRequests = pgTable("service_discount_requests", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  /** لقطةُ رقمٍ بلا مفتاح أجنبي — الحالة قد تُسحَب أو تُدمَج والطلبُ يبقى. */
+  caseId: integer("case_id"),
+  branchId: integer("branch_id"),
+  department: text("department").notNull(),
+  /** مرجعُ السياق — متابعةٌ بعينها أو تسعيرُ علاجٍ طبيعي. يُقرأ عند الاستئناف. */
+  contextRef: text("context_ref"),
+  originalPrice: integer("original_price").notNull(),
+  proposedFinalPrice: integer("proposed_final_price").notNull(),
+  discountAmount: integer("discount_amount").notNull(),
+  discountPercentage: numeric("discount_percentage", { precision: 5, scale: 2 }).notNull(),
+  /** **المجّانيُّ صريحٌ لا مستنتَج** — والقيدُ أدناه يجعله مكافئاً للصفر. */
+  isFree: boolean("is_free").notNull().default(false),
+  reason: text("reason").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("pending"),
+  /** أقلُّ ما يلزم لاستئناف العملية القائمة — خبيرٌ وجلساتٌ ونوعُ علاج. */
+  payload: jsonb("payload").$type<Record<string, any>>().notNull().default({}),
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  /** ما اعتُمد فعلاً — قد يخالف المقترح في «تعديل واعتماد». */
+  approvedFinalPrice: integer("approved_final_price"),
+  /** **حارسُ الاعتماد المزدوج**: صفٌّ نُفِّذ لا يُنفَّذ ثانية. */
+  appliedAt: timestamp("applied_at", { withTimezone: true }),
+}, (t) => [
+  check("service_discount_requests_department_check",
+    sql`${t.department} IN ('prosthetic', 'medical_support', 'physiotherapy')`),
+  check("service_discount_requests_status_check",
+    sql`${t.status} IN ('pending', 'approved', 'rejected', 'cancelled')`),
+  // **صفٌّ لا يستطيع أن يكذب**: الأصليُّ موجب · والنهائيُّ بينه وبين الصفر ·
+  // والخصمُ مطابقٌ للفرق · **والمجّانيُّ صفرٌ والصفرُ مجّانيّ** تكافؤاً تامّاً،
+  // فلا صفرٌ يتسلّل بلا علمِ تبرّعٍ صريح ولا مجّانيٌّ بسعرٍ موجب.
+  check("service_discount_requests_shape_check", sql`
+    ${t.originalPrice} > 0
+    AND ${t.proposedFinalPrice} >= 0
+    AND ${t.proposedFinalPrice} <= ${t.originalPrice}
+    AND ${t.discountAmount} > 0
+    AND ${t.discountAmount} = ${t.originalPrice} - ${t.proposedFinalPrice}
+    AND (${t.isFree} = (${t.proposedFinalPrice} = 0))`),
+  check("service_discount_requests_approved_check", sql`
+    ${t.approvedFinalPrice} IS NULL
+    OR (${t.approvedFinalPrice} >= 0 AND ${t.approvedFinalPrice} <= ${t.originalPrice})`),
+  //  **و«معتمَد» يعني «نُفِّذ»**: الحسمُ والتنفيذُ والختم معاملةٌ واحدة،
+  //  فصفٌّ معتمَدٌ بلا لحظةِ تنفيذ حالةٌ مشلولة **لا يمكن أن توجد**.
+  check("service_discount_requests_decision_check", sql`
+    ${t.status} <> 'approved'
+    OR (${t.approvedFinalPrice} IS NOT NULL AND ${t.decidedAt} IS NOT NULL
+        AND ${t.appliedAt} IS NOT NULL)`),
+  // **طلبٌ معلَّقٌ واحدٌ لكل خدمة** — حارسٌ بنيويّ لا قاعدةٌ في الشيفرة.
+  uniqueIndex("uq_sdr_one_pending")
+    .on(t.patientId, t.department, sql`COALESCE(context_ref, '')`)
+    .where(sql`status = 'pending'`),
+  index("ix_sdr_branch_status").on(t.branchId, t.status, sql`requested_at DESC`),
+  index("ix_sdr_patient").on(t.patientId),
+]);

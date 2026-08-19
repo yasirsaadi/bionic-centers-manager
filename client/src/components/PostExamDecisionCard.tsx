@@ -36,6 +36,11 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
+  discountBlocked, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
+import { MoneyInput } from "@/components/ui/money-input";
+import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
@@ -49,6 +54,9 @@ interface Followup {
   priceSource: string;
   purchaseInterestAt: string | null;
   purchaseInterestByName: string | null;
+  closedByName: string | null;
+  closedEventAt: string | null;
+  closedNote: string | null;
   selectedExpertUserId: number | null;
   selectedExpertName: string | null;
   examDoctorName: string | null;
@@ -81,6 +89,12 @@ const STATUS_TONE: Record<string, string> = {
 
 const fmt = (v: string | null) =>
   v ? new Date(v).toLocaleDateString("ar-IQ", { year: "numeric", month: "2-digit", day: "2-digit" }) : "—";
+/** «متى» سؤالٌ عن اللحظة لا عن اليوم وحده — فالساعةُ معه. */
+const fmtDateTime = (v: string | null) =>
+  v ? new Date(v).toLocaleString("ar-IQ", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  }) : "—";
 
 /** موعدٌ افتراضي مقترَح — أسبوعٌ من اليوم. والمستخدم يغيّره كما يشاء. */
 function defaultNextDate(): string {
@@ -124,9 +138,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
 
   const active = (followups ?? [])[0] ?? null;
 
+  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
+  //  السعرُ الأصلي حين سكتت المعاينة — يكتبه الاستعلامات مرّةً واحدة.
+  const [firstPrice, setFirstPrice] = useState<number>(0);
+
   const reset = () => {
     setDialog(null); setNote(""); setFinalPrice(""); setPriceReason(""); setExpertId("");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
+    setDiscount(EMPTY_DISCOUNT); setFirstPrice(0);
   };
 
   const act = useMutation({
@@ -134,12 +153,19 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       const res = await apiRequest("POST", path, body);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
       qc.invalidateQueries({ queryKey: ["/api/followups"] });
       qc.invalidateQueries({ queryKey: ["/api/followups/approvals"] });
       qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
-      toast({ title: "تمّ الحفظ" });
+      qc.invalidateQueries({ queryKey: ["/api/discounts"] });
+      qc.invalidateQueries({ queryKey: [`/api/discounts/patient/${patientId}`] });
+      toast(data?.pendingApproval
+        ? {
+          title: "أُرسل طلب الخصم للاعتماد",
+          description: "لم يبدأ التصنيع ولم تُقيَّد كلفة — يبدأ فور اعتماد المسؤول أو مدير الفرع.",
+        }
+        : { title: "تمّ الحفظ" });
       reset();
     },
     onError: (err: any) => {
@@ -166,6 +192,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const busy = act.isPending;
   //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
   //  فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
+  //  **السعرُ المرجعيّ للنافذة**: المحفوظ على الصفّ إن وُجد، وإلّا ما
+  //  يكتبه الاستعلامات الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
+  const needsFirstPrice = active.approvedPrice <= 0;
+  const originalPrice = needsFirstPrice ? firstPrice : active.approvedPrice;
+
   const preview = computeCommercialPrice({
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
   });
@@ -213,10 +244,40 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         {active.purchaseInterestAt && (
           <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800"
             data-testid="text-purchase-interest">
-            🟢 المريض أبدى رغبته بالشراء الآن
+            🟢 اشترى — المريض قرّر الإكمال، ينتظر إتمام البيع
             {active.purchaseInterestByName && ` — سجّلها ${active.purchaseInterestByName}`}
             {` (${fmt(active.purchaseInterestAt)})`}
           </p>
+        )}
+
+        {/*  **النتيجةُ تبقى مقروءةً بعد الإغلاق** — بسببها وملاحظتها ومَن
+            سجّلها ومتى. والملاحظةُ لا تختفي: هي في الحدث وفي الصفّ معاً. */}
+        {active.status === "closed_without_purchase" && (
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+            data-testid="card-closed-decision">
+            <div className="font-medium text-gray-800">لم يشترِ</div>
+            <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              <div data-testid="text-closed-reason">
+                السبب: <b className="text-foreground">{active.closedReason
+                  ? FOLLOWUP_REASON_LABELS[active.closedReason as FollowupReason]
+                    ?? active.closedReason
+                  : "—"}</b>
+              </div>
+              {(active.closedNote || active.lastNote) && (
+                <div data-testid="text-closed-note">
+                  الملاحظة: <b className="text-foreground">{active.closedNote || active.lastNote}</b>
+                </div>
+              )}
+              {active.closedByName && (
+                <div data-testid="text-closed-by">
+                  سجّلها: <b className="text-foreground">{active.closedByName}</b>
+                </div>
+              )}
+              <div data-testid="text-closed-at">
+                التاريخ: {fmtDateTime(active.closedEventAt ?? active.lastContactAt)}
+              </div>
+            </div>
+          </div>
         )}
 
         {/*  صفٌّ معلَّقٌ من المسار القديم — يُقال بلا زرّ لمن لا يحسمه. */}
@@ -295,7 +356,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => submit(`/api/followups/${active.id}/purchase-interest`, {})}
               data-testid="button-signal-purchase-interest">
-              <HandCoins className="h-4 w-4" /> المريض يرغب بالشراء الآن
+              <HandCoins className="h-4 w-4" /> اشترى — يرغب بإكمال البيع
             </Button>
           )}
           {/*  توافقٌ رجعي: حسمُ طلبٍ قديمٍ معلَّق. لا يُنشأ مثلُه بعد اليوم. */}
@@ -530,8 +591,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.
-              يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
+              {needsFirstPrice
+                ? <>لم يحدّد الطبيب كلفة الجهاز — أدخل السعر الأصلي أدناه.</>
+                : <>السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.</>}
+              {" "}يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
             </p>
             {/*  الخبير **يُعرَض ولا يُختار هنا**: له نقطتُه وتدقيقُه. والخادم
                 يقرأه من الصفّ لا من الطلب، فلا يُرسَل أصلاً. والسعرُ كذلك. */}
@@ -546,12 +609,43 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 اختر الخبير المسؤول أولاً.
               </p>
             )}
+
+            {/*  **السعرُ الأصلي حين سكتت المعاينة** — ليس خصماً ولا يحتاج
+                اعتماداً: الطبيبُ ترك الحقلَ فارغاً، وأولُ رقمٍ يُكتب هو
+                السعرُ الطبيعي نفسه. */}
+            {needsFirstPrice && (
+              <div className="space-y-1" data-testid="first-price-block">
+                <Label className="text-sm font-semibold">
+                  السعر الأصلي <span className="text-destructive">*</span>
+                </Label>
+                <MoneyInput value={firstPrice} onValueChange={setFirstPrice}
+                  placeholder="0" data-testid="input-first-price" />
+                <p className="text-xs text-muted-foreground">
+                  لم يحدّد الطبيب كلفة الجهاز في المعاينة — أدخل السعر الطبيعي.
+                  <b> لا يحتاج اعتماداً</b>؛ الاعتماد للخصم وحده.
+                </p>
+              </div>
+            )}
+
+            {/*  والخصمُ هنا **لا يمرّ إلى التصنيع مباشرةً**: يُنشئ طلباً
+                يعتمده المسؤولُ أو مديرُ الفرع، ولا يبدأ شيءٌ قبله. */}
+            {originalPrice > 0 && (
+              <ServiceDiscountFields originalPrice={originalPrice}
+                value={discount} onChange={setDiscount} testIdPrefix="purchase-discount" />
+            )}
           </div>
           <DialogFooter>
-            <Button disabled={busy || active.selectedExpertUserId === null}
+            <Button disabled={busy || active.selectedExpertUserId === null
+              || originalPrice <= 0 || discountBlocked(discount, originalPrice)}
               data-testid="button-confirm-purchase-submit"
-              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {})}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "تأكيد وبدء التصنيع"}
+              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {
+                ...(needsFirstPrice ? { originalPrice: firstPrice } : {}),
+                ...(hasDiscount(discount, originalPrice)
+                  ? { discount: discountPayload(discount) } : {}),
+              })}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" />
+                : hasDiscount(discount, originalPrice) ? "إرسال للاعتماد"
+                  : "تأكيد وبدء التصنيع"}
             </Button>
           </DialogFooter>
         </DialogContent>

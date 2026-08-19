@@ -45,6 +45,23 @@ export const LEGACY_ONLY_STATUSES: FollowupStatus[] = [
   "purchase_approval_pending",
 ];
 
+/**
+ * مرشِّحاتُ شاشة المتابعة — **أربعةٌ حيّة وسلّةٌ للقديم**.
+ *
+ * كانت الشاشةُ تعرض كلَّ حالةٍ في القاعدة مرشِّحاً مستقلاً، فقرأها الموظّف
+ * كلوحةِ إدارةِ آلةِ حالات لا كطابورِ عمل. والمسارُ الحيّ اليوم ثلاثُ
+ * محطّات لا أكثر: ينتظر قراره · قرّر ويريد الإكمال · لم يشترِ.
+ *
+ * و`legacy` سلّةٌ واحدة تجمع الحالات الموروثة الثلاث — تُقرأ ولا تتصدّر.
+ */
+export const FOLLOWUP_FILTERS: Array<{ key: string; label: string }> = [
+  { key: "all", label: "الكل" },
+  { key: "awaiting_patient_decision", label: "بانتظار قرار المريض" },
+  { key: "wants_purchase", label: "يرغب بالشراء — أكمل البيع" },
+  { key: "closed_without_purchase", label: "مغلق بدون شراء" },
+  { key: "legacy", label: "حالات قديمة" },
+];
+
 /** الحالتان النهائيّتان — لا متابعةَ بعدهما إلّا بإعادة فتح. */
 export const TERMINAL_STATUSES: FollowupStatus[] = ["closed_without_purchase", "converted"];
 export const isTerminal = (s: string): boolean =>
@@ -80,7 +97,9 @@ export const isFollowupReason = (v: unknown): v is FollowupReason =>
 // ── مصدرُ السعر المعتمد ──────────────────────────────────────────────────
 //
 // **مَن قال هذا الرقم** — سؤالٌ يبقى بعد أن يُنسى كلُّ شيء آخر.
-export const PRICE_SOURCES = ["exam", "manager_set", "approved_change"] as const;
+export const PRICE_SOURCES = [
+  "exam", "manager_set", "approved_change", "reception_set",
+] as const;
 export type PriceSource = (typeof PRICE_SOURCES)[number];
 
 export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
@@ -89,6 +108,10 @@ export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
   //  توافقٌ رجعي: اعتمادٌ حُسم بالمسار القديم. **ولا يُسمّى «مدير الفرع»**
   //  لأن مَن اعتمده يومَها كان طبيباً أو مسؤولاً.
   approved_change: "بعد تعديل سعر سابق",
+  //  **أولُ سعرٍ حين سكتت المعاينة** — أدخله الاستعلامات، وليس خصماً ولا
+  //  قرارَ مدير. وله اسمُه هو: خلطُه بـ`manager_set` كان سيجعل السجلّ
+  //  ينسب إلى المدير رقماً لم يره.
+  reception_set: "أدخله الاستعلامات",
 };
 
 export const isPriceSource = (v: unknown): v is PriceSource =>
@@ -101,6 +124,24 @@ export function priceSourceShort(v: unknown): string {
 /** العبارةُ الكاملة — **مشتقّةٌ لا مكرَّرة**، فلا تنحرف نسختان. */
 export function priceSourceLabel(v: unknown): string {
   return `السعر المعتمد ${priceSourceShort(v)}`;
+}
+
+/**
+ * **مَن يُدخل أولَ سعرٍ للجهاز حين سكتت المعاينة.**
+ *
+ * كلُّ مَن يُتمّ البيع — استقبالٌ ومديرٌ وطبيبٌ مخوَّل ومسؤول. لأن هذا ليس
+ * تخفيضاً ولا قراراً مالياً استثنائياً، بل **إعلانُ السعر الطبيعي** الذي
+ * تركه الطبيبُ فارغاً. وإيقافُ المريض على مدير الفرع لسهوِ حقلٍ في المعاينة
+ * عقوبةٌ له على ما لا شأن له به.
+ *
+ * **والحارسُ الحقيقيّ في الخادم شرطٌ لا دور**: لا تُقبل الكتابة إلّا حين
+ * يكون السعر المعتمد **صفراً**. فمتى وُجد سعرٌ موجب صار تخفيضُه خصماً يمرّ
+ * ببابه، ورفعُه قرارَ مديرٍ يمرّ بـ`canSetCommercialPrice`.
+ */
+export function canSetInitialCommercialPrice(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  return canConfirmPurchase(s);
 }
 
 // ── السعر التجاري ────────────────────────────────────────────────────────
@@ -258,21 +299,26 @@ export function canSetCommercialPrice(
 }
 
 /**
- * مَن يرفع إشارة **«المريض يرغب بالشراء الآن»** — الطبيبُ والمسؤول.
+ * مَن يسجّل **«اشترى — يرغب بإكمال البيع»** — الطبيبُ والاستقبالُ ومديرُ
+ * الفرع والمسؤول.
  *
- * ══ إشارةُ تسليمٍ لا قرارُ بيع ══════════════════════════════════════════
- * الطبيبُ يخرج من غرفته وقد قال المريضُ أمامه «أريده اليوم». فبدل أن يمشي
- * إلى الاستعلامات أو يُنسى الأمر، يضغط زرّاً واحداً يرفع رايةً على الملفّ.
+ * ══ قرارُ المريض لا بيعَه ═══════════════════════════════════════════════
+ * المريض قال «نعم أريده». مَن سمعها يسجّلها: الطبيبُ وهو يخرج من غرفته،
+ * أو موظّفُ الاستعلامات وقد وقف المريضُ أمامه بعدها. **ولا يُشترط أحدٌ
+ * بعينه** — ولذلك البابُ مفتوحٌ لمن يتابع الملفّ كلِّه.
  *
  * **ولا يفعل شيئاً آخر إطلاقاً**: لا يسجّل بيعاً ولا يحرّك سعراً ولا يقيّد
- * كلفةً ولا يفتح تصنيعاً ولا يقبض ديناراً. وتركُه — وهو الأغلب — **لا يعني
- * أن المريض رفض**: يعني أن لا إشارةَ رُفعت، والملفّ يبقى «بانتظار قرار
- * المريض» كما كان. فلا صمتَ يُقرأ رفضاً.
+ * كلفةً ولا يفتح تصنيعاً ولا يُسنِد خبيراً ولا يقبض ديناراً. إنما يرفع
+ * رايةً تقول «هذا المريض ينتظر إتمام البيع» فتضعه في رأس الطابور.
+ *
+ * وتركُه — وهو الأغلب — **لا يعني أن المريض رفض**: يعني أن لا قرارَ سُجّل،
+ * والملفّ يبقى «بانتظار قرار المريض» كما كان. فلا صمتَ يُقرأ رفضاً.
  */
 export function canSignalPurchaseInterest(
   s: FollowupSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
+  if (s?.role === "reception" || s?.role === "branch_manager") return true;
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
 }
 

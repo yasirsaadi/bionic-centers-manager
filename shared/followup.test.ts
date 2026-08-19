@@ -122,13 +122,15 @@ same("ب٤. **مديرُ الفرع: يبيع ويسعّر ولا يحسم ال�
 // ══ ج. الأزرار بحسب الحالة ═════════════════════════════════════════════
 console.log("\n── الأزرار ──");
 //  **الاستقبال ينفّذ ولا يسعّر**: ثلاثةُ أفعالٍ لا رابعَ لها.
-same("د. بانتظار قرار المريض: الاستقبال يرى الثلاثة",
+//  **وقرارُ المريض يسجّله مَن سمعه** — استقبالاً كان أو طبيباً.
+same("د. بانتظار قرار المريض: الاستقبال يرى الأربعة",
   allowedActions(recv, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer"]);
+  ["close", "confirm_purchase", "defer", "signal_purchase_interest"]);
 //  ومديرُ الفرع يرى معها **قرارَه التجاري** — لا طلباً يرسله.
 same("   **ومديرُ الفرع يرى معها تحديدَ السعر**",
   allowedActions(mgr, "awaiting_patient_decision").sort(),
-  ["close", "confirm_purchase", "defer", "set_commercial_price"]);
+  ["close", "confirm_purchase", "defer", "set_commercial_price",
+    "signal_purchase_interest"]);
 //  والطبيبُ يرى **إشارةَ التسليم** — ولا يسعّر ولا يبيع بقرارٍ تجاري.
 //  **والطبيبُ المخوَّل يرى التشغيليَّ ومعه إشارتُه — ولا يرى التسعير.**
 same("   **والطبيب يرى الأفعالَ التشغيلية ومعها إشارتُه**",
@@ -269,6 +271,10 @@ same("   ويرى تحديدَ السعر في الأزرار كذلك",
   allowedActions(adminDoc, "awaiting_patient_decision").sort(),
   ["close", "confirm_purchase", "defer", "set_commercial_price",
     "signal_purchase_interest"]);
+same("   **والفرقُ عن الاستقبال هو التسعيرُ وحده**",
+  allowedActions(recv, "awaiting_patient_decision").sort()
+    .concat("set_commercial_price").sort(),
+  allowedActions(adminDoc, "awaiting_patient_decision").sort());
 same("   ويسنِد الخبير في كلّ حالةٍ حيّة",
   LIVE.filter((st) => !canSelectExpert(adminDoc, st)), []);
 
@@ -316,10 +322,15 @@ same("   **ولا الطبيب** — قرارُه سريريّ لا تجاري",
 same("   ولا جلسةَ فارغة", [canSetCommercialPrice(null), canSetCommercialPrice(undefined)],
   [false, false]);
 
-same("م. **إشارةُ الرغبة للطبيب والمسؤول**",
-  [canSignalPurchaseInterest(doc), canSignalPurchaseInterest(admin)], [true, true]);
-same("   ولا للاستقبال ولا لمدير الفرع — إشارةُ تسليمٍ من غرفة الطبيب",
-  [canSignalPurchaseInterest(recv), canSignalPurchaseInterest(mgr)], [false, false]);
+//  **قرارُ المريض يسجّله مَن سمعه**: الطبيبُ وهو يخرج من غرفته، أو
+//  الاستعلامات وقد وقف المريضُ أمامه بعدها. ولا يُشترط أحدٌ بعينه.
+same("م. **«اشترى» يسجّله الأربعة**",
+  [canSignalPurchaseInterest(doc), canSignalPurchaseInterest(recv),
+    canSignalPurchaseInterest(mgr), canSignalPurchaseInterest(admin)],
+  [true, true, true, true]);
+same("   **ولا الخبير ولا المحاسب** — ليسا من مسؤولي المتابعة",
+  [canSignalPurchaseInterest(expert), canSignalPurchaseInterest(accountant2)],
+  [false, false]);
 
 // ══ ن. **ولا اعتمادَ شراءٍ ولا اعتمادَ خصمٍ في أي حالة لأي دور** ═════════
 const EVERY_ROLE = [recv, mgr, doc, admin];
@@ -333,10 +344,10 @@ same("ن. **لا فعلَ اعتمادٍ منقرضاً يظهر لأي دورٍ
     allowedActions(who, st).filter((a) => FORBIDDEN.includes(a)).map((a) => `${st}:${a}`))),
   []);
 
-// ══ س. مصدرُ السعر — ثلاثةٌ ونصٌّ واحدٌ لكلٍّ ═══════════════════════════
+// ══ س. مصدرُ السعر — أربعةٌ ونصٌّ واحدٌ لكلٍّ ═══════════════════════════
 console.log("\n── مصدر السعر ──");
-same("س. القيمُ الثلاث بأسمائها", [...PRICE_SOURCES],
-  ["exam", "manager_set", "approved_change"]);
+same("س. القيمُ الأربع بأسمائها", [...PRICE_SOURCES],
+  ["exam", "manager_set", "approved_change", "reception_set"]);
 same("   والمعاينةُ «من المعاينة»", priceSourceLabel("exam"), "السعر المعتمد من المعاينة");
 same("   **ومَن حدّده مديرُ الفرع يُقال باسمه**",
   priceSourceLabel("manager_set"), "السعر المعتمد حدّده مدير الفرع");
@@ -345,9 +356,15 @@ same("   **والقديمُ لا يُنسَب إلى مدير الفرع**",
   priceSourceLabel("approved_change"), "السعر المعتمد بعد تعديل سعر سابق");
 check(!priceSourceShort("approved_change").includes("مدير"),
   "   ولا ترد «مدير» في نصّ القديم إطلاقاً", priceSourceShort("approved_change"));
+//  **وأولُ سعرٍ يُنسَب لمن أدخله**: الطبيبُ ترك الحقل فارغاً، فأدخله
+//  الاستعلامات — ونسبتُه إلى مدير الفرع كانت ستكذب على قارئ السجلّ.
+same("   **وأولُ سعرٍ يُنسَب إلى الاستعلامات لا إلى المدير**",
+  priceSourceLabel("reception_set"), "السعر المعتمد أدخله الاستعلامات");
+check(!priceSourceShort("reception_set").includes("مدير"),
+  "   ولا ترد «مدير» في نصّه إطلاقاً", priceSourceShort("reception_set"));
 same("   والمختصرُ جزءٌ من الكامل — نصٌّ واحد لا نصّان",
   PRICE_SOURCES.map((v) => priceSourceLabel(v) === `السعر المعتمد ${priceSourceShort(v)}`),
-  [true, true, true]);
+  [true, true, true, true]);
 same("   وقيمةٌ لا تُعرَف تُقرأ «من المعاينة» ولا تُخترَع لها عبارة",
   [priceSourceShort("junk"), priceSourceShort(null)], ["من المعاينة", "من المعاينة"]);
 

@@ -25,6 +25,15 @@ interface UserPermissions {
   // Doctor capability. Never auto-granted — not even to admins — because
   // signing a clinical record is a professional act, not an administrative one.
   canWriteMedicalExam: boolean;
+  /**
+   * اعتمادُ الخصم والتبرّع — **عَلَمٌ صريحٌ لا استنتاجٌ من دور**.
+   *
+   * الخصمُ قرارٌ ماليّ لا سريريّ، فلا يُمنَح لكلّ من دورُه «طبيب» كما
+   * تُمنَح كتابةُ المعاينة. والمسؤولُ ومديرُ الفرع يمرّان بسلطتهما في
+   * `canApproveServiceDiscount`، لا بهذا العَلَم — فهو لتخويل مَن دورُه
+   * شيءٌ آخر.
+   */
+  canApproveDiscount: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -50,6 +59,7 @@ const defaultAdminPermissions: UserPermissions = {
   canViewSessionsReport: true,
   canWorkAsExpert: false,
   canWriteMedicalExam: false,
+  canApproveDiscount: false,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -75,6 +85,7 @@ const defaultBranchPermissions: UserPermissions = {
   canViewSessionsReport: false,
   canWorkAsExpert: false,
   canWriteMedicalExam: false,
+  canApproveDiscount: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -104,6 +115,7 @@ export function usePermissions(): UserPermissions {
       canViewSessionsReport: false,
       canWorkAsExpert: false,
       canWriteMedicalExam: false,
+      canApproveDiscount: false,
     };
   }
 
@@ -132,6 +144,7 @@ export function usePermissions(): UserPermissions {
       canViewSessionsReport: perms.canViewSessionsReport ?? false,
       canWorkAsExpert: perms.canWorkAsExpert ?? false,
       canWriteMedicalExam: perms.canWriteMedicalExam ?? false,
+      canApproveDiscount: perms.canApproveDiscount ?? false,
     };
   }
   

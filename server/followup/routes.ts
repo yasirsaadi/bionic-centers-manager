@@ -29,6 +29,8 @@ import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
+import * as discountStore from "../discounts/store";
+import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
 
@@ -155,6 +157,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const out = await store.listPendingApprovals(branchScope(req));
     res.json({ ...out, mayApprove: true, legacyOnly: true });
+  });
+
+  // ── الخدماتُ التي يحكمها ملفُّ متابعةٍ حيّ — **لإخفاء الباب المكرَّر** ──
+  //  سجلُّ المرضى يسأل هذه أوّلاً فلا يعرض «تخصيص وإسناد خبير» لخدمةٍ
+  //  سيردّها الخادم. وهي **قراءةٌ محضة**: الحارسُ في `assign-manufacturing`
+  //  لم يُمسّ، وهذا إخفاءُ زرٍّ لا استبدالُ حراسة.
+  app.get("/api/followups/governed", isAuthenticated, async (req: Req, res) => {
+    if (!canViewFollowup(getSession(req))) return res.json({ governed: {} });
+    res.json({ governed: await store.governedServices(branchScope(req)) });
   });
 
   // ── تأجيل ────────────────────────────────────────────────────────────
@@ -452,6 +463,99 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const v = await validateExpert(f.selectedExpertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
+    // ══ أولُ سعرٍ حين سكتت المعاينة — **ليس خصماً** ════════════════════
+    // الطبيبُ قد يترك كلفةَ الجهاز فارغة، فلا يكون للجهاز سعرٌ أصليٌّ قطّ.
+    // وأولُ رقمٍ يُكتب حينها هو **السعر الطبيعي** لا تخفيضٌ لشيء — فيُدخله
+    // مَن يُتمّ البيع بلا اعتماد، ولا يقف المريضُ على مدير الفرع لسهوِ حقل.
+    //
+    // **والحارسُ شرطٌ لا دور**: المخزن يرفض الكتابة إن كان السعر موجباً
+    // أصلاً (يفحصه تحت القفل)، فمتى وُجد سعرٌ صار تخفيضُه خصماً يمرّ ببابه.
+    let workingFollowup = f;
+    if (f.approvedPrice <= 0) {
+      const raw = req.body?.originalPrice;
+      const asked = raw === undefined || raw === null || raw === "" ? null : Number(raw);
+      if (asked === null || !Number.isFinite(asked) || !Number.isInteger(asked) || asked <= 0) {
+        return res.status(400).json({
+          error: "لم يحدّد الطبيب كلفة الجهاز — أدخل السعر الأصلي لإتمام البيع",
+        });
+      }
+      try {
+        workingFollowup = await store.setInitialCommercialPrice({
+          followupId: f.id, originalPrice: asked, actor: actorOf(req),
+        });
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          oldValues: { approvedPrice: f.approvedPrice, priceSource: f.priceSource },
+          newValues: { approvedPrice: asked, priceSource: "reception_set" },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `تحديد السعر الأصلي لأول مرّة (المعاينة بلا كلفة): ${asked.toLocaleString()} د.ع`,
+        });
+      } catch (e) { if (!fail(res, e)) throw e; return; }
+    }
+
+    // ══ خصمٌ أو تبرّع؟ ⟶ بابُ الاعتماد. وإلّا فالمسارُ كما هو حرفاً ══════
+    // **والسعرُ الأصلي هو السعرُ المحفوظ على الصفّ** — كلفةُ المعاينة، أو
+    // قرارُ مدير الفرع، أو أولُ سعرٍ كُتب قبل سطرين. ولا رقمَ من الطلب.
+    //
+    // ولا يتحوّل الملفُّ ولا يُنشأ أمرُ تصنيعٍ ولا تُقيَّد كلفةٌ قبل الاعتماد:
+    // `confirmPurchase` تُنادى من `applyApproved` وحدها بعده.
+    const dsc = req.body?.discount;
+    const wantsFree = dsc?.isFree === true;
+    const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+      && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== workingFollowup.approvedPrice;
+    if (wantsFree || wantsCut) {
+      try {
+        const out = await discountStore.submitDiscount({
+          patientId: f.patientId, department: f.serviceType as any,
+          branchId: f.branchId, contextRef: `followup:${f.id}`,
+          originalPrice: workingFollowup.approvedPrice,
+          finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+          isFree: wantsFree,
+          reason: String(dsc?.reason ?? ""), note: str(dsc?.note),
+          payload: { followupId: f.id, expertUserId: f.selectedExpertUserId },
+          actor: actorOf(req),
+          actorMayApprove: mayApproveDiscountHere(req, f.branchId),
+          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا يُعتمد
+          //  خصمٌ ويتحرّك مالٌ بإذنٍ لا أثرَ له.
+          audit: {
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            note: (row) => discountAuditNote(row, "طلب واعتماد"),
+          },
+        });
+        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك، فسطرُه أفضلُ جهدٍ
+        //  كبقيّة النظام — ولا يستطيع أن يُفشل ما نجح.
+        if (out.status === "pending") {
+          await logAudit({
+            entityType: "service_discount", entityId: out.request.id,
+            action: "create",
+            userId: s.userId, userName: s.userName, branchId: f.branchId,
+            newValues: {
+              patientId: f.patientId, followupId: f.id,
+              department: f.serviceType, status: out.request.status,
+            },
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            notes: discountAuditNote(out.request, "طلب"),
+          });
+        }
+        return res.json({
+          ok: true, pendingApproval: out.status === "pending",
+          discountRequestId: out.request.id, discountStatus: out.request.status,
+          workOrderId: out.applied?.workOrderId ?? null,
+          followup: out.applied?.followup ?? workingFollowup,
+        });
+      } catch (e: any) {
+        if (e?.name === "DiscountError") return res.status(e.status).json({ error: e.message });
+        if (fail(res, e)) return;
+        if (e?.name === "ActiveAssignmentError" || e?.code === "23505") {
+          return res.status(409).json({
+            error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — حدّث الصفحة",
+          });
+        }
+        throw e;
+      }
+    }
+
     try {
       const out = await store.confirmPurchase({
         followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
@@ -460,9 +564,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         entityType: "post_exam_followup", entityId: f.id, action: "update",
         userId: s.userId, userName: s.userName, branchId: f.branchId,
         oldValues: { status: f.status },
-        newValues: { status: "converted", workOrderId: out.workOrderId, approvedPrice: f.approvedPrice },
+        newValues: {
+          status: "converted", workOrderId: out.workOrderId,
+          approvedPrice: workingFollowup.approvedPrice,
+        },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `تأكيد الشراء لمتابعة #${f.id} بسعر ${f.approvedPrice.toLocaleString()} د.ع — أمر تصنيع #${out.workOrderId}`,
+        notes: `تأكيد الشراء لمتابعة #${f.id} بسعر ${workingFollowup.approvedPrice.toLocaleString()} د.ع — أمر تصنيع #${out.workOrderId}`,
       });
       res.json(out);
     } catch (e) {

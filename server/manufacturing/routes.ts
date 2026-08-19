@@ -26,8 +26,19 @@ import {
   MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
 import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
+import * as discountStore from "../discounts/store";
+import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
+
+/** الفاعلُ كما يُكتب في صفّ الخصم — الاسمُ لقطةٌ تبقى بعد حذف الحساب. */
+const discountActor = (req: Req) => {
+  const s = (req.session as any)?.branchSession;
+  return {
+    userId: (s?.userId ?? null) as number | null,
+    userName: (s?.displayName ?? null) as string | null,
+  };
+};
 
 function getSession(req: Req) {
   const s = (req.session as any)?.branchSession;
@@ -459,6 +470,55 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         : await prescribedSpecs(patientId, serviceType));
     } catch (err) {
       console.error("[manufacturing] reading prescribed specs failed:", err);
+    }
+
+    // ══ خصمٌ أو تبرّع؟ ⟶ بابُ الاعتماد. وإلّا فالمسارُ كما هو حرفاً ══════
+    // **والسعرُ الأصلي هو `effectiveCost`** — أي ما حسبه الخادمُ قبل قليل من
+    // معاينة الطبيب الموقّعة، لا رقمٌ يعلنه العميل. فلو قُبل «الأصلي» من
+    // الطلب لأمكن تضخيمُه ليبدو الخصمُ صغيراً وهو كبير.
+    //
+    // ولا شيءَ يُنفَّذ قبل الاعتماد: لا أمرَ تصنيع ولا كلفةَ ولا قيد.
+    const dsc = req.body?.discount;
+    const wantsFree = dsc?.isFree === true;
+    const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+      && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== effectiveCost;
+    if (wantsFree || wantsCut) {
+      try {
+        const out = await discountStore.submitDiscount({
+          patientId, department: serviceType, branchId: patient.branchId,
+          contextRef: liveEpisode ? `episode:${liveEpisode.id}` : `service:${serviceType}`,
+          originalPrice: effectiveCost,
+          finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+          isFree: wantsFree,
+          reason: String(dsc?.reason ?? ""), note: strOrU(dsc?.note) ?? null,
+          //  الخبيرُ والمواصفاتُ يُحفظان ليُستأنف التخصيصُ بلا إعادة إدخال.
+          payload: { expertUserId, fields, serviceType },
+          actor: discountActor(req),
+          actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا أمرُ تصنيعٍ
+          //  يُولَد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+          audit: {
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+          },
+        });
+        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
+        if (out.status === "pending") {
+          await audit(req, "service_discount", out.request.id, "create", patient.branchId,
+            discountAuditNote(out.request, "طلب"));
+        }
+        return res.status(out.status === "approved" ? 201 : 202).json({
+          ok: true, pendingApproval: out.status === "pending",
+          discountRequestId: out.request.id, discountStatus: out.request.status,
+          workOrderId: out.applied?.workOrderId ?? null,
+        });
+      } catch (e: any) {
+        if (e?.name === "DiscountError") return res.status(e.status).json({ error: e.message });
+        if (e?.name === "ActiveAssignmentError" || e?.code === "23505") {
+          return res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه أولاً" });
+        }
+        throw e;
+      }
     }
 
     try {

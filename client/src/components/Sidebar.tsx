@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -98,6 +98,9 @@ export function Sidebar() {
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: "متابعة ما بعد المعاينة", icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager", "doctor"] as const },
+    //  اعتمادُ الخصم لمديرِ الفرع والمخوَّل — والمسؤولُ يرى كلَّ شيء أصلاً.
+    //  والطبيبُ العاديّ لا يراه: الخصمُ قرارٌ ماليٌّ لا سريريّ.
+    { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },
     { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
@@ -127,7 +130,12 @@ export function Sidebar() {
     if (itemRoles && !branchSession?.isAdmin) {
       const matchesRole = itemRoles.includes(branchSession?.role ?? "");
       const expertBypass = itemRoles.includes("prosthetics_expert") && permissions.canWorkAsExpert;
-      if (!matchesRole && !expertBypass) return false;
+      //  والخصمُ كذلك: عَلَمُ `canApproveDiscount` يفتح الشاشةَ لمن دورُه شيءٌ
+      //  آخر — طبيبٌ خُوِّل صراحةً مثلاً. **ولا يُفتَح بالدور وحده لغير
+      //  مديرِ الفرع**، فالطبيبُ العاديّ لا يراها.
+      const discountBypass = item.href === "/discount-approvals"
+        && permissions.canApproveDiscount;
+      if (!matchesRole && !expertBypass && !discountBypass) return false;
     }
     
     // Check branch settings for non-admin users

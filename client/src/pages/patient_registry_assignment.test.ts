@@ -142,5 +142,29 @@ same("   والتخصيص يبقى محكوماً بقرار الطبيب",
   assignableServices({ patient: { id: 8, isAmputee: true }, decided: ["prosthetic"], legacyExempt: false }),
   ["prosthetic"]);
 
+// ══ **البابُ المكرَّر يُخفى** — خدمةٌ يحكمها ملفُّ متابعةٍ حيّ ═══════════
+//  الخادمُ يردّ «تخصيص» المباشر على خدمةٍ لها متابعةٌ حيّة، فكان الزرُّ
+//  يظهر ثم يُضغط ثم يُردّ. والزرُّ الذي ينتهي دائماً بخطأ أسوأ من زرٍّ
+//  يختفي بعد أن أدّى غرضه.
+same("ك. **خدمةٌ يحكمها ملفُّ متابعةٍ حيّ لا تُعرَض للتخصيص**",
+  assignableServices({
+    patient: plainProsthetic, decided: ["prosthetic"], legacyExempt: false,
+    governed: ["prosthetic"],
+  }), []);
+same("   **ولا يُنقذها إعفاءُ القِدَم** — الحارسُ لا يستثني القدامى",
+  assignableServices({
+    patient: legacyPlain, decided: [], legacyExempt: true, governed: ["prosthetic"],
+  }), []);
+same("   وما لا تحكمه متابعةٌ يبقى مفتوحاً كما كان",
+  assignableServices({
+    patient: plainProsthetic, decided: ["prosthetic"], legacyExempt: false,
+    governed: ["medical_support"],
+  }), ["prosthetic"]);
+same("   **والغيابُ لا يغيّر شيئاً** — نداءٌ لم يمرّر الخريطة يسلك كما كان",
+  [assignableServices({ patient: plainProsthetic, decided: ["prosthetic"], legacyExempt: false }),
+    assignableServices({ patient: plainProsthetic, decided: ["prosthetic"],
+      legacyExempt: false, governed: null })],
+  [["prosthetic"], ["prosthetic"]]);
+
 console.log(`\n${failures === 0 ? "✅ all registry-assignment cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

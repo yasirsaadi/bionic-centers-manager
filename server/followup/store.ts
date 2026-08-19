@@ -268,10 +268,20 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            f.purchase_interest_at, f.purchase_interest_by, f.purchase_interest_by_name,
            f.created_at, f.updated_at,
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
-           u.display_name AS selected_expert_name
+           u.display_name AS selected_expert_name,
+           cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
+           cl.note AS closed_note
       FROM post_exam_followups f
       LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
       LEFT JOIN system_users u ON u.id = f.selected_expert_user_id
+      --  مَن سجّل «لم يشترِ» ومتى وبأي ملاحظة — من دفتر الأحداث نفسه.
+      --  ولا جدولَ ملاحظاتٍ ثانٍ: دفترُ الأحداث يحمل الفاعل والسبب
+      --  والملاحظة والزمن منذ ٠٥٣، وإنشاءُ ثانٍ يجعلهما ينحرفان.
+      LEFT JOIN LATERAL (
+        SELECT actor_name, created_at, note FROM post_exam_followup_events
+         WHERE followup_id = f.id AND event_type = 'closed_without_purchase'
+         ORDER BY id DESC LIMIT 1
+      ) cl ON TRUE
      WHERE f.patient_id = ${patientId}
      ORDER BY (f.status NOT IN ('closed_without_purchase','converted')) DESC, f.id DESC
   `);
@@ -279,6 +289,11 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     ...toRow(x),
     examDoctorName: x.exam_doctor_name ?? null,
     examSignedAt: x.exam_signed_at ?? null,
+    //  **القرارُ يبقى مقروءاً بعد الإغلاق**: مَن سجّله ومتى وبأي ملاحظة.
+    //  والملاحظةُ لا تختفي — هي في الحدث وفي `last_note` معاً.
+    closedByName: x.closed_by_name ?? null,
+    closedEventAt: x.closed_event_at ?? null,
+    closedNote: x.closed_note ?? null,
     //  حسابٌ حُذف يترك رقماً بلا اسم — فيظهر الرقم ويختار الموظّف من جديد.
     selectedExpertName: x.selected_expert_name ?? null,
   }));
@@ -528,7 +543,7 @@ export async function recordPatientAcceptedPrice(params: {
     ]);
     if (cur.approvedPrice <= 0) {
       throw new FollowupError(
-        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة أو يُعتمد تعديلٌ للسعر", 409);
+        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
     }
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
@@ -851,6 +866,119 @@ export async function setCommercialPrice(params: {
 }
 
 /**
+ * **تثبيتُ السعر المعتمد بعد اعتماد خصم** — يناديه مسارُ الخصم وحده.
+ *
+ * ══ ولماذا لا يُعاد استعمالُ `setCommercialPrice` ═══════════════════════
+ * لأن ذاك بابُ **قرارِ مديرِ الفرع** بحرّاسه: سببٌ إلزاميّ عند التغيير،
+ * ومصدرٌ `manager_set`، ورفضُ الصفر. والخصمُ المعتمد سبقه سببُه المنظَّم
+ * وموافقةُ معتمِدٍ مخوَّل، وقد يكون صفراً حين يكون تبرّعاً. فخلطُ البابين
+ * كان سيعني إمّا إضعافَ حُرّاسِ التسعير اليدوي، وإمّا منعَ التبرّع.
+ *
+ * ══ ولا دينارَ يتحرّك هنا ═══════════════════════════════════════════════
+ * **لا كلفةَ مريض ولا كلفةَ حالة ولا قيدَ دفتر ولا دفعةَ ولا أمرَ تصنيع.**
+ * هذه كتابةُ رقمٍ ينتظر `confirmPurchase` — وهي وحدها مَن يصيّره مالاً.
+ *
+ * والخبيرُ يُكتب هنا حين أرسله الطلبُ الأصلي: الموظّف اختاره قبل أن يطلب
+ * الخصم، فلا يُطلب منه اختيارُه ثانيةً بعد أيامٍ من الاعتماد.
+ */
+export async function setApprovedPriceForDiscount(params: {
+  followupId: number; finalPrice: number; expertUserId?: number | null;
+  actor: Actor;
+  /** معاملةُ المُستدعي — اعتمادُ الخصم يكتب السعرَ ويبيع في حدثٍ واحد. */
+  tx?: any;
+}): Promise<FollowupRow> {
+  const price = Number(params.finalPrice);
+  if (!Number.isInteger(price) || price < 0) {
+    throw new FollowupError("السعر المعتمد غير صالح", 400);
+  }
+  const body = async (tx: any) => {
+    const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  خبيرُ الطلب إن وُجد، وإلّا فالمختارُ سابقاً كما هو — **ولا يُمحى**.
+    const expertUserId = params.expertUserId ?? cur.selectedExpertUserId;
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${price},
+             price_source = 'approved_change',
+             selected_expert_user_id = ${expertUserId},
+             last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status}
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "discount_price_applied",
+      fromStatus: cur.status, toStatus: cur.status,
+      payload: {
+        previousPrice: cur.approvedPrice, finalPrice: price,
+        previousPriceSource: cur.priceSource,
+        expertUserId, setByUserId: params.actor.userId,
+        setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+    return toRow(row);
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
+ * **أولُ سعرٍ للجهاز حين سكتت المعاينة** — يكتبه الاستعلامات، بلا اعتماد.
+ *
+ * ══ لماذا ليس خصماً ولا قرارَ مدير ═══════════════════════════════════════
+ * الطبيبُ **قد** يكتب كلفةَ الجهاز في معاينته، وقد يتركها. وحين يتركها لم
+ * يكن للجهاز سعرٌ أصليٌّ قطّ — فأولُ رقمٍ يُكتب ليس تخفيضاً لشيء، بل هو
+ * **إعلانُ السعر الطبيعي** نفسه. وإيقافُ البيع على مدير الفرع لأن الطبيب
+ * نسي حقلاً عقوبةٌ للمريض على سهوٍ لا شأن له به.
+ *
+ * ══ والحارسُ في الشرط لا في الدور ═══════════════════════════════════════
+ * تعمل **فقط حين يكون السعر المعتمد صفراً** — أي «غير مسعَّر». فمتى وُجد
+ * سعرٌ موجب (من المعاينة أو من مديرٍ أو من أوّل كتابةٍ كهذه) صار تخفيضُه
+ * خصماً يمرّ ببابه. فلا تصير هذه النقطةُ باباً خلفياً لخفض سعرٍ قائم.
+ *
+ * ولا دينارَ يتحرّك هنا: رقمٌ ينتظر تأكيدَ الشراء كسعر المعاينة تماماً.
+ */
+export async function setInitialCommercialPrice(params: {
+  followupId: number; originalPrice: number; actor: Actor; tx?: any;
+}): Promise<FollowupRow> {
+  const price = Number(params.originalPrice);
+  if (!Number.isInteger(price) || price <= 0) {
+    throw new FollowupError("السعر الأصلي يجب أن يكون مبلغاً موجباً بالدينار الصحيح", 400);
+  }
+  const body = async (tx: any) => {
+    const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  **الشرطُ يُفحَص تحت القفل**: بين قراءة الشاشة وهذه اللحظة قد يكون
+    //  مديرٌ سعّره، فلا يُكتب فوق سعرٍ صار موجباً.
+    if (cur.approvedPrice > 0) {
+      throw new FollowupError(
+        "لهذا الجهاز سعر معتمد بالفعل — تخفيضه يمرّ بطلب خصم، ورفعه لمدير الفرع", 409);
+    }
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${price}, price_source = 'reception_set',
+             last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status} AND approved_price <= 0
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "initial_price_set", fromStatus: cur.status, toStatus: cur.status,
+      payload: {
+        previousPrice: cur.approvedPrice, finalPrice: price,
+        previousPriceSource: cur.priceSource,
+        setByUserId: params.actor.userId, setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+    return toRow(row);
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
  * اعتمادُ التعديل أو رفضه — **طبيبٌ أو مسؤول** (تفرضه النقطة).
  *
  * والاعتماد **لا يعني شراءً**: ينقل إلى «بانتظار تأكيد المريض»، فيبقى أن
@@ -964,12 +1092,31 @@ const CONFIRMABLE: FollowupStatus[] = [
  */
 export async function confirmPurchase(params: {
   followupId: number; note?: string | null; actor: Actor;
+  /**
+   * **البابُ الوحيد للصفر** — يرفعه مسارُ الخصم لصفٍّ اعتُمدت مجّانيتُه
+   * صراحةً، ولا يصل من جسم طلبٍ قطّ.
+   *
+   * الحارسُ أدناه يقول «صفرٌ = غيرُ مسعَّر»، وهو صحيحٌ لكلّ مَن يناديه
+   * اليوم. لكنّ التبرّعَ المعتمَد صفرٌ **قرّره معتمِدٌ مخوَّل** وسُجّل سببُه
+   * ومَن أذن به. فلو بقي الحارسُ مطلقاً لَما أمكن التبرّعُ بجهاز؛ ولو
+   * أُسقط لعاد كلُّ ملفٍّ لم يُسعَّر بعدُ يمرّ إلى التصنيع بلا سعر.
+   */
+  allowFreeDonation?: boolean;
+  /**
+   * معاملةُ المُستدعي — اعتمادُ الخصم يقرّر ويبيع في **معاملةٍ واحدة**، فلا
+   * تبقى لحظةٌ يكون فيها الطلبُ «معتمَداً» والبيعُ لم يقع.
+   */
+  tx?: any;
 }): Promise<{ followup: FollowupRow; workOrderId: number }> {
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
-    if (cur.approvedPrice <= 0) {
+    if (cur.approvedPrice <= 0 && params.allowFreeDonation !== true) {
       throw new FollowupError(
-        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُعتمد تعديلٌ للسعر", 409);
+        "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
+    }
+    //  وحتى مع الإذن: **سالبٌ لا يمرّ**. التبرّعُ صفرٌ لا خصمٌ فوق السعر.
+    if (cur.approvedPrice < 0) {
+      throw new FollowupError("السعر المعتمد غير صالح", 409);
     }
 
     // ══ الخبير يُقرأ من الصفّ **تحت القفل** لا من الطلب ═════════════════
@@ -1031,7 +1178,8 @@ export async function confirmPurchase(params: {
       actor: params.actor,
     });
     return { followup: toRow(row), workOrderId };
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ── الطوابير ─────────────────────────────────────────────────────────────
@@ -1055,12 +1203,20 @@ export async function listFollowups(params: {
         AND f.next_follow_up_at IS NOT NULL
         AND f.next_follow_up_at::date < (NOW() AT TIME ZONE 'Asia/Baghdad')::date`
         : f === "awaiting_patient_decision" ? sql`f.status = 'awaiting_patient_decision'`
-          : f === "price_approval_pending" ? sql`f.status = 'price_approval_pending'`
-            : f === "price_approved_waiting_patient" ? sql`f.status = 'price_approved_waiting_patient'`
-              : f === "purchase_approval_pending" ? sql`f.status = 'purchase_approval_pending'`
-                : f === "follow_up" ? sql`f.status = 'follow_up'`
-                  : f === "closed_without_purchase" ? sql`f.status = 'closed_without_purchase'`
-                    : sql`f.status NOT IN ('converted')`;
+        //  **«يرغب بالشراء»**: قرارُ المريض سُجّل والبيعُ لم يُتمّ بعد. وهو
+        //  طابورُ عملِ الاستعلامات الحقيقي — لا حالةٌ في آلة حالات.
+        : f === "wants_purchase" ? sql`f.purchase_interest_at IS NOT NULL
+            AND f.status NOT IN ('converted', 'closed_without_purchase')`
+          //  **سلّةُ القديم**: الحالات الثلاث الموروثة في مرشِّحٍ واحد،
+          //  فلا تتصدّر الشاشةَ بأسماءٍ لا يفهمها الموظّف.
+          : f === "legacy" ? sql`f.status IN ('price_approval_pending',
+              'price_approved_waiting_patient', 'purchase_approval_pending')`
+            : f === "price_approval_pending" ? sql`f.status = 'price_approval_pending'`
+              : f === "price_approved_waiting_patient" ? sql`f.status = 'price_approved_waiting_patient'`
+                : f === "purchase_approval_pending" ? sql`f.status = 'purchase_approval_pending'`
+                  : f === "follow_up" ? sql`f.status = 'follow_up'`
+                    : f === "closed_without_purchase" ? sql`f.status = 'closed_without_purchase'`
+                      : sql`f.status NOT IN ('converted')`;
 
   const r = await db.execute(sql`
     SELECT f.id, f.patient_id, f.branch_id, f.service_type, f.status,
@@ -1208,6 +1364,40 @@ export async function recentPurchasesForDoctor(params: {
     priceSetAt: x.price_set_at ?? null,
     priceChange: x.price_payload ?? null,
   }));
+}
+
+/**
+ * **الخدماتُ التي يحكمها ملفُّ متابعةٍ حيّ** — خريطةُ (مريض ⟶ خدمات).
+ *
+ * ══ الباب المكرَّر الذي تغلقه ═══════════════════════════════════════════
+ * سجلُّ المرضى كان يعرض «تخصيص وإسناد خبير» لكلّ خدمةٍ قرّرها الطبيب ولا
+ * أمرَ بناءٍ لها — **بلا أن يعرف أن للمريض ملفَّ متابعةٍ حيّاً يحكمها**.
+ * فيضغطه الموظّف، ويردّه الخادمُ بـ409 «لديه متابعة حيّة». بابان ظاهران،
+ * وأحدُهما ينتهي دائماً برسالة خطأ.
+ *
+ * فالشاشةُ تسأل هذه النقطةَ أوّلاً وتُخفي البابَ الذي سيُردّ. **والحارسُ في
+ * الخادم لم يُمسّ**: هو الحقيقة، وهذا إخفاءُ زرٍّ لا استبدالُ حراسة.
+ *
+ * والمنتهيتان خارجها: المُحوَّل صار له أمرُ تصنيع، والمغلق لا يحكم شيئاً —
+ * فيعود بابُ التخصيص القديم مشروعاً لمن أُغلق ملفُّه ثم أُعيد فتحُ خدمته
+ * بمسارٍ آخر.
+ */
+export async function governedServices(
+  scope: number[] | null,
+): Promise<Record<number, string[]>> {
+  const r = await db.execute(sql`
+    SELECT f.patient_id, f.service_type
+      FROM post_exam_followups f
+     WHERE f.status NOT IN ('converted', 'closed_without_purchase')
+       AND ${scopeClause(scope)}
+     LIMIT 5000
+  `);
+  const out: Record<number, string[]> = {};
+  for (const x of (r.rows ?? []) as any[]) {
+    const pid = Number(x.patient_id);
+    (out[pid] ||= []).push(String(x.service_type));
+  }
+  return out;
 }
 
 export { isTerminal };

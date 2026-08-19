@@ -25,6 +25,8 @@ import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/r
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import * as followupStore from "./followup/store";
+import { registerDiscountRoutes, mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "./discounts/routes";
+import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
@@ -60,6 +62,10 @@ import { generateSurveyReply } from "./ai/survey_reply";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
+
+/** نصٌّ غيرُ فارغ أو `null` — والفراغُ لا يُحفَظ كسلسلةٍ فارغة. */
+const strOrNull = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
 
 // Validation schemas for admin settings
 const adminPasswordSchema = z.object({
@@ -427,6 +433,12 @@ export async function registerRoutes(
             // so a revocation applies immediately, not at next login.
             canWriteMedicalExam:
               systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
+            // اعتمادُ الخصم والتبرّع — **علمٌ صريحٌ لا استنتاجٌ من دور**.
+            // الخصمُ قرارٌ ماليّ لا سريريّ، فلا يُمنَح لكلّ من دورُه «طبيب»
+            // كما تُمنَح كتابةُ المعاينة أعلاه. والمسؤولُ ومديرُ الفرع
+            // يمرّان بسلطتهما في `canApproveServiceDiscount` نفسِها، لا
+            // بهذا العَلَم — فهو لتخويل مَن دورُه شيءٌ آخر.
+            canApproveDiscount: Boolean(systemUser.canApproveDiscount),
           };
 
           // Store session with user permissions
@@ -1127,6 +1139,11 @@ export async function registerRoutes(
         userData.canWriteMedicalExam =
           userData.canWriteMedicalExam === true || userData.canWriteMedicalExam === "true";
       }
+      // اعتمادُ الخصم — نفسُ التطبيع: نصُّ "false" صادقٌ لو تُرك كما ورد.
+      if (userData.canApproveDiscount !== undefined) {
+        userData.canApproveDiscount =
+          userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
+      }
       if (userData.medicalSpecialties !== undefined) {
         const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
         userData.medicalSpecialties = raw.filter(isMedicalSpecialty);
@@ -1209,6 +1226,11 @@ export async function registerRoutes(
       if (userData.canWriteMedicalExam !== undefined) {
         userData.canWriteMedicalExam =
           userData.canWriteMedicalExam === true || userData.canWriteMedicalExam === "true";
+      }
+      // اعتمادُ الخصم — نفسُ التطبيع: نصُّ "false" صادقٌ لو تُرك كما ورد.
+      if (userData.canApproveDiscount !== undefined) {
+        userData.canApproveDiscount =
+          userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
         const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
@@ -2511,6 +2533,61 @@ export async function registerRoutes(
       const totalCost = entries.reduce((s: number, e: any) => s + physioEntryCost(e), 0);
       const totalSessions = entries.reduce((s: number, e: any) => s + e.sessionCount, 0);
       const typesJoined = Array.from(new Set<string>(entries.map((e: any) => e.treatmentType))).join("، ");
+
+      // ══ خصمٌ أو تبرّع؟ ⟶ بابُ الاعتماد. وإلّا فالمسارُ كما هو حرفاً ══════
+      // **والفرقُ يُقاس على السعر المحسوب من الجدول** — لا على رقمٍ يعلنه
+      // العميل: لو قُبل «السعر الأصلي» من الطلب لأمكن تضخيمُه ليبدو الخصمُ
+      // صغيراً وهو كبير.
+      //
+      // وجلساتُ «إضافة جلسات مجانية» تبقى كما كانت تماماً: هي بنودٌ بلا
+      // كلفة داخل الدورة، وقد دخلت `totalCost` بصفرها. والخصمُ هنا شيءٌ
+      // آخر: تخفيضُ **ثمن الخدمة** كلِّها، وله سببُه ومعتمِدُه.
+      const dsc = req.body?.discount;
+      const wantsFree = dsc?.isFree === true;
+      const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+        && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== totalCost;
+      if (wantsFree || wantsCut) {
+        try {
+          const out = await discountStore.submitDiscount({
+            patientId, department: "physiotherapy", branchId: patient.branchId,
+            contextRef: null,
+            originalPrice: totalCost,
+            finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+            isFree: wantsFree,
+            reason: String(dsc?.reason ?? ""), note: strOrNull(dsc?.note),
+            payload: { entries },
+            actor: { userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null },
+            actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+            //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا كلفةٌ
+            //  تُقيَّد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+            audit: {
+              ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+              note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+            },
+          });
+          //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
+          if (out.status === "pending") {
+            await logAudit({
+              entityType: "service_discount", entityId: out.request.id,
+              action: "create",
+              userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+              branchId: patient.branchId, ipAddress: req.ip ?? null,
+              userAgent: req.get("user-agent") ?? null,
+              newValues: { patientId, department: "physiotherapy", status: out.request.status },
+              notes: discountAuditNote(out.request, "طلب"),
+            });
+          }
+          return res.json({
+            ok: true, pendingApproval: out.status === "pending",
+            discountRequestId: out.request.id, discountStatus: out.request.status,
+            totalCost: out.status === "approved" ? (out.request.approvedFinalPrice ?? 0) : 0,
+            patient: out.applied?.patient ?? null,
+          });
+        } catch (e: any) {
+          if (e?.name === "DiscountError") return res.status(e.status).json({ message: e.message });
+          throw e;
+        }
+      }
 
       const updated = await storage.pricePhysiotherapy(patientId, {
         entries, totalCost, totalSessions, treatmentType: typesJoined,
@@ -6841,6 +6918,7 @@ export async function registerRoutes(
   // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
   // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.
   registerFollowupRoutes(app, isAuthenticated);
+  registerDiscountRoutes(app, isAuthenticated);
 
   // Register patient communication link-token routes (روابط تواصل المريض).
   // Staff-facing only: issue / list / revoke. There is deliberately NO public

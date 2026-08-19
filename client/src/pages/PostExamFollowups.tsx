@@ -18,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS, canDecideLegacyPriceRequest,
+  FOLLOWUP_FILTERS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
+  canDecideLegacyPriceRequest,
   priceSourceShort, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
@@ -43,20 +44,10 @@ interface Row {
   purchaseInterestByName: string | null;
 }
 
-const FILTERS: Array<{ key: string; label: string }> = [
-  { key: "all", label: "الكل (عدا المُحوَّل)" },
-  { key: "due_today", label: "متابعة اليوم" },
-  { key: "overdue", label: "متأخّر عن المتابعة" },
-  { key: "awaiting_patient_decision", label: "بانتظار قرار المريض" },
-  //  مرشِّحان لبقايا المسار القديم — لا يدخلهما ملفٌّ جديد بعد اليوم.
-  { key: "price_approval_pending", label: "طلب سعر قديم معلَّق" },
-  { key: "price_approved_waiting_patient", label: "بانتظار تأكيد المريض بعد التعديل" },
-  //  مرشِّحٌ للصفوف المحتجزة من قبل التبسيط — تُفتَح وتُؤكَّد بضغطة. ولا
-  //  يدخلها ملفٌّ جديد بعد اليوم.
-  { key: "purchase_approval_pending", label: "محتجز قبل التبسيط" },
-  { key: "follow_up", label: "مؤجَّل" },
-  { key: "closed_without_purchase", label: "مغلق بدون شراء" },
-];
+//  **المرشِّحاتُ من المشتركة**: أربعةٌ حيّة وسلّةٌ للقديم. وكانت الشاشةُ
+//  تعرض كلَّ حالةٍ في القاعدة مرشِّحاً مستقلاً فقرأها الموظّف كلوحةِ إدارةِ
+//  آلةِ حالات — والمرشِّحُ الذي لا يُستعمل ضجيجٌ لا خيار.
+const FILTERS = FOLLOWUP_FILTERS;
 
 const SERVICE_LABELS: Record<string, string> = {
   prosthetic: "طرف صناعي",

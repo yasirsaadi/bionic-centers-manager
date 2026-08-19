@@ -738,8 +738,19 @@ export class DatabaseStorage implements IStorage {
     totalCost: number;
     totalSessions: number;
     treatmentType: string;
+    /**
+     * معاملةُ المُستدعي، إن كان التسعير جزءاً من عمليةٍ أكبر.
+     *
+     * اعتمادُ خصمٍ على علاجٍ طبيعي يجب أن ينتج **قرارَ الاعتماد والتسعيرَ
+     * معاً أو لا شيء**: صفُّ خصمٍ يقول «معتمَد» بلا كلفةٍ كُتبت كذبةٌ في
+     * الشاشة، وكلفةٌ كُتبت بلا صفٍّ يفسّرها ثقبٌ في التدقيق. فيمرّر
+     * مُستدعيه معاملته فيصيران حدثاً واحداً — **بلا نسخ منطق التسعير،
+     * وبلا تغيّرٍ لأي مُستدعٍ قائم**: مَن لا يمرّر شيئاً يفتح معاملته
+     * كما كان دائماً.
+     */
+    tx?: DbTransactionLike;
   }): Promise<Patient> {
-    return await db.transaction(async (tx) => {
+    const body = async (tx: any) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
       // Remember HOW MANY sessions were sold, not just their price (036). The
@@ -759,7 +770,7 @@ export class DatabaseStorage implements IStorage {
           .select({ type: payments.paymentTreatmentType, n: payments.sessionCount })
           .from(payments)
           .where(eq(payments.patientId, patientId));
-        const legacy = priorPayments
+        const legacy = (priorPayments as { type: string | null; n: number | null }[])
           .filter((r) => (r.n ?? 0) > 0)
           .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
@@ -794,7 +805,8 @@ export class DatabaseStorage implements IStorage {
         }).onConflictDoNothing();
       }
       return updated;
-    });
+    };
+    return params.tx ? await body(params.tx) : await db.transaction(body);
   }
 
   // Add a service's price onto the case it belongs to (resolved from its
@@ -1009,6 +1021,14 @@ export class DatabaseStorage implements IStorage {
       // تاريخَ مالياً: يُحذف مع المريض ولا يمنع حذفه.
       // (القاعدة الملزمة في CLAUDE.md: كل جدولٍ جديد بمفتاحٍ إلى المريض أو
       //  توابعه يُضاف هنا ويُختبَر بحذفٍ حقيقي على Postgres محلي.)
+      // ══ طلباتُ الخصم والتبرّع (ترحيل ٠٥٨) ═══════════════════════════
+      // مفتاحٌ أجنبيٌّ إلى `patients` ⟶ **موضعُه هنا إلزاماً**، وإلّا فشل
+      // حذفُ كلّ مريضٍ طُلب له خصمٌ يوماً. وهو جدولُ إذنٍ وتدقيق لا دفترُ
+      // مال: المالُ نفسُه في `cost_entries` و`payments` ويُحذف بمسارِه.
+      // (القاعدة الملزمة في CLAUDE.md، ومُختبَرٌ بحذفٍ حقيقي محلياً.)
+      await tx.execute(sql`
+        DELETE FROM service_discount_requests WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM medical_review_requests WHERE patient_id = ${id}
       `);
@@ -1736,6 +1756,34 @@ export class DatabaseStorage implements IStorage {
       `);
       await tx.execute(sql`
         UPDATE price_change_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+
+      // ── طلباتُ الخصم والتبرّع (ترحيل ٠٥٨) ────────────────────────────────
+      // **وتصادمٌ مشروعٌ واحد**: `uq_sdr_one_pending` معلَّقٌ واحدٌ لكل
+      // (مريض، قسم، مرجع)، وكلا الملفّين قد يحمل واحداً للقسم نفسه. فإعادةُ
+      // التوجيه وحدها كانت ستنتهك الفهرس وتُسقط الدمج — نفس علّة
+      // `post_exam_followups` و`medical_review_requests` حرفياً.
+      //
+      // فطلبُ المصدر المعلَّق **يُلغى قبل نقله**: ينتقل محفوظاً كتاريخٍ كامل،
+      // والمعلَّق يبقى واحداً. و`decided_by` تبقى فارغة عمداً — الإلغاء
+      // إداريٌّ لا قرارَ معتمِدٍ فيه، والنصُّ يقولها كي لا يُقرأ بعد سنةٍ
+      // كأنّ أحداً رفضه.
+      //
+      // **ولا مالَ يتحرّك**: الطلبُ المعلَّق لم يكن له أثرٌ ماليٌّ أصلاً.
+      await tx.execute(sql`
+        UPDATE service_discount_requests s
+           SET status = 'cancelled', decided_at = NOW(),
+               decision_note = 'أُلغي تلقائياً عند دمج الملفّين — الطلب المعلَّق على الملفّ الباقي هو الحيّ'
+         WHERE s.patient_id = ${sourceId} AND s.status = 'pending'
+           AND EXISTS (
+             SELECT 1 FROM service_discount_requests t
+              WHERE t.patient_id = ${targetId} AND t.status = 'pending'
+                AND t.department = s.department
+                AND COALESCE(t.context_ref, '') = COALESCE(s.context_ref, '')
+           )
+      `);
+      await tx.execute(sql`
+        UPDATE service_discount_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
       `);
 
       // ── مراجعةُ الطبيب للأطراف والمساند (ترحيل ٠٥٥) ──────────────────────
