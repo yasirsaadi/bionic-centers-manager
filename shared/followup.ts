@@ -63,6 +63,46 @@ export const FOLLOWUP_REASON_LABELS: Record<FollowupReason, string> = {
 export const isFollowupReason = (v: unknown): v is FollowupReason =>
   typeof v === "string" && (FOLLOWUP_REASONS as readonly string[]).includes(v);
 
+// ── مصدرُ السعر المعتمد ──────────────────────────────────────────────────
+//
+// **ثلاثةُ مصادر لا مصدران.** كان الاعتمادان — تعديلُ سعرٍ عامّ قديم وخصمٌ
+// جديد — ينتهيان إلى القيمة نفسها `approved_change`، فيضيع الفرقُ بينهما
+// **بعد** الاعتماد: صفٌّ اعتُمد رفعُ سعره يُقرأ «بعد الخصم» في البطاقة
+// والتقرير. والصفُّ نفسه هو الشاهد الوحيد بعد أن يُحسم الطلب، فإن لم يحمل
+// الفرقَ لم يحمله شيء.
+//
+// **ولا تُعاد كتابةُ التاريخ**: `approved_change` تبقى قيمةً صالحة تعني ما
+// كانت تعنيه — «اعتُمد تعديلُ سعرٍ سابق» — والجديدُ وحده يكتب
+// `approved_discount`.
+export const PRICE_SOURCES = ["exam", "approved_change", "approved_discount"] as const;
+export type PriceSource = (typeof PRICE_SOURCES)[number];
+
+/**
+ * الوصفُ المختصر — **مصدرُ الحقيقة الوحيد لكلّ نصٍّ يراه المستخدم**.
+ *
+ * والعبارةُ الكاملة تُشتقّ منه لا تُكتب ثانيةً (`priceSourceLabel`)، فلا
+ * تقول بطاقةٌ «بعد الخصم» وتقول أخرى «بعد تعديل سابق» لنفس الصفّ.
+ */
+export const PRICE_SOURCE_SHORT: Record<PriceSource, string> = {
+  exam: "من المعاينة",
+  approved_discount: "بعد الخصم",
+  //  **ولا تقول «خصماً»**: قد يكون رفعَ سعرٍ اعتُمد قبل هذه المرحلة.
+  approved_change: "بعد تعديل سعر سابق",
+};
+
+export const isPriceSource = (v: unknown): v is PriceSource =>
+  typeof v === "string" && (PRICE_SOURCES as readonly string[]).includes(v);
+
+/** «السعر المعتمد بعد الخصم» — العبارةُ الكاملة، مشتقّةً لا مكرَّرة. */
+export function priceSourceLabel(v: unknown): string {
+  return `السعر المعتمد ${priceSourceShort(v)}`;
+}
+
+/** «بعد الخصم» — وقيمةٌ لا نعرفها تُقرأ «من المعاينة» لا تُخترع لها عبارة. */
+export function priceSourceShort(v: unknown): string {
+  return PRICE_SOURCE_SHORT[isPriceSource(v) ? v : "exam"];
+}
+
 // ── الخصم: أسبابُه وحسابُه ───────────────────────────────────────────────
 //
 // **الخصمُ ليس «تعديلَ سعر»**، ولذلك أسبابُه قائمةٌ مستقلّة عن أسباب
@@ -114,8 +154,9 @@ export const isDiscountMode = (v: unknown): v is DiscountMode =>
  * ذلك كان ما تعرضه. فيُترجَم **حتمياً** لا عشوائياً، **والأصلُ يُحفظ** في
  * حمولة الحدث وفي الملاحظة معاً — فلا يضيع ما قاله الموظّف فعلاً.
  *
- * وما لا يقابله شيءٌ بعينه يقع في `other`: تخمينُ سببٍ أدقّ من نصٍّ لا
- * يحمله كذبٌ على التقرير.
+ * وسببٌ **من القائمة القديمة** لا يقابله شيءٌ بعينه يقع في `other`: تخمينُ
+ * سببٍ أدقّ من نصٍّ لا يحمله كذبٌ على التقرير. أمّا نصٌّ ليس من القائمتين
+ * فلا يقع في `other` إطلاقاً — يُردّ.
  */
 export const LEGACY_REASON_TO_DISCOUNT: Record<string, DiscountReason> = {
   price: "patient_negotiation",
@@ -125,13 +166,24 @@ export const LEGACY_REASON_TO_DISCOUNT: Record<string, DiscountReason> = {
   waiting_salary_or_finance: "financial_hardship",
 };
 
-export function discountReasonFromLegacy(v: unknown): DiscountReason {
+/**
+ * `null` تعني **«ليس سبباً على الإطلاق»** — لا «سبباً آخر».
+ *
+ * ══ لماذا لا يبتلع `other` كلَّ شيء ═════════════════════════════════════
+ * كانت الدالّة تُرجع `other` لأيّ نصّ، فيصير الفرقُ بين «الموظّف اختار سبباً
+ * آخر» و«لم يُرسَل سببٌ أصلاً» معدوماً في السجلّ. وقاعدةُ العمل أن **لكلّ
+ * خصمٍ سبباً مسجّلاً**؛ وحقلٌ فارغ أو نصٌّ مخترَع من نداءٍ مباشر كان يمرّ
+ * موسوماً «سبب آخر» فيبدو قراراً وهو غياب.
+ *
+ * فالمقبول ثلاثةٌ لا رابع: سببُ خصمٍ صحيح · سببُ متابعةٍ قديم له مقابل ·
+ * سببُ متابعةٍ قديم بلا مقابل ⟶ `other` **مع حفظ أصله**. وما عداه `null`.
+ */
+export function discountReasonFromLegacy(v: unknown): DiscountReason | null {
   //  سببُ خصمٍ صحيحٌ يمرّ كما هو: عميلٌ نصفُ محدَّث قد يرسله.
   if (isDiscountReason(v)) return v;
-  if (typeof v === "string" && LEGACY_REASON_TO_DISCOUNT[v]) {
-    return LEGACY_REASON_TO_DISCOUNT[v];
-  }
-  return "other";
+  //  ومفردةُ التأجيل القديمة تُترجَم — والقائمةُ هي الحدّ، لا وجودُ مقابل.
+  if (isFollowupReason(v)) return LEGACY_REASON_TO_DISCOUNT[v] ?? "other";
+  return null;
 }
 
 export interface DiscountComputation {
@@ -160,12 +212,25 @@ export interface DiscountComputation {
  * • ولا صفرَ ولا سالب: «خصمٌ بصفر» طلبُ اعتمادٍ بلا مضمون.
  * • والنسبةُ بين صفر ومئة حصراً — ومئةٌ تعني جهازاً مجّانياً، وهو قرارٌ
  *   لا يمرّ بنافذة خصم.
+ * • **وبمنزلتين عشريّتين على الأكثر** — انظر أدناه.
  * • والنهائيُّ موجبٌ دائماً: صفرٌ يجعل «تخصيص» يحجز بيعاً بلا مال.
  * • والتقريبُ إلى الدينار الصحيح — لا كسورَ في نظامٍ كلُّ أعمدته صحيحة.
  *
  * والتقريبُ يقع على **مبلغ الخصم** لا على السعر النهائي، فيبقى
  * `final = current − discount` صحيحاً بالضبط ولا يتولّد دينارُ فرقٍ يظهر
  * لاحقاً في مصالحة الدفتر.
+ *
+ * ══ ولماذا تُردّ ١٢٫٣٤٥٪ ولا تُقرَّب ═════════════════════════════════════
+ * العمودُ `NUMERIC(14,2)`، فمنزلةٌ ثالثة **لا تُخزَّن**: تُقرَّب صامتةً إلى
+ * ١٢٫٣٤ ثم يقرأ السجلُّ رقماً لم يكتبه أحد، ويصير مبلغُ الخصم المحفوظ
+ * مخالفاً لما تقوله النسبةُ المحفوظة. فالردُّ صريحٌ برسالة، والقاعدةُ نفسها
+ * تربط المبلغَ بالنسبة فلا يمكن أن ينحرفا ولو مرّرهما نداءٌ مباشر.
+ *
+ * ══ وحسابُ النسبة بأعدادٍ صحيحة ════════════════════════════════════════
+ * `current * scaled / 10000` حيث `scaled` نسبةٌ بمئات الأجزاء — فالضربُ
+ * كلُّه صحيحٌ دون حدّ الدقّة، والقسمةُ وحدها عشرية. وهي **نفسُ دلالة
+ * التقريب** التي يكتبها قيدُ القاعدة (`round(current * value / 100)`):
+ * النصفُ يصعد في كليهما، فلا يمرّ من الشاشة ما تردّه القاعدة.
  */
 export function computeDiscount(params: {
   currentPrice: number; mode: string; value: number;
@@ -185,7 +250,13 @@ export function computeDiscount(params: {
   let discountAmount: number;
   if (params.mode === "percentage") {
     if (value >= 100) return { ...nil, error: "نسبة الخصم يجب أن تكون أقل من ١٠٠٪" };
-    discountAmount = Math.round((current * value) / 100);
+    //  منزلتان لا ثلاث — والفحصُ على القيمة المضروبة في مئة: `12.34` تعطي
+    //  عدداً صحيحاً (ضمن هامش الفاصلة العائمة) و`12.345` لا تعطيه.
+    const scaled = Math.round(value * 100);
+    if (Math.abs(value * 100 - scaled) > 1e-9) {
+      return { ...nil, error: "نسبة الخصم بمنزلتين عشريتين على الأكثر (مثال: ١٢٫٣٤٪)" };
+    }
+    discountAmount = Math.round((current * scaled) / 10000);
   } else {
     if (!Number.isInteger(value)) {
       return { ...nil, error: "مبلغ الخصم يجب أن يكون بالدينار الصحيح" };

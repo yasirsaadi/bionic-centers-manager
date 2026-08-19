@@ -96,6 +96,12 @@ SELECT jsonb_build_object(
      WHERE c.conrelid = 'price_change_requests'::regclass AND c.contype = 'c'
        AND c.conname LIKE '%discount%'
   ),
+  'price_source_check', (
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c
+     WHERE c.conrelid = 'post_exam_followups'::regclass AND c.contype = 'c'
+       AND c.conname = 'post_exam_followups_price_source_check'
+  ),
   'index', (
     SELECT jsonb_build_object(
              'name', ci.relname,
@@ -196,11 +202,25 @@ async function main() {
         DROP COLUMN IF EXISTS discount_mode,
         DROP COLUMN IF EXISTS discount_value,
         DROP COLUMN IF EXISTS discount_amount`);
+      //  **وقيدُ مصدرِ السعر يُردّ إلى صيغة ٠٥٣ بقيمتيه**: هذا هو حالُ
+      //  الإنتاج قبل ٠٥٧ بالضبط، وبه وحده يصير «توسيعُ القيد» سؤالاً
+      //  حقيقياً لا تحصيلَ حاصلٍ من قاعدةٍ بُنيت واسعةً من أولها.
+      await c.query(`ALTER TABLE post_exam_followups
+        DROP CONSTRAINT IF EXISTS post_exam_followups_price_source_check`);
+      await c.query(`ALTER TABLE post_exam_followups
+        ADD CONSTRAINT post_exam_followups_price_source_check
+        CHECK (price_source IN ('exam', 'approved_change'))`);
       const before57 = (await c.query(
         `SELECT COUNT(*)::int n FROM pg_attribute
           WHERE attrelid = 'price_change_requests'::regclass
             AND attname LIKE 'discount%' AND NOT attisdropped`)).rows[0].n;
       same("٣ب. **والجدولُ عاد إلى ما قبل ٠٥٧** — لا أعمدةَ خصم", before57, 0);
+      const srcBefore = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'post_exam_followups_price_source_check'
+            AND conrelid = 'post_exam_followups'::regclass`)).rows[0].d;
+      same("   **وقيدُ مصدر السعر عاد إلى قيمتين**",
+        String(srcBefore).includes("approved_discount"), false);
       await c.query(migration057.sql);
       check(true, "   تطبيقُ الترحيل ٠٥٧ نجح");
       await c.query(migration057.sql);
@@ -210,6 +230,32 @@ async function main() {
           WHERE conrelid = 'price_change_requests'::regclass AND contype = 'c'
             AND conname LIKE '%discount%'`)).rows[0].n;
       same("   والقيدان اثنان لا أربعة بعد الإعادة", dup57, 2);
+
+      // ══ ٣ج. **وقاعدةٌ تحمل نسخةً أقدم من ٠٥٧ تتقارب إليها** ═══════════
+      //  idempotent لا تعني «آمنَ الإعادة» وحدها بل **واحديّةَ النتيجة**:
+      //  قاعدةُ تطويرٍ سبقها ٠٥٧ في صيغته الأولى (بلا ربط القيمة بالمبلغ)
+      //  يجب أن تصير كالإنتاج تماماً، لا أن تُترك بقيدٍ أضعف لأن الاسمَ
+      //  موجود. وهذا ما كان سيقع لو اكتفى الفحصُ بوجود الاسم.
+      await c.query(`ALTER TABLE price_change_requests
+        DROP CONSTRAINT IF EXISTS price_change_requests_discount_shape_check`);
+      await c.query(`ALTER TABLE price_change_requests
+        ADD CONSTRAINT price_change_requests_discount_shape_check
+        CHECK (
+          (discount_mode IS NULL AND discount_value IS NULL AND discount_amount IS NULL)
+          OR (discount_mode IN ('amount', 'percentage')
+              AND discount_value IS NOT NULL AND discount_amount IS NOT NULL))`);
+      await c.query(migration057.sql);
+      const converged = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'price_change_requests_discount_shape_check'
+            AND conrelid = 'price_change_requests'::regclass`)).rows[0].d;
+      same("٣ج. **ونسخةٌ أقدم من القيد يُعاد بناؤها** — تقارُبٌ لا مجرّد أمانٍ",
+        String(converged).includes("round"), true);
+      const dupShape = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_constraint
+          WHERE conrelid = 'price_change_requests'::regclass AND contype = 'c'
+            AND conname LIKE '%discount_shape%'`)).rows[0].n;
+      same("   وواحدٌ لا اثنان بعد إعادة البناء", dupShape, 1);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -239,6 +285,8 @@ async function main() {
       fromSchema.discount_columns, fromMigrations.discount_columns);
     same("٧ج. **وقيدا الخصم متطابقان نصّاً**",
       fromSchema.discount_checks, fromMigrations.discount_checks);
+    same("٧د. **وقيدُ مصدر السعر متطابقٌ نصّاً**",
+      fromSchema.price_source_check, fromMigrations.price_source_check);
 
     //  ولا يكفي التطابق: قد تتّفقان على الخطأ. فالقيمُ تُثبَّت صراحةً.
     console.log("\n── ٤. والقيمُ هي المقصودة لا مجرّد متساوية ──");
@@ -287,6 +335,18 @@ async function main() {
       "   والفرعُ الجديد يربط المبلغَ بفرق السعرين", shapeNorm);
     check(shapeNorm.includes("proposed_price < current_price"),
       "   **ويمنع رفعَ السعر في القاعدة نفسها**", shapeNorm);
+    //  ودلالةُ الاتّساق: القيمةُ المعلنة مربوطةٌ بالمبلغ المحفوظ في الوضعين.
+    check(shapeNorm.includes("discount_value = discount_amount"),
+      "   **ومبلغاً: القيمةُ هي المبلغُ عينه**", shapeNorm);
+    check(shapeNorm.includes("round"),
+      "   **ونسبةً: المبلغُ ناتجُها مقرَّباً**", shapeNorm);
+
+    // ══ ١٢و. **ومصدرُ السعر ثلاثةٌ في القاعدتين** ══════════════════════
+    const srcNorm = String(fromMigrations.price_source_check ?? "");
+    check(["exam", "approved_change", "approved_discount"].every((v) => srcNorm.includes(v)),
+      "١٢و. **والقيمُ الثلاث مقبولةٌ في القاعدة**", srcNorm);
+    check(String(fromSchema.price_source_check ?? "").includes("approved_discount"),
+      "   وفي المبنيّة من المخطّط كذلك", String(fromSchema.price_source_check));
 
     // ══ ١٢هـ. والقيدُ يعمل حيّاً على القاعدتين ═════════════════════════
     //  التعريفُ وحده لا يكفي دليلاً — يُنفَّذ الإدراجُ فعلاً.
@@ -311,6 +371,25 @@ async function main() {
         same(`     وخصمٌ كاذبٌ يُردّ (${label})`,
           await ins("current_price, proposed_price, discount_mode, discount_value, discount_amount",
             "500000, 400000, 'amount', 100000, 7"), false);
+        // ══ **والقيمةُ المعلنة مربوطةٌ بالمبلغ** — لا تزعم ما لا تحمل ══
+        const full = "current_price, proposed_price, discount_mode, discount_value, discount_amount";
+        same(`     **ومبلغاً: قيمةٌ تخالف المبلغَ تُردّ** (${label})`,
+          await ins(full, "500000, 450000, 'amount', 10000, 50000"), false);
+        same(`     والمطابقةُ تمرّ (${label})`,
+          await ins(full, "500000, 450000, 'amount', 50000, 50000"), true);
+        same(`     **ونسبةً: مبلغٌ لا يخرج من النسبة يُردّ** (${label})`,
+          await ins(full, "1000000, 700000, 'percentage', 10, 300000"), false);
+        same(`     وناتجُ النسبة الصحيح يمرّ (${label})`,
+          await ins(full, "1000000, 900000, 'percentage', 10, 100000"), true);
+        same(`     ومنزلتان عشريّتان تمرّان (${label})`,
+          await ins(full, "1000000, 876600, 'percentage', 12.34, 123400"), true);
+        //  ٣٣٫٣٣٪ من ٩٩٩٬٩٩٩ = ٣٣٣٬٢٩٩٫٦٦٧ ⟶ ٣٣٣٬٣٠٠ — تقريبُ القاعدة هو
+        //  تقريبُ `computeDiscount` سواءً بسواء، فلا يمرّ من إحداهما ما تردّه
+        //  الأخرى.
+        same(`     **وتقريبُ القاعدة هو تقريبُ الشاشة** (${label})`,
+          await ins(full, "999999, 666699, 'percentage', 33.33, 333300"), true);
+        same(`     والناتجُ غيرُ المقرَّب يُردّ (${label})`,
+          await ins(full, "999999, 666700, 'percentage', 33.33, 333299"), false);
       });
     }
 

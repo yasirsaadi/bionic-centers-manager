@@ -1487,7 +1487,15 @@ export const postExamFollowups = pgTable("post_exam_followups", {
    * وهذا هو الرقم الذي يحجزه «تخصيص» عند اعتماد الشراء.
    */
   approvedPrice: integer("approved_price").notNull().default(0),
-  priceSource: text("price_source").notNull().default("exam"), // exam | approved_change
+  /**
+   * **من أين جاء الرقمُ أعلاه** — ثلاثةٌ لا اثنان (ترحيل ٠٥٧).
+   *
+   * `exam` سعرُ المعاينة · `approved_discount` خصمٌ اعتُمد ·
+   * `approved_change` **تعديلُ سعرٍ اعتُمد قبل هذه المرحلة، وقد يكون رفعاً**.
+   * وكان الأخيران قيمةً واحدة، فيضيع الفرقُ بعد الحسم ويُقرأ رفعُ السعر
+   * «بعد الخصم». والصفُّ هو الشاهدُ الوحيد بعدها، فإن لم يحمل الفرقَ ضاع.
+   */
+  priceSource: text("price_source").notNull().default("exam"),
   /**
    * الخبير المختار لهذا الجهاز — **يُبذَر من اقتراح الطبيب ويبقى مرناً**.
    *
@@ -1520,7 +1528,7 @@ export const postExamFollowups = pgTable("post_exam_followups", {
   check("post_exam_followups_service_check",
     sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
   check("post_exam_followups_price_source_check",
-    sql`${t.priceSource} IN ('exam', 'approved_change')`),
+    sql`${t.priceSource} IN ('exam', 'approved_change', 'approved_discount')`),
   // «مؤجَّل» بلا موعدٍ ولا استثناءٍ صريح حالةٌ ميتة: لا تُقال للموظّف ولا
   // تظهر في طابور. فالقاعدة ترفضها بدل أن تُخزَّن ثم تُنسى.
   check("post_exam_followups_followup_date_check", sql`
@@ -1640,6 +1648,12 @@ export const priceChangeRequests = pgTable("price_change_requests", {
    *
    * وهو ما يجعل «خصمٌ فقط» قاعدةً في القاعدة لا في الشيفرة وحدها: رفعُ
    * سعرٍ متنكّرٍ في هيئة خصم يُردّ ولو تسلّل من نداءٍ مباشر.
+   *
+   * **والمبلغُ مربوطٌ بما طُلب لا بفرق السعرين وحده**: صفٌّ يزعم «اخصم
+   * عشرة آلاف» ويحمل خصماً بخمسين ألفاً كان يمرّ — الفرقُ يطابق السعرين
+   * والقيمةُ المعلنة لا تطابق شيئاً. فمبلغاً: القيمةُ هي المبلغُ عينه
+   * (وهو ما يفرض أنها بالدينار الصحيح، إذ `discount_amount` عددٌ صحيح)،
+   * ونسبةً: المبلغُ ناتجُها مقرَّباً — بنفس دلالة `computeDiscount`.
    */
   check("price_change_requests_discount_shape_check", sql`
     (
@@ -1655,6 +1669,9 @@ export const priceChangeRequests = pgTable("price_change_requests", {
       AND ${t.proposedPrice} < ${t.currentPrice}
       AND ${t.discountAmount} = ${t.currentPrice} - ${t.proposedPrice}
       AND (${t.discountMode} <> 'percentage' OR ${t.discountValue} < 100)
+      AND (${t.discountMode} <> 'amount' OR ${t.discountValue} = ${t.discountAmount})
+      AND (${t.discountMode} <> 'percentage'
+           OR ${t.discountAmount} = round(${t.currentPrice} * ${t.discountValue} / 100))
     )
   `),
   // **طلبٌ معلَّقٌ واحد لكل متابعة** — فلا يعتمد طبيبان طلبين متناقضين معاً.

@@ -31,6 +31,7 @@ import {
   allowedActions, canSelectExpert, computeDiscount,
   DISCOUNT_MODES, DISCOUNT_MODE_LABELS, DISCOUNT_REASONS, DISCOUNT_REASON_LABELS,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
+  priceSourceLabel, priceSourceShort,
   type DiscountMode, type DiscountReason, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 
@@ -197,9 +198,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             value={active.selectedExpertName
               ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}
             hint={active.selectedExpertName ? undefined : "يختاره الاستعلامات"} />
+          {/*  ثلاثةُ مصادر لا اثنان: خصمٌ اعتُمد · تعديلٌ قديم قد يكون رفعاً ·
+              سعرُ المعاينة. والنصُّ من `shared/followup` وحدها. */}
           <Field label="السعر المعتمد"
             value={`${active.approvedPrice.toLocaleString()} د.ع`}
-            hint={active.priceSource === "approved_change" ? "بعد خصمٍ معتمد" : "من المعاينة"} />
+            hint={priceSourceShort(active.priceSource)} />
           <Field label="آخر تواصل" value={fmt(active.lastContactAt)} />
           <Field label="المتابعة القادمة"
             value={active.noScheduledFollowUp ? "بلا موعد" : fmt(active.nextFollowUpAt)} />
@@ -219,7 +222,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {pendingRequest?.isLegacyPriceChange
               ? "بانتظار اعتماد تعديل السعر من الطبيب المخوَّل أو المسؤول العام"
               : "بانتظار اعتماد الخصم من المسؤول أو مدير الفرع أو الطبيب المخوَّل"}
-            {pendingRequest && ` — السعر بعد الخصم ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`}
+            {/*  و«السعر المقترح» للقديم: قد يكون رفعاً، فتسميتُه خصماً كذب. */}
+            {pendingRequest && (pendingRequest.isLegacyPriceChange
+              ? ` — السعر المقترح ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`
+              : ` — السعر بعد الخصم ${pendingRequest.proposedPrice?.toLocaleString()} د.ع`)}
           </p>
         )}
         {/*  صفٌّ محتجزٌ من قبل التبسيط — يُستأنف بضغطةٍ واحدة لا بانتظارِ أحد. */}
@@ -533,7 +539,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               اقترحه الطبيب في المعاينة، ولك إبقاؤه أو تغييره. الاختيار
-              <b> لا يبدأ تصنيعاً</b> — التصنيع يبدأ باعتماد الشراء.
+              <b> لا يبدأ تصنيعاً</b> — التصنيع يبدأ بتأكيد الشراء.
             </p>
             <div>
               <Label>الخبير</Label>
@@ -566,7 +572,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-                {active.priceSource === "approved_change" ? "السعر المعتمد بعد الخصم: " : "السعر المعتمد: "}
+              {priceSourceLabel(active.priceSource)}{": "}
               <b data-testid="text-purchase-approved-price">
                 {active.approvedPrice.toLocaleString()} د.ع</b>.
               يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض بهذا المبلغ بعينه.

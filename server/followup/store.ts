@@ -22,7 +22,7 @@ import { storage } from "../storage";
 import {
   computeDiscount, discountReasonFromLegacy, isDiscountReason, isFollowupReason,
   isSelfDecision, isTerminal,
-  type FollowupReason, type FollowupStatus,
+  type FollowupReason, type FollowupStatus, type PriceSource,
 } from "@shared/followup";
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
@@ -761,8 +761,13 @@ export async function requestDiscount(params: {
   //  والنافذةُ القديمة تُرسل مفرداتِ التأجيل، فتُترجَم حتمياً ويُحفظ أصلُها.
   const isStale = params.legacyProposedPrice !== undefined;
   const reason = isStale ? discountReasonFromLegacy(params.reason) : params.reason;
+  //  **والترجمةُ لا تبتلع الغياب**: النافذةُ القديمة تُترجَم مفرداتُها، أمّا
+  //  حقلٌ فارغ أو نصٌّ ليس من القائمتين فيُردّ ولا يصير «سبباً آخر». فبقيت
+  //  قاعدةُ «لكلّ خصمٍ سببٌ مسجَّل» صحيحةً من كلا البابين.
   if (!isDiscountReason(reason)) {
-    throw new FollowupError("سبب الخصم مطلوب — اختر سبباً من القائمة", 400);
+    throw new FollowupError(isStale
+      ? "سبب الخصم مطلوب ولم يُفهَم ما أُرسل — حدّث الصفحة واختر سبباً من القائمة"
+      : "سبب الخصم مطلوب — اختر سبباً من القائمة", 400);
   }
   const legacyReasonRaw = isStale && typeof params.reason === "string" && params.reason
     ? params.reason : null;
@@ -911,11 +916,16 @@ export async function decideDiscount(params: {
     //  الرفض يعيدها حيّةً — والوجهة `awaiting_patient_decision` لأنها الحالة
     //  التي تسمح بكل الخيارات: قبول السعر الحالي، أو تأجيل، أو إغلاق.
     const nextStatus = approving ? "price_approved_waiting_patient" : "awaiting_patient_decision";
+    //  **ومصدرُ السعر يتبع نوعَ الصفّ كما تتبعه الأحداث تماماً**: خصمٌ اعتُمد
+    //  يكتب `approved_discount`، وتعديلٌ قديم يبقى `approved_change` بمعناه
+    //  الأصلي. فبعد الحسم — حين لا يبقى إلّا الصفّ — لا يُقرأ رفعُ سعرٍ
+    //  اعتُمد على أنه «السعر بعد الخصم».
+    const nextPriceSource: PriceSource = isLegacy ? "approved_change" : "approved_discount";
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET status = ${nextStatus},
              approved_price = ${approving ? proposed : cur.approvedPrice},
-             price_source = ${approving ? "approved_change" : cur.priceSource},
+             price_source = ${approving ? nextPriceSource : cur.priceSource},
              updated_at = NOW()
        WHERE id = ${followupId} AND status = 'price_approval_pending'
       RETURNING ${SELECT_COLS}

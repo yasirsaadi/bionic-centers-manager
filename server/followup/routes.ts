@@ -403,15 +403,22 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       const out = await store.decideDiscount({
         requestId, decision, note: str(req.body?.note), actor: actorOf(req),
       });
+      // ══ ونصُّ التدقيق يتبع **نوعَ الصفّ** كما تتبعه الأحداث والسلطة ═════
+      //  سجلٌّ قديم قد يكون رفعَ سعر، فتسميتُه «خصماً» في دفتر التدقيق
+      //  تُفسده حيث لا يُفسَّر: بعد سنة لا يبقى إلّا هذا السطر.
+      const kind = reqs.isLegacy ? "تعديل سعر" : "خصم";
       await logAudit({
         entityType: "price_change_request", entityId: requestId, action: "update",
         userId: s.userId, userName: s.userName, branchId: reqs.branchId,
         oldValues: { approvedPrice: reqs.currentPrice },
-        newValues: { approvedPrice: out.followup.approvedPrice, decision },
+        newValues: {
+          approvedPrice: out.followup.approvedPrice, decision,
+          priceSource: out.followup.priceSource, isLegacyPriceChange: reqs.isLegacy,
+        },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         notes: decision === "approve"
-          ? `اعتماد خصم #${requestId}: ${reqs.currentPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
-          : `رفض خصم #${requestId} — السعر المعتمد بقي ${out.followup.approvedPrice.toLocaleString()} د.ع`,
+          ? `اعتماد ${kind} #${requestId}: ${reqs.currentPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
+          : `رفض ${kind} #${requestId} — السعر المعتمد بقي ${out.followup.approvedPrice.toLocaleString()} د.ع`,
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }

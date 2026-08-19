@@ -19,6 +19,7 @@ import {
   isDiscountMode, isDiscountReason,
   isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
+  PRICE_SOURCES, priceSourceLabel, priceSourceShort,
 } from "./followup";
 
 let failures = 0;
@@ -155,14 +156,51 @@ same("   و«يقارن خيارات» ⟶ سعر منافس",
   discountReasonFromLegacy("comparing_options"), "competitor_price");
 same("   و«بانتظار الراتب» ⟶ حالة مادّية",
   discountReasonFromLegacy("waiting_salary_or_finance"), "financial_hardship");
-same("   **وما لا يقابله شيءٌ ⟶ «سبب آخر»** لا تخمينَ أدقّ منه",
+same("   **وسببٌ قديمٌ صحيحٌ بلا مقابل ⟶ «سبب آخر»** لا تخمينَ أدقّ منه",
   [discountReasonFromLegacy("health_condition"), discountReasonFromLegacy("cannot_reach"),
-    discountReasonFromLegacy(""), discountReasonFromLegacy(null)],
+    discountReasonFromLegacy("needs_time"), discountReasonFromLegacy("family_decision")],
   ["other", "other", "other", "other"]);
 same("   **وسببُ خصمٍ صحيحٌ يمرّ كما هو** — لعميلٍ نصفِ محدَّث",
   discountReasonFromLegacy("campaign_or_offer"), "campaign_or_offer");
 same("   وكلُّ مخرجاتها أسبابُ خصمٍ صحيحة",
   [...FOLLOWUP_REASONS].map(discountReasonFromLegacy).filter((r) => !isDiscountReason(r)), []);
+
+// ══ ب٠خ. **والغيابُ ليس «سبباً آخر»** ═══════════════════════════════════
+//  `other` قرارُ موظّفٍ اختاره؛ والفارغُ والمخترَع غيابُ قرار. وابتلاعُهما
+//  في `other` كان يُنتج خصماً «بسببٍ مسجَّل» لا سببَ له في الحقيقة.
+same("ب٠خ. **الفارغُ والمعدومُ يُردّان `null`** — لا «سبب آخر»",
+  [discountReasonFromLegacy(""), discountReasonFromLegacy(null),
+    discountReasonFromLegacy(undefined)],
+  [null, null, null]);
+same("   **ونصٌّ مخترَعٌ يُردّ كذلك** — لا من القائمتين",
+  [discountReasonFromLegacy("مزاج"), discountReasonFromLegacy("free_text"),
+    discountReasonFromLegacy("DISCOUNT"), discountReasonFromLegacy(7)],
+  [null, null, null, null]);
+same("   وكلُّ مفردةٍ من القائمة القديمة تُقبل — بلا استثناء",
+  [...FOLLOWUP_REASONS].filter((r) => discountReasonFromLegacy(r) === null), []);
+same("   وكلُّ سببِ خصمٍ صحيحٍ يُقبل كذلك",
+  [...DISCOUNT_REASONS].filter((r) => discountReasonFromLegacy(r) === null), []);
+
+// ══ ب٠د. مصدرُ السعر — **ثلاثةٌ لا اثنان، ونصٌّ واحد لكلٍّ** ════════════
+console.log("\n── مصدرُ السعر المعتمد ──");
+same("ب٠د. القيمُ الثلاث بأسمائها", [...PRICE_SOURCES],
+  ["exam", "approved_change", "approved_discount"]);
+same("   والمعاينةُ «من المعاينة»", priceSourceLabel("exam"), "السعر المعتمد من المعاينة");
+same("   **والخصمُ المعتمد «بعد الخصم»**",
+  priceSourceLabel("approved_discount"), "السعر المعتمد بعد الخصم");
+//  الحكمُ الجوهري: صفٌّ قديمٌ قد يكون رفعَ سعر، فتسميتُه خصماً كذبٌ على
+//  قارئٍ لا يملك بعد الحسم إلّا هذا السطر.
+same("   **والتعديلُ القديم «بعد تعديل سعر سابق» — ولا يقول «خصماً»**",
+  priceSourceLabel("approved_change"), "السعر المعتمد بعد تعديل سعر سابق");
+check(!priceSourceLabel("approved_change").includes("الخصم")
+  && !priceSourceShort("approved_change").includes("الخصم"),
+  "   **ولا ترد كلمةُ «الخصم» في نصّ القديم إطلاقاً**",
+  priceSourceLabel("approved_change"));
+same("   والمختصرُ جزءٌ من الكامل — نصٌّ واحد لا نصّان",
+  PRICE_SOURCES.map((s) => priceSourceLabel(s) === `السعر المعتمد ${priceSourceShort(s)}`),
+  [true, true, true]);
+same("   وقيمةٌ لا تُعرَف تُقرأ «من المعاينة» ولا تُخترع لها عبارة",
+  [priceSourceShort("junk"), priceSourceShort(null)], ["من المعاينة", "من المعاينة"]);
 
 // ══ ب٢. مَن يؤكّد الشراء — بوّابةٌ مستقلّةٌ أوسع ═══════════════════════
 //  «اشترى» تسجيلُ واقعةٍ لا اعتماد، فبوّابتُها الفرعُ لا الطبيب. وفصلُها
@@ -325,6 +363,44 @@ same("ع. وكلُّ رفضٍ برسالةٍ عربية",
   [D(1_000_000, "amount", 0), D(1_000_000, "percentage", 100), D(0, "amount", 1)]
     .filter((r) => !r.error), []);
 
+// ══ ع٢. **منزلتان عشريّتان لا ثلاث — ولا تقريبَ صامت** ═══════════════════
+//  العمودُ `NUMERIC(14,2)`. فمنزلةٌ ثالثة تُقرَّب في القاعدة صامتةً: يُخزَّن
+//  ١٢٫٣٤ ويُقرأ سجلٌّ لم يكتبه أحد، ويصير المبلغُ المحفوظ مخالفاً للنسبة
+//  المحفوظة. والردُّ خيرٌ من رقمٍ ملفَّق.
+console.log("\n── دقّةُ النسبة ──");
+same("ع٢. **١٢٫٣٤٪ تُقبل**", D(1_000_000, "percentage", 12.34).ok, true);
+same("   وقيمتُها ١٢٣٬٤٠٠ د.ع", D(1_000_000, "percentage", 12.34).discountAmount, 123_400);
+same("   **و١٢٫٣٤٥٪ تُردّ ولا تُقرَّب**", D(1_000_000, "percentage", 12.345).ok, false);
+check((D(1_000_000, "percentage", 12.345).error ?? "").includes("منزلتين"),
+  "   برسالةٍ تقول الحدَّ صراحةً", D(1_000_000, "percentage", 12.345).error ?? "");
+same("   والمنزلةُ الواحدة والصحيحُ يمرّان",
+  [D(1_000_000, "percentage", 12.5).ok, D(1_000_000, "percentage", 12).ok], [true, true]);
+same("   **وكسرٌ طويل يُردّ** — لا يمرّ ثلثٌ بلا نهاية",
+  [D(1_000_000, "percentage", 33.333).ok, D(1_000_000, "percentage", 1 / 3).ok],
+  [false, false]);
+same("   و٩٩٫٩٩٪ تبقى مقبولة — منزلتان وحدُّها دون المئة",
+  D(1_000_000, "percentage", 99.99).ok, true);
+//  والمبلغُ لا يُلمس: حدُّ المنزلتين على النسبة وحدها.
+same("   **والمبلغُ لا يتأثّر بالقاعدة** — شرطُه أن يكون ديناراً صحيحاً",
+  [D(1_000_000, "amount", 123_456).ok, D(1_000_000, "amount", 123.45).ok], [true, false]);
+
+// ══ ع٣. **والقيمةُ والمبلغُ متّسقان بالبناء** — وهو ما يفرضه قيدُ القاعدة ══
+//  مبلغاً: المبلغُ هو القيمةُ عينها. ونسبةً: المبلغُ ناتجُ النسبة مقرَّباً
+//  بنفس دلالة `round` في Postgres (النصفُ يصعد). فما تحسبه الشاشةُ هو
+//  بعينه ما تقبله القاعدة — ولا صفَّ يمرّ من أحدهما ويُردّ من الآخر.
+const consistent = (cur: number, mode: string, v: number) => {
+  const r = D(cur, mode, v);
+  if (!r.ok) return null;
+  return mode === "amount"
+    ? r.discountAmount === v
+    : r.discountAmount === Math.round((cur * Math.round(v * 100)) / 10000);
+};
+same("ع٣. **مبلغاً: القيمةُ هي المبلغُ عينه**",
+  [consistent(1_000_000, "amount", 200_000), consistent(777_777, "amount", 1)], [true, true]);
+same("   ونسبةً: المبلغُ ناتجُها مقرَّباً — في كلّ العيّنات",
+  [[1_000_000, 12.34], [999_999, 33.33], [750_000, 7.5], [333_333, 0.01], [12_345, 99.99]]
+    .map(([c, v]) => consistent(c, "percentage", v)).filter((x) => x !== true), []);
+
 // ══ ف. أسبابُ الخصم وأنواعُه ═══════════════════════════════════════════
 console.log("\n── أسباب الخصم ──");
 same("ف. الأسبابُ السبعة المطلوبة", DISCOUNT_REASONS.length, 7);
@@ -378,6 +454,27 @@ check(cardSrc.includes("text-self-decision-blocked"),
 //  والصفُّ القديم يُسمّى باسمه ولا يُخفى.
 check(cardSrc.includes("isLegacyPriceChange"),
   "ط٧. **والسجلُّ القديم يُعرَض ويُسمّى «تعديل سعر»**");
+
+// ══ ط٨. نصُّ مصدرِ السعر من المشتركة — ولا استنتاجَ في الشاشة ═══════════
+//  الشاشةُ كانت تكتب `priceSource === "approved_change" ? "بعد الخصم" : …`
+//  فتقرأ رفعَ سعرٍ اعتُمد «بعد الخصم». والقاعدةُ الآن في مكانٍ واحد.
+console.log("\n── نصُّ مصدر السعر في الشاشة ──");
+check(cardSrc.includes("priceSourceShort(active.priceSource)")
+  && cardSrc.includes("priceSourceLabel(active.priceSource)"),
+  "ط٨. **البطاقةُ تنادي دالّتَي المشتركة**");
+check(!/approved_change/.test(cardSrc),
+  "   **ولا تستنتج من `approved_change` شيئاً بنفسها**",
+  (cardSrc.match(/.*approved_change.*/g) ?? []).join("\n"));
+
+// ══ ط٩. **ولا «اعتماد شراء» حيٌّ في الشاشة** ════════════════════════════
+//  الشراءُ تسجيلُ واقعةٍ لا اعتماد. والذكرُ الوحيد المسموح هو ما يصف
+//  النظامَ القديم صراحةً للصفوف المحتجزة قبل التبسيط.
+const purchaseApprovalMentions = (cardSrc.match(/.*اعتماد الشراء.*/g) ?? []);
+check(purchaseApprovalMentions.every((l) => l.includes("قبل التبسيط")),
+  "ط٩. **ولا يقول شيءٌ حيٌّ «اعتماد الشراء»**",
+  purchaseApprovalMentions.join("\n"));
+check(cardSrc.includes("التصنيع يبدأ بتأكيد الشراء"),
+  "   ونافذةُ الخبير تقول «تأكيد الشراء»");
 
 console.log(`\n${failures === 0 ? "✅ all followup-rule cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

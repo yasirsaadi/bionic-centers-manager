@@ -331,6 +331,13 @@ async function main() {
     await bad("**وسببٌ خارج القائمة يُردّ**", { discountMode: "amount", discountValue: 10_000, reason: "لأني أريد" });
     await bad("وبلا سبب يُردّ", { discountMode: "amount", discountValue: 10_000 });
     await bad("**وسببُ تأجيلٍ ليس سببَ خصم**", { discountMode: "amount", discountValue: 10_000, reason: "needs_time" });
+    //  ══ ومنزلةٌ عشريّةٌ ثالثة تُردّ ولا تُقرَّب صامتةً ══
+    //  العمودُ `NUMERIC(14,2)`: ما يزيد يُقرَّب في القاعدة، فيُخزَّن رقمٌ لم
+    //  يكتبه أحد ويصير المبلغُ المحفوظ مخالفاً للنسبة المحفوظة.
+    await bad("**ونسبةٌ بثلاث منازل تُردّ**",
+      { discountMode: "percentage", discountValue: 12.345, reason: "other" });
+    await bad("وكسرٌ طويلٌ يُردّ كذلك",
+      { discountMode: "percentage", discountValue: 33.3333, reason: "other" });
 
     same("   **وطلبٌ ثانٍ معلَّق يُردّ**",
       (await disc(S.recv, { discountMode: "amount", discountValue: 100_000, reason: "other" })).status, 409);
@@ -350,9 +357,12 @@ async function main() {
     //  والاعتماد لمخوَّلٍ **غير صاحب الطلب** — وطبيبٍ **غير المعاين**.
     const approve = await decide(S.doc2, reqId, { decision: "approve", note: "موافق" });
     same("٧. **طبيبٌ آخر بنفس الاختصاص يعتمد** — لا حكرَ على المعاين", approve.status, 200);
-    same("   والسعرُ المعتمد صار المخفَّض",
+    //  **ومصدرُ السعر `approved_discount` لا `approved_change`**: الأخيرةُ
+    //  تعني «اعتُمد تعديلُ سعرٍ سابق» وقد يكون رفعاً. وبعد الحسم لا يبقى
+    //  إلّا هذا العمود شاهداً على أيّهما وقع.
+    same("   والسعرُ المعتمد صار المخفَّض — ومصدرُه **خصمٌ معتمد**",
       [approve.body?.followup?.approvedPrice, approve.body?.followup?.priceSource],
-      [1_200_000, "approved_change"]);
+      [1_200_000, "approved_discount"]);
     same("٩. **والاعتماد ليس شراءً**: «بانتظار قرار المريض»",
       approve.body?.followup?.status, "price_approved_waiting_patient");
     same("   **ولا أمرَ تصنيعٍ وُلد باعتماد الخصم**",
@@ -1414,6 +1424,126 @@ async function main() {
     await shape("   **وخصمٌ كاذبٌ يُردّ** — مبلغُه يخالف فرقَ السعرين",
       "current_price, proposed_price, discount_mode, discount_value, discount_amount",
       "500000, 400000, 'amount', 100000, 7", false);
+    // ══ ٤٤ب. **والقيمةُ مربوطةٌ بالمبلغ لا بفرق السعرين وحده** ═══════════
+    //  الثغرةُ التي بقيت: صفٌّ يزعم «اخصم عشرة آلاف» ويحمل خصماً بخمسين
+    //  ألفاً كان يمرّ — فرقُ السعرين يطابق المبلغَ، والقيمةُ المعلنة لا
+    //  تطابق شيئاً. فيُقرأ السجلُّ بعد سنة على غير ما وقع.
+    await shape("٤٤ب. **ومبلغاً: قيمةٌ تخالف المبلغَ تُردّ** (١٠٬٠٠٠ تزعم خصماً ٥٠٬٠٠٠)",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "500000, 450000, 'amount', 10000, 50000", false);
+    await shape("   والمطابقةُ تمرّ",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "500000, 450000, 'amount', 50000, 50000", true);
+    //  ونسبةً: المبلغُ **ناتجُ النسبة مقرَّباً** لا رقماً حرّاً.
+    await shape("   **ونسبةً: مبلغٌ لا يخرج من النسبة يُردّ** (١٠٪ من مليون ≠ ٣٠٠٬٠٠٠)",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "1000000, 700000, 'percentage', 10, 300000", false);
+    await shape("   **والناتجُ الصحيح يمرّ** (١٠٪ من مليون = ١٠٠٬٠٠٠)",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "1000000, 900000, 'percentage', 10, 100000", true);
+    //  والمنزلتان تعملان في القاعدة كما في الشاشة — ١٢٫٣٤٪ من مليون.
+    await shape("   ومنزلتان عشريّتان تمرّان (١٢٫٣٤٪ = ١٢٣٬٤٠٠)",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "1000000, 876600, 'percentage', 12.34, 123400", true);
+    //  ٣٣٫٣٣٪ من ٩٩٩٬٩٩٩ = ٣٣٣٬٢٩٩٫٦٦٧ ⟶ تُقرَّب إلى ٣٣٣٬٣٠٠ في القاعدة
+    //  كما في `computeDiscount` سواءً بسواء.
+    await shape("   **وتقريبُ القاعدة هو تقريبُ الشاشة** — ٣٣٫٣٣٪ من ٩٩٩٬٩٩٩",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "999999, 666699, 'percentage', 33.33, 333300", true);
+    await shape("   **والكسرُ المهمَل يُردّ** — لا يمرّ ناتجٌ غيرُ مقرَّب",
+      "current_price, proposed_price, discount_mode, discount_value, discount_amount",
+      "999999, 666700, 'percentage', 33.33, 333299", false);
+
+    // ══ ٤٥. **مصدرُ السعر يميّز الخصمَ من التعديل القديم** ═══════════════
+    console.log("\n── مصدرُ السعر بعد الاعتماد ──");
+    //  الخصمُ الجديد أُثبت أعلاه (٧). وهنا **القديم**: يعتمده الطبيب فيبقى
+    //  `approved_change` — ولا يُقرأ رفعُ سعرٍ اعتُمد على أنه «بعد الخصم».
+    const srcLeg = await mkLegacyPending("لمصدر السعر", 900_000, 700_000);
+    same("٤٥. **والتعديلُ القديم يكتب `approved_change`** — لا `approved_discount`",
+      [(await http("POST", `/api/discount-requests/${srcLeg.requestId}/decide`, S.doc,
+        { decision: "approve" })).status,
+        (await q(`SELECT price_source FROM post_exam_followups WHERE id=$1`,
+          [srcLeg.followupId]))[0].price_source],
+      [200, "approved_change"]);
+    //  ومَن لم يُعتمد عليه شيءٌ يبقى `exam` — ولا يُعاد كتابةُ صفٍّ واحد.
+    const pSrcExam = await mkPatient("مصدرُه المعاينة");
+    await mkCase(pSrcExam);
+    await signExam(pSrcExam, S.doc, { deviceCost: 400_000 });
+    same("   **ومَن لا طلبَ عليه يبقى `exam`**",
+      (await q(`SELECT price_source FROM post_exam_followups WHERE patient_id=$1`,
+        [pSrcExam]))[0].price_source, "exam");
+    //  والرفضُ لا يمسّ المصدر أصلاً — لا في الجديد ولا في القديم.
+    const srcRej = await mkLegacyPending("مرفوض", 800_000, 600_000);
+    await http("POST", `/api/discount-requests/${srcRej.requestId}/decide`, S.doc,
+      { decision: "reject" });
+    same("   والرفضُ يترك المصدرَ كما كان",
+      (await q(`SELECT price_source FROM post_exam_followups WHERE id=$1`,
+        [srcRej.followupId]))[0].price_source, "exam");
+    //  **ولا صفَّ تاريخيّ أُعيدت كتابتُه**: `approved_change` باقيةٌ قيمةً
+    //  صالحة، والقاعدةُ تقبل الثلاثةَ لا اثنين.
+    const srcVals = (await q(
+      `SELECT DISTINCT price_source FROM post_exam_followups ORDER BY 1`)).map((r: any) => r.price_source);
+    check(srcVals.every((v: string) =>
+      ["exam", "approved_change", "approved_discount"].includes(v)),
+      "   **ولا قيمةَ رابعة في الجدول كلّه**", JSON.stringify(srcVals));
+    check(srcVals.includes("approved_change") && srcVals.includes("approved_discount"),
+      "   **والقيمتان تتعايشان** — لا ترحيلَ محا إحداهما", JSON.stringify(srcVals));
+
+    // ══ ٤٦. **ونصُّ التدقيق يتبع نوعَ الصفّ** ═══════════════════════════
+    console.log("\n── نصُّ التدقيق ──");
+    const auditOf = async (rid: number) => (await q(
+      `SELECT notes FROM audit_log
+        WHERE entity_type='price_change_request' AND entity_id=$1 AND action='update'
+        ORDER BY id DESC LIMIT 1`, [rid]))[0]?.notes ?? "";
+    const audLegNote = await auditOf(srcLeg.requestId);
+    check(audLegNote.includes("اعتماد تعديل سعر") && !audLegNote.includes("خصم"),
+      "٤٦. **تدقيقُ الصفّ القديم يقول «تعديل سعر» ولا يقول «خصم»**", audLegNote);
+    const audLegRej = await auditOf(srcRej.requestId);
+    check(audLegRej.includes("رفض تعديل سعر") && !audLegRej.includes("خصم"),
+      "   ورفضُه كذلك", audLegRej);
+    const audDisc = await auditOf(reqId);
+    check(audDisc.includes("اعتماد خصم"),
+      "   **وتدقيقُ الخصم الجديد يقول «خصم»**", audDisc);
+
+    // ══ ٤٧. النافذةُ القديمة — **السببُ إلزاميٌّ لا يبتلعه «سبب آخر»** ══
+    console.log("\n── سببُ النافذة القديمة ──");
+    const staleBad = async (label: string, body: any) => {
+      const pS = await mkPatient(`سببٌ ${label.slice(0, 20)}`);
+      await mkCase(pS);
+      await signExam(pS, S.doc, { deviceCost: 700_000 });
+      const fS = await followupOf(pS);
+      const r = await http("POST", `/api/followups/${fS.id}/price-request`, S.recv,
+        { proposedPrice: 500_000, ...body });
+      same(label, r.status, 400);
+      same("     (ولا صفَّ طلبٍ كُتب ولا السعرُ تحرّك)", [
+        (await q(`SELECT 1 FROM price_change_requests WHERE followup_id=$1`, [fS.id])).length,
+        Number((await q(`SELECT approved_price FROM post_exam_followups WHERE id=$1`,
+          [fS.id]))[0].approved_price),
+        (await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [fS.id]))[0].status,
+      ], [0, 700_000, "awaiting_patient_decision"]);
+    };
+    await staleBad("٤٧. **وبلا سببٍ يُردّ** — لا يصير «سبباً آخر»", {});
+    await staleBad("وسببٌ فارغٌ يُردّ", { reason: "" });
+    await staleBad("**وسببٌ مخترَعٌ يُردّ**", { reason: "لأن المدير قال" });
+    await staleBad("ونصٌّ إنجليزيٌّ حرٌّ يُردّ", { reason: "because_manager_said" });
+    //  ── وسببٌ صحيحٌ من أيّ القائمتين يمرّ ──
+    const pS2 = await mkPatient("سببٌ جديدٌ من نافذةٍ قديمة");
+    await mkCase(pS2);
+    await signExam(pS2, S.doc, { deviceCost: 700_000 });
+    const fS2 = await followupOf(pS2);
+    const staleNew = await http("POST", `/api/followups/${fS2.id}/price-request`, S.recv,
+      { proposedPrice: 600_000, reason: "campaign_or_offer" });
+    same("   **وسببُ خصمٍ صحيحٌ يمرّ كما هو** — لعميلٍ نصفِ محدَّث",
+      [staleNew.status, (await q(`SELECT reason FROM price_change_requests WHERE id=$1`,
+        [staleNew.body.requestId]))[0].reason],
+      [200, "campaign_or_offer"]);
+    //  وسببٌ قديمٌ صحيحٌ بلا مقابل ⟶ «سبب آخر» **مع حفظ أصله** (٤٣ أثبت
+    //  الترجمة؛ وهنا يُثبَت أن الأصل لم يضع).
+    const otherRow = (await q(
+      `SELECT reason, note FROM price_change_requests WHERE id=$1`,
+      [staleOther.body.requestId]))[0];
+    check(String(otherRow.note ?? "").includes("health_condition"),
+      "   **والأصلُ محفوظٌ ولو وقع في «سبب آخر»**", String(otherRow.note));
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");
