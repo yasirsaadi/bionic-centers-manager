@@ -19,7 +19,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import * as mfg from "./manufacturing/store";
-import { REQUESTED_ITEM_LABELS } from "@shared/prosthetic_parts";
+import { COMPONENT_LABELS } from "@shared/prosthetic_parts";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -92,7 +92,7 @@ async function mkDeliveredEpisode(patientId: number, caseId: number, seq = 1) {
   const r = await q<{ id: number }>(
     `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
        status, agreed_cost, requested_item, created_by, delivered_at)
-     VALUES ($1,$2,1,$3,'delivered',1000000,'full_prosthesis',$4,NOW()) RETURNING id`,
+     VALUES ($1,$2,1,$3,'delivered',1000000,'full_device',$4,NOW()) RETURNING id`,
     [patientId, caseId, seq, MANAGER]);
   return r[0].id;
 }
@@ -203,13 +203,13 @@ async function main() {
       const before = await q(
         `SELECT count(*)::int AS n FROM patients WHERE referral_source=$1`, [MARK]);
       const r = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "full_prosthesis" });
+        { serviceType: "prosthetic", requestedItem: "full_device" });
       same("١. **الطلبُ يُقبل** لمريضٍ جهازُه مسلَّم", r.status, 201);
       const ep2 = await epRow(r.body?.id);
       same("٢. **حلقةٌ ثانيةٌ على الخيط نفسه** — لا خيطَ جديد",
         [ep2?.sequence_number, ep2?.status], [2, "awaiting_exam"]);
       same("٣. **والمطلوبُ مخزَّنٌ منظَّماً: طرفٌ كامل ⟶ بلا جزء**",
-        [ep2?.requested_item, ep2?.component], ["full_prosthesis", null]);
+        [ep2?.requested_item, ep2?.component], ["full_device", null]);
       const after = await q(
         `SELECT count(*)::int AS n FROM patients WHERE referral_source=$1`, [MARK]);
       same("٤. **ولا ملفَّ مريضٍ ثانياً يُنشأ** — العائدُ هو هو",
@@ -268,10 +268,10 @@ async function main() {
         { serviceType: "medical_support", requestedItem: "knee" });
       same("١٢. **وجزءُ طرفٍ على مسندٍ يُردّ**", bad.status, 400);
       const ok = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "medical_support", requestedItem: "full_prosthesis" });
+        { serviceType: "medical_support", requestedItem: "full_device" });
       same("١٣. والمسندُ يمرّ بلا جزء", ok.status, 201);
       const ep = await epRow(ok.body?.id);
-      same("   (وعمودُه فارغ)", [ep?.requested_item, ep?.component], ["full_prosthesis", null]);
+      same("   (وعمودُه فارغ)", [ep?.requested_item, ep?.component], ["full_device", null]);
     }
     {
       //  **والحوكمةُ التجارية نفسها**: الجزءُ لا يُخصَّص قبل معاينته هو.
@@ -644,30 +644,149 @@ async function main() {
         "٧٠. **والتعريفُ المنظَّم يمرّ**", `${ok.status} ${JSON.stringify(ok.body)}`);
     }
     {
-      //  **والملفُّ القديم الناقص يُكمَل عند تعديله** — لا يُخمَّن ولا يُترك.
+      // ══ **الملفُّ القديم: يُصحَّح إدارياً، ولا يدخل دورةً ناقصاً** ══════
+      //  **قرارُ المالك** بعد المراجعة: إجبارُ الموظّف على وزنٍ لا يملكه
+      //  لحظتَها كي يصحّح رقمَ هاتفٍ يوقف عملاً مشروعاً بلا مقابل —
+      //  ونتيجتُه المعتادة أن يُخترَع رقم، وهو أسوأ من الفراغ لأنه يُقرأ
+      //  قياساً. فاللحظةُ التي يجب أن يكتمل فيها الملفّ هي **دخولُه دورةَ
+      //  تصنيعٍ جديدة**، لا كلُّ حفظٍ يمرّ عليه.
       const legacy = await q<{ id: number }>(
         `INSERT INTO patients (name, phone, referral_source, age, medical_condition,
            branch_id, is_amputee, total_cost, patient_classification)
          VALUES ($1,'07701234567',$2,'40','بتر',1,true,0,'past') RETURNING id`,
         [`${MARK} قديمٌ ناقص`, MARK]);
       const lid = legacy[0].id;
-      const blocked = await http("PUT", `/api/patients/${lid}`, S.manager,
+      await mkCase(lid);
+
+      //  ① **التصحيحُ الإداريُّ المحض يمرّ** — هاتفٌ وتصنيفٌ وعنوان.
+      const admin1 = await http("PUT", `/api/patients/${lid}`, S.manager,
         { name: `${MARK} قديمٌ ناقص`, phone: "07709998877", branchId: 1 });
-      same("٧١. **وتعديلُ ملفٍّ قديمٍ ناقص يُردّ حتى يُكمَل**", blocked.status, 400);
-      same("   **ولم يُنفَّذ التعديلُ المطلوب**",
-        (await q(`SELECT phone FROM patients WHERE id=$1`, [lid]))[0].phone, "07701234567");
+      same("٧١. **تصحيحُ هاتفٍ على ملفٍّ قديمٍ ناقص يمرّ**", admin1.status, 200);
+      same("   **ونُفِّذ فعلاً**",
+        (await q(`SELECT phone FROM patients WHERE id=$1`, [lid]))[0].phone, "07709998877");
+      same("٧٢. **والتصنيفُ كذلك**",
+        (await http("PUT", `/api/patients/${lid}`, S.manager,
+          { patientClassification: "new" })).status, 200);
+      same("   والعنوانُ كذلك",
+        (await http("PUT", `/api/patients/${lid}`, S.manager,
+          { address: "عنوانٌ ما" })).status, 200);
+      //  **ولا يُخمَّن الناقص**: الملفُّ ما زال بلا طولٍ ولا وزن.
+      same("٧٣. **ولا يُخترَع له قياسٌ في الطريق**",
+        (await q(`SELECT height, weight FROM patients WHERE id=$1`, [lid]))[0],
+        { height: null, weight: null });
+
+      //  ② **ولمسُ الحقول نفسها يُلزم بإكمالها** — لا نصفُ حالةٍ يُحفَظ.
+      const half = await http("PUT", `/api/patients/${lid}`, S.manager,
+        { height: "165" });
+      same("٧٤. **وإدخالُ الطول وحده يُردّ** — نصفُ الحالة لا يُحفَظ", half.status, 400);
+      same("   ولم يُكتب شيء",
+        (await q(`SELECT height FROM patients WHERE id=$1`, [lid]))[0].height, null);
+
+      //  ③ **ولا دورةَ تصنيعٍ جديدة بملفٍّ ناقص** — وهذه هي البوّابة.
+      const blocked = await http("POST", `/api/patients/${lid}/device-episodes`,
+        S.reception, { serviceType: "prosthetic", requestedItem: "knee" });
+      same("٧٥. **وطلبُ جزءٍ جديد يُردّ حتى يكتمل الملفّ**", blocked.status, 400);
+      check(String(blocked.body?.error ?? "").includes("أكمِل ملفّ المريض"),
+        "   (برسالةٍ تدلّ على ما يجب فعله)", JSON.stringify(blocked.body));
+      check(Array.isArray(blocked.body?.missing) && blocked.body.missing.length > 0,
+        "   **وتسمّي الناقصَ حقلاً حقلاً** — فتعرضه الواجهة",
+        JSON.stringify(blocked.body?.missing));
+      same("٧٦. **ولا حلقةَ فُتحت**",
+        (await q(`SELECT count(*)::int AS n FROM patient_device_episodes WHERE patient_id=$1`,
+          [lid]))[0].n, 0);
+
+      //  ④ **والإكمالُ يفتح البابَ** — بلا ترحيلٍ يخترع أرقاماً.
       const done = await http("PUT", `/api/patients/${lid}`, S.manager, {
-        name: `${MARK} قديمٌ ناقص`, phone: "07709998877", branchId: 1,
-        height: "165", weight: "62",
+        height: "165", weight: "62", age: "40",
         amputationSite: "احادي - طرف سفلي - يسار - فوق الركبة",
       });
-      same("٧٢. **والإكمالُ في النداء نفسه يمرّ**", done.status, 200);
-      same("   ومعه التعديلُ المطلوب",
-        (await q(`SELECT phone FROM patients WHERE id=$1`, [lid]))[0].phone, "07709998877");
-      //  **وبعد الإكمال يمرّ التعديلُ الضيّق** — الإجبارُ للنقص لا عقوبةٌ دائمة.
-      same("٧٣. **وبعدها يمرّ التعديلُ الضيّق بلا إعادة إرسال**",
-        (await http("PUT", `/api/patients/${lid}`, S.manager,
-          { name: `${MARK} قديمٌ ناقص`, address: "عنوان", branchId: 1 })).status, 200);
+      same("٧٧. **والإكمالُ في نداءٍ واحد يمرّ**", done.status, 200);
+      same("٧٨. **وبعده يُفتح الطلب**",
+        (await http("POST", `/api/patients/${lid}/device-episodes`, S.reception,
+          { serviceType: "prosthetic", requestedItem: "knee" })).status, 201);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ح. **إضافةُ حالة أطراف لا تُنتج ملفّاً نصفَ مكتمل**
+    //
+    //  «إضافة نوع حالة» كانت ترفع `is_amputee` **بلا موقع بتر** — فيُولَد
+    //  ملفٌّ مبتورٌ بلا تعريفِ بتره، ويُترك إكمالُه لتعديلٍ لاحقٍ لا يقع.
+    //  ثم يصطدم به الطبيبُ في المعاينة والخبيرُ في القياس.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ح. إضافة حالة الأطراف ──");
+    {
+      //  مريضُ علاجٍ طبيعي **بلا بتر ولا مقاسات كاملة** — يُضاف له الأطراف.
+      const [p] = await q<{ id: number }>(
+        `INSERT INTO patients (name, phone, referral_source, age, medical_condition,
+           branch_id, is_amputee, is_physiotherapy, total_cost, patient_classification)
+         VALUES ($1,'07701234567',$2,'35','ألم',1,false,true,0,'new') RETURNING id`,
+        [`${MARK} يضيف أطرافاً`, MARK]);
+      const add = (body: any) =>
+        http("POST", `/api/patients/${p.id}/add-case-type`, S.reception, body);
+
+      const noSite = await add({ caseType: "amputee" });
+      same("٧٩. **إضافةُ أطرافٍ بلا تعريفِ بترٍ تُردّ**", noSite.status, 400);
+      check(String(noSite.body?.message ?? "").includes("تعريف البتر"),
+        "   (برسالةٍ تقول ما يلزم)", JSON.stringify(noSite.body));
+      same("   **ولم يُرفَع العَلَم**",
+        (await q(`SELECT is_amputee FROM patients WHERE id=$1`, [p.id]))[0].is_amputee, false);
+
+      //  ونصٌّ حرٌّ لا يفهمه الباني يُردّ كذلك — لا بديلَ عن المنظَّم.
+      same("٨٠. **ونصٌّ حرٌّ يُردّ**",
+        (await add({ caseType: "amputee", amputationSite: "مبتور من الرجل" })).status, 400);
+
+      //  والمقاساتُ الناقصة تُطلَب **في المسار نفسه** لا في تعديلٍ لاحق.
+      const noMeasures = await add({
+        caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
+      });
+      same("٨١. **وبلا طولٍ ووزنٍ تُردّ أيضاً**", noMeasures.status, 400);
+      same("   **ولم يُرفَع العَلَم بعد**",
+        (await q(`SELECT is_amputee FROM patients WHERE id=$1`, [p.id]))[0].is_amputee, false);
+
+      //  **والمسارُ الواحد يجمعها كلَّها** فيُفتح الخيطُ مكتملاً.
+      const ok = await add({
+        caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
+        height: "170", weight: "68",
+      });
+      same("٨٢. **وبها جميعاً تُفتَح الحالةُ مكتملة**", ok.status, 200);
+      const after = (await q(
+        `SELECT is_amputee, height, weight, amputation_site FROM patients WHERE id=$1`,
+        [p.id]))[0];
+      same("   **والملفُّ مكتملٌ لحظةَ فتحه** — لا نصفَ حالةٍ يُحفَظ",
+        [after.is_amputee, after.height, after.weight,
+          String(after.amputation_site).includes("تحت الركبة")],
+        [true, "170", "68", true]);
+      //  **ويدخل الدورةَ فوراً** — لأن ما يلزمها اكتمل في مسارها.
+      same("   ويبدأ طلبَ جهازٍ فوراً بلا عائق",
+        (await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
+          { serviceType: "prosthetic", requestedItem: "full_device" })).status, 201);
+    }
+    {
+      //  **والمساندُ والعلاجُ الطبيعي لا يُسألان عن بتر إطلاقاً.**
+      const [p] = await q<{ id: number }>(
+        `INSERT INTO patients (name, phone, referral_source, age, medical_condition,
+           branch_id, is_amputee, total_cost, patient_classification)
+         VALUES ($1,'07701234567',$2,'50','ألم',1,false,0,'new') RETURNING id`,
+        [`${MARK} يضيف مسنداً`, MARK]);
+      same("٨٣. **وإضافةُ مسندٍ تمرّ بلا تعريفِ بتر**",
+        (await http("POST", `/api/patients/${p.id}/add-case-type`, S.reception,
+          { caseType: "medical_support" })).status, 200);
+      //  **وحلقتُه محايدةٌ في القاعدة، مسمّاةٌ في الشاشة.**
+      const ep = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
+        { serviceType: "medical_support" });
+      same("٨٤. **وحلقةُ المسند تُفتَح**", ep.status, 201);
+      const row = await epRow(ep.body?.id);
+      same("٨٥. **وقيمتُها محايدة — لا «طرف» على مسند**",
+        [row?.requested_item, row?.component], ["full_device", null]);
+      const [rev] = await q(
+        `SELECT reception_note FROM medical_review_requests
+          WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [p.id]);
+      same("٨٦. **والطبيبُ يقرأ «مسند طبي كامل»** — لا «طرف صناعي كامل»",
+        String(rev?.reception_note ?? "").startsWith("المطلوب: مسند طبي كامل"), true);
+      //  **وجزءُ طرفٍ عليه يُردّ** — لا يُصحَّح إلى «كامل».
+      const bad = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
+        { serviceType: "medical_support", requestedItem: "knee" });
+      same("٨٧. **وطلبُ ركبةٍ على مسندٍ يُردّ**", bad.status, 400);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -695,7 +814,7 @@ async function main() {
         { ...S.manager, isAdmin: true, role: "admin",
           permissions: { ...S.manager.permissions, canDeletePatients: true } });
       check(del.status === 200 || del.status === 204,
-        "٧٥. **حذفُ مريضٍ يحمل الأعمدة الجديدة ينجح**",
+        "٨٨. **حذفُ مريضٍ يحمل الأعمدة الجديدة ينجح**",
         `${del.status} ${JSON.stringify(del.body)}`);
       same("   ولا صفَّ حلقةٍ يتيماً بقي",
         (await q(`SELECT count(*)::int AS n FROM patient_device_episodes WHERE patient_id=$1`,
@@ -707,9 +826,9 @@ async function main() {
     }
 
     //  ── والقائمةُ مشتركةٌ بين المسارين حرفاً ──
-    same("٧٦. **وقائمةُ الأجزاء واحدةٌ للشراء والصيانة**",
-      [REQUESTED_ITEM_LABELS.knee, REQUESTED_ITEM_LABELS.foot,
-        REQUESTED_ITEM_LABELS.socket, REQUESTED_ITEM_LABELS.tube],
+    same("٨٩. **وقائمةُ الأجزاء واحدةٌ للشراء والصيانة**",
+      [COMPONENT_LABELS.knee, COMPONENT_LABELS.foot,
+        COMPONENT_LABELS.socket, COMPONENT_LABELS.tube],
       ["الركبة", "القدم", "القالب", "التيوب"]);
     void mfg;
   } finally {

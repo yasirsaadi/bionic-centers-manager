@@ -11,7 +11,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  REQUESTED_ITEMS, REQUESTED_ITEM_LABELS, requestedItemLabel,
+  requestedItemOptions, requestedItemLabel, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
 
@@ -52,10 +52,16 @@ export function NewDeviceEpisodeModal({
   const [item, setItem] = useState<RequestedItem | "">("");
   //  ولا مسوّدةٌ تتسرّب إلى المريض التالي.
   useEffect(() => { if (open) setItem(""); }, [open]);
+  //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
+  //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
+  const [blockNote, setBlockNote] = useState<string>("");
+  const [missing, setMissing] = useState<string[]>([]);
+  useEffect(() => { if (open) { setBlockNote(""); setMissing([]); } }, [open]);
   //  والمساندُ الطبية لا أجزاءَ لها في هذه القائمة — قائمةُ أجزاءِ طرفٍ
   //  صناعي بعينها. فتبقى كما كانت: تأكيدٌ واحد.
   const asksItem = serviceType === "prosthetic";
-  const chosen: RequestedItem = asksItem && item ? item : "full_prosthesis";
+  const options = requestedItemOptions(serviceType);
+  const chosen: RequestedItem = asksItem && item ? item : FULL_DEVICE;
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -67,7 +73,7 @@ export function NewDeviceEpisodeModal({
     onSuccess: (episode: any) => {
       toast({
         title: "تم فتح طلب الجهاز",
-        description: `${requestedItemLabel(episode?.requestedItem ?? chosen)} — بانتظار معاينة الطبيب`,
+        description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)} — بانتظار معاينة الطبيب`,
       });
       // الحلقات نفسها، وقوائم انتظار الطبيب، وصفحة المريض: الطلب الجديد
       // يظهر في الثلاثة فوراً، فلا يبقى الموظّف يعيد التحميل ليصدّق.
@@ -82,6 +88,8 @@ export function NewDeviceEpisodeModal({
     onError: (error: any) => {
       // الخادم يبقى صاحب القرار: قد تكون حلقةٌ فُتحت من جهازٍ آخر بين
       // تحميل الصفحة والضغط، فتصل 409 برسالتها — تُعرَض كما هي.
+      setBlockNote(error?.message || "حدث خطأ غير متوقع");
+      setMissing(Array.isArray(error?.missing) ? error.missing : []);
       toast({
         title: "تعذّر فتح طلب الجهاز",
         description: error?.message || "حدث خطأ غير متوقع",
@@ -124,8 +132,8 @@ export function NewDeviceEpisodeModal({
                 <SelectValue placeholder="اختر الطرف الكامل أو الجزء المطلوب" />
               </SelectTrigger>
               <SelectContent>
-                {REQUESTED_ITEMS.map((v) => (
-                  <SelectItem key={v} value={v}>{REQUESTED_ITEM_LABELS[v]}</SelectItem>
+                {options.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -133,6 +141,24 @@ export function NewDeviceEpisodeModal({
               شراءُ قطعةٍ جديدة <b>بيعٌ لا صيانة</b>: يمرّ بالمعاينة والسعر
               والاعتماد كأيّ بيع. أمّا إصلاحُ قطعةٍ قائمة فمن «صيانة طرف صناعي».
             </p>
+          </div>
+        )}
+
+        {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════
+            ملفٌّ قديمٌ بلا مقاساتٍ أو بلا تعريفِ بترٍ لا يدخل دورةَ تصنيعٍ
+            جديدة: الطرفُ يُصنَع على تلك الأرقام. والرسالةُ تسمّي الناقص
+            وتدلّ على «تعديل مريض» — فلا يبقى الموظّف يخمّن سببَ الردّ. */}
+        {blockNote && (
+          <div
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-right text-sm"
+            data-testid="block-episode-error"
+          >
+            <p className="font-semibold text-destructive">{blockNote}</p>
+            {missing.length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                أكمِلها من «تعديل مريض» ثم أعد المحاولة.
+              </p>
+            )}
           </div>
         )}
 

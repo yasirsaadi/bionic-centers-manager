@@ -20,6 +20,7 @@ import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 import {
   parseRequestedItem, requestedItemLabel, requestedItemLine,
 } from "@shared/prosthetic_parts";
+import { checkRequiredPatientData } from "@shared/patient_required";
 
 type Req = any;
 
@@ -60,8 +61,15 @@ function canStartService(req: Req): boolean {
 async function patientScope(patientId: number) {
   const { db } = await import("../db");
   const { sql } = await import("drizzle-orm");
-  const r = await db.execute<{ id: number; name: string | null; branch_id: number | null }>(sql`
-    SELECT id, name, branch_id FROM patients WHERE id = ${patientId}
+  //  والمقاساتُ تُقرأ هنا لأن **بدءَ طرفٍ جديد يشترطها** — الطرفُ يُصنَع
+  //  عليها، وملفٌّ قديمٌ ناقصٌ لا يدخل دورةَ تصنيعٍ جديدة بها.
+  const r = await db.execute<{
+    id: number; name: string | null; branch_id: number | null;
+    age: string | null; height: string | null; weight: string | null;
+    is_amputee: boolean | null; amputation_site: string | null;
+  }>(sql`
+    SELECT id, name, branch_id, age, height, weight, is_amputee, amputation_site
+      FROM patients WHERE id = ${patientId}
   `);
   return (r.rows ?? [])[0] ?? null;
 }
@@ -109,23 +117,37 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نوع الجهاز غير صالح" });
       }
 
-      // ── **ما المطلوب؟** طرفٌ كامل أم جزء (ترحيل ٠٦٠) ─────────────────
-      //  المجهولُ يُردّ لا يُصحَّح بصمت: تصحيحُه إلى «طرف كامل» كان سيفتح
-      //  طلبَ طرفٍ كامل لمريضٍ يريد ركبةً — وثمنُه بين الاثنين هائل.
+      // ── **ما المطلوب؟** جهازٌ كامل أم جزء (ترحيل ٠٦٠) ────────────────
+      //  المجهولُ يُردّ لا يُصحَّح بصمت: تصحيحُه إلى «كامل» كان سيفتح طلبَ
+      //  جهازٍ كامل لمريضٍ يريد ركبةً — وثمنُه بين الاثنين هائل.
       //  والغيابُ مقبولٌ ويُقرأ «كامل»: نافذةٌ قديمة مفتوحة لا ترسله.
-      const parsedItem = parseRequestedItem(req.body?.requestedItem);
+      //  **والمساندُ الطبية بلا أجزاء** — يفرضه المحلّلُ نفسه بنوع الخدمة،
+      //  ويعيده المخزنُ داخل معاملته المقفلة.
+      const parsedItem = parseRequestedItem(req.body?.requestedItem, serviceType);
       if (!parsedItem.ok) return res.status(400).json({ error: parsedItem.error });
-      //  والمساندُ الطبية لا أجزاءَ لها في هذه القائمة — قائمةُ الأجزاء
-      //  أجزاءُ طرفٍ صناعي بعينها، فطلبُ «ركبة» على مسندٍ خلطٌ يُردّ.
-      if (serviceType !== "prosthetic" && parsedItem.value
-        && parsedItem.value !== "full_prosthesis") {
-        return res.status(400).json({ error: "الأجزاء للأطراف الصناعية فقط" });
-      }
 
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (!canReachBranch(req, patient.branch_id)) {
         return res.status(403).json({ error: "لا يمكنك بدء جهاز لمريض فرع آخر" });
+      }
+
+      // ── **لا دورةَ تصنيعٍ جديدة بملفٍّ ناقص** ────────────────────────
+      //  العمرُ والطولُ والوزن وتعريفُ البتر ليست حقولاً إدارية: الطرفُ
+      //  يُصنَع عليها. والملفُّ القديم يبقى **مقروءاً** ويُصحَّح إدارياً بلا
+      //  إجبار — لكنّ **لحظةَ دخوله دورةً جديدة** هي اللحظة التي يجب أن
+      //  يكتمل فيها، لا بعد أن يُقاس الجهازُ على فراغ.
+      if (serviceType === "prosthetic") {
+        const req0 = checkRequiredPatientData({
+          age: patient.age, height: patient.height, weight: patient.weight,
+          isAmputee: true, amputationSite: patient.amputation_site,
+        });
+        if (!req0.ok) {
+          return res.status(400).json({
+            error: `${req0.message} — أكمِل ملفّ المريض قبل بدء طرف أو جزء جديد`,
+            missing: req0.missing,
+          });
+        }
       }
 
       const session = getSession(req);
@@ -145,7 +167,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         reviewKind: "new_device", requestedPath: "full",
         //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
         //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
-        receptionNote: [requestedItemLine(episode.requestedItem),
+        receptionNote: [requestedItemLine(episode.requestedItem, serviceType),
           typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
           .filter(Boolean).join(" — "),
         deviceEpisodeId: episode.id,
@@ -161,7 +183,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         newValues: episode,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem)})`
+        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType)})`
           + ` للمريض ${patient.name ?? patientId}`
           + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),
       });

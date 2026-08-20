@@ -154,3 +154,33 @@ export function checkAmputationSite(site: string): RequiredCheck {
 export function legacyIncomplete(p: PatientCoreInput | null | undefined): boolean {
   return !checkRequiredPatientData(p).ok;
 }
+
+/**
+ * الحقولُ الخمسة التي يحرسها هذا الملفّ — بأسمائها في جسم الطلب.
+ *
+ * `isAmputee` منها عمداً: **رفعُ العلم هو فتحُ خيط أطراف**، ومَن يفعله
+ * يفعله وهو مسؤولٌ عن تعريف البتر. فتركُه خارج القائمة كان يسمح بفتح خيطٍ
+ * ناقصٍ من نافذة «تعديل مريض».
+ */
+export const REQUIRED_PATIENT_FIELDS = [
+  "age", "height", "weight", "isAmputee", "amputationSite",
+] as const;
+
+/**
+ * **هل هذا التعديل إداريٌّ محض؟**
+ *
+ * الملفُّ القديم الناقص **يُقرأ ويُصحَّح إدارياً** — هاتفٌ خاطئ، أو تصنيفٌ،
+ * أو عنوان. وإجبارُ الموظّف على مقاساتٍ لا يملكها لحظتَها كي يصحّح رقمَ
+ * هاتفٍ **يوقف عملاً مشروعاً بلا مقابل**، والنتيجةُ المعتادة أن يُخترَع رقم.
+ *
+ * أمّا اللحظةُ التي يجب أن يكتمل فيها فهي **لمسُ الحقول نفسها** أو **دخولُ
+ * دورة تصنيعٍ جديدة** — وذاك يحرسه `POST /device-episodes`.
+ *
+ * والقاعدةُ بالسلب لا بقائمةِ سماح: كلُّ ما ليس من الخمسة إداريٌّ بالتعريف،
+ * فحقلٌ جديد يُضاف للنموذج غداً لا يفتح ثغرةً بالنسيان.
+ */
+export function isAdministrativeOnlyPatch(patch: unknown): boolean {
+  if (!patch || typeof patch !== "object") return true;
+  const keys = Object.keys(patch as Record<string, unknown>);
+  return !keys.some((k) => (REQUIRED_PATIENT_FIELDS as readonly string[]).includes(k));
+}

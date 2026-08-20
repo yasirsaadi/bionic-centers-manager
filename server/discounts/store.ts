@@ -239,8 +239,38 @@ export async function requestDiscount(params: {
   }
   const payload = sanitizePayload(params.department, params.payload);
 
-  try {
-    const r = await db.execute(sql`
+  // ══ **التسلسلُ مع تصحيح الطبيب لسعره** ═══════════════════════════════
+  //  البابان يحرّكان الرقمَ نفسه من طرفين: الطبيبُ يصحّح الأصلَ، والموظّفُ
+  //  يطلب خصماً **محسوباً على ذلك الأصل**. وبلا نقطةِ تسلسلٍ مشتركة كان
+  //  التداخلُ يُنتج طلباً معلَّقاً أساسُه رقمٌ لم يعد قائماً — يُعتمَد بعدها
+  //  فيُخصَم من سعرٍ خاطئ.
+  //
+  //  فالقفلُ على **صفّ المتابعة** — النقطةُ التي يأخذها التصحيحُ أيضاً:
+  //  مَن ظفر بها أوّلاً مضى، والآخر يقرأ الحالةَ الجديدة فيُردّ.
+  //  والصيانةُ بلا متابعة، فتمضي كما كانت بلا قفلٍ زائد.
+  const followupId = Number(payload?.followupId);
+  const lockedInsert = async (tx: any) => {
+    if (Number.isFinite(followupId) && followupId > 0) {
+      const f = await tx.execute(sql`
+        SELECT approved_price, converted_work_order_id
+          FROM post_exam_followups WHERE id = ${followupId} FOR UPDATE
+      `);
+      const row = (f.rows ?? [])[0] as any;
+      if (!row) throw new DiscountError("المتابعة غير موجودة", 404);
+      if (row.converted_work_order_id !== null) {
+        throw new DiscountError("تم اعتماد البيع بالفعل — حدّث الصفحة", 409);
+      }
+      //  **ولا طلبَ على أساسٍ بائت**: السعرُ الأصلي المحسوب عليه الخصم يجب
+      //  أن يكون هو المكتوب على الصفّ الآن، بعد القفل لا قبله.
+      const live = Number(row.approved_price ?? 0);
+      if (live !== calc.originalPrice) {
+        throw new DiscountError(
+          `تغيّر السعر الأصلي إلى ${live.toLocaleString("en-US")} د.ع أثناء الطلب`
+          + " — حدّث الصفحة وأعد حساب الخصم", 409,
+        );
+      }
+    }
+    const r = await tx.execute(sql`
       INSERT INTO service_discount_requests
         (patient_id, case_id, branch_id, department, context_ref,
          original_price, proposed_final_price, discount_amount, discount_percentage,
@@ -253,7 +283,11 @@ export async function requestDiscount(params: {
               ${params.actor.userId}, ${params.actor.userName})
       RETURNING ${COLS}
     `);
-    return { request: toRow((r.rows ?? [])[0]), calc };
+    return toRow((r.rows ?? [])[0]);
+  };
+
+  try {
+    return { request: await db.transaction(lockedInsert), calc };
   } catch (e: any) {
     if (e?.code === "23505") {
       throw new DiscountError("يوجد طلب خصم معلَّق لهذه الخدمة بالفعل", 409);

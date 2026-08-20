@@ -483,32 +483,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // a specialty change has a case to point the revised exam at.
       const applied = await applyDecision(exam.patientId, caseType, prescription);
 
-      const updated = await store.reviseExam(
-        examId,
-        { caseType, prescription, deviceCost, proposedExpertUserId, ...body },
-        { userId: session.userId, userName: editorName },
-      );
-
-      //  **والسعرُ التجاري يتبع التصحيح** — داخل النداء نفسه، بحدثٍ يُقرأ.
-      //  وفشلُه لا يُفشل التصحيحَ السريريّ: المعاينةُ حُفظت فعلاً، والملاحظةُ
-      //  تصل الطبيبَ ليعرف أن الرقم التجاري لم يتحرّك.
-      if (priceVerdict?.kind === "sync" && deviceCost !== null) {
-        try {
-          const fs = await import("../followup/store");
-          const synced = await fs.applyExamPriceCorrection({
-            followupId: priceVerdict.followupId, newPrice: deviceCost,
-            actor: { userId: session.userId, userName: editorName },
-          });
-          if (!synced) {
-            priceSyncNote = "تغيّرت حالة الملفّ التجاري أثناء الحفظ — راجع السعر المعتمد.";
-          }
-        } catch (e) {
-          console.error("[medical] exam price sync failed:", e);
-          priceSyncNote = "تعذّر تحديث السعر المعتمد — راجعه في بطاقة قرار المريض.";
-        }
-      }
-
-      await logAudit({
+      const revisionValues = {
+        caseType, prescription, deviceCost, proposedExpertUserId, ...body,
+      };
+      const editor = { userId: session.userId, userName: editorName };
+      const auditNote = (version: number) =>
+        `تعديل المعاينة #${examId} إلى النسخة ${version} — بواسطة ${editorName}${isAuthor ? "" : " (مدير)"}`
+        + (priceChanged
+          ? ` — تصحيح كلفة الجهاز: ${(exam.deviceCost ?? 0).toLocaleString("en-US")}`
+            + ` ⟶ ${(deviceCost ?? 0).toLocaleString("en-US")} د.ع`
+            + (priceVerdict?.kind === "sync" ? " (زُوّمن السعر المعتمد)" : " (بقي السعر التجاري)")
+          : "");
+      const auditFor = (version: number, tx?: any) => logAudit({
         entityType: "medical_exam",
         entityId: examId,
         action: "update",
@@ -516,16 +502,40 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         userName: editorName,
         branchId: exam.branchId,
         oldValues: exam,
-        newValues: updated,
+        newValues: { ...revisionValues, version },
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `تعديل المعاينة #${examId} إلى النسخة ${updated.version} — بواسطة ${editorName}${isAuthor ? "" : " (مدير)"}`
-          + (priceChanged
-            ? ` — تصحيح كلفة الجهاز: ${(exam.deviceCost ?? 0).toLocaleString("en-US")}`
-              + ` ⟶ ${(deviceCost ?? 0).toLocaleString("en-US")} د.ع`
-              + (priceVerdict?.kind === "sync" ? " (زُوّمن السعر المعتمد)" : " (بقي السعر التجاري)")
-            : ""),
+        notes: auditNote(version),
+        tx,
       });
+
+      let updated;
+      if (priceVerdict?.kind === "sync" && deviceCost !== null) {
+        // ══ **التصحيحُ والتزامنُ معاملةٌ واحدة** ═══════════════════════
+        //  كان التنقيحُ يُحفَظ أوّلاً ثم يُحاوَل التزامن. وسقوطُ الثانية كان
+        //  يترك حالاً لا يجوز أن توجد: معاينةٌ تقول ٦,٥٠٠,٠٠٠ ومتابعةٌ تقول
+        //  ٦,٠٠٠,٠٠٠ — والاستعلاماتُ تقبض على الثانية.
+        //
+        //  **والسجلُّ معهما**: تدقيقٌ يصف تصحيحاً لم يقع كذبٌ على السجلّ.
+        //  فالأربعة — النسخة، والسعر، وحدثُ المتابعة، والتدقيق — تنجح معاً
+        //  أو تسقط معاً، ويبقى الرقمُ القديم في الجهتين.
+        //
+        //  وأيُّ انحرافٍ يكتشفه القفلُ داخلها يُرمى، فيُرجِع التنقيحَ نفسه.
+        const fs = await import("../followup/store");
+        const { db } = await import("../db");
+        updated = await db.transaction(async (tx) => {
+          const revised = await store.reviseExam(examId, revisionValues, editor, { tx });
+          await fs.applyExamPriceCorrection({
+            followupId: priceVerdict!.kind === "sync" ? priceVerdict!.followupId : 0,
+            newPrice: deviceCost, actor: editor, tx,
+          });
+          await auditFor(revised.version, tx);
+          return revised;
+        });
+      } else {
+        updated = await store.reviseExam(examId, revisionValues, editor);
+        await auditFor(updated.version);
+      }
 
       res.json({
         ...updated, switchNote: applied.switchNote ?? null,
@@ -536,6 +546,12 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // must read WHY and what to do instead, not a bare 500.
       if (err instanceof DeviceEpisodeError) {
         return res.status(err.status).json({ error: err.message });
+      }
+      //  **وانحرافُ الملفّ التجاري تحت القفل جوابُ عملٍ أيضاً**: المعاملةُ
+      //  رجعت كلُّها — لا نسخةَ حُفظت ولا سعرَ تحرّك — والطبيبُ يحتاج أن
+      //  يعرف ذلك ليحدّث ويعيد، لا خمسمئةً غامضة.
+      if (err?.name === "FollowupError") {
+        return res.status(err.status ?? 409).json({ error: err.message });
       }
       console.error("[medical] PATCH exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر تعديل المعاينة" });

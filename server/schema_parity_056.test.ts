@@ -449,6 +449,16 @@ async function main() {
            (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage)
          VALUES ($1,1,$2,'prosthetic','maintenance','completed','delivered') RETURNING id`,
         [seedPatient, seedExpert])).rows[0].id;
+      //  **وحلقةُ مسندٍ طبيّ** — الجدولُ مشترَك، وهذا هو الصفُّ الذي كانت
+      //  الصيغةُ الأولى تصفه بأنه «طرفٌ كامل» في العمود نفسه.
+      const seedSupportCase = (await c.query(
+        `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, status)
+         VALUES ($1,1,'medical_support',0,'active') RETURNING id`, [seedPatient])).rows[0].id;
+      const seedSupportEpisode = (await c.query(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost)
+         VALUES ($1,$2,1,1,'delivered',0) RETURNING id`,
+        [seedPatient, seedSupportCase])).rows[0].id;
 
       await c.query(migration060.sql);
       check(true, "٣ز. تطبيقُ الترحيل ٠٦٠ نجح على قاعدةٍ فيها صفوفٌ قائمة");
@@ -457,8 +467,14 @@ async function main() {
       const legacy = (await c.query(
         `SELECT requested_item, component FROM patient_device_episodes WHERE id = $1`,
         [seedEpisode])).rows[0];
-      same("٣ح. **والصفُّ القديم صار «طرفاً كاملاً» بلا جزء** — تسجيلُ واقعٍ لا ترميم",
-        [legacy.requested_item, legacy.component], ["full_prosthesis", null]);
+      same("٣ح. **وحلقةُ الأطراف القديمة صارت «جهازاً كاملاً» بلا جزء**",
+        [legacy.requested_item, legacy.component], ["full_device", null]);
+      //  **وهذا هو تصحيحُ المالك**: المسندُ لا يُوصَف طرفاً في العمود نفسه.
+      const legacySupport = (await c.query(
+        `SELECT requested_item, component FROM patient_device_episodes WHERE id = $1`,
+        [seedSupportEpisode])).rows[0];
+      same("٣ح ب. **وحلقةُ المسند كذلك — بقيمةٍ محايدة لا «طرف»**",
+        [legacySupport.requested_item, legacySupport.component], ["full_device", null]);
       const legacyWo = (await c.query(
         `SELECT maintenance_component FROM prosthetic_work_orders WHERE id = $1`,
         [seedMaint])).rows[0];
@@ -482,8 +498,8 @@ async function main() {
         DROP CONSTRAINT IF EXISTS patient_device_episodes_component_check`);
       await c.query(`ALTER TABLE patient_device_episodes
         ADD CONSTRAINT patient_device_episodes_component_check
-        CHECK ((requested_item = 'full_prosthesis' AND component IS NULL)
-               OR (requested_item <> 'full_prosthesis' AND component = requested_item))`);
+        CHECK ((requested_item = 'full_device' AND component IS NULL)
+               OR (requested_item <> 'full_device' AND component = requested_item))`);
       await c.query(migration060.sql);
       const conv60 = (await c.query(
         `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
@@ -491,6 +507,30 @@ async function main() {
             AND conrelid = 'patient_device_episodes'::regclass`)).rows[0].d;
       check(String(conv60).includes("component IS NOT NULL"),
         "٣ي أ. **والصيغةُ الأرخى يُعاد بناؤها** — تقارُبٌ لا مجرّد أمانٍ", conv60);
+
+      //  ── **والسنتينلُ القديم يُرقَّى** ──────────────────────────────
+      //  قاعدةُ تطويرٍ طبّقت الصيغةَ الأولى من ٠٦٠ تحمل `full_prosthesis`.
+      //  والترحيلُ لم يُنشَر بعد، فالترقيةُ فيه هي الطريقُ الصحيح — لا
+      //  ترحيلٌ ثانٍ يُضاف لتصحيح ترحيلٍ لم يخرج.
+      await c.query(`ALTER TABLE patient_device_episodes
+        DROP CONSTRAINT IF EXISTS patient_device_episodes_requested_item_check,
+        DROP CONSTRAINT IF EXISTS patient_device_episodes_component_check`);
+      await c.query(`ALTER TABLE patient_device_episodes
+        ALTER COLUMN requested_item SET DEFAULT 'full_prosthesis'`);
+      await c.query(`UPDATE patient_device_episodes SET requested_item = 'full_prosthesis'`);
+      await c.query(migration060.sql);
+      const upgraded = (await c.query(
+        `SELECT DISTINCT requested_item FROM patient_device_episodes`)).rows
+        .map((r: any) => r.requested_item);
+      same("٣ي ب. **والاسمُ القديم يُرقَّى إلى المحايد** — لا صفَّ يبقى «طرفاً»",
+        upgraded, ["full_device"]);
+      const defAfter = (await c.query(
+        `SELECT pg_get_expr(d.adbin, d.adrelid) def FROM pg_attribute a
+           JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+          WHERE a.attrelid = 'patient_device_episodes'::regclass
+            AND a.attname = 'requested_item'`)).rows[0].def;
+      check(String(defAfter).includes("full_device"),
+        "   **والافتراضُ يُرقَّى معه**", String(defAfter));
 
       //  ── **والقيدُ يمنع فعلاً** ما تمنعه الشيفرة ──
       const rejects = async (label: string, q: string, params: any[] = []) => {
@@ -501,7 +541,7 @@ async function main() {
         rejects("جزءٌ مخترَع", `UPDATE patient_device_episodes
            SET requested_item='elbow', component='elbow' WHERE id=$1`, [seedEpisode]),
         rejects("كاملٌ بجزء", `UPDATE patient_device_episodes
-           SET requested_item='full_prosthesis', component='knee' WHERE id=$1`, [seedEpisode]),
+           SET requested_item='full_device', component='knee' WHERE id=$1`, [seedEpisode]),
         rejects("جزءٌ بلا جزء", `UPDATE patient_device_episodes
            SET requested_item='knee', component=NULL WHERE id=$1`, [seedEpisode]),
         rejects("عمودان مختلفان", `UPDATE patient_device_episodes
@@ -528,7 +568,7 @@ async function main() {
       same("٣ل. **والتركيبةُ الصحيحة تمرّ**",
         [good.requested_item, good.component], ["knee", "knee"]);
       await c.query(`UPDATE patient_device_episodes
-         SET requested_item='full_prosthesis', component=NULL WHERE id=$1`, [seedEpisode]);
+         SET requested_item='full_device', component=NULL WHERE id=$1`, [seedEpisode]);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -671,7 +711,7 @@ async function main() {
       return [c.data_type, c.not_null, String(c.default ?? "")];
     };
     same("٢٩. **«ما المطلوب» نصٌّ إلزاميّ افتراضُه الطرفُ الكامل**",
-      partCol("requested_item"), ["text", true, "'full_prosthesis'::text"]);
+      partCol("requested_item"), ["text", true, "'full_device'::text"]);
     same("٣٠. **والجزءُ نصٌّ يقبل الفراغ بلا افتراض** — الفراغُ معناه «كامل»",
       partCol("component"), ["text", false, ""]);
     same("٣١. **وجزءُ الصيانة يقبل الفراغ** — الأوامرُ القديمة لم تسجّله",
@@ -679,7 +719,7 @@ async function main() {
       ["text", false]);
     const itemDef = String(
       fromMigrations.pde_part_checks?.patient_device_episodes_requested_item_check ?? "");
-    check(["full_prosthesis", "socket", "silicone", "knee", "tube",
+    check(["full_device", "socket", "silicone", "knee", "tube",
       "adapter", "foot", "foam_cover", "foot_shell"].every((v) => itemDef.includes(`'${v}'`)),
       "٣٢. **والقيمُ التسع كلُّها في قيد القاعدة**", itemDef);
     const lockstep = String(

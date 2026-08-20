@@ -559,20 +559,52 @@ export async function classifyExamPriceChange(params: {
 /**
  * **يُنزل تصحيحَ الطبيب على السعر التجاري** — بحدثٍ يقرأه الجميع.
  *
- * يُنادى بعد `classifyExamPriceChange` وحدها، ويعيد فحصَ الشروط **تحت
- * القفل**: بين التصنيف والكتابة قد يعتمد أحدٌ خصماً أو يؤكّد شراءً.
+ * ══ يُنادى **داخل معاملة تنقيح المعاينة نفسها** ═══════════════════════
+ * كان يُنادى بعدها: تُحفَظ النسخةُ الجديدة أوّلاً، ثم يُحاوَل التزامن. وسقوطُ
+ * الثانية كان يترك النظام في حالٍ لا يجوز أن توجد — معاينةٌ تقول ٦,٥٠٠,٠٠٠
+ * ومتابعةٌ تقول ٦,٠٠٠,٠٠٠، والاستعلاماتُ تقبض على الثانية. فصارتا معاملةً
+ * واحدة: تنجحان معاً أو تسقطان معاً، ويبقى الرقمُ القديم في الاثنين.
+ *
+ * ══ ويُعيد فحصَ الشروط **تحت القفل** ═══════════════════════════════════
+ * التصنيفُ (`classifyExamPriceChange`) لقطةٌ بلا قفل، وبينها وبين الكتابة
+ * قد يعتمد أحدٌ خصماً أو يؤكّد شراءً أو **يفتح طلبَ خصمٍ محسوباً على الرقم
+ * القديم**. والقفلُ على صفّ المتابعة هو نقطةُ التسلسل التي يشترك فيها
+ * البابان: `requestDiscount` يأخذه أيضاً قبل أن يكتب طلبَه.
+ *
+ * **ويُرمى ولا يُرجَع `null`**: النداءُ داخل معاملةٍ تحمل تنقيحَ المعاينة،
+ * فالرميُ وحده يُرجِعها — و«لم أفعل شيئاً» بصمتٍ كان يترك النسخةَ محفوظة.
  */
 export async function applyExamPriceCorrection(params: {
   followupId: number; newPrice: number; actor: Actor; tx?: any;
-}): Promise<FollowupRow | null> {
+}): Promise<FollowupRow> {
   const price = Number(params.newPrice);
   if (!Number.isInteger(price) || price <= 0) {
     throw new FollowupError("كلفة الجهاز يجب أن تكون مبلغاً موجباً بالدينار الصحيح", 400);
   }
+  const DRIFT = "تغيّرت حالة الملفّ التجاري أثناء الحفظ — لم يُعدَّل شيء. حدّث الصفحة وأعد المحاولة.";
   const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
     //  **الشروطُ تُعاد تحت القفل**: التصنيفُ لقطةٌ قد تشيخ.
-    if (cur.priceSource !== "exam" || cur.approvedPrice === price) return null;
+    if (cur.priceSource !== "exam" || cur.convertedWorkOrderId !== null) {
+      throw new FollowupError(DRIFT, 409);
+    }
+    if (cur.approvedPrice === price) throw new FollowupError(DRIFT, 409);
+    //  **وطلبُ الخصم المعلَّق يُفحَص هنا** لا في التصنيف وحده: هو الطرفُ
+    //  الآخر من السباق، وقد وُلد بعد التصنيف وقبل هذا السطر. وتحريكُ
+    //  الأصلِ تحته يجعل خصماً معتمَداً يُحسَب على رقمٍ لم يعد قائماً.
+    const pend = await tx.execute(sql`
+      SELECT id FROM service_discount_requests
+       WHERE patient_id = ${cur.patientId}
+         AND department = ${cur.serviceType}
+         AND status = 'pending'
+       LIMIT 1
+    `);
+    if ((pend.rows ?? []).length > 0) {
+      throw new FollowupError(
+        "فُتح طلب خصم على السعر السابق أثناء الحفظ — لم يُعدَّل شيء."
+        + " احسم الطلب ثم صحّح السعر.", 409,
+      );
+    }
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET approved_price = ${price}, updated_at = NOW()
@@ -581,7 +613,7 @@ export async function applyExamPriceCorrection(params: {
       RETURNING ${SELECT_COLS}
     `);
     const row = (upd.rows ?? [])[0];
-    if (!row) return null;
+    if (!row) throw new FollowupError(DRIFT, 409);
     await appendEvent(tx, {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
       //  **نوعٌ خاصٌّ به لا `commercial_price_set`**: ذاك قرارُ مديرٍ

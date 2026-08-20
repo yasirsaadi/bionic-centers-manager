@@ -77,9 +77,14 @@ async function http(method: string, path: string, session: any, body?: any) {
 
 async function mkPatient(name: string, totalCost = 0) {
   const r = await q<{ id: number }>(
+    //  **المقاساتُ وتعريفُ البتر كاملان**: بدءُ جهازٍ جديد يشترطهما — الطرفُ
+    //  يُصنَع عليها، وملفٌّ ناقصٌ لا يدخل دورةَ تصنيعٍ جديدة.
     `INSERT INTO patients (name, phone, phone_e164, phone_status, referral_source, age,
+       height, weight, amputation_site,
        medical_condition, branch_id, is_amputee, total_cost, patient_classification)
-     VALUES ($1,'07701234567','+9647701234567','ok',$2,'40','amputee',1,true,$3,'new') RETURNING id`,
+     VALUES ($1,'07701234567','+9647701234567','ok',$2,'40','172','78',
+             'احادي - طرف سفلي - يمين - تحت الركبة',
+             'amputee',1,true,$3,'new') RETURNING id`,
     [name, MARK, totalCost]);
   return r[0].id;
 }

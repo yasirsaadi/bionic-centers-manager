@@ -442,8 +442,18 @@ export async function reviseExam(
     notes: string | null;
   },
   editor: { userId: number | null; userName: string },
+  /**
+   * **معاملةُ المُستدعي** — يمرّرها تصحيحُ السعر فيصير التنقيحُ والتزامنُ
+   * والحدثُ معاملةً واحدة: تنجح معاً أو تسقط معاً. ومَن لا يمرّر شيئاً
+   * يفتح معاملته كما كان — نفسُ نمط `createMaintenanceOrderWithVisit`.
+   *
+   * ولا نسخةَ ثانية من منطق النسخ: الجسمُ واحد، والفرقُ مَن يملك المعاملة.
+   */
+  opts?: { tx?: any },
 ): Promise<MedicalExam> {
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
+    //  ختمُ ٠٢٨ يرفض أيّ تعديلٍ لم يفتح البابَ المراقَب — ويُفتَح داخل
+    //  المعاملة العاملة أيّاً كان صاحبُها، فـ`SET LOCAL` نطاقُها المعاملة.
     await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
 
     const [current] = await tx.select().from(EX).where(eq(EX.id, examId));
@@ -524,7 +534,8 @@ export async function reviseExam(
       .returning();
 
     return updated;
-  });
+  };
+  return opts?.tx ? await body(opts.tx) : await db.transaction(body);
 }
 
 /** Every superseded version of an exam, oldest first. */

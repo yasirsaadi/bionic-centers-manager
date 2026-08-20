@@ -22,8 +22,8 @@ import {
   type PatientDeviceEpisodeStatus,
 } from "@shared/schema";
 import {
-  isRequestedItem, isProstheticComponent, componentOfRequest,
-  type RequestedItem, type ProstheticComponent,
+  isRequestedItem, isProstheticComponent, componentOfRequest, parseRequestedItem,
+  FULL_DEVICE, type RequestedItem, type ProstheticComponent,
 } from "@shared/prosthetic_parts";
 
 /** الاختصاصان اللذان يُشترى فيهما جهاز. العلاج الطبيعي لا حلقة له. */
@@ -63,11 +63,14 @@ export interface DeviceEpisodeView {
   status: string;
   agreedCost: number;
   /**
-   * **ما طُلب** (ترحيل ٠٦٠): طرفٌ كامل أو جزءٌ بعينه. والقيمُ في
-   * `shared/prosthetic_parts`، والصفوفُ السابقة كلُّها `full_prosthesis`.
+   * **ما طُلب** (ترحيل ٠٦٠): جهازٌ كامل أو جزءٌ بعينه. والقيمُ في
+   * `shared/prosthetic_parts`، والصفوفُ السابقة كلُّها `full_device`.
+   *
+   * والقيمةُ محايدةٌ بين الأطراف والمساند — العنوانُ يُشتقّ من
+   * `serviceType` عند العرض، فلا يُوصَف مسندٌ بأنه طرف.
    */
   requestedItem: RequestedItem;
-  /** الجزءُ وحده — `null` للطرف الكامل. مشتقٌّ ومحروسٌ بقيدٍ يلازم الأوّل. */
+  /** الجزءُ وحده — `null` للجهاز الكامل. مشتقٌّ ومحروسٌ بقيدٍ يلازم الأوّل. */
   component: ProstheticComponent | null;
   branchId: number | null;
   createdAt: string | null;
@@ -87,8 +90,9 @@ function toView(r: Record<string, any>): DeviceEpisodeView {
     sequenceNumber: Number(r.sequence_number),
     status: String(r.status),
     agreedCost: Number(r.agreed_cost ?? 0),
-    //  والغيابُ يُقرأ «طرف كامل»: صفوفُ ما قبل الترحيل كلُّها كذلك فعلاً.
-    requestedItem: isRequestedItem(r.requested_item) ? r.requested_item : "full_prosthesis",
+    //  والغيابُ يُقرأ «جهازاً كاملاً»: صفوفُ ما قبل الترحيل كلُّها كذلك
+    //  فعلاً — أطرافاً كانت أو مساند.
+    requestedItem: isRequestedItem(r.requested_item) ? r.requested_item : FULL_DEVICE,
     component: isProstheticComponent(r.component) ? r.component : null,
     branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
     createdAt: iso(r.created_at),
@@ -335,18 +339,22 @@ export async function startDeviceEpisode(params: {
   serviceType: DeviceServiceType;
   createdBy: number | null;
   /**
-   * **ما طُلب** — طرفٌ كامل أو جزءٌ بعينه (ترحيل ٠٦٠).
+   * **ما طُلب** — جهازٌ كامل أو جزءٌ بعينه (ترحيل ٠٦٠).
    *
-   * الغيابُ يُقرأ «طرف كامل»: نافذةٌ قديمة مفتوحةٌ منذ ما قبل النشر لا
-   * ترسله، ولا يجوز أن تُردّ وهي تفعل ما كانت تفعله دائماً. والمساندُ
-   * الطبية لا أجزاءَ لها في هذه القائمة، فتبقى على الكامل حتماً.
+   * الغيابُ يُقرأ «جهازاً كاملاً»: نافذةٌ قديمة مفتوحةٌ منذ ما قبل النشر لا
+   * ترسله، ولا يجوز أن تُردّ وهي تفعل ما كانت تفعله دائماً.
+   *
+   * **والجزءُ على مسندٍ طبيّ يُردّ لا يُصحَّح**: تصحيحُه إلى «كامل» — كما
+   * كان يفعل هذا السطر — يمرّر طلباً لم يقصده أحد، ويكتب في السجلّ أن
+   * المريض طلب مسنداً كاملاً وهو طلب ركبة. والحارسُ هنا لا في النقطة
+   * وحدها: ما يصل من العميل لا يُوثَق به، وهذه هي الطبقةُ القانونية.
    */
   requestedItem?: RequestedItem | null;
 }): Promise<DeviceEpisodeView> {
   const { patientId, serviceType, createdBy } = params;
-  const requestedItem: RequestedItem =
-    serviceType === "prosthetic" && isRequestedItem(params.requestedItem)
-      ? params.requestedItem : "full_prosthesis";
+  const parsed = parseRequestedItem(params.requestedItem, serviceType);
+  if (!parsed.ok) throw new DeviceEpisodeError(parsed.error!, 400);
+  const requestedItem: RequestedItem = parsed.value ?? FULL_DEVICE;
   //  **والجزءُ مشتقٌّ لا مُدخَل**: القيدُ في القاعدة يلازم بينهما، واشتقاقُه
   //  هنا يمنع أن يُكتب العمودان بيدين فينحرفا.
   const component = componentOfRequest(requestedItem);

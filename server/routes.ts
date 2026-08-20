@@ -31,7 +31,9 @@ import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
 import { patientActiveOnDate } from "./patient_activity";
-import { checkRequiredPatientData } from "@shared/patient_required";
+import {
+  checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
+} from "@shared/patient_required";
 import { aliasCodesByPatient } from "./patient_code/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
@@ -2159,14 +2161,22 @@ export async function registerRoutes(
         }
       }
 
-      // ══ **والتحريرُ يُكمِل الملفَّ القديم** ════════════════════════════
-      //  الملفّاتُ القديمة تُقرأ كما هي — لا تعبئةَ ولا تخمين. لكنّ مَن فتح
-      //  ملفّاً ليعدّله يقف على نقصه ويكمله قبل الحفظ، فتُنظَّف القاعدةُ
-      //  بمرور العمل لا بترحيلٍ يخترع أرقاماً.
+      // ══ **والتحريرُ يُكمِل ما يلمسه — لا ما لا يلمسه** ═════════════════
+      //  الملفّاتُ القديمة تُقرأ كما هي: لا تعبئةَ ولا تخمين. ومَن يلمس
+      //  المقاساتِ أو تعريفَ البتر **يكملها قبل الحفظ** — فلا يُحفَظ نصفُ
+      //  الحالة ويُترك الباقي لتعديلٍ لاحق لا يقع.
+      //
+      //  **لكنّ التصحيحَ الإداريَّ المحض لا يُمنَع**: هاتفٌ خاطئ، أو تصنيف،
+      //  أو عنوان. إجبارُ الموظّف على وزنٍ لا يملكه لحظتَها كي يصحّح رقم
+      //  هاتفٍ يوقف عملاً مشروعاً بلا مقابل — ونتيجتُه المعتادة أن يُخترَع
+      //  رقم، وهو أسوأ من الفراغ لأنه يُقرأ قياساً.
+      //
+      //  واللحظةُ التي **يجب** أن يكتمل فيها الملفّ هي دخولُه دورةَ تصنيعٍ
+      //  جديدة — يحرسها `POST /api/patients/:id/device-episodes`.
       //
       //  والفحصُ على **الصورة بعد الدمج**: التعديلُ الجزئي يرسل ما تغيّر
       //  وحده، فقياسُ الوارد وحده كان سيردّ تعديلَ هاتفٍ على ملفٍّ مكتمل.
-      {
+      if (!isAdministrativeOnlyPatch(req.body)) {
         const before = await storage.getPatient(id);
         const merged = {
           age: patch.age ?? before?.age,
@@ -2773,6 +2783,48 @@ export async function registerRoutes(
       const fields: any = {};
       for (const f of allowed) {
         if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
+      }
+
+      // ══ **فتحُ خيطِ أطرافٍ لا يُنتج ملفّاً نصفَ مكتمل** ═════════════════
+      //  هذه النقطة كانت ترفع `is_amputee` **بلا موقع بتر** — فيُولَد ملفٌّ
+      //  مبتورٌ بلا تعريفِ بتره، ويُترك إكمالُه لتعديلٍ لاحقٍ لا يقع. ثم
+      //  يصطدم به الطبيبُ في المعاينة والخبيرُ في القياس.
+      //
+      //  فالبياناتُ تُجمَع **في المسار نفسه**: تعريفُ البتر منظَّماً،
+      //  والمقاساتُ الثلاث إن كانت ناقصةً على الملفّ — تُقبَل هنا وتُكتب مع
+      //  فتح الخيط، أو يُردّ الطلبُ بما ينقص.
+      //
+      //  والمساندُ والعلاجُ الطبيعي لا يُسألان عن بتر إطلاقاً.
+      if (caseType === "amputee") {
+        const site = typeof fields.amputationSite === "string" ? fields.amputationSite : "";
+        const amp = checkAmputationSite(site);
+        if (!amp.ok) {
+          return res.status(400).json({
+            message: `${amp.message} — تعريف البتر يُحدَّد عند فتح حالة الأطراف`,
+            missing: amp.missing,
+          });
+        }
+        //  والمقاساتُ تُقبَل هنا لمَن نقصته: الطرفُ يُصنَع عليها.
+        const measures: any = {};
+        for (const f of ["age", "height", "weight"] as const) {
+          if (typeof req.body?.[f] === "string" && req.body[f].trim()) {
+            measures[f] = req.body[f].trim();
+          }
+        }
+        const merged = {
+          age: measures.age ?? patient.age,
+          height: measures.height ?? (patient as any).height,
+          weight: measures.weight ?? (patient as any).weight,
+          isAmputee: true, amputationSite: site,
+        };
+        const reqCase = checkRequiredPatientData(merged);
+        if (!reqCase.ok) {
+          return res.status(400).json({
+            message: `${reqCase.message} — تُستكمل عند فتح حالة الأطراف`,
+            missing: reqCase.missing,
+          });
+        }
+        Object.assign(fields, measures);
       }
 
       const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);

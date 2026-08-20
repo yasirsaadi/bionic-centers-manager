@@ -1,5 +1,5 @@
 /**
- * Migration 060 — **ما المطلوب**: طرفٌ كامل أم جزءٌ منه
+ * Migration 060 — **ما المطلوب**: جهازٌ كامل أم جزءٌ منه
  *
  * ══ العطبُ الذي يغلقه ═══════════════════════════════════════════════════
  * المريضُ العائد نادراً ما يطلب طرفاً كاملاً: تنكسر ركبةٌ، أو يتمزّق
@@ -16,21 +16,31 @@
  *   • `prosthetic_work_orders.maintenance_component` — الجزءُ المُصان.
  *
  * ولماذا عمودان على الحلقة لا واحد؟ لأن السؤالين مختلفان: «ماذا طلب» يشمل
- * الطرفَ الكامل، و«أيُّ جزء» لا يشمله. وفصلُهما يجعل استعلامَ «كم ركبةً
+ * الجهازَ الكامل، و«أيُّ جزء» لا يشمله. وفصلُهما يجعل استعلامَ «كم ركبةً
  * بعنا هذا الشهر» فهرساً على عمودٍ ضيّق لا مسحاً بـ`CASE`. والقيدُ يربطهما
- * فلا ينحرفان: `full_prosthesis` ⟺ `component IS NULL`.
+ * فلا ينحرفان: `full_device` ⟺ `component IS NULL`.
+ *
+ * ══ ولماذا السنتينلُ محايد ═════════════════════════════════════════════
+ * **الجدولُ مشترَك بين الأطراف والمساند.** فقيمةٌ اسمُها «طرفٌ كامل» على
+ * حلقةِ مسندٍ طبيّ كذبٌ في العمود نفسه — تُقرأ في التقارير وفي السجلّ وفي
+ * كل استعلامٍ لاحق فتصف مسنداً بأنه طرف. فالقيمةُ `full_device` محايدة،
+ * والعنوانُ يُشتقّ من نوع الخدمة عند العرض: «طرف صناعي كامل» أو «مسند طبي
+ * كامل». والأجزاءُ الثمانية قطعُ طرفٍ بعينها، فتُردّ على المساند — وذاك
+ * شرطٌ عبر جدولين لا تعبّر عنه CHECK، فيُحرَس في المخزن داخل معاملته.
  *
  * ══ ولا صفَّ تاريخيٌّ يُعاد تفسيره ═════════════════════════════════════
- * كلُّ حلقةٍ قائمة اليوم **هي طرفٌ كامل فعلاً** — لم يكن للنظام باب غيره.
- * فالتعبئةُ ليست ترميماً لنقصٍ بل تسجيلُ ما هو واقع. و`component` تبقى
- * `NULL` لها جميعاً: **لا صفَّ قديم يصير جزءاً**.
+ * كلُّ حلقةٍ قائمة اليوم **هي جهازٌ كامل فعلاً** — لم يكن للنظام باب غيره،
+ * لا لطرفٍ ولا لمسند. فالتعبئةُ ليست ترميماً لنقصٍ بل تسجيلُ ما هو واقع،
+ * وهي **صادقةٌ للنوعين معاً**. و`component` تبقى `NULL` لها جميعاً:
+ * **لا صفَّ قديم يصير جزءاً**.
  *
  * وأوامرُ الصيانة القديمة تبقى `maintenance_component IS NULL` — «لم يُسجَّل
  * الجزء» حقيقةٌ عنها، وادّعاءُ جزءٍ بعينه كذبٌ على السجلّ. والإلزامُ في
  * التطبيق للجديد وحده.
  *
- * idempotent: `ADD COLUMN IF NOT EXISTS`، وقيودٌ تُفحَص بأسمائها قبل
- * إضافتها، وتعبئةٌ مشروطة بـ`IS NULL` فلا تكتب فوق شيء.
+ * idempotent **ومتقارِب**: `ADD COLUMN IF NOT EXISTS`، وقيودٌ تُفحَص
+ * **بنصّ تعريفها** لا باسمها فتُعاد بناءً حين تكون بصيغةٍ أقدم، وتعبئةٌ
+ * مشروطة فلا تكتب فوق قيمةٍ قصدها أحد.
  */
 
 export const name = "060_prosthetic_parts";
@@ -42,14 +52,53 @@ ALTER TABLE patient_device_episodes
 ALTER TABLE patient_device_episodes
   ADD COLUMN IF NOT EXISTS component TEXT;
 
--- تعبئةُ ما هو واقعٌ فعلاً: كلُّ حلقةٍ قائمة طرفٌ كامل.
+-- **القيودُ القديمة تُنزَع قبل التعبئة** — وإلّا رُدَّت القيمةُ الجديدة
+-- بقيدٍ يعرف القديمةَ وحدها. والفحصُ على **نصّ التعريف** لا على الاسم:
+-- idempotent تعني واحديّةَ النتيجة لا مجرّد أمانِ الإعادة.
+DO $r0$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'patient_device_episodes_requested_item_check'
+       AND conrelid = 'patient_device_episodes'::regclass
+       AND pg_get_constraintdef(oid) NOT LIKE '%full_device%'
+  ) THEN
+    ALTER TABLE patient_device_episodes
+      DROP CONSTRAINT patient_device_episodes_requested_item_check;
+  END IF;
+
+  -- و IS NOT NULL **صريحةٌ عمداً**: المساواةُ وحدها (component = requested_item)
+  -- تُقيَّم NULL حين يكون العمود فارغاً، و CHECK تقبل NULL (لا تردّ إلّا
+  -- FALSE) — فصفٌّ يقول «ركبة» بلا جزءٍ كان يمرّ.
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'patient_device_episodes_component_check'
+       AND conrelid = 'patient_device_episodes'::regclass
+       AND (pg_get_constraintdef(oid) NOT LIKE '%component IS NOT NULL%'
+            OR pg_get_constraintdef(oid) NOT LIKE '%full_device%')
+  ) THEN
+    ALTER TABLE patient_device_episodes
+      DROP CONSTRAINT patient_device_episodes_component_check;
+  END IF;
+END
+$r0$;
+
+-- **تعبئةُ ما هو واقعٌ فعلاً: كلُّ حلقةٍ قائمة جهازٌ كامل.**
+--
+-- والسنتينلُ محايدٌ عمداً: هذا الجدولُ مشترَك بين الأطراف والمساند، فقيمةٌ
+-- اسمُها «طرفٌ كامل» على حلقةِ مسندٍ طبيّ كذبٌ في العمود نفسه. والعنوانُ
+-- يُشتقّ من نوع الخدمة عند العرض («طرف صناعي كامل» / «مسند طبي كامل»).
+--
+-- والشرطُ يشمل 'full_prosthesis': قواعدُ التطوير التي طبّقت الصيغةَ الأولى
+-- من هذا الترحيل نفسِه تتقارب إليها — والترحيلُ لم يُنشَر بعد فلا صفَّ
+-- إنتاجيٍّ يحمله.
 UPDATE patient_device_episodes
-   SET requested_item = 'full_prosthesis'
- WHERE requested_item IS NULL;
+   SET requested_item = 'full_device'
+ WHERE requested_item IS NULL OR requested_item = 'full_prosthesis';
 
 -- ثم يصير الحقلُ إلزامياً بقيمةٍ افتراضية للصفوف الجديدة الصامتة.
 ALTER TABLE patient_device_episodes
-  ALTER COLUMN requested_item SET DEFAULT 'full_prosthesis';
+  ALTER COLUMN requested_item SET DEFAULT 'full_device';
 ALTER TABLE patient_device_episodes
   ALTER COLUMN requested_item SET NOT NULL;
 
@@ -63,29 +112,16 @@ BEGIN
     ALTER TABLE patient_device_episodes
       ADD CONSTRAINT patient_device_episodes_requested_item_check
       CHECK (requested_item IN (
-        'full_prosthesis', 'socket', 'silicone', 'knee', 'tube',
+        'full_device', 'socket', 'silicone', 'knee', 'tube',
         'adapter', 'foot', 'foam_cover', 'foot_shell'));
   END IF;
 
-  -- **العمودان متلازمان**: طرفٌ كامل ⟺ لا جزء. وجزءٌ ⟺ الاسمُ نفسه في
-  -- العمودين. فلا صفَّ يقول «طرف كامل» ويحمل ركبةً، ولا عكسُه.
+  -- **العمودان متلازمان**: جهازٌ كامل ⟺ لا جزء. وجزءٌ ⟺ الاسمُ نفسه في
+  -- العمودين. فلا صفَّ يقول «كامل» ويحمل ركبةً، ولا عكسُه.
   --
-  -- و IS NOT NULL **صريحةٌ عمداً**: المساواةُ وحدها (component = requested_item)
-  -- تُقيَّم NULL حين يكون العمود فارغاً، و CHECK تقبل NULL (لا تردّ إلّا
-  -- FALSE) — فصفٌّ يقول «ركبة» بلا جزءٍ كان يمرّ.
-  --
-  -- وصيغةٌ أقدم تُنزَع أوّلاً لا تُترك لأن الاسم موجود: idempotent تعني
-  -- **واحديّةَ النتيجة** لا مجرّد أمانِ الإعادة.
-  IF EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conname = 'patient_device_episodes_component_check'
-       AND conrelid = 'patient_device_episodes'::regclass
-       AND pg_get_constraintdef(oid) NOT LIKE '%component IS NOT NULL%'
-  ) THEN
-    ALTER TABLE patient_device_episodes
-      DROP CONSTRAINT patient_device_episodes_component_check;
-  END IF;
-
+  -- **وأنّ الأجزاء للأطراف وحدها** شرطٌ عبر جدولين (نوعُ الحالة على
+  -- patient_cases)، و CHECK لا تقرأ جدولاً آخر. فيُحرَس في المخزن داخل
+  -- المعاملة المقفلة التي تقرأ صفَّ الخيط أصلاً — لا بتريغرٍ يُضاف.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conname = 'patient_device_episodes_component_check'
@@ -94,8 +130,8 @@ BEGIN
     ALTER TABLE patient_device_episodes
       ADD CONSTRAINT patient_device_episodes_component_check
       CHECK (
-        (requested_item = 'full_prosthesis' AND component IS NULL)
-        OR (requested_item <> 'full_prosthesis'
+        (requested_item = 'full_device' AND component IS NULL)
+        OR (requested_item <> 'full_device'
             AND component IS NOT NULL AND component = requested_item));
   END IF;
 END

@@ -40,7 +40,7 @@ import { z } from "zod";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import {
-  PROSTHETIC_COMPONENTS, REQUESTED_ITEM_LABELS, type ProstheticComponent,
+  PROSTHETIC_COMPONENTS, COMPONENT_LABELS, type ProstheticComponent,
 } from "@shared/prosthetic_parts";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountBlocked,
@@ -517,7 +517,7 @@ export function VisitModal({
                       </SelectTrigger>
                       <SelectContent>
                         {PROSTHETIC_COMPONENTS.map((c) => (
-                          <SelectItem key={c} value={c}>{REQUESTED_ITEM_LABELS[c]}</SelectItem>
+                          <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

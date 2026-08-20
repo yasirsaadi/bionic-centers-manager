@@ -184,7 +184,7 @@ async function main() {
       [pAll, DAY]);
     await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
                sequence_number, status, agreed_cost, requested_item, created_at)
-             VALUES ($1,$2,1,1,'awaiting_exam',0,'full_prosthesis',
+             VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',
                      (($3::date + TIME '13:00') AT TIME ZONE 'Asia/Baghdad'))`,
       [pAll, cAll, DAY]);
     const rows = await activeOn(DAY);

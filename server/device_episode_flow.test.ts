@@ -566,7 +566,7 @@ async function main() {
     //  **والمساندُ الطبية لا أجزاءَ لها** — تبقى على الطرف الكامل حتماً.
     same("   والمسند طلبٌ كاملٌ بلا جزء",
       [list.body?.episodes?.[0]?.requestedItem, list.body?.episodes?.[0]?.component],
-      ["full_prosthesis", null]);
+      ["full_device", null]);
     same("ولا يقرأها موظّف فرعٍ آخر",
       (await http("GET", `/api/patients/${pX}/device-episodes`, S.otherBranch)).status, 403);
 
