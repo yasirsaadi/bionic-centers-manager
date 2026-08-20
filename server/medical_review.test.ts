@@ -613,7 +613,7 @@ async function main() {
     const mvRes = await http("POST", "/api/manufacturing/maintenance-visit", S.recv1, {
       maintenanceComponent: "knee",
       patientId: autoMaint, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
+      cost: 25_000, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
       reviewPath: "quick", reviewKind: "maintenance", reviewNote: "يشكو صريراً",
     });
     same("٢١. فتحُ الصيانة ينجح", mvRes.status, 201);

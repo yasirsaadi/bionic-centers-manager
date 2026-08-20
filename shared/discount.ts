@@ -208,3 +208,54 @@ export function canRequestServiceDiscount(
   if (s?.role === "branch_manager" || s?.role === "reception") return true;
   return s?.permissions?.canAddPatients === true;
 }
+
+// ── مراجعُ السياق — **هويّةُ الخدمة التي يخصّها الطلب** ───────────────────
+//
+// ══ العطبُ الذي تغلقه ═══════════════════════════════════════════════════
+// المريضُ العائد يملك **أكثر من جهاز**: طرفٌ سُلِّم قبل سنتين، وطلبٌ ثانٍ
+// اليوم. وفحصُ «هل لهذا المريض طلبُ خصمٍ معلَّق؟» بـ(مريض + قسم) وحدهما
+// يخلط الجهازين: **خصمٌ معلَّقٌ على الجهاز الأول يمنع تصحيحَ سعر الثاني**،
+// وبيعٌ اكتمل على الأول يجمّد الثاني — ولا علاقة لأحدهما بالآخر.
+//
+// فالهويّةُ **دقيقة**: مرجعُ المتابعة نفسِها، أو مرجعُ حلقتها. ولا مرجعَ
+// جديد يُخترَع — هذه هي المراجعُ التي تكتبها النقاطُ أصلاً منذ ٠٥٨.
+
+/** طلبٌ وُلد من نافذة «اشترى» — مربوطٌ بمتابعةٍ بعينها. */
+export const followupDiscountRef = (followupId: number | string) =>
+  `followup:${followupId}`;
+
+/** وطلبٌ وُلد من «تخصيص» على حلقةٍ حيّة — مربوطٌ بالحلقة. */
+export const episodeDiscountRef = (episodeId: number | string) =>
+  `episode:${episodeId}`;
+
+/**
+ * وطلبٌ وُلد من «تخصيص» بلا حلقة — مريضٌ قديم، **جهازُه واحدٌ بالتعريف**
+ * إذ لا حلقةَ تميّز جهازاً عن آخر.
+ */
+export const serviceDiscountRef = (serviceType: string) => `service:${serviceType}`;
+
+/** وصيانةٌ بخصم — مرجعُها نوعُ الخدمة، ولا تلتقي بمسار البيع. */
+export const maintenanceDiscountRef = (serviceType: string) =>
+  `maintenance:${serviceType}`;
+
+/**
+ * **المراجعُ التي تعني «هذا الجهاز بعينه»** — لفحص «هل عليه طلبٌ معلَّق؟».
+ *
+ * متابعةٌ واحدة قد يُفتَح عليها طلبٌ من بابين: نافذةُ «اشترى» (مرجعُ
+ * المتابعة) أو «تخصيص» على حلقتها (مرجعُ الحلقة). وكلاهما **الجهازُ نفسُه**.
+ *
+ * ومَن لا حلقةَ له يُضاف مرجعُ الخدمة: لا يوجد جهازٌ ثانٍ يخلط به.
+ */
+export function deviceDiscountRefs(params: {
+  followupId: number | string;
+  deviceEpisodeId?: number | string | null;
+  serviceType: string;
+}): string[] {
+  const refs = [followupDiscountRef(params.followupId)];
+  if (params.deviceEpisodeId !== null && params.deviceEpisodeId !== undefined) {
+    refs.push(episodeDiscountRef(params.deviceEpisodeId));
+  } else {
+    refs.push(serviceDiscountRef(params.serviceType));
+  }
+  return refs;
+}

@@ -343,6 +343,48 @@ async function main() {
         Number(orders[0].device_episode_id), ep);
     }
 
+    // ══ **والصفرُ وحده لا يعني «مجّاناً»** ═══════════════════════════════
+    //  كانت الصيانةُ تُقبل بصفر مباشرةً فتُفتَح **بلا اعتماد**: لا سببَ
+    //  مسجَّل ولا معتمِد ولا سطرَ في تقرير «كم تبرّعنا».
+    console.log("\n── ج. الصفر لا يعني مجّاناً ──");
+    {
+      const p = await mkPatient("صيانة بصفر");
+      const c = await mkCase(p);
+      const ep = await mkDeliveredEpisode(p, c);
+      const zero = await http("POST", "/api/manufacturing/maintenance-visit", S.reception,
+        { patientId: p, expertUserId: EXPERT, cost: 0,
+          maintenanceComponent: "knee", deviceEpisodeId: ep, notes: "صيانة" });
+      same("٢٦. **صيانةٌ بصفرٍ بلا تبرّعٍ صريح تُردّ ٤٠٠**", zero.status, 400);
+      check(String(zero.body?.error ?? "").includes("موجب"),
+        "   (والرسالةُ تدلّ على الباب الصحيح)", JSON.stringify(zero.body));
+      same("٢٧. **ولا أثرَ ماليّاً إطلاقاً** — لا أمرَ ولا زيارةَ ولا كلفة",
+        await moneyOf(p), { total: 0, visits: 0, cost_entries: 0, orders: 0 });
+      const [jl] = await q(
+        `SELECT count(*)::int AS n FROM journal_lines WHERE patient_id=$1`, [p]);
+      same("   (ولا سطرَ يومية)", jl.n, 0);
+
+      //  **والمجّانيّ من سعرٍ أصليٍّ موجب يمرّ** — بطابوره.
+      const free = await http("POST", "/api/manufacturing/maintenance-visit", S.reception,
+        { patientId: p, expertUserId: EXPERT, cost: 80000,
+          maintenanceComponent: "knee", deviceEpisodeId: ep,
+          discount: { isFree: true, reason: "humanitarian" } });
+      same("٢٨. **والتبرّعُ الصريح من سعرٍ موجب يُنشئ طلباً معلَّقاً**",
+        [free.status, free.body?.pendingApproval], [201, true]);
+      const [row] = await q(
+        `SELECT original_price::int AS orig, proposed_final_price::int AS fin, is_free
+           FROM service_discount_requests WHERE id=$1`, [free.body?.discountRequestId]);
+      same("٢٩. **بسعرٍ أصليٍّ موجبٍ ونهائيٍّ صفر**",
+        [row.orig, row.fin, row.is_free], [80000, 0, true]);
+      same("٣٠. **ولا شيءَ نُفِّذ قبل الاعتماد**",
+        await moneyOf(p), { total: 0, visits: 0, cost_entries: 0, orders: 0 });
+      const ok = await http("POST", `/api/discounts/${free.body?.discountRequestId}/decide`,
+        S.manager, { decision: "approve", isFree: true });
+      same("٣١. **والاعتمادُ ينفّذها بصفرٍ على المريض**", ok.status, 200);
+      const m = await moneyOf(p);
+      same("   (أمرٌ واحدٌ وزيارةٌ وبلا دينار)",
+        [m.orders, m.visits, m.total, m.cost_entries], [1, 1, 0, 0]);
+    }
+
     console.log("\n── ج. خصمُ الصيانة: طابورُ الاعتماد نفسه ──");
     let discountPatient = 0, discountRequest = 0, discountEpisode = 0;
     {
@@ -355,10 +397,10 @@ async function main() {
         { patientId: p, expertUserId: EXPERT, cost: 100000, maintenanceComponent: "foot",
           deviceEpisodeId: ep, notes: "صيانة القدم",
           discount: { finalPrice: 60000, reason: "humanitarian" } });
-      same("٢٦. **الخصمُ يُنشئ طلباً معلَّقاً لا أمراً**",
+      same("٣٢. **الخصمُ يُنشئ طلباً معلَّقاً لا أمراً**",
         [r.status, r.body?.pendingApproval, r.body?.id], [201, true, null]);
       discountRequest = r.body?.discountRequestId;
-      same("٢٧. **ولا شيءَ نُفِّذ قبل الاعتماد** — لا أمرَ ولا زيارةَ ولا كلفةَ ولا قيد",
+      same("٣٣. **ولا شيءَ نُفِّذ قبل الاعتماد** — لا أمرَ ولا زيارةَ ولا كلفةَ ولا قيد",
         await moneyOf(p), { total: 0, visits: 0, cost_entries: 0, orders: 0 });
       const [jl] = await q(
         `SELECT count(*)::int AS n FROM journal_lines WHERE patient_id=$1`, [p]);
@@ -368,12 +410,12 @@ async function main() {
       const [row] = await q(
         `SELECT original_price::int AS orig, proposed_final_price::int AS fin, payload, status
            FROM service_discount_requests WHERE id=$1`, [discountRequest]);
-      same("٢٨. **والسعرانِ على الصفّ لا في الحمولة**",
+      same("٣٤. **والسعرانِ على الصفّ لا في الحمولة**",
         [row.orig, row.fin, row.status], [100000, 60000, "pending"]);
       const payloadKeys = Object.keys(row.payload ?? {});
-      same("٢٩. **ولا سعرَ ثانٍ داخل الحمولة**",
+      same("٣٥. **ولا سعرَ ثانٍ داخل الحمولة**",
         payloadKeys.filter((k) => /price|cost/i.test(k)), []);
-      same("٣٠. **والحمولةُ تحمل ما يلزم الاستئناف فقط**",
+      same("٣٦. **والحمولةُ تحمل ما يلزم الاستئناف فقط**",
         [row.payload?.kind, row.payload?.maintenanceComponent,
           Number(row.payload?.deviceEpisodeId)],
         ["maintenance", "foot", ep]);
@@ -382,36 +424,36 @@ async function main() {
       const dup = await http("POST", "/api/manufacturing/maintenance-visit", S.reception,
         { patientId: p, expertUserId: EXPERT, cost: 100000, maintenanceComponent: "foot",
           deviceEpisodeId: ep, discount: { finalPrice: 50000, reason: "other" } });
-      same("٣١. **وطلبٌ معلَّقٌ ثانٍ على الصيانة نفسها يُردّ**", dup.status, 409);
+      same("٣٧. **وطلبٌ معلَّقٌ ثانٍ على الصيانة نفسها يُردّ**", dup.status, 409);
       same("   (وما زال أمرٌ واحدٌ صفراً)", (await ordersOf(p)).length, 0);
     }
     {
       //  ── الاعتماد: **الدالّةُ القانونية نفسها** تُنفَّذ ──
       const r = await http("POST", `/api/discounts/${discountRequest}/decide`,
         S.manager, { decision: "approve" });
-      same("٣٢. **والاعتمادُ ينفّذ الصيانة**", r.status, 200);
+      same("٣٨. **والاعتمادُ ينفّذ الصيانة**", r.status, 200);
       const orders = await ordersOf(discountPatient);
-      same("٣٣. **أمرُ صيانةٍ واحدٌ بالضبط** — لا اثنان ولا صفر",
+      same("٣٩. **أمرُ صيانةٍ واحدٌ بالضبط** — لا اثنان ولا صفر",
         orders.map((o: any) => [o.purpose, o.maintenance_component, o.status]),
         [["maintenance", "foot", "active"]]);
-      same("٣٤. **وبالجهاز المُصان نفسه**",
+      same("٤٠. **وبالجهاز المُصان نفسه**",
         Number(orders[0].device_episode_id), discountEpisode);
       const m = await moneyOf(discountPatient);
-      same("٣٥. **والمقيَّدُ هو السعرُ المعتمَد لا الأصلي**",
+      same("٤١. **والمقيَّدُ هو السعرُ المعتمَد لا الأصلي**",
         [m.total, m.visits, m.cost_entries], [60000, 1, 1]);
       const [ce] = await q(
         `SELECT amount::int AS amt, source FROM cost_entries WHERE patient_id=$1`,
         [discountPatient]);
       //  **ومصدرُ القيد `maintenance`** — فيُبوَّب في «أجهزة» كصيانةٍ عادية،
       //  لا كمصدرٍ ثالثٍ يخترعه بابُ الاعتماد لنفسه.
-      same("٣٦. **وقيدُ الدفتر بالسعر المعتمد ومصدرُه صيانة**",
+      same("٤٢. **وقيدُ الدفتر بالسعر المعتمد ومصدرُه صيانة**",
         [ce.amt, ce.source], [60000, "maintenance"]);
 
       //  **ولا تنفيذَ مرّتين**: إعادةُ الاعتماد تُردّ والأمرُ يبقى واحداً.
       const again = await http("POST", `/api/discounts/${discountRequest}/decide`,
         S.manager, { decision: "approve" });
-      check(again.status >= 400, "٣٧. **وإعادةُ الاعتماد تُردّ**", String(again.status));
-      same("٣٨. **والأمرُ يبقى واحداً** — لا ازدواج",
+      check(again.status >= 400, "٤٣. **وإعادةُ الاعتماد تُردّ**", String(again.status));
+      same("٤٤. **والأمرُ يبقى واحداً** — لا ازدواج",
         (await ordersOf(discountPatient)).length, 1);
       same("   (والمالُ لم يتضاعف)", (await moneyOf(discountPatient)).total, 60000);
     }
@@ -424,18 +466,18 @@ async function main() {
       const r = await http("POST", "/api/manufacturing/maintenance-visit", S.reception,
         { patientId: p, expertUserId: EXPERT, cost: 80000, maintenanceComponent: "socket",
           deviceEpisodeId: ep, discount: { isFree: true, reason: "humanitarian" } });
-      same("٣٩. **والمجّانيّ يمرّ بالطابور نفسه**",
+      same("٤٥. **والمجّانيّ يمرّ بالطابور نفسه**",
         [r.status, r.body?.pendingApproval], [201, true]);
-      same("٤٠. **ولا شيءَ وقع قبل الاعتماد**",
+      same("٤٦. **ولا شيءَ وقع قبل الاعتماد**",
         await moneyOf(p), { total: 0, visits: 0, cost_entries: 0, orders: 0 });
       const ok = await http("POST", `/api/discounts/${r.body?.discountRequestId}/decide`,
         S.manager, { decision: "approve", isFree: true });
-      same("٤١. **والاعتمادُ ينفّذها بصفر**", ok.status, 200);
+      same("٤٧. **والاعتمادُ ينفّذها بصفر**", ok.status, 200);
       const orders = await ordersOf(p);
-      same("٤٢. **أمرٌ واحدٌ بجزئه**",
+      same("٤٨. **أمرٌ واحدٌ بجزئه**",
         orders.map((o: any) => [o.purpose, o.maintenance_component]), [["maintenance", "socket"]]);
       const m = await moneyOf(p);
-      same("٤٣. **وبلا دينارٍ على المريض** — ولا قيدَ كلفةٍ يُخترَع",
+      same("٤٩. **وبلا دينارٍ على المريض** — ولا قيدَ كلفةٍ يُخترَع",
         [m.total, m.cost_entries, m.visits], [0, 0, 1]);
     }
     {
@@ -448,8 +490,8 @@ async function main() {
           deviceEpisodeId: ep, discount: { finalPrice: 10000, reason: "other" } });
       const dec = await http("POST", `/api/discounts/${r.body?.discountRequestId}/decide`,
         S.manager, { decision: "reject", note: "غير مبرَّر" });
-      same("٤٤. **والرفضُ يُقبل**", dec.status, 200);
-      same("٤٥. **ولا يُنفَّذ شيء** — لا أمرَ ولا كلفة",
+      same("٥٠. **والرفضُ يُقبل**", dec.status, 200);
+      same("٥١. **ولا يُنفَّذ شيء** — لا أمرَ ولا كلفة",
         await moneyOf(p), { total: 0, visits: 0, cost_entries: 0, orders: 0 });
     }
 

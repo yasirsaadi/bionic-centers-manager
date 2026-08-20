@@ -19,6 +19,7 @@
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
+import { deviceDiscountRefs } from "@shared/discount";
 import {
   computeCommercialPrice, isFollowupReason, isTerminal,
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
@@ -488,6 +489,19 @@ export type ExamPriceVerdict =
   | { kind: "frozen"; reason: string }
   | { kind: "blocked"; reason: string };
 
+/** قائمةُ مراجعَ مُعلَّمةً — لا مصفوفةً يبنيها المحرّك سجلّاً لا نصّاً. */
+const refList = (refs: string[]) => sql.join(refs.map((r) => sql`${r}`), sql`, `);
+
+/** مراجعُ الجهاز من صفٍّ خام — نفسُ القاعدة المشتركة، بلا تحويلٍ كامل. */
+function refsForRow(row: any): string[] {
+  return deviceDiscountRefs({
+    followupId: Number(row.id),
+    deviceEpisodeId: row.device_episode_id === null || row.device_episode_id === undefined
+      ? null : Number(row.device_episode_id),
+    serviceType: String(row.service_type),
+  });
+}
+
 export async function classifyExamPriceChange(params: {
   patientId: number;
   serviceType: "prosthetic" | "medical_support";
@@ -495,14 +509,16 @@ export async function classifyExamPriceChange(params: {
 }): Promise<ExamPriceVerdict> {
   const r = params.deviceEpisodeId !== null
     ? await db.execute(sql`
-        SELECT id, status, approved_price, price_source, converted_work_order_id
+        SELECT id, status, approved_price, price_source, converted_work_order_id,
+               device_episode_id, service_type
           FROM post_exam_followups
          WHERE patient_id = ${params.patientId}
            AND device_episode_id = ${params.deviceEpisodeId}
          ORDER BY id DESC LIMIT 1
       `)
     : await db.execute(sql`
-        SELECT id, status, approved_price, price_source, converted_work_order_id
+        SELECT id, status, approved_price, price_source, converted_work_order_id,
+               device_episode_id, service_type
           FROM post_exam_followups
          WHERE patient_id = ${params.patientId}
            AND service_type = ${params.serviceType}
@@ -515,11 +531,16 @@ export async function classifyExamPriceChange(params: {
   if (!row) return { kind: "no_followup" };
 
   // ④ **الطلبُ المعلَّق يردّ** — وهو الفحصُ الأسبق لأنه الوحيد الذي يمنع.
+  //
+  //  **ومرجعُ الجهاز بعينه لا المريضَ كلَّه**: العائدُ يملك أكثر من جهاز،
+  //  وخصمٌ معلَّقٌ على طرفِه الأول لا علاقةَ له بتصحيح سعر الثاني. وكان
+  //  الفحصُ بـ(مريض + قسم) يجمّد الجهاز الثاني بسبب الأول.
   const pend = await db.execute(sql`
     SELECT id FROM service_discount_requests
      WHERE patient_id = ${params.patientId}
        AND department = ${params.serviceType}
        AND status = 'pending'
+       AND context_ref IN (${refList(refsForRow(row))})
      LIMIT 1
   `);
   if ((pend.rows ?? []).length > 0) {
@@ -592,11 +613,17 @@ export async function applyExamPriceCorrection(params: {
     //  **وطلبُ الخصم المعلَّق يُفحَص هنا** لا في التصنيف وحده: هو الطرفُ
     //  الآخر من السباق، وقد وُلد بعد التصنيف وقبل هذا السطر. وتحريكُ
     //  الأصلِ تحته يجعل خصماً معتمَداً يُحسَب على رقمٍ لم يعد قائماً.
+    //  **وبمرجع هذه المتابعة وحدها** — لا بكلّ طلبات المريض: العائدُ يملك
+    //  أكثر من جهاز، والخصمُ على أحدهما لا يمسّ الآخر.
     const pend = await tx.execute(sql`
       SELECT id FROM service_discount_requests
        WHERE patient_id = ${cur.patientId}
          AND department = ${cur.serviceType}
          AND status = 'pending'
+         AND context_ref IN (${refList(deviceDiscountRefs({
+           followupId: cur.id, deviceEpisodeId: cur.deviceEpisodeId,
+           serviceType: cur.serviceType,
+         }))})
        LIMIT 1
     `);
     if ((pend.rows ?? []).length > 0) {

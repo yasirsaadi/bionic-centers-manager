@@ -29,6 +29,9 @@ import { canConfirmPurchase } from "@shared/followup";
 import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
 import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 import * as discountStore from "../discounts/store";
+import {
+  episodeDiscountRef, serviceDiscountRef, maintenanceDiscountRef,
+} from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
@@ -512,7 +515,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       try {
         const out = await discountStore.submitDiscount({
           patientId, department: serviceType, branchId: patient.branchId,
-          contextRef: liveEpisode ? `episode:${liveEpisode.id}` : `service:${serviceType}`,
+          contextRef: liveEpisode
+            ? episodeDiscountRef(liveEpisode.id) : serviceDiscountRef(serviceType),
           originalPrice: effectiveCost,
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,
@@ -648,6 +652,22 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(400).json({ error: "حدّد الجزء المراد صيانته" });
     }
 
+    // ══ **والصفرُ وحده لا يعني «مجّاناً» أبداً** ═════════════════════════
+    //  كانت الصيانةُ تُقبل بصفر مباشرةً، فتُفتَح **بلا اعتماد**: لا سببَ
+    //  مسجَّل، ولا معتمِد، ولا سطرَ في تقرير «كم تبرّعنا». والتبرّعُ قرارٌ
+    //  ماليّ له بابُه — وصفرٌ صامتٌ يلتفّ على الباب كلِّه.
+    //
+    //  فالسعرُ الأصليّ **موجبٌ دائماً**، والمجّانيّ يُختار صراحةً منه:
+    //  «مجاني (تبرع من دكتور ياسر)» ⟶ طلبٌ معلَّق ⟶ اعتماد. والقاعدةُ
+    //  نفسُها التي تحرس بيعَ جهازٍ بخصم — لا استثناءَ للصيانة.
+    if (cost <= 0) {
+      return res.status(400).json({
+        error: "أجور الصيانة يجب أن تكون مبلغاً موجباً."
+          + " والمجّاني يُختار صراحةً «مجاني (تبرع من دكتور ياسر)» من سعرٍ أصليّ موجب،"
+          + " فيمرّ بالاعتماد.",
+      });
+    }
+
     // ══ ── خصمٌ أو تبرّع على أجور الصيانة ── ═══════════════════════════
     //  **الصيانةُ كانت تحجز كلفتها مباشرةً** بلا اعتماد — فخصمُها قرارٌ
     //  يقع بلا أثرٍ يُراجَع، بينما بيعُ جهازٍ بخصمٍ يمرّ بطابور. والباب
@@ -663,7 +683,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           patientId, department: serviceType as any, branchId: patient.branchId,
           //  **مرجعٌ يمنع طلبين معلَّقين على الصيانة نفسها** — والفهرسُ
           //  الفريد في ٠٥٨ يفرضه على (مريض، قسم، مرجع).
-          contextRef: `maintenance:${serviceType}`,
+          contextRef: maintenanceDiscountRef(serviceType),
           originalPrice: cost,
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,

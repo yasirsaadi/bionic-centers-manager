@@ -238,6 +238,17 @@ export function VisitModal({
     if (svc === "prosthetic" && !maintComponent) {
       toast({ title: "حدّد الجزء المراد صيانته", variant: "destructive" }); return;
     }
+    //  **والصفرُ وحده لا يعني «مجّاناً»**: التبرّعُ يُختار صراحةً من سعرٍ
+    //  أصليّ موجب فيمرّ بالاعتماد. وصفرٌ صامتٌ كان يفتح الصيانةَ بلا سببٍ
+    //  ولا معتمِدٍ ولا سطرٍ في تقرير «كم تبرّعنا».
+    if (maintCost <= 0) {
+      toast({
+        title: "أدخل أجور الصيانة",
+        description: "المبلغ الأصلي يجب أن يكون موجباً — والمجّاني يُختار صراحةً من الخصم بعده.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (discountBlocked(maintDiscount, maintCost)) {
       toast({ title: "أكمل بيانات الخصم", description: "اختر سبباً للخصم أو صحّح المبلغ", variant: "destructive" });
       return;
@@ -524,10 +535,17 @@ export function VisitModal({
                   </FormItem>
                 )}
                 <FormItem>
-                  <FormLabel>أجور الصيانة (د.ع)</FormLabel>
+                  <FormLabel>
+                    أجور الصيانة (د.ع) <span className="text-destructive">*</span>
+                  </FormLabel>
                   <MoneyInput value={maintCost} onValueChange={setMaintCost} placeholder="0" data-testid="input-maintenance-cost" />
+                  {/*  **والصفرُ ليس سعراً عادياً**: المجّانيّ قرارٌ ماليّ له
+                      بابُه — يُختار صراحةً من سعرٍ أصليّ موجب فيمرّ
+                      بالاعتماد، ويُقرأ في تقرير التبرّعات بسببه ومعتمِده. */}
                   <p className="text-[11px] text-muted-foreground">
-                    تُقيَّد على حساب المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. المبلغ قراركم — صفر أو أي مبلغ، بغضّ النظر عن الضمان.
+                    المبلغ الأصلي قراركم، و<b>يجب أن يكون موجباً</b>. تُقيَّد على حساب
+                    المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. وللمجّاني اختر
+                    «مجاني (تبرع من دكتور ياسر)» من الخصم أدناه — فيمرّ بالاعتماد.
                   </p>
                 </FormItem>
                 {/*  والخصمُ على الأجور يمرّ بالبابِ الموحَّد نفسه — لا يُحجَز

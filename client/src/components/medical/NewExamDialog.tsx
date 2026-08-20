@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Stethoscope, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { deviceDiscountRefs } from "@shared/discount";
 import { EXAM_FIELDS, SPECIALTY_LABELS, type ExamFieldKey, type MedicalSpecialty } from "@shared/medical";
 import { useDoctorGrant } from "./useDoctorGrant";
 import { api } from "@shared/routes";
@@ -32,6 +33,8 @@ export interface ExamToEdit {
   prescription?: Record<string, any> | null;
   deviceCost?: number | null;
   proposedExpertUserId?: number | null;
+  /** الجهازُ الذي فُحص — به تُطابَق المتابعةُ حين يحمل المريضُ أكثر من جهاز. */
+  deviceEpisodeId?: number | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -129,10 +132,30 @@ export function NewExamDialog({
       return res.json();
     },
   });
-  const activeFollowup = (followupRows ?? [])[0] ?? null;
+  // ══ **متابعةُ هذه المعاينة بعينها — لا أوّلُ متابعةٍ للمريض** ═══════════
+  //  المريضُ العائد يملك أكثر من جهاز: طرفٌ سُلِّم قبل سنتين وطلبٌ ثانٍ اليوم،
+  //  ولكلٍّ متابعتُه. وأخذُ `[0]` كان يقفل سعرَ الجهاز الثاني لأن الأول
+  //  بِيع — قفلٌ لا علاقةَ له بما يُحرَّر.
+  //
+  //  والمطابقةُ بالهويّة القانونية: المعاينةُ التي فتحت المتابعة، وإلّا
+  //  فالحلقةُ التي تخصّها.
+  const activeFollowup = (followupRows ?? []).find((f: any) =>
+    (exam?.id != null && Number(f?.medicalExamId) === Number(exam.id))
+    || (exam?.deviceEpisodeId != null
+      && Number(f?.deviceEpisodeId) === Number(exam.deviceEpisodeId))) ?? null;
   const soldAlready = Boolean(activeFollowup)
     && (activeFollowup.status === "converted" || activeFollowup.convertedWorkOrderId);
-  const discountPending = (discountRows?.requests ?? []).some((r: any) => r?.status === "pending");
+  //  **والطلبُ المعلَّق بمرجع هذا الجهاز** — لا بأيّ طلبٍ للمريض. والمراجعُ
+  //  من المصدر المشترك نفسِه الذي يكتبها الخادم ويقرأها.
+  const deviceRefs = activeFollowup
+    ? deviceDiscountRefs({
+      followupId: activeFollowup.id,
+      deviceEpisodeId: activeFollowup.deviceEpisodeId ?? null,
+      serviceType: activeFollowup.serviceType,
+    })
+    : [];
+  const discountPending = (discountRows?.requests ?? []).some(
+    (r: any) => r?.status === "pending" && deviceRefs.includes(String(r?.contextRef)));
   //  والقرارُ التجاريُّ الصريح يبقى كما هو — لكنه **لا يمنع** التصحيح على
   //  المعاينة نفسها، فالحقلُ يبقى مفتوحاً وتُقال الملاحظةُ بعد الحفظ.
   const priceLock: null | { why: string } =

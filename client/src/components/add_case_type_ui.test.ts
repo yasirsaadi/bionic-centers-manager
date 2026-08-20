@@ -27,6 +27,8 @@ const builder = read("./AmputationBuilder.tsx");
 const create = read("../pages/CreatePatient.tsx");
 const launcher = read("./PatientServiceLauncher.tsx");
 const edit = read("../pages/EditPatient.tsx");
+const examDlg = read("./medical/NewExamDialog.tsx");
+const visit = read("./VisitModal.tsx");
 
 console.log("\n═══ عقدُ «إضافة نوع حالة» ═══\n");
 
@@ -158,6 +160,39 @@ check("٣٠. **والباني المشترك هو المعروض**",
   edit.includes("<AmputationBuilder") && edit.includes('testIdPrefix="edit-amp"'));
 check("٣١. **والنصُّ القديم غيرُ المفهوم يبقى معروضاً** — يعرف الموظّف ما يستبدله",
   edit.includes('data-testid="text-legacy-amputation"'));
+
+// ── ٨. **قفلُ سعر المعاينة على جهازه هو** ───────────────────────────────
+//  المريضُ العائد يملك أكثر من طرف. وأخذُ `followupRows[0]` كان يقفل سعرَ
+//  الجهاز الثاني لأن الأول بِيع — قفلٌ لا علاقةَ له بما يُحرَّر.
+console.log("\n── قفل سعر المعاينة ──");
+check("٣٢. **ولا تُؤخَذ أولُ متابعةٍ للمريض**",
+  !examDlg.includes("(followupRows ?? [])[0]"),
+  (examDlg.match(/.*followupRows.*/g) ?? []).join("\n"));
+check("٣٣. **بل متابعةُ المعاينة المحرَّرة نفسِها**",
+  examDlg.includes("Number(f?.medicalExamId) === Number(exam.id)")
+    && examDlg.includes("Number(f?.deviceEpisodeId) === Number(exam.deviceEpisodeId)"),
+  (examDlg.match(/.*medicalExamId.*/g) ?? []).join("\n"));
+check("٣٤. **والطلبُ المعلَّق بمرجع هذا الجهاز** — لا بأيّ طلبٍ للمريض",
+  examDlg.includes("deviceRefs.includes(String(r?.contextRef))")
+    && !examDlg.includes('.some((r: any) => r?.status === "pending")'),
+  (examDlg.match(/.*discountPending =.*/g) ?? []).join("\n"));
+check("٣٥. **والمراجعُ من المصدر المشترك** — لا هويّةٌ تُخترَع",
+  examDlg.includes("deviceDiscountRefs({") && examDlg.includes("@shared/discount"));
+check("٣٦. **والحلقةُ تصل النافذةَ مع المعاينة**",
+  examDlg.includes("deviceEpisodeId?: number | null;"));
+
+// ── ٩. **والصفرُ ليس سعرَ صيانةٍ عادياً** ────────────────────────────────
+console.log("\n── أجور الصيانة ──");
+check("٣٧. **ولا وعدَ بأن الصفر مبلغٌ مقبول**",
+  !visit.includes("صفر أو أي مبلغ"),
+  (visit.match(/.*صفر.*/g) ?? []).join("\n"));
+check("٣٨. **بل يُقال إنه يجب أن يكون موجباً**",
+  visit.includes("يجب أن يكون موجباً"));
+check("٣٩. **والشاشةُ تمنع الإرسال بصفر**",
+  visit.includes("if (maintCost <= 0) {"),
+  (visit.match(/.*maintCost <= 0.*/g) ?? []).join("\n"));
+check("٤٠. **وحقلُ الخصم يبقى متاحاً من سعرٍ أصليٍّ موجب**",
+  visit.includes("{maintCost > 0 && (") && visit.includes("<ServiceDiscountFields originalPrice={maintCost}"));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -378,7 +378,7 @@ async function main() {
       http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 0, notes: "صيانة متزامنة", deviceEpisodeId: d1,
+        cost: 25_000, notes: "صيانة متزامنة", deviceEpisodeId: d1,
       })));
     same("أربع محاولات على الجهاز نفسه ⟶ نجاح واحد", races.filter((r) => r.status === 201).length, 1);
     check(!races.some((r) => JSON.stringify(r.body ?? "").includes("duplicate key")),
@@ -389,7 +389,7 @@ async function main() {
     const second = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
+      cost: 25_000, notes: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
     });
     same("وجهازٌ مسلَّمٌ آخر ⟶ صيانته الخاصّة تُفتح معه", second.status, 201);
     same("   فصار أمرا صيانة متوازيان",
@@ -397,13 +397,13 @@ async function main() {
 
     const noChoice = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
-      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0, notes: "بلا اختيار",
+      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000, notes: "بلا اختيار",
     });
     same("وصيانةٌ بلا اختيارٍ ومعه أجهزة مسجَّلة ⟶ مرفوضة", noChoice.status, 400);
     same("وجهازٌ غير مسلَّم لا يُصان",
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
+        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
         notes: "صيانة ملغى", deviceEpisodeId: cancelledEp,
       })).status, 400);
 
@@ -449,7 +449,7 @@ async function main() {
     same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
+        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
         notes: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
       })).status, 400);
 
@@ -494,14 +494,14 @@ async function main() {
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 0, notes: "صيانة إرث",
+        cost: 25_000, notes: "صيانة إرث",
       })).status, 201);
     await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
     await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
     const maintAfterDeliver = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صيانة بعد التسليم",
+      cost: 25_000, notes: "صيانة بعد التسليم",
     });
     same("   وبعده: صار جهازٌ مسلَّم ⟶ صيانةٌ بلا هدف تُردّ", maintAfterDeliver.status, 400);
     same("   ولا أمر صيانةٍ ثانٍ",
@@ -566,7 +566,7 @@ async function main() {
     const afterTrue = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "بعد التسليم",
+      cost: 25_000, notes: "بعد التسليم",
     });
     same("   وبعد استقراره: صيانةٌ بلا هدف تُردّ ٤٠٠", afterTrue.status, 400);
 
