@@ -170,7 +170,10 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       disabled: hasSupport,
       disabledReason: hasSupport ? DEVICE_EXISTS : undefined,
     },
-    newDeviceOption(p, "prosthetic", hasProsthetic, "طرف صناعي جديد"),
+    //  **«أو جزء جديد»** — المريضُ العائد نادراً ما يطلب طرفاً كاملاً:
+    //  تنكسر ركبةٌ أو يبلى غلاف. والاسمُ القديم كان يقول له إن هذا ليس
+    //  بابَه فيذهب إلى «صيانة» — وشراءُ قطعةٍ **بيعٌ لا صيانة**.
+    newDeviceOption(p, "prosthetic", hasProsthetic, "طرف صناعي جديد أو جزء جديد"),
     newDeviceOption(p, "medical_support", hasSupport, "مسند طبي جديد"),
     //  ══ الصيانةُ تُنسَب لقسم جهازها ══════════════════════════════════
     //  كانت بنداً واحداً تحت «خدمات الأجهزة»، فلا يعرف الناظرُ أيَّ قسمٍ

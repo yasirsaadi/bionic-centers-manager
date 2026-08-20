@@ -36,6 +36,7 @@ import * as migration056 from "./migrations/056_cost_entry_department";
 import * as migration057 from "./migrations/057_commercial_price";
 import * as migration058 from "./migrations/058_service_discounts";
 import * as migration059 from "./migrations/059_reception_initial_price";
+import * as migration060 from "./migrations/060_prosthetic_parts";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -169,6 +170,50 @@ SELECT jsonb_build_object(
       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
      WHERE a.attrelid = 'system_users'::regclass
        AND a.attname = 'can_approve_discount' AND NOT a.attisdropped
+  ),
+  -- ══ ترحيل ٠٦٠: «ما المطلوب» — الأعمدةُ الثلاثة وقيودُها وفهرساها ══
+  'parts_columns', (
+    SELECT jsonb_object_agg(a.attname,
+             jsonb_build_object('data_type', format_type(a.atttypid, a.atttypmod),
+                                'not_null', a.attnotnull,
+                                'default', pg_get_expr(d.adbin, d.adrelid)))
+      FROM pg_attribute a
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+     WHERE a.attrelid = 'patient_device_episodes'::regclass
+       AND a.attname IN ('requested_item', 'component') AND NOT a.attisdropped
+  ),
+  'maint_component', (
+    SELECT jsonb_build_object(
+             'data_type', format_type(a.atttypid, a.atttypmod),
+             'not_null', a.attnotnull,
+             'default', pg_get_expr(d.adbin, d.adrelid))
+      FROM pg_attribute a
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+     WHERE a.attrelid = 'prosthetic_work_orders'::regclass
+       AND a.attname = 'maintenance_component' AND NOT a.attisdropped
+  ),
+  'pde_part_checks', (
+    SELECT jsonb_object_agg(c.conname, pg_get_constraintdef(c.oid))
+      FROM pg_constraint c
+     WHERE c.conrelid = 'patient_device_episodes'::regclass AND c.contype = 'c'
+       AND c.conname IN ('patient_device_episodes_requested_item_check',
+                         'patient_device_episodes_component_check')
+  ),
+  'wo_part_checks', (
+    SELECT jsonb_object_agg(c.conname, pg_get_constraintdef(c.oid))
+      FROM pg_constraint c
+     WHERE c.conrelid = 'prosthetic_work_orders'::regclass AND c.contype = 'c'
+       AND c.conname IN ('prosthetic_work_orders_maint_component_check',
+                         'prosthetic_work_orders_maint_component_purpose_check')
+  ),
+  'parts_indexes', (
+    SELECT jsonb_object_agg(ci.relname, jsonb_build_object(
+             'def', pg_get_indexdef(i.indexrelid),
+             'is_unique', i.indisunique,
+             'predicate', pg_get_expr(i.indpred, i.indrelid)))
+      FROM pg_index i
+      JOIN pg_class ci ON ci.oid = i.indexrelid
+     WHERE ci.relname IN ('ix_pde_component', 'ix_wo_maint_component')
   )
 ) AS facts`;
 
@@ -354,6 +399,136 @@ async function main() {
             AND conrelid = 'service_discount_requests'::regclass`)).rows[0].d;
       check(String(dec59).includes("applied_at IS NOT NULL"),
         "   **وقيدُ «معتمَدٌ يعني نُفِّذ» شُدَّ على قاعدةٍ سبقته**", dec59);
+
+      // ══ وترحيل ٠٦٠ بنفس الطريقة ════════════════════════════════════
+      //  تُنزَع الفهارسُ ثم القيودُ ثم الأعمدةُ الثلاثة، **ويُزرَع صفٌّ
+      //  قائم** قبل التطبيق: فيصير «لا صفَّ تاريخيٌّ يُعاد تفسيره» سؤالاً
+      //  حقيقياً لا دعوى — الترحيلُ يجعل العمودَ إلزامياً، وصفٌّ موجودٌ
+      //  بلا قيمة كان سيُسقطه لولا التعبئة.
+      await c.query(`DROP INDEX IF EXISTS ix_pde_component`);
+      await c.query(`DROP INDEX IF EXISTS ix_wo_maint_component`);
+      await c.query(`ALTER TABLE patient_device_episodes
+        DROP CONSTRAINT IF EXISTS patient_device_episodes_component_check,
+        DROP CONSTRAINT IF EXISTS patient_device_episodes_requested_item_check`);
+      await c.query(`ALTER TABLE patient_device_episodes
+        DROP COLUMN IF EXISTS requested_item, DROP COLUMN IF EXISTS component`);
+      await c.query(`ALTER TABLE prosthetic_work_orders
+        DROP CONSTRAINT IF EXISTS prosthetic_work_orders_maint_component_check,
+        DROP CONSTRAINT IF EXISTS prosthetic_work_orders_maint_component_purpose_check`);
+      await c.query(`ALTER TABLE prosthetic_work_orders
+        DROP COLUMN IF EXISTS maintenance_component`);
+      const before60 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_attribute
+          WHERE attrelid = 'patient_device_episodes'::regclass
+            AND attname IN ('requested_item', 'component') AND NOT attisdropped`)).rows[0].n;
+      same("٣و. **والقاعدةُ عادت إلى ما قبل ٠٦٠** — لا عمودَ «ما المطلوب»", before60, 0);
+
+      //  صفٌّ تاريخيّ: مريضٌ وحالةٌ وحلقةٌ وأمرُ صيانة — كما كانت الإنتاجُ.
+      //  **بمعرّفاتٍ من التسلسل لا مفروضة**: فرضُ `id = 1` يترك التسلسلَ
+      //  خلفه فيصطدم أولُ إدراجٍ لاحق بالمفتاح.
+      await c.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد')
+                     ON CONFLICT DO NOTHING`);
+      const seedPatient = (await c.query(
+        `INSERT INTO patients (name, phone, patient_code, referral_source,
+           age, medical_condition, branch_id, total_cost)
+         VALUES ('قديم','07700000000','BC-000060','ترحيل','40','بتر',1,0)
+         RETURNING id`)).rows[0].id;
+      const seedCase = (await c.query(
+        `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, status)
+         VALUES ($1,1,'prosthetic',0,'active') RETURNING id`, [seedPatient])).rows[0].id;
+      const seedEpisode = (await c.query(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost)
+         VALUES ($1,$2,1,1,'delivered',0) RETURNING id`,
+        [seedPatient, seedCase])).rows[0].id;
+      const seedExpert = (await c.query(
+        `INSERT INTO system_users (username, password_hash, display_name, role, branch_id, is_active)
+         VALUES ('parity_expert','x','خبير','prosthetics_expert',1,true) RETURNING id`)).rows[0].id;
+      const seedMaint = (await c.query(
+        `INSERT INTO prosthetic_work_orders
+           (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage)
+         VALUES ($1,1,$2,'prosthetic','maintenance','completed','delivered') RETURNING id`,
+        [seedPatient, seedExpert])).rows[0].id;
+
+      await c.query(migration060.sql);
+      check(true, "٣ز. تطبيقُ الترحيل ٠٦٠ نجح على قاعدةٍ فيها صفوفٌ قائمة");
+      await c.query(migration060.sql);
+      check(true, "   **وأُعيد مرّةً ثانية بلا خطأ** — idempotent");
+      const legacy = (await c.query(
+        `SELECT requested_item, component FROM patient_device_episodes WHERE id = $1`,
+        [seedEpisode])).rows[0];
+      same("٣ح. **والصفُّ القديم صار «طرفاً كاملاً» بلا جزء** — تسجيلُ واقعٍ لا ترميم",
+        [legacy.requested_item, legacy.component], ["full_prosthesis", null]);
+      const legacyWo = (await c.query(
+        `SELECT maintenance_component FROM prosthetic_work_orders WHERE id = $1`,
+        [seedMaint])).rows[0];
+      same("٣ط. **وأمرُ الصيانة القديم يبقى بلا جزء** — «لم يُسجَّل» حقيقةٌ عنه",
+        legacyWo.maintenance_component, null);
+      const dup60 = (await c.query(
+        `SELECT COUNT(*)::int n FROM pg_constraint
+          WHERE contype = 'c' AND conname IN (
+            'patient_device_episodes_requested_item_check',
+            'patient_device_episodes_component_check',
+            'prosthetic_work_orders_maint_component_check',
+            'prosthetic_work_orders_maint_component_purpose_check')`)).rows[0].n;
+      same("   والقيودُ أربعةٌ لا ثمانية بعد الإعادة", dup60, 4);
+
+      //  ── **وصيغةٌ أرخى من قيد التلازم يُعاد بناؤها** ──
+      //  `component = requested_item` وحدها تُقيَّم NULL حين يفرغ العمود،
+      //  و CHECK تقبل NULL — فقاعدةٌ تحمل الصيغةَ الأولى كانت تقبل «ركبةً
+      //  بلا جزء». والتقارُبُ هو ما يجعل الترحيلَ يصلحها بدل أن يتخطّاها
+      //  لأن اسمَ القيد موجود.
+      await c.query(`ALTER TABLE patient_device_episodes
+        DROP CONSTRAINT IF EXISTS patient_device_episodes_component_check`);
+      await c.query(`ALTER TABLE patient_device_episodes
+        ADD CONSTRAINT patient_device_episodes_component_check
+        CHECK ((requested_item = 'full_prosthesis' AND component IS NULL)
+               OR (requested_item <> 'full_prosthesis' AND component = requested_item))`);
+      await c.query(migration060.sql);
+      const conv60 = (await c.query(
+        `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+          WHERE conname = 'patient_device_episodes_component_check'
+            AND conrelid = 'patient_device_episodes'::regclass`)).rows[0].d;
+      check(String(conv60).includes("component IS NOT NULL"),
+        "٣ي أ. **والصيغةُ الأرخى يُعاد بناؤها** — تقارُبٌ لا مجرّد أمانٍ", conv60);
+
+      //  ── **والقيدُ يمنع فعلاً** ما تمنعه الشيفرة ──
+      const rejects = async (label: string, q: string, params: any[] = []) => {
+        try { await c.query(q, params); return `${label}: قُبل!`; }
+        catch { return null; }
+      };
+      const violations = (await Promise.all([
+        rejects("جزءٌ مخترَع", `UPDATE patient_device_episodes
+           SET requested_item='elbow', component='elbow' WHERE id=$1`, [seedEpisode]),
+        rejects("كاملٌ بجزء", `UPDATE patient_device_episodes
+           SET requested_item='full_prosthesis', component='knee' WHERE id=$1`, [seedEpisode]),
+        rejects("جزءٌ بلا جزء", `UPDATE patient_device_episodes
+           SET requested_item='knee', component=NULL WHERE id=$1`, [seedEpisode]),
+        rejects("عمودان مختلفان", `UPDATE patient_device_episodes
+           SET requested_item='knee', component='foot' WHERE id=$1`, [seedEpisode]),
+        rejects("جزءُ صيانةٍ مخترَع", `UPDATE prosthetic_work_orders
+           SET maintenance_component='elbow' WHERE id=$1`, [seedMaint]),
+      ])).filter(Boolean);
+      same("٣ي. **والقاعدةُ تردّ التركيبات المستحيلة الخمس**", violations, []);
+      //  **والصيانةُ على أمرِ بناءٍ مردودةٌ كذلك** — البابان لا يختلطان.
+      const seedBuild = (await c.query(
+        `INSERT INTO prosthetic_work_orders
+           (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage)
+         VALUES ($1,1,$2,'prosthetic','initial_build','completed','delivered') RETURNING id`,
+        [seedPatient, seedExpert])).rows[0].id;
+      const buildViolation = await rejects("جزءُ صيانةٍ على أمرِ بناء",
+        `UPDATE prosthetic_work_orders SET maintenance_component='knee' WHERE id=$1`, [seedBuild]);
+      same("٣ك. **ولا جزءَ صيانةٍ على أمر بناء**", buildViolation, null);
+      //  ولا يكفي أنها تردّ: **الصحيحُ يمرّ** — وإلّا كان القيدُ يمنع كلَّ شيء.
+      await c.query(`UPDATE patient_device_episodes
+         SET requested_item='knee', component='knee' WHERE id=$1`, [seedEpisode]);
+      const good = (await c.query(
+        `SELECT requested_item, component FROM patient_device_episodes WHERE id=$1`,
+        [seedEpisode])).rows[0];
+      same("٣ل. **والتركيبةُ الصحيحة تمرّ**",
+        [good.requested_item, good.component], ["knee", "knee"]);
+      await c.query(`UPDATE patient_device_episodes
+         SET requested_item='full_prosthesis', component=NULL WHERE id=$1`, [seedEpisode]);
     });
 
     // ══ ٣. المقارنة ═══════════════════════════════════════════════════
@@ -476,6 +651,53 @@ async function main() {
       [fromMigrations.approve_flag?.data_type,
         String(fromMigrations.approve_flag?.default ?? "")],
       ["boolean", "false"]);
+
+    // ══ ترحيل ٠٦٠: «ما المطلوب» ══════════════════════════════════════
+    console.log("\n── ٦. ما المطلوب (٠٦٠) ──");
+    same("٢٤. **عمودا الحلقة متطابقان نوعاً وإلزاماً وافتراضاً**",
+      fromSchema.parts_columns, fromMigrations.parts_columns);
+    same("٢٥. **وعمودُ جزء الصيانة متطابق**",
+      fromSchema.maint_component, fromMigrations.maint_component);
+    same("٢٦. **وقيدا الحلقة متطابقان نصّاً**",
+      fromSchema.pde_part_checks, fromMigrations.pde_part_checks);
+    same("٢٧. **وقيدا أمر الصيانة كذلك**",
+      fromSchema.wo_part_checks, fromMigrations.wo_part_checks);
+    same("٢٨. **وفهرساهما الجزئيّان متطابقان**",
+      fromSchema.parts_indexes, fromMigrations.parts_indexes);
+
+    //  ولا يكفي التطابق: القيمُ المقصودة تُثبَّت صراحةً.
+    const partCol = (n: string) => {
+      const c = (fromMigrations.parts_columns ?? {})[n] ?? {};
+      return [c.data_type, c.not_null, String(c.default ?? "")];
+    };
+    same("٢٩. **«ما المطلوب» نصٌّ إلزاميّ افتراضُه الطرفُ الكامل**",
+      partCol("requested_item"), ["text", true, "'full_prosthesis'::text"]);
+    same("٣٠. **والجزءُ نصٌّ يقبل الفراغ بلا افتراض** — الفراغُ معناه «كامل»",
+      partCol("component"), ["text", false, ""]);
+    same("٣١. **وجزءُ الصيانة يقبل الفراغ** — الأوامرُ القديمة لم تسجّله",
+      [fromMigrations.maint_component?.data_type, fromMigrations.maint_component?.not_null],
+      ["text", false]);
+    const itemDef = String(
+      fromMigrations.pde_part_checks?.patient_device_episodes_requested_item_check ?? "");
+    check(["full_prosthesis", "socket", "silicone", "knee", "tube",
+      "adapter", "foot", "foam_cover", "foot_shell"].every((v) => itemDef.includes(`'${v}'`)),
+      "٣٢. **والقيمُ التسع كلُّها في قيد القاعدة**", itemDef);
+    const lockstep = String(
+      fromMigrations.pde_part_checks?.patient_device_episodes_component_check ?? "")
+      .replace(/\s+/g, " ");
+    check(lockstep.includes("component IS NULL") && lockstep.includes("component = requested_item"),
+      "٣٣. **والعمودان متلازمان في القاعدة**: كاملٌ ⟺ لا جزء، وجزءٌ ⟺ الاسمُ نفسه",
+      lockstep);
+    const maintPurpose = String(
+      fromMigrations.wo_part_checks?.prosthetic_work_orders_maint_component_purpose_check ?? "")
+      .replace(/\s+/g, " ");
+    check(maintPurpose.includes("'maintenance'"),
+      "٣٤. **ولا جزءَ صيانةٍ إلّا على أمر صيانة**", maintPurpose);
+    const pdeIdx = (fromMigrations.parts_indexes ?? {}).ix_pde_component ?? {};
+    same("٣٥. **وفهرسُ الأجزاء جزئيٌّ غيرُ فريد** — على المباعة وحدها",
+      [pdeIdx.is_unique,
+        String(pdeIdx.predicate ?? "").replace(/[()]/g, " ").replace(/\s+/g, " ").trim()],
+      [false, "component IS NOT NULL"]);
 
     same("١١. والفهرسُ على `case_id` وحده وغيرُ فريد",
       [fromMigrations.index?.columns, fromMigrations.index?.is_unique],

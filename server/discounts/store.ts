@@ -19,6 +19,7 @@ import {
 } from "@shared/discount";
 import { isDepartment } from "@shared/service_taxonomy";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
+import { parseComponent } from "@shared/prosthetic_parts";
 
 export class DiscountError extends Error {
   status: number;
@@ -118,6 +119,24 @@ export interface DiscountPayload {
   fields?: Record<string, string>;
   /** علاجٌ طبيعي: بنودُ الجلسات كما أدخلها الموظّف. */
   entries?: { treatmentType: string; sessionCount: number }[];
+  /**
+   * ══ **صيانة** (ترحيل ٠٦٠) — نوعٌ ثالثٌ داخل قسم الأجهزة ═══════════════
+   *
+   * القسمُ يقول «أطراف» ولا يقول «صيانةٌ أم بيعُ جهاز»، والمسارَان يُنفَّذان
+   * بدالّتين مختلفتين تماماً. فالعَلَمُ هنا هو ما يميّزهما عند الاعتماد.
+   *
+   * **ولا سعرَ في الحمولة إطلاقاً**: السعرُ المعتمد على الصفّ هو المصدر،
+   * ونسخةٌ ثانية هنا كانت ستنحرف عنه عند «تعديل واعتماد».
+   */
+  kind?: "maintenance";
+  /** الجهازُ المُصان — أو `null` مع `legacyUnrecordedDevice` للقديم. */
+  deviceEpisodeId?: number | null;
+  legacyUnrecordedDevice?: boolean;
+  /** الجزءُ المُصان — إلزاميٌّ للأطراف. */
+  maintenanceComponent?: string | null;
+  /** ملاحظةُ الزيارة كما كتبها الموظّف، وموعدُ التسليم إن حُدِّد. */
+  visitNotes?: string | null;
+  expectedDeliveryDate?: string | null;
 }
 
 //  مفاتيحُ المواصفات المسموحة — نفسُ قائمتَي «تخصيص»، فلا تدخل الحمولةُ
@@ -141,6 +160,31 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
       throw new DiscountError("أدخل نوع علاج وعدد جلسات صحيحاً", 400);
     }
     out.entries = clean;
+  } else if (raw?.kind === "maintenance") {
+    //  ══ صيانةٌ بخصم — حمولةٌ تحفظ **ما يلزم للاستئناف فقط** ═══════════
+    //  الجهازُ المختار، والخبير، والجزء، والملاحظة، والموعد. ولا سعر:
+    //  المعتمَدُ على الصفّ هو المصدر، ونسخةٌ هنا كانت ستنحرف عند «تعديل
+    //  واعتماد».
+    out.kind = "maintenance";
+    const x = Number(raw?.expertUserId);
+    out.expertUserId = Number.isFinite(x) && x > 0 ? x : null;
+    if (!out.expertUserId) {
+      throw new DiscountError("اختر الخبير المسؤول قبل إرسال الطلب", 400);
+    }
+    const ep = Number(raw?.deviceEpisodeId);
+    out.deviceEpisodeId = Number.isFinite(ep) && ep > 0 ? ep : null;
+    out.legacyUnrecordedDevice = raw?.legacyUnrecordedDevice === true;
+    const comp = parseComponent(raw?.maintenanceComponent);
+    if (!comp.ok) throw new DiscountError(comp.error!, 400);
+    if (dept === "prosthetic" && !comp.value) {
+      throw new DiscountError("حدّد الجزء المراد صيانته", 400);
+    }
+    out.maintenanceComponent = comp.value;
+    out.visitNotes = typeof raw?.visitNotes === "string" && raw.visitNotes.trim()
+      ? raw.visitNotes.trim().slice(0, 500) : null;
+    const d = raw?.expectedDeliveryDate;
+    out.expectedDeliveryDate = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)
+      ? d : null;
   } else {
     const f = Number(raw?.followupId);
     out.followupId = Number.isFinite(f) && f > 0 ? f : null;
@@ -422,6 +466,34 @@ async function applyApproved(
       entries, totalCost: finalPrice, totalSessions, treatmentType: typesJoined, tx,
     });
     return { kind: "physiotherapy", totalCost: finalPrice, totalSessions, patient };
+  }
+
+  //  ══ ── صيانةٌ معتمَدة ── ═════════════════════════════════════════════
+  //  **تُنادى الدالّةُ القانونية نفسها** التي تنادِيها الصيانةُ العادية —
+  //  بأمرها وزيارتها وقيدها وكلفتها. ولا نسخةَ من محاسبة الصيانة هنا:
+  //  نسخةٌ ثانية كانت ستنحرف عن الأولى عند أوّل تعديل.
+  if (payload.kind === "maintenance") {
+    const { createMaintenanceOrderWithVisit } = await import("../manufacturing/store");
+    const serviceType = req.department as "prosthetic" | "medical_support";
+    const order = await createMaintenanceOrderWithVisit({
+      patientId: req.patientId,
+      branchId: req.branchId as number,
+      serviceType,
+      expertUserId: payload.expertUserId as number,
+      expectedDeliveryDate: payload.expectedDeliveryDate ?? null,
+      assignedBy: actor.userId,
+      visitNotes: payload.visitNotes ?? "صيانة طرف/مسند",
+      //  **وقتُ التنفيذ هو وقتُ الاعتماد** — لا يوم الطلب. فالمالُ يُقيَّد
+      //  يوم وقع فعلاً، والتقريرُ اليومي يقرأه في يومه.
+      visitDate: new Date(),
+      //  **السعرُ المعتمد وحده** — من الصفّ لا من الحمولة.
+      cost: finalPrice,
+      deviceEpisodeId: payload.deviceEpisodeId ?? null,
+      legacyUnrecordedDevice: payload.legacyUnrecordedDevice === true,
+      maintenanceComponent: payload.maintenanceComponent ?? null,
+      tx,
+    });
+    return { kind: "maintenance", workOrderId: order.id };
   }
 
   //  ── جهاز ──

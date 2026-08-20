@@ -9,6 +9,10 @@ import {
 } from "./DeviceEpisodeSelect";
 import { deviceServiceOfPaymentType } from "@shared/device_attribution";
 import {
+  paymentAttribution, showsTreatmentTypes, PAYMENT_CASE_QUESTION,
+  CASE_PAYMENT_TAG, CASE_LABEL, type DeviceCaseType,
+} from "@/components/payment_attribution";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -116,15 +120,39 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     AMPUTEE_TYPE,
     SUPPORT_TYPE,
   ];
+  // ══ **لا يُسأل عمّا هو معروف** ═══════════════════════════════════════
+  //  مريضُ أطرافٍ كان يُفتَح له «نوع العلاج» بالروبوت والتمارين والأبر —
+  //  وجوابُه معروفٌ قبل السؤال. وثمنُ السؤال الزائد خطأٌ متكرّر: بندٌ يُختار
+  //  بالعادة فتُوسَم دفعةُ أطرافٍ «تمارين»، ويذهب المال إلى قسمٍ ليس قسمَه.
+  //
+  //  والقاعدةُ في `payment_attribution` وحدها كي تُختبَر. **والعلاجُ الطبيعي
+  //  لا يُمَسّ**: جلساتُه وأسعارُها منطقٌ حقيقيّ لا سؤالٌ زائد.
+  const attribution = paymentAttribution({ isPhysiotherapy, isAmputee, isMedicalSupport });
+  //  حين يُسأل السؤالُ الحقيقي، جوابُ الموظّف يُحفَظ هنا.
+  const [askedCase, setAskedCase] = useState<string>("");
+  //  الحالةُ الفعّالة: المستنتَجةُ تلقائياً، أو التي أجاب بها.
+  const resolvedCase: DeviceCaseType | "physiotherapy" | null =
+    attribution.mode === "auto" ? attribution.caseType
+      : attribution.mode === "physio" ? "physiotherapy"
+        : attribution.mode === "ask" && askedCase ? (askedCase as any) : null;
+
   // With أطراف/مساند always present, the treatment-type picker always shows and
   // a type is required on every payment (keeps every payment tagged).
-  const showTreatmentSection = treatmentOptions.length > 0;
+  //  **إلّا حين تكون الحالةُ معروفة** — فتُوسَم بلا قائمة.
+  const showTreatmentSection = treatmentOptions.length > 0
+    && (showsTreatmentTypes(attribution) || resolvedCase === "physiotherapy");
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   /** الجهاز الذي تخصّه الدفعة — فارغٌ حتى يختار الموظّف. */
   const [deviceTarget, setDeviceTarget] = useState<string>("");
 
   // خدمةُ الجهاز التي تمثّلها بنود هذه الدفعة، إن كانت دفعة جهاز أصلاً.
   const deviceService = (() => {
+    //  **الحالةُ المحسومة تسبق استنتاجَ الوسم**: حين لا تُعرَض قائمةُ الأنواع
+    //  لا يوجد نصٌّ يُستنتَج منه شيء — والخدمةُ معروفةٌ أصلاً.
+    if (resolvedCase === "prosthetic" || resolvedCase === "medical_support") {
+      return resolvedCase;
+    }
+    if (resolvedCase === "physiotherapy") return null;
     const tags = treatmentEntries.map((e) => e.treatmentType).filter(Boolean).join("، ");
     const svc = deviceServiceOfPaymentType(tags);
     return svc === "prosthetic" || svc === "medical_support" ? svc : null;
@@ -202,6 +230,11 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   const hasManualType = treatmentEntries.some(e => MANUAL_AMOUNT_TYPES.has(e.treatmentType));
 
   function onSubmit(values: z.infer<typeof formSchema>) {
+    //  غموضٌ حقيقيّ بلا جواب: يُسأل ولا يُخمَّن.
+    if (attribution.mode === "ask" && !askedCase) {
+      toast({ title: PAYMENT_CASE_QUESTION, variant: "destructive" });
+      return;
+    }
     if (showTreatmentSection) {
       const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
       if (hasEmptyType) {
@@ -225,7 +258,13 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     }
     
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
-    const paymentTreatmentType = showTreatmentSection ? validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") || null : null;
+    //  **الوسمُ من الحالة حين لا تُعرَض القائمة** — فكلُّ دفعةٍ تبقى موسومة
+    //  كما كانت، والفرقُ أن الوسم صار مشتقّاً لا مختاراً بالعادة.
+    const autoTag = resolvedCase === "prosthetic" || resolvedCase === "medical_support"
+      ? CASE_PAYMENT_TAG[resolvedCase] : null;
+    const paymentTreatmentType = showTreatmentSection
+      ? (validEntries.map(e => e.treatmentType).filter(Boolean).join("، ") || null)
+      : autoTag;
     const sessionCount = showTreatmentSection ? validEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0) || null : null;
 
     // أطراف/مساند بمبلغ يدوي: كلفة الإدخال = 0 والمبلغ الحقيقي في `amount`.
@@ -254,7 +293,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
         form.reset();
         setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
         setManualCostOverride(false);
-        setDeviceTarget("");
+        setDeviceTarget(""); setAskedCase("");
       },
     });
   }
@@ -302,6 +341,36 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
                 </FormItem>
               )}
             />
+
+            {/*  ══ **الحالةُ المعروفة تُقال ولا تُسأل** ═══════════════════════
+                مريضُ أطرافٍ يرى سطراً يقول «هذه الدفعة على حساب: أطراف
+                صناعية» بدل قائمةٍ يختار منها ما يعرفه النظام أصلاً. */}
+            {attribution.mode === "auto" && (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
+                data-testid="text-payment-case-auto">
+                <span className="text-muted-foreground">هذه الدفعة على حساب: </span>
+                <b>{CASE_LABEL[attribution.caseType]}</b>
+              </div>
+            )}
+
+            {/*  ══ **وحين يكون السؤالُ حقيقياً يُطرَح بصيغته الصحيحة** ═══════
+                «هذه الدفعة تخص أي حالة؟» — لا «نوع العلاج»، وبحالات المريض
+                وحدها لا بقائمة النظام كلّها. */}
+            {attribution.mode === "ask" && (
+              <div className="space-y-2" data-testid="block-payment-case-ask">
+                <FormLabel>{PAYMENT_CASE_QUESTION} <span className="text-red-500">*</span></FormLabel>
+                <Select value={askedCase} onValueChange={setAskedCase}>
+                  <SelectTrigger data-testid="select-payment-case">
+                    <SelectValue placeholder="اختر الحالة" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {attribution.choices.map((c) => (
+                      <SelectItem key={c.caseType} value={c.caseType}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {showTreatmentSection && (
               <div className="space-y-3">

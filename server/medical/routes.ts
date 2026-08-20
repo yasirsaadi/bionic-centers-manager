@@ -24,7 +24,8 @@ import type { Express } from "express";
 import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { DeviceEpisodeError } from "../device_episodes/store";
+import { DeviceEpisodeError, isDeviceServiceType } from "../device_episodes/store";
+import type * as FollowupStore from "../followup/store";
 import { closeRequestsAwaitingExam } from "../medical_review/store";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
@@ -430,10 +431,42 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         req.body?.prescription && typeof req.body.prescription === "object"
           ? (req.body.prescription as Record<string, any>)
           : {};
-      const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
+      let deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
       const proposedExpertUserId = await parseProposedExpert(
         req.body?.proposedExpertUserId, caseType, exam.branchId,
       );
+
+      // ══ **تصحيحُ الطبيب لسعره الأصلي** ═══════════════════════════════
+      //  الواقعة: كتب ٦,٠٠٠,٠٠٠ ثم صحّحها إلى ٦,٥٠٠,٠٠٠ — ولم يتغيّر سعرُ
+      //  المتابعة، فاضطرّ المالك إلى «تحديد السعر النهائي» ليصلح رقماً.
+      //  وذاك قرارٌ تجاريٌّ لمدير الفرع، وهذا تصحيحُ طبيبٍ لما أراد قولَه.
+      //
+      //  والتصنيفُ يقرّر: يُزامَن · يبقى القرارُ التجاري · يُجمَّد بعد
+      //  البيع · أو يُردّ لأن طلبَ خصمٍ معلَّقٌ محسوبٌ على الرقم القديم.
+      let priceSyncNote: string | null = null;
+      let priceVerdict: Awaited<ReturnType<typeof FollowupStore.classifyExamPriceChange>> | null = null;
+      const priceChanged = isDeviceServiceType(caseType)
+        && deviceCost !== null && deviceCost !== (exam.deviceCost ?? null);
+      if (priceChanged) {
+        //  استيرادٌ ديناميّ كبقيّة نداءات المتابعة في هذا الملفّ — ترتيبُ
+        //  تحميل الوحدات يبقى كما كان بالضبط.
+        const fs = await import("../followup/store");
+        priceVerdict = await fs.classifyExamPriceChange({
+          patientId: exam.patientId,
+          serviceType: caseType as "prosthetic" | "medical_support",
+          deviceEpisodeId: exam.deviceEpisodeId ?? null,
+        });
+        //  **الردُّ الوحيد**: طلبٌ معلَّقٌ يُحسَم بيد إنسان لا يُلغى بصمت.
+        if (priceVerdict.kind === "blocked") {
+          return res.status(409).json({ error: priceVerdict.reason });
+        }
+        //  **وبعد البيع الرقمُ مجمَّد** — لا على المعاينة ولا في المال.
+        //  فتُبقى القيمةُ القديمة ويمضي التصحيحُ السريريّ.
+        if (priceVerdict.kind === "frozen") {
+          return res.status(409).json({ error: priceVerdict.reason });
+        }
+        if (priceVerdict.kind === "keep_commercial") priceSyncNote = priceVerdict.reason;
+      }
 
       const hasNarrative = Object.values(body).some((v) => v !== null);
       const hasPrescription = Object.values(prescription).some((v) =>
@@ -456,6 +489,25 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         { userId: session.userId, userName: editorName },
       );
 
+      //  **والسعرُ التجاري يتبع التصحيح** — داخل النداء نفسه، بحدثٍ يُقرأ.
+      //  وفشلُه لا يُفشل التصحيحَ السريريّ: المعاينةُ حُفظت فعلاً، والملاحظةُ
+      //  تصل الطبيبَ ليعرف أن الرقم التجاري لم يتحرّك.
+      if (priceVerdict?.kind === "sync" && deviceCost !== null) {
+        try {
+          const fs = await import("../followup/store");
+          const synced = await fs.applyExamPriceCorrection({
+            followupId: priceVerdict.followupId, newPrice: deviceCost,
+            actor: { userId: session.userId, userName: editorName },
+          });
+          if (!synced) {
+            priceSyncNote = "تغيّرت حالة الملفّ التجاري أثناء الحفظ — راجع السعر المعتمد.";
+          }
+        } catch (e) {
+          console.error("[medical] exam price sync failed:", e);
+          priceSyncNote = "تعذّر تحديث السعر المعتمد — راجعه في بطاقة قرار المريض.";
+        }
+      }
+
       await logAudit({
         entityType: "medical_exam",
         entityId: examId,
@@ -467,10 +519,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         newValues: updated,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `تعديل المعاينة #${examId} إلى النسخة ${updated.version} — بواسطة ${editorName}${isAuthor ? "" : " (مدير)"}`,
+        notes: `تعديل المعاينة #${examId} إلى النسخة ${updated.version} — بواسطة ${editorName}${isAuthor ? "" : " (مدير)"}`
+          + (priceChanged
+            ? ` — تصحيح كلفة الجهاز: ${(exam.deviceCost ?? 0).toLocaleString("en-US")}`
+              + ` ⟶ ${(deviceCost ?? 0).toLocaleString("en-US")} د.ع`
+              + (priceVerdict?.kind === "sync" ? " (زُوّمن السعر المعتمد)" : " (بقي السعر التجاري)")
+            : ""),
       });
 
-      res.json({ ...updated, switchNote: applied.switchNote ?? null });
+      res.json({
+        ...updated, switchNote: applied.switchNote ?? null,
+        priceNote: priceSyncNote,
+      });
     } catch (err: any) {
       // A refused edit is a business answer, not a server fault: the doctor
       // must read WHY and what to do instead, not a bare 500.

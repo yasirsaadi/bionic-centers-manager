@@ -17,6 +17,9 @@ import { logAudit } from "../accounting/ledger";
 import { routeServiceToDoctorReview } from "../medical_review/routing";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
+import {
+  parseRequestedItem, requestedItemLabel, requestedItemLine,
+} from "@shared/prosthetic_parts";
 
 type Req = any;
 
@@ -106,6 +109,19 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نوع الجهاز غير صالح" });
       }
 
+      // ── **ما المطلوب؟** طرفٌ كامل أم جزء (ترحيل ٠٦٠) ─────────────────
+      //  المجهولُ يُردّ لا يُصحَّح بصمت: تصحيحُه إلى «طرف كامل» كان سيفتح
+      //  طلبَ طرفٍ كامل لمريضٍ يريد ركبةً — وثمنُه بين الاثنين هائل.
+      //  والغيابُ مقبولٌ ويُقرأ «كامل»: نافذةٌ قديمة مفتوحة لا ترسله.
+      const parsedItem = parseRequestedItem(req.body?.requestedItem);
+      if (!parsedItem.ok) return res.status(400).json({ error: parsedItem.error });
+      //  والمساندُ الطبية لا أجزاءَ لها في هذه القائمة — قائمةُ الأجزاء
+      //  أجزاءُ طرفٍ صناعي بعينها، فطلبُ «ركبة» على مسندٍ خلطٌ يُردّ.
+      if (serviceType !== "prosthetic" && parsedItem.value
+        && parsedItem.value !== "full_prosthesis") {
+        return res.status(400).json({ error: "الأجزاء للأطراف الصناعية فقط" });
+      }
+
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (!canReachBranch(req, patient.branch_id)) {
@@ -115,6 +131,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const session = getSession(req);
       const episode = await episodes.startDeviceEpisode({
         patientId, serviceType, createdBy: session.userId,
+        requestedItem: parsedItem.value,
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
@@ -126,7 +143,11 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const routing = await routeServiceToDoctorReview(req, {
         patientId, caseType: serviceType,
         reviewKind: "new_device", requestedPath: "full",
-        receptionNote: req.body?.reviewNote ?? null,
+        //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
+        //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
+        receptionNote: [requestedItemLine(episode.requestedItem),
+          typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
+          .filter(Boolean).join(" — "),
         deviceEpisodeId: episode.id,
       });
 
@@ -140,7 +161,8 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         newValues: episode,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `بدء جهاز جديد #${episode.sequenceNumber} للمريض ${patient.name ?? patientId}`
+        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem)})`
+          + ` للمريض ${patient.name ?? patientId}`
           + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),
       });
 

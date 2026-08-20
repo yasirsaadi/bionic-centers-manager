@@ -556,10 +556,17 @@ async function main() {
     const list = await http("GET", `/api/patients/${pX}/device-episodes`, S.manager);
     same("والقراءة تعيد الحلقات بحقولها المحدودة", list.status, 200);
     same("   بنوع الخدمة المشتقّ", list.body?.episodes?.[0]?.serviceType, "medical_support");
+    //  و«ما طُلب» حقلٌ تجاريٌّ لا سريريّ ولا ماليّ: يقول أيَّ قطعةٍ اشترى
+    //  المريض — يقرؤه الطبيبُ في طلبه والخبيرُ في أمره (ترحيل ٠٦٠).
     same("   وبلا أي حقل سريري أو مالي زائد",
       Object.keys(list.body?.episodes?.[0] ?? {}).sort(),
-      ["agreedCost", "branchId", "cancelReason", "cancelledAt", "caseId", "createdAt",
-       "deliveredAt", "id", "sequenceNumber", "serviceType", "status"]);
+      ["agreedCost", "branchId", "cancelReason", "cancelledAt", "caseId", "component",
+       "createdAt", "deliveredAt", "id", "requestedItem", "sequenceNumber",
+       "serviceType", "status"]);
+    //  **والمساندُ الطبية لا أجزاءَ لها** — تبقى على الطرف الكامل حتماً.
+    same("   والمسند طلبٌ كاملٌ بلا جزء",
+      [list.body?.episodes?.[0]?.requestedItem, list.body?.episodes?.[0]?.component],
+      ["full_prosthesis", null]);
     same("ولا يقرأها موظّف فرعٍ آخر",
       (await http("GET", `/api/patients/${pX}/device-episodes`, S.otherBranch)).status, 403);
 

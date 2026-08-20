@@ -125,9 +125,22 @@ async function main() {
     // ══ ١٣. طرفٌ فقط ⇒ prosthetic تلقائياً — بلا سؤال ولا تغيير سلوك ═══
     console.log("\n── صاحب نوعٍ واحد: كما كان تماماً ──");
     const pPro = await mkPatient("مريض طرف فقط", { amputee: true });
+    //  **والجزءُ المُصان إلزاميٌّ للأطراف** (ترحيل ٠٦٠): يُثبَت أوّلاً أن
+    //  الطلبَ بلا جزءٍ يُردّ، ثم يمضي المسارُ القديم كما هو مع الجزء.
     let r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
       { patientId: pPro, expertUserId: EXPERT, cost: 0 });
+    same("١٣أ. **طرفٌ بلا تحديد الجزء ⇒ 400**", r.status, 400);
+    check(String(r.json?.error ?? "").includes("الجزء"),
+      "    برسالةٍ تطلب الجزء", JSON.stringify(r.json));
+    same("    **ولا أمرَ أُنشئ**", (await ordersOf(pPro)).length, 0);
+
+    r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
+      { patientId: pPro, expertUserId: EXPERT, cost: 0, maintenanceComponent: "knee" });
     same("١٣. طرفٌ فقط ⇒ 201 بلا تحديد نوع", r.status, 201);
+    same("    **والجزءُ محفوظٌ منظَّماً على الأمر**",
+      (await pool.query(
+        `SELECT maintenance_component FROM prosthetic_work_orders WHERE patient_id = $1`,
+        [pPro])).rows[0]?.maintenance_component, "knee");
     let ords = await ordersOf(pPro);
     same("ونوع الخدمة prosthetic", ords.map((o) => o.serviceType), ["prosthetic"]);
     same("وغرضه صيانة", ords.map((o) => o.purpose), ["maintenance"]);
@@ -151,7 +164,8 @@ async function main() {
 
     // ١٦. اختيار الطرف ⇒ prosthetic.
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic",
+        maintenanceComponent: "socket" });
     same("١٦. اختيار الطرف ⇒ 201", r.status, 201);
     same("وأمرٌ واحد نوعه prosthetic", (await ordersOf(pDual)).map((o) => o.serviceType), ["prosthetic"]);
 
@@ -167,7 +181,8 @@ async function main() {
 
     // والحارس نفسه لم يضعف: أمرٌ ثانٍ لنفس الخدمة ما زال مرفوضاً.
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic",
+        maintenanceComponent: "socket" });
     same("وحارس «أمرٌ نشط واحد لكل خدمة» كما هو ⇒ 409", r.status, 409);
 
     // ══ ١٨. نوعٌ لا يملكه المريض يُرفَض ═════════════════════════════════

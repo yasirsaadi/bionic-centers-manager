@@ -73,7 +73,12 @@
     "test:followup-events": "tsx shared/followup_events.test.ts",
     "test:followup-dialog": "tsx client/src/components/followup_dialog_ui.test.ts",
     "test:money-input": "tsx client/src/components/money_input.test.ts",
-    "test:patient-cache": "tsx client/src/lib/patient_cache.test.ts"
+    "test:patient-cache": "tsx client/src/lib/patient_cache.test.ts",
+    "test:parts": "tsx shared/prosthetic_parts.test.ts",
+    "test:patient-required": "tsx shared/patient_required.test.ts",
+    "test:pay-attribution": "tsx client/src/components/payment_attribution.test.ts",
+    "test:patient-activity": "tsx server/patient_activity.test.ts",
+    "test:returning-patient": "tsx server/returning_patient.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
