@@ -15,7 +15,7 @@ import {
   allowedActions, canActCommercially, canApprove, canConfirmPurchase,
   canDecideLegacyPriceRequest,
   canRecordFollowup, canSelectExpert, canSetCommercialPrice,
-  canSignalPurchaseInterest, canViewFollowup,
+  canSetInitialCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
   computeCommercialPrice, isFollowupReason, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUSES, FOLLOWUP_STATUS_LABELS,
   LEGACY_ONLY_STATUSES, PRICE_SOURCES, priceSourceLabel, priceSourceShort,
@@ -54,6 +54,10 @@ const physioStaff = { role: "therapist", isAdmin: false,
 const expertWithAdd = { role: "prosthetics_expert", isAdmin: false,
   permissions: { canAddPatients: true } };
 
+/** الحالاتُ الخمسُ الحيّة — كلُّ ما ليس نهائياً. تُستعمل في أكثر من قسم. */
+const LIVE = ["awaiting_patient_decision", "follow_up", "price_approval_pending",
+  "price_approved_waiting_patient", "purchase_approval_pending"] as const;
+
 // ══ أ. مَن يعمل تجارياً — **يستطيع ولا يُطلَب منه** ══════════════════════
 //  الطبيبُ المخوَّل داخلها: يسدّ فراغاً حين يقف المريضُ أمامه والاستعلامات
 //  مشغول. **ولا حالةَ تنتظره**: الاستقبالُ ومديرُ الفرع يُتمّان كلَّ شيء.
@@ -77,15 +81,21 @@ same("   والاسمُ القديم مطابقٌ للجديد — لا بوّا
 console.log("\n── مَن يقرأ ──");
 same("أ٢. الأربعة يقرأون",
   [recv, mgr, doc, admin].map(canViewFollowup), [true, true, true, true]);
-same("   **والمحاسبُ لا يقرأ ولو حمل `canAddPatients`**",
-  canViewFollowup(accountant2), false);
+//  **والمحاسبُ معهم — بدوره لا بقدرته.** المريضُ يقف عنده بالمال، فبطاقةٌ
+//  محجوبةٌ عنه كانت تعني أن يقبض ثمن بيعٍ لا يراه. والبوّابةُ بقيت بالدور:
+//  `canAddPatients` وحدها لا تزال لا تفتح شيئاً.
+same("أ٣. **والمحاسبُ يقرأ — بدوره** لأنه يقبض", canViewFollowup(accountant2), true);
 same("   **ولا مُدخِلُ الجلسات ولو حمل `canEditPatients`**",
   canViewFollowup(physioStaff), false);
 same("   **ولا خبيرُ الأطراف ولو حملها**", canViewFollowup(expertWithAdd), false);
 same("   وبلا جلسة ⟶ لا", canViewFollowup(null), false);
 same("   **ومَن لا يقرأ لا يكتب** — الحجبُ لا ثغرةَ فيه",
-  [accountant2, physioStaff, expertWithAdd]
+  [physioStaff, expertWithAdd]
     .filter((w) => canViewFollowup(w) || canActCommercially(w)), []);
+//  **وقراءتُه لا تفتح له إدارةَ الملفّ**: القراءةُ والقبضُ بابان، والتأجيلُ
+//  والإغلاقُ وإعادةُ الفتح خلف `canActCommercially` وحدها — وهو خارجها.
+same("   **والمحاسبُ يقرأ ولا يدير** — `canActCommercially` تبقى دونه",
+  canActCommercially(accountant2), false);
 
 // ══ ب. مَن يعتمد — القاعدة الحاسمة ═════════════════════════════════════
 console.log("\n── مَن يعتمد ──");
@@ -118,6 +128,38 @@ same("   وبلا جلسة ⟶ لا", canConfirmPurchase(null), false);
 same("ب٤. **مديرُ الفرع: يبيع ويسعّر ولا يحسم القديم**",
   [canConfirmPurchase(mgr), canSetCommercialPrice(mgr), canDecideLegacyPriceRequest(mgr)],
   [true, true, false]);
+
+// ══ ب٥. **المحاسبُ: يُتمّ البيع ولا شيءَ بعده** ═══════════════════════════
+//  هذا هو ثمرُ فصلِ البوّابتين، ويُثبَت واحدةً واحدة لا بالوصف. فإضافتُه
+//  إلى `canActCommercially` — وهي الطريقةُ «الأسهل» — كانت ستمنحه معه
+//  التأجيلَ والإغلاقَ وإعادةَ الفتح والإشارةَ وتحديدَ السعر دفعةً واحدة.
+console.log("\n── المحاسبُ يُتمّ البيع ولا يديره ──");
+same("ب٥. **المحاسبُ يؤكّد الشراء**", canConfirmPurchase(accountant2), true);
+same("   **ويُدخل أولَ سعرٍ حين سكتت المعاينة**",
+  canSetInitialCommercialPrice(accountant2), true);
+same("   **ويختار الخبير في الحالات الحيّة الخمس**",
+  LIVE.filter((st) => !canSelectExpert(accountant2, st)), []);
+//  **وما لا يُمنَح**: خمسُ بوّاباتٍ تبقى مغلقةً دونه — لا واحدةَ تسرّبت.
+same("ب٦. **ولا يُمنَح شيئاً آخر** — خمسُ بوّاباتٍ مغلقةٌ دونه",
+  ([["إدارةُ الملفّ (تأجيل/إغلاق/إعادةُ فتح)", canActCommercially],
+    ["تحديدُ السعر", canSetCommercialPrice],
+    ["إشارةُ الرغبة", canSignalPurchaseInterest],
+    ["حسمُ الطلب القديم", canDecideLegacyPriceRequest],
+    ["اعتمادُ السعر", canApprove],
+  ] as Array<[string, (x: any) => boolean]>)
+    .filter(([, gate]) => gate(accountant2)).map(([n]) => n), []);
+//  **والأزرارُ تُترجم ذلك حرفياً**: زرٌّ واحدٌ في كلّ حالةٍ حيّة لا غير.
+same("ب٧. **وزرُّه واحدٌ في كلّ حالةٍ حيّة: «اشترى» لا غير**",
+  LIVE.map((st) => allowedActions(accountant2, st).join("+")),
+  ["confirm_purchase", "confirm_purchase", "", "confirm_purchase", "confirm_purchase"]);
+same("   **ولا زرَّ له في النهائيّتين** — لا إعادةَ فتحٍ ولا شيء",
+  ["closed_without_purchase", "converted"].flatMap((st) =>
+    allowedActions(accountant2, st)), []);
+//  ودورُ «محاسب» وحده هو البوّابة: القدرةُ المالية لا تصنع محاسباً.
+same("ب٨. **والقدرةُ المالية وحدها لا تفتح شيئاً** — الدورُ هو الحَكَم",
+  [canViewFollowup({ role: "therapist", permissions: { canManageAccounting: true } }),
+    canConfirmPurchase({ role: "therapist", permissions: { canManageAccounting: true } })],
+  [false, false]);
 
 // ══ ج. الأزرار بحسب الحالة ═════════════════════════════════════════════
 console.log("\n── الأزرار ──");
@@ -201,9 +243,6 @@ same("ط١. **والخبيرُ لا يؤكّد شراءً في أي حالة**",
 //  الاعتماد لأن قائمتَهما فارغة هناك — وهما الحالتان اللتان يلزم فيهما
 //  اختيارُ الخبير أكثر ما يلزم: البيع على وشك أن يُعتمد.
 console.log("\n── زرّ الخبير ──");
-const LIVE = ["awaiting_patient_decision", "follow_up", "price_approval_pending",
-  "price_approved_waiting_patient", "purchase_approval_pending"] as const;
-
 same("ط٢. **الاستقبال يختار الخبير في الحالات الحيّة الخمس**",
   LIVE.filter((st) => !canSelectExpert(recv, st)), []);
 same("   **وفي `price_approval_pending` تحديداً — وقائمةُ أزراره فارغة**",
@@ -222,9 +261,19 @@ same("   ومديرُ الفرع والطبيبُ والمسؤول كذلك",
 same("   **ولا يظهر في النهائيّتين**",
   [recv, mgr, doc, admin].flatMap((w) =>
     ["closed_without_purchase", "converted"].filter((st) => canSelectExpert(w, st))), []);
-same("   **ولا لخبير الأطراف ولا للمحاسب** — ليسا من مسؤولي المتابعة",
-  [expert, accountant2, physioStaff].flatMap((w) =>
+same("   **ولا لخبير الأطراف ولا لمُدخِل الجلسات** — ليسا ممّن يُتمّ البيع",
+  [expert, physioStaff].flatMap((w) =>
     LIVE.filter((st) => canSelectExpert(w, st))), []);
+//  **والمحاسبُ داخلها اليوم** — لأن الخبيرَ الناقصَ يُختار داخل «اشترى»
+//  نفسها. وحجبُه كان سيوقف بيعاً قائماً عند شاشةٍ أخرى لا يملكها.
+same("   **والمحاسبُ يختاره** — إتمامُ البيع يشمل خبيرَه",
+  LIVE.filter((st) => !canSelectExpert(accountant2, st)), []);
+//  **والبوّابةُ هي «مَن يُتمّ البيع» حرفياً** — لا نسخةٌ ثانيةٌ منها. فلو
+//  ضُيّق التأكيدُ يوماً ضاق معه اختيارُ الخبير بلا أن يُنسى ملفٌّ.
+same("   **ومصدرُها `canConfirmPurchase` نفسه لا نسخةٌ منه**",
+  [recv, mgr, doc, admin, expert, accountant2, physioStaff, expertWithAdd]
+    .flatMap((w) => LIVE.filter((st) => canSelectExpert(w, st) !== canConfirmPurchase(w))),
+  []);
 same("   وبلا جلسة ⟶ لا",
   LIVE.filter((st) => canSelectExpert(null, st)), []);
 
@@ -356,12 +405,18 @@ same("   **والقديمُ لا يُنسَب إلى مدير الفرع**",
   priceSourceLabel("approved_change"), "السعر المعتمد بعد تعديل سعر سابق");
 check(!priceSourceShort("approved_change").includes("مدير"),
   "   ولا ترد «مدير» في نصّ القديم إطلاقاً", priceSourceShort("approved_change"));
-//  **وأولُ سعرٍ يُنسَب لمن أدخله**: الطبيبُ ترك الحقل فارغاً، فأدخله
-//  الاستعلامات — ونسبتُه إلى مدير الفرع كانت ستكذب على قارئ السجلّ.
-same("   **وأولُ سعرٍ يُنسَب إلى الاستعلامات لا إلى المدير**",
-  priceSourceLabel("reception_set"), "السعر المعتمد أدخله الاستعلامات");
-check(!priceSourceShort("reception_set").includes("مدير"),
-  "   ولا ترد «مدير» في نصّه إطلاقاً", priceSourceShort("reception_set"));
+//  **وأولُ سعرٍ لا يُنسَب إلى دورٍ بعينه**: الطبيبُ ترك الحقل فارغاً، ومَن
+//  أتمّ البيع أدخله — استقبالاً كان أو محاسباً أو طبيباً أو مديراً. ونسبتُه
+//  إلى أيٍّ منهم بالاسم في نصٍّ ثابت كانت ستكذب على قارئ السجلّ.
+same("   **وأولُ سعرٍ يُنسَب إلى فعله لا إلى دورٍ بعينه**",
+  priceSourceLabel("reception_set"), "السعر المعتمد أُدخل عند إتمام البيع");
+same("   **ولا يسمّي دوراً واحداً** — لا مديراً ولا استعلامات",
+  ["مدير", "الاستعلامات", "محاسب", "طبيب"]
+    .filter((w) => priceSourceShort("reception_set").includes(w)), []);
+//  **والقيمةُ المخزَّنة لم تتغيّر**: صفوفٌ مكتوبةٌ تحملها، وتغييرُها ترحيلٌ
+//  لا يشتري شيئاً. النصُّ وحده هو ما تحرّر.
+same("   **والقيمةُ المخزَّنة `reception_set` كما هي — النصُّ وحده تغيّر**",
+  PRICE_SOURCES.includes("reception_set" as any), true);
 same("   والمختصرُ جزءٌ من الكامل — نصٌّ واحد لا نصّان",
   PRICE_SOURCES.map((v) => priceSourceLabel(v) === `السعر المعتمد ${priceSourceShort(v)}`),
   [true, true, true, true]);
@@ -409,9 +464,29 @@ console.log("\n── عقد البطاقة التجاري ──");
 check(cardSrc.includes("button-set-commercial-price")
   && cardSrc.includes("/commercial-price"),
   "ر. **زرُّ تحديد السعر ونقطتُه في البطاقة**");
-check(cardSrc.includes("button-signal-purchase-interest")
-  && cardSrc.includes("/purchase-interest"),
-  "   وزرُّ إشارةِ الرغبة ونقطتُه");
+// ══ ر٠. **زرُّ الشراء واحد** — والإشارةُ صارت أثراً لا زرّاً ══════════════
+//  كان في البطاقة زرّان يعنيان الشيء نفسه للموظّف: «اشترى» و«اشترى — يرغب
+//  بإكمال البيع». فالثاني حُذف من الشاشة، **ونقطتُه وتاريخُه باقيان**:
+//  الخادم يسجّل الإشارة نفسها تلقائياً حين يُرفَع طلبُ خصم، والصفوف القديمة
+//  تُقرأ كما هي. حذفُ الزرّ تبسيطُ واجهةٍ لا حذفُ بيانات.
+check(!cardSrc.includes("button-signal-purchase-interest"),
+  "ر٠. **ولا زرَّ إشارةٍ ثانياً في البطاقة** — زرُّ شراءٍ واحد",
+  (cardSrc.match(/.*signal-purchase-interest.*/g) ?? []).join("\n"));
+const buyButtons = (cardSrc.match(/data-testid="button-confirm-purchase"/g) ?? []);
+check(buyButtons.length === 1,
+  "   **وزرُّ «اشترى» واحدٌ لا نسختان**", `عددُها: ${buyButtons.length}`);
+//  **ولا يُعطَّل لغياب الخبير**: النافذةُ تختاره، فلا يُطرَد الموظّف منها.
+check(!/selectedExpertUserId === null[\s\S]{0,400}button-confirm-purchase"/.test(cardSrc),
+  "   **ولا يُعطَّل لغياب الخبير** — النافذةُ تختاره");
+check(!cardSrc.includes("اختر الخبير المسؤول أولاً"),
+  "   **ولا نصَّ يطرد الموظّفَ ليختار الخبير في مكانٍ آخر**");
+//  **والنقطةُ باقيةٌ في الخادم** — توافقاً رجعياً وللتسجيل التلقائي.
+const followupRoutesSrc = readFileSync(
+  join(import.meta.dirname, "../server/followup/routes.ts"), "utf8");
+check(followupRoutesSrc.includes("/:id/purchase-interest"),
+  "   **ونقطةُ الإشارة باقيةٌ في الخادم** — لم تُحذف مع الزرّ");
+check(followupRoutesSrc.includes("signalPurchaseInterest({"),
+  "   **ويسجّلها الخادمُ تلقائياً** عند رفع طلب الخصم من النافذة");
 //  **والشاشةُ لا تُلزِم الطبيبَ بشيء**: لا نصَّ يقول «على الطبيب» أو
 //  «بانتظار الطبيب» أو «يجب على الطبيب». مشاركتُه اختيارٌ لا واجب.
 const obligation = (cardSrc.match(/.*(على الطبيب|بانتظار الطبيب|يجب على|الطبيب يجب).*/g) ?? []);

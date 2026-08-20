@@ -30,6 +30,7 @@ import {
   DISCOUNT_STATUS_LABELS, FREE_DONATION_LABEL, type DiscountStatus,
 } from "@shared/discount";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import { PriceTransition } from "@/components/PriceTransition";
 
 interface Row {
   id: number; patientId: number; patientName: string; patientCode: string | null;
@@ -184,10 +185,12 @@ export default function DiscountApprovals() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <div className="flex flex-wrap gap-x-6 gap-y-1">
-                  <span><span className="text-muted-foreground">السعر الأصلي: </span>
-                    <b className="font-mono">{money(r.originalPrice)}</b> د.ع</span>
-                  <span><span className="text-muted-foreground">بعد الخصم: </span>
-                    <b className="font-mono">{money(r.approvedFinalPrice ?? r.proposedFinalPrice)}</b> د.ع</span>
+                  {/*  الأصليُّ ثم النهائيُّ في وحدةٍ معزولة — فلا يقلبها
+                      اتجاهُ الصفحة فيبدو الخصمُ زيادةً. */}
+                  <span><span className="text-muted-foreground">السعر: </span>
+                    <PriceTransition from={r.originalPrice}
+                      to={r.approvedFinalPrice ?? r.proposedFinalPrice}
+                      testId={`discount-${r.id}-transition`} /> د.ع</span>
                   <span><span className="text-muted-foreground">الفرق: </span>
                     <b className="font-mono">{money(r.discountAmount)}</b> د.ع</span>
                 </div>

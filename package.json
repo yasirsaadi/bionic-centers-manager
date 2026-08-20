@@ -67,7 +67,9 @@
     "test:schema-parity": "tsx server/schema_parity_056.test.ts",
     "test:discount-rules": "tsx shared/discount.test.ts",
     "test:discount": "tsx server/service_discount.test.ts",
-    "test:discount-ui": "tsx client/src/components/service_discount_ui.test.ts"
+    "test:purchase-dialog": "tsx server/purchase_dialog.test.ts",
+    "test:discount-ui": "tsx client/src/components/service_discount_ui.test.ts",
+    "test:purchase-ui": "tsx client/src/components/purchase_dialog_ui.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

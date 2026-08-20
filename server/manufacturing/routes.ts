@@ -25,6 +25,7 @@ import {
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
   MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
+import { canConfirmPurchase } from "@shared/followup";
 import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 import * as discountStore from "../discounts/store";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
@@ -84,8 +85,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   app.get("/api/manufacturing/experts", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     // Experts don't assign experts. Everyone else who can add/manage patients may read.
+    //  **ومَن يُتمّ البيع يقرأ القائمة**: نافذة «اشترى» تختار الخبير الناقص
+    //  في مكانها، فحاجبُ القائمة عن أحد مَن يُتمّ البيع كان يعطيه قائمةً
+    //  فارغة وزرّاً لا يعمل — منعاً بلا رسالة. والقائمةُ أسماءُ خبراء الفرع
+    //  لا مال، ولا يمرّ منها رقمٌ ماليّ إطلاقاً.
     if (isExpert(s)) return res.status(403).json({ error: "غير مصرح" });
-    const canRead = s.isAdmin || isManager(s) || s.permissions?.canAddPatients || s.permissions?.canViewPatients;
+    const canRead = s.isAdmin || isManager(s) || canConfirmPurchase(s)
+      || s.permissions?.canAddPatients || s.permissions?.canViewPatients;
     if (!canRead) return res.status(403).json({ error: "غير مصرح" });
 
     // Non-admins are pinned to a branch they can access; admins pass ?branchId=.
