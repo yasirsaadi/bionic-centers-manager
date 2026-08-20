@@ -1,4 +1,4 @@
-// **عقدُ الشاشة مع الخادم** — «إضافة نوع حالة» وتسجيلُ مريض جديد.
+// **عقدُ الشاشة مع الخادم** — إضافةُ الحالة، والتسجيل، وتعديلُ المريض.
 // `npm run test:add-case-ui`.
 //
 // ══ العطبُ الذي يحرسه ═══════════════════════════════════════════════════
@@ -26,6 +26,7 @@ const modal = read("./AddCaseTypeModal.tsx");
 const builder = read("./AmputationBuilder.tsx");
 const create = read("../pages/CreatePatient.tsx");
 const launcher = read("./PatientServiceLauncher.tsx");
+const edit = read("../pages/EditPatient.tsx");
 
 console.log("\n═══ عقدُ «إضافة نوع حالة» ═══\n");
 
@@ -118,6 +119,45 @@ check("١٩. **والفحصُ قبل الإرسال بالقاعدة المشت�
   (create.match(/.*checkRequiredPatientData.*/g) ?? []).join("\n"));
 check("٢٠. **ولا يُنتظَر ٤٠٠ ليعرف الموظّف ما ينقص**",
   create.includes('title: "بيانات ناقصة"'));
+
+// ── ٧. **«تعديل مريض»: إداريٌّ يمرّ، وسريريٌّ يكتمل** ────────────────────
+//  A) ملفٌّ قديمٌ بلا عمرٍ ولا طولٍ ولا وزن، والهاتفُ وحده يتغيّر ⟶ يُرسَل.
+//  B) العمرُ يتغيّر والباقي فارغ ⟶ يُمنَع قبل الإرسال.
+console.log("\n── تعديل مريض ──");
+check("٢١. **العمرُ لم يعد إلزامياً في مخطّط النموذج**",
+  !edit.includes('age: z.string().min(1'),
+  (edit.match(/.*age: z\.string.*/g) ?? []).join("\n"));
+check("٢٢. **بل صار الإلزامُ مشروطاً بما تغيّر** — بقاعدة الخادم نفسها",
+  edit.includes("isAdministrativeOnlyPatch(values as any, patient as any)")
+    && edit.includes("@shared/patient_required"),
+  (edit.match(/.*isAdministrativeOnlyPatch.*/g) ?? []).join("\n"));
+check("٢٣. **ومَن يلمسها يُطالَب باكتمالها قبل الإرسال**",
+  edit.includes("checkRequiredPatientData({") && edit.includes('title: "بيانات ناقصة"'));
+//  C) **ولا تُخترَع «احادي/سفلي/يمين»** لمريضٍ بلا موقعِ بتر.
+check("٢٤. **ولا حالةَ بترٍ بافتراضاتها في الصفحة**",
+  !edit.includes('useState<"single" | "double" | "silicone">("single")')
+    && !edit.includes('setSingleLimb') && !edit.includes('setDoubleLimbType'),
+  (edit.match(/.*setSingle.*/g) ?? []).join("\n"));
+check("٢٥. **وتبدأ فارغةً تماماً**",
+  edit.includes("useState<AmputationParts>({})"),
+  (edit.match(/.*AmputationParts.*/g) ?? []).join("\n"));
+//  D/F) **والمحفوظُ يُقرأ بالمحلّل الرسمي** ثم يُعاد كما هو ما لم يُلمَس.
+check("٢٦. **والمحفوظُ يُحمَّل بالمحلّل الرسمي** — لا بمحلّلٍ ثانٍ ناقص",
+  edit.includes("setAmp(parseAmputationSite(patient.amputationSite))")
+    && !edit.includes('if (site.startsWith("احادي"))'),
+  (edit.match(/.*parseAmputationSite.*/g) ?? []).join("\n"));
+check("٢٧. **ولا يُكتب شيءٌ ما لم يلمسه أحد** — نصٌّ قديم لا يُمحى بصمت",
+  edit.includes("if (conditionType !== \"amputee\" || !ampTouched) return;"),
+  (edit.match(/.*ampTouched.*/g) ?? []).join("\n"));
+check("٢٨. **وحين يُلمَس تُكتب بالباني المشترك**",
+  edit.includes('form.setValue("amputationSite", amputationSiteOf(amp))'));
+check("٢٩. **ولا حارسَ `isInitialized` يمنع القديمَ من الإكمال**",
+  !edit.includes("isInitialized"),
+  (edit.match(/.*isInitialized.*/g) ?? []).join("\n"));
+check("٣٠. **والباني المشترك هو المعروض**",
+  edit.includes("<AmputationBuilder") && edit.includes('testIdPrefix="edit-amp"'));
+check("٣١. **والنصُّ القديم غيرُ المفهوم يبقى معروضاً** — يعرف الموظّف ما يستبدله",
+  edit.includes('data-testid="text-legacy-amputation"'));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

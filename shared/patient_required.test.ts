@@ -13,7 +13,7 @@ import {
   checkRequiredPatientData, checkAmputationSite, checkAmputationParts,
   meaningfulMeasure, legacyIncomplete, isAdministrativeOnlyPatch,
 } from "./patient_required";
-import { buildAmputationSite } from "./case_fields";
+import { buildAmputationSite, parseAmputationSite } from "./case_fields";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -227,6 +227,98 @@ console.log("\n── ما تغيّر لا ما حضر ──");
     !isAdministrativeOnlyPatch({ height: "170" }));
   check("٤٥. وحمولةٌ بلا حقلٍ إلزاميّ إداريّةٌ دائماً",
     isAdministrativeOnlyPatch({ phone: "0770", address: "x" }));
+}
+
+// ── ٨. **«تعديل مريض» — سلوكُ الصفحة كما تُنفّذه** ───────────────────────
+//  النموذجُ يرسل الكائنَ كاملاً في كل حفظ. والصفحةُ الآن تنادي هاتين
+//  الدالّتين بالضبط: `isAdministrativeOnlyPatch` ثم `checkRequiredPatientData`
+//  حين تُخرِجها الأولى من الإداريّ. وهنا يُحاكى المساران كما هما.
+//
+//  والسلسلةُ تُبنى كما يبنيها الباني المشترك: المكتملُ يُكتب، والناقصُ يبقى
+//  فراغاً — ولا يُخترَع تعريفٌ لم يُختَر.
+console.log("\n── سلوكُ «تعديل مريض» ──");
+{
+  const siteOf = (parts: any) =>
+    checkAmputationParts(parts).ok ? buildAmputationSite(parts) : "";
+  /** ما تفعله `onSubmit` حرفاً: يمرّ أو يُمنَع، وبأيّ سلسلة. */
+  const submit = (stored: any, values: any) => {
+    if (!isAdministrativeOnlyPatch(values, stored)) {
+      const req = checkRequiredPatientData({
+        age: values.age, height: values.height, weight: values.weight,
+        isAmputee: values.isAmputee, amputationSite: values.amputationSite,
+      });
+      if (!req.ok) return { ok: false, missing: req.missing };
+    }
+    return { ok: true, sent: values };
+  };
+
+  //  ملفٌّ قديم: بلا عمرٍ ولا طولٍ ولا وزن، مبتورٌ بلا موقعِ بتر.
+  const legacy = { age: "", height: "", weight: "", isAmputee: true, amputationSite: "" };
+  const form = (patch: any = {}) => ({
+    name: "مريض", phone: "07701111111", address: "عنوان",
+    patientClassification: "past",
+    age: "", height: "", weight: "", isAmputee: true, amputationSite: "",
+    ...patch,
+  });
+
+  //  (أ) الهاتفُ وحده يتغيّر ⟶ يمرّ.
+  same("٤٦. **(أ) الهاتفُ وحده على ملفٍّ ناقص ⟶ يمرّ**",
+    submit(legacy, form({ phone: "07702222222" })).ok, true);
+  same("   والعنوانُ وحده كذلك",
+    submit(legacy, form({ address: "عنوانٌ آخر" })).ok, true);
+  same("   والتصنيفُ وحده كذلك",
+    submit(legacy, form({ patientClassification: "new" })).ok, true);
+
+  //  (ب) العمرُ يتغيّر والباقي فارغ ⟶ يُمنَع، ويُسمّى الناقصُ كلُّه.
+  const changedAge = submit(legacy, form({ age: "40" }));
+  same("٤٧. **(ب) والعمرُ يتغيّر والباقي فارغ ⟶ يُمنَع**", changedAge.ok, false);
+  same("   ويُسمّى الناقصُ كلُّه",
+    (changedAge as any).missing,
+    ["height", "weight", "amputationType", "amputationSide", "amputationLevel"]);
+
+  //  (ج) **ولا يُخترَع تعريفٌ** لمريضٍ بلا موقعِ بتر: المحلّلُ يُرجع فراغاً.
+  same("٤٨. **(ج) وملفٌّ بلا موقعِ بترٍ يُقرأ فراغاً — لا «احادي/سفلي/يمين»**",
+    parseAmputationSite(legacy.amputationSite), {});
+  same("   والباني لا يكتب شيئاً من الفراغ", siteOf({}), "");
+
+  //  (د) الموظّفُ يُكمِل صراحةً ⟶ تُكتب السلسلةُ الصحيحة ويمرّ.
+  const chosen = {
+    amputationType: "single", singleLimb: "lower", singleSide: "right",
+    singleDetail: "تحت الركبة",
+  };
+  same("٤٩. **(د) والإكمالُ الصريح يكتب السلسلة الصحيحة**",
+    siteOf(chosen), "احادي - طرف سفلي - يمين - تحت الركبة");
+  same("   ويمرّ حين تكتمل المقاسات معه",
+    submit(legacy, form({
+      age: "40", height: "170", weight: "70", amputationSite: siteOf(chosen),
+    })).ok, true);
+
+  //  (هـ) الثنائيُّ نصفَ مُعرَّفٍ ⟶ يُمنَع.
+  const halfDouble = {
+    amputationType: "double", doubleLimbType: "lower", doubleRightDetail: "تحت الركبة",
+  };
+  same("٥٠. **(هـ) والثنائيُّ بجهةٍ واحدة لا يُبنى أصلاً**", siteOf(halfDouble), "");
+  const blocked = submit(legacy, form({
+    age: "40", height: "170", weight: "70", amputationSite: siteOf(halfDouble),
+  }));
+  same("   ويُمنَع الإرسالُ به", blocked.ok, false);
+
+  //  (و) **والمحفوظُ الصحيح يُقرأ ويُعاد كما هو** ما لم يُغيَّره أحد.
+  const stored = buildAmputationSite({
+    amputationType: "double", doubleLimbType: "lower",
+    doubleRightDetail: "تحت الركبة", doubleLeftDetail: "فوق الركبة",
+  });
+  same("٥١. **(و) والمحفوظُ الصحيح يدور كاملاً بلا خسارة**",
+    siteOf(parseAmputationSite(stored)), stored);
+  //  **وهذا ما كان ينكسر**: المحلّلُ القديم في «تعديل مريض» لا يقرأ تفاصيل
+  //  الثنائيّ إطلاقاً، فتضيع المستويات ثم تُكتب فوقها شرطات.
+  const parsed = parseAmputationSite(stored);
+  same("   **وتفاصيلُ الجهتين محفوظةٌ في القراءة**",
+    [parsed.doubleRightDetail, parsed.doubleLeftDetail], ["تحت الركبة", "فوق الركبة"]);
+  const completeFile = { age: "40", height: "170", weight: "70",
+    isAmputee: true, amputationSite: stored };
+  same("   وحفظٌ إداريٌّ عليه يمرّ بلا مساس",
+    submit(completeFile, { ...completeFile, phone: "07703333333" }).ok, true);
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
