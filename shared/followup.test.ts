@@ -288,6 +288,15 @@ same("   وسببٌ مخترَع يُردّ", isFollowupReason("whatever"), fals
 same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_salary_or_finance"), true);
 same("ك. النهائيّتان اثنتان لا غير",
   FOLLOWUP_STATUSES.filter(isTerminal), ["closed_without_purchase", "converted"]);
+//  ══ **الشارةُ تقول الواقعة لا اسم الآلة** ═══════════════════════════════
+//  «تحوّل إلى تصنيع» تصف ما فعله النظام بالصفّ. والموظّفُ يسأل عن المريض:
+//  أشترى أم لا. فالنصُّ صار يجيبه — **والقيمةُ المخزَّنة `converted` كما هي**.
+same("ك٢. **وشارةُ التحوّل تقول «تم الشراء — بدأ التصنيع»**",
+  FOLLOWUP_STATUS_LABELS.converted, "تم الشراء — بدأ التصنيع");
+check(!FOLLOWUP_STATUS_LABELS.converted.includes("ينتظر"),
+  "   **ولا تقول «ينتظر» شيئاً بعد أن تمّ**", FOLLOWUP_STATUS_LABELS.converted);
+same("   والقيمةُ المخزَّنة لم تتغيّر — النصُّ وحده",
+  FOLLOWUP_STATUSES.includes("converted" as any), true);
 
 // ══ ط٣. والبطاقةُ تستعمل البوّابة فعلاً ═══════════════════════════════
 //  القاعدة الصحيحة لا تنفع إن بقيت الواجهة على الشرط القديم. والعقد على

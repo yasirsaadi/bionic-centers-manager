@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -335,12 +335,20 @@ export function NewExamDialog({
               <Label htmlFor="exam-device-cost" className="font-semibold">
                 كلفة {specialty === "prosthetic" ? "الطرف" : "المسند"} (د.ع)
               </Label>
-              <Input
+              {/*  ══ الرقمُ يُقرأ وهو يُكتَب ═══════════════════════════════
+                  كان الحقلُ نصّاً خاماً: `2500000` — لا يستطيع الطبيبُ أن
+                  يتحقّق منه بنظرةٍ واحدة، وصفرٌ زائدٌ أو ناقصٌ يمرّ. وهذه
+                  كلفةُ جهازٍ تدخل حساباتِ المريض حين يعتمدها الاستعلامات.
+                  فصار حقلَ المال نفسه المستعمل في كلّ نافذةٍ تقبض أو تسعّر:
+                  يُعرَض `2,500,000` ويُرسَل `2500000`.
+                  **و`allowEmpty`**: الفارغُ يبقى فارغاً لا يصير صفراً —
+                  «لم أحدّد الكلفة» ليست «كلفتُه صفر». */}
+              <MoneyInput
                 id="exam-device-cost"
-                inputMode="numeric"
+                allowEmpty
                 placeholder="مثال: 1,500,000"
                 value={deviceCost}
-                onChange={(e) => setDeviceCost(e.target.value.replace(/[^\d,]/g, ""))}
+                onValueChange={(v) => setDeviceCost(v === null ? "" : String(v))}
                 className="bg-white"
                 data-testid="input-exam-device-cost"
               />
