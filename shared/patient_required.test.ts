@@ -10,7 +10,8 @@
 // (٤) **والملفُّ القديم يُقرأ ولا يُخمَّن** — القاعدةُ للحفظ لا للعرض.
 
 import {
-  checkRequiredPatientData, checkAmputationSite, meaningfulMeasure, legacyIncomplete,
+  checkRequiredPatientData, checkAmputationSite, checkAmputationParts,
+  meaningfulMeasure, legacyIncomplete, isAdministrativeOnlyPatch,
 } from "./patient_required";
 import { buildAmputationSite } from "./case_fields";
 
@@ -78,29 +79,46 @@ console.log("\n── تعريف البتر ──");
   same(`١٥. **واحاديٌّ بلا مستوى يُردّ** («${noLevel}»)`,
     checkAmputationSite(noLevel).missing, ["amputationLevel"]);
 }
+// ── **الثنائيُّ يلزمه الجهتان معاً — أيّاً كان نمطُه** ────────────────────
+//  «ثنائي» تعني الطرفين بالتعريف. وكان النمطُ «علويّ» و«سفليّ» يُقبل بجهةٍ
+//  واحدة، فيُحفَظ مبتورُ الطرفين بتعريفِ نصفِه — والخبيرُ يقيس على ما هو
+//  مكتوب: طرفٌ يُصنَع، والثاني لا أحدَ يعرف مستواه.
 {
-  const both = buildAmputationSite({
-    amputationType: "double", doubleLimbType: "both",
-    bothRightLimb: "lower", bothLeftLimb: "lower",
-    bothRightDetail: "تحت الركبة", bothLeftDetail: "فوق الركبة",
-  });
-  check(`١٦. **وثنائيٌّ «علوي وسفلي» بتفصيل الجهتين يُقبل**`,
-    checkAmputationSite(both).ok, `«${both}» ⟵ ${JSON.stringify(checkAmputationSite(both))}`);
-  const half = buildAmputationSite({
-    amputationType: "double", doubleLimbType: "both",
-    bothRightLimb: "lower", bothLeftLimb: "lower",
-    bothRightDetail: "تحت الركبة",
-  });
-  same("١٧. **ونصفُ التعريف يُردّ** — جهةٌ بلا تفصيل",
-    checkAmputationSite(half).missing, ["amputationLevel"]);
+  const dbl = (extra: Record<string, string>) => buildAmputationSite({
+    amputationType: "double", ...extra,
+  } as any);
+  const lowerBoth = dbl({ doubleLimbType: "lower",
+    doubleRightDetail: "تحت الركبة", doubleLeftDetail: "فوق الركبة" });
+  const lowerRight = dbl({ doubleLimbType: "lower", doubleRightDetail: "تحت الركبة" });
+  const lowerLeft = dbl({ doubleLimbType: "lower", doubleLeftDetail: "فوق الركبة" });
+  check(`١٦. **ثنائيٌّ سفليٌّ بالجهتين يُقبل**`, checkAmputationSite(lowerBoth).ok,
+    `«${lowerBoth}» ⟵ ${JSON.stringify(checkAmputationSite(lowerBoth))}`);
+  same("١٦ب. **وباليمين وحده يُردّ**",
+    checkAmputationSite(lowerRight).missing, ["amputationLevel"]);
+  same("١٦ج. **وباليسار وحده يُردّ**",
+    checkAmputationSite(lowerLeft).missing, ["amputationLevel"]);
+
+  const upperBoth = dbl({ doubleLimbType: "upper",
+    doubleRightDetail: "تحت المرفق", doubleLeftDetail: "فوق المرفق" });
+  const upperRight = dbl({ doubleLimbType: "upper", doubleRightDetail: "تحت المرفق" });
+  check(`١٧. **وثنائيٌّ علويٌّ بالجهتين يُقبل**`, checkAmputationSite(upperBoth).ok,
+    `«${upperBoth}» ⟵ ${JSON.stringify(checkAmputationSite(upperBoth))}`);
+  same("١٧ب. **وباليمين وحده يُردّ**",
+    checkAmputationSite(upperRight).missing, ["amputationLevel"]);
 }
 {
-  const upper = buildAmputationSite({
-    amputationType: "double", doubleLimbType: "upper",
-    doubleRightDetail: "تحت المرفق", doubleLeftDetail: "تحت المرفق",
-  });
-  check(`١٨. وثنائيٌّ علويٌّ بتفاصيله يُقبل`, checkAmputationSite(upper).ok,
-    `«${upper}» ⟵ ${JSON.stringify(checkAmputationSite(upper))}`);
+  //  والمختلطُ «علوي وسفلي» كذلك — كلتا الجهتين بطرفها وتفصيلها.
+  const mixed = (extra: Record<string, string>) => buildAmputationSite({
+    amputationType: "double", doubleLimbType: "both",
+    bothRightLimb: "lower", bothLeftLimb: "upper", ...extra,
+  } as any);
+  const both = mixed({ bothRightDetail: "تحت الركبة", bothLeftDetail: "فوق المرفق" });
+  check(`١٨. **والمختلطُ بالجهتين يُقبل**`, checkAmputationSite(both).ok,
+    `«${both}» ⟵ ${JSON.stringify(checkAmputationSite(both))}`);
+  same("١٨ب. **وبلا اليسار يُردّ**",
+    checkAmputationSite(mixed({ bothRightDetail: "تحت الركبة" })).missing, ["amputationLevel"]);
+  same("١٨ج. **وبلا اليمين يُردّ**",
+    checkAmputationSite(mixed({ bothLeftDetail: "فوق المرفق" })).missing, ["amputationLevel"]);
 }
 {
   const sil = buildAmputationSite({
@@ -146,6 +164,70 @@ check("٢٩. **ولا تُعدَّل الحمولةُ الواردة إطلاق�
   })());
 same("٣٠. **ومريضٌ فارغٌ تماماً لا يُسقط شيئاً**",
   [checkRequiredPatientData(null).ok, checkRequiredPatientData(undefined).ok], [false, false]);
+
+// ── ٦. **الفحصُ على الأجزاء — والافتراضُ ليس إجابة** ────────────────────
+//  `buildAmputationSite` تكتب «طرف سفلي» و«يمين» حين لا يُختار شيء (تعبيرٌ
+//  ثلاثيّ افتراضُه أحدهما)، فسلسلةٌ نصفُ مختارة **تبدو مكتملةً للمحلّل**.
+//  فالشاشةُ تفحص الأجزاء التي تملكها، لا السلسلةَ التي بنتها.
+console.log("\n── الأجزاء لا السلسلة ──");
+same("٣١. **نوعٌ بلا اختيار يُردّ بالثلاثة**",
+  checkAmputationParts({}).missing,
+  ["amputationType", "amputationSide", "amputationLevel"]);
+same("٣٢. **و«احادي» بلا طرفٍ ولا جهةٍ ولا مستوى يُردّ بالثلاثة**",
+  checkAmputationParts({ amputationType: "single" }).missing,
+  ["amputationType", "amputationSide", "amputationLevel"]);
+//  **وهذه هي الحالةُ التي كانت تمرّ**: السلسلةُ المبنيّة منها تبدو تامّة.
+check("٣٣. **والسلسلةُ المبنيّة من نصفِ اختيارٍ تبدو تامّة** — ولذلك تُفحَص الأجزاء",
+  checkAmputationSite(buildAmputationSite({
+    amputationType: "single", singleDetail: "تحت الركبة",
+  } as any)).ok,
+  buildAmputationSite({ amputationType: "single", singleDetail: "تحت الركبة" } as any));
+same("٣٤. والمكتملُ يمرّ على الأجزاء",
+  checkAmputationParts({
+    amputationType: "single", singleLimb: "lower", singleSide: "right",
+    singleDetail: "تحت الركبة",
+  }).ok, true);
+same("٣٥. **وسليكونيٌّ بلا جهةٍ لغير الأنف يُردّ**",
+  checkAmputationParts({ amputationType: "silicone", siliconePart: "اصبع" }).missing,
+  ["amputationSide"]);
+same("٣٦. **والأنفُ يمرّ بلا جهة**",
+  checkAmputationParts({ amputationType: "silicone", siliconePart: "انف" }).ok, true);
+
+// ── ٧. **التصحيحُ الإداريّ يُقاس بما تغيّر لا بما حضر** ─────────────────
+//  نموذجُ «تعديل مريض» يرسل الكائنَ كاملاً في كل حفظ. فقاعدةٌ تقرأ **وجودَ
+//  المفاتيح** كانت تردّ كلَّ تصحيحٍ إداريّ على كلّ ملفٍّ قديم — أي القاعدةَ
+//  التي وُضعت لإلغائها بعينها.
+console.log("\n── ما تغيّر لا ما حضر ──");
+{
+  const stored = { age: "40", height: null, weight: null, isAmputee: true,
+    amputationSite: null };
+  //  نموذجٌ كامل، والهاتفُ وحده مختلف — والحقولُ الإلزامية بقيمها المخزَّنة.
+  const fullForm = { name: "س", phone: "07709998877", age: "40", height: "",
+    weight: "", isAmputee: true, amputationSite: "" };
+  check("٣٧. **نموذجٌ كامل لم يتغيّر فيه إلزاميّ ⟶ إداريٌّ محض**",
+    isAdministrativeOnlyPatch(fullForm, stored as any),
+    JSON.stringify(fullForm));
+  check("٣٨. **وتغييرُ الطول يُخرجه من الإداريّ**",
+    !isAdministrativeOnlyPatch({ ...fullForm, height: "170" }, stored as any));
+  check("٣٩. **وتغييرُ العمر كذلك**",
+    !isAdministrativeOnlyPatch({ ...fullForm, age: "41" }, stored as any));
+  check("٤٠. **ورفعُ رايةِ البتر كذلك**",
+    !isAdministrativeOnlyPatch({ ...fullForm, isAmputee: false }, stored as any));
+  check("٤١. **وتعريفُ البتر كذلك**",
+    !isAdministrativeOnlyPatch(
+      { ...fullForm, amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" },
+      stored as any));
+  //  **والنصُّ والرقمُ المتساويان قيمةٌ واحدة** — وإلّا أُلزِم مَن لم يغيّر.
+  check("٤٢. **و«170» و170 قيمةٌ واحدة** — لا تُقرأ تغييراً",
+    isAdministrativeOnlyPatch({ height: 170 }, { height: "170" } as any));
+  check("٤٣. **و`null` و«» سواء**",
+    isAdministrativeOnlyPatch({ weight: "" }, { weight: null } as any));
+  //  وبلا صفٍّ مخزَّن يُتشدَّد: كلُّ مفتاحٍ حاضرٍ يُقرأ تغييراً.
+  check("٤٤. **وبلا مرجعٍ محفوظ يُتشدَّد**",
+    !isAdministrativeOnlyPatch({ height: "170" }));
+  check("٤٥. وحمولةٌ بلا حقلٍ إلزاميّ إداريّةٌ دائماً",
+    isAdministrativeOnlyPatch({ phone: "0770", address: "x" }));
+}
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

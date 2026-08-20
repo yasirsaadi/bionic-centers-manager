@@ -22,7 +22,7 @@
 // يُسأل. فالضوابطُ تبدأ **فارغة**، والفراغُ يُردّ — فيُسأل الموظّف مرّةً
 // واحدة بدل أن يُكذَب عليه في كلّ ملفّ.
 
-import { parseAmputationSite } from "./case_fields";
+import { parseAmputationSite, type AmputationParts } from "./case_fields";
 
 /** الحقولُ الثلاثة المشتركة بين كلّ المرضى. */
 export const CORE_MEASUREMENT_FIELDS = ["age", "height", "weight"] as const;
@@ -115,11 +115,24 @@ export function checkRequiredPatientData(p: PatientCoreInput | null | undefined)
  */
 export function checkAmputationSite(site: string): RequiredCheck {
   const raw = (site ?? "").trim();
-  const ALL = ["amputationType", "amputationSide", "amputationLevel"];
-  if (!raw) return fail(ALL);
-
+  if (!raw) return fail(AMPUTATION_ALL);
   const p = parseAmputationSite(raw);
-  if (!p.amputationType) return fail(ALL);
+  if (!p.amputationType) return fail(AMPUTATION_ALL);
+  return checkAmputationParts(p);
+}
+
+const AMPUTATION_ALL = ["amputationType", "amputationSide", "amputationLevel"];
+
+/**
+ * **الفحصُ على الأجزاء نفسها** — لا على السلسلة المركّبة.
+ *
+ * الشاشةُ تملك الأجزاء قبل أن تُركَّب، وهذا هو الفرق الحاسم: `buildAmputationSite`
+ * تكتب «طرف سفلي» و«يمين» حين لا يُختار شيء (تعبيرٌ ثلاثيّ افتراضُه أحدهما)،
+ * فسلسلةٌ نصفُ مختارة تبدو مكتملةً للمحلّل. فتُفحَص الأجزاء على الشاشة —
+ * والفارغُ فيها فراغٌ لا افتراض — ولا تُرسَل سلسلةٌ إلّا حين تكتمل.
+ */
+export function checkAmputationParts(p: AmputationParts): RequiredCheck {
+  if (!p.amputationType) return fail(AMPUTATION_ALL);
 
   const missing: string[] = [];
   if (p.amputationType === "single") {
@@ -128,11 +141,19 @@ export function checkAmputationSite(site: string): RequiredCheck {
     if (!p.singleDetail) missing.push("amputationLevel");
   } else if (p.amputationType === "double") {
     if (!p.doubleLimbType) missing.push("amputationType");
+    //  ══ **الثنائيُّ يلزمه الجهتان معاً — أيّاً كان نمطُه** ═══════════════
+    //  كان النمطُ «علويّ» و«سفليّ» يُقبل بجهةٍ واحدة (`&&` لا `||`)، فيُحفَظ
+    //  مبتورُ الطرفين بتعريفِ نصفِه. والخبيرُ يقيس على ما هو مكتوب: طرفٌ
+    //  يُصنَع ويُسلَّم، والثاني لا أحدَ يعرف مستواه — فيعود المريضُ ليُسأل
+    //  عمّا سُئل عنه يوم التسجيل.
+    //
+    //  و«ثنائي» تعني الطرفين بالتعريف، فلا معنى لنصفِ تعريفٍ فيها.
     if (p.doubleLimbType === "both") {
-      //  «علوي وسفلي» يلزمه تفصيلُ الجهتين معاً — وإلّا فنصفُ التعريف.
+      //  «علوي وسفلي»: لكلّ جهةٍ طرفُها وتفصيلُها.
       if (!p.bothRightDetail || !p.bothLeftDetail) missing.push("amputationLevel");
-    } else if (!p.doubleRightDetail && !p.doubleLeftDetail) {
-      missing.push("amputationLevel");
+    } else if (p.doubleLimbType) {
+      //  «علويّ» أو «سفليّ»: الجهتان من الطرف نفسه، وكلتاهما تُسأل.
+      if (!p.doubleRightDetail || !p.doubleLeftDetail) missing.push("amputationLevel");
     }
   } else if (p.amputationType === "silicone") {
     if (!p.siliconePart) missing.push("amputationType");
@@ -167,20 +188,45 @@ export const REQUIRED_PATIENT_FIELDS = [
 ] as const;
 
 /**
- * **هل هذا التعديل إداريٌّ محض؟**
+ * تطبيعُ قيمةٍ للمقارنة — **النصُّ والرقمُ المتساويان قيمةٌ واحدة**.
+ *
+ * الأعمدةُ نصّيةٌ في القاعدة والنموذجُ قد يرسل رقماً، و`null` و`""`
+ * و`undefined` كلُّها «لا قيمة». وبلا تطبيعٍ كان `170 !== "170"` يُقرأ
+ * **تغييراً** فيُلزَم مَن لم يغيّر شيئاً.
+ */
+function norm(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v).trim();
+}
+
+/**
+ * **هل هذا التعديل إداريٌّ محض؟** — بما **تغيّر فعلاً** لا بما حضر.
  *
  * الملفُّ القديم الناقص **يُقرأ ويُصحَّح إدارياً** — هاتفٌ خاطئ، أو تصنيفٌ،
  * أو عنوان. وإجبارُ الموظّف على مقاساتٍ لا يملكها لحظتَها كي يصحّح رقمَ
  * هاتفٍ **يوقف عملاً مشروعاً بلا مقابل**، والنتيجةُ المعتادة أن يُخترَع رقم.
  *
- * أمّا اللحظةُ التي يجب أن يكتمل فيها فهي **لمسُ الحقول نفسها** أو **دخولُ
- * دورة تصنيعٍ جديدة** — وذاك يحرسه `POST /device-episodes`.
+ * ══ ولماذا لا يكفي وجودُ المفتاح ═══════════════════════════════════════
+ * **نموذجُ «تعديل مريض» يرسل الكائنَ كاملاً** عند كلّ حفظ. فتصحيحُ هاتفٍ
+ * يحمل معه `age` و`height` و`weight` و`isAmputee` و`amputationSite` وإن لم
+ * يلمسها أحد. وقاعدةٌ تقرأ **وجودَ المفاتيح** كانت تردّ كلَّ تصحيحٍ إداريّ
+ * على كلّ ملفٍّ قديم — أي القاعدةَ التي وُضعت لإلغائها بعينها.
  *
- * والقاعدةُ بالسلب لا بقائمةِ سماح: كلُّ ما ليس من الخمسة إداريٌّ بالتعريف،
- * فحقلٌ جديد يُضاف للنموذج غداً لا يفتح ثغرةً بالنسيان.
+ * فالمقارنةُ **بالقيمة المخزَّنة**: حقلٌ وصل بقيمته نفسِها لم يتغيّر.
+ *
+ * @param patch جسمُ الطلب كما وصل.
+ * @param stored الصفُّ المحفوظ. وغيابُه يعني «لا أعرف» — فيُقرأ كلُّ مفتاحٍ
+ *   حاضرٍ تغييراً، وهو التشدّدُ الآمن.
  */
-export function isAdministrativeOnlyPatch(patch: unknown): boolean {
+export function isAdministrativeOnlyPatch(
+  patch: unknown, stored?: PatientCoreInput | null,
+): boolean {
   if (!patch || typeof patch !== "object") return true;
-  const keys = Object.keys(patch as Record<string, unknown>);
-  return !keys.some((k) => (REQUIRED_PATIENT_FIELDS as readonly string[]).includes(k));
+  const body = patch as Record<string, unknown>;
+  return !REQUIRED_PATIENT_FIELDS.some((k) => {
+    if (!(k in body)) return false;
+    if (!stored) return true;
+    return norm(body[k]) !== norm((stored as Record<string, unknown>)[k]);
+  });
 }

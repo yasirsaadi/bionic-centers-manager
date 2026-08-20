@@ -5,6 +5,8 @@ import { SUPPORT_SPECS } from "@shared/case_fields";
 import { normalizePhone } from "@shared/phone";
 import { useCreatePatient } from "@/hooks/use-patients";
 import { useToast } from "@/hooks/use-toast";
+import { amputationSiteOf } from "@/components/AmputationBuilder";
+import { checkRequiredPatientData, checkAmputationParts } from "@shared/patient_required";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -229,17 +231,20 @@ export default function CreatePatient() {
     }
   }, [experts, expertUserId]);
 
-  // Amputation selection state
-  const [amputationType, setAmputationType] = useState<"single" | "double" | "silicone">("single");
-  const [singleLimb, setSingleLimb] = useState<"upper" | "lower">("lower");
-  const [singleSide, setSingleSide] = useState<"right" | "left">("right");
+  // ══ **ضوابطُ البتر تبدأ فارغة** — الافتراضُ ليس إجابة ═══════════════════
+  //  كانت تفتح على «احادي / سفلي / يمين»، فكلُّ مبتورٍ سُجّل بلا سؤالٍ يحمل
+  //  هذا التعريفَ بعينه — ويقيس عليه الخبير. فالفراغُ الآن فراغ، والحفظُ
+  //  يُردّ حتى يُجاب.
+  const [amputationType, setAmputationType] = useState<string>("");
+  const [singleLimb, setSingleLimb] = useState<string>("");
+  const [singleSide, setSingleSide] = useState<string>("");
   const [singleAmputationDetail, setSingleAmputationDetail] = useState("");
-  
-  const [doubleLimbType, setDoubleLimbType] = useState<"upper" | "lower" | "both">("lower");
+
+  const [doubleLimbType, setDoubleLimbType] = useState<string>("");
   const [doubleRightDetail, setDoubleRightDetail] = useState("");
   const [doubleLeftDetail, setDoubleLeftDetail] = useState("");
-  const [bothRightLimb, setBothRightLimb] = useState<"upper" | "lower">("upper");
-  const [bothLeftLimb, setBothLeftLimb] = useState<"upper" | "lower">("upper");
+  const [bothRightLimb, setBothRightLimb] = useState<string>("");
+  const [bothLeftLimb, setBothLeftLimb] = useState<string>("");
   const [bothRightDetail, setBothRightDetail] = useState("");
   const [bothLeftDetail, setBothLeftDetail] = useState("");
   
@@ -250,8 +255,16 @@ export default function CreatePatient() {
 
   // Silicone prosthetics state
   const [siliconePart, setSiliconePart] = useState("");
-  const [siliconeSide, setSiliconeSide] = useState<"right" | "left" | "both">("right");
+  const [siliconeSide, setSiliconeSide] = useState<string>("");
   const [siliconeNotes, setSiliconeNotes] = useState("");
+
+  //  أجزاءُ التعريف في كائنٍ واحد — يُمرَّر للباني وللفحص معاً.
+  const amputationParts = {
+    amputationType, singleLimb, singleSide, singleDetail: singleAmputationDetail,
+    doubleLimbType, doubleRightDetail, doubleLeftDetail,
+    bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail,
+    siliconePart, siliconeSide, siliconeNotes,
+  };
 
   // Build amputationSite string from selections
   useEffect(() => {
@@ -260,43 +273,13 @@ export default function CreatePatient() {
     // "احادي - طرف سفلي - يمين" onto every reception-registered amputee.
     if (!canEditAmputationBuilder) return;
     
-    let site = "";
-    if (amputationType === "single") {
-      const limbText = singleLimb === "upper" ? "طرف علوي" : "طرف سفلي";
-      const sideText = singleSide === "right" ? "يمين" : "يسار";
-      site = `احادي - ${limbText} - ${sideText}`;
-      if (singleAmputationDetail) site += ` - ${singleAmputationDetail}`;
-    } else if (amputationType === "double") {
-      // Double amputation
-      if (doubleLimbType === "upper") {
-        site = `ثنائي - علوي`;
-        if (doubleRightDetail || doubleLeftDetail) {
-          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
-        }
-      } else if (doubleLimbType === "lower") {
-        site = `ثنائي - سفلي`;
-        if (doubleRightDetail || doubleLeftDetail) {
-          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
-        }
-      } else {
-        // both upper and lower
-        const rightLimbText = bothRightLimb === "upper" ? "علوي" : "سفلي";
-        const leftLimbText = bothLeftLimb === "upper" ? "علوي" : "سفلي";
-        site = `ثنائي - علوي وسفلي`;
-        site += ` | يمين (${rightLimbText}): ${bothRightDetail || "-"}`;
-        site += ` | يسار (${leftLimbText}): ${bothLeftDetail || "-"}`;
-      }
-    } else if (amputationType === "silicone") {
-      // Silicone prosthetics
-      site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
-      // Add side for all parts except nose
-      if (siliconePart && siliconePart !== "انف") {
-        const sideText = siliconeSide === "right" ? "يمين" : siliconeSide === "left" ? "يسار" : "كلا الجانبين";
-        site += ` - ${sideText}`;
-      }
-      if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
-    }
-    form.setValue("amputationSite", site);
+    //  **تُبنى بالباني المشترك** لا بنسخةٍ ثانية هنا: صيغةٌ واحدة تقرؤها
+    //  «تعديل مريض» وأمرُ التصنيع ومعاينةُ الطبيب.
+    //
+    //  **ولا تُكتب إلّا حين تكتمل**: الباني يكتب «طرف سفلي» و«يمين» افتراضاً
+    //  حين لا يُختار شيء (تعبيرٌ ثلاثيّ)، فسلسلةٌ نصفُ مختارة تبدو مكتملةً
+    //  للمحلّل وتمرّ على الخادم. فالناقصُ يُرسَل فراغاً — والخادمُ يردّه.
+    form.setValue("amputationSite", amputationSiteOf(amputationParts));
   }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, canEditAmputationBuilder, form]);
 
   // Sync boolean flags with string selection, AND clear the fields belonging to
@@ -435,6 +418,32 @@ export default function CreatePatient() {
         variant: "destructive",
       });
       return;
+    }
+    // ══ **البياناتُ التي لا يُصنَع جهازٌ بدونها — تُفحَص هنا لا بعد الردّ** ══
+    //  الخادمُ يحرسها، لكنّ انتظارَ ٤٠٠ ليعرف الموظّفُ ما ينقص يعني ملءَ
+    //  النموذج كلِّه ثم الاصطدام. والقاعدةُ **مشتركة** فلا تنحرف الشاشةُ عن
+    //  الخادم: `checkRequiredPatientData` نفسُها التي تفحص في `routes.ts`.
+    {
+      const req = checkRequiredPatientData({
+        age: values.age, height: (values as any).height, weight: (values as any).weight,
+        isAmputee: conditionType === "amputee",
+        //  **والفحصُ على الأجزاء لا على السلسلة** حين يكون الباني ظاهراً:
+        //  السلسلةُ تحمل افتراضاتِ الباني، والأجزاءُ تحمل ما اختاره الموظّف.
+        amputationSite: conditionType === "amputee" && canEditAmputationBuilder
+          ? amputationSiteOf(amputationParts)
+          : values.amputationSite,
+      });
+      const ampMissing = conditionType === "amputee" && canEditAmputationBuilder
+        ? checkAmputationParts(amputationParts as any).missing : [];
+      if (!req.ok) {
+        toast({
+          title: "بيانات ناقصة",
+          description: req.message ?? "أكمل البيانات المطلوبة",
+          variant: "destructive",
+        });
+        return;
+      }
+      void ampMissing;
     }
     // REGISTRATION IS PRICELESS for every condition type now (owner's flow):
     // - طرف/مسند: priced after the exam via «تخصيص وإسناد خبير».
@@ -998,9 +1007,9 @@ export default function CreatePatient() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <FormLabel>{t.patientForm.limb}</FormLabel>
-                          <Select value={singleLimb} onValueChange={(val) => setSingleLimb(val as "upper" | "lower")}>
+                          <Select value={singleLimb} onValueChange={(val) => { setSingleLimb(val); setSingleAmputationDetail(""); }}>
                             <SelectTrigger className="bg-white">
-                              <SelectValue />
+                              <SelectValue placeholder="اختر الطرف" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="upper">{t.patientForm.upperLimb}</SelectItem>
@@ -1010,9 +1019,9 @@ export default function CreatePatient() {
                         </div>
                         <div className="space-y-2">
                           <FormLabel>{t.patientForm.side}</FormLabel>
-                          <Select value={singleSide} onValueChange={(val) => setSingleSide(val as "right" | "left")}>
+                          <Select value={singleSide} onValueChange={setSingleSide}>
                             <SelectTrigger className="bg-white">
-                              <SelectValue />
+                              <SelectValue placeholder="اختر الجهة" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="right">{t.patientForm.right}</SelectItem>
@@ -1021,6 +1030,10 @@ export default function CreatePatient() {
                           </Select>
                         </div>
                       </div>
+                      {/*  **ولا قائمةَ مستويات قبل اختيار الطرف**: قوائمُ
+                          العلويّ غيرُ السفليّ، وعرضُ إحداهما افتراضاً يدعو
+                          إلى مستوىً لا ينتمي للطرف المختار. */}
+                      {singleLimb && (
                       <div className="space-y-2">
                         <FormLabel>{t.patientForm.amputationDetailType}</FormLabel>
                         {singleLimb === "lower" ? (
@@ -1054,6 +1067,7 @@ export default function CreatePatient() {
                           </Select>
                         )}
                       </div>
+                      )}
                     </div>
                   )}
 
@@ -1062,9 +1076,9 @@ export default function CreatePatient() {
                     <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
                       <div className="space-y-2">
                         <FormLabel>{t.patientForm.doubleAmputationType}</FormLabel>
-                        <Select value={doubleLimbType} onValueChange={(val) => setDoubleLimbType(val as "upper" | "lower" | "both")}>
+                        <Select value={doubleLimbType} onValueChange={(val) => { setDoubleLimbType(val); setDoubleRightDetail(""); setDoubleLeftDetail(""); setBothRightDetail(""); setBothLeftDetail(""); }}>
                           <SelectTrigger className="bg-white">
-                            <SelectValue />
+                            <SelectValue placeholder="اختر النمط" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
@@ -1151,9 +1165,9 @@ export default function CreatePatient() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-3 p-3 border rounded-lg bg-white">
                             <FormLabel className="text-primary">{t.patientForm.rightSide}</FormLabel>
-                            <Select value={bothRightLimb} onValueChange={(val) => setBothRightLimb(val as "upper" | "lower")}>
+                            <Select value={bothRightLimb} onValueChange={(val) => { setBothRightLimb(val); setBothRightDetail(""); }}>
                               <SelectTrigger>
-                                <SelectValue />
+                                <SelectValue placeholder="اختر الطرف" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
@@ -1193,9 +1207,9 @@ export default function CreatePatient() {
                           </div>
                           <div className="space-y-3 p-3 border rounded-lg bg-white">
                             <FormLabel className="text-primary">{t.patientForm.leftSide}</FormLabel>
-                            <Select value={bothLeftLimb} onValueChange={(val) => setBothLeftLimb(val as "upper" | "lower")}>
+                            <Select value={bothLeftLimb} onValueChange={(val) => { setBothLeftLimb(val); setBothLeftDetail(""); }}>
                               <SelectTrigger>
-                                <SelectValue />
+                                <SelectValue placeholder="اختر الطرف" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
@@ -1260,9 +1274,9 @@ export default function CreatePatient() {
                         {siliconePart && siliconePart !== "انف" && (
                           <div className="space-y-2">
                             <FormLabel>{t.patientForm.amputationSide}</FormLabel>
-                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left" | "both")}>
+                            <Select value={siliconeSide} onValueChange={setSiliconeSide}>
                               <SelectTrigger className="bg-white" data-testid="select-silicone-side">
-                                <SelectValue />
+                                <SelectValue placeholder="اختر الجهة" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="right">{t.patientForm.right}</SelectItem>

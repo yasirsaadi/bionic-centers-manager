@@ -2174,20 +2174,27 @@ export async function registerRoutes(
       //  واللحظةُ التي **يجب** أن يكتمل فيها الملفّ هي دخولُه دورةَ تصنيعٍ
       //  جديدة — يحرسها `POST /api/patients/:id/device-episodes`.
       //
+      //  **و«لمسَها» تعني أن قيمتَها تغيّرت** لا أن مفتاحَها حضر: نموذجُ
+      //  «تعديل مريض» يرسل الكائنَ كاملاً في كل حفظ، فقراءةُ وجود المفاتيح
+      //  كانت تردّ كلَّ تصحيحٍ إداريّ على كل ملفٍّ قديم — أي القاعدةَ التي
+      //  وُضعت لإلغائها بعينها. فتُقارَن القيمُ بالمخزَّن.
+      //
       //  والفحصُ على **الصورة بعد الدمج**: التعديلُ الجزئي يرسل ما تغيّر
       //  وحده، فقياسُ الوارد وحده كان سيردّ تعديلَ هاتفٍ على ملفٍّ مكتمل.
-      if (!isAdministrativeOnlyPatch(req.body)) {
+      {
         const before = await storage.getPatient(id);
-        const merged = {
-          age: patch.age ?? before?.age,
-          height: (patch as any).height ?? (before as any)?.height,
-          weight: (patch as any).weight ?? (before as any)?.weight,
-          isAmputee: (patch as any).isAmputee ?? before?.isAmputee,
-          amputationSite: (patch as any).amputationSite ?? before?.amputationSite,
-        };
-        const req1 = checkRequiredPatientData(merged);
-        if (!req1.ok) {
-          return res.status(400).json({ message: req1.message, missing: req1.missing });
+        if (!isAdministrativeOnlyPatch(req.body, before as any)) {
+          const merged = {
+            age: patch.age ?? before?.age,
+            height: (patch as any).height ?? (before as any)?.height,
+            weight: (patch as any).weight ?? (before as any)?.weight,
+            isAmputee: (patch as any).isAmputee ?? before?.isAmputee,
+            amputationSite: (patch as any).amputationSite ?? before?.amputationSite,
+          };
+          const req1 = checkRequiredPatientData(merged);
+          if (!req1.ok) {
+            return res.status(400).json({ message: req1.message, missing: req1.missing });
+          }
         }
       }
 

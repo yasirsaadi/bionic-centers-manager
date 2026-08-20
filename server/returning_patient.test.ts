@@ -675,23 +675,53 @@ async function main() {
         (await q(`SELECT height, weight FROM patients WHERE id=$1`, [lid]))[0],
         { height: null, weight: null });
 
-      //  ② **ولمسُ الحقول نفسها يُلزم بإكمالها** — لا نصفُ حالةٍ يُحفَظ.
+      //  ② **والنموذجُ الكامل كما يرسله «تعديل مريض»** — كلُّ الحقول حاضرة
+      //  والهاتفُ وحده مختلف. وهذه هي الحالةُ الحقيقية: الشاشةُ ترسل الكائن
+      //  كاملاً في كلّ حفظ، فقراءةُ **وجود المفاتيح** كانت تردّ كلَّ تصحيحٍ
+      //  إداريّ على كلّ ملفٍّ قديم — أي القاعدةَ التي وُضعت لإلغائها بعينها.
+      const fullForm = (patch: any = {}) => ({
+        name: `${MARK} قديمٌ ناقص`, phone: "07709998877", branchId: 1,
+        age: "40", height: "", weight: "", isAmputee: true, amputationSite: "",
+        medicalCondition: "بتر", referralSource: MARK, patientClassification: "new",
+        address: "عنوانٌ ما", ...patch,
+      });
+      const fullPhone = await http("PUT", `/api/patients/${lid}`, S.manager,
+        fullForm({ phone: "07705554433" }));
+      same("٧٤. **نموذجٌ كامل والهاتفُ وحده مختلف ⟶ يمرّ**", fullPhone.status, 200);
+      same("   **ونُفِّذ فعلاً**",
+        (await q(`SELECT phone FROM patients WHERE id=$1`, [lid]))[0].phone, "07705554433");
+      //  **والناقصُ ما زال ناقصاً**: النموذجُ يرسل «» والمخزَّن كان `null`،
+      //  وكلاهما «لا قيمة» بنصّ القاعدة — المهمّ ألّا يُخترَع رقم.
+      const stillMissing = (await q(
+        `SELECT COALESCE(NULLIF(height,''), NULL) AS h, COALESCE(NULLIF(weight,''), NULL) AS w
+           FROM patients WHERE id=$1`, [lid]))[0];
+      same("   **والناقصُ ما زال ناقصاً — لا يُخترَع رقم**",
+        stillMissing, { h: null, w: null });
+
+      //  ③ **ولمسُ حقلٍ إلزاميّ في النموذج نفسه يُلزم بإكمالها**.
+      const fullHeight = await http("PUT", `/api/patients/${lid}`, S.manager,
+        fullForm({ phone: "07705554433", height: "165" }));
+      same("٧٥. **والنموذجُ نفسُه بطولٍ جديد يُردّ حتى يكتمل**", fullHeight.status, 400);
+      check(Array.isArray(fullHeight.body?.missing)
+        && fullHeight.body.missing.includes("weight"),
+        "   **ويسمّي الناقصَ الحقيقيّ**", JSON.stringify(fullHeight.body?.missing));
+      same("   ولم يُكتب الطولُ المرفوض",
+        (await q(`SELECT NULLIF(height,'') AS h FROM patients WHERE id=$1`, [lid]))[0].h, null);
+      //  ونصفُ الحالة من نداءٍ ضيّق يُردّ كذلك.
       const half = await http("PUT", `/api/patients/${lid}`, S.manager,
         { height: "165" });
-      same("٧٤. **وإدخالُ الطول وحده يُردّ** — نصفُ الحالة لا يُحفَظ", half.status, 400);
-      same("   ولم يُكتب شيء",
-        (await q(`SELECT height FROM patients WHERE id=$1`, [lid]))[0].height, null);
+      same("٧٦. **وإدخالُ الطول وحده يُردّ** — نصفُ الحالة لا يُحفَظ", half.status, 400);
 
       //  ③ **ولا دورةَ تصنيعٍ جديدة بملفٍّ ناقص** — وهذه هي البوّابة.
       const blocked = await http("POST", `/api/patients/${lid}/device-episodes`,
         S.reception, { serviceType: "prosthetic", requestedItem: "knee" });
-      same("٧٥. **وطلبُ جزءٍ جديد يُردّ حتى يكتمل الملفّ**", blocked.status, 400);
+      same("٧٧. **وطلبُ جزءٍ جديد يُردّ حتى يكتمل الملفّ**", blocked.status, 400);
       check(String(blocked.body?.error ?? "").includes("أكمِل ملفّ المريض"),
         "   (برسالةٍ تدلّ على ما يجب فعله)", JSON.stringify(blocked.body));
       check(Array.isArray(blocked.body?.missing) && blocked.body.missing.length > 0,
         "   **وتسمّي الناقصَ حقلاً حقلاً** — فتعرضه الواجهة",
         JSON.stringify(blocked.body?.missing));
-      same("٧٦. **ولا حلقةَ فُتحت**",
+      same("٧٨. **ولا حلقةَ فُتحت**",
         (await q(`SELECT count(*)::int AS n FROM patient_device_episodes WHERE patient_id=$1`,
           [lid]))[0].n, 0);
 
@@ -700,8 +730,8 @@ async function main() {
         height: "165", weight: "62", age: "40",
         amputationSite: "احادي - طرف سفلي - يسار - فوق الركبة",
       });
-      same("٧٧. **والإكمالُ في نداءٍ واحد يمرّ**", done.status, 200);
-      same("٧٨. **وبعده يُفتح الطلب**",
+      same("٧٩. **والإكمالُ في نداءٍ واحد يمرّ**", done.status, 200);
+      same("٨٠. **وبعده يُفتح الطلب**",
         (await http("POST", `/api/patients/${lid}/device-episodes`, S.reception,
           { serviceType: "prosthetic", requestedItem: "knee" })).status, 201);
     }
@@ -725,21 +755,21 @@ async function main() {
         http("POST", `/api/patients/${p.id}/add-case-type`, S.reception, body);
 
       const noSite = await add({ caseType: "amputee" });
-      same("٧٩. **إضافةُ أطرافٍ بلا تعريفِ بترٍ تُردّ**", noSite.status, 400);
+      same("٨١. **إضافةُ أطرافٍ بلا تعريفِ بترٍ تُردّ**", noSite.status, 400);
       check(String(noSite.body?.message ?? "").includes("تعريف البتر"),
         "   (برسالةٍ تقول ما يلزم)", JSON.stringify(noSite.body));
       same("   **ولم يُرفَع العَلَم**",
         (await q(`SELECT is_amputee FROM patients WHERE id=$1`, [p.id]))[0].is_amputee, false);
 
       //  ونصٌّ حرٌّ لا يفهمه الباني يُردّ كذلك — لا بديلَ عن المنظَّم.
-      same("٨٠. **ونصٌّ حرٌّ يُردّ**",
+      same("٨٢. **ونصٌّ حرٌّ يُردّ**",
         (await add({ caseType: "amputee", amputationSite: "مبتور من الرجل" })).status, 400);
 
       //  والمقاساتُ الناقصة تُطلَب **في المسار نفسه** لا في تعديلٍ لاحق.
       const noMeasures = await add({
         caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
       });
-      same("٨١. **وبلا طولٍ ووزنٍ تُردّ أيضاً**", noMeasures.status, 400);
+      same("٨٣. **وبلا طولٍ ووزنٍ تُردّ أيضاً**", noMeasures.status, 400);
       same("   **ولم يُرفَع العَلَم بعد**",
         (await q(`SELECT is_amputee FROM patients WHERE id=$1`, [p.id]))[0].is_amputee, false);
 
@@ -748,7 +778,7 @@ async function main() {
         caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
         height: "170", weight: "68",
       });
-      same("٨٢. **وبها جميعاً تُفتَح الحالةُ مكتملة**", ok.status, 200);
+      same("٨٤. **وبها جميعاً تُفتَح الحالةُ مكتملة**", ok.status, 200);
       const after = (await q(
         `SELECT is_amputee, height, weight, amputation_site FROM patients WHERE id=$1`,
         [p.id]))[0];
@@ -768,25 +798,25 @@ async function main() {
            branch_id, is_amputee, total_cost, patient_classification)
          VALUES ($1,'07701234567',$2,'50','ألم',1,false,0,'new') RETURNING id`,
         [`${MARK} يضيف مسنداً`, MARK]);
-      same("٨٣. **وإضافةُ مسندٍ تمرّ بلا تعريفِ بتر**",
+      same("٨٥. **وإضافةُ مسندٍ تمرّ بلا تعريفِ بتر**",
         (await http("POST", `/api/patients/${p.id}/add-case-type`, S.reception,
           { caseType: "medical_support" })).status, 200);
       //  **وحلقتُه محايدةٌ في القاعدة، مسمّاةٌ في الشاشة.**
       const ep = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
         { serviceType: "medical_support" });
-      same("٨٤. **وحلقةُ المسند تُفتَح**", ep.status, 201);
+      same("٨٦. **وحلقةُ المسند تُفتَح**", ep.status, 201);
       const row = await epRow(ep.body?.id);
-      same("٨٥. **وقيمتُها محايدة — لا «طرف» على مسند**",
+      same("٨٧. **وقيمتُها محايدة — لا «طرف» على مسند**",
         [row?.requested_item, row?.component], ["full_device", null]);
       const [rev] = await q(
         `SELECT reception_note FROM medical_review_requests
           WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [p.id]);
-      same("٨٦. **والطبيبُ يقرأ «مسند طبي كامل»** — لا «طرف صناعي كامل»",
+      same("٨٨. **والطبيبُ يقرأ «مسند طبي كامل»** — لا «طرف صناعي كامل»",
         String(rev?.reception_note ?? "").startsWith("المطلوب: مسند طبي كامل"), true);
       //  **وجزءُ طرفٍ عليه يُردّ** — لا يُصحَّح إلى «كامل».
       const bad = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
         { serviceType: "medical_support", requestedItem: "knee" });
-      same("٨٧. **وطلبُ ركبةٍ على مسندٍ يُردّ**", bad.status, 400);
+      same("٨٩. **وطلبُ ركبةٍ على مسندٍ يُردّ**", bad.status, 400);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -814,7 +844,7 @@ async function main() {
         { ...S.manager, isAdmin: true, role: "admin",
           permissions: { ...S.manager.permissions, canDeletePatients: true } });
       check(del.status === 200 || del.status === 204,
-        "٨٨. **حذفُ مريضٍ يحمل الأعمدة الجديدة ينجح**",
+        "٩٠. **حذفُ مريضٍ يحمل الأعمدة الجديدة ينجح**",
         `${del.status} ${JSON.stringify(del.body)}`);
       same("   ولا صفَّ حلقةٍ يتيماً بقي",
         (await q(`SELECT count(*)::int AS n FROM patient_device_episodes WHERE patient_id=$1`,
@@ -826,7 +856,7 @@ async function main() {
     }
 
     //  ── والقائمةُ مشتركةٌ بين المسارين حرفاً ──
-    same("٨٩. **وقائمةُ الأجزاء واحدةٌ للشراء والصيانة**",
+    same("٩١. **وقائمةُ الأجزاء واحدةٌ للشراء والصيانة**",
       [COMPONENT_LABELS.knee, COMPONENT_LABELS.foot,
         COMPONENT_LABELS.socket, COMPONENT_LABELS.tube],
       ["الركبة", "القدم", "القالب", "التيوب"]);

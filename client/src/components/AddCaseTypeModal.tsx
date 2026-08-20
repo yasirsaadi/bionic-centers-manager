@@ -9,9 +9,18 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Layers, Loader2 } from "lucide-react";
 import { invalidatePatientData } from "@/lib/queryClient";
+import {
+  AmputationBuilder, amputationSiteOf, amputationComplete,
+  type AmputationParts,
+} from "@/components/AmputationBuilder";
+import {
+  CORE_MEASUREMENT_FIELDS, FIELD_LABELS, meaningfulMeasure,
+} from "@shared/patient_required";
 
 interface AddCaseTypeModalProps {
   patient: {
@@ -20,6 +29,10 @@ interface AddCaseTypeModalProps {
     isAmputee?: boolean | null;
     isPhysiotherapy?: boolean | null;
     isMedicalSupport?: boolean | null;
+    //  المقاساتُ تُقرأ من الملفّ فلا يُسأل الموظّفُ عمّا هو مكتوبٌ أمامه.
+    age?: string | null;
+    height?: string | null;
+    weight?: string | null;
   };
   /**
    * فتحٌ **موجَّه** من موزِّع الخدمات: النافذة تُدار من الخارج وتفتح على
@@ -72,16 +85,45 @@ export function AddCaseTypeModal({
 
   const isManufacturing = caseType === "amputee" || caseType === "medical_support";
 
+  // ══ **فتحُ خيطِ أطرافٍ يُنتج ملفّاً مكتملاً أو لا يقع** ═════════════════
+  //  كانت النافذةُ ترسل النوعَ وحده ثم **تحوّل** إلى صفحة الحقول الكاملة
+  //  ليُكمِلها الموظّف لاحقاً — فيُولَد ملفٌّ مبتورٌ بلا تعريفِ بتره، ويبقى
+  //  كذلك ما لم يعد أحدٌ. ثم يصطدم به الطبيبُ والخبير.
+  //
+  //  فالسؤالُ صار **هنا وفي الطلب نفسه**: تعريفُ البتر منظَّماً، وما ينقص
+  //  من المقاسات وحده — وما هو مكتوبٌ على الملفّ لا يُسأل عنه ثانيةً.
+  const isAmputeeCase = caseType === "amputee";
+  const [amp, setAmp] = useState<AmputationParts>({});
+  const [measures, setMeasures] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (open) { setAmp({}); setMeasures({}); }
+  }, [open]);
+
+  //  ما ينقص الملفَّ فعلاً — يُقرأ منه لا يُفترَض.
+  const missingMeasures = CORE_MEASUREMENT_FIELDS.filter(
+    (f) => !meaningfulMeasure((patient as any)[f]),
+  );
+  const measuresReady = missingMeasures.every((f) => meaningfulMeasure(measures[f]));
+  const ampReady = !isAmputeeCase || (amputationComplete(amp) && measuresReady);
+
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
+      const body: Record<string, any> = {
+        // Decision only — NO money here. Pricing stays in its dedicated
+        // post-exam steps (تخصيص for devices / الكلفة والجلسات for physio),
+        // so the clerk never sees mixed totals while adding a case.
+        caseType, serviceCost: 0, paidNow: 0,
+      };
+      //  **والمساندُ والعلاجُ الطبيعي لا يُسألان عن بتر** — ولا يُرسَل عنهما.
+      if (isAmputeeCase) {
+        body.amputationSite = amputationSiteOf(amp);
+        for (const f of missingMeasures) body[f] = measures[f]?.trim() ?? "";
+      }
       const res = await fetch(`/api/patients/${patient.id}/add-case-type`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        // Decision only — NO money here. Pricing stays in its dedicated
-        // post-exam steps (تخصيص for devices / الكلفة والجلسات for physio),
-        // so the clerk never sees mixed totals while adding a case.
-        body: JSON.stringify({ caseType, serviceCost: 0, paidNow: 0 }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -90,8 +132,14 @@ export function AddCaseTypeModal({
       return res.json();
     },
     onSuccess: () => {
+      const addedTypeIsAmputee = isAmputeeCase;
       invalidatePatientData(queryClient, patient.id);
-      toast({ title: "تمت إضافة نوع الحالة", description: "أكمل الآن كل حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة." });
+      toast({
+        title: "تمت إضافة نوع الحالة",
+        description: addedTypeIsAmputee
+          ? "الملفّ مكتمل. تُستكمل بقية تفاصيل النوع الجديد في صفحة الحقول الكاملة."
+          : "أكمل الآن بقية حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة.",
+      });
       const addedType = caseType;
       reset();
       setOpen(false);
@@ -103,9 +151,9 @@ export function AddCaseTypeModal({
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  function reset() { setCaseType(initialCaseType ?? ""); }
+  function reset() { setCaseType(initialCaseType ?? ""); setAmp({}); setMeasures({}); }
 
-  const canSubmit = !!caseType && !isPending;
+  const canSubmit = !!caseType && !isPending && ampReady;
 
   // بلا نوعٍ ناقص لا شيء يُضاف — ويبقى هذا صحيحاً في الوضعين. والموزِّع
   // يعطّل الخيار قبل ذلك، فلا يصل إلى هنا أصلاً.
@@ -151,9 +199,52 @@ export function AddCaseTypeModal({
             </Select>
           </div>
 
-          {caseType && (
+          {/*  ══ **تعريفُ البتر يُجمَع هنا** ═══════════════════════════════
+              لا بعد الحفظ. فتحُ خيطِ أطرافٍ بلا تعريفِ بترٍ يُنتج ملفّاً
+              نصفَ مكتمل يُترك إكمالُه لتعديلٍ لاحقٍ لا يقع. */}
+          {isAmputeeCase && (
+            <div className="space-y-4 rounded-md border p-3" data-testid="block-add-case-amputation">
+              <p className="text-xs text-muted-foreground">
+                <b>تعريف البتر مطلوب لفتح حالة الأطراف</b> — عليه يُقاس الجهاز،
+                ولا يُحفَظ نصفُ الحالة ليُكمَل لاحقاً.
+              </p>
+              <AmputationBuilder value={amp} onChange={setAmp} testIdPrefix="add-case" />
+
+              {missingMeasures.length > 0 && (
+                <div className="space-y-3 border-t pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    وينقص ملفَّ المريض ما يلي — الطرفُ يُصنَع عليه:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {missingMeasures.map((f) => (
+                      <div key={f} className="space-y-1">
+                        <Label className="text-xs">
+                          {FIELD_LABELS[f]} <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          value={measures[f] ?? ""}
+                          onChange={(e) => setMeasures((m) => ({ ...m, [f]: e.target.value }))}
+                          inputMode="numeric"
+                          className="bg-white"
+                          data-testid={`input-add-case-${f}`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {caseType && !isAmputeeCase && (
             <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
-              بعد الحفظ ستُفتح لك <b>صفحة الحقول الكاملة</b> للنوع الجديد (كما في تسجيل مريض جديد) لتكمل كل التفاصيل.
+              بعد الحفظ ستُفتح لك <b>صفحة الحقول الكاملة</b> للنوع الجديد (كما في تسجيل مريض جديد) لتكمل بقية التفاصيل.
+            </div>
+          )}
+          {isAmputeeCase && (
+            <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
+              بعد الحفظ ستُفتح لك <b>صفحة الحقول الكاملة</b> لبقية تفاصيل النوع الجديد —
+              أمّا تعريف البتر والمقاسات فتُحفَظ الآن مع فتح الحالة.
             </div>
           )}
 

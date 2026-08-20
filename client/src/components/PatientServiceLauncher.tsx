@@ -42,6 +42,11 @@ interface PatientServiceLauncherProps {
     isAmputee?: boolean | null;
     isPhysiotherapy?: boolean | null;
     isMedicalSupport?: boolean | null;
+    //  تُمرَّر إلى «إضافة نوع حالة» فتسأل عمّا ينقص وحده — والمكتوبُ على
+    //  الملفّ لا يُسأل عنه ثانيةً.
+    age?: string | null;
+    height?: string | null;
+    weight?: string | null;
   };
 }
 

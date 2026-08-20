@@ -78,7 +78,8 @@
     "test:patient-required": "tsx shared/patient_required.test.ts",
     "test:pay-attribution": "tsx client/src/components/payment_attribution.test.ts",
     "test:patient-activity": "tsx server/patient_activity.test.ts",
-    "test:returning-patient": "tsx server/returning_patient.test.ts"
+    "test:returning-patient": "tsx server/returning_patient.test.ts",
+    "test:add-case-ui": "tsx client/src/components/add_case_type_ui.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
