@@ -278,7 +278,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  الطبيب اقترحه في معاينته، والفرع يقرّر. ولا تصنيعَ يبدأ من هنا.
   app.post("/api/followups/:id/expert", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
+    //  ══ **بوّابةٌ واحدة لاختيار الخبير** — هنا وفي نافذة «اشترى» سواء ══
+    //  و`canSelectExpert` المشتركة شرطان: **مَن** (`canConfirmPurchase`)
+    //  و**متى** (الملفُّ حيّ). والخادم يفصلهما عمداً كي **لا يكذب رمزُ
+    //  الردّ**: مَن لا يملك الصلاحية يُردّ ٤٠٣، وملفٌّ تحوّل أو أُغلق يُردّ
+    //  ٤٠٩ من حارس المخزن — فهي حالةُ الصفّ لا صفةُ الطالب. وحارسُ المخزن
+    //  يقبل الحالات الخمس الحيّة نفسَها حرفاً، فلا ثغرةَ بين النصفين.
+    if (!canConfirmPurchase(s)) {
+      return res.status(403).json({ error: COMMERCIAL_ONLY });
+    }
     const f = await loadInScope(req, res);
     if (!f) return;
     const expertUserId = Number(req.body?.expertUserId);
@@ -446,21 +454,58 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const f = await loadInScope(req, res);
     if (!f) return;
 
-    // ══ الخبير **لا يُقبل من الطلب إطلاقاً** ═══════════════════════════
-    // اختيارُه فعلٌ مستقلٌّ له نقطتُه وتدقيقُه. فلو قُرئ رقمٌ من الجسم لصار
-    // تأكيدُ الشراء باباً خلفياً يسند الجهاز لخبيرٍ لم يُختَر صراحةً.
-    // والمخزن يقرأه من الصفّ تحت القفل، وهنا لا يُقرأ الحقل أصلاً —
-    // فما لا يُقرأ لا يُهرَّب. والسعرُ كذلك: لا يُقرأ من الطلب هنا ولا هناك.
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+
+    // ══ الخبيرُ الناقص يُختار **هنا**، والموجودُ لا يُستبدَل ═════════════
+    //
+    // كان الحقلُ لا يُقرأ من الجسم إطلاقاً، والزرُّ يُعطَّل حتى يُختار
+    // الخبيرُ من نقطةٍ أخرى. فصار على الموظّف أن يخرج ويختار ويعود ويضغط —
+    // ثلاثُ خطواتٍ لسؤالٍ واحد. والنافذةُ الآن تسأله في مكانه.
+    //
+    // **والأمانُ لم يضعف، بل تحدّد**:
+    //   • رقمٌ من الجسم يُقرأ **فقط** حين لا خبيرَ محفوظاً — فالموجودُ
+    //     اختاره أحدٌ صراحةً ولا يُبدَّل من باب البيع.
+    //   • ويُكتب بنقطة الاختيار نفسها (`store.selectExpert`) بحدثها
+    //     وتدقيقها — لا كتابةً جانبية.
+    //   • ويُتحقَّق منه بـ`validateExpertForBranch` نفسها: فرعُ المريض،
+    //     حسابٌ فعّال، صفةُ خبير.
+    //   • وبوّابتُه `canSelectExpert` — «مَن يُتمّ البيع يختار خبيرَه».
+    let workingFollowup = f;
     if (f.selectedExpertUserId === null) {
-      return res.status(409).json({
-        error: "اختر الخبير المسؤول أولاً ثم أكّد الشراء",
-      });
+      const rawExpert = req.body?.expertUserId;
+      const askedExpert = rawExpert === undefined || rawExpert === null || rawExpert === ""
+        ? null : Number(rawExpert);
+      if (askedExpert === null || !Number.isFinite(askedExpert) || !Number.isInteger(askedExpert)
+        || askedExpert <= 0) {
+        return res.status(400).json({
+          error: "لم يُختَر خبير لهذا الجهاز — اختر الخبير المسؤول لإتمام البيع",
+        });
+      }
+      //  ولا بوّابةَ ثانية هنا: `canConfirmPurchase` فُحصت في رأس المعالج،
+      //  وهي **نصفُ `canSelectExpert` الأوّل بعينه**. وحياةُ الملفّ — نصفُها
+      //  الثاني — يحرسها `store.selectExpert` بـ٤٠٩، فلا يُكتب خبيرٌ على
+      //  ملفٍّ تحوّل أو أُغلق.
+      const okExpert = await validateExpert(askedExpert, patient.branchId);
+      if (!okExpert.ok) return res.status(400).json({ error: okExpert.reason });
+      try {
+        workingFollowup = await store.selectExpert({
+          followupId: f.id, expertUserId: askedExpert, actor: actorOf(req),
+        });
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          oldValues: { selectedExpertUserId: null },
+          newValues: { selectedExpertUserId: askedExpert },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `اختيار الخبير #${askedExpert} ضمن نافذة «اشترى»`,
+        });
+      } catch (e) { if (!fail(res, e)) throw e; return; }
     }
+
     //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع أو عُطّل حسابُه
     //  منذ اختياره.
-    const v = await validateExpert(f.selectedExpertUserId, patient.branchId);
+    const v = await validateExpert(workingFollowup.selectedExpertUserId!, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
     // ══ أولُ سعرٍ حين سكتت المعاينة — **ليس خصماً** ════════════════════
@@ -470,8 +515,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     //
     // **والحارسُ شرطٌ لا دور**: المخزن يرفض الكتابة إن كان السعر موجباً
     // أصلاً (يفحصه تحت القفل)، فمتى وُجد سعرٌ صار تخفيضُه خصماً يمرّ ببابه.
-    let workingFollowup = f;
-    if (f.approvedPrice <= 0) {
+    if (workingFollowup.approvedPrice <= 0) {
       const raw = req.body?.originalPrice;
       const asked = raw === undefined || raw === null || raw === "" ? null : Number(raw);
       if (asked === null || !Number.isFinite(asked) || !Number.isInteger(asked) || asked <= 0) {
@@ -513,7 +557,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,
           reason: String(dsc?.reason ?? ""), note: str(dsc?.note),
-          payload: { followupId: f.id, expertUserId: f.selectedExpertUserId },
+          //  **الخبيرُ من الصفّ العامل لا من صورته الأولى**: قد يكون اختير
+          //  قبل سطورٍ داخل هذه النافذة نفسها، و`f` لقطةٌ سبقت ذلك. وقراءتُها
+          //  هنا كانت تُفشل أشدَّ الحالات وقوعاً — «لا سعرَ ولا خبيرَ ثم خصم»
+          //  — برسالةٍ تطلب خبيراً **اختير فعلاً في النداء نفسه**.
+          payload: {
+            followupId: f.id, expertUserId: workingFollowup.selectedExpertUserId,
+          },
           actor: actorOf(req),
           actorMayApprove: mayApproveDiscountHere(req, f.branchId),
           //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا يُعتمد
@@ -537,6 +587,19 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
             ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
             notes: discountAuditNote(out.request, "طلب"),
           });
+        }
+        //  ══ ورايةُ «يرغب بالشراء» تُرفع تلقائياً — **بلا زرٍّ ثانٍ** ══
+        //  مَن طلب خصماً لمريضٍ فقد أعلن أن المريض يريد الشراء. فبدل أن
+        //  يُطلَب من الموظّف أن يضغط زرّاً إضافياً ليقول ما قاله فعله،
+        //  تُرفع الرايةُ هنا — **idempotent** (الثانيةُ لا تُنشئ حدثاً ولا
+        //  تغيّر صاحبَها)، و**فشلُها لا يُفشل شيئاً**: هي ترتيبُ طابورٍ
+        //  لا مال.
+        if (out.status === "pending") {
+          try {
+            await store.signalPurchaseInterest({ followupId: f.id, actor: actorOf(req) });
+          } catch (e) {
+            console.error("[followup] purchase-interest signal failed:", e);
+          }
         }
         return res.json({
           ok: true, pendingApproval: out.status === "pending",

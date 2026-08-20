@@ -97,7 +97,7 @@ export function Sidebar() {
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
-    { label: "متابعة ما بعد المعاينة", icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager", "doctor"] as const },
+    { label: "متابعة ما بعد المعاينة", icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager", "doctor", "accountant"] as const },
     //  اعتمادُ الخصم لمديرِ الفرع والمخوَّل — والمسؤولُ يرى كلَّ شيء أصلاً.
     //  والطبيبُ العاديّ لا يراه: الخصمُ قرارٌ ماليٌّ لا سريريّ.
     { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },

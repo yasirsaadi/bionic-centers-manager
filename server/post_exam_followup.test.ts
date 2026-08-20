@@ -400,12 +400,17 @@ async function main() {
 
     // ══ ١٠. الخبيرُ شرطٌ، ثم يؤكّد الموظّف فيقع البيع ═════════════════
     console.log("\n── تأكيد الشراء من الاستقبال مباشرةً ──");
-    //  بلا خبير: يُردّ برسالةٍ تقول ما يُفعَل، ولا تصنيعَ يبدأ.
+    //  بلا خبير **وبلا اختيارٍ في الجسم**: يُردّ برسالةٍ تقول ما يُفعَل،
+    //  ولا تصنيعَ يبدأ. والنافذةُ اليوم تسأل عن الخبير في مكانه — لكنّ
+    //  الخادم يبقى الحارس: طلبٌ ناقصٌ يُردّ ولو أرسلته واجهةٌ قديمة.
     const noExpertYet = await http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.recv, {});
-    same("١٠. **بلا خبيرٍ لا يُؤكَّد الشراء**", noExpertYet.status, 409);
+    same("١٠. **بلا خبيرٍ لا يُؤكَّد الشراء**", noExpertYet.status, 400);
+    check(String(noExpertYet.body?.error ?? "").includes("الخبير"),
+      "    ورسالتُه تقول ما يُفعَل لا «طلب غير صالح»", String(noExpertYet.body?.error));
     same("    ولا أمرَ وُلد",
       (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id = $1`, [p1])).length, 0);
 
+    //  والنقطةُ المستقلّة تبقى — «تغيير الخبير» متاحٌ ولا يُشترَط.
     same("١١. (الاستعلامات تختار الخبير)",
       (await http("POST", `/api/followups/${f1.id}/expert`, S.recv,
         { expertUserId: EXPERT })).status, 200);
@@ -796,9 +801,11 @@ async function main() {
       `SELECT expert_user_id FROM prosthetic_work_orders WHERE patient_id=$1`, [pExp]);
     same("     **والمُسنَد هو المحفوظ لا المهرَّب في الطلب**",
       Number(expOrder[0].expert_user_id), EXPERT2);
-    same("     وبعد التحويل لا يُغيَّر الخبير من المتابعة",
-      (await http("POST", `/api/followups/${fExp.id}/expert`, S.recv,
-        { expertUserId: EXPERT })).status, 409);
+    //  **وبعد التحويل يُردّ بتعارضٍ لا بمنع**: الاستقبالُ يملك الصلاحية،
+    //  والملفُّ هو مَن تحوّل — فرمزُ الردّ يقول حالة الصفّ لا صفةَ الطالب.
+    const afterConv = await http("POST", `/api/followups/${fExp.id}/expert`, S.recv,
+      { expertUserId: EXPERT });
+    same("     وبعد التحويل لا يُغيَّر الخبير من المتابعة", afterConv.status, 409);
 
     //  ومتابعةٌ بلا خبير: الاعتماد يُردّ ويطلب اختياره.
     const pNoExp = await mkPatient("بلا خبير");
@@ -809,19 +816,32 @@ async function main() {
     await http("POST", `/api/followups/${fNoExp.id}/accept-price`, S.recv, {});
     const noExpApprove = await http("POST", `/api/followups/${fNoExp.id}/approve-purchase`,
       S.recv, {});
-    same("ب٢. **ولا اعتمادَ بلا خبيرٍ مختار**", noExpApprove.status, 409);
+    same("ب٢. **ولا اعتمادَ بلا خبيرٍ مختار**", noExpApprove.status, 400);
     same("     ولا أمرَ وُلد",
       (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pNoExp])).length, 0);
+    //  **ويُتمّ في النداء نفسه حين يُرسَل الخبير** — لا خروجَ ولا عودة.
+    const noExpWithExpert = await http("POST", `/api/followups/${fNoExp.id}/approve-purchase`,
+      S.recv, { expertUserId: EXPERT });
+    same("     **ويُتمّ حين يُرسَل الخبير في النداء نفسه**",
+      [noExpWithExpert.status,
+        (await q(`SELECT 1 FROM prosthetic_work_orders WHERE patient_id=$1`, [pNoExp])).length],
+      [200, 1]);
 
     // ══ ب٣. قراءةُ المتابعة لمسؤوليها وحدهم ═══════════════════════════
     console.log("\n── مَن يقرأ المتابعة ──");
-    for (const [who, sess] of [["خبير الأطراف", S.expert], ["المحاسب", S.acct],
+    for (const [who, sess] of [["خبير الأطراف", S.expert],
       ["مُدخِل الجلسات", S.physio]] as any[]) {
       same(`ب٣. **${who} لا يقرأ لوحة المتابعة**`,
         (await http("GET", "/api/followups", sess)).status, 403);
       same(`     ولا ملفَّ متابعةِ مريض`,
         (await http("GET", `/api/followups/patient/${pExp}`, sess)).status, 403);
     }
+    //  **والمحاسبُ يقرأ** — المريضُ يقف عنده بالمال، فبطاقةٌ محجوبةٌ عنه
+    //  كانت تعني أن يقبض ثمن بيعٍ لا يراه. **ولا يفتح له ذلك إدارةَ الملفّ.**
+    same("ب٣ب. **والمحاسبُ يقرأ اللوحة والملفَّ معاً**",
+      [(await http("GET", "/api/followups", S.acct)).status,
+        (await http("GET", `/api/followups/patient/${pExp}`, S.acct)).status],
+      [200, 200]);
     for (const [who, sess] of [["الاستقبال", S.recv], ["مدير الفرع", S.mgr],
       ["الطبيب", S.doc], ["المسؤول", S.admin]] as any[]) {
       same(`     و${who} يقرأ ضمن نطاقه`,
@@ -963,12 +983,17 @@ async function main() {
 
     // ══ ٢٨. البابُ الوحيد إلى الحالة الملغاة هو النقطةُ المتروكة ══════
     //  لا يُثبَت هذا بعدّ الصفوف — النقطةُ المتروكة `/accept-price` باقيةٌ
-    //  للتوافق وتُنادى في أقسامٍ أخرى. فيُثبَت **بالباب**: كلُّ حدثٍ وجهتُه
-    //  تلك الحالة نوعُه `patient_accepted_price` وحده، أي أنه جاء من النقطة
-    //  القديمة صراحةً. فلا مسارٌ حيٌّ يقود إليها بعد اليوم.
+    //  للتوافق وتُنادى في أقسامٍ أخرى. فيُثبَت **بالباب**: كلُّ حدثٍ **ينقل**
+    //  إلى تلك الحالة نوعُه `patient_accepted_price` وحده، أي أنه جاء من
+    //  النقطة القديمة صراحةً. فلا مسارٌ حيٌّ يقود إليها بعد اليوم.
+    //
+    //  **والنقلُ وحده يُعَدّ باباً**: أحداثٌ كثيرة تقع **داخل** الحالة بلا
+    //  انتقال (`from = to`) — اختيارُ خبيرٍ، إشارةُ رغبة، تسعير. وعدُّها
+    //  أبواباً كان سيجعل كلَّ فعلٍ يقع في صفٍّ محتجزٍ يبدو مساراً يقود إليه.
     const gates = await q(`SELECT DISTINCT e.event_type FROM post_exam_followup_events e
       JOIN patients p ON p.id = e.patient_id
-      WHERE p.referral_source = $1 AND e.to_status = 'purchase_approval_pending'`, [MARK]);
+      WHERE p.referral_source = $1 AND e.to_status = 'purchase_approval_pending'
+        AND e.from_status IS DISTINCT FROM e.to_status`, [MARK]);
     same("٢٨. **ولا بابَ إلى حالة الاعتماد الملغاة سوى النقطة المتروكة**",
       gates.map((r: any) => r.event_type).sort(), ["patient_accepted_price"]);
 

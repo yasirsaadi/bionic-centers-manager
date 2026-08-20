@@ -12,6 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { BadgePercent, HeartHandshake } from "lucide-react";
 import { discountReasonLabel, FREE_DONATION_LABEL } from "@shared/discount";
+import { PriceTransition } from "@/components/PriceTransition";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
 interface Row {
@@ -59,8 +60,10 @@ export function PendingDiscountBanner({ patientId }: { patientId: number }) {
               <>تبرّع بقيمة <b className="font-mono">{money(r.originalPrice)}</b> د.ع
                 {" "}({FREE_DONATION_LABEL}).</>
             ) : (
-              <><b className="font-mono">{money(r.originalPrice)}</b> ⟶{" "}
-                <b className="font-mono">{money(r.proposedFinalPrice)}</b> د.ع
+              <>{/*  السهمُ في وحدةٍ معزولةٍ من اليسار لليمين، فلا يقلبه
+                     اتجاهُ الصفحة فيُقرأ الخصمُ ارتفاعاً. */}
+                <PriceTransition from={r.originalPrice} to={r.proposedFinalPrice}
+                  testId={`pending-discount-${r.id}-transition`} /> د.ع
                 {" "}— خصم <b>{r.discountPercentage}%</b>. السبب: <b>{discountReasonLabel(r.reason)}</b>.</>
             )}
           </p>

@@ -36,10 +36,14 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
-  discountBlocked, type DiscountDraft,
+  ServiceDiscountFields, EMPTY_DISCOUNT, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
+import {
+  purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
+  purchaseSubmitLabel,
+} from "@/components/purchase_dialog_ui";
 import { MoneyInput } from "@/components/ui/money-input";
+import { PriceTransition } from "@/components/PriceTransition";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -192,10 +196,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const busy = act.isPending;
   //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
   //  فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
+  //  **ما ينقص يُسأل عنه، والموجودُ لا** — أساسُ النافذة الذكيّة. والقاعدةُ
+  //  في `purchase_dialog_ui` وحدها كي تُختبَر: اثنتا عشرة تركيبةً لا تُقرأ
+  //  بالعين في JSX.
+  const { needsFirstPrice, needsExpert } = purchaseGaps(active);
   //  **السعرُ المرجعيّ للنافذة**: المحفوظ على الصفّ إن وُجد، وإلّا ما
-  //  يكتبه الاستعلامات الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
-  const needsFirstPrice = active.approvedPrice <= 0;
-  const originalPrice = needsFirstPrice ? firstPrice : active.approvedPrice;
+  //  يكتبه الموظّف الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
+  const originalPrice = purchaseOriginalPrice(active, firstPrice);
 
   const preview = computeCommercialPrice({
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
@@ -297,19 +304,12 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           </p>
         )}
 
-        {/*  الخبير شرطُ البدء لا شرطُ العرض: يُقال صراحةً وزرُّه تحته. */}
-        {actions.includes("confirm_purchase") && active.selectedExpertUserId === null && (
-          <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700"
-            data-testid="text-expert-required">
-            اختر الخبير المسؤول أولاً — ثم يصير «اشترى — بدء التصنيع» متاحاً.
-          </p>
-        )}
-
         {pendingRequest && actions.includes("approve_price") && (
           <div className="rounded-md border border-blue-200 bg-blue-50/60 px-3 py-2 text-sm">
             <div className="font-medium">طلب تعديل سعر</div>
             <div className="text-muted-foreground text-xs mt-1">
-              {pendingRequest.currentPrice?.toLocaleString()} ⟶ {pendingRequest.proposedPrice?.toLocaleString()} د.ع
+              <PriceTransition from={pendingRequest.currentPrice ?? 0}
+                to={pendingRequest.proposedPrice ?? 0} /> د.ع
               {" — "}{FOLLOWUP_REASON_LABELS[pendingRequest.reason as FollowupReason] ?? pendingRequest.reason}
               {pendingRequest.requestedByName && ` · طلبه ${pendingRequest.requestedByName}`}
             </div>
@@ -320,14 +320,19 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {/*  فعلٌ واحد: يشتري المريض فيبدأ التصنيع في الحال — بلا خطوةِ
-              اعتمادٍ بينهما ولا انتظارِ أحد. والخبيرُ شرطُه، فيُعطَّل بلا
-              ضغطةٍ تنتهي برسالة خطأ. */}
+          {/*  ══ **زرٌّ واحد اسمُه «اشترى»** ═════════════════════════════
+              كان زرّان: «اشترى — يرغب بإكمال البيع» و«اشترى — بدء التصنيع».
+              والفرقُ بينهما داخليّ (رايةُ طابور مقابل بيعٍ فعليّ)، فحمّل
+              الموظّفَ تمييزاً لا شأنَ له به — واختار الخطأ نصفَ الوقت.
+
+              فبقي واحد. **ولا يُعطَّل لنقصِ معلومة**: النافذةُ تسأل عمّا
+              ينقص (سعراً أو خبيراً أو كليهما) في مكانها، بدل أن يُطرَد
+              الموظّف إلى شاشةٍ أخرى ثم يُطلَب منه أن يعود. */}
           {actions.includes("confirm_purchase") && (
-            <Button size="sm" disabled={busy || active.selectedExpertUserId === null}
+            <Button size="sm" disabled={busy}
               onClick={() => setDialog("confirm_purchase")}
               data-testid="button-confirm-purchase">
-              اشترى — بدء التصنيع
+              <HandCoins className="h-4 w-4" /> اشترى
             </Button>
           )}
           {actions.includes("defer") && (
@@ -351,14 +356,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <CircleDollarSign className="h-4 w-4" /> تحديد السعر النهائي
             </Button>
           )}
-          {/*  **إشارةُ تسليمٍ لا بيع**: زرٌّ واحد للطبيب، ولا يظهر بعد رفعها. */}
-          {actions.includes("signal_purchase_interest") && !active.purchaseInterestAt && (
-            <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => submit(`/api/followups/${active.id}/purchase-interest`, {})}
-              data-testid="button-signal-purchase-interest">
-              <HandCoins className="h-4 w-4" /> اشترى — يرغب بإكمال البيع
-            </Button>
-          )}
+          {/*  ══ زرُّ «يرغب بإكمال البيع» أُزيل من الشاشة الحيّة ═════════
+              كان يطلب من الموظّف أن يميّز بين «نيّة شراء» و«بيع» — وهو
+              تمييزٌ داخليّ. والرايةُ نفسُها **باقيةٌ في القاعدة والنقطة
+              والطابور**، وتُرفع تلقائياً حين يُنشَأ طلبُ خصمٍ من نافذة
+              «اشترى»: مَن طلب خصماً فقد أعلن أن المريض يريد الشراء. */}
           {/*  توافقٌ رجعي: حسمُ طلبٍ قديمٍ معلَّق. لا يُنشأ مثلُه بعد اليوم. */}
           {actions.includes("approve_price") && pendingRequest && (
             <>
@@ -588,27 +590,21 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       {/* ── تأكيد الشراء ── */}
       <Dialog open={dialog === "confirm_purchase"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>اشترى — بدء التصنيع</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>اشترى</DialogTitle></DialogHeader>
+          {/*  ══ نافذةٌ واحدة **تسأل عمّا ينقص فقط** ═══════════════════════
+              أربعُ حالات لا أربعُ شاشات: (سعرٌ وخبير) موجودان ⟶ تأكيد ·
+              ناقصُ الخبير ⟶ الخبير وحده · ناقصُ السعر ⟶ السعر وحده ·
+              ناقصُهما ⟶ الاثنان معاً. والموجودُ يُعرَض ولا يُسأل عنه. */}
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              {needsFirstPrice
-                ? <>لم يحدّد الطبيب كلفة الجهاز — أدخل السعر الأصلي أدناه.</>
+              {needsFirstPrice || needsExpert
+                ? <>ينقص لإتمام البيع: {[
+                  needsFirstPrice ? "السعر الأصلي" : null,
+                  needsExpert ? "الخبير المسؤول" : null,
+                ].filter(Boolean).join(" و")}.</>
                 : <>السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.</>}
               {" "}يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
             </p>
-            {/*  الخبير **يُعرَض ولا يُختار هنا**: له نقطتُه وتدقيقُه. والخادم
-                يقرأه من الصفّ لا من الطلب، فلا يُرسَل أصلاً. والسعرُ كذلك. */}
-            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
-              data-testid="text-purchase-expert">
-              <span className="text-muted-foreground">الخبير المسؤول: </span>
-              <b>{active.selectedExpertName
-                ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}</b>
-            </div>
-            {active.selectedExpertUserId === null && (
-              <p className="text-sm text-destructive" data-testid="text-expert-required-dialog">
-                اختر الخبير المسؤول أولاً.
-              </p>
-            )}
 
             {/*  **السعرُ الأصلي حين سكتت المعاينة** — ليس خصماً ولا يحتاج
                 اعتماداً: الطبيبُ ترك الحقلَ فارغاً، وأولُ رقمٍ يُكتب هو
@@ -627,6 +623,33 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               </div>
             )}
 
+            {/*  والخبيرُ الناقص يُختار **هنا** لا في شاشةٍ أخرى. والموجودُ
+                يُعرَض للقراءة: تغييرُه فعلٌ مستقلٌّ له زرُّه، ولا يُبدَّل
+                من باب البيع. */}
+            {needsExpert ? (
+              <div className="space-y-1" data-testid="purchase-expert-block">
+                <Label className="text-sm font-semibold">
+                  الخبير المسؤول <span className="text-destructive">*</span>
+                </Label>
+                <Select value={expertId} onValueChange={setExpertId}>
+                  <SelectTrigger data-testid="select-purchase-expert">
+                    <SelectValue placeholder="اختر الخبير" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(experts ?? []).map((e: any) => (
+                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
+                data-testid="text-purchase-expert">
+                <span className="text-muted-foreground">الخبير المسؤول: </span>
+                <b>{active.selectedExpertName ?? `#${active.selectedExpertUserId}`}</b>
+              </div>
+            )}
+
             {/*  والخصمُ هنا **لا يمرّ إلى التصنيع مباشرةً**: يُنشئ طلباً
                 يعتمده المسؤولُ أو مديرُ الفرع، ولا يبدأ شيءٌ قبله. */}
             {originalPrice > 0 && (
@@ -635,17 +658,15 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             )}
           </div>
           <DialogFooter>
-            <Button disabled={busy || active.selectedExpertUserId === null
-              || originalPrice <= 0 || discountBlocked(discount, originalPrice)}
+            <Button
+              disabled={purchaseBlocked({
+                followup: active, firstPrice, expertId, discount, busy,
+              })}
               data-testid="button-confirm-purchase-submit"
-              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`, {
-                ...(needsFirstPrice ? { originalPrice: firstPrice } : {}),
-                ...(hasDiscount(discount, originalPrice)
-                  ? { discount: discountPayload(discount) } : {}),
-              })}>
+              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`,
+                purchaseBody({ followup: active, firstPrice, expertId, discount }))}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" />
-                : hasDiscount(discount, originalPrice) ? "إرسال للاعتماد"
-                  : "تأكيد وبدء التصنيع"}
+                : purchaseSubmitLabel({ followup: active, firstPrice, discount })}
             </Button>
           </DialogFooter>
         </DialogContent>

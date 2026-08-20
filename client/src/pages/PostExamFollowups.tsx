@@ -13,6 +13,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PriceTransition } from "@/components/PriceTransition";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft } from "lucide-react";
@@ -140,7 +141,7 @@ export default function PostExamFollowups() {
                     <Badge variant="outline" className="text-xs">طلب قديم</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {a.currentPrice?.toLocaleString()} ⟶ {a.proposedPrice?.toLocaleString()} د.ع
+                    <PriceTransition from={a.currentPrice ?? 0} to={a.proposedPrice ?? 0} /> د.ع
                   </div>
                 </div>
               </Link>
