@@ -42,8 +42,12 @@ import {
   purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
   purchaseSubmitLabel,
 } from "@/components/purchase_dialog_ui";
+import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
+import {
+  followupEventView, purchasePresentation, PURCHASE_STATE_TEXT,
+} from "@shared/followup_events";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -140,6 +144,20 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     enabled: true,
   });
 
+  //  **الخصمُ المعلَّق معلومةُ حالةٍ لا زينة**: بيعٌ رُفع له طلبُ خصمٍ لم
+  //  يُعتمد بعد **لم يقع**، فلا يُقال عنه «بانتظار إتمام البيع» كأن الموظّف
+  //  هو مَن يتأخّر. والمفتاحُ هو مفتاحُ شريط الخصم نفسه، فلا طلبَ ثانياً.
+  const { data: discountRows } = useQuery<{ requests?: any[] }>({
+    queryKey: [`/api/discounts/patient/${patientId}`],
+    queryFn: async () => {
+      const res = await fetch(`/api/discounts/patient/${patientId}`, { credentials: "include" });
+      if (!res.ok) return { requests: [] };
+      return res.json();
+    },
+  });
+  const hasPendingDiscount = (discountRows?.requests ?? [])
+    .some((r: any) => r?.status === "pending");
+
   const active = (followups ?? [])[0] ?? null;
 
   const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
@@ -203,6 +221,22 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  **السعرُ المرجعيّ للنافذة**: المحفوظ على الصفّ إن وُجد، وإلّا ما
   //  يكتبه الموظّف الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
   const originalPrice = purchaseOriginalPrice(active, firstPrice);
+  //  **اسمُ الخبير للسجلّ**: الحمولةُ تخزّن الرقم وحده، والشاشةُ تعرف أسماء
+  //  خبراء الفرع. ومَن غادر الفرع فلم يعد في القائمة يبقى برقمه — أهونُ من
+  //  اسمٍ مخترَع. والمحفوظُ على الصفّ يُقدَّم لأنه أوثق من قائمةٍ حيّة.
+  const expertNameOf = (id: number): string | null => {
+    if (id === active.selectedExpertUserId && active.selectedExpertName) {
+      return active.selectedExpertName;
+    }
+    return (experts ?? []).find((x: any) => Number(x.id) === id)?.displayName ?? null;
+  };
+
+  //  **أين وقف الشراء فعلاً** — من الحالة لا من نصٍّ محفوظ.
+  const purchaseState = purchasePresentation({
+    status: active.status,
+    convertedWorkOrderId: active.convertedWorkOrderId,
+    hasPendingDiscount,
+  });
 
   const preview = computeCommercialPrice({
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
@@ -247,13 +281,33 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           )}
         </div>
 
-        {/*  **رايةُ الطبيب** — تُقرأ في رأس البطاقة كما تُقرأ في رأس الطابور. */}
+        {/*  ══ **رايةُ الموافقة تقول أين وقف الملفّ فعلاً** ══════════════
+            كان النصُّ واحداً لا يتغيّر: «المريض قرّر الإكمال، ينتظر إتمام
+            البيع» — ويبقى معروضاً **بعد أن تمّ البيع وبدأ التصنيع فعلاً**.
+            فيقرأ الموظّفُ أن الملفّ ينتظره وهو منتهٍ، أو يظنّ الخصمَ
+            المعلَّق بيعاً لم يُسجَّل.
+
+            والنصُّ الآن **مشتقٌّ من الحالة** لا محفوظ: تحوّل ⟶ تمّ · خصمٌ
+            معلَّق ⟶ بانتظار الاعتماد · وإلّا ⟶ بانتظار إتمام البيع. */}
         {active.purchaseInterestAt && (
-          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800"
+          <p className={`rounded-md px-3 py-2 text-sm ${purchaseState === "converted"
+            ? "bg-green-100 text-green-900" : purchaseState === "discount_pending"
+              ? "bg-amber-50 text-amber-800" : "bg-green-50 text-green-800"}`}
             data-testid="text-purchase-interest">
-            🟢 اشترى — المريض قرّر الإكمال، ينتظر إتمام البيع
+            {purchaseState === "converted" ? "✅ " : purchaseState === "discount_pending"
+              ? "🟡 " : "🟢 "}
+            {PURCHASE_STATE_TEXT[purchaseState]}
             {active.purchaseInterestByName && ` — سجّلها ${active.purchaseInterestByName}`}
             {` (${fmt(active.purchaseInterestAt)})`}
+          </p>
+        )}
+        {/*  **والتحوّلُ يُقال ولو لم تُرفع رايةٌ قطّ**: بيعٌ تمّ مباشرةً بلا
+            إشارةٍ مسبقة كان يمرّ بلا سطرٍ يقول إنه تمّ. */}
+        {purchaseState === "converted" && !active.purchaseInterestAt && (
+          <p className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900"
+            data-testid="text-purchase-done">
+            ✅ تم الشراء — بدأ التصنيع
+            {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
           </p>
         )}
 
@@ -389,28 +443,68 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               {active.selectedExpertUserId ? "تغيير الخبير" : "اختيار الخبير"}
             </Button>
           )}
+          {/*  ══ **إعادةُ الفتح لا تقترح موعداً** ═══════════════════════════
+              كان حقلُ الموعد يُفتح مملوءاً بأسبوعٍ من اليوم، فالموظّفُ الذي
+              أراد **إعادة الفتح فقط** يضغط «حفظ» فيصير الملفّ «مؤجَّل —
+              متابعة» بموعدٍ لم يقرّره أحد (لاحظه المالك على الإنتاج).
+
+              والموعدُ قرارٌ يُتَّخذ لا افتراضٌ يُملأ: يُفرَّغ الحقلُ عند
+              الفتح، فإن كتب الموظّفُ تاريخاً كان تأجيلاً مقصوداً، وإلّا عاد
+              الملفُّ «بانتظار قرار المريض» بلا موعد. */}
           {actions.includes("reopen") && (
             <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => setDialog("reopen")} data-testid="button-reopen">
+              onClick={() => { setNextDate(""); setDialog("reopen"); }}
+              data-testid="button-reopen">
               <RotateCcw className="h-4 w-4" /> إعادة فتح المتابعة
             </Button>
           )}
         </div>
 
+        {/*  ══ **سجلّ الإجراءات** — يُقرأ بلا شرح ═══════════════════════
+            كان اسمُه «سجلّ المتابعة» ويعرض أسماء الأحداث البرمجية حين لا
+            يجد لها ترجمة (`expert_selected`, `initial_price_set`) — فصار
+            زينةً تُطوى لا أداةً تُسأل.
+
+            والآن كلُّ سطرٍ يقف بنفسه: **يومٌ وساعة** (لا التاريخ وحده —
+            إجراءاتُ الملفّ الواحد تقع في دقائق)، وفعلٌ عربيّ، وفاعلٌ باسمه،
+            وتفصيلٌ من الحمولة المخزَّنة. والترجمةُ في `shared/followup_events`
+            وحدها — فلا رمزَ إنجليزيٌّ يتسرّب. */}
         {(active.events ?? []).length > 0 && (
           <details className="text-xs" data-testid="details-followup-history">
             <summary className="cursor-pointer text-muted-foreground">
-              سجلّ المتابعة ({active.events.length})
+              سجلّ الإجراءات ({active.events.length})
             </summary>
-            <ul className="mt-2 space-y-1">
-              {active.events.map((e: any) => (
-                <li key={e.id} className="flex gap-2 text-muted-foreground">
-                  <span className="shrink-0">{fmt(e.createdAt)}</span>
-                  <span className="font-medium text-foreground">{EVENT_LABELS[e.eventType] ?? e.eventType}</span>
-                  {e.actorName && <span>· {e.actorName}</span>}
-                  {e.reason && <span>· {FOLLOWUP_REASON_LABELS[e.reason as FollowupReason] ?? e.reason}</span>}
-                </li>
-              ))}
+            <ul className="mt-2 space-y-2">
+              {active.events.map((e: any) => {
+                const v = followupEventView(e, expertNameOf);
+                return (
+                  <li key={e.id} className="border-r-2 border-muted pr-2 leading-relaxed"
+                    data-testid={`event-${e.id}`}>
+                    <div className="text-muted-foreground" data-testid={`event-${e.id}-when`}>
+                      {fmtDateTime(e.createdAt)}
+                    </div>
+                    <div className="font-medium text-foreground">
+                      {v.title}
+                      {v.transition && (
+                        <>
+                          {": "}
+                          <PriceTransition from={v.transition.from} to={v.transition.to}
+                            testId={`event-${e.id}-transition`} />
+                          {" د.ع"}
+                        </>
+                      )}
+                    </div>
+                    {v.facts.length > 0 && (
+                      <div className="text-muted-foreground" data-testid={`event-${e.id}-facts`}>
+                        {v.facts.join(" · ")}
+                      </div>
+                    )}
+                    {e.actorName && (
+                      <div className="text-muted-foreground">بواسطة: {e.actorName}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </details>
         )}
@@ -442,16 +536,28 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             )}
             {dialog !== "close" && (
               <div className="space-y-2">
-                <Label>موعد المتابعة القادمة</Label>
+                <Label>
+                  موعد المتابعة القادمة
+                  {dialog === "reopen" && <span className="text-muted-foreground"> (اختياري)</span>}
+                </Label>
                 <Input type="date" value={nextDate} disabled={noSchedule}
                   onChange={(e) => setNextDate(e.target.value)}
                   data-testid="input-next-followup" />
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={noSchedule}
-                    onChange={(e) => setNoSchedule(e.target.checked)}
-                    data-testid="checkbox-no-schedule" />
-                  بلا موعد متابعة (قرارٌ صريح)
-                </label>
+                {/*  في إعادة الفتح: الفراغُ قرارٌ صريح بنفسه، فلا مربّعَ
+                    ثالثاً يقول الشيء نفسه. */}
+                {dialog === "reopen" ? (
+                  <p className="text-xs text-muted-foreground" data-testid="text-reopen-hint">
+                    اتركه فارغاً ليعود الملف <b>بانتظار قرار المريض</b> بلا موعد.
+                    وحدّد تاريخاً فقط إن أردت تأجيله للمتابعة.
+                  </p>
+                ) : (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={noSchedule}
+                      onChange={(e) => setNoSchedule(e.target.checked)}
+                      data-testid="checkbox-no-schedule" />
+                    بلا موعد متابعة (قرارٌ صريح)
+                  </label>
+                )}
               </div>
             )}
             <div>
@@ -466,17 +572,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 if (dialog === "close") {
                   submit(`/api/followups/${active.id}/close`, { reason, note: note || undefined });
                 } else if (dialog === "reopen") {
-                  submit(`/api/followups/${active.id}/reopen`, {
-                    toStatus: noSchedule || !nextDate ? "awaiting_patient_decision" : "follow_up",
-                    nextFollowUpAt: noSchedule ? undefined : new Date(nextDate).toISOString(),
-                    noScheduledFollowUp: noSchedule, note: note || undefined,
-                  });
+                  submit(`/api/followups/${active.id}/reopen`,
+                    reopenPayload({ nextDate, note }));
                 } else {
-                  submit(`/api/followups/${active.id}/defer`, {
-                    reason, note: note || undefined,
-                    nextFollowUpAt: noSchedule ? undefined : new Date(nextDate).toISOString(),
-                    noScheduledFollowUp: noSchedule,
-                  });
+                  submit(`/api/followups/${active.id}/defer`,
+                    deferPayload({ reason, nextDate, noSchedule, note }));
                 }
               }}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ"}
@@ -675,28 +775,15 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   );
 }
 
-const EVENT_LABELS: Record<string, string> = {
-  followup_created: "فُتحت المتابعة",
-  patient_deferred: "أجّل المريض",
-  contact_recorded: "تواصل",
-  //  **القرارُ التجاري الحيّ** — مديرُ الفرع يحدّد السعر مباشرةً.
-  commercial_price_set: "حُدِّد السعر التجاري",
-  //  إشارةُ تسليمٍ من الطبيب — بلا أثرٍ مالي.
-  purchase_interest_signaled: "أبدى المريض رغبته بالشراء",
-  //  أسماءٌ تاريخية: طلبُ تعديلِ سعرٍ من المسار القديم. تبقى كي تُقرأ كما
-  //  كُتبت لا كما صارت — ولا يُنشأ مثلُها بعد اليوم.
-  price_change_requested: "طُلب تعديل السعر (قبل التبسيط)",
-  price_approved: "اعتُمد تعديل السعر (قبل التبسيط)",
-  price_rejected: "رُفض تعديل السعر (قبل التبسيط)",
-  patient_accepted_price: "وافق المريض على السعر",
-  purchase_confirmed: "أكّد الموظّف الشراء",
-  //  اسمٌ تاريخي: صفوفُ ما قبل التبسيط حين كان الطبيب يعتمد. يبقى كي
-  //  تُقرأ كما كُتبت لا كما صارت.
-  purchase_approved: "اعتُمد الشراء (قبل التبسيط)",
-  converted: "تحوّل إلى تصنيع",
-  closed_without_purchase: "أُغلق بدون شراء",
-  reopened: "أُعيد فتحه",
-};
+//  ══ خريطةُ الأحداث انتقلت إلى `shared/followup_events` ═════════════════
+//  كانت هنا ناقصةً: أربعةُ أنواعٍ يكتبها الخادم (`expert_selected` ·
+//  `initial_price_set` · `discount_price_applied` · `price_request_cancelled`)
+//  لم تكن فيها، والشاشةُ كانت تسقط إلى **اسم الحدث الخام** حين لا تجد
+//  ترجمة — فتعرض رمزاً برمجياً لموظّفةٍ لا تعرف الإنجليزية.
+//
+//  والخريطةُ الجديدة تغطّي الثمانيةَ عشرَ نوعاً كلَّها، **ولا تعرض رمزاً
+//  إنجليزياً إطلاقاً** ولو ظهر نوعٌ لم يُترجَم بعد. وهي مُختبَرةٌ وحدها بلا
+//  شاشة، والاختبارُ يقرأ أنواعَ الخادم من مصدره فلا تُنسى ترجمةُ نوعٍ جديد.
 
 function Field({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (

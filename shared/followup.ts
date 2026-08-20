@@ -29,7 +29,10 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   price_approved_waiting_patient: "بانتظار تأكيد المريض بعد تعديل السعر",
   purchase_approval_pending: "محتجز قبل التبسيط — أكّد الشراء",
   closed_without_purchase: "مغلق بدون شراء",
-  converted: "تحوّل إلى تصنيع",
+  //  **«تحوّل إلى تصنيع» كانت تصف الآلة لا الواقعة.** والواقعةُ التي تهمّ
+  //  الموظّف: المريضُ اشترى، والجهازُ بدأ. والاسمُ المخزَّن `converted` كما
+  //  هو — النصُّ المقروء وحده تغيّر.
+  converted: "تم الشراء — بدأ التصنيع",
 };
 
 /**

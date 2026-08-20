@@ -69,7 +69,11 @@
     "test:discount": "tsx server/service_discount.test.ts",
     "test:purchase-dialog": "tsx server/purchase_dialog.test.ts",
     "test:discount-ui": "tsx client/src/components/service_discount_ui.test.ts",
-    "test:purchase-ui": "tsx client/src/components/purchase_dialog_ui.test.ts"
+    "test:purchase-ui": "tsx client/src/components/purchase_dialog_ui.test.ts",
+    "test:followup-events": "tsx shared/followup_events.test.ts",
+    "test:followup-dialog": "tsx client/src/components/followup_dialog_ui.test.ts",
+    "test:money-input": "tsx client/src/components/money_input.test.ts",
+    "test:patient-cache": "tsx client/src/lib/patient_cache.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

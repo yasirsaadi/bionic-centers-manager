@@ -584,6 +584,31 @@ async function main() {
       "   والإغلاقُ السابق باقٍ في السرد", JSON.stringify(eventTypes(f3re)));
     same("   ورمزُ المريض لم يتغيّر",
       (await q(`SELECT patient_code FROM patients WHERE id=$1`, [p3]))[0].patient_code, codeBefore);
+    //  ══ **إعادةُ الفتح لا تخترع موعداً** ══════════════════════════════
+    //  النافذةُ كانت تُفتح وحقلُ الموعد مملوءاً بأسبوعٍ من اليوم، فمَن أراد
+    //  إعادةَ الفتح وحدها يضغط «حفظ» فيصير الملفّ **«مؤجَّل — متابعة»**
+    //  بموعدٍ لم يقرّره أحد ويخرج من الطابور. الجسمُ الآن يخلو من الموعد،
+    //  والخادمُ يجب أن يعيده حيّاً بانتظار القرار **بلا `next_follow_up_at`**.
+    same("١٩ب. **بلا موعد ⟶ بانتظار قرار المريض، ولا موعدَ يُكتب**",
+      [(await followupOf(p3))?.status, (await followupOf(p3))?.nextFollowUpAt,
+        (await followupOf(p3))?.noScheduledFollowUp],
+      ["awaiting_patient_decision", null, false]);
+    same("   والعمودُ في القاعدة فارغٌ فعلاً — لا في الردّ وحده",
+      (await q(`SELECT next_follow_up_at FROM post_exam_followups WHERE id=$1`,
+        [f3.id]))[0].next_follow_up_at, null);
+
+    //  **وبتاريخٍ صريح: تأجيلٌ مقصود** — القرارُ الآخر يعمل كما هو.
+    await http("POST", `/api/followups/${f3.id}/close`, S.recv, { reason: "price" });
+    const reDated = await http("POST", `/api/followups/${f3.id}/reopen`, S.recv,
+      { toStatus: "follow_up", nextFollowUpAt: "2026-09-01T09:00:00Z" });
+    same("١٩ج. **وبتاريخٍ صريح ⟶ مؤجَّل بذلك الموعد**",
+      [reDated.status, reDated.body?.status,
+        String(reDated.body?.nextFollowUpAt).slice(0, 10)],
+      [200, "follow_up", "2026-09-01"]);
+    //  وتُعاد إلى حالٍ حيّة كي لا تتأثّر بقيةُ السيناريوهات على هذا الصفّ.
+    await http("POST", `/api/followups/${f3.id}/close`, S.recv, { reason: "price" });
+    await http("POST", `/api/followups/${f3.id}/reopen`, S.recv,
+      { toStatus: "awaiting_patient_decision" });
 
     // ══ الحالةُ القديمة لا تُكتب فوق الجديدة ══════════════════════════
     //  هذا ما يعزل حارسَ المتابعة نفسه: حارسُ «تخصيص» القائم يمنع أمرين،

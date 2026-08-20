@@ -58,6 +58,53 @@ export function invalidatePatientData(
   client.invalidateQueries({ queryKey: ["/api/reports/daily-summary"] });
 }
 
+/**
+ * ملفٌّ حُذف — **اختفاءٌ في الحال، بلا تحديثِ صفحة**.
+ *
+ * ══ العطبُ الذي يغلقه (لاحظه المالك على الإنتاج) ═══════════════════════
+ * الحذفُ كان ينجح في الخادم **ويبقى المريضُ ظاهراً في السجلّ** حتى يُحدَّث
+ * المتصفّح يدوياً. والسببُ عائلتا مفاتيح لا واحدة: طلبُ الحذف كان يُبطل
+ * `["/api/patients"]` وحدها، بينما الشاشةُ المرئية تقرأ
+ * `["/api/patients/registry", صفحة, حجم, بحث, فرع, عرض, تاريخ]` — سبعةُ
+ * عناصر أوّلُها **نصٌّ مختلف**، فلا تطابقَ بالبادئة ولا إبطال.
+ *
+ * والموظّفُ يرى ملفّاً حذفه للتوّ، فيضغط «حذف» ثانيةً على صفٍّ لم يعد
+ * موجوداً — وهذا مصدرُ رسائل خطأٍ يقرأها «فشل الحذف» وقد نجح.
+ *
+ * ══ لماذا `remove` للملفّ و`invalidate` للقوائم ═════════════════════════
+ * `invalidate` تعني «أعد الجلب». وصفحةُ مريضٍ محذوف تُعيد الجلب فتصطدم
+ * بـ404 وتعرض خطأً — فالصحيحُ أن **تُنزَع من الذاكرة** لا أن تُحدَّث. أمّا
+ * القوائمُ فما زالت قائمةً وتُعاد بصفٍّ أقلّ، فتُبطَل لا تُنزَع.
+ *
+ * **والمطابقةُ بالبادئة تغطّي كلّ التوليفات**: `["/api/patients/registry"]`
+ * تصيب كلّ صفحةٍ وكلّ بحثٍ وكلّ فرعٍ وكلّ تاريخ — فلا تبقى توليفةٌ محفوظةٌ
+ * تحمل المحذوف.
+ */
+export function invalidateAfterPatientDelete(
+  client: QueryClient,
+  patientId: number,
+): void {
+  //  ما عاد له وجود: يُنزَع بدل أن يُعاد جلبُه فيُردّ بـ404.
+  client.removeQueries({ queryKey: ["/api/patients/:id", patientId] });
+  client.removeQueries({ queryKey: ["/api/patients", patientId] });
+  client.removeQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+  client.removeQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
+  client.removeQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
+  client.removeQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
+  //  والقوائمُ باقيةٌ بصفٍّ أقلّ — تُبطَل بالبادئة فتشمل كلّ توليفة.
+  client.invalidateQueries({ queryKey: ["/api/patients"] });
+  client.invalidateQueries({ queryKey: ["/api/patients/registry"] });
+  //  والعدّادات والطوابير التي كان يظهر فيها.
+  client.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+  client.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+  client.invalidateQueries({ queryKey: ["/api/followups"] });
+  client.invalidateQueries({ queryKey: ["/api/followups/governed"] });
+  client.invalidateQueries({ queryKey: ["/api/discounts"] });
+  //  والمال: كلفتُه وقيودُه ذهبت معه.
+  client.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
+  client.invalidateQueries({ queryKey: ["/api/reports/daily-summary"] });
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
