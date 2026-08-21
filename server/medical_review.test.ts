@@ -386,13 +386,23 @@ async function main() {
     check(Boolean(openReq), "   وثمّة طلبٌ معلَّق للاختبار");
     same("   والاستقبالُ لا يقرّر",
       (await decide(S.recv1, openReq.id, "approve")).status, 403);
-    same("   **والمسؤول العام لا يقرّر بحكم منصبه**",
-      (await decide(S.admin, openReq.id, "approve")).status, 403);
+    // ══ **قدرتان لا واحدة** (قرار المالك 2026-08-21) ═══════════════════
+    //  «تمت المراجعة» اعترافٌ إشرافيّ بأثرٍ رجعي: المسؤولُ ومديرُ الفرع
+    //  مسؤولان عن حركة مرضاهما فيؤشّران أنهما اطّلعا.
+    //  أمّا «يتطلّب معاينة كاملة» فقرارٌ **سريريّ** — يبقى للطبيب وحده،
+    //  ولا يفتحه الإشرافُ لأحد. وهذا هو الخطُّ الذي يحرسه هذا الفحص.
+    same("   **والمسؤول العام لا يطلب معاينةً كاملة — قرارٌ سريريّ**",
+      (await decide(S.admin, openReq.id, "require_full_exam")).status, 403);
+    same("   والاستقبالُ لا يُرجع للاستعلامات — الإرجاعُ إشرافيّ",
+      (await decide(S.recv1, openReq.id, "return_to_reception", "سبب")).status, 403);
     //  وسحبُ الصلاحية يسري فوراً — تُقرأ من القاعدة لا من الجلسة.
     await q(`UPDATE system_users SET is_active=false WHERE id=$1`, [DOC1]);
     same("   وطبيبٌ عُطِّل حسابُه لا يقرّر ولو حملت جلستُه القديم",
       (await decide(S.doc1, openReq.id, "approve")).status, 403);
     await q(`UPDATE system_users SET is_active=true WHERE id=$1`, [DOC1]);
+    //  **والاعترافُ الإشرافيُّ مفتوحٌ للمسؤول** — وهو الغرضُ من فصل القدرتين.
+    same("   **والمسؤول العام يؤشّر «تمت المراجعة»**",
+      (await decide(S.admin, openReq.id, "approve")).status, 200);
 
     // ══ ١١. الفرع حاجز ════════════════════════════════════════════════
     console.log("\n── ١١. حدود الفرع ──");

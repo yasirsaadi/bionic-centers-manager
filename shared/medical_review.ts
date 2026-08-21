@@ -37,8 +37,20 @@ export const isReviewServiceType = (v: unknown): v is ReviewServiceType =>
 export const REVIEW_PATHS = ["quick", "full"] as const;
 export type ReviewPath = (typeof REVIEW_PATHS)[number];
 
+// ══ **«تمت المراجعة» اعترافٌ لا موافقةٌ طبية** ═════════════════════════
+//  المسارُ السريع يُنشأ **بعد** أن تقع الخدمةُ فعلاً: تُفتَح صيانةٌ أو
+//  تُسجَّل زيارةٌ ثم يُوجَّه الطلب. فتسميتُه «موافقةً طبية قبل التنفيذ»
+//  وصفٌ لشيءٍ لم يحدث — والمسؤولُ الذي يقرأ «موافقة» يظنّ أن الخدمة كانت
+//  تنتظره، والذي لا يقرؤها يظنّ أنه أوقف شيئاً.
+//
+//  فهو **مراجعةٌ إشرافيةٌ بأثرٍ رجعي**: مَن جاء، وماذا جرى، ومتى، ومَن
+//  تولّاه. والقيمةُ المخزَّنة `approved` تبقى كما هي — تسميتُها في القاعدة
+//  لا تستحقّ ترحيلاً — **لكن كلَّ ما يقرؤه إنسان يقول «تمت المراجعة»**.
+//
+//  **وبوّابةُ المعاينة الكاملة لم تُمَسّ**: الجهازُ الجديد يستوجب معاينةً
+//  موقّعة كما كان، ولا شيءَ هنا يُضعف ذلك الشرط.
 export const REVIEW_PATH_LABELS: Record<ReviewPath, string> = {
-  quick: "موافقة طبية سريعة",
+  quick: "مراجعة إشرافية سريعة",
   full: "معاينة طبية كاملة",
 };
 
@@ -75,10 +87,12 @@ export const REVIEW_STATUSES = [
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
 export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
-  pending: "بانتظار الطبيب",
-  approved: "موافقة طبية",
+  pending: "بانتظار المراجعة",
+  //  القيمةُ `approved` باقيةٌ في القاعدة، ومعناها المعروض **اعترافٌ** لا
+  //  موافقةٌ سابقة للتنفيذ. راجع الشرح أعلى `REVIEW_PATH_LABELS`.
+  approved: "تمت المراجعة",
   escalated: "أُحيل إلى معاينة كاملة",
-  returned: "أُعيد إلى الاستقبال",
+  returned: "أُعيد إلى الاستعلامات",
   examined: "أُنجزت المعاينة",
 };
 
@@ -89,9 +103,10 @@ export const REVIEW_DECISIONS = [
 export type ReviewDecision = (typeof REVIEW_DECISIONS)[number];
 
 export const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
-  approve: "موافقة",
+  //  **اعترافٌ لا إذن**: القيمةُ `approve` باقية، والمعروضُ ما تعنيه حقاً.
+  approve: "تمت المراجعة",
   require_full_exam: "يتطلّب معاينة كاملة",
-  return_to_reception: "إعادة إلى الاستقبال",
+  return_to_reception: "إرجاع للاستعلامات",
 };
 
 export const isReviewDecision = (v: unknown): v is ReviewDecision =>
@@ -170,4 +185,26 @@ export function canCreateReview(s: ReviewSessionLike | null | undefined): boolea
  */
 export function canDecideReview(s: ReviewSessionLike | null | undefined): boolean {
   return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+}
+
+/**
+ * مَن **يراجع إشرافياً** — المسؤولُ العام، ومديرُ الفرع في نطاقه، والطبيبُ
+ * المخوَّل في اختصاصه.
+ *
+ * ══ ولماذا دالّةٌ ثانية لا توسيعُ الأولى ═══════════════════════════════
+ * **الاعترافُ الإشرافيُّ والتوقيعُ السريريُّ قدرتان مختلفتان.** مديرُ الفرع
+ * مسؤولٌ عن حركة مرضاه: يرى مَن جاء وماذا جرى ويؤشّر أنه اطّلع. وهذا لا
+ * يجعله طبيباً: لا يوقّع معاينةً، ولا يقرّر جهازاً، ولا يكتب تشخيصاً.
+ *
+ * ولو وُسِّعت `canDecideReview` — أو مُنح المديرُ `canWriteMedicalExam` —
+ * لصار قادراً على توقيع سجلٍّ سريريٍّ مختوم باسمه. فالدالّتان منفصلتان
+ * بالاسم والمعنى، **و`canWriteMedicalExam` لم تُمَسّ بحرف**.
+ *
+ * والفرعُ يُفرَض في النقطة لا هنا: هذه تقول «أيملك هذه القدرة؟»، والنطاق
+ * يقول «على أيّ الصفوف؟» — ومديرُ فرعٍ آخر يسقط عند الثاني.
+ */
+export function canSuperviseReview(s: ReviewSessionLike | null | undefined): boolean {
+  if (s?.isAdmin === true) return true;
+  if (s?.role === "branch_manager") return true;
+  return canDecideReview(s);
 }

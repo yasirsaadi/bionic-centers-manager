@@ -32,6 +32,11 @@ import {
 } from "./patient_search/sql";
 import { patientActiveOnDate } from "./patient_activity";
 import {
+  executeNewService, normalizeEntries, NewServiceError,
+  NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
+} from "./new_service/store";
+import { newServiceDiscountRef } from "@shared/discount";
+import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
 import { aliasCodesByPatient } from "./patient_code/store";
@@ -2417,18 +2422,10 @@ export async function registerRoutes(
         return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
       }
 
-      const serviceLabels: Record<string, string> = {
-        additional_therapy: "جلسات علاج إضافية",
-        consultation: "استشارة طبية",
-        other: "خدمة أخرى",
-      };
-      const redirects: Record<string, string> = {
-        maintenance: "الصيانة تُسجَّل من «تسجيل زيارة» (زيارة صيانة) لتُقيَّد أجورها ويُفتح أمرها",
-        new_prosthetic: "الطرف الجديد يمرّ عبر معاينة الطبيب ثم «تخصيص وإسناد خبير»",
-        adjustment: "التعديل والضبط يُسجَّلان كزيارة صيانة من «تسجيل زيارة»",
-      };
-      if (redirects[serviceType]) return res.status(400).json({ message: redirects[serviceType] });
-      const serviceLabel = serviceLabels[serviceType];
+      if (NEW_SERVICE_REDIRECTS[serviceType]) {
+        return res.status(400).json({ message: NEW_SERVICE_REDIRECTS[serviceType] });
+      }
+      const serviceLabel = NEW_SERVICE_LABELS[serviceType];
       if (!serviceLabel) return res.status(400).json({ message: "نوع الخدمة غير صالح" });
 
       // «جلسات علاج إضافية» تفترض خطّة قائمة تُزاد عليها. ومريضٌ بلا حالة
@@ -2441,148 +2438,107 @@ export async function registerRoutes(
         return res.status(400).json({ message: "يجب تفعيل حالة العلاج الطبيعي للمريض أولاً" });
       }
 
-      const entries = Array.isArray(treatmentEntries)
-        ? treatmentEntries.map((e: any) => ({
-            treatmentType: typeof e?.treatmentType === "string" && e.treatmentType ? e.treatmentType : null,
-            sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
-            cost: Math.max(0, Math.round(Number(e?.cost) || 0)),
-          }))
-        : null;
+      const entries = normalizeEntries(treatmentEntries);
 
-      // Update totalCost. Extra physiotherapy sessions top up the stored plan
-      // (036) — but ONLY when a plan already exists. A per-session patient
-      // (يدفع مفرد) has no plan: his whole history lives on his payments, and
-      // creating a one-session plan here OVERRODE that history in the counter —
-      // a patient with 15 paid sessions read "1 purchased" the moment he bought
-      // one more, and went deeply negative (ذي قار incident, 2026-07-29). For
-      // him we write no plan: the payment rows this endpoint creates below
-      // carry the session counts, which is exactly where his counter reads.
-      const newTotalCost = (patient.totalCost || 0) + serviceCost;
-      const hasPlan = Array.isArray(patient.physioPlan) && patient.physioPlan.length > 0;
-      const planPatch = hasPlan && entries && entries.length > 0
-        ? { physioPlan: mergePhysioPlan(patient.physioPlan, entries.map((e) => ({
-            treatmentType: e.treatmentType ?? "", sessionCount: e.sessionCount,
-          }))) }
-        : {};
-      // ══ قسمُ «خدمة جديدة» — علاجٌ طبيعي بحكم التصنيف ═══════════════════
-      //  الأنواعُ الثلاثة الباقية في هذه النقطة — جلساتٌ إضافية · استشارة ·
-      //  خدمة أخرى — **كلُّها علاجٌ طبيعي**، تحسمها خريطةٌ مهيكلة على نوع
-      //  الخدمة لا مطابقةُ نصٍّ حرّ.
+      // ══ ── **الاتفاقُ الذي أبرمه الاستقبال** ── ═══════════════════════
+      //  الموظّفُ هو مَن يكلّم المريض ويعرف على كم اتّفقا: ٢٥,٠٠٠ أو
+      //  ١٢,٥٠٠ أو مجّاناً. وقبل هذا لم يكن له حقلٌ يقوله فيه — تُنفَّذ
+      //  الخدمةُ بسعرها الكامل ثم **يخمّن المديرُ الاتفاقَ لاحقاً**.
       //
-      //  **والخيطُ يُفتح قبل أن يتحرّك دينار.** كان الحلُّ بـ`resolveCaseId`
-      //  العامّة فترجع أوّلَ حالةٍ للمريض: مريضُ أطرافٍ يشتري استشارةً
-      //  تُقيَّد **على قسم الأطراف**، ومريضٌ بلا حالةٍ يُنتج قيداً بلا قسم.
-      //  والآن حالةُ العلاج الطبيعي موجودةٌ يقيناً قبل أوّل كتابةٍ مالية،
-      //  **ومعرّفُها هو المستعمَل في الأربعة كلّها**: قيدُ الكلفة، وكلفةُ
-      //  الحالة، والزيارة، والدفعة. فلا يقول أحدُها قسماً ويقول الآخرُ غيرَه.
+      //  **والسعرُ الكامل يمضي فوراً** كما كان: خمسون مريضاً في اليوم لا
+      //  يمرّون بطابور، والطابورُ للاستثناء وحده.
       //
-      //  ولا تُمَسّ حالاتُه الأخرى: الأطرافُ تبقى أطرافاً بكلفتها كما هي.
-      const nsDepartment = NEW_SERVICE_DEPARTMENT[String(serviceType)] ?? null;
-      //  هل كان الخيطُ مفتوحاً قبلنا؟ يُقرأ **قبل** الفتح كي يُذكَر في التدقيق
-      //  ويُخبَر به الموظّف — فتحُ قسمٍ للمريض حدثٌ يُعلَن لا أثرٌ صامت.
-      const hadPhysioBefore = Boolean(patient.isPhysiotherapy)
-        || (await storage.getCasesByPatientId(patientId)).some((c: any) => c.caseType === "physiotherapy");
-      const nsCaseId = nsDepartment === "physiotherapy"
-        ? await storage.ensurePhysiotherapyCase(patientId)
-        : null;
-      const openedPhysioCase = nsDepartment === "physiotherapy" && !hadPhysioBefore;
-      if (nsDepartment === "physiotherapy" && nsCaseId === null) {
-        //  تعذّر فتحُ الخيط ⟹ **لا مال يُكتب**. قيدٌ بلا قسمٍ من مسارٍ يومي
-        //  هو بالضبط ما جاء هذا الإصلاح يمنعه، فالفشلُ الصريح خيرٌ منه.
-        return res.status(500).json({ message: "تعذّر فتح حالة العلاج الطبيعي — لم تُسجَّل الخدمة" });
-      }
-      await storage.updatePatient(
-        patientId, { totalCost: newTotalCost, ...planPatch } as any, "new_service", nsCaseId,
-      );
-
-      // Keep the per-case split in step: the same amount the aggregate just
-      // gained is added onto the case(s) the service belongs to — otherwise
-      // sum(case costs) permanently diverges from total_cost.
-      //  **بالمعرّف لا بالوسم**: القسمُ محسومٌ أعلاه، فحلُّه ثانيةً من نصٍّ
-      //  حرّ يفتح بابَ خطأٍ بلا حاجة — وكان يفتحه فعلاً.
-      if (entries) {
-        let distributed = 0;
-        for (const entry of entries) {
-          if (entry.cost > 0) {
-            await storage.addToCaseCostById(patientId, nsCaseId!, entry.cost);
-            distributed += entry.cost;
-          }
-        }
-        // The aggregate gained `serviceCost`, but the lines only account for
-        // `distributed` — they differ whenever the total was typed by hand
-        // (the form lets a human override it). Booking only the lines left the
-        // remainder on the patient and on NO case, so sum(cases) fell short of
-        // total_cost permanently — exactly the 25,000 gap the owner found on
-        // امل عويز, reproduced 1:1 before this fix.
-        const remainder = serviceCost - distributed;
-        if (remainder > 0) await storage.addToCaseCostById(patientId, nsCaseId!, remainder);
-      } else {
-        await storage.addToCaseCostById(patientId, nsCaseId!, serviceCost);
-      }
-
-      // Create payment records and visit records - either from treatmentEntries or single entry
-      if (entries) {
-        for (const entry of entries) {
-          //  `caseId` صريحة في الزيارة والدفعة معاً: بدونها يعيد كلٌّ منهما
-          //  الحلَّ من وسمه فينتهيان إلى حالتين مختلفتين لخدمةٍ واحدة.
-          await storage.createVisit({
-            patientId,
-            branchId: patient.branchId,
-            caseId: nsCaseId!,
-            treatmentType: entry.treatmentType,
-            details: "خدمة جديدة",
-            notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة) (تكلفة: ${entry.cost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
-          });
-
-          if (entry.cost > 0) {
-            await storage.createPayment({
-              patientId,
-              branchId: patient.branchId,
-              caseId: nsCaseId!,
-              amount: entry.cost,
-              notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
-              paymentTreatmentType: entry.treatmentType,
-              sessionCount: entry.sessionCount,
-            });
-          }
-        }
-      } else {
-        await storage.createVisit({
-          patientId,
-          branchId: patient.branchId,
-          caseId: nsCaseId!,
-          treatmentType: paymentTreatmentType || null,
-          details: "خدمة جديدة",
-          notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""} (تكلفة: ${serviceCost.toLocaleString()} د.ع)${notes ? ` - ${notes}` : ""}`,
-        });
-
-        // Record ONLY the amount actually paid now (may be partial or zero).
-        // The service still raised totalCost above, so any unpaid part stays
-        // as a remaining balance the accountant collects later.
-        const paidNow = Math.max(0, Math.min(Number(req.body?.initialPayment) || 0, serviceCost));
-        if (paidNow > 0) {
-          await storage.createPayment({
-            patientId,
-            branchId: patient.branchId,
-            caseId: nsCaseId!,
-            amount: paidNow,
-            notes: `${serviceLabel}${sessionCount ? ` (${sessionCount} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
-            paymentTreatmentType: paymentTreatmentType || null,
-            sessionCount: sessionCount ? Number(sessionCount) : null,
+      //  **والسعرُ الأصليّ يُحسب في الخادم** من جدول الأسعار المشترك لا
+      //  يُقبل من العميل: وإلّا لأمكن إعلانُ أصلٍ ملفَّق يجعل الخصمَ يبدو
+      //  صغيراً. والصفرُ وحده لا يعني «مجّاناً» — المجّانيّ يُختار صراحةً.
+      const dsc = req.body?.discount;
+      const wantsFree = dsc?.isFree === true;
+      const validEntries = (entries ?? []).filter((e) => e.treatmentType);
+      const stdPrice = serviceType === "additional_therapy" && validEntries.length > 0
+        ? discountStore.physioOriginalPrice(validEntries.map((e) => ({
+            treatmentType: e.treatmentType as string, sessionCount: e.sessionCount,
+          })))
+        : serviceCost;
+      const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+        && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== stdPrice;
+      if (serviceType === "additional_therapy" && (wantsFree || wantsCut)) {
+        if (!(stdPrice > 0)) {
+          return res.status(400).json({
+            message: "السعر الأصلي يجب أن يكون موجباً — اختر نوع العلاج وعدد الجلسات أولاً",
           });
         }
+        try {
+          const out = await discountStore.submitDiscount({
+            patientId, department: "physiotherapy", branchId: patient.branchId,
+            //  **مرجعٌ من رمز الإرسالة**: ضغطةٌ واحدة = طلبٌ واحد.
+            contextRef: newServiceDiscountRef(submissionToken, serviceType),
+            originalPrice: stdPrice,
+            finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+            isFree: wantsFree,
+            reason: String(dsc?.reason ?? ""),
+            note: typeof dsc?.note === "string" && dsc.note.trim() ? dsc.note.trim() : null,
+            //  **ولا سعرَ في الحمولة**: المعتمَدُ على الصفّ هو المصدر.
+            payload: {
+              kind: "new_service", serviceType,
+              entries: validEntries.map((e) => ({
+                treatmentType: e.treatmentType, sessionCount: e.sessionCount,
+              })),
+              serviceNotes: notes ?? null,
+              paymentTreatmentType: paymentTreatmentType ?? null,
+              sessionCount: sessionCount ?? null,
+            },
+            actor: {
+              userId: branchSession?.userId ?? null,
+              userName: branchSession?.displayName ?? null,
+            },
+            actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+            audit: {
+              ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+              note: (row) => discountAuditNote(row, "طلب واعتماد"),
+            },
+          });
+          return res.status(201).json({
+            success: true,
+            pendingApproval: out.status === "pending",
+            discountRequestId: out.request.id,
+            discountStatus: out.request.status,
+            newTotalCost: out.applied?.newTotalCost ?? patient.totalCost ?? 0,
+            openedPhysiotherapyCase: out.applied?.openedPhysiotherapyCase ?? false,
+          });
+        } catch (e: any) {
+          if (e?.name === "DiscountError") return res.status(e.status).json({ message: e.message });
+          throw e;
+        }
       }
 
-      await logAudit({
-        entityType: "patient", entityId: patientId, action: "update",
-        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`
-          + `${openedPhysioCase ? " — وفُتحت حالة علاج طبيعي للمريض" : ""}`,
+      //  ══ **الكتابةُ الواحدة** — لا نسخةَ ثانية من محاسبة الخدمة ═════════
+      //  نفسُ الدالّة التي يناديها اعتمادُ الخصم. فمَن يصلح إحداهما يصلحهما،
+      //  ولا تنحرف واحدةٌ عن الأخرى بعد أوّل تعديل.
+      const done = await executeNewService({
+        patientId,
+        serviceType,
+        serviceCost,
+        entries,
+        notes: notes ?? null,
+        paymentTreatmentType: paymentTreatmentType ?? null,
+        sessionCount: sessionCount ?? null,
+        initialPayment: req.body?.initialPayment ?? null,
+        actor: {
+          userId: branchSession?.userId ?? null,
+          userName: branchSession?.displayName ?? null,
+        },
+        audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
       });
 
-      res.json({ success: true, newTotalCost, openedPhysiotherapyCase: openedPhysioCase });
-    } catch (err) {
+      res.json({
+        success: true,
+        newTotalCost: done.newTotalCost,
+        openedPhysiotherapyCase: done.openedPhysiotherapyCase,
+      });
+    } catch (err: any) {
+      if (err instanceof NewServiceError) {
+        return res.status(err.status).json({ message: err.message });
+      }
       console.error("Error adding new service:", err);
       res.status(500).json({ message: "حدث خطأ أثناء إضافة الخدمة" });
     }

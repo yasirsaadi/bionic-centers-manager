@@ -36,6 +36,10 @@ import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { nextSubmissionToken, mintSubmissionToken } from "./patient_service_launcher_logic";
+import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, discountBlocked, discountPayload,
+  hasDiscount, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
 
 interface NewServiceModalProps {
   patientId: number;
@@ -102,6 +106,12 @@ export function NewServiceModal({
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
   const [paidNowOverride, setPaidNowOverride] = useState(false);
+  //  ══ **الاتفاقُ الذي أبرمه الاستقبال** ═════════════════════════════════
+  //  الموظّفُ هو مَن يكلّم المريض ويعرف على كم اتّفقا. وقبل هذا لم يكن له
+  //  حقلٌ يقوله فيه، فتُنفَّذ الخدمةُ بسعرها الكامل ثم **يخمّن المديرُ
+  //  الاتفاقَ لاحقاً**. والسعرُ الكامل يمضي فوراً كما كان — الطابورُ
+  //  للاستثناء وحده.
+  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -126,17 +136,25 @@ export function NewServiceModal({
         submissionToken,
       });
     },
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       invalidatePatientData(queryClient, patientId);
-      toast({
-        title: t.modals.serviceAddedSuccess,
-        description: t.modals.serviceAddedDesc,
-      });
+      //  **والمعلَّقُ يُقال صراحةً**: «تمت» على خدمةٍ لم تقع بعد تجعل
+      //  الموظّف يخبر المريض أنه اشترى، ثم لا يجد شيئاً في ملفّه.
+      toast(res?.pendingApproval
+        ? {
+          title: "أُرسل الطلب للاعتماد",
+          description: "الخصم بانتظار اعتماد المسؤول أو مدير الفرع — لم تُسجَّل الخدمة بعد.",
+        }
+        : {
+          title: t.modals.serviceAddedSuccess,
+          description: t.modals.serviceAddedDesc,
+        });
       setOpen(false);
       form.reset();
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
       setPaidNowOverride(false);
+      setDiscount(EMPTY_DISCOUNT);
     },
     onError: () => {
       toast({
@@ -215,6 +233,13 @@ export function NewServiceModal({
   }, [treatmentEntries, isPhysioService, form, manualCostOverride]);
 
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
+  //  **السعرُ الأصليّ من جدول الأسعار لا من الحقل**: الحقلُ قابلٌ للتجاوز
+  //  اليدوي، وأصلٌ مُدخَلٌ بيدٍ يجعل الخصمَ يبدو أصغرَ ممّا هو. والخادمُ
+  //  يعيد حسابه بالجدول نفسه، فما يراه الموظّف هو ما يُحفَظ.
+  const standardPrice = treatmentEntries.reduce((sum, e) => {
+    const price = TREATMENT_PRICES[e.treatmentType];
+    return sum + (price === undefined ? 0 : price * (e.sessionCount || 0));
+  }, 0);
   const newTotal = currentTotalCost + serviceCostValue;
   const paidNowValue = Number(form.watch("paidNow")) || 0;
   const remainingAfter = Math.max(0, serviceCostValue - paidNowValue);
@@ -243,8 +268,28 @@ export function NewServiceModal({
     }
     
     const validEntries = treatmentEntries.filter(e => e.treatmentType);
+
+    //  **والصفرُ وحده لا يعني «مجّاناً»**: المجّانيّ يُختار صراحةً من سعرٍ
+    //  أصليٍّ موجب فيمرّ بالاعتماد. ونفسُ قواعد الخادم معروضةً قبل الضغط.
+    if (isPhysioService && discountBlocked(discount, standardPrice)) {
+      toast({
+        title: "أكمل بيانات الخصم",
+        description: "اختر سبب الخصم، وتأكّد أن السعر بعد الخصم أقلّ من الأصلي ولا يقلّ عن صفر.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (isPhysioService && hasDiscount(discount, standardPrice) && !(standardPrice > 0)) {
+      toast({
+        title: "لا سعر أصلي",
+        description: "اختر نوع العلاج وعدد الجلسات أولاً — الخصم يُحسب على سعرٍ أصليٍّ موجب.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const hasMedicalConsultationOnly = isPhysioService && validEntries.length === 1 && validEntries[0].treatmentType === "استشارة طبية";
-    if (!hasMedicalConsultationOnly && serviceCost <= 0) {
+    if (!hasMedicalConsultationOnly && !hasDiscount(discount, standardPrice) && serviceCost <= 0) {
       toast({
         title: t.modals.costError,
         description: t.modals.costErrorDesc,
@@ -259,7 +304,12 @@ export function NewServiceModal({
       ? serviceCost
       : Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
 
+    //  **والخصمُ لا يُرسَل إلّا حين يوجد**: المساواةُ ليست خصماً، فالمسارُ
+    //  الطبيعي يمضي بلا طلبٍ ولا طابور — وهو المسارُ الأغلب.
+    const wantsDiscount = isPhysioService && hasDiscount(discount, standardPrice);
+
     mutate({
+      ...(wantsDiscount ? { discount: discountPayload(discount) } : {}),
       // الموجَّه يسود على حالة النموذج: القفل في الواجهة يمنع الالتباس،
       // وهذا يمنع أن يُرسَل غيرُه مهما جرى للحالة بينهما.
       serviceType: initialServiceType ?? values.serviceType,
@@ -417,6 +467,19 @@ export function NewServiceModal({
                   {t.modals.addTreatmentType}
                 </Button>
               </div>
+            )}
+
+            {/* ══ **الاتفاقُ الذي أبرمه الاستقبال** ═══════════════════════
+                الموظّفُ هو مَن كلّم المريض ويعرف على كم اتّفقا. والسعرُ
+                الكامل يمضي فوراً بلا طابور — والطابورُ للاستثناء وحده. */}
+            {isPhysioService && standardPrice > 0 && (
+              <ServiceDiscountFields
+                originalPrice={standardPrice}
+                value={discount}
+                onChange={setDiscount}
+                disabled={isPending}
+                testIdPrefix="new-service-discount"
+              />
             )}
 
             <FormField

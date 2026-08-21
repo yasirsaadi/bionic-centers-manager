@@ -311,11 +311,21 @@ function main() {
   same("٢٠.ب ولا نقطة خدمات عامّة جديدة", generic, ["/api/patients/:id/new-service"]);
 
   // ٢١. محاسبة الخدمة لم تُمَسّ: الأنواع الثلاثة والرفض القائم كما هما.
-  check(/additional_therapy: "جلسات علاج إضافية"/.test(srv), "٢١. وأنواع الخدمة الثلاثة كما هي");
-  check(/new_prosthetic: "الطرف الجديد يمرّ عبر معاينة الطبيب/.test(SERVER_ROUTES),
+  //  الخريطتان انتقلتا إلى بيتهما القانوني (2026-08-21) — العناوينُ إلى
+  //  `shared/service_taxonomy.ts` ليقرأها الخادمُ والشاشتان، والتحويلاتُ إلى
+  //  `server/new_service/store.ts` مع الكتابة التي تحرسها. **والفحصُ يتبعهما
+  //  ولا يلين**: نفسُ الحرف، في الملفّ الذي صار مصدرَه.
+  const taxonomy = read("..", "..", "..", "shared", "service_taxonomy.ts");
+  const newSrvStore = read("..", "..", "..", "server", "new_service", "store.ts");
+  check(/additional_therapy: "جلسات علاج إضافية"/.test(taxonomy), "٢١. وأنواع الخدمة الثلاثة كما هي");
+  check(/new_prosthetic: "الطرف الجديد يمرّ عبر معاينة الطبيب/.test(newSrvStore),
     "**والخادم ما زال يرفض `new_prosthetic` في new-service**");
-  check(/maintenance: "الصيانة تُسجَّل من/.test(SERVER_ROUTES),
+  check(/maintenance: "الصيانة تُسجَّل من/.test(newSrvStore),
     "ويرفض `maintenance` فيها كذلك — والموزِّع لا يحاول");
+  //  **والنقطةُ تناديهما فعلاً** — وإلّا كان الحرفُ حيّاً في ملفٍّ ميت.
+  check(/NEW_SERVICE_REDIRECTS\[serviceType\]/.test(srv)
+    && /NEW_SERVICE_LABELS\[serviceType\]/.test(srv),
+  "٢١.ب والنقطة تقرأ الخريطتين من مصدرهما لا من نسخةٍ محلّية");
 
   // ٢٢. وworkflow التصنيع لم يُمَسّ: الإصلاح في اختيار النوع لا في الأمر.
   for (const untouched of ["createMaintenanceOrderWithVisit", "purpose: \"maintenance\"", "ActiveOrderError"]) {

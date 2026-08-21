@@ -17,8 +17,8 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import * as medical from "../medical/store";
 import {
-  canCreateReview, canDecideReview, REVIEW_DECISION_LABELS,
-  REVIEW_PATH_LABELS, REVIEW_KIND_LABELS,
+  canCreateReview, canDecideReview, canSuperviseReview, REVIEW_DECISION_LABELS,
+  REVIEW_PATH_LABELS, REVIEW_KIND_LABELS, REVIEW_SERVICE_TYPES,
   isReviewDecision, type ReviewDecision,
 } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
@@ -53,13 +53,57 @@ function branchScope(req: Req): number[] | null {
  */
 async function liveCanDecide(userId: number | null): Promise<boolean> {
   if (!userId) return false;
-  const r = await db.execute<{ role: string; can: boolean | null; active: boolean | null }>(sql`
-    SELECT role, can_write_medical_exam AS can, is_active AS active
+  const u = await liveUser(userId);
+  if (!u) return false;
+  return canDecideReview({ role: u.role, permissions: { canWriteMedicalExam: u.can } });
+}
+
+/** صفُّ المستخدم الحيّ — أو `null` لمعطَّلٍ أو غير موجود. */
+async function liveUser(userId: number | null): Promise<
+  { role: string; isAdmin: boolean; can: boolean } | null
+> {
+  if (!userId) return null;
+  const r = await db.execute<{
+    role: string; can: boolean | null; active: boolean | null; admin: boolean | null;
+  }>(sql`
+    SELECT role, can_write_medical_exam AS can, is_active AS active,
+           (role = 'admin') AS admin
       FROM system_users WHERE id = ${userId}
   `);
   const u = (r.rows ?? [])[0];
-  if (!u || u.active === false) return false;
-  return canDecideReview({ role: u.role, permissions: { canWriteMedicalExam: Boolean(u.can) } });
+  if (!u || u.active === false) return null;
+  return { role: String(u.role), isAdmin: Boolean(u.admin), can: Boolean(u.can) };
+}
+
+/**
+ * القدرةُ الحيّة على **المراجعة الإشرافية** — من صفّ المستخدم لا من جلسته.
+ *
+ * أوسعُ من `liveCanDecide` بمديري الفروع والمسؤول، **وأضيقُ من التوقيع**:
+ * لا شيء هنا يمنح `canWriteMedicalExam` لأحد.
+ */
+async function liveCanSupervise(userId: number | null): Promise<boolean> {
+  const u = await liveUser(userId);
+  if (!u) return false;
+  return canSuperviseReview({
+    role: u.role, isAdmin: u.isAdmin, permissions: { canWriteMedicalExam: u.can },
+  });
+}
+
+/**
+ * الاختصاصاتُ التي يراها المنادي في شاشة الإشراف.
+ *
+ * **الطبيبُ يرى اختصاصَه وحده** — طبيبُ أطرافٍ لا يُعرَض عليه مسند.
+ * **والمشرفُ الإداريّ يرى الاثنين**: مديرُ الفرع مسؤولٌ عن حركة مرضاه
+ * كلِّها، وهو ليس طبيباً فلا اختصاصَ له يُرشَّح به — وترشيحُه بقائمةٍ
+ * فارغة كان يعني صفحةً فارغة لمن الصفحةُ له.
+ */
+async function reviewSpecialtiesFor(userId: number | null): Promise<readonly string[]> {
+  const mine = await medical.doctorSpecialties(userId);
+  const device = mine.filter((s) => (REVIEW_SERVICE_TYPES as readonly string[]).includes(s));
+  if (device.length > 0) return device;
+  const u = await liveUser(userId);
+  if (u && (u.isAdmin || u.role === "branch_manager")) return REVIEW_SERVICE_TYPES;
+  return [];
 }
 
 export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) {
@@ -102,13 +146,20 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
   app.get("/api/medical-review/queue", isAuthenticated, async (req: Req, res) => {
     try {
       const s = getSession(req);
-      const specialties = await medical.doctorSpecialties(s.userId);
+      const specialties = await reviewSpecialtiesFor(s.userId);
+      const raw = String(req.query?.window ?? "today");
+      const window = raw === "older" || raw === "all" ? raw : "today";
       const rows = specialties.length === 0
         ? []
-        : await store.listPendingReviews({ branchIds: branchScope(req), specialties });
+        : await store.listPendingReviews({ branchIds: branchScope(req), specialties, window });
       res.json({
         rows,
-        specialties: specialties.filter((x) => x !== "physiotherapy"),
+        specialties,
+        window,
+        //  **قدرتان لا واحدة**: الإشرافُ يفتح «تمت المراجعة» و«إرجاع»،
+        //  والقرارُ الطبّيّ يفتح «يتطلّب معاينة كاملة». والواجهةُ تعرض ما
+        //  يملكه كلٌّ — والخادمُ يعيد الفحص على كل فعلٍ مهما عرضت.
+        canSupervise: await liveCanSupervise(s.userId),
         canDecide: await liveCanDecide(s.userId),
       });
     } catch (err: any) {
@@ -133,11 +184,27 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
   // ── قرارُ الطبيب ───────────────────────────────────────────────────────
   app.post("/api/medical-review/requests/:id/decide", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!(await liveCanDecide(s.userId))) {
-      return res.status(403).json({ error: "القرار الطبي لطبيب مخوَّل فقط" });
-    }
     const decision = String(req.body?.decision ?? "");
     if (!isReviewDecision(decision)) return res.status(400).json({ error: "قرار غير صالح" });
+
+    // ══ **قدرتان لا واحدة** ═══════════════════════════════════════════
+    //  «تمت المراجعة» و«إرجاع للاستعلامات» فعلان **إشرافيّان**: مديرُ
+    //  الفرع مسؤولٌ عن حركة مرضاه، يؤشّر أنه اطّلع ويعيد ما بياناتُه خطأ.
+    //
+    //  أمّا «يتطلّب معاينة كاملة» فهو **قرارٌ سريريّ**: يقول إن هذه الحالة
+    //  تحتاج فحصَ طبيب. فيبقى للطبيب المخوَّل وحده كما كان — ولا يفتحه
+    //  الإشرافُ لأحد. والاستقبالُ العاديُّ ليس من الاثنين.
+    const needsClinical = decision === "require_full_exam";
+    const allowed = needsClinical
+      ? await liveCanDecide(s.userId)
+      : await liveCanSupervise(s.userId);
+    if (!allowed) {
+      return res.status(403).json({
+        error: needsClinical
+          ? "طلبُ المعاينة الكاملة قرارٌ سريريّ — لطبيب مخوَّل فقط"
+          : "المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص",
+      });
+    }
     try {
       const row = await store.decideReviewRequest({
         requestId: parseInt(req.params.id),
@@ -151,14 +218,50 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
         userId: s.userId, userName: s.userName, branchId: row.branchId,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: row as any,
-        notes: `قرار الطبيب: ${REVIEW_DECISION_LABELS[decision as ReviewDecision]}`
-          + ` — مريض #${row.patientId} (${specialtyLabel(row.serviceType)})`,
+        //  **ونصُّ التدقيق يقول ما وقع فعلاً**: «تمت المراجعة» اعترافٌ
+        //  إشرافيّ بأثرٍ رجعي، لا موافقةٌ طبية سبقت تنفيذ الخدمة.
+        notes: `مراجعة إشرافية: ${REVIEW_DECISION_LABELS[decision as ReviewDecision]}`
+          + ` — مريض #${row.patientId} (${specialtyLabel(row.serviceType)})`
+          + (row.doctorNote ? ` · ${row.doctorNote}` : ""),
       });
       res.json(row);
     } catch (err: any) {
       if (err instanceof store.ReviewError) return res.status(err.status).json({ error: err.message });
       console.error("[medical-review] decide failed:", err);
       res.status(500).json({ error: "تعذّر حفظ القرار" });
+    }
+  });
+
+  // ── إرجاعُ طلبِ معاينةٍ كاملة إلى الاستعلامات ──────────────────────────
+  //  بابُ الخروج النظيف لطلبٍ أُرسل ببيانٍ خاطئ: يخرج من «معايناتي»، ولا
+  //  معاينةَ تُكتب ولا تُحذف، ويستطيع الاستعلاماتُ إرسالَ طلبٍ مصحَّح.
+  app.post("/api/medical-review/requests/:id/return", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!(await liveCanSupervise(s.userId))) {
+      return res.status(403).json({
+        error: "الإرجاع فعلٌ إشرافيّ — للمسؤول أو مدير الفرع أو طبيب الاختصاص",
+      });
+    }
+    try {
+      const row = await store.returnFullRequestToReception({
+        requestId: parseInt(req.params.id),
+        reason: req.body?.reason,
+        actorUserId: s.userId as number,
+        branchIds: branchScope(req),
+      });
+      await logAudit({
+        entityType: "medical_review_request", entityId: row.id, action: "update",
+        userId: s.userId, userName: s.userName, branchId: row.branchId,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        newValues: row as any,
+        notes: `إرجاع طلب معاينة كاملة إلى الاستعلامات — مريض #${row.patientId}`
+          + ` (${specialtyLabel(row.serviceType)}) · ${row.doctorNote ?? ""}`,
+      });
+      res.json(row);
+    } catch (err: any) {
+      if (err instanceof store.ReviewError) return res.status(err.status).json({ error: err.message });
+      console.error("[medical-review] return failed:", err);
+      res.status(500).json({ error: "تعذّر إرجاع الطلب" });
     }
   });
 }

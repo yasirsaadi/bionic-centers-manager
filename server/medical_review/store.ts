@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   isReviewServiceType, isReviewKind, isReviewPath, isReviewDecision,
-  isPathAllowedForKind, STATUS_AFTER,
+  isPathAllowedForKind, isAwaitingFullExam, STATUS_AFTER,
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 
@@ -276,6 +276,14 @@ export async function decideReviewRequest(params: {
   if (!isReviewDecision(decision)) throw new ReviewError("قرار غير صالح", 400);
   const nextStatus = STATUS_AFTER[decision];
 
+  //  **والإرجاعُ بسببٍ إلزاميّ**: بطاقةٌ ترجع للاستعلامات بلا سبب تُقرأ
+  //  «أُعيد» ولا يعرف الموظّفُ ماذا يصحّح — فيعيد إرسالها كما هي، أو يتركها.
+  //  والسببُ يبقى في السجلّ: مَن أرجع، ومتى، ولماذا.
+  const returnNote = clean(params.doctorNote);
+  if (decision === "return_to_reception" && !returnNote) {
+    throw new ReviewError("اكتب سبب الإرجاع — ما الذي يصحّحه الاستعلامات؟", 400);
+  }
+
   return await db.transaction(async (tx) => {
     const cur = await tx.execute<{
       id: number; branch_id: number | null; status: string; requested_path: string;
@@ -301,7 +309,7 @@ export async function decideReviewRequest(params: {
       UPDATE medical_review_requests
          SET status = ${nextStatus}, decision = ${decision},
              decided_by = ${doctorUserId}, decided_at = NOW(),
-             doctor_note = ${clean(params.doctorNote)}, updated_at = NOW()
+             doctor_note = ${returnNote}, updated_at = NOW()
        WHERE id = ${requestId} AND status = 'pending'
       RETURNING *
     `);
@@ -309,6 +317,130 @@ export async function decideReviewRequest(params: {
     if (!out) throw new ReviewError("تمّ البتّ في هذا الطلب بالفعل", 409);
     return toRow(out);
   });
+}
+
+/**
+ * **إرجاعُ طلبِ معاينةٍ كاملة إلى الاستعلامات — قبل أن تُكتب معاينة.**
+ *
+ * ══ العطبُ الذي يغلقه ══════════════════════════════════════════════════
+ * الطلبُ الكامل لا يُقرَّر بضغطةٍ — نهايتُه توقيعُ معاينة. فطلبٌ أُرسل ببيانٍ
+ * خاطئ (جهةُ بترٍ مقلوبة، اختصاصٌ غير صحيح) كان **عالقاً إلى الأبد** في
+ * قائمة «معايناتي»: لا الطبيبُ يوقّع على خطأ، ولا أحدَ يستطيع سحبَه.
+ * والحيلةُ الوحيدة كانت أن يوقّع الطبيبُ معاينةً يعرف أنها خطأ ليُخرجها من
+ * قائمته — وهذا أسوأ ما يمكن أن يدفع إليه نظام.
+ *
+ * فصار له بابُ خروجٍ نظيف: يُوسَم `returned` بسببٍ إلزاميّ، فيخرج من
+ * القائمة، **ويُحرَّر فهرسُ التفرّد** (`WHERE status = 'pending'`) فيرسل
+ * الاستعلاماتُ طلباً جديداً مصحَّحاً على المرساة نفسها بلا ٤٠٩.
+ *
+ * ══ وما **لا** يفعله ═══════════════════════════════════════════════════
+ * • **لا يُنشئ معاينةً ولا يحذفها ولا يمسّ نسخةً ولا ملحقاً.**
+ * • **ولا يمسّ حلقةَ الجهاز ولا أمرَ التصنيع ولا ديناراً**: الخدمةُ التي
+ *   وقعت وقعت؛ المُرجَعُ هو **طلبُ المراجعة** لا الحدثُ الذي وثّقه.
+ * • **ولا يُرجِع ما وُقّعت له معاينةٌ بعده**: عندئذٍ الطلبُ مُنجَزٌ لا معلَّق،
+ *   وإرجاعُه يزوّر تسلسلاً وقع.
+ * • **ولا يُرجِع المرءُ طلبَ نفسه**: هذا فعلٌ إشرافيّ — ومَن يصنّف لا
+ *   يسحب تصنيفَه بنفسه، وإلّا صار البابُ طريقاً لمحو الأثر.
+ */
+export async function returnFullRequestToReception(params: {
+  requestId: number;
+  reason: unknown;
+  actorUserId: number;
+  branchIds: number[] | null;
+}): Promise<ReviewRow> {
+  const reason = clean(params.reason);
+  if (!reason) {
+    throw new ReviewError("اكتب سبب الإرجاع — ما الذي يصحّحه الاستعلامات؟", 400);
+  }
+
+  return await db.transaction(async (tx) => {
+    const cur = await tx.execute<{
+      id: number; branch_id: number | null; status: string; requested_path: string;
+      patient_id: number; service_type: string; created_by: number | null;
+      decided_at: string | null; created_at: string;
+    }>(sql`
+      SELECT id, branch_id, status, requested_path, patient_id, service_type,
+             created_by, decided_at, created_at
+        FROM medical_review_requests
+       WHERE id = ${params.requestId} FOR UPDATE
+    `);
+    const row = (cur.rows ?? [])[0];
+    if (!row) throw new ReviewError("طلب المراجعة غير موجود", 404);
+    if (params.branchIds !== null && !params.branchIds.includes(Number(row.branch_id))) {
+      throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
+    }
+    //  المنتظرُ معاينةً كاملة وحده: المُرسَل كاملاً، أو المُحال بعد نظرة.
+    if (!isAwaitingFullExam(String(row.status), String(row.requested_path))) {
+      throw new ReviewError(
+        "هذا الطلب لا ينتظر معاينةً كاملة — لا شيء يُرجَع", 400,
+      );
+    }
+    if (Number(row.created_by) === Number(params.actorUserId)) {
+      throw new ReviewError(
+        "لا تُرجِع طلبك بنفسك — الإرجاع فعلٌ إشرافيّ من مسؤول أو مدير فرع أو طبيب الاختصاص",
+        403,
+      );
+    }
+    //  **ولا إرجاعَ بعد توقيع**: معاينةٌ وُقّعت بعد الطلب تعني أنه أُنجز.
+    const ex = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM medical_exams
+       WHERE patient_id = ${row.patient_id}
+         AND case_type = ${row.service_type}
+         AND created_at >= COALESCE(${row.decided_at}::timestamptz, ${row.created_at}::timestamptz)
+       LIMIT 1
+    `);
+    if ((ex.rows ?? []).length > 0) {
+      throw new ReviewError("وُقّعت معاينة لهذا الطلب — لا يُرجَع بعد التوقيع", 409);
+    }
+
+    const upd = await tx.execute<Record<string, any>>(sql`
+      UPDATE medical_review_requests
+         SET status = 'returned', decision = 'return_to_reception',
+             decided_by = ${params.actorUserId}, decided_at = NOW(),
+             doctor_note = ${reason}, updated_at = NOW()
+       WHERE id = ${params.requestId}
+         AND (status = 'escalated' OR (status = 'pending' AND requested_path = 'full'))
+      RETURNING *
+    `);
+    const out = (upd.rows ?? [])[0];
+    if (!out) throw new ReviewError("تغيّرت حالة الطلب — حدّث الصفحة", 409);
+    return toRow(out);
+  });
+}
+
+/**
+ * طلباتُ المعاينة الكاملة المعلَّقة لمرضى قائمةِ العمل — **هويّةٌ لا أكثر**.
+ *
+ * قائمةُ «معايناتي» صفٌّ لكلّ (مريض، اختصاص) لا لكلّ طلب، فلا رقمَ طلبٍ
+ * فيها يُرجِعه الزرّ. وهذه تُرجع أقدمَ طلبٍ منتظرٍ لكلّ ثنائيّة — وهو
+ * الطلبُ الذي وضع المريضَ في القائمة.
+ */
+export async function pendingFullRequestsFor(params: {
+  patientIds: number[];
+  branchIds: number[] | null;
+}): Promise<{ patientId: number; serviceType: string; requestId: number; createdBy: number | null }[]> {
+  if (params.patientIds.length === 0) return [];
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT DISTINCT ON (r.patient_id, r.service_type)
+           r.id, r.patient_id, r.service_type, r.created_by
+      FROM medical_review_requests r
+     WHERE r.patient_id IN (${sql.join(params.patientIds.map((p) => sql`${p}`), sql`, `)})
+       AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+       AND ${scopeClause(params.branchIds, "r.branch_id")}
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_exams me
+          WHERE me.patient_id = r.patient_id
+            AND me.case_type = r.service_type
+            AND me.created_at >= COALESCE(r.decided_at, r.created_at)
+       )
+     ORDER BY r.patient_id, r.service_type, r.created_at ASC
+  `);
+  return (rows.rows ?? []).map((r) => ({
+    patientId: Number(r.patient_id),
+    serviceType: String(r.service_type),
+    requestId: Number(r.id),
+    createdBy: numOrNull(r.created_by),
+  }));
 }
 
 /**
@@ -326,10 +458,25 @@ export async function decideReviewRequest(params: {
 export async function listPendingReviews(params: {
   branchIds: number[] | null;
   specialties: readonly string[];
+  /**
+   * **اليومُ افتراضاً** (تقويمُ بغداد) — هذه شاشةُ عملٍ لا أرشيف. وكومةٌ
+   * تاريخيةٌ بلا نهاية تجعل الصفحةَ تُهجَر، فيضيع المتروكُ فيها.
+   * و`older` بابٌ واحدٌ لما تُرك بلا مراجعةٍ قبل اليوم.
+   */
+  window?: "today" | "older" | "all";
 }): Promise<ReviewCard[]> {
   const { branchIds, specialties } = params;
   const device = specialties.filter(isReviewServiceType);
   if (device.length === 0) return [];
+
+  const win = params.window ?? "today";
+  //  المقارنةُ بتقويم بغداد لا بـUTC: طلبٌ في العاشرة مساءً بغداد يقع في
+  //  «غد» بتوقيت UTC، فيختفي من «اليوم» عند مَن أنشأه قبل دقائق.
+  const windowClause = win === "all"
+    ? sql`TRUE`
+    : win === "older"
+      ? sql`(r.created_at AT TIME ZONE 'Asia/Baghdad')::date < (NOW() AT TIME ZONE 'Asia/Baghdad')::date`
+      : sql`(r.created_at AT TIME ZONE 'Asia/Baghdad')::date = (NOW() AT TIME ZONE 'Asia/Baghdad')::date`;
 
   const rows = await db.execute<Record<string, any>>(sql`
     SELECT r.*,
@@ -366,6 +513,7 @@ export async function listPendingReviews(params: {
          ORDER BY me.created_at DESC LIMIT 1
       ) le ON TRUE
      WHERE r.status = 'pending' AND r.requested_path = 'quick'
+       AND ${windowClause}
        AND ${scopeClause(branchIds, "r.branch_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
      ORDER BY r.created_at ASC

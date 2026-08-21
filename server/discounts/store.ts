@@ -20,6 +20,7 @@ import {
 import { isDepartment } from "@shared/service_taxonomy";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 import { parseComponent } from "@shared/prosthetic_parts";
+import { NEW_SERVICE_LABELS } from "../new_service/store";
 
 export class DiscountError extends Error {
   status: number;
@@ -128,7 +129,15 @@ export interface DiscountPayload {
    * **ولا سعرَ في الحمولة إطلاقاً**: السعرُ المعتمد على الصفّ هو المصدر،
    * ونسخةٌ ثانية هنا كانت ستنحرف عنه عند «تعديل واعتماد».
    */
-  kind?: "maintenance";
+  /**
+   * ══ **«خدمة جديدة»** — نوعٌ ثالثٌ داخل قسم العلاج الطبيعي ═══════════════
+   *
+   * القسمُ يقول «علاجٌ طبيعي» ولا يقول «تسعيرُ خطّةٍ أم خدمةٌ إضافية»،
+   * والمسارَان يُنفَّذان بدالّتين مختلفتين: `pricePhysiotherapy` تكتب خطّةً
+   * جديدة، و`executeNewService` تزيد على القائم بزيارةٍ ودفعة. فالعَلَمُ هنا
+   * هو ما يميّزهما عند الاعتماد.
+   */
+  kind?: "maintenance" | "new_service";
   /** الجهازُ المُصان — أو `null` مع `legacyUnrecordedDevice` للقديم. */
   deviceEpisodeId?: number | null;
   legacyUnrecordedDevice?: boolean;
@@ -137,6 +146,12 @@ export interface DiscountPayload {
   /** ملاحظةُ الزيارة كما كتبها الموظّف، وموعدُ التسليم إن حُدِّد. */
   visitNotes?: string | null;
   expectedDeliveryDate?: string | null;
+  /** «خدمة جديدة»: أيُّ الأنواع الثلاثة — ولا سعرَ معه. */
+  serviceType?: string | null;
+  /** «خدمة جديدة»: ما كتبه الموظّف من ملاحظةٍ ووسمٍ وعددِ جلسات. */
+  serviceNotes?: string | null;
+  paymentTreatmentType?: string | null;
+  sessionCount?: number | null;
 }
 
 //  مفاتيحُ المواصفات المسموحة — نفسُ قائمتَي «تخصيص»، فلا تدخل الحمولةُ
@@ -148,6 +163,33 @@ const DEVICE_SPEC_KEYS = new Set<string>([
 
 function sanitizePayload(dept: Department, raw: any): DiscountPayload {
   const out: DiscountPayload = {};
+  if (raw?.kind === "new_service") {
+    //  ══ «خدمة جديدة» بخصم — **ما يلزم للاستئناف فقط، ولا سعر** ═════════
+    //  البنودُ والوسمُ والملاحظة كما أدخلها الموظّف مرّةً واحدة. والسعرُ
+    //  المعتمَد على الصفّ هو المصدر الوحيد — نسخةٌ هنا كانت ستنحرف عند
+    //  «تعديل واعتماد».
+    out.kind = "new_service";
+    const st = String(raw?.serviceType ?? "");
+    if (!NEW_SERVICE_LABELS[st]) {
+      throw new DiscountError("نوع الخدمة غير صالح", 400);
+    }
+    out.serviceType = st;
+    const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+    const clean = entries
+      .map((e: any) => ({
+        treatmentType: String(e?.treatmentType ?? ""),
+        sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+      }))
+      .filter((e: any) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+    out.entries = clean.length > 0 ? clean : undefined;
+    out.serviceNotes = typeof raw?.serviceNotes === "string" && raw.serviceNotes.trim()
+      ? raw.serviceNotes.trim().slice(0, 500) : null;
+    out.paymentTreatmentType = typeof raw?.paymentTreatmentType === "string" && raw.paymentTreatmentType.trim()
+      ? raw.paymentTreatmentType.trim().slice(0, 200) : null;
+    const n = Number(raw?.sessionCount);
+    out.sessionCount = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    return out;
+  }
   if (dept === "physiotherapy") {
     const entries = Array.isArray(raw?.entries) ? raw.entries : [];
     const clean = entries
@@ -483,6 +525,43 @@ async function applyApproved(
   req: DiscountRow, finalPrice: number, actor: Actor, tx: any,
 ): Promise<any> {
   const payload = (req.payload ?? {}) as DiscountPayload;
+
+  //  ══ ── «خدمة جديدة» معتمَدة ── ═══════════════════════════════════════
+  //  **تُنادى الدالّةُ القانونية نفسها** التي تنادِيها الخدمةُ كاملةُ السعر
+  //  من نقطتها — بكلفتها وقيدها وزيارتها ودفعتها وخطّة جلساتها. ولا نسخةَ
+  //  من محاسبة «خدمة جديدة» هنا: نسخةٌ ثانية كانت ستنحرف عن الأولى عند
+  //  أوّل تعديل، كما انحرفت الصيانةُ قبل ٠٦٠.
+  //
+  //  **والبنودُ تُسعَّر بالمعتمَد لا بالجدول**: بندٌ واحد يأخذ السعرَ كلَّه،
+  //  والباقي أصفار — فمجموعُ البنود = الكلفة، ولا فرقَ يتسرّب إلى «باقٍ على
+  //  المريض» وهمّي. والأعدادُ كما هي فالجلساتُ لا تنقص بالخصم.
+  if (payload.kind === "new_service") {
+    const { executeNewService } = await import("../new_service/store");
+    const src = payload.entries ?? [];
+    const entries = src.length > 0
+      ? src.map((e, i) => ({
+        treatmentType: e.treatmentType,
+        sessionCount: e.sessionCount,
+        cost: i === 0 ? finalPrice : 0,
+      }))
+      : null;
+    const out = await executeNewService({
+      patientId: req.patientId,
+      serviceType: String(payload.serviceType ?? ""),
+      //  **السعرُ المعتمد وحده** — من الصفّ لا من الحمولة.
+      serviceCost: finalPrice,
+      entries,
+      notes: payload.serviceNotes ?? null,
+      paymentTreatmentType: payload.paymentTreatmentType ?? null,
+      sessionCount: payload.sessionCount ?? null,
+      //  خدمةٌ نُفِّذت ⟹ قُبض ثمنُها المعتمد. والمجّانيّ يمرّ بعلمه.
+      initialPayment: finalPrice,
+      isFree: req.isFree,
+      actor,
+      tx,
+    });
+    return { kind: "new_service", totalCost: finalPrice, ...out };
+  }
 
   if (req.department === "physiotherapy") {
     const entries = (payload.entries ?? []).map((e) => ({

@@ -29,7 +29,7 @@ import {
   canApproveServiceDiscount, discountReasonLabel, computeServiceDiscount,
   DISCOUNT_STATUS_LABELS, FREE_DONATION_LABEL, type DiscountStatus,
 } from "@shared/discount";
-import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import { DEPARTMENT_LABELS, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 import { PriceTransition } from "@/components/PriceTransition";
 
 interface Row {
@@ -41,6 +41,30 @@ interface Row {
   requestedByName: string | null; requestedAt: string;
   decidedByName: string | null; decidedAt: string | null; decisionNote: string | null;
   approvedFinalPrice: number | null;
+  /** حمولةُ الاستئناف — منها يُقرأ **ما اشتراه المريض** لا رقمُه فقط. */
+  payload?: {
+    kind?: string | null;
+    serviceType?: string | null;
+    entries?: { treatmentType: string; sessionCount: number }[] | null;
+  } | null;
+}
+
+/**
+ * **ماذا اشترى المريض؟** — سطرٌ واحد يقرأه المعتمِد بلا فتح ملفّ.
+ *
+ * بطاقةٌ تقول «٢٥,٠٠٠ ← ١٢,٥٠٠» وحدها تجعل المديرَ يخمّن ما بيع، أو يفتح
+ * ملفّ المريض ليعرف — وهو ما يجعله يعتمد بلا قراءة. فالخدمةُ والجلساتُ
+ * تُعرَضان معه.
+ */
+function serviceLine(r: Row): string | null {
+  const p = r.payload;
+  if (!p || p.kind !== "new_service") return null;
+  const head = NEW_SERVICE_LABELS[String(p.serviceType ?? "")] ?? null;
+  const parts = (p.entries ?? [])
+    .filter((e) => e && e.treatmentType && Number(e.sessionCount) > 0)
+    .map((e) => `${e.treatmentType} — ${e.sessionCount} جلسة`);
+  if (parts.length === 0) return head;
+  return head ? `${head}: ${parts.join(" · ")}` : parts.join(" · ");
 }
 
 const FILTERS: Array<{ key: DiscountStatus; label: string }> = [
@@ -184,6 +208,11 @@ export default function DiscountApprovals() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
+                {/*  **ما اشتراه المريض** — قبل رقمه. */}
+                {serviceLine(r) && (
+                  <p className="font-medium" data-testid={`discount-${r.id}-service`}
+                    dir="auto" style={{ unicodeBidi: "plaintext" }}>{serviceLine(r)}</p>
+                )}
                 <div className="flex flex-wrap gap-x-6 gap-y-1">
                   {/*  الأصليُّ ثم النهائيُّ في وحدةٍ معزولة — فلا يقلبها
                       اتجاهُ الصفحة فيبدو الخصمُ زيادةً. */}
@@ -213,25 +242,30 @@ export default function DiscountApprovals() {
                   </p>
                 )}
 
+                {/*  **الاعتمادُ والرفضُ أوّلاً، والتعديلُ ثانوي**: الاتفاقُ
+                    أبرمه الاستقبالُ مع المريض، فالمعتمِدُ يقرّه في الغالب
+                    بضغطةٍ واحدة. و«تعديل واعتماد» للاستثناء لا للعادة —
+                    ولا يُطلَب من المدير أن يُدخل السعرَ المتّفق عليه ابتداءً. */}
                 {r.status === "pending" && (
-                  <div className="flex flex-wrap gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
                     <Button size="sm" disabled={decide.isPending} className="gap-1"
                       data-testid={`approve-${r.id}`}
                       onClick={() => decide.mutate({ id: r.id, body: { decision: "approve" } })}>
-                      <Check className="w-4 h-4" /> موافقة
+                      <Check className="w-4 h-4" /> اعتماد
                     </Button>
-                    <Button size="sm" variant="outline" disabled={decide.isPending} className="gap-1"
+                    <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
+                      data-testid={`reject-${r.id}`}
+                      onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
+                      <X className="w-4 h-4" /> رفض
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={decide.isPending}
+                      className="gap-1 text-muted-foreground"
                       data-testid={`modify-${r.id}`}
                       onClick={() => {
                         setEditing(r); setEditPrice(r.proposedFinalPrice);
                         setEditFree(r.isFree); setEditNote("");
                       }}>
                       <Pencil className="w-4 h-4" /> تعديل واعتماد
-                    </Button>
-                    <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
-                      data-testid={`reject-${r.id}`}
-                      onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
-                      <X className="w-4 h-4" /> رفض
                     </Button>
                   </div>
                 )}
