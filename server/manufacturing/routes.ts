@@ -637,9 +637,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     const visitNotes = strOrU(req.body?.notes) ?? "صيانة طرف/مسند";
     // أجور الصيانة — reception / manager / admin set it here (the roles this
-    // endpoint already admits). The amount is the STAFF'S decision — zero or
-    // anything else, with no warranty assumption baked in. Booked inside the same
-    // transaction that opens the maintenance episode.
+    // endpoint already admits). The amount **must be positive**: zero alone is
+    // never "free" — a free maintenance is chosen explicitly as
+    // «مجاني (تبرع من دكتور ياسر)» from a positive original price and goes
+    // through the same approval as a discount (see the guard below). A
+    // full-price job is booked inside the same transaction that opens the
+    // maintenance episode.
     const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
     // ── **أيُّ جزءٍ يُصان؟** (ترحيل ٠٦٠) ────────────────────────────────

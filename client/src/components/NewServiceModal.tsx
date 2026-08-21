@@ -36,6 +36,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { nextSubmissionToken, mintSubmissionToken } from "./patient_service_launcher_logic";
+import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, discountBlocked, discountPayload,
   hasDiscount, type DiscountDraft,
@@ -82,13 +83,10 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
-const TREATMENT_PRICES: Record<string, number> = {
-  "استشارة طبية": 0,
-  "روبوت": 50000,
-  "تمارين تأهيلية": 25000,
-  "أجهزة علاج طبيعي": 25000,
-  "أبر صينية": 25000,
-};
+//  **جدولُ الأسعار مصدرٌ واحد** (`@shared/pricing`): نسخةٌ محلّية هنا كانت
+//  تعني أن تعديلَ سعرٍ في الخادم لا يصل الشاشة، فيَعرض الموظّفُ رقماً
+//  ويُنفَّذ غيرُه. والخادمُ يعيد الحسابَ بالجدول نفسه على كلّ طلب.
+const TREATMENT_PRICES = PHYSIO_TREATMENT_PRICES;
 
 export function NewServiceModal({
   patientId, branchId, currentTotalCost,
@@ -208,7 +206,8 @@ export function NewServiceModal({
 
   useEffect(() => {
     if (!isPhysioService) return;
-    if (manualCostOverride) return;
+    //  **ولا تجاوزَ يدويّ للجلسات**: الحقلُ صار للقراءة، فلا حالةَ تجاوزٍ
+    //  تُوقف إعادةَ الحساب. (يبقى `manualCostOverride` لما عدا الجلسات.)
 
     const updatedEntries = treatmentEntries.map(entry => {
       if (!entry.treatmentType) return { ...entry, cost: 0 };
@@ -230,7 +229,7 @@ export function NewServiceModal({
 
     const totalSessions = updatedEntries.reduce((sum, e) => sum + (e.sessionCount || 0), 0);
     form.setValue("sessionCount", String(totalSessions));
-  }, [treatmentEntries, isPhysioService, form, manualCostOverride]);
+  }, [treatmentEntries, isPhysioService, form]);
 
   const serviceCostValue = Number(form.watch("serviceCost")) || 0;
   //  **السعرُ الأصليّ من جدول الأسعار لا من الحقل**: الحقلُ قابلٌ للتجاوز
@@ -254,8 +253,10 @@ export function NewServiceModal({
   }, [serviceCostValue, isPhysioService, paidNowOverride, form]);
 
   function onSubmit(values: FormValues) {
-    const serviceCost = Number(values.serviceCost) || 0;
-    
+    //  **والجلساتُ تُرسَل بالقياسيّ دائماً** — لا بقيمةِ حقلٍ قد تكون بائتة.
+    //  والخادمُ يردّ أيَّ مبلغٍ يخالفه بلا خصم، فالطرفان يقولان الشيءَ نفسه.
+    const serviceCost = isPhysioService ? standardPrice : (Number(values.serviceCost) || 0);
+
     if (isPhysioService) {
       const hasEmptyType = treatmentEntries.some(e => !e.treatmentType);
       if (hasEmptyType) {
@@ -489,16 +490,36 @@ export function NewServiceModal({
                 <FormItem>
                   <FormLabel>{t.modals.serviceCost}</FormLabel>
                   <FormControl>
-                    <MoneyInput
-                      value={field.value}
-                      className="bg-white"
-                      placeholder={t.modals.enterCost}
-                      data-testid="input-service-cost"
-                      onValueChange={(n) => {
-                        field.onChange(String(n));
-                        setManualCostOverride(true);
-                      }}
-                    />
+                    {/* ══ **سعرُ الجلسات يُقرأ ولا يُكتب** ═══════════════
+                        كان الحقلُ قابلاً للتحرير هنا أيضاً، فيكتب الموظّفُ
+                        ١٢,٥٠٠ بدل ٢٥,٠٠٠ ويترك حقولَ الخصم فارغة —
+                        **فتُنفَّذ الخدمةُ مخفَّضةً بلا اعتماد**، ويسقط
+                        الطابورُ كلُّه. فصار السعرُ القياسيُّ معروضاً، وكلُّ
+                        تخفيضٍ يمرّ من «خصم أو خدمة مجّانية» أعلاه.
+                        والخادمُ يردّ أيَّ مبلغٍ يخالف القياسيّ بلا خصم. */}
+                    {isPhysioService ? (
+                      <div className="flex items-center justify-between rounded-md border
+                        border-slate-200 bg-slate-50 px-3 py-2"
+                      data-testid="service-cost-readonly">
+                        <span className="font-mono font-semibold">
+                          {standardPrice.toLocaleString("en-US")} د.ع
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          السعر القياسي — التخفيض من «خصم أو خدمة مجّانية»
+                        </span>
+                      </div>
+                    ) : (
+                      <MoneyInput
+                        value={field.value}
+                        className="bg-white"
+                        placeholder={t.modals.enterCost}
+                        data-testid="input-service-cost"
+                        onValueChange={(n) => {
+                          field.onChange(String(n));
+                          setManualCostOverride(true);
+                        }}
+                      />
+                    )}
                   </FormControl>
                   <FormMessage />
                 </FormItem>

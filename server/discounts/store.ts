@@ -532,17 +532,26 @@ async function applyApproved(
   //  من محاسبة «خدمة جديدة» هنا: نسخةٌ ثانية كانت ستنحرف عن الأولى عند
   //  أوّل تعديل، كما انحرفت الصيانةُ قبل ٠٦٠.
   //
-  //  **والبنودُ تُسعَّر بالمعتمَد لا بالجدول**: بندٌ واحد يأخذ السعرَ كلَّه،
-  //  والباقي أصفار — فمجموعُ البنود = الكلفة، ولا فرقَ يتسرّب إلى «باقٍ على
-  //  المريض» وهمّي. والأعدادُ كما هي فالجلساتُ لا تنقص بالخصم.
+  //  **والبنودُ تُسعَّر بالمعتمَد لا بالجدول** — بتوزيعٍ تناسبيٍّ صحيح
+  //  مجموعُه يساوي المعتمَد بالضبط، فلا فرقَ يتسرّب إلى «باقٍ على المريض»
+  //  وهمّي. **والأعدادُ كما هي**: كلُّ بندٍ يبقى ممثَّلاً في عدّاد الجلسات
+  //  ولو كان نصيبُه من المال صفراً.
+  //
+  //  (وضعُ السعر كلِّه على البند الأول — التنفيذُ الأول — كان يصفّر ما بعده،
+  //  فتضيع جلساتُ كلّ بندٍ بعد الأول من عدّاد مريض المفرد.)
   if (payload.kind === "new_service") {
     const { executeNewService } = await import("../new_service/store");
+    const { allocateApprovedCost } = await import("@shared/pricing");
     const src = payload.entries ?? [];
+    const shares = allocateApprovedCost(
+      src.map((e) => physioEntryCost({ treatmentType: e.treatmentType, sessionCount: e.sessionCount })),
+      finalPrice,
+    );
     const entries = src.length > 0
       ? src.map((e, i) => ({
         treatmentType: e.treatmentType,
         sessionCount: e.sessionCount,
-        cost: i === 0 ? finalPrice : 0,
+        cost: shares[i] ?? 0,
       }))
       : null;
     const out = await executeNewService({

@@ -521,6 +521,54 @@ export async function listPendingReviews(params: {
   return (rows.rows ?? []).map(toCard);
 }
 
+/**
+ * **طلباتُ المعاينة الكاملة المنتظرة — لسطح الإشراف.**
+ *
+ * ══ لماذا هنا لا في «معايناتي» ═════════════════════════════════════════
+ * قائمةُ «معايناتي» تُبنى من `doctorSpecialties`، فمديرُ الفرع — وهو ليس
+ * طبيباً ولا اختصاصَ له — يقرؤها **فارغة دائماً**. فكان يملك قدرةَ الإرجاع
+ * ولا يصله شيءٌ يُرجعه: صلاحيةٌ بلا باب.
+ *
+ * وفتحُ «معايناتي» له كان سيجعله يقف أمام قائمةٍ سريرية بزرّ «كتابة معاينة»
+ * — وهو ما لا يجوز. فالبابُ في صفحته هو: قسمٌ صغيرٌ للقراءة والإرجاع، **بلا
+ * زرِّ معاينةٍ ولا توقيع**.
+ *
+ * ولا تُعرَض إلّا **القابلةُ للإرجاع فعلاً**: منتظِرةٌ، وبلا معاينةٍ وُقّعت
+ * بعدها — فلا يُعرض زرٌّ يردّه الخادمُ عند الضغط.
+ */
+export async function listPendingFullRequests(params: {
+  branchIds: number[] | null;
+  specialties: readonly string[];
+}): Promise<ReviewCard[]> {
+  const device = params.specialties.filter(isReviewServiceType);
+  if (device.length === 0) return [];
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT r.*,
+           p.name AS patient_name, p.patient_code, p.phone AS patient_phone,
+           p.patient_classification,
+           b.name AS branch_name,
+           cu.display_name AS created_by_name,
+           du.display_name AS decided_by_name
+      FROM medical_review_requests r
+      JOIN patients p ON p.id = r.patient_id
+      LEFT JOIN branches b ON b.id = r.branch_id
+      LEFT JOIN system_users cu ON cu.id = r.created_by
+      LEFT JOIN system_users du ON du.id = r.decided_by
+     WHERE (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+       AND ${scopeClause(params.branchIds, "r.branch_id")}
+       AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_exams me
+          WHERE me.patient_id = r.patient_id
+            AND me.case_type = r.service_type
+            AND me.created_at >= COALESCE(r.decided_at, r.created_at)
+       )
+     ORDER BY r.created_at ASC
+     LIMIT 200
+  `);
+  return (rows.rows ?? []).map(toCard);
+}
+
 /** تاريخُ طلبات مريضٍ واحد — لصفحة المريض. مرتَّبٌ بالأحدث. */
 export async function listReviewsForPatient(
   patientId: number, branchIds: number[] | null,

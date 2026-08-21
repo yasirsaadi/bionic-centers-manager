@@ -2453,15 +2453,47 @@ export async function registerRoutes(
       //  صغيراً. والصفرُ وحده لا يعني «مجّاناً» — المجّانيّ يُختار صراحةً.
       const dsc = req.body?.discount;
       const wantsFree = dsc?.isFree === true;
-      const validEntries = (entries ?? []).filter((e) => e.treatmentType);
-      const stdPrice = serviceType === "additional_therapy" && validEntries.length > 0
-        ? discountStore.physioOriginalPrice(validEntries.map((e) => ({
-            treatmentType: e.treatmentType as string, sessionCount: e.sessionCount,
-          })))
+      const isPhysioService = serviceType === "additional_therapy";
+
+      // ══ **البنودُ تُعاد بناؤها في الخادم** — ولا كلفةَ سطرٍ تُصدَّق ═══
+      //  العميلُ يرسل `cost` لكلّ بند. وهو **عرضٌ لا حقيقة**: نافذةٌ قديمة
+      //  أو طلبٌ مُلفَّق يرسل ١٠٠,٠٠٠ لجلسةٍ سعرُها ٢٥,٠٠٠، فتنحرف كلفةُ
+      //  الحالة عن كلفة المريض ويظهر «باقٍ عليه» وهميّ. فالقيمةُ الوحيدة
+      //  المصدَّقة هي **نوعُ العلاج وعددُ الجلسات**، والسعرُ من الجدول.
+      const canonEntries = isPhysioService
+        ? (entries ?? [])
+          .filter((e) => e.treatmentType && PHYSIO_TREATMENT_TYPES.includes(e.treatmentType))
+          .map((e) => ({
+            treatmentType: e.treatmentType,
+            sessionCount: e.sessionCount,
+            cost: physioEntryCost({
+              treatmentType: e.treatmentType as string, sessionCount: e.sessionCount,
+            }),
+          }))
+        : (entries ?? []).filter((e) => e.treatmentType);
+      const validEntries = canonEntries;
+      const stdPrice = isPhysioService
+        ? canonEntries.reduce((s, e) => s + e.cost, 0)
         : serviceCost;
       const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
         && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== stdPrice;
-      if (serviceType === "additional_therapy" && (wantsFree || wantsCut)) {
+
+      // ══ **ولا سعرَ أقلَّ من القياسيّ يمرّ بلا اعتماد** ═══════════════
+      //  حقلُ «تكلفة الخدمة» كان يقبل التحرير للجلسات الإضافية، فيكتب
+      //  الموظّفُ ١٢,٥٠٠ بدل ٢٥,٠٠٠ ويترك حقولَ الخصم فارغة — **فتُنفَّذ
+      //  الخدمةُ مخفَّضةً بلا طلبٍ ولا معتمِد**، ويسقط الطابورُ كلُّه.
+      //
+      //  فالقياسيُّ هو الحاكم هنا: كلُّ تخفيضٍ يمرّ من باب الخصم أو لا يمرّ.
+      //  **والرفضُ الصريح لا التصحيحُ الصامت**: نافذةٌ قديمة عرضت ١٢,٥٠٠
+      //  ثم نُفِّذت ٢٥,٠٠٠ تجعل الموظّفَ يقول للمريض غيرَ ما وقع.
+      if (isPhysioService && !wantsFree && !wantsCut && serviceCost !== stdPrice) {
+        return res.status(400).json({
+          message: `سعر الجلسات ${stdPrice.toLocaleString("en-US")} د.ع.`
+            + ` وأيّ مبلغ أقلّ يمرّ من «خصم أو خدمة مجّانية» فيُعتمَد —`
+            + ` لا يُكتب في حقل الكلفة. حدّث الصفحة وأعد المحاولة.`,
+        });
+      }
+      if (isPhysioService && (wantsFree || wantsCut)) {
         if (!(stdPrice > 0)) {
           return res.status(400).json({
             message: "السعر الأصلي يجب أن يكون موجباً — اختر نوع العلاج وعدد الجلسات أولاً",
@@ -2517,8 +2549,10 @@ export async function registerRoutes(
       const done = await executeNewService({
         patientId,
         serviceType,
-        serviceCost,
-        entries,
+        //  **القياسيُّ للجلسات، والمُدخَلُ لما عداها**: الاستشارةُ و«خدمة
+        //  أخرى» بلا جدولِ أسعارٍ يحكمها، فيبقى مبلغُها قرارَ الموظّف كما كان.
+        serviceCost: isPhysioService ? stdPrice : serviceCost,
+        entries: isPhysioService ? canonEntries : entries,
         notes: notes ?? null,
         paymentTreatmentType: paymentTreatmentType ?? null,
         sessionCount: sessionCount ?? null,

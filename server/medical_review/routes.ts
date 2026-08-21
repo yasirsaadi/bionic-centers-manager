@@ -90,6 +90,42 @@ async function liveCanSupervise(userId: number | null): Promise<boolean> {
 }
 
 /**
+ * **الاختصاصُ يُفرَض في الخادم لا في الشاشة.**
+ *
+ * ══ الثغرةُ التي يغلقها ═════════════════════════════════════════════════
+ * الواجهةُ ترشّح طابورَ الطبيب باختصاصاته، لكنّ **الترشيحَ عرضٌ لا حراسة**:
+ * طبيبُ أطرافٍ يعرف رقمَ طلبِ مساندٍ يستطيع أن يبتّ فيه بنداءٍ مباشر — وهو
+ * قرارٌ مهنيٌّ خارج اختصاصه، يُكتب باسمه في السجلّ.
+ *
+ * ══ القاعدة ════════════════════════════════════════════════════════════
+ * • **مسؤولٌ عام** ⟶ كلُّ الاختصاصات (وحدودُ الفرع تُفرَض في الطبقة).
+ * • **مديرُ فرع** ⟶ كلُّ الاختصاصات **داخل نطاقه** — إشرافُه إداريٌّ على
+ *   حركة مرضاه لا مهنيٌّ في تخصّص، فلا معنى لترشيحه باختصاص.
+ * • **طبيبٌ مخوَّل** ⟶ **اختصاصاتُه المسجَّلة وحدها**.
+ *
+ * والمنحُ يُقرأ من القاعدة عند كلّ فعل، فسحبُ اختصاصٍ يسري فوراً.
+ */
+async function specialtyAllowed(
+  userId: number | null, serviceType: string,
+): Promise<boolean> {
+  const u = await liveUser(userId);
+  if (!u) return false;
+  if (u.isAdmin || u.role === "branch_manager") return true;
+  const mine = await medical.doctorSpecialties(userId);
+  return mine.includes(serviceType as any);
+}
+
+/** صفُّ الطلب — للتحقّق من اختصاصه قبل أي فعل. `null` إن لم يوجد. */
+async function requestServiceType(id: number): Promise<string | null> {
+  if (!Number.isFinite(id)) return null;
+  const r = await db.execute<{ service_type: string }>(sql`
+    SELECT service_type FROM medical_review_requests WHERE id = ${id}
+  `);
+  const row = (r.rows ?? [])[0];
+  return row ? String(row.service_type) : null;
+}
+
+/**
  * الاختصاصاتُ التي يراها المنادي في شاشة الإشراف.
  *
  * **الطبيبُ يرى اختصاصَه وحده** — طبيبُ أطرافٍ لا يُعرَض عليه مسند.
@@ -149,17 +185,26 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
       const specialties = await reviewSpecialtiesFor(s.userId);
       const raw = String(req.query?.window ?? "today");
       const window = raw === "older" || raw === "all" ? raw : "today";
+      const scope = branchScope(req);
+      const canSupervise = await liveCanSupervise(s.userId);
       const rows = specialties.length === 0
         ? []
-        : await store.listPendingReviews({ branchIds: branchScope(req), specialties, window });
+        : await store.listPendingReviews({ branchIds: scope, specialties, window });
+      //  **وقسمُ المعاينات المنتظرة** — لمن يملك الإرجاع وحده. ومَن أنشأ
+      //  الطلبَ بنفسه لا يُعرض له (والخادمُ يردّه أيضاً عند الضغط).
+      const awaitingFull = canSupervise && specialties.length > 0
+        ? (await store.listPendingFullRequests({ branchIds: scope, specialties }))
+          .filter((r) => r.createdBy !== s.userId)
+        : [];
       res.json({
         rows,
+        awaitingFull,
         specialties,
         window,
         //  **قدرتان لا واحدة**: الإشرافُ يفتح «تمت المراجعة» و«إرجاع»،
         //  والقرارُ الطبّيّ يفتح «يتطلّب معاينة كاملة». والواجهةُ تعرض ما
         //  يملكه كلٌّ — والخادمُ يعيد الفحص على كل فعلٍ مهما عرضت.
-        canSupervise: await liveCanSupervise(s.userId),
+        canSupervise,
         canDecide: await liveCanDecide(s.userId),
       });
     } catch (err: any) {
@@ -205,6 +250,14 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
           : "المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص",
       });
     }
+    //  **والاختصاصُ يُفرَض هنا لا في الشاشة**: طبيبُ أطرافٍ لا يبتّ في طلبِ
+    //  مساندٍ بنداءٍ مباشر ولو عرف رقمَه.
+    const sType = await requestServiceType(parseInt(req.params.id));
+    if (sType && !(await specialtyAllowed(s.userId, sType))) {
+      return res.status(403).json({
+        error: `هذا الطلب في اختصاص ${specialtyLabel(sType)} — وليس من اختصاصاتك`,
+      });
+    }
     try {
       const row = await store.decideReviewRequest({
         requestId: parseInt(req.params.id),
@@ -218,9 +271,12 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
         userId: s.userId, userName: s.userName, branchId: row.branchId,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: row as any,
-        //  **ونصُّ التدقيق يقول ما وقع فعلاً**: «تمت المراجعة» اعترافٌ
-        //  إشرافيّ بأثرٍ رجعي، لا موافقةٌ طبية سبقت تنفيذ الخدمة.
-        notes: `مراجعة إشرافية: ${REVIEW_DECISION_LABELS[decision as ReviewDecision]}`
+        //  **ونصُّ التدقيق يقول ما وقع فعلاً**: «تمت المراجعة» و«الإرجاع»
+        //  فعلان **إشرافيّان** بأثرٍ رجعي، لا موافقةٌ طبية سبقت التنفيذ.
+        //  أمّا «يتطلّب معاينة كاملة» فقرارٌ **سريريّ** — ووسمُه إشرافياً
+        //  يجعل مَن يقرأ السجلّ يظنّ أن إدارياً قرّر حاجةً طبية.
+        notes: `${needsClinical ? "قرار سريري" : "مراجعة إشرافية"}: `
+          + `${REVIEW_DECISION_LABELS[decision as ReviewDecision]}`
           + ` — مريض #${row.patientId} (${specialtyLabel(row.serviceType)})`
           + (row.doctorNote ? ` · ${row.doctorNote}` : ""),
       });
@@ -240,6 +296,13 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
     if (!(await liveCanSupervise(s.userId))) {
       return res.status(403).json({
         error: "الإرجاع فعلٌ إشرافيّ — للمسؤول أو مدير الفرع أو طبيب الاختصاص",
+      });
+    }
+    //  والاختصاصُ هنا كما في البتّ — طبيبٌ لا يُرجع طلبَ اختصاصٍ ليس له.
+    const rType = await requestServiceType(parseInt(req.params.id));
+    if (rType && !(await specialtyAllowed(s.userId, rType))) {
+      return res.status(403).json({
+        error: `هذا الطلب في اختصاص ${specialtyLabel(rType)} — وليس من اختصاصاتك`,
       });
     }
     try {

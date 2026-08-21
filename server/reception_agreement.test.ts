@@ -320,6 +320,134 @@ async function main() {
     same("و.ب والصفرُ بلا إعلانِ تبرّعٍ يُردّ", zero.status, 400);
     same("   ولا طلبَ ولا مال", (await pendingFor(pF2)).length, 0);
 
+    // ══ م. السعرُ القياسيُّ لا يُلتفّ عليه من حقل الكلفة ═══════════════
+    console.log("\n── م. لا التفافَ على الاعتماد ──");
+    const pM = await mk("م — التفاف", { physio: true });
+    const beforeM = await money(pM);
+    const sneak = await newService(S.recv, pM, sessionBody("tok-agreement-m", {
+      serviceCost: 12500,   // القياسيُّ ٢٥,٠٠٠ — وبلا حقل خصمٍ إطلاقاً
+      treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: 12500 }],
+      initialPayment: 12500,
+    }));
+    same("م. **مبلغٌ أقلُّ من القياسيّ بلا خصمٍ يُردّ ٤٠٠**", sneak.status, 400);
+    check(String(sneak.body?.message ?? "").includes("خصم أو خدمة مجّانية"),
+      "   برسالةٍ تدلّ على الباب الصحيح", String(sneak.body?.message));
+    same("   **ولا خدمةَ ولا مال ولا جلسة**", await money(pM), beforeM);
+    same("   ولا طلبَ خصمٍ أُنشئ", (await pendingFor(pM)).length, 0);
+
+    //  وكلفةُ السطر المضخَّمة لا تُصدَّق: القياسيُّ يحكم، والحسابُ لا ينحرف.
+    const pM2 = await mk("م.ب — سطرٌ مضخَّم", { physio: true });
+    const inflated = await newService(S.recv, pM2, sessionBody("tok-agreement-m2", {
+      serviceCost: 25000,
+      treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: 100000 }],
+      initialPayment: 25000,
+    }));
+    same("م.ب والخدمةُ تمرّ بالقياسيّ", inflated.status, 200);
+    const mM2 = await money(pM2);
+    same("   **وكلفةُ السطر ١٠٠,٠٠٠ لم تُصدَّق**",
+      [mM2.totalCost, mM2.caseCost, mM2.paid], [25000, 25000, 25000]);
+
+    // ══ ن. الخصمُ على نوعين يحفظ جلسات النوعين ════════════════════════
+    console.log("\n── ن. نوعان مع خصم ──");
+    //  روبوت ٥٠,٠٠٠ + أجهزة ٢٥,٠٠٠ = ٧٥,٠٠٠ قياسيّاً.
+    const twoTypes = (token: string, extra: any = {}) => ({
+      serviceType: "additional_therapy",
+      serviceCost: 75000,
+      initialPayment: 75000,
+      submissionToken: token,
+      treatmentEntries: [
+        { treatmentType: "روبوت", sessionCount: 1, cost: 50000 },
+        { treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: 25000 },
+      ],
+      paymentTreatmentType: "روبوت، أجهزة علاج طبيعي",
+      sessionCount: 2,
+      ...extra,
+    });
+    const typesOf = async (patientId: number) =>
+      (await q<{ t: string; s: number }>(
+        `SELECT payment_treatment_type t, session_count s FROM payments
+          WHERE patient_id=$1 ORDER BY payment_treatment_type`, [patientId]))
+        .map((r) => `${r.t}:${r.s}`);
+
+    //  ن.أ — بالسعر الكامل: النوعان مسجَّلان.
+    const pN1 = await mk("ن.أ — نوعان كامل", { physio: true });
+    same("ن.أ الخدمةُ تمرّ", (await newService(S.recv, pN1, twoTypes("tok-agreement-n1"))).status, 200);
+    same("   والنوعان مسجَّلان بجلستيهما",
+      await typesOf(pN1), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
+    same("   والكلفةُ ٧٥,٠٠٠", (await money(pN1)).totalCost, 75000);
+
+    //  ن.ب — بخصمٍ إلى ٤٠,٠٠٠: **النوعان يبقيان**، والمجموعُ يطابق المعتمَد.
+    const pN2 = await mk("ن.ب — نوعان بخصم", { physio: true });
+    await newService(S.recv, pN2, twoTypes("tok-agreement-n2", {
+      discount: { finalPrice: 40000, isFree: false, reason: "humanitarian" },
+    }));
+    const reqN2 = (await pendingFor(pN2))[0];
+    same("ن.ب الطلبُ معلَّقٌ بأصلٍ ٧٥,٠٠٠", Number(reqN2?.original_price), 75000);
+    same("   والاعتمادُ يمرّ",
+      (await decideDiscount(S.mgr, Number(reqN2.id), { decision: "approve" })).status, 200);
+    same("   **والنوعان باقيان بجلستيهما رغم الخصم**",
+      await typesOf(pN2), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
+    const mN2 = await money(pN2);
+    same("   ومجموعُ الدفعات = المعتمَد بالضبط", mN2.paid, 40000);
+    same("   وكلفةُ المريض = كلفةُ الحالة = المعتمَد",
+      [mN2.totalCost, mN2.caseCost], [40000, 40000]);
+    same("   ومجموعُ الجلسات اثنتان", mN2.sessions, 2);
+    same("   ومجموعُ قيود الدفتر = الكلفة", Number((await q(
+      `SELECT COALESCE(SUM(amount),0)::int c FROM cost_entries WHERE patient_id=$1`,
+      [pN2]))[0].c), 40000);
+    //  والتوزيعُ تناسبيّ: ٥٠/٧٥ × ٤٠,٠٠٠ ≈ ٢٦,٦٦٧ و٢٥/٧٥ ≈ ١٣,٣٣٣.
+    const linesN2 = (await q<{ a: number; t: string }>(
+      `SELECT amount a, payment_treatment_type t FROM payments
+        WHERE patient_id=$1 ORDER BY amount DESC`, [pN2])).map((r) => Number(r.a));
+    same("   والتوزيعُ تناسبيٌّ مجموعُه المعتمَد", [linesN2, linesN2[0] + linesN2[1]],
+      [[26667, 13333], 40000]);
+
+    //  ن.ج — إعادةُ الاعتماد لا تُكرّر شيئاً.
+    same("ن.ج الاعتمادُ الثاني يُردّ ٤٠٩",
+      (await decideDiscount(S.mgr, Number(reqN2.id), { decision: "approve" })).status, 409);
+    same("   **ولا جلساتٍ مكرّرة**", await money(pN2), mN2);
+
+    //  ن.هـ — **بندٌ نصيبُه من المال صفر تبقى جلستُه**.
+    //  خطُّ دفاعٍ ثانٍ خلف التوزيع التناسبيّ: بندٌ سعرُه الأصليّ صفر
+    //  (استشارة) يحمل جلسات ⟶ نصيبُه صفرٌ مهما كان المعتمَد. وقبل الإصلاح
+    //  كان شرطُ `cost > 0` يُسقط صفَّه، فتضيع جلساتُه من العدّاد نهائياً.
+    const pN4 = await mk("ن.هـ — بندٌ بلا سعر", { physio: true });
+    await newService(S.recv, pN4, {
+      serviceType: "additional_therapy",
+      serviceCost: 50000,
+      initialPayment: 50000,
+      submissionToken: "tok-agreement-n4",
+      treatmentEntries: [
+        { treatmentType: "روبوت", sessionCount: 1, cost: 50000 },
+        { treatmentType: "استشارة طبية", sessionCount: 2, cost: 0 },
+      ],
+      paymentTreatmentType: "روبوت، استشارة طبية",
+      sessionCount: 3,
+      discount: { finalPrice: 30000, isFree: false, reason: "humanitarian" },
+    });
+    const reqN4 = (await pendingFor(pN4))[0];
+    same("ن.هـ الاعتمادُ يمرّ",
+      (await decideDiscount(S.mgr, Number(reqN4.id), { decision: "approve" })).status, 200);
+    same("   **والبندُ الذي نصيبُه صفر بقيت جلساتُه**",
+      await typesOf(pN4), ["استشارة طبية:2", "روبوت:1"]);
+    const mN4 = await money(pN4);
+    same("   ومجموعُ الدفعات = المعتمَد", mN4.paid, 30000);
+    same("   ومجموعُ الجلسات ثلاث", mN4.sessions, 3);
+
+    //  ن.د — تبرّعٌ صريح على نوعين: الجلستان تبقيان بقيمةٍ صفر.
+    const pN3 = await mk("ن.د — نوعان مجّاناً", { physio: true });
+    await newService(S.recv, pN3, twoTypes("tok-agreement-n3", {
+      discount: { finalPrice: 0, isFree: true, reason: "" },
+    }));
+    const reqN3 = (await pendingFor(pN3))[0];
+    same("ن.د الاعتمادُ يمرّ",
+      (await decideDiscount(S.mgr, Number(reqN3.id), { decision: "approve" })).status, 200);
+    same("   **والنوعان باقيان بجلستيهما**",
+      await typesOf(pN3), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
+    const mN3 = await money(pN3);
+    same("   وبقيمةٍ ماليّة صفر", [mN3.paid, mN3.totalCost, mN3.caseCost], [0, 0, 0]);
+    same("   والجلستان معدودتان", mN3.sessions, 2);
+
     // ══ ز. مديرُ الفرع يؤشّر «تمت المراجعة» ═══════════════════════════
     console.log("\n── ز. المراجعة الإشرافية ──");
     const pG = await mk("ز — مراجعة", { prosthetic: true });
@@ -427,6 +555,77 @@ async function main() {
     const afterSign = await http("POST", `/api/medical-review/requests/${againJ.body.id}/return`,
       S.doc, { reason: "محاولة إرجاع بعد التوقيع" });
     same("   **ولا يُرجَع طلبٌ وُقّعت معاينتُه — ٤٠٩**", afterSign.status, 409);
+
+    // ══ س. الاختصاصُ يُفرَض في الخادم لا في الشاشة ════════════════════
+    console.log("\n── س. حدود الاختصاص ──");
+    //  طبيبُ أطرافٍ فقط — يعرف رقمَ طلبِ مسندٍ ويحاول البتّ فيه مباشرةً.
+    await q(`UPDATE system_users SET medical_specialties = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(["prosthetic"]), DOC]);
+    const pS = await mk("س — مساند", { prosthetic: true });
+    await q(`INSERT INTO patient_cases (patient_id, case_type, status, branch_id)
+             VALUES ($1,'medical_support','active',1) ON CONFLICT DO NOTHING`, [pS]);
+    const supportReq = (await http("POST", "/api/medical-review/requests", S.recv, {
+      patientId: pS, serviceType: "medical_support", requestedPath: "quick",
+      reviewKind: "maintenance",
+    })).body;
+    check(Boolean(supportReq?.id), "س. طلبُ مساندٍ أُنشئ", JSON.stringify(supportReq));
+    same("س. **طبيبُ الأطراف لا يبتّ في طلبِ مساند ولو عرف رقمَه**",
+      (await http("POST", `/api/medical-review/requests/${supportReq.id}/decide`, S.doc,
+        { decision: "approve" })).status, 403);
+    //  ومريضٌ ثانٍ للطلب الكامل: فهرسُ التفرّد يسمح بمعلَّقٍ واحدٍ بلا مرساة
+    //  لكلّ (مريض، اختصاص) — فطلبان على المريض نفسه يُردّ ثانيهما ٤٠٩.
+    const pS2 = await mk("س.ب — مساند كامل", { prosthetic: true, classification: "past" });
+    await q(`INSERT INTO patient_cases (patient_id, case_type, status, branch_id)
+             VALUES ($1,'medical_support','active',1) ON CONFLICT DO NOTHING`, [pS2]);
+    const supportFull = (await http("POST", "/api/medical-review/requests", S.recv, {
+      patientId: pS2, serviceType: "medical_support", requestedPath: "full",
+      reviewKind: "new_device",
+    })).body;
+    check(Boolean(supportFull?.id), "   وطلبُ معاينةٍ كاملة للمساند أُنشئ",
+      JSON.stringify(supportFull));
+    same("   ولا يُرجع طلبَ معاينةٍ كاملة في اختصاصٍ ليس له",
+      (await http("POST", `/api/medical-review/requests/${supportFull.id}/return`, S.doc,
+        { reason: "محاولة" })).status, 403);
+    //  وفي اختصاصه يمرّ — فالحارسُ يميّز ولا يحجب الجميع.
+    const prosReq = (await mkReq(S.recv, pS, "quick")).body;
+    same("   **وفي اختصاصه يمرّ**",
+      (await http("POST", `/api/medical-review/requests/${prosReq.id}/decide`, S.doc,
+        { decision: "approve" })).status, 200);
+    //  ومديرُ الفرع إشرافُه إداريّ فلا يُرشَّح باختصاص — الاثنان في نطاقه.
+    same("   **ومديرُ الفرع يؤشّر على المساند أيضاً — إشرافُه إداريّ**",
+      (await http("POST", `/api/medical-review/requests/${supportReq.id}/decide`, S.mgr,
+        { decision: "approve" })).status, 200);
+    same("   والمسؤولُ العام يُرجع المساند في فرعٍ يصله",
+      (await http("POST", `/api/medical-review/requests/${supportFull.id}/return`, S.admin,
+        { reason: "بيانٌ خاطئ" })).status, 200);
+    await q(`UPDATE system_users SET medical_specialties = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(["prosthetic", "medical_support"]), DOC]);
+
+    // ══ ع. بابُ المدير إلى الطلبات المنتظرة ═══════════════════════════
+    console.log("\n── ع. سطح إشراف المدير ──");
+    const pO = await mk("ع — منتظر", { prosthetic: true, classification: "past" });
+    const reqO = (await mkReq(S.recv, pO, "full")).body;
+    check(Boolean(reqO?.id), "ع. طلبُ معاينةٍ كاملة أُنشئ", JSON.stringify(reqO));
+    //  «معايناتي» تبقى للطبيب: المديرُ يقرؤها فارغة — وهذا هو العطبُ الذي
+    //  فتح له بابٌ آخر بدل أن تُحوَّل قائمةُ الطبيب إلى قائمة مدير.
+    const wlMgr = await http("GET", "/api/medical/worklist", S.mgr);
+    same("   و«معايناتي» تبقى فارغةً للمدير — لم تُحوَّل إلى قائمة مدير",
+      (wlMgr.body?.rows ?? []).length, 0);
+    const qMgr = await http("GET", "/api/medical-review/queue", S.mgr);
+    const waiting = (qMgr.body?.awaitingFull ?? []) as any[];
+    check(waiting.some((r) => r.id === reqO.id),
+      "ع. **والطلبُ يصل المديرَ في قسم «بانتظار الطبيب»**",
+      JSON.stringify(waiting.map((r) => r.id)));
+    same("   والمديرُ يُرجعه بسبب",
+      (await http("POST", `/api/medical-review/requests/${reqO.id}/return`, S.mgr,
+        { reason: "الاختصاص غير صحيح — أعد الإرسال" })).status, 200);
+    const qAfterO = await http("GET", "/api/medical-review/queue", S.mgr);
+    check(!((qAfterO.body?.awaitingFull ?? []) as any[]).some((r) => r.id === reqO.id),
+      "   **وخرج من القسم بعد الإرجاع**");
+    //  ولا يُعرَض للاستقبال إطلاقاً.
+    const qRecv = await http("GET", "/api/medical-review/queue", S.recv);
+    same("   ولا يُعرَض القسمُ للاستقبال",
+      [(qRecv.body?.awaitingFull ?? []).length, qRecv.body?.canSupervise], [0, false]);
 
     // ══ ك. الفرعُ حاجز ═══════════════════════════════════════════════
     console.log("\n── ك. حدود الفرع ──");

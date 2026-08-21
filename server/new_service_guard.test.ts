@@ -150,17 +150,22 @@ async function main() {
     same("**ولم يُحرَّك دينارٌ واحد**", (await storage.getPatient(pNo))?.totalCost ?? 0, 0);
     same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pNo))).length, 0);
 
+    //  **بالسعر القياسيّ**: روبوتٌ ٥٠,٠٠٠ للجلسة × جلستين = ١٠٠,٠٠٠.
+    //  كانت هذه الحمولة تطلب جلستين بـ٥٠,٠٠٠ — أي **نصفَ القياسيّ بلا
+    //  خصم**، وهو بالضبط الالتفافُ الذي صار الخادمُ يردّه (2026-08-21).
+    //  فصارت متّسقةً مع نفسها: الحارسُ المُختبَر هنا هو حالةُ العلاج
+    //  الطبيعي، لا السعر.
     const pYes = await mkPatient("مريض علاج طبيعي", true);
     r = await req(`/api/patients/${pYes}/new-service`, S.manager, {
-      serviceType: "additional_therapy", serviceCost: 50000, initialPayment: 50000,
+      serviceType: "additional_therapy", serviceCost: 100000, initialPayment: 100000,
       sessionCount: 2, paymentTreatmentType: "روبوت",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 50000 }],
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
       submissionToken: token(),
     });
     same("١٤. ولمريض العلاج الطبيعي ⇒ تُقبَل", r.status, 200);
-    same("والكلفة قُيِّدت", (await storage.getPatient(pYes))?.totalCost, 50000);
+    same("والكلفة قُيِّدت", (await storage.getPatient(pYes))?.totalCost, 100000);
     const payYes = await db.select().from(payments).where(eq(payments.patientId, pYes));
-    same("ودفعةٌ بجلساتها", payYes.map((p) => [p.amount, p.sessionCount]), [[50000, 2]]);
+    same("ودفعةٌ بجلساتها", payYes.map((p) => [p.amount, p.sessionCount]), [[100000, 2]]);
 
     // ولا يتغيّر شيءٌ في الاستشارة و«خدمة أخرى» — لم تُمَسّا بالحارس.
     for (const [st, label] of [["consultation", "استشارة"], ["other", "خدمة أخرى"]] as [string, string][]) {

@@ -4,6 +4,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -104,7 +107,8 @@ export default function MedicalReview() {
   const [win, setWin] = useState<Win>("today");
 
   const { data, isLoading } = useQuery<{
-    rows: ReviewCard[]; specialties: string[]; canSupervise: boolean; canDecide: boolean;
+    rows: ReviewCard[]; awaitingFull?: ReviewCard[]; specialties: string[];
+    canSupervise: boolean; canDecide: boolean;
   }>({
     queryKey: ["/api/medical-review/queue", win],
     queryFn: async () => {
@@ -115,6 +119,41 @@ export default function MedicalReview() {
   });
 
   const rows = data?.rows ?? [];
+  const awaitingFull = data?.awaitingFull ?? [];
+
+  //  ══ إرجاعُ طلبِ معاينةٍ كاملة — بسببٍ إلزاميّ ═══════════════════════
+  const [returning, setReturning] = useState<ReviewCard | null>(null);
+  const [returnReason, setReturnReason] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
+
+  const submitReturn = async () => {
+    const reason = returnReason.trim();
+    if (!returning || !reason) return;
+    setReturnBusy(true);
+    try {
+      const res = await fetch(`/api/medical-review/requests/${returning.id}/return`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "تعذّر إرجاع الطلب");
+      qc.invalidateQueries({ queryKey: ["/api/medical-review/queue"] });
+      qc.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      qc.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      setReturning(null);
+      setReturnReason("");
+      toast({
+        title: "أُعيد إلى الاستعلامات",
+        description: "خرج من قائمة الطبيب — ويستطيع الاستعلامات تصحيح البيانات وإرسال طلبٍ جديد.",
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
+    } finally {
+      setReturnBusy(false);
+    }
+  };
   const canSupervise = data?.canSupervise === true;
   const canDecide = data?.canDecide === true;
   const specialties = useMemo(
@@ -227,6 +266,66 @@ export default function MedicalReview() {
               {specialtyLabel(sp)} ({rows.filter((r) => r.serviceType === sp).length})
             </Button>
           ))}
+        </div>
+      )}
+
+      {/* ══ **طلباتُ معاينةٍ كاملة بانتظار الطبيب** ═══════════════════════
+          قسمٌ صغير للإشراف: مديرُ الفرع لا تصله «معايناتي» (تُبنى من
+          اختصاصات الطبيب فتخرج فارغةً له)، فكان يملك قدرةَ الإرجاع بلا بابٍ
+          يصله. وفتحُ «معايناتي» له كان سيضعه أمام زرِّ «كتابة معاينة» — وهو
+          ما لا يجوز. **فلا زرَّ معاينةٍ هنا ولا توقيع**: قراءةٌ وإرجاعٌ فقط. */}
+      {canSupervise && awaitingFull.length > 0 && (
+        <div className="mb-5" data-testid="awaiting-full-section">
+          <h2 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+            <Stethoscope className="w-4 h-4 text-muted-foreground" />
+            طلبات معاينة كاملة بانتظار الطبيب
+            <span className="text-xs font-normal text-muted-foreground">({awaitingFull.length})</span>
+          </h2>
+          <div className="space-y-2">
+            {awaitingFull.map((r) => (
+              <Card key={r.id} className="border-slate-200" data-testid={`awaiting-full-${r.id}`}>
+                <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <Link href={`/patients/${r.patientId}`}>
+                      <span className="font-medium text-sm hover:underline cursor-pointer">
+                        {r.patientName}
+                      </span>
+                    </Link>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap text-[11px] text-muted-foreground">
+                      {r.patientCode && <span className="font-mono">{r.patientCode}</span>}
+                      {r.branchName && (
+                        <span className="flex items-center gap-1">
+                          <Building2 className="w-3 h-3" />{r.branchName}
+                        </span>
+                      )}
+                      <span>{specialtyLabel(r.serviceType)}</span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />{formatDateTimeIraq(r.createdAt)}
+                      </span>
+                      {r.createdByName && <span>أرسله {r.createdByName}</span>}
+                    </div>
+                    {r.receptionNote && (
+                      <p className="text-[11px] text-muted-foreground mt-1" dir="auto"
+                        style={{ unicodeBidi: "plaintext" }}>{r.receptionNote}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Link href={`/patients/${r.patientId}`}>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs gap-1"
+                        data-testid={`awaiting-open-${r.id}`}>
+                        <Eye className="w-3.5 h-3.5" /> فتح ملف المريض
+                      </Button>
+                    </Link>
+                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1"
+                      onClick={() => { setReturning(r); setReturnReason(""); }}
+                      data-testid={`awaiting-return-${r.id}`}>
+                      <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
 
@@ -349,6 +448,44 @@ export default function MedicalReview() {
           })}
         </div>
       )}
+
+      {/* ══ إرجاعُ طلبِ معاينةٍ كاملة — بسببٍ إلزاميّ ═══════════════════ */}
+      <Dialog open={!!returning} onOpenChange={(o) => { if (!o) { setReturning(null); setReturnReason(""); } }}>
+        <DialogContent dir="rtl" className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="text-base">إرجاع الطلب إلى الاستعلامات</DialogTitle>
+            <DialogDescription className="text-xs">
+              {returning?.patientName} — {returning ? specialtyLabel(returning.serviceType) : ""}.
+              يخرج من قائمة الطبيب، <b>ولا تُكتب معاينةٌ ولا تُحذف</b>، ويستطيع
+              الاستعلامات تصحيح البيانات وإرسال طلبٍ جديد.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">
+              سبب الإرجاع <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+              rows={3} className="text-sm"
+              placeholder="مثال: جهة البتر غير صحيحة — عدّلها وأعد إرسال الطلب"
+              data-testid="awaiting-return-reason"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              يُحفظ في السجلّ مع اسمك ووقته، ويقرؤه موظّف الاستعلامات ليعرف ماذا يصحّح.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm"
+              onClick={() => { setReturning(null); setReturnReason(""); }}>
+              إلغاء
+            </Button>
+            <Button size="sm" disabled={!returnReason.trim() || returnBusy}
+              onClick={submitReturn} data-testid="awaiting-return-confirm">
+              <Undo2 className="w-3.5 h-3.5 ml-1" /> إرجاع
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

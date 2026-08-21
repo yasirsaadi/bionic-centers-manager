@@ -32,6 +32,21 @@ console.log("\n── ١. نافذة «خدمة جديدة»: الاستقبال
 
 check(/ServiceDiscountFields/.test(NEW_SERVICE),
   "١. النافذةُ تعرض حقولَ الخصم المشتركة — لا نسخةً رابعة منها");
+//  ══ **ولا التفافَ من حقل الكلفة** ═══════════════════════════════════
+//  الحقلُ كان قابلاً للتحرير للجلسات، فيكتب الموظّفُ ١٢,٥٠٠ بدل ٢٥,٠٠٠
+//  ويترك حقولَ الخصم فارغة — فتُنفَّذ الخدمةُ مخفَّضةً بلا اعتماد.
+check(/service-cost-readonly/.test(NEW_SERVICE),
+  "١.أ **وسعرُ الجلسات يُقرأ ولا يُكتب**");
+check(/\{isPhysioService \? \(/.test(NEW_SERVICE),
+  "   والتحريرُ باقٍ لما عدا الجلسات — الاستشارة و«خدمة أخرى» بلا جدول");
+check(/const serviceCost = isPhysioService \? standardPrice/.test(NEW_SERVICE),
+  "١.ب **والمُرسَل هو القياسيُّ لا قيمةُ حقلٍ بائتة**");
+//  والجدولُ مصدرٌ واحد — لا نسخةَ محلّية تنحرف عن الخادم.
+check(/const TREATMENT_PRICES = PHYSIO_TREATMENT_PRICES;/.test(NEW_SERVICE)
+  && /from "@shared\/pricing"/.test(NEW_SERVICE),
+"١.ج وجدولُ الأسعار من `@shared/pricing` — لا نسخةَ محلّية");
+check(!/"روبوت": 50000/.test(NEW_SERVICE),
+  "   والنسخةُ المحلّية حُذفت فعلاً");
 check(/isPhysioService && standardPrice > 0/.test(NEW_SERVICE),
   "   وتظهر للجلسات الإضافية وحدها، وبسعرٍ أصليٍّ موجب");
 check(/originalPrice=\{standardPrice\}/.test(NEW_SERVICE),
@@ -119,6 +134,31 @@ check(/canSupervise \?/.test(REVIEW),
   "١٨. **والأزرارُ تتبع القدرة الإشرافية** لا القدرة على التوقيع");
 check(/\{canDecide && \(/.test(REVIEW),
   "   و«يتطلّب معاينة كاملة» خلف القدرة السريرية وحدها");
+
+//  ══ **بابُ المدير إلى الطلبات المنتظرة** ═══════════════════════════
+//  «معايناتي» تُبنى من اختصاصات الطبيب، فمديرُ الفرع يقرؤها فارغةً دائماً
+//  — فكان يملك قدرةَ الإرجاع بلا بابٍ يصله. وفتحُ «معايناتي» له كان سيضعه
+//  أمام زرِّ «كتابة معاينة»، وهو ما لا يجوز.
+check(/طلبات معاينة كاملة بانتظار الطبيب/.test(REVIEW),
+  "١٩. **وقسمٌ صغيرٌ للطلبات المنتظرة في صفحة الإشراف**");
+check(/awaitingFull\.length > 0/.test(REVIEW) && /canSupervise && awaitingFull/.test(REVIEW),
+  "   يظهر لمن يملك الإشراف وحده، وحين يوجد ما يُعرَض");
+for (const [re, msg] of [
+  [/awaiting-open-\$\{r\.id\}/, "٢٠. وفيه «فتح ملف المريض»"],
+  [/awaiting-return-\$\{r\.id\}/, "   و«إرجاع للاستعلامات»"],
+  [/awaiting-return-reason/, "   وسببٌ إلزاميّ في نافذته"],
+  [/disabled=\{!returnReason\.trim\(\) \|\| returnBusy\}/, "   لا إرسالَ بلا سبب"],
+] as [RegExp, string][]) check(re.test(REVIEW), msg);
+//  **ولا زرَّ معاينةٍ ولا توقيعٍ في هذا القسم إطلاقاً.**
+const section = REVIEW.slice(
+  REVIEW.indexOf("awaiting-full-section"),
+  REVIEW.indexOf("{isLoading ?"),
+);
+check(section.length > 400, "   والقسمُ اقتُطع فعلاً للفحص", String(section.length));
+for (const forbidden of ["كتابة معاينة", "NewExamDialog", "setTarget"]) {
+  check(!section.includes(forbidden),
+    `٢١. **ولا «${forbidden}» فيه** — المديرُ يراجع ولا يوقّع`);
+}
 
 console.log("\n── ٤. «معايناتي»: بابُ خروجٍ نظيف ──");
 

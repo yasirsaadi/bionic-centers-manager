@@ -160,3 +160,45 @@ export function physioEntryCost(e: PhysioEntry): number {
   const n = Math.max(0, Math.floor(Number(e.sessionCount) || 0));
   return n * price;
 }
+
+/**
+ * **توزيعُ سعرٍ معتمَدٍ على بنود الخدمة** — بلا دينارٍ يضيع ولا يُخترَع.
+ *
+ * ══ العطبُ الذي يغلقه ══════════════════════════════════════════════════
+ * أوّلُ تنفيذٍ للخصم على «خدمة جديدة» وضع السعرَ المعتمد كلَّه على **البند
+ * الأول** وصفَّر ما بعده. والبندُ المصفَّر لا تُنشأ له دفعة، **ودفعتُه هي
+ * ذاكرةُ جلساته** لمريض المفرد — فمَن اشترى «روبوت ١ + أجهزة ١» بخصمٍ كان
+ * يخسر جلسةَ «أجهزة» من عدّاده نهائياً.
+ *
+ * ══ القاعدة ════════════════════════════════════════════════════════════
+ * توزيعٌ تناسبيٌّ صحيحٌ على الكلف الأصلية، والباقي يُوزَّع بـ**أكبر كسرٍ
+ * أولاً** (largest remainder) وعند التعادل الأسبقُ في الترتيب. فالنتيجة
+ * حتميّةٌ لا تعتمد على ترتيبِ عائم، **ومجموعُها يساوي المعتمَد بالضبط**.
+ *
+ * والحالاتُ الحدّية: مجموعٌ أصليٌّ صفر (استشارةٌ بحتة) ⟶ كلُّ المعتمَد على
+ * أوّل بند؛ ومعتمَدٌ صفر (تبرّع) ⟶ أصفارٌ كلُّها — والجلساتُ تبقى محفوظة
+ * لأن إنشاء صفّها لا يتوقّف على مبلغها.
+ */
+export function allocateApprovedCost(originalCosts: number[], approvedTotal: number): number[] {
+  const n = originalCosts.length;
+  if (n === 0) return [];
+  const costs = originalCosts.map((c) => Math.max(0, Math.round(Number(c) || 0)));
+  const total = Math.max(0, Math.round(Number(approvedTotal) || 0));
+  const base = costs.reduce((s, c) => s + c, 0);
+  if (total === 0) return costs.map(() => 0);
+  if (base === 0) return costs.map((_, i) => (i === 0 ? total : 0));
+
+  const exact = costs.map((c) => (total * c) / base);
+  const floors = exact.map((x) => Math.floor(x));
+  let remainder = total - floors.reduce((s, x) => s + x, 0);
+  //  الأسبقُ في الترتيب يفوز عند تعادل الكسر — فالنتيجةُ نفسُها في كلّ تشغيل.
+  const order = exact
+    .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+    .sort((a, b) => (b.frac - a.frac) || (a.i - b.i));
+  for (const { i } of order) {
+    if (remainder <= 0) break;
+    floors[i] += 1;
+    remainder -= 1;
+  }
+  return floors;
+}
