@@ -26,8 +26,12 @@ import {
   MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
+import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
 import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 import * as discountStore from "../discounts/store";
+import {
+  episodeDiscountRef, serviceDiscountRef, maintenanceDiscountRef,
+} from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
@@ -281,6 +285,25 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
       });
     }
+
+    // ══ **ولا جهازَ ثانٍ من هذا الباب بعد أن سُلِّم الأوّل** ═════════════
+    //  هذه النقطة اختصارٌ موروث لمريضٍ **سُجِّل للمعاينة فقط**: لا كلفة ولا
+    //  خبير ولا أمر — ثم قرّر الشراء. وحارسُها كان «لا أمرَ نشط»، فمتى
+    //  اكتمل أمرُه الأول صار «غيرَ نشط» فعاد الاختصارُ يظهر — واختصارٌ يبدأ
+    //  جهازاً ثانياً **بلا حلقةٍ ولا معاينةٍ جديدة ولا سعر**.
+    //
+    //  والمريضُ العائد بابُه واحد: «إضافة خدمة جديدة» ⟶ حلقةٌ ومعاينةٌ
+    //  وسعرٌ واعتماد. فالاختصارُ يبقى لمن **لم يكن له جهازٌ قطّ** وحده.
+    //
+    //  **ولا يُمَسّ تاريخُه**: الأمرُ المكتمل وخبيرُه يبقيان كما هما — هذا
+    //  منعُ بابٍ لا حذفُ سجلّ.
+    const prior = await store.hasPriorDevice({ patientId, serviceType });
+    if (prior) {
+      return res.status(409).json({
+        error: "لهذا المريض جهاز سابق — الجهاز أو الجزء الجديد يبدأ من «إضافة خدمة جديدة»",
+      });
+    }
+
     if (!(await hasSignedExam(patientId, serviceType))
         && !(await isLegacyPatient(patientId))) {
       return res.status(409).json({
@@ -492,7 +515,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       try {
         const out = await discountStore.submitDiscount({
           patientId, department: serviceType, branchId: patient.branchId,
-          contextRef: liveEpisode ? `episode:${liveEpisode.id}` : `service:${serviceType}`,
+          contextRef: liveEpisode
+            ? episodeDiscountRef(liveEpisode.id) : serviceDiscountRef(serviceType),
           originalPrice: effectiveCost,
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,
@@ -618,6 +642,86 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // transaction that opens the maintenance episode.
     const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
 
+    // ── **أيُّ جزءٍ يُصان؟** (ترحيل ٠٦٠) ────────────────────────────────
+    //  كانت الصيانة تُفتَح بلا أن يُقال، فيصل الخبيرَ أمرٌ عليه أن يسأل عنه
+    //  ويبقى السجلُّ عاجزاً عن «كم ركبةً صُلّحت». والمخزن يعيد التحقّق داخل
+    //  معاملته، وهذا الفحصُ هنا ليردّ برسالةٍ واضحة قبل أن يبدأ شيء.
+    const compParsed = parseComponent(req.body?.maintenanceComponent);
+    if (!compParsed.ok) return res.status(400).json({ error: compParsed.error });
+    if (serviceType === "prosthetic" && !compParsed.value) {
+      return res.status(400).json({ error: "حدّد الجزء المراد صيانته" });
+    }
+
+    // ══ **والصفرُ وحده لا يعني «مجّاناً» أبداً** ═════════════════════════
+    //  كانت الصيانةُ تُقبل بصفر مباشرةً، فتُفتَح **بلا اعتماد**: لا سببَ
+    //  مسجَّل، ولا معتمِد، ولا سطرَ في تقرير «كم تبرّعنا». والتبرّعُ قرارٌ
+    //  ماليّ له بابُه — وصفرٌ صامتٌ يلتفّ على الباب كلِّه.
+    //
+    //  فالسعرُ الأصليّ **موجبٌ دائماً**، والمجّانيّ يُختار صراحةً منه:
+    //  «مجاني (تبرع من دكتور ياسر)» ⟶ طلبٌ معلَّق ⟶ اعتماد. والقاعدةُ
+    //  نفسُها التي تحرس بيعَ جهازٍ بخصم — لا استثناءَ للصيانة.
+    if (cost <= 0) {
+      return res.status(400).json({
+        error: "أجور الصيانة يجب أن تكون مبلغاً موجباً."
+          + " والمجّاني يُختار صراحةً «مجاني (تبرع من دكتور ياسر)» من سعرٍ أصليّ موجب،"
+          + " فيمرّ بالاعتماد.",
+      });
+    }
+
+    // ══ ── خصمٌ أو تبرّع على أجور الصيانة ── ═══════════════════════════
+    //  **الصيانةُ كانت تحجز كلفتها مباشرةً** بلا اعتماد — فخصمُها قرارٌ
+    //  يقع بلا أثرٍ يُراجَع، بينما بيعُ جهازٍ بخصمٍ يمرّ بطابور. والباب
+    //  الآن واحد: طلبٌ معلَّق **بلا أمرٍ ولا زيارةٍ ولا كلفةٍ ولا قيد**،
+    //  والاعتمادُ ينادي `createMaintenanceOrderWithVisit` نفسها.
+    const dsc = req.body?.discount;
+    const wantsFree = dsc?.isFree === true;
+    const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+      && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== cost;
+    if (wantsFree || wantsCut) {
+      try {
+        const out = await discountStore.submitDiscount({
+          patientId, department: serviceType as any, branchId: patient.branchId,
+          //  **مرجعٌ يمنع طلبين معلَّقين على الصيانة نفسها** — والفهرسُ
+          //  الفريد في ٠٥٨ يفرضه على (مريض، قسم، مرجع).
+          contextRef: maintenanceDiscountRef(serviceType),
+          originalPrice: cost,
+          finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
+          isFree: wantsFree,
+          reason: String(dsc?.reason ?? ""), note: strOrU(dsc?.note) ?? null,
+          //  **ما يلزم للاستئناف فقط — ولا سعر**: المعتمَدُ على الصفّ هو
+          //  المصدر، ونسخةٌ هنا كانت ستنحرف عند «تعديل واعتماد».
+          payload: {
+            kind: "maintenance", expertUserId,
+            deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
+            legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
+            maintenanceComponent: compParsed.value,
+            visitNotes, expectedDeliveryDate,
+          },
+          actor: {
+            userId: s.userId ?? null,
+            userName: (req.session as any)?.branchSession?.displayName ?? null,
+          },
+          actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
+          audit: {
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            note: (row) => discountAuditNote(row, "طلب واعتماد"),
+          },
+        });
+        return res.status(201).json({
+          ok: true, pendingApproval: out.status === "pending",
+          discountRequestId: out.request.id, discountStatus: out.request.status,
+          id: out.applied?.workOrderId ?? null,
+        });
+      } catch (e: any) {
+        if (e?.name === "DiscountError") return res.status(e.status).json({ error: e.message });
+        if (e instanceof DeviceEpisodeError) return res.status(e.status).json({ error: e.message });
+        if (e instanceof store.ActiveOrderError) {
+          return res.status(409).json({ error: "لدى المريض أمر صيانة نشط لهذا الجهاز — أكمِله أو ألغِه أولاً" });
+        }
+        throw e;
+      }
+    }
+
     // أيّ جهازٍ يُصان — **يُحسَم داخل المعاملة** لا هنا. النقطة تمرّر ما
     // اختاره الموظّف كما وصل، والطبقة تقفل وتتحقّق وتقرّر. فلا لقطةٌ تشيخ
     // بين القراءة والكتابة.
@@ -627,6 +731,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate, cost,
         deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
         legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
+        maintenanceComponent: compParsed.value,
       });
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ──────────────────────────
       //  **الصيانة كانت لا تصل الطبيب إطلاقاً** — لا حلقةَ جديدة تُنشأ ولا
@@ -642,7 +747,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         workOrderId: order.id,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-        `إنشاء أمر صيانة + زيارة لمريض #${patientId} للخبير #${expertUserId}`
+        `إنشاء أمر صيانة${compParsed.value ? ` (${componentLabel(compParsed.value)})` : ""}`
+          + ` + زيارة لمريض #${patientId} للخبير #${expertUserId}`
           + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`
           + (routing.request ? ` — طلب مراجعة #${routing.request.id}` : ""));
       res.status(201).json({ ...order, reviewRequestId: routing.request?.id ?? null });

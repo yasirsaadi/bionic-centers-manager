@@ -675,20 +675,24 @@ export default function PatientsList() {
               )}
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block">
-              <Table>
+            {/*  ══ Desktop Table View ══════════════════════════════════════
+                **التمريرُ الأفقي بدل سحقِ الأعمدة.** كان عمودُ التفاصيل
+                يُضغَط على الشاشات المتوسّطة حتى يُرسَم الحرفُ تحت الحرف —
+                نصٌّ عموديٌّ لا يُقرأ. والجدولُ الآن يمرّر أفقياً حين يضيق،
+                فيبقى كلُّ عمودٍ بعرضٍ مقروء ولا يُحذَف من التفاصيل شيء. */}
+            <div className="hidden md:block overflow-x-auto">
+              <Table className="min-w-[1080px]">
                 <TableHeader className="bg-slate-50/50">
                   <TableRow>
                     <TableHead className="text-center font-bold text-slate-700 py-4 w-12 first:pr-4">#</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.name}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.age}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.branch}</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.condition}</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">{t.patients.diseaseType}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 min-w-[180px]">{t.patientDetails.condition}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 min-w-[220px]">{t.patients.diseaseType}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patientForm.patientClassification}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.registrationDate}</TableHead>
-                    <TableHead className="text-left font-bold text-slate-700 last:pl-6">{t.patients.actions}</TableHead>
+                    <TableHead className="text-left font-bold text-slate-700 last:pl-6 whitespace-nowrap">{t.patients.actions}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -725,8 +729,17 @@ export default function PatientsList() {
                         <TableCell>
                           <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
                         </TableCell>
-                        <TableCell className="text-slate-600">
-                          {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
+                        {/*  التفاصيلُ الطويلة تُقصّ عند ثلاثة أسطرٍ مقروءة
+                            ويبقى النصُّ كاملاً في `title` — لا يُحذَف منه
+                            شيء، ولا يُكسَر كلُّ كلمةٍ على سطر. */}
+                        <TableCell className="text-slate-600 min-w-[220px] max-w-[340px]">
+                          <div
+                            className="line-clamp-3 break-words leading-relaxed"
+                            title={patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? (patient.supportType ?? "") : (patient.diseaseType || "-")}
+                            data-testid={`text-patient-details-${patient.id}`}
+                          >
+                            {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
+                          </div>
                         </TableCell>
                         <TableCell className="text-slate-600 text-sm">
                           {patient.patientClassification === "new" ? t.patientForm.newPatient : patient.patientClassification === "past" ? t.patientForm.pastPatient : "-"}

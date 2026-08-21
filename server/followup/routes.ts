@@ -30,6 +30,7 @@ import {
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
 import * as discountStore from "../discounts/store";
+import { followupDiscountRef } from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
 type Req = any;
@@ -552,7 +553,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       try {
         const out = await discountStore.submitDiscount({
           patientId: f.patientId, department: f.serviceType as any,
-          branchId: f.branchId, contextRef: `followup:${f.id}`,
+          branchId: f.branchId, contextRef: followupDiscountRef(f.id),
           originalPrice: workingFollowup.approvedPrice,
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,

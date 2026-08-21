@@ -106,10 +106,14 @@ async function mk(name: string, opts: {
 }): Promise<number> {
   const branchId = opts.branchId ?? 1;
   const r = await q<{ id: number }>(
-    `INSERT INTO patients (name, referral_source, age, medical_condition, branch_id,
+    //  المقاساتُ وتعريفُ البتر كاملان: بدءُ طرفٍ جديد يشترطهما (ترحيل ٠٦٠)،
+    //  وهذا الملفُّ يختبر **التوجيه** لا اكتمالَ الملفّ.
+    `INSERT INTO patients (name, referral_source, age, height, weight, amputation_site,
+       medical_condition, branch_id,
        is_amputee, is_medical_support, is_physiotherapy, total_cost, patient_classification,
        created_at)
-     VALUES ($1,$2,'40','x',$3,$4,$5,$6,0,$7, NOW() - ($8 || ' days')::interval)
+     VALUES ($1,$2,'40','172','78','احادي - طرف سفلي - يمين - تحت الركبة','x',
+             $3,$4,$5,$6,0,$7, NOW() - ($8 || ' days')::interval)
      RETURNING id`,
     [name, MARK, branchId, Boolean(opts.prosthetic), Boolean(opts.support),
       Boolean(opts.physio), opts.classification ?? "new", String(opts.createdDaysAgo ?? 0)]);
@@ -555,8 +559,11 @@ async function main() {
     //  لا زرَّ يُتذكَّر: الخدمةُ نفسها تُنشئ الطلب.
     console.log("\n── ١٩. توجيهٌ تلقائي: إضافة نوع حالة ──");
     const autoCase = await mk("ليث النوع الجديد", { physio: true });
+    //  **وفتحُ خيطِ أطرافٍ يجمع تعريفَ البتر والمقاسات في مساره** — لا
+    //  يُحفَظ نصفُ الحالة ويُترك الباقي لتعديلٍ لاحق.
     const addCase = await http("POST", `/api/patients/${autoCase}/add-case-type`, S.recv1, {
-      caseType: "amputee",
+      caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
+      height: "170", weight: "70",
     });
     same("١٩. إضافةُ حالة أطراف تنجح", addCase.status, 200);
     const acReq = (await q(`SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoCase]));
@@ -604,8 +611,9 @@ async function main() {
       prosthetic: true, classification: "past", createdDaysAgo: 800,
     });
     const mvRes = await http("POST", "/api/manufacturing/maintenance-visit", S.recv1, {
+      maintenanceComponent: "knee",
       patientId: autoMaint, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
+      cost: 25_000, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
       reviewPath: "quick", reviewKind: "maintenance", reviewNote: "يشكو صريراً",
     });
     same("٢١. فتحُ الصيانة ينجح", mvRes.status, 201);

@@ -1,6 +1,10 @@
 // صيانة المريض الذي يحمل طرفاً ومسنداً — اختبار حيّ عبر النقطة الحقيقية.
 // قاعدة محلّية: `npm run test:maintenance-service`.
 //
+// **والأجورُ موجبةٌ في كل نداءٍ هنا عمداً**: هذا الملفّ يختبر **حسمَ نوع
+// الخدمة** لا المال، وصفرُ الأجور صار مردوداً بذاته (التبرّع يُختار صراحةً
+// فيمرّ بالاعتماد) — فرقمٌ موجب يُبقي الاختبار على موضوعه.
+//
 // ══ العطب الذي يحرسه ═══════════════════════════════════════════════════
 // كانت نقطة الصيانة تحسم نوع الجهاز بسطر واحد:
 //   `patient.isAmputee ? "prosthetic" : "medical_support"`
@@ -125,9 +129,22 @@ async function main() {
     // ══ ١٣. طرفٌ فقط ⇒ prosthetic تلقائياً — بلا سؤال ولا تغيير سلوك ═══
     console.log("\n── صاحب نوعٍ واحد: كما كان تماماً ──");
     const pPro = await mkPatient("مريض طرف فقط", { amputee: true });
+    //  **والجزءُ المُصان إلزاميٌّ للأطراف** (ترحيل ٠٦٠): يُثبَت أوّلاً أن
+    //  الطلبَ بلا جزءٍ يُردّ، ثم يمضي المسارُ القديم كما هو مع الجزء.
     let r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pPro, expertUserId: EXPERT, cost: 0 });
+      { patientId: pPro, expertUserId: EXPERT, cost: 25_000 });
+    same("١٣أ. **طرفٌ بلا تحديد الجزء ⇒ 400**", r.status, 400);
+    check(String(r.json?.error ?? "").includes("الجزء"),
+      "    برسالةٍ تطلب الجزء", JSON.stringify(r.json));
+    same("    **ولا أمرَ أُنشئ**", (await ordersOf(pPro)).length, 0);
+
+    r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
+      { patientId: pPro, expertUserId: EXPERT, cost: 25_000, maintenanceComponent: "knee" });
     same("١٣. طرفٌ فقط ⇒ 201 بلا تحديد نوع", r.status, 201);
+    same("    **والجزءُ محفوظٌ منظَّماً على الأمر**",
+      (await pool.query(
+        `SELECT maintenance_component FROM prosthetic_work_orders WHERE patient_id = $1`,
+        [pPro])).rows[0]?.maintenance_component, "knee");
     let ords = await ordersOf(pPro);
     same("ونوع الخدمة prosthetic", ords.map((o) => o.serviceType), ["prosthetic"]);
     same("وغرضه صيانة", ords.map((o) => o.purpose), ["maintenance"]);
@@ -135,7 +152,7 @@ async function main() {
     // ══ ١٤. مسندٌ فقط ⇒ medical_support تلقائياً ═════════════════════════
     const pSup = await mkPatient("مريض مسند فقط", { support: true });
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pSup, expertUserId: EXPERT, cost: 0 });
+      { patientId: pSup, expertUserId: EXPERT, cost: 25_000 });
     same("١٤. مسندٌ فقط ⇒ 201 بلا تحديد نوع", r.status, 201);
     same("ونوعه medical_support", (await ordersOf(pSup)).map((o) => o.serviceType), ["medical_support"]);
 
@@ -143,7 +160,7 @@ async function main() {
     console.log("\n── صاحب الاثنين: لا تخمين ──");
     const pDual = await mkPatient("مريض طرف ومسند", { amputee: true, support: true });
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0 });
+      { patientId: pDual, expertUserId: EXPERT, cost: 25_000 });
     same("١٥. الاثنان بلا تحديد ⇒ 400", r.status, 400);
     check(String(r.json?.error ?? "").includes("حدّد نوع الجهاز"), "برسالةٍ تطلب التحديد", JSON.stringify(r.json));
     same("**ولا أمر صيانة أُنشئ بالتخمين**", (await ordersOf(pDual)).length, 0);
@@ -151,7 +168,8 @@ async function main() {
 
     // ١٦. اختيار الطرف ⇒ prosthetic.
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "prosthetic",
+        maintenanceComponent: "socket" });
     same("١٦. اختيار الطرف ⇒ 201", r.status, 201);
     same("وأمرٌ واحد نوعه prosthetic", (await ordersOf(pDual)).map((o) => o.serviceType), ["prosthetic"]);
 
@@ -159,7 +177,7 @@ async function main() {
     // الحارس يمنع أمراً ثانياً لنفس الخدمة، وبالتعبير القديم كانت صيانة
     // المسند تُبنى على `prosthetic` فتصطدم بأمر الأطراف المفتوح.
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "medical_support" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "medical_support" });
     same("١٧. اختيار المسند ⇒ 201 مع وجود أمر أطراف مفتوح", r.status, 201);
     same("وأمران بخدمتين مستقلّتين",
       (await ordersOf(pDual)).map((o) => o.serviceType).sort(), ["medical_support", "prosthetic"]);
@@ -167,29 +185,30 @@ async function main() {
 
     // والحارس نفسه لم يضعف: أمرٌ ثانٍ لنفس الخدمة ما زال مرفوضاً.
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "prosthetic",
+        maintenanceComponent: "socket" });
     same("وحارس «أمرٌ نشط واحد لكل خدمة» كما هو ⇒ 409", r.status, 409);
 
     // ══ ١٨. نوعٌ لا يملكه المريض يُرفَض ═════════════════════════════════
     console.log("\n── التحقّق من الملكية ──");
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pPro, expertUserId: EXPERT, cost: 0, serviceType: "medical_support" });
+      { patientId: pPro, expertUserId: EXPERT, cost: 25_000, serviceType: "medical_support" });
     same("١٨. طلبُ مسندٍ لمريض أطراف فقط ⇒ 400", r.status, 400);
     check(String(r.json?.error ?? "").includes("غير مفعّل"), "برسالة «غير مفعّل على ملف المريض»", JSON.stringify(r.json));
     same("ولا أمر مسند أُنشئ", (await ordersOf(pPro)).filter((o) => o.serviceType === "medical_support").length, 0);
 
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pSup, expertUserId: EXPERT, cost: 0, serviceType: "prosthetic" });
+      { patientId: pSup, expertUserId: EXPERT, cost: 25_000, serviceType: "prosthetic" });
     same("والعكس كذلك ⇒ 400", r.status, 400);
 
     // وقيمةٌ لا يعرفها النظام أصلاً — لا تُقبل بحجّة أنها «مذكورة».
     const pPhysio = await mkPatient("مريض علاج فقط", { physio: true });
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pPhysio, expertUserId: EXPERT, cost: 0, serviceType: "physiotherapy" });
+      { patientId: pPhysio, expertUserId: EXPERT, cost: 25_000, serviceType: "physiotherapy" });
     same("ومريض علاجٍ فقط لا صيانة له ⇒ 400", r.status, 400);
     check(String(r.json?.error ?? "").includes("الأطراف والمساند"), "بالرسالة القائمة نفسها", JSON.stringify(r.json));
     r = await req("POST", "/api/manufacturing/maintenance-visit", S.manager,
-      { patientId: pDual, expertUserId: EXPERT, cost: 0, serviceType: "orthosis" });
+      { patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "orthosis" });
     same("وقيمةٌ مخترَعة ⇒ 400", r.status, 400);
 
     // ══ ٢١. أجور الصيانة ومحاسبتها لم تتغيّر — وتذهب لحالتها الصحيحة ═══

@@ -92,11 +92,15 @@ async function cleanup() {
 }
 
 /** مريضٌ بلا أعلام — الحالاتُ تُضاف عبر النقاط كي يُختبَر المسار الحقيقي. */
+//  الطولُ والوزن يُملآن هنا عمداً: هذا الملفّ يختبر **قاعدة التصنيف**،
+//  وقاعدةُ «أكمِل المقاسات عند التعديل» (ترحيل ٠٦٠) لها اختبارها المستقلّ.
+//  وخلطُهما كان سيجعل فشلَ إحداهما يُقرأ فشلاً للأخرى.
 async function mk(label: string, branchId = 1, classification = "new") {
   const r = await q<{ id: number }>(
-    `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id,
+    `INSERT INTO patients (name, phone, referral_source, age, height, weight,
+       medical_condition, branch_id,
        is_amputee, is_medical_support, is_physiotherapy, total_cost, patient_classification)
-     VALUES ($1,'07701234567',$2,'40','x',$3,false,false,false,0,$4) RETURNING id`,
+     VALUES ($1,'07701234567',$2,'40','170','70','x',$3,false,false,false,0,$4) RETURNING id`,
     [`${MARK} ${label}`, MARK, branchId, classification]);
   return r[0].id;
 }
@@ -148,7 +152,8 @@ async function main() {
     const pPro = await mk("أطراف");
     same("١. إضافةُ حالة أطراف تنجح",
       (await http("POST", `/api/patients/${pPro}/add-case-type`, S.recv,
-        { caseType: "amputee", serviceCost: 1_000_000 })).status, 200);
+        { caseType: "amputee", serviceCost: 1_000_000,
+          amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة", height: "170", weight: "70" })).status, 200);
     same("   **وقيدُ كلفتها مبوَّبٌ أطرافاً**", await deptOfEntries(pPro),
       [["prosthetic", "add_case_type", 1_000_000]]);
 
@@ -245,6 +250,7 @@ async function main() {
     // ══ ٣. الصيانةُ تُبوَّب على قسم جهازها ══════════════════════════════
     console.log("\n── ٣. الصيانة ──");
     const mv = await http("POST", "/api/manufacturing/maintenance-visit", S.recv, {
+      maintenanceComponent: "knee",
       patientId: pPro, expertUserId: EXPERT, serviceType: "prosthetic",
       cost: 75_000, legacyUnrecordedDevice: true, notes: "صيانة",
       reviewPath: "quick", reviewKind: "maintenance",
@@ -283,7 +289,8 @@ async function main() {
     //  على المريض بدل الحالة يضرب كلَّ قيدٍ في كلّ حالةٍ له فيتضاعف المال.
     const pBoth = await mk("قسمان معاً");
     await http("POST", `/api/patients/${pBoth}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 500_000 });
+      { caseType: "amputee", serviceCost: 500_000,
+        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة", height: "170", weight: "70" });
     await http("POST", `/api/patients/${pBoth}/add-case-type`, S.recv,
       { caseType: "medical_support", serviceCost: 150_000 });
     //  ودفعتُه موسومةٌ بحالةِ أطرافه وحدها — فإن رُبط المقبوضُ بالمريض بدل
@@ -486,8 +493,10 @@ async function main() {
 
     // ══ ٨. تصنيفُ المريض ═══════════════════════════════════════════════
     console.log("\n── ٨. تصنيف المريض ──");
+    //  الطولُ والوزن إلزاميّان منذ هذا الترحيل — الطرفُ يُصنَع عليهما.
     const base = {
-      name: `${MARK} بلا تصنيف`, age: "30", medicalCondition: "x",
+      name: `${MARK} بلا تصنيف`, age: "30", height: "170", weight: "70",
+      medicalCondition: "x",
       referralSource: MARK, branchId: 1, phone: "07709999999",
     };
     same("١٣. **إنشاءُ مريضٍ بلا تصنيف يُردّ**",
@@ -506,7 +515,11 @@ async function main() {
     //  والصفوفُ القديمة الفارغة **لا تُخمَّن ولا تُملأ**.
     const pNull = await mk("تصنيفٌ فارغ");
     await q(`UPDATE patients SET patient_classification = NULL WHERE id = $1`, [pNull]);
-    await http("POST", `/api/patients/${pNull}/add-case-type`, S.recv, { caseType: "amputee" });
+    //  و«إضافة نوع حالة» صارت **تجمع تعريفَ البتر في مسارها** (تصحيحُ
+    //  المالك): لا تُرفَع رايةُ البتر بلا موقعه، فلا يُولَد ملفٌّ نصفُ
+    //  مكتمل يُترك إكمالُه لتعديلٍ لاحقٍ لا يقع.
+    await http("POST", `/api/patients/${pNull}/add-case-type`, S.recv,
+      { caseType: "amputee", amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
     same("١٥. **والصفُّ القديم الفارغ يبقى فارغاً — لا يُخمَّن**",
       (await q(`SELECT patient_classification FROM patients WHERE id=$1`, [pNull]))[0]
         .patient_classification, null);
@@ -575,7 +588,8 @@ async function main() {
     console.log("\n── ٩. الحذف والدمج ──");
     const pDel = await mk("للحذف");
     await http("POST", `/api/patients/${pDel}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 120_000 });
+      { caseType: "amputee", serviceCost: 120_000,
+        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
     const del = await http("DELETE", `/api/patients/${pDel}`, S.admin);
     check(del.status === 200 || del.status === 204,
       "١٦. **حذفُ مريضٍ بقيدٍ مبوَّب ينجح**", String(del.status));
@@ -585,9 +599,11 @@ async function main() {
     const mSrc = await mk("مصدر الدمج");
     const mDst = await mk("هدف الدمج");
     await http("POST", `/api/patients/${mSrc}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 200_000 });
+      { caseType: "amputee", serviceCost: 200_000,
+        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
     await http("POST", `/api/patients/${mDst}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 100_000 });
+      { caseType: "amputee", serviceCost: 100_000,
+        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
     await storage.mergePatients(mSrc, mDst);
     check(true, "١٧. **والدمج ينجح**");
     same("   **وقسمُ القيد المنقول محفوظٌ لا مُفرَّغ**",

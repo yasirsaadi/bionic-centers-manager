@@ -42,6 +42,17 @@ export function StartManufacturingDialog({ patient }: {
     },
   });
 
+  //  حلقاتُ أجهزته — نفسُ مفتاح صفحة المريض، فلا طلبَ ثانٍ.
+  const { data: episodeData } = useQuery<{ episodes?: any[] }>({
+    queryKey: [`/api/patients/${patient.id}/device-episodes`],
+    enabled: mayStart && !!patient.id,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patient.id}/device-episodes`, { credentials: "include" });
+      if (!res.ok) return { episodes: [] };
+      return res.json();
+    },
+  });
+
   const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
     queryKey: ["/api/manufacturing/experts", patient.branchId],
     enabled: open,
@@ -108,12 +119,22 @@ export function StartManufacturingDialog({ patient }: {
   // exam gate — same rule the server applies.
   const legacyExempt = Boolean((examData as any)?.legacyExempt);
 
-  // Show only when there is no ACTIVE order (never / cancelled / completed)
-  // AND the doctor has signed the exam (or the file is legacy-exempt) —
-  // before that, the patient page shows the amber "بانتظار معاينة" badge
-  // instead of a button that would 409.
-  const hasActive = summary && summary.status !== "cancelled" && summary.status !== "completed";
-  if (!mayStart || hasActive || (!hasExam && !legacyExempt)) return null;
+  // ══ **اختصارٌ لمن لم يكن له جهازٌ قطّ — لا لمن سُلِّم جهازُه** ═════════
+  //  كان الشرط «لا أمرَ نشط»، فمتى اكتمل أمرُ المريض الأول صار «غيرَ نشط»
+  //  **فعاد الزرُّ يظهر على ملفٍّ سُلِّم جهازُه** — يبدأ جهازاً ثانياً بلا
+  //  حلقةٍ ولا معاينةٍ جديدة ولا سعر. ورآه المالك حيّاً على الإنتاج.
+  //
+  //  والقاعدةُ الآن: **أيُّ أمرٍ سابق مهما كانت حالتُه يُغلق هذا الباب**.
+  //  فالمريضُ العائد بابُه «إضافة خدمة جديدة»: حلقةٌ ومعاينةٌ وسعرٌ واعتماد.
+  //  والخادم يفرض الشيءَ نفسه (`hasPriorDevice`) فلا يُعتمَد على إخفاءِ زرّ.
+  //
+  //  **والتاريخُ لا يُمَسّ**: الأمرُ المكتمل وخبيرُه يبقيان معروضين في بطاقة
+  //  التصنيع كما هما — هذا منعُ بابٍ لا حذفُ سجلّ.
+  //  **والحلقةُ تُغلقه أيضاً**: ملفٌّ فُتحت له حلقةُ جهاز — مفتوحةً كانت أو
+  //  مسلَّمة — يعرف البابَ الحديث، فلا يُعرَض عليه الاختصار. ولولا ذلك ظهر
+  //  الزرُّ لمريضٍ حلقتُه بانتظار المعاينة ثم ردّه الخادمُ بـ409.
+  const hasAnyOrder = Boolean(summary) || (episodeData?.episodes ?? []).length > 0;
+  if (!mayStart || hasAnyOrder || (!hasExam && !legacyExempt)) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

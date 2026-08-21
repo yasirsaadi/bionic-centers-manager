@@ -175,6 +175,27 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    * يبقى صفراً حتى تُبنى نقطة اعتماده («تخصيص») في مرحلة لاحقة.
    */
   agreedCost: integer("agreed_cost").notNull().default(0),
+  /**
+   * **ما طُلب شراؤه** (ترحيل ٠٦٠): جهازٌ كامل أو أحدُ أجزاء الطرف الثمانية.
+   *
+   * المريضُ العائد نادراً ما يطلب طرفاً كاملاً — تنكسر ركبةٌ أو يبلى غلاف.
+   * وكان الجزءُ يُكتب في ملاحظةٍ حرّة إن كُتب، فلا يُبحَث ولا يُحصى ولا
+   * يقرؤه الطبيبُ في طلبه. والقيمُ في `shared/prosthetic_parts`.
+   *
+   * و`full_device` **محايدةٌ عمداً**: هذا الجدول مشترَك بين الأطراف
+   * والمساند، فقيمةٌ اسمُها «طرفٌ كامل» على حلقةِ مسندٍ كذبٌ في العمود
+   * نفسه. والعنوانُ يُشتقّ من نوع الخدمة عند العرض.
+   */
+  requestedItem: text("requested_item").notNull().default("full_device"),
+  /**
+   * الجزءُ وحده — **مشتقٌّ من `requestedItem` ومحروسٌ بقيدٍ يلازمه**:
+   * جهازٌ كامل ⟺ `NULL`، وجزءٌ ⟺ الاسمُ نفسه. وعمودان لأن السؤالين
+   * مختلفان، ولأن «كم ركبةً بعنا» يصير فهرساً ضيّقاً لا مسحَ جدول.
+   *
+   * **وأنّ الأجزاء للأطراف وحدها** شرطٌ عبر جدولين (نوعُ الحالة على
+   * `patientCases`)، و`CHECK` لا تقرأ جدولاً آخر — فيُحرَس في المخزن.
+   */
+  component: text("component"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
@@ -186,12 +207,27 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
   // أو من Console تُردّ عند الكتابة لا تُكتشَف بعد شهر.
   check("patient_device_episodes_status_check",
     sql`${t.status} IN ('awaiting_exam', 'examined', 'in_manufacturing', 'delivered', 'cancelled')`),
+  //  التسعةُ محروسةً في القاعدة (ترحيل ٠٦٠) — قيمةٌ مخترَعة تُردّ عند الكتابة.
+  check("patient_device_episodes_requested_item_check",
+    sql`${t.requestedItem} IN ('full_device', 'socket', 'silicone', 'knee', 'tube', 'adapter', 'foot', 'foam_cover', 'foot_shell')`),
+  //  **العمودان متلازمان**: طرفٌ كامل ⟺ لا جزء، وجزءٌ ⟺ الاسمُ نفسه فيهما.
+  //  فلا صفَّ يقول «طرف كامل» ويحمل ركبةً، ولا عكسُه.
+  //
+  //  و`IS NOT NULL` **صريحةٌ عمداً**: `component = requested_item` وحدها
+  //  تُقيَّم `NULL` حين يكون العمود فارغاً، و`CHECK` تقبل `NULL` (لا تردّ
+  //  إلّا `FALSE`) — فصفٌّ يقول «ركبة» بلا جزءٍ كان يمرّ. كشفه اختبارُ
+  //  التطابق حين حاول كتابته فقُبل.
+  check("patient_device_episodes_component_check",
+    sql`(${t.requestedItem} = 'full_device' AND ${t.component} IS NULL) OR (${t.requestedItem} <> 'full_device' AND ${t.component} IS NOT NULL AND ${t.component} = ${t.requestedItem})`),
   uniqueIndex("uq_pde_case_seq").on(t.caseId, t.sequenceNumber),
   // **شراءٌ مفتوحٌ واحد لكل خيط** — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة.
   uniqueIndex("uq_pde_case_open")
     .on(t.caseId)
     .where(sql`status NOT IN ('delivered', 'cancelled')`),
   index("ix_pde_patient").on(t.patientId),
+  //  فهرسٌ ضيّقٌ للسؤال التجاري (ترحيل ٠٦٠): «كم ركبةً بعنا هذا الشهر»
+  //  يصير قراءةَ فهرسٍ لا مسحَ جدول. وجزئيٌّ لأن أغلب الحلقات أطرافٌ كاملة.
+  index("ix_pde_component").on(t.component).where(sql`component IS NOT NULL`),
   // يقبله المفتاح المركّب في الجداول الأربعة التابعة — قيداً لا فهرساً،
   // للسبب نفسه المشروح على `patientCases`.
   unique("uq_pde_id_patient").on(t.patientId, t.id),
@@ -793,9 +829,28 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    * ولا يكتبها أحد بعد — هذه المرحلة أساسٌ بلا سلوك.
    */
   deviceEpisodeId: integer("device_episode_id").references(() => patientDeviceEpisodes.id),
+  /**
+   * **الجزءُ المُصان** (ترحيل ٠٦٠) — لأوامر الصيانة وحدها.
+   *
+   * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
+   * أن يسأل عنه. و`NULL` يبقى مقبولاً في القاعدة لأن أوامر الصيانة القديمة
+   * لم تسجّله — «لم يُسجَّل» حقيقةٌ عنها، والإلزامُ في التطبيق للجديد وحده.
+   */
+  maintenanceComponent: text("maintenance_component"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
+  //  القيمُ الثمانية محروسةً، و`NULL` مقبولةٌ للقديم (ترحيل ٠٦٠).
+  check("prosthetic_work_orders_maint_component_check",
+    sql`${t.maintenanceComponent} IS NULL OR ${t.maintenanceComponent} IN ('socket', 'silicone', 'knee', 'tube', 'adapter', 'foot', 'foam_cover', 'foot_shell')`),
+  //  **ولا جزءَ صيانةٍ على أمرِ بناء**: البناءُ يصنع ما طُلب شراؤه، وذاك
+  //  مسجَّلٌ على الحلقة لا هنا. فعمودٌ مملوءٌ على بناءٍ يعني خلطاً بين بابين.
+  check("prosthetic_work_orders_maint_component_purpose_check",
+    sql`${t.maintenanceComponent} IS NULL OR ${t.purpose} = 'maintenance'`),
+  //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة
+  //  وحدها، فأوامرُ الصيانة القديمة بلا جزءٍ لا تثقله (ترحيل ٠٦٠).
+  index("ix_wo_maint_component").on(t.maintenanceComponent)
+    .where(sql`maintenance_component IS NOT NULL`),
   /**
    * **لا صفَّ لمريضٍ على حلقة مريضٍ آخر** — سلامةٌ مرجعية مركّبة.
    *

@@ -77,9 +77,14 @@ async function http(method: string, path: string, session: any, body?: any) {
 
 async function mkPatient(name: string, totalCost = 0) {
   const r = await q<{ id: number }>(
+    //  **المقاساتُ وتعريفُ البتر كاملان**: بدءُ جهازٍ جديد يشترطهما — الطرفُ
+    //  يُصنَع عليها، وملفٌّ ناقصٌ لا يدخل دورةَ تصنيعٍ جديدة.
     `INSERT INTO patients (name, phone, phone_e164, phone_status, referral_source, age,
+       height, weight, amputation_site,
        medical_condition, branch_id, is_amputee, total_cost, patient_classification)
-     VALUES ($1,'07701234567','+9647701234567','ok',$2,'40','amputee',1,true,$3,'new') RETURNING id`,
+     VALUES ($1,'07701234567','+9647701234567','ok',$2,'40','172','78',
+             'احادي - طرف سفلي - يمين - تحت الركبة',
+             'amputee',1,true,$3,'new') RETURNING id`,
     [name, MARK, totalCost]);
   return r[0].id;
 }
@@ -267,6 +272,7 @@ async function main() {
     // ٦. **وبينما الجديد يُصنَّع**: صيانةٌ على القديم المسلَّم.
     console.log("\n── التعايش: صيانة القديم أثناء تصنيع الجديد ──");
     const maint = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
       patientId: P, expertUserId: EXPERT, serviceType: "prosthetic",
       cost: 75_000, notes: "صيانة الطرف القديم", deviceEpisodeId: dev1,
     });
@@ -370,8 +376,9 @@ async function main() {
     const d2 = await mkEpisode(pm, cm, 2, "delivered", 0);
     const races = await Promise.all(Array.from({ length: 4 }, () =>
       http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 0, notes: "صيانة متزامنة", deviceEpisodeId: d1,
+        cost: 25_000, notes: "صيانة متزامنة", deviceEpisodeId: d1,
       })));
     same("أربع محاولات على الجهاز نفسه ⟶ نجاح واحد", races.filter((r) => r.status === 201).length, 1);
     check(!races.some((r) => JSON.stringify(r.body ?? "").includes("duplicate key")),
@@ -380,20 +387,23 @@ async function main() {
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 1);
 
     const second = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
+      cost: 25_000, notes: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
     });
     same("وجهازٌ مسلَّمٌ آخر ⟶ صيانته الخاصّة تُفتح معه", second.status, 201);
     same("   فصار أمرا صيانة متوازيان",
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 2);
 
     const noChoice = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
-      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0, notes: "بلا اختيار",
+      maintenanceComponent: "knee",
+      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000, notes: "بلا اختيار",
     });
     same("وصيانةٌ بلا اختيارٍ ومعه أجهزة مسجَّلة ⟶ مرفوضة", noChoice.status, 400);
     same("وجهازٌ غير مسلَّم لا يُصان",
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
-        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
+      maintenanceComponent: "knee",
+        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
         notes: "صيانة ملغى", deviceEpisodeId: cancelledEp,
       })).status, 400);
 
@@ -424,6 +434,7 @@ async function main() {
         (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ce,
         (SELECT COALESCE(total_cost,0) FROM patients WHERE id=$1) AS total`, [pOnlyMfg]);
     const explicitMfg = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
       patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic",
       cost: 50_000, notes: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
     });
@@ -437,7 +448,8 @@ async function main() {
 
     same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
-        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 0,
+      maintenanceComponent: "knee",
+        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
         notes: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
       })).status, 400);
 
@@ -480,14 +492,16 @@ async function main() {
     const cRaceM = await mkCase(pRaceM, 0);
     same("٦. قبل التسليم: لا جهاز مسجَّل ⟶ صيانةٌ بلا هدف مسموحة",
       (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
         patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 0, notes: "صيانة إرث",
+        cost: 25_000, notes: "صيانة إرث",
       })).status, 201);
     await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
     await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
     const maintAfterDeliver = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "صيانة بعد التسليم",
+      cost: 25_000, notes: "صيانة بعد التسليم",
     });
     same("   وبعده: صار جهازٌ مسلَّم ⟶ صيانةٌ بلا هدف تُردّ", maintAfterDeliver.status, 400);
     same("   ولا أمر صيانةٍ ثانٍ",
@@ -550,8 +564,9 @@ async function main() {
 
     //  والاتجاه المعاكس: بعد أن استقرّ التسليم، صيانةٌ بلا هدف تُردّ.
     const afterTrue = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      maintenanceComponent: "knee",
       patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 0, notes: "بعد التسليم",
+      cost: 25_000, notes: "بعد التسليم",
     });
     same("   وبعد استقراره: صيانةٌ بلا هدف تُردّ ٤٠٠", afterTrue.status, 400);
 

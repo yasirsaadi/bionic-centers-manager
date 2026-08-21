@@ -108,9 +108,14 @@ async function http(method: string, path: string, session: any, body?: any) {
 
 async function mkPatient(label: string, branchId = 1) {
   const r = await q<{ id: number }>(
-    `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id,
+    //  **بيانات المريض الإلزامية كاملة** (العمر والطول والوزن وتعريف البتر):
+    //  «تعديل مريض» يفرض إكمالها، وملفٌّ ناقصٌ هنا كان سيُردّ ٤٠٠ فتفشل
+    //  اختباراتٌ تسأل عن جواب النقطة لا عن اكتمال الملفّ.
+    `INSERT INTO patients (name, phone, referral_source, age, height, weight,
+       medical_condition, amputation_site, branch_id,
        is_amputee, is_medical_support, total_cost, patient_classification)
-     VALUES ($1,'07701234567',$2,'40','بتر',$3,true,false,0,'new') RETURNING id`,
+     VALUES ($1,'07701234567',$2,'40','172','78','بتر',
+             'احادي - طرف سفلي - يمين - تحت الركبة',$3,true,false,0,'new') RETURNING id`,
     [`${MARK} ${label}`, MARK, branchId]);
   return r[0].id;
 }
@@ -149,6 +154,7 @@ async function cleanup() {
   await q(`DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM price_change_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM post_exam_followups WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM service_discount_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
@@ -1496,6 +1502,354 @@ async function main() {
     same("    **ومرشِّحُ «حالات قديمة» يحمل الموروثةَ وحدها**",
       legacyRows.filter((r: any) => !["price_approval_pending",
         "price_approved_waiting_patient", "purchase_approval_pending"].includes(r.status)), []);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ٥٤–٦٤. **تصحيحُ الطبيب لسعره الأصلي**
+    //
+    //  الواقعة: كتب ٦,٠٠٠,٠٠٠ ثم صحّحها إلى ٦,٥٠٠,٠٠٠ — ولم يتغيّر سعرُ
+    //  المتابعة، فاضطرّ المالك إلى «تحديد السعر النهائي» ليُصلح رقماً.
+    //  وذاك قرارٌ تجاريٌّ لمدير الفرع، وهذا تصحيحُ طبيبٍ لما أراد قولَه.
+    //
+    //  **وأربعةُ أحكامٍ لا واحد**: يُزامَن قبل البيع · يبقى القرارُ التجاري
+    //  إن وُجد · يُردّ بعد البيع · ويُردّ ما دام طلبُ خصمٍ معلَّقاً محسوباً
+    //  على الرقم القديم.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── تصحيح الطبيب لسعره ──");
+    const examIdOf = async (patientId: number) =>
+      (await q<{ id: number }>(
+        `SELECT id FROM medical_exams WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`,
+        [patientId]))[0].id;
+    const editExam = (examId: number, session: any, body: any) =>
+      http("PATCH", `/api/medical/exams/${examId}`, session,
+        { caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {}, ...body });
+
+    //  ① **قبل أيّ بيع: يُزامَن** — وهو العطبُ الأصلي.
+    let correctedExam = 0;
+    {
+      const p = await mkPatient("تصحيح قبل البيع");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 6_000_000 });
+      const before = await followupOf(p);
+      correctedExam = await examIdOf(p);
+      const r = await editExam(correctedExam, S.doc, { deviceCost: 6_500_000 });
+      same("٥٤. **تصحيحُ الطبيب يُقبل**", r.status, 200);
+      same("٥٥. **ونسخةُ المعاينة تتقدّم** — ولا يُمحى الأصل",
+        [before?.approvedPrice, r.body?.version], [6_000_000, 2]);
+      same("   (والنسخةُ الأولى محفوظةٌ بنصّها)",
+        (await q(`SELECT count(*)::int AS n FROM medical_exam_revisions WHERE exam_id=$1`,
+          [correctedExam]))[0].n, 1);
+      const after = await followupOf(p);
+      same("٥٦. **والسعرُ التجاري يتبعه** — بلا «تحديد سعر نهائي» من المالك",
+        [after?.approvedPrice, after?.priceSource], [6_500_000, "exam"]);
+      check(eventTypes(after).includes("exam_price_corrected"),
+        "٥٧. **وحدثٌ منظَّمٌ يقرأه الجميع** — لا قرارٌ تجاريٌّ يُنتحَل",
+        JSON.stringify(eventTypes(after)));
+      const ev = (after?.events ?? []).find((e: any) => e.eventType === "exam_price_corrected");
+      same("٥٨. **والحدثُ يحمل الرقمين ومَن صحّح**",
+        [ev?.payload?.previousPrice, ev?.payload?.finalPrice, ev?.payload?.setByName],
+        [6_000_000, 6_500_000, "د. المعاين"]);
+      //  **ولا مالَ تحرّك**: التصحيحُ قبل البيع رقمٌ مقترَح لا قيد.
+      same("٥٩. **ولا دينارَ قُيِّد** — البيعُ لم يقع بعد",
+        [(await q(`SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c,
+          (await q(`SELECT count(*)::int AS n FROM cost_entries WHERE patient_id=$1`, [p]))[0].n],
+        [0, 0]);
+    }
+
+    //  ② **قرارٌ تجاريٌّ صريح يبقى** — تصحيحُ المعاينة لا يرفعه.
+    {
+      const p = await mkPatient("تصحيح بعد قرار تجاري");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 5_000_000 });
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/commercial-price`, S.mgr,
+        { finalPrice: 4_000_000, reason: "مفاوضة" });
+      const r = await editExam(await examIdOf(p), S.doc, { deviceCost: 5_500_000 });
+      same("٦٠. **والمعاينةُ تُحفَظ** — التصحيحُ السريريّ لا يُمنَع", r.status, 200);
+      check(String(r.body?.priceNote ?? "").length > 0,
+        "٦١. **ويُقال للطبيب إن الرقم التجاري لم يتحرّك**", JSON.stringify(r.body?.priceNote));
+      const after = await followupOf(p);
+      same("٦٢. **والقرارُ التجاري باقٍ كما هو**",
+        [after?.approvedPrice, after?.priceSource], [4_000_000, "manager_set"]);
+    }
+
+    //  ③ **طلبُ خصمٍ معلَّقٌ يمنع** — محسوبٌ على الرقم القديم، فيُحسَم أولاً.
+    {
+      const p = await mkPatient("تصحيح وطلبٌ معلَّق");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 3_000_000 });
+      const f = await followupOf(p);
+      const sub = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
+        { expertUserId: EXPERT, discount: { finalPrice: 2_500_000, reason: "humanitarian" } });
+      same("٦٣. (طلبُ خصمٍ معلَّق أُنشئ)", sub.body?.pendingApproval, true);
+      const examId = await examIdOf(p);
+      const blocked = await editExam(examId, S.doc, { deviceCost: 3_200_000 });
+      same("٦٤. **وتصحيحُ السعر يُردّ ٤٠٩ ما دام معلَّقاً**", blocked.status, 409);
+      check(String(blocked.body?.error ?? "").includes("طلب خصم"),
+        "   (برسالةٍ تقول ما يجب فعله)", JSON.stringify(blocked.body));
+      same("   **ولا نسخةَ أُنشئت** — الردُّ قبل الكتابة لا بعدها",
+        (await q(`SELECT version FROM medical_exams WHERE id=$1`, [examId]))[0].version, 1);
+      //  **والتصحيحُ السريريّ وحده يمرّ** — الرقمُ كما هو فلا شيء يُمنَع.
+      const clinical = await editExam(examId, S.doc,
+        { deviceCost: 3_000_000, diagnosis: "بتر تحت الركبة — الجهة اليمنى" });
+      same("٦٥. **وتعديلُ النصّ بلا مسّ الرقم يمرّ**", clinical.status, 200);
+    }
+
+    //  ④ **وبعد البيع الرقمُ مجمَّد** — المالُ قُيِّد ودخل الدفتر.
+    {
+      const p = await mkPatient("تصحيح بعد البيع");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 2_000_000 });
+      const f = await followupOf(p);
+      const buy = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
+        { expertUserId: EXPERT });
+      same("٦٦. (البيعُ اعتُمد)", buy.status, 200);
+      const moneyBefore = (await q(
+        `SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c;
+      const examId = await examIdOf(p);
+      const frozen = await editExam(examId, S.doc, { deviceCost: 2_900_000 });
+      same("٦٧. **وتصحيحُ السعر بعد البيع يُردّ ٤٠٩**", frozen.status, 409);
+      same("٦٨. **ولا حالةَ ماليّة تتغيّر**",
+        [(await q(`SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c,
+          (await followupOf(p))?.approvedPrice],
+        [moneyBefore, 2_000_000]);
+      same("   (ولا نسخةَ معاينةٍ أُنشئت)",
+        (await q(`SELECT version FROM medical_exams WHERE id=$1`, [examId]))[0].version, 1);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ٦٩–٧٦. **الذرّية والسباق** — تصحيحُ السعر معاملةٌ واحدة
+    //
+    //  كان التنقيحُ يُحفَظ أوّلاً ثم يُحاوَل التزامن. وسقوطُ الثانية يترك
+    //  حالاً لا يجوز أن توجد: معاينةٌ تقول ٦,٥٠٠,٠٠٠ ومتابعةٌ تقول
+    //  ٦,٠٠٠,٠٠٠ — والاستعلاماتُ تقبض على الثانية.
+    //
+    //  ══ وكيف يُختبَر سباقٌ حقيقيّ ═══════════════════════════════════
+    //  بعميلٍ ثانٍ يمسك **قفلَ صفّ المتابعة** ثم يُطلَق الطلبُ فيتوقّف
+    //  عنده. فالتصنيفُ (بلا قفل) يقرأ الحالةَ القديمة، ثم يُحرَّر القفلُ
+    //  بحالةٍ جديدة، فيقرؤها القفلُ داخل المعاملة. وهذا هو التداخلُ
+    //  بعينه، لا محاكاةٌ له.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ذرّية تصحيح السعر وسباقه ──");
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    //  ① **انحرافُ الملفّ التجاري تحت القفل ⟶ لا شيء يُحفَظ**.
+    {
+      const p = await mkPatient("ذرّية التصحيح");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 6_000_000 });
+      const f = await followupOf(p);
+      const examId = await examIdOf(p);
+
+      const holder = await pool.connect();
+      let patch: Promise<any>;
+      try {
+        await holder.query("BEGIN");
+        await holder.query(
+          `SELECT id FROM post_exam_followups WHERE id = $1 FOR UPDATE`, [f.id]);
+        await holder.query(
+          `UPDATE post_exam_followups SET price_source = 'manager_set' WHERE id = $1`, [f.id]);
+        //  يُطلَق الطلبُ الآن: يصنّف على الحالة القديمة ثم يتوقّف عند القفل.
+        patch = editExam(examId, S.doc, { deviceCost: 6_500_000 });
+        await sleep(400);
+        await holder.query("COMMIT");
+      } finally {
+        holder.release();
+      }
+      const res = await patch;
+      same("٦٩. **الانحرافُ تحت القفل يُردّ ٤٠٩**", res.status, 409);
+      const after = (await q(
+        `SELECT version, device_cost::int AS cost FROM medical_exams WHERE id=$1`,
+        [examId]))[0];
+      same("٧٠. **ولا نسخةَ حُفظت ولا سعرٌ تغيّر على المعاينة**",
+        [after.version, after.cost], [1, 6_000_000]);
+      same("٧١. **ولا صفَّ نسخةٍ في الأرشيف** — المعاملةُ رجعت كلُّها",
+        (await q(`SELECT count(*)::int AS n FROM medical_exam_revisions WHERE exam_id=$1`,
+          [examId]))[0].n, 0);
+      const fAfter = await followupOf(p);
+      same("٧٢. **والسعرُ التجاري كما كان**", fAfter?.approvedPrice, 6_000_000);
+      check(!eventTypes(fAfter).includes("exam_price_corrected"),
+        "٧٣. **ولا حدثَ تصحيحٍ كُتب** — لا سجلَّ لِما لم يقع",
+        JSON.stringify(eventTypes(fAfter)));
+      same("   **ولا سطرَ تدقيقِ تعديلٍ كذلك** — لا سجلَّ لِما لم يقع",
+        (await q(`SELECT count(*)::int AS n FROM audit_log
+                   WHERE entity_type='medical_exam' AND entity_id=$1
+                     AND action='update'`, [examId]))[0].n, 0);
+    }
+
+    //  ② **طلبُ خصمٍ يُولَد أثناء التصحيح ⟶ التصحيحُ يُردّ**.
+    {
+      const p = await mkPatient("سباق الخصم");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 4_000_000 });
+      const f = await followupOf(p);
+      const examId = await examIdOf(p);
+
+      const holder = await pool.connect();
+      let patch: Promise<any>;
+      try {
+        await holder.query("BEGIN");
+        await holder.query(
+          `SELECT id FROM post_exam_followups WHERE id = $1 FOR UPDATE`, [f.id]);
+        patch = editExam(examId, S.doc, { deviceCost: 4_400_000 });
+        await sleep(400);
+        //  الموظّفُ يفتح طلبَ خصمٍ محسوباً على ٤,٠٠٠,٠٠٠ — تحت القفل نفسه.
+        await holder.query(
+          `INSERT INTO service_discount_requests
+             (patient_id, branch_id, department, context_ref, original_price,
+              proposed_final_price, discount_amount, discount_percentage,
+              is_free, reason, status, payload, requested_by)
+           VALUES ($1,1,'prosthetic',$2,4000000,3500000,500000,12.50,false,
+                   'humanitarian','pending','{}'::jsonb,$3)`,
+          [p, `followup:${f.id}`, RECV]);
+        await holder.query("COMMIT");
+      } finally {
+        holder.release();
+      }
+      const res = await patch;
+      same("٧٤. **وطلبُ خصمٍ وُلد تحت القفل يردّ التصحيح**", res.status, 409);
+      const after = (await q(
+        `SELECT version, device_cost::int AS cost FROM medical_exams WHERE id=$1`,
+        [examId]))[0];
+      same("٧٥. **ولا نسخةَ حُفظت** — المعاملةُ رجعت كلُّها",
+        [after.version, after.cost], [1, 4_000_000]);
+      const [dsc] = await q(
+        `SELECT original_price::int AS orig, status FROM service_discount_requests
+          WHERE patient_id=$1`, [p]);
+      same("٧٦. **وأساسُ الخصم بقي هو الرقمَ القائم** — لا خصمَ على سعرٍ بائت",
+        [dsc.orig, dsc.status, (await followupOf(p))?.approvedPrice],
+        [4_000_000, "pending", 4_000_000]);
+    }
+
+    //  ③ **والعكس: التصحيحُ يسبق، فالطلبُ يُردّ** — لا أساسٌ بائت يمرّ.
+    {
+      const p = await mkPatient("سباق معكوس");
+      await mkCase(p);
+      await signExam(p, S.doc, { deviceCost: 3_000_000 });
+      const f = await followupOf(p);
+      //  **الخبيرُ يُختار أوّلاً** كي يبقى السباقُ على ما نقيسه: اختيارُه
+      //  داخل نافذة البيع يقفل الصفَّ بنفسه فيقرأ السعرَ بعد التحرير —
+      //  وهو مخرجٌ آمنٌ آخر، لكنه ليس البابَ الذي نختبره هنا.
+      same("(اختير الخبير قبل السباق)",
+        (await http("POST", `/api/followups/${f.id}/expert`, S.recv,
+          { expertUserId: EXPERT })).status, 200);
+
+      const holder = await pool.connect();
+      let buy: Promise<any>;
+      try {
+        await holder.query("BEGIN");
+        await holder.query(
+          `SELECT id FROM post_exam_followups WHERE id = $1 FOR UPDATE`, [f.id]);
+        await holder.query(
+          `UPDATE post_exam_followups SET approved_price = 3300000 WHERE id = $1`, [f.id]);
+        //  الموظّفُ يطلب خصماً محسوباً على ٣,٠٠٠,٠٠٠ (ما يراه على شاشته).
+        buy = http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
+          { discount: { finalPrice: 2_500_000, reason: "humanitarian" } });
+        await sleep(400);
+        await holder.query("COMMIT");
+      } finally {
+        holder.release();
+      }
+      const res = await buy;
+      same("٧٧. **والطلبُ المحسوب على سعرٍ تغيّر تحته يُردّ ٤٠٩**", res.status, 409);
+      check(String(res.body?.error ?? "").includes("تغيّر السعر الأصلي"),
+        "   (برسالةٍ تقول الرقمَ الجديد)", JSON.stringify(res.body));
+      same("٧٨. **ولا طلبَ معلَّقٌ كُتب على أساسٍ بائت**",
+        (await q(`SELECT count(*)::int AS n FROM service_discount_requests
+                   WHERE patient_id=$1`, [p]))[0].n, 0);
+      same("   **ولا بيعَ وقع**", (await followupOf(p))?.convertedWorkOrderId ?? null, null);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ٧٩–٨٨. **المريضُ متعدّدُ الأجهزة** — القفلُ على جهازه لا على ملفّه
+    //
+    //  العائدُ يملك أكثر من طرف: واحدٌ بِيع وسُلِّم، وطلبٌ ثانٍ اليوم. وكان
+    //  فحصُ «هل عليه طلبُ خصمٍ معلَّق؟» و«هل بِيع؟» يُقاس بـ(مريض + قسم)
+    //  فيخلط الجهازين: **بيعُ الأول يجمّد سعرَ الثاني**، وخصمُ الأول يمنع
+    //  تصحيحَه — ولا علاقةَ لأحدهما بالآخر.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── جهازان لمريضٍ واحد ──");
+    {
+      const p = await mkPatient("جهازان");
+      const c = await mkCase(p);
+      //  الجهازُ الأول: حلقةٌ ⟵ معاينةٌ ⟵ متابعةٌ ⟵ **بيعٌ معتمَد** ⟵ تسليم.
+      await q(`INSERT INTO patient_device_episodes
+                 (patient_id, case_id, branch_id, sequence_number, status, agreed_cost)
+               VALUES ($1,$2,1,1,'awaiting_exam',0)`, [p, c]);
+      await signExam(p, S.doc, { deviceCost: 5_000_000 });
+      const f1 = await followupOf(p);
+      const ex1 = await examIdOf(p);
+      same("٧٩. (متابعةُ الجهاز الأول بسعر معاينته)", f1?.approvedPrice, 5_000_000);
+      same("   (وبيعُه اعتُمد)",
+        (await http("POST", `/api/followups/${f1.id}/confirm-purchase`, S.recv,
+          { expertUserId: EXPERT })).status, 200);
+      //  وسُلِّم — فينفتح البابُ لجهازٍ ثانٍ على الخيط نفسه.
+      await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW()
+                WHERE patient_id=$1`, [p]);
+
+      //  الجهازُ الثاني: من بابه الحقيقيّ.
+      const ep2 = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
+        { serviceType: "prosthetic", requestedItem: "knee" });
+      same("٨٠. **والجهازُ الثاني يُفتَح على الخيط نفسه**", ep2.status, 201);
+      await signExam(p, S.doc, { deviceCost: 900_000 });
+      const rows = (await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [];
+      const f2 = rows.find((r: any) => Number(r.deviceEpisodeId) === Number(ep2.body?.id));
+      const ex2 = await examIdOf(p);
+      check(Boolean(f2) && f2.id !== f1.id,
+        "٨١. **ولكلٍّ متابعتُه** — لا متابعةٌ واحدة تُقرأ للاثنين",
+        JSON.stringify(rows.map((r: any) => [r.id, r.deviceEpisodeId, r.status])));
+      same("   (ومتابعةُ الثاني بسعر معاينته هو)", f2?.approvedPrice, 900_000);
+
+      // ── (أ) **الأولُ بِيع، والثاني يُصحَّح** ─────────────────────────
+      const fixA = await editExam(ex2, S.doc, { deviceCost: 950_000 });
+      same("٨٢. **(أ) وبيعُ الأول لا يجمّد سعرَ الثاني**", fixA.status, 200);
+      const afterA = (await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [];
+      same("٨٣. **والتزامنُ يقع على الثاني وحده**",
+        [afterA.find((r: any) => r.id === f2.id)?.approvedPrice,
+          afterA.find((r: any) => r.id === f1.id)?.approvedPrice],
+        [950_000, 5_000_000]);
+      const ev1 = (await q(
+        `SELECT count(*)::int AS n FROM post_exam_followup_events
+          WHERE followup_id=$1 AND event_type='exam_price_corrected'`, [f1.id]))[0].n;
+      same("٨٤. **ولا حدثَ على الأول إطلاقاً**", ev1, 0);
+      same("   (ومعاينةُ الأول لم تُمَسّ)",
+        (await q(`SELECT version, device_cost::int AS cost FROM medical_exams WHERE id=$1`,
+          [ex1]))[0], { version: 1, cost: 5_000_000 });
+
+      // ── (ب) **خصمٌ معلَّقٌ على الأول لا يمنع الثاني** ─────────────────
+      await q(`INSERT INTO service_discount_requests
+                 (patient_id, branch_id, department, context_ref, original_price,
+                  proposed_final_price, discount_amount, discount_percentage,
+                  is_free, reason, status, payload, requested_by)
+               VALUES ($1,1,'prosthetic',$2,5000000,4000000,1000000,20.00,false,
+                       'humanitarian','pending','{}'::jsonb,$3)`,
+        [p, `followup:${f1.id}`, RECV]);
+      const fixB = await editExam(ex2, S.doc, { deviceCost: 970_000 });
+      same("٨٥. **(ب) وخصمٌ معلَّقٌ على الأول لا يمنع تصحيحَ الثاني**", fixB.status, 200);
+      same("   والتزامنُ وقع على الثاني",
+        ((await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [])
+          .find((r: any) => r.id === f2.id)?.approvedPrice, 970_000);
+
+      // ── (ج) **وخصمٌ على الثاني نفسِه يمنعه** ─────────────────────────
+      await q(`INSERT INTO service_discount_requests
+                 (patient_id, branch_id, department, context_ref, original_price,
+                  proposed_final_price, discount_amount, discount_percentage,
+                  is_free, reason, status, payload, requested_by)
+               VALUES ($1,1,'prosthetic',$2,970000,800000,170000,17.53,false,
+                       'humanitarian','pending','{}'::jsonb,$3)`,
+        [p, `followup:${f2.id}`, RECV]);
+      const fixC = await editExam(ex2, S.doc, { deviceCost: 999_000 });
+      same("٨٦. **(ج) وخصمٌ على الثاني نفسِه يمنع تصحيحَه**", fixC.status, 409);
+      same("٨٧. **ولا سعرٌ تحرّك**",
+        ((await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [])
+          .find((r: any) => r.id === f2.id)?.approvedPrice, 970_000);
+      same("   (ولا نسخةَ معاينةٍ زائدة)",
+        (await q(`SELECT device_cost::int AS cost FROM medical_exams WHERE id=$1`,
+          [ex2]))[0].cost, 970_000);
+      //  **والأولُ لم يتغيّر في أيٍّ من الثلاثة**.
+      same("٨٨. **والجهازُ الأول كما هو في المسارات الثلاثة**",
+        ((await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [])
+          .find((r: any) => r.id === f1.id)?.approvedPrice, 5_000_000);
+    }
 
     // ══ ٢٦. حذفُ المريض يبقى ممكناً — القاعدة الملزمة ═════════════════
     console.log("\n── الكاسكيد ──");

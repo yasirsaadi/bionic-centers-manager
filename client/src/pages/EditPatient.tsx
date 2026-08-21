@@ -1,7 +1,13 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 import { normalizePhone } from "@shared/phone";
+import { AmputationBuilder, amputationSiteOf, type AmputationParts } from "@/components/AmputationBuilder";
+import { parseAmputationSite } from "@shared/case_fields";
+import {
+  checkRequiredPatientData, isAdministrativeOnlyPatch,
+} from "@shared/patient_required";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -52,7 +58,15 @@ const injuryAreaOptions = [
 ];
 
 const formSchema = insertPatientSchema.extend({
-  age: z.string().min(1, "العمر مطلوب"),
+  //  ══ **العمرُ ليس إلزامياً في مخطّط النموذج** ═══════════════════════════
+  //  آلافُ الملفّات القديمة بلا عمر، وإلزامُه هنا كان يمنع **تصحيحَ رقم
+  //  هاتفٍ** عليها: النموذجُ يُردّ قبل أن يصل الخادم، فالقاعدةُ التي سمحت
+  //  بالتصحيح الإداريّ معطَّلةٌ في الشاشة.
+  //
+  //  والإلزامُ لم يُلغَ بل **صار مشروطاً بما تغيّر**: مَن يلمس العمرَ أو
+  //  الطولَ أو الوزنَ أو تعريفَ البتر يُطالَب باكتمالها قبل الإرسال
+  //  (`onSubmit` أدناه، بالقاعدة المشتركة نفسها) — والخادمُ هو الحَكَم.
+  age: z.string(),
   // أخفّ من نموذج الإنشاء عمداً: مريض قديم قد لا يحمل رقماً إطلاقاً ويجب
   // أن يبقى ملفه قابلاً للتعديل. فالمكتوب يجب أن يكون صحيحاً، والفراغ
   // مسموح. ومنع *حذف* رقم قائم قرار يحتاج معرفة الصفّ المحفوظ، فيفرضه
@@ -191,29 +205,23 @@ export default function EditPatient() {
     }
   }, [patient, form]);
 
+  const { toast } = useToast();
   const conditionType = form.watch("medicalCondition");
 
-  // Amputation selection state
-  const [amputationType, setAmputationType] = useState<"single" | "double" | "silicone">("single");
-  const [singleLimb, setSingleLimb] = useState<"upper" | "lower">("lower");
-  const [singleSide, setSingleSide] = useState<"right" | "left">("right");
-  const [singleAmputationDetail, setSingleAmputationDetail] = useState("");
-  
-  const [doubleLimbType, setDoubleLimbType] = useState<"upper" | "lower" | "both">("lower");
-  const [doubleRightDetail, setDoubleRightDetail] = useState("");
-  const [doubleLeftDetail, setDoubleLeftDetail] = useState("");
-  const [bothRightLimb, setBothRightLimb] = useState<"upper" | "lower">("upper");
-  const [bothLeftLimb, setBothLeftLimb] = useState<"upper" | "lower">("upper");
-  const [bothRightDetail, setBothRightDetail] = useState("");
-  const [bothLeftDetail, setBothLeftDetail] = useState("");
-  const [isInitialized, setIsInitialized] = useState(false);
+  // ══ **تعريفُ البتر: حالةٌ واحدة، وبانٍ واحد** ═══════════════════════════
+  //  كانت هنا ثلاثةَ عشرَ متغيّراً بافتراضاتها («احادي/سفلي/يمين»)، ومحلّلٌ
+  //  ثانٍ **ناقص**: لا يقرأ تفاصيلَ الثنائيّ إطلاقاً، فمريضٌ مبتورُ الطرفين
+  //  يُفتَح ملفُّه فتضيع مستوياتُه ثم تُكتب فوقها شرطاتٌ عند الحفظ.
+  //
+  //  الآن `parseAmputationSite` نفسُها التي يختبرها `test:amputation-site`،
+  //  و`AmputationBuilder` نفسُه المستعمَل في التسجيل وفي «إضافة نوع حالة».
+  const [amp, setAmp] = useState<AmputationParts>({});
+  //  **ولا تُكتب السلسلةُ ما لم يلمسها أحد**: ملفٌّ قديم بنصٍّ حرٍّ لا يفهمه
+  //  المحلّل يجب أن يبقى كما هو حين يُصحَّح هاتفُه — والكتابةُ فوقه بفراغٍ
+  //  محوٌ لمعلومةٍ لم يطلب أحدٌ محوَها.
+  const [ampTouched, setAmpTouched] = useState(false);
 
   const [injuryEntries, setInjuryEntries] = useState<InjuryEntry[]>([{ type: "", area: "", side: "" }]);
-  
-  // Silicone prosthetics state
-  const [siliconePart, setSiliconePart] = useState("");
-  const [siliconeSide, setSiliconeSide] = useState<"right" | "left" | "both">("right");
-  const [siliconeNotes, setSiliconeNotes] = useState("");
 
   useEffect(() => {
     if (patient) {
@@ -251,85 +259,23 @@ export default function EditPatient() {
     form.setValue("injuryArea", injuryEntries.map(e => e.area).filter(Boolean).join("، "));
   }, [injuryEntries, conditionType, form]);
 
-  // Parse existing amputationSite when patient loads
+  //  يُحمَّل المحفوظُ **بالمحلّل الرسمي** — وما لا يُفهَم لا يُخترَع له بديل.
+  //
+  //  ولا حارسَ تهيئةٍ بعد اليوم: كان يشترط وجودَ سلسلةٍ محفوظة كي يُفعَّل
+  //  الباني، فمريضُ بترٍ قديمٌ **بلا موقعِ بتر** لا يستطيع إكماله إطلاقاً —
+  //  الحقولُ معطَّلةٌ عن الكتابة وهو بالضبط مَن يحتاجها.
   useEffect(() => {
-    if (patient?.amputationSite && !isInitialized) {
-      const site = patient.amputationSite;
-      if (site.startsWith("احادي")) {
-        setAmputationType("single");
-        if (site.includes("طرف علوي")) setSingleLimb("upper");
-        else setSingleLimb("lower");
-        if (site.includes("يسار")) setSingleSide("left");
-        else setSingleSide("right");
-        const parts = site.split(" - ");
-        if (parts.length >= 4) setSingleAmputationDetail(parts[3]);
-      } else if (site.startsWith("ثنائي")) {
-        setAmputationType("double");
-        if (site.includes("علوي وسفلي")) {
-          setDoubleLimbType("both");
-        } else if (site.includes("علوي")) {
-          setDoubleLimbType("upper");
-        } else {
-          setDoubleLimbType("lower");
-        }
-      } else if (site.startsWith("اطراف سليكونية")) {
-        setAmputationType("silicone");
-        // Parse silicone part, side and notes
-        const mainParts = site.split(" | ملاحظات: ");
-        const siliconeInfo = mainParts[0].replace("اطراف سليكونية تعويضية - ", "");
-        const infoParts = siliconeInfo.split(" - ");
-        setSiliconePart(infoParts[0] || "");
-        if (infoParts.length >= 2) {
-          if (infoParts[1] === "يسار") setSiliconeSide("left");
-          else if (infoParts[1] === "كلا الجانبين") setSiliconeSide("both");
-          else setSiliconeSide("right");
-        }
-        if (mainParts.length >= 2) setSiliconeNotes(mainParts[1] || "");
-      }
-      setIsInitialized(true);
-    }
-  }, [patient, isInitialized]);
+    if (!patient) return;
+    setAmp(parseAmputationSite(patient.amputationSite));
+    setAmpTouched(false);
+  }, [patient]);
 
-  // Build amputationSite string from selections
+  //  والكتابةُ **بعد اللمس وحده**، وبالباني المشترك: المكتملُ يُكتب،
+  //  والناقصُ يُكتب فراغاً فيردّه الخادم — ولا يُخترَع تعريفٌ لم يُختَر.
   useEffect(() => {
-    if (conditionType !== "amputee" || !isInitialized) return;
-    
-    let site = "";
-    if (amputationType === "single") {
-      const limbText = singleLimb === "upper" ? "طرف علوي" : "طرف سفلي";
-      const sideText = singleSide === "right" ? "يمين" : "يسار";
-      site = `احادي - ${limbText} - ${sideText}`;
-      if (singleAmputationDetail) site += ` - ${singleAmputationDetail}`;
-    } else if (amputationType === "double") {
-      if (doubleLimbType === "upper") {
-        site = `ثنائي - علوي`;
-        if (doubleRightDetail || doubleLeftDetail) {
-          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
-        }
-      } else if (doubleLimbType === "lower") {
-        site = `ثنائي - سفلي`;
-        if (doubleRightDetail || doubleLeftDetail) {
-          site += ` | يمين: ${doubleRightDetail || "-"} | يسار: ${doubleLeftDetail || "-"}`;
-        }
-      } else {
-        const rightLimbText = bothRightLimb === "upper" ? "علوي" : "سفلي";
-        const leftLimbText = bothLeftLimb === "upper" ? "علوي" : "سفلي";
-        site = `ثنائي - علوي وسفلي`;
-        site += ` | يمين (${rightLimbText}): ${bothRightDetail || "-"}`;
-        site += ` | يسار (${leftLimbText}): ${bothLeftDetail || "-"}`;
-      }
-    } else if (amputationType === "silicone") {
-      // Silicone prosthetics
-      site = `اطراف سليكونية تعويضية - ${siliconePart || "-"}`;
-      // Add side for all parts except nose
-      if (siliconePart && siliconePart !== "انف") {
-        const sideText = siliconeSide === "right" ? "يمين" : siliconeSide === "left" ? "يسار" : "كلا الجانبين";
-        site += ` - ${sideText}`;
-      }
-      if (siliconeNotes) site += ` | ملاحظات: ${siliconeNotes}`;
-    }
-    form.setValue("amputationSite", site);
-  }, [amputationType, singleLimb, singleSide, singleAmputationDetail, doubleLimbType, doubleRightDetail, doubleLeftDetail, bothRightLimb, bothLeftLimb, bothRightDetail, bothLeftDetail, siliconePart, siliconeSide, siliconeNotes, conditionType, form, isInitialized]);
+    if (conditionType !== "amputee" || !ampTouched) return;
+    form.setValue("amputationSite", amputationSiteOf(amp));
+  }, [amp, ampTouched, conditionType, form]);
 
   // ADDITIVE, never destructive: the radio selects which type's SECTION is
   // open for editing and turns THAT type's flag on — it must never turn the
@@ -353,6 +299,29 @@ export default function EditPatient() {
   }, [conditionType, form, formLoaded]);
 
   function onSubmit(values: FormValues) {
+    // ══ **الإلزامُ مشروطٌ بما تغيّر** — لا بما يحمله النموذج ═══════════════
+    //  النموذجُ يرسل الكائنَ كاملاً في كل حفظ، فملفٌّ قديمٌ بلا مقاسات كان
+    //  يُردّ عند تصحيح هاتفه لو قِيس بحضور المفاتيح. والقاعدةُ هنا **هي
+    //  قاعدةُ الخادم نفسُها** (`isAdministrativeOnlyPatch`) فلا تنحرف
+    //  الشاشةُ عنه في أيّ اتجاه — لا تشدّداً ولا تساهلاً.
+    //
+    //  ومَن يلمس المقاساتِ أو تعريفَ البتر يُطالَب باكتمالها قبل الإرسال،
+    //  فيعرف ما ينقص وهو أمام الحقول لا بعد ردٍّ من الخادم.
+    if (patient && !isAdministrativeOnlyPatch(values as any, patient as any)) {
+      const req = checkRequiredPatientData({
+        age: values.age, height: (values as any).height, weight: (values as any).weight,
+        isAmputee: (values as any).isAmputee,
+        amputationSite: (values as any).amputationSite,
+      });
+      if (!req.ok) {
+        toast({
+          title: "بيانات ناقصة",
+          description: req.message ?? "أكمل البيانات المطلوبة",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     mutate({ id: patientId, data: values }, {
       onSuccess: () => {
         setLocation(`/patients/${patientId}${branchParam}`);
@@ -608,323 +577,32 @@ export default function EditPatient() {
 
               {conditionType === "amputee" && (
                 <>
-                  {/* Amputation Type Selection */}
+                  {/*  ══ **الباني المشترك** — لا نسخةٌ ثالثة من القوائم ══
+                      كان هنا بانٍ كامل بافتراضاته ومحلّلٍ ناقصٍ لا يقرأ
+                      تفاصيلَ الثنائيّ. والآن `AmputationBuilder` نفسُه
+                      المستعمَل في التسجيل وفي «إضافة نوع حالة». */}
                   <div className="space-y-4">
                     <FormLabel className="text-base">{t.patientForm.amputationType}</FormLabel>
-                    <RadioGroup
-                      value={amputationType}
-                      onValueChange={(val) => setAmputationType(val as "single" | "double" | "silicone")}
-                      className="flex flex-col sm:flex-row gap-4"
-                    >
-                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
-                        <RadioGroupItem value="single" id="edit-single" />
-                        <label htmlFor="edit-single" className="font-normal cursor-pointer flex-1">{t.patientForm.singleAmputation}</label>
-                      </div>
-                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
-                        <RadioGroupItem value="double" id="edit-double" />
-                        <label htmlFor="edit-double" className="font-normal cursor-pointer flex-1">{t.patientForm.doubleAmputation}</label>
-                      </div>
-                      <div className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
-                        <RadioGroupItem value="silicone" id="edit-silicone" />
-                        <label htmlFor="edit-silicone" className="font-normal cursor-pointer flex-1">{t.patientForm.siliconeProsthetics}</label>
-                      </div>
-                    </RadioGroup>
+                    <AmputationBuilder
+                      value={amp}
+                      onChange={(next) => { setAmp(next); setAmpTouched(true); }}
+                      testIdPrefix="edit-amp"
+                    />
+                    {/*  **ونصٌّ قديم لا يفهمه المحلّل يبقى معروضاً** — فلا
+                        يُمحى بصمتٍ حين يُصحَّح هاتفٌ، ويعرف الموظّف ما كان
+                        مكتوباً قبل أن يستبدله. */}
+                    {!ampTouched && patient?.amputationSite
+                      && !parseAmputationSite(patient.amputationSite).amputationType && (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2"
+                         data-testid="text-legacy-amputation">
+                        المسجَّل حالياً نصٌّ قديم: <b>{patient.amputationSite}</b> —
+                        يبقى كما هو ما لم تختر تعريفاً منظَّماً أعلاه.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Single Amputation Options */}
-                  {amputationType === "single" && (
-                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <FormLabel>{t.patientForm.limb}</FormLabel>
-                          <Select value={singleLimb} onValueChange={(val) => setSingleLimb(val as "upper" | "lower")}>
-                            <SelectTrigger className="bg-white">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="upper">{t.patientForm.upperLimb}</SelectItem>
-                              <SelectItem value="lower">{t.patientForm.lowerLimb}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <FormLabel>{t.patientForm.side}</FormLabel>
-                          <Select value={singleSide} onValueChange={(val) => setSingleSide(val as "right" | "left")}>
-                            <SelectTrigger className="bg-white">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="right">{t.patientForm.right}</SelectItem>
-                              <SelectItem value="left">{t.patientForm.left}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <FormLabel>{t.patientForm.amputationDetailType}</FormLabel>
-                        {singleLimb === "lower" ? (
-                          <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
-                            <SelectTrigger className="bg-white">
-                              <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="جوبارت">جوبارت</SelectItem>
-                              <SelectItem value="سايمز">سايمز</SelectItem>
-                              <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                              <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                              <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                              <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Select value={singleAmputationDetail} onValueChange={setSingleAmputationDetail}>
-                            <SelectTrigger className="bg-white">
-                              <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="اصبع">اصبع</SelectItem>
-                              <SelectItem value="خلال الكف">خلال الكف</SelectItem>
-                              <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                              <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                              <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                              <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                              <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Double Amputation Options */}
-                  {amputationType === "double" && (
-                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
-                      <div className="space-y-2">
-                        <FormLabel>{t.patientForm.doubleAmputationType}</FormLabel>
-                        <Select value={doubleLimbType} onValueChange={(val) => setDoubleLimbType(val as "upper" | "lower" | "both")}>
-                          <SelectTrigger className="bg-white">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
-                            <SelectItem value="lower">{t.patientForm.lower}</SelectItem>
-                            <SelectItem value="both">{t.patientForm.upperAndLower}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {(doubleLimbType === "upper" || doubleLimbType === "lower") && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <FormLabel>{t.patientForm.rightAmputation}</FormLabel>
-                            {doubleLimbType === "lower" ? (
-                              <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Select value={doubleRightDetail} onValueChange={setDoubleRightDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="اصبع">اصبع</SelectItem>
-                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
-                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <FormLabel>{t.patientForm.leftAmputation}</FormLabel>
-                            {doubleLimbType === "lower" ? (
-                              <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Select value={doubleLeftDetail} onValueChange={setDoubleLeftDetail}>
-                                <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="اصبع">اصبع</SelectItem>
-                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
-                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {doubleLimbType === "both" && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-3 p-3 border rounded-lg bg-white">
-                            <FormLabel className="text-primary">{t.patientForm.rightSide}</FormLabel>
-                            <Select value={bothRightLimb} onValueChange={(val) => setBothRightLimb(val as "upper" | "lower")}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
-                                <SelectItem value="lower">{t.patientForm.lower}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {bothRightLimb === "lower" ? (
-                              <Select value={bothRightDetail} onValueChange={setBothRightDetail}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Select value={bothRightDetail} onValueChange={setBothRightDetail}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="اصبع">اصبع</SelectItem>
-                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
-                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </div>
-                          <div className="space-y-3 p-3 border rounded-lg bg-white">
-                            <FormLabel className="text-primary">{t.patientForm.leftSide}</FormLabel>
-                            <Select value={bothLeftLimb} onValueChange={(val) => setBothLeftLimb(val as "upper" | "lower")}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="upper">{t.patientForm.upper}</SelectItem>
-                                <SelectItem value="lower">{t.patientForm.lower}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {bothLeftLimb === "lower" ? (
-                              <Select value={bothLeftDetail} onValueChange={setBothLeftDetail}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="جوبارت">جوبارت</SelectItem>
-                                  <SelectItem value="سايمز">سايمز</SelectItem>
-                                  <SelectItem value="تحت الركبة">تحت الركبة</SelectItem>
-                                  <SelectItem value="خلال الركبة">خلال الركبة</SelectItem>
-                                  <SelectItem value="فوق الركبة">فوق الركبة</SelectItem>
-                                  <SelectItem value="خلال الحوض">خلال الحوض</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Select value={bothLeftDetail} onValueChange={setBothLeftDetail}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder={t.patientForm.selectAmputationType} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="اصبع">اصبع</SelectItem>
-                                  <SelectItem value="خلال الكف">خلال الكف</SelectItem>
-                                  <SelectItem value="خلال الرسغ">خلال الرسغ</SelectItem>
-                                  <SelectItem value="تحت المرفق">تحت المرفق</SelectItem>
-                                  <SelectItem value="خلال المرفق">خلال المرفق</SelectItem>
-                                  <SelectItem value="فوق المرفق">فوق المرفق</SelectItem>
-                                  <SelectItem value="خلال الكتف">خلال الكتف</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Silicone Prosthetics Options */}
-                  {amputationType === "silicone" && (
-                    <div className="space-y-4 p-4 border rounded-xl bg-slate-50/50">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <FormLabel>{t.patientForm.siliconePartType}</FormLabel>
-                          <Select value={siliconePart} onValueChange={setSiliconePart}>
-                            <SelectTrigger className="bg-white" data-testid="select-silicone-part-edit">
-                              <SelectValue placeholder={t.patientForm.selectSiliconePart} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="اذن">اذن</SelectItem>
-                              <SelectItem value="انف">انف</SelectItem>
-                              <SelectItem value="محجر عين">محجر عين</SelectItem>
-                              <SelectItem value="اصبع">اصبع</SelectItem>
-                              <SelectItem value="كف">كف</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {siliconePart && siliconePart !== "انف" && (
-                          <div className="space-y-2">
-                            <FormLabel>{t.patientForm.amputationSide}</FormLabel>
-                            <Select value={siliconeSide} onValueChange={(val) => setSiliconeSide(val as "right" | "left" | "both")}>
-                              <SelectTrigger className="bg-white" data-testid="select-silicone-side-edit">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="right">{t.patientForm.right}</SelectItem>
-                                <SelectItem value="left">{t.patientForm.left}</SelectItem>
-                                <SelectItem value="both">{t.patientForm.bothSides}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <FormLabel>{t.patientForm.generalNotes}</FormLabel>
-                        <Input 
-                          value={siliconeNotes} 
-                          onChange={(e) => setSiliconeNotes(e.target.value)}
-                          placeholder={t.patientForm.generalNotesPlaceholder}
-                          className="bg-white"
-                          data-testid="input-silicone-notes-edit"
-                        />
-                      </div>
-                    </div>
-                  )}
-
                   {/* Show prosthetic details only for single/double amputation */}
-                  {(amputationType === "single" || amputationType === "double") && (
+                  {(amp.amputationType === "single" || amp.amputationType === "double") && (
                     <>
                   <FormField
                     control={form.control}

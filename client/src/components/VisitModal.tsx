@@ -39,6 +39,13 @@ import {
 import { z } from "zod";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
+import {
+  PROSTHETIC_COMPONENTS, COMPONENT_LABELS, type ProstheticComponent,
+} from "@shared/prosthetic_parts";
+import {
+  ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountBlocked,
+  discountPayload, type DiscountDraft,
+} from "@/components/ServiceDiscountFields";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
 import {
   needsMaintenanceChoice, ownedDeviceTypes, resolveMaintenanceServiceType,
@@ -117,6 +124,11 @@ export function VisitModal({
   // أيّ جهاز يُصان — لمن يحمل الاثنين وحده. وصاحبُ نوعٍ واحد لا يُسأل.
   const [maintServiceType, setMaintServiceType] = useState<string>(initialMaintServiceType ?? "");
   const [maintCost, setMaintCost] = useState<number>(0);
+  //  **أيُّ جزءٍ يُصان** (ترحيل ٠٦٠) — بلا اختيارٍ مسبق: قيمةٌ افتراضية
+  //  كانت ستمرّ بضغطةٍ واحدة فتُسجَّل قطعةٌ لم يُصلحها أحد.
+  const [maintComponent, setMaintComponent] = useState<ProstheticComponent | "">("");
+  //  وخصمُ أجور الصيانة يمرّ بالبابِ الموحَّد نفسه — لا يُحجَز مباشرةً.
+  const [maintDiscount, setMaintDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
   /** الجهاز المقصود — بالصيانة أو بالزيارة العامّة. فارغٌ حتى يختار الموظّف. */
   const [maintDevice, setMaintDevice] = useState<string>("");
   const [visitDevice, setVisitDevice] = useState<string>("");
@@ -205,6 +217,7 @@ export function VisitModal({
     //  ضبطاً على المسند، وإلّا سألت صاحبَ النوعين سؤالاً سبق أن أجابه.
     setMaintServiceType(initialMaintServiceType ?? "");
     setVisitCaseId(null); setMaintCost(0);
+    setMaintComponent(""); setMaintDiscount(EMPTY_DISCOUNT);
     setReviewPath("quick"); setReviewNote("");
     setReviewKind(initialPurpose === "maintenance" ? "maintenance" : "follow_up");
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
@@ -220,6 +233,26 @@ export function VisitModal({
     // تعبير. وبلا تحديدٍ لا يُبنى طلبٌ نعلم أن الخادم سيردّه.
     const svc = resolveMaintenanceServiceType({ isAmputee, isMedicalSupport }, maintServiceType);
     if (!svc) { toast({ title: "حدّد نوع الجهاز المراد صيانته", variant: "destructive" }); return; }
+    //  **والجزءُ إلزاميٌّ للأطراف** — حتى للجهاز القديم غير المسجَّل:
+    //  الجهازُ مجهولٌ والجزءُ ليس كذلك.
+    if (svc === "prosthetic" && !maintComponent) {
+      toast({ title: "حدّد الجزء المراد صيانته", variant: "destructive" }); return;
+    }
+    //  **والصفرُ وحده لا يعني «مجّاناً»**: التبرّعُ يُختار صراحةً من سعرٍ
+    //  أصليّ موجب فيمرّ بالاعتماد. وصفرٌ صامتٌ كان يفتح الصيانةَ بلا سببٍ
+    //  ولا معتمِدٍ ولا سطرٍ في تقرير «كم تبرّعنا».
+    if (maintCost <= 0) {
+      toast({
+        title: "أدخل أجور الصيانة",
+        description: "المبلغ الأصلي يجب أن يكون موجباً — والمجّاني يُختار صراحةً من الخصم بعده.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (discountBlocked(maintDiscount, maintCost)) {
+      toast({ title: "أكمل بيانات الخصم", description: "اختر سبباً للخصم أو صحّح المبلغ", variant: "destructive" });
+      return;
+    }
     setMaintPending(true);
     try {
       const res = await fetch("/api/manufacturing/maintenance-visit", {
@@ -235,6 +268,11 @@ export function VisitModal({
                 ? { legacyUnrecordedDevice: true }
                 : maintDevice ? { deviceEpisodeId: Number(maintDevice) } : {})
             : {}),
+          ...(svc === "prosthetic" ? { maintenanceComponent: maintComponent } : {}),
+          //  خصمٌ أو تبرّع ⟶ طلبٌ معلَّق بلا أمرٍ ولا كلفة. وإلّا فالمسارُ
+          //  القديم بحرفه: أمرٌ وزيارةٌ وكلفةٌ في الحال.
+          ...(hasDiscount(maintDiscount, maintCost)
+            ? { discount: discountPayload(maintDiscount) } : {}),
           notes: values.notes?.trim() || undefined, customDate: values.customDate || undefined,
           reviewPath, reviewKind, reviewNote: reviewNote.trim() || undefined,
         }),
@@ -248,7 +286,12 @@ export function VisitModal({
       // Refresh the patient's visits, payments and manufacturing views.
       invalidatePatientData(queryClient, patientId);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
-      toast({ title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
+      //  **والرسالةُ تقول ما وقع فعلاً**: طلبٌ ينتظر الاعتماد ليس أمراً فُتح.
+      const body = await res.json().catch(() => ({}));
+      toast(body?.pendingApproval
+        ? { title: "أُرسل طلب الخصم للاعتماد",
+          description: "لن يُفتح أمر الصيانة ولا تُقيَّد الأجور قبل الاعتماد." }
+        : { title: "تم فتح أمر الصيانة وتسجيل الزيارة" });
       setMaintPending(false); setOpen(false); resetAll();
     } catch {
       toast({ title: "تعذّر فتح الصيانة", variant: "destructive" });
@@ -471,13 +514,47 @@ export function VisitModal({
                     </Select>
                   )}
                 </FormItem>
+                {/*  ══ **أيُّ جزءٍ يُصان؟** ═══════════════════════════════
+                    كانت الصيانة تُفتَح بلا أن يُقال، فيصل الخبيرَ أمرٌ عليه
+                    أن يسأل عنه، ويبقى السجلُّ عاجزاً عن «كم ركبةً صُلّحت».
+                    ويُطلَب **حتى للجهاز القديم غير المسجَّل**. */}
+                {resolveMaintenanceServiceType({ isAmputee, isMedicalSupport }, maintServiceType) === "prosthetic" && (
+                  <FormItem>
+                    <FormLabel>الجزء المراد صيانته <span className="text-red-500">*</span></FormLabel>
+                    <Select value={maintComponent}
+                      onValueChange={(v) => setMaintComponent(v as ProstheticComponent)}>
+                      <SelectTrigger data-testid="select-maintenance-component">
+                        <SelectValue placeholder="اختر الجزء" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROSTHETIC_COMPONENTS.map((c) => (
+                          <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
                 <FormItem>
-                  <FormLabel>أجور الصيانة (د.ع)</FormLabel>
+                  <FormLabel>
+                    أجور الصيانة (د.ع) <span className="text-destructive">*</span>
+                  </FormLabel>
                   <MoneyInput value={maintCost} onValueChange={setMaintCost} placeholder="0" data-testid="input-maintenance-cost" />
+                  {/*  **والصفرُ ليس سعراً عادياً**: المجّانيّ قرارٌ ماليّ له
+                      بابُه — يُختار صراحةً من سعرٍ أصليّ موجب فيمرّ
+                      بالاعتماد، ويُقرأ في تقرير التبرّعات بسببه ومعتمِده. */}
                   <p className="text-[11px] text-muted-foreground">
-                    تُقيَّد على حساب المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. المبلغ قراركم — صفر أو أي مبلغ، بغضّ النظر عن الضمان.
+                    المبلغ الأصلي قراركم، و<b>يجب أن يكون موجباً</b>. تُقيَّد على حساب
+                    المريض فور الحفظ ويُسجَّل الدفع كالمعتاد. وللمجّاني اختر
+                    «مجاني (تبرع من دكتور ياسر)» من الخصم أدناه — فيمرّ بالاعتماد.
                   </p>
                 </FormItem>
+                {/*  والخصمُ على الأجور يمرّ بالبابِ الموحَّد نفسه — لا يُحجَز
+                    مباشرةً كما كان. ولا يظهر قبل أن يُعرَف السعرُ الأصلي. */}
+                {maintCost > 0 && (
+                  <ServiceDiscountFields originalPrice={maintCost}
+                    value={maintDiscount} onChange={setMaintDiscount}
+                    testIdPrefix="maintenance-discount" />
+                )}
                 <p className="text-[11px] text-muted-foreground">
                   ستُفتح حلقة صيانة مستقلّة بخبيرها — يحدّد الخبير تاريخ التسليم عند أخذ القالب. إن كان للمريض أمر صيانة/بناء جارٍ لنفس الخدمة لم يُسلَّم، تُمنع حتى يكتمل.
                 </p>

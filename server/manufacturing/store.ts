@@ -11,6 +11,7 @@ import {
   prostheticWorkOrders as WO,
   prostheticWorkHistory as WH,
   prostheticReworkEvents as RW,
+  patientDeviceEpisodes as PDE,
   type InsertPatient, type Patient, type ProstheticWorkOrder,
 } from "@shared/schema";
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
@@ -21,6 +22,7 @@ import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
   isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
+import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -81,6 +83,44 @@ function buildCompetitionFilter(params: {
     AND service_type = ${params.serviceType}
     AND purpose = 'maintenance'
     AND device_episode_id IS NULL`;
+}
+
+/**
+ * **هل لهذا المريض جهازٌ سابق من هذه الخدمة؟**
+ *
+ * ══ لماذا يلزم ═════════════════════════════════════════════════════════
+ * اختصارُ «بدء التصنيع وإسناد خبير» موروثٌ لمريضٍ سُجِّل **للمعاينة فقط**:
+ * بلا كلفةٍ ولا خبيرٍ ولا أمر — ثم قرّر الشراء. وحارسُه كان «لا أمرَ نشط»،
+ * فمتى اكتمل أمرُه الأول صار «غيرَ نشط» **فعاد الاختصارُ يظهر** — يبدأ
+ * جهازاً ثانياً بلا حلقةٍ ولا معاينةٍ جديدة ولا سعر.
+ *
+ * ══ وما يُعَدّ «جهازاً سابقاً» ═════════════════════════════════════════
+ * أيُّ أمرِ بناءٍ سابق **مهما كانت حالته** — مكتملاً أو ملغى أو نشطاً —
+ * أو أيُّ حلقةِ جهاز. فحتى الملغى يعني أن الملفّ عرف هذا الباب مرّة،
+ * والعائدُ بعده يمرّ بالمسار الكامل لا بالاختصار.
+ *
+ * **ولا يُقرأ منه شيءٌ للحذف**: هذا سؤالُ بابٍ لا حكمٌ على تاريخ. الأمرُ
+ * المكتمل وخبيرُه يبقيان معروضين كما هما.
+ */
+export async function hasPriorDevice(params: {
+  patientId: number; serviceType: string;
+}): Promise<boolean> {
+  const orders = await db.execute<{ id: number }>(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE patient_id = ${params.patientId}
+       AND service_type = ${params.serviceType}
+       AND purpose = 'initial_build'
+     LIMIT 1
+  `);
+  if ((orders.rows ?? []).length > 0) return true;
+  const eps = await db.execute<{ id: number }>(sql`
+    SELECT e.id FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${params.patientId}
+       AND pc.case_type = ${params.serviceType}
+     LIMIT 1
+  `);
+  return (eps.rows ?? []).length > 0;
 }
 
 /** نفس الشرط، داخل معاملة المُستدعي. */
@@ -355,12 +395,35 @@ export async function createMaintenanceOrderWithVisit(params: {
   deviceEpisodeId?: number | null;
   /** إقرارٌ صريح بأن الجهاز المُصان قديمٌ غير مسجَّل. */
   legacyUnrecordedDevice?: boolean;
+  /**
+   * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
+   *
+   * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
+   * أن يسأل عنه — ويبقى السجلُّ عاجزاً عن الجواب: كم ركبةً صُلّحت هذا العام.
+   * ويُطلَب **حتى للجهاز القديم غير المسجَّل**: الجهازُ مجهولٌ والجزءُ ليس كذلك.
+   */
+  maintenanceComponent?: string | null;
+  /**
+   * **معاملةُ المُستدعي** — يمرّرها اعتمادُ الخصم فيصير الحسمُ والتنفيذ
+   * والختم معاملةً واحدة: تنجح معاً أو تسقط معاً. ومَن لا يمرّر شيئاً يفتح
+   * معاملته كما كان — نفسُ نمط `assignManufacturing` منذ ٠٥٣.
+   */
+  tx?: any;
 }): Promise<ProstheticWorkOrder> {
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     // **الهوية تُحسم هنا، لا في النقطة.** ما تقرؤه النقطة للعرض قد يشيخ:
     // جهازٌ يُسلَّم بين قراءتها وكتابتنا يصير محلّاً للصيانة، فقرارُ «لا
     // أجهزة مسجَّلة ⟶ صيانةٌ بلا هوية» المبنيّ على لقطةٍ بائتة يُنتج
     // الصفَّ الملتبس نفسه. والقفل على صفّ الخيط يجعل الترتيب صريحاً.
+    //  **الجزءُ يُتحقَّق منه هنا** — داخل المعاملة كالهوية، ومهما فحصته
+    //  النقطة: ما يصل من العميل لا يُوثَق به. والأطرافُ وحدها لها أجزاء.
+    const parsedComponent = parseComponent(params.maintenanceComponent);
+    if (!parsedComponent.ok) throw new DeviceEpisodeError(parsedComponent.error!, 400);
+    if (params.serviceType === "prosthetic" && !parsedComponent.value) {
+      throw new DeviceEpisodeError("حدّد الجزء المراد صيانته", 400);
+    }
+    const component = params.serviceType === "prosthetic" ? parsedComponent.value : null;
+
     const targetEpisodeId = isDeviceServiceType(params.serviceType)
       ? await resolveDeviceTargetTx(tx, {
           patientId: params.patientId,
@@ -391,18 +454,22 @@ export async function createMaintenanceOrderWithVisit(params: {
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
       deviceEpisodeId: targetEpisodeId,
+      maintenanceComponent: component,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
       toStage: firstStageFor(params.serviceType, "maintenance"),
-      notes: `إنشاء أمر صيانة لمريض موجود — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
+      notes: `إنشاء أمر صيانة${component ? ` — ${componentLabel(component)}` : ""}`
+        + ` لمريض موجود — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
     // Attribute the visit to the matching case so it shows in the patient's
     // per-case tabs (case-filtered views hide caseId-null rows by default).
-    const caseRows = await tx.select({ id: patientCases.id, caseType: patientCases.caseType })
+    //  والنوعُ صريحٌ لأن `tx` صارت مفتوحةً لتقبل معاملةَ المُستدعي.
+    const caseRows: { id: number; caseType: string }[] = await tx
+      .select({ id: patientCases.id, caseType: patientCases.caseType })
       .from(patientCases).where(eq(patientCases.patientId, params.patientId));
     const caseId = caseRows.find((c) => c.caseType === params.serviceType)?.id
       ?? caseRows.find((c) => c.caseType === "physiotherapy")?.id
@@ -414,7 +481,15 @@ export async function createMaintenanceOrderWithVisit(params: {
       // Deliberately NOT the "تكلفة:" marker format — syncPatientCases parses
       // that marker to reallocate base costs, and maintenance fees are booked
       // directly below, not via markers.
-      notes: params.cost > 0 ? `${params.visitNotes} — أجور الصيانة: ${params.cost.toLocaleString("en-US")} د.ع` : params.visitNotes,
+      //  **والجزءُ في نصّ الزيارة أيضاً** — يقرؤه مَن يفتح سجلّ الزيارات
+      //  بلا أن يفتح الأمر. والعمودُ المنظَّم يبقى هو المصدر لا هذا النصّ.
+      //
+      //  **وملاحظةُ الموظّف تبقى كما كتبها**: الجزءُ يُضاف إليها ولا يحلّ
+      //  محلّها — «صيانة الطرف القديم» معلومةٌ لا يملكها النظام.
+      notes: [component ? `صيانة ${componentLabel(component)}` : null,
+        params.visitNotes,
+        params.cost > 0 ? `أجور الصيانة: ${params.cost.toLocaleString("en-US")} د.ع` : ""]
+        .filter(Boolean).join(" — "),
       treatmentType: null,
       caseId,
       deviceEpisodeId: targetEpisodeId,
@@ -444,7 +519,8 @@ export async function createMaintenanceOrderWithVisit(params: {
       });
     }
     return workOrder;
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ---- order listing + enrichment ----------------------------------------------
@@ -1207,9 +1283,15 @@ export async function getAllOrdersForPatient(patientId: number) {
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, createdAt: WO.createdAt,
       expertUserId: WO.expertUserId, expertName: systemUsers.displayName,
+      //  **ماذا يُصنَع أو يُصان** (ترحيل ٠٦٠) — يقرؤه الخبيرُ في أمره
+      //  والفريقُ في ملفّ المريض، بلا أن يسأل أحد.
+      maintenanceComponent: WO.maintenanceComponent,
+      deviceEpisodeId: WO.deviceEpisodeId,
+      requestedItem: PDE.requestedItem,
     })
     .from(WO)
     .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
+    .leftJoin(PDE, eq(PDE.id, WO.deviceEpisodeId))
     .where(eq(WO.patientId, patientId))
     .orderBy(desc(WO.createdAt));
   // Delivery-date changes travel WITH the orders so the patient page can show

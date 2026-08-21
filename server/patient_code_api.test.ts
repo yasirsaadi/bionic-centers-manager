@@ -70,6 +70,8 @@ async function http(method: string, path: string, session: any, body?: any) {
 async function createVia(session: any, extra: any = {}) {
   return http("POST", "/api/patients", session, {
     name: `${MARK} ${extra.name ?? "مريض"}`, phone: "07701234567", age: "40",
+    //  الطولُ والوزنُ إلزاميّان لكلّ ملفٍّ جديد (الطرفُ يُصنَع عليهما).
+    height: "172", weight: "78",
     medicalCondition: "x", referralSource: MARK, branchId: session.branchId || 1,
     patientClassification: "new", ...extra,
   });

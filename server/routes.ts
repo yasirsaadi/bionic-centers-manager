@@ -30,6 +30,10 @@ import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
+import { patientActiveOnDate } from "./patient_activity";
+import {
+  checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
+} from "@shared/patient_required";
 import { aliasCodesByPatient } from "./patient_code/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
@@ -136,6 +140,45 @@ async function deviceServiceOfCaseId(
     .where(and(eq(patientCases.id, id), eq(patientCases.patientId, patientId)));
   const t = row?.caseType;
   return t === "prosthetic" || t === "medical_support" ? t : null;
+}
+
+/**
+ * **هل يملك المريضُ هذه الحالةَ فعلاً؟**
+ *
+ * نافذةُ الدفع صارت تحسم الحالةَ تلقائياً ولا تسأل إلّا عند غموضٍ حقيقيّ،
+ * وقائمتُها **حالاتُ المريض وحدها**. لكنّ الواجهةَ ليست حارساً: نافذةٌ
+ * قديمة مفتوحةٌ منذ ما قبل التغيير — أو طلبٌ مصنوعٌ بيدٍ — قد يحمل وسمَ
+ * «أطراف صناعية» لمريضِ علاجٍ طبيعي، فيدخل مالُه في تقسيم قسمٍ لا يخصّه
+ * ويظهر مديناً لجهازٍ لم يطلبه قطّ.
+ *
+ * والملكيّةُ **ثلاثةُ أدلّة يكفي أحدُها**: علمُ الملفّ، أو خيطُ حالةٍ
+ * مفتوح، أو حلقةُ جهاز. ثلاثةٌ لأن الملفّات القديمة تحمل بعضَها دون بعض،
+ * والحارسُ يجب أن يردّ الخطأ لا التاريخ.
+ */
+async function patientOwnsCase(
+  patientId: number, caseType: "prosthetic" | "medical_support",
+): Promise<boolean> {
+  const r = await db.execute<{ owns: boolean }>(sql`
+    SELECT (
+      EXISTS (
+        SELECT 1 FROM patients p
+         WHERE p.id = ${patientId}
+           AND ${caseType === "prosthetic"
+             ? sql`p.is_amputee IS TRUE`
+             : sql`p.is_medical_support IS TRUE`}
+      )
+      OR EXISTS (
+        SELECT 1 FROM patient_cases pc
+         WHERE pc.patient_id = ${patientId} AND pc.case_type = ${caseType}
+      )
+      OR EXISTS (
+        SELECT 1 FROM patient_device_episodes de
+          JOIN patient_cases pc ON pc.id = de.case_id
+         WHERE de.patient_id = ${patientId} AND pc.case_type = ${caseType}
+      )
+    ) AS owns
+  `);
+  return Boolean((r.rows ?? [])[0]?.owns);
 }
 
 export async function registerRoutes(
@@ -1510,13 +1553,15 @@ export async function registerRoutes(
       searchRank = built.rank;
       searchTie = searchTieBreaker(search, { trigram });
     } else if (visitDate) {
-      // Patients who had a (non-deleted) visit on that Baghdad calendar day.
-      conditions.push(sql`EXISTS (
-        SELECT 1 FROM visits v
-        WHERE v.patient_id = ${patients.id}
-          AND v.deleted_at IS NULL
-          AND ((v.visit_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = ${visitDate}::date
-      )`);
+      // ══ **«مرضى اليوم» تعني نشاطاً حقيقياً لا صفَّ زيارة** ═══════════
+      //  كان الشرط يسأل جدول الزيارات وحده، والزيارةُ صفٌّ يُنشئه الموظّف
+      //  بيده — فمريضٌ جاء اليوم واشترى ودفع ووقّع الطبيبُ معاينته يختفي
+      //  من القائمة إن لم يفتح له أحدٌ زيارة. والموظّفُ الذي يرى ذلك يخترع
+      //  زيارةً ليُظهره، فيتلوّث الجدولُ الذي تُبنى عليه كلُّ إحصاءة.
+      //
+      //  والتعريفُ الآن في `patient_activity` وحده — **يستعمله العدّادُ
+      //  والصفوفُ معاً** لأنه شرطٌ واحد على `patients` نفسها، فلا يفترقان.
+      conditions.push(patientActiveOnDate(visitDate));
     }
     const where = conditions.length ? and(...conditions) : sql`TRUE`;
 
@@ -1880,6 +1925,22 @@ export async function registerRoutes(
         branchId
       });
 
+      // ══ **بياناتٌ لا يُصنَع جهازٌ بدونها** ═════════════════════════════
+      //  العمرُ والطولُ والوزن ليست حقولاً إدارية: الطرفُ يُصنَع عليها.
+      //  ومريضُ البتر يزيد تعريفَ بترِه **منظَّماً** — نصٌّ حرٌّ لا يُصفّى
+      //  ولا يُقرأ في أمر التصنيع.
+      //
+      //  **والخادمُ هو الحارس**: النموذجُ يُبرزها والخادمُ يردّها، فقيمةٌ
+      //  افتراضية في واجهةٍ قديمة لا تُقرأ اختياراً من موظّف.
+      const req0 = checkRequiredPatientData({
+        age: input.age, height: (input as any).height, weight: (input as any).weight,
+        isAmputee: (input as any).isAmputee === true,
+        amputationSite: (input as any).amputationSite,
+      });
+      if (!req0.ok) {
+        return res.status(400).json({ message: req0.message, missing: req0.missing });
+      }
+
       // Patients are ALWAYS registered WITHOUT an expert — expert assignment is
       // a separate, later step ("تحديد خبير" from the patients registry), so the
       // add form no longer asks for an expert or a delivery date. Prosthetic /
@@ -2097,6 +2158,43 @@ export async function registerRoutes(
           });
         } else {
           patch.patientClassification = typedClass;
+        }
+      }
+
+      // ══ **والتحريرُ يُكمِل ما يلمسه — لا ما لا يلمسه** ═════════════════
+      //  الملفّاتُ القديمة تُقرأ كما هي: لا تعبئةَ ولا تخمين. ومَن يلمس
+      //  المقاساتِ أو تعريفَ البتر **يكملها قبل الحفظ** — فلا يُحفَظ نصفُ
+      //  الحالة ويُترك الباقي لتعديلٍ لاحق لا يقع.
+      //
+      //  **لكنّ التصحيحَ الإداريَّ المحض لا يُمنَع**: هاتفٌ خاطئ، أو تصنيف،
+      //  أو عنوان. إجبارُ الموظّف على وزنٍ لا يملكه لحظتَها كي يصحّح رقم
+      //  هاتفٍ يوقف عملاً مشروعاً بلا مقابل — ونتيجتُه المعتادة أن يُخترَع
+      //  رقم، وهو أسوأ من الفراغ لأنه يُقرأ قياساً.
+      //
+      //  واللحظةُ التي **يجب** أن يكتمل فيها الملفّ هي دخولُه دورةَ تصنيعٍ
+      //  جديدة — يحرسها `POST /api/patients/:id/device-episodes`.
+      //
+      //  **و«لمسَها» تعني أن قيمتَها تغيّرت** لا أن مفتاحَها حضر: نموذجُ
+      //  «تعديل مريض» يرسل الكائنَ كاملاً في كل حفظ، فقراءةُ وجود المفاتيح
+      //  كانت تردّ كلَّ تصحيحٍ إداريّ على كل ملفٍّ قديم — أي القاعدةَ التي
+      //  وُضعت لإلغائها بعينها. فتُقارَن القيمُ بالمخزَّن.
+      //
+      //  والفحصُ على **الصورة بعد الدمج**: التعديلُ الجزئي يرسل ما تغيّر
+      //  وحده، فقياسُ الوارد وحده كان سيردّ تعديلَ هاتفٍ على ملفٍّ مكتمل.
+      {
+        const before = await storage.getPatient(id);
+        if (!isAdministrativeOnlyPatch(req.body, before as any)) {
+          const merged = {
+            age: patch.age ?? before?.age,
+            height: (patch as any).height ?? (before as any)?.height,
+            weight: (patch as any).weight ?? (before as any)?.weight,
+            isAmputee: (patch as any).isAmputee ?? before?.isAmputee,
+            amputationSite: (patch as any).amputationSite ?? before?.amputationSite,
+          };
+          const req1 = checkRequiredPatientData(merged);
+          if (!req1.ok) {
+            return res.status(400).json({ message: req1.message, missing: req1.missing });
+          }
         }
       }
 
@@ -2694,6 +2792,48 @@ export async function registerRoutes(
         if (typeof req.body?.[f] === "string" && req.body[f]) fields[f] = req.body[f];
       }
 
+      // ══ **فتحُ خيطِ أطرافٍ لا يُنتج ملفّاً نصفَ مكتمل** ═════════════════
+      //  هذه النقطة كانت ترفع `is_amputee` **بلا موقع بتر** — فيُولَد ملفٌّ
+      //  مبتورٌ بلا تعريفِ بتره، ويُترك إكمالُه لتعديلٍ لاحقٍ لا يقع. ثم
+      //  يصطدم به الطبيبُ في المعاينة والخبيرُ في القياس.
+      //
+      //  فالبياناتُ تُجمَع **في المسار نفسه**: تعريفُ البتر منظَّماً،
+      //  والمقاساتُ الثلاث إن كانت ناقصةً على الملفّ — تُقبَل هنا وتُكتب مع
+      //  فتح الخيط، أو يُردّ الطلبُ بما ينقص.
+      //
+      //  والمساندُ والعلاجُ الطبيعي لا يُسألان عن بتر إطلاقاً.
+      if (caseType === "amputee") {
+        const site = typeof fields.amputationSite === "string" ? fields.amputationSite : "";
+        const amp = checkAmputationSite(site);
+        if (!amp.ok) {
+          return res.status(400).json({
+            message: `${amp.message} — تعريف البتر يُحدَّد عند فتح حالة الأطراف`,
+            missing: amp.missing,
+          });
+        }
+        //  والمقاساتُ تُقبَل هنا لمَن نقصته: الطرفُ يُصنَع عليها.
+        const measures: any = {};
+        for (const f of ["age", "height", "weight"] as const) {
+          if (typeof req.body?.[f] === "string" && req.body[f].trim()) {
+            measures[f] = req.body[f].trim();
+          }
+        }
+        const merged = {
+          age: measures.age ?? patient.age,
+          height: measures.height ?? (patient as any).height,
+          weight: measures.weight ?? (patient as any).weight,
+          isAmputee: true, amputationSite: site,
+        };
+        const reqCase = checkRequiredPatientData(merged);
+        if (!reqCase.ok) {
+          return res.status(400).json({
+            message: `${reqCase.message} — تُستكمل عند فتح حالة الأطراف`,
+            missing: reqCase.missing,
+          });
+        }
+        Object.assign(fields, measures);
+      }
+
       const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
       const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
 
@@ -3164,6 +3304,20 @@ export async function registerRoutes(
       return res.status(400).json({
         message: "دفعة الجهاز معاملةٌ لجهازٍ واحد — سجّل الجهاز في دفعة مستقلّة",
       });
+    }
+    // ══ **والحالةُ الموسومة يجب أن تكون حالتَه هو** ═══════════════════════
+    // النافذةُ لا تعرض إلّا حالاتِ المريض، لكنّ العرضَ ليس حراسة: وسمٌ من
+    // نافذةٍ قديمة أو طلبٍ مصنوعٍ بيدٍ كان يُدخل مالَ مريضِ علاجٍ طبيعي في
+    // قسم الأجهزة بلا اعتراض. والفحصُ هنا — لا في الواجهة — هو ما يجعل
+    // القاعدةَ حقيقية.
+    if (deviceService === "prosthetic" || deviceService === "medical_support") {
+      if (!(await patientOwnsCase(input.patientId, deviceService))) {
+        return res.status(400).json({
+          message: deviceService === "prosthetic"
+            ? "لا توجد حالة أطراف صناعية على ملفّ هذا المريض — راجع نوع الدفعة"
+            : "لا توجد حالة مساند طبية على ملفّ هذا المريض — راجع نوع الدفعة",
+        });
+      }
     }
 
     // القرار والكتابة معاً داخل معاملة واحدة (انظر `createPaymentAttributed`).

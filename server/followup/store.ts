@@ -19,6 +19,7 @@
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
+import { deviceDiscountRefs } from "@shared/discount";
 import {
   computeCommercialPrice, isFollowupReason, isTerminal,
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
@@ -451,6 +452,212 @@ export async function purchaseGovernedByFollowup(params: {
   if (!row) return { governed: false, status: null };
   const status = String(row.status);
   return { governed: status !== "converted", status };
+}
+
+// ── تصحيحُ الطبيب لسعره الأصلي ───────────────────────────────────────────
+
+/**
+ * **هل يجوز للطبيب أن يصحّح كلفة جهازه؟ وهل يتبعه السعرُ التجاري؟**
+ *
+ * ══ الواقعةُ التي بُنيت لها (لاحظها المالك على الإنتاج) ═══════════════════
+ * كتب الطبيبُ ٦,٠٠٠,٠٠٠ ثم تبيّن أن الصحيح ٦,٥٠٠,٠٠٠. فتح «تعديل» على
+ * معاينته وصحّحها — **ولم يتغيّر سعرُ المتابعة**. فاضطرّ المالك إلى
+ * «تحديد السعر النهائي» ليصلح خطأً إملائياً في رقم.
+ *
+ * وهذا **خلطٌ مفهوميّ**: «تحديد السعر النهائي» قرارٌ تجاريّ لمدير الفرع —
+ * «نبيعه لهذا المريض بكذا». وتصحيحُ الطبيبِ رقمَه قبل البيع ليس قراراً
+ * تجارياً بل **تصحيحُ ما أراد قولَه أصلاً**.
+ *
+ * ══ وأربعةُ شروطٍ تُفحَص، كلٌّ منها يحمي شيئاً مختلفاً ═══════════════════
+ *   ① **لم يقع بيعٌ بعد** (`converted` أو أمرُ تصنيع): بعده المالُ قُيِّد
+ *     ودخل الدفتر، فتعديلُ المعاينة لا يعيد كتابة التاريخ.
+ *   ② **ولا خصمٌ اعتُمد**: `discount_price_applied` قرارٌ وقّعه معتمِد على
+ *     رقمٍ بعينه — ورفعُ الأصلي تحته يغيّر ما اعتُمد بلا اعتماد.
+ *   ③ **والسعرُ ما زال أصلُه المعاينة** (`price_source = 'exam'`): متى
+ *     تدخّل مديرٌ أو موظّفٌ صار الرقمُ **قراراً تجارياً صريحاً**، وسحبُه
+ *     من تحته إلغاءٌ صامتٌ لقرارٍ اتّخذه إنسان.
+ *   ④ **ولا طلبَ خصمٍ معلَّق**: الطلبُ محسوبٌ على الأصلي القديم، وتحريكُه
+ *     تحته يغيّر ما سيوقّع عليه المعتمِد. وهذا يُردّ صراحةً لا يُتجاهَل.
+ *
+ * والنتيجةُ الرابعة تُميَّز عن الثلاث: الأولى والثانية والثالثة **تُبقيان
+ * السعرَ التجاري كما هو ويمضي التصحيحُ على المعاينة**، والرابعة **تردّ**.
+ */
+export type ExamPriceVerdict =
+  | { kind: "sync"; followupId: number; previousPrice: number }
+  | { kind: "no_followup" }
+  | { kind: "keep_commercial"; reason: string }
+  | { kind: "frozen"; reason: string }
+  | { kind: "blocked"; reason: string };
+
+/** قائمةُ مراجعَ مُعلَّمةً — لا مصفوفةً يبنيها المحرّك سجلّاً لا نصّاً. */
+const refList = (refs: string[]) => sql.join(refs.map((r) => sql`${r}`), sql`, `);
+
+/** مراجعُ الجهاز من صفٍّ خام — نفسُ القاعدة المشتركة، بلا تحويلٍ كامل. */
+function refsForRow(row: any): string[] {
+  return deviceDiscountRefs({
+    followupId: Number(row.id),
+    deviceEpisodeId: row.device_episode_id === null || row.device_episode_id === undefined
+      ? null : Number(row.device_episode_id),
+    serviceType: String(row.service_type),
+  });
+}
+
+export async function classifyExamPriceChange(params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  deviceEpisodeId: number | null;
+}): Promise<ExamPriceVerdict> {
+  const r = params.deviceEpisodeId !== null
+    ? await db.execute(sql`
+        SELECT id, status, approved_price, price_source, converted_work_order_id,
+               device_episode_id, service_type
+          FROM post_exam_followups
+         WHERE patient_id = ${params.patientId}
+           AND device_episode_id = ${params.deviceEpisodeId}
+         ORDER BY id DESC LIMIT 1
+      `)
+    : await db.execute(sql`
+        SELECT id, status, approved_price, price_source, converted_work_order_id,
+               device_episode_id, service_type
+          FROM post_exam_followups
+         WHERE patient_id = ${params.patientId}
+           AND service_type = ${params.serviceType}
+           AND device_episode_id IS NULL
+         ORDER BY id DESC LIMIT 1
+      `);
+  const row = (r.rows ?? [])[0] as any;
+  //  لا متابعة: معاينةٌ روتينية أو ملفٌّ قديم — لا شيء يُزامَن، ولا شيء
+  //  يُمنَع. التصحيحُ يمضي على المعاينة وحدها.
+  if (!row) return { kind: "no_followup" };
+
+  // ④ **الطلبُ المعلَّق يردّ** — وهو الفحصُ الأسبق لأنه الوحيد الذي يمنع.
+  //
+  //  **ومرجعُ الجهاز بعينه لا المريضَ كلَّه**: العائدُ يملك أكثر من جهاز،
+  //  وخصمٌ معلَّقٌ على طرفِه الأول لا علاقةَ له بتصحيح سعر الثاني. وكان
+  //  الفحصُ بـ(مريض + قسم) يجمّد الجهاز الثاني بسبب الأول.
+  const pend = await db.execute(sql`
+    SELECT id FROM service_discount_requests
+     WHERE patient_id = ${params.patientId}
+       AND department = ${params.serviceType}
+       AND status = 'pending'
+       AND context_ref IN (${refList(refsForRow(row))})
+     LIMIT 1
+  `);
+  if ((pend.rows ?? []).length > 0) {
+    return {
+      kind: "blocked",
+      reason: "يوجد طلب خصم بانتظار الاعتماد محسوبٌ على السعر السابق —"
+        + " احسم الطلب (اعتماداً أو رفضاً أو إلغاءً) ثم صحّح السعر."
+        + " ويمكنك تعديل بقية المعاينة الآن بلا تغيير السعر.",
+    };
+  }
+
+  // ① بيعٌ وقع: المالُ قُيِّد ودخل الدفتر.
+  if (String(row.status) === "converted" || row.converted_work_order_id !== null) {
+    return {
+      kind: "frozen",
+      reason: "تم اعتماد البيع؛ تعديل المعاينة لا يغيّر السعر المالي.",
+    };
+  }
+
+  // ②③ خصمٌ اعتُمد، أو قرارٌ تجاريٌّ صريح حلّ محلّ سعر المعاينة.
+  const source = String(row.price_source ?? "exam");
+  if (source !== "exam") {
+    return {
+      kind: "keep_commercial",
+      reason: source === "discount_applied"
+        ? "السعر الحالي خصمٌ معتمَد — تصحيح المعاينة لا يرفعه."
+        : "السعر الحالي قرارٌ تجاريّ صريح — تصحيح المعاينة لا يستبدله.",
+    };
+  }
+
+  return {
+    kind: "sync", followupId: Number(row.id),
+    previousPrice: Number(row.approved_price ?? 0),
+  };
+}
+
+/**
+ * **يُنزل تصحيحَ الطبيب على السعر التجاري** — بحدثٍ يقرأه الجميع.
+ *
+ * ══ يُنادى **داخل معاملة تنقيح المعاينة نفسها** ═══════════════════════
+ * كان يُنادى بعدها: تُحفَظ النسخةُ الجديدة أوّلاً، ثم يُحاوَل التزامن. وسقوطُ
+ * الثانية كان يترك النظام في حالٍ لا يجوز أن توجد — معاينةٌ تقول ٦,٥٠٠,٠٠٠
+ * ومتابعةٌ تقول ٦,٠٠٠,٠٠٠، والاستعلاماتُ تقبض على الثانية. فصارتا معاملةً
+ * واحدة: تنجحان معاً أو تسقطان معاً، ويبقى الرقمُ القديم في الاثنين.
+ *
+ * ══ ويُعيد فحصَ الشروط **تحت القفل** ═══════════════════════════════════
+ * التصنيفُ (`classifyExamPriceChange`) لقطةٌ بلا قفل، وبينها وبين الكتابة
+ * قد يعتمد أحدٌ خصماً أو يؤكّد شراءً أو **يفتح طلبَ خصمٍ محسوباً على الرقم
+ * القديم**. والقفلُ على صفّ المتابعة هو نقطةُ التسلسل التي يشترك فيها
+ * البابان: `requestDiscount` يأخذه أيضاً قبل أن يكتب طلبَه.
+ *
+ * **ويُرمى ولا يُرجَع `null`**: النداءُ داخل معاملةٍ تحمل تنقيحَ المعاينة،
+ * فالرميُ وحده يُرجِعها — و«لم أفعل شيئاً» بصمتٍ كان يترك النسخةَ محفوظة.
+ */
+export async function applyExamPriceCorrection(params: {
+  followupId: number; newPrice: number; actor: Actor; tx?: any;
+}): Promise<FollowupRow> {
+  const price = Number(params.newPrice);
+  if (!Number.isInteger(price) || price <= 0) {
+    throw new FollowupError("كلفة الجهاز يجب أن تكون مبلغاً موجباً بالدينار الصحيح", 400);
+  }
+  const DRIFT = "تغيّرت حالة الملفّ التجاري أثناء الحفظ — لم يُعدَّل شيء. حدّث الصفحة وأعد المحاولة.";
+  const body = async (tx: any) => {
+    const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  **الشروطُ تُعاد تحت القفل**: التصنيفُ لقطةٌ قد تشيخ.
+    if (cur.priceSource !== "exam" || cur.convertedWorkOrderId !== null) {
+      throw new FollowupError(DRIFT, 409);
+    }
+    if (cur.approvedPrice === price) throw new FollowupError(DRIFT, 409);
+    //  **وطلبُ الخصم المعلَّق يُفحَص هنا** لا في التصنيف وحده: هو الطرفُ
+    //  الآخر من السباق، وقد وُلد بعد التصنيف وقبل هذا السطر. وتحريكُ
+    //  الأصلِ تحته يجعل خصماً معتمَداً يُحسَب على رقمٍ لم يعد قائماً.
+    //  **وبمرجع هذه المتابعة وحدها** — لا بكلّ طلبات المريض: العائدُ يملك
+    //  أكثر من جهاز، والخصمُ على أحدهما لا يمسّ الآخر.
+    const pend = await tx.execute(sql`
+      SELECT id FROM service_discount_requests
+       WHERE patient_id = ${cur.patientId}
+         AND department = ${cur.serviceType}
+         AND status = 'pending'
+         AND context_ref IN (${refList(deviceDiscountRefs({
+           followupId: cur.id, deviceEpisodeId: cur.deviceEpisodeId,
+           serviceType: cur.serviceType,
+         }))})
+       LIMIT 1
+    `);
+    if ((pend.rows ?? []).length > 0) {
+      throw new FollowupError(
+        "فُتح طلب خصم على السعر السابق أثناء الحفظ — لم يُعدَّل شيء."
+        + " احسم الطلب ثم صحّح السعر.", 409,
+      );
+    }
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${price}, updated_at = NOW()
+       WHERE id = ${cur.id} AND status = ${cur.status}
+         AND price_source = 'exam' AND converted_work_order_id IS NULL
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(DRIFT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      //  **نوعٌ خاصٌّ به لا `commercial_price_set`**: ذاك قرارُ مديرٍ
+      //  تجاريّ، وهذا تصحيحُ طبيبٍ لرقمه. وخلطُهما كان سيجعل التقرير يقرأ
+      //  تصحيحاً إملائياً قراراً تجارياً.
+      eventType: "exam_price_corrected",
+      fromStatus: cur.status, toStatus: cur.status,
+      payload: {
+        previousPrice: cur.approvedPrice, finalPrice: price,
+        previousPriceSource: cur.priceSource,
+        setByUserId: params.actor.userId, setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+    return toRow(row);
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ── الانتقالات ───────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Stethoscope, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { deviceDiscountRefs } from "@shared/discount";
 import { EXAM_FIELDS, SPECIALTY_LABELS, type ExamFieldKey, type MedicalSpecialty } from "@shared/medical";
 import { useDoctorGrant } from "./useDoctorGrant";
 import { api } from "@shared/routes";
@@ -32,6 +33,8 @@ export interface ExamToEdit {
   prescription?: Record<string, any> | null;
   deviceCost?: number | null;
   proposedExpertUserId?: number | null;
+  /** الجهازُ الذي فُحص — به تُطابَق المتابعةُ حين يحمل المريضُ أكثر من جهاز. */
+  deviceEpisodeId?: number | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -103,6 +106,65 @@ export function NewExamDialog({
       return res.json();
     },
   });
+
+  // ══ **هل ما زال السعرُ قابلاً للتصحيح؟** (تحرير فقط) ═══════════════════
+  //  الواقعة: كتب الطبيبُ ٦,٠٠٠,٠٠٠ ثم صحّحها — والسعرُ التجاري لم يتبعه،
+  //  فاضطرّ المالك إلى «تحديد السعر النهائي» لإصلاح رقم. والتصحيحُ الآن
+  //  يتبعه **قبل البيع**، ويُقفل بعده.
+  //
+  //  والقفلُ هنا **للعرض والشرح**: الخادمُ هو الحارس (يردّ ٤٠٩)، والشاشةُ
+  //  تقول للطبيب لماذا قبل أن يكتب رقماً سيُردّ.
+  const { data: followupRows } = useQuery<any[]>({
+    queryKey: [`/api/followups/patient/${patientId}`],
+    enabled: open && isEdit,
+    queryFn: async () => {
+      const res = await fetch(`/api/followups/patient/${patientId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const { data: discountRows } = useQuery<{ requests?: any[] }>({
+    queryKey: [`/api/discounts/patient/${patientId}`],
+    enabled: open && isEdit,
+    queryFn: async () => {
+      const res = await fetch(`/api/discounts/patient/${patientId}`, { credentials: "include" });
+      if (!res.ok) return { requests: [] };
+      return res.json();
+    },
+  });
+  // ══ **متابعةُ هذه المعاينة بعينها — لا أوّلُ متابعةٍ للمريض** ═══════════
+  //  المريضُ العائد يملك أكثر من جهاز: طرفٌ سُلِّم قبل سنتين وطلبٌ ثانٍ اليوم،
+  //  ولكلٍّ متابعتُه. وأخذُ `[0]` كان يقفل سعرَ الجهاز الثاني لأن الأول
+  //  بِيع — قفلٌ لا علاقةَ له بما يُحرَّر.
+  //
+  //  والمطابقةُ بالهويّة القانونية: المعاينةُ التي فتحت المتابعة، وإلّا
+  //  فالحلقةُ التي تخصّها.
+  const activeFollowup = (followupRows ?? []).find((f: any) =>
+    (exam?.id != null && Number(f?.medicalExamId) === Number(exam.id))
+    || (exam?.deviceEpisodeId != null
+      && Number(f?.deviceEpisodeId) === Number(exam.deviceEpisodeId))) ?? null;
+  const soldAlready = Boolean(activeFollowup)
+    && (activeFollowup.status === "converted" || activeFollowup.convertedWorkOrderId);
+  //  **والطلبُ المعلَّق بمرجع هذا الجهاز** — لا بأيّ طلبٍ للمريض. والمراجعُ
+  //  من المصدر المشترك نفسِه الذي يكتبها الخادم ويقرأها.
+  const deviceRefs = activeFollowup
+    ? deviceDiscountRefs({
+      followupId: activeFollowup.id,
+      deviceEpisodeId: activeFollowup.deviceEpisodeId ?? null,
+      serviceType: activeFollowup.serviceType,
+    })
+    : [];
+  const discountPending = (discountRows?.requests ?? []).some(
+    (r: any) => r?.status === "pending" && deviceRefs.includes(String(r?.contextRef)));
+  //  والقرارُ التجاريُّ الصريح يبقى كما هو — لكنه **لا يمنع** التصحيح على
+  //  المعاينة نفسها، فالحقلُ يبقى مفتوحاً وتُقال الملاحظةُ بعد الحفظ.
+  const priceLock: null | { why: string } =
+    !isEdit ? null
+      : soldAlready ? { why: "تم اعتماد البيع؛ تعديل المعاينة لا يغيّر السعر المالي." }
+        : discountPending ? {
+          why: "يوجد طلب خصم بانتظار الاعتماد محسوبٌ على هذا السعر — احسمه أولاً."
+            + " ويمكنك تعديل بقية المعاينة الآن.",
+        } : null;
 
   // The manufacturing experts of the patient's branch — the same roster
   // reception picks from, so the doctor's suggestion is always a real option.
@@ -263,7 +325,8 @@ export function NewExamDialog({
         title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
         // The server could not retire the superseded case (it already carries a
         // work order or tagged payments) — the doctor has to know both are open.
-        description: saved?.switchNote ?? undefined,
+        //  **وملاحظةُ السعر تُقال** — فيعرف الطبيبُ إن لم يتبعه الرقمُ التجاري.
+        description: [saved?.switchNote, saved?.priceNote].filter(Boolean).join(" · ") || undefined,
       });
       onDone?.();
     },
@@ -349,9 +412,16 @@ export function NewExamDialog({
                 placeholder="مثال: 1,500,000"
                 value={deviceCost}
                 onValueChange={(v) => setDeviceCost(v === null ? "" : String(v))}
-                className="bg-white"
+                readOnly={Boolean(priceLock)}
+                className={priceLock ? "bg-muted" : "bg-white"}
                 data-testid="input-exam-device-cost"
               />
+              {priceLock && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1"
+                  data-testid="text-device-cost-locked">
+                  {priceLock.why}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 كلفة <b>مقترحة</b>: تظهر لموظف الاستعلامات ولا تدخل الحسابات إلا حين
                 يعتمدها في «تخصيص وإسناد خبير» بعد موافقة المريض. فإن لم يدفع أو

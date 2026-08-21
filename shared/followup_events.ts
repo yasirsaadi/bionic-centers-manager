@@ -76,6 +76,10 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   expert_selected: "تم اختيار الخبير",
   initial_price_set: "تم إدخال السعر الأصلي",
   commercial_price_set: "تم تعديل السعر",
+  //  **تصحيحُ الطبيب لرقمه ليس قراراً تجارياً** — ولذلك نوعٌ خاصٌّ به:
+  //  خلطُه بـ`commercial_price_set` كان سيجعل التقرير يقرأ تصحيحاً إملائياً
+  //  قرارَ مديرٍ بالبيع بسعرٍ آخر.
+  exam_price_corrected: "صحّح الطبيب السعر الأصلي",
   discount_price_applied: "تم اعتماد الخصم",
   purchase_interest_signaled: "تم تسجيل موافقة المريض على الشراء",
   purchase_confirmed: "تم تأكيد الشراء",
@@ -154,6 +158,13 @@ export function followupEventView(
     case "initial_price_set": {
       const price = pos(p.finalPrice);
       if (price !== null) out.facts.push(`${money(price)} د.ع`);
+      break;
+    }
+    case "exam_price_corrected": {
+      const from = Number(p.previousPrice), to = Number(p.finalPrice);
+      if (Number.isFinite(from) && Number.isFinite(to) && to > 0) {
+        out.transition = { from, to };
+      }
       break;
     }
     case "commercial_price_set": {
