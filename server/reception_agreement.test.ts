@@ -627,6 +627,70 @@ async function main() {
     same("   ولا يُعرَض القسمُ للاستقبال",
       [(qRecv.body?.awaitingFull ?? []).length, qRecv.body?.canSupervise], [0, false]);
 
+    // ══ ف. الدورُ يسبق الاختصاص في سطح الإشراف ════════════════════════
+    console.log("\n── ف. الدور يسبق الاختصاص ──");
+    //  **العطب**: مسؤولٌ أو مديرٌ يحمل منحاً سريرياً في الأطراف كان
+    //  يُحجَب عنه المساند — فيُضيَّق عليه بسبب صلاحيةٍ زائدة لا ناقصة.
+    await q(`UPDATE system_users
+                SET can_write_medical_exam = true, medical_specialties = $1::jsonb
+              WHERE id = ANY($2::int[])`,
+    [JSON.stringify(["prosthetic"]), [ADMIN, MGR]]);
+
+    //  مريضان منتظران: أحدهما أطراف والآخر مساند — ليُقاس ما يصل كلَّ دور.
+    const pRolePros = await mk("ف — أطراف", { prosthetic: true, classification: "past" });
+    const reqF1 = (await mkReq(S.recv, pRolePros, "full")).body;
+    const pRoleSup = await mk("ف — مساند", { prosthetic: true, classification: "past" });
+    await q(`INSERT INTO patient_cases (patient_id, case_type, status, branch_id)
+             VALUES ($1,'medical_support','active',1) ON CONFLICT DO NOTHING`, [pRoleSup]);
+    const reqF2 = (await http("POST", "/api/medical-review/requests", S.recv, {
+      patientId: pRoleSup, serviceType: "medical_support", requestedPath: "full",
+      reviewKind: "new_device",
+    })).body;
+    check(Boolean(reqF1?.id) && Boolean(reqF2?.id), "ف. طلبان أُنشئا (أطراف ومساند)",
+      `${JSON.stringify(reqF1)} ${JSON.stringify(reqF2)}`);
+
+    const specsOf = async (session: any) => {
+      const r = await http("GET", "/api/medical-review/queue", session);
+      return {
+        specialties: [...(r.body?.specialties ?? [])].sort(),
+        awaiting: ((r.body?.awaitingFull ?? []) as any[]).map((x) => x.id).sort(),
+      };
+    };
+
+    //  أ) مسؤولٌ عام بمنحٍ سريريٍّ في الأطراف ⟶ الاثنان.
+    const adm = await specsOf(S.admin);
+    same("ف.أ **المسؤولُ ذو المنح السريريّ يشرف على الاختصاصين**",
+      adm.specialties, ["medical_support", "prosthetic"]);
+    check(adm.awaiting.includes(reqF1.id) && adm.awaiting.includes(reqF2.id),
+      "   والطلبان المنتظران يصلانه معاً", JSON.stringify(adm.awaiting));
+
+    //  ب) مديرُ فرعٍ بالمنح نفسه ⟶ الاثنان داخل نطاقه.
+    const mg = await specsOf(S.mgr);
+    same("ف.ب **ومديرُ الفرع كذلك — إشرافُه إداريّ لا مهنيّ**",
+      mg.specialties, ["medical_support", "prosthetic"]);
+    check(mg.awaiting.includes(reqF1.id) && mg.awaiting.includes(reqF2.id),
+      "   والطلبان يصلانه في فرعه", JSON.stringify(mg.awaiting));
+
+    //  ج) طبيبُ أطرافٍ فقط ⟶ الأطراف وحدها.
+    await q(`UPDATE system_users SET medical_specialties = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(["prosthetic"]), DOC]);
+    const dc = await specsOf(S.doc);
+    same("ف.ج **والطبيبُ باختصاصه المسجَّل وحده**", dc.specialties, ["prosthetic"]);
+    check(dc.awaiting.includes(reqF1.id) && !dc.awaiting.includes(reqF2.id),
+      "   فيصله طلبُ الأطراف ولا يصله المساند", JSON.stringify(dc.awaiting));
+
+    //  د) والفرعُ يبقى حاجزاً فوق ذلك كلِّه.
+    const mg2 = await specsOf(S.mgr2);
+    same("ف.د ومديرُ الفرع الآخر يشرف على الاختصاصين — في فرعه هو",
+      mg2.specialties, ["medical_support", "prosthetic"]);
+    same("   **ولا يصله شيءٌ من فرعٍ ليس له**", mg2.awaiting, []);
+
+    await q(`UPDATE system_users
+                SET can_write_medical_exam = false, medical_specialties = NULL
+              WHERE id = ANY($1::int[])`, [[ADMIN, MGR]]);
+    await q(`UPDATE system_users SET medical_specialties = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(["prosthetic", "medical_support"]), DOC]);
+
     // ══ ك. الفرعُ حاجز ═══════════════════════════════════════════════
     console.log("\n── ك. حدود الفرع ──");
     const reqK = (await mkReq(S.recv, pG, "quick")).body ?? {};

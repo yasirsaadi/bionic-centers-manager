@@ -134,12 +134,23 @@ async function requestServiceType(id: number): Promise<string | null> {
  * فارغة كان يعني صفحةً فارغة لمن الصفحةُ له.
  */
 async function reviewSpecialtiesFor(userId: number | null): Promise<readonly string[]> {
-  const mine = await medical.doctorSpecialties(userId);
-  const device = mine.filter((s) => (REVIEW_SERVICE_TYPES as readonly string[]).includes(s));
-  if (device.length > 0) return device;
   const u = await liveUser(userId);
-  if (u && (u.isAdmin || u.role === "branch_manager")) return REVIEW_SERVICE_TYPES;
-  return [];
+  if (!u) return [];
+  //  ══ **الدورُ يسبق الاختصاص — لا العكس** ═════════════════════════════
+  //  أوّلُ تنفيذٍ سأل عن الاختصاصات أوّلاً، فمَن حمل منها شيئاً رجع بها
+  //  ولم يُسأل عن دوره. والنتيجةُ عكسُ المقصود بالضبط: **مسؤولٌ عام يحمل
+  //  منحاً سريرياً في الأطراف كان يُحجَب عنه المساند** — فيُضيَّق عليه
+  //  بسبب صلاحيةٍ زائدة لا ناقصة.
+  //
+  //  والإشرافُ الإداريُّ ليس مهنةً في تخصّص: المسؤولُ ومديرُ الفرع
+  //  مسؤولان عن **حركة مرضاهما كلِّها**، فلا يُرشَّحان باختصاص. أمّا
+  //  الطبيبُ فاختصاصاتُه المسجَّلة وحدها.
+  //
+  //  (والفرعُ يبقى حاجزاً في `branchScope`، و`specialtyAllowed` تحرس
+  //  الفعلَ نفسه — هذه للعرض لا للإذن.)
+  if (u.isAdmin || u.role === "branch_manager") return REVIEW_SERVICE_TYPES;
+  const mine = await medical.doctorSpecialties(userId);
+  return mine.filter((s) => (REVIEW_SERVICE_TYPES as readonly string[]).includes(s));
 }
 
 export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) {
