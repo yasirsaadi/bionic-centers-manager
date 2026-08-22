@@ -48,6 +48,7 @@ import { NEW_SERVICE_DEPARTMENT, isPatientClassification } from "@shared/service
 import { DeviceEpisodeError } from "./device_episodes/store";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
+import { registerPatientWhatsappWebhook } from "./patient_whatsapp/webhook";
 import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
@@ -7074,6 +7075,13 @@ export async function registerRoutes(
   // Secret-Token header, compared in constant time. Separate bot, separate
   // module, separate credentials from the admin notification bot.
   registerPatientTelegramWebhook(app);
+
+  // Patient WhatsApp webhook — the new-link channel. PUBLIC by necessity, and
+  // guarded harder than Telegram's: GET carries Meta's own verify-token
+  // challenge, POST is authenticated by an HMAC-SHA256 signature over the RAW
+  // body (captured by express.json({verify}) in index.ts). Separate module,
+  // separate credentials, no knowledge of manufacturing.
+  registerPatientWhatsappWebhook(app);
 
   return httpServer;
 }

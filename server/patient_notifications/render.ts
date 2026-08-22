@@ -98,9 +98,35 @@ function orderCreatedText(serviceType: unknown): string {
     "سنوافيك بتحديثات مراحل العمل عبر هذه القناة.";
 }
 
-const WELCOME_TEXT =
-  "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي. " +
-  "تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح.";
+const WELCOME_INTRO =
+  "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي.";
+
+/**
+ * **السطرُ الوحيد في الكتالوج كلِّه الذي يعرف قناته** — ويجب أن يعرفها:
+ * «تم ربط حساب Telegram» في رسالةٍ تصل عبر واتساب كذبٌ يقرؤه المريض.
+ *
+ * وما عداه — كلُّ نصوص المراحل والمواعيد — **مستقلٌّ عن القناة حرفياً**.
+ * ولذلك لم يُنسَخ الكتالوج ولم تُشتَقّ منه نسخةٌ ثانية: مُعامِلٌ اختياريّ
+ * صغير يمرّ إلى هذه الدالّة وحدها، وكلُّ شيءٍ آخر يبقى كما هو بايتاً.
+ *
+ * والمجهولُ يرجع إلى الصيغة العامّة: صفٌّ قديمٌ بلا قناة معروفة يقول «تم
+ * ربط حسابك» — صحيحةٌ في كلّ حال، ولا تسمّي قناةً قد لا تكون هي.
+ */
+const CHANNEL_WELCOME: Record<string, string> = {
+  whatsapp: "تم ربط حساب واتساب بملفك في نظام المراكز الموحد بنجاح.",
+  telegram: "تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح.",
+};
+const GENERIC_WELCOME = "تم ربط حسابك بملفك في نظام المراكز الموحد بنجاح.";
+
+/**
+ * سياقُ الإرسال — **صغيرٌ عمداً**.
+ *
+ * ليس «القناة» بمعنى النقل، بل ما يحتاجه النصُّ ليصدق. ولا يحمل معرّفاً ولا
+ * توكناً ولا شيئاً عن المزوّد: العارضُ لا يعرف كيف تُرسَل الرسالة.
+ */
+export interface RenderContext {
+  channel?: string | null;
+}
 
 /**
  * الترحيب — ومعه رمزُ المريض إن حملته الحمولة (ترحيل ٠٥٢).
@@ -111,10 +137,12 @@ const WELCOME_TEXT =
  *
  * ولا يُقبل إلا رمزٌ قانوني: حمولةٌ مشوّهة تُهمَل بصمت بدل أن تُطبع كما هي.
  */
-function welcomeText(payload: Record<string, unknown>): string {
+function welcomeText(payload: Record<string, unknown>, ctx: RenderContext): string {
+  const channel = typeof ctx.channel === "string" ? ctx.channel : "";
+  const intro = `${WELCOME_INTRO} ${CHANNEL_WELCOME[channel] ?? GENERIC_WELCOME}`;
   const code = payload.patientCode;
-  if (!isCanonicalPatientCode(code)) return WELCOME_TEXT;
-  return `${WELCOME_TEXT}\nرمز المريض الخاص بك: ${code}\n`
+  if (!isCanonicalPatientCode(code)) return intro;
+  return `${intro}\nرمز المريض الخاص بك: ${code}\n`
     + "احتفظ بهذا الرمز لاستخدامه عند مراجعة المركز.";
 }
 
@@ -158,6 +186,8 @@ function deliveryDateText(payload: Record<string, unknown>): string | null {
 export function renderNotification(
   notificationType: string,
   payload: Record<string, unknown> | null | undefined,
+  /** سياقُ الإرسال. اختياريّ: كلُّ نوعٍ عداه الترحيب لا يقرؤه أصلاً. */
+  ctx: RenderContext = {},
 ): string | null {
   const p = payload ?? {};
   switch (notificationType) {
@@ -176,7 +206,7 @@ export function renderNotification(
       return deliveryDateText(p);
 
     case LINK_NOTIFICATION_TYPES.WELCOME:
-      return welcomeText(p);
+      return welcomeText(p, ctx);
 
     // لقطة الحالة عند الربط: **حالة** لا **تحديث** — المريض لم يتغيّر عنده
     // شيء الآن، هو فقط يرى أين وصل. فصيغتها ثابتة لكل المراحل.
@@ -189,6 +219,22 @@ export function renderNotification(
     default:
       return null;
   }
+}
+
+/**
+ * هل هذا النوعُ من رسائل **لحظةِ الربط**؟
+ *
+ * ══ ولماذا يهمّ ════════════════════════════════════════════════════════
+ * لأن واتساب يفرّق بينهما فرقاً جوهرياً. رسائلُ الربط تقع **بعد ثوانٍ** من
+ * أن أرسل المريضُ رسالتَه بنفسه، فنافذةُ المحادثة مفتوحة ويمرّ النصُّ كما هو.
+ * أما تحديثُ مرحلةٍ فقد يقع بعد ثلاثة أسابيع من آخر كلمةٍ قالها — ولا نافذةَ
+ * يجوز افتراضُها، فيلزم قالبٌ معتمَد.
+ *
+ * والتمييزُ يُشتقّ من `LINK_NOTIFICATION_TYPES` نفسها لا من قائمةٍ ثانية
+ * تُكتب بجوارها فتنحرف عنها.
+ */
+export function isLinkNotificationType(notificationType: string): boolean {
+  return (Object.values(LINK_NOTIFICATION_TYPES) as string[]).includes(notificationType);
 }
 
 /** الأنواع التي لها نصّ فعلاً — يُشتقّ لا يُكتب مرّتين. */

@@ -26,9 +26,11 @@
 
 import type { Express } from "express";
 import { createHash, timingSafeEqual } from "crypto";
-import { redeemLinkToken, LinkTokenError, patientsForExternalId } from "../patient_contacts/store";
+import { LinkTokenError } from "../patient_contacts/store";
 // الرمز وحده — هذه الوحدة لا تعرف الملفّ ولا تقرأ منه شيئاً آخر.
-import { patientCodesFor } from "../patient_code/store";
+// **والمنطقُ مشتركٌ مع واتساب** في `patient_code/messages.ts`: جوابُ «ما
+// رمزُ ملفّي؟» لا يحتمل نسختين تنحرف إحداهما عن الأخرى.
+import { patientCodesReply, patientCodesMessage, NO_LINKED_PATIENT } from "../patient_code/messages";
 import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
 import { sendMessage } from "./client";
 // الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
@@ -43,7 +45,8 @@ export const MESSAGES = {
   linked: "تم ربط حساب Telegram بملف المريض بنجاح.",
   invalid: "رابط الربط غير صالح أو انتهت صلاحيته. يرجى طلب رابط جديد من المركز.",
   noPayload: "لبدء الربط، افتح رابط الربط الذي زوّدك به المركز.",
-  noLinkedPatient: "لا يوجد ملف مريض مرتبط بهذا الحساب حالياً. يرجى طلب رابط ربط جديد من المركز.",
+  //  **من المصدر المشترك** — نفسُ النصّ حرفياً في القناتين.
+  noLinkedPatient: NO_LINKED_PATIENT,
 } as const;
 
 /**
@@ -90,20 +93,16 @@ export function isIdCommand(text: unknown): boolean {
 }
 
 /**
- * نصّ الردّ على `/id`.
+ * نصّ الردّ على `/id` — **يُعاد تصديرُه من المصدر المشترك**.
  *
- * حسابٌ واحد قد يكون مربوطاً بأكثر من ملفّ مشروعاً (أبٌ يتابع ابنيه)، فكلّ
- * الرموز الحالية تُعرَض. **ولا شيء غيرها**: لا اسم، ولا تشخيص، ولا جهاز،
- * ولا مال، ولا هاتف، ولا رقم صفّ — فمن يصل إلى الحساب لا يصل إلى الملفّ.
+ * كان يُكتب هنا. ونقلُه إلى `patient_code/messages.ts` كان شرطَ إضافةِ
+ * واتساب بلا نسخة ثانية: حدُّ ما يخرج في هذا الجواب هو حدُّ ما يعرفه مَن
+ * يمسك هاتفاً، وانحرافُ نسخةٍ عن أختها تسريبٌ في قناةٍ دون أخرى.
  *
- * وبلا ربطٍ نشِط: نصٌّ عامّ واحد. لا يفرّق بين «لا حساب» و«حسابٌ سُحب
- * ربطه» — الفرقُ في الردّ يجعل البوت أداةَ استكشاف، وعلاجُ الحالتين واحد.
+ * ويبقى مُصدَّراً من هنا: اختباراتٌ قائمة تستورده، وكسرُها بلا سببٍ ليس
+ * ترحيلاً بل ضجيج.
  */
-export function patientCodesMessage(codes: string[]): string {
-  if (codes.length === 0) return MESSAGES.noLinkedPatient;
-  if (codes.length === 1) return `رمز المريض الخاص بك: ${codes[0]}`;
-  return "رموز الملفّات المرتبطة بحسابك:\n" + codes.map((c) => `• ${c}`).join("\n");
-}
+export { patientCodesMessage };
 
 export function registerPatientTelegramWebhook(app: Express) {
   console.log(patientBotStatusLine());
@@ -144,9 +143,7 @@ export function registerPatientTelegramWebhook(app: Express) {
       // مَن يكتب رقم ملفٍّ آخر لا يحصل على شيء. والمسحوب ربطُه لا يُحتسب.
       // ولا حدث مريض يُسجَّل: سؤالُ المريض عن رمزه ليس واقعةً في ملفّه.
       if (isIdCommand(message.text)) {
-        const contacts = await patientsForExternalId("telegram", String(fromId));
-        const codes = await patientCodesFor(contacts.map((c) => c.patientId));
-        await sendMessage(chatId, patientCodesMessage(codes));
+        await sendMessage(chatId, await patientCodesReply("telegram", String(fromId)));
         return res.json({ ok: true });
       }
 

@@ -29,6 +29,7 @@ import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import { patientBotDeepLink } from "../patient_telegram/config";
+import { patientWhatsappDeepLink } from "../patient_whatsapp/config";
 import {
   createLinkToken, revokeLinkToken, revokeContact,
   listActiveContacts, listPendingTokens, getLinkToken, getContact,
@@ -216,11 +217,22 @@ export function registerPatientCommunicationRoutes(app: Express, isAuthenticated
         userAgent: req.get?.("user-agent") ?? null,
       });
 
-      // الرابط العميق: **لقناة تلغرام وحدها**، و**فقط إن كان البوت
-      // مُعدّاً بالكامل** — رابطٌ إلى بوتٍ لا نستطيع خدمته يعد المريض بما
-      // لا يقع. وهو النصّ الخام بثوبٍ آخر: لا يُخزَّن ولا يُدقَّق، ويُحجب
-      // من السجلّ باسم حقله كما يُحجب النصّ باسمه.
-      const telegramDeepLink = token.channel === "telegram" ? patientBotDeepLink(rawToken) : null;
+      // ══ الرابطُ العميق — **بحقلٍ محايدٍ للقناة** ═══════════════════════
+      // كان الحقلُ اسمُه `telegramDeepLink`، فكانت الواجهةُ تعرف قناتَها من
+      // **اسم حقلٍ في JSON**. وإضافةُ واتساب بحقلٍ ثانٍ كانت ستجعل الشاشةَ
+      // تجرّب الحقول بالترتيب — وهو تخمينٌ لا عقد.
+      //
+      // فـ`deepLink` واحدٌ لكلّ القنوات، و`channel` بجواره يقول أيَّها هو.
+      // و`telegramDeepLink` **يبقى** لتلغرام وحده: عملاءُ قدامى واختباراتٌ
+      // قائمة يقرؤونه، وكسرُهم بلا سببٍ ليس ترحيلاً بل ضجيج. والجديدُ يقرأ
+      // العقدَ العامّ.
+      //
+      // **وفقط إن كانت القناةُ مُعدّةً بالكامل**: رابطٌ إلى تكاملٍ لا نستطيع
+      // خدمته يعد المريضَ بما لا يقع. وهو النصُّ الخام بثوبٍ آخر — لا
+      // يُخزَّن ولا يُدقَّق، ويُحجب من السجلّ باسم حقله كما يُحجب النصُّ باسمه.
+      const deepLink = token.channel === "whatsapp" ? patientWhatsappDeepLink(rawToken)
+        : token.channel === "telegram" ? patientBotDeepLink(rawToken)
+        : null;
 
       // إسقاط صريح حقلاً بحقل — لا نشر للصفّ. الصفّ يحمل `tokenHash`، ونشرُه
       // كان سيُخرجه اليوم أو يُخرج أي عمود يُضاف غداً.
@@ -230,7 +242,8 @@ export function registerPatientCommunicationRoutes(app: Express, isAuthenticated
         channel: token.channel,
         relation: token.relation,
         expiresAt: token.expiresAt,
-        ...(telegramDeepLink ? { telegramDeepLink } : {}),
+        ...(deepLink ? { deepLink } : {}),
+        ...(deepLink && token.channel === "telegram" ? { telegramDeepLink: deepLink } : {}),
       });
     } catch (err) {
       // رسالة عامّة: نصّ الاستثناء قد يحمل قيماً من الطلب.

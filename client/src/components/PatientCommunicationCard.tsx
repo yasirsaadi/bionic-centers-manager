@@ -1,16 +1,24 @@
-// بطاقة «تواصل المريض» — إدارة ربط تلغرام من صفحة المريض.
+// بطاقة «تواصل المريض» — **واتساب هي قناةُ الروابط الجديدة**.
 //
 // ══ ما لا تفعله هذه الواجهة ═════════════════════════════════════════════
-// **لا تنادي Bot API إطلاقاً.** لا ترسل رسالة، ولا تختبر بوتاً، ولا تعرف
-// توكناً. مهمّتها ربط الحساب فقط — والترحيب ولقطة الحالة يرسلهما صندوق
-// الصادر تلقائياً بعد أن يضغط المريض Start، فيستفيدان من إعادة المحاولة.
-// وزرّ «رسالة تجريبية» كان سيفتح مساراً يتجاوز الصادر كلّه.
+// **لا تنادي مزوّداً إطلاقاً.** لا Bot API ولا Graph، ولا ترسل رسالة، ولا
+// تعرف توكناً. مهمّتها إصدارُ رابطِ ربطٍ فقط — والترحيبُ ولقطةُ الحالة
+// يرسلهما صندوقُ الصادر تلقائياً بعد أن يرسل المريضُ رسالةَ الربط بنفسه،
+// فيستفيدان من إعادة المحاولة. وزرُّ «رسالة تجريبية» كان سيفتح مساراً
+// يتجاوز الصادرَ كلَّه.
 //
 // ══ وما لا تعرضه ════════════════════════════════════════════════════════
-// لا `externalId` — الموظّف لا يحتاج معرّف حساب تلغرام (والخادم لا يرسله
-// أصلاً). ولا بصمة تذكرة. ولا نصّ التذكرة عارياً: الرابط العميق يُعرَض
-// **رمزاً ونسخاً** لا نصّاً مقروءاً، ويعيش في حالة النافذة وحدها ويُمحى
-// بإغلاقها. ولا يدخل سجلّاً ولا تخزيناً محلّياً ولا عنوان صفحة.
+// لا `externalId` — الموظّفُ لا يحتاج رقمَ واتساب صاحبِ الحساب ولا معرّفَ
+// تلغرام، **والخادمُ لا يرسلهما أصلاً**. ولا بصمةَ تذكرة. ولا نصَّ التذكرة
+// عارياً: الرابطُ يُعرَض **رمزاً ونسخاً** لا نصّاً مقروءاً، ويعيش في حالة
+// النافذة وحدها ويُمحى بإغلاقها. ولا يدخل سجلّاً ولا تخزيناً محلّياً ولا
+// عنوانَ صفحة.
+//
+// ══ وتلغرام أثناء الانتقال ══════════════════════════════════════════════
+// **لا يُنشأ رابطُ تلغرام جديد من هنا بعد اليوم.** لكنّ المرتبطين به فعلاً
+// يظهرون في قسمٍ صغير «ربط قديم» بزرّ سحبِهم — ولا يُسحبون تلقائياً: مريضٌ
+// ينتظر طرفَه ويستلم تحديثاته على تلغرام لا يجوز أن ينقطع عنه لأننا بدّلنا
+// القناة. التقاعدُ يقع بعد إثبات واتساب على الإنتاج، وفي تغييرٍ صريح.
 //
 // ══ والصلاحية من الخادم لا من الإخفاء ══════════════════════════════════
 // كل نقطة تفحص بنفسها (دور مؤهَّل ثم نطاق فرع المريض). فإن ردّ الخادم 403
@@ -37,6 +45,11 @@ import { useToast } from "@/hooks/use-toast";
 import { classifyCommunicationError, hasNewContact } from "./patient_communication_logic";
 
 // ── المفردات ──────────────────────────────────────────────────────────────
+
+/** القناةُ التي تُصدَر بها الروابطُ الجديدة — **في موضعٍ واحد**. */
+const LINK_CHANNEL = "whatsapp";
+/** القناةُ الموروثة: تُقرأ وتُسحَب، **ولا تُنشأ**. */
+const LEGACY_CHANNEL = "telegram";
 
 /** الصلات كما يقرؤها الموظّف ⇒ القيم التي يقبلها الخادم. */
 const RELATIONS: { value: string; label: string }[] = [
@@ -118,12 +131,17 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
   // تُعرَض أزرارٌ تفترضها.
   const failure = state.isError ? classifyCommunicationError(state.error) : null;
   const data = state.data;
-  const activeTelegram = useMemo(
-    () => (data?.activeContacts ?? []).filter((c) => c.channel === "telegram"),
+  const activeWhatsapp = useMemo(
+    () => (data?.activeContacts ?? []).filter((c) => c.channel === LINK_CHANNEL),
     [data],
   );
-  const pendingTelegram = useMemo(
-    () => (data?.pendingTokens ?? []).filter((t) => t.channel === "telegram"),
+  const pendingWhatsapp = useMemo(
+    () => (data?.pendingTokens ?? []).filter((t) => t.channel === LINK_CHANNEL),
+    [data],
+  );
+  /** المرتبطون بتلغرام فعلاً — **قراءةٌ وسحبٌ فقط، ولا إنشاء**. */
+  const legacyTelegram = useMemo(
+    () => (data?.activeContacts ?? []).filter((c) => c.channel === LEGACY_CHANNEL),
     [data],
   );
 
@@ -132,17 +150,17 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
    * تغيّر الصلة يستبدل الجهة ولا يزيدها، فالعدد يبقى واحداً والربط نجح.
    */
   const [baselineIds, setBaselineIds] = useState<number[]>([]);
-  const currentIds = useMemo(() => activeTelegram.map((c) => c.id), [activeTelegram]);
+  const currentIds = useMemo(() => activeWhatsapp.map((c) => c.id), [activeWhatsapp]);
   useEffect(() => {
     if (dialogOpen && deepLink && !justLinked && hasNewContact(baselineIds, currentIds)) {
       setJustLinked(true); // يوقف الاستطلاع (الشرط أعلاه) ويُظهر النجاح
       setDeepLink(null);   // **الرابط يُمحى فور نجاحه** — أدّى عمله
-      toast({ title: "تم ربط Telegram بالمريض بنجاح." });
+      toast({ title: "تم ربط واتساب بالمريض بنجاح." });
     }
   }, [currentIds, baselineIds, dialogOpen, deepLink, justLinked, toast]);
 
   function openDialog() {
-    setBaselineIds(activeTelegram.map((c) => c.id));
+    setBaselineIds(activeWhatsapp.map((c) => c.id));
     setRelation("self");
     setDeepLink(null);
     setCopied(false);
@@ -163,14 +181,16 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
   const issue = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/patients/${patientId}/communication/link-tokens`, {
-        channel: "telegram",
+        channel: LINK_CHANNEL,
         relation,
       });
       return res.json();
     },
-    onSuccess: async (payload: { tokenId?: number; telegramDeepLink?: string }) => {
-      if (!payload.telegramDeepLink) {
-        // **تذكرةٌ صدرت بلا رابط يُعرَض** — البوت غير مُعدّ على الخادم.
+    // **العقدُ العامّ `deepLink`** — لا حقلٌ باسم قناته. الخادمُ يقول
+    // `channel` بجواره، فالشاشةُ لا تخمّن قناتها من اسم مفتاحٍ في JSON.
+    onSuccess: async (payload: { tokenId?: number; deepLink?: string }) => {
+      if (!payload.deepLink) {
+        // **تذكرةٌ صدرت بلا رابط يُعرَض** — واتساب غير مُعدّ على الخادم.
         // تركُها يُبقي «رابطاً بانتظار المريض» لا وجود له، فيمنع إصدار
         // غيره ويُربك الموظّف. فتُسحَب فوراً «بذل جهد»: فشلُ السحب لا
         // يُخفي الخطأ الأصلي، والصفّ يبقى ظاهراً بزرّ إلغائه.
@@ -185,12 +205,12 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
         queryClient.invalidateQueries({ queryKey: key });
         toast({
           title: "تعذّر إنشاء الرابط",
-          description: "تكامل Telegram غير مُفعَّل على الخادم. راجع المسؤول.",
+          description: "تكامل واتساب غير مُفعَّل على الخادم. راجع المسؤول.",
           variant: "destructive",
         });
         return;
       }
-      setDeepLink(payload.telegramDeepLink);
+      setDeepLink(payload.deepLink);
       queryClient.invalidateQueries({ queryKey: key });
     },
     onError: (err: any) =>
@@ -214,7 +234,7 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
       await apiRequest("POST", `/api/patients/${patientId}/communication/contacts/${contactId}/revoke`);
     },
     onSuccess: () => {
-      toast({ title: "أُلغي ربط Telegram" });
+      toast({ title: "أُلغي الربط" });
       queryClient.invalidateQueries({ queryKey: key });
     },
     onError: (err: any) =>
@@ -242,7 +262,7 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
       <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50" data-testid="card-communication">
         <h3 className="font-bold text-lg flex items-center gap-2 text-sky-700 mb-4">
           <MessageCircle className="w-5 h-5" />
-          تواصل المريض
+          تواصل المريض — واتساب
         </h3>
         <p
           className="text-sm text-muted-foreground flex items-center gap-2"
@@ -269,35 +289,35 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
     <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50" data-testid="card-communication">
       <h3 className="font-bold text-lg flex items-center gap-2 text-sky-700 mb-4">
         <MessageCircle className="w-5 h-5" />
-        تواصل المريض
+        تواصل المريض — واتساب
       </h3>
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-700">Telegram</span>
+          <span className="font-semibold text-slate-700">واتساب</span>
           {state.isLoading ? (
             <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-          ) : activeTelegram.length > 0 ? (
-            <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100" data-testid="badge-telegram-linked">
+          ) : activeWhatsapp.length > 0 ? (
+            <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100" data-testid="badge-whatsapp-linked">
               مربوط ✓
             </Badge>
-          ) : pendingTelegram.length > 0 ? (
-            <Badge variant="outline" className="text-amber-700 border-amber-300" data-testid="badge-telegram-pending">
+          ) : pendingWhatsapp.length > 0 ? (
+            <Badge variant="outline" className="text-amber-700 border-amber-300" data-testid="badge-whatsapp-pending">
               بانتظار المريض
             </Badge>
           ) : (
-            <Badge variant="outline" className="text-muted-foreground" data-testid="badge-telegram-unlinked">
+            <Badge variant="outline" className="text-muted-foreground" data-testid="badge-whatsapp-unlinked">
               غير مربوط
             </Badge>
           )}
         </div>
 
         {/* ── المربوط ──────────────────────────────────────────────────── */}
-        {activeTelegram.map((c) => (
+        {activeWhatsapp.map((c) => (
           <div
             key={c.id}
             className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 space-y-1"
-            data-testid={`row-telegram-contact-${c.id}`}
+            data-testid={`row-whatsapp-contact-${c.id}`}
           >
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm">
@@ -322,7 +342,7 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
         {/* ── رابط معلَّق ──────────────────────────────────────────────── */}
         {/* نصّ الرابط لا يُخزَّن، فلا سبيل لإعادة عرض رابطٍ قديم. المخرج
             الصحيح: إلغاؤه وإصدار غيره — وهذا ما تقوله البطاقة صراحةً. */}
-        {pendingTelegram.map((tk) => (
+        {pendingWhatsapp.map((tk) => (
           <div
             key={tk.id}
             className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2"
@@ -352,46 +372,87 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
         {/* رابطٌ معلَّق قائم ⇒ لا إصدار ثانٍ. تذكرتان حيّتان لمريض واحد
             تُربكان الموظّف (أيّهما أعطيته؟) بلا فائدة — والمخرج إلغاء
             القائم، وهو زرٌّ ظاهر فوق. */}
-        {pendingTelegram.length > 0 ? (
+        {pendingWhatsapp.length > 0 ? (
           <p className="text-xs text-center text-muted-foreground" data-testid="text-pending-blocks-issue">
             يوجد رابط ربط بانتظار المريض. ألغِه أولاً لإصدار رابط جديد.
           </p>
         ) : (
           <Button
             onClick={openDialog}
-            variant={activeTelegram.length > 0 ? "outline" : "default"}
+            variant={activeWhatsapp.length > 0 ? "outline" : "default"}
             className="w-full"
             disabled={state.isLoading}
-            data-testid="button-link-telegram"
+            data-testid="button-link-whatsapp"
           >
             <Link2 className="w-4 h-4 ml-2" />
-            {activeTelegram.length > 0 ? "ربط حساب آخر" : "ربط Telegram"}
+            {activeWhatsapp.length > 0 ? "ربط رقم آخر" : "ربط واتساب"}
           </Button>
+        )}
+
+        {/* ══ تلغرام — ربط قديم ═══════════════════════════════════════════
+            **يُقرأ ويُسحَب، ولا يُنشأ.** ولا زرَّ ربطٍ هنا إطلاقاً: القناةُ
+            الجديدة واحدة، وإبقاءُ بابٍ ثانٍ مفتوحاً يعني موظّفاً يربط اليوم
+            بقناةٍ سنتقاعدها غداً. والسحبُ يبقى متاحاً لمن أراده، ولا يقع
+            تلقائياً — الانقطاعُ عن مريضٍ ينتظر جهازه أسوأُ من قناةٍ قديمة. */}
+        {legacyTelegram.length > 0 && (
+          <div className="pt-3 border-t border-border/60 space-y-2" data-testid="section-legacy-telegram">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span>Telegram — ربط قديم</span>
+              <Badge variant="outline" className="text-[10px] text-slate-600">
+                يستمر الإرسال مؤقتاً
+              </Badge>
+            </div>
+            {legacyTelegram.map((c) => (
+              <div
+                key={c.id}
+                className="rounded-lg border border-slate-200 bg-white/60 p-2 flex items-center justify-between gap-2"
+                data-testid={`row-legacy-telegram-${c.id}`}
+              >
+                <div className="text-xs">
+                  <div className="font-medium text-slate-700">
+                    {RELATION_LABEL[c.relation] ?? c.relation}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    رُبِط في {formatDateTime(c.linkedAt)}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 shrink-0 h-7 text-xs"
+                  onClick={() => setConfirmRevokeContact(c.id)}
+                  disabled={revokeContact.isPending}
+                  data-testid={`button-revoke-contact-${c.id}`}
+                >
+                  إلغاء الربط
+                </Button>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
       {/* ══ نافذة الإصدار ══════════════════════════════════════════════ */}
       <Dialog open={dialogOpen} onOpenChange={closeDialog}>
-        <DialogContent className="sm:max-w-md" dir="rtl" data-testid="dialog-link-telegram">
+        <DialogContent className="sm:max-w-md" dir="rtl" data-testid="dialog-link-whatsapp">
           <DialogHeader>
-            <DialogTitle>ربط حساب Telegram</DialogTitle>
+            <DialogTitle>ربط واتساب</DialogTitle>
             <DialogDescription>
               {justLinked
                 ? "تم الربط بنجاح."
                 : deepLink
-                  ? "اطلب من المريض مسح رمز QR ثم الضغط على Start في Telegram مرة واحدة فقط."
-                  : "اختر صلة صاحب الحساب بالمريض، ثم أنشئ الرابط."}
+                  ? "اطلب من المريض مسح رمز QR ثم إرسال الرسالة الجاهزة في واتساب مرة واحدة فقط."
+                  : "اختر صلة صاحب الرقم بالمريض، ثم أنشئ الرابط."}
             </DialogDescription>
           </DialogHeader>
 
           {justLinked ? (
             <div className="py-6 text-center space-y-2" data-testid="text-link-success">
               <Check className="w-10 h-10 mx-auto text-emerald-600" />
-              <p className="font-semibold text-emerald-700">تم ربط Telegram بالمريض بنجاح.</p>
+              <p className="font-semibold text-emerald-700">تم ربط واتساب بالمريض بنجاح.</p>
             </div>
           ) : !deepLink ? (
             <div className="space-y-3 py-2">
-              <label className="text-sm font-medium">صلة صاحب الحساب بالمريض</label>
+              <label className="text-sm font-medium">صلة صاحب الرقم بالمريض</label>
               <Select value={relation} onValueChange={setRelation}>
                 <SelectTrigger data-testid="select-relation">
                   <SelectValue />
@@ -413,7 +474,8 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
                 <QRCodeSVG value={deepLink} size={220} level="M" includeMargin />
               </div>
               <p className="text-xs text-center text-amber-700 bg-amber-50 rounded-lg py-2 px-3">
-                الرابط صالح لمدة 15 دقيقة ويُستخدم مرة واحدة.
+                الرابط صالح لمدة 15 دقيقة ويُستخدم مرة واحدة. يجب أن يرسل المريض
+                الرسالة الجاهزة بنفسه من رقمه.
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1" onClick={copyLink} data-testid="button-copy-link">
@@ -422,17 +484,17 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
                 </Button>
                 <Button
                   variant="outline" className="flex-1" asChild
-                  data-testid="button-open-telegram"
+                  data-testid="button-open-whatsapp"
                 >
                   <a href={deepLink} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="w-4 h-4 ml-2" />
-                    فتح Telegram
+                    فتح واتساب
                   </a>
                 </Button>
               </div>
               <p className="text-xs text-center text-muted-foreground flex items-center justify-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                بانتظار ضغط المريض على Start…
+                بانتظار إرسال المريض لرسالة الربط…
               </p>
             </div>
           )}
@@ -462,7 +524,7 @@ export default function PatientCommunicationCard({ patientId }: { patientId: num
       >
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
-            <AlertDialogTitle>إلغاء ربط Telegram؟</AlertDialogTitle>
+            <AlertDialogTitle>إلغاء الربط؟</AlertDialogTitle>
             <AlertDialogDescription>
               سيتوقّف إرسال تحديثات جهاز المريض إلى هذا الحساب. السجل التاريخي
               يبقى محفوظاً، ويمكن إعادة الربط برابط جديد في أي وقت.

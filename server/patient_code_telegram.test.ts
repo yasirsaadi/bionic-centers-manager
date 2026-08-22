@@ -81,6 +81,26 @@ const msg = (fromId: string, text: string) => ({
 });
 const lastText = () => sent[sent.length - 1]?.text ?? "";
 
+/** مرضى هذه الحزمة — يُعرَّف مرّةً ويُستعمل في الانتظار والتنظيف معاً. */
+const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+
+/**
+ * **عزلٌ عن بقيّة الحزم.**
+ *
+ * صفوفٌ مستحقّة لمرضى حزمٍ أخرى تبقى `pending` في قاعدة الاختبار. والمرسِلُ
+ * الذي يكبسه الربطُ هنا يلتقطها ويرسلها — فتصل الجاسوسَ **بعد** أن مسحناه،
+ * فيقرأ التأكيدُ ترحيبَ مريضٍ آخر كأنه ردُّ `/id`. وهذا هو التلوّثُ الذي
+ * كان يُسقط الحزمة في التشغيل الشامل ويمرّرها منفردة.
+ *
+ * تُختَم `skipped` قبل البدء: قاعدةُ اختبارٍ محلّية، والصفوفُ ليست بيانات أحد.
+ */
+async function quiesceForeignOutbox() {
+  await q(`UPDATE patient_notification_deliveries
+              SET status = 'skipped'
+            WHERE status IN ('pending', 'failed', 'processing')
+              AND patient_id NOT IN (${ids})`);
+}
+
 /**
  * ينتظر أن يفرغ طابور الصادر.
  *
@@ -91,8 +111,13 @@ const lastText = () => sent[sent.length - 1]?.text ?? "";
 async function drainOutbox(timeoutMs = 4000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
+    //  **مرضى هذه الحزمة وحدهم.** كان الشرطُ على الجدول كلِّه، فصفٌّ معلَّقٌ
+    //  تركته حزمةٌ أخرى يجعل الانتظارَ يبلغ مهلتَه دائماً بلا أن يستقرّ
+    //  شيء — ويظلّ المرسِلُ المكبوس يفرّغ صفوفَ غيرنا في الجاسوس أثناءها.
+    //  فيصل ترحيبُ مريضٍ آخر بعد `sent.length = 0` ويُقرأ كأنه ردُّنا.
     const [r] = await q(`SELECT count(*)::int n FROM patient_notification_deliveries
-                          WHERE status IN ('pending','processing')`);
+                          WHERE status IN ('pending','processing')
+                            AND patient_id IN (${ids})`);
     if (r.n === 0) return;
     await new Promise((res) => setTimeout(res, 100));
   }
@@ -104,12 +129,26 @@ async function mkPatient(name: string) {
      VALUES ($1,'07701234567',$2,'40','x',1,0) RETURNING id, patient_code`, [`${MARK} ${name}`, MARK]);
   return r[0];
 }
-/** يربط حساباً بملفّ عبر التذكرة الحقيقية والـwebhook الحقيقي. */
+/**
+ * يربط حساباً بملفّ عبر التذكرة الحقيقية والـwebhook الحقيقي.
+ *
+ * ══ ولماذا ينتظر التصريف قبل أن يعود ═══════════════════════════════════
+ * الـwebhook ينادي `nudgeDispatcher()` **بلا انتظار** — وهذا صحيحٌ في
+ * الإنتاج (الربطُ لا يتعلّق بشبكة تلغرام). لكنه يعني أن ترحيبَ الربط قد
+ * يصل الجاسوسَ **بعد** أن مسحه القسمُ التالي بـ`sent.length = 0`، فيقرأ
+ * التأكيدُ ترحيباً متأخّراً كأنه ردُّ `/id`.
+ *
+ * كان الانتظارُ مكتوباً في **موضعٍ واحد** من الحزمة (بعد ربطٍ واحد)، وبقيت
+ * خمسةُ مواضعَ أخرى مكشوفة — وهي التي كانت تُسقط الحزمة في التشغيل الشامل
+ * وتمرّرها منفردة. فصار الانتظارُ في الرابط نفسه: كلُّ ربطٍ يعود **بعد** أن
+ * يهدأ ما استحقّه، فلا موضعَ يُنسى.
+ */
 async function link(patientId: number, externalId: string) {
   const { rawToken } = await createLinkToken({
     patientId, channel: "telegram", relation: "self", createdBy: ADMIN,
   });
   await update(msg(externalId, `/start ${rawToken}`));
+  await drainOutbox();
   return rawToken;
 }
 async function welcomeRowFor(patientId: number) {
@@ -121,7 +160,6 @@ async function welcomeRowFor(patientId: number) {
 }
 
 async function cleanup() {
-  const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
@@ -139,6 +177,7 @@ async function main() {
   await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
            VALUES ($1,'pct_admin','x','المسؤول','admin',1,'[1]'::jsonb,true) ON CONFLICT (id) DO NOTHING`, [ADMIN]);
   await cleanup();
+  await quiesceForeignOutbox();
 
   const app = express();
   app.use(express.json());

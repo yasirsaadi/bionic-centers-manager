@@ -26,20 +26,52 @@ import {
 } from "@shared/schema";
 import type { DbTransaction } from "../events/store";
 
-/** القناة الوحيدة المدعومة للإرسال اليوم. */
-export const DELIVERY_CHANNEL = "telegram";
+/**
+ * **القناةُ تأتي من الصفّ، لا من ثابتٍ هنا.**
+ *
+ * ══ ما كان ═════════════════════════════════════════════════════════════
+ * `DELIVERY_CHANNEL = "telegram"` ثابتٌ كانت تكتبه كلُّ دالّةِ استحقاق
+ * وتقارن به كلُّ قراءة. فالبنيةُ عامّةٌ في شكلها **ومقيَّدةٌ بقناةٍ واحدة في
+ * أمرِ واقعها**: جهةُ اتصالٍ بقناةٍ أخرى لا تُستحقّ لها رسالةٌ أصلاً، ولو
+ * أُنشئ صفُّها يدوياً لتخطّاه العاملُ لأن قناتَه لا تساوي الثابت.
+ *
+ * ══ وما صار ════════════════════════════════════════════════════════════
+ * `patient_contacts.channel` هي المصدر عند الاستحقاق، و
+ * `patient_notification_deliveries.channel` هي **المرجع** بعده: الصفُّ يحمل
+ * قناتَه، والعاملُ يختار الناقلَ منها. فقناةٌ ثالثة تُضاف يوماً لا تحتاج
+ * تعديلَ حرفٍ في هذا الملفّ.
+ *
+ * **ولا تُلمَس الصفوفُ القديمة**: صفُّ تلغرام المستحقُّ قبل واتساب يبقى
+ * `channel = 'telegram'` ويُرسَل بناقله كما كان — إضافةُ قناةٍ ليست إلغاءَ
+ * أخرى.
+ */
+export const SUPPORTED_CHANNELS = ["telegram", "whatsapp"] as const;
+export type DeliveryChannel = (typeof SUPPORTED_CHANNELS)[number];
+
+export function isDeliveryChannel(v: unknown): v is DeliveryChannel {
+  return typeof v === "string" && (SUPPORTED_CHANNELS as readonly string[]).includes(v);
+}
 
 export type DeliveryStatus = "pending" | "processing" | "sent" | "failed" | "skipped";
 
 /**
  * رموز الفشل — **قائمة مغلقة**. نصّ الخطأ الخام ممنوع: خطأ الشبكة قد يحمل
  * عنوان Bot API وفيه التوكن، فيستقرّ في الجدول ثم في النسخة الاحتياطية.
+ * وجسمُ خطأ Graph يحمل `fbtrace_id` ومعرّفاتٍ ورقمَ المستقبِل — بنفس الحكم.
+ *
+ * **ورموزُ تلغرام تبقى مقروءة**: صفوفٌ تاريخية تحملها، وحذفُها من النوع
+ * كان سيجعل قارئَ التقرير يرى رمزاً لا يعرفه النظام.
  */
 export type DeliveryErrorCode =
   | "telegram_timeout"
   | "telegram_network"
   | "telegram_api_error"
   | "telegram_disabled"
+  | "whatsapp_timeout"
+  | "whatsapp_network"
+  | "whatsapp_api_error"
+  | "whatsapp_disabled"
+  | "whatsapp_template_error"
   | "render_failed";
 
 /**
@@ -88,20 +120,29 @@ export async function enqueueForActiveContacts(
   tx: DbTransaction,
   input: EnqueueInput,
 ): Promise<number> {
-  const contacts = await tx.select({ id: patientContacts.id })
+  // **كلُّ جهةٍ نشطة بقناتها هي** — لا تصفيةَ بقناةٍ واحدة. مريضٌ يحمل
+  // تلغراماً قديماً وواتساباً جديداً أثناء الانتقال يستحقّ **صفّاً لكلٍّ**:
+  // القناتان هويّتان خارجيّتان مختلفتان، ولا تخمينَ بأن إحداهما تُغني.
+  const contacts = await tx.select({
+    id: patientContacts.id,
+    channel: patientContacts.channel,
+  })
     .from(patientContacts)
     .where(and(
       eq(patientContacts.patientId, input.patientId),
-      eq(patientContacts.channel, DELIVERY_CHANNEL),
       isNull(patientContacts.revokedAt),
     ));
-  if (contacts.length === 0) return 0;
 
-  const rows = contacts.map((c) => ({
+  // وقناةٌ لا ناقلَ لها في هذا الإصدار لا يُكتب لها صفٌّ لا يُقرأ أبداً.
+  const deliverable = contacts.filter((c) => isDeliveryChannel(c.channel));
+  if (deliverable.length === 0) return 0;
+
+  const rows = deliverable.map((c) => ({
     patientId: input.patientId,
     patientEventId: input.patientEventId ?? null,
     patientContactId: c.id,
-    channel: DELIVERY_CHANNEL,
+    // **قناةُ الجهة نفسها** — تُنسَخ إلى الصفّ فيصير هو المرجع بعدها.
+    channel: c.channel,
     notificationType: input.notificationType,
     payload: input.payload ?? {},
   }));
@@ -112,16 +153,28 @@ export async function enqueueForActiveContacts(
   return inserted.length;
 }
 
-/** يستحقّ رسالةً لجهة اتصال **واحدة بعينها** — مسار الترحيل عند الربط. */
+/**
+ * يستحقّ رسالةً لجهة اتصال **واحدة بعينها** — مسار الترحيب عند الربط.
+ *
+ * **والقناةُ تُقرأ من صفّ الجهة** لا تُمرَّر ولا تُفترَض: المستدعي يعرف أيَّ
+ * جهةٍ يخاطب، ولا يجوز أن يقرّر أيّ قناةٍ هي — فتمريرُها كان سيسمح بصفّ
+ * واتسابٍ لجهة تلغرام.
+ */
 export async function enqueueForContact(
   runner: DbTransaction | typeof db,
   input: EnqueueInput & { patientContactId: number },
 ): Promise<number | null> {
+  const [contact] = await (runner as any).select({ channel: patientContacts.channel })
+    .from(patientContacts)
+    .where(eq(patientContacts.id, input.patientContactId))
+    .limit(1);
+  if (!contact || !isDeliveryChannel(contact.channel)) return null;
+
   const [row] = await (runner as any).insert(PND).values({
     patientId: input.patientId,
     patientEventId: input.patientEventId ?? null,
     patientContactId: input.patientContactId,
-    channel: DELIVERY_CHANNEL,
+    channel: contact.channel,
     notificationType: input.notificationType,
     payload: input.payload ?? {},
   }).onConflictDoNothing().returning({ id: PND.id });
@@ -141,16 +194,28 @@ export async function enqueueForContact(
  *
  * ويشمل الاختيار **المحجوز المنسيّ**: صفٌّ `processing` مضى على ختمه أكثر
  * من المهلة يعني عاملاً مات وهو يرسل — فيُستردّ بدل أن يعلق إلى الأبد.
+ *
+ * ── ولا يُحجَز ما لا ناقلَ له ────────────────────────────────────────────
+ * `channels` هي القنواتُ التي يملك العاملُ ناقلاً مُعدّاً لها الآن. وصفٌّ
+ * خارجها **لا يُلمَس**: لا يُحجَز ولا يُخطّى ولا يُعدّ فشلاً — يبقى `pending`
+ * حتى يُضبط ناقلُه. فمركزٌ عطّل تلغرام مؤقّتاً لا يفقد ما كان مستحقّاً عليه،
+ * ومركزٌ لم يُعدّ واتساب بعدُ لا تُحرَق صفوفُه في تباعدِ إعادةٍ لا يعالج شيئاً.
  */
-export async function claimDue(limit = 20): Promise<PatientNotificationDelivery[]> {
+export async function claimDue(
+  limit = 20,
+  channels: readonly string[] = SUPPORTED_CHANNELS,
+): Promise<PatientNotificationDelivery[]> {
+  if (channels.length === 0) return [];
   const staleBefore = new Date(Date.now() - LEASE_TIMEOUT_MS);
+  const channelList = sql.join(channels.map((c) => sql`${c}`), sql`, `);
   return await db.transaction(async (tx) => {
     // القفل والتحديث في معاملة واحدة: القفل يصمد حتى الحفظ، فلا نافذة بين
     // «اخترتُ» و«حجزتُ» يقرأ فيها عاملٌ آخر الصفّ نفسه.
     const picked = await (tx as any).execute(sql`
       SELECT id FROM patient_notification_deliveries
-       WHERE (status IN ('pending', 'failed') AND next_attempt_at <= NOW())
-          OR (status = 'processing' AND locked_at < ${staleBefore})
+       WHERE channel IN (${channelList})
+         AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW())
+           OR (status = 'processing' AND locked_at < ${staleBefore}))
        ORDER BY next_attempt_at
        FOR UPDATE SKIP LOCKED
        LIMIT ${limit}

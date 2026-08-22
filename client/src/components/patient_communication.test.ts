@@ -43,6 +43,12 @@ function same(msg: string, got: unknown, expected: unknown) {
 process.env.PATIENT_TELEGRAM_BOT_TOKEN = "1234567:TEST-UI-TOKEN";
 process.env.PATIENT_TELEGRAM_BOT_USERNAME = "bionic_ui_test_bot";
 process.env.PATIENT_TELEGRAM_WEBHOOK_SECRET = "ui-test-secret-0001";
+//  وواتساب مُعدٌّ أيضاً — فهي قناةُ الروابط الجديدة التي تصدرها البطاقة.
+process.env.PATIENT_WHATSAPP_ACCESS_TOKEN = "TEST-UI-WA-TOKEN";
+process.env.PATIENT_WHATSAPP_PHONE_NUMBER_ID = "111222333";
+process.env.PATIENT_WHATSAPP_BUSINESS_PHONE = "9647700000000";
+process.env.PATIENT_WHATSAPP_VERIFY_TOKEN = "ui-wa-verify-0001";
+process.env.PATIENT_WHATSAPP_APP_SECRET = "ui-wa-secret-0001";
 
 const PORT = 6795;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -129,15 +135,18 @@ async function main() {
     same("١. مريض غير مربوط ⇒ قائمتان فارغتان",
       [r.status, r.json.activeContacts.length, r.json.pendingTokens.length], [200, 0, 0]);
     // البطاقة تشتقّ «غير مربوط» من هذا وحده، فتُظهر زرّ الربط.
-    check(/غير مربوط/.test(SRC) && /ربط Telegram/.test(SRC), "والبطاقة تعرض «غير مربوط» وزرّ الربط");
+    check(/غير مربوط/.test(SRC) && /ربط واتساب/.test(SRC), "والبطاقة تعرض «غير مربوط» وزرّ الربط");
 
     // ══ ٢-٣. الإصدار: الرابط والصلة ══════════════════════════════════════
     console.log("\n── الإصدار ──");
-    r = await req("POST", `${COMM(p)}/link-tokens`, S.admin, { channel: "telegram", relation: "guardian" });
+    r = await req("POST", `${COMM(p)}/link-tokens`, S.admin, { channel: "whatsapp", relation: "guardian" });
     same("٢. الإصدار ⇒ 201", r.status, 201);
-    const deepLink: string = r.json.telegramDeepLink;
-    check(typeof deepLink === "string" && deepLink.startsWith("https://t.me/"),
-      "ويعيد `telegramDeepLink` — وهو ما يُبنى منه رمز QR", String(deepLink));
+    //  **العقدُ العامّ**: `deepLink` واحدٌ لكلّ القنوات، و`channel` بجواره
+    //  يقول أيَّها هو — فلا تخمّن الشاشةُ قناتَها من اسم مفتاحٍ في JSON.
+    const deepLink: string = r.json.deepLink;
+    check(typeof deepLink === "string" && deepLink.startsWith("https://wa.me/"),
+      "ويعيد `deepLink` المحايد — وهو ما يُبنى منه رمز QR", String(deepLink));
+    same("وقناتُه معه صراحةً", r.json.channel, "whatsapp");
     same("٣. والصلة المرسَلة هي المحفوظة", r.json.relation, "guardian");
     // والقيم الخمس في البطاقة هي التي يقبلها الخادم — لا أكثر ولا أقلّ.
     const uiRelations = [...SRC.matchAll(/\{ value: "(\w+)", label: "([^"]+)" \}/g)].map((m) => m[1]);
@@ -172,7 +181,7 @@ async function main() {
     console.log("\n── بعد الربط ──");
     // نستهلك التذكرة كما يفعل الـwebhook، ثم نقرأ ما ستراه البطاقة.
     const { redeemAndWelcome } = await import("../../../server/patient_notifications/welcome");
-    await redeemAndWelcome({ rawToken: deepLinkToken(fresh.telegramDeepLink), externalId: "tg-ui-9001" });
+    await redeemAndWelcome({ rawToken: deepLinkToken(fresh.deepLink), externalId: "tg-ui-9001" });
     r = await req("GET", COMM(p), S.admin);
     same("٦-٧. الجهة النشطة تظهر — وهذا ما يوقف الاستطلاع", r.json.activeContacts.length, 1);
     const contact = r.json.activeContacts[0];
@@ -192,12 +201,12 @@ async function main() {
 
     // ══ ١٤. أكثر من جهة نشطة ═════════════════════════════════════════════
     const second = await req("POST", `${COMM(p)}/link-tokens`, S.admin, { channel: "telegram", relation: "guardian" });
-    await redeemAndWelcome({ rawToken: deepLinkToken(second.json.telegramDeepLink), externalId: "tg-ui-9002" });
+    await redeemAndWelcome({ rawToken: deepLinkToken(second.json.deepLink), externalId: "tg-ui-9002" });
     r = await req("GET", COMM(p), S.admin);
     same("١٤. جهتان نشطتان تظهران معاً", r.json.activeContacts.length, 2);
     same("بصلتيهما المختلفتين",
       r.json.activeContacts.map((c: any) => c.relation).sort(), ["guardian", "self"]);
-    check(/activeTelegram\.map\(\(c\)/.test(SRC), "والبطاقة تعرضها بالتكرار لا بواحدة");
+    check(/activeWhatsapp\.map\(\(c\)/.test(SRC), "والبطاقة تعرضها بالتكرار لا بواحدة");
 
     // ══ ٩. سحب الجهة ═════════════════════════════════════════════════════
     r = await req("POST", `${COMM(p)}/contacts/${contact.id}/revoke`, S.admin);
@@ -218,9 +227,9 @@ async function main() {
     check(classifyCommunicationError(new Error("403: غير مصرح")).kind === "denied",
       "والبطاقة تصنّفه منعاً وتعرض بطاقةً صامتة");
     const deniedAt = CODE.indexOf("if (failure)");
-    const buttonAt = CODE.indexOf("button-link-telegram");
+    const buttonAt = CODE.indexOf("button-link-whatsapp");
     check(deniedAt > 0 && deniedAt < buttonAt, "وتُعاد قبل أي زرّ قابل للتنفيذ");
-    check(!/data-testid="button-(link-telegram|revoke)/.test(CODE.slice(deniedAt, CODE.indexOf("</Card>", deniedAt))),
+    check(!/data-testid="button-(link-whatsapp|revoke)/.test(CODE.slice(deniedAt, CODE.indexOf("</Card>", deniedAt))),
       "**ولا زرّ ربط ولا سحب داخل بطاقة المنع**");
 
     // ══ ١١-١٢ و١٦. ثوابت الأمان ══════════════════════════════════════════
@@ -263,13 +272,13 @@ async function main() {
       "١-٣. والبطاقة تُغلق على أي فشل لا على 403 وحده");
     check(/if \(failure\) \{/.test(CODE), "وتُعاد بطاقة الفشل مبكّراً");
     const failAt = CODE.indexOf("if (failure) {");
-    const linkBtnAt = CODE.indexOf("button-link-telegram");
+    const linkBtnAt = CODE.indexOf("button-link-whatsapp");
     const revokeBtnAt = CODE.indexOf("button-revoke-contact-");
     check(failAt > 0 && failAt < linkBtnAt && failAt < revokeBtnAt,
       "**وقبل زرّ الربط وزرّ السحب معاً**");
     const failBlock = CODE.slice(failAt, CODE.indexOf("return (", linkBtnAt - 4000) > 0
       ? CODE.indexOf("</Card>", failAt) : CODE.indexOf("</Card>", failAt));
-    check(!/button-link-telegram|button-revoke/.test(failBlock),
+    check(!/button-link-whatsapp|button-revoke/.test(failBlock),
       "ولا زرّ ربط ولا سحب داخل بطاقة الفشل", failBlock.slice(0, 120));
     check(/failure\.canRetry &&/.test(CODE), "وزرّ إعادة المحاولة مشروطٌ بالعطل العابر وحده");
 
@@ -285,19 +294,19 @@ async function main() {
     same("وتبديل واحدة من اثنتين ⇒ نجاح", hasNewContact([10, 11], [10, 12]), true);
     // والبطاقة تستعملها فعلاً بالمعرّفات.
     check(/hasNewContact\(baselineIds, currentIds\)/.test(CODE), "والبطاقة تقارن المعرّفات");
-    check(!/activeTelegram\.length > baseline\b/.test(CODE), "**ولا أثر لمقارنة الأعداد**");
-    check(/setBaselineIds\(activeTelegram\.map\(\(c\) => c\.id\)\)/.test(CODE),
+    check(!/activeWhatsapp\.length > baseline\b/.test(CODE), "**ولا أثر لمقارنة الأعداد**");
+    check(/setBaselineIds\(activeWhatsapp\.map\(\(c\) => c\.id\)\)/.test(CODE),
       "وتلتقط المعرّفات عند فتح النافذة");
 
     // ══ ٧-٨ (بلوكر): تذكرةٌ بلا رابط تُسحَب فوراً ════════════════════════
     console.log("\n── تذكرة بلا رابط ──");
     const pOrphan = await mkPatient("مريض التكامل المعطَّل");
     // نُعطِّل البوت كما لو أن الخادم بلا إعداد — فتصدر التذكرة بلا رابط.
-    const savedUser = process.env.PATIENT_TELEGRAM_BOT_USERNAME;
-    delete process.env.PATIENT_TELEGRAM_BOT_USERNAME;
+    const savedPhone = process.env.PATIENT_WHATSAPP_BUSINESS_PHONE;
+    delete process.env.PATIENT_WHATSAPP_BUSINESS_PHONE;
     const orphan = await req("POST", `${COMM(pOrphan)}/link-tokens`, S.admin,
-      { channel: "telegram", relation: "self" });
-    same("٧. الإصدار ينجح لكن بلا رابط عميق", [orphan.status, orphan.json.telegramDeepLink], [201, undefined]);
+      { channel: "whatsapp", relation: "self" });
+    same("٧. الإصدار ينجح لكن بلا رابط عميق", [orphan.status, orphan.json.deepLink], [201, undefined]);
     check(typeof orphan.json.tokenId === "number", "والردّ يحمل `tokenId` — وهو ما يُسحَب به");
     same("والتذكرة معلَّقة فعلاً قبل السحب",
       (await req("GET", COMM(pOrphan), S.admin)).json.pendingTokens.length, 1);
@@ -306,10 +315,10 @@ async function main() {
     same("والسحب بالنقطة القائمة ينجح", [revoked.status, revoked.json.revoked], [200, true]);
     same("٨. **فلا يبقى رابط معلَّق مخفيّ**",
       (await req("GET", COMM(pOrphan), S.admin)).json.pendingTokens.length, 0);
-    process.env.PATIENT_TELEGRAM_BOT_USERNAME = savedUser;
+    process.env.PATIENT_WHATSAPP_BUSINESS_PHONE = savedPhone;
     // والبطاقة تفعل ذلك في شيفرتها: سحبٌ ثم إبطالٌ ثم خطأ.
     const issueBlock = CODE.slice(CODE.indexOf("const issue = useMutation"), CODE.indexOf("const revokeToken"));
-    check(/if \(!payload\.telegramDeepLink\)/.test(issueBlock), "والبطاقة تكشف غياب الرابط");
+    check(/if \(!payload\.deepLink\)/.test(issueBlock), "والبطاقة تكشف غياب الرابط");
     check(/link-tokens\/\$\{payload\.tokenId\}\/revoke/.test(issueBlock), "وتسحب التذكرة الصادرة");
     check(/invalidateQueries/.test(issueBlock), "وتُبطل الاستعلام");
     check(/variant: "destructive"/.test(issueBlock), "وتعرض خطأ التكامل");
@@ -319,11 +328,11 @@ async function main() {
     // ══ ٩ (بلوكر): المعلَّق يمنع إصدار ثانٍ ══════════════════════════════
     console.log("\n── المعلَّق يمنع الإصدار ──");
     const pBlock = await mkPatient("مريض المنع");
-    await req("POST", `${COMM(pBlock)}/link-tokens`, S.admin, { channel: "telegram", relation: "self" });
+    await req("POST", `${COMM(pBlock)}/link-tokens`, S.admin, { channel: "whatsapp", relation: "self" });
     same("٩. للمريض رابط معلَّق", (await req("GET", COMM(pBlock), S.admin)).json.pendingTokens.length, 1);
-    // **الشرط مربوط بالعنصر نفسه** — لا بأي ذكرٍ آخر لـ`pendingTelegram`
+    // **الشرط مربوط بالعنصر نفسه** — لا بأي ذكرٍ آخر لـ`pendingWhatsapp`
     // (الشارة تستعمله أيضاً، فمطابقةٌ عامّة كانت تمرّ ولو أُزيل الحارس).
-    const gateRe = /\{pendingTelegram\.length > 0 \? \(\s*[\s\S]{0,200}?data-testid="text-pending-blocks-issue"/;
+    const gateRe = /\{pendingWhatsapp\.length > 0 \? \(\s*[\s\S]{0,200}?data-testid="text-pending-blocks-issue"/;
     check(gateRe.test(CODE), "والبطاقة تستبدل زرّ الربط بنصّ التوجيه — بشرطٍ مربوط بالنصّ نفسه");
     check(/يوجد رابط ربط بانتظار المريض\. ألغِه أولاً لإصدار رابط جديد\./.test(SRC),
       "بالنصّ المطلوب حرفياً");
@@ -331,15 +340,57 @@ async function main() {
     const gateAt = CODE.search(gateRe);
     const gate = gateAt >= 0 ? CODE.slice(gateAt, CODE.indexOf("</Dialog>")) : "";
     const elseAt = gate.indexOf(") : (");
-    check(elseAt > 0 && gate.indexOf("button-link-telegram") > elseAt,
+    check(elseAt > 0 && gate.indexOf("button-link-whatsapp") > elseAt,
       "**وزرّ الربط في فرع «لا معلَّق» وحده**");
 
     // ══ ١٠. لا سرّ في الواجهة ════════════════════════════════════════════
-    check(!/rawToken/.test(CODE.replace(/payload\.telegramDeepLink/g, "")),
+    check(!/rawToken/.test(CODE.replace(/payload\.deepLink/g, "")),
       "١٠. ولا `rawToken` في شيفرة البطاقة إطلاقاً");
 
     // ══ ١٥. لا مساس بمسار التصنيع ════════════════════════════════════════
     check(!/manufacturing|work_order|workOrder/i.test(CODE), "١٥. ولا مساس بالتصنيع في شيفرة البطاقة");
+
+    // ══ ١٧. **الانتقال إلى واتساب** — البابُ الجديد واحد ══════════════════
+    //
+    // ══ ما يحرسه ═══════════════════════════════════════════════════════
+    // بابان مفتوحان يعنيان موظّفاً يربط اليوم بقناةٍ نتقاعدها غداً. فالجديدُ
+    // واتساب حصراً، والقديمُ يُقرأ ويُسحَب **ولا يُنشأ**.
+    console.log("\n── الانتقال إلى واتساب ──");
+    check(/channel: LINK_CHANNEL/.test(CODE) && /const LINK_CHANNEL = "whatsapp"/.test(CODE),
+      "١٧. **الإصدارُ بقناة واتساب — من ثابتٍ واحد**",
+      (CODE.match(/.*channel: .*/g) ?? []).join(" | "));
+    //  **ولا `channel: "telegram"` في أي مسار إصدار** — لا نصّاً ولا ثابتاً.
+    const issueCalls = CODE.slice(CODE.indexOf("const issue = useMutation"), CODE.indexOf("const revokeToken"));
+    check(!/telegram/i.test(issueCalls),
+      "١٧.١ **ولا ذكرَ لتلغرام في مسار الإصدار إطلاقاً**", issueCalls);
+    check(/payload\.deepLink/.test(CODE) && !/telegramDeepLink/.test(CODE),
+      "١٧.٢ **وتقرأ العقدَ العامّ `deepLink` لا حقلاً باسم قناته**");
+
+    //  واجهةُ الموظّف تقول «واتساب» — لا «Telegram».
+    check(/تواصل المريض — واتساب/.test(SRC), "١٧.٣ **والعنوان «تواصل المريض — واتساب»**");
+    check(/ربط واتساب/.test(SRC), "١٧.٤ **والزرّ الأساسي «ربط واتساب»**");
+    check(/تم ربط واتساب بالمريض بنجاح\./.test(SRC), "١٧.٥ **ونصُّ النجاح بواتساب**");
+    check(!/ربط Telegram|ربط حساب Telegram/.test(SRC),
+      "١٧.٦ **ولا زرَّ ربطٍ بتلغرام في الشاشة الحيّة**",
+      (SRC.match(/.*ربط .*Telegram.*/g) ?? []).join(" | "));
+
+    //  والقديمُ يُعرَض ويُسحَب — ولا يُسحَب تلقائياً.
+    check(/Telegram — ربط قديم/.test(SRC), "١٧.٧ **وقسمُ «Telegram — ربط قديم» موجود**");
+    const legacyAt = CODE.indexOf("section-legacy-telegram");
+    const legacyBlock = legacyAt > 0 ? CODE.slice(legacyAt, legacyAt + 1600) : "";
+    check(/button-revoke-contact-/.test(legacyBlock),
+      "١٧.٨ **وفيه زرُّ السحب** — الإدارةُ تبقى ممكنة", legacyBlock.slice(0, 100));
+    check(!/button-link|issue\.mutate/.test(legacyBlock),
+      "١٧.٩ **ولا زرَّ إنشاءٍ فيه إطلاقاً**", legacyBlock.slice(0, 200));
+    check(/legacyTelegram = useMemo/.test(CODE) && /c\.channel === LEGACY_CHANNEL/.test(CODE),
+      "١٧.١٠ ويُشتقّ من قناة الجهة لا من ترتيبها");
+    //  **ولا سحبَ تلقائيّ**: لا مؤثّرٌ ولا نداءٌ يُلغي تلغرام من تلقائه.
+    check(!/revokeContact\.mutate\([^)]*\)\s*;?\s*}\s*,\s*\[/.test(CODE),
+      "١٧.١١ **ولا سحبَ تلقائياً لتلغرام** — الانقطاعُ قرارُ إنسان");
+
+    //  والحارسُ حيٌّ: لو أُعيد زرُّ تلغرام إلى الشاشة لسقط الفحصُ أعلاه.
+    check(/ربط واتساب/.test("ربط واتساب") && !/ربط واتساب/.test("ربط Telegram"),
+      "١٧.١٢ وحارسُ النصّ يمسك المخالفة");
 
     // والحارسان حيّان — مخالفةٌ حقيقية تُمسك، وتعليقٌ لا يعثّرهما.
     const strip = (src: string) => src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
@@ -357,8 +408,17 @@ async function main() {
 }
 
 /** نصّ التذكرة من الرابط العميق — كما يفعل تلغرام حين يضغط المريض Start. */
+/**
+ * النصُّ الخام من الرابط العميق — **لمحاكاة ما يرسله المريضُ بيده**.
+ *
+ * `wa.me/<num>?text=%D8%B1%D8%A8%D8%B7%20<token>`: الرسالةُ المُعبّأة تحمل
+ * أمرَ الربط ثم التذكرة، فيؤخَذ ما بعد الفراغ. و`t.me/...?start=<token>`
+ * يبقى مفهوماً للصفوف القديمة.
+ */
 function deepLinkToken(link: string): string {
-  return decodeURIComponent(link.split("?start=")[1] ?? "");
+  if (link.includes("?start=")) return decodeURIComponent(link.split("?start=")[1] ?? "");
+  const text = decodeURIComponent(link.split("?text=")[1] ?? "");
+  return text.split(/\s+/).slice(1).join(" ");
 }
 
 main().catch(async (e) => {

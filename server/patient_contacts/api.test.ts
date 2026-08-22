@@ -179,8 +179,13 @@ async function main() {
     r = await req("POST", ISSUE(p1), S.admin, { channel: "telegram", relation: "زوج" });
     same("٥. صلة غير صالحة ⇒ 400", r.status, 400);
 
-    r = await req("POST", ISSUE(p1), S.admin, { channel: "whatsapp", relation: "self" });
+    //  **واتساب صارت مدعومة** — وهي قناةُ الروابط الجديدة. والمرفوضُ ما لا
+    //  ناقلَ له: قناةٌ يخترعها عميلٌ تُردّ، ولا تُقبل بصمتٍ ثم تُنتج تذكرةً
+    //  لا يستطيع أحدٌ استهلاكها.
+    r = await req("POST", ISSUE(p1), S.admin, { channel: "sms", relation: "self" });
     same("٦. قناة غير مدعومة ⇒ 400", r.status, 400);
+    r = await req("POST", ISSUE(p1), S.admin, { channel: "WhatsApp", relation: "self" });
+    same("٦.١ **والمطابقةُ حرفيّة** — لا تصحيحَ حالةِ أحرف", r.status, 400);
 
     r = await req("POST", ISSUE(p1), S.admin, { channel: "telegram", relation: "self", ttlMs: 999999999 });
     same("٧. `ttlMs` من العميل ⇒ 400 رفضاً لا تجاهلاً", r.status, 400);
