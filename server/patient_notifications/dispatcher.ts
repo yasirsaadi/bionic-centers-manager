@@ -1,23 +1,29 @@
-// عامل الصادر — يقرأ المستحقّ ويرسله.
+// عامل الصادر — يقرأ المستحقّ ويرسله عبر واتساب.
 //
 // ══ الموضع في السلسلة ═══════════════════════════════════════════════════
-// حدث المريض ⇒ صفٌّ في الصادر (داخل معاملة التصنيع) ⇒ **هنا** ⇒ تلغرام.
-// وهذا الفاصل هو ما يجعل فشل تلغرام غير مؤثّر: المعاملة التجارية انتهت
-// وثُبِّتت قبل أن يبدأ هذا العامل، فلا شيء يتراجع مهما فشل الإرسال.
+// حدثُ مريض (أو حفظُ ملفّ) ⇒ صفٌّ في الصادر **داخل معاملة العمل** ⇒ **هنا**
+// ⇒ Meta. وهذا الفاصل هو ما يجعل عطلَ واتساب غيرَ مؤثّر: المعاملةُ التجارية
+// انتهت وثُبِّتت قبل أن يبدأ هذا العامل، فلا شيءَ يتراجع مهما فشل الإرسال.
+// **ولا يُردّ تسجيلُ مريضٍ لأن Meta متعثّرة.**
 //
 // ══ ولا حلقة ضيّقة ══════════════════════════════════════════════════════
 // دورة كل دقيقة، وكل دورة تأخذ دفعةً محدودة. والفشل يؤجَّل بتباعد متزايد
-// لا يُعاد فوراً. فحسابٌ حظر البوت لا يُنتج آلاف النداءات.
+// لا يُعاد فوراً. فرقمٌ حظر المركز لا يُنتج آلاف النداءات.
+//
+// ══ وقالبٌ لا يُضبَط ليس فشلاً ══════════════════════════════════════════
+// مشغّلٌ لم يُنهِ اعتماد قالبه في Meta بعدُ **لا تُحرَق صفوفُه**: لا تُحجَز،
+// ولا يُنادى المزوّد، ولا يُزاد عدّادُ محاولة. تبقى `pending` بـ٠ محاولات
+// حتى يظهر اسمُ القالب — ثم تُرسَل الصفوفُ **نفسُها** بلا تدخّل.
 
-import { patientBotEnabled } from "../patient_telegram/config";
-import { sendMessage } from "../patient_telegram/client";
-import { renderNotification } from "./render";
+import { renderNotification, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
+import { patientWhatsappEnabled, templateReady, type TemplateKind } from "../patient_whatsapp/config";
+import { sendTemplate } from "../patient_whatsapp/client";
 import {
   claimDue, contactForDelivery, markFailed, markSent, markSkipped,
-  DELIVERY_CHANNEL, type DeliveryErrorCode,
+  PATIENT_CHANNEL, type DeliveryErrorCode, type TypeFilter,
 } from "./outbox";
 
-/** كل دقيقة. تلغرام ليس آنيّاً بطبعه، والدفعة تُفرِّغ المتراكم سريعاً. */
+/** كل دقيقة. الإشعارُ ليس آنيّاً بطبعه، والدفعة تُفرِّغ المتراكم سريعاً. */
 export const DISPATCH_INTERVAL_MS = 60_000;
 const BATCH = 20;
 
@@ -29,47 +35,93 @@ export interface DispatchSummary {
 }
 
 /**
+ * أنواعُ القوالب الجاهزة الآن — تُحسَب في كلّ دورة.
+ *
+ * متغيّرٌ يُضاف على Render يبدأ الإرسالَ في الدورة التالية بلا نشرِ شيفرة،
+ * والصفوفُ التي كانت تنتظر تجد طريقَها من تلقائها.
+ */
+function readyKinds(): TemplateKind[] {
+  return (["welcome", "update"] as const).filter((k) => templateReady(k));
+}
+
+/**
+ * تصفيةُ الأنواع المؤهَّلة — **تدخل جملةَ الاختيار قبل `LIMIT`**.
+ *
+ * ══ ولماذا قبله لا بعده ════════════════════════════════════════════════
+ * الدفعةُ محدودة والترتيبُ بالأقدم. فلو صُفّيت بعد الحجز لاستهلك غيرُ
+ * المؤهَّل سعةَ الدفعة كلَّها ثم أُعيد — ويبقى المؤهَّلُ خلفه **لا يُحجَز
+ * أبداً**. مركزٌ لم يعتمد قالبَ ترحيبه وعنده ثلاثون ترحيباً مستحقّاً كان
+ * سيمنع تحديثَ تصنيعٍ واحداً خلفها إلى الأبد.
+ *
+ * والاشتقاقُ من `WELCOME_NOTIFICATION_TYPES` وحدها — **ولا كتالوجَ ثانٍ**:
+ * «التحديث» فئةٌ مفتوحة (كلُّ نوعٍ ليس ترحيباً)، فتُوصَف بالنفي لا بالعدّ.
+ */
+function eligibleTypes(kinds: TemplateKind[]): TypeFilter {
+  const welcome = kinds.includes("welcome");
+  const update = kinds.includes("update");
+  if (welcome && update) return null;                       // الكلّ مؤهَّل
+  if (welcome) return { only: WELCOME_NOTIFICATION_TYPES }; // الترحيبُ وحده
+  return { except: WELCOME_NOTIFICATION_TYPES };            // كلُّ ما عداه
+}
+
+/**
  * دورة واحدة. تُصدَّر كي يستدعيها الاختبار مباشرةً — وكي يُكبَس عليها فور
- * الربط فتصل رسالة الترحيب في ثوانٍ لا في دقيقة.
+ * حفظ المريض فيصل الترحيب في ثوانٍ لا في دقيقة.
  *
  * **لا ترمي أبداً**: هي تعمل في مؤقّت، ورميةٌ غير ملتقَطة هناك تُسقط
  * العملية كلّها على Render.
  */
 export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
   const summary: DispatchSummary = { claimed: 0, sent: 0, failed: 0, skipped: 0 };
-  if (!patientBotEnabled()) return summary;
+  if (!patientWhatsappEnabled()) return summary;
+
+  // **ولا حجزَ لنوعٍ لا قالبَ له.** الحجزُ يعني نداءً ثم فشلاً ثم تباعدَ
+  // إعادةٍ لا يعالج شيئاً — والمشغّلُ لم يخطئ، هو فقط لم ينتهِ بعد.
+  const kinds = readyKinds();
+  if (kinds.length === 0) return summary;
 
   let claimed: Awaited<ReturnType<typeof claimDue>>;
   try {
-    claimed = await claimDue(limit);
+    // **والتصفيةُ بالقالب تدخل SQL** — فلا يستهلك غيرُ المؤهَّل سعةَ الدفعة
+    // ولا يُقفَل، ويبقى `pending` بـ٠ محاولات، ويُحجَز المؤهَّلُ خلفه.
+    claimed = await claimDue(limit, [PATIENT_CHANNEL], eligibleTypes(kinds));
   } catch {
     console.error("[patient-notifications] claim failed");
     return summary;
   }
-  summary.claimed = claimed.length;
 
   for (const row of claimed) {
     try {
+      const kind = templateKindFor(row.notificationType);
+      // **حزامُ سباقٍ لا مسارٌ عاديّ**: التصفيةُ وقعت في SQL أعلاه، فلا يصل
+      // هنا غيرُ مؤهَّل إلا إن تغيّر الإعدادُ بين الحجز والإرسال. ويُعاد
+      // حينها إلى الطابور **بلا عدّ محاولة** — لا فشلاً ولا تخطّياً.
+      if (!kinds.includes(kind)) {
+        await markPendingAgain(row.id);
+        continue;
+      }
+      summary.claimed++;
+
       // ── جهة الاتصال تُقرأ الآن لا وقت الاستحقاق ──────────────────────
-      // بينهما قد تُسحَب: المريض فكّ الربط، أو الموظّف سحبه. فالمسحوبة
-      // تُخطّى ولا تُرسَل — والقراءة الحيّة هي ما يجعل ذلك ممكناً أصلاً،
-      // ولذلك لا يُخزَّن معرّف الحساب في الصادر.
+      // بينهما قد تُسحَب: الموظّف أوقف الإشعارات، أو غيّر الرقم. فالمسحوبة
+      // تُخطّى ولا تُرسَل — والقراءةُ الحيّة هي ما يجعل ذلك ممكناً أصلاً،
+      // ولذلك لا يُخزَّن الرقمُ في الصادر.
       const contact = await contactForDelivery(row.patientContactId);
-      if (!contact || contact.revokedAt !== null || contact.channel !== DELIVERY_CHANNEL) {
+      if (!contact || contact.revokedAt !== null || contact.channel !== row.channel) {
         await markSkipped(row.id);
         summary.skipped++;
         continue;
       }
 
-      const text = renderNotification(row.notificationType, row.payload as any);
-      if (!text) {
+      const param = renderNotification(row.notificationType, row.payload as any);
+      if (!param) {
         // نوعٌ لا نصّ له أو حمولة ناقصة: يُخطّى ولا يُعاد إلى الأبد.
         await markSkipped(row.id, "render_failed");
         summary.skipped++;
         continue;
       }
 
-      const res = await sendMessage(contact.externalId, text);
+      const res = await sendTemplate(contact.externalId, kind, param);
       if (res.ok) {
         await markSent(row.id);
         summary.sent++;
@@ -77,23 +129,39 @@ export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
       }
 
       const code: DeliveryErrorCode =
-        res.reason === "timeout" ? "telegram_timeout"
-        : res.reason === "network" ? "telegram_network"
-        : res.reason === "disabled" ? "telegram_disabled"
-        : "telegram_api_error";
+        res.reason === "timeout" ? "whatsapp_timeout"
+        : res.reason === "network" ? "whatsapp_network"
+        : res.reason === "disabled" ? "whatsapp_disabled"
+        : res.reason === "template_error" ? "whatsapp_template_error"
+        : res.reason === "no_template" ? "whatsapp_template_error"
+        : "whatsapp_api_error";
       await markFailed(row.id, row.attemptCount, code);
       summary.failed++;
     } catch {
-      // خطأ غير متوقَّع على صفٍّ واحد لا يوقف الدفعة. ولا يُطبع نصّه:
-      // قد يحمل عنوان Bot API وفيه التوكن.
+      // خطأ غير متوقَّع على صفٍّ واحد لا يوقف الدفعة. ولا يُطبع نصّه: قد
+      // يحمل جسمَ خطأ Graph وفيه معرّفات.
       console.error("[patient-notifications] delivery failed");
       try {
-        await markFailed(row.id, row.attemptCount, "telegram_api_error");
+        await markFailed(row.id, row.attemptCount, "whatsapp_api_error");
         summary.failed++;
       } catch { /* القاعدة نفسها متعثّرة — الدورة التالية تلتقطه */ }
     }
   }
   return summary;
+}
+
+/**
+ * يعيد صفّاً محجوزاً إلى الطابور **بلا عدّ محاولة ولا رمزِ خطأ**.
+ *
+ * لأن ما وقع ليس فشلَ إرسال: لم يُنادَ مزوّدٌ أصلاً. وعدُّه محاولةً كان
+ * سيدفعه في تباعدٍ متزايد حتى ستّ ساعات — عقوبةً على إعدادٍ لم يكتمل.
+ */
+async function markPendingAgain(id: number): Promise<void> {
+  const { deliveriesTable, eq } = await import("./outbox");
+  const { db } = await import("../db");
+  await db.update(deliveriesTable)
+    .set({ status: "pending", lockedAt: null, nextAttemptAt: new Date(), updatedAt: new Date() })
+    .where(eq(deliveriesTable.id, id));
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -105,11 +173,11 @@ let running = false;
  */
 export function startNotificationDispatcher(): void {
   if (timer) return;
-  if (!patientBotEnabled()) {
-    console.log("[patient-notifications] dispatcher idle — patient bot not configured");
+  if (!patientWhatsappEnabled()) {
+    console.log("[patient-notifications] dispatcher idle — WhatsApp not configured");
     return;
   }
-  console.log("[patient-notifications] dispatcher started");
+  console.log("[patient-notifications] dispatcher started — channel: whatsapp");
   timer = setInterval(() => {
     if (running) return;
     running = true;
@@ -126,8 +194,8 @@ export function stopNotificationDispatcher(): void {
 }
 
 /**
- * كبسة واحدة بعد فعلٍ يستحقّ رسالةً فوريّة (الربط مثلاً) — «أطلق وانسَ».
- * فشلها لا يعني شيئاً: الدورة الدورية ستلتقط ما بقي.
+ * كبسة واحدة بعد فعلٍ يستحقّ رسالةً فوريّة (حفظُ مريضٍ مثلاً) — «أطلق
+ * وانسَ». فشلها لا يعني شيئاً: الدورة الدورية ستلتقط ما بقي.
  */
 export function nudgeDispatcher(): void {
   void dispatchOnce().catch(() => { /* الدورة الدورية تكفي */ });

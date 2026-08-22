@@ -152,6 +152,9 @@ async function cleanup() {
   await q(`DELETE FROM post_exam_followups WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
+  //  جهاتُ واتساب تُنشأ تلقائياً مع كلّ مريضٍ يُسجَّل بالنقطة الحقيقية
+  //  (الرايةُ مرفوعةٌ افتراضاً)، فحذفُ المريض بـSQL خام يصطدم بمفتاحها.
+  await q(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   await q(`DELETE FROM patient_code_aliases a
             WHERE NOT EXISTS (SELECT 1 FROM patients p WHERE p.id = a.patient_id)`);

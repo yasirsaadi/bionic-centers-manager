@@ -37,6 +37,10 @@ import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+//  واتساب: جهةُ الاتصال وترحيبُ التسجيل — **قاعدةُ بياناتٍ فقط، ولا شبكة**.
+import {
+  registerWhatsappWelcome, ensureWhatsappContact, revokeWhatsappContacts,
+} from "./patient_notifications/registration";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import type { DbTransaction as DbTransactionLike } from "./events/store";
@@ -900,7 +904,38 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
-    const [patient] = await db.insert(patients).values(valuesToInsert).returning();
+    // ══ **حفظُ المريض = واتساب جاهزة — في معاملةٍ واحدة** ══════════════
+    //
+    //  ══ عطلان لا عطلٌ واحد ═════════════════════════════════════════════
+    //  **(أ) عطلُ المزوّد** — Meta ساقطة، أو الشبكةُ مقطوعة، أو التوكن، أو
+    //      قالبٌ لم يُعتمَد. هذه **لا تبلغ هنا إطلاقاً**: لا نداءَ شبكةٍ
+    //      داخل هذه المعاملة، والإرسالُ كلُّه بعد `COMMIT` في العامل. فلا
+    //      يمكن لعطلٍ عند Meta أن يتراجع عن تسجيلِ مريض.
+    //
+    //  **(ب) عطلُ القاعدة نفسِها** — تعذّرُ حفظِ الحالة الدائمة. وهذا
+    //      **ليس عطلَ واتساب**، وابتلاعُه كان يُنتج أسوأَ حالةٍ ممكنة:
+    //      ردٌّ ٢٠١ بمريضٍ رايتُه مرفوعة، **بلا جهةٍ وبلا ترحيب** — ووعدٌ
+    //      ضاع بلا أن يعلم أحد، ولا سبيلَ لاكتشافه لاحقاً.
+    //
+    //  فالثلاثةُ معاً أو لا شيء: صفُّ المريض · جهةُ الاتصال · صفُّ الترحيب.
+    //  وفشلُ المعاملة يُصعِّد فيردّ الطلبُ خطأً — وهو الصواب: الكتابةُ في
+    //  القاعدة فشلت فعلاً، ولا يجوز أن نقول «تمّ».
+    //
+    //  ولا شيءَ يقع للمرضى القدامى: الرايةُ افتراضُها `FALSE` في القاعدة،
+    //  ونموذجُ التسجيل الجديد وحده يرسل `true`.
+    const patient = await db.transaction(async (tx) => {
+      const [row] = await tx.insert(patients).values(valuesToInsert).returning();
+      if (row.whatsappNotificationsEnabled) {
+        await registerWhatsappWelcome(tx as any, {
+          patientId: row.id,
+          phoneE164: row.phoneE164,
+          patientCode: row.patientCode,
+          enabled: true,
+        });
+      }
+      return row;
+    });
+
     // Create the case row(s) for this new patient from its flags (Phase 3).
     await this.syncPatientCases(patient.id);
     if ((patient.totalCost || 0) > 0) {
@@ -934,6 +969,23 @@ export class DatabaseStorage implements IStorage {
   //  `tx` اختيارية — والقيدُ يُكتب داخلها كالتحديث تماماً، فلا تُنقَل الكلفةُ
   //  في معاملةٍ ويُقيَّد تاريخُها خارجها.
   async updatePatient(id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit", costCaseId: number | null = null, tx?: any): Promise<Patient | undefined> {
+    // ══ تعديلٌ يمسّ وجهةَ واتساب ⟶ **وحدةٌ دائمة واحدة** ═══════════════
+    //
+    //  الحالةُ التي يجب ألّا تقع أبداً:
+    //      `patients.phone` = الرقمُ الجديد
+    //      وجهةُ الاتصال النشطة = الرقمُ **القديم**
+    //  فتذهب تحديثاتُ جهازه إلى رقمٍ لم يعد له — وقد يكون لغيره الآن.
+    //
+    //  وكانت ممكنةً فعلاً: التحديثُ يُثبَّت، ثم تُزامَن الجهةُ في معاملةٍ
+    //  ثانية، ثم يُبتلَع خطؤها. فيبقى الصفُّ الجديد والجهةُ القديمة معاً.
+    //
+    //  فحين لا يمرّر المنادي معاملةً ويمسّ التعديلُ الرقمَ أو الراية، تُفتح
+    //  معاملةٌ تشمل الاثنين. ومَن مرّر معاملتَه فالوحدةُ وحدتُه أصلاً.
+    if (!tx && ((updates as any).phone !== undefined
+      || (updates as any).whatsappNotificationsEnabled !== undefined)) {
+      return await db.transaction((t) =>
+        this.updatePatient(id, updates, costSource, costCaseId, t));
+    }
     const h = tx ?? db;
     // The generic patch is one of the ways total_cost moves (management edit,
     // خدمة جديدة, paid visit) — the ledger entry is written here, at the choke
@@ -1005,6 +1057,32 @@ export class DatabaseStorage implements IStorage {
           patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
         });
+      }
+    }
+
+    // ══ الرقمُ تغيّر أو الرايةُ تبدّلت ⇒ الجهةُ تتبع ═══════════════════
+    //  **نقطةُ الخنق نفسُها**: كلُّ مسارٍ يعدّل مريضاً يمرّ من هنا، فلا موضعَ
+    //  يُنسى فتبقى الرسائلُ تذهب إلى رقمٍ قديم.
+    //
+    //  والقواعدُ الثلاث صريحة:
+    //   • أُطفئت الراية ⇒ تُسحَب الجهاتُ النشطة، فلا يُستحقّ لها شيءٌ بعدُ.
+    //   • تغيّر الرقم والرايةُ مرفوعة ⇒ القديمةُ تُختَم والجديدةُ تُنشأ،
+    //     **وبلا ترحيبٍ ثانٍ**: تعديلُ رقمٍ ليس تسجيلاً جديداً.
+    //   • أُعيدت الراية ⇒ جهةٌ من الرقم الحالي، **وبلا بثٍّ رجعيّ**: أحداثُ
+    //     الأمس لم تُستحقّ لها صفوفٌ أصلاً — والغيابُ أمتنُ من الترشيح.
+    //
+    //  **وبالمُشغّل نفسِه `h`، وبلا ابتلاعِ خطأ**: هذه كتابةُ قاعدةٍ لا نداءُ
+    //  مزوّد. فشلُها يُصعِّد فتتراجع المعاملةُ كلُّها — الصفُّ والجهةُ معاً —
+    //  ويبقى الملفُّ على حالته القديمة **المتّسقة**. وذلك خيرٌ ألفَ مرّة من
+    //  رقمٍ جديد مع جهةٍ قديمة نشطة لا يعلم بها أحد.
+    if (updated && (patch.phoneE164 !== undefined || patch.whatsappNotificationsEnabled !== undefined)) {
+      if (!updated.whatsappNotificationsEnabled) {
+        await revokeWhatsappContacts(h as any, id, null);
+      } else {
+        const contactId = await ensureWhatsappContact(h as any, {
+          patientId: id, phoneE164: updated.phoneE164,
+        });
+        await revokeWhatsappContacts(h as any, id, contactId);
       }
     }
     return updated;

@@ -15,11 +15,6 @@
     "test:workflow": "tsx server/manufacturing/workflow.test.ts",
     "test:legacy-catchup": "tsx server/migrations/legacy_catchup.test.ts",
     "test:manufacturing-events": "tsx server/manufacturing/events.test.ts",
-    "test:patient-identity": "tsx server/patient_contacts/identity.test.ts",
-    "test:communication-api": "tsx server/patient_contacts/api.test.ts",
-    "test:patient-telegram": "tsx server/patient_telegram/link.test.ts",
-    "test:notifications": "tsx server/patient_notifications/outbox.test.ts",
-    "test:communication-ui": "tsx client/src/components/patient_communication.test.ts",
     "telegram:patient-webhook": "tsx scripts/patient_telegram_webhook.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",
@@ -50,7 +45,6 @@
     "test:patient-code": "tsx shared/patient_code.test.ts",
     "test:migration-052": "tsx server/migration_052.test.ts",
     "test:patient-code-api": "tsx server/patient_code_api.test.ts",
-    "test:patient-code-telegram": "tsx server/patient_code_telegram.test.ts",
     "test:patient-code-ui": "tsx client/src/pages/patient_code_ui.test.ts",
     "test:ai-tools": "tsx server/ai_tools.test.ts",
     "test:ai-live": "tsx server/ai_live_assistant.test.ts",
@@ -82,7 +76,8 @@
     "test:add-case-ui": "tsx client/src/components/add_case_type_ui.test.ts",
     "test:reception-agreement": "tsx server/reception_agreement.test.ts",
     "test:supervisor-ui": "tsx client/src/pages/supervisor_ui.test.ts",
-    "test:exam-cancellation": "tsx server/exam_cancellation.test.ts"
+    "test:exam-cancellation": "tsx server/exam_cancellation.test.ts",
+    "test:whatsapp": "tsx server/patient_whatsapp/whatsapp.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

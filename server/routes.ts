@@ -7,6 +7,7 @@ import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
+import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
@@ -46,8 +47,6 @@ import {
 import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
 import { NEW_SERVICE_DEPARTMENT, isPatientClassification } from "@shared/service_taxonomy";
 import { DeviceEpisodeError } from "./device_episodes/store";
-import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
-import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import * as manufacturingStore from "./manufacturing/store";
 import {
   createJournalForPayment,
@@ -1952,7 +1951,22 @@ export async function registerRoutes(
       // support patients simply carry their flags; the "تحديد خبير" action
       // creates the work order (and the expert commits to the delivery date only
       // when they reach the mold stage).
+      // ══ موافقةُ واتساب — **قرارُ الموظّف، مؤرَّخاً ومنسوباً** ═══════════
+      //  الرايةُ تأتي من النموذج (افتراضُها مرفوعة)، والختمُ والمُقرِّر
+      //  يكتبهما الخادمُ لا العميل: قيمةٌ في جسم الطلب تدّعي أن فلاناً وافق
+      //  يومَ كذا ليست موافقة. وحين تُترك مطفأة لا يُكتب ختمٌ ولا اسم —
+      //  فالفراغُ يقول «لا موافقةَ مسجَّلة» بصدق.
+      const waEnabled = (input as any).whatsappNotificationsEnabled !== false;
+      (input as any).whatsappNotificationsEnabled = waEnabled;
+      (input as any).whatsappConsentAt = waEnabled ? new Date() : null;
+      (input as any).whatsappConsentByUserId = waEnabled ? (branchSession?.userId ?? null) : null;
+
       const patient = await storage.createPatient(input);
+
+      // كبسةٌ كي يصل الترحيبُ في ثوانٍ لا في دقيقة. **«أطلق وانسَ» وبعد
+      // الحفظ** — فشلُها لا يعني شيئاً، والدورةُ الدورية تلتقط ما بقي،
+      // ولا يمكن لها أن تُفشل تسجيلاً وقع وثُبِّت.
+      if (patient.whatsappNotificationsEnabled) nudgeDispatcher();
 
       // Owner's instant ping. Fire-and-forget: a Telegram hiccup must never
       // fail or slow the registration itself.
@@ -1986,7 +2000,15 @@ export async function registerRoutes(
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       console.error("Error creating patient:", err);
-      throw err;
+      // ══ **فشلُ الكتابة يُقال، لا يُترك معلَّقاً** ═══════════════════════
+      //  كان `throw err` داخل معالجٍ غير متزامن يصير رفضاً غير ملتقَط:
+      //  الخدمةُ تبقى حيّة (حارسُ `index.ts`) **والطلبُ بلا ردٍّ إطلاقاً** —
+      //  فتنتظر موظّفةُ الاستقبال دوّارةً حتى تنتهي مهلةُ المتصفّح، ولا تعرف
+      //  أحُفظ المريضُ أم لا. وهذا أسوأُ من خطأٍ صريح.
+      //
+      //  والمعاملةُ تراجعت كاملةً (صفُّ المريض وجهتُه وترحيبُه معاً)، فلا
+      //  حالةَ نصفَ مكتوبة تُخفيها هذه الرسالة — وإعادةُ المحاولة نظيفة.
+      return res.status(500).json({ message: "تعذّر تسجيل المريض — لم يُحفظ شيء، أعد المحاولة" });
     }
   });
 
@@ -2133,6 +2155,26 @@ export async function registerRoutes(
         }
       }
 
+      // ══ تبديلُ رايةِ واتساب — والختمُ يكتبه الخادم ════════════════════
+      //  رفعُها يسجّل مَن رفعها ومتى. وإطفاؤها **لا يمحو الختمَ القديم**:
+      //  «وافق يومَ كذا ثم أوقفنا الإرسال» تاريخٌ صحيح، ومحوُه يجعل الملفَّ
+      //  يقول إن أحداً لم يوافق قطّ. وسحبُ الجهة يتكفّل به `updatePatient`.
+      if (patch.whatsappNotificationsEnabled !== undefined) {
+        const on = patch.whatsappNotificationsEnabled === true;
+        patch.whatsappNotificationsEnabled = on;
+        if (on && !existingPatient.whatsappNotificationsEnabled) {
+          patch.whatsappConsentAt = new Date();
+          patch.whatsappConsentByUserId = branchSession?.userId ?? null;
+        } else {
+          delete patch.whatsappConsentAt;
+          delete patch.whatsappConsentByUserId;
+        }
+      } else {
+        //  ولا يكتبهما عميلٌ مباشرةً بحال.
+        delete patch.whatsappConsentAt;
+        delete patch.whatsappConsentByUserId;
+      }
+
       // ══ تصنيفُ المريض على التعديل — نفسُ منطق رقم الاتصال أعلاه ═══════
       //  الإنشاءُ يُلزم بأحد الاثنين. والتعديلُ يحرس ما بُني:
       //
@@ -2212,7 +2254,13 @@ export async function registerRoutes(
         : patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
-      throw err;
+      // ══ **وفشلُ التعديل يُقال أيضاً** — نفسُ علّة الإنشاء ═══════════════
+      //  `throw` في معالجٍ غير متزامن = رفضٌ غير ملتقَط: الخدمةُ حيّة
+      //  **والطلبُ بلا ردّ**، فينتظر الموظّفُ ولا يعرف أحُفظ التعديلُ أم لا.
+      //  والمعاملةُ تراجعت كاملةً — الصفُّ وجهةُ الاتصال معاً — فالملفُّ
+      //  على حالته القديمة المتّسقة، وإعادةُ المحاولة نظيفة.
+      console.error("Error updating patient:", err);
+      return res.status(500).json({ message: "تعذّر حفظ التعديل — لم يُحفظ شيء، أعد المحاولة" });
     }
   });
 
@@ -7064,16 +7112,13 @@ export async function registerRoutes(
   registerFollowupRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
 
-  // Register patient communication link-token routes (روابط تواصل المريض).
-  // Staff-facing only: issue / list / revoke. There is deliberately NO public
-  // redeem endpoint — redeemLinkToken stays an internal function.
-  registerPatientCommunicationRoutes(app, isAuthenticated);
-
-  // Patient Telegram bot webhook. PUBLIC by necessity — Telegram calls it and
-  // has no session. Guarded by a shared secret in the X-Telegram-Bot-Api-
-  // Secret-Token header, compared in constant time. Separate bot, separate
-  // module, separate credentials from the admin notification bot.
-  registerPatientTelegramWebhook(app);
+  // ══ تواصلُ المريض — **صادرٌ فقط، بلا نقطةٍ عامّة واحدة** ═══════════════
+  //  لا webhook، ولا تذاكرَ ربط، ولا استهلاك، ولا أوامرَ واردة. الرقمُ
+  //  المسجَّل في الملفّ هو الوجهة، والترحيبُ يُستحقّ لحظةَ الحفظ، والعاملُ
+  //  الدوريّ يرسل. فما لا يُستقبَل لا يُفتَح له باب.
+  //
+  //  (وتنبيهاتُ المالك الداخلية في `notifications/telegram.ts` شأنٌ آخر
+  //   تماماً ولم تُمَسّ: تلك للإدارة لا للمرضى.)
 
   return httpServer;
 }

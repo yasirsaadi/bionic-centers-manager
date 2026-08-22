@@ -165,6 +165,9 @@ export default function CreatePatient() {
     defaultValues: {
       name: "",
       phone: "",
+      //  **مرفوعةٌ افتراضاً** — والقاعدةُ افتراضُها `FALSE`، فالمرضى القدامى
+      //  لا يستيقظون على رسالةٍ بعد النشر. الجديدُ وحده يرسل `true`.
+      whatsappNotificationsEnabled: true,
       address: "",
       referralSource: "",
       referralSubSource: "",
@@ -566,6 +569,33 @@ export default function CreatePatient() {
                     </FormControl>
                     <p className="text-xs text-muted-foreground">{t.patientForm.phoneHint}</p>
                     <FormMessage />
+
+                    {/* ══ إشعاراتُ واتساب — **مربّعٌ واحد، بلا نافذةٍ ولا اعتماد** ══
+                        الموظّفُ يكلّم المريضَ وهو يكتب رقمه، فيسأله في الجملة
+                        نفسها. ومربّعٌ مرفوعٌ افتراضاً هو المسلك المتوقَّع في
+                        أي مؤسّسةٍ حديثة — ومَن رفض يُطفئه بضغطةٍ واحدة.
+                        وحفظُ الملفّ هو الموافقة: لا شاشةَ ثانية ولا توقيع. */}
+                    <label
+                      className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-2 cursor-pointer"
+                      data-testid="label-whatsapp-consent"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 accent-emerald-600"
+                        checked={form.watch("whatsappNotificationsEnabled") !== false}
+                        onChange={(e) =>
+                          form.setValue("whatsappNotificationsEnabled", e.target.checked)}
+                        data-testid="checkbox-whatsapp-consent"
+                      />
+                      <span className="text-xs leading-relaxed">
+                        <span className="font-medium text-emerald-900">
+                          إرسال إشعارات وتحديثات المركز عبر واتساب على الرقم المسجل
+                        </span>
+                        <span className="block text-muted-foreground mt-0.5">
+                          بحفظ الملف سيُستخدم الرقم لإرسال رسائل الخدمة وتحديثاتها.
+                        </span>
+                      </span>
+                    </label>
                   </FormItem>
                 )}
               />
