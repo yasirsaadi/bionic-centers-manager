@@ -29,6 +29,8 @@ import type * as FollowupStore from "../followup/store";
 import { closeRequestsAwaitingExam } from "../medical_review/store";
 import * as reviewStore from "../medical_review/store";
 import { canSuperviseReview } from "@shared/medical_review";
+import { cancelledExamIds, isExamCancelled } from "./active_exam";
+import { cancelExam, ExamCancelError } from "./cancel_exam";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -177,6 +179,24 @@ async function applyDecision(
   return { switchNote };
 }
 
+/**
+ * **مَن يُلغي معاينةً موقّعة** — نفسُ طرفَي «تعديل» بلا توسيعٍ ولا دورٍ جديد.
+ *
+ * صاحبُ المعاينة، أو المديرُ المسؤول (مسؤولٌ عام / مديرُ فرع). وطبيبٌ آخر
+ * — ولو حمل الاختصاص نفسه — **لا يسحب توقيع زميله**؛ فذلك سجلٌّ باسم غيره.
+ * والاستقبالُ والمحاسبُ والخبير ليسوا منهم إطلاقاً.
+ *
+ * ونطاقُ الفرع يُفرَض فوق هذا في النقطة (`canReachBranch`) — هذه تقول
+ * «أيملك هذه القدرة؟»، والنطاقُ يقول «على أيّ الصفوف؟».
+ */
+function mayCancelExam(
+  session: { userId: number | null; isAdmin: boolean; role: string },
+  exam: { doctorId: number | null },
+): boolean {
+  if (session.isAdmin || session.role === "branch_manager") return true;
+  return exam.doctorId !== null && exam.doctorId === session.userId;
+}
+
 export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   // ── The current user's doctor grant ──────────────────────────────────────
   // The UI asks this to decide whether to offer the "معاينة جديدة" button and
@@ -207,11 +227,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       }
 
       const session = getSession(req);
-      const [exams, pending, specialties] = await Promise.all([
+      const [allExams, pending, specialties] = await Promise.all([
         store.getExamsByPatient(patientId),
         store.getPendingForPatient(patientId),
         store.doctorSpecialties(session.userId),
       ]);
+      //  **الملغاةُ لا تُعرَض في السجلّ الفعّال** (ترحيل ٠٦١): الشاشةُ
+      //  السريرية تقول «ما حالُ هذا المريض»، ومعاينةٌ أُلغيت ليست حالَه.
+      //  وهي محفوظةٌ كاملةً في القاعدة وفي `audit_log` لمن يدقّق.
+      const cancelledIds = await cancelledExamIds(allExams.map((e) => e.id));
+      const exams = allExams.filter((e) => !cancelledIds.has(e.id));
 
       // Superseded versions, grouped onto their exam. Read by everyone: the
       // history is the reason editing is safe, so hiding it would defeat it.
@@ -239,6 +264,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
             ? expertNames[e.proposedExpertUserId] ?? null
             : null,
           revisions: (byExam[e.id] ?? []).map(scrub),
+          //  **مَن يجوز له الإلغاء — يقوله الخادم لا تخمّنه الشاشة.**
+          //  نفسُ قاعدة «تعديل» حرفياً: صاحبُ المعاينة أو المدير المسؤول.
+          //  وطبيبٌ آخر — ولو بنفس الاختصاص — لا يسحب توقيع زميله.
+          canCancel: mayCancelExam(session, { doctorId: e.doctorId ?? null }),
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         canWriteMedicalExam: specialties.length > 0,
@@ -414,6 +443,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           .status(403)
           .json({ error: "تعديل المعاينة للطبيب صاحبها أو للمدير المسؤول فقط" });
       }
+      //  **ولا تعديلَ لملغاة** (ترحيل ٠٦١): تحريرُها يُنتج نسخةً جديدة من
+      //  سجلٍّ سُحبت سلطتُه — تصحيحٌ في مكانٍ لا يُقرأ. والمسار: معاينةٌ جديدة.
+      if (await isExamCancelled(examId)) {
+        return res.status(409).json({ error: "هذه المعاينة ملغاة — اكتب معاينة جديدة بدل التعديل" });
+      }
 
       const caseType = req.body?.caseType ?? exam.caseType;
       if (!isMedicalSpecialty(caseType)) {
@@ -585,6 +619,54 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   });
 
   // ── Append a correction to an existing exam ──────────────────────────────
+  // ── إلغاءُ معاينةٍ موقّعة ──────────────────────────────────────────────
+  //  زرُّ «حذف» في الشاشة يصل هنا. **ولا حذفَ**: صفُّ إلغاءٍ يُضاف، والسجلّ
+  //  ونسخُه وملاحقُه وتوقيعُ الطبيب تبقى كما هي. والحُرّاسُ التجارية في
+  //  `cancel_exam.ts` — تُردّ ٤٠٩ متى وقع بيعٌ أو تصنيع.
+  app.post("/api/medical/exams/:examId/cancel", isAuthenticated, async (req: Req, res) => {
+    try {
+      const examId = Number(req.params.examId);
+      if (!Number.isFinite(examId)) {
+        return res.status(400).json({ error: "معرّف معاينة غير صالح" });
+      }
+      const session = getSession(req);
+      const exam = await store.getExam(examId);
+      if (!exam) return res.status(404).json({ error: "المعاينة غير موجودة" });
+      if (!canReachBranch(req, exam.branchId)) {
+        return res.status(403).json({ error: "لا يمكنك إلغاء معاينة فرع آخر" });
+      }
+      if (!mayCancelExam(session, { doctorId: exam.doctorId ?? null })) {
+        return res.status(403).json({
+          error: "إلغاء المعاينة للطبيب صاحبها أو للمدير المسؤول فقط",
+        });
+      }
+      //  **وصاحبُها يلغيها ما دام طبيباً**: سحبُ المنح السريريّ يسري فوراً،
+      //  فمَن لم يعد يوقّع لا يسحب توقيعاً. والمديرُ المسؤول ليس مشروطاً به —
+      //  إذنُه إداريٌّ لا سريريّ.
+      const isManager = session.isAdmin || session.role === "branch_manager";
+      if (!isManager) {
+        const specialties = await store.doctorSpecialties(session.userId);
+        if (specialties.length === 0) {
+          return res.status(403).json({ error: "إلغاء المعاينة للطبيب صاحبها أو للمدير المسؤول فقط" });
+        }
+      }
+
+      const out = await cancelExam({
+        examId,
+        reason: String(req.body?.reason ?? ""),
+        actor: { userId: session.userId, userName: session.userName },
+        audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
+      });
+      res.json({ ok: true, ...out });
+    } catch (err: any) {
+      if (err instanceof ExamCancelError) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      console.error("[medical] cancel exam failed:", err);
+      res.status(500).json({ error: "تعذّر إلغاء المعاينة" });
+    }
+  });
+
   app.post("/api/medical/exams/:examId/addenda", isAuthenticated, async (req: Req, res) => {
     try {
       const examId = Number(req.params.examId);
@@ -607,6 +689,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       }
       if (!canReachBranch(req, exam.branchId)) {
         return res.status(403).json({ error: "لا يمكنك الكتابة على معاينة فرع آخر" });
+      }
+      //  **ولا كتابةَ على ملغاة** (ترحيل ٠٦١): ملحقٌ على سجلٍّ سُحبت سلطتُه
+      //  يوهم قارئَه بأنه حيّ. والتصحيحُ يُكتب في معاينةٍ جديدة.
+      if (await isExamCancelled(examId)) {
+        return res.status(409).json({ error: "هذه المعاينة ملغاة — اكتب معاينة جديدة بدل الملحق" });
       }
 
       const bodyText = clean(req.body?.body);

@@ -31,6 +31,7 @@ import { normalizePatientCode } from "@shared/patient_code";
 import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
+import { activeExamDrizzle } from "../../medical/active_exam";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -122,7 +123,10 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
   const [lastExam] = await db.select({
     caseType: medicalExams.caseType, signedAt: medicalExams.signedAt,
     doctorName: medicalExams.doctorName,
-  }).from(medicalExams).where(eq(medicalExams.patientId, patientId))
+  //  **الفعّالة وحدها** (ترحيل ٠٦١): المساعدُ يجيب عن «ما حالته الآن»،
+  //  ومعاينةٌ أُلغيت ليست حالتَه.
+  }).from(medicalExams)
+    .where(and(eq(medicalExams.patientId, patientId), activeExamDrizzle()))
     .orderBy(desc(medicalExams.signedAt)).limit(1);
 
   // ── حلقات الأجهزة: هويّة الجهاز لا سعره ───────────────────────────────
@@ -298,7 +302,7 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
     doctorName: medicalExams.doctorName, diagnosis: medicalExams.diagnosis,
     prescription: medicalExams.prescription,
   }).from(medicalExams)
-    .where(eq(medicalExams.patientId, hit.patientId))
+    .where(and(eq(medicalExams.patientId, hit.patientId), activeExamDrizzle()))
     .orderBy(desc(medicalExams.signedAt));
 
   const latestBySpecialty: typeof rows = [];

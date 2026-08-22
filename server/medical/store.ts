@@ -32,6 +32,7 @@ import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
+import { activeExamDrizzle, activeExamSql } from "./active_exam";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -185,7 +186,7 @@ export async function hasSignedExamForEpisode(episodeId: number): Promise<boolea
   const [row] = await db
     .select({ id: EX.id })
     .from(EX)
-    .where(eq(EX.deviceEpisodeId, episodeId))
+    .where(and(eq(EX.deviceEpisodeId, episodeId), activeExamDrizzle()))
     .limit(1);
   return !!row;
 }
@@ -195,7 +196,7 @@ export async function latestDeviceCostForEpisode(episodeId: number): Promise<num
   const [exam] = await db
     .select({ deviceCost: EX.deviceCost })
     .from(EX)
-    .where(eq(EX.deviceEpisodeId, episodeId))
+    .where(and(eq(EX.deviceEpisodeId, episodeId), activeExamDrizzle()))
     .orderBy(desc(EX.signedAt), desc(EX.id))
     .limit(1);
   return typeof exam?.deviceCost === "number" && exam.deviceCost > 0 ? exam.deviceCost : null;
@@ -209,7 +210,7 @@ export async function prescribedSpecsForEpisode(
   const [exam] = await db
     .select({ prescription: EX.prescription })
     .from(EX)
-    .where(eq(EX.deviceEpisodeId, episodeId))
+    .where(and(eq(EX.deviceEpisodeId, episodeId), activeExamDrizzle()))
     .orderBy(desc(EX.signedAt), desc(EX.id))
     .limit(1);
   const rx = exam?.prescription;
@@ -563,7 +564,7 @@ export async function hasSignedExam(
   const [row] = await db
     .select({ id: EX.id })
     .from(EX)
-    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType), activeExamDrizzle()))
     .limit(1);
   return !!row;
 }
@@ -616,7 +617,7 @@ export async function latestDeviceCost(
   const [exam] = await db
     .select({ deviceCost: EX.deviceCost })
     .from(EX)
-    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType), activeExamDrizzle()))
     .orderBy(desc(EX.signedAt), desc(EX.id))
     .limit(1);
   return typeof exam?.deviceCost === "number" && exam.deviceCost > 0 ? exam.deviceCost : null;
@@ -636,7 +637,7 @@ export async function prescribedSpecs(
   const [exam] = await db
     .select({ prescription: EX.prescription })
     .from(EX)
-    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType)))
+    .where(and(eq(EX.patientId, patientId), eq(EX.caseType, caseType), activeExamDrizzle()))
     .orderBy(desc(EX.signedAt), desc(EX.id))
     .limit(1);
   const rx = exam?.prescription;
@@ -725,7 +726,8 @@ export async function getPendingExams(
     SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)`;
   const neverExamined = sql`NOT EXISTS (
     SELECT 1 FROM medical_exams me
-     WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type)`;
+     WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type
+       AND ${activeExamSql("me")})`;
 
   // ══ المنتظِرُ معاينةً كاملة من المراجعة (ترحيل ٠٥٥) ══════════════════
   // بابان يلتقيان هنا: ما **أرسله الاستقبال كاملاً** من أوّله (جهازٌ جديد،
@@ -745,7 +747,8 @@ export async function getPendingExams(
          SELECT 1 FROM medical_exams me2
           WHERE me2.patient_id = r.patient_id
             AND me2.case_type = r.service_type
-            AND me2.created_at >= COALESCE(r.decided_at, r.created_at)))`;
+            AND me2.created_at >= COALESCE(r.decided_at, r.created_at)
+            AND ${activeExamSql("me2")}))`;
   const legacyPath = sql`(${noEpisodes} AND ${legacyOnly ? isExempt : sql`NOT ${isExempt}`} AND ${neverExamined})`;
   // The optional list is for the exempt only; a mandatory awaiting-exam
   // episode belongs in the amber queue, never in the quiet one.
@@ -808,7 +811,7 @@ export async function getDecidedExams(
   const episodeAware = sql`EXISTS (
     SELECT 1 FROM medical_exams m2
       JOIN patient_device_episodes e2 ON e2.id = m2.device_episode_id
-     WHERE e2.case_id = pc.id)`;
+     WHERE e2.case_id = pc.id AND ${activeExamSql("m2")})`;
   const openExamined = sql`EXISTS (
     SELECT 1 FROM patient_device_episodes e
      WHERE e.case_id = pc.id AND e.status = 'examined')`;
@@ -823,6 +826,7 @@ export async function getDecidedExams(
     LEFT JOIN patient_cases pc
       ON pc.patient_id = me.patient_id AND pc.case_type = me.case_type
     WHERE ${scoped}
+      AND ${activeExamSql("me")}
       AND (
         ${openExamined}
         OR (${noOpenEpisode} AND NOT ${episodeAware})
@@ -932,6 +936,7 @@ export async function getWorklist(
                 WHERE me2.patient_id = r.patient_id
                   AND me2.case_type = r.service_type
                   AND me2.created_at >= COALESCE(r.decided_at, r.created_at)
+                  AND ${activeExamSql("me2")}
              )
         )
         OR (
@@ -941,6 +946,7 @@ export async function getWorklist(
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
               AND me.case_type = pc.case_type
+              AND ${activeExamSql("me")}
           )
         )
       )
@@ -1003,6 +1009,7 @@ export async function getPendingForPatient(patientId: number): Promise<string[]>
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
               AND me.case_type = pc.case_type
+              AND ${activeExamSql("me")}
           )
         )
       )

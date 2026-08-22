@@ -519,6 +519,26 @@ export async function claimAwaitingEpisodeForExam(
   return row ? Number(row.id) : null;
 }
 
+/**
+ * **أعِد الحلقة إلى «بانتظار المعاينة»** — عند إلغاء المعاينة التي عاينتها
+ * (ترحيل ٠٦١).
+ *
+ * الطلبُ باقٍ والمعاينةُ سقطت: المريضُ ما زال يريد الجهاز، فتُوقَّع له
+ * معاينةٌ مصحَّحة تطالب **هذه الحلقةَ نفسَها** ولا تفتح ثانية. والشرطُ
+ * `status = 'examined'` يجعلها بلا أثرٍ على أيّ حالةٍ أخرى — فحلقةٌ دخلت
+ * التصنيعَ بين الفحص والكتابة لا تُسحَب منه بأثرٍ رجعي.
+ */
+export async function revertEpisodeToAwaitingExam(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeId: number,
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'awaiting_exam', updated_at = NOW()
+     WHERE id = ${episodeId} AND status = 'examined'
+  `);
+}
+
 /** حرّك الحلقة إلى «مُعايَنة» داخل معاملة المُستدعي. */
 export async function markEpisodeExamined(
   tx: { execute: (q: any) => Promise<any> },

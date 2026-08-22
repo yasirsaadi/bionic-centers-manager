@@ -29,7 +29,7 @@ import {
   type SurveyQuestion, type InsertSurveyQuestion,
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
-  medicalExams, medicalExamAddenda, medicalExamRevisions,
+  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries, patientCodeAliases,
 } from "@shared/schema";
@@ -1073,6 +1073,13 @@ export class DatabaseStorage implements IStorage {
         const examIds = examRows.map((e) => e.id);
         await tx.delete(medicalExamAddenda).where(inArray(medicalExamAddenda.examId, examIds));
         await tx.delete(medicalExamRevisions).where(inArray(medicalExamRevisions.examId, examIds));
+        //  شواهدُ الإلغاء (ترحيل ٠٦١) — **صراحةً لا اتّكالاً على الكاسكيد**.
+        //  الصفُّ يحمل مفتاحاً أجنبياً إلى `patients` أيضاً، فحذفٌ يعتمد على
+        //  `ON DELETE CASCADE` من المعاينة وحده يبقى صحيحاً بالمصادفة: يكفي
+        //  أن يتغيّر ترتيبُ سطرين هنا ليفشل حذفُ كلّ مريضٍ له معاينةٌ ملغاة.
+        //  (القاعدة الملزمة في CLAUDE.md بعد حادثة 2026-07-26.)
+        await tx.delete(medicalExamCancellations)
+          .where(inArray(medicalExamCancellations.examId, examIds));
         await tx.delete(medicalExams).where(eq(medicalExams.patientId, id));
       }
       // ══ سلسلة الحلقة (migration 049) — الترتيب هنا **ليس تفضيلاً** ══════
@@ -1731,12 +1738,12 @@ export class DatabaseStorage implements IStorage {
       const collided = await tx.execute<{ id: number; branch_id: number | null }>(sql`
         SELECT s.id, s.branch_id FROM post_exam_followups s
          WHERE s.patient_id = ${sourceId}
-           AND s.status NOT IN ('closed_without_purchase', 'converted')
+           AND s.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
            AND EXISTS (
              SELECT 1 FROM post_exam_followups t
               WHERE t.patient_id = ${targetId}
                 AND t.service_type = s.service_type
-                AND t.status NOT IN ('closed_without_purchase', 'converted')
+                AND t.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
            )
       `);
       for (const row of (collided.rows ?? [])) {
@@ -1912,6 +1919,11 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
       await repoint("medicalExams", medicalExams, medicalExams.patientId);
       await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'off'`);
+      //  وشاهدةُ الإلغاء (ترحيل ٠٦١) تتبع معاينتَها: `exam_id` لا يتغيّر،
+      //  فيبقى الربطُ سليماً — لكنّ `patient_id` عليها يجب أن يتبع صاحبَه،
+      //  وإلّا صار الصفُّ يشير إلى ملفٍّ اندمج ثم اختفى.
+      await repoint("medicalExamCancellations", medicalExamCancellations,
+        medicalExamCancellations.patientId);
 
       // ── Event log (migration 044) ────────────────────────────────────────
       // Repointing patient_id alone is NOT enough, for two independent reasons.

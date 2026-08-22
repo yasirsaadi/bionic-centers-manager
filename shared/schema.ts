@@ -1304,6 +1304,35 @@ export const medicalExamRevisions = pgTable("medical_exam_revisions", {
 
 export type MedicalExamRevision = typeof medicalExamRevisions.$inferSelect;
 
+/**
+ * **إلغاءُ معاينةٍ موقّعة — شاهدةُ قبرٍ تُضاف، لا سجلٌّ يُمحى** (ترحيل ٠٦١).
+ *
+ * زرُّ «حذف» في الشاشة يعني **هذا الصفَّ**: المعاينةُ الأصلية ونسخُها
+ * وملاحقُها وتوقيعُ الطبيب وأختامُه الزمنية تبقى كما هي بايتاً بايت،
+ * ويتوقّف القارئُ التشغيليّ عن اعتبارها سلطةً سريرية.
+ *
+ * و`examId` فريدٌ: معاينةٌ لا تُلغى مرّتين، والسباقُ يحسمه صفُّ القاعدة.
+ * و`ON DELETE CASCADE` هو الوحيدُ المسموح — حذفُ المريض الكامل يحذف
+ * `medical_exams`، فلولاه لانكسر الحذفُ على كلّ مَن له معاينةٌ ملغاة.
+ */
+export const medicalExamCancellations = pgTable("medical_exam_cancellations", {
+  id: serial("id").primaryKey(),
+  examId: integer("exam_id").notNull().unique()
+    .references(() => medicalExams.id, { onDelete: "cascade" }),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  cancelledBy: integer("cancelled_by").references(() => systemUsers.id),
+  /** لقطةُ الاسم — حسابٌ يُحذف يترك رقماً لا يُفسَّر. */
+  cancelledByName: text("cancelled_by_name"),
+  reason: text("reason").notNull(),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("medical_exam_cancellations_reason_check", sql`length(btrim(${t.reason})) > 0`),
+  index("ix_mec_patient").on(t.patientId),
+]);
+
+export type MedicalExamCancellation = typeof medicalExamCancellations.$inferSelect;
+
 // Corrections append, never overwrite. The original exam text stays untouched
 // forever; an addendum carries its own signature and timestamp.
 export const medicalExamAddenda = pgTable("medical_exam_addenda", {

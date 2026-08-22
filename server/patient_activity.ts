@@ -30,6 +30,7 @@
 
 import { sql, type SQL } from "drizzle-orm";
 import { patients } from "@shared/schema";
+import { activeExamSql } from "./medical/active_exam";
 
 /**
  * **يومُ بغداد** لعمودٍ بلا منطقة زمنية.
@@ -82,11 +83,14 @@ export function patientActiveOnDate(date: string): SQL {
        WHERE pm.patient_id = ${sql.raw(P)}
          AND ${bgdNaive("pm.date")} = ${date}::date
     )
-    -- ④ معاينةٌ وقّعها الطبيب.
+    -- ④ معاينةٌ وقّعها الطبيب — **الفعّالة وحدها**.
+    --    معاينةٌ أُلغيت (ترحيل ٠٦١) لا تُثبت حضوراً: أشيعُ سببٍ للإلغاء
+    --    «أُدخلت للمريض الخطأ» — وذلك المريضُ لم يأتِ أصلاً.
     OR EXISTS (
       SELECT 1 FROM medical_exams me
        WHERE me.patient_id = ${sql.raw(P)}
          AND ${bgdTz("me.signed_at")} = ${date}::date
+         AND ${activeExamSql("me")}
     )
     -- ⑤ طلبُ جهازٍ أو جزءٍ جديد.
     OR EXISTS (
@@ -124,7 +128,7 @@ export function patientActiveOnDateBySource(
         AND ${bgdNaive("pm.date")} = ${date}::date)`;
     case "exam":
       return sql`EXISTS (SELECT 1 FROM medical_exams me WHERE me.patient_id = ${sql.raw(P)}
-        AND ${bgdTz("me.signed_at")} = ${date}::date)`;
+        AND ${bgdTz("me.signed_at")} = ${date}::date AND ${activeExamSql("me")})`;
     case "device_request":
       return sql`EXISTS (SELECT 1 FROM patient_device_episodes de WHERE de.patient_id = ${sql.raw(P)}
         AND ${bgdTz("de.created_at")} = ${date}::date)`;
