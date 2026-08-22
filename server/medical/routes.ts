@@ -188,13 +188,30 @@ async function applyDecision(
  *
  * ونطاقُ الفرع يُفرَض فوق هذا في النقطة (`canReachBranch`) — هذه تقول
  * «أيملك هذه القدرة؟»، والنطاقُ يقول «على أيّ الصفوف؟».
+ *
+ * ══ والاختصاصُ يُقرأ حيّاً، لا كما كان يوم التوقيع ═══════════════════════
+ * `specialties` هي **اختصاصاتُ الطالب الآن** من القاعدة (`doctorSpecialties`)
+ * لا من جلسته. فصاحبُ المعاينة يُلغيها بشرطين معاً:
+ *   ١) أن يبقى طبيباً — قائمةٌ غيرُ فارغة هي `canWriteMedicalExam` حرفياً؛
+ *   ٢) وأن يبقى اختصاصُ **هذه المعاينة بعينها** ضمن اختصاصاته.
+ *
+ * وبلا الشرط الثاني كان طبيبُ العلاج الطبيعي — بعد أن سُحب منه اختصاصُ
+ * الأطراف — يظلّ قادراً على سحب توقيعٍ لم يعد يملك أن يكتب مثلَه. وسحبُ
+ * المنح يجب أن يسري فوراً في **كلا** الاتجاهين: لا يكتب، ولا يمحو.
+ *
+ * والمديرُ المسؤول خارج هذا الشرط: إذنُه إداريٌّ لا سريريّ، فلا يُطلَب منه
+ * اختصاصٌ طبّيٌّ ليمارس إشرافَه — كما لا يُطلَب منه ليوقّع (وهو لا يوقّع).
  */
 function mayCancelExam(
   session: { userId: number | null; isAdmin: boolean; role: string },
-  exam: { doctorId: number | null },
+  exam: { doctorId: number | null; caseType: string | null },
+  specialties: readonly MedicalSpecialty[],
 ): boolean {
   if (session.isAdmin || session.role === "branch_manager") return true;
-  return exam.doctorId !== null && exam.doctorId === session.userId;
+  if (exam.doctorId === null || exam.doctorId !== session.userId) return false;
+  //  قائمةٌ فارغة = لم يعد طبيباً أصلاً (أو عُطّل حسابُه) ⇒ لا يلغي شيئاً.
+  if (specialties.length === 0) return false;
+  return isMedicalSpecialty(exam.caseType) && specialties.includes(exam.caseType);
 }
 
 export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
@@ -267,7 +284,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  **مَن يجوز له الإلغاء — يقوله الخادم لا تخمّنه الشاشة.**
           //  نفسُ قاعدة «تعديل» حرفياً: صاحبُ المعاينة أو المدير المسؤول.
           //  وطبيبٌ آخر — ولو بنفس الاختصاص — لا يسحب توقيع زميله.
-          canCancel: mayCancelExam(session, { doctorId: e.doctorId ?? null }),
+          //
+          //  **وبالدالّة نفسِها التي تحرس النقطة** وباختصاصات الطالب التي
+          //  قُرئت مرّةً واحدة أعلاه — لا استعلامَ لكلّ معاينة، ولا قاعدةَ
+          //  ثانية تنحرف. فزرُّ «حذف» لا يظهر حيث كان الخادمُ سيردّ ٤٠٣.
+          canCancel: mayCancelExam(
+            session,
+            { doctorId: e.doctorId ?? null, caseType: e.caseType ?? null },
+            specialties,
+          ),
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         canWriteMedicalExam: specialties.length > 0,
@@ -635,20 +660,20 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (!canReachBranch(req, exam.branchId)) {
         return res.status(403).json({ error: "لا يمكنك إلغاء معاينة فرع آخر" });
       }
-      if (!mayCancelExam(session, { doctorId: exam.doctorId ?? null })) {
-        return res.status(403).json({
-          error: "إلغاء المعاينة للطبيب صاحبها أو للمدير المسؤول فقط",
-        });
-      }
-      //  **وصاحبُها يلغيها ما دام طبيباً**: سحبُ المنح السريريّ يسري فوراً،
-      //  فمَن لم يعد يوقّع لا يسحب توقيعاً. والمديرُ المسؤول ليس مشروطاً به —
-      //  إذنُه إداريٌّ لا سريريّ.
+      //  **والمنحُ السريريّ يُقرأ من القاعدة لا من الجلسة**: سحبُ الاختصاص
+      //  يسري فوراً لا عند الدخول التالي — نفسُ قاعدة الكتابة حرفياً.
+      //  والمديرُ المسؤول لا يُستعلَم عن اختصاصه: إذنُه إداريٌّ لا سريريّ.
       const isManager = session.isAdmin || session.role === "branch_manager";
-      if (!isManager) {
-        const specialties = await store.doctorSpecialties(session.userId);
-        if (specialties.length === 0) {
-          return res.status(403).json({ error: "إلغاء المعاينة للطبيب صاحبها أو للمدير المسؤول فقط" });
-        }
+      const specialties = isManager ? [] : await store.doctorSpecialties(session.userId);
+      if (!mayCancelExam(session, exam, specialties)) {
+        //  ورسالةٌ تقول أيُّ بابٍ أُغلق: صاحبُ المعاينة الذي سُحب منه
+        //  الاختصاص يحتاج أن يعرف أنه سُحب، لا أن يظنّ النظامَ لا يعرفه.
+        const isAuthor = exam.doctorId !== null && exam.doctorId === session.userId;
+        return res.status(403).json({
+          error: isAuthor
+            ? `لم تعد تملك اختصاص ${specialtyLabel(exam.caseType)} — إلغاء المعاينة لطبيب اختصاصها أو للمدير المسؤول`
+            : "إلغاء المعاينة للطبيب صاحبها أو للمدير المسؤول فقط",
+        });
       }
 
       const out = await cancelExam({

@@ -458,6 +458,89 @@ async function main() {
       "م.١ **وحذفُ المريض الكامل ما زال ينجح**", `${del.status} ${JSON.stringify(del.body)}`);
     same("   ولا صفَّ شاهدةٍ يتيم",
       (await q(`SELECT COUNT(*)::int c FROM medical_exam_cancellations WHERE patient_id=$1`, [pM]))[0].c, 0);
+
+    // ══ ن. **سحبُ الاختصاص يسري فوراً — على الإلغاء كما على الكتابة** ══
+    //
+    //  ══ العطبُ الذي يغلقه ═══════════════════════════════════════════
+    //  كان الشرطُ على صاحب المعاينة «أيملك أيَّ اختصاصٍ طبّي؟» لا «أيملك
+    //  اختصاصَ هذه المعاينة؟». فطبيبٌ سُحب منه اختصاصُ الأطراف وبقي له
+    //  العلاجُ الطبيعي كان يظلّ قادراً على **سحب توقيعٍ لم يعد يملك أن
+    //  يكتب مثلَه**. وسحبُ المنح يجب أن يسري في الاتجاهين معاً.
+    //
+    //  والشرطُ يُقرأ من القاعدة لا من الجلسة: الجلسةُ هنا تحمل
+    //  `canWriteMedicalExam: true` طوال الوقت، والقاعدةُ وحدها تتغيّر.
+    console.log("\n── ن. سحبُ الاختصاص ──");
+    const setSpecialties = (userId: number, list: string[]) =>
+      q(`UPDATE system_users SET medical_specialties = $2::jsonb WHERE id = $1`,
+        [userId, JSON.stringify(list)]);
+    /** ما يقوله الخادمُ للشاشة عن هذه المعاينة — `null` إن لم تعد تُعرَض. */
+    const canCancelOf = async (patientId: number, examId: number, session: any) => {
+      const r = await listExams(patientId, session);
+      const row = ((r.body?.exams ?? []) as any[]).find((e) => e.id === examId);
+      return row ? row.canCancel : null;
+    };
+    const cancelRows = async (examId: number) => Number((await q(
+      `SELECT COUNT(*)::int c FROM medical_exam_cancellations WHERE exam_id=$1`, [examId]))[0].c);
+
+    const pN = await mk("ن — سحب الاختصاص", { prosthetic: true });
+    const epN = (await startEpisode(pN, "prosthetic")).body;
+    //  يوقّعها د.٢ وهو يحمل الأطراف والمساند.
+    await setSpecialties(DOC2, ["prosthetic", "medical_support"]);
+    const exN = (await signExam(pN, "prosthetic", { deviceCost: 900000 }, S.doc2)).body;
+    check(Boolean(exN?.id), "ن. معاينةُ أطرافٍ وقّعها صاحبُ الاختصاص",
+      JSON.stringify(exN)?.slice(0, 80));
+    same("   وهو يراها قابلةً للإلغاء", await canCancelOf(pN, exN.id, S.doc2), true);
+    const epBefore = await episodeStatus(epN.id);
+    const fuBefore = await followupOf(exN.id);
+
+    // ── أ. سُحب منه اختصاصُ الأطراف وبقي طبيباً ──────────────────────
+    await setSpecialties(DOC2, ["physiotherapy"]);
+    same("ن.أ **الزرُّ يختفي فوراً** — `canCancel=false` بلا خروجٍ ودخول",
+      await canCancelOf(pN, exN.id, S.doc2), false);
+    const rNa = await cancel(exN.id, "لم يعد اختصاصي", S.doc2);
+    same("ن.أ.١ **والنقطةُ تردّ ٤٠٣**", rNa.status, 403);
+    check(String(rNa.body?.error ?? "").includes("لم تعد تملك اختصاص"),
+      "   برسالةٍ تقول أيُّ بابٍ أُغلق", String(rNa.body?.error));
+    same("ن.أ.٢ **ولا شاهدةَ إلغاء**", await cancelRows(exN.id), 0);
+    same("ن.أ.٣ **ولا الحلقةُ ولا المتابعةُ تحرّكتا**",
+      [await episodeStatus(epN.id), (await followupOf(exN.id))?.status],
+      [epBefore, fuBefore?.status]);
+
+    // ── ج. اختصاصٌ آخرُ حقيقيّ لا يكفي كذلك ─────────────────────────
+    //  وهذا هو ما كان يمرّ: القائمةُ غيرُ فارغة ⟹ كان يُقبل.
+    await setSpecialties(DOC2, ["medical_support"]);
+    same("ن.ج **ومساندٌ لا يُلغي معاينةَ أطراف** — `canCancel=false`",
+      await canCancelOf(pN, exN.id, S.doc2), false);
+    same("ن.ج.١ والنقطةُ تردّ ٤٠٣", (await cancel(exN.id, "x", S.doc2)).status, 403);
+    same("   ولا شاهدة", await cancelRows(exN.id), 0);
+
+    // ── د. والمديرُ والمسؤولُ لا يمسّهما شيءٌ من ذلك ─────────────────
+    //  إذنُهما إداريٌّ لا سريريّ، ولا يحملان اختصاصاً طبّياً أصلاً.
+    same("ن.د **مديرُ الفرع في نطاقه يراها قابلةً للإلغاء**",
+      await canCancelOf(pN, exN.id, S.mgr), true);
+    same("ن.د.١ **والمسؤولُ العام كذلك**",
+      await canCancelOf(pN, exN.id, S.admin), true);
+    same("   ومديرُ فرعٍ آخر لا يصل إليها أصلاً",
+      (await listExams(pN, S.mgr2)).status, 403);
+
+    // ── ب. أُعيد له الاختصاص ⟶ يعود الحقّ فوراً ──────────────────────
+    await setSpecialties(DOC2, ["prosthetic"]);
+    same("ن.ب **وإعادةُ الاختصاص تعيد الحقّ فوراً**",
+      await canCancelOf(pN, exN.id, S.doc2), true);
+    same("ن.ب.١ **والإلغاءُ ينجح**",
+      (await cancel(exN.id, "كُتبت للمريض الخطأ", S.doc2)).status, 200);
+    same("   وشاهدةٌ واحدة", await cancelRows(exN.id), 1);
+    same("ن.ب.٢ **والحلقةُ عادت بانتظار المعاينة**", await episodeStatus(epN.id), "awaiting_exam");
+    same("   والمتابعةُ تقاعدت بسببها الحقيقي",
+      (await followupOf(exN.id))?.status, "closed_exam_cancelled");
+    //  وسطرُ السجلّ يقول ذلك بالعربية لا برمزٍ داخليّ.
+    const evN = (await q(`SELECT event_type, reason, note FROM post_exam_followup_events
+                           WHERE followup_id=$1 ORDER BY id DESC LIMIT 1`, [fuBefore?.id]))[0];
+    check(String(evN?.event_type) === "closed_exam_cancelled"
+      && String(evN?.note ?? "").includes("كُتبت للمريض الخطأ"),
+      "ن.ب.٣ **وحدثُ الإغلاق يحمل سببَ مَن ألغى**", JSON.stringify(evN));
+
+    await setSpecialties(DOC2, ["prosthetic", "medical_support"]);
   } finally {
     await cleanup();
     await q(`UPDATE audit_log SET user_id = NULL WHERE user_id = ANY($1::int[])`,
