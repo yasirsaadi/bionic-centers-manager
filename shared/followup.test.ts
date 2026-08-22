@@ -286,8 +286,14 @@ same("   وكلُّ حالةٍ بعنوانٍ عربي",
   FOLLOWUP_STATUSES.filter((s) => !FOLLOWUP_STATUS_LABELS[s]), []);
 same("   وسببٌ مخترَع يُردّ", isFollowupReason("whatever"), false);
 same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_salary_or_finance"), true);
-same("ك. النهائيّتان اثنتان لا غير",
-  FOLLOWUP_STATUSES.filter(isTerminal), ["closed_without_purchase", "converted"]);
+//  **وصارت ثلاثاً بترحيل ٠٦١**: `closed_exam_cancelled` تُغلق متابعةً
+//  وُلدت عن معاينةٍ أُلغيت. ولم تُوسَم `closed_without_purchase` لأن معناها
+//  المعروض «مغلق بدون شراء» — والمريضُ لم يرفض الشراء، بل سقطت المعاينة.
+same("ك. النهائيّاتُ ثلاثٌ لا غير",
+  FOLLOWUP_STATUSES.filter(isTerminal),
+  ["closed_without_purchase", "converted", "closed_exam_cancelled"]);
+same("ك.ب وعنوانُها يقول سببَها",
+  FOLLOWUP_STATUS_LABELS.closed_exam_cancelled, "أُغلقت بسبب إلغاء المعاينة");
 //  ══ **الشارةُ تقول الواقعة لا اسم الآلة** ═══════════════════════════════
 //  «تحوّل إلى تصنيع» تصف ما فعله النظام بالصفّ. والموظّفُ يسأل عن المريض:
 //  أشترى أم لا. فالنصُّ صار يجيبه — **والقيمةُ المخزَّنة `converted` كما هي**.
@@ -340,7 +346,12 @@ same("   ويسنِد الخبير في كلّ حالةٍ حيّة",
 //  الطبيبُ يستطيع، ولا يُطلَب. فالبرهانُ أن الاستقبالَ ومديرَ الفرع يريان
 //  فعلاً واحداً على الأقلّ في كلّ حالةٍ حيّة — فلا يقف ملفٌّ بلا يدٍ تحرّكه.
 console.log("\n── لا حالةَ تنتظر طبيباً ──");
-const NON_TERMINAL = FOLLOWUP_STATUSES.filter((st) => st !== "converted");
+//  **ولا تُحسَب `closed_exam_cancelled` حالةً حيّة**: هي طرفيّة، ولا
+//  «إعادة فتح» لها عمداً — متابعةٌ وُلدت عن معاينةٍ ملغاة لا تُبعَث؛
+//  المعاينةُ المصحَّحة تُنشئ متابعتَها هي. (و`closed_without_purchase`
+//  تبقى في القائمة لأن إعادةَ فتحها فعلٌ مشروعٌ يملكه الفرع.)
+const NON_TERMINAL = FOLLOWUP_STATUSES.filter(
+  (st) => st !== "converted" && st !== "closed_exam_cancelled");
 same("ت. **الاستقبالُ يملك فعلاً في كلّ حالةٍ حيّة إلّا الطلبَ القديم**",
   NON_TERMINAL.filter((st) => allowedActions(recv, st).length === 0),
   ["price_approval_pending"]);

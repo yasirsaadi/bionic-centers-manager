@@ -53,6 +53,9 @@ const MERGE_DECISIONS: Record<string, string> = {
   "cost_entries.patient_id": "repoint — دفتر الكلف المؤرَّخ يتبع المريض",
   "patient_events.patient_id": "repoint داخل باب الختم، مع إفراغ dedupe_key المتصادم",
   "medical_exams.patient_id": "repoint داخل باب الختم — إعادة ربط إدارية بلا مساس سريري",
+  //  الشاهدةُ تتبع معاينتَها: `exam_id` لا يتغيّر بالدمج، و`patient_id`
+  //  عليها يتبع صاحبَه فلا يشير إلى ملفٍّ اندمج ثم اختفى.
+  "medical_exam_cancellations.patient_id": "repoint — الشاهدة تتبع معاينتها وصاحبَها",
   "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
   "patient_link_tokens.patient_id": "repoint — البصمة فريدة عالمياً فلا تتصادم",
   "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",

@@ -15,6 +15,7 @@ import {
   isPathAllowedForKind, isAwaitingFullExam, STATUS_AFTER,
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
+import { activeExamSql } from "../medical/active_exam";
 
 export class ReviewError extends Error {
   constructor(message: string, readonly status = 400) {
@@ -383,10 +384,11 @@ export async function returnFullRequestToReception(params: {
     }
     //  **ولا إرجاعَ بعد توقيع**: معاينةٌ وُقّعت بعد الطلب تعني أنه أُنجز.
     const ex = await tx.execute<{ id: number }>(sql`
-      SELECT id FROM medical_exams
-       WHERE patient_id = ${row.patient_id}
-         AND case_type = ${row.service_type}
-         AND created_at >= COALESCE(${row.decided_at}::timestamptz, ${row.created_at}::timestamptz)
+      SELECT id FROM medical_exams me
+       WHERE me.patient_id = ${row.patient_id}
+         AND me.case_type = ${row.service_type}
+         AND me.created_at >= COALESCE(${row.decided_at}::timestamptz, ${row.created_at}::timestamptz)
+         AND ${activeExamSql("me")}
        LIMIT 1
     `);
     if ((ex.rows ?? []).length > 0) {
@@ -432,6 +434,7 @@ export async function pendingFullRequestsFor(params: {
           WHERE me.patient_id = r.patient_id
             AND me.case_type = r.service_type
             AND me.created_at >= COALESCE(r.decided_at, r.created_at)
+            AND ${activeExamSql("me")}
        )
      ORDER BY r.patient_id, r.service_type, r.created_at ASC
   `);
@@ -510,6 +513,7 @@ export async function listPendingReviews(params: {
         SELECT me.id, me.doctor_name, me.created_at, me.diagnosis, me.plan
           FROM medical_exams me
          WHERE me.patient_id = r.patient_id AND me.case_type = r.service_type
+           AND ${activeExamSql("me")}
          ORDER BY me.created_at DESC LIMIT 1
       ) le ON TRUE
      WHERE r.status = 'pending' AND r.requested_path = 'quick'
@@ -562,6 +566,7 @@ export async function listPendingFullRequests(params: {
           WHERE me.patient_id = r.patient_id
             AND me.case_type = r.service_type
             AND me.created_at >= COALESCE(r.decided_at, r.created_at)
+            AND ${activeExamSql("me")}
        )
      ORDER BY r.created_at ASC
      LIMIT 200

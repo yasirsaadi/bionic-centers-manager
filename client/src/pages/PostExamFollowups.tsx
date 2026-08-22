@@ -65,6 +65,9 @@ const STATUS_TONE: Record<string, string> = {
   //  كهرمانيّ لا أزرق: صار انتظارَ فعلٍ من الفرع لا اعتماداً من طبيب.
   purchase_approval_pending: "bg-amber-100 text-amber-800",
   closed_without_purchase: "bg-gray-100 text-gray-600",
+  //  رماديٌّ كالمنتهي — فهو منتهٍ فعلاً. ولا يُلوَّن أحمرَ إنذارٍ: لا خطأ
+  //  وقع على الملفّ، بل سقطت المعاينةُ وتُكتب مصحَّحة.
+  closed_exam_cancelled: "bg-gray-100 text-gray-600",
   converted: "bg-green-100 text-green-800",
 };
 

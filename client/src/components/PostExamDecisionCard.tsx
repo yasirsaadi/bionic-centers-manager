@@ -92,6 +92,9 @@ const STATUS_TONE: Record<string, string> = {
   price_approved_waiting_patient: "bg-violet-100 text-violet-800",
   purchase_approval_pending: "bg-blue-100 text-blue-800",
   closed_without_purchase: "bg-gray-100 text-gray-600",
+  //  رماديٌّ كالمنتهي — ولا إنذارَ أحمر: المعاينةُ سقطت والملفُّ يُستأنف
+  //  بمعاينةٍ مصحَّحة، لا خطأَ قائمٌ ينتظر أحداً.
+  closed_exam_cancelled: "bg-gray-100 text-gray-600",
   converted: "bg-green-100 text-green-800",
 };
 

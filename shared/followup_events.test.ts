@@ -17,6 +17,7 @@ import {
   followupEventView, followupEventTitle, purchasePresentation,
   FOLLOWUP_EVENT_TITLES, PURCHASE_STATE_TEXT, UNKNOWN_EVENT_TITLE,
 } from "./followup_events";
+import { FOLLOWUP_STATUS_LABELS } from "./followup";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -276,6 +277,79 @@ console.log("\n── عقد البطاقة ──");
     /v\.transition\s*&&[\s\S]{0,220}<PriceTransition/.test(cardSrc));
   //  والفاعلُ يُسمّى في كلّ سطر.
   check("٥١. **وفاعلُ كلّ إجراءٍ باسمه**", cardSrc.includes("بواسطة: "));
+}
+
+// ══ ح. **إلغاءُ المعاينة يُقال بالعربية — لا بالعبارة العامّة** ══════════
+//  ══ العطبُ الذي يغلقه ═════════════════════════════════════════════════
+//  الخادمُ يكتب حدثاً نوعُه `closed_exam_cancelled` وسببُه `exam_cancelled`.
+//  ولم تكن الخريطةُ تعرفه، فيقرأ الموظّفُ «إجراء مسجَّل على الملف» — عبارةٌ
+//  صحيحةٌ ولا تقول شيئاً. **والسببُ الذي كتبه مَن ألغى** هو الخبرُ كلُّه.
+console.log("\n── إلغاء المعاينة ──");
+{
+  //  **يُقرأ ما يكتبه الخادمُ من مصدره لا من قائمةٍ منسوخة**: تغييرُ الرمز
+  //  هناك بلا ترجمةٍ هنا يُسقط هذا الاختبار.
+  const cancelSrc = readFileSync(
+    join(import.meta.dirname, "../server/medical/cancel_exam.ts"), "utf8");
+  const at = cancelSrc.indexOf("INSERT INTO post_exam_followup_events");
+  const written = at < 0 ? [] :
+    [...cancelSrc.slice(at, at + 900).matchAll(/\$\{"([a-z_]+)"\}/g)].map((m) => m[1]);
+  check("ح. **الخادمُ يكتب `closed_exam_cancelled` فعلاً** (قُرئ من مصدره)",
+    written.includes("closed_exam_cancelled"), written.join(", ") || "(لم يُقرأ)");
+  //  والسببُ المخزَّن مفتاحٌ داخليّ — نثبته هنا كي يبقى الاختبارُ التالي
+  //  يحرس ما يقع فعلاً لا ما نتخيّله.
+  check("٥٢. والسببُ المخزَّن `exam_cancelled` (مفتاحٌ داخليّ لا يُعرَض)",
+    written.includes("exam_cancelled"), written.join(", "));
+
+  same("٥٣. **عنوانٌ عربيٌّ صريح لا العبارةُ العامّة**",
+    followupEventTitle("closed_exam_cancelled"), "أُغلقت المتابعة بسبب إلغاء المعاينة");
+  check("٥٤. وليس هو نصَّ المجهول",
+    followupEventTitle("closed_exam_cancelled") !== UNKNOWN_EVENT_TITLE);
+
+  //  الصفُّ كما يكتبه الخادمُ حرفياً — نوعٌ وسببٌ وملاحظةٌ وحمولة.
+  const REASON = "كُتبت للمريض الخطأ";
+  const row = {
+    eventType: "closed_exam_cancelled",
+    fromStatus: "awaiting_patient_decision",
+    toStatus: "closed_exam_cancelled",
+    reason: "exam_cancelled",
+    note: `أُغلقت بسبب إلغاء المعاينة — ${REASON}`,
+    payload: { examId: 41 },
+  };
+  const v = view(row);
+  same("٥٥. **وسببُ الإلغاء يظهر معنوناً** — لا يضيع ولا يتكرّر معه العنوان",
+    v.facts, [`سبب الإلغاء: ${REASON}`]);
+  check("٥٦. **ولا مفتاحَ داخليٌّ في المخرَج** — لا نوعٌ ولا سبب",
+    !LATIN.test(v.title) && !v.facts.some((f) => LATIN.test(f))
+      && !v.title.includes("closed_exam_cancelled") && !v.title.includes("exam_cancelled"),
+    JSON.stringify(v));
+  check("٥٧. ولا انتقالَ سعرٍ مخترَعاً على حدثٍ لا مالَ فيه", v.transition === undefined);
+
+  //  **وملاحظةٌ بصيغةٍ أخرى تُعرَض كاملةً لا تُبتَر** — صفٌّ قديم، أو
+  //  صياغةٌ تغيّرت في الخادم: القصُّ الأعمى كان سيمحو نصفَ سببٍ حقيقيّ.
+  same("٥٨. وملاحظةٌ بلا الصدر المعروف تُعرَض كما هي",
+    view({ ...row, note: "أُلغيت لأن الاختصاص خطأ" }).facts,
+    ["سبب الإلغاء: أُلغيت لأن الاختصاص خطأ"]);
+  //  وصفٌّ بلا ملاحظةٍ يبقى مقروءاً بعنوانه وحده — بلا سطرٍ فارغ.
+  same("٥٩. **وبلا ملاحظةٍ يبقى العنوانُ وحدَه مقروءاً**",
+    view({ eventType: "closed_exam_cancelled", reason: "exam_cancelled", note: null }).facts, []);
+  same("٦٠. وكذلك ملاحظةٌ هي الصدرُ وحدَه بلا سبب",
+    view({ ...row, note: "أُغلقت بسبب إلغاء المعاينة" }).facts, []);
+
+  //  **والحالةُ الطرفيّةُ الثالثة لها تسميةٌ عربية في الشارة أيضاً** —
+  //  الشاشتان تقرآن `FOLLOWUP_STATUS_LABELS`، فرمزٌ بلا تسميةٍ يظهر خاماً.
+  check("٦١. **وللحالة تسميةٌ عربية في الشارة**",
+    Boolean(FOLLOWUP_STATUS_LABELS.closed_exam_cancelled)
+      && !LATIN.test(FOLLOWUP_STATUS_LABELS.closed_exam_cancelled),
+    FOLLOWUP_STATUS_LABELS.closed_exam_cancelled);
+  //  وللونٍ يقرؤه الطابورُ بالنظرة — في الشاشتين معاً لا في واحدة.
+  for (const [n, f] of [
+    ["٦٢", "../client/src/pages/PostExamFollowups.tsx"],
+    ["٦٣", "../client/src/components/PostExamDecisionCard.tsx"],
+  ] as const) {
+    const src = readFileSync(join(import.meta.dirname, f), "utf8");
+    check(`${n}. ولها لونٌ في ${f.split("/").pop()}`,
+      /closed_exam_cancelled:\s*"bg-/.test(src));
+  }
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);

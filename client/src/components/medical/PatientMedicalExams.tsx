@@ -12,7 +12,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2 } from "lucide-react";
+import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
@@ -113,6 +114,8 @@ interface Exam {
   notes: string | null;
   signedAt: string;
   addenda: Addendum[];
+  /** **يقوله الخادم** — الشاشةُ لا تخمّن مَن يُلغي. */
+  canCancel?: boolean;
 }
 
 interface ExamsResponse {
@@ -159,6 +162,8 @@ export function PatientMedicalExams({
   const [addendumBody, setAddendumBody] = useState("");
   const [editing, setEditing] = useState<Exam | null>(null);
   const [historyOf, setHistoryOf] = useState<Exam | null>(null);
+  const [cancelling, setCancelling] = useState<Exam | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const queryKey = [`/api/medical/patients/${patientId}/exams`];
 
@@ -187,6 +192,39 @@ export function PatientMedicalExams({
   const canEdit = (exam: Exam) =>
     Boolean(data?.canManageExams) ||
     (exam.doctorId != null && data?.userId != null && exam.doctorId === data.userId);
+
+  //  ══ إلغاءُ معاينة — **لا `confirm()` من المتصفّح** ═══════════════════
+  //  نافذةٌ حقيقية تشرح ما يقع فعلاً وتطلب سبباً: الموظّفُ يضغط «حذف» وهو
+  //  يظنّ أن السجلَّ يُمحى، فالنافذةُ هي المكانُ الوحيد الذي يصحّح فهمَه
+  //  قبل الفعل — وسببُه يبقى في السجلّ لمن يقرأ بعد شهر.
+  const cancelExam = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/medical/exams/${cancelling?.id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason: cancelReason.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || "تعذّر إلغاء المعاينة");
+      return res.json();
+    },
+    onSuccess: () => {
+      //  الإلغاءُ يحرّك أكثر من شاشة: السجلّ، وطابورَ الانتظار، وقائمةَ عمل
+      //  الطبيب، وحلقةَ الجهاز ومتابعتَها — فتُبطَل كلُّها لا واحدة.
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical-review/queue"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}/device-episodes`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
+      setCancelling(null);
+      setCancelReason("");
+      toast({ title: "أُلغيت المعاينة", description: "بقيت محفوظة في سجل التدقيق." });
+    },
+    onError: (e: any) =>
+      toast({ title: "تعذّر الإلغاء", description: e?.message, variant: "destructive" }),
+  });
 
   const saveAddendum = useMutation({
     mutationFn: async () => {
@@ -415,6 +453,22 @@ ${addenda}
                       >
                         <Printer className="w-3.5 h-3.5 ml-1" /> طباعة
                       </Button>
+                      {/*  **«حذف» في الشاشة = إلغاءٌ مؤرشف في القاعدة.**
+                          الموظّفُ يفهم «حذف»، والنظامُ لا يمحو شيئاً: صفُّ
+                          إلغاءٍ يُضاف فتخرج المعاينةُ من السجلّ الفعّال
+                          ويبقى الأصلُ وتوقيعُه وملاحقُه كما هي. ولا يظهر
+                          الزرُّ إلّا حين يقول الخادمُ إن هذا المستخدم يملكه. */}
+                      {exam.canCancel && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-destructive hover:text-destructive"
+                          onClick={() => { setCancelling(exam); setCancelReason(""); }}
+                          data-testid={`button-cancel-exam-${exam.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 ml-1" /> حذف
+                        </Button>
+                      )}
                     </div>
                   </div>
 
@@ -605,6 +659,60 @@ ${addenda}
               data-testid="button-save-addendum"
             >
               {saveAddendum.isPending ? "جارٍ الحفظ…" : "حفظ الملحق"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══ إلغاءُ معاينة — العنوانُ يقول ما يقع، لا ما يظنّه الضاغط ══════ */}
+      <Dialog
+        open={!!cancelling}
+        onOpenChange={(o) => { if (!o) { setCancelling(null); setCancelReason(""); } }}
+      >
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">إلغاء المعاينة</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <p className="text-sm">
+              ستختفي المعاينة من السجل الفعّال، لكنها ستبقى محفوظة في سجل التدقيق.
+            </p>
+            {cancelling && (
+              <p className="text-xs text-muted-foreground">
+                {specialtyLabel(cancelling.caseType)} — د. {cancelling.doctorName} ·{" "}
+                {formatDateIraq(cancelling.signedAt)}
+              </p>
+            )}
+            <div className="space-y-1.5">
+              <Label className="text-sm">
+                سبب الإلغاء <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="مثال: أُدخلت للمريض الخطأ"
+                data-testid="input-cancel-reason"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                أمثلة: أُدخلت للمريض الخطأ · الاختصاص غير صحيح · بيانات المعاينة
+                غير صحيحة ويجب إعادة كتابتها.
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => { setCancelling(null); setCancelReason(""); }}
+            >
+              تراجع
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => cancelExam.mutate()}
+              disabled={!cancelReason.trim() || cancelExam.isPending}
+              data-testid="button-confirm-cancel-exam"
+            >
+              {cancelExam.isPending ? "جارٍ الإلغاء…" : "إلغاء المعاينة"}
             </Button>
           </DialogFooter>
         </DialogContent>
