@@ -1,44 +1,44 @@
-// هوية تواصل المريض — إنشاء تذاكر الربط واستهلاكها.
+// هويةُ تواصل المريض — قراءةٌ وسحبٌ ودمج.
 //
-// ══ ما لا يعنيه الربط ═══════════════════════════════════════════════════
-// وجود `patient_contact` بقناة `telegram` يعني شيئاً واحداً: **هذا الحساب
-// رُبِط بهذا الملفّ.** ولا يعني — ولا واحداً منها:
+// ══ ما لا يعنيه صفُّ الجهة ══════════════════════════════════════════════
+// وجودُ `patient_contact` بقناة `whatsapp` يعني شيئاً واحداً: **هذا هو
+// الرقمُ الذي أعطاه المريضُ للاستقبال للتواصل.** ولا يعني — ولا واحدةً
+// منها:
 //
-//   • أن رقم هاتف تلغرام يساوي `patients.phone`
-//   • أن مالك الحساب هو المريض نفسه
-//   • أن ملكية الرقم مُتحقَّق منها
-//   • أن تحقّق Telegram Gateway جرى
-//   • أن مطابقة مشاركة جهة الاتصال جرت
+//   • أن المزوّد أثبت أن الحسابَ لصاحب الرقم
+//   • أن المريضَ راسلنا فأكّد هويّته
+//   • أن ملكيةَ الرقم مُتحقَّق منها
 //
-// هذه حقائق مختلفة، ولا حقل هنا يدّعي واحدة منها. ومَن يضيف لاحقاً حقلاً
-// اسمه `verified` فليُعرّف أولاً **ماذا** تحقّق وبأي دليل — وإلا صار الاسم
-// وحده مصدر ثقة لا تسنده واقعة.
+// **وهذا قرارُ منتجٍ صريح**: المؤسّسةُ تسأل مريضَها رقمَه وترسل عليه
+// تحديثاتِ خدمته — كما يفعل المصرفُ والمستشفى. ولا حقلَ هنا يدّعي توثيقاً،
+// ولا يُبنى على الجهة إذنٌ ولا وصولٌ إلى شيء. ومَن يضيف لاحقاً حقلاً اسمه
+// `verified` فليُعرّف أولاً **ماذا** تحقّق وبأي دليل.
 //
-// ══ ولا إرسال هنا ═══════════════════════════════════════════════════════
-// هذا الملفّ لا يعرف تلغرام ولا يتصل بشبكة. يولّد تذكرة ويستهلكها ويربط
-// حساباً — والقناة التي يصل بها الرابط إلى المريض مرحلةٌ أخرى لم تبدأ.
+// ══ وما زال هنا لا إرسال ════════════════════════════════════════════════
+// هذا الملفّ لا يعرف Meta ولا يتصل بشبكة. والإنشاءُ نفسُه انتقل إلى
+// `patient_notifications/registration.ts` — وهو الوسيطُ الذي يعرف الطرفين.
 
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  patientContacts, patientLinkTokens, patients,
-  type PatientContact, type PatientLinkToken,
+  patientContacts,
+  type PatientContact,
 } from "@shared/schema";
 import type { DbTransaction } from "../events/store";
 
 // ══ المفردات ═════════════════════════════════════════════════════════════
 
 /**
- * القنواتُ المدعومة. العمودُ نصّيٌّ ليتّسع، والتحقّقُ هنا — **ولا قيدَ في
- * القاعدة**، فإضافةُ قناةٍ لا تحتاج ترحيلاً (تُثبته `whatsapp.test.ts`).
+ * القناةُ المدعومة. العمودُ نصّيٌّ ليتّسع، والتحقّقُ هنا — **ولا قيدَ في
+ * القاعدة**، فتغييرُ القائمة لا يحتاج ترحيلاً.
  *
- * `whatsapp` هي قناةُ الروابط الجديدة. و`telegram` **تبقى صالحة**: مرضى
- * رُبطوا بها يستلمون تحديثاتِ أجهزتهم كما كانوا حتى يُثبَت واتساب على
- * الإنتاج، فتُتقاعَد في تغييرٍ صريحٍ مستقلّ. وحذفُها اليوم كان يعني مريضاً
- * ينتظر طرفَه ولا يصله خبر.
+ * **واتساب وحدها.** وتلغرامُ المرضى تقاعد: لا جهةَ تُنشأ به، ولا صفَّ
+ * يُستحقّ له، ولا نقطةَ تستقبله. وصفوفُه التاريخية تبقى في الجدول
+ * **خاملةً** — تُقرأ للتدقيق ولا يُرسَل إليها شيء. (والتنبيهاتُ الداخلية
+ * للمالك في `server/notifications/telegram.ts` **شأنٌ آخر تماماً** لم
+ * يُمَسّ بحرف: تلك رسائلٌ للإدارة لا للمرضى.)
  */
-export const CONTACT_CHANNELS = ["whatsapp", "telegram"] as const;
+export const CONTACT_CHANNELS = ["whatsapp"] as const;
 export type ContactChannel = (typeof CONTACT_CHANNELS)[number];
 
 /**
@@ -55,296 +55,7 @@ export function isContactRelation(v: unknown): v is ContactRelation {
   return typeof v === "string" && (CONTACT_RELATIONS as readonly string[]).includes(v);
 }
 
-/** المهلة الافتراضية: خمس عشرة دقيقة. قابلة للتمرير للاختبارات. */
-export const DEFAULT_TOKEN_TTL_MS = 15 * 60 * 1000;
-
-// ══ أخطاء مصنَّفة ════════════════════════════════════════════════════════
-// نصوصها **لا تحمل النصّ الأصلي للتذكرة أبداً** — رسالة الخطأ تُسجَّل وتُعرَض
-// وتُرسَل، فأي تسريب فيها تسريبٌ في كل هذه المواضع.
-
-export type LinkTokenFailure = "not_found" | "expired" | "revoked" | "already_consumed";
-
-export class LinkTokenError extends Error {
-  readonly reason: LinkTokenFailure;
-  constructor(reason: LinkTokenFailure) {
-    super(`patient link token rejected: ${reason}`);
-    this.name = "LinkTokenError";
-    this.reason = reason;
-  }
-}
-
-// ══ التذكرة ══════════════════════════════════════════════════════════════
-
-/**
- * بصمة التذكرة. SHA-256 على النصّ الخام.
- *
- * لا مِلح ولا تشديد: النصّ ٣٢ بايت عشوائية من `randomBytes`، فمجاله يفوق
- * أي هجوم قاموس أو جدول جاهز. والتشديد (bcrypt ونحوه) يُبطئ **بحثنا نحن**
- * بلا مكسب — البحث هنا بالبصمة نفسها، والمِلح كان سيمنعه أصلاً.
- */
-export function hashToken(rawToken: string): string {
-  return createHash("sha256").update(rawToken, "utf8").digest("hex");
-}
-
-/**
- * مقارنة ثابتة الزمن للبصمتين. البحث في القاعدة يتمّ بالبصمة مباشرةً،
- * لكن أي مقارنة في الشيفرة تمرّ من هنا كي لا يتسرّب شيء عبر زمن التنفيذ.
- */
-export function tokenHashEquals(a: string, b: string): boolean {
-  const ba = Buffer.from(a, "utf8"), bb = Buffer.from(b, "utf8");
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
-}
-
-export interface CreatedLinkToken {
-  /**
-   * النصّ الخام — **يُعاد مرّة واحدة فقط ولا يُخزَّن**. مَن يفقده يُصدر
-   * غيره؛ ولا سبيل لاستخراجه من القاعدة لأنه ليس فيها.
-   */
-  rawToken: string;
-  token: PatientLinkToken;
-}
-
-export interface CreateLinkTokenInput {
-  patientId: number;
-  channel: ContactChannel;
-  relation: ContactRelation;
-  createdByUserId?: number | null;
-  /** بالمللي ثانية. الافتراض ١٥ دقيقة. */
-  ttlMs?: number;
-}
-
-/**
- * يولّد تذكرة ربط. ٣٢ بايت عشوائية بترميز base64url — آمنة في المسارات
- * وفي روابط التطبيقات بلا ترميز إضافي.
- */
-export async function createLinkToken(
-  input: CreateLinkTokenInput,
-  tx?: DbTransaction,
-): Promise<CreatedLinkToken> {
-  if (!Number.isFinite(input.patientId) || input.patientId <= 0) {
-    throw new Error(`createLinkToken: invalid patientId ${String(input.patientId)}`);
-  }
-  if (!isContactChannel(input.channel)) {
-    throw new Error(`createLinkToken: unsupported channel "${String(input.channel)}"`);
-  }
-  if (!isContactRelation(input.relation)) {
-    throw new Error(`createLinkToken: unknown relation "${String(input.relation)}"`);
-  }
-
-  const rawToken = randomBytes(32).toString("base64url");
-  const ttl = input.ttlMs ?? DEFAULT_TOKEN_TTL_MS;
-  const expiresAt = new Date(Date.now() + ttl);
-
-  const runner = tx ?? db;
-  const [token] = await runner.insert(patientLinkTokens).values({
-    patientId: input.patientId,
-    channel: input.channel,
-    relation: input.relation,
-    // البصمة وحدها. النصّ الخام لا يغادر هذه الدالّة إلا في المُخرَج.
-    tokenHash: hashToken(rawToken),
-    expiresAt,
-    createdByUserId: input.createdByUserId ?? null,
-  }).returning();
-
-  return { rawToken, token };
-}
-
-/**
- * سحب تذكرة **معلَّقة**. تُرجع `false` إن لم يكن هناك ما يُسحَب.
- *
- * والمستهلَكة ليست منها: التذكرة التي أدّت عملها وأنشأت جهة اتصال حدثٌ
- * وقع، وختمها بـ`revoked_at` يقلب معناها في السجل من «رُبِط بها حساب»
- * إلى «أُلغيت» — فيقرأ المدقّق لاحقاً تاريخاً لم يحدث. السحب يُلغي
- * المستقبل ولا يُنكِر الماضي، فمَن أراد فكّ الربط يسحب **جهة الاتصال**
- * (`revokeContact`) لا التذكرة.
- *
- * ولا خطأ يُرمى: «لا يوجد ما يُسحَب» ليس فشلاً — والمسحوبة سلفاً تُرجع
- * `false` أيضاً، فالنداء idempotent.
- */
-export async function revokeLinkToken(tokenId: number): Promise<boolean> {
-  const rows = await db.update(patientLinkTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(
-      eq(patientLinkTokens.id, tokenId),
-      isNull(patientLinkTokens.revokedAt),
-      isNull(patientLinkTokens.consumedAt),
-    ))
-    .returning({ id: patientLinkTokens.id });
-  return rows.length > 0;
-}
-
-// ══ الاستهلاك والربط — عملية واحدة ذرّية ═════════════════════════════════
-
-export interface RedeemResult {
-  contact: PatientContact;
-  token: PatientLinkToken;
-  /** false تعني: الحساب كان مرتبطاً بهذا المريض **بنفس الصلة**، فأُعيدت جهته. */
-  createdContact: boolean;
-  /**
-   * الجهة السابقة التي خُتمت لأن صلتها اختلفت عن صلة التذكرة — إن حدث.
-   * وجودها يعني أن الصلة تغيّرت، وأن الصفّ القديم باقٍ في الجدول تاريخاً.
-   */
-  supersededContact?: PatientContact;
-}
-
-/**
- * يستهلك التذكرة **ويربط الحساب في معاملة واحدة**.
- *
- * ── لماذا القفل ─────────────────────────────────────────────────────────
- * التذكرة لمرّة واحدة، ونقرتان متزامنتان على الرابط نفسه واقعةٌ متوقَّعة لا
- * نادرة. فحص «هل استُهلكت؟» ثم الكتابة بلا قفل هو check-then-act: كلاهما
- * يقرأ «لا» فيمرّان. `SELECT … FOR UPDATE` يسلسلهما، والثاني يجد
- * `consumed_at` مملوءاً فيُردّ — بلا جهة اتصال ثانية.
- *
- * ── والصلة من التذكرة لا من المستهلِك ───────────────────────────────────
- * الموظّف اختار `guardian` قبل إصدار الرابط، فمَن يستهلكه يُربَط
- * `guardian` — ولا سبيل لأن يرسل `self` بدلاً منها، لأن الدالّة **لا
- * تقبل** الصلة معاملاً أصلاً.
- *
- * ── والتكرار المشروع ────────────────────────────────────────────────────
- * الحساب نفسه مرتبطٌ بالمريض نفسه **بنفس الصلة** ⇒ تُعاد جهته الموجودة بلا
- * صفٍّ ثانٍ. فإعادة الضغط لا تُنشئ ازدواجاً، ولا تفشل في وجه المستخدم.
- *
- * ── فإن اختلفت الصلة ────────────────────────────────────────────────────
- * الابن كبر فصار الحساب `self` بعد أن كان `guardian` أبيه. إعادةُ الجهة
- * كما هي هنا **تخالف العقد**: التذكرة تحمل صلةً اختارها الموظّف، فتُستهلَك
- * ولا تُطبَّق. والتعديل في مكانه يمحو أن العلاقة كانت يوماً وصاية.
- * فالقديمة **تُختَم** والجديدة تُنشأ: صفّان، نشِطٌ واحد، وتاريخٌ كامل.
- */
-export async function redeemLinkToken(
-  params: {
-    rawToken: string;
-    /** معرّف الحساب الخارجي — نصّ دائماً. */
-    externalId: string;
-  },
-  /**
-   * معاملة خارجية اختيارية.
-   *
-   * ── لماذا ───────────────────────────────────────────────────────────────
-   * الاستهلاك وحده ذرّي، لكن ما يتبعه ليس منه: مَن يربط حسابه يستحقّ رسالة
-   * ترحيب وحالةَ جهازه. فلو حُفظ الاستهلاك ثم فشل استحقاق الرسائل، لبقيت
-   * التذكرة مستهلَكة والجهة مربوطة **والترحيب ضائعاً إلى الأبد** — لا سبيل
-   * لإعادة توليده لأن التذكرة لا تُستهلَك مرّتين.
-   *
-   * فمرّر معاملتك ليقع الكلّ فيها: إمّا ربطٌ ورسائله، وإمّا لا شيء يُحفظ.
-   * والمستدعون القدامى الذين لا يمرّرون شيئاً يفتح لهم معاملته كما كان.
-   */
-  outerTx?: DbTransaction,
-): Promise<RedeemResult> {
-  const externalId = String(params.externalId ?? "").trim();
-  if (!externalId) throw new Error("redeemLinkToken: externalId is required");
-  const tokenHash = hashToken(params.rawToken ?? "");
-
-  const run = async (tx: DbTransaction): Promise<RedeemResult> => {
-    // القفل أولاً: من هنا حتى نهاية المعاملة لا يستطيع مستهلِكٌ آخر أن
-    // يقرأ هذه التذكرة غير مستهلَكة.
-    const [row] = await tx.select().from(patientLinkTokens)
-      .where(eq(patientLinkTokens.tokenHash, tokenHash))
-      .for("update");
-
-    // بصمة غير موجودة. الرسالة لا تفرّق بين «لا وجود» و«خطأ في النصّ» —
-    // وكلاهما لا يكشف شيئاً عن التذاكر القائمة.
-    if (!row) throw new LinkTokenError("not_found");
-    if (row.revokedAt) throw new LinkTokenError("revoked");
-    if (row.consumedAt) throw new LinkTokenError("already_consumed");
-    if (row.expiresAt.getTime() <= Date.now()) throw new LinkTokenError("expired");
-
-    // ── القفل الثاني: صفّ المريض ─────────────────────────────────────────
-    // قفل التذكرة يسلسل نقرتين على **الرابط نفسه**، ولا يسلسل تذكرتين
-    // مختلفتين لنفس المريض والحساب: بصمتاهما مختلفتان فالصفّان مختلفان،
-    // فتمرّ الاثنتان معاً، ولا تجد أيٌّ منهما جهةً قائمة، فتُدرِجان صفّين
-    // ينتهكان `uq_patient_contacts_active` — ويصل خطأ Postgres خاماً إلى
-    // مستخدمٍ لم يفعل شيئاً خاطئاً.
-    //
-    // فصفّ المريض هو نقطة التسلسل الطبيعية: كل ما يمسّ هوية تواصله يمرّ
-    // من هنا. والترتيب ثابت (تذكرة ثم مريض) فلا دورة انتظار بين مستهلِكَين.
-    //
-    // و`NO KEY UPDATE` لا `UPDATE`: الأضعف يكفي للتسلسل بيننا، ولا يحجز
-    // مفتاح الصفّ فلا يُعطّل إدراج زيارة أو دفعة لنفس المريض في الأثناء.
-    await tx.select({ id: patients.id }).from(patients)
-      .where(eq(patients.id, row.patientId))
-      .for("no key update");
-
-    const now = new Date();
-    const [token] = await tx.update(patientLinkTokens)
-      .set({ consumedAt: now, consumedByExternalId: externalId })
-      .where(eq(patientLinkTokens.id, row.id))
-      .returning();
-
-    // جهة نشطة لهذا الحساب على هذا المريض؟
-    const [existing] = await tx.select().from(patientContacts)
-      .where(and(
-        eq(patientContacts.patientId, row.patientId),
-        eq(patientContacts.channel, row.channel),
-        eq(patientContacts.externalId, externalId),
-        isNull(patientContacts.revokedAt),
-      ))
-      .limit(1);
-
-    // بنفس الصلة ⇒ تُعاد كما هي. لا صفّ ثانٍ ولا خطأ في وجه مَن ضغط مرّتين.
-    if (existing && existing.relation === row.relation) {
-      return { contact: existing, token, createdContact: false };
-    }
-
-    // بصلة مختلفة ⇒ تُختَم القديمة **ولا تُعدَّل**. التعديل في مكانه يجعل
-    // الوصاية كأنها لم تكن؛ والختم يُبقيها مقروءة بتاريخها.
-    let superseded: PatientContact | undefined;
-    if (existing) {
-      const [sealed] = await tx.update(patientContacts)
-        .set({ revokedAt: now })
-        .where(eq(patientContacts.id, existing.id))
-        .returning();
-      superseded = sealed;
-    }
-
-    const [contact] = await tx.insert(patientContacts).values({
-      patientId: row.patientId,
-      channel: row.channel,
-      // **الصلة من التذكرة.** لا من الطلب، ولا من المستهلِك.
-      relation: row.relation,
-      externalId,
-      linkedAt: now,
-    }).returning();
-
-    return superseded
-      ? { contact, token, createdContact: true, supersededContact: superseded }
-      : { contact, token, createdContact: true };
-  };
-
-  return outerTx ? await run(outerTx) : await db.transaction(run);
-}
-
 // ══ جهات الاتصال ═════════════════════════════════════════════════════════
-
-/**
- * التذاكر **المعلَّقة**: غير مستهلَكة، غير مسحوبة، **ولم تنتهِ بعد**.
- *
- * والمنتهية مستبعَدة عمداً: موظّفٌ يراها في القائمة يظنّ أن للمريض رابطاً
- * قائماً فينتظر، والرابط ميت. «معلَّقة» تعني «ما زال يُستهلَك»، وما عداه
- * تاريخ لا حاضر.
- */
-export async function listPendingTokens(patientId: number): Promise<PatientLinkToken[]> {
-  return db.select().from(patientLinkTokens)
-    .where(and(
-      eq(patientLinkTokens.patientId, patientId),
-      isNull(patientLinkTokens.consumedAt),
-      isNull(patientLinkTokens.revokedAt),
-      gt(patientLinkTokens.expiresAt, new Date()),
-    ))
-    .orderBy(patientLinkTokens.id);
-}
-
-/**
- * تذكرة بمعرّفها — **بلا تصفية بالمريض**، فالمستدعي هو مَن يقارن
- * `patientId` بمريض المسار. الفصل مقصود: الدالّة تقرأ، والقرار بمَن يملك
- * ماذا يبقى في طبقة الصلاحيات حيث يُرى.
- */
-export async function getLinkToken(tokenId: number): Promise<PatientLinkToken | null> {
-  const [row] = await db.select().from(patientLinkTokens)
-    .where(eq(patientLinkTokens.id, tokenId)).limit(1);
-  return row ?? null;
-}
 
 /** جهة اتصال بمعرّفها — وبنفس القاعدة: الملكية يفحصها المستدعي. */
 export async function getContact(contactId: number): Promise<PatientContact | null> {

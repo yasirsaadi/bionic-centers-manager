@@ -40,6 +40,15 @@ export const patients = pgTable("patients", {
   phoneCountry: text("phone_country"), // IQ | TR | ISO أخرى | INTL
   phoneStatus: text("phone_status"),   // ok | needs_review
 
+  // ══ إشعاراتُ واتساب — قرارٌ صغير عند التسجيل (ترحيل ٠٦٢) ═════════════
+  // **الافتراضُ في القاعدة `FALSE` عمداً**، والنموذجُ الجديد يرسل `true`.
+  // فالمرضى القدامى لا يستيقظون على رسالةِ ترحيبٍ بعد النشر — وهذا هو
+  // الفرقُ بين ميزةٍ تبدأ اليوم وبين رسالةٍ جماعية لم يطلبها أحد.
+  whatsappNotificationsEnabled: boolean("whatsapp_notifications_enabled").notNull().default(false),
+  // مَن قرّر ومتى — الموافقةُ واقعةٌ تُسجَّل لا رايةٌ تُرفع.
+  whatsappConsentAt: timestamp("whatsapp_consent_at", { withTimezone: true }),
+  whatsappConsentByUserId: integer("whatsapp_consent_by_user_id"),
+
   // ══ أعمدةُ البحث المشتقّة (migration 054) ════════════════════════════
   // `GENERATED ALWAYS … STORED`: تحسبها القاعدة عند كل كتابة، فلا تُدرَج ولا
   // تُحدَّث من التطبيق أبداً — ولذلك تُسقطها `createInsertSchema` تلقائياً.

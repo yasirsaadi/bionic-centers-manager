@@ -1,40 +1,40 @@
-// واتساب المريض — حيّاً على النقاط الحقيقية وعلى Postgres، **بلا شبكة Meta**.
+// واتساب المريض — **حفظُ المريض = واتساب جاهزة**، حيّاً على Postgres وعلى
+// نقطة التسجيل الحقيقية، **وبلا نداءِ شبكةٍ واحد إلى Meta**.
 // قاعدة محلّية: `npm run test:whatsapp`.
 //
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
-// (أ) **القنوات**: `whatsapp` و`telegram` مقبولتان، وما عداهما مرفوض.
-// (ب) **الرابط العميق**: إلى رقم المركز، وبأمر الربط، **ولا يُخزَّن النصّ
-//     الخام في القاعدة إطلاقاً** — وإعدادٌ ناقص لا يعطي رابطاً يُعرَض.
-// (ج) **تحقّق GET**: التحدّي يمرّ بالسرّ الصحيح، ويُردّ بغيره.
-// (د) **توقيع POST**: التوقيع الخاطئ يُردّ ٤٠١، والصحيح يمرّ.
-// (هـ) **الربط**: «ربط <token>» ⟶ جهة واتساب واحدة + استهلاك التذكرة +
-//     صفوفُ الترحيب/اللقطة **لتلك الجهة**.
-// (و) **الإعادة**: تذكرةٌ مُستهلَكة لا تُنشئ جهةً ثانية.
-// (ز) **الهويّة من المزوّد** لا من هاتف الملفّ ولا من جسم الطلب.
-// (ح) **«رمزي»**: الرمزُ وحده — ولا اسم ولا تشخيص ولا جهاز ولا مال.
-// (ط) **حدثُ تصنيع بجهتين** ⟶ صفّان، واحدٌ لكلّ جهة بقناتها.
-// (ي) **العامل** يرسل كلَّ صفٍّ بناقله هو.
-// (ك) رسالةُ الربط بوضع **النصّ**، و(ل) تحديثُ التصنيع بوضع **القالب**.
-// (م) **فشلُ Meta**: المعاملةُ التجارية ثابتة، والصفُّ فاشلٌ برمزٍ محدود،
-//     والتباعدُ سليم.
-// (ع) **تلغرام القديم يبقى مقروءاً وقابلاً للإرسال**.
-// (ف) **ولا حقل سريريّ ولا ماليّ ولا داخليّ في أي حمولة تخرج**.
+// (أ) تسجيلٌ برقمٍ عراقيّ محلّي ⟶ جهةٌ واحدة + ترحيبٌ واحد + الرمزُ فيه.
+// (ب) والصيغةُ الدولية تعطي **الوجهةَ نفسَها بالضبط**.
+// (ج) والرايةُ مطفأةً ⟶ لا جهةَ ولا ترحيب.
+// (د) ورقمٌ غير صالح ⟶ التسجيلُ يُردّ، **ولا وجهةَ مشوّهة تُطابَر**.
+// (هـ) وMeta معطَّلة ⟶ **المريضُ محفوظ** والصفُّ قابلٌ للإعادة.
+// (و) وقالبُ الترحيب غير مُعدّ ⟶ الصفُّ ينتظر بـ٠ محاولات و**بلا نداء**.
+// (ز) ثمّ يُضبَط ⟶ **الصفُّ نفسُه** يُرسَل.
+// (ح) ورفضُ Meta الحقيقيّ ⟶ رمزٌ محدود، بلا جسم مزوّدٍ خام.
+// (ط) وحمولةُ الترحيب **الرمزُ وحده** — ولا اسمَ ولا تشخيصَ ولا مالاً.
+// (ي) وتغييرُ الرقم ⟶ القديمةُ تُختَم والجديدةُ تعمل، **وبلا ترحيبٍ ثانٍ**.
+// (ك) والإطفاءُ يوقف كلَّ استحقاقٍ لاحق.
+// (ل) وإعادةُ الرفع تعمل للمستقبل **بلا بثٍّ رجعيّ ولا ترحيبٍ مكرَّر**.
+// (م) وحدثُ تصنيعٍ ⟶ صفٌّ واحد يُرسَل بقالب التحديث.
+// (ن) **ولا أثرَ تشغيليّ لتلغرام المرضى** في المستودع.
+// (ع) **وتنبيهاتُ المالك الداخلية باقيةٌ كما هي.**
+// (ف) وإعادةُ طلب التسجيل لا تُنتج ترحيباً ثانياً.
 
 import express from "express";
-import { createHmac } from "crypto";
+import { readFileSync, existsSync, readdirSync } from "fs";
+import { join } from "path";
+import { createServer } from "http";
 import { pool, db } from "../db";
-import { registerPatientWhatsappWebhook, WHATSAPP_WEBHOOK_PATH, WHATSAPP_MESSAGES } from "./webhook";
-import {
-  patientWhatsappDeepLink, patientWhatsappConfig, patientWhatsappEnabled,
-  patientWhatsappTemplateReady, missingPatientWhatsappEnv, normalizeWhatsappId,
-  PATIENT_WHATSAPP_ENV, LINK_COMMAND,
-} from "./config";
-import { createLinkToken, isContactChannel, CONTACT_CHANNELS, hashToken } from "../patient_contacts/store";
-import { enqueueForActiveContacts, enqueueForContact, deliveriesForPatient, claimDue, backoffFor } from "../patient_notifications/outbox";
-import { enabledChannels, transportFor } from "../patient_notifications/transports";
+import { registerRoutes } from "../routes";
+import { storage } from "../storage";
 import { dispatchOnce } from "../patient_notifications/dispatcher";
-import { renderNotification, LINK_NOTIFICATION_TYPES, isLinkNotificationType } from "../patient_notifications/render";
+import { registerWhatsappWelcome } from "../patient_notifications/registration";
+import { deliveriesForPatient, enqueueForActiveContacts, backoffFor } from "../patient_notifications/outbox";
+import { REGISTRATION_WELCOME, welcomePreview, WELCOME_LINES, templateKindFor } from "../patient_notifications/render";
+import { whatsappDestination, PATIENT_WHATSAPP_ENV, templateReady } from "./config";
+import { CONTACT_CHANNELS } from "../patient_contacts/store";
 import { PATIENT_EVENT_TYPES } from "@shared/patient_events";
+import { normalizePhone } from "@shared/phone";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -53,61 +53,40 @@ function same(msg: string, got: unknown, expected: unknown) {
 }
 
 // ── إعدادٌ وهميّ: لا سرَّ حقيقيّ، ولا نداءَ شبكة ─────────────────────────
-const ACCESS_TOKEN = "TEST-WA-ACCESS-TOKEN-DO-NOT-USE";
-const PHONE_NUMBER_ID = "111222333444555";
-const BUSINESS_PHONE = "9647700000000";
-const VERIFY_TOKEN = "test-wa-verify-token-0062";
-const APP_SECRET = "test-wa-app-secret-0062";
-const TEMPLATE_NAME = "bionic_patient_update";
-process.env[PATIENT_WHATSAPP_ENV.accessToken] = ACCESS_TOKEN;
-process.env[PATIENT_WHATSAPP_ENV.phoneNumberId] = PHONE_NUMBER_ID;
-process.env[PATIENT_WHATSAPP_ENV.businessPhone] = BUSINESS_PHONE;
-process.env[PATIENT_WHATSAPP_ENV.verifyToken] = VERIFY_TOKEN;
-process.env[PATIENT_WHATSAPP_ENV.appSecret] = APP_SECRET;
-process.env[PATIENT_WHATSAPP_ENV.templateName] = TEMPLATE_NAME;
+const WELCOME_TEMPLATE = "bionic_patient_welcome";
+const UPDATE_TEMPLATE = "bionic_patient_update";
+process.env[PATIENT_WHATSAPP_ENV.accessToken] = "TEST-WA-ACCESS-TOKEN-DO-NOT-USE";
+process.env[PATIENT_WHATSAPP_ENV.phoneNumberId] = "111222333444555";
+process.env[PATIENT_WHATSAPP_ENV.welcomeTemplate] = WELCOME_TEMPLATE;
+process.env[PATIENT_WHATSAPP_ENV.updateTemplate] = UPDATE_TEMPLATE;
 process.env[PATIENT_WHATSAPP_ENV.templateLanguage] = "ar";
-// وتلغرام مُعدٌّ أيضاً: الانتقالُ يعني قناتين حيّتين معاً.
-process.env.PATIENT_TELEGRAM_BOT_TOKEN = "1234567:TEST-BOT-TOKEN-DO-NOT-USE";
-process.env.PATIENT_TELEGRAM_BOT_USERNAME = "bionic_wa_test_bot";
-process.env.PATIENT_TELEGRAM_WEBHOOK_SECRET = "test-tg-secret-0062";
 
-const PORT = 6884;
+const PORT = 6885;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-واتساب";
 const ADMIN = 9891;
-const WA_ID = "9647701112233";
-const WA_ID_2 = "9647709998877";
-const TG_ID = "770001";
 
-// ── جاسوسٌ على المزوّدين: لا نداءَ شبكة، ونرى ما كان سيُرسَل ─────────────
-interface SentWa { to: string; type: string; text: string; template: string | null }
+// ── جاسوسٌ على Graph: لا نداءَ شبكة، ونرى ما كان سيُرسَل ─────────────────
+interface SentWa { to: string; template: string; param: string }
 const waSent: SentWa[] = [];
-const tgSent: { chatId: string; text: string }[] = [];
-/** إخفاقٌ مُبرمَج للنداء التالي إلى Graph — لإثبات مسار الفشل بلا شبكة. */
+/** إخفاقٌ مُبرمَج للنداء التالي — لإثبات مسار الفشل بلا شبكة. */
 let waFailure: null | { status: number } | "network" = null;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init: any) => {
   const href = String(url);
   if (href.includes("graph.facebook.com")) {
-    if (waFailure === "network") throw new TypeError("simulated network failure");
-    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (waFailure === "network") { waFailure = null; throw new TypeError("simulated network failure"); }
     if (waFailure) {
-      const status = waFailure.status;
-      waFailure = null;
-      return new Response(JSON.stringify({ error: { message: "simulated" } }), { status });
+      const status = waFailure.status; waFailure = null;
+      return new Response(JSON.stringify({ error: { message: "simulated", fbtrace_id: "SECRET" } }), { status });
     }
+    const body = JSON.parse(String(init?.body ?? "{}"));
     waSent.push({
       to: String(body.to ?? ""),
-      type: String(body.type ?? ""),
-      text: String(body.text?.body ?? body.template?.components?.[0]?.parameters?.[0]?.text ?? ""),
-      template: body.template?.name ?? null,
+      template: String(body.template?.name ?? ""),
+      param: String(body.template?.components?.[0]?.parameters?.[0]?.text ?? ""),
     });
     return new Response(JSON.stringify({ messages: [{ id: "wamid.TEST" }] }), { status: 200 });
-  }
-  if (href.includes("api.telegram.org")) {
-    const body = JSON.parse(String(init?.body ?? "{}"));
-    tgSent.push({ chatId: String(body.chat_id), text: String(body.text ?? "") });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
   }
   return realFetch(url, init);
 }) as any;
@@ -117,99 +96,77 @@ async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
   return rows as T[];
 }
 
-/** تحديثُ Meta كما يصل فعلاً — ومعه توقيعُه الصحيح ما لم يُطلَب غيره. */
-function metaUpdate(from: string, text: string) {
-  return {
-    object: "whatsapp_business_account",
-    entry: [{
-      id: "WABA",
-      changes: [{
-        field: "messages",
-        value: {
-          messaging_product: "whatsapp",
-          metadata: { display_phone_number: BUSINESS_PHONE, phone_number_id: PHONE_NUMBER_ID },
-          contacts: [{ profile: { name: "اسمٌ يكتبه صاحبُ الحساب" }, wa_id: from }],
-          messages: [{ from, id: "wamid.X", timestamp: "1", type: "text", text: { body: text } }],
-        },
-      }],
-    }],
-  };
-}
-
-async function post(update: unknown, opts: { signature?: string | null } = {}) {
-  const raw = JSON.stringify(update);
-  const sig = opts.signature === undefined
-    ? `sha256=${createHmac("sha256", APP_SECRET).update(raw, "utf8").digest("hex")}`
-    : opts.signature;
-  const res = await fetch(BASE + WHATSAPP_WEBHOOK_PATH, {
-    method: "POST",
+const SESSION = {
+  userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1],
+  displayName: "المسؤول",
+  permissions: { canViewPatients: true, canAddPatients: true, canEditPatients: true },
+};
+async function http(method: string, path: string, body?: any) {
+  const res = await fetch(BASE + path, {
+    method,
     headers: {
       "content-type": "application/json",
-      ...(sig ? { "x-hub-signature-256": sig } : {}),
+      "x-test-session": Buffer.from(JSON.stringify(SESSION), "utf8").toString("base64"),
     },
-    body: raw,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status };
+  let json: any = null;
+  try { json = await res.json(); } catch { /* empty */ }
+  return { status: res.status, body: json };
+}
+
+/** جسمُ تسجيلٍ كاملٌ صالح — يتغيّر منه ما يخصّ السيناريو فقط. */
+function newPatientBody(name: string, phone: string, extra: any = {}) {
+  return {
+    name: `${MARK} ${name}`, phone, referralSource: MARK,
+    age: "40", height: "172", weight: "78",
+    medicalCondition: "x", branchId: 1, totalCost: 0,
+    patientClassification: "new", isPhysiotherapy: true,
+    ...extra,
+  };
 }
 
 const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
 async function cleanup() {
   await q(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
-  await q(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM patient_link_tokens WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
-  await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
-  await q(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
-  await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
 }
-
-/**
- * **عزلٌ عن بقيّة الحزم**: صفوفٌ مستحقّة لمرضى اختباراتٍ أخرى ما زالت
- * `pending` في القاعدة يلتقطها عاملُنا فيرسلها ويُلوّث جاسوسَنا. تُختَم
- * `skipped` قبل البدء — قاعدةُ اختبارٍ محلّية، والصفوفُ ليست بيانات أحد.
- */
+/** عزلٌ عن بقيّة الحزم: صفوفُ مرضى آخرين لا يلتقطها عاملُنا فيلوّث الجاسوس. */
 async function quiesceForeignOutbox() {
-  await q(`UPDATE patient_notification_deliveries
-              SET status = 'skipped'
-            WHERE status IN ('pending', 'failed', 'processing')
-              AND patient_id NOT IN (${ids})`);
+  await q(`UPDATE patient_notification_deliveries SET status = 'skipped'
+            WHERE status IN ('pending','failed','processing') AND patient_id NOT IN (${ids})`);
 }
 
 /**
- * يستنزف الطابورَ حتى يهدأ.
+ * ينتظر أن يهدأ الطابور — **بلا صفٍّ محجوزٍ في الطريق**.
  *
- * الـwebhook ينادي `nudgeDispatcher()` **بلا انتظار** — وهذا صحيحٌ في
- * الإنتاج (الربطُ لا ينتظر شبكةً) لكنه يجعل الاختبارَ غير حتميّ: إرسالٌ
- * أطلقه قسمٌ سابق قد يصل الجاسوسَ بعد أن مسحناه. فالتصريفُ صريحٌ هنا.
+ * نقطةُ التسجيل تنادي `nudgeDispatcher()` «أطلق وانسَ» (وهو صحيحٌ في
+ * الإنتاج: الحفظُ لا ينتظر شبكة). فحين يقيس الاختبارُ فوراً قد يجد الصفَّ
+ * `processing` بين يدَي تلك الكبسة — لا `pending` ولا `sent`. فيُنتظَر
+ * خروجُه من الحجز أوّلاً، ثمّ يُقاس.
  */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await dispatchOnce(50);
-    await new Promise((r) => setTimeout(r, 30));
+async function settle(timeoutMs = 4000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const [r] = await q<{ n: number }>(
+      `SELECT COUNT(*)::int n FROM patient_notification_deliveries
+        WHERE status = 'processing' AND patient_id IN (${ids})`);
+    if (r.n === 0) { await new Promise((x) => setTimeout(x, 40)); return; }
+    await new Promise((x) => setTimeout(x, 50));
   }
 }
 
-async function mkPatient(name: string): Promise<{ id: number; code: string }> {
-  const r = await q<{ id: number; patient_code: string }>(
-    `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, total_cost)
-     VALUES ($1,'07709999999',$2,'40','بتر تحت الركبة',1,1500000) RETURNING id, patient_code`,
-    [`${MARK} ${name}`, MARK]);
-  return { id: r[0].id, code: r[0].patient_code };
-}
-
-/** يربط جهةً يدوياً — لسيناريوهاتٍ لا تمرّ بالـwebhook. */
-async function linkContact(patientId: number, channel: string, externalId: string) {
-  const r = await q<{ id: number }>(
-    `INSERT INTO patient_contacts (patient_id, channel, relation, external_id, linked_at)
-     VALUES ($1,$2,'self',$3,NOW()) RETURNING id`, [patientId, channel, externalId]);
-  //  BIGSERIAL يعود نصّاً من `pg` الخام بينما Drizzle يعيده رقماً — والخلطُ
-  //  بينهما يجعل المقارنة تفشل صامتةً. فالتطبيعُ عند المصدر مرّةً واحدة.
-  return Number(r[0].id);
-}
+const contactsOf = (patientId: number) => q<{ id: string; channel: string; external_id: string; relation: string; revoked_at: string | null }>(
+  `SELECT id, channel, external_id, relation, revoked_at FROM patient_contacts
+    WHERE patient_id = $1 ORDER BY id`, [patientId]);
+const activeOf = async (patientId: number) =>
+  (await contactsOf(patientId)).filter((c) => c.revoked_at === null);
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
@@ -219,360 +176,331 @@ async function main() {
   await quiesceForeignOutbox();
 
   const app = express();
-  // نفسُ التقاط الجسم الخام الذي في `server/index.ts` — وهو ما يحرس التوقيع.
-  app.use(express.json({ verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
-  registerPatientWhatsappWebhook(app);
-  const server = app.listen(PORT, "127.0.0.1");
-  await new Promise<void>((r) => server.on("listening", () => r()));
+  app.use(express.json());
+  app.use((r: any, _res, next) => {
+    const h = r.headers["x-test-session"];
+    r.session = h ? { branchSession: JSON.parse(Buffer.from(h, "base64").toString("utf8")) } : {};
+    next();
+  });
+  const realUse = app.use.bind(app);
+  (app as any).use = (...args: any[]) => {
+    if (args.length === 1 && typeof args[0] === "function" && args[0].name === "session") return app;
+    return realUse(...(args as [any]));
+  };
+  const httpServer = createServer(app);
+  await registerRoutes(httpServer, app);
+  await new Promise<void>((r) => httpServer.listen(PORT, "127.0.0.1", () => r()));
 
   try {
-    // ══ أ. القنوات ══════════════════════════════════════════════════════
-    console.log("\n── أ. القنوات ──");
-    same("أ. **القناتان المدعومتان**", [...CONTACT_CHANNELS].sort(), ["telegram", "whatsapp"]);
-    same("أ.١ وكلتاهما مقبولة",
-      [isContactChannel("whatsapp"), isContactChannel("telegram")], [true, true]);
-    same("أ.٢ **وما عداهما مرفوض**",
-      ["sms", "email", "signal", "", "WHATSAPP", null].map(isContactChannel),
-      [false, false, false, false, false, false]);
-    same("أ.٣ وناقلٌ لكلٍّ منهما",
-      [transportFor("whatsapp")?.channel, transportFor("telegram")?.channel, transportFor("sms")],
-      ["whatsapp", "telegram", null]);
-    same("أ.٤ والقناتان مُعدّتان في هذا الاختبار",
-      [...enabledChannels()].sort(), ["telegram", "whatsapp"]);
-
-    // ══ ب. الرابط العميق ════════════════════════════════════════════════
-    console.log("\n── ب. الرابط العميق ──");
-    const pB = await mkPatient("ب");
-    const { rawToken: tokB, token: rowB } = await createLinkToken({
-      patientId: pB.id, channel: "whatsapp", relation: "self", createdByUserId: ADMIN,
-    });
-    const link = patientWhatsappDeepLink(tokB);
-    check(Boolean(link?.startsWith(`https://wa.me/${BUSINESS_PHONE}?text=`)),
-      "ب. **إلى رقم المركز المُعدّ**", String(link));
-    check(link!.includes(encodeURIComponent(LINK_COMMAND)),
-      "ب.١ **وبأمر الربط لمرّة واحدة**", String(link));
-    check(link!.includes(encodeURIComponent(tokB)),
-      "ب.٢ والتذكرة داخله (وهو كلُّ ما يُعرَض منها)");
-
-    //  **ولا نصَّ خام في القاعدة** — بصمتُه وحدها.
-    const stored = await q<{ token_hash: string }>(
-      `SELECT token_hash FROM patient_link_tokens WHERE id = $1`, [rowB.id]);
-    same("ب.٣ **المخزَّن بصمةٌ لا نصّ**", stored[0].token_hash, hashToken(tokB));
-    const anywhere = await q<{ n: number }>(
-      `SELECT COUNT(*)::int n FROM patient_link_tokens WHERE token_hash = $1`, [tokB]);
-    same("ب.٤ **ولا صفَّ يحمل النصّ الخام إطلاقاً**", anywhere[0].n, 0);
-
-    //  وإعدادٌ ناقص ⟶ لا رابط.
-    const savedToken = process.env[PATIENT_WHATSAPP_ENV.accessToken];
-    delete process.env[PATIENT_WHATSAPP_ENV.accessToken];
-    same("ب.٥ **إعدادٌ ناقص ⟶ لا رابطَ يُعرَض**", patientWhatsappDeepLink(tokB), null);
-    same("   والتكامل معطَّل نظيفاً", patientWhatsappEnabled(), false);
-    same("   ويُقال اسمُ الناقص لا قيمتُه",
-      missingPatientWhatsappEnv(), [PATIENT_WHATSAPP_ENV.accessToken]);
-    process.env[PATIENT_WHATSAPP_ENV.accessToken] = savedToken;
-    same("   ثم يعود", patientWhatsappEnabled(), true);
-
-    // ══ ج. تحقّق GET ════════════════════════════════════════════════════
-    console.log("\n── ج. تحقّق GET ──");
-    const okGet = await fetch(
-      `${BASE}${WHATSAPP_WEBHOOK_PATH}?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(VERIFY_TOKEN)}&hub.challenge=CHALLENGE-42`);
-    same("ج. **السرُّ الصحيح ⟶ ٢٠٠**", okGet.status, 200);
-    same("ج.١ **والتحدّي عارياً كما يشترط المزوّد**", await okGet.text(), "CHALLENGE-42");
-    const badGet = await fetch(
-      `${BASE}${WHATSAPP_WEBHOOK_PATH}?hub.mode=subscribe&hub.verify_token=wrong-token&hub.challenge=CHALLENGE-42`);
-    same("ج.٢ **والسرُّ الخاطئ ⟶ ٤٠٣**", badGet.status, 403);
-    check(!(await badGet.text()).includes("CHALLENGE-42"), "   ولا يُسرَّب التحدّي");
-    const noMode = await fetch(
-      `${BASE}${WHATSAPP_WEBHOOK_PATH}?hub.verify_token=${encodeURIComponent(VERIFY_TOKEN)}&hub.challenge=C`);
-    same("ج.٣ وبلا `hub.mode` ⟶ ٤٠٣", noMode.status, 403);
-
-    // ══ د. توقيع POST ═══════════════════════════════════════════════════
-    console.log("\n── د. توقيع POST ──");
-    const upd = metaUpdate(WA_ID, "شيء لا نعالجه");
-    same("د. **بلا توقيع ⟶ ٤٠١**", (await post(upd, { signature: null })).status, 401);
-    same("د.١ **وبتوقيعٍ خاطئ ⟶ ٤٠١**",
-      (await post(upd, { signature: "sha256=" + "0".repeat(64) })).status, 401);
-    same("د.٢ **وبتوقيعٍ بسرٍّ آخر ⟶ ٤٠١**", (await post(upd, {
-      signature: `sha256=${createHmac("sha256", "wrong-secret").update(JSON.stringify(upd)).digest("hex")}`,
-    })).status, 401);
-    same("د.٣ **وبالتوقيع الصحيح ⟶ ٢٠٠**", (await post(upd)).status, 200);
-    same("   ونصٌّ لا نعرفه لا يصير محادثةً آلية", waSent.length, 0);
-
-    // ══ هـ. الربط ═══════════════════════════════════════════════════════
-    console.log("\n── هـ. الربط ──");
-    const pE = await mkPatient("هـ");
-    //  أمرُ تصنيعٍ حيّ ⇒ لقطةُ حالةٍ مع الترحيب.
-    await q(`INSERT INTO prosthetic_work_orders
-               (patient_id, branch_id, expert_user_id, service_type, purpose,
-                current_stage, status, expected_delivery_date, assigned_by)
-             VALUES ($1,1,$2,'prosthetic','initial_build','manufacturing','active','2026-12-01',$2)`,
-      [pE.id, ADMIN]);
-    const { rawToken: tokE } = await createLinkToken({
-      patientId: pE.id, channel: "whatsapp", relation: "self", createdByUserId: ADMIN,
-    });
+    // ══ أ. تسجيلٌ برقمٍ عراقيّ محلّي ═══════════════════════════════════
+    console.log("\n── أ. التسجيل: 0770… ──");
     waSent.length = 0;
-    same("هـ. **«ربط <token>» ⟶ ٢٠٠**",
-      (await post(metaUpdate(WA_ID, `${LINK_COMMAND} ${tokE}`))).status, 200);
-
-    const contactsE = (await q<{ id: string; channel: string; external_id: string; relation: string }>(
-      `SELECT id, channel, external_id, relation FROM patient_contacts
-        WHERE patient_id = $1 AND revoked_at IS NULL`, [pE.id]))
-      .map((c) => ({ ...c, id: Number(c.id) }));
-    same("هـ.١ **جهةُ واتسابٍ واحدة بالضبط**", contactsE.length, 1);
-    same("هـ.٢ بقناتها ومعرّفها وصلتها",
-      [contactsE[0].channel, contactsE[0].external_id, contactsE[0].relation],
-      ["whatsapp", WA_ID, "self"]);
-    const consumed = await q<{ consumed_at: string | null; consumed_by_external_id: string | null }>(
-      `SELECT consumed_at, consumed_by_external_id FROM patient_link_tokens
-        WHERE token_hash = $1`, [hashToken(tokE)]);
-    check(consumed[0].consumed_at !== null && consumed[0].consumed_by_external_id === WA_ID,
-      "هـ.٣ **والتذكرةُ استُهلكت بهذا الحساب**", JSON.stringify(consumed[0]));
-
-    const rowsE = await deliveriesForPatient(pE.id);
-    same("هـ.٤ **وصفوفُ الربط استُحقّت لتلك الجهة**",
-      rowsE.map((r) => [r.notificationType, r.channel, r.patientContactId === contactsE[0].id]),
-      [
-        [LINK_NOTIFICATION_TYPES.WELCOME, "whatsapp", true],
-        [LINK_NOTIFICATION_TYPES.CURRENT_STAGE, "whatsapp", true],
-        [LINK_NOTIFICATION_TYPES.DELIVERY_DATE, "whatsapp", true],
-      ]);
-
-    // ══ و. الإعادة ══════════════════════════════════════════════════════
-    console.log("\n── و. الإعادة ──");
-    same("و. **إعادةُ التذكرة نفسها ⟶ ٢٠٠**",
-      (await post(metaUpdate(WA_ID, `${LINK_COMMAND} ${tokE}`))).status, 200);
-    const afterReplay = await q<{ n: number }>(
-      `SELECT COUNT(*)::int n FROM patient_contacts WHERE patient_id = $1 AND revoked_at IS NULL`, [pE.id]);
-    same("و.١ **ولا جهةَ ثانية**", afterReplay[0].n, 1);
-    same("و.٢ ولا صفوفَ ربطٍ مكرَّرة", (await deliveriesForPatient(pE.id)).length, 3);
-    check(waSent.some((m) => m.text === WHATSAPP_MESSAGES.invalid),
-      "و.٣ ويُجاب بالنصّ العامّ الواحد", JSON.stringify(waSent.map((m) => m.text)));
-
-    // ══ ز. الهويّة من المزوّد ═══════════════════════════════════════════
-    console.log("\n── ز. الهويّة ──");
-    const pZ = await mkPatient("ز");
-    const { rawToken: tokZ } = await createLinkToken({
-      patientId: pZ.id, channel: "whatsapp", relation: "guardian", createdByUserId: ADMIN,
-    });
-    //  التحديثُ يحمل هاتفَ الملفّ ورقمَ مريضٍ آخر واسماً — **ولا يُقرأ منها شيء**.
-    const spoof: any = metaUpdate(WA_ID_2, `${LINK_COMMAND} ${tokZ}`);
-    spoof.entry[0].changes[0].value.messages[0].text.body =
-      `${LINK_COMMAND} ${tokZ}`;
-    spoof.patientId = pB.id;
-    spoof.entry[0].changes[0].value.contacts[0].wa_id = "07709999999";
-    same("ز. الربط يمرّ", (await post(spoof)).status, 200);
-    const cZ = await q<{ external_id: string; patient_id: number; relation: string }>(
-      `SELECT external_id, patient_id, relation FROM patient_contacts
-        WHERE patient_id = $1 AND revoked_at IS NULL`, [pZ.id]);
-    same("ز.١ **الهويّةُ من `messages[].from` لا من `contacts[].wa_id` ولا من الهاتف**",
-      cZ[0].external_id, WA_ID_2);
-    same("ز.٢ **والملفُّ من التذكرة لا من جسم الطلب**", cZ[0].patient_id, pZ.id);
-    same("ز.٣ **والصلةُ من التذكرة**", cZ[0].relation, "guardian");
-    const leaked = await q<{ n: number }>(
-      `SELECT COUNT(*)::int n FROM patient_contacts WHERE patient_id = $1`, [pB.id]);
-    same("ز.٤ **ولا جهةَ للمريض الذي ادّعاه الجسم**", leaked[0].n, 0);
-
-    // ══ ح. «رمزي» ══════════════════════════════════════════════════════
-    console.log("\n── ح. رمزي ──");
-    waSent.length = 0;
-    same("ح. «رمزي» ⟶ ٢٠٠", (await post(metaUpdate(WA_ID, "رمزي"))).status, 200);
-    const codeReply = waSent[waSent.length - 1]?.text ?? "";
-    check(codeReply.includes(pE.code), "ح.١ **الرمزُ الحالي**", codeReply);
-    const forbidden: [string, string][] = [
-      ["اسم المريض", MARK], ["التشخيص", "بتر تحت الركبة"],
-      ["الهاتف", "07709999999"], ["المال", "1500000"],
-      ["رقم الصفّ", `#${pE.id}`], ["المرحلة الداخلية", "manufacturing"],
-    ];
-    for (const [label, needle] of forbidden) {
-      check(!codeReply.includes(needle), `   ولا ${label}`, codeReply);
-    }
-    //  ورقمٌ في نصّ الرسالة لا يفتح ملفَّ غيره.
-    waSent.length = 0;
-    await post(metaUpdate(WA_ID, `رمزي ${pZ.id}`));
-    same("ح.٢ **و«رمزي <رقم>» تُتجاهَل صامتة**", waSent.length, 0);
-    //  وحسابٌ بلا ربط ⟶ نصٌّ عامّ واحد.
-    waSent.length = 0;
-    await post(metaUpdate("964770000000", "رمزي"));
-    same("ح.٣ وحسابٌ بلا ربط ⟶ نصٌّ عامّ",
-      waSent[waSent.length - 1]?.text, WHATSAPP_MESSAGES.noLinkedPatient);
-
-    // ══ ط. حدثُ تصنيعٍ بجهتين ═══════════════════════════════════════════
-    console.log("\n── ط. جهتان، صفّان ──");
-    //  **تصريفٌ محسوم قبل القياس**: الـwebhook ينادي `nudgeDispatcher()`
-    //  «أطلق وانسَ»، فقد تصل إرسالاتُ الأقسام السابقة **بعد** أن نمسح
-    //  الجاسوس. فتُستنزف أولاً بانتظارٍ صريح — ثم يُقاس ما نُنشئه نحن.
+    const rA = await http("POST", "/api/patients", newPatientBody("أ", "07701234567"));
     await settle();
-    const pT = await mkPatient("ط");
-    const waContact = await linkContact(pT.id, "whatsapp", WA_ID);
-    const tgContact = await linkContact(pT.id, "telegram", TG_ID);
-    const [evt] = await q<{ id: number }>(
-      `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
-       VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
-      [pT.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, ADMIN]);
-    const queued = await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
-      patientId: pT.id, patientEventId: evt.id,
-      notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED,
-      payload: { stage: "manufacturing", serviceType: "prosthetic" },
-    }));
-    same("ط. **حدثٌ واحد ⟶ صفّان**", queued, 2);
-    const rowsT = await deliveriesForPatient(pT.id);
-    same("ط.١ **واحدٌ لكلّ جهة بقناتها هي**",
-      rowsT.map((r) => [r.channel, r.patientContactId]).sort(),
-      [["telegram", tgContact], ["whatsapp", waContact]].sort());
-    //  والتكرار ممنوع: نفسُ الحدث لنفس الجهة لا يُنتج صفّاً ثانياً.
-    const again = await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
-      patientId: pT.id, patientEventId: evt.id,
-      notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED,
-      payload: { stage: "manufacturing", serviceType: "prosthetic" },
-    }));
-    same("ط.٢ **وإعادةُ الاستحقاق لا تُنتج صفّاً مكرَّراً**", again, 0);
+    same("أ. **المريضُ حُفظ**", rA.status, 201);
+    const pA = rA.body;
+    check(Boolean(pA?.id && pA?.patientCode), "أ.١ وله رمزٌ قانونيّ", JSON.stringify(pA?.patientCode));
+    same("أ.٢ **والرايةُ مرفوعة افتراضاً**", pA.whatsappNotificationsEnabled, true);
+    check(Boolean(pA.whatsappConsentAt), "أ.٣ وموافقتُه مؤرَّخة", String(pA.whatsappConsentAt));
+    same("   ومنسوبةٌ لمن أشّرها", pA.whatsappConsentByUserId, ADMIN);
 
-    // ══ ي/ك/ل. العامل: كلُّ صفٍّ بناقله، وبوضعه ═════════════════════════
-    console.log("\n── ي/ك/ل. العامل ──");
-    //  وترحيبٌ طازج لهذا المريض كي يُقاس وضعُه لا وضعُ صفٍّ أُرسل سلفاً.
-    await db.transaction((tx) => enqueueForContact(tx as any, {
-      patientId: pT.id, patientContactId: waContact,
-      notificationType: LINK_NOTIFICATION_TYPES.WELCOME,
-      payload: { patientCode: pT.code },
-    }) as any);
-    waSent.length = 0; tgSent.length = 0;
+    const cA = await activeOf(pA.id);
+    same("أ.٤ **جهةُ واتسابٍ واحدة نشطة**", cA.length, 1);
+    same("أ.٥ **والوجهةُ الدولية بأرقامٍ فقط**",
+      [cA[0].channel, cA[0].external_id, cA[0].relation],
+      ["whatsapp", "9647701234567", "self"]);
+
+    const dA = await deliveriesForPatient(pA.id);
+    //  **وقد أُرسل فعلاً**: الكبسةُ بعد الحفظ تُوصله في ثوانٍ — وهذا هو
+    //  «حفظُ المريض = واتساب جاهزة» مقاساً لا موصوفاً.
+    same("أ.٦ **صفُّ ترحيبٍ واحد بالضبط، وقد أُرسل**",
+      dA.map((d) => [d.notificationType, d.channel, d.status]),
+      [[REGISTRATION_WELCOME, "whatsapp", "sent"]]);
+    same("أ.٧ **وحمولتُه الرمزُ وحده**", dA[0].payload, { patientCode: pA.patientCode });
+    same("أ.٨ **ولا صفَّ تلغرام**", dA.filter((d) => d.channel === "telegram").length, 0);
+    same("أ.٩ **ولا تذكرةَ ربطٍ إطلاقاً**",
+      Number((await q(`SELECT COUNT(*)::int c FROM patient_link_tokens WHERE patient_id=$1`, [pA.id]))[0].c), 0);
+
+    // ══ ب. الصيغةُ الدولية ⟶ الوجهةُ نفسها ══════════════════════════════
+    console.log("\n── ب. +964… ──");
+    const rB = await http("POST", "/api/patients", newPatientBody("ب", "+9647701234567"));
+    await settle();
+    same("ب. المريضُ حُفظ", rB.status, 201);
+    const cB = await activeOf(rB.body.id);
+    same("ب.١ **الوجهةُ مطابقةٌ للمحلّي حرفاً بحرف**", cB[0].external_id, cA[0].external_id);
+    //  ومن مطبِّع المستودع نفسه — لا خوارزميةَ ثانية.
+    same("ب.٢ **والمصدرُ `normalizePhone` وحده**",
+      ["07701234567", "+9647701234567", "٠٧٧٠١٢٣٤٥٦٧", "00964 770 123 4567"]
+        .map((v) => whatsappDestination(normalizePhone(v, "IQ").e164)),
+      ["9647701234567", "9647701234567", "9647701234567", "9647701234567"]);
+    same("ب.٣ ولا وجهةَ من رقمٍ لم يُطبَّع",
+      [whatsappDestination(null), whatsappDestination("0770"), whatsappDestination("9647701234567")],
+      [null, null, null]);
+
+    // ══ ج. الرايةُ مطفأة ═══════════════════════════════════════════════
+    console.log("\n── ج. مطفأة ──");
+    const rC = await http("POST", "/api/patients",
+      newPatientBody("ج", "07705550000", { whatsappNotificationsEnabled: false }));
+    await settle();
+    same("ج. المريضُ حُفظ", rC.status, 201);
+    same("ج.١ **والرايةُ مطفأة**", rC.body.whatsappNotificationsEnabled, false);
+    same("ج.٢ ولا ختمَ موافقةٍ ملفَّق", rC.body.whatsappConsentAt, null);
+    same("ج.٣ **ولا جهةَ اتصال**", (await activeOf(rC.body.id)).length, 0);
+    same("ج.٤ **ولا صفَّ ترحيب**", (await deliveriesForPatient(rC.body.id)).length, 0);
+
+    // ══ د. رقمٌ غير صالح ════════════════════════════════════════════════
+    console.log("\n── د. رقم غير صالح ──");
+    const before = Number((await q(`SELECT COUNT(*)::int c FROM patient_contacts`))[0].c);
+    const rD = await http("POST", "/api/patients", newPatientBody("د", "هاتف الجار"));
+    same("د. **التسجيلُ يُردّ ٤٠٠** — بقاعدة الهاتف القائمة", rD.status, 400);
+    same("د.١ **ولا جهةَ أُنشئت**",
+      Number((await q(`SELECT COUNT(*)::int c FROM patient_contacts`))[0].c), before);
+    same("د.٢ **ولا وجهةَ مشوّهة في الطابور**",
+      Number((await q(
+        `SELECT COUNT(*)::int c FROM patient_contacts WHERE external_id !~ '^[0-9]{8,15}$'`))[0].c), 0);
+
+    // ══ هـ. Meta معطَّلة ═══════════════════════════════════════════════
+    console.log("\n── هـ. Meta معطَّلة ──");
+    waFailure = "network";
+    const rE = await http("POST", "/api/patients", newPatientBody("هـ", "07709998888"));
+    same("هـ. **المريضُ محفوظٌ رغم العطل**", rE.status, 201);
+    await settle();
     await dispatchOnce(50);
-    const waTo = waSent.filter((m) => m.to === WA_ID);
-    check(tgSent.some((m) => m.chatId === TG_ID),
-      "ي. **صفُّ تلغرام ذهب إلى تلغرام**", JSON.stringify(tgSent));
-    check(waTo.length > 0, "ي.١ **وصفُّ واتساب إلى واتساب**", JSON.stringify(waSent));
-    same("ي.٢ **ولا رسالةَ واتسابٍ ذهبت إلى معرّف تلغرام**",
-      waSent.filter((m) => m.to === TG_ID).length, 0);
+    await settle();
+    const dE = (await deliveriesForPatient(rE.body.id))[0];
+    same("هـ.١ **والصفُّ فاشلٌ قابلٌ للإعادة**", dE.status, "failed");
+    same("هـ.٢ برمزٍ محدود", dE.lastErrorCode, "whatsapp_network");
+    check(dE.nextAttemptAt !== null
+      && new Date(dE.nextAttemptAt).getTime() > Date.now() + backoffFor(1) - 5000,
+      "هـ.٣ والتباعدُ سليم", String(dE.nextAttemptAt));
+    same("هـ.٤ **والمريضُ ما زال في القاعدة**",
+      Number((await q(`SELECT COUNT(*)::int c FROM patients WHERE id=$1`, [rE.body.id]))[0].c), 1);
+    check(!String(dE.lastErrorCode ?? "").includes("SECRET"),
+      "هـ.٥ ولا نصَّ مزوّدٍ خام", String(dE.lastErrorCode));
 
-    const welcomeSent = waSent.find((m) => m.text.includes("مرحباً بك"));
-    check(Boolean(welcomeSent) && welcomeSent!.type === "text" && welcomeSent!.template === null,
-      "ك. **رسالةُ الربط بوضع النصّ** (نافذةٌ مفتوحة)", JSON.stringify(welcomeSent));
-    check(welcomeSent!.text.includes("واتساب") && !welcomeSent!.text.includes("Telegram"),
-      "ك.١ **وسطرُ الترحيب يقول واتساب لا Telegram**", welcomeSent!.text);
+    // ══ و. قالبُ الترحيب غير مُعدّ ═════════════════════════════════════
+    console.log("\n── و. بلا قالب ──");
+    delete process.env[PATIENT_WHATSAPP_ENV.welcomeTemplate];
+    same("و. **والنوعُ يُعلَن غيرَ جاهز**", templateReady("welcome"), false);
+    const rF = await http("POST", "/api/patients", newPatientBody("و", "07707776666"));
+    same("و.١ **المريضُ حُفظ**", rF.status, 201);
+    await settle();
+    waSent.length = 0;
+    await dispatchOnce(50);
+    await settle();
+    const dF = (await deliveriesForPatient(rF.body.id))[0];
+    same("و.٢ **الصفُّ ينتظر**", dF.status, "pending");
+    same("و.٣ **وبلا محاولةٍ محروقة**", dF.attemptCount, 0);
+    same("و.٤ ولا رمزَ خطأٍ ملفَّق", dF.lastErrorCode, null);
+    same("و.٥ **ولا نداءَ إلى Meta إطلاقاً**", waSent.length, 0);
 
-    const stageSent = waSent.find((m) => m.type === "template");
-    check(Boolean(stageSent) && stageSent!.template === TEMPLATE_NAME,
-      "ل. **وتحديثُ التصنيع بالقالب المُعدّ**", JSON.stringify(stageSent));
-    check(stageSent!.text.includes("طرفك الصناعي"),
-      "ل.١ **والنصُّ من `renderNotification` نفسه** معامِلاً للقالب", String(stageSent?.text));
-    same("ل.٢ **والتمييزُ مشتقٌّ لا مكتوبٌ مرّتين**",
-      [
-        isLinkNotificationType(LINK_NOTIFICATION_TYPES.WELCOME),
-        isLinkNotificationType(PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED),
-      ], [true, false]);
-    //  وترحيبُ تلغرام يبقى بصياغته هو — القناةُ تصل العارض.
-    const tgWelcome = tgSent.find((m) => m.text.includes("مرحباً بك"));
-    check(!tgWelcome || tgWelcome.text.includes("Telegram"),
-      "ك.٢ وترحيبُ تلغرام يبقى بصياغته", String(tgWelcome?.text));
+    // ══ ز. ثمّ يُضبَط القالب ═══════════════════════════════════════════
+    console.log("\n── ز. ثمّ يُضبَط ──");
+    process.env[PATIENT_WHATSAPP_ENV.welcomeTemplate] = WELCOME_TEMPLATE;
+    await dispatchOnce(50);
+    await settle();
+    const dF2 = (await deliveriesForPatient(rF.body.id))[0];
+    same("ز. **الصفُّ نفسُه أُرسل**", [dF2.id, dF2.status], [dF.id, "sent"]);
+    const sentF = waSent.find((m) => m.param === rF.body.patientCode);
+    check(Boolean(sentF) && sentF!.template === WELCOME_TEMPLATE,
+      "ز.١ **بقالب الترحيب المُعدّ**", JSON.stringify(sentF));
+    same("ز.٢ ووجهتُه رقمُه المسجَّل", sentF!.to, "9647707776666");
 
-    // ══ م. فشلُ Meta ════════════════════════════════════════════════════
-    console.log("\n── م. الفشل ──");
-    const pM = await mkPatient("م");
-    const waM = await linkContact(pM.id, "whatsapp", WA_ID_2);
-    const [evtM] = await q<{ id: number }>(
+    // ══ ح. رفضُ Meta الحقيقيّ ══════════════════════════════════════════
+    console.log("\n── ح. رفضُ القالب ──");
+    waFailure = { status: 400 };
+    const rH = await http("POST", "/api/patients", newPatientBody("ح", "07701110000"));
+    await settle();
+    await dispatchOnce(50);
+    await settle();
+    const dH = (await deliveriesForPatient(rH.body.id))[0];
+    same("ح. **رمزُ خطأ القالب**", [dH.status, dH.lastErrorCode], ["failed", "whatsapp_template_error"]);
+    same("ح.١ والمحاولةُ عُدَّت هنا (رفضٌ حقيقيّ لا إعدادٌ ناقص)", dH.attemptCount, 1);
+    check(!JSON.stringify(dH).includes("fbtrace") && !JSON.stringify(dH).includes("SECRET"),
+      "ح.٢ **ولا جسمَ مزوّدٍ خام في الصفّ**", JSON.stringify(dH).slice(0, 160));
+
+    // ══ ط. ما لا يخرج في الترحيب ═══════════════════════════════════════
+    console.log("\n── ط. ما لا يخرج ──");
+    same("ط. **معامِلُ القالب هو الرمزُ وحده**",
+      waSent.filter((m) => m.template === WELCOME_TEMPLATE)
+        .every((m) => /^[A-Z]{2}-\d+$/.test(m.param)), true);
+    const forbidden: [string, string][] = [
+      ["اسم المريض", MARK], ["التشخيص", "x"], ["الهاتف", "07701234567"],
+      ["رقم الصفّ", String(pA.id)],
+    ];
+    const allParams = waSent.map((m) => m.param).join("\n");
+    for (const [label, needle] of forbidden) {
+      check(!allParams.includes(needle), `ط.١ ولا ${label} في أي معامِل`, needle);
+    }
+    //  والنصُّ المرجعيّ للقالب هو ما أملاه المالك حرفاً — والرمزُ متغيّرُه الوحيد.
+    const preview = welcomePreview("WB-201234");
+    check(preview.includes("أهلاً وسهلاً بكم في مجموعة مراكز الدكتور ياسر الساعدي (الوارث وبايونك)")
+      && preview.includes("تم تسجيل ملفكم بنجاح في نظام المراكز الموحد.")
+      && preview.includes("رمز ملفكم: WB-201234")
+      && preview.includes("نتمنى لكم دوام الصحة والعافية"),
+      "ط.٢ **ونصُّ الترحيب المرجعيّ كما أُملي**", preview);
+    same("ط.٣ **ولا اسمَ مريضٍ متغيّراً في القالب** — معامِلٌ واحد",
+      WELCOME_LINES.join("\n").match(/\{\{\w+\}\}/g), ["{{code}}"]);
+    same("ط.٤ والترحيبُ يخصّ قالبَه، والتصنيعُ قالبَه",
+      [templateKindFor(REGISTRATION_WELCOME),
+       templateKindFor(PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED)],
+      ["welcome", "update"]);
+
+    // ══ ي. تغييرُ الرقم ════════════════════════════════════════════════
+    console.log("\n── ي. تغييرُ الرقم ──");
+    const beforeWelcomes = (await deliveriesForPatient(pA.id))
+      .filter((d) => d.notificationType === REGISTRATION_WELCOME).length;
+    const rY = await http("PUT", `/api/patients/${pA.id}`, { phone: "07712223333" });
+    same("ي. التعديلُ نجح", rY.status, 200);
+    const cY = await contactsOf(pA.id);
+    same("ي.١ **القديمةُ خُتمت والجديدةُ نشطة**",
+      cY.map((c) => [c.external_id, c.revoked_at === null]),
+      [["9647701234567", false], ["9647712223333", true]]);
+    same("ي.٢ **ولا ترحيبَ ثانٍ** — تعديلُ رقمٍ ليس تسجيلاً",
+      (await deliveriesForPatient(pA.id))
+        .filter((d) => d.notificationType === REGISTRATION_WELCOME).length, beforeWelcomes);
+    //  والحدثُ التالي يذهب إلى الجديد وحده.
+    const evY = await q<{ id: number }>(
       `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
        VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
-      [pM.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, ADMIN]);
-    const costBefore = await q<{ total_cost: string }>(
-      `SELECT total_cost FROM patients WHERE id = $1`, [pM.id]);
+      [pA.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, ADMIN]);
     await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
-      patientId: pM.id, patientEventId: evtM.id,
+      patientId: pA.id, patientEventId: evY[0].id,
       notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED,
       payload: { stage: "mold", serviceType: "prosthetic" },
     }));
-    waFailure = "network";
+    waSent.length = 0;
     await dispatchOnce(50);
-    const failed = (await deliveriesForPatient(pM.id))[0];
-    same("م. **الصفُّ فاشل**", failed.status, "failed");
-    same("م.١ **برمزٍ محدود من القائمة المغلقة**", failed.lastErrorCode, "whatsapp_network");
-    same("م.٢ والمحاولةُ عُدَّت", failed.attemptCount, 1);
-    check(failed.nextAttemptAt !== null
-      && new Date(failed.nextAttemptAt).getTime() > Date.now() + backoffFor(1) - 5000,
-      "م.٣ **والتباعدُ سليم**", String(failed.nextAttemptAt));
-    same("م.٤ **والمعاملةُ التجارية ثابتة** — لا دينارَ تحرّك",
-      (await q(`SELECT total_cost FROM patients WHERE id = $1`, [pM.id]))[0].total_cost,
-      costBefore[0].total_cost);
-    check(!String(failed.lastErrorCode ?? "").includes("simulated"),
-      "م.٥ **ولا نصَّ مزوّدٍ خام في العمود**", String(failed.lastErrorCode));
-    //  وخطأُ قالبٍ يُميَّز عن خطأِ شبكة.
-    await q(`UPDATE patient_notification_deliveries
-                SET status='pending', next_attempt_at=NOW(), attempt_count=0
-              WHERE id = $1`, [failed.id]);
-    waFailure = { status: 400 };
+    await settle();
+    same("ي.٣ **والحدثُ التالي إلى الرقم الجديد وحده**",
+      waSent.map((m) => m.to), ["9647712223333"]);
+
+    // ══ ك. الإطفاء ═════════════════════════════════════════════════════
+    console.log("\n── ك. الإطفاء ──");
+    same("ك. التبديلُ نجح",
+      (await http("PUT", `/api/patients/${pA.id}`, { whatsappNotificationsEnabled: false })).status, 200);
+    same("ك.١ **ولا جهةَ نشطة**", (await activeOf(pA.id)).length, 0);
+    const evK = await q<{ id: number }>(
+      `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
+       VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
+      [pA.id, PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERED, ADMIN]);
+    const queuedK = await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
+      patientId: pA.id, patientEventId: evK[0].id,
+      notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERED,
+      payload: { stage: "delivered", serviceType: "prosthetic" },
+    }));
+    same("ك.٢ **ولا صفَّ يُستحقّ بعد الإطفاء**", queuedK, 0);
+
+    // ══ ل. إعادةُ الرفع ════════════════════════════════════════════════
+    console.log("\n── ل. إعادةُ الرفع ──");
+    const beforeRows = (await deliveriesForPatient(pA.id)).length;
+    same("ل. التبديلُ نجح",
+      (await http("PUT", `/api/patients/${pA.id}`, { whatsappNotificationsEnabled: true })).status, 200);
+    same("ل.١ **جهةٌ نشطة من الرقم الحالي**",
+      (await activeOf(pA.id)).map((c) => c.external_id), ["9647712223333"]);
+    same("ل.٢ **ولا صفَّ رجعيّ ولا ترحيبَ مكرَّر**",
+      (await deliveriesForPatient(pA.id)).length, beforeRows);
+    //  والمستقبلُ يعمل.
+    const evL = await q<{ id: number }>(
+      `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
+       VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
+      [pA.id, PATIENT_EVENT_TYPES.MANUFACTURING_READY_FOR_DELIVERY, ADMIN]);
+    same("ل.٣ **والحدثُ الجديد يُستحقّ**",
+      await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
+        patientId: pA.id, patientEventId: evL[0].id,
+        notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_READY_FOR_DELIVERY,
+        payload: { stage: "ready_for_fitting", serviceType: "prosthetic" },
+      })), 1);
+
+    // ══ م. حدثُ تصنيعٍ بقالب التحديث ═══════════════════════════════════
+    console.log("\n── م. تحديثُ التصنيع ──");
+    waSent.length = 0;
     await dispatchOnce(50);
-    same("م.٦ **وخطأُ القالب يُميَّز**",
-      (await deliveriesForPatient(pM.id))[0].lastErrorCode, "whatsapp_template_error");
-    void waM;
+    await settle();
+    const upd = waSent.find((m) => m.template === UPDATE_TEMPLATE);
+    check(Boolean(upd), "م. **أُرسل بقالب التحديث**", JSON.stringify(waSent));
+    check(upd!.param.includes("جاهزاً للتجربة"),
+      "م.١ **ومعامِلُه نصُّ العارض نفسه**", upd!.param);
+    check(!upd!.param.includes(MARK) && !/\d{6,}/.test(upd!.param.replace(/\d{2}\/\d{2}\/\d{4}/g, "")),
+      "م.٢ ولا اسمَ ولا مبلغَ فيه", upd!.param);
 
-    // ══ ع. تلغرام القديم ═══════════════════════════════════════════════
-    console.log("\n── ع. تلغرام القديم ──");
-    const legacy = await q<{ n: number }>(
-      `SELECT COUNT(*)::int n FROM patient_notification_deliveries
-        WHERE patient_id = $1 AND channel = 'telegram' AND status = 'sent'`, [pT.id]);
-    check(legacy[0].n > 0, "ع. **صفُّ تلغرام أُرسل فعلاً ولم يُخطَّ**", JSON.stringify(legacy));
-    const skippedLegacy = await q<{ n: number }>(
-      `SELECT COUNT(*)::int n FROM patient_notification_deliveries
-        WHERE patient_id = $1 AND channel = 'telegram' AND status = 'skipped'`, [pT.id]);
-    same("ع.١ **ولم يُوسَم متخطّى لمجرّد أن واتساب أُضيف**", skippedLegacy[0].n, 0);
-    same("ع.٢ **وجهةُ تلغرام ما زالت تُقرأ**",
-      (await q<{ n: number }>(
-        `SELECT COUNT(*)::int n FROM patient_contacts
-          WHERE patient_id = $1 AND channel = 'telegram' AND revoked_at IS NULL`, [pT.id]))[0].n, 1);
+    // ══ ن. لا أثرَ تشغيليّ لتلغرام المرضى ═══════════════════════════════
+    console.log("\n── ن. تلغرام المرضى ──");
+    check(!existsSync(join(import.meta.dirname, "..", "patient_telegram")),
+      "ن. **مجلّد `server/patient_telegram/` أُزيل**");
+    const routesSrc = readFileSync(join(import.meta.dirname, "..", "routes.ts"), "utf8");
+    check(!/patient_telegram|registerPatientTelegramWebhook/.test(routesSrc),
+      "ن.١ **ولا تسجيلَ نقطةِ تلغرام للمرضى**",
+      (routesSrc.match(/.*patient_telegram.*/g) ?? []).join(" | "));
+    check(!existsSync(join(import.meta.dirname, "..", "patient_notifications", "transports.ts")),
+      "ن.٢ **ولا سجلَّ نواقلَ ثنائياً**");
+    same("ن.٣ **والقناةُ المدعومة واحدة**", [...CONTACT_CHANNELS], ["whatsapp"]);
+    //  **بلا تعليقات**: سطرٌ يشرح ما أُزيل ليس هو الشيءَ المُزال.
+    const cardSrc = readFileSync(
+      join(import.meta.dirname, "../../client/src/components/PatientCommunicationCard.tsx"), "utf8")
+      .split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")
+        && !l.trim().startsWith("/*")).join("\n");
+    check(!/Telegram|QRCode|qrcode|ربط واتساب|deepLink|link-token/i.test(cardSrc),
+      "ن.٤ **ولا واجهةَ ربطٍ ولا رمزَ QR في البطاقة**",
+      (cardSrc.match(/.*(Telegram|QR|deepLink).*/gi) ?? []).join(" | "));
+    //  ولا صفَّ تلغرامٍ **جديد** يُنشأ لأي مريضٍ من هذه الحزمة.
+    same("ن.٥ **ولا جهةَ تلغرامٍ أُنشئت**",
+      Number((await q(
+        `SELECT COUNT(*)::int c FROM patient_contacts
+          WHERE channel <> 'whatsapp' AND patient_id IN (${ids})`))[0].c), 0);
 
-    //  ولا يُحجَز صفٌّ لقناةٍ بلا ناقل — يبقى `pending` لا يُحرَق.
-    const pQ = await mkPatient("ق");
-    const cQ = await linkContact(pQ.id, "telegram", "770777");
-    await q(`INSERT INTO patient_notification_deliveries
-               (patient_id, patient_contact_id, channel, notification_type, payload)
-             VALUES ($1,$2,'telegram',$3,'{"stage":"mold"}'::jsonb)`,
-      [pQ.id, cQ, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED]);
-    const onlyWa = await claimDue(50, ["whatsapp"]);
-    same("ع.٣ **وحجزُ واتساب وحدَه لا يمسّ صفَّ تلغرام**",
-      onlyWa.filter((r) => r.channel === "telegram").length, 0);
-    same("   والصفُّ ما زال `pending` لا متخطّى",
-      (await deliveriesForPatient(pQ.id))[0].status, "pending");
+    // ══ ع. تنبيهاتُ المالك الداخلية باقية ══════════════════════════════
+    console.log("\n── ع. تنبيهاتُ الإدارة ──");
+    check(existsSync(join(import.meta.dirname, "..", "notifications", "telegram.ts")),
+      "ع. **`server/notifications/telegram.ts` قائمٌ كما هو**");
+    check(/notifyNewPatient/.test(routesSrc),
+      "ع.١ **وما زال يُنادى عند تسجيل مريض** — شأنٌ آخر تماماً");
 
-    // ══ ف. لا حقلَ سريرياً ولا مالياً في أي حمولة تخرج ══════════════════
-    console.log("\n── ف. ما لا يخرج ──");
-    const payloads = await q<{ payload: any; notification_type: string }>(
-      `SELECT payload, notification_type FROM patient_notification_deliveries
-        WHERE patient_id IN (${ids})`);
-    const allowedKeys = new Set([
-      "stage", "serviceType", "expectedDeliveryDate", "patientCode",
-    ]);
-    const strayKeys = [...new Set(payloads.flatMap((r) => Object.keys(r.payload ?? {})))]
-      .filter((k) => !allowedKeys.has(k));
-    same("ف. **لا مفتاحَ خارج القائمة البيضاء في أي حمولة**", strayKeys, []);
-    const outboundTexts = waSent.map((m) => m.text).join("\n");
-    for (const [label, needle] of forbidden) {
-      check(!outboundTexts.includes(needle),
-        `ف.١ ولا ${label} في أي نصٍّ خرج إلى واتساب`, needle);
-    }
-    //  **ولا رقمَ في رسالةٍ إلا ما له مسوّغ**: تاريخُ تسليمٍ متوقَّع، أو
-    //  رمزُ المريض القانونيّ. وما عداهما — مبلغٌ، معرّفٌ داخليّ، رقمُ صفّ —
-    //  لا يخرج. والفحصُ على الباقي بعد نزعِ المسوَّغَين لا على النصّ كلِّه،
-    //  فلا يمرّ مبلغٌ لأنه جاور تاريخاً.
-    const strayDigits = waSent
-      .map((m) => m.text
-        .replace(/\d{2}\/\d{2}\/\d{4}/g, "")      // موعدُ التسليم
-        .replace(/[A-Z]{2}-\d+/g, ""))            // رمزُ المريض القانونيّ
-      .filter((t) => /\d/.test(t));
-    same("ف.٢ **ولا رقمَ آخر في أي رسالة** — لا مبلغ ولا معرّف", strayDigits, []);
-    //  والعارضُ نفسه لا يُخرج شيئاً لنوعٍ غير مسموح.
-    same("ف.٣ **ونوعٌ غير مسموحٍ لا نصَّ له**",
-      renderNotification(PATIENT_EVENT_TYPES.PAYMENT_RECORDED ?? "payment.recorded", { amount: 500000 }),
-      null);
-    same("ف.٤ والقالبُ جاهزٌ في هذا الاختبار", patientWhatsappTemplateReady(), true);
-    same("ف.٥ والتطبيعُ يوحّد صيغَ الرقم",
-      ["+964 770 111 2233", "00964-770", "(770)"].map(normalizeWhatsappId),
-      ["9647701112233", "00964770", "770"]);
-    void patientWhatsappConfig();
+    // ══ ف. إعادةُ طلب التسجيل ══════════════════════════════════════════
+    console.log("\n── ف. إعادةُ الطلب ──");
+    //  نفسُ الرقم لمريضٍ ثانٍ: جهةٌ ثانية مشروعة (أبٌ وابنه)، وترحيبٌ لكلٍّ.
+    const rP1 = await http("POST", "/api/patients", newPatientBody("ف١", "07714445555"));
+    const rP2 = await http("POST", "/api/patients", newPatientBody("ف٢", "07714445555"));
+    await settle();
+    same("ف. **رقمٌ واحد لملفَّين مشروع**", [rP1.status, rP2.status], [201, 201]);
+    same("ف.١ ولكلٍّ جهتُه وترحيبُه",
+      [(await activeOf(rP1.body.id)).length, (await activeOf(rP2.body.id)).length], [1, 1]);
+    //  **وإعادةُ الاستحقاق لنفس الجهة لا تُنتج ترحيباً ثانياً** — الفهرسُ يحسم.
+    const dup = await storage.getPatient(rP1.body.id);
+    await db.transaction((tx) => registerWhatsappWelcome(tx as any, {
+      patientId: dup!.id, phoneE164: dup!.phoneE164,
+      patientCode: dup!.patientCode, enabled: true,
+    }));
+    same("ف.٢ **وإعادةُ النداء لا تُنتج صفّاً ثانياً**",
+      (await deliveriesForPatient(rP1.body.id))
+        .filter((d) => d.notificationType === REGISTRATION_WELCOME).length, 1);
+    same("ف.٣ **ولا جهةَ مكرَّرة**", (await activeOf(rP1.body.id)).length, 1);
+
+    //  ولا ترحيبَ استُحقّ لمريضٍ سابقٍ على الميزة (الرايةُ افتراضُها FALSE).
+    const legacy = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, phone_e164, phone_status, referral_source, age,
+                             medical_condition, branch_id, total_cost)
+       VALUES ($1,'07700000001','+9647700000001','ok',$2,'50','x',1,0) RETURNING id`,
+      [`${MARK} قديم`, MARK]);
+    same("ف.٤ **ومريضٌ أُدرج بلا رايةٍ لا يُستحقّ له شيء**",
+      (await deliveriesForPatient(legacy[0].id)).length, 0);
+    same("   ورايتُه مطفأةٌ بحكم القاعدة",
+      (await q(`SELECT whatsapp_notifications_enabled e FROM patients WHERE id=$1`, [legacy[0].id]))[0].e,
+      false);
+
+    // ولا ترحيلَ يبثّ للقدامى: لا حلقةَ في ٠٦٢ ولا مسحَ إقلاع.
+    const mig = readFileSync(
+      join(import.meta.dirname, "..", "migrations", "062_whatsapp_notification_consent.ts"), "utf8");
+    check(!/INSERT INTO patient_notification_deliveries|UPDATE patients\s+SET whatsapp_notifications_enabled = TRUE/i.test(mig),
+      "ف.٥ **ولا بثَّ جماعيّ في الترحيل**");
+    check(/DEFAULT FALSE/.test(mig), "ف.٦ **وافتراضُ العمود FALSE صراحةً**");
+    void readdirSync;
   } finally {
     globalThis.fetch = realFetch;
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = $1`, [ADMIN]);
     await q(`DELETE FROM system_users WHERE id = $1`, [ADMIN]);
-    server.close();
+    httpServer.close();
   }
 
   console.log(`\n${failures === 0 ? "✅ كل الاختبارات نجحت" : `❌ ${failures} فشل`}`);

@@ -26,18 +26,17 @@ import { PATIENT_EVENT_TYPES } from "@shared/patient_events";
 import { isCanonicalPatientCode } from "@shared/patient_code";
 
 /**
- * أنواع لا تقابلها أحداث في تاريخ المريض.
+ * **ترحيبُ التسجيل** — النوعُ الوحيد الذي لا يقابله حدثٌ في تاريخ المريض.
  *
- * رسالة الترحيب ولقطة الحالة عند الربط ليستا واقعةً جديدة — لا شيء تغيّر
- * في الجهاز. فاختراع `patient_event` لهما كان سيجعل سجلّ الأحداث يكذب:
- * «تغيّرت المرحلة» في يومٍ لم تتغيّر فيه. لذلك نوعٌ مستقلّ معلَن هنا،
- * وعمود `patient_event_id` يقبل الفراغ لأجلها.
+ * ══ ولماذا ليس حدثاً ═══════════════════════════════════════════════════
+ * فتحُ الملفّ واقعةٌ في السجلّ الإداري لا في تاريخ **الجهاز**. واختراعُ
+ * `patient_event` له كان سيجعل سجلَّ الأحداث يقول «تغيّرت المرحلة» في يومٍ
+ * لا جهازَ فيه أصلاً. فنوعٌ مستقلٌّ معلَن هنا، وعمودُ `patient_event_id`
+ * يقبل الفراغ لأجله — والفهرسُ الجزئيّ
+ * `uq_pnd_contact_link_type (contact, type) WHERE patient_event_id IS NULL`
+ * يجعله **مرّةً واحدة لكلّ جهة** بحكم القاعدة لا بحكم الشيفرة.
  */
-export const LINK_NOTIFICATION_TYPES = {
-  WELCOME: "link.welcome",
-  CURRENT_STAGE: "link.current_stage",
-  DELIVERY_DATE: "link.delivery_date",
-} as const;
+export const REGISTRATION_WELCOME = "registration.welcome";
 
 /**
  * أسماء المراحل الستّ كما يقرؤها المريض. **لا أسماء داخلية ولا رموز.**
@@ -98,52 +97,40 @@ function orderCreatedText(serviceType: unknown): string {
     "سنوافيك بتحديثات مراحل العمل عبر هذه القناة.";
 }
 
-const WELCOME_INTRO =
-  "مرحباً بك في مجموعة مراكز الوارث وبايونك للأطراف الذكية والعلاج الطبيعي.";
+/**
+ * **نصُّ الترحيب كما أملاه المالك — حرفاً بحرف.**
+ *
+ * ══ وما لا يخرج فيه ════════════════════════════════════════════════════
+ * لا تشخيص · لا نوع بتر · لا جهاز ولا مواصفاته · لا سعر ولا دَين · لا اسم
+ * طبيبٍ ولا خبير · ولا رقمُ صفٍّ داخليّ. **الاسمُ نفسُه لا يُرسَل**: رسالةٌ
+ * تصل رقماً خاطئاً بالاسم تكشف مريضاً، وبالرمز وحده لا تكشف أحداً.
+ *
+ * ولا يُبنى النصُّ هنا للإرسال — القالبُ المعتمَد في Meta يحمل الصياغةَ
+ * الثابتة، و`{{1}}` = **رمزُ المريض وحده**. وهذه الدالّة هي المرجعُ
+ * المكتوب لتلك الصياغة، وهي ما يقرؤه الاختبار ليثبت أن لا شيءَ سواه يخرج.
+ */
+export const WELCOME_LINES = [
+  "أهلاً وسهلاً بكم في مجموعة مراكز الدكتور ياسر الساعدي (الوارث وبايونك)",
+  "تم تسجيل ملفكم بنجاح في نظام المراكز الموحد.",
+  "سنبقيكم على اطلاع عبر هذا الرقم على المواعيد ومراحل الخدمة الخاصة بكم.",
+  "رمز ملفكم: {{code}}",
+  "نتمنى لكم دوام الصحة والعافية",
+] as const;
 
 /**
- * **السطرُ الوحيد في الكتالوج كلِّه الذي يعرف قناته** — ويجب أن يعرفها:
- * «تم ربط حساب Telegram» في رسالةٍ تصل عبر واتساب كذبٌ يقرؤه المريض.
+ * **المعامِلُ الوحيد للقالب** — رمزُ المريض القانونيّ.
  *
- * وما عداه — كلُّ نصوص المراحل والمواعيد — **مستقلٌّ عن القناة حرفياً**.
- * ولذلك لم يُنسَخ الكتالوج ولم تُشتَقّ منه نسخةٌ ثانية: مُعامِلٌ اختياريّ
- * صغير يمرّ إلى هذه الدالّة وحدها، وكلُّ شيءٍ آخر يبقى كما هو بايتاً.
- *
- * والمجهولُ يرجع إلى الصيغة العامّة: صفٌّ قديمٌ بلا قناة معروفة يقول «تم
- * ربط حسابك» — صحيحةٌ في كلّ حال، ولا تسمّي قناةً قد لا تكون هي.
+ * و`null` تعني «لا ترحيبَ يُرسَل»: ملفٌّ بلا رمزٍ قانونيّ لا نخترع له
+ * واحداً، ولا نرسل رسالةً تقول «رمز ملفكم: undefined».
  */
-const CHANNEL_WELCOME: Record<string, string> = {
-  whatsapp: "تم ربط حساب واتساب بملفك في نظام المراكز الموحد بنجاح.",
-  telegram: "تم ربط حساب Telegram بملفك في نظام المراكز الموحد بنجاح.",
-};
-const GENERIC_WELCOME = "تم ربط حسابك بملفك في نظام المراكز الموحد بنجاح.";
-
-/**
- * سياقُ الإرسال — **صغيرٌ عمداً**.
- *
- * ليس «القناة» بمعنى النقل، بل ما يحتاجه النصُّ ليصدق. ولا يحمل معرّفاً ولا
- * توكناً ولا شيئاً عن المزوّد: العارضُ لا يعرف كيف تُرسَل الرسالة.
- */
-export interface RenderContext {
-  channel?: string | null;
+function welcomeParam(payload: Record<string, unknown>): string | null {
+  const code = payload.patientCode;
+  return isCanonicalPatientCode(code) ? String(code) : null;
 }
 
-/**
- * الترحيب — ومعه رمزُ المريض إن حملته الحمولة (ترحيل ٠٥٢).
- *
- * **والصفوف القديمة تبقى تُعرَض**: طابورُ الصادر قد يحمل ترحيباً استُحقّ
- * قبل هذه الميزة، بلا حمولة إطلاقاً. فغيابُ الرمز يعيد النصّ الأول كما
- * كان — لا فراغاً ولا «undefined» في رسالةٍ تصل مريضاً.
- *
- * ولا يُقبل إلا رمزٌ قانوني: حمولةٌ مشوّهة تُهمَل بصمت بدل أن تُطبع كما هي.
- */
-function welcomeText(payload: Record<string, unknown>, ctx: RenderContext): string {
-  const channel = typeof ctx.channel === "string" ? ctx.channel : "";
-  const intro = `${WELCOME_INTRO} ${CHANNEL_WELCOME[channel] ?? GENERIC_WELCOME}`;
-  const code = payload.patientCode;
-  if (!isCanonicalPatientCode(code)) return intro;
-  return `${intro}\nرمز المريض الخاص بك: ${code}\n`
-    + "احتفظ بهذا الرمز لاستخدامه عند مراجعة المركز.";
+/** النصُّ الكامل كما يقرؤه المريض — للتوثيق والاختبار لا للإرسال. */
+export function welcomePreview(patientCode: string): string {
+  return WELCOME_LINES.map((l) => l.replace("{{code}}", patientCode)).join("\n");
 }
 
 /**
@@ -186,8 +173,6 @@ function deliveryDateText(payload: Record<string, unknown>): string | null {
 export function renderNotification(
   notificationType: string,
   payload: Record<string, unknown> | null | undefined,
-  /** سياقُ الإرسال. اختياريّ: كلُّ نوعٍ عداه الترحيب لا يقرؤه أصلاً. */
-  ctx: RenderContext = {},
 ): string | null {
   const p = payload ?? {};
   switch (notificationType) {
@@ -202,16 +187,13 @@ export function renderNotification(
       return stageText(p.stage, p.serviceType);
 
     case PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED:
-    case LINK_NOTIFICATION_TYPES.DELIVERY_DATE:
       return deliveryDateText(p);
 
-    case LINK_NOTIFICATION_TYPES.WELCOME:
-      return welcomeText(p, ctx);
-
-    // لقطة الحالة عند الربط: **حالة** لا **تحديث** — المريض لم يتغيّر عنده
-    // شيء الآن، هو فقط يرى أين وصل. فصيغتها ثابتة لكل المراحل.
-    case LINK_NOTIFICATION_TYPES.CURRENT_STAGE:
-      return currentStageText(p.stage, p.serviceType);
+    //  **ترحيبُ التسجيل يخرج بمعامِله لا بنصّه**: الصياغةُ الثابتة في
+    //  القالب المعتمَد، والمتغيّرُ الوحيد رمزُ المريض. فما يعيده العارضُ
+    //  هنا هو ما يُوضَع في `{{1}}` — لا جملةٌ تُرسَل كما هي.
+    case REGISTRATION_WELCOME:
+      return welcomeParam(p);
 
     // وكل ما عداه لا يُرسَل: إسناد خبير · توقّف · استئناف · صيانة ·
     // تسجيل مريض · دفعة · مواعيد. قائمة بيضاء، فالنوع الجديد صامت حتى
@@ -222,19 +204,18 @@ export function renderNotification(
 }
 
 /**
- * هل هذا النوعُ من رسائل **لحظةِ الربط**؟
+ * أيُّ القالبين يخصّ هذا النوع.
  *
- * ══ ولماذا يهمّ ════════════════════════════════════════════════════════
- * لأن واتساب يفرّق بينهما فرقاً جوهرياً. رسائلُ الربط تقع **بعد ثوانٍ** من
- * أن أرسل المريضُ رسالتَه بنفسه، فنافذةُ المحادثة مفتوحة ويمرّ النصُّ كما هو.
- * أما تحديثُ مرحلةٍ فقد يقع بعد ثلاثة أسابيع من آخر كلمةٍ قالها — ولا نافذةَ
- * يجوز افتراضُها، فيلزم قالبٌ معتمَد.
+ * ══ ولماذا قالبان ══════════════════════════════════════════════════════
+ * الترحيبُ صياغةٌ ثابتة كاملة، ومتغيّرُه الوحيد رمزُ المريض. أما التحديثُ
+ * فصياغتُه في `renderNotification` وتتغيّر بتغيّر المرحلة، فقالبُه غلافٌ
+ * عامّ (`تحديث من …: {{1}}`). ودمجُهما في قالبٍ واحد كان سيجعل الترحيبَ
+ * يُقرأ «تحديث من المركز: WB-١٢٣٤٥».
  *
- * والتمييزُ يُشتقّ من `LINK_NOTIFICATION_TYPES` نفسها لا من قائمةٍ ثانية
- * تُكتب بجوارها فتنحرف عنها.
+ * والتمييزُ يُشتقّ من ثابتٍ واحد لا من قائمةٍ ثانية تنحرف عنه.
  */
-export function isLinkNotificationType(notificationType: string): boolean {
-  return (Object.values(LINK_NOTIFICATION_TYPES) as string[]).includes(notificationType);
+export function templateKindFor(notificationType: string): "welcome" | "update" {
+  return notificationType === REGISTRATION_WELCOME ? "welcome" : "update";
 }
 
 /** الأنواع التي لها نصّ فعلاً — يُشتقّ لا يُكتب مرّتين. */

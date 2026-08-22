@@ -1077,7 +1077,10 @@ export default function PatientDetails() {
 
           {/* قنوات تواصل المريض — الصلاحية يفرضها الخادم، والبطاقة تصمت
               بلا أزرار حين يردّ 403. */}
-          <PatientCommunicationCard patientId={patient.id} />
+          <PatientCommunicationCard
+            enabled={(patient as any).whatsappNotificationsEnabled}
+            hasPhone={Boolean((patient as any).phoneE164)}
+          />
         </div>
 
         {/* Right Column: Tabs (Payments, Documents) */}

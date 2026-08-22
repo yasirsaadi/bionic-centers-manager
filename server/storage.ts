@@ -37,6 +37,10 @@ import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+//  واتساب: جهةُ الاتصال وترحيبُ التسجيل — **قاعدةُ بياناتٍ فقط، ولا شبكة**.
+import {
+  registerWhatsappWelcome, ensureWhatsappContact, revokeWhatsappContacts,
+} from "./patient_notifications/registration";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import type { DbTransaction as DbTransactionLike } from "./events/store";
@@ -903,6 +907,31 @@ export class DatabaseStorage implements IStorage {
     const [patient] = await db.insert(patients).values(valuesToInsert).returning();
     // Create the case row(s) for this new patient from its flags (Phase 3).
     await this.syncPatientCases(patient.id);
+
+    // ══ **حفظُ المريض = واتساب جاهزة** ════════════════════════════════
+    //  جهةُ الاتصال وترحيبُها يُكتبان هنا — **قاعدةُ بياناتٍ فقط، ولا نداءَ
+    //  شبكةٍ واحد**. والإرسالُ بعدُ في العامل، بعد أن يكون الصفُّ محفوظاً.
+    //
+    //  **ولا يُفشِل التسجيلَ شيء**: انقطاعُ Meta، أو قالبٌ لم يُعتمَد بعد،
+    //  أو إعدادٌ ناقص — كلُّها لا تبلغ هنا أصلاً (لا شبكة)، وما يقع من
+    //  تعثّرٍ في القاعدة يُلتقَط ويُسجَّل ويمضي الحفظُ. فموظّفةُ الاستقبال
+    //  لا ترى «تعذّر تسجيل المريض» لأن رسالةً لم تُستحقّ.
+    //
+    //  ولا شيءَ يقع للمرضى القدامى: الرايةُ افتراضُها `FALSE` في القاعدة،
+    //  ونموذجُ التسجيل الجديد وحده يرسل `true`.
+    if (patient.whatsappNotificationsEnabled) {
+      try {
+        await db.transaction((tx) => registerWhatsappWelcome(tx as any, {
+          patientId: patient.id,
+          phoneE164: patient.phoneE164,
+          patientCode: patient.patientCode,
+          enabled: true,
+        }));
+      } catch (err) {
+        console.error("[patient-whatsapp] welcome enqueue failed for new patient");
+        void err;
+      }
+    }
     if ((patient.totalCost || 0) > 0) {
       // Dated at the patient's own createdAt so a backdated registration lands
       // its cost on the day the owner chose, not the day the form was typed.
@@ -1005,6 +1034,34 @@ export class DatabaseStorage implements IStorage {
           patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
         });
+      }
+    }
+
+    // ══ الرقمُ تغيّر أو الرايةُ تبدّلت ⇒ الجهةُ تتبع ═══════════════════
+    //  **نقطةُ الخنق نفسُها**: كلُّ مسارٍ يعدّل مريضاً يمرّ من هنا، فلا موضعَ
+    //  يُنسى فتبقى الرسائلُ تذهب إلى رقمٍ قديم.
+    //
+    //  والقواعدُ الثلاث صريحة:
+    //   • أُطفئت الراية ⇒ تُسحَب الجهاتُ النشطة، فلا يُستحقّ لها شيءٌ بعدُ.
+    //   • تغيّر الرقم والرايةُ مرفوعة ⇒ القديمةُ تُختَم والجديدةُ تُنشأ،
+    //     **وبلا ترحيبٍ ثانٍ**: تعديلُ رقمٍ ليس تسجيلاً جديداً.
+    //   • أُعيدت الراية ⇒ جهةٌ من الرقم الحالي، **وبلا بثٍّ رجعيّ**: أحداثُ
+    //     الأمس لم تُستحقّ لها صفوفٌ أصلاً — والغيابُ أمتنُ من الترشيح.
+    if (updated && (patch.phoneE164 !== undefined || patch.whatsappNotificationsEnabled !== undefined)) {
+      try {
+        await db.transaction(async (tx) => {
+          if (!updated.whatsappNotificationsEnabled) {
+            await revokeWhatsappContacts(tx as any, id, null);
+            return;
+          }
+          const contactId = await ensureWhatsappContact(tx as any, {
+            patientId: id, phoneE164: updated.phoneE164,
+          });
+          await revokeWhatsappContacts(tx as any, id, contactId);
+        });
+      } catch (err) {
+        console.error("[patient-whatsapp] contact sync failed on patient update");
+        void err;
       }
     }
     return updated;
