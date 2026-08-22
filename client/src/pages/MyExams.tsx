@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag, Undo2 } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
@@ -23,6 +28,12 @@ interface WorklistRow {
   branchName: string | null;
   caseType: string;
   waitingSince: string | null;
+  /**
+   * رقمُ طلبِ المراجعة الذي وضع هذا المريضَ في القائمة — **حين يجوز
+   * إرجاعُه**. يرسله الخادمُ لمن يملك القدرة الإشرافية وحده، ولا يرسله
+   * لمن أنشأ الطلبَ بنفسه. وغيابُه يعني: لا زرّ.
+   */
+  returnableRequestId?: number | null;
 }
 
 function accent(caseType: string) {
@@ -65,7 +76,9 @@ export default function MyExams() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useQuery<{ rows: WorklistRow[]; specialties: string[] }>({
+  const { data, isLoading } = useQuery<{
+    rows: WorklistRow[]; specialties: string[]; canReturnRequests?: boolean;
+  }>({
     queryKey: ["/api/medical/worklist"],
     queryFn: async () => {
       const res = await fetch("/api/medical/worklist", { credentials: "include" });
@@ -73,6 +86,47 @@ export default function MyExams() {
       return res.json();
     },
   });
+
+  //  ══ **بابُ خروجٍ نظيف لطلبٍ أُرسل ببيانٍ خاطئ** ═══════════════════════
+  //  كان الطلبُ الخاطئ عالقاً إلى الأبد: لا الطبيبُ يوقّع على خطأ، ولا أحدَ
+  //  يسحبه. فكانت الحيلةُ الوحيدة أن يوقّع معاينةً يعرف أنها خطأ ليُخرجها
+  //  من قائمته. والآن يُرجَع بسببٍ إلزاميّ — **ولا معاينةَ تُكتب ولا تُحذف،
+  //  ولا يُمَسّ ديناراً**. ويرسل الاستعلاماتُ طلباً مصحَّحاً بعده.
+  const [returning, setReturning] = useState<WorklistRow | null>(null);
+  const [returnReason, setReturnReason] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
+  const { toast: notify } = useToast();
+  const qcMy = useQueryClient();
+
+  const submitReturn = async () => {
+    const id = returning?.returnableRequestId;
+    const reason = returnReason.trim();
+    if (!id || !reason) return;
+    setReturnBusy(true);
+    try {
+      const res = await fetch(`/api/medical-review/requests/${id}/return`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "تعذّر إرجاع الطلب");
+      qcMy.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      qcMy.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      qcMy.invalidateQueries({ queryKey: ["/api/medical-review/queue"] });
+      setReturning(null);
+      setReturnReason("");
+      notify({
+        title: "أُعيد إلى الاستعلامات",
+        description: "خرج من قائمتك — ويستطيع الاستعلامات تصحيح البيانات وإرسال طلبٍ جديد.",
+      });
+    } catch (e: any) {
+      notify({ title: "خطأ", description: e?.message, variant: "destructive" });
+    } finally {
+      setReturnBusy(false);
+    }
+  };
 
   const rows = data?.rows ?? [];
   //  ترتيبٌ واحدٌ ثابت لأزرار الترشيح ولعناوين الأقسام معاً — أطراف صناعية
@@ -337,6 +391,15 @@ export default function MyExams() {
                                     <Eye className="w-3.5 h-3.5" /> الملف
                                   </Button>
                                 </Link>
+                                {r.returnableRequestId != null && (
+                                  <Button
+                                    size="sm" variant="outline" className="h-8 text-xs gap-1"
+                                    onClick={() => { setReturning(r); setReturnReason(""); }}
+                                    data-testid={`return-request-${r.patientId}-${r.caseType}`}
+                                  >
+                                    <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
+                                  </Button>
+                                )}
                                 <Button
                                   size="sm"
                                   className="h-8 text-xs gap-1"
@@ -403,6 +466,44 @@ export default function MyExams() {
           onDone={() => setTarget(null)}
         />
       )}
+
+      {/* ══ إرجاعُ طلبٍ خاطئ إلى الاستعلامات — بسببٍ إلزاميّ ═══════════ */}
+      <Dialog open={!!returning} onOpenChange={(o) => { if (!o) { setReturning(null); setReturnReason(""); } }}>
+        <DialogContent dir="rtl" className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="text-base">إرجاع الطلب إلى الاستعلامات</DialogTitle>
+            <DialogDescription className="text-xs">
+              {returning?.patientName} — {returning ? specialtyLabel(returning.caseType) : ""}.
+              يخرج من قائمتك، <b>ولا تُكتب معاينةٌ ولا تُحذف</b>، ويستطيع الاستعلامات
+              تصحيح البيانات وإرسال طلبٍ جديد.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">
+              سبب الإرجاع <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+              rows={3} className="text-sm"
+              placeholder="مثال: جهة البتر غير صحيحة — عدّلها وأعد إرسال الطلب"
+              data-testid="return-reason"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              يُحفظ في السجلّ مع اسمك ووقته، ويقرؤه موظّف الاستعلامات ليعرف ماذا يصحّح.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm"
+              onClick={() => { setReturning(null); setReturnReason(""); }}>
+              إلغاء
+            </Button>
+            <Button size="sm" disabled={!returnReason.trim() || returnBusy}
+              onClick={submitReturn} data-testid="return-confirm">
+              <Undo2 className="w-3.5 h-3.5 ml-1" /> إرجاع
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

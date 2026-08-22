@@ -95,6 +95,18 @@ export const NEW_SERVICE_DEPARTMENT: Record<string, Department> = {
   other: "physiotherapy",
 };
 
+/**
+ * وعناوينُها كما تُقرأ — **مصدرٌ واحدٌ للخادم وللشاشتين**.
+ *
+ * كانت مكرّرةً في النقطة وفي النافذة، ثم احتاجتها بطاقةُ الاعتماد ثالثةً:
+ * والمعتمِدُ الذي يرى «additional_therapy» لا يعرف ما يعتمد.
+ */
+export const NEW_SERVICE_LABELS: Record<string, string> = {
+  additional_therapy: "جلسات علاج إضافية",
+  consultation: "استشارة طبية",
+  other: "خدمة أخرى",
+};
+
 // ── الاشتقاقُ من العلاقات المهيكلة ──────────────────────────────────────
 
 /**

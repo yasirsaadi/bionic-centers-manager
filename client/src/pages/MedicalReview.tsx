@@ -4,6 +4,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -12,7 +15,7 @@ import {
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
 import {
-  REVIEW_KIND_LABELS, REVIEW_PATH_LABELS,
+  REVIEW_KIND_LABELS,
   type ReviewDecision, type ReviewKind, type ReviewPath,
 } from "@shared/medical_review";
 
@@ -44,35 +47,54 @@ interface ReviewCard {
   } | null;
 }
 
+type Win = "today" | "older";
+
 function accent(caseType: string) {
   return isMedicalSpecialty(caseType)
     ? SPECIALTY_COLORS[caseType]
     : { badge: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-400", ring: "border-slate-200" };
 }
 
-/** سطرُ حقيقةٍ واحد — يُحذف كلّه حين لا قيمة، فلا يقرأ الطبيب فراغات. */
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
-  if (value === null || value === undefined || value === "") return null;
-  return (
-    <div className="flex gap-1.5 text-xs">
-      <span className="text-muted-foreground shrink-0">{label}:</span>
-      <span className="font-medium break-words">{value}</span>
-    </div>
-  );
+/**
+ * **ماذا جرى؟** — سطرٌ واحدٌ بلغة الأرض، لا حالةٌ داخلية.
+ *
+ * البطاقةُ كانت تعرض `awaiting_exam` و`in_production` كما هي في القاعدة.
+ * والمشرفُ الذي يقرأ ذلك لا يعرف ما جرى للمريض — يعرف كيف خزّنه النظام.
+ */
+function actionLine(r: ReviewCard): string {
+  const kind = REVIEW_KIND_LABELS[r.reviewKind] ?? "زيارة";
+  if (r.workOrder) {
+    return r.workOrder.purpose === "maintenance" ? `${kind} — أمر صيانة` : `${kind} — أمر تصنيع`;
+  }
+  if (r.visit) return `${kind} — زيارة`;
+  if (r.episode) return `${kind} — طلب جهاز`;
+  return kind;
+}
+
+/** مَن تولّاه: الخبيرُ المسنَد إن وُجد، وإلّا مَن سجّل الحركة. */
+function handledBy(r: ReviewCard): string | null {
+  return r.workOrder?.expertName || r.createdByName || null;
 }
 
 /**
- * طابورُ مراجعة الطبيب — الأطراف والمساند وحدهما.
+ * **مراجعة حركة مرضى الأطراف والمساند** — سطحُ إشرافٍ خفيف.
  *
- * ══ لماذا شاشةٌ ثانية بجانب «معايناتي» ═══════════════════════════════════
- * «معايناتي» طابورُ **السجلّ السريري الموقّع**: فعلٌ ثقيل يُكتب مرّةً ولا
- * يُمحى. وهذا طابورُ **قرارٍ خفيف**: صيانةٌ روتينية، تعديلٌ صغير، مريضٌ عائد
- * مستقرّ. وخلطُهما كان سيدفع الطبيب إمّا إلى توقيع سجلّاتٍ فارغة، وإمّا —
- * وهو ما كان يحدث فعلاً — إلى ألّا يرى هؤلاء المرضى إطلاقاً.
+ * ══ ما هذه الصفحة، وما ليست ═══════════════════════════════════════════
+ * كانت تُسمّى «مراجعة الطبيب» وتُسمّي فعلَها «موافقة». وهذا **وصفٌ لشيءٍ لا
+ * يحدث**: الطلبُ السريع يُنشَأ **بعد** أن تقع الخدمةُ فعلاً — تُفتَح صيانةٌ
+ * أو تُسجَّل زيارةٌ ثمّ يُوجَّه الطلب. فلا شيء كان ينتظر إذناً، والكلمةُ
+ * «موافقة» تجعل القارئَ يظنّ أنه يفتح باباً مغلقاً.
  *
- * والبطاقة تحمل ما يكفي للقرار في مكانه: مَن المريض، ورمزُه، وفرعُه، وسببُ
- * زيارته، وجهازُه، وآخرُ ما وقّعه طبيبٌ له. فلا يفتح الطبيب أربع صفحاتٍ
- * ليوافق على تبديل حزام.
+ * فهي **مراجعةٌ بأثرٍ رجعي**: مَن جاء · وماذا جرى · ومتى · ومَن تولّاه.
+ * والمسؤولُ يمرّ على حركة يومه فيؤشّر أنه اطّلع، أو يُعيد ما بياناتُه خطأ.
+ *
+ * **وبوّابةُ المعاينة الكاملة لم تُمَسّ**: الجهازُ الجديد يستوجب معاينةً
+ * موقّعة كما كان، ومكانُها «معايناتي».
+ *
+ * ══ والبطاقةُ خفيفة عن قصد ═════════════════════════════════════════════
+ * كانت تسكب ملفَّ المريض كلَّه: مواصفات الجهاز، ومرحلة الأمر، وتشخيصَ آخر
+ * معاينةٍ وخطّتَها. ومَن يمرّ على ثلاثين بطاقةً كهذه لا يقرأ شيئاً. فبقي
+ * ما يلزم للتأشير — والتفصيلُ خلف «فتح ملف المريض» بضغطة.
  */
 export default function MedicalReview() {
   const { toast } = useToast();
@@ -80,19 +102,59 @@ export default function MedicalReview() {
   const [only, setOnly] = useState<string | null>(null);
   const [openNote, setOpenNote] = useState<number | null>(null);
   const [note, setNote] = useState("");
+  //  **اليومُ افتراضاً**: شاشةُ عملٍ لا أرشيف. وكومةٌ تاريخيةٌ بلا نهاية
+  //  تجعل الصفحةَ تُهجَر، فيضيع المتروكُ فيها.
+  const [win, setWin] = useState<Win>("today");
 
   const { data, isLoading } = useQuery<{
-    rows: ReviewCard[]; specialties: string[]; canDecide: boolean;
+    rows: ReviewCard[]; awaitingFull?: ReviewCard[]; specialties: string[];
+    canSupervise: boolean; canDecide: boolean;
   }>({
-    queryKey: ["/api/medical-review/queue"],
+    queryKey: ["/api/medical-review/queue", win],
     queryFn: async () => {
-      const res = await fetch("/api/medical-review/queue", { credentials: "include" });
-      if (!res.ok) return { rows: [], specialties: [], canDecide: false };
+      const res = await fetch(`/api/medical-review/queue?window=${win}`, { credentials: "include" });
+      if (!res.ok) return { rows: [], specialties: [], canSupervise: false, canDecide: false };
       return res.json();
     },
   });
 
   const rows = data?.rows ?? [];
+  const awaitingFull = data?.awaitingFull ?? [];
+
+  //  ══ إرجاعُ طلبِ معاينةٍ كاملة — بسببٍ إلزاميّ ═══════════════════════
+  const [returning, setReturning] = useState<ReviewCard | null>(null);
+  const [returnReason, setReturnReason] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
+
+  const submitReturn = async () => {
+    const reason = returnReason.trim();
+    if (!returning || !reason) return;
+    setReturnBusy(true);
+    try {
+      const res = await fetch(`/api/medical-review/requests/${returning.id}/return`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "تعذّر إرجاع الطلب");
+      qc.invalidateQueries({ queryKey: ["/api/medical-review/queue"] });
+      qc.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      qc.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      setReturning(null);
+      setReturnReason("");
+      toast({
+        title: "أُعيد إلى الاستعلامات",
+        description: "خرج من قائمة الطبيب — ويستطيع الاستعلامات تصحيح البيانات وإرسال طلبٍ جديد.",
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
+    } finally {
+      setReturnBusy(false);
+    }
+  };
+  const canSupervise = data?.canSupervise === true;
   const canDecide = data?.canDecide === true;
   const specialties = useMemo(
     () => sortBySpecialty(data?.specialties ?? [], (s) => s),
@@ -127,9 +189,9 @@ export default function MedicalReview() {
       setOpenNote(null);
       setNote("");
       toast({
-        title: v.decision === "approve" ? "تمت الموافقة"
+        title: v.decision === "approve" ? "تمت المراجعة"
           : v.decision === "require_full_exam" ? "أُحيل إلى معاينة كاملة"
-            : "أُعيد إلى الاستقبال",
+            : "أُعيد إلى الاستعلامات",
       });
     },
     onError: (e: any) => toast({ title: "خطأ", description: e?.message, variant: "destructive" }),
@@ -138,22 +200,51 @@ export default function MedicalReview() {
   const act = (id: number, decision: ReviewDecision) =>
     decide.mutate({ id, decision, doctorNote: openNote === id ? note.trim() || undefined : undefined });
 
+  //  **والإرجاعُ لا يقع بلا سبب**: البطاقةُ التي ترجع بلا سببٍ تُقرأ
+  //  «أُعيدت» ولا يعرف الموظّفُ ماذا يصحّح. والخادمُ يفرضها أيضاً.
+  const askReturn = (id: number) => {
+    if (openNote !== id || !note.trim()) {
+      setOpenNote(id);
+      toast({
+        title: "اكتب سبب الإرجاع",
+        description: "ما الذي يصحّحه الاستعلامات قبل إعادة الإرسال؟",
+      });
+      return;
+    }
+    act(id, "return_to_reception");
+  };
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
       <div className="mb-5">
         <h1 className="text-xl font-bold flex items-center gap-2">
-          <ClipboardCheck className="w-5 h-5 text-primary" /> مراجعة الطبيب
+          <ClipboardCheck className="w-5 h-5 text-primary" /> مراجعة حركة مرضى الأطراف والمساند
         </h1>
         <p className="text-xs text-muted-foreground mt-1">
-          طلباتُ الأطراف الصناعية والمساند الطبية التي صنّفها الاستقبال
-          <span className="font-medium"> «موافقة سريعة» </span>— الأقدم أولاً.
+          مَن جاء، وماذا جرى، ومتى، ومَن تولّاه — للاطّلاع والتأشير.
+          <span className="font-medium"> ليست موافقةً سابقةً لتنفيذ الخدمة</span>: الحركةُ
+          وقعت، وهذه مراجعتُها.
         </p>
-        {/* وأين ذهب الباقي: ما صُنِّف «معاينة كاملة» ليس هنا، وطلبُ الجهاز
-            الجديد لا يكون سريعاً أصلاً — فمكانُهما «معايناتي». */}
         <p className="text-[11px] text-muted-foreground mt-1">
-          أمّا ما صُنِّف «معاينة كاملة» — وكلُّ طلبِ جهازٍ جديد — فيصلك في
-          <span className="font-medium"> «معايناتي» </span>مباشرةً، وينتهي بتوقيع معاينة.
+          أمّا الجهازُ الجديد وكلُّ ما يستوجب معاينةً كاملة فيصل
+          <span className="font-medium"> «معايناتي» </span>وينتهي بتوقيع معاينة — بلا تغيير.
         </p>
+      </div>
+
+      {/* ══ اليومُ أوّلاً، وبابٌ واحدٌ للمتروك قبله ═══════════════════════ */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <Button
+          size="sm" variant={win === "today" ? "default" : "outline"} className="h-8 text-xs"
+          onClick={() => { setWin("today"); setOnly(null); }} data-testid="review-window-today"
+        >
+          اليوم
+        </Button>
+        <Button
+          size="sm" variant={win === "older" ? "default" : "outline"} className="h-8 text-xs"
+          onClick={() => { setWin("older"); setOnly(null); }} data-testid="review-window-older"
+        >
+          غير مراجعة سابقة
+        </Button>
       </div>
 
       {specialties.length > 1 && (
@@ -178,100 +269,126 @@ export default function MedicalReview() {
         </div>
       )}
 
+      {/* ══ **طلباتُ معاينةٍ كاملة بانتظار الطبيب** ═══════════════════════
+          قسمٌ صغير للإشراف: مديرُ الفرع لا تصله «معايناتي» (تُبنى من
+          اختصاصات الطبيب فتخرج فارغةً له)، فكان يملك قدرةَ الإرجاع بلا بابٍ
+          يصله. وفتحُ «معايناتي» له كان سيضعه أمام زرِّ «كتابة معاينة» — وهو
+          ما لا يجوز. **فلا زرَّ معاينةٍ هنا ولا توقيع**: قراءةٌ وإرجاعٌ فقط. */}
+      {canSupervise && awaitingFull.length > 0 && (
+        <div className="mb-5" data-testid="awaiting-full-section">
+          <h2 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+            <Stethoscope className="w-4 h-4 text-muted-foreground" />
+            طلبات معاينة كاملة بانتظار الطبيب
+            <span className="text-xs font-normal text-muted-foreground">({awaitingFull.length})</span>
+          </h2>
+          <div className="space-y-2">
+            {awaitingFull.map((r) => (
+              <Card key={r.id} className="border-slate-200" data-testid={`awaiting-full-${r.id}`}>
+                <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <Link href={`/patients/${r.patientId}`}>
+                      <span className="font-medium text-sm hover:underline cursor-pointer">
+                        {r.patientName}
+                      </span>
+                    </Link>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap text-[11px] text-muted-foreground">
+                      {r.patientCode && <span className="font-mono">{r.patientCode}</span>}
+                      {r.branchName && (
+                        <span className="flex items-center gap-1">
+                          <Building2 className="w-3 h-3" />{r.branchName}
+                        </span>
+                      )}
+                      <span>{specialtyLabel(r.serviceType)}</span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />{formatDateTimeIraq(r.createdAt)}
+                      </span>
+                      {r.createdByName && <span>أرسله {r.createdByName}</span>}
+                    </div>
+                    {r.receptionNote && (
+                      <p className="text-[11px] text-muted-foreground mt-1" dir="auto"
+                        style={{ unicodeBidi: "plaintext" }}>{r.receptionNote}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Link href={`/patients/${r.patientId}`}>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs gap-1"
+                        data-testid={`awaiting-open-${r.id}`}>
+                        <Eye className="w-3.5 h-3.5" /> فتح ملف المريض
+                      </Button>
+                    </Link>
+                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1"
+                      onClick={() => { setReturning(r); setReturnReason(""); }}
+                      data-testid={`awaiting-return-${r.id}`}>
+                      <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
-        <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-32 w-full" />)}</div>
+        <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
       ) : filtered.length === 0 ? (
         <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">
           <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500" />
-          لا توجد طلبات مراجعة بانتظارك.
+          {win === "today" ? "لا حركة بانتظار المراجعة اليوم." : "لا متروكَ من الأيام السابقة."}
         </CardContent></Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {filtered.map((r) => {
             const a = accent(r.serviceType);
-            const d = r.caseDetails ?? {};
+            const who = handledBy(r);
             return (
               <Card key={r.id} className={`border ${a.ring}`} data-testid={`review-card-${r.id}`}>
-                <CardContent className="p-4 space-y-3">
-                  {/* الهوية */}
+                <CardContent className="p-3.5 space-y-2">
+                  {/* ── مَن · ماذا · متى · مَن تولّاه ────────────────── */}
                   <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
+                    <div className="min-w-0">
                       <Link href={`/patients/${r.patientId}`}>
                         <span className="font-bold text-sm hover:underline cursor-pointer">
                           {r.patientName}
                         </span>
                       </Link>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap text-[11px] text-muted-foreground">
                         {r.patientCode && <span className="font-mono">{r.patientCode}</span>}
                         {r.branchName && (
                           <span className="flex items-center gap-1">
                             <Building2 className="w-3 h-3" />{r.branchName}
                           </span>
                         )}
-                        {r.patientClassification === "past" && <span>مريض قديم</span>}
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />{formatDateTimeIraq(r.createdAt)}
                         </span>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className={`text-[11px] px-2 py-0.5 rounded border ${a.badge}`}>
-                        {specialtyLabel(r.serviceType)}
-                      </span>
-                      <span className="text-[11px] px-2 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-200">
-                        {REVIEW_PATH_LABELS[r.requestedPath]}
-                      </span>
-                    </div>
+                    <span className={`text-[11px] px-2 py-0.5 rounded border shrink-0 ${a.badge}`}>
+                      {specialtyLabel(r.serviceType)}
+                    </span>
                   </div>
 
-                  {/* السياق — كلُّ سطرٍ يختفي حين لا قيمة له */}
-                  <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1 border-t pt-2">
-                    <Fact label="سبب الزيارة" value={REVIEW_KIND_LABELS[r.reviewKind]} />
-                    <Fact label="أرسله" value={r.createdByName} />
-                    <Fact label="ملاحظة الاستقبال" value={r.receptionNote} />
-                    <Fact label="الهاتف" value={r.patientPhone} />
-                    <Fact
-                      label="الجهاز"
-                      value={d.prostheticType ?? d.supportType ?? d.amputationSite ?? null}
-                    />
-                    {r.episode && (
-                      <Fact label="الجهاز الحالي" value={`#${r.episode.sequenceNumber} — ${r.episode.status}`} />
-                    )}
-                    {r.workOrder && (
-                      <Fact
-                        label={r.workOrder.purpose === "maintenance" ? "أمر صيانة" : "أمر تصنيع"}
-                        value={`#${r.workOrder.id} · ${r.workOrder.currentStage}`
-                          + (r.workOrder.expertName ? ` · ${r.workOrder.expertName}` : "")}
-                      />
-                    )}
-                    {r.visit && (
-                      <Fact
-                        label="الزيارة"
-                        value={`${r.visit.visitDate ? formatDateTimeIraq(r.visit.visitDate) : ""}`
-                          + (r.visit.notes ? ` — ${r.visit.notes}` : "")}
-                      />
-                    )}
+                  <div className="text-xs" data-testid={`review-action-${r.id}`}>
+                    <span className="font-medium">{actionLine(r)}</span>
+                    {who && <span className="text-muted-foreground"> · {who}</span>}
                   </div>
 
-                  {/* آخر معاينة موقّعة — سياقٌ لا قيد */}
-                  {r.lastExam && (
-                    <div className="border-t pt-2 text-xs bg-muted/40 rounded p-2">
-                      <div className="flex items-center gap-1.5 font-medium mb-1">
-                        <Stethoscope className="w-3.5 h-3.5" />
-                        آخر معاينة — د. {r.lastExam.doctorName} · {formatDateTimeIraq(r.lastExam.createdAt)}
-                      </div>
-                      {r.lastExam.diagnosis && <div>التشخيص: {r.lastExam.diagnosis}</div>}
-                      {r.lastExam.plan && <div>الخطة: {r.lastExam.plan}</div>}
-                    </div>
+                  {r.receptionNote && (
+                    <p className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2 py-1"
+                      dir="auto" style={{ unicodeBidi: "plaintext" }}>
+                      {r.receptionNote}
+                    </p>
                   )}
 
-                  {/* القرار */}
-                  {canDecide ? (
-                    <div className="border-t pt-3 space-y-2">
+                  {/* ── التأشير ─────────────────────────────────────── */}
+                  {canSupervise ? (
+                    <div className="border-t pt-2.5 space-y-2">
                       {openNote === r.id && (
                         <Textarea
                           value={note} onChange={(e) => setNote(e.target.value)}
-                          placeholder="ملاحظة الطبيب (اختيارية)" rows={2} className="text-xs"
+                          placeholder="ملاحظة — وسببُ الإرجاع إن كنت تُرجِع (مثال: جهة البتر غير صحيحة، عدّلها وأعد الإرسال)"
+                          rows={2} className="text-xs"
                           data-testid={`review-note-${r.id}`}
                         />
                       )}
@@ -281,40 +398,48 @@ export default function MedicalReview() {
                           onClick={() => act(r.id, "approve")}
                           data-testid={`review-approve-${r.id}`}
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> موافقة
+                          <CheckCircle2 className="w-3.5 h-3.5" /> تمت المراجعة
                         </Button>
                         <Button
                           size="sm" variant="outline" className="h-8 text-xs gap-1.5"
                           disabled={decide.isPending}
-                          onClick={() => act(r.id, "require_full_exam")}
-                          data-testid={`review-escalate-${r.id}`}
-                        >
-                          <Stethoscope className="w-3.5 h-3.5" /> يتطلّب معاينة كاملة
-                        </Button>
-                        <Button
-                          size="sm" variant="outline" className="h-8 text-xs gap-1.5"
-                          disabled={decide.isPending}
-                          onClick={() => act(r.id, "return_to_reception")}
-                          data-testid={`review-return-${r.id}`}
-                        >
-                          <Undo2 className="w-3.5 h-3.5" /> إعادة إلى الاستقبال
-                        </Button>
-                        <Button
-                          size="sm" variant="ghost" className="h-8 text-xs"
                           onClick={() => { setOpenNote(openNote === r.id ? null : r.id); setNote(""); }}
+                          data-testid={`review-note-toggle-${r.id}`}
                         >
                           {openNote === r.id ? "إخفاء الملاحظة" : "إضافة ملاحظة"}
                         </Button>
+                        <Button
+                          size="sm" variant="outline" className="h-8 text-xs gap-1.5"
+                          disabled={decide.isPending}
+                          onClick={() => askReturn(r.id)}
+                          data-testid={`review-return-${r.id}`}
+                        >
+                          <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
+                        </Button>
                         <Link href={`/patients/${r.patientId}`}>
-                          <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5">
-                            <Eye className="w-3.5 h-3.5" /> الملفّ
+                          <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5"
+                            data-testid={`review-open-${r.id}`}>
+                            <Eye className="w-3.5 h-3.5" /> فتح ملف المريض
                           </Button>
                         </Link>
+                        {/*  **قرارٌ سريريّ لا إشرافيّ**: يقول إن هذه الحالة
+                            تحتاج فحصَ طبيب. فيبقى لمن يملك التوقيع وحده —
+                            والمشرفُ الإداريّ لا يراه ولا يستطيعه. */}
+                        {canDecide && (
+                          <Button
+                            size="sm" variant="ghost" className="h-8 text-xs gap-1.5 text-muted-foreground"
+                            disabled={decide.isPending}
+                            onClick={() => act(r.id, "require_full_exam")}
+                            data-testid={`review-escalate-${r.id}`}
+                          >
+                            <Stethoscope className="w-3.5 h-3.5" /> يتطلّب معاينة كاملة
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ) : (
                     <div className="border-t pt-2 text-[11px] text-muted-foreground">
-                      القرار الطبي لطبيب مخوَّل — يمكنك قراءة الطلب فقط.
+                      المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص — يمكنك القراءة فقط.
                     </div>
                   )}
                 </CardContent>
@@ -323,6 +448,44 @@ export default function MedicalReview() {
           })}
         </div>
       )}
+
+      {/* ══ إرجاعُ طلبِ معاينةٍ كاملة — بسببٍ إلزاميّ ═══════════════════ */}
+      <Dialog open={!!returning} onOpenChange={(o) => { if (!o) { setReturning(null); setReturnReason(""); } }}>
+        <DialogContent dir="rtl" className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="text-base">إرجاع الطلب إلى الاستعلامات</DialogTitle>
+            <DialogDescription className="text-xs">
+              {returning?.patientName} — {returning ? specialtyLabel(returning.serviceType) : ""}.
+              يخرج من قائمة الطبيب، <b>ولا تُكتب معاينةٌ ولا تُحذف</b>، ويستطيع
+              الاستعلامات تصحيح البيانات وإرسال طلبٍ جديد.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">
+              سبب الإرجاع <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+              rows={3} className="text-sm"
+              placeholder="مثال: جهة البتر غير صحيحة — عدّلها وأعد إرسال الطلب"
+              data-testid="awaiting-return-reason"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              يُحفظ في السجلّ مع اسمك ووقته، ويقرؤه موظّف الاستعلامات ليعرف ماذا يصحّح.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm"
+              onClick={() => { setReturning(null); setReturnReason(""); }}>
+              إلغاء
+            </Button>
+            <Button size="sm" disabled={!returnReason.trim() || returnBusy}
+              onClick={submitReturn} data-testid="awaiting-return-confirm">
+              <Undo2 className="w-3.5 h-3.5 ml-1" /> إرجاع
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

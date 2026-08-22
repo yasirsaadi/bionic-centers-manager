@@ -27,9 +27,35 @@ import * as store from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "../device_episodes/store";
 import type * as FollowupStore from "../followup/store";
 import { closeRequestsAwaitingExam } from "../medical_review/store";
+import * as reviewStore from "../medical_review/store";
+import { canSuperviseReview } from "@shared/medical_review";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
+
+/**
+ * القدرةُ الحيّة على الإرجاع الإشرافيّ — تُقرأ من صفّ المستخدم لا من جلسته،
+ * فسحبُ الصلاحية يسري فوراً. ونفسُ قاعدة `medical_review/routes.ts` حرفياً:
+ * مسؤولٌ، أو مديرُ فرع، أو طبيبٌ مخوَّل. **ولا تمنح توقيعاً لأحد.**
+ */
+async function liveCanSuperviseWorklist(userId: number | null): Promise<boolean> {
+  if (!userId) return false;
+  const { db } = await import("../db");
+  const { sql } = await import("drizzle-orm");
+  const r = await db.execute<{
+    role: string; can: boolean | null; active: boolean | null; admin: boolean | null;
+  }>(sql`
+    SELECT role, can_write_medical_exam AS can, is_active AS active,
+           (role = 'admin') AS admin
+      FROM system_users WHERE id = ${userId}
+  `);
+  const u = (r.rows ?? [])[0];
+  if (!u || u.active === false) return false;
+  return canSuperviseReview({
+    role: String(u.role), isAdmin: Boolean(u.admin),
+    permissions: { canWriteMedicalExam: Boolean(u.can) },
+  });
+}
 
 function getSession(req: Req) {
   const s = (req.session as any)?.branchSession;
@@ -626,10 +652,28 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  الأسماء البديلة دفعةً واحدة لصفوف هذه القائمة — والقائمة نفسها مرّت
       //  بـ`branchScope` أعلاه، فلا يتّسع نطاقٌ بإرفاق رمزٍ لمريضٍ فيها.
       const aliasByPatient = await aliasCodesByPatient(rows.map((r) => r.patientId));
+      //  ══ **هويّةُ الطلب — أقلُّ ما يلزم الزرّ** ═══════════════════════
+      //  الصفُّ هنا (مريض، اختصاص) لا طلب، فلا رقمَ يُرجِعه زرُّ «إرجاع
+      //  للاستعلامات». ويُرفَق `returnableRequestId` لمن يملك القدرة —
+      //  ومَن أنشأ الطلبَ بنفسه لا يُعرَض له الزرّ (والخادم يردّه أيضاً).
+      const mayReturn = await liveCanSuperviseWorklist(userId);
+      const pend = mayReturn
+        ? await reviewStore.pendingFullRequestsFor({
+          patientIds: rows.map((r) => r.patientId), branchIds: branchScope(req),
+        })
+        : [];
+      const reqByKey = new Map(pend.map((p) => [`${p.patientId}:${p.serviceType}`, p]));
       res.json({
-        rows: rows.map((r) => (aliasByPatient.has(r.patientId)
-          ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : r)),
+        rows: rows.map((r) => {
+          const hit = reqByKey.get(`${r.patientId}:${r.caseType}`);
+          const withAlias = aliasByPatient.has(r.patientId)
+            ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : { ...r };
+          return hit && hit.createdBy !== userId
+            ? { ...withAlias, returnableRequestId: hit.requestId }
+            : withAlias;
+        }),
         specialties,
+        canReturnRequests: mayReturn,
       });
     } catch (err: any) {
       console.error("[medical] GET worklist failed:", err);

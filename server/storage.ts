@@ -404,8 +404,8 @@ export class DatabaseStorage implements IStorage {
 
   // Independent cases for a patient (Phase 1). Each row is one specialty with
   // its own details, cost, and (via case_id) its own visits and payments.
-  async getCasesByPatientId(patientId: number): Promise<PatientCase[]> {
-    return await db.select().from(patientCases)
+  async getCasesByPatientId(patientId: number, tx?: any): Promise<PatientCase[]> {
+    return await (tx ?? db).select().from(patientCases)
       .where(eq(patientCases.patientId, patientId))
       .orderBy(patientCases.id);
   }
@@ -461,8 +461,11 @@ export class DatabaseStorage implements IStorage {
    * والقفلُ الاستشاري + `onConflictDoNothing` + إعادةُ القراءة: نداءان
    * متزامنان يخرجان بنفس الحالة الواحدة لا بحالتين.
    */
-  async ensurePhysiotherapyCase(patientId: number): Promise<number | null> {
-    return await db.transaction(async (tx) => {
+  //  `tx` اختيارية — حين يكون الفتحُ جزءاً من عمليةٍ أكبر (اعتمادُ خصمٍ على
+  //  «خدمة جديدة» مثلاً) ينضمّ إلى معاملة مُستدعيه فيقع الفتحُ والمالُ معاً
+  //  أو لا يقع شيء. ومَن لا يمرّر شيئاً يفتح معاملته كما كان دائماً.
+  async ensurePhysiotherapyCase(patientId: number, outerTx?: any): Promise<number | null> {
+    const body = async (tx: any) => {
       //  نفسُ قفل `syncPatientCases` (919) — فلا يتسابق الفتحُ مع مزامنةٍ
       //  جارية على المريض نفسه.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
@@ -499,7 +502,8 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId),
           eq(patientCases.caseType, "physiotherapy")));
       return created?.id ?? null;
-    });
+    };
+    return outerTx ? await body(outerTx) : await db.transaction(body);
   }
 
   /**
@@ -510,12 +514,13 @@ export class DatabaseStorage implements IStorage {
    * طبيعي) فالاستنتاجُ يفتح بابَ الخطأ بلا حاجة. و`patientId` في الشرط كي
    * لا تُعدَّل حالةُ مريضٍ آخر بمعرّفٍ مغلوط.
    */
-  async addToCaseCostById(patientId: number, caseId: number, amount: number): Promise<void> {
+  async addToCaseCostById(patientId: number, caseId: number, amount: number, tx?: any): Promise<void> {
     if (!(amount > 0)) return;
-    const [c] = await db.select().from(patientCases)
+    const h = tx ?? db;
+    const [c] = await h.select().from(patientCases)
       .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)));
     if (!c) return;
-    await db.update(patientCases)
+    await h.update(patientCases)
       .set({ cost: (c.cost || 0) + amount, updatedAt: new Date() })
       .where(eq(patientCases.id, caseId));
   }
@@ -832,8 +837,8 @@ export class DatabaseStorage implements IStorage {
 
   // Which case a new payment/visit settles, from its treatment tag / type.
   // Mirrors the migration's linking so new rows attribute consistently.
-  async resolveCaseId(patientId: number, opts: { tag?: string | null; treatmentType?: string | null }): Promise<number | null> {
-    const cases = await db.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+  async resolveCaseId(patientId: number, opts: { tag?: string | null; treatmentType?: string | null }, tx?: any): Promise<number | null> {
+    const cases: PatientCase[] = await (tx ?? db).select().from(patientCases).where(eq(patientCases.patientId, patientId));
     if (cases.length === 0) return null;
     const byType = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
     const order: Record<string, number> = { prosthetic: 1, medical_support: 2, physiotherapy: 3 };
@@ -847,8 +852,8 @@ export class DatabaseStorage implements IStorage {
     return primary;
   }
 
-  async getPatient(id: number): Promise<Patient | undefined> {
-    const [patient] = await db.select().from(patients).where(eq(patients.id, id));
+  async getPatient(id: number, tx?: any): Promise<Patient | undefined> {
+    const [patient] = await (tx ?? db).select().from(patients).where(eq(patients.id, id));
     return patient;
   }
 
@@ -926,13 +931,16 @@ export class DatabaseStorage implements IStorage {
    * يميّز. فيُمرَّر صراحةً ولا يُخمَّن هنا من أعلام المريض: مريضٌ يحمل
    * ثلاثةَ أقسام تجعل كلَّ استنتاجٍ منها كذبةً على قسمين.
    */
-  async updatePatient(id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit", costCaseId: number | null = null): Promise<Patient | undefined> {
+  //  `tx` اختيارية — والقيدُ يُكتب داخلها كالتحديث تماماً، فلا تُنقَل الكلفةُ
+  //  في معاملةٍ ويُقيَّد تاريخُها خارجها.
+  async updatePatient(id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit", costCaseId: number | null = null, tx?: any): Promise<Patient | undefined> {
+    const h = tx ?? db;
     // The generic patch is one of the ways total_cost moves (management edit,
     // خدمة جديدة, paid visit) — the ledger entry is written here, at the choke
     // point, so no caller can move the number without dating the move.
     const wantsCost = (updates as any).totalCost !== undefined;
     const [before] = wantsCost
-      ? await db.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
+      ? await h.select({ totalCost: patients.totalCost, branchId: patients.branchId }).from(patients).where(eq(patients.id, id))
       : [undefined as any];
 
     // Phone: same choke point as the cost ledger. The three derived columns
@@ -947,7 +955,7 @@ export class DatabaseStorage implements IStorage {
     // ورسالةُ تلغرام تصل غير صاحبها. فالمحاولة تُردّ بنصّها لا تُبتلع —
     // ومَن يعيد إرسال الصفّ كما قرأه (بنفس الرمز) لا يُعطَّل عليه التعديل.
     if (patch.patientCode !== undefined) {
-      const [row] = await db.select({ patientCode: patients.patientCode })
+      const [row] = await h.select({ patientCode: patients.patientCode })
         .from(patients).where(eq(patients.id, id));
       if (row && String(patch.patientCode) !== row.patientCode) {
         throw new Error("رمز المريض ثابت ولا يقبل التعديل");
@@ -961,7 +969,7 @@ export class DatabaseStorage implements IStorage {
     if ((updates as any).phone !== undefined) {
       // The stored country is the normalization hint, so re-typing a Turkish
       // number on a Turkish file still resolves as Turkish.
-      const [existing] = await db
+      const [existing] = await h
         .select({ phoneCountry: patients.phoneCountry })
         .from(patients)
         .where(eq(patients.id, id));
@@ -979,11 +987,11 @@ export class DatabaseStorage implements IStorage {
     // asks for nothing — so answer it with the current row instead. Found by
     // the live Postgres run, not by types.
     if (Object.keys(patch).length === 0) {
-      const [current] = await db.select().from(patients).where(eq(patients.id, id));
+      const [current] = await h.select().from(patients).where(eq(patients.id, id));
       return current;
     }
 
-    const [updated] = await db.update(patients)
+    const [updated] = await h.update(patients)
       // Cast: drizzle-zod widens the jsonb columns (physioPlan) into a shape
       // Drizzle's own .set() type doesn't accept back. The values are validated
       // by the callers that build them, not by this assignment.
@@ -993,7 +1001,7 @@ export class DatabaseStorage implements IStorage {
     if (updated && wantsCost && before) {
       const delta = (updated.totalCost || 0) - (before.totalCost || 0);
       if (delta !== 0) {
-        await db.insert(costEntries).values({
+        await h.insert(costEntries).values({
           patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
         });
@@ -2072,7 +2080,7 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(visits.branchId, branchId), isNull(visits.deletedAt)))
       .orderBy(desc(visits.visitDate));
   }
-  async createVisit(insertVisit: InsertVisit): Promise<Visit> {
+  async createVisit(insertVisit: InsertVisit, tx?: any): Promise<Visit> {
     const { customDate, ...visitData } = insertVisit as InsertVisit & { customDate?: string | null };
     
     const valuesToInsert: any = { ...visitData };
@@ -2095,10 +2103,10 @@ export class DatabaseStorage implements IStorage {
 
     // Attribute the visit to a case (Phase 3) unless one was already provided.
     if (valuesToInsert.caseId == null && valuesToInsert.patientId) {
-      valuesToInsert.caseId = await this.resolveCaseId(valuesToInsert.patientId, { treatmentType: valuesToInsert.treatmentType ?? null });
+      valuesToInsert.caseId = await this.resolveCaseId(valuesToInsert.patientId, { treatmentType: valuesToInsert.treatmentType ?? null }, tx);
     }
 
-    const [visit] = await db.insert(visits).values(valuesToInsert).returning();
+    const [visit] = await (tx ?? db).insert(visits).values(valuesToInsert).returning();
     return visit;
   }
   // Soft delete: mark the row instead of removing it. Reads filter on
@@ -2160,8 +2168,8 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async createPayment(insertPayment: InsertPayment): Promise<Payment> {
-    return await this.insertPaymentRow(insertPayment);
+  async createPayment(insertPayment: InsertPayment, tx?: any): Promise<Payment> {
+    return await this.insertPaymentRow(insertPayment, tx);
   }
 
   private async insertPaymentRow(insertPayment: InsertPayment, tx?: any): Promise<Payment> {
@@ -2185,7 +2193,7 @@ export class DatabaseStorage implements IStorage {
     // Attribute the payment to a case (Phase 3) unless one was already provided,
     // resolved from its treatment tag (أطراف/مساند/نوع العلاج).
     if (paymentData.caseId == null && paymentData.patientId) {
-      paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null });
+      paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null }, tx);
     }
     const [payment] = await (tx ?? db).insert(payments).values(paymentData).returning();
     return payment;
