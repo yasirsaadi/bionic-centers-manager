@@ -308,6 +308,49 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  ب٢) **حلقةٌ مفتوحةٌ غيرُ مرتبطة ⟶ ٤٠٩، ولا تُختطَف.**
+    //
+    //  متابعةٌ بلا هويّة + حلقةٌ مفتوحةٌ على الخيط = **التباس**. لا دليلَ
+    //  يربطهما: قد تكون طلبَ جهازٍ آخر أحدثَ، أو تكراراً تشغيلياً. والتقاطُها
+    //  كان سيثبّت سعرَ هذه المتابعة على جهازٍ لم يُقصَد.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ب٢) حلقةٌ مفتوحةٌ غيرُ مرتبطة ──");
+    {
+      const p = await mkPatient("حلقةٌ غيرُ مرتبطة");
+      await mkCase(p);
+      //  المعاينةُ تُوقَّع أوّلاً فتفتح متابعةً **بلا حلقة**…
+      await signExam(p, S.doc, 1_400_000);
+      const f = await followupOf(p);
+      same("٥٣. (متابعةٌ بلا هويّة جهاز)", f?.deviceEpisodeId, null);
+      // …ثمّ يفتح الاستعلاماتُ طلبَ جهازٍ صريحاً — لا علاقةَ له بها.
+      const stray = await episodes.startDeviceEpisode({
+        patientId: p, serviceType: "prosthetic", createdBy: MGR,
+      });
+      const strayId = Number((stray as any).id ?? stray);
+      const strayBefore = (await q(
+        `SELECT status, agreed_cost::int AS cost, sequence_number
+           FROM patient_device_episodes WHERE id=$1`, [strayId]))[0];
+
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const buy = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
+      same("٥٤. **البيعُ يُردّ ٤٠٩** — ولا تُختطَف حلقةٌ لم يُقل إنها له",
+        buy.status, 409);
+      check(String(buy.body?.error ?? "").includes("غير مرتبط بهذه المتابعة"),
+        "٥٥. **والرسالةُ تدلّ على المراجعة**", String(buy.body?.error));
+
+      const s = await shape(p);
+      same("٥٦. **ولا رابطَ كُتب على المتابعة**", s.f?.device_episode_id, null);
+      same("٥٧. **ولا أمرَ تصنيعٍ ولا قيدَ كلفة**",
+        [s.wos.length, s.entries.length], [0, 0]);
+      same("٥٨. **والحلقةُ الغريبة كما هي** — لا حالةً ولا سعراً ولا تسلسلاً",
+        (await q(`SELECT status, agreed_cost::int AS cost, sequence_number
+                    FROM patient_device_episodes WHERE id=$1`, [strayId]))[0],
+        strayBefore);
+      same("٥٩. **ولا حلقةَ ثانيةً أُنشئت**", s.eps.length, 1);
+      same("٦٠. **ولا مالَ تحرّك**", [s.total, s.caseCost], [0, 0]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  ج) **الضغطةُ المزدوجة لا تُنتج حلقتين** (§٩).
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ج) ضغطتان متزامنتان ──");
@@ -473,6 +516,80 @@ async function main() {
       const s = await shape(p);
       same("٣٦. **(د) الاختلافُ لا يُمَسّ ولا يُخمَّن** — كلٌّ كما هو",
         [Number(s.f?.device_episode_id), Number(s.wos[0]?.device_episode_id)], [epA, epB]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  هـ٢) **حارسُ التسلسل** — الإصلاحُ لا يقلب تاريخَ أجهزة المريض.
+    //
+    //  «MAX + ROW_NUMBER» وحدَه صحيحٌ فقط إن كان المفقودُ متأخّراً عن كلّ
+    //  حلقةٍ قائمة. وإلّا صار الأقدمُ «الجهاز الثاني» والأحدثُ «الأول».
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── هـ٢) حارسُ التسلسل الزمنيّ ──");
+    /** يُعيد ملفَّ مريضٍ مباعٍ إلى «بلا هويّة» كما كان قبل إغلاق الباب. */
+    const stripIdentity = async (patientId: number) => {
+      await q(`UPDATE post_exam_followups SET device_episode_id=NULL WHERE patient_id=$1`,
+        [patientId]);
+      await q(`UPDATE prosthetic_work_orders SET device_episode_id=NULL WHERE patient_id=$1`,
+        [patientId]);
+      await q(`UPDATE cost_entries SET device_episode_id=NULL WHERE patient_id=$1`, [patientId]);
+      await q(`DELETE FROM patient_device_episodes WHERE patient_id=$1`, [patientId]);
+    };
+    //  (ب) حلقةٌ قائمةٌ **أقدم**، والمفقودُ أحدثُ منها ⟶ يُلحَق بأمان.
+    {
+      const p = await mkPatient("قائمةٌ أقدم فيُلحَق");
+      const caseId = await mkCase(p);
+      await signExam(p, S.doc, 400_000);
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
+      await stripIdentity(p);
+      //  حلقةٌ قديمةٌ مسلَّمة — أقدمُ من أمر المريض بيقين.
+      const old = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, created_at)
+         VALUES ($1,$2,1,1,'delivered',0, NOW() - INTERVAL '2 years') RETURNING id`,
+        [p, caseId]);
+      await runRepair();
+      const eps = await q(`SELECT id, sequence_number FROM patient_device_episodes
+                            WHERE patient_id=$1 ORDER BY sequence_number`, [p]);
+      same("٤٧. **(ب) المفقودُ الأحدثُ يُلحَق بالتسلسل التالي**",
+        eps.map((e: any) => Number(e.sequence_number)), [1, 2]);
+      same("   **والقديمةُ لم تُرقَّم من جديد**",
+        Number(eps[0].id), Number(old[0].id));
+      same("   **والمتابعةُ على الجديدة لا على القديمة**",
+        Number((await shape(p)).f?.device_episode_id), Number(eps[1].id));
+    }
+    //  (ج) حلقةٌ قائمةٌ **أحدث**، والمفقودُ أقدمُ ⟶ **لا يُنشَأ شيء**.
+    {
+      const p = await mkPatient("قائمةٌ أحدثُ فلا يُصلَح");
+      const caseId = await mkCase(p);
+      await signExam(p, S.doc, 300_000);
+      const f = await followupOf(p);
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
+      await stripIdentity(p);
+      //  الجهازُ الثاني فُتح لاحقاً بالمسار الصريح وأخذ التسلسل ١.
+      const newer = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, created_at)
+         VALUES ($1,$2,1,1,'awaiting_exam',0, NOW() + INTERVAL '1 day') RETURNING id`,
+        [p, caseId]);
+      const before = await shape(p);
+      await runRepair();
+      const s = await shape(p);
+      same("٤٨. **(ج) لا حلقةَ تُنشَأ للأقدم** — ولا يُقلَب التاريخ",
+        [s.eps.length, Number(s.eps[0].id)], [1, Number(newer[0].id)]);
+      same("٤٩. **ولا تسلسلَ تغيّر على القائمة**",
+        Number(s.eps[0].sequence_number), 1);
+      same("٥٠. **والمتابعةُ والأمرُ يبقيان بلا رابط** — للمراجعة اليدوية",
+        [s.f?.device_episode_id, s.wos[0]?.device_episode_id], [null, null]);
+      same("٥١. **ولا مالَ تحرّك**",
+        [s.total, s.caseCost, s.entries.map((e: any) => e.amount)],
+        [before.total, before.caseCost, before.entries.map((e: any) => e.amount)]);
+      //  وتشغيلٌ ثانٍ لا يغيّر الحكم.
+      await runRepair();
+      same("٥٢. **وتشغيلٌ ثانٍ يُبقيه كما هو**",
+        (await shape(p)).eps.length, 1);
     }
 
     // ══════════════════════════════════════════════════════════════════
