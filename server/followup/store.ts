@@ -523,30 +523,71 @@ function refsForRow(row: any): string[] {
   });
 }
 
+/**
+ * متابعةُ هذه المعاينة بعينها — **بأقوى هويّةٍ متاحة، بهذا الترتيب**:
+ *
+ *   ① `medical_exam_id` — الرابطُ الذي كتبه التوقيعُ نفسُه. لا شيءَ أقوى.
+ *   ② `device_episode_id` — الجهازُ بعينه حين تُعرف هويّتُه.
+ *   ③ (مريض + خدمة + بلا حلقة) — مخرجُ القديم الآمن، وهو الأضعف.
+ *
+ * ══ ولماذا صار الأول أوّلاً (بعد واقعة WB-02243) ═══════════════════════
+ * المعاينةُ المختومة قد لا تحمل `device_episode_id` — والختمُ (٠٢٨) يمنع
+ * فتحَها لملء هويّةٍ إدارية، ولا يجوز أن يُفتح لأجل ذلك. فحين تُصلَح
+ * المتابعةُ بحلقة (ترحيلُ الإصلاح، أو المسارُ الحيّ)، تصير المعاينةُ
+ * القديمة بلا حلقةٍ **عاجزةً عن إيجاد متابعتها** بالمسار ②، وتسقط إلى ③
+ * الذي يشترط `device_episode_id IS NULL` فلا يجدها كذلك.
+ *
+ * والرابطُ `medical_exam_id` يعبر ذلك كلَّه: **معاينةٌ تجد متابعتَها ولو
+ * لم تعرف جهازَها قطّ.**
+ *
+ * **ولا يُختار «آخرُ متابعةٍ للمريض والخدمة» ما دام الرابطُ الدقيق موجوداً**
+ * — العائدُ يملك أكثر من جهاز، وأخذُ الأحدث يصيب غيرَ المقصود.
+ */
+async function followupForExamPrice(params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  deviceEpisodeId: number | null;
+  medicalExamId?: number | null;
+}): Promise<any> {
+  const COLS = sql`id, status, approved_price, price_source, converted_work_order_id,
+                   device_episode_id, service_type`;
+  if (params.medicalExamId !== null && params.medicalExamId !== undefined) {
+    const exact = await db.execute(sql`
+      SELECT ${COLS} FROM post_exam_followups
+       WHERE patient_id = ${params.patientId}
+         AND medical_exam_id = ${params.medicalExamId}
+       ORDER BY id DESC LIMIT 1
+    `);
+    const hit = (exact.rows ?? [])[0];
+    if (hit) return hit;
+  }
+  if (params.deviceEpisodeId !== null) {
+    const byEpisode = await db.execute(sql`
+      SELECT ${COLS} FROM post_exam_followups
+       WHERE patient_id = ${params.patientId}
+         AND device_episode_id = ${params.deviceEpisodeId}
+       ORDER BY id DESC LIMIT 1
+    `);
+    return (byEpisode.rows ?? [])[0];
+  }
+  const legacy = await db.execute(sql`
+    SELECT ${COLS} FROM post_exam_followups
+     WHERE patient_id = ${params.patientId}
+       AND service_type = ${params.serviceType}
+       AND device_episode_id IS NULL
+     ORDER BY id DESC LIMIT 1
+  `);
+  return (legacy.rows ?? [])[0];
+}
+
 export async function classifyExamPriceChange(params: {
   patientId: number;
   serviceType: "prosthetic" | "medical_support";
   deviceEpisodeId: number | null;
+  /** الرابطُ الأقوى — يُمرَّر دائماً من نقطة تعديل المعاينة. */
+  medicalExamId?: number | null;
 }): Promise<ExamPriceVerdict> {
-  const r = params.deviceEpisodeId !== null
-    ? await db.execute(sql`
-        SELECT id, status, approved_price, price_source, converted_work_order_id,
-               device_episode_id, service_type
-          FROM post_exam_followups
-         WHERE patient_id = ${params.patientId}
-           AND device_episode_id = ${params.deviceEpisodeId}
-         ORDER BY id DESC LIMIT 1
-      `)
-    : await db.execute(sql`
-        SELECT id, status, approved_price, price_source, converted_work_order_id,
-               device_episode_id, service_type
-          FROM post_exam_followups
-         WHERE patient_id = ${params.patientId}
-           AND service_type = ${params.serviceType}
-           AND device_episode_id IS NULL
-         ORDER BY id DESC LIMIT 1
-      `);
-  const row = (r.rows ?? [])[0] as any;
+  const row = await followupForExamPrice(params) as any;
   //  لا متابعة: معاينةٌ روتينية أو ملفٌّ قديم — لا شيء يُزامَن، ولا شيء
   //  يُمنَع. التصحيحُ يمضي على المعاينة وحدها.
   if (!row) return { kind: "no_followup" };
@@ -1590,6 +1631,40 @@ export async function confirmPurchase(params: {
       actor: params.actor,
     });
 
+    // ══ **هويّةُ الجهاز تُماديَ هنا إن لم تكن** (بعد واقعة WB-02243) ══
+    //  ترحيلُ ٠٥٠ ملأ التاريخَ مرّةً واحدة، والمسارُ الحيّ ظلّ يبيع
+    //  **الجهازَ الأول** بلا حلقة حين لا يفتح له الاستعلاماتُ طلباً
+    //  صريحاً. فصفٌّ يولد اليوم كان يصير «تاريخياً» لحظةَ ولادته، ويُردّ
+    //  عليه تصحيحُ السعر بعد البيع بحجّة «مسارٌ قديم بلا هويّة جهاز».
+    //
+    //  وهذه أضيقُ نقطةٍ يَعلم فيها النظامُ يقيناً أن **هذه المتابعةَ
+    //  بعينها** تتحوّل إلى **هذا البيع بعينه** — لا رايةُ بترٍ على ملفّ.
+    //
+    //  **والمريضُ العائد لا يُمَسّ**: متابعتُه تحمل حلقتَها من «طلب جهاز
+    //  جديد»، فتمضي كما هي ولا تُفتح ثانية.
+    let episodeId = cur.deviceEpisodeId;
+    const eps = await import("../device_episodes/store");
+    if (episodeId === null && eps.isDeviceServiceType(cur.serviceType)) {
+      const ep = await eps.ensureFirstDeviceEpisodeForSale(tx, {
+        patientId: cur.patientId,
+        serviceType: cur.serviceType,
+        createdBy: params.actor.userId,
+      });
+      //  لا خيطَ لهذا الاختصاص ⟶ `null`، فيمضي البيعُ على مساره القديم
+      //  بلا كسر. ورفضُه هنا كان سيوقف بيعاً صحيحاً لأجل هويّةٍ إدارية.
+      if (ep) {
+        episodeId = ep.id;
+        //  **والمتابعةُ تُربَط قبل الإسناد**: `assignManufacturing` تكتب
+        //  الهويّةَ على الأمر وعلى قيد الكلفة، وربطُ المتابعة يجعل
+        //  الثلاثةَ تشير إلى الجهاز نفسه في المعاملة الواحدة.
+        await tx.execute(sql`
+          UPDATE post_exam_followups
+             SET device_episode_id = ${ep.id}, updated_at = NOW()
+           WHERE id = ${cur.id} AND device_episode_id IS NULL
+        `);
+      }
+    }
+
     //  **المسار الرسمي القائم بحرفه** — لا نسخةَ منه هنا.
     const { workOrderId } = await storage.assignManufacturing({
       patientId: cur.patientId,
@@ -1598,7 +1673,7 @@ export async function confirmPurchase(params: {
       cost: cur.approvedPrice,
       expertUserId,
       assignedBy: params.actor.userId,
-      deviceEpisodeId: cur.deviceEpisodeId,
+      deviceEpisodeId: episodeId,
       tx,
     });
 

@@ -542,6 +542,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           patientId: exam.patientId,
           serviceType: caseType as "prosthetic" | "medical_support",
           deviceEpisodeId: exam.deviceEpisodeId ?? null,
+          //  **الرابطُ الأقوى**: معاينةٌ مختومة بلا `device_episode_id`
+          //  تجد متابعتَها ولو أُصلحت المتابعةُ بحلقةٍ بعد ختمها — بلا
+          //  فتح الختم لملء هويّةٍ إدارية.
+          medicalExamId: examId,
         });
         //  **الردُّ الوحيد**: طلبٌ معلَّقٌ يُحسَم بيد إنسان لا يُلغى بصمت.
         if (priceVerdict.kind === "blocked") {
