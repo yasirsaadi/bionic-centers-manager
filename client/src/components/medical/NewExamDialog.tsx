@@ -94,6 +94,9 @@ export function NewExamDialog({
   const [deviceCost, setDeviceCost] = useState<string>("");
   const [expertUserId, setExpertUserId] = useState<string>("");
   const [prefilled, setPrefilled] = useState(false);
+  //  تصحيحُ سعرٍ بعد البيع يحرّك مالاً، فيمرّ بتأكيدٍ يقول كم ولماذا.
+  const [confirmPrice, setConfirmPrice] = useState(false);
+  const [priceCorrectionReason, setPriceCorrectionReason] = useState("");
 
   // The patient row: prefills what reception already recorded (physiotherapy)
   // and gives the branch whose expert roster this doctor may suggest from.
@@ -156,15 +159,44 @@ export function NewExamDialog({
     : [];
   const discountPending = (discountRows?.requests ?? []).some(
     (r: any) => r?.status === "pending" && deviceRefs.includes(String(r?.contextRef)));
-  //  والقرارُ التجاريُّ الصريح يبقى كما هو — لكنه **لا يمنع** التصحيح على
-  //  المعاينة نفسها، فالحقلُ يبقى مفتوحاً وتُقال الملاحظةُ بعد الحفظ.
+  //  **مصدرُ السعر القائم** — وهو ما يقرّر ماذا يفعل التصحيح، لا البيعُ.
+  const commercialOverride = Boolean(activeFollowup)
+    && String(activeFollowup.priceSource ?? "exam") !== "exam";
+
+  // ══ **القفلُ للمانع الحقيقيّ وحده** ════════════════════════════════════
+  //  كان البيعُ يقفل الحقلَ قفلاً عامّاً، فمعاينةٌ وُقّعت بـ١,٧٠٠,٠٠٠ وهي
+  //  تقصد ١,٧٥٠,٠٠٠ لم يكن لها بابٌ بعد الشراء — فصُحّح الرقمُ من شاشة
+  //  تعديل المريض العامّة وتحرّك المجموعُ وحدَه. **إخفاءُ البابِ لم يمنع
+  //  التصحيح، منع أن يكون نظيفاً.**
+  //
+  //  والمانعُ الوحيد الباقي هو الطلبُ المعلَّق: قرارٌ ينتظر إنساناً، وتحريكُ
+  //  الأصلِ تحته يغيّر ما سيوقّع عليه. والقرارُ التجاريُّ الصريح **لا يقفل**:
+  //  المعاينةُ تُصحَّح ويبقى هو، وتُقال العبارةُ صراحةً قبل الحفظ وبعده.
   const priceLock: null | { why: string } =
     !isEdit ? null
-      : soldAlready ? { why: "تم اعتماد البيع؛ تعديل المعاينة لا يغيّر السعر المالي." }
-        : discountPending ? {
-          why: "يوجد طلب خصم بانتظار الاعتماد محسوبٌ على هذا السعر — احسمه أولاً."
-            + " ويمكنك تعديل بقية المعاينة الآن.",
-        } : null;
+      : discountPending ? {
+        why: "يوجد طلب خصم بانتظار الاعتماد محسوبٌ على هذا السعر — احسمه أولاً."
+          + " ويمكنك تعديل بقية المعاينة الآن.",
+      } : null;
+
+  //  تحذيرٌ يُقال والحقلُ مفتوح: **لا يُعرَض حقلٌ فعّال ويُخفى أثرُه.**
+  const priceWarning: string | null =
+    !isEdit || priceLock ? null
+      : commercialOverride
+        ? "السعر التجاري الحالي ناتج عن قرار مستقل؛ تعديل المعاينة لن يغيّر السعر التجاري أو الحسابات."
+        : soldAlready
+          ? "تم البيع وبدأت إجراءات التصنيع. تصحيح هذا السعر سيحدّث كلفة الجهاز"
+            + " وإجمالي حساب المريض، ولن يغيّر الدفعات السابقة."
+          : null;
+
+  //  **والتصحيحُ الماليّ بعد البيع يستأذن**: بِيع الجهازُ وسعرُه ما زال سعرَ
+  //  المعاينة ⟶ الحفظُ يحرّك مالاً، فيمرّ بتأكيدٍ يقول كم ولماذا.
+  const afterSaleCorrection = isEdit && soldAlready && !commercialOverride && !priceLock;
+  const priceNow = Number(activeFollowup?.approvedPrice ?? exam?.deviceCost ?? 0);
+  const priceNext = deviceCost === "" ? null : Number(deviceCost);
+  const priceMoved = afterSaleCorrection
+    && priceNext !== null && Number.isFinite(priceNext) && priceNext > 0
+    && priceNext !== Number(exam?.deviceCost ?? 0);
 
   // The manufacturing experts of the patient's branch — the same roster
   // reception picks from, so the doctor's suggestion is always a real option.
@@ -182,6 +214,9 @@ export function NewExamDialog({
   // these records are permanent once signed, so a stale field is a real hazard.
   useEffect(() => {
     if (!open) return;
+    //  سببُ التصحيح لا يُورَّث من فتحةٍ سابقة: سببُ أمسٍ ليس سببَ اليوم.
+    setConfirmPrice(false);
+    setPriceCorrectionReason("");
     if (exam) {
       setForm({
         chiefComplaint: exam.chiefComplaint ?? "",
@@ -300,6 +335,9 @@ export function NewExamDialog({
             // A SUGGESTION. Reception's «تخصيص» opens with it filled in and
             // may keep or change it; nothing is assigned until they save.
             proposedExpertUserId: isDeviceSpecialty && expertUserId ? Number(expertUserId) : undefined,
+            //  سببُ تصحيح سعرٍ بعد البيع — **والخادمُ يفرضه ولا يثق بوجود
+            //  الحقل في الشاشة**: من يستدعي النقطةَ مباشرةً يُردّ مثلَ غيره.
+            priceCorrectionReason: priceMoved ? priceCorrectionReason.trim() : undefined,
           }),
         },
       );
@@ -320,6 +358,15 @@ export function NewExamDialog({
       // pre-decision shape until a manual reload.
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      // ══ تصحيحُ السعر بعد البيع حرّك أربعةَ أرقامٍ يراها المستخدم ═══════
+      //  سعرُ المعاينة (أعلاه) · السعرُ المعتمد في المتابعة · مجموعُ المريض
+      //  (أعلاه) · وسعرُ حلقة الجهاز ومتبقّيه. وبلا هذين يبقى نصفُ الشاشة
+      //  على الرقم القديم حتى يُحدَّث المتصفّح يدوياً — فيظنّ الموظّفُ أن
+      //  التصحيح لم يقع.
+      queryClient.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}/device-episodes`] });
+      setConfirmPrice(false);
+      setPriceCorrectionReason("");
       onOpenChange(false);
       toast({
         title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
@@ -345,6 +392,7 @@ export function NewExamDialog({
   const hasContent = hasNarrative || hasPrescription;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto" dir="rtl">
         <DialogHeader>
@@ -422,6 +470,14 @@ export function NewExamDialog({
                   {priceLock.why}
                 </p>
               )}
+              {/*  **حقلٌ مفتوحٌ يقول أثرَه**: الطبيبُ يعرف قبل أن يكتب هل
+                  يتبعه المالُ أم يبقى القرارُ التجاريّ كما هو. */}
+              {priceWarning && (
+                <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1"
+                  data-testid="text-device-cost-after-sale">
+                  {priceWarning}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 كلفة <b>مقترحة</b>: تظهر لموظف الاستعلامات ولا تدخل الحسابات إلا حين
                 يعتمدها في «تخصيص وإسناد خبير» بعد موافقة المريض. فإن لم يدفع أو
@@ -479,7 +535,7 @@ export function NewExamDialog({
             إلغاء
           </Button>
           <Button
-            onClick={() => save.mutate()}
+            onClick={() => (priceMoved ? setConfirmPrice(true) : save.mutate())}
             disabled={!specialty || !hasContent || save.isPending}
             data-testid="button-save-medical-exam"
           >
@@ -488,5 +544,64 @@ export function NewExamDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+      {/* ══ تأكيدُ تصحيحِ سعرٍ بعد البيع ═════════════════════════════════
+          الحفظُ هنا يحرّك مالاً مقيَّداً في الدفتر، فلا يقع بضغطةٍ عابرة:
+          يُعرض الرقمان والفرقُ وما سيتغيّر وما لن يتغيّر، ويُطلب السبب. */}
+      <Dialog open={confirmPrice} onOpenChange={setConfirmPrice}>
+        <DialogContent className="sm:max-w-[440px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-amber-900">تصحيح سعر بعد البيع</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1"
+              data-testid="box-price-correction-figures">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">السعر الحالي:</span>
+                <b>{priceNow.toLocaleString("en-US")} د.ع</b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">السعر المصحح:</span>
+                <b>{(priceNext ?? 0).toLocaleString("en-US")} د.ع</b>
+              </div>
+              <div className="flex justify-between border-t border-amber-200 pt-1">
+                <span className="text-muted-foreground">الفرق:</span>
+                <b className={(priceNext ?? 0) - priceNow >= 0 ? "text-emerald-700" : "text-red-700"}>
+                  {(priceNext ?? 0) - priceNow > 0 ? "+" : ""}
+                  {((priceNext ?? 0) - priceNow).toLocaleString("en-US")} د.ع
+                </b>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              سيتم تحديث كلفة هذا الجهاز وإجمالي حساب المريض. الدفعات السابقة وأمر
+              التصنيع لن تتغير.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="price-correction-reason">سبب التصحيح *</Label>
+              <Textarea
+                id="price-correction-reason"
+                rows={2}
+                placeholder="خطأ في إدخال السعر أثناء المعاينة"
+                value={priceCorrectionReason}
+                onChange={(e) => setPriceCorrectionReason(e.target.value)}
+                data-testid="input-price-correction-reason"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setConfirmPrice(false)}>
+              إلغاء
+            </Button>
+            <Button
+              onClick={() => save.mutate()}
+              disabled={priceCorrectionReason.trim().length === 0 || save.isPending}
+              data-testid="button-confirm-price-correction"
+            >
+              {save.isPending ? "جارٍ الحفظ…" : "تأكيد التصحيح"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

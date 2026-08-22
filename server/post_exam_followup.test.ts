@@ -1594,9 +1594,16 @@ async function main() {
       same("٦٥. **وتعديلُ النصّ بلا مسّ الرقم يمرّ**", clinical.status, 200);
     }
 
-    //  ④ **وبعد البيع الرقمُ مجمَّد** — المالُ قُيِّد ودخل الدفتر.
+    //  ④ **وبيعٌ على مسارٍ قديم بلا هويّة جهاز يبقى مجمَّداً.**
+    //
+    //  **والقاعدةُ تضيّقت** (٢٠٢٦-٠٨-٢٢): البيعُ وحدَه لم يعد يجمّد شيئاً —
+    //  جهازٌ مباعٌ ما زال سعرُه سعرَ المعاينة يُصحَّح ويُنزَل على الحلقة
+    //  والكلفة والمجموع والدفتر (اختبارُه المستقلّ:
+    //  `npm run test:exam-price-correction`). والمجمَّدُ هنا حالةٌ أخرى:
+    //  متابعةٌ بلا `device_episode_id` — مسارٌ قديم لا يملك أين يُنزل الفرق،
+    //  فيُردّ بصدقٍ بدل أن يُخمَّن له جهازٌ بـ(مريض + قسم) فيُصاب غيرُ المقصود.
     {
-      const p = await mkPatient("تصحيح بعد البيع");
+      const p = await mkPatient("تصحيح بعد بيعٍ بلا حلقة");
       await mkCase(p);
       await signExam(p, S.doc, { deviceCost: 2_000_000 });
       const f = await followupOf(p);
@@ -1607,7 +1614,10 @@ async function main() {
         `SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c;
       const examId = await examIdOf(p);
       const frozen = await editExam(examId, S.doc, { deviceCost: 2_900_000 });
-      same("٦٧. **وتصحيحُ السعر بعد البيع يُردّ ٤٠٩**", frozen.status, 409);
+      same("٦٧. **وتصحيحُ سعرِ بيعٍ بلا هويّة جهاز يُردّ ٤٠٩**", frozen.status, 409);
+      check(String(frozen.body?.error ?? "").includes("مسار قديم"),
+        "   **والرسالةُ تقول السببَ الحقيقيّ** — لا «تم اعتماد البيع» عامّةً",
+        String(frozen.body?.error));
       same("٦٨. **ولا حالةَ ماليّة تتغيّر**",
         [(await q(`SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c,
           (await followupOf(p))?.approvedPrice],
