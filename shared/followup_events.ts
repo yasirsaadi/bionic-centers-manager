@@ -192,7 +192,22 @@ export function followupEventView(
       const from = Number(p.previousPrice), to = Number(p.finalPrice);
       if (Number.isFinite(from) && Number.isFinite(to) && to > 0) {
         out.transition = { from, to };
+        //  **والفرقُ يُقال صراحةً** حين يتحرّك المال: القارئُ بعد سنة يريد
+        //  «كم» قبل أن يطرح رقمين بذهنه. والإشارةُ تُكتب فالنقصان يُقرأ.
+        const delta = Number.isFinite(Number(p.delta)) ? Number(p.delta) : to - from;
+        if (delta !== 0) {
+          out.facts.push(`الفرق: ${delta > 0 ? "+" : "−"}${money(Math.abs(delta))} د.ع`);
+        }
       }
+      //  وتصحيحُ ما بعد البيع يُميَّز: ذاك رقمٌ لم يقبضه أحد بعد، وهذا مالٌ
+      //  قُيِّد في الدفتر وتحرّكت به كلفةُ الجهاز وحسابُ المريض.
+      if (p.afterSale === true) {
+        out.facts.push("تصحيح بعد البيع — حُدّثت كلفة الجهاز وحساب المريض");
+      }
+      //  والسببُ **معنوناً**: بلا العنوان يظهر نصُّ الموظّف عائماً بين
+      //  الأرقام فلا يُعرَف أهو سببٌ أم ملاحظةٌ أم اسمُ جهاز.
+      const why = typeof p.correctionReason === "string" ? p.correctionReason.trim() : "";
+      if (why) out.facts.push(`سبب التصحيح: ${why}`);
       break;
     }
     case "commercial_price_set": {
@@ -290,7 +305,9 @@ export function followupEventView(
   //  كاملةً فوق السجلّ، فتكرارُها ضجيج. ومن الإلغاء لأنها خرجت أعلاه
   //  معنونةً «سبب الإلغاء» — والسطرُ الواحد مرّتين ضجيجٌ كذلك.
   const note = typeof e?.note === "string" ? e.note.trim() : "";
-  if (note && type !== "closed_without_purchase" && type !== "closed_exam_cancelled") {
+  if (note && type !== "closed_without_purchase" && type !== "closed_exam_cancelled"
+    //  ومن تصحيح السعر: خرج أعلاه معنوناً «سبب التصحيح» — ومرّتين ضجيج.
+    && type !== "exam_price_corrected") {
     out.facts.push(note);
   }
   return out;

@@ -669,6 +669,73 @@ export async function markEpisodeInManufacturing(
   `);
 }
 
+/** الحلقةُ المقفولة لتصحيح سعرها — هويّتُها وحالتُها وسعرُها القائم. */
+export interface EpisodeForPriceCorrection {
+  id: number;
+  caseId: number;
+  patientId: number;
+  status: string;
+  agreedCost: number;
+}
+
+/** الحالاتُ التي يجوز تصحيحُ سعرها بعد البيع — وما عداها يُردّ لا يُخمَّن. */
+export const PRICE_CORRECTABLE_STATUSES = ["in_manufacturing", "delivered"] as const;
+
+/**
+ * اقفل حلقةً بعينها لتصحيح سعرها — **بهويّتها لا بـ(مريض + قسم)**.
+ *
+ * المريضُ العائد يملك أكثر من جهاز، والتصحيحُ يخصّ الجهازَ الذي وصفته
+ * المعاينةُ وحده. فالمعرّف يأتي من سلسلةِ الهويّة (معاينة ⟶ متابعة ⟶ حلقة)
+ * ويُتحقَّق هنا أن الحلقة **لهذا المريض وهذا الخيط** قبل أن يُكتب دينار.
+ *
+ * `FOR UPDATE` يجعل التصحيحَ والبيعَ والتسليمَ يتسلسلون على الصفّ نفسه.
+ */
+export async function lockEpisodeForPriceCorrection(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeId: number,
+): Promise<EpisodeForPriceCorrection | null> {
+  const r = await tx.execute(sql`
+    SELECT id, case_id, patient_id, status, agreed_cost
+      FROM patient_device_episodes
+     WHERE id = ${episodeId}
+     LIMIT 1
+     FOR UPDATE
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    caseId: Number(row.case_id),
+    patientId: Number(row.patient_id),
+    status: String(row.status),
+    agreedCost: Number(row.agreed_cost ?? 0),
+  };
+}
+
+/**
+ * صحّح سعرَ حلقةٍ **بلا أن تلمس حالتها**.
+ *
+ * ══ ولماذا ليست `markEpisodeInManufacturing` ═══════════════════════════
+ * تلك تكتب السعرَ **وتدفع الحلقةَ إلى التصنيع** — وهي البيعُ نفسُه. وجهازٌ
+ * سُلِّم فعلاً يُصحَّح سعرُه لا يُعاد إلى التصنيع: نداؤها هنا كان سيقلب
+ * `delivered` إلى `in_manufacturing` ويعيد جهازاً في يد صاحبه إلى المصنع.
+ *
+ * فالتصحيحُ يكتب رقماً واحداً، والشرطُ في `WHERE` يمنع أن يقع على حلقةٍ
+ * تغيّرت حالتُها بين القراءة والكتابة. ويُرجع عددَ الصفوف كي يقرّر المُستدعي.
+ */
+export async function correctEpisodeAgreedCost(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; agreedCost: number; expectStatus: string },
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET agreed_cost = ${params.agreedCost}, updated_at = NOW()
+     WHERE id = ${params.episodeId} AND status = ${params.expectStatus}
+    RETURNING id
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
 /**
  * زامن الحلقة مع أمرها حين ينتهي.
  *

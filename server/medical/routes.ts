@@ -530,6 +530,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  البيع · أو يُردّ لأن طلبَ خصمٍ معلَّقٌ محسوبٌ على الرقم القديم.
       let priceSyncNote: string | null = null;
       let priceVerdict: Awaited<ReturnType<typeof FollowupStore.classifyExamPriceChange>> | null = null;
+      const correctionReason = typeof req.body?.priceCorrectionReason === "string"
+        ? req.body.priceCorrectionReason.trim() : "";
       const priceChanged = isDeviceServiceType(caseType)
         && deviceCost !== null && deviceCost !== (exam.deviceCost ?? null);
       if (priceChanged) {
@@ -545,12 +547,21 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         if (priceVerdict.kind === "blocked") {
           return res.status(409).json({ error: priceVerdict.reason });
         }
-        //  **وبعد البيع الرقمُ مجمَّد** — لا على المعاينة ولا في المال.
-        //  فتُبقى القيمةُ القديمة ويمضي التصحيحُ السريريّ.
+        //  ومسارٌ قديمٌ بلا هويّة جهاز يبقى مجمَّداً بصدق: لا مكانَ نظيفاً
+        //  يُنزَل عليه الفرق، والتخمينُ أسوأ من الردّ.
         if (priceVerdict.kind === "frozen") {
           return res.status(409).json({ error: priceVerdict.reason });
         }
         if (priceVerdict.kind === "keep_commercial") priceSyncNote = priceVerdict.reason;
+        //  ══ **وبعد البيع لا يمضي تصحيحُ مالٍ بلا سببٍ مكتوب** ══════════
+        //  التصحيحُ قبل البيع رقمٌ لم يقبضه أحد بعد. وبعده مالٌ قُيِّد في
+        //  الدفتر ودخل التقارير، فمَن يقرأ القيدَ بعد سنة يحتاج أن يعرف
+        //  **لماذا** تحرّك — لا أن يجد فرقاً بلا رواية.
+        if (priceVerdict.kind === "sync_after_sale" && correctionReason.length === 0) {
+          return res.status(400).json({
+            error: "تصحيح سعر جهاز بعد البيع يتطلّب سبباً مكتوباً — اكتب سبب التصحيح ثم أعد المحاولة",
+          });
+        }
       }
 
       const hasNarrative = Object.values(body).some((v) => v !== null);
@@ -577,7 +588,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         + (priceChanged
           ? ` — تصحيح كلفة الجهاز: ${(exam.deviceCost ?? 0).toLocaleString("en-US")}`
             + ` ⟶ ${(deviceCost ?? 0).toLocaleString("en-US")} د.ع`
-            + (priceVerdict?.kind === "sync" ? " (زُوّمن السعر المعتمد)" : " (بقي السعر التجاري)")
+            + (priceVerdict?.kind === "sync" ? " (زُوّمن السعر المعتمد)"
+              : priceVerdict?.kind === "sync_after_sale"
+                ? ` (تصحيح بعد البيع — زُوّمن السعر والحلقة والمال؛ السبب: ${correctionReason})`
+                : " (بقي السعر التجاري)")
           : "");
       const auditFor = (version: number, tx?: any) => logAudit({
         entityType: "medical_exam",
@@ -614,6 +628,30 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
             followupId: priceVerdict!.kind === "sync" ? priceVerdict!.followupId : 0,
             newPrice: deviceCost, actor: editor, tx,
           });
+          await auditFor(revised.version, tx);
+          return revised;
+        });
+      } else if (priceVerdict?.kind === "sync_after_sale" && deviceCost !== null) {
+        // ══ **بعد البيع: المعاينةُ والمالُ كلُّه ذرّةٌ واحدة** ═════════════
+        //  ستّةُ مواضعَ تتحرّك (المتابعة · الحلقة · كلفةُ الخيط · مجموعُ
+        //  المريض · قيدُ الدفتر · الحدث) ومعها النسخةُ والتدقيق. وسقوطُ
+        //  أيّها يُرجِع الجميعَ — فلا يبقى مريضٌ سعرُ معاينته يقول شيئاً
+        //  وسعرُ حلقته يقول غيرَه، وهي الحالُ التي وُلد لها هذا الباب.
+        const fs = await import("../followup/store");
+        const { db } = await import("../db");
+        const vd = priceVerdict;
+        updated = await db.transaction(async (tx) => {
+          const revised = await store.reviseExam(examId, revisionValues, editor, { tx });
+          const done = await fs.applyExamPriceCorrectionAfterSale({
+            followupId: vd.followupId,
+            medicalExamId: examId,
+            examDeviceEpisodeId: exam.deviceEpisodeId ?? null,
+            newPrice: deviceCost, reason: correctionReason, actor: editor, tx,
+          });
+          priceSyncNote = "تم تصحيح السعر بعد البيع: "
+            + `${vd.previousPrice.toLocaleString("en-US")} ⟶ ${deviceCost.toLocaleString("en-US")} د.ع`
+            + ` (الفرق ${done.delta > 0 ? "+" : ""}${done.delta.toLocaleString("en-US")})`
+            + " — حُدّث سعر الجهاز وكلفة المريض وقُيّد الفرق في الدفتر.";
           await auditFor(revised.version, tx);
           return revised;
         });
