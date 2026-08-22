@@ -218,6 +218,17 @@ export function templateKindFor(notificationType: string): "welcome" | "update" 
   return notificationType === REGISTRATION_WELCOME ? "welcome" : "update";
 }
 
+/**
+ * الأنواعُ التي يخدمها قالبُ **الترحيب** — **مشتقّةٌ من التصنيف نفسه**.
+ *
+ * تُقرأ في `claimDue` لتصفية الطابور **قبل** `LIMIT`. وهي قائمةٌ صغيرة
+ * لأن التصنيف نفسَه ثنائيّ: نوعٌ واحد للترحيب، وكلُّ ما عداه تحديث. ولو
+ * أُضيف نوعُ ترحيبٍ ثانٍ يوماً فمكانُه هنا وفي `templateKindFor` معاً —
+ * ولذلك تُشتقّ منها لا تُكتب بجوارها.
+ */
+export const WELCOME_NOTIFICATION_TYPES: string[] =
+  [REGISTRATION_WELCOME].filter((t) => templateKindFor(t) === "welcome");
+
 /** الأنواع التي لها نصّ فعلاً — يُشتقّ لا يُكتب مرّتين. */
 export function isSendableType(notificationType: string): boolean {
   // حمولة نموذجية لكل عائلة: النوع الذي لا نصّ له بأي حمولة ليس قابلاً للإرسال.

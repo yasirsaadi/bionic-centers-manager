@@ -200,22 +200,48 @@ export async function enqueueForContact(
  * ── ولا يُحجَز ما لا ناقلَ له ────────────────────────────────────────────
  * `channels` هي القنواتُ التي يملك العاملُ ناقلاً مُعدّاً لها الآن. وصفٌّ
  * خارجها **لا يُلمَس**: لا يُحجَز ولا يُخطّى ولا يُعدّ فشلاً — يبقى `pending`
- * حتى يُضبط ناقلُه. فمركزٌ عطّل تلغرام مؤقّتاً لا يفقد ما كان مستحقّاً عليه،
- * ومركزٌ لم يُعدّ واتساب بعدُ لا تُحرَق صفوفُه في تباعدِ إعادةٍ لا يعالج شيئاً.
+ * حتى يُضبط ناقلُه.
+ *
+ * ── ولا ما لا قالبَ له — **قبل `LIMIT` لا بعده** ────────────────────────
+ * `types` تصفيةُ نوعٍ تدخل **جملة الاختيار نفسَها**، فلا يبلغ الحاجزَ صفٌّ
+ * قالبُه غيرُ مُعدّ.
+ *
+ * ══ ولماذا لا تكفي التصفيةُ بعد الحجز ══════════════════════════════════
+ * **تجويعٌ حقيقيّ لا نظريّ.** الدفعةُ عشرون، والترتيبُ بالأقدم. فمركزٌ لم
+ * يعتمد قالبَ الترحيب بعدُ وعنده ثلاثون ترحيباً مستحقّاً وتحديثُ تصنيعٍ
+ * واحد خلفها: كلُّ دورةٍ تحجز العشرين الأولى (كلُّها ترحيب)، تعيدها، وتنتهي.
+ * **وتحديثُ التصنيع لا يبلغ الدفعةَ أبداً** — مريضٌ ينتظر جهازه لا يصله خبر
+ * لأن قالبَ ترحيبٍ لا يخصّه لم يُعتمَد.
+ *
+ * فالتصفيةُ في SQL: الصفوفُ غيرُ المؤهَّلة **لا تُقرأ ولا تُقفَل ولا تستهلك
+ * سعةَ الدفعة**، وتبقى `pending` بـ٠ محاولات — والمؤهَّلُ خلفها يُحجَز.
+ *
+ * و`types` ثلاثةُ أشكال: `null` = بلا تصفية · `{ only }` = هذه وحدها ·
+ * `{ except }` = كلُّ ما عداها. والشكلُ الثالث ضروريّ لأن «التحديث» فئةٌ
+ * مفتوحة (كلُّ نوعٍ ليس ترحيباً)، فلا تُعدّ أنواعُها ولا تُنسَخ قائمتُها.
  */
+export type TypeFilter = { only: readonly string[] } | { except: readonly string[] } | null;
+
 export async function claimDue(
   limit = 20,
   channels: readonly string[] = SUPPORTED_CHANNELS,
+  types: TypeFilter = null,
 ): Promise<PatientNotificationDelivery[]> {
   if (channels.length === 0) return [];
+  if (types && "only" in types && types.only.length === 0) return [];
   const staleBefore = new Date(Date.now() - LEASE_TIMEOUT_MS);
   const channelList = sql.join(channels.map((c) => sql`${c}`), sql`, `);
+  const typeClause = !types ? sql``
+    : "only" in types
+      ? sql` AND notification_type IN (${sql.join(types.only.map((t) => sql`${t}`), sql`, `)})`
+      : types.except.length === 0 ? sql``
+        : sql` AND notification_type NOT IN (${sql.join(types.except.map((t) => sql`${t}`), sql`, `)})`;
   return await db.transaction(async (tx) => {
     // القفل والتحديث في معاملة واحدة: القفل يصمد حتى الحفظ، فلا نافذة بين
     // «اخترتُ» و«حجزتُ» يقرأ فيها عاملٌ آخر الصفّ نفسه.
     const picked = await (tx as any).execute(sql`
       SELECT id FROM patient_notification_deliveries
-       WHERE channel IN (${channelList})
+       WHERE channel IN (${channelList})${typeClause}
          AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW())
            OR (status = 'processing' AND locked_at < ${staleBefore}))
        ORDER BY next_attempt_at

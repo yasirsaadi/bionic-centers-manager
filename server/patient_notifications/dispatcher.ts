@@ -15,12 +15,12 @@
 // ولا يُنادى المزوّد، ولا يُزاد عدّادُ محاولة. تبقى `pending` بـ٠ محاولات
 // حتى يظهر اسمُ القالب — ثم تُرسَل الصفوفُ **نفسُها** بلا تدخّل.
 
-import { renderNotification, templateKindFor } from "./render";
+import { renderNotification, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
 import { patientWhatsappEnabled, templateReady, type TemplateKind } from "../patient_whatsapp/config";
 import { sendTemplate } from "../patient_whatsapp/client";
 import {
   claimDue, contactForDelivery, markFailed, markSent, markSkipped,
-  PATIENT_CHANNEL, type DeliveryErrorCode,
+  PATIENT_CHANNEL, type DeliveryErrorCode, type TypeFilter,
 } from "./outbox";
 
 /** كل دقيقة. الإشعارُ ليس آنيّاً بطبعه، والدفعة تُفرِّغ المتراكم سريعاً. */
@@ -45,6 +45,26 @@ function readyKinds(): TemplateKind[] {
 }
 
 /**
+ * تصفيةُ الأنواع المؤهَّلة — **تدخل جملةَ الاختيار قبل `LIMIT`**.
+ *
+ * ══ ولماذا قبله لا بعده ════════════════════════════════════════════════
+ * الدفعةُ محدودة والترتيبُ بالأقدم. فلو صُفّيت بعد الحجز لاستهلك غيرُ
+ * المؤهَّل سعةَ الدفعة كلَّها ثم أُعيد — ويبقى المؤهَّلُ خلفه **لا يُحجَز
+ * أبداً**. مركزٌ لم يعتمد قالبَ ترحيبه وعنده ثلاثون ترحيباً مستحقّاً كان
+ * سيمنع تحديثَ تصنيعٍ واحداً خلفها إلى الأبد.
+ *
+ * والاشتقاقُ من `WELCOME_NOTIFICATION_TYPES` وحدها — **ولا كتالوجَ ثانٍ**:
+ * «التحديث» فئةٌ مفتوحة (كلُّ نوعٍ ليس ترحيباً)، فتُوصَف بالنفي لا بالعدّ.
+ */
+function eligibleTypes(kinds: TemplateKind[]): TypeFilter {
+  const welcome = kinds.includes("welcome");
+  const update = kinds.includes("update");
+  if (welcome && update) return null;                       // الكلّ مؤهَّل
+  if (welcome) return { only: WELCOME_NOTIFICATION_TYPES }; // الترحيبُ وحده
+  return { except: WELCOME_NOTIFICATION_TYPES };            // كلُّ ما عداه
+}
+
+/**
  * دورة واحدة. تُصدَّر كي يستدعيها الاختبار مباشرةً — وكي يُكبَس عليها فور
  * حفظ المريض فيصل الترحيب في ثوانٍ لا في دقيقة.
  *
@@ -62,7 +82,9 @@ export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
 
   let claimed: Awaited<ReturnType<typeof claimDue>>;
   try {
-    claimed = await claimDue(limit, [PATIENT_CHANNEL]);
+    // **والتصفيةُ بالقالب تدخل SQL** — فلا يستهلك غيرُ المؤهَّل سعةَ الدفعة
+    // ولا يُقفَل، ويبقى `pending` بـ٠ محاولات، ويُحجَز المؤهَّلُ خلفه.
+    claimed = await claimDue(limit, [PATIENT_CHANNEL], eligibleTypes(kinds));
   } catch {
     console.error("[patient-notifications] claim failed");
     return summary;
@@ -71,8 +93,9 @@ export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
   for (const row of claimed) {
     try {
       const kind = templateKindFor(row.notificationType);
-      // صفٌّ حُجز ثم تبيّن أن قالبَه غيرُ جاهز (سباقُ إعدادٍ نادر): يُعاد
-      // إلى الطابور **بلا عدّ محاولة** — لا يُعدّ فشلاً ولا يُخطّى.
+      // **حزامُ سباقٍ لا مسارٌ عاديّ**: التصفيةُ وقعت في SQL أعلاه، فلا يصل
+      // هنا غيرُ مؤهَّل إلا إن تغيّر الإعدادُ بين الحجز والإرسال. ويُعاد
+      // حينها إلى الطابور **بلا عدّ محاولة** — لا فشلاً ولا تخطّياً.
       if (!kinds.includes(kind)) {
         await markPendingAgain(row.id);
         continue;

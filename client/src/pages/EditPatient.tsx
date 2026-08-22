@@ -130,6 +130,8 @@ export default function EditPatient() {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      //  **القيمةُ الابتدائية من صفّ المريض** — تُملأ في `reset` أدناه.
+      whatsappNotificationsEnabled: false,
       name: "",
       phone: "",
       address: "",
@@ -167,6 +169,9 @@ export default function EditPatient() {
       form.reset({
         name: patient.name,
         phone: patient.phone || "",
+        //  من بيانات المريض الحالية، لا افتراضاً: ملفٌّ قديمٌ مطفأ يبقى مطفأً
+        //  حتى يؤشّرها الموظّف بنفسه — ولا يُرفع بمجرّد فتح النموذج.
+        whatsappNotificationsEnabled: (patient as any).whatsappNotificationsEnabled === true,
         address: patient.address || "",
         age: patient.age,
         weight: patient.weight || "",
@@ -392,6 +397,33 @@ export default function EditPatient() {
                     </FormControl>
                     <p className="text-xs text-muted-foreground">{t.patientForm.phoneHint}</p>
                     <FormMessage />
+
+                    {/* ══ إشعاراتُ واتساب — **بجوار الرقم، لا في شاشةٍ ثانية** ══
+                        هذا هو البابُ الوحيد لإدارتها بعد التسجيل: البطاقةُ في
+                        صفحة المريض تقول الحالةَ ولا تديرها. وإطفاؤها يسحب
+                        الجهةَ في الخادم، ورفعُها يُنشئها من الرقم الحالي —
+                        **بلا ترحيبٍ ثانٍ وبلا بثٍّ رجعيّ**. */}
+                    <label
+                      className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-2 cursor-pointer"
+                      data-testid="label-whatsapp-consent"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 accent-emerald-600"
+                        checked={form.watch("whatsappNotificationsEnabled") === true}
+                        onChange={(e) =>
+                          form.setValue("whatsappNotificationsEnabled", e.target.checked)}
+                        data-testid="checkbox-whatsapp-consent"
+                      />
+                      <span className="text-xs leading-relaxed">
+                        <span className="font-medium text-emerald-900">
+                          إرسال إشعارات وتحديثات المركز عبر واتساب على الرقم المسجل
+                        </span>
+                        <span className="block text-muted-foreground mt-0.5">
+                          عند تغيير الرقم تنتقل الإشعارات إلى الرقم الجديد تلقائياً.
+                        </span>
+                      </span>
+                    </label>
                   </FormItem>
                 )}
               />

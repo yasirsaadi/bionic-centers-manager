@@ -19,6 +19,11 @@
 // (ن) **ولا أثرَ تشغيليّ لتلغرام المرضى** في المستودع.
 // (ع) **وتنبيهاتُ المالك الداخلية باقيةٌ كما هي.**
 // (ف) وإعادةُ طلب التسجيل لا تُنتج ترحيباً ثانياً.
+// (ص) **ذرّيّةُ الكتابة**: عطلُ قاعدةٍ عند التسجيل أو عند تغيير الرقم لا
+//     يترك حالةً نصفَ مكتوبة — ولا رقماً جديداً مع جهةٍ قديمة نشطة.
+// (ق) **ولا تجويع**: صفوفٌ بلا قالبٍ لا تستهلك سعةَ الدفعة، والمؤهَّلُ
+//     خلفها يُرسَل.
+// (ر) **وحقلُ الموافقة في نموذج تعديل المريض** — لا في شاشةٍ ثانية.
 
 import express from "express";
 import { readFileSync, existsSync, readdirSync } from "fs";
@@ -168,6 +173,16 @@ const contactsOf = (patientId: number) => q<{ id: string; channel: string; exter
 const activeOf = async (patientId: number) =>
   (await contactsOf(patientId)).filter((c) => c.revoked_at === null);
 
+/** مريضٌ يملك طابوراً صناعياً — لاختبار سعةِ الدفعة بلا خمسةٍ وعشرين تسجيلاً. */
+async function mkQueueOwner(): Promise<{ id: number; code: string }> {
+  const r = await q<{ id: number; patient_code: string }>(
+    `INSERT INTO patients (name, phone, phone_e164, phone_status, referral_source, age,
+                           medical_condition, branch_id, total_cost)
+     VALUES ($1,'07700000009','+9647700000009','ok',$2,'40','x',1,0)
+     RETURNING id, patient_code`, [`${MARK} طابور`, MARK]);
+  return { id: r[0].id, code: r[0].patient_code };
+}
+
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
@@ -189,6 +204,13 @@ async function main() {
   };
   const httpServer = createServer(app);
   await registerRoutes(httpServer, app);
+  //  **مثلُ الإنتاج**: `server/index.ts` يركّب معالجَ أخطاءٍ عامّاً يردّ ٥٠٠
+  //  ولا يرمي (PR #71). وبدونه هنا كان خطأُ قاعدةٍ متعمَّد يُسقط العملية
+  //  بدل أن يُقاس ردُّه — فيبدو الاختبارُ منهاراً وهو يقيس السلوك الصحيح.
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    if (res.headersSent) return;
+    res.status(err?.status ?? 500).json({ message: "خطأ في الخادم" });
+  });
   await new Promise<void>((r) => httpServer.listen(PORT, "127.0.0.1", () => r()));
 
   try {
@@ -495,8 +517,181 @@ async function main() {
       "ف.٥ **ولا بثَّ جماعيّ في الترحيل**");
     check(/DEFAULT FALSE/.test(mig), "ف.٦ **وافتراضُ العمود FALSE صراحةً**");
     void readdirSync;
+
+    // ══ ص. ذرّيّةُ الكتابة — **عطلُ قاعدةٍ لا يترك نصفَ حالة** ═══════════
+    //
+    //  ══ عطلان لا عطلٌ واحد ═══════════════════════════════════════════
+    //  عطلُ المزوّد (هـ أعلاه) **لا يتراجع عن شيء** — الحفظُ ثابت والصفُّ
+    //  يُعاد. أمّا عطلُ **القاعدة نفسِها** فلا يجوز أن يُبتلَع: ردٌّ ٢٠١
+    //  بمريضٍ رايتُه مرفوعة بلا جهةٍ وبلا ترحيب وعدٌ ضاع بلا أن يعلم أحد.
+    console.log("\n── ص. ذرّيّة الكتابة ──");
+    //  حاجزٌ في القاعدة يرفض إدراجَ صفّ الترحيب — أقربُ ما يكون لعطلٍ حقيقيّ.
+    await q(`CREATE OR REPLACE FUNCTION wa_test_block_welcome() RETURNS trigger AS $$
+             BEGIN RAISE EXCEPTION 'wa_test: welcome insert blocked'; END $$ LANGUAGE plpgsql`);
+    await q(`DROP TRIGGER IF EXISTS wa_test_block_welcome ON patient_notification_deliveries`);
+    await q(`CREATE TRIGGER wa_test_block_welcome BEFORE INSERT ON patient_notification_deliveries
+             FOR EACH ROW WHEN (NEW.notification_type = '${REGISTRATION_WELCOME}')
+             EXECUTE FUNCTION wa_test_block_welcome()`);
+    const rS = await http("POST", "/api/patients", newPatientBody("ص", "07713334444"));
+    check(rS.status >= 400,
+      "ص. **التسجيلُ لا يُبلِّغ نجاحاً وحالتُه ناقصة**", `${rS.status}`);
+    const orphan = await q<{ n: number }>(
+      `SELECT COUNT(*)::int n FROM patients
+        WHERE referral_source = '${MARK}' AND phone_e164 = '+9647713334444'`);
+    same("ص.١ **ولا مريضَ نصفَ مكتوب** — المعاملةُ تراجعت كاملةً", orphan[0].n, 0);
+    same("ص.٢ ولا جهةَ يتيمة",
+      Number((await q(`SELECT COUNT(*)::int n FROM patient_contacts
+                        WHERE external_id = '9647713334444'`))[0].n), 0);
+
+    await q(`DROP TRIGGER wa_test_block_welcome ON patient_notification_deliveries`);
+    const rS2 = await http("POST", "/api/patients", newPatientBody("ص٢", "07713334444"));
+    await settle();
+    same("ص.٣ **وبعد زوال العطل يمرّ التسجيل**", rS2.status, 201);
+    same("ص.٤ **بجهةٍ واحدة وترحيبٍ واحد**",
+      [(await activeOf(rS2.body.id)).length,
+       (await deliveriesForPatient(rS2.body.id))
+         .filter((d) => d.notificationType === REGISTRATION_WELCOME).length],
+      [1, 1]);
+
+    //  ── وتغييرُ الرقم: **لا رقمٌ جديد مع جهةٍ قديمة نشطة أبداً** ──────
+    const beforePhone = (await q<{ phone_e164: string }>(
+      `SELECT phone_e164 FROM patients WHERE id=$1`, [rS2.body.id]))[0].phone_e164;
+    const beforeContacts = (await activeOf(rS2.body.id)).map((c) => c.external_id);
+    await q(`CREATE OR REPLACE FUNCTION wa_test_block_contact() RETURNS trigger AS $$
+             BEGIN RAISE EXCEPTION 'wa_test: contact insert blocked'; END $$ LANGUAGE plpgsql`);
+    await q(`DROP TRIGGER IF EXISTS wa_test_block_contact ON patient_contacts`);
+    await q(`CREATE TRIGGER wa_test_block_contact BEFORE INSERT ON patient_contacts
+             FOR EACH ROW WHEN (NEW.external_id = '9647715556666')
+             EXECUTE FUNCTION wa_test_block_contact()`);
+    const rS3 = await http("PUT", `/api/patients/${rS2.body.id}`, { phone: "07715556666" });
+    check(rS3.status >= 400, "ص.٥ **والتعديلُ يفشل معلَناً لا صامتاً**", `${rS3.status}`);
+    same("ص.٦ **والرقمُ بقي على حاله المتّسق**",
+      (await q<{ phone_e164: string }>(
+        `SELECT phone_e164 FROM patients WHERE id=$1`, [rS2.body.id]))[0].phone_e164, beforePhone);
+    same("ص.٧ **والجهةُ النشطة هي هي** — لا رقمٌ جديد مع جهةٍ قديمة",
+      (await activeOf(rS2.body.id)).map((c) => c.external_id), beforeContacts);
+    await q(`DROP TRIGGER wa_test_block_contact ON patient_contacts`);
+
+    // ══ ق. لا تجويع — التصفيةُ بالقالب قبل `LIMIT` ═════════════════════
+    //
+    //  السيناريو الذي كان يقع: الدفعةُ عشرون، والترتيبُ بالأقدم. فثلاثون
+    //  ترحيباً بلا قالبٍ معتمَد كانت تُحجَز ثم تُعاد في كلّ دورة، **وتحديثُ
+    //  التصنيع خلفها لا يبلغ الدفعةَ أبداً**.
+    console.log("\n── ق. لا تجويع ──");
+    const pQ = await mkQueueOwner();
+    //  ٢٥ جهةً وترحيباً لكلٍّ — أقدمُ من التحديث بدقيقة.
+    for (let i = 0; i < 25; i++) {
+      const cid = Number((await q<{ id: string }>(
+        `INSERT INTO patient_contacts (patient_id, channel, relation, external_id, linked_at)
+         VALUES ($1,'whatsapp','self',$2,NOW()) RETURNING id`,
+        [pQ.id, `96477000${String(i).padStart(4, "0")}`]))[0].id);
+      await q(`INSERT INTO patient_notification_deliveries
+                 (patient_id, patient_contact_id, channel, notification_type, payload,
+                  next_attempt_at)
+               VALUES ($1,$2,'whatsapp',$3,$4::jsonb, NOW() - INTERVAL '1 minute')`,
+        [pQ.id, cid, REGISTRATION_WELCOME, JSON.stringify({ patientCode: pQ.code })]);
+    }
+    const cUpd = Number((await q<{ id: string }>(
+      `INSERT INTO patient_contacts (patient_id, channel, relation, external_id, linked_at)
+       VALUES ($1,'whatsapp','self','9647799999999',NOW()) RETURNING id`, [pQ.id]))[0].id);
+    const evQ = (await q<{ id: number }>(
+      `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
+       VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
+      [pQ.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, ADMIN]))[0];
+    await q(`INSERT INTO patient_notification_deliveries
+               (patient_id, patient_event_id, patient_contact_id, channel, notification_type,
+                payload, next_attempt_at)
+             VALUES ($1,$2,$3,'whatsapp',$4,'{"stage":"mold","serviceType":"prosthetic"}'::jsonb, NOW())`,
+      [pQ.id, evQ.id, cUpd, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED]);
+
+    //  قالبُ الترحيب غائب، وقالبُ التحديث جاهز.
+    delete process.env[PATIENT_WHATSAPP_ENV.welcomeTemplate];
+    waSent.length = 0;
+    await dispatchOnce(20);   // نفسُ حجم الدفعة الحقيقيّ
+    await settle();
+    check(waSent.some((m) => m.template === UPDATE_TEMPLATE && m.to === "9647799999999"),
+      "ق. **تحديثُ التصنيع خلف ٢٥ ترحيباً وصل**", JSON.stringify(waSent.slice(0, 3)));
+    same("ق.١ **ولا ترحيبَ أُرسل**",
+      waSent.filter((m) => m.template === WELCOME_TEMPLATE).length, 0);
+    const stuck = await q<{ n: number; a: number }>(
+      `SELECT COUNT(*)::int n, COALESCE(MAX(attempt_count),0)::int a
+         FROM patient_notification_deliveries
+        WHERE patient_id=$1 AND notification_type=$2`, [pQ.id, REGISTRATION_WELCOME]);
+    same("ق.٢ **والترحيباتُ الخمسةُ والعشرون تنتظر بـ٠ محاولات**",
+      [stuck[0].n, stuck[0].a], [25, 0]);
+    same("ق.٣ **ولا صفَّ ترحيبٍ محجوز**",
+      Number((await q(`SELECT COUNT(*)::int n FROM patient_notification_deliveries
+                        WHERE patient_id=$1 AND notification_type=$2 AND status <> 'pending'`,
+        [pQ.id, REGISTRATION_WELCOME]))[0].n), 0);
+
+    //  ── العكس: قالبُ التحديث غائب والترحيبُ جاهز ──────────────────────
+    process.env[PATIENT_WHATSAPP_ENV.welcomeTemplate] = WELCOME_TEMPLATE;
+    delete process.env[PATIENT_WHATSAPP_ENV.updateTemplate];
+    waSent.length = 0;
+    await dispatchOnce(20);
+    await settle();
+    check(waSent.length > 0 && waSent.every((m) => m.template === WELCOME_TEMPLATE),
+      "ق.٤ **والعكس: الترحيبُ الجاهز يمرّ وحده**",
+      JSON.stringify(waSent.map((m) => m.template).slice(0, 3)));
+
+    //  ── ثمّ يُضبَط الغائب ⟶ **الصفوفُ نفسُها** تُرسَل ─────────────────
+    process.env[PATIENT_WHATSAPP_ENV.updateTemplate] = UPDATE_TEMPLATE;
+    const updRowBefore = (await q<{ id: string; status: string }>(
+      `SELECT id, status FROM patient_notification_deliveries
+        WHERE patient_id=$1 AND notification_type=$2`,
+      [pQ.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED]))[0];
+    waSent.length = 0;
+    await dispatchOnce(50);
+    await settle();
+    const updRowAfter = (await q<{ id: string; status: string }>(
+      `SELECT id, status FROM patient_notification_deliveries
+        WHERE patient_id=$1 AND notification_type=$2`,
+      [pQ.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED]))[0];
+    same("ق.٥ **وبعد ضبطه: الصفُّ نفسُه بمعرّفه أُرسل**",
+      [updRowAfter.id, updRowAfter.status], [updRowBefore.id, "sent"]);
+
+    //  ── ورفضُ Meta لقالبٍ **مُعدٍّ فعلاً** يبقى خطأً حقيقياً ──────────
+    const pR = await http("POST", "/api/patients", newPatientBody("ق-رفض", "07718889999"));
+    await settle();
+    await q(`UPDATE patient_notification_deliveries
+                SET status='pending', attempt_count=0, next_attempt_at=NOW(), last_error_code=NULL
+              WHERE patient_id=$1`, [pR.body.id]);
+    waFailure = { status: 400 };
+    await dispatchOnce(50);
+    await settle();
+    same("ق.٦ **ورفضُ Meta لقالبٍ مُعدٍّ = خطأٌ حقيقيّ**",
+      (await deliveriesForPatient(pR.body.id)).map((d) => [d.status, d.lastErrorCode]),
+      [["failed", "whatsapp_template_error"]]);
+
+    // ══ ر. حقلُ الموافقة في **نموذج تعديل المريض** ═════════════════════
+    console.log("\n── ر. نموذج التعديل ──");
+    const editSrc = readFileSync(
+      join(import.meta.dirname, "../../client/src/pages/EditPatient.tsx"), "utf8");
+    check(/checkbox-whatsapp-consent/.test(editSrc),
+      "ر. **المربّعُ موجودٌ في نموذج التعديل**");
+    check(/إرسال إشعارات وتحديثات المركز عبر واتساب على الرقم المسجل/.test(editSrc),
+      "ر.١ **بالنصّ نفسه الذي في التسجيل**");
+    check(/whatsappNotificationsEnabled: \(patient as any\)\.whatsappNotificationsEnabled === true/
+      .test(editSrc),
+      "ر.٢ **وقيمتُه الابتدائية من بيانات المريض** لا افتراضاً",
+      (editSrc.match(/.*whatsappNotificationsEnabled.*/g) ?? []).join(" | "));
+    check(/form\.setValue\("whatsappNotificationsEnabled", e\.target\.checked\)/.test(editSrc),
+      "ر.٣ ويُكتب في النموذج فيدخل حمولة الحفظ");
+    check(/mutate\(\{ id: patientId, data: values \}/.test(editSrc),
+      "ر.٤ **والحفظُ يرسل النموذجَ كاملاً** — فالحقلُ في حمولة PUT");
+    //  ولا بابَ ثانٍ: البطاقةُ حالةٌ تُقرأ لا شاشةُ إدارة.
+    check(!/checkbox|onChange|mutate|apiRequest/.test(cardSrc),
+      "ر.٥ **والبطاقةُ بلا أيّ زرٍّ أو تبديل**", cardSrc.slice(0, 120));
+    //  والخادمُ يقبل الحقل فعلاً على PUT (مُثبَتٌ حيّاً في ك/ل أعلاه).
+    same("ر.٦ **والخادمُ يقبله على PUT** (أُثبت حيّاً في ك/ل)",
+      (await http("PUT", `/api/patients/${rS2.body.id}`,
+        { whatsappNotificationsEnabled: true })).status, 200);
   } finally {
     globalThis.fetch = realFetch;
+    //  **حواجزُ العطل المتعمَّد تُرفع دائماً** — انهيارٌ في المنتصف كان
+    //  يتركها على الجدول فتُسقط كلَّ تشغيلٍ تالٍ بلا سببٍ مفهوم.
+    await q(`DROP TRIGGER IF EXISTS wa_test_block_welcome ON patient_notification_deliveries`);
+    await q(`DROP TRIGGER IF EXISTS wa_test_block_contact ON patient_contacts`);
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = $1`, [ADMIN]);
     await q(`DELETE FROM system_users WHERE id = $1`, [ADMIN]);
