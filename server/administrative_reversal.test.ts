@@ -207,8 +207,24 @@ async function soldOperation(label: string, price: number, opts: {
 
 const preview = (target: any, session: any = S.admin) =>
   http("POST", "/api/admin/operation-reversal/preview", session, target);
-const execute = (body: any, session: any = S.admin) =>
+/** ينفّذ كما يصل من الشاشة — بلا لمسٍ للجسم. للاختبارات السالبة. */
+const executeRaw = (body: any, session: any = S.admin) =>
   http("POST", "/api/admin/operation-reversal/execute", session, body);
+/**
+ * ينفّذ **بعد مراجعة الأثر** — وهو المسارُ المؤسّسيّ الوحيد.
+ *
+ * الختمُ صار إلزامياً، فالمساعدُ يجلب المعاينةَ الحيّة ما لم يُمرَّر ختمٌ
+ * صراحةً — فتبقى الاختباراتُ تصف نيّتَها لا آليّةَ العقد.
+ */
+async function execute(body: any, session: any = S.admin) {
+  if (body?.stateStamp !== undefined) return await executeRaw(body, session);
+  const pv = await preview({
+    followupId: body?.followupId ?? null,
+    workOrderId: body?.workOrderId ?? null,
+    episodeId: body?.episodeId ?? null,
+  }, S.admin);
+  return await executeRaw({ ...body, stateStamp: pv.body?.stateStamp }, session);
+}
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
@@ -246,7 +262,9 @@ async function main() {
     [ADMIN, "admin", "المسؤول", 1, "[]"],
     [RECV, "reception", "استعلامات", 1, "[]"],
     [MGR, "branch_manager", "مدير الفرع", 1, "[]"],
-    [DOC, "doctor", "د. المعاين", 1, '["prosthetic","medical_support"]'],
+    //  والعلاجُ الطبيعيّ معه: يلزم للبرهان السالب في (ي٢) — معاينةٌ سريريةٌ
+    //  حقيقيّة لا عمليةَ جهازٍ لها، فلا يظهر عليها بابُ التصحيح.
+    [DOC, "doctor", "د. المعاين", 1, '["prosthetic","medical_support","physiotherapy"]'],
     [EXPERT, "prosthetics_expert", "الخبير", 1, "[]"],
     [ACCT, "accountant", "المحاسب", 1, "[]"],
     [MGR_B2, "branch_manager", "مدير الفرع ٢", 2, "[]"],
@@ -691,6 +709,207 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  ز٢) **هويّةُ التصحيح صفقةٌ لا متابعةٌ مدى الحياة** — نقضُ القفل الأبديّ.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ز٢) التصحيح يتبع الصفقة لا المتابعة ──");
+    {
+      const d = await soldOperation("صفقتان على متابعةٍ واحدة", 800_000);
+      //  ① تراجعٌ عن الشراء الأول.
+      same("٨٥. (تراجعٌ عن الشراء الأول)",
+        (await execute({
+          followupId: d.followupId, mode: "purchase_only",
+          reasonCode: "purchase_recorded_by_mistake", reasonNote: "ضغطةٌ خاطئة",
+        })).status, 200);
+      //  ② ثمّ يُشترى **بشكلٍ صحيح** فيولد أمرٌ ثانٍ.
+      same("٨٦. (ثمّ يُشترى بشكل صحيح فيولد أمرٌ ثانٍ)",
+        (await http("POST", `/api/followups/${d.followupId}/confirm-purchase`,
+          S.recv, {})).status, 200);
+      const s1 = await shape(d.patientId);
+      same("   (أمران: الأولُ ملغى والثاني حيّ)",
+        [s1.wos.length, s1.wos[0].status, s1.wos[1].status],
+        [2, "cancelled", "active"]);
+      const wo2 = Number(s1.wos[1].id);
+
+      //  ③ **والمعاينةُ المسبقة لا تقول «ملغاة» للصفقة الثانية**.
+      const pv = await preview({ followupId: d.followupId });
+      same("٨٧. **الصفقةُ الثانية ليست مصحَّحة** — التصحيحُ القديم لا يقفلها",
+        [pv.body?.alreadyReversed, pv.body?.workOrderId], [false, wo2]);
+      //  ④ وتصحيحُها ينفَّذ.
+      same("٨٨. **وتصحيحُ الأمر الثاني ينفَّذ** — لا قفلَ أبديّ على المتابعة",
+        (await execute({
+          followupId: d.followupId, mode: "full_operation",
+          reasonCode: "other", reasonNote: "الثانية أيضاً خاطئة",
+        })).status, 200);
+      const s2 = await shape(d.patientId);
+      same("٨٩. **وصفّا تصحيحٍ: واحدٌ لكلّ صفقة**",
+        s2.revs.map((r: any) => [r.mode, r.delta]),
+        [["purchase_only", -800_000], ["full_operation", -800_000]]);
+      same("٩٠. **وقيدان سالبان — واحدٌ لكلّ بيعٍ وقع فعلاً**",
+        [s2.entries.filter((e: any) => e.source === "administrative_reversal").length,
+          s2.total],
+        [2, 0]);
+    }
+    //  **وإبطالٌ كاملٌ بعد التراجع مباشرةً** — قبل إعادة الشراء.
+    {
+      const d = await soldOperation("إبطالٌ بعد التراجع", 500_000);
+      await execute({
+        followupId: d.followupId, mode: "purchase_only",
+        reasonCode: "purchase_recorded_by_mistake", reasonNote: "ضغطةٌ خاطئة",
+      });
+      const mid = await shape(d.patientId);
+      same("٩١. (المالُ رجع، والطلبُ قائمٌ بلا أمر)",
+        [mid.total, mid.fus[0].status, mid.fus[0].converted_work_order_id],
+        [0, "awaiting_patient_decision", null]);
+      const pv = await preview({ followupId: d.followupId });
+      same("٩٢. **ووضعُ التراجع لم يعد متاحاً** — لا بيعَ قائم",
+        pv.body?.availableModes, ["full_operation"]);
+      same("٩٣. **والإبطالُ الكامل ينفَّذ بعده** — الطلبُ نفسُه كان خطأً",
+        (await execute({
+          followupId: d.followupId, mode: "full_operation",
+          reasonCode: "wrong_service_or_device", reasonNote: "الطلبُ نفسُه خاطئ",
+        })).status, 200);
+      const s = await shape(d.patientId);
+      same("٩٤. **وبلا عكسٍ ماليٍّ ثانٍ** — البيعُ عُكس مرّةً واحدة",
+        [s.entries.filter((e: any) => e.source === "administrative_reversal").length,
+          s.revs[1].delta, s.total],
+        [1, 0, 0]);
+      same("٩٥. **والمعاينةُ سُحبت سلطتُها والحلقةُ أُلغيت**",
+        [s.cancels.length, s.eps[0].status, s.fus[0].status],
+        [1, "cancelled", "closed_admin_void"]);
+    }
+    //  **وتصحيحُ الأمر نفسِه مرّتين يُردّ** — والضغطتان المتزامنتان كذلك.
+    {
+      const d = await soldOperation("أمرٌ واحد مرّتين", 400_000);
+      const pv = await preview({ workOrderId: d.workOrderId });
+      await executeRaw({
+        workOrderId: d.workOrderId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "الأول", stateStamp: pv.body?.stateStamp,
+      });
+      const again = await execute({
+        workOrderId: d.workOrderId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "الثاني",
+      });
+      same("٩٦. **تصحيحُ الأمر نفسِه ثانيةً يُردّ ٤٠٩**", again.status, 409);
+      const s = await shape(d.patientId);
+      same("٩٧. **وصفٌّ واحدٌ وقيدٌ واحد**",
+        [s.revs.length,
+          s.entries.filter((e: any) => e.source === "administrative_reversal").length],
+        [1, 1]);
+    }
+    {
+      const d = await soldOperation("ضغطتان على أمرٍ واحد", 350_000);
+      const pv = await preview({ workOrderId: d.workOrderId });
+      const body = {
+        workOrderId: d.workOrderId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "متزامن", stateStamp: pv.body?.stateStamp,
+      };
+      const [a, b] = await Promise.all([executeRaw(body), executeRaw(body)]);
+      same("٩٨. **وضغطتان متزامنتان على الأمر نفسِه ⟶ واحدةٌ تنجح**",
+        [a.status, b.status].sort((x, y) => x - y).map((c) => c === 200 ? "ok" : "refused"),
+        ["ok", "refused"]);
+      const s = await shape(d.patientId);
+      same("٩٩. **بصفٍّ واحدٍ وقيدٍ واحد** — يحسمه فهرسُ القاعدة",
+        [s.revs.length,
+          s.entries.filter((e: any) => e.source === "administrative_reversal").length],
+        [1, 1]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ح٢) **المسلَّمُ لا يقبل «تراجعاً عن الشراء»** — وضعٌ يستحيل معناه.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ح٢) المسلَّم: إلغاءٌ كاملٌ لا تراجعٌ عن شراء ──");
+    {
+      const d = await soldOperation("مسلَّمٌ ووضعٌ واحد", 950_000);
+      await q(`UPDATE prosthetic_work_orders SET status='completed', completed_at=NOW()
+                WHERE id=$1`, [d.workOrderId]);
+      await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW()
+                WHERE id=$1`, [d.episodeId]);
+      const pv = await preview({ followupId: d.followupId });
+      same("١٠٠. **وضعٌ واحدٌ يُعرَض للمسلَّم**",
+        pv.body?.availableModes, ["full_operation"]);
+      //  **والخادمُ يفرضها ولو صُنع الطلبُ بيد** — لا يُنفَّذ نصفُه.
+      const crafted = await executeRaw({
+        followupId: d.followupId, mode: "purchase_only",
+        reasonCode: "other", reasonNote: "طلبٌ مصنوع",
+        stateStamp: pv.body?.stateStamp,
+      });
+      same("١٠١. **وطلبٌ مصنوعٌ بـ«تراجع عن الشراء» يُردّ ٤٠٩**", crafted.status, 409);
+      check(String(crafted.body?.error ?? "").includes("سُلّم أو انتهى أمره"),
+        "١٠٢. **برسالةٍ تدلّ على الوضع الصحيح**", String(crafted.body?.error));
+      const s = await shape(d.patientId);
+      same("١٠٣. **ولا شيءَ تغيّر** — لا نصفَ تصحيح",
+        [s.revs.length, s.total, s.eps[0].status, s.wos[0].status],
+        [0, 950_000, "delivered", "completed"]);
+    }
+    //  **وتغيّرُ الحلقة بين المعاينة والتنفيذ ⟶ لا تصحيحَ نصفيّ**.
+    {
+      const d = await soldOperation("تغيّرت الحلقة", 700_000);
+      const pv = await preview({ followupId: d.followupId });
+      same("١٠٤. (وضعان متاحان قبل التسليم)",
+        pv.body?.availableModes, ["purchase_only", "full_operation"]);
+      //  يُسلَّم الجهازُ بعد فتح النافذة.
+      await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW()
+                WHERE id=$1`, [d.episodeId]);
+      await q(`UPDATE prosthetic_work_orders SET status='completed', completed_at=NOW()
+                WHERE id=$1`, [d.workOrderId]);
+      const stale = await executeRaw({
+        followupId: d.followupId, mode: "purchase_only",
+        reasonCode: "other", reasonNote: "بأثرٍ بائت",
+        stateStamp: pv.body?.stateStamp,
+      });
+      check(stale.status === 409, "١٠٥. **التنفيذُ على حالٍ تغيّرت يُردّ ٤٠٩**",
+        String(stale.status));
+      const s = await shape(d.patientId);
+      same("١٠٦. **ولا صفَّ تصحيحٍ ولا قيدَ ولا حالةً تحرّكت**",
+        [s.revs.length, s.total, s.eps[0].status, s.wos[0].status],
+        [0, 700_000, "delivered", "completed"]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ط٢) **الإذنُ والختمُ يُفرَضان داخل المعاملة**.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ط٢) الإذن تحت القفل والختم الإلزاميّ ──");
+    {
+      const d = await soldOperation("نقلُ الفرع", 600_000);
+      const pv = await preview({ followupId: d.followupId }, S.mgr);
+      same("١٠٧. (مديرُ الفرع يقرأ الأثر في فرعه)", pv.status, 200);
+      //  يُنقَل المريضُ إلى فرعٍ آخر **بعد** فتح النافذة.
+      await q(`UPDATE patients SET branch_id=2 WHERE id=$1`, [d.patientId]);
+      const moved = await executeRaw({
+        followupId: d.followupId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "بعد النقل", stateStamp: pv.body?.stateStamp,
+      }, S.mgr);
+      same("١٠٨. **ومديرُ الفرع يُردّ ٤٠٣ بعد نقل المريض** — الفحصُ تحت القفل",
+        moved.status, 403);
+      const s = await shape(d.patientId);
+      same("١٠٩. **ولا شيءَ تغيّر**", [s.revs.length, s.total], [0, 600_000]);
+      //  والمسؤولُ يمرّ على الحال نفسِها.
+      const pv2 = await preview({ followupId: d.followupId }, S.admin);
+      same("١١٠. **والمسؤولُ العامّ يمرّ** — سلطتُه في كلّ الفروع",
+        (await executeRaw({
+          followupId: d.followupId, mode: "full_operation",
+          reasonCode: "other", reasonNote: "المسؤول", stateStamp: pv2.body?.stateStamp,
+        }, S.admin)).status, 200);
+    }
+    {
+      const d = await soldOperation("بلا ختم", 550_000);
+      const noStamp = await executeRaw({
+        followupId: d.followupId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "بلا مراجعة",
+      });
+      same("١١١. **وتنفيذٌ بلا ختمٍ يُردّ ٤٠٠**", noStamp.status, 400);
+      check(String(noStamp.body?.error ?? "").includes("أعد فتح نافذة التصحيح"),
+        "١١٢. **برسالةٍ تطلب مراجعةَ الأثر أوّلاً**", String(noStamp.body?.error));
+      const empty = await executeRaw({
+        followupId: d.followupId, mode: "full_operation",
+        reasonCode: "other", reasonNote: "ختمٌ فارغ", stateStamp: "",
+      });
+      same("١١٣. **وختمٌ فارغ كذلك**", empty.status, 400);
+      const s = await shape(d.patientId);
+      same("١١٤. **ولا كتابةَ واحدة**", [s.revs.length, s.total], [0, 550_000]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  ي) **بيانات المريض الناقصة** — الحراسةُ تبقى، والردُّ يصير مفهوماً.
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ي) الملفّ الناقص ──");
@@ -707,6 +926,43 @@ async function main() {
       same("٧٠. **ولا حلقةَ فُتحت**",
         (await q(`SELECT count(*)::int AS n FROM patient_device_episodes WHERE patient_id=$1`,
           [p]))[0].n, 0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ي٢) **بابُ بطاقة المعاينة** — والخادمُ هو مَن يقول متى يُفتَح.
+    //
+    //  البطاقةُ أحدُ الأبواب الثلاثة، **لكنّ معاينةً سريريةً ليست عمليةَ
+    //  جهاز**. فالشرطُ ليس دورَ الناظر بل **وجودُ المتابعة** — الرابطُ
+    //  الذي كتبه التوقيعُ نفسُه، لا قرينةٌ تُخمَّن في الشاشة.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ي٢) بابُ بطاقة المعاينة ──");
+    {
+      const d = await soldOperation("بابُ المعاينة", 400_000);
+      const r = await http("GET", `/api/medical/patients/${d.patientId}/exams`, S.admin);
+      same("١١٥. (نقطةُ المعاينات تستجيب)", r.status, 200);
+      const exam = (r.body?.exams ?? []).find((e: any) => Number(e.id) === d.examId);
+      check(!!exam, "١١٦. (معاينةُ الجهاز موجودة)", JSON.stringify(r.body?.exams ?? []));
+      same("١١٧. **ومعاينةُ الجهاز تحمل هويّةَ عمليتها**",
+        Number(exam?.reversalFollowupId), d.followupId);
+
+      //  **والهويّةُ تفتح النافذةَ فعلاً** — لا رقمٌ يُعرَض ولا يُقبَل.
+      const pv = await preview({ followupId: exam?.reversalFollowupId }, S.admin);
+      same("١١٨. **وبها تُقرأ العمليةُ نفسُها بلا نقطةٍ ثانية**",
+        [pv.status, Number(pv.body?.workOrderId)], [200, d.workOrderId]);
+
+      //  ومعاينةٌ سريريةٌ بلا عمليةِ جهاز ⟶ لا زرَّ عليها إطلاقاً.
+      const phys = await mkPatient("معاينةٌ سريرية", 1);
+      await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [phys]);
+      await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, status, cost)
+               VALUES ($1, 1, 'physiotherapy', 'active', 0)`, [phys]);
+      const signed = await http("POST", `/api/medical/patients/${phys}/exams`, S.doc, {
+        caseType: "physiotherapy", chiefComplaint: "ألم", clinicalFindings: "—",
+        diagnosis: "—", plan: "—",
+      });
+      same("١١٩. (معاينةُ علاجٍ طبيعي وُقّعت)", signed.status < 300, true);
+      const pr = await http("GET", `/api/medical/patients/${phys}/exams`, S.admin);
+      same("١٢٠. **ومعاينةُ العلاج الطبيعي بلا عملية** — فلا بابَ عليها",
+        (pr.body?.exams ?? []).map((e: any) => e.reversalFollowupId), [null]);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -777,8 +1033,23 @@ async function main() {
       const modal = strip(readFileSync("client/src/components/NewDeviceEpisodeModal.tsx", "utf8"));
       check(modal.includes("RequiredPatientDataDialog"),
         "٨٣. **ونافذةُ الجهاز الجديد تعرضها بدل الـJSON**", "");
-      check(/pendingSelection|preserved|keepSelection/i.test(modal),
-        "٨٤. **وتحتفظ باختيار الموظّف ليعود إليه**", "");
+      //  ══ **الاختيارُ يبقى — لكن ليس في النافذة** ═══════════════════════
+      //  «إكمال البيانات الآن» يغيّر المسارَ إلى شاشة تعديل المريض، فتُفكَّك
+      //  النافذةُ والموزِّعُ والصفحةُ معاً. فحالةٌ محلّية هنا وعدٌ يموت مع
+      //  أوّل تغيّرِ مسار — وقد كان يموت فعلاً.
+      //
+      //  فالنافذةُ **تُسلّم** اختيارَها إلى مالكِ الحالة و**تُملأ** منه،
+      //  والحفظُ في `sessionStorage` عند الموزِّع. وتفصيلُ المنطق مُختبَرٌ
+      //  حيّاً في `npm run test:device-flow-resume`.
+      check(modal.includes("onEditPatient(item)"),
+        "٨٤. **وتسلّم اختيارَ الموظّف إلى مَن يبقى بعد تغيّر المسار**", "");
+      check(modal.includes("initialRequestedItem"),
+        "٨٤-ب. **وتُملأ منه عند العودة**", "");
+      const launcher = strip(readFileSync("client/src/components/PatientServiceLauncher.tsx", "utf8"));
+      check(launcher.includes("saveDeviceFlowResume")
+        && launcher.includes("takeDeviceFlowResume")
+        && /setLocation\(`\/patients\/\$\{patient\.id\}\/edit/.test(launcher),
+      "٨٤-ج. **والموزِّعُ يحفظ ويفتح شاشةَ التعديل القائمة ثمّ يستأنف**", "");
     }
   } finally {
     server.close();

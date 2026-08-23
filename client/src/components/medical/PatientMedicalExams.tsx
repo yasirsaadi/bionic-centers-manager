@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2, Trash2 } from "lucide-react";
+import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2, Trash2, ShieldAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
@@ -24,6 +24,8 @@ import {
   type MedicalSpecialty,
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
+import { useBranchSession } from "@/components/BranchGate";
+import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { buildAmputationSite, specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
 
 // Render the signed decision as label/value lines, using the very same field
@@ -116,6 +118,13 @@ interface Exam {
   addenda: Addendum[];
   /** **يقوله الخادم** — الشاشةُ لا تخمّن مَن يُلغي. */
   canCancel?: boolean;
+  /**
+   * متابعةُ هذه المعاينة — هويّةُ عمليةِ الجهاز التي يصحّحها المسؤول.
+   *
+   * `null` ⟶ معاينةٌ سريريةٌ بلا عمليةِ جهاز (علاجٌ طبيعي مثلاً)، فلا
+   * يظهر عليها بابُ التصحيح الإداريّ إطلاقاً.
+   */
+  reversalFollowupId?: number | null;
 }
 
 interface ExamsResponse {
@@ -164,6 +173,13 @@ export function PatientMedicalExams({
   const [historyOf, setHistoryOf] = useState<Exam | null>(null);
   const [cancelling, setCancelling] = useState<Exam | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  //  ══ **بابُ التصحيح الإداريّ الثالث** (ترحيل ٠٦٤) ═════════════════════
+  //  المسؤولُ يقرأ الخطأ على بطاقة المعاينة أحياناً — «هذه معاينةُ مريضٍ
+  //  آخر» — فلا يُطلَب منه أن يبحث عن الشاشة التي فيها الزرّ.
+  //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
+  const session = useBranchSession();
+  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const [reversalFor, setReversalFor] = useState<number | null>(null);
 
   const queryKey = [`/api/medical/patients/${patientId}/exams`];
 
@@ -307,6 +323,14 @@ ${addenda}
 
   return (
     <>
+      {/*  **النافذةُ نفسُها التي تفتحها البطاقتان الأخريان** — بهويّةِ
+          المتابعة التي كتبها التوقيع، ولا نقطةَ تصحيحٍ ثانية. */}
+      <AdministrativeReversalDialog
+        open={reversalFor !== null}
+        onOpenChange={(v) => { if (!v) setReversalFor(null); }}
+        patientId={patientId}
+        target={{ followupId: reversalFor }}
+      />
       <Card className="p-4 rounded-2xl border-teal-300/60 bg-teal-50/40">
         <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
           <h3 className="font-bold text-sm flex items-center gap-2 text-teal-800">
@@ -467,6 +491,22 @@ ${addenda}
                           data-testid={`button-cancel-exam-${exam.id}`}
                         >
                           <Trash2 className="w-3.5 h-3.5 ml-1" /> حذف
+                        </Button>
+                      )}
+                      {/*  **تصحيحٌ إداريٌّ للعملية — لا سحبٌ للتوقيع.**
+                          «حذف» أعلاه قرارٌ سريريّ لصاحب المعاينة؛ وهذا
+                          قرارٌ إداريٌّ يعكس البيعَ والتصنيع. ولا يظهر إلّا
+                          حين تكون لهذه المعاينة **عمليةُ جهازٍ فعلاً** —
+                          فمعاينةُ علاجٍ طبيعي لا عمليةَ لها. */}
+                      {mayReverse && exam.reversalFollowupId && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-amber-800 hover:text-amber-900"
+                          onClick={() => setReversalFor(exam.reversalFollowupId ?? null)}
+                          data-testid={`button-open-reversal-exam-${exam.id}`}
+                        >
+                          <ShieldAlert className="w-3.5 h-3.5 ml-1" /> تصحيح / إلغاء العملية
                         </Button>
                       )}
                     </div>

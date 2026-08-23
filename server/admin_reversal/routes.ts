@@ -113,16 +113,26 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       const reasonNote = typeof req.body?.reasonNote === "string" ? req.body.reasonNote.trim() : "";
       if (!reasonNote) return res.status(400).json({ error: "اكتب سبب التصحيح" });
 
-      //  الإذنُ يُفحَص على **فرع المريض المقروء من صفّه** لا من جسم الطلب.
-      const found = await reversal.previewReversal(target);
-      if (!found) return res.status(404).json({ error: "العملية غير موجودة" });
-      const perm = mayReverse(req, await branchOf(found.patientId));
-      if (!perm.ok) return res.status(403).json({ error: perm.error });
+      //  ══ **الإذنُ يُحمَل ولا يُفحَص هنا وحده** ═══════════════════════
+      //  الفحصُ قبل فتح المعاملة نافذةٌ مفتوحة: قد يُنقَل المريضُ بين
+      //  الفحص والتنفيذ. فيُمرَّر نطاقُ الجلسة الحيّ إلى المنسّق ليُقارنه
+      //  بفرع المريض **تحت القفل**. والفحصُ الأوّليّ هنا يبقى ردّاً مبكّراً
+      //  للاستقبال والمحاسب — لا هو الحارسُ الأخير.
+      const s = getSession(req);
+      if (!s.isAdmin && s.role !== "branch_manager") {
+        return res.status(403).json({
+          error: "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط",
+        });
+      }
 
       const outcome = await reversal.executeReversal({
         target, mode, reasonCode, reasonNote,
-        expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : null,
-        actor: { userId: getSession(req).userId, userName: getSession(req).userName },
+        expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : "",
+        authz: {
+          isAdmin: s.isAdmin, role: s.role,
+          scope: s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []),
+        },
+        actor: { userId: s.userId, userName: s.userName },
         audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
       });
       res.json(outcome);

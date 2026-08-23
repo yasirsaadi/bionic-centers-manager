@@ -129,10 +129,31 @@ export async function resolveOperation(
       `);
   const paidAmount = Number((pay.rows ?? [])[0]?.paid ?? 0);
 
-  const rev = await h.execute(sql`
-    SELECT id FROM administrative_operation_reversals
-     WHERE followup_id = ${Number(row.followup_id)} LIMIT 1
-  `);
+  // ══ **«صُحّحت» تعني العمليةَ القائمة، لا تاريخَ المتابعة** ═════════════
+  //  التفرّدُ على المتابعة مدى الحياة كان يقفل البابَ إلى الأبد: «تراجع عن
+  //  الشراء» يُعيد المتابعةَ نفسَها إلى ما قبل البيع، فتُشترى بعدها بشكلٍ
+  //  صحيح ويولد **أمرٌ ثانٍ**. ولو احتاج ذاك تصحيحاً لرُدّ بحجّة تصحيحٍ
+  //  قديمٍ لا علاقةَ له به — **وهو نقضُ الغرض**.
+  //
+  //  فالسؤالُ الصحيح: هل صُحّحت **هذه الصفقةُ بعينها**؟
+  //    · لها أمرُ تصنيعٍ قائم ⟶ تصحيحُ ذلك الأمر بعينه.
+  //    · بلا أمر (لم تُبَع، أو عاد الشراءُ فأُبطل) ⟶ إبطالٌ كاملٌ سابق
+  //      لهذه المتابعة بلا أمر — وهو الحدثُ الطرفيّ الذي يقع مرّةً.
+  const currentWo = row.converted_work_order_id === null
+    || row.converted_work_order_id === undefined
+    ? null : Number(row.converted_work_order_id);
+  const rev = currentWo !== null
+    ? await h.execute(sql`
+        SELECT id FROM administrative_operation_reversals
+         WHERE work_order_id = ${currentWo} LIMIT 1
+      `)
+    : await h.execute(sql`
+        SELECT id FROM administrative_operation_reversals
+         WHERE followup_id = ${Number(row.followup_id)}
+           AND work_order_id IS NULL
+           AND mode = 'full_operation'
+         LIMIT 1
+      `);
   const existingReversalId = (rev.rows ?? [])[0]?.id ?? null;
 
   const examId = row.medical_exam_id === null || row.medical_exam_id === undefined
@@ -186,6 +207,28 @@ function saleAmountOf(op: ResolvedOperation): number {
     ? op.episodeAgreedCost : op.approvedPrice;
 }
 
+/**
+ * **هل يمكن إرجاعُ هذه الصفقة إلى ما قبل الشراء حقاً؟**
+ *
+ * ══ ولماذا ليس كلُّ مباعٍ قابلاً للتراجع ═══════════════════════════════
+ * «تراجع عن الشراء فقط» يعني حرفياً: تعود الحلقةُ `examined` وتعود المتابعةُ
+ * `awaiting_patient_decision`، فيُشترى الطلبُ بعدها بشكلٍ صحيح. وجهازٌ
+ * **سُلِّم فعلاً** لا يقبل ذلك: يستحيل أن يكون `examined` و`delivered` معاً،
+ * ولا يجوز أن نُنكر تسليماً وقع لنُبسّط حالة. فالنتيجةُ حالٌ متناقضة.
+ *
+ * **ولا يُمنَع التصحيح** — يبقى «إلغاء العملية بالكامل» متاحاً بكلّ سلطته.
+ * الذي يُمنَع وضعٌ يستحيل معناه، لا حقُّ المسؤول في التصحيح.
+ */
+function purchaseOnlyPossible(op: ResolvedOperation): boolean {
+  return op.deviceEpisodeId !== null
+    && op.episodeStatus === "in_manufacturing"
+    && op.workOrderId !== null
+    && op.orderStatus !== "completed"
+    && op.orderStatus !== "cancelled"
+    && !op.episodeVoided
+    && !op.orderVoided;
+}
+
 // ── المعاينةُ المسبقة ────────────────────────────────────────────────────
 
 /**
@@ -212,9 +255,11 @@ export async function previewReversal(target: {
   const itemLabel = op.episodeRequestedItem
     ? requestedItemLabel(op.episodeRequestedItem, op.serviceType) : null;
 
-  //  **الوضعان لا يُعرَضان دائماً**: «تراجع عن الشراء» بلا بيعٍ لا معنى له.
+  //  **الوضعان لا يُعرَضان دائماً**: «تراجع عن الشراء» بلا بيعٍ لا معنى له،
+  //  ولا يُعرَض لجهازٍ سُلِّم — فذاك وضعٌ يستحيل معناه لا خيارٌ يُخفى.
   const availableModes: ReversalMode[] = alreadyReversed ? []
-    : sold ? ["purchase_only", "full_operation"] : ["full_operation"];
+    : sold && purchaseOnlyPossible(op) ? ["purchase_only", "full_operation"]
+      : ["full_operation"];
 
   const financeLines = (): ReversalImpactLine[] => {
     const out: ReversalImpactLine[] = [];
@@ -333,18 +378,41 @@ export interface ReversalOutcome {
  * السريرية**. فلو سقطت أيُّ كتابةٍ بقي الملفُّ على حاله الأول المتّسق، ولم
  * تبقَ لحظةٌ تكون فيها المعاينةُ ملغاةً والمالُ قائماً.
  */
+/**
+ * سياقُ الإذن كما يصل من الجلسة الموقَّعة — **يُفحَص داخل المعاملة**.
+ *
+ * ولا يُقبل `branchId` من الطلب ولا من المعاينة المسبقة: الفحصُ قبل فتح
+ * المعاملة نافذةٌ مفتوحة (TOCTOU) — قد يُنقَل المريضُ إلى فرعٍ آخر بينهما،
+ * فيصحّح مديرُ فرعٍ عمليةً لم تعد في نطاقه. فالنطاقُ يُقرأ من صفّ المريض
+ * **تحت القفل** ويُقارَن بنطاق الجلسة الحيّ.
+ */
+export interface ReversalAuthz {
+  isAdmin: boolean;
+  role: string;
+  /** الفروعُ التي تخوّلها الجلسةُ فعلاً. */
+  scope: number[];
+}
+
 export async function executeReversal(params: {
   target: { followupId?: number | null; workOrderId?: number | null; episodeId?: number | null };
   mode: ReversalMode;
   reasonCode: string;
   reasonNote: string;
-  /** ختمُ المعاينة المسبقة — يُقارَن تحت القفل فيُكشَف أيُّ تغيّر. */
-  expectedStamp?: string | null;
+  /** ختمُ المعاينة المسبقة — **إلزاميّ**، ويُقارَن تحت القفل. */
+  expectedStamp: string;
+  authz: ReversalAuthz;
   actor: { userId: number | null; userName: string | null };
   audit?: { ipAddress?: string | null; userAgent?: string | null };
 }): Promise<ReversalOutcome> {
   const reasonNote = String(params.reasonNote ?? "").trim();
   if (!reasonNote) throw new ReversalError("اكتب سبب التصحيح", 400);
+  // ══ **الأثرُ يُراجَع قبل التنفيذ — عقدٌ لا تحسين** ═══════════════════
+  //  المسارُ المؤسّسيّ: يُعرَض الأثر ⟶ يقرؤه المسؤول ⟶ ينفّذ **ذلك الأثر
+  //  بعينه**. وطلبٌ مصنوعٌ بلا ختمٍ يتخطّى المراجعةَ كلَّها ويُبطل عمليةً
+  //  بمالها بضغطةٍ واحدة عمياء.
+  if (typeof params.expectedStamp !== "string" || params.expectedStamp.trim() === "") {
+    throw new ReversalError("أعد فتح نافذة التصحيح لمراجعة الأثر قبل التنفيذ", 400);
+  }
 
   return await db.transaction(async (tx) => {
     // ── ① القفلُ على المتابعة — نقطةُ التسلسل الوحيدة ──────────────────
@@ -364,19 +432,46 @@ export async function executeReversal(params: {
     // ── ② القراءةُ تحت القفل — والختمُ يُقارَن ─────────────────────────
     const op = await resolveOperation(tx, { followupId });
     if (!op) throw new ReversalError("العملية غير موجودة", 404);
+
+    // ── ②-ب **الإذنُ يُعاد فحصُه تحت القفل** ───────────────────────────
+    //  الفحصُ في النقطة قبل المعاملة نافذةٌ مفتوحة: قد يُنقَل المريضُ إلى
+    //  فرعٍ آخر بين المعاينة والتنفيذ، فيُبطل مديرُ فرعٍ عمليةً لم تعد في
+    //  نطاقه. والفرعُ يُقرأ من **صفّ المريض المقفول** لا من الطلب ولا من
+    //  لقطةٍ بائتة.
+    const br = await tx.execute(sql`
+      SELECT branch_id FROM patients WHERE id = ${op.patientId} FOR UPDATE
+    `);
+    const liveBranch = (br.rows ?? [])[0]?.branch_id ?? null;
+    if (!params.authz.isAdmin) {
+      if (params.authz.role !== "branch_manager") {
+        throw new ReversalError(
+          "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط", 403);
+      }
+      if (liveBranch !== null && !params.authz.scope.includes(Number(liveBranch))) {
+        throw new ReversalError("لا يمكنك تصحيح عملية في فرع آخر", 403);
+      }
+    }
     if (op.existingReversalId !== null) {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);
     }
-    if (params.expectedStamp && params.expectedStamp !== stampOf(op)) {
-      throw new ReversalError(DRIFT, 409);
-    }
+    if (params.expectedStamp !== stampOf(op)) throw new ReversalError(DRIFT, 409);
 
     const sale = saleAmountOf(op);
     const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
-    if (params.mode === "purchase_only" && !sold) {
-      throw new ReversalError(
-        "لا يوجد شراء مسجَّل على هذه العملية — استخدم «إلغاء العملية بالكامل»", 409,
-      );
+    if (params.mode === "purchase_only") {
+      if (!sold) {
+        throw new ReversalError(
+          "لا يوجد شراء مسجَّل على هذه العملية — استخدم «إلغاء العملية بالكامل»", 409,
+        );
+      }
+      //  **والخادمُ يفرضها ولو لم تعرضها الشاشة**: طلبٌ مصنوعٌ بيدٍ يطلب
+      //  «تراجعاً عن الشراء» لجهازٍ سُلِّم يُردّ — لا يُنفَّذ نصفُه.
+      if (!purchaseOnlyPossible(op)) {
+        throw new ReversalError(
+          "لا يمكن التراجع عن الشراء لهذه العملية — الجهاز سُلّم أو انتهى أمره."
+          + " استخدم «إلغاء العملية بالكامل».", 409,
+        );
+      }
     }
 
     // ── ③ صفُّ التصحيح أوّلاً: كلُّ ما يلي يحمل هويّتَه ──────────────────
@@ -408,10 +503,16 @@ export async function executeReversal(params: {
     // ── ④ إبطالُ أمر التصنيع — بلا مسّ تاريخه ──────────────────────────
     let workOrderVoided: number | null = null;
     if (op.workOrderId !== null) {
-      await voidOrderAdministratively(tx, {
+      const voided = await voidOrderAdministratively(tx, {
         orderId: op.workOrderId, reversalId, reason: reasonNote,
         performedBy: params.actor.userId,
       });
+      //  **والنتيجةُ تُقرأ لا تُهمَل**: القفلُ يقرأ الصفَّ الحيّ، فإن كان
+      //  الأمرُ قد انتهى بين المعاينة والقفل فـ«التراجع عن الشراء» صار
+      //  مستحيلاً — ولا يُنفَّذ نصفُه بل تُرجَع المعاملةُ كلُّها.
+      if (params.mode === "purchase_only" && voided.wasTerminal) {
+        throw new ReversalError(DRIFT, 409);
+      }
       workOrderVoided = op.workOrderId;
     }
 
@@ -441,7 +542,13 @@ export async function executeReversal(params: {
     // ── ⑥ الحلقةُ والمتابعة — بحسب الوضع ───────────────────────────────
     if (params.mode === "purchase_only") {
       //  الطلبُ باقٍ والمعاينةُ فعّالة؛ الذي بطل هو الشراء وحده.
-      if (op.deviceEpisodeId !== null) await revertEpisodeToExamined(tx, op.deviceEpisodeId);
+      //
+      //  **والنتيجةُ تُقرأ**: الدالّة تشترط `in_manufacturing` في `WHERE`،
+      //  فـ`false` تعني أن الحلقةَ تغيّرت بين المعاينة والقفل. وتجاهلُها كان
+      //  سيُنتج نصفَ تصحيح: مالٌ عاد ومتابعةٌ رجعت، وحلقةٌ ما زالت مباعة.
+      if (op.deviceEpisodeId === null) throw new ReversalError(DRIFT, 409);
+      const reverted = await revertEpisodeToExamined(tx, op.deviceEpisodeId);
+      if (!reverted) throw new ReversalError(DRIFT, 409);
       const back = await tx.execute(sql`
         UPDATE post_exam_followups
            SET status = 'awaiting_patient_decision',

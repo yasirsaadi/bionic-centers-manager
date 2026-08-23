@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Wrench, CheckCircle2, Clock } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
+import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
+import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS, FINAL_RESULT_LABELS } from "@shared/manufacturing";
 
 interface OrderRow {
@@ -18,6 +21,7 @@ interface OrderRow {
   createdAt: string | null;
   finalResult: string | null;
   active: boolean;
+  adminVoidReversalId?: number | null;
   dateChanges?: { note: string; byName: string | null; at: string | null }[];
 }
 
@@ -30,6 +34,12 @@ interface OrderRow {
 export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
   const session = useBranchSession();
   const isExpert = session?.role === "prosthetics_expert";
+  //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
+  //  «بدأتُ التصنيع بالخطأ» يقولها الموظّفُ لمديره، والمديرُ يقرأ الأمرَ
+  //  هنا — فالزرُّ هنا، بهويّةِ الأمر بعينه لا بتخمينِ «آخر عملية».
+  //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
+  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const [reverseOrderId, setReverseOrderId] = useState<number | null>(null);
 
   const { data: orders } = useQuery<OrderRow[]>({
     queryKey: [`/api/manufacturing/patient/${patientId}/orders`],
@@ -47,16 +57,27 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
     iso ? new Date(iso).toLocaleDateString("ar-IQ", { year: "numeric", month: "short", day: "numeric" }) : "—";
 
   return (
-    <Card className="p-4 rounded-2xl border-primary/30 bg-primary/5">
+    //  مرساةُ «فتح العملية الحالية» حين يوجد أمرُ تصنيع — وصفحةُ الأمر
+    //  نفسُها هي الوجهةُ الأولى، وهذه للحالات التي تبقى في صفحة المريض.
+    <Card id="patient-manufacturing-card" className="p-4 rounded-2xl border-primary/30 bg-primary/5">
       <h3 className="font-bold text-sm flex items-center gap-2 text-primary mb-3">
         <Wrench className="w-4 h-4" /> سجلّ التصنيع
         <span className="text-xs font-normal text-muted-foreground">({orders.length} أمر)</span>
       </h3>
 
+      {/*  نافذةٌ واحدة للجميع — تُفتَح على الأمر المضغوط بعينه. */}
+      <AdministrativeReversalDialog
+        open={reverseOrderId !== null}
+        onOpenChange={(v) => { if (!v) setReverseOrderId(null); }}
+        patientId={patientId}
+        target={{ workOrderId: reverseOrderId }}
+      />
+
       <div className="space-y-3">
         {orders.map((o) => (
           <div
             key={o.id}
+            id={`work-order-${o.id}`}
             className={`rounded-xl border p-3 ${o.active ? "bg-white border-primary/40" : "bg-slate-50 border-slate-200"}`}
           >
             <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -74,14 +95,35 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                 )}
                 <span className="text-xs text-muted-foreground">— الخبير: {o.expertName ?? "—"}</span>
               </div>
-              <Badge
-                variant="outline"
-                className={o.active
-                  ? "bg-amber-100 text-amber-800 border-amber-200"
-                  : "bg-green-100 text-green-800 border-green-200"}
-              >
-                {STATUS_LABELS[o.status] ?? o.status}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {/*  الأمرُ المُبطَل يُقال مُبطَلاً — ولا يُفتَح عليه تصحيحٌ ثانٍ. */}
+                {o.adminVoidReversalId ? (
+                  <Badge variant="outline"
+                    className="bg-slate-200 text-slate-700 border-slate-300"
+                    data-testid={`badge-order-admin-void-${o.id}`}>
+                    {ADMIN_VOID_BADGE}
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className={o.active
+                      ? "bg-amber-100 text-amber-800 border-amber-200"
+                      : "bg-green-100 text-green-800 border-green-200"}
+                  >
+                    {STATUS_LABELS[o.status] ?? o.status}
+                  </Badge>
+                )}
+                {mayReverse && !o.adminVoidReversalId && (
+                  <button
+                    type="button"
+                    onClick={() => setReverseOrderId(o.id)}
+                    className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+                    data-testid={`button-open-reversal-order-${o.id}`}
+                  >
+                    تصحيح / إلغاء العملية
+                  </button>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
               <Item label="المرحلة" value={STAGE_LABELS[o.currentStage] ?? o.currentStage} />

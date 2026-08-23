@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
+import { POST_EXAM_CARD_ANCHOR } from "@/components/device_flow_resume";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
@@ -258,7 +259,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
   return (
-    <Card data-testid="card-post-exam-decision">
+    //  **مرساةُ «فتح العملية الحالية»** حين تكون الحلقةُ بلا أمرِ تصنيع بعد:
+    //  هذه هي البطاقةُ التي تُقرأ فيها حالةُ الطلب، فإليها يُذهَب.
+    <Card id={POST_EXAM_CARD_ANCHOR} data-testid="card-post-exam-decision">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <ClipboardCheck className="h-5 w-5 text-primary" />

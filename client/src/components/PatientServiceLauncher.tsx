@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
@@ -13,6 +14,9 @@ import {
   launcherOptions, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type ServiceFlow,
 } from "./patient_service_launcher_logic";
+import {
+  saveDeviceFlowResume, takeDeviceFlowResume, clearDeviceFlowResume, sessionResumeStore,
+} from "./device_flow_resume";
 
 // موزِّع خدمات المريض — **باب واحد إلى المسارات القائمة**.
 //
@@ -57,6 +61,20 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   const [pickerOpen, setPickerOpen] = useState(false);
   /** المسار المفتوح الآن — واحدٌ لا أكثر. */
   const [flow, setFlow] = useState<ServiceFlow | null>(null);
+  const [, setLocation] = useLocation();
+  /** الجزءُ المستأنَف بعد العودة من «تعديل مريض» — يُملأ من التخزين لا غير. */
+  const [resumeItem, setResumeItem] = useState<string>("");
+
+  // ══ **العودةُ من «تعديل مريض» تُستأنف حيث تُرك المسار** ═════════════════
+  //  حفظُ التعديل يغيّر المسار، فتُفكَّك الصفحةُ والموزِّعُ والنافذةُ معاً.
+  //  فاللقطةُ في `sessionStorage` لا في `useState` — وتُقرأ مرّةً واحدة عند
+  //  التركيب ثمّ تُمسَح، فلا تلاحق الموظّفَ نافذةٌ في كلّ تحميل.
+  useEffect(() => {
+    const resume = takeDeviceFlowResume(sessionResumeStore(), patient.id);
+    if (!resume) return;
+    setResumeItem(resume.requestedItem);
+    setFlow({ kind: "device_episode", serviceType: resume.serviceType });
+  }, [patient.id]);
 
   // حلقات المريض — تُقرأ لتعطيل «جهاز جديد» بسببٍ مفهوم حين يكون له طلبٌ
   // قائم. والخادم يبقى صاحب القرار: يردّ 409 على السباق مهما قالت الواجهة.
@@ -72,11 +90,37 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
     // تُغلَق نافذة الاختيار أوّلاً ثم تُفتح نافذة المسار: نافذتان فوق
     // بعضهما تتنازعان حبس التركيز فتبقى الثانية غير قابلة للكتابة.
     setPickerOpen(false);
+    //  اختيارٌ جديد بيدِ الموظّف ⟶ لا استئنافَ قديمٌ يملأ القائمة.
+    setResumeItem("");
     setFlow(option.flow);
   }
 
   function closeFlow(open: boolean) {
-    if (!open) setFlow(null);
+    if (open) return;
+    setFlow(null);
+    setResumeItem("");
+    //  إغلاقٌ بيدِ الموظّف قرارٌ صريح — فلا تُفتح النافذةُ عليه ثانيةً
+    //  بلقطةٍ بقيت من محاولةٍ سابقة.
+    clearDeviceFlowResume(sessionResumeStore());
+  }
+
+  /**
+   * **نقصُ الملفّ ⟶ شاشةُ التعديل القائمة، والاختيارُ محفوظ.**
+   *
+   * ولا شاشةَ تعديلٍ ثانية تُخترَع: المسارُ `/patients/:id/edit` نفسُه الذي
+   * يفتحه زرُّ «تعديل» في رأس الصفحة — بفرعه إن جاء الموظّفُ من فرع، فحفظُ
+   * التعديل يعيده إلى `/patients/:id` حيث يُستأنَف الطلب.
+   */
+  function editPatientAndResume(
+    serviceType: "prosthetic" | "medical_support", requestedItem: string,
+  ) {
+    saveDeviceFlowResume(sessionResumeStore(), {
+      patientId: patient.id, serviceType, requestedItem,
+    });
+    setFlow(null);
+    const branch = typeof window === "undefined"
+      ? null : new URLSearchParams(window.location.search).get("branch");
+    setLocation(`/patients/${patient.id}/edit${branch ? `?branch=${branch}` : ""}`);
   }
 
   return (
@@ -165,6 +209,9 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           serviceType={flow.serviceType}
           open
           onOpenChange={closeFlow}
+          initialRequestedItem={resumeItem}
+          onEditPatient={(requestedItem) =>
+            editPatientAndResume(flow.serviceType, requestedItem)}
         />
       )}
 

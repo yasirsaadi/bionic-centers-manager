@@ -1341,6 +1341,10 @@ export async function getAllOrdersForPatient(patientId: number) {
       maintenanceComponent: WO.maintenanceComponent,
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
+      //  **الأمرُ المُبطَل إدارياً يُقال مُبطَلاً** (ترحيل ٠٦٤): يبقى في
+      //  السجلّ بمراحله وختمه، لكن الشاشةَ لا تعرضه كعمليةٍ قائمة ولا تفتح
+      //  عليه بابَ تصحيحٍ ثانٍ.
+      adminVoidReversalId: WO.adminVoidReversalId,
     })
     .from(WO)
     .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
@@ -1389,6 +1393,7 @@ export async function getAllOrdersForPatient(patientId: number) {
     createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
     finalResult: r.finalResult ?? null,
     active: r.status !== "completed" && r.status !== "cancelled",
+    adminVoidReversalId: r.adminVoidReversalId ?? null,
     dateChanges: changesByOrder.get(r.id) ?? [],
   }));
 }

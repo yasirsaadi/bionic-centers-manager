@@ -274,6 +274,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         exams.map((e) => e.proposedExpertUserId).filter((n): n is number => typeof n === "number"),
       );
 
+      //  **أيُّ معاينةٍ لها عمليةُ جهاز** — بالرابط الذي كتبه التوقيع.
+      //  بطاقةُ المعاينة أحدُ أبواب التصحيح الإداريّ الثلاثة، ومعاينةٌ
+      //  سريريةٌ بلا متابعة (علاجٌ طبيعي مثلاً) ليست عمليةً تُصحَّح.
+      const followupOfExam = await store.followupIdsForExams(exams.map((e) => e.id));
+
       res.json({
         exams: exams.map((e) => ({
           ...scrub(e),
@@ -293,6 +298,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
             { doctorId: e.doctorId ?? null, caseType: e.caseType ?? null },
             specialties,
           ),
+          //  هويّةُ العملية التي يفتح بها زرُّ «تصحيح / إلغاء العملية»
+          //  نافذتَه — و`null` تعني «لا عمليةَ هنا» فلا يظهر الزرّ.
+          reversalFollowupId: followupOfExam[e.id] ?? null,
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         canWriteMedicalExam: specialties.length > 0,

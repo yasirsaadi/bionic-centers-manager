@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -11,11 +12,12 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  requestedItemOptions, requestedItemLabel, FULL_DEVICE,
+  requestedItemOptions, requestedItemLabel, isRequestedItem, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
 import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
 import { AdministrativeReversalDialog } from "./AdministrativeReversalDialog";
+import { activeOperationFocus } from "./device_flow_resume";
 import { useBranchSession } from "@/components/BranchGate";
 
 // «جهاز جديد» — تأكيدٌ واحد، بلا مال ولا خبير ولا موعد.
@@ -35,12 +37,19 @@ interface NewDeviceEpisodeModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
-   * يفتح «تعديل مريض» حين ينقص الملفّ — **والاختيارُ محفوظ**.
+   * ما اختاره الموظّفُ قبل أن يُردّ لنقصِ الملفّ — يُعاد إليه عند العودة.
+   *
+   * **ولا تحفظه هذه النافذة**: حفظُ التعديل يغيّر المسار فتُفكَّك النافذةُ
+   * والموزِّعُ والصفحةُ معاً. فمن يحفظ هو مَن يبقى، وهذه تُملأ منه.
+   */
+  initialRequestedItem?: string;
+  /**
+   * يفتح «تعديل مريض» حين ينقص الملفّ، **حاملاً الاختيارَ إلى مَن يحفظه**.
    *
    * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
-   * يعود ليبدأ الطلبَ من أوّله. فالنافذةُ تتذكّر ما اختاره وتعيده إليه.
+   * يعود ليبدأ الطلبَ من أوّله.
    */
-  onEditPatient?: () => void;
+  onEditPatient?: (requestedItem: RequestedItem | "") => void;
 }
 
 //  ══ «طرف صناعي جديد **أو جزء جديد**» ═══════════════════════════════════
@@ -53,23 +62,24 @@ const LABEL = {
 } as const;
 
 export function NewDeviceEpisodeModal({
-  patientId, serviceType, open, onOpenChange, onEditPatient,
+  patientId, serviceType, open, onOpenChange, initialRequestedItem, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   //  **بلا اختيارٍ مسبق**: «طرف كامل» افتراضاً كان سيمرّ بضغطةٍ واحدة على
   //  مريضٍ يريد ركبة — والفرقُ في الثمن هائل. فالسؤال يُطرَح ويُجاب.
-  const [item, setItem] = useState<RequestedItem | "">("");
-  //  ══ **الاختيارُ يُحفَظ حين يُرَدّ الطلبُ لنقصِ الملفّ** ═══════════════
-  //  الموظّفُ اختار «قالب» ثمّ رُدّ. فلو مُسح اختيارُه عند العودة من تعديل
-  //  المريض لبدأ من أوّله — والخطأُ الذي وُلد له هذا الباب كان تعجُّلاً.
-  const [pendingSelection, setPendingSelection] = useState<RequestedItem | "">("");
+  //
+  //  والاستئنافُ وحده يملأه: `initialRequestedItem` يأتي من مالكِ الحالة
+  //  الذي **لا يُفكَّك** عند تغيّر المسار، فيعود الموظّفُ إلى «قالب» كما
+  //  تركه لا إلى قائمةٍ فارغة.
+  const resumed = (isRequestedItem(initialRequestedItem)
+    ? initialRequestedItem : "") as RequestedItem | "";
+  const [item, setItem] = useState<RequestedItem | "">(resumed);
   useEffect(() => {
     if (!open) return;
-    //  يُستعاد المحفوظُ إن كان، وإلّا يبدأ فارغاً. ولا مسوّدةَ تتسرّب
-    //  إلى مريضٍ آخر: العودةُ تكون إلى النافذة نفسها للمريض نفسه.
-    setItem(pendingSelection);
-  }, [open]);
+    setItem(resumed);
+  }, [open, resumed]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
@@ -99,8 +109,6 @@ export function NewDeviceEpisodeModal({
       return await res.json();
     },
     onSuccess: (episode: any) => {
-      //  نجح الطلبُ ⟶ لا اختيارَ محفوظٌ ينتظر.
-      setPendingSelection("");
       toast({
         title: "تم فتح طلب الجهاز",
         description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)} — بانتظار معاينة الطبيب`,
@@ -122,7 +130,6 @@ export function NewDeviceEpisodeModal({
       //  تُفتَح نافذةٌ تسمّي الناقصَ بالعربية وتفتح تعديلَ المريض بضغطة،
       //  **ويُحفَظ اختيارُها** لتعود إليه بلا أن تبدأ من أوّله.
       if (miss.length > 0) {
-        setPendingSelection(item);
         setMissing(miss);
         setNeedsData(true);
         return;
@@ -158,10 +165,11 @@ export function NewDeviceEpisodeModal({
       missing={missing}
       onComplete={() => {
         setNeedsData(false);
-        onOpenChange(false);
-        //  **الاختيارُ باقٍ في `pendingSelection`** — فتُستأنَف النافذةُ
-        //  به حين تُفتح ثانيةً بعد الحفظ.
-        onEditPatient?.();
+        //  **الاختيارُ يُسلَّم إلى مَن يبقى** — ثمّ تُفتح شاشةُ التعديل.
+        //  ولا `onOpenChange(false)` هنا: مالكُ الحالة هو مَن يغلق المسار،
+        //  فلا يقع الإغلاقُ مرّتين ولا يسبق التسليمَ.
+        if (onEditPatient) onEditPatient(item);
+        else onOpenChange(false);
       }}
     />
     {/*  نافذةُ التصحيح — الهويّةُ هي الحلقةُ القائمة بعينها. */}
@@ -237,10 +245,25 @@ export function NewDeviceEpisodeModal({
                 الباب. والتصحيحُ للمخوَّل وحده، والخادمُ يفحصه ثانيةً. */}
             {conflict && (
               <div className="mt-2 flex flex-wrap gap-2" data-testid="block-active-operation">
+                {/*  ══ **ويفتحها فعلاً** ═══════════════════════════════
+                    أمرُ تصنيعٍ قائم ⟶ صفحةُ الأمر بمسارها القائم.
+                    حلقةٌ بلا أمر ⟶ بطاقةُ قرار ما بعد المعاينة في هذه
+                    الصفحة نفسِها. **ولا عارضَ ثانٍ للعملية** — الوجهتان
+                    قائمتان قبل هذه التمريرة، والقرارُ بينهما مُختبَر. */}
                 <button
                   type="button"
                   className="rounded-md border bg-background px-2 py-1 text-xs font-medium"
-                  onClick={() => { onOpenChange(false); }}
+                  onClick={() => {
+                    const focus = activeOperationFocus(conflict);
+                    onOpenChange(false);
+                    if (focus.kind === "route") { setLocation(focus.href); return; }
+                    //  والمرساةُ تُبرَز لا تُفتَح: البطاقةُ في الصفحة نفسِها،
+                    //  فيكفي أن تصير أمام العين. والتأخيرُ لأن النافذةَ
+                    //  تُفكَّك بعد هذه الضغطة، وحبسُ التركيز يعيده إلى زرّها.
+                    const el = typeof document === "undefined"
+                      ? null : document.getElementById(focus.elementId);
+                    if (el) setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+                  }}
                   data-testid="button-open-active-operation"
                 >
                   فتح العملية الحالية
