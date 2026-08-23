@@ -30,7 +30,9 @@ import {
   markEpisodeAdministrativelyVoid, revertEpisodeToExamined,
 } from "../device_episodes/store";
 import { voidOrderAdministratively } from "../manufacturing/store";
-import { requestedItemLabel } from "@shared/prosthetic_parts";
+import {
+  componentOfRequest, isRequestedItem, requestedItemLabel, requestedItemOptions,
+} from "@shared/prosthetic_parts";
 import {
   FOLLOWUP_ADMIN_VOID_STATUS, REVERSAL_EVENT_TITLES, reversalCostNote,
   reversalReasonLabel, type ReversalMode, type ReversalPreview,
@@ -332,7 +334,17 @@ export async function previewReversal(target: {
     financialDelta: -sale,
     requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
     availableModes,
+    availableIntents: [
+      ...(availableModes.includes("purchase_only") ? ["purchase_mistake" as const] : []),
+      "replace_requested_item", "work_order_mistake", "cancel_operation",
+    ],
+    requestedItem: op.episodeRequestedItem,
     impact,
+    replacementImpact: [
+      { kind: "check", text: "فتح طلب جهاز أو جزء جديد بكلفة صفر" },
+      { kind: "check", text: "بدء الطلب الجديد بانتظار المعاينة، بلا شراء أو تصنيع" },
+      { kind: "check", text: "عدم نسخ الدفعة أو الخصم أو الخبير أو المعاينة القديمة" },
+    ],
     currentStatusText: alreadyReversed ? "ملغاة إدارياً"
       : sold ? "تم الشراء — بدأ التصنيع" : "طلب قائم لم يُشترَ بعد",
     manufacturingStarted: started,
@@ -369,6 +381,7 @@ export interface ReversalOutcome {
   workOrderVoided: number | null;
   episodeId: number | null;
   examCancelled: number | null;
+  replacementEpisodeId: number | null;
 }
 
 /**
@@ -403,6 +416,7 @@ export async function executeReversal(params: {
   authz: ReversalAuthz;
   actor: { userId: number | null; userName: string | null };
   audit?: { ipAddress?: string | null; userAgent?: string | null };
+  replacementRequestedItem?: string | null;
 }): Promise<ReversalOutcome> {
   const reasonNote = String(params.reasonNote ?? "").trim();
   if (!reasonNote) throw new ReversalError("اكتب سبب التصحيح", 400);
@@ -455,6 +469,20 @@ export async function executeReversal(params: {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);
     }
     if (params.expectedStamp !== stampOf(op)) throw new ReversalError(DRIFT, 409);
+
+    const replacementItem = params.replacementRequestedItem ?? null;
+    if (replacementItem !== null) {
+      if (params.mode !== "full_operation" || op.deviceEpisodeId === null || op.caseId === null) {
+        throw new ReversalError("لا يمكن استبدال هذا الطلب", 409);
+      }
+      if (!isRequestedItem(replacementItem)
+          || !requestedItemOptions(op.serviceType).some((x) => x.value === replacementItem)) {
+        throw new ReversalError("الطلب الصحيح غير صالح لهذه الخدمة", 400);
+      }
+      if ((op.episodeRequestedItem ?? "full_device") === replacementItem) {
+        throw new ReversalError("اختر جهازاً أو جزءاً مختلفاً عن الطلب الحالي", 400);
+      }
+    }
 
     const sale = saleAmountOf(op);
     const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
@@ -575,6 +603,25 @@ export async function executeReversal(params: {
       if ((closed.rows ?? []).length === 0) throw new ReversalError(DRIFT, 409);
     }
 
+    let replacementEpisodeId: number | null = null;
+    if (replacementItem !== null) {
+      const seq = await tx.execute(sql`
+        SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+          FROM patient_device_episodes WHERE case_id = ${op.caseId}
+      `);
+      const inserted = await tx.execute(sql`
+        INSERT INTO patient_device_episodes
+          (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+           requested_item, component, created_by, created_at, updated_at)
+        VALUES (${op.patientId}, ${op.caseId}, ${op.branchId},
+                ${Number((seq.rows ?? [])[0]?.next ?? 1)}, 'awaiting_exam', 0,
+                ${replacementItem}, ${componentOfRequest(replacementItem)},
+                ${params.actor.userId}, NOW(), NOW())
+        RETURNING id
+      `);
+      replacementEpisodeId = Number((inserted.rows ?? [])[0].id);
+    }
+
     // ── ⑦ حدثُ المتابعة — يقرؤه الجميع بلا مفتاحٍ خام ──────────────────
     await tx.execute(sql`
       INSERT INTO post_exam_followup_events
@@ -591,6 +638,7 @@ export async function executeReversal(params: {
                 deviceEpisodeId: op.deviceEpisodeId,
                 preservedPaidAmount: op.paidAmount,
                 requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
+                replacementEpisodeId, replacementRequestedItem: replacementItem,
                 setByName: params.actor.userName,
               })}::jsonb,
               ${params.actor.userId}, ${params.actor.userName})
@@ -622,6 +670,7 @@ export async function executeReversal(params: {
         financialDelta: -sale, workOrderVoided,
         deviceEpisodeId: op.deviceEpisodeId, examCancelled,
         preservedPaidAmount: op.paidAmount,
+        replacementEpisodeId, replacementRequestedItem: replacementItem,
       },
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
@@ -637,7 +686,7 @@ export async function executeReversal(params: {
       financialDelta: -sale,
       requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
       preservedPaidAmount: op.paidAmount,
-      workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled,
+      workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled, replacementEpisodeId,
     };
   });
 }

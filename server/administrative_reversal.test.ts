@@ -321,8 +321,7 @@ async function main() {
         JSON.stringify(pv.body?.impact?.purchase_only));
 
       const r = await execute({
-        followupId: d.followupId, mode: "purchase_only",
-        reasonCode: "purchase_recorded_by_mistake",
+        followupId: d.followupId, intent: "purchase_mistake",
         reasonNote: "ضُغط الشراء قبل إكمال المسار",
         stateStamp: pv.body?.stateStamp,
       });
@@ -414,8 +413,8 @@ async function main() {
       const pv = await preview({ followupId: f.id });
       same("١٩. (المعاينةُ المسبقة تقرأ البيعَ الخاطئ)", pv.body?.saleAmount, 1_500_000);
       const r = await execute({
-        followupId: f.id, mode: "full_operation",
-        reasonCode: "wrong_service_or_device",
+        followupId: f.id, intent: "replace_requested_item",
+        replacementRequestedItem: "socket",
         reasonNote: "المريض يريد قالباً لا طرفاً كاملاً",
         stateStamp: pv.body?.stateStamp,
       });
@@ -448,12 +447,9 @@ async function main() {
       same("٢٩. **وهويّةٌ واحدة تجمع التصحيح**",
         [s.revs.length, s.revs[0].mode], [1, "full_operation"]);
 
-      // ── ثمّ الطلبُ الصحيح: **قالب** ────────────────────────────────────
-      const socket = await http("POST", `/api/patients/${patientId}/device-episodes`, S.recv, {
-        serviceType: "prosthetic", requestedItem: "socket",
-      });
-      check(socket.status < 300, "٣٠. **ويُفتح الطلبُ الصحيح فوراً — قالب**",
-        JSON.stringify(socket.body));
+      // الطلب الصحيح وُلد في المعاملة نفسها؛ لا نداء HTTP ثانٍ من المتصفح.
+      check(Number(r.body?.replacementEpisodeId) > 0,
+        "٣٠. **ويُفتح الطلبُ الصحيح ذرّياً — قالب**", JSON.stringify(r.body));
       const s3 = await shape(patientId);
       const fresh = s3.eps.filter((e: any) =>
         Number(e.id) !== oldEpId && Number(e.id) !== wrongEpId);

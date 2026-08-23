@@ -16,7 +16,7 @@
 import type { Express } from "express";
 import * as reversal from "./store";
 import { ReversalError } from "./store";
-import { isReversalMode, isReversalReasonCode } from "@shared/administrative_reversal";
+import { isCorrectionIntent, isReversalMode, isReversalReasonCode } from "@shared/administrative_reversal";
 
 type Req = any;
 
@@ -102,11 +102,16 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       if (target.followupId === null && target.workOrderId === null && target.episodeId === null) {
         return res.status(400).json({ error: "حدّد العملية المطلوب تصحيحها" });
       }
-      const mode = req.body?.mode;
+      const intent = req.body?.intent;
+      const mode = intent === "purchase_mistake" ? "purchase_only"
+        : isCorrectionIntent(intent) ? "full_operation" : req.body?.mode;
       if (!isReversalMode(mode)) {
         return res.status(400).json({ error: "اختر نوع التصحيح" });
       }
-      const reasonCode = req.body?.reasonCode;
+      const reasonCode = intent === "purchase_mistake" ? "purchase_recorded_by_mistake"
+        : intent === "replace_requested_item" ? "wrong_service_or_device"
+          : intent === "work_order_mistake" ? "work_order_created_by_mistake"
+            : intent === "cancel_operation" ? "other" : req.body?.reasonCode;
       if (!isReversalReasonCode(reasonCode)) {
         return res.status(400).json({ error: "اختر سبب التصحيح" });
       }
@@ -134,6 +139,8 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         },
         actor: { userId: s.userId, userName: s.userName },
         audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
+        replacementRequestedItem: intent === "replace_requested_item"
+          ? req.body?.replacementRequestedItem : null,
       });
       res.json(outcome);
     } catch (err: any) {

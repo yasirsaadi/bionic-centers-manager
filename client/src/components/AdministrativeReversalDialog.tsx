@@ -12,9 +12,9 @@ import {
 import { ShieldAlert, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
-  REVERSAL_MODE_LABELS, REVERSAL_MODE_HINTS, REVERSAL_REASON_CODES,
-  REVERSAL_REASON_LABELS, type ReversalMode, type ReversalPreview,
+  CORRECTION_INTENT_LABELS, type CorrectionIntent, type ReversalMode, type ReversalPreview,
 } from "@shared/administrative_reversal";
+import { requestedItemOptions } from "@shared/prosthetic_parts";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
 //
@@ -51,13 +51,14 @@ export function AdministrativeReversalDialog({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ReversalMode | "">("");
-  const [reasonCode, setReasonCode] = useState<string>("");
+  const [intent, setIntent] = useState<CorrectionIntent | "">("");
+  const [replacementRequestedItem, setReplacementRequestedItem] = useState("");
   const [reasonNote, setReasonNote] = useState("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
-    setMode(""); setReasonCode(""); setReasonNote("");
+    setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -86,6 +87,11 @@ export function AdministrativeReversalDialog({
     if (modes.length === 1 && !mode) setMode(modes[0]);
   }, [preview, mode]);
 
+  useEffect(() => {
+    if (!intent) return;
+    setMode(intent === "purchase_mistake" ? "purchase_only" : "full_operation");
+  }, [intent]);
+
   const run = useMutation({
     mutationFn: async () => {
       const res = await fetch("/api/admin/operation-reversal/execute", {
@@ -93,7 +99,7 @@ export function AdministrativeReversalDialog({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          ...target, mode, reasonCode, reasonNote: reasonNote.trim(),
+          ...target, intent, replacementRequestedItem, reasonNote: reasonNote.trim(),
           stateStamp: preview?.stateStamp,
         }),
       });
@@ -102,8 +108,10 @@ export function AdministrativeReversalDialog({
     },
     onSuccess: (out: any) => {
       toast({
-        title: mode === "purchase_only"
-          ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
+        title: intent === "replace_requested_item"
+          ? `تم تصحيح العملية وفتح طلب جديد: ${requestedItemOptions(preview?.serviceType)
+            .find((x) => x.value === replacementRequestedItem)?.label ?? "الطلب الصحيح"}.`
+          : mode === "purchase_only" ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
         description: out?.requiresFinancialSettlement
           ? "الدفعة المسجلة لم تُحذف — للمريض رصيد يحتاج تسوية مالية."
           : "عادت الحالة الصحيحة، وبقيت جميع السجلات في التاريخ.",
@@ -126,8 +134,12 @@ export function AdministrativeReversalDialog({
     }),
   });
 
-  const lines = mode && preview ? preview.impact[mode] ?? [] : [];
-  const canRun = Boolean(mode) && Boolean(reasonCode) && reasonNote.trim().length > 0
+  const lines = mode && preview ? [
+    ...(preview.impact[mode] ?? []),
+    ...(intent === "replace_requested_item" ? preview.replacementImpact : []),
+  ] : [];
+  const canRun = Boolean(intent) && reasonNote.trim().length > 0
+    && (intent !== "replace_requested_item" || Boolean(replacementRequestedItem))
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -187,46 +199,43 @@ export function AdministrativeReversalDialog({
               )}
             </div>
 
-            {/* ① ما الخطأ؟ */}
+            {/* الموظف يصف المقصود، والخادم يختار آلية العكس الآمنة. */}
             <div className="space-y-2">
-              <Label className="font-semibold">ما الخطأ الذي وقع؟ *</Label>
-              <Select value={reasonCode} onValueChange={setReasonCode}>
-                <SelectTrigger data-testid="select-reversal-reason">
-                  <SelectValue placeholder="اختر سبب التصحيح" />
-                </SelectTrigger>
-                <SelectContent>
-                  {REVERSAL_REASON_CODES.map((c) => (
-                    <SelectItem key={c} value={c}>{REVERSAL_REASON_LABELS[c]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* ② أيُّ تصحيح؟ */}
-            <div className="space-y-2">
-              <Label className="font-semibold">نوع التصحيح *</Label>
+              <Label className="font-semibold">ما الذي تريد تصحيحه؟ *</Label>
               <div className="space-y-2">
-                {preview.availableModes.map((m) => (
+                {preview.availableIntents.map((choice) => (
                   <button
-                    key={m}
+                    key={choice}
                     type="button"
-                    onClick={() => setMode(m)}
-                    data-testid={`option-mode-${m}`}
+                    onClick={() => setIntent(choice)}
+                    data-testid={`option-intent-${choice}`}
                     className={`w-full rounded-lg border p-3 text-right transition ${
-                      mode === m ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
+                      intent === choice ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
                   >
-                    <div className="font-semibold">{REVERSAL_MODE_LABELS[m]}</div>
-                    <div className="text-xs text-muted-foreground">{REVERSAL_MODE_HINTS[m]}</div>
+                    <div className="font-semibold">{CORRECTION_INTENT_LABELS[choice]}</div>
                   </button>
                 ))}
               </div>
             </div>
 
+            {intent === "replace_requested_item" && (
+              <div className="space-y-2">
+                <Label className="font-semibold">الطلب الصحيح *</Label>
+                <Select value={replacementRequestedItem} onValueChange={setReplacementRequestedItem}>
+                  <SelectTrigger data-testid="select-replacement-item"><SelectValue placeholder="اختر الجهاز أو الجزء" /></SelectTrigger>
+                  <SelectContent>
+                    {requestedItemOptions(preview.serviceType)
+                      .filter((x) => x.value !== (preview.requestedItem ?? "full_device"))
+                      .map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* ③ الأثرُ الحقيقيّ — من الخادم حرفياً */}
             {mode && (
-              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3"
-                data-testid="box-reversal-impact">
-                <div className="text-sm font-semibold text-amber-900">سيتم:</div>
+              <details className="rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid="box-reversal-impact">
+                <summary className="cursor-pointer text-sm font-semibold text-amber-900">تفاصيل ما سيحدث</summary>
                 <ul className="space-y-1 text-sm">
                   {lines.map((l, i) => (
                     <li key={i} className={`flex items-start gap-2 ${
@@ -238,7 +247,7 @@ export function AdministrativeReversalDialog({
                     </li>
                   ))}
                 </ul>
-              </div>
+              </details>
             )}
 
             {/* ④ السبب — إلزاميّ */}

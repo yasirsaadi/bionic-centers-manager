@@ -50,6 +50,7 @@ import { PriceTransition } from "@/components/PriceTransition";
 import {
   followupEventView, purchasePresentation, PURCHASE_STATE_TEXT,
 } from "@shared/followup_events";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -78,6 +79,7 @@ interface Followup {
   lastContactAt: string | null;
   closedReason: string | null;
   convertedWorkOrderId: number | null;
+  requestedItem: string | null;
   events: any[];
   priceRequests: any[];
 }
@@ -165,7 +167,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const hasPendingDiscount = (discountRows?.requests ?? [])
     .some((r: any) => r?.status === "pending");
 
-  const active = (followups ?? [])[0] ?? null;
+  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
+  const active = (followups ?? []).find((f) => !terminal.has(f.status))
+    ?? (followups ?? [])[0] ?? null;
 
   //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
   //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً
@@ -222,6 +226,30 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     );
   }
   if (!active) return null;
+
+  if (active.status === "closed_admin_void") {
+    return (
+      <Card id={POST_EXAM_CARD_ANCHOR} data-testid="card-admin-void-history"
+        className="border-gray-200 bg-gray-50 text-gray-700">
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2">
+          <XCircle className="h-5 w-5" />عملية ملغاة إدارياً
+          {mayReverse && <button type="button" onClick={() => setReversalOpen(true)}
+            className="mr-auto text-xs underline">عرض تفاصيل العملية السابقة</button>}
+        </CardTitle></CardHeader>
+        <AdministrativeReversalDialog open={reversalOpen} onOpenChange={setReversalOpen}
+          patientId={patientId} target={{ followupId: active.id }} />
+        <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+          <Field label="الطلب السابق" value={requestedItemLabel(active.requestedItem, active.serviceType)} />
+          <Field label="السعر السابق" value={`${active.approvedPrice.toLocaleString()} د.ع`} />
+          <Field label="أمر التصنيع السابق"
+            value={active.convertedWorkOrderId ? `#${active.convertedWorkOrderId}` : "—"} />
+          <Field label="سبب التصحيح" value={active.closedNote || active.lastNote || "—"} />
+          <Field label="من نفذ التصحيح" value={active.closedByName || "—"} />
+          <Field label="تاريخ التصحيح" value={fmtDateTime(active.closedEventAt ?? active.lastContactAt)} />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const actions = allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");

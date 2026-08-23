@@ -19,6 +19,17 @@
 /** وضعا التصحيح — لا ثالثَ لهما. */
 export const REVERSAL_MODES = ["purchase_only", "full_operation"] as const;
 export type ReversalMode = (typeof REVERSAL_MODES)[number];
+export const CORRECTION_INTENTS = ["purchase_mistake", "replace_requested_item", "work_order_mistake", "cancel_operation"] as const;
+export type CorrectionIntent = (typeof CORRECTION_INTENTS)[number];
+export function isCorrectionIntent(v: unknown): v is CorrectionIntent {
+  return typeof v === "string" && (CORRECTION_INTENTS as readonly string[]).includes(v);
+}
+export const CORRECTION_INTENT_LABELS: Record<CorrectionIntent, string> = {
+  purchase_mistake: "تم تسجيل الشراء بالخطأ",
+  replace_requested_item: "تم اختيار جهاز أو جزء خاطئ",
+  work_order_mistake: "تم إنشاء أمر تصنيع بالخطأ",
+  cancel_operation: "أخرى — إلغاء العملية",
+};
 
 export function isReversalMode(v: unknown): v is ReversalMode {
   return typeof v === "string" && (REVERSAL_MODES as readonly string[]).includes(v);
@@ -137,8 +148,11 @@ export interface ReversalPreview {
   requiresFinancialSettlement: boolean;
   /** الأوضاعُ المتاحة لهذه العملية بعينها. */
   availableModes: ReversalMode[];
+  availableIntents: CorrectionIntent[];
+  requestedItem: string | null;
   /** أثرُ كلّ وضعٍ سطراً سطراً. */
   impact: Record<ReversalMode, ReversalImpactLine[]>;
+  replacementImpact: ReversalImpactLine[];
   /** حالةُ العملية اليوم كما تُقرأ. */
   currentStatusText: string;
   /** بدأ العملُ فعلاً على الأمر؟ */
