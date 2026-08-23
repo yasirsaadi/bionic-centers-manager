@@ -1061,9 +1061,26 @@ export default function PatientDetails() {
                   <p className="text-muted-foreground">{t.patientDetails.paidAmount}</p>
                   <p className="font-bold text-emerald-600">{totalPaid.toLocaleString('ar-IQ')} {t.patientDetails.currency}</p>
                 </div>
-                <div className="text-left">
-                  <p className="text-muted-foreground">{t.patientDetails.remainingAmount}</p>
-                  <p className="font-bold text-red-500">{remaining.toLocaleString('ar-IQ')} {t.patientDetails.currency}</p>
+                {/*  ══ **الرصيدُ السالب يُقال رصيداً** (ترحيل ٠٦٤) ═══════════
+                    بعد تصحيحٍ إداريّ يُعكَس فيه بيعٌ دُفع جزءٌ منه، يصير
+                    المدفوعُ أكبرَ من المستحقّ. و«المتبقي: −٣٠٠,٠٠٠» بالأحمر
+                    سطرٌ يقرأه الموظّف فيظنّ عطباً في الحساب. والحقيقةُ أبسط
+                    وأنفع: **للمريض رصيدٌ يحتاج تسوية.** */}
+                <div className="text-left" data-testid="box-patient-remaining">
+                  {remaining < 0 ? (
+                    <>
+                      <p className="text-muted-foreground">رصيد للمريض</p>
+                      <p className="font-bold text-emerald-600">
+                        {Math.abs(remaining).toLocaleString('ar-IQ')} {t.patientDetails.currency}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">يحتاج تسوية مالية</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-muted-foreground">{t.patientDetails.remainingAmount}</p>
+                      <p className="font-bold text-red-500">{remaining.toLocaleString('ar-IQ')} {t.patientDetails.currency}</p>
+                    </>
+                  )}
                 </div>
               </div>
 

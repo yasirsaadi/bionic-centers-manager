@@ -35,6 +35,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
+import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
@@ -95,6 +96,8 @@ const STATUS_TONE: Record<string, string> = {
   //  رماديٌّ كالمنتهي — ولا إنذارَ أحمر: المعاينةُ سقطت والملفُّ يُستأنف
   //  بمعاينةٍ مصحَّحة، لا خطأَ قائمٌ ينتظر أحداً.
   closed_exam_cancelled: "bg-gray-100 text-gray-600",
+  //  والملغاةُ إدارياً كذلك: تصحيحٌ وقع لا خطأٌ ينتظر أحداً.
+  closed_admin_void: "bg-gray-100 text-gray-600",
   converted: "bg-green-100 text-green-800",
 };
 
@@ -162,6 +165,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     .some((r: any) => r?.status === "pending");
 
   const active = (followups ?? [])[0] ?? null;
+
+  //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
+  //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً
+  //  خاطئة. فالزرُّ هنا، على البطاقة التي يقرأ فيها الخطأ.
+  //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
+  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const [reversalOpen, setReversalOpen] = useState(false);
 
   const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
   //  السعرُ الأصلي حين سكتت المعاينة — يكتبه الاستعلامات مرّةً واحدة.
@@ -257,8 +267,24 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             data-testid="text-followup-status">
             {FOLLOWUP_STATUS_LABELS[active.status] ?? active.status}
           </span>
+          {mayReverse && (
+            <button
+              type="button"
+              onClick={() => setReversalOpen(true)}
+              className="mr-auto rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+              data-testid="button-open-reversal-followup"
+            >
+              تصحيح / إلغاء العملية
+            </button>
+          )}
         </CardTitle>
       </CardHeader>
+      <AdministrativeReversalDialog
+        open={reversalOpen}
+        onOpenChange={setReversalOpen}
+        patientId={patientId}
+        target={{ followupId: active.id }}
+      />
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
           <Field label="الخدمة" value={SERVICE_LABELS[active.serviceType] ?? active.serviceType} />

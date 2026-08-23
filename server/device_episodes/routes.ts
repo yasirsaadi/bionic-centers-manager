@@ -76,7 +76,16 @@ async function patientScope(patientId: number) {
 
 function fail(res: any, err: unknown, fallback: string) {
   if (err instanceof DeviceEpisodeError) {
-    return res.status(err.status).json({ error: err.message });
+    //  **والسياقُ المنظَّم يمرّ معها** (ترحيل ٠٦٤): الشاشةُ تبني عليه زرَّ
+    //  «فتح العملية الحالية» و — للمخوَّل — «تصحيح / إلغاء العملية»، بدل
+    //  أن تعرض جملةً لا يعرف الموظّفُ ماذا يفعل بعدها.
+    const ctx = err as any;
+    return res.status(err.status).json({
+      error: err.message,
+      ...(ctx.code ? { code: ctx.code } : {}),
+      ...(ctx.activeEpisodeId ? { activeEpisodeId: ctx.activeEpisodeId } : {}),
+      ...(ctx.activeWorkOrderId ? { activeWorkOrderId: ctx.activeWorkOrderId } : {}),
+    });
   }
   console.error(`[device-episodes] ${fallback}:`, err);
   return res.status(500).json({ error: fallback });

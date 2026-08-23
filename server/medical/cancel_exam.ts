@@ -80,6 +80,47 @@ export async function examForPermission(examId: number): Promise<ExamForPermissi
 }
 
 /**
+ * **كتابةُ شاهدة الإلغاء وحدها** — بلا حُرّاسٍ تجارية، داخل معاملة المُنادي.
+ *
+ * ══ لماذا انفصلت (ترحيل ٠٦٤) ════════════════════════════════════════════
+ * الحُرّاسُ في `cancelExam` صحيحةٌ لبابها: مَن يُلغي معاينةً وحدها لا يجوز
+ * أن يترك بيعاً قائماً بلا حدثٍ يفسّره. لكنّ **المُصحِّح الإداريّ يعكس تلك
+ * الآثار أوّلاً** — يُبطل الأمر، ويعكس الكلفة، ويُقاعد المتابعة — ثمّ يُلغي
+ * المعاينة. فالحُرّاسُ عنده أُوفيت لا أُسقطت.
+ *
+ * **ولا رايةَ عامّة `skipSoldGuard`**: علمٌ كهذا في نقطةٍ عامّة يصير باباً
+ * خلفياً يُلغي به أيُّ مخوَّلٍ معاينةً مباعة بلا عكسِ شيء. فالانفصالُ
+ * دالّةٌ داخلية شرطُها المكتوب: **العواقبُ التجارية عُكست سلفاً في هذه
+ * المعاملة نفسِها**. والبابُ العامّ يبقى بحُرّاسه كاملةً.
+ *
+ * وضغطتان متزامنتان يحسمهما فهرسُ التفرّد على `exam_id` — لا ترتيبُ الشيفرة.
+ */
+export async function writeExamCancellation(
+  tx: any,
+  params: {
+    examId: number;
+    patientId: number;
+    branchId: number | null;
+    reason: string;
+    actor: { userId: number | null; userName: string | null };
+  },
+): Promise<void> {
+  try {
+    await tx.execute(sql`
+      INSERT INTO medical_exam_cancellations
+        (exam_id, patient_id, branch_id, cancelled_by, cancelled_by_name, reason)
+      VALUES (${params.examId}, ${params.patientId}, ${params.branchId},
+              ${params.actor.userId}, ${params.actor.userName}, ${params.reason})
+    `);
+  } catch (e: any) {
+    if (String(e?.code) === "23505") {
+      throw new ExamCancelError("هذه المعاينة ملغاة بالفعل", 409);
+    }
+    throw e;
+  }
+}
+
+/**
  * الإلغاءُ نفسه — **الإذنُ يُفحَص في النقطة قبل النداء**، وهذه تحرس الواقع.
  *
  * الخطواتُ كلُّها في معاملةٍ واحدة: القفل، والحُرّاس، والشاهدة، وإرجاعُ
@@ -189,20 +230,10 @@ export async function cancelExam(params: {
       followupRetired = Number(fu.id);
     }
 
-    // ── ④ الشاهدة ──────────────────────────────────────────────────────
-    try {
-      await tx.execute(sql`
-        INSERT INTO medical_exam_cancellations
-          (exam_id, patient_id, branch_id, cancelled_by, cancelled_by_name, reason)
-        VALUES (${params.examId}, ${patientId}, ${branchId},
-                ${params.actor.userId}, ${params.actor.userName}, ${reason})
-      `);
-    } catch (e: any) {
-      if (String(e?.code) === "23505") {
-        throw new ExamCancelError("هذه المعاينة ملغاة بالفعل", 409);
-      }
-      throw e;
-    }
+    // ── ④ الشاهدة — **الكتابةُ الواحدة** التي يشاركها المُصحِّح الإداريّ ──
+    await writeExamCancellation(tx, {
+      examId: params.examId, patientId, branchId, reason, actor: params.actor,
+    });
 
     // ── ⑤ إرجاعُ الحلقة ────────────────────────────────────────────────
     if (episodeReset !== null) {

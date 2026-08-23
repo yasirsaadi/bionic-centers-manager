@@ -286,12 +286,17 @@ same("   وكلُّ حالةٍ بعنوانٍ عربي",
   FOLLOWUP_STATUSES.filter((s) => !FOLLOWUP_STATUS_LABELS[s]), []);
 same("   وسببٌ مخترَع يُردّ", isFollowupReason("whatever"), false);
 same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_salary_or_finance"), true);
-//  **وصارت ثلاثاً بترحيل ٠٦١**: `closed_exam_cancelled` تُغلق متابعةً
-//  وُلدت عن معاينةٍ أُلغيت. ولم تُوسَم `closed_without_purchase` لأن معناها
-//  المعروض «مغلق بدون شراء» — والمريضُ لم يرفض الشراء، بل سقطت المعاينة.
-same("ك. النهائيّاتُ ثلاثٌ لا غير",
+//  **وصارت ثلاثاً بترحيل ٠٦١** ثمّ **أربعاً بترحيل ٠٦٤**، ولكلٍّ معناها:
+//  `closed_exam_cancelled` تُغلق متابعةً وُلدت عن معاينةٍ أُلغيت سريرياً،
+//  و`closed_admin_void` تُغلق عمليةً بطلت بقرارٍ إداريٍّ مدقَّق. ولم تُوسَم
+//  أيٌّ منهما `closed_without_purchase`: معناها المعروض «مغلق بدون شراء»،
+//  والمريضُ لم يرفض الشراء في الحالتين.
+same("ك. النهائيّاتُ أربعٌ لا غير",
   FOLLOWUP_STATUSES.filter(isTerminal),
-  ["closed_without_purchase", "converted", "closed_exam_cancelled"]);
+  ["closed_without_purchase", "converted", "closed_exam_cancelled",
+    "closed_admin_void"]);
+same("ك.ج **وعنوانُ الملغاة إدارياً يقول سببَها**",
+  FOLLOWUP_STATUS_LABELS.closed_admin_void, "ملغاة إدارياً");
 same("ك.ب وعنوانُها يقول سببَها",
   FOLLOWUP_STATUS_LABELS.closed_exam_cancelled, "أُغلقت بسبب إلغاء المعاينة");
 //  ══ **الشارةُ تقول الواقعة لا اسم الآلة** ═══════════════════════════════
@@ -350,8 +355,11 @@ console.log("\n── لا حالةَ تنتظر طبيباً ──");
 //  «إعادة فتح» لها عمداً — متابعةٌ وُلدت عن معاينةٍ ملغاة لا تُبعَث؛
 //  المعاينةُ المصحَّحة تُنشئ متابعتَها هي. (و`closed_without_purchase`
 //  تبقى في القائمة لأن إعادةَ فتحها فعلٌ مشروعٌ يملكه الفرع.)
+//  و`closed_admin_void` كذلك (ترحيل ٠٦٤): عمليةٌ بطلت إدارياً لا تُبعَث —
+//  الطلبُ الصحيح يُفتَح من جديد بمتابعته هو.
 const NON_TERMINAL = FOLLOWUP_STATUSES.filter(
-  (st) => st !== "converted" && st !== "closed_exam_cancelled");
+  (st) => st !== "converted" && st !== "closed_exam_cancelled"
+    && st !== "closed_admin_void");
 same("ت. **الاستقبالُ يملك فعلاً في كلّ حالةٍ حيّة إلّا الطلبَ القديم**",
   NON_TERMINAL.filter((st) => allowedActions(recv, st).length === 0),
   ["price_approval_pending"]);

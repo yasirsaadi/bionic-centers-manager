@@ -14,6 +14,9 @@ import {
   requestedItemOptions, requestedItemLabel, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
+import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
+import { AdministrativeReversalDialog } from "./AdministrativeReversalDialog";
+import { useBranchSession } from "@/components/BranchGate";
 
 // «جهاز جديد» — تأكيدٌ واحد، بلا مال ولا خبير ولا موعد.
 //
@@ -31,6 +34,13 @@ interface NewDeviceEpisodeModalProps {
   serviceType: "prosthetic" | "medical_support";
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * يفتح «تعديل مريض» حين ينقص الملفّ — **والاختيارُ محفوظ**.
+   *
+   * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
+   * يعود ليبدأ الطلبَ من أوّله. فالنافذةُ تتذكّر ما اختاره وتعيده إليه.
+   */
+  onEditPatient?: () => void;
 }
 
 //  ══ «طرف صناعي جديد **أو جزء جديد**» ═══════════════════════════════════
@@ -43,20 +53,38 @@ const LABEL = {
 } as const;
 
 export function NewDeviceEpisodeModal({
-  patientId, serviceType, open, onOpenChange,
+  patientId, serviceType, open, onOpenChange, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   //  **بلا اختيارٍ مسبق**: «طرف كامل» افتراضاً كان سيمرّ بضغطةٍ واحدة على
   //  مريضٍ يريد ركبة — والفرقُ في الثمن هائل. فالسؤال يُطرَح ويُجاب.
   const [item, setItem] = useState<RequestedItem | "">("");
-  //  ولا مسوّدةٌ تتسرّب إلى المريض التالي.
-  useEffect(() => { if (open) setItem(""); }, [open]);
+  //  ══ **الاختيارُ يُحفَظ حين يُرَدّ الطلبُ لنقصِ الملفّ** ═══════════════
+  //  الموظّفُ اختار «قالب» ثمّ رُدّ. فلو مُسح اختيارُه عند العودة من تعديل
+  //  المريض لبدأ من أوّله — والخطأُ الذي وُلد له هذا الباب كان تعجُّلاً.
+  const [pendingSelection, setPendingSelection] = useState<RequestedItem | "">("");
+  useEffect(() => {
+    if (!open) return;
+    //  يُستعاد المحفوظُ إن كان، وإلّا يبدأ فارغاً. ولا مسوّدةَ تتسرّب
+    //  إلى مريضٍ آخر: العودةُ تكون إلى النافذة نفسها للمريض نفسه.
+    setItem(pendingSelection);
+  }, [open]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
   const [missing, setMissing] = useState<string[]>([]);
-  useEffect(() => { if (open) { setBlockNote(""); setMissing([]); } }, [open]);
+  //  نافذةُ الملفّ الناقص — **بدل الـJSON الخام**.
+  const [needsData, setNeedsData] = useState(false);
+  //  طلبٌ قائمٌ يمنع فتحَ ثانٍ — ومعه ما يفتحه أو يصحّحه.
+  const [conflict, setConflict] = useState<
+    { episodeId: number | null; workOrderId: number | null } | null>(null);
+  const [reversalOpen, setReversalOpen] = useState(false);
+  const session = useBranchSession();
+  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  useEffect(() => {
+    if (open) { setBlockNote(""); setMissing([]); setNeedsData(false); setConflict(null); }
+  }, [open]);
   //  والمساندُ الطبية لا أجزاءَ لها في هذه القائمة — قائمةُ أجزاءِ طرفٍ
   //  صناعي بعينها. فتبقى كما كانت: تأكيدٌ واحد.
   const asksItem = serviceType === "prosthetic";
@@ -71,6 +99,8 @@ export function NewDeviceEpisodeModal({
       return await res.json();
     },
     onSuccess: (episode: any) => {
+      //  نجح الطلبُ ⟶ لا اختيارَ محفوظٌ ينتظر.
+      setPendingSelection("");
       toast({
         title: "تم فتح طلب الجهاز",
         description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)} — بانتظار معاينة الطبيب`,
@@ -86,10 +116,26 @@ export function NewDeviceEpisodeModal({
       onOpenChange(false);
     },
     onError: (error: any) => {
+      const miss: string[] = Array.isArray(error?.missing) ? error.missing : [];
+      // ══ **نقصُ الملفّ ليس خطأً بل خطوةٌ ناقصة** ══════════════════════
+      //  فلا يُسكَب رمزُ الحالة ولا اسمُ الحقل الإنجليزيّ على الموظّفة:
+      //  تُفتَح نافذةٌ تسمّي الناقصَ بالعربية وتفتح تعديلَ المريض بضغطة،
+      //  **ويُحفَظ اختيارُها** لتعود إليه بلا أن تبدأ من أوّله.
+      if (miss.length > 0) {
+        setPendingSelection(item);
+        setMissing(miss);
+        setNeedsData(true);
+        return;
+      }
       // الخادم يبقى صاحب القرار: قد تكون حلقةٌ فُتحت من جهازٍ آخر بين
       // تحميل الصفحة والضغط، فتصل 409 برسالتها — تُعرَض كما هي.
+      //  **وطلبٌ قائمٌ يُعرَض بأزراره لا بجملةٍ وحدها**: الموظّفُ يحتاج أن
+      //  يفتح العمليةَ القائمة، والمخوَّلُ أن يصحّحها إن كانت خطأً.
+      setConflict(error?.code === "active_device_operation" ? {
+        episodeId: Number(error?.activeEpisodeId) || null,
+        workOrderId: Number(error?.activeWorkOrderId) || null,
+      } : null);
       setBlockNote(error?.message || "حدث خطأ غير متوقع");
-      setMissing(Array.isArray(error?.missing) ? error.missing : []);
       toast({
         title: "تعذّر فتح طلب الجهاز",
         description: error?.message || "حدث خطأ غير متوقع",
@@ -99,7 +145,35 @@ export function NewDeviceEpisodeModal({
   });
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <>
+    {/*  ══ الملفُّ الناقص — نافذةٌ تُقرأ، لا `missing:["amputationLevel"]` ══ */}
+    <RequiredPatientDataDialog
+      open={needsData}
+      onOpenChange={(v) => {
+        setNeedsData(v);
+        //  إغلاقُها بلا إكمال يُبقي الاختيارَ محفوظاً كذلك — قد تعود بعد
+        //  أن تسأل المريضَ عن مقاسه.
+        if (!v) onOpenChange(false);
+      }}
+      missing={missing}
+      onComplete={() => {
+        setNeedsData(false);
+        onOpenChange(false);
+        //  **الاختيارُ باقٍ في `pendingSelection`** — فتُستأنَف النافذةُ
+        //  به حين تُفتح ثانيةً بعد الحفظ.
+        onEditPatient?.();
+      }}
+    />
+    {/*  نافذةُ التصحيح — الهويّةُ هي الحلقةُ القائمة بعينها. */}
+    {conflict?.episodeId && (
+      <AdministrativeReversalDialog
+        open={reversalOpen}
+        onOpenChange={(v) => { setReversalOpen(v); if (!v) onOpenChange(false); }}
+        patientId={patientId}
+        target={{ episodeId: conflict.episodeId, workOrderId: conflict.workOrderId }}
+      />
+    )}
+    <AlertDialog open={open && !needsData && !reversalOpen} onOpenChange={onOpenChange}>
       <AlertDialogContent dir="rtl">
         <AlertDialogHeader>
           <AlertDialogTitle>{LABEL[serviceType]}</AlertDialogTitle>
@@ -159,6 +233,30 @@ export function NewDeviceEpisodeModal({
                 أكمِلها من «تعديل مريض» ثم أعد المحاولة.
               </p>
             )}
+            {/*  **وأزرارُ العمل مع الرسالة** — لا جملةٌ تُقرأ ثمّ يُبحَث عن
+                الباب. والتصحيحُ للمخوَّل وحده، والخادمُ يفحصه ثانيةً. */}
+            {conflict && (
+              <div className="mt-2 flex flex-wrap gap-2" data-testid="block-active-operation">
+                <button
+                  type="button"
+                  className="rounded-md border bg-background px-2 py-1 text-xs font-medium"
+                  onClick={() => { onOpenChange(false); }}
+                  data-testid="button-open-active-operation"
+                >
+                  فتح العملية الحالية
+                </button>
+                {mayReverse && (
+                  <button
+                    type="button"
+                    className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900"
+                    onClick={() => setReversalOpen(true)}
+                    data-testid="button-reverse-active-operation"
+                  >
+                    تصحيح / إلغاء العملية
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -174,5 +272,6 @@ export function NewDeviceEpisodeModal({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    </>
   );
 }

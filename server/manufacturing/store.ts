@@ -1200,6 +1200,59 @@ export async function cancelOrder(params: {
   });
 }
 
+/**
+ * **إبطالُ أمرٍ إدارياً** (ترحيل ٠٦٤) — داخل معاملة المُصحِّح، بلا حُرّاسه.
+ *
+ * ══ ولماذا ليست `cancelOrder` ═══════════════════════════════════════════
+ * تلك بابُ التصنيع الطبيعيّ: تفتح معاملتَها، وترفض المنتهيَ
+ * (`assertNotTerminal`)، وتُزامن الحلقةَ إلى حالةٍ طرفيّة. وثلاثتُها لا
+ * تصلح هنا — **والباب الطبيعيُّ يبقى بحُرّاسه كما هو**.
+ *
+ *   ① التصحيحُ الإداريّ جزءٌ من معاملةٍ أكبر تعكس مالاً وتُقاعد متابعةً
+ *     وتُلغي معاينة. فمعاملةٌ ثانية تكسر ذرّيةَ الفعل الواحد.
+ *   ② والمالكُ يجب أن يصحّح **حتى أمراً اكتمل**: منعُه هو الحبسُ الذي وُلد
+ *     هذا الباب لأجل رفعه.
+ *   ③ والحلقةُ يتولّاها المُصحِّح بقواعده هو — فحلقةٌ مسلَّمة تبقى مسلَّمة.
+ *
+ * ══ وما لا يُمَسّ إطلاقاً ════════════════════════════════════════════════
+ * **سجلُّ المراحل، والمواد، والخبير، وأحداثُ إعادة العمل، ومواعيدُ التسليم،
+ * وختمُ الاكتمال.** أمرٌ اكتمل يبقى `completed` بختمه ويخرج من السلطة
+ * التجارية بالوسم وحده — فلا يُقال إن جهازاً سُلِّم لم يُسلَّم. وأمرٌ لم
+ * ينتهِ يأخذ الوسمَ و`cancelled` معاً: تلك حالتُه الصحيحة فعلاً.
+ *
+ * ويُلحَق **سطرُ تاريخٍ صريح** يقول إنه بطل إدارياً ولماذا — فمن يقرأ
+ * الأمرَ بعد سنة يجد الروايةَ في مكانها لا في جدولٍ آخر.
+ */
+export async function voidOrderAdministratively(
+  tx: any,
+  params: {
+    orderId: number;
+    reversalId: number;
+    reason: string;
+    performedBy: number | null;
+  },
+): Promise<{ wasTerminal: boolean; status: string; currentStage: string | null }> {
+  const live = await lockOrder(tx, params.orderId);
+  const wasTerminal = live.status === "completed" || live.status === "cancelled";
+  await tx.update(WO)
+    .set({
+      //  المنتهي يبقى على حالته — الوسمُ وحده يرفع سلطتَه.
+      ...(wasTerminal ? {} : { status: "cancelled", holdReasonCode: null, holdNote: null }),
+      adminVoidReversalId: params.reversalId,
+      updatedAt: new Date(),
+    })
+    .where(eq(WO.id, params.orderId));
+  await tx.insert(WH).values({
+    workOrderId: params.orderId,
+    actionType: "status_change",
+    fromStage: live.currentStage, toStage: live.currentStage,
+    notes: `إلغاء إداري للعملية — ${params.reason}`
+      + (wasTerminal ? " (بقي سجل التنفيذ والتسليم كما هو)" : ""),
+    performedBy: params.performedBy,
+  });
+  return { wasTerminal, status: live.status, currentStage: live.currentStage };
+}
+
 export async function reassignExpert(params: {
   order: ProstheticWorkOrder;
   newExpertUserId: number;

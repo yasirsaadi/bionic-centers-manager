@@ -385,7 +385,23 @@ export async function startDeviceEpisode(params: {
        LIMIT 1
     `);
     if ((open.rows ?? []).length > 0) {
-      throw new DeviceEpisodeError("لدى المريض جهاز من هذا النوع قيد الإجراء بالفعل", 409);
+      //  ══ **رسالةٌ تقول ماذا يفعل، لا ماذا منعه** (ترحيل ٠٦٤) ═══════════
+      //  «لدى المريض جهاز قيد الإجراء» جملةٌ صحيحة لا تفيد: الموظّفُ لا
+      //  يعرف أيَّ جهاز، ولا كيف يفتحه، ولا أن للمدير باباً يصحّحه إن كان
+      //  خطأً. فالسياقُ المنظَّم يُرسَل معها لتبني الشاشةُ عليه أزرارَها.
+      const e = new DeviceEpisodeError(
+        "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد", 409,
+      );
+      (e as any).code = "active_device_operation";
+      (e as any).activeEpisodeId = Number((open.rows ?? [])[0].id);
+      const wo = await tx.execute<{ id: number }>(sql`
+        SELECT id FROM prosthetic_work_orders
+         WHERE device_episode_id = ${Number((open.rows ?? [])[0].id)}
+           AND status NOT IN ('completed', 'cancelled')
+         LIMIT 1
+      `);
+      (e as any).activeWorkOrderId = (wo.rows ?? [])[0]?.id ?? null;
+      throw e;
     }
 
     //  **والطرف الآخر من السباق نفسه.** أمرُ بناءٍ قديمٍ نشط — بلا حلقة —
@@ -792,6 +808,65 @@ export async function ensureFirstDeviceEpisodeForSale(
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
   };
+}
+
+/**
+ * **البطلانُ الإداريّ للحلقة** (ترحيل ٠٦٤) — يرفع السلطةَ ولا يمحو الشهادة.
+ *
+ * حلقةٌ لم تُسلَّم بعد تأخذ `cancelled` **والوسمَ** معاً: تلك حالتُها
+ * الصحيحة فعلاً، ولا شهادةَ تُمحى.
+ *
+ * وحلقةٌ **سُلِّمت** تأخذ الوسمَ **وحدَه**: التسليمُ واقعةٌ فيزيائية —
+ * المريضُ يحمل الجهاز — وتحويلُها إلى «ملغاة» وتصفيرُ `delivered_at` يكتب
+ * ماضياً لم يقع. فتبقى `delivered` بختمها، وتخرج من الطوابير والسلطة
+ * التجارية بالوسم.
+ *
+ * **ولا يُحذف صفٌّ ولا تسلسلٌ ولا `requested_item`**: التصحيحُ يبطل عمليةً
+ * ولا يمحو أن المريضَ طلب قالباً يوماً.
+ */
+export async function markEpisodeAdministrativelyVoid(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; reversalId: number; reason: string },
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET admin_void_reversal_id = ${params.reversalId},
+           status = CASE WHEN status = 'delivered' THEN status ELSE 'cancelled' END,
+           cancelled_at = CASE WHEN status = 'delivered' THEN cancelled_at ELSE NOW() END,
+           cancel_reason = CASE WHEN status = 'delivered' THEN cancel_reason
+                                ELSE ${params.reason} END,
+           updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+}
+
+/**
+ * أعِد الحلقةَ من «قيد التصنيع» إلى «مُعايَنة» — **للتراجع عن الشراء وحده**.
+ *
+ * الطلبُ باقٍ والمعاينةُ فعّالة؛ الذي بطل هو الشراء. فتعود الحلقةُ إلى ما
+ * قبل البيع **بالضبط**.
+ *
+ * ══ و«بالضبط» تشمل السعر — وهذا ما كسره الاختبار ══════════════════════
+ * `markEpisodeInManufacturing` تكتب **الحالةَ والسعرَ معاً** لحظةَ البيع.
+ * فإرجاعُ الحالة وحدها يترك `agreed_cost` على سعر البيع الملغى، ثمّ يُحسب
+ * الشراءُ الصحيح التالي بفرقٍ من ذلك الرقم — `750,000 − 750,000 = 0` —
+ * **فلا يعود المالُ إلى حساب المريض أبداً** ويُشترى الجهازُ مجّاناً في
+ * الأرقام. فما كتبه البيعُ معاً يُرجَع معاً.
+ *
+ * والشرطُ في `WHERE` يمنع أن تقع على حلقةٍ تغيّرت حالتُها بين القراءة
+ * والكتابة.
+ */
+export async function revertEpisodeToExamined(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeId: number,
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'examined', agreed_cost = 0, updated_at = NOW()
+     WHERE id = ${episodeId} AND status = 'in_manufacturing'
+    RETURNING id
+  `);
+  return (r.rows ?? []).length > 0;
 }
 
 /** الحلقةُ المقفولة لتصحيح سعرها — هويّتُها وحالتُها وسعرُها القائم. */
