@@ -669,6 +669,131 @@ export async function markEpisodeInManufacturing(
   `);
 }
 
+/**
+ * **حلقةُ الجهاز الأول تُماديَ عند البيع — لا تُترك للتاريخ.**
+ *
+ * ══ الثغرةُ التي تُغلقها (المريض WB-02243، بعد ٢٣٩) ═══════════════════
+ * ترحيلُ ٠٥٠ ملأ أوامرَ البناء التاريخية بحلقاتها — **لكنه جرى مرّةً
+ * واحدة**. والمسارُ الحيّ ظلّ يقبل بيعَ **الجهاز الأول** بلا حلقة: مريضٌ
+ * جديد يُعايَن ثمّ يشتري، والاستعلاماتُ لم تفتح له «طلبَ جهاز» صراحةً —
+ * فلا حلقةَ ولا هويّة. **فصفٌّ يولد اليوم يصير «تاريخياً» لحظةَ ولادته**،
+ * ويُردّ عليه تصحيحُ السعر بعد البيع بحجّة «مسارٌ قديم بلا هويّة جهاز».
+ *
+ * والعلاجُ ليس ترحيلاً ثانياً بل **إغلاقُ البابِ نفسه**: تُماديَ الحلقةُ
+ * في **أضيق نقطةٍ يَعلم فيها النظامُ يقيناً** أن هذه المتابعةَ بعينها
+ * تتحوّل إلى هذا البيع بعينه — لحظةَ تأكيد الشراء، داخل معاملته.
+ *
+ * ══ ولا تُنشأ لمجرّد أن المريضَ مبتور ════════════════════════════════
+ * الرايةُ على الملفّ نيّةٌ لا طلب. والمتابعةُ الموقَّعة هي الدليلُ القاطع:
+ * لها مريضٌ وخيطٌ ومعاينةٌ ونوعُ خدمة، وقد بلغت لحظةَ البيع.
+ *
+ * ══ وحالتُها `examined` لا `awaiting_exam` ═══════════════════════════
+ * المتابعةُ لا توجد إلّا عن معاينةٍ موقّعة — فالجهازُ **فُحص فعلاً**،
+ * وكتابةُ «ينتظر الفحص» تكذب على السجلّ ثمّ تحتاج خطوةً تصحّحها. و
+ * `assignManufacturing` تشترط `examined` بالضبط، فتستقبلها كأيّ حلقةٍ
+ * فتحها الاستعلاماتُ صراحةً — **بلا مسارِ تصنيعٍ ثانٍ.**
+ *
+ * ══ وحلقةٌ مفتوحةٌ غيرُ مرتبطةٍ **تُردّ ولا تُختطَف** ═══════════════════
+ * هذه الدالّة لا تُنادى إلّا حين `followup.device_episode_id IS NULL` —
+ * فالمريضُ العائد ذو الطلب الصريح لا يمرّ بها أصلاً، ولا يحتاج «مخرجاً»
+ * يلتقط له حلقةً.
+ *
+ * ومتى وُجدت حلقةٌ مفتوحةٌ على الخيط بينما المتابعةُ لا تحمل هويّةً، **فلا
+ * دليلَ يربطهما**. قد تكون طلبَ جهازٍ آخر أحدثَ، أو تكراراً تشغيلياً، أو
+ * حالةً تاريخيةً غيرَ متّسقة. والتقاطُها هنا كان **اختطافاً**: بيعُ هذه
+ * المتابعة يُثبَّت على جهازٍ لم يُقصَد، ويُكتب سعرُه عليه، ويُنسَب أمرُ
+ * تصنيعه إليه — وكلُّ ذلك بلا أن يقول أحدٌ إنهما واحد.
+ *
+ * فتُردّ ٤٠٩ ويحسمها إنسان. **والصمتُ عن الالتباس أسوأ من الردّ.**
+ *
+ * ══ والذرّية بالقفل لا بالتقاط الموجود ═══════════════════════════════
+ * القفلُ على صفّ الخيط هو نقطةُ التسلسل نفسُها التي يستعملها
+ * `startDeviceEpisode` و`lockCaseAndReadOpenEpisode` — **لا عرفَ قفلٍ
+ * ثانٍ**. وضغطتان متزامنتان على «تأكيد الشراء» يحسمهما قفلُ المتابعة
+ * قبل الوصول إلى هنا (الثانيةُ تقرأ `converted` فتُردّ)، ويحرسهما
+ * `uq_pde_case_open` و`uq_pde_case_seq` في القاعدة.
+ *
+ * **ولا تُستعمَل «حلقةٌ مفتوحةٌ موجودة» وسيلةَ عدم-تكرارٍ لمتابعةٍ مجهولة
+ * الهويّة** — تلك تجعل الالتباسَ يمرّ صامتاً بدل أن يُردّ.
+ *
+ * @returns الحلقةُ المُنشأة، أو `null` حين لا خيطَ لهذا الاختصاص
+ *          (فيمضي المُستدعي على مساره القديم بلا كسر).
+ * @throws  `DeviceEpisodeError` 409 حين توجد حلقةٌ مفتوحةٌ لا تخصّ هذه
+ *          المتابعة يقيناً.
+ */
+export async function ensureFirstDeviceEpisodeForSale(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    createdBy: number | null;
+    /** ما طُلب إن كان معروفاً — والغيابُ «جهازٌ كامل»، وهو حالُ الأول. */
+    requestedItem?: RequestedItem | null;
+  },
+): Promise<LockedEpisode | null> {
+  //  القفلُ أوّلاً: الخيطُ ثابتُ الوجود، وكلُّ مَن يفتح حلقةً يمرّ به.
+  const cs = await tx.execute(sql`
+    SELECT id, branch_id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  //  لا خيط ⟶ لا حلقةَ ممكنة. والمُستدعي يمضي كما كان يمضي دائماً:
+  //  رفضُ البيع هنا كان سيكسر مساراً قائماً لأجل هويّةٍ إدارية.
+  if (!caseRow) return null;
+
+  //  **حلقةٌ مفتوحةٌ قائمة ⟶ التباسٌ يُردّ، لا فرصةٌ تُلتقَط.**
+  //
+  //  المتابعةُ التي أوصلتنا إلى هنا لا تحمل هويّةَ جهاز. فوجودُ حلقةٍ
+  //  مفتوحةٍ على الخيط **لا يُثبت** أنها لها: قد تكون طلبَ جهازٍ آخر
+  //  أحدثَ فتحه الاستعلاماتُ، أو تكراراً تشغيلياً، أو حالةً تاريخيةً
+  //  غيرَ متّسقة. وربطُ البيع بها يُثبّت سعرَ هذه المتابعة على جهازٍ لم
+  //  يُقصَد ويُنسَب أمرُ تصنيعه إليه — بلا أن يقول أحدٌ إنهما واحد.
+  const open = await tx.execute(sql`
+    SELECT id FROM patient_device_episodes
+     WHERE case_id = ${caseRow.id}
+       AND status NOT IN ('delivered', 'cancelled')
+     LIMIT 1
+     FOR UPDATE
+  `);
+  if ((open.rows ?? []).length > 0) {
+    throw new DeviceEpisodeError(
+      "يوجد جهاز آخر قيد الإجراء لهذه الحالة لكنه غير مرتبط بهذه المتابعة."
+      + " راجع هوية الجهاز قبل تأكيد الشراء.", 409,
+    );
+  }
+
+  const parsed = parseRequestedItem(params.requestedItem, params.serviceType);
+  if (!parsed.ok) throw new DeviceEpisodeError(parsed.error!, 400);
+  const requestedItem: RequestedItem = parsed.value ?? FULL_DEVICE;
+  const component = componentOfRequest(requestedItem);
+
+  const mx = await tx.execute(sql`
+    SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+      FROM patient_device_episodes WHERE case_id = ${caseRow.id}
+  `);
+  const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+
+  const ins = await tx.execute(sql`
+    INSERT INTO patient_device_episodes
+      (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+       requested_item, component, created_by, created_at, updated_at)
+    VALUES (${params.patientId}, ${caseRow.id}, ${caseRow.branch_id ?? null},
+            ${nextSeq}, 'examined', 0, ${requestedItem}, ${component},
+            ${params.createdBy}, NOW(), NOW())
+    RETURNING id, case_id, patient_id, status, agreed_cost
+  `);
+  const row = (ins.rows ?? [])[0];
+  return {
+    id: Number(row.id),
+    caseId: Number(row.case_id),
+    patientId: Number(row.patient_id),
+    serviceType: params.serviceType,
+    status: String(row.status),
+    agreedCost: Number(row.agreed_cost ?? 0),
+  };
+}
+
 /** الحلقةُ المقفولة لتصحيح سعرها — هويّتُها وحالتُها وسعرُها القائم. */
 export interface EpisodeForPriceCorrection {
   id: number;

@@ -1594,36 +1594,53 @@ async function main() {
       same("٦٥. **وتعديلُ النصّ بلا مسّ الرقم يمرّ**", clinical.status, 200);
     }
 
-    //  ④ **وبيعٌ على مسارٍ قديم بلا هويّة جهاز يبقى مجمَّداً.**
+    //  ④ **وبيعُ الجهاز الأول يخرج بهويّةٍ دقيقة — فيُصحَّح سعرُه.**
     //
-    //  **والقاعدةُ تضيّقت** (٢٠٢٦-٠٨-٢٢): البيعُ وحدَه لم يعد يجمّد شيئاً —
-    //  جهازٌ مباعٌ ما زال سعرُه سعرَ المعاينة يُصحَّح ويُنزَل على الحلقة
-    //  والكلفة والمجموع والدفتر (اختبارُه المستقلّ:
-    //  `npm run test:exam-price-correction`). والمجمَّدُ هنا حالةٌ أخرى:
-    //  متابعةٌ بلا `device_episode_id` — مسارٌ قديم لا يملك أين يُنزل الفرق،
-    //  فيُردّ بصدقٍ بدل أن يُخمَّن له جهازٌ بـ(مريض + قسم) فيُصاب غيرُ المقصود.
+    //  **الحكايةُ في ثلاث محطّات:**
+    //  (١) كان البيعُ وحدَه يجمّد السعرَ إطلاقاً.
+    //  (٢) ثمّ تضيّق (٢٣٩): المجمَّدُ هو ما لا هويّةَ جهازٍ له وحده، لأنه لا
+    //      يملك أين يُنزل الفرق.
+    //  (٣) ثمّ زال ذلك أيضاً في مصدره: `confirmPurchase` صار **يُمادي حلقةَ
+    //      الجهاز الأول داخل معاملة البيع** حين لا يفتحها الاستعلاماتُ
+    //      صراحةً. فالمسارُ الحيُّ لا يُنتج بيعاً بلا هويّة بعد اليوم — وهو
+    //      ما كان يُنتجه هنا بالضبط قبل الإصلاح (واقعة WB-02243).
+    //
+    //  فما كان يُختبَر «تجميداً» صار يُختبَر **ثابتاً**. والصفُّ الملتبسُ
+    //  حقاً (بيعٌ قديمٌ بلا رابطٍ حتميّ) ما زال يُردّ ٤٠٩ — واختبارُه في
+    //  `npm run test:first-device-identity` حيث يُصنَع بنزع الهويّة عمداً.
     {
-      const p = await mkPatient("تصحيح بعد بيعٍ بلا حلقة");
-      await mkCase(p);
+      const p = await mkPatient("بيعُ الجهاز الأول يخرج بهويّته");
+      const caseId = await mkCase(p);
       await signExam(p, S.doc, { deviceCost: 2_000_000 });
       const f = await followupOf(p);
+      same("   (المتابعةُ بلا حلقة قبل البيع)", f?.deviceEpisodeId, null);
       const buy = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
         { expertUserId: EXPERT });
       same("٦٦. (البيعُ اعتُمد)", buy.status, 200);
-      const moneyBefore = (await q(
-        `SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c;
+
+      const eps = await q(`SELECT id, case_id, status, agreed_cost::int AS cost
+                             FROM patient_device_episodes WHERE patient_id=$1`, [p]);
+      same("٦٧. **وحلقةُ الجهاز الأول تُماديَ في معاملة البيع نفسها**",
+        [eps.length, Number(eps[0]?.case_id), eps[0]?.status, eps[0]?.cost],
+        [1, caseId, "in_manufacturing", 2_000_000]);
+      same("   **والمتابعةُ وأمرُ التصنيع كلاهما عليها**",
+        [Number((await followupOf(p))?.deviceEpisodeId),
+          Number((await q(`SELECT device_episode_id FROM prosthetic_work_orders
+                            WHERE patient_id=$1`, [p]))[0]?.device_episode_id)],
+        [Number(eps[0].id), Number(eps[0].id)]);
+
       const examId = await examIdOf(p);
-      const frozen = await editExam(examId, S.doc, { deviceCost: 2_900_000 });
-      same("٦٧. **وتصحيحُ سعرِ بيعٍ بلا هويّة جهاز يُردّ ٤٠٩**", frozen.status, 409);
-      check(String(frozen.body?.error ?? "").includes("مسار قديم"),
-        "   **والرسالةُ تقول السببَ الحقيقيّ** — لا «تم اعتماد البيع» عامّةً",
-        String(frozen.body?.error));
-      same("٦٨. **ولا حالةَ ماليّة تتغيّر**",
+      const fixed = await editExam(examId, S.doc, {
+        deviceCost: 2_900_000, priceCorrectionReason: "تصحيح سعر المعاينة",
+      });
+      same("٦٨. **فيمضي تصحيحُ السعر بعد البيع** — لا «مسارٌ قديم» بعد اليوم",
+        fixed.status, 200);
+      same("   **والمالُ كلُّه تبعه**",
         [(await q(`SELECT total_cost::int AS c FROM patients WHERE id=$1`, [p]))[0].c,
-          (await followupOf(p))?.approvedPrice],
-        [moneyBefore, 2_000_000]);
-      same("   (ولا نسخةَ معاينةٍ أُنشئت)",
-        (await q(`SELECT version FROM medical_exams WHERE id=$1`, [examId]))[0].version, 1);
+          (await followupOf(p))?.approvedPrice,
+          Number((await q(`SELECT agreed_cost::int AS c FROM patient_device_episodes
+                            WHERE id=$1`, [eps[0].id]))[0].c)],
+        [2_900_000, 2_900_000, 2_900_000]);
     }
 
     // ══════════════════════════════════════════════════════════════════
