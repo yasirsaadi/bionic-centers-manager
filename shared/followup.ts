@@ -20,6 +20,11 @@ export const FOLLOWUP_STATUSES = [
   //  والمريضُ لم يرفض الشراء — بل سقطت المعاينةُ نفسُها. وسجلٌّ يقول سبباً
   //  لم يقع أسوأُ من سجلٍّ صامت.
   "closed_exam_cancelled",
+  //  ══ **طرفيّةٌ رابعة** (ترحيل ٠٦٤) — صحّحت الإدارةُ عمليةً خاطئة ══════
+  //  ولا `closed_without_purchase`: المريضُ لم يرفض شيئاً. ولا
+  //  `closed_exam_cancelled`: لم تسقط معاينةٌ سريرياً — بل بطلت العمليةُ
+  //  التجارية كلُّها بقرارٍ إداريّ مدقَّق.
+  "closed_admin_void",
 ] as const;
 export type FollowupStatus = (typeof FOLLOWUP_STATUSES)[number];
 
@@ -35,6 +40,7 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   purchase_approval_pending: "محتجز قبل التبسيط — أكّد الشراء",
   closed_without_purchase: "مغلق بدون شراء",
   closed_exam_cancelled: "أُغلقت بسبب إلغاء المعاينة",
+  closed_admin_void: "ملغاة إدارياً",
   //  **«تحوّل إلى تصنيع» كانت تصف الآلة لا الواقعة.** والواقعةُ التي تهمّ
   //  الموظّف: المريضُ اشترى، والجهازُ بدأ. والاسمُ المخزَّن `converted` كما
   //  هو — النصُّ المقروء وحده تغيّر.
@@ -74,6 +80,7 @@ export const FOLLOWUP_FILTERS: Array<{ key: string; label: string }> = [
 /** الحالاتُ النهائيّة — لا متابعةَ بعدها إلّا بإعادة فتح. */
 export const TERMINAL_STATUSES: FollowupStatus[] = [
   "closed_without_purchase", "converted", "closed_exam_cancelled",
+  "closed_admin_void",
 ];
 export const isTerminal = (s: string): boolean =>
   TERMINAL_STATUSES.includes(s as FollowupStatus);

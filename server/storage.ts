@@ -1118,6 +1118,14 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`
         DELETE FROM medical_review_requests WHERE patient_id = ${id}
       `);
+      // ══ سجلُّ التصحيح الإداريّ (ترحيل ٠٦٤) ═══════════════════════════
+      // مفتاحٌ أجنبيٌّ إلى `patients` ⟶ **موضعُه هنا إلزاماً**، وإلّا فشل
+      // حذفُ كلّ مريضٍ صُحّحت له عمليةٌ يوماً. ومراجعُه إلى المتابعة والحلقة
+      // والأمر بلا مفاتيح، فلا ترتيبَ يفرضه غيرُ صفّ المريض نفسِه.
+      // (القاعدة الملزمة في CLAUDE.md، ومُختبَرٌ بحذفٍ حقيقي محلياً.)
+      await tx.execute(sql`
+        DELETE FROM administrative_operation_reversals WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followup_events WHERE patient_id = ${id}
       `);
@@ -1849,6 +1857,14 @@ export class DatabaseStorage implements IStorage {
       `);
       await tx.execute(sql`
         UPDATE price_change_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+      // ── سجلُّ التصحيح الإداريّ (ترحيل ٠٦٤) ───────────────────────────────
+      //  **repoint بلا تصادمٍ ممكن**: فهرسُ التفرّد عليه على `followup_id`
+      //  لا على المريض، والمتابعاتُ نفسُها انتقلت للتوّ بمعرّفاتها. فسجلُّ
+      //  «صُحّحت هذه العملية» يتبع صاحبَه ولا يشير إلى ملفٍّ اندمج ثم اختفى.
+      await tx.execute(sql`
+        UPDATE administrative_operation_reversals
+           SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
       `);
 
       // ── طلباتُ الخصم والتبرّع (ترحيل ٠٥٨) ────────────────────────────────

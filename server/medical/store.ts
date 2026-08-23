@@ -978,6 +978,39 @@ export async function userNames(ids: number[]): Promise<Record<number, string>> 
   return out;
 }
 
+/**
+ * معاينة ⟶ متابعتُها — **الرابطُ الذي كتبه التوقيعُ نفسُه**.
+ *
+ * ══ لماذا يُقرأ هنا ═════════════════════════════════════════════════════
+ * بطاقةُ المعاينة أحدُ أبواب «تصحيح / إلغاء العملية» الثلاثة، **لكنّ معاينةً
+ * سريريةً عاديةً ليست عمليةَ جهاز**: معاينةُ علاجٍ طبيعي لا تولّد متابعةً
+ * أصلاً، فعرضُ الزرّ عليها يَعِد بتصحيحٍ لا هدفَ له.
+ *
+ * فالشرطُ **وجودُ المتابعة** — وهي الهويّةُ نفسُها التي يفتح بها الزرُّ
+ * النافذةَ، لا قرينةً ثانية. **ولا نقطةَ تصحيحٍ ثانية تُخترَع**: هذه قراءةٌ
+ * تقول «أيّ معاينةٍ لها عملية»، والتصحيحُ يبقى في نقطته الواحدة.
+ */
+export async function followupIdsForExams(
+  examIds: number[],
+): Promise<Record<number, number>> {
+  const unique = Array.from(new Set(examIds.filter((n) => Number.isFinite(n))));
+  if (unique.length === 0) return {};
+  const rows = await db.execute<{ medical_exam_id: number; id: number }>(sql`
+    SELECT medical_exam_id, id
+    FROM post_exam_followups
+    WHERE medical_exam_id IN (${sql.join(unique.map((n) => sql`${n}`), sql`, `)})
+  `);
+  const out: Record<number, number> = {};
+  //  والأقدمُ لا يزيح الأحدث: التوقيعُ يكتب متابعةً واحدة لكلّ معاينة،
+  //  وإن وُجدت أكثرُ (صفٌّ تاريخيّ) فالأحدثُ هي العملية القائمة.
+  for (const r of rows.rows ?? []) {
+    const exam = Number(r.medical_exam_id);
+    const id = Number(r.id);
+    if (!out[exam] || id > out[exam]) out[exam] = id;
+  }
+  return out;
+}
+
 /** Branch id → name, for error messages that must name the branch. */
 export async function branchNames(): Promise<Record<number, string>> {
   const rows = await db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM branches`);

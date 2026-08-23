@@ -542,7 +542,7 @@ async function main() {
     const again = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
       { serviceType: "medical_support" });
     same("والثانية تُردّ بـ409", again.status, 409);
-    same("   برسالة عربية", again.body?.error, "لدى المريض جهاز من هذا النوع قيد الإجراء بالفعل");
+    same("   برسالة عربية", again.body?.error, "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد");
 
     const badType = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
       { serviceType: "physiotherapy" });

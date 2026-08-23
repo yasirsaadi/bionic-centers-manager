@@ -51,6 +51,7 @@
     "test:followup": "tsx server/post_exam_followup.test.ts",
     "test:exam-price-correction": "tsx server/exam_price_correction.test.ts",
     "test:first-device-identity": "tsx server/first_device_identity.test.ts",
+    "test:administrative-reversal": "tsx server/administrative_reversal.test.ts",
     "test:followup-rules": "tsx shared/followup.test.ts",
     "test:specialty-order": "tsx shared/specialty_order.test.ts",
     "test:patient-search": "tsx server/patient_search.test.ts",
@@ -79,7 +80,8 @@
     "test:reception-agreement": "tsx server/reception_agreement.test.ts",
     "test:supervisor-ui": "tsx client/src/pages/supervisor_ui.test.ts",
     "test:exam-cancellation": "tsx server/exam_cancellation.test.ts",
-    "test:whatsapp": "tsx server/patient_whatsapp/whatsapp.test.ts"
+    "test:whatsapp": "tsx server/patient_whatsapp/whatsapp.test.ts",
+    "test:device-flow-resume": "tsx client/src/components/device_flow_resume.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

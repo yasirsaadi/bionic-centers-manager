@@ -632,9 +632,11 @@ async function main() {
     {
       const { readFileSync } = await import("fs");
       const runner = readFileSync("server/migrations/runner.ts", "utf8");
+      //  **مستورَدٌ ومُدرَجٌ بعد ٠٦٢** — ولا يُشترَط أن يبقى الأخير:
+      //  ترحيلاتٌ لاحقة تُضاف بعده، والمهمّ ترتيبُه لا موقعُه من الذيل.
       check(runner.includes("063_sold_device_identity_repair")
-        && /migration062,\s*migration063\]/.test(runner),
-      "٤٠. **٠٦٣ مستورَدٌ ومُدرَجٌ في نهاية القائمة**", "");
+        && /migration062,\s*migration063\b/.test(runner),
+      "٤٠. **٠٦٣ مستورَدٌ ومُدرَجٌ بعد ٠٦٢ في القائمة**", "");
       same("٤١. (واسمُه كما يسجّله المُشغّل)", repairName, "063_sold_device_identity_repair");
       check(!repairSql.includes("DROP ") && !repairSql.includes("ALTER TABLE")
         && !repairSql.includes("DELETE FROM")

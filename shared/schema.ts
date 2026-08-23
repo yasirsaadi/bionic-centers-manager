@@ -210,6 +210,17 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   cancelReason: text("cancel_reason"),
+  /**
+   * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — يرفع السلطةَ ولا يمحو الشهادة.
+   *
+   * حلقةٌ سُلِّمت فعلاً واقعةٌ فيزيائية: المريضُ يحمل الجهاز. فتحويلُ حالتها
+   * إلى «ملغاة» وتصفيرُ ختم تسليمها يكتب ماضياً لم يقع. والوسمُ يُخرجها من
+   * الطوابير والسلطة التجارية ويُبقي تاريخَها كما هو.
+   *
+   * وحلقةٌ لم تُسلَّم بعد تأخذ الوسمَ **وحالةَ `cancelled`** معاً — تلك
+   * حالتُها الصحيحة فعلاً، ولا شهادةَ تُمحى.
+   */
+  adminVoidReversalId: integer("admin_void_reversal_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   // الحالات الخمس محروسةً في القاعدة لا في التطبيق: قيمةٌ مخترَعة من سكربت
@@ -846,6 +857,13 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    * لم تسجّله — «لم يُسجَّل» حقيقةٌ عنها، والإلزامُ في التطبيق للجديد وحده.
    */
   maintenanceComponent: text("maintenance_component"),
+  /**
+   * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
+   *
+   * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
+   * السلطة التجارية بالوسم وحده. وأمرٌ لم ينتهِ يأخذ الوسمَ و`cancelled`.
+   */
+  adminVoidReversalId: integer("admin_void_reversal_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -1341,6 +1359,48 @@ export const medicalExamCancellations = pgTable("medical_exam_cancellations", {
 ]);
 
 export type MedicalExamCancellation = typeof medicalExamCancellations.$inferSelect;
+
+/**
+ * **التصحيحُ الإداريّ لعمليةِ جهازٍ خاطئة** (ترحيل ٠٦٤).
+ *
+ * التصحيحُ الواحد يلمس المتابعةَ والحلقةَ والأمرَ والدفترَ والمعاينة. وبلا
+ * هويّةٍ جامعة تصير خمسةَ أحداثٍ متفرّقة لا يعرف قارئُها أنها فعلٌ واحد.
+ *
+ * **ولا يحلّ محلّ تدقيق النطاقات**: كلُّ جدولٍ يستقبل حدثَه كالمعتاد،
+ * وهذا يقول «كلُّها تنتمي إلى تصحيحٍ واحد».
+ *
+ * والمراجعُ إلى المتابعة والحلقة والأمر **بلا مفتاحٍ أجنبيّ عمداً** — درسُ
+ * `proposed_expert_user_id` و`payments.visit_id`: صفٌّ يُحذف بالكاسكيد كان
+ * سيكسر الترتيب، والرقمُ لقطةٌ للتاريخ لا علاقةٌ حيّة.
+ */
+export const administrativeOperationReversals = pgTable("administrative_operation_reversals", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  medicalExamId: integer("medical_exam_id"),
+  followupId: integer("followup_id"),
+  deviceEpisodeId: integer("device_episode_id"),
+  workOrderId: integer("work_order_id"),
+  /** `purchase_only` | `full_operation` */
+  mode: text("mode").notNull(),
+  reasonCode: text("reason_code").notNull(),
+  reasonNote: text("reason_note").notNull(),
+  /** ما قُيِّد فعلاً في الدفتر — سالبٌ حين يُعكَس بيع. */
+  financialDelta: integer("financial_delta").notNull().default(0),
+  /** دفعةٌ باقيةٌ صارت رصيداً ⟶ تسويةٌ محاسبية صريحة، ولا ردَّ تلقائيّ. */
+  requiresFinancialSettlement: boolean("requires_financial_settlement").notNull().default(false),
+  preservedPaidAmount: integer("preserved_paid_amount").notNull().default(0),
+  createdBy: integer("created_by"),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("administrative_operation_reversals_mode_check",
+    sql`${t.mode} IN ('purchase_only', 'full_operation')`),
+  index("ix_aor_patient").on(t.patientId),
+]);
+
+export type AdministrativeOperationReversal =
+  typeof administrativeOperationReversals.$inferSelect;
 
 // Corrections append, never overwrite. The original exam text stays untouched
 // forever; an addendum carries its own signature and timestamp.
