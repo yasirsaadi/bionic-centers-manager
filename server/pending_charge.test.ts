@@ -53,8 +53,8 @@ const PORT = 6853;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-بلا-معاينة";
 const ADMIN = 9931, MANAGER = 9932, DOC = 9933, DOCSUP = 9934, DOCPHYS = 9935;
-const RECV = 9936, RECV2 = 9937, EXPERT = 9938, ACC = 9939;
-const USERS = [ADMIN, MANAGER, DOC, DOCSUP, DOCPHYS, RECV, RECV2, EXPERT, ACC];
+const RECV = 9936, RECV2 = 9937, EXPERT = 9938, ACC = 9939, EXPERT2 = 9940;
+const USERS = [ADMIN, MANAGER, DOC, DOCSUP, DOCPHYS, RECV, RECV2, EXPERT, ACC, EXPERT2];
 
 const S = {
   admin: {
@@ -217,7 +217,8 @@ const ZERO_MONEY_ONLY = {
 const orderOf = async (id: number) => {
   const [r] = await q(`SELECT id, patient_id::int p, branch_id::int b, service_type st,
       purpose, status, device_episode_id::int de, expert_user_id::int ex,
-      maintenance_component mc, device_origin origin
+      maintenance_component mc, device_origin origin,
+      no_exam_no_charge nocharge, admin_void_reversal_id voided
     FROM prosthetic_work_orders WHERE id=$1`, [id]);
   return r ?? null;
 };
@@ -291,6 +292,7 @@ async function main() {
     [RECV, "reception", "null", "ريام", 1],
     [RECV2, "reception", "null", "زهراء", 1],
     [EXPERT, "prosthetics_expert", "null", "الخبير", 1],
+    [EXPERT2, "prosthetics_expert", "null", "الخبير الثاني", 1],
     [ACC, "accountant", "null", "المحاسب", 1],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
@@ -1148,6 +1150,231 @@ async function main() {
     same("   **والقيدُ على فرعِ العملية لا على فرع المريض الجديد**", Number(ceT.b), 1);
 
     // ══════════════════════════════════════════════════════════════════
+    //  (١) **الاعتمادُ بعد أن يكتمل العملُ ويُسلَّم الجهاز**
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ١. العملُ قد يسبق المراجعَ — والمالُ يلحقه ──");
+    const pD = await mkPatient("تسليم قبل الاعتماد");
+    await mkCase(pD);
+    const epD = (await startNoExam(pD, "prosthetic", "knee")).body?.id;
+    const cD = await sale({
+      patientId: pD, serviceType: "prosthetic", deviceEpisodeId: epD,
+      expertUserId: EXPERT, charged: true, amount: 850_000,
+    });
+    const chD = cD.body?.charge?.id;
+    const woD = Number(cD.body?.workOrderId);
+
+    //  **العملُ يمضي إلى نهايته** بينما المبلغُ ما زال ينتظر: الأمرُ يكتمل
+    //  والحلقةُ تُسلَّم — وهذا بالضبط ما يعنيه «العمليةُ تمضي».
+    await q(`UPDATE prosthetic_work_orders SET status='completed',
+             completed_at=NOW() WHERE id=$1`, [woD]);
+    await q(`UPDATE patient_device_episodes SET status='delivered',
+             delivered_at=NOW() WHERE id=$1`, [epD]);
+    same("١أ. الحلقةُ مسلَّمةٌ والأمرُ مكتمل", 
+      [(await episodeOf(epD)).status, (await orderOf(woD)).status],
+      ["delivered", "completed"]);
+    same("١ب. **والمالُ ما زال صفراً** — لم يُقيَّد شيء", 
+      await moneyOnly(pD), ZERO_MONEY_ONLY);
+    same("   والصفُّ ما زال بانتظار المراجعة", (await chargeRow(chD)).status, "pending_review");
+
+    const apD = await http("POST", `/api/no-exam/charges/${chD}/approve`, S.doc, {});
+    check(apD.status === 200,
+      "١ج. **والطبيبُ يعتمد بعد التسليم** — العملُ لا يُعاقَب لأنه أسرعُ من المراجع",
+      JSON.stringify(apD.body));
+    const mD = await moneyOf(pD);
+    same("١د. ويُقيَّد على **الأمر نفسِه** مرّةً واحدة",
+      [mD.total, mD.ledger, mD.ledger_rows, mD.orders, Number(apD.body.workOrderId)],
+      [850_000, 850_000, 1, 1, woD]);
+    same("   ومجموعُ القيود = كلفةُ المريض", mD.ledger, mD.total);
+    same("   **والتسليمُ يبقى تسليماً** — لا تعود الحلقةُ إلى التصنيع",
+      (await episodeOf(epD)).status, "delivered");
+
+    // ══════════════════════════════════════════════════════════════════
+    //  (٢) **الخبيرُ الحاليُّ على الأمر هو السلطة**
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ٢. الخبيرُ الحاليُّ على الأمر لا لقطةُ الإنشاء ──");
+    //  (أ) إعادةُ إسنادٍ مشروعة بعد الإرسال ⟶ الاعتمادُ يمضي.
+    const pE = await mkPatient("إعادة إسناد");
+    await mkCase(pE);
+    const epE = (await startNoExam(pE, "prosthetic", "socket")).body?.id;
+    const cE = await sale({
+      patientId: pE, serviceType: "prosthetic", deviceEpisodeId: epE,
+      expertUserId: EXPERT, charged: true, amount: 400_000,
+    });
+    const chE = cE.body?.charge?.id, woE = Number(cE.body?.workOrderId);
+    await q(`UPDATE prosthetic_work_orders SET expert_user_id=$2 WHERE id=$1`, [woE, EXPERT2]);
+    const apE = await http("POST", `/api/no-exam/charges/${chE}/approve`, S.doc, {});
+    check(apE.status === 200,
+      "٢أ. **أُسنِد الأمرُ لخبيرٍ آخر ⟶ الاعتمادُ يمضي**", JSON.stringify(apE.body));
+    same("   ويُقيَّد مرّةً واحدة",
+      (({ total, ledger_rows }) => [total, ledger_rows])(await moneyOf(pE)), [400_000, 1]);
+    same("   **ولقطةُ الإنشاء تبقى للتدقيق ولا تُعاد كتابتُها**",
+      Number((await chargeRow(chE)).sale_expert_user_id), EXPERT);
+
+    //  (ب) الخبيرُ الحاليُّ غيرُ فعّال ⟶ يُردّ.
+    const pE2 = await mkPatient("خبير حالي موقوف");
+    await mkCase(pE2);
+    const epE2 = (await startNoExam(pE2, "prosthetic", "foot")).body?.id;
+    const cE2 = await sale({
+      patientId: pE2, serviceType: "prosthetic", deviceEpisodeId: epE2,
+      expertUserId: EXPERT, charged: true, amount: 300_000,
+    });
+    const chE2 = cE2.body?.charge?.id, woE2 = Number(cE2.body?.workOrderId);
+    await q(`UPDATE prosthetic_work_orders SET expert_user_id=$2 WHERE id=$1`, [woE2, EXPERT2]);
+    await q(`UPDATE system_users SET is_active=false WHERE id=$1`, [EXPERT2]);
+    const apE2 = await http("POST", `/api/no-exam/charges/${chE2}/approve`, S.doc, {});
+    same("٢ب. **والخبيرُ الحاليُّ غيرُ الفعّال يُردّ ٤٠٩**", apE2.status, 409);
+    same("   ولا دينار", await moneyOnly(pE2), ZERO_MONEY_ONLY);
+    await q(`UPDATE system_users SET is_active=true WHERE id=$1`, [EXPERT2]);
+
+    //  (ج) الخبيرُ الحاليُّ خارجَ فرع الأمر ⟶ يُردّ.
+    await q(`UPDATE system_users SET branch_id=2, branch_ids='[2]'::jsonb WHERE id=$1`, [EXPERT2]);
+    const apE3 = await http("POST", `/api/no-exam/charges/${chE2}/approve`, S.doc, {});
+    same("٢ج. **وخارجَ فرع الأمر يُردّ ٤٠٩**", apE3.status, 409);
+    same("   ولا دينار", await moneyOnly(pE2), ZERO_MONEY_ONLY);
+    await q(`UPDATE system_users SET branch_id=1, branch_ids='[1,2]'::jsonb WHERE id=$1`, [EXPERT2]);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  (٣) **هويّةُ الصيانة تُعاد قراءتُها قبل الدينار**
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ٣. الصيانة: مطابقةٌ قبل القيد ──");
+    const mkMaint = async (label: string, amount = 100_000) => {
+      const pid = await mkPatient(label);
+      await mkCase(pid);
+      const out = await maint({
+        patientId: pid, serviceType: "prosthetic", expertUserId: EXPERT,
+        maintenanceComponent: "knee", deviceOrigin: "external",
+        charged: true, amount,
+      });
+      return { pid, chargeId: out.body?.charge?.id, woId: Number(out.body?.workOrderId) };
+    };
+
+    //  (د) صيانةٌ اكتملت قبل الاعتماد ⟶ يمضي.
+    const mD2 = await mkMaint("صيانة مكتملة");
+    await q(`UPDATE prosthetic_work_orders SET status='completed', completed_at=NOW()
+             WHERE id=$1`, [mD2.woId]);
+    const apM = await http("POST", `/api/no-exam/charges/${mD2.chargeId}/approve`, S.doc, {});
+    check(apM.status === 200, "٣د. **صيانةٌ اكتملت ⟶ الاعتمادُ يمضي**",
+      JSON.stringify(apM.body));
+    same("   ويُقيَّد مرّةً واحدة بمصدره",
+      (({ total, ledger_rows }) => [total, ledger_rows])(await moneyOf(mD2.pid)), [100_000, 1]);
+
+    //  (هـ) صيانةٌ أُلغيت ⟶ تُردّ.
+    const mE = await mkMaint("صيانة ملغاة");
+    await q(`UPDATE prosthetic_work_orders SET status='cancelled' WHERE id=$1`, [mE.woId]);
+    const apMe = await http("POST", `/api/no-exam/charges/${mE.chargeId}/approve`, S.doc, {});
+    same("٣هـ. **وصيانةٌ ملغاة تُردّ ٤٠٩**", apMe.status, 409);
+    same("   **ولا دينار**", await moneyOnly(mE.pid), ZERO_MONEY_ONLY);
+    //  والمُبطَلُ إدارياً كذلك.
+    await q(`UPDATE prosthetic_work_orders SET status='active', admin_void_reversal_id=1
+             WHERE id=$1`, [mE.woId]);
+    same("   والمُبطَلُ إدارياً كذلك",
+      (await http("POST", `/api/no-exam/charges/${mE.chargeId}/approve`, S.doc, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(mE.pid), ZERO_MONEY_ONLY);
+    await q(`UPDATE prosthetic_work_orders SET admin_void_reversal_id=NULL WHERE id=$1`, [mE.woId]);
+
+    //  (و) فرعُ الصفّ ≠ فرعُ أمر الصيانة ⟶ يُردّ.
+    const mF = await mkMaint("صيانة فرع مختلف");
+    await q(`UPDATE pending_service_charges SET branch_id=2 WHERE id=$1`, [mF.chargeId]);
+    same("٣و. **فرعُ الصفّ ≠ فرعُ الأمر ⟶ ٤٠٩**",
+      (await http("POST", `/api/no-exam/charges/${mF.chargeId}/approve`, S.admin, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(mF.pid), ZERO_MONEY_ONLY);
+    await q(`UPDATE pending_service_charges SET branch_id=1 WHERE id=$1`, [mF.chargeId]);
+
+    //  (ز) منشأُ الصفّ ≠ منشأُ الأمر ⟶ يُردّ.
+    await q(`UPDATE pending_service_charges SET device_origin='center_unrecorded'
+             WHERE id=$1`, [mF.chargeId]);
+    same("٣ز. **ومنشأٌ لا يطابق السجلَّ التشغيليّ ⟶ ٤٠٩**",
+      (await http("POST", `/api/no-exam/charges/${mF.chargeId}/approve`, S.admin, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(mF.pid), ZERO_MONEY_ONLY);
+    await q(`UPDATE pending_service_charges SET device_origin='external' WHERE id=$1`,
+      [mF.chargeId]);
+
+    //  (ح) أمرُ صيانةٍ لمريضٍ آخر ⟶ يُردّ.
+    await q(`UPDATE pending_service_charges SET work_order_id=$2 WHERE id=$1`,
+      [mF.chargeId, mD2.woId]);
+    same("٣ح. **وأمرٌ لمريضٍ آخر ⟶ ٤٠٩**",
+      (await http("POST", `/api/no-exam/charges/${mF.chargeId}/approve`, S.admin, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(mF.pid), ZERO_MONEY_ONLY);
+    //  والجزءُ كذلك: صفٌّ يقول «قدم» وأمرٌ يقول «ركبة».
+    await q(`UPDATE pending_service_charges SET work_order_id=$2,
+             maintenance_component='foot' WHERE id=$1`, [mF.chargeId, mF.woId]);
+    same("   وجزءٌ لا يطابق ⟶ ٤٠٩",
+      (await http("POST", `/api/no-exam/charges/${mF.chargeId}/approve`, S.admin, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(mF.pid), ZERO_MONEY_ONLY);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  (٤) **«بلا أجر» واقعةٌ محفوظة لا غيابُ صفّ**
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ٤. «بلا أجر» تُقال على السجلّ ──");
+    same("٤ط. **بيعٌ بلا أجر ⟶ الأمرُ يقولها صراحةً**",
+      (await orderOf(Number(saleFree.body.workOrderId))).nocharge, true);
+    same("   ولا صفَّ معلَّقاً", (await q(
+      `SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`, [pF]))[0].n, 0);
+    same("   والمالُ صفر", await moneyOnly(pF), ZERO_MONEY_ONLY);
+    same("٤ي. **وصيانةٌ بلا أجر كذلك**",
+      (await orderOf(Number(mtFree.body.workOrderId))).nocharge, true);
+    same("٤ك. **والمدفوعُ يقول `false` صراحةً** — لا يُترك فارغاً",
+      (await orderOf(woD)).nocharge, false);
+    check((await q(`SELECT count(*)::int n FROM pending_service_charges
+                     WHERE work_order_id=$1`, [woD]))[0].n === 1,
+      "   وله صفُّه المعلَّق");
+    //  (ل) والقديمُ يبقى `NULL` — لا قيمةَ افتراضية تكتب عليه معنىً.
+    const [legacyWo] = await q(`SELECT id FROM prosthetic_work_orders
+      WHERE no_exam_no_charge IS NULL LIMIT 1`);
+    check(Boolean(legacyWo), "٤ل. **وأوامرُ المسارات الأخرى تبقى NULL** — لم تُسأل");
+
+    // ══════════════════════════════════════════════════════════════════
+    //  (٥) **فرعُ الحلقة ≠ فرعُ المريض الحاليّ ⟶ لا عملية ولا مال**
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ٥. حلقةٌ من فرعٍ آخر لا تبدأ هنا ──");
+    const pN = await mkPatient("نقل قبل البدء");
+    await mkCase(pN);
+    const epN = (await startNoExam(pN, "prosthetic", "tube")).body?.id;
+    await q(`UPDATE patients SET branch_id=2 WHERE id=$1`, [pN]);
+    await q(`UPDATE patient_cases SET branch_id=2 WHERE patient_id=$1`, [pN]);
+    const saleN = await sale({
+      patientId: pN, serviceType: "prosthetic", deviceEpisodeId: epN,
+      expertUserId: EXPERT2, charged: true, amount: 220_000,
+    }, S.admin);
+    same("٥م. **حلقةُ الفرع ١ ومريضٌ صار في الفرع ٢ ⟶ ٤٠٩**", saleN.status, 409);
+    check(String(saleN.body?.error).includes("فرعٍ آخر"),
+      "   برسالةٍ تدلّ على التصحيح الإداريّ", String(saleN.body?.error));
+    same("   **ولا أمرَ ولا صفَّ ولا دينار**",
+      (await q(`SELECT
+          (SELECT count(*)::int FROM prosthetic_work_orders WHERE patient_id=$1) o,
+          (SELECT count(*)::int FROM pending_service_charges WHERE patient_id=$1) c,
+          (SELECT COALESCE(SUM(amount),0)::int FROM cost_entries WHERE patient_id=$1) l`,
+        [pN]))[0], { o: 0, c: 0, l: 0 });
+
+    //  (ن) خيطُ الصفّ ≠ خيطُ الحلقة ⟶ الاعتمادُ يُردّ.
+    const pO = await mkPatient("خيط مختلف");
+    await mkCase(pO);
+    const epO = (await startNoExam(pO, "prosthetic", "adapter")).body?.id;
+    const chO = (await sale({
+      patientId: pO, serviceType: "prosthetic", deviceEpisodeId: epO,
+      expertUserId: EXPERT, charged: true, amount: 150_000,
+    })).body?.charge?.id;
+    const otherCase = await mkCase(pO, "medical_support");
+    await q(`UPDATE pending_service_charges SET case_id=$2 WHERE id=$1`, [chO, otherCase]);
+    same("٥ن. **خيطُ الصفّ ≠ خيطُ الحلقة ⟶ ٤٠٩**",
+      (await http("POST", `/api/no-exam/charges/${chO}/approve`, S.admin, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(pO), ZERO_MONEY_ONLY);
+
+    //  والحلقةُ الملغاةُ لا تُقيَّد عليها.
+    const pP2 = await mkPatient("حلقة ملغاة");
+    await mkCase(pP2);
+    const epP2 = (await startNoExam(pP2, "prosthetic", "foam_cover")).body?.id;
+    const chP2 = (await sale({
+      patientId: pP2, serviceType: "prosthetic", deviceEpisodeId: epP2,
+      expertUserId: EXPERT, charged: true, amount: 70_000,
+    })).body?.charge?.id;
+    await q(`UPDATE patient_device_episodes SET status='cancelled', cancelled_at=NOW()
+             WHERE id=$1`, [epP2]);
+    same("   **وحلقةٌ ملغاة ⟶ ٤٠٩**",
+      (await http("POST", `/api/no-exam/charges/${chP2}/approve`, S.doc, {})).status, 409);
+    same("   ولا دينار", await moneyOnly(pP2), ZERO_MONEY_ONLY);
+
+    // ══════════════════════════════════════════════════════════════════
     //  عقدُ الشاشات — بلا مشغّل DOM
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── عقدُ الشاشات ──");
@@ -1175,6 +1402,28 @@ async function main() {
 
       const sidebar = readFileSync(join(process.cwd(),
         "client/src/components/Sidebar.tsx"), "utf8");
+      //  ══ **القائمةُ لا تضيق عن الخادم** ═══════════════════════════════
+      //  شرطُ الخادم شكلاً: مسؤولٌ · دورُه طبيب · أو `canWriteMedicalExam`.
+      //  فاشتراطُ `canWriteMedicalExam` وحدها في القائمة كان يُخفي الشاشةَ
+      //  عن طبيبٍ يقبله الخادم.
+      const reviewItem = (sidebar.match(/\{[^\n]*href: "\/no-exam-review"[^\n]*\}/) ?? [""])[0];
+      check(reviewItem.includes('permission: null'),
+        "**والمراجعةُ المالية لا تشترط صلاحيةَ كتابة المعاينة في القائمة**",
+        reviewItem);
+      check(/roles: \["doctor"\]/.test(reviewItem),
+        "   ودورُ الطبيب يراها");
+      check(/noExamReviewBypass[\s\S]{0,120}permissions\.canWriteMedicalExam/.test(sidebar),
+        "   ومَن يحمل العَلَمَ يراها ولو كان دورُه شيئاً آخر — كما يقبله الخادم");
+      {
+        //  **والطرفان يقرآن القاعدةَ نفسَها**: كلُّ جلسةٍ يقبلها الخادمُ
+        //  شكلاً تراها القائمة، والعكسُ بالعكس.
+        const menuSees = (x: any) => Boolean(x.isAdmin) || x.role === "doctor"
+          || x.permissions?.canWriteMedicalExam === true;
+        const cases = [S.admin, S.doc, S.docSup, S.docPhys, S.recv, S.manager, S.acc, S.expert];
+        same("**ولا خلافَ بين القائمة والخادم على أيّ جلسة**",
+          cases.map((c) => menuSees(c) === mayReviewShape(c as any)),
+          cases.map(() => true));
+      }
       check(sidebar.includes("/api/no-exam/returned/count")
         && sidebar.includes("badge: returnedCount"),
         "**والشارةُ على القائمة** — فيُعرَف أن هناك ما ينتظر بلا فتح الصفحة");

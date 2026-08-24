@@ -615,6 +615,85 @@ export interface LockedEpisode {
    * الكاملُ قرارٌ سريريٌّ من أوّله فيُردّ إلى مسار المعاينة.
    */
   requestedItem: string | null;
+  /**
+   * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — يملؤه التحميلُ الدقيق وحده.
+   *
+   * حلقةٌ أُبطلت إدارياً لا يُقيَّد عليها مالٌ متأخّر: بابُها التصحيحُ لا
+   * الاعتماد. والقارئُ العامّ لا يحتاجه، فيبقى اختيارياً ولا يُلزَم به
+   * كلُّ بانٍ قائم.
+   */
+  adminVoidReversalId?: number | null;
+}
+
+/**
+ * **الحلقةُ بعينها — مقفولةً بترتيب القفل القانونيّ** (المرحلة الثالثة).
+ *
+ * ══ لماذا لا تكفي «الحلقةُ المفتوحة» ═══════════════════════════════════
+ * `lockCaseAndReadOpenEpisode` تستثني `delivered` و`cancelled` عمداً: هي
+ * تجيب عن «أيُّ جهازٍ قيد الإجراء الآن؟».
+ *
+ * لكنّ مسارَ «بلا معاينة» يقول **العمليةُ تمضي والمالُ ينتظر** — فالجزءُ
+ * قد يُصنَّع **ويُسلَّم** قبل أن يفرغ الطبيبُ لمراجعة مبلغه. والبحثُ عن
+ * «حلقةٍ مفتوحة» حينها لا يجدها، **فيصير الجهازُ المسلَّمُ بحقٍّ غيرَ قابلٍ
+ * للاعتماد المالي أبداً**. والعملُ لا يُعاقَب لأنه أسرعُ من المراجع.
+ *
+ * ══ وترتيبُ القفل واحد لا اثنان ════════════════════════════════════════
+ * **الخيطُ أوّلاً ثمّ الحلقة** — نفسُ ترتيب `lockCaseAndReadOpenEpisode` و
+ * `startDeviceEpisode`. وترتيبان متعاكسان في نظامٍ واحد يصنعان جمودَ قفلٍ
+ * (deadlock) لا يظهر إلّا تحت الضغط.
+ *
+ * والهويّةُ تُفحَص هنا: الحلقةُ لهذا المريض ولهذا الخيط ومن هذا النوع.
+ */
+export async function lockCaseAndReadExactEpisode(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    episodeId: number;
+  },
+): Promise<{ caseId: number | null; episode: LockedEpisode | null; branchId: number | null }> {
+  //  ① الخيطُ أوّلاً — نقطةُ القفل القانونية.
+  const cs = await tx.execute(sql`
+    SELECT id, branch_id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  if (!caseRow) return { caseId: null, episode: null, branchId: null };
+
+  //  ② ثمّ الحلقةُ بمعرّفها — **مهما كانت حالتُها**، فالمسلَّمُ يُعتمَد مالُه.
+  const r = await tx.execute(sql`
+    SELECT id, case_id, patient_id, branch_id, status, agreed_cost, service_path,
+           requested_item, admin_void_reversal_id
+      FROM patient_device_episodes
+     WHERE id = ${params.episodeId}
+     FOR UPDATE
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return { caseId: Number(caseRow.id), episode: null, branchId: null };
+  //  **ولا تُقبَل حلقةٌ من خيطٍ آخر** ولو حمل الطلبُ معرّفَها.
+  if (Number(row.case_id) !== Number(caseRow.id)
+    || Number(row.patient_id) !== params.patientId) {
+    return { caseId: Number(caseRow.id), episode: null, branchId: null };
+  }
+  return {
+    caseId: Number(caseRow.id),
+    branchId: row.branch_id === null || row.branch_id === undefined
+      ? null : Number(row.branch_id),
+    episode: {
+      id: Number(row.id),
+      caseId: Number(row.case_id),
+      patientId: Number(row.patient_id),
+      serviceType: params.serviceType,
+      status: String(row.status),
+      agreedCost: Number(row.agreed_cost ?? 0),
+      servicePath: parseServicePath(row.service_path),
+      requestedItem: row.requested_item ?? null,
+      adminVoidReversalId: row.admin_void_reversal_id === null
+        || row.admin_void_reversal_id === undefined
+        ? null : Number(row.admin_void_reversal_id),
+    },
+  };
 }
 
 /**

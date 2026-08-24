@@ -32,9 +32,6 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
-import {
-  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
-} from "@shared/prosthetic_parts";
 import type { DeviceOrigin } from "@shared/device_origin";
 
 export class ChargeError extends Error {
@@ -244,32 +241,15 @@ export async function createDeviceSaleCharge(p: CreateBase & {
 }): Promise<{ charge: ChargeRow | null; workOrderId: number }> {
   const store = await import("../storage");
   return await db.transaction(async (tx) => {
-    const r = await tx.execute(sql`
-      SELECT e.id, e.status, e.service_path, e.requested_item, e.case_id, e.patient_id
-        FROM patient_device_episodes e
-       WHERE e.id = ${p.deviceEpisodeId} FOR UPDATE
-    `);
-    const ep = (r.rows ?? [])[0];
-    if (!ep) throw new ChargeError("طلب الجهاز غير موجود", 404);
-    if (Number(ep.patient_id) !== p.patientId) {
-      throw new ChargeError("طلب الجهاز لا يخصّ هذا المريض", 409);
-    }
-    if (String(ep.service_path) !== "no_exam") {
-      throw new ChargeError(
-        "هذا الطلب على مسار المعاينة — يمرّ بالطبيب ثم «تفاصيل البيع»", 409);
-    }
-    if (String(ep.status) !== "awaiting_exam") {
-      throw new ChargeError("طلب الجهاز ليس في حالة تسمح بالبيع", 409);
-    }
-    const requestedItem = String(ep.requested_item ?? "full_device");
-    //  **والطرفُ الكاملُ يُردّ هنا أيضاً** — قبل أن يُفتَح شيء. والحارسُ
-    //  المُلزِم في `startDeviceSaleOperationallyTx` تحت القفل، وهذا ردٌّ
-    //  مبكّرٌ برسالةٍ واحدة لا رسالتين.
-    if (p.serviceType === "prosthetic" && !isProstheticComponent(requestedItem)) {
-      throw new ChargeError(NO_EXAM_FULL_PROSTHESIS_REFUSAL, 409);
-    }
-
-    //  ══ **العملُ يبدأ الآن** — النصفُ التشغيليُّ وحده، بلا دينار ══════
+    //  ══ **ترتيبُ قفلٍ واحد لا اثنان** ═══════════════════════════════════
+    //  كان هنا قفلٌ تمهيديٌّ على **الحلقة** قبل الخيط — عكسَ الترتيب
+    //  القانونيّ (`lockCaseAndReadOpenEpisode`: الخيطُ ثمّ الحلقة). وترتيبان
+    //  متعاكسان في نظامٍ واحد يصنعان جمودَ قفلٍ لا يظهر إلّا تحت الضغط.
+    //
+    //  فحُذف. والحُرّاسُ كلُّها داخل `startDeviceSaleOperationallyTx`:
+    //  انتماءُ الحلقة (بقفل الخيط) · مسارُها (`expectServicePath`) ·
+    //  حالتُها · الطرفُ الكامل · وفرعُها. **وما طُلب يُقرأ من هناك** —
+    //  من الصفّ المقفول لا من قراءةٍ سابقةٍ له.
     const op = await store.startDeviceSaleOperationallyTx(tx, {
       patientId: p.patientId,
       serviceType: p.serviceType,
@@ -277,6 +257,9 @@ export async function createDeviceSaleCharge(p: CreateBase & {
       expertUserId: p.saleExpertUserId,
       assignedBy: p.actor.userId,
       deviceEpisodeId: p.deviceEpisodeId,
+      expectServicePath: "no_exam",
+      //  **الواقعةُ الصريحة** — لا يُستدَلّ عليها بغياب صفّ لاحقاً.
+      noExamNoCharge: p.amount === null,
     });
 
     const charge = await insertCharge(tx, {
@@ -285,10 +268,10 @@ export async function createDeviceSaleCharge(p: CreateBase & {
       //  **والصفُّ يشير إلى أمرِ عمله** — فالاعتمادُ يقيّد على أمرٍ قائم
       //  ولا يُنشئ ثانياً.
       workOrderId: op.workOrderId,
-      requestedItem,
+      requestedItem: op.requestedItem,
       maintenanceComponent: null, deviceOrigin: null,
       saleExpertUserId: p.saleExpertUserId,
-      caseId: p.caseId ?? Number(ep.case_id),
+      caseId: op.caseId,
     });
     return { charge, workOrderId: op.workOrderId };
   });
@@ -339,6 +322,7 @@ export async function createMaintenanceCharge(p: CreateBase & {
       legacyUnrecordedDevice: p.deviceEpisodeId === null,
       maintenanceComponent: p.maintenanceComponent,
       deviceOrigin: p.deviceOrigin,
+      noExamNoCharge: p.amount === null,
       tx,
     });
     const charge = await insertCharge(tx, {
@@ -352,6 +336,70 @@ export async function createMaintenanceCharge(p: CreateBase & {
     });
     return { charge, workOrderId: order.id };
   });
+}
+
+/**
+ * **هويّةُ عمليةِ الصيانة — تُقرأ مقفولةً قبل الدينار.**
+ *
+ * ══ لماذا لا يكفي قفلُ الصفّ المعلَّق ═══════════════════════════════════
+ * `postMaintenanceFee` كاتبٌ مطيع: يقيّد ما يُعطى بلا سؤال — وهذا صوابُه،
+ * فهو الكتابةُ الواحدة التي تناديها الصيانةُ كاملةُ الأجر أيضاً. لكنّ
+ * مناداتَه من هنا بلا مطابقةٍ كانت تعني أن صفّاً عُبث برقم أمره يقيّد أجراً
+ * على أمرِ مريضٍ آخر — **والمالُ لا يُصحَّح بعد وقوعه**.
+ *
+ * ══ والمكتملُ يُقبَل والملغى يُردّ ══════════════════════════════════════
+ * «العمليةُ تمضي والمالُ ينتظر» يعني أن الصيانةَ قد **تكتمل** قبل أن يفرغ
+ * الطبيبُ لأجرها — فاشتراطُ بقائها «فعّالة» كان سيحبس أجرَ عملٍ تمّ. أمّا
+ * الملغاةُ أو المُبطَلةُ إدارياً فبابُها التصحيحُ لا الاعتماد.
+ *
+ * **والمنشأُ يُطابَق** كذلك: لقطةُ الصفّ يجب أن تقول ما يقوله السجلُّ
+ * التشغيليّ، وإلّا عُرض على الطبيب منشأٌ غيرُ الذي وقع.
+ */
+async function loadMaintenanceOperationTx(tx: any, cur: ChargeRow): Promise<{
+  branchId: number; deviceEpisodeId: number | null;
+}> {
+  const MISMATCH =
+    "بيانات الصيانة لا تطابق أمرها المسجَّل — راجع الملفّ إدارياً قبل قيد المبلغ";
+  const r = await tx.execute(sql`
+    SELECT id, patient_id, branch_id, service_type, purpose, status,
+           device_episode_id, maintenance_component, device_origin,
+           admin_void_reversal_id
+      FROM prosthetic_work_orders WHERE id = ${cur.workOrderId} FOR UPDATE
+  `);
+  const wo = (r.rows ?? [])[0];
+  if (!wo) throw new ChargeError("أمر الصيانة غير موجود", 409);
+
+  if (String(wo.purpose ?? "initial_build") !== "maintenance"
+    || Number(wo.patient_id) !== cur.patientId
+    || String(wo.service_type) !== cur.serviceType
+    || (cur.branchId !== null && Number(wo.branch_id) !== cur.branchId)
+    || (wo.maintenance_component ?? null) !== (cur.maintenanceComponent ?? null)
+    || (wo.device_origin ?? null) !== (cur.deviceOrigin ?? null)
+    || Number(wo.device_episode_id ?? 0) !== Number(cur.deviceEpisodeId ?? 0)) {
+    throw new ChargeError(MISMATCH, 409);
+  }
+  if (String(wo.status) === "cancelled" || wo.admin_void_reversal_id !== null) {
+    throw new ChargeError(
+      "أمر الصيانة ملغى أو مُبطَل إدارياً — لا يُقيَّد عليه مبلغ."
+      + " صحّح العملية من «تصحيح / إلغاء العملية».", 409);
+  }
+
+  //  **وجهازُ الصيانة المسجَّل يُطابَق بعينه** — والآخران بلا حلقة، فلا
+  //  تُخترَع لهما ولا تُطلَب منهما.
+  const episodeId = cur.deviceEpisodeId;
+  if (episodeId !== null) {
+    const er = await tx.execute(sql`
+      SELECT id, patient_id, status, admin_void_reversal_id
+        FROM patient_device_episodes WHERE id = ${episodeId} FOR UPDATE
+    `);
+    const ep = (er.rows ?? [])[0];
+    if (!ep || Number(ep.patient_id) !== cur.patientId) throw new ChargeError(MISMATCH, 409);
+    if (ep.admin_void_reversal_id !== null || String(ep.status) === "cancelled") {
+      throw new ChargeError(
+        "جهاز الصيانة ملغى أو مُبطَل إدارياً — لا يُقيَّد عليه مبلغ.", 409);
+    }
+  }
+  return { branchId: Number(wo.branch_id ?? cur.branchId ?? 0), deviceEpisodeId: episodeId };
 }
 
 // ── قرارُ الطبيب ─────────────────────────────────────────────────────────
@@ -386,32 +434,23 @@ export async function approveCharge(params: {
     if (!may.ok) throw new ChargeError(may.reason ?? "غير مصرح بمراجعة هذه العملية", 403);
 
     const workOrderId: number | null = cur.workOrderId;
+    if (workOrderId === null) {
+      throw new ChargeError(
+        "لا يوجد أمر تصنيع لهذه العملية — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+    }
+
     if (cur.operationKind === "maintenance") {
-      //  **الكتابةُ الواحدة** التي تناديها الصيانةُ كاملةُ الأجر — بالمبلغ
-      //  المعتمَد وبهويّة الجهاز نفسِها التي حُفظت لحظةَ فتح الأمر.
+      //  ══ **وهويّةُ الصيانة تُعاد قراءتُها قبل الدينار** ═══════════════
+      //  `postMaintenanceFee` كاتبٌ مطيع: يقيّد ما يُعطى بلا سؤال. فلو
+      //  نُودي بلا مطابقةٍ لقُيِّد أجرُ صيانةٍ على أمرٍ لمريضٍ آخر أو على
+      //  عمليةٍ أُلغيت — والمالُ لا يُصحَّح بعد وقوعه.
+      const op = await loadMaintenanceOperationTx(tx, cur);
       await mfg.postMaintenanceFee(tx, {
-        patientId: cur.patientId, branchId: cur.branchId ?? 0,
+        patientId: cur.patientId, branchId: op.branchId,
         serviceType: cur.serviceType, cost: cur.amount,
-        deviceEpisodeId: cur.deviceEpisodeId,
+        deviceEpisodeId: op.deviceEpisodeId,
       });
     } else {
-      if (workOrderId === null) {
-        throw new ChargeError(
-          "لا يوجد أمر تصنيع لهذه العملية — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
-      }
-      //  ══ **الخبيرُ يُقرأ من الصفّ المقفول ويُعاد التحقّق منه الآن** ═══
-      //  لقطةٌ قُرئت قبل القفل ليست سلطة: قد يُوقَف الخبيرُ أو يُنقَل بين
-      //  الإرسال والاعتماد. **وخبيرٌ لم يعد صالحاً لا يُقيَّد عليه مال.**
-      const expert = Number(cur.saleExpertUserId);
-      if (!Number.isInteger(expert) || expert <= 0) {
-        throw new ChargeError("لا خبير مسجَّل على هذه العملية — صحّحها قبل الاعتماد", 409);
-      }
-      const v = await mfg.validateExpertForBranchTx(tx, expert, cur.branchId ?? 0);
-      if (!v.ok) {
-        throw new ChargeError(
-          `${v.reason} — صحّح إسناد العملية قبل اعتماد مبلغها`, 409);
-      }
-
       //  **العمليةُ القائمة تُقرأ بهويّتها كاملة** — والتناقضُ يُردّ.
       const op = await store.loadDeviceSaleOperationTx(tx, {
         patientId: cur.patientId,
@@ -419,8 +458,18 @@ export async function approveCharge(params: {
         workOrderId,
         deviceEpisodeId: cur.deviceEpisodeId,
         branchId: cur.branchId,
+        caseId: cur.caseId,
         requestedItem: cur.requestedItem,
       });
+      //  ══ **الخبيرُ الحاليُّ على الأمر هو السلطة** ═══════════════════════
+      //  لقطةُ الإنشاء (`sale_expert_user_id`) تبقى للتدقيق، **ولا تصير
+      //  سلطةً ثانيةً بائتة**: إعادةُ إسنادٍ مشروعةٌ بعد الإرسال يجب ألّا
+      //  تُفشل المال. ويُعاد التحقّق من الحاليّ **بفرع أمر العمل**.
+      const v = await mfg.validateExpertForBranchTx(tx, op.expertUserId, op.branchId ?? 0);
+      if (!v.ok) {
+        throw new ChargeError(
+          `${v.reason} — صحّح إسناد العملية قبل اعتماد مبلغها`, 409);
+      }
       //  **والنصفُ الماليُّ وحده** — لا أمرَ ولا حلقةَ ولا سجلَّ عمل.
       await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: cur.amount });
     }

@@ -126,7 +126,15 @@ export function Sidebar() {
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
     //  «معايناتي» و«مراجعة الطبيب»: سؤالٌ واحد له شاشتُه.
-    { label: "مراجعة مبيعات بلا معاينة", icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
+    //
+    //  **والقائمةُ تطابق الخادمَ ولا تضيق عنه**: شرطُ الخادم شكلاً هو
+    //  «مسؤولٌ أو دورُه طبيب أو يحمل `canWriteMedicalExam`»، ثمّ يصفّي
+    //  بالاختصاص الحيّ والفرع. فاشتراطُ `canWriteMedicalExam` وحدها هنا كان
+    //  **يُخفي الشاشةَ عن طبيبٍ يقبله الخادم** — وهذه مراجعةٌ ماليةٌ لا
+    //  معاينةٌ تُوقَّع، فلا تُشترَط لها صلاحيةُ كتابة المعاينة.
+    //  ومَن لا اختصاصَ له يفتحها فيقرأ سببَ خلوّها — لا أن يبحث عن بابٍ
+    //  لا يراه. **ولا تتوسّع سلطةُ الخادم بحرف.**
+    { label: "مراجعة مبيعات بلا معاينة", icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["doctor"] as const },
     //  **وطابورُ الاستقبال للمُعادات** — بعددٍ ظاهر، فيُعرَف أن هناك ما
     //  ينتظر بلا فتح الصفحة.
     { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount },
@@ -167,7 +175,13 @@ export function Sidebar() {
       //  آخر. ولا تُفتَح لمن لا يملكها.
       const returnedBypass = item.href === "/returned-charges"
         && permissions.canAddPatients;
-      if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass) return false;
+      //  **والمراجعةُ المالية كذلك**: عَلَمُ `canWriteMedicalExam` يفتحها لمن
+      //  دورُه شيءٌ آخر — تماماً كما يقبله الخادم. فالقائمةُ والخادمُ لا
+      //  يختلفان على طبيبٍ مراجع.
+      const noExamReviewBypass = item.href === "/no-exam-review"
+        && permissions.canWriteMedicalExam;
+      if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
+        && !noExamReviewBypass) return false;
     }
     
     // Check branch settings for non-admin users

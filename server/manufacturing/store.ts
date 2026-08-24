@@ -424,6 +424,13 @@ export async function createMaintenanceOrderWithVisit(params: {
    */
   deviceOrigin?: string | null;
   /**
+   * **«بلا أجر» واقعةٌ تُحفَظ** (ترحيل ٠٦٧) — لا غيابُ صفّ معلَّق.
+   *
+   * `undefined` للصيانة كاملةِ الأجر بنقطتها القائمة: ليست من هذا المسار،
+   * فيبقى العمودُ `NULL` صادقاً ولا يُكتب عليها معنىً لم يُسأل عنه.
+   */
+  noExamNoCharge?: boolean;
+  /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
    * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
@@ -485,6 +492,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       maintenanceComponent: component,
       //  **الواقعةُ على السجلّ التشغيليّ** — فتبقى ولو كانت الخدمةُ بلا أجر.
       deviceOrigin: params.deviceOrigin ?? null,
+      noExamNoCharge: params.noExamNoCharge ?? null,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,

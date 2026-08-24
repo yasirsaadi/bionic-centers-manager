@@ -48,7 +48,8 @@ import type { DbTransaction as DbTransactionLike } from "./events/store";
 import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
 import {
-  lockCaseAndReadOpenEpisode, markEpisodeInManufacturing, caseHasEpisodes,
+  lockCaseAndReadOpenEpisode, lockCaseAndReadExactEpisode,
+  markEpisodeInManufacturing, caseHasEpisodes,
   startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
@@ -349,7 +350,11 @@ export interface DeviceSaleOperation {
   serviceType: "prosthetic" | "medical_support";
   branchId: number | null;
   workOrderId: number;
+  /** **الخبيرُ الحاليُّ على الأمر** — الإسنادُ التشغيليُّ المعتمَد. */
+  expertUserId: number;
   episodeId: number | null;
+  /** **ما طُلب كما قُرئ تحت القفل** — لا كما وصل في الطلب. */
+  requestedItem: string | null;
   caseId: number;
   /** كلفةُ الخيط **قبل** أن يلمسها هذا البيع. */
   priorCaseCost: number;
@@ -382,6 +387,20 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   deviceEpisodeId?: number | null;
   /** منشأُ الجهاز — للصيانة. البناءُ الأوليّ لا منشأَ له: نحن نصنعه. */
   deviceOrigin?: string | null;
+  /**
+   * **«بلا أجر» واقعةٌ تُحفَظ** (ترحيل ٠٦٧) — لا غيابُ صفّ.
+   *
+   * `undefined` = ليس من مسار «بلا معاينة» أصلاً، فيبقى العمودُ `NULL`
+   * صادقاً. و`true`/`false` جوابٌ صريحٌ سجّله الموظّف.
+   */
+  noExamNoCharge?: boolean;
+  /**
+   * **مسارُ العملية المتوقَّع** — يُطابَق بما في الصفّ المقفول.
+   *
+   * فبابُ «بلا معاينة» لا يبيع طلباً على مسار المعاينة ولو حمل معرّفَه،
+   * **ويُقال ذلك برسالته الصحيحة** لا برسالةِ «لم يفحصها طبيب».
+   */
+  expectServicePath?: "exam" | "no_exam";
 }): Promise<DeviceSaleOperation> {
   const { patientId, serviceType, fields, expertUserId, assignedBy } = params;
   const wantEpisode = params.deviceEpisodeId ?? null;
@@ -413,6 +432,15 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     if (!episode || episode.id !== wantEpisode) {
       throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
     }
+    //  **ومسارُ الطلب يُقرأ من صفّه** — فبابُ «بلا معاينة» لا يبيع طلباً
+    //  على مسار المعاينة، ويُقال ذلك برسالته الصحيحة.
+    if (params.expectServicePath !== undefined
+      && episode.servicePath !== params.expectServicePath) {
+      throw new DeviceEpisodeError(
+        params.expectServicePath === "no_exam"
+          ? "هذا الطلب على مسار المعاينة — يمرّ بالطبيب ثم «تفاصيل البيع»"
+          : "هذا الطلب على مسار «بلا معاينة» — يُسجَّل من «بيع بلا معاينة»", 409);
+    }
     // ══ **والحارسُ يقرأ المسار لا الحالةَ وحدها** (المرحلة الثالثة) ══
     //  `awaiting_exam` على مسار المعاينة تعني «لم يفحصها طبيبٌ بعد»
     //  فتُردّ. وعلى مسار «بلا معاينة» (٠٦٥) تعني «لا فحصَ مطلوبٌ أصلاً»
@@ -438,6 +466,25 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     throw new DeviceEpisodeError(
       "تغيّرت حالة طلب الجهاز — حدّث الصفحة وأكمل الطلب الجديد", 409,
     );
+  }
+
+  // ══ **ولا أمرَ في فرعٍ مرتبطٍ بحلقةٍ من فرعٍ آخر** ═════════════════════
+  //  مريضٌ نُقل بعد أن فُتح طلبُه: الأمرُ يُنشأ بفرعه **الحاليّ** بينما
+  //  الحلقةُ من فرعه القديم — فيصير للعملية فرعان، ويُنسب مالُها بعد شهرٍ
+  //  إلى فرعٍ لم يعمل فيها. والتصحيحُ بابُه نقلُ العملية إدارياً لا الصمت.
+  if (episode) {
+    const eb = await tx.execute(sql`
+      SELECT branch_id FROM patient_device_episodes WHERE id = ${episode.id}
+    `);
+    const epBranch = (eb.rows ?? [])[0]?.branch_id ?? null;
+    if (epBranch !== null && existing.branchId !== null
+      && Number(epBranch) !== Number(existing.branchId)) {
+      throw new DeviceEpisodeError(
+        "طلب الجهاز مفتوحٌ على فرعٍ آخر غير فرع المريض الحالي —"
+        + " صحّح العملية إدارياً قبل بدئها، فلا يُفتَح أمرٌ في فرعٍ وحلقتُه في آخر.",
+        409,
+      );
+    }
   }
 
   const [existingCase] = await tx.select().from(patientCases)
@@ -508,6 +555,9 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     //  **ومنشأُ الجهاز واقعةٌ تشغيلية** (٠٦٧): البناءُ الأوليُّ لا منشأَ له
     //  — نحن نصنعه — فيبقى `NULL`. والصيانةُ وحدها تقوله.
     deviceOrigin: params.deviceOrigin ?? null,
+    //  **و«بلا أجر» تُحفَظ في المعاملة نفسِها** التي تبدأ العمل — فالواقعةُ
+    //  تنجو ولو لم يُنشَأ صفُّ مبلغٍ إطلاقاً.
+    noExamNoCharge: params.noExamNoCharge ?? null,
   }).returning();
   const [created] = await tx.insert(prostheticWorkHistory).values({
     workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
@@ -520,7 +570,8 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
 
   return {
     patientId, serviceType, branchId: existing.branchId,
-    workOrderId: wo.id, episodeId: episode?.id ?? null, caseId,
+    workOrderId: wo.id, expertUserId, episodeId: episode?.id ?? null,
+    requestedItem: episode?.requestedItem ?? null, caseId,
     priorCaseCost, priorCaseSource, priorTotalCost, priorEpisodeAgreedCost,
     patient,
   };
@@ -543,61 +594,111 @@ export async function loadDeviceSaleOperationTx(tx: any, params: {
   workOrderId: number;
   deviceEpisodeId: number | null;
   branchId: number | null;
+  caseId?: number | null;
   requestedItem?: string | null;
 }): Promise<DeviceSaleOperation> {
   const [existing] = await tx.select().from(patients).where(eq(patients.id, params.patientId));
   if (!existing) throw new DeviceEpisodeError("المريض غير موجود", 404);
 
-  const { caseId, episode } = await lockCaseAndReadOpenEpisode(tx, {
-    patientId: params.patientId, serviceType: params.serviceType,
-  });
+  // ══ **الحلقةُ بمعرّفها لا بـ«المفتوحة»** ═════════════════════════════
+  //  «العمليةُ تمضي والمالُ ينتظر» يعني أن الجزءَ قد يُصنَّع **ويُسلَّم**
+  //  قبل أن يفرغ الطبيبُ لمبلغه. والبحثُ عن «حلقةٍ مفتوحة» لا يجد المسلَّم،
+  //  **فيصير الجهازُ المسلَّمُ بحقٍّ غيرَ قابلٍ للاعتماد أبداً**.
+  //
+  //  وترتيبُ القفل هو القانونيُّ نفسُه: **الخيطُ أوّلاً ثمّ الحلقة**.
+  const locked = params.deviceEpisodeId !== null
+    ? await lockCaseAndReadExactEpisode(tx, {
+      patientId: params.patientId, serviceType: params.serviceType,
+      episodeId: params.deviceEpisodeId,
+    })
+    : { ...await lockCaseAndReadOpenEpisode(tx, {
+      patientId: params.patientId, serviceType: params.serviceType,
+    }), branchId: null as number | null };
+  const { caseId, episode } = locked;
   if (caseId === null) {
     throw new DeviceEpisodeError("لا توجد حالة لهذا النوع على ملفّ المريض", 409);
   }
 
   const wor = await tx.execute(sql`
     SELECT id, patient_id, branch_id, service_type, purpose, status,
-           device_episode_id, expert_user_id
+           device_episode_id, expert_user_id, admin_void_reversal_id
       FROM prosthetic_work_orders WHERE id = ${params.workOrderId} FOR UPDATE
   `);
   const wo = (wor.rows ?? [])[0];
   if (!wo) throw new DeviceEpisodeError("أمر التصنيع غير موجود", 409);
 
+  const IDENTITY_MISMATCH =
+    "بيانات العملية لا تطابق أمر التصنيع المسجَّل — راجع الملفّ إدارياً قبل قيد المبلغ";
   const mismatch =
     Number(wo.patient_id) !== params.patientId
     || String(wo.service_type) !== params.serviceType
     || (params.branchId !== null && Number(wo.branch_id) !== params.branchId)
     || Number(wo.device_episode_id ?? 0) !== Number(params.deviceEpisodeId ?? 0);
-  if (mismatch) {
+  if (mismatch) throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+
+  // ══ **الحالاتُ الطرفيّةُ لا تقبل مالاً متأخّراً** ══════════════════════
+  //  والمكتملُ يقبله: العملُ وقع، والمبلغُ تأخّر عنه فحسب.
+  if (String(wo.status) === "cancelled" || wo.admin_void_reversal_id !== null) {
     throw new DeviceEpisodeError(
-      "بيانات العملية لا تطابق أمر التصنيع المسجَّل — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+      "أمر التصنيع ملغى أو مُبطَل إدارياً — لا يُقيَّد عليه مبلغ."
+      + " صحّح العملية من «تصحيح / إلغاء العملية».", 409);
   }
-  if (String(wo.status) === "cancelled") {
-    throw new DeviceEpisodeError("أمر التصنيع ملغى — لا يُقيَّد عليه مبلغ", 409);
-  }
-  if (params.deviceEpisodeId !== null
-    && (!episode || episode.id !== params.deviceEpisodeId)) {
-    throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
-  }
-  //  **وما طُلب يُطابَق من الحلقة نفسِها** — هي مصدرُ حقيقةِ الطلب (٠٦٠)،
-  //  وأمرُ التصنيع يرثه بالرابط لا بنسخةٍ ثانية تنحرف.
-  if (params.requestedItem !== undefined && episode
-    && (episode.requestedItem ?? null) !== (params.requestedItem ?? null)) {
-    throw new DeviceEpisodeError(
-      "تغيّر الطلب المسجَّل على هذا الجهاز — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+
+  if (params.deviceEpisodeId !== null) {
+    if (!episode) throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+    //  **الحالاتُ المشروعةُ بعد بدء العمل** — ومنها المسلَّم.
+    if (episode.status !== "in_manufacturing" && episode.status !== "delivered") {
+      throw new DeviceEpisodeError(
+        episode.status === "cancelled"
+          ? "طلب الجهاز ملغى — لا يُقيَّد عليه مبلغ. صحّح العملية من «تصحيح / إلغاء العملية»."
+          : "تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
+    }
+    if (episode.adminVoidReversalId != null) {
+      throw new DeviceEpisodeError(
+        "طلب الجهاز مُبطَل إدارياً — لا يُقيَّد عليه مبلغ."
+        + " صحّح العملية من «تصحيح / إلغاء العملية».", 409);
+    }
+    //  **ومسارُه هو مسارُ هذه المراجعة** — لا يُقيَّد مبلغُ «بلا معاينة»
+    //  على حلقةٍ صارت على مسار المعاينة أو فقدت مسارَها.
+    if (episode.servicePath !== "no_exam") throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+    //  **وما طُلب من الحلقة نفسِها** — مصدرُ حقيقةِ الطلب (٠٦٠).
+    if (params.requestedItem !== undefined
+      && (episode.requestedItem ?? null) !== (params.requestedItem ?? null)) {
+      throw new DeviceEpisodeError(
+        "تغيّر الطلب المسجَّل على هذا الجهاز — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+    }
+    //  **وفرعُ الحلقة هو فرعُ العملية** — فلا يُنقَل مالُ عمليةٍ قديمة إلى
+    //  فرعِ المريض الجديد لأنه انتقل بعد أن بدأ عملُه.
+    if (locked.branchId !== null && params.branchId !== null
+      && locked.branchId !== params.branchId) {
+      throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+    }
   }
 
   const [existingCase] = await tx.select().from(patientCases)
     .where(and(eq(patientCases.patientId, params.patientId),
       eq(patientCases.caseType, params.serviceType)));
+  const resolvedCaseId = existingCase?.id ?? caseId;
+  //  **وخيطُ الحلقة هو خيطُ الصفّ المعلَّق** — قيدٌ على خيطٍ آخر يبوّب
+  //  البيعَ في قسمٍ لم يقع فيه.
+  if (params.caseId != null && Number(params.caseId) !== Number(resolvedCaseId)) {
+    throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+  }
+  if (episode && Number(episode.caseId) !== Number(resolvedCaseId)) {
+    throw new DeviceEpisodeError(IDENTITY_MISMATCH, 409);
+  }
 
   return {
     patientId: params.patientId,
     serviceType: params.serviceType,
     branchId: Number(wo.branch_id ?? existing.branchId ?? 0) || existing.branchId,
     workOrderId: Number(wo.id),
+    //  **والخبيرُ الحاليُّ على الأمر هو الإسنادُ التشغيليُّ المعتمَد** —
+    //  لا لقطةُ الإنشاء: إعادةُ إسنادٍ مشروعةٍ بعد الإرسال لا تُفشل المال.
+    expertUserId: Number(wo.expert_user_id),
     episodeId: params.deviceEpisodeId,
-    caseId: existingCase?.id ?? caseId,
+    requestedItem: episode?.requestedItem ?? null,
+    caseId: resolvedCaseId,
     priorCaseCost: existingCase?.cost || 0,
     priorCaseSource: existingCase?.costSource ?? null,
     priorTotalCost: existing.totalCost || 0,

@@ -192,6 +192,20 @@ END $$;
 ALTER TABLE prosthetic_work_orders
   ADD COLUMN IF NOT EXISTS device_origin TEXT;
 
+-- ══ **«بلا أجر» واقعةٌ تُحفَظ لا غيابُ صفّ** ══════════════════════════════
+--  العمليةُ بلا أجر لا تُنشئ صفَّ مبلغٍ معلَّق — وهذا صواب. لكنّ **غيابَ
+--  الصفّ ليس شهادة**: مَن يقرأ الأمرَ بعد شهور لا يفرّق بين «قُرِّر مجّاناً
+--  صراحةً» و«لم يُسجَّل مبلغُه بعد» و«ليس من هذا المسار أصلاً».
+--
+--  ثلاثيةٌ صادقة: NULL = لم يُسأل (قديمٌ أو خارج المسار) · TRUE = سُجِّل
+--  صراحةً بلا أجر · FALSE = سُجِّل بأجرٍ يمرّ بالمراجعة المالية.
+--  **ولا DEFAULT** — فقيمةٌ افتراضية تكتب معنىً على كلّ أمرٍ قديم لم يُسأل.
+ALTER TABLE prosthetic_work_orders
+  ADD COLUMN IF NOT EXISTS no_exam_no_charge BOOLEAN;
+
+COMMENT ON COLUMN prosthetic_work_orders.no_exam_no_charge IS
+  'عملية «بلا معاينة»: TRUE سجلت صراحة بلا أجر · FALSE سجلت بأجر يمر بالمراجعة · NULL لم تسأل (قديم أو خارج المسار).';
+
 COMMENT ON COLUMN prosthetic_work_orders.device_origin IS
   'منشأ الجهاز المُصان: registered (له حلقة) / center_unrecorded (صنعناه قبل النظام) / external (صُنع خارج المركز). NULL = لم يُسأل أو بناء أولي.';
 
