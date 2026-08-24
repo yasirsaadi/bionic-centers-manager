@@ -30,6 +30,7 @@ import {
   SAVED_PENDING_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
 } from "@shared/pending_charge";
 import { parseComponent, isDeviceServiceKind } from "@shared/prosthetic_parts";
+import { parseDeviceOrigin, originHasEpisode } from "@shared/device_origin";
 
 type Req = any;
 
@@ -190,7 +191,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!amount.ok) return res.status(400).json({ error: amount.error });
 
-      const charge = await store.createDeviceSaleCharge({
+      const out = await store.createDeviceSaleCharge({
         patientId, branchId: patient.branch_id ?? null,
         caseId: await caseIdFor(patientId, serviceType),
         serviceType, amount: amount.amount,
@@ -199,21 +200,23 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         deviceEpisodeId, saleExpertUserId: expertUserId,
       });
 
-      if (charge) {
-        await logAudit({
-          entityType: "pending_service_charge", entityId: charge.id, action: "create",
-          userId: getSession(req).userId, userName: getSession(req).userName ?? null,
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          newValues: {
-            patientId, amount: charge.amount, operationKind: "device_sale",
-            requestedItem: charge.requestedItem, serviceType,
-          },
-          notes: `عملية بلا معاينة — بيع بمبلغ معلّق ${charge.amount} د.ع`,
-        });
-      }
+      await logAudit({
+        entityType: "pending_service_charge",
+        entityId: out.charge?.id ?? out.workOrderId, action: "create",
+        userId: getSession(req).userId, userName: getSession(req).userName ?? null,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        newValues: {
+          patientId, serviceType, workOrderId: out.workOrderId,
+          operationKind: "device_sale", amount: out.charge?.amount ?? 0,
+          requestedItem: out.charge?.requestedItem ?? null,
+        },
+        notes: out.charge
+          ? `بيع بلا معاينة — بدأ العمل، ومبلغٌ معلّق ${out.charge.amount} د.ع`
+          : "بيع بلا معاينة — بدأ العمل، بلا أجور",
+      });
       return res.status(201).json({
-        ok: true, charge,
-        message: charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
+        ok: true, charge: out.charge, workOrderId: out.workOrderId,
+        message: out.charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
       });
     } catch (err) {
       fail(res, err, "تعذّر تسجيل العملية");
@@ -283,13 +286,22 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!amount.ok) return res.status(400).json({ error: amount.error });
 
-      //  **واقعةُ المنشأ** (البند ٦): جهازٌ صُنع خارج المركز يُصان بصدق —
-      //  ويمرّ بمخرج «جهازٌ قديم غير مسجَّل» القائم، فلا يُخترَع له أمرُ
-      //  تصنيعٍ ولا حلقةٌ مسلَّمة عندنا لم تقع.
-      const externalDevice = req.body?.externalDevice === true;
+      //  ══ **منشأُ الجهاز — ثلاثُ حقائق لا اثنتان** (ترحيل ٠٦٧) ═════════
+      //  «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز»: وسمُ الأوّل بالثاني
+      //  يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق. **ولا يُستنتَج
+      //  من `had_prior_center_history`** — تلك عن المريض وهذه عن الجهاز.
+      const originParsed = parseDeviceOrigin(req.body?.deviceOrigin);
+      if (!originParsed.ok) return res.status(400).json({ error: originParsed.error });
+      const deviceOrigin = originParsed.value;
       const rawEpisode = req.body?.deviceEpisodeId;
-      const deviceEpisodeId = externalDevice ? null
-        : (Number.isFinite(Number(rawEpisode)) ? Number(rawEpisode) : null);
+      //  **والمسجَّلُ وحده يحمل حلقة** — والآخران بلا هويّة، ولا تُلتقط لهما
+      //  حلقةُ جهازٍ آخر ولا يُخترَع لهما تاريخُ تصنيعٍ لم يقع.
+      const deviceEpisodeId = originHasEpisode(deviceOrigin)
+        ? (Number.isFinite(Number(rawEpisode)) ? Number(rawEpisode) : null)
+        : null;
+      if (originHasEpisode(deviceOrigin) && deviceEpisodeId === null) {
+        return res.status(400).json({ error: "اختر الجهاز المسجَّل المراد صيانته" });
+      }
 
       const out = await store.createMaintenanceCharge({
         patientId, branchId: patient.branch_id ?? null,
@@ -301,7 +313,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         visitNotes: typeof req.body?.notes === "string" && req.body.notes.trim()
           ? req.body.notes.trim() : "صيانة طرف/مسند",
         maintenanceComponent: comp.value,
-        deviceEpisodeId, externalDevice,
+        deviceEpisodeId, deviceOrigin,
       });
 
       await logAudit({
@@ -311,7 +323,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType,
-          maintenanceComponent: comp.value, externalDevice,
+          maintenanceComponent: comp.value, deviceOrigin,
           amount: out.charge?.amount ?? 0,
         },
         notes: out.charge
@@ -365,10 +377,11 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       if (!mayReviewShape(chargeSession(req))) {
         return res.status(403).json({ error: "مراجعة المبالغ لطبيبٍ مخوَّل أو للمسؤول" });
       }
-      const before = await store.getCharge(chargeId);
+      //  **ولا لقطةَ قبل القفل**: الخبيرُ والهويّةُ يُقرآن من الصفّ المقفول
+      //  داخل المعاملة ويُعاد التحقّق منهما هناك — فما قُرئ قبل القفل قد
+      //  يشيخ قبل أن يُكتب دينار.
       const out = await store.approveCharge({
         chargeId, actor: actorOf(req), eligible: reviewGate(req),
-        saleExpertUserId: before?.saleExpertUserId ?? null,
       });
       await logAudit({
         entityType: "pending_service_charge", entityId: chargeId, action: "update",

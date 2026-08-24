@@ -11,16 +11,18 @@
  *             حرفٍ يتغيّر فيه.
  * فلا حسابُ دفترٍ يُكرَّر، ولا ينحرف أحدُ النسختين يوماً.
  *
- * ══ ولماذا يُنشأ أمرُ الصيانة الآن وأمرُ البيع عند الاعتماد ═══════════════
- * **الصيانةُ عملٌ يجري الآن**: الخبيرُ يفتح الجهازَ ويصلحه، والأجرُ قد يكون
- * صفراً بحقٍّ (خدمةٌ مجّانية واقعةٌ حقيقية). فالأمرُ يُفتَح بأجرٍ صفر —
- * وليس ذلك سعراً ملفَّقاً — ويُقيَّد الأجرُ عند الاعتماد.
+ * ══ والعملُ يبدأ لحظتَه — البيعُ كالصيانة ═══════════════════════════════
+ * **العمليةُ تمضي**: بيعُ الجزء يفتح أمرَ تصنيعه **الآن**، فالخبيرُ يبدأ
+ * والمريضُ لا ينتظر قرارَ طبيبٍ لم يُطلَب منه أصلاً. وذاك هو معنى المسار.
  *
- * **والبيعُ سعرٌ وإسنادٌ معاً**: `assignManufacturing` تُسعّر وتُسنِد في فعلٍ
- * واحد لا ينفصل. ففتحُ أمرٍ بسعر صفر ثمّ رفعُه كان **يخترع سعراً** — وهو
- * بالضبط الالتباسُ الذي أُغلق في المرحلة الثانية («صفرٌ» ≠ «لم يُدخَل»).
- * فهويّةُ العملية قبل الاعتماد هي **الحلقةُ** (مفتوحةٌ بما طُلب بالضبط) ومعها
- * صفُّ المبلغ المعلَّق، والأمرُ يُولَد مع المال في نداءٍ واحد.
+ * وهذا صار ممكناً لأن `storage` فصلت البيعَ نصفين (المرحلة الثالثة):
+ *   `startDeviceSaleOperationallyTx` — الأمرُ والحلقةُ والسجلّ، **بلا دينار**.
+ *   `applyDeviceSaleFinancialsTx`    — المجموعُ والكلفةُ والقيد، **بلا عمل**.
+ * ومسارُ المعاينة يركّبهما في `assignManufacturing` كما كان بحرفه.
+ *
+ * **والصفرُ لا يُخترَع**: الأمرُ يُفتَح بلا سعرٍ إطلاقاً — لا بسعر صفر —
+ * و`agreed_cost` على الحلقة يعني «كم قُيِّد في المحاسبة» فيبقى صفراً صادقاً
+ * حتى يقع القيد. فلا التباسَ بين «مجّانيّ» و«لم يُدخَل» (المرحلة الثانية).
  */
 
 import { db } from "../db";
@@ -30,6 +32,10 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
+import {
+  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
+} from "@shared/prosthetic_parts";
+import type { DeviceOrigin } from "@shared/device_origin";
 
 export class ChargeError extends Error {
   status: number;
@@ -67,7 +73,7 @@ export interface ChargeRow {
   operationKind: PendingChargeKind;
   requestedItem: string | null;
   maintenanceComponent: string | null;
-  externalDevice: boolean;
+  deviceOrigin: string | null;
   saleExpertUserId: number | null;
   amount: number;
   note: string | null;
@@ -86,7 +92,7 @@ export interface ChargeRow {
 }
 
 const COLS = sql`id, patient_id, branch_id, case_id, device_episode_id, work_order_id,
-  service_type, operation_kind, requested_item, maintenance_component, external_device,
+  service_type, operation_kind, requested_item, maintenance_component, device_origin,
   sale_expert_user_id, amount, note, status, created_by, created_by_name, created_at, submitted_at,
   return_reason, returned_at, returned_by_name, reviewed_by_name, reviewed_at,
   applied_at, applied_work_order_id`;
@@ -104,7 +110,7 @@ const toRow = (r: any): ChargeRow => ({
   operationKind: r.operation_kind,
   requestedItem: r.requested_item ?? null,
   maintenanceComponent: r.maintenance_component ?? null,
-  externalDevice: Boolean(r.external_device),
+  deviceOrigin: r.device_origin ?? null,
   saleExpertUserId: r.sale_expert_user_id === null || r.sale_expert_user_id === undefined
     ? null : Number(r.sale_expert_user_id),
   amount: Number(r.amount ?? 0),
@@ -190,7 +196,7 @@ async function insertCharge(tx: any, p: CreateBase & {
   workOrderId: number | null;
   requestedItem: string | null;
   maintenanceComponent: string | null;
-  externalDevice: boolean;
+  deviceOrigin: string | null;
   saleExpertUserId: number | null;
 }): Promise<ChargeRow | null> {
   if (p.amount === null) return null;
@@ -199,11 +205,11 @@ async function insertCharge(tx: any, p: CreateBase & {
   const ins = await tx.execute(sql`
     INSERT INTO pending_service_charges
       (patient_id, branch_id, case_id, device_episode_id, work_order_id, service_type,
-       operation_kind, requested_item, maintenance_component, external_device,
+       operation_kind, requested_item, maintenance_component, device_origin,
        sale_expert_user_id, amount, note, status, created_by, created_by_name)
     VALUES (${p.patientId}, ${p.branchId}, ${p.caseId}, ${p.deviceEpisodeId},
             ${p.workOrderId}, ${p.serviceType}, ${p.operationKind}, ${p.requestedItem},
-            ${p.maintenanceComponent}, ${p.externalDevice}, ${p.saleExpertUserId},
+            ${p.maintenanceComponent}, ${p.deviceOrigin}, ${p.saleExpertUserId},
             ${p.amount}, ${p.note},
             'pending_review', ${p.actor.userId}, ${p.actor.userName})
     RETURNING ${COLS}
@@ -218,7 +224,7 @@ async function insertCharge(tx: any, p: CreateBase & {
       amount: charge.amount, operationKind: charge.operationKind,
       requestedItem: charge.requestedItem,
       maintenanceComponent: charge.maintenanceComponent,
-      externalDevice: charge.externalDevice,
+      deviceOrigin: charge.deviceOrigin,
     },
     actor: p.actor,
   });
@@ -235,14 +241,13 @@ async function insertCharge(tx: any, p: CreateBase & {
 export async function createDeviceSaleCharge(p: CreateBase & {
   deviceEpisodeId: number;
   saleExpertUserId: number;
-}): Promise<ChargeRow | null> {
+}): Promise<{ charge: ChargeRow | null; workOrderId: number }> {
+  const store = await import("../storage");
   return await db.transaction(async (tx) => {
     const r = await tx.execute(sql`
-      SELECT e.id, e.status, e.service_path, e.requested_item, e.case_id, e.patient_id,
-             pc.case_type
+      SELECT e.id, e.status, e.service_path, e.requested_item, e.case_id, e.patient_id
         FROM patient_device_episodes e
-        JOIN patient_cases pc ON pc.id = e.case_id
-       WHERE e.id = ${p.deviceEpisodeId} FOR UPDATE OF e
+       WHERE e.id = ${p.deviceEpisodeId} FOR UPDATE
     `);
     const ep = (r.rows ?? [])[0];
     if (!ep) throw new ChargeError("طلب الجهاز غير موجود", 404);
@@ -256,14 +261,36 @@ export async function createDeviceSaleCharge(p: CreateBase & {
     if (String(ep.status) !== "awaiting_exam") {
       throw new ChargeError("طلب الجهاز ليس في حالة تسمح بالبيع", 409);
     }
-    return await insertCharge(tx, {
+    const requestedItem = String(ep.requested_item ?? "full_device");
+    //  **والطرفُ الكاملُ يُردّ هنا أيضاً** — قبل أن يُفتَح شيء. والحارسُ
+    //  المُلزِم في `startDeviceSaleOperationallyTx` تحت القفل، وهذا ردٌّ
+    //  مبكّرٌ برسالةٍ واحدة لا رسالتين.
+    if (p.serviceType === "prosthetic" && !isProstheticComponent(requestedItem)) {
+      throw new ChargeError(NO_EXAM_FULL_PROSTHESIS_REFUSAL, 409);
+    }
+
+    //  ══ **العملُ يبدأ الآن** — النصفُ التشغيليُّ وحده، بلا دينار ══════
+    const op = await store.startDeviceSaleOperationallyTx(tx, {
+      patientId: p.patientId,
+      serviceType: p.serviceType,
+      fields: {},
+      expertUserId: p.saleExpertUserId,
+      assignedBy: p.actor.userId,
+      deviceEpisodeId: p.deviceEpisodeId,
+    });
+
+    const charge = await insertCharge(tx, {
       ...p, operationKind: "device_sale",
-      deviceEpisodeId: p.deviceEpisodeId, workOrderId: null,
-      requestedItem: String(ep.requested_item ?? "full_device"),
-      maintenanceComponent: null, externalDevice: false,
+      deviceEpisodeId: p.deviceEpisodeId,
+      //  **والصفُّ يشير إلى أمرِ عمله** — فالاعتمادُ يقيّد على أمرٍ قائم
+      //  ولا يُنشئ ثانياً.
+      workOrderId: op.workOrderId,
+      requestedItem,
+      maintenanceComponent: null, deviceOrigin: null,
       saleExpertUserId: p.saleExpertUserId,
       caseId: p.caseId ?? Number(ep.case_id),
     });
+    return { charge, workOrderId: op.workOrderId };
   });
 }
 
@@ -274,16 +301,23 @@ export async function createDeviceSaleCharge(p: CreateBase & {
  * يُكتب (`postMaintenanceFee` تخرج مبكّراً عند الصفر). ثمّ يُقيَّد الأجرُ عند
  * الاعتماد بالدالّة نفسِها.
  *
- * **والجهازُ المصنوع خارج المركز** يُقال كما هو: `externalDevice` واقعةُ
- * منشأٍ صريحة، ويمرّ تشغيلياً بمخرج «جهاز قديم غير مسجَّل» القائم — فلا
- * يُخترَع له أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة عندنا لم تقع.
+ * ══ **ومنشأُ الجهاز يُحفَظ على الأمر** (ترحيل ٠٦٧) ═══════════════════════
+ * ثلاثُ حقائق لا اثنتان: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل النظام ·
+ * صُنع خارج المركز. ووسمُ الثاني بالثالث كان يصف عملَنا بأنه عملُ غيرنا.
+ *
+ * **ومكانُه السجلُّ التشغيليّ لا صفُّ المال**: صيانةٌ بلا أجرٍ لا تُنشئ صفّاً
+ * معلَّقاً أصلاً، فلو عاشت الواقعةُ هناك وحدها لاختفت كلّما كانت الخدمةُ
+ * مجّانية. والصفُّ يأخذ لقطةً منها للعرض ولا يصير مصدرَ حقيقةٍ ثانياً.
+ *
+ * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — لا لواحدٍ
+ * صنعناه ولا لواحدٍ صُنع خارجنا. الغيابُ يُقال غياباً.
  */
 export async function createMaintenanceCharge(p: CreateBase & {
   expertUserId: number;
   visitNotes: string;
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
-  externalDevice: boolean;
+  deviceOrigin: DeviceOrigin;
 }): Promise<{ charge: ChargeRow | null; workOrderId: number }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
@@ -300,9 +334,11 @@ export async function createMaintenanceCharge(p: CreateBase & {
       //  ما يعنيه هذا المسار بالضبط. والمبلغُ المقترح في الصفّ المعلَّق.
       cost: 0,
       deviceEpisodeId: p.deviceEpisodeId,
-      //  جهازٌ خارجيّ أو قديمٌ غير مسجَّل: المخرجُ القائم نفسُه، بلا اختراع.
+      //  جهازٌ بلا حلقة — صنعناه ولم نسجّله، أو صُنع خارجنا: المخرجُ القائم
+      //  نفسُه، بلا اختراع. والفرقُ بينهما يقوله `deviceOrigin` لا هذه الراية.
       legacyUnrecordedDevice: p.deviceEpisodeId === null,
       maintenanceComponent: p.maintenanceComponent,
+      deviceOrigin: p.deviceOrigin,
       tx,
     });
     const charge = await insertCharge(tx, {
@@ -311,7 +347,7 @@ export async function createMaintenanceCharge(p: CreateBase & {
       workOrderId: order.id,
       requestedItem: null,
       maintenanceComponent: p.maintenanceComponent,
-      externalDevice: p.externalDevice,
+      deviceOrigin: p.deviceOrigin,
       saleExpertUserId: null,
     });
     return { charge, workOrderId: order.id };
@@ -321,11 +357,18 @@ export async function createMaintenanceCharge(p: CreateBase & {
 // ── قرارُ الطبيب ─────────────────────────────────────────────────────────
 
 /**
- * **الاعتماد — ويُقيَّد المبلغُ مرّةً واحدة بالضبط.**
+ * **الاعتماد — ويُقيَّد المبلغُ مرّةً واحدة بالضبط على العملية القائمة.**
  *
- * القفلُ ثمّ شرطُ الحالة ثمّ `applied_at`: ثلاثُ طبقاتٍ تجعل ضغطتين
- * متزامنتين — أو طبيبين — تُنتجان **قيدَ كلفةٍ واحداً**. والثانيةُ تنتظر
- * القفلَ ثمّ تقرأ `approved` فتُردّ برسالةٍ تقول ما جرى.
+ * ══ ولا أمرَ تصنيعٍ ثانٍ ═══════════════════════════════════════════════
+ * العملُ بدأ لحظةَ تسجيل العملية — أمرُه قائمٌ وخبيرُه يعمل. فالاعتمادُ
+ * **يُدخل المالَ فحسب**: `applyDeviceSaleFinancialsTx` على الأمر نفسِه،
+ * لا `assignManufacturing` التي كانت ستفتح أمراً ثانياً وتُنشئ حلقةً ثانية.
+ *
+ * ══ والهويّةُ تُعاد قراءتُها **تحت القفل** ═══════════════════════════════
+ * بين الإرسال والاعتماد قد يمرّ يوم: يُنقَل المريضُ فرعاً · يُوقَف خبير ·
+ * يُلغى أمرٌ إدارياً · تتغيّر الحلقة. فلا يُقبَل شيءٌ من لقطةٍ قديمة —
+ * المريضُ والفرعُ والخدمةُ والحلقةُ وما طُلب وأمرُ التصنيع والخبير،
+ * **كلُّها تُقرأ الآن وتُطابَق**، والتناقضُ يُردّ ٤٠٩ بلا دينار.
  *
  * **والكاتبُ قانونيٌّ قائم** لا نسخةٌ ثانية — انظر رأس الملفّ.
  */
@@ -334,17 +377,16 @@ export async function approveCharge(params: {
   actor: Actor;
   /** يُفحص **تحت القفل** بفرع الصفّ نفسِه لا بفرعٍ يعلنه الطلب. */
   eligible: (charge: ChargeRow) => Promise<{ ok: boolean; reason?: string }>;
-  /** خبيرُ البيع — يُقرأ من الطلب ويُتحقَّق منه في النقطة قبل الوصول. */
-  saleExpertUserId?: number | null;
 }): Promise<{ charge: ChargeRow; workOrderId: number | null }> {
+  const store = await import("../storage");
+  const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
     const cur = await lockCharge(tx, params.chargeId, ["pending_review"]);
     const may = await params.eligible(cur);
     if (!may.ok) throw new ChargeError(may.reason ?? "غير مصرح بمراجعة هذه العملية", 403);
 
-    let workOrderId: number | null = cur.workOrderId;
+    const workOrderId: number | null = cur.workOrderId;
     if (cur.operationKind === "maintenance") {
-      const mfg = await import("../manufacturing/store");
       //  **الكتابةُ الواحدة** التي تناديها الصيانةُ كاملةُ الأجر — بالمبلغ
       //  المعتمَد وبهويّة الجهاز نفسِها التي حُفظت لحظةَ فتح الأمر.
       await mfg.postMaintenanceFee(tx, {
@@ -353,23 +395,34 @@ export async function approveCharge(params: {
         deviceEpisodeId: cur.deviceEpisodeId,
       });
     } else {
-      const expert = Number(params.saleExpertUserId);
-      if (!Number.isInteger(expert) || expert <= 0) {
-        throw new ChargeError("اختر الخبير المسؤول قبل اعتماد البيع", 400);
+      if (workOrderId === null) {
+        throw new ChargeError(
+          "لا يوجد أمر تصنيع لهذه العملية — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
       }
-      //  **الكاتبُ القانونيّ للبيع بحرفه**: يسعّر ويُسنِد ويقيّد في فعلٍ
-      //  واحد — فلا حسابَ دفترٍ يُكرَّر هنا.
-      const out = await storage.assignManufacturing({
+      //  ══ **الخبيرُ يُقرأ من الصفّ المقفول ويُعاد التحقّق منه الآن** ═══
+      //  لقطةٌ قُرئت قبل القفل ليست سلطة: قد يُوقَف الخبيرُ أو يُنقَل بين
+      //  الإرسال والاعتماد. **وخبيرٌ لم يعد صالحاً لا يُقيَّد عليه مال.**
+      const expert = Number(cur.saleExpertUserId);
+      if (!Number.isInteger(expert) || expert <= 0) {
+        throw new ChargeError("لا خبير مسجَّل على هذه العملية — صحّحها قبل الاعتماد", 409);
+      }
+      const v = await mfg.validateExpertForBranchTx(tx, expert, cur.branchId ?? 0);
+      if (!v.ok) {
+        throw new ChargeError(
+          `${v.reason} — صحّح إسناد العملية قبل اعتماد مبلغها`, 409);
+      }
+
+      //  **العمليةُ القائمة تُقرأ بهويّتها كاملة** — والتناقضُ يُردّ.
+      const op = await store.loadDeviceSaleOperationTx(tx, {
         patientId: cur.patientId,
         serviceType: cur.serviceType as "prosthetic" | "medical_support",
-        fields: {},
-        cost: cur.amount,
-        expertUserId: expert,
-        assignedBy: params.actor.userId,
+        workOrderId,
         deviceEpisodeId: cur.deviceEpisodeId,
-        tx,
+        branchId: cur.branchId,
+        requestedItem: cur.requestedItem,
       });
-      workOrderId = out.workOrderId;
+      //  **والنصفُ الماليُّ وحده** — لا أمرَ ولا حلقةَ ولا سجلَّ عمل.
+      await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: cur.amount });
     }
 
     const upd = await tx.execute(sql`
@@ -491,7 +544,7 @@ const scopeClause = (scope: number[] | null) =>
 
 const CARD_COLS = sql`c.id, c.patient_id, c.branch_id, c.case_id, c.device_episode_id,
   c.work_order_id, c.service_type, c.operation_kind, c.requested_item,
-  c.maintenance_component, c.external_device, c.sale_expert_user_id, c.amount, c.note, c.status,
+  c.maintenance_component, c.device_origin, c.sale_expert_user_id, c.amount, c.note, c.status,
   c.created_by, c.created_by_name, c.created_at, c.submitted_at, c.return_reason,
   c.returned_at, c.returned_by_name, c.reviewed_by_name, c.reviewed_at,
   c.applied_at, c.applied_work_order_id`;

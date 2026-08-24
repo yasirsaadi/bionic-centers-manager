@@ -49,9 +49,13 @@ import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
 import {
   lockCaseAndReadOpenEpisode, markEpisodeInManufacturing, caseHasEpisodes,
+  startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
+import {
+  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
+} from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -327,6 +331,374 @@ export interface IStorage {
   createSurveyResponse(response: InsertSurveyResponse): Promise<SurveyResponse>;
   getSurveyAnswers(responseId: number): Promise<SurveyAnswer[]>;
   createSurveyAnswer(answer: InsertSurveyAnswer): Promise<SurveyAnswer>;
+}
+
+/**
+ * **العمليةُ التشغيلية لبيع جهاز — مقروءةً بهويّتها كاملة.**
+ *
+ * تُنتجها `startDeviceSaleOperationallyTx` عند فتح العملية، وتقرؤها
+ * `loadDeviceSaleOperationTx` عند اعتماد مبلغها لاحقاً. والنصفُ الماليُّ
+ * يأخذها كما هي في الحالتين — **فحسابٌ واحد لا حسابان**.
+ *
+ * وتحمل معها **لقطةَ ما قبل البيع** (`priorCaseCost` وأخواتها) لأنها
+ * تُقرأ تحت القفل قبل أن يلمسها شيء. ولو أعاد النصفُ الماليُّ قراءتها
+ * بنفسه لقرأ ما كتبه النصفُ التشغيليُّ قبله فحسب فرقاً كاذباً.
+ */
+export interface DeviceSaleOperation {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  branchId: number | null;
+  workOrderId: number;
+  episodeId: number | null;
+  caseId: number;
+  /** كلفةُ الخيط **قبل** أن يلمسها هذا البيع. */
+  priorCaseCost: number;
+  priorCaseSource: string | null;
+  /** مجموعُ المريض قبله. */
+  priorTotalCost: number;
+  /** **ما قُيِّد من هذه الحلقة في المحاسبة** قبله — لا «بكم اتُّفق». */
+  priorEpisodeAgreedCost: number;
+  /** صفُّ المريض بعد الكتابة التشغيلية (المواصفات والراية). */
+  patient: Patient;
+}
+
+/**
+ * ══ ① النصفُ التشغيليّ — **يبدأ العمل ولا يمسّ ديناراً** ══════════════
+ *
+ * حارسُ الأمر النشط · قفلُ الخيط · هويّةُ الحلقة وحالتُها · مواصفاتُ
+ * الجهاز على الملفّ وتفاصيلُ الحالة · انتقالُ الحلقة إلى التصنيع · أمرُ
+ * التصنيع وسجلُّه وحدثُه.
+ *
+ * **ولا `total_cost` ولا `cost_entries` ولا كلفةَ حالة ولا `agreed_cost`.**
+ * فمريضٌ اشترى قالباً بلا معاينة يبدأ تصنيعُه الآن، ويبقى مبلغُه خارج
+ * الدفاتر حتى يعتمده طبيب — وحتى **العمليةُ بلا أجر** تكتمل من هنا وحدها.
+ */
+export async function startDeviceSaleOperationallyTx(tx: any, params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  fields: Partial<InsertPatient>;
+  expertUserId: number;
+  assignedBy: number | null;
+  deviceEpisodeId?: number | null;
+  /** منشأُ الجهاز — للصيانة. البناءُ الأوليّ لا منشأَ له: نحن نصنعه. */
+  deviceOrigin?: string | null;
+}): Promise<DeviceSaleOperation> {
+  const { patientId, serviceType, fields, expertUserId, assignedBy } = params;
+  const wantEpisode = params.deviceEpisodeId ?? null;
+
+  const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+  if (!existing) throw new Error("المريض غير موجود");
+
+  // One active order per (patient, service) — enforced INSIDE the
+  // transaction (plus the partial unique index from migration 021), so two
+  // simultaneous clicks can't create duplicate orders.
+  // بناءٌ أوليٌّ واحد مفتوح — وصيانةُ جهازٍ قديم لا تزاحمه.
+  const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
+    .where(and(
+      eq(prostheticWorkOrders.patientId, patientId),
+      eq(prostheticWorkOrders.serviceType, serviceType),
+      sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
+      sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+    )).limit(1);
+  if (openWo.length > 0) throw new ActiveAssignmentError();
+
+  // ══ الوضع يُحسم **داخل** المعاملة، خلف قفل الخيط ═══════════════════
+  // قراءة النقطة ترشيحٌ لا قرار: بينها وبين هنا قد تُفتح حلقة. ولو
+  // مضينا على قراءةٍ بائتة تقول «لا حلقة» لأنشأنا أمر بناءٍ يتيماً
+  // بينما حلقةٌ مفتوحة تنتظره — نصفُ حالةٍ لا يُصلحها شيء بعد وقوعها.
+  // فالقفل على صفّ الخيط — نقطة القفل نفسها التي يستعملها
+  // `startDeviceEpisode` — هو ما يجعل الطريقين متسلسلين حقاً.
+  const { episode } = await lockCaseAndReadOpenEpisode(tx, { patientId, serviceType });
+  if (wantEpisode !== null) {
+    if (!episode || episode.id !== wantEpisode) {
+      throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
+    }
+    // ══ **والحارسُ يقرأ المسار لا الحالةَ وحدها** (المرحلة الثالثة) ══
+    //  `awaiting_exam` على مسار المعاينة تعني «لم يفحصها طبيبٌ بعد»
+    //  فتُردّ. وعلى مسار «بلا معاينة» (٠٦٥) تعني «لا فحصَ مطلوبٌ أصلاً»
+    //  — والمالُ هناك يمرّ بمراجعةٍ ماليةٍ مستقلّة (٠٦٧) لا بالمعاينة.
+    //  والمسارُ يُقرأ من الصفّ **تحت القفل** لا من الطلب.
+    const noExamSellable = episode.servicePath === "no_exam"
+      && episode.status === "awaiting_exam";
+    if (episode.status !== "examined" && !noExamSellable) {
+      throw new DeviceEpisodeError(
+        "لا يمكن تخصيص الجهاز قبل معاينة الطبيب لهذا الطلب بالذات", 409,
+      );
+    }
+    // ══ **والطرفُ الكاملُ لا يُباع بلا معاينة** (المرحلة الثالثة) ══════
+    //  الجزءُ بديلٌ لقطعةٍ وُصفت يوماً، والجهازُ الكاملُ قرارٌ سريريٌّ من
+    //  أوّله: مقاسٌ ونوعُ بترٍ ومفصلٌ وقدم. فطلبُه على مسار «بلا معاينة»
+    //  **يُردّ ولا يُصحَّح بصمت** — وتصحيحُ مساره بابُه التصحيحُ الإداريّ.
+    if (noExamSellable && serviceType === "prosthetic"
+      && !isProstheticComponent(episode.requestedItem)) {
+      throw new DeviceEpisodeError(NO_EXAM_FULL_PROSTHESIS_REFUSAL, 409);
+    }
+  } else if (episode) {
+    // حلقةٌ وُلدت بعد قراءة النقطة: المسار القديم لم يعد صالحاً.
+    throw new DeviceEpisodeError(
+      "تغيّرت حالة طلب الجهاز — حدّث الصفحة وأكمل الطلب الجديد", 409,
+    );
+  }
+
+  const [existingCase] = await tx.select().from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
+
+  //  **لقطةُ ما قبل البيع** — تُؤخذ الآن تحت القفل، ويقرؤها النصفُ الماليّ
+  //  ولو جرى بعد شهرٍ في معاملةٍ أخرى.
+  const priorCaseCost = existingCase?.cost || 0;
+  const priorCaseSource = existingCase?.costSource ?? null;
+  const priorTotalCost = existing.totalCost || 0;
+  const priorEpisodeAgreedCost = episode ? episode.agreedCost : 0;
+
+  // مواصفاتُ الجهاز والرايةُ — كتابةٌ **تشغيلية** لا مالية.
+  const patch: any = { ...fields };
+  if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
+  const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
+
+  // Build the case details from the freshly-updated patient fields.
+  const detailsForType: Record<string, any> = serviceType === "prosthetic" ? {
+    amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
+    siliconType: patient.siliconType, siliconSize: patient.siliconSize,
+    suspensionSystem: patient.suspensionSystem, footType: patient.footType,
+    footSize: patient.footSize, kneeJointType: patient.kneeJointType, injurySide: patient.injurySide,
+    injuryCause: patient.injuryCause, injuryDate: patient.injuryDate, injuryType: patient.injuryType,
+  } : {
+    supportType: patient.supportType, injurySide: patient.injurySide,
+    injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
+  };
+  const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+
+  let caseId: number;
+  if (existingCase) {
+    caseId = existingCase.id;
+    await tx.update(patientCases).set({ details: cleanDetails, updatedAt: new Date() })
+      .where(eq(patientCases.id, caseId));
+  } else {
+    //  حالةٌ جديدة تُفتَح **بكلفةٍ صفر**: الكلفةُ يكتبها النصفُ الماليّ
+    //  وحده، فما لم يُعتمَد مبلغُه لا يظهر رقمٌ في أيّ تقرير.
+    const [nc] = await tx.insert(patientCases).values({
+      patientId, branchId: existing.branchId, caseType: serviceType, cost: 0,
+      details: cleanDetails, costSource: "manual",
+    }).onConflictDoNothing().returning();
+    if (nc) {
+      caseId = nc.id;
+    } else {
+      // Unique-index race: fall back to the row the concurrent path made.
+      const [raced] = await tx.select().from(patientCases)
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
+      caseId = raced.id;
+      await tx.update(patientCases).set({ details: cleanDetails, updatedAt: new Date() })
+        .where(eq(patientCases.id, caseId));
+    }
+  }
+
+  //  الحلقةُ تدخل التصنيع **بلا سعر**: `agreed_cost` معناه «كم قُيِّد في
+  //  المحاسبة»، ويكتبه النصفُ الماليُّ حين يقع القيدُ فعلاً.
+  if (episode) {
+    await startEpisodeManufacturingTx(tx, { episodeId: episode.id });
+  }
+
+  const [wo] = await tx.insert(prostheticWorkOrders).values({
+    patientId, branchId: existing.branchId, expertUserId, serviceType,
+    status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
+    // بناءٌ أولي صراحةً لا اعتماداً على قيمة العمود الافتراضية، والرابط
+    // معه: أمرُ جهازٍ حيّ بلا هويّته يتيمٌ لا يُنهي حلقته أبداً.
+    purpose: "initial_build",
+    deviceEpisodeId: episode?.id ?? null,
+    //  **ومنشأُ الجهاز واقعةٌ تشغيلية** (٠٦٧): البناءُ الأوليُّ لا منشأَ له
+    //  — نحن نصنعه — فيبقى `NULL`. والصيانةُ وحدها تقوله.
+    deviceOrigin: params.deviceOrigin ?? null,
+  }).returning();
+  const [created] = await tx.insert(prostheticWorkHistory).values({
+    workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
+    notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
+  }).returning({ id: prostheticWorkHistory.id });
+  // مسار إنشاء رابع — «تخصيص وإسناد خبير» من سجلّ المرضى.
+  await recordOrderCreatedEvent(tx, {
+    order: wo, stage: FIRST_STAGE, historyId: created.id,
+  });
+
+  return {
+    patientId, serviceType, branchId: existing.branchId,
+    workOrderId: wo.id, episodeId: episode?.id ?? null, caseId,
+    priorCaseCost, priorCaseSource, priorTotalCost, priorEpisodeAgreedCost,
+    patient,
+  };
+}
+
+/**
+ * **تقرأ عمليةً تشغيليةً قائمة** — بالهويّة الدقيقة وتحت القفل.
+ *
+ * يناديها اعتمادُ مبلغٍ معلَّق: العملُ وقع سلفاً وأمرُه قائم، فلا يُنشَأ
+ * ثانٍ. وتُنتج **الشكلَ نفسَه** الذي يُنتجه النصفُ التشغيليّ، فيأخذه
+ * النصفُ الماليُّ بلا أن يعرف من أين جاء.
+ *
+ * **والهويّةُ تُطابَق بالكامل** (المريض · الخدمة · الفرع · الحلقة · ما
+ * طُلب): مبلغٌ يُقيَّد على أمرٍ غيرِ الذي وُصف يُنسب مالاً إلى جهازٍ لم
+ * يُبَع. والتناقضُ **يُردّ ولا يُصحَّح بصمت**.
+ */
+export async function loadDeviceSaleOperationTx(tx: any, params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  workOrderId: number;
+  deviceEpisodeId: number | null;
+  branchId: number | null;
+  requestedItem?: string | null;
+}): Promise<DeviceSaleOperation> {
+  const [existing] = await tx.select().from(patients).where(eq(patients.id, params.patientId));
+  if (!existing) throw new DeviceEpisodeError("المريض غير موجود", 404);
+
+  const { caseId, episode } = await lockCaseAndReadOpenEpisode(tx, {
+    patientId: params.patientId, serviceType: params.serviceType,
+  });
+  if (caseId === null) {
+    throw new DeviceEpisodeError("لا توجد حالة لهذا النوع على ملفّ المريض", 409);
+  }
+
+  const wor = await tx.execute(sql`
+    SELECT id, patient_id, branch_id, service_type, purpose, status,
+           device_episode_id, expert_user_id
+      FROM prosthetic_work_orders WHERE id = ${params.workOrderId} FOR UPDATE
+  `);
+  const wo = (wor.rows ?? [])[0];
+  if (!wo) throw new DeviceEpisodeError("أمر التصنيع غير موجود", 409);
+
+  const mismatch =
+    Number(wo.patient_id) !== params.patientId
+    || String(wo.service_type) !== params.serviceType
+    || (params.branchId !== null && Number(wo.branch_id) !== params.branchId)
+    || Number(wo.device_episode_id ?? 0) !== Number(params.deviceEpisodeId ?? 0);
+  if (mismatch) {
+    throw new DeviceEpisodeError(
+      "بيانات العملية لا تطابق أمر التصنيع المسجَّل — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+  }
+  if (String(wo.status) === "cancelled") {
+    throw new DeviceEpisodeError("أمر التصنيع ملغى — لا يُقيَّد عليه مبلغ", 409);
+  }
+  if (params.deviceEpisodeId !== null
+    && (!episode || episode.id !== params.deviceEpisodeId)) {
+    throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
+  }
+  //  **وما طُلب يُطابَق من الحلقة نفسِها** — هي مصدرُ حقيقةِ الطلب (٠٦٠)،
+  //  وأمرُ التصنيع يرثه بالرابط لا بنسخةٍ ثانية تنحرف.
+  if (params.requestedItem !== undefined && episode
+    && (episode.requestedItem ?? null) !== (params.requestedItem ?? null)) {
+    throw new DeviceEpisodeError(
+      "تغيّر الطلب المسجَّل على هذا الجهاز — راجع الملفّ إدارياً قبل قيد المبلغ", 409);
+  }
+
+  const [existingCase] = await tx.select().from(patientCases)
+    .where(and(eq(patientCases.patientId, params.patientId),
+      eq(patientCases.caseType, params.serviceType)));
+
+  return {
+    patientId: params.patientId,
+    serviceType: params.serviceType,
+    branchId: Number(wo.branch_id ?? existing.branchId ?? 0) || existing.branchId,
+    workOrderId: Number(wo.id),
+    episodeId: params.deviceEpisodeId,
+    caseId: existingCase?.id ?? caseId,
+    priorCaseCost: existingCase?.cost || 0,
+    priorCaseSource: existingCase?.costSource ?? null,
+    priorTotalCost: existing.totalCost || 0,
+    priorEpisodeAgreedCost: episode ? episode.agreedCost : 0,
+    patient: existing,
+  };
+}
+
+/**
+ * ══ ② النصفُ الماليّ — **يُدخل المالَ ولا يُنشئ عملاً** ═══════════════
+ *
+ * `patients.total_cost` · كلفةُ الحالة · قيدُ الدفتر · كلفةُ الحلقة
+ * المقيَّدة. **ولا أمرَ تصنيعٍ ولا انتقالَ حلقةٍ ولا سجلَّ عمل.**
+ *
+ * وينادِيه بابان: `assignManufacturing` لحظةَ البيع على مسار المعاينة،
+ * واعتمادُ الطبيب على مسار «بلا معاينة» — **بالحساب نفسِه حرفاً**.
+ */
+export async function applyDeviceSaleFinancialsTx(tx: any, params: {
+  operation: DeviceSaleOperation;
+  cost: number;
+}): Promise<{ patient: Patient; appliedDelta: number }> {
+  const op = params.operation;
+  const { patientId, serviceType, cost } = { ...op, cost: params.cost };
+
+  // How the entered price moves patients.total_cost:
+  // - New case, human-priced case, or price >= current case cost:
+  //   delta semantics (total follows the price difference) — correct for
+  //   the new flow (case 0 → total += price) and for explicit re-pricing.
+  // - LEGACY trap: an 'auto' case that inherited the WHOLE old aggregate
+  //   (migration 017 put total_cost on the device case of a device+physio
+  //   patient, physio got 0). Entering the real device price there must
+  //   NOT shrink total_cost by the physio share — instead the excess is
+  //   parked back on the physio case and the total stays untouched.
+  // الجهاز الحيّ يُحاسَب على حلقته، لا على تراكم الخيط. والفخّ التاريخي
+  // أدناه لا يُطبَّق عليه أصلاً: هو علاجٌ لرقمٍ ورثته حالةٌ من ترحيل
+  // ٠١٧، ولا شأن له بجهازٍ يُباع اليوم بهويّته.
+  const hasEpisode = op.episodeId !== null;
+  const episodeDelta = hasEpisode ? cost - op.priorEpisodeAgreedCost : 0;
+  let totalDelta = hasEpisode ? episodeDelta : cost - op.priorCaseCost;
+  if (!hasEpisode && op.priorCaseSource !== null && op.priorCaseSource !== "manual"
+    && op.priorCaseCost > cost) {
+    const [physioCase] = await tx.select().from(patientCases)
+      .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
+    if (physioCase) {
+      await tx.update(patientCases)
+        .set({ cost: (physioCase.cost || 0) + (op.priorCaseCost - cost), updatedAt: new Date() })
+        .where(eq(patientCases.id, physioCase.id));
+      totalDelta = 0;
+    }
+  }
+
+  // ══ زيادةٌ ذرّية لا كتابةٌ مطلقة (المسار الجديد) ═══════════════════
+  // قفل الخيط يُسلسل حلقات النوع الواحد، ولا يُسلسل نوعين: طرفٌ ومسندٌ
+  // يُخصَّصان معاً يقفلان خيطين مختلفين ويتقدّمان جنباً إلى جنب. فلو
+  // كتب كلٌّ منهما `المقروء + فرقه` لمحا آخرُهما بيعَ الأول. القاعدة
+  // نفسها تجمع الآن، فلا قيمة مقروءة سلفاً تُكتب فوق قيمةٍ أحدث.
+  const totalPatch: any = hasEpisode
+    ? sql`GREATEST(0, COALESCE(${patients.totalCost}, 0) + ${episodeDelta})`
+    : Math.max(0, op.priorTotalCost + totalDelta);
+  const [patient] = await tx.update(patients).set({ totalCost: totalPatch })
+    .where(eq(patients.id, patientId)).returning();
+
+  // Ledger the APPLIED delta (after the zero clamp), signed — a downward
+  // re-pricing is a real negative cost event and must date-stamp too.
+  // وللجهاز الحيّ: فرقُ حلقته هو، لا فرقُ المجموع قبل/بعد — فذاك قد
+  // يحمل زيادةَ معاملةٍ متزامنة فيُنسب بيعُ جهازٍ إلى جهازٍ آخر.
+  const appliedDelta = hasEpisode
+    ? episodeDelta
+    : (patient.totalCost || 0) - op.priorTotalCost;
+  if (appliedDelta !== 0) {
+    await tx.insert(costEntries).values({
+      patientId, branchId: op.branchId, amount: appliedDelta,
+      source: "assign_manufacturing",
+      //  قسمُ البيع هو حالةُ نوعِ الخدمة نفسها (ترحيل ٠٥٦) — فيفترق
+      //  الطرفُ عن المسند في التقرير بدل أن يُجمعا في دلوٍ واحد.
+      caseId: op.caseId,
+      // القيد يحمل هوية الجهاز حين يكون البيع لجهازٍ حيّ. والمصدر
+      // كما هو عمداً: تقاريرُ الأقسام تبوّب عليه، وتغييره يحرّك أرقاماً
+      // لا علاقة لها بهذه المرحلة.
+      deviceEpisodeId: op.episodeId,
+      notes: serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي",
+    });
+  }
+
+  // الخيط تراكم: الجهاز الحيّ **يضيف** سعره ولا يستبدل ما قبله —
+  // وبالجمع في القاعدة للسبب نفسه أعلاه. أمّا المسار القديم فيكتب
+  // السعر كما كان يفعل دائماً.
+  const caseCostPatch = hasEpisode
+    ? sql`COALESCE(${patientCases.cost}, 0) + ${episodeDelta}`
+    : cost;
+  // A human priced the device — 'manual' keeps the cost floor away.
+  await tx.update(patientCases)
+    .set({ cost: caseCostPatch as any, costSource: "manual", updatedAt: new Date() })
+    .where(eq(patientCases.id, op.caseId));
+
+  //  والحلقةُ تسجّل **ما قُيِّد منها** الآن — لا قبل ذلك.
+  if (op.episodeId !== null) {
+    await setEpisodeAgreedCostTx(tx, { episodeId: op.episodeId, agreedCost: cost });
+  }
+
+  return { patient, appliedDelta };
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1433,6 +1805,30 @@ export class DatabaseStorage implements IStorage {
    * الحلقة وحدها. والطرح من سعر الحلقة السابق (صفرٍ في أول تخصيص) هو ما
    * يجعل تصحيحاً لاحقاً على الحلقة نفسها لا يُحتسب مرّتين.
    */
+  /**
+   * **بيعُ الجهاز — نصفان لا واحد** (المرحلة الثالثة).
+   *
+   * ══ لماذا انفصلا ═════════════════════════════════════════════════════
+   * كانت هذه الدالّة تجمع فعلين وقعا دائماً معاً فبَدَوا فعلاً واحداً:
+   *   **(أ) بدءُ العمل** — حارسُ الأمر النشط · انتقالُ الحلقة · أمرُ التصنيع
+   *        وسجلُّه وحدثُه.
+   *   **(ب) دخولُ المال** — `patients.total_cost` · كلفةُ الحالة · قيدُ
+   *        الدفتر · كلفةُ الحلقة المقيَّدة.
+   *
+   * ومسارُ «بلا معاينة» (٠٦٥ + ٠٦٧) يفصلهما زماناً: **العمليةُ تمضي لحظةَ
+   * تسجيلها، والمالُ ينتظر اعتمادَ طبيبٍ مخوَّل**. فبقاؤهما ملتحمين كان
+   * يعني أحدَ سوءين — إمّا أن ينتظر المريضُ الطبيبَ ليبدأ جهازُه (وهو ما
+   * جاء المسارُ لينهيه)، وإمّا أن تُنسَخ محاسبةُ البيع في مكانٍ ثانٍ.
+   *
+   * ══ ومسارُ المعاينة لم يتغيّر بحرف ═══════════════════════════════════
+   * `assignManufacturing` تبقى **هي هي**: تركّب النصفين في المعاملة نفسِها
+   * بالترتيب نفسِه، فتُنتج ما كانت تُنتجه بالضبط — أمراً واحداً وقيداً
+   * واحداً وكلفةً واحدة.
+   *
+   * **ومصدرُ الحقيقة واحد** لكلٍّ من: حارسِ الأمر النشط · انتقالِ الحلقة ·
+   * إنشاءِ الأمر وسجلِّه · حسابِ الفرق · مجموعِ المريض · كلفةِ الحالة ·
+   * قيدِ الدفتر. **ولا محاسبةَ ثانية في أيّ مكان.**
+   */
   async assignManufacturing(params: {
     patientId: number;
     serviceType: "prosthetic" | "medical_support";
@@ -1453,183 +1849,19 @@ export class DatabaseStorage implements IStorage {
      */
     tx?: DbTransactionLike;
   }): Promise<{ patient: Patient; workOrderId: number; deviceEpisodeId: number | null }> {
-    const { patientId, serviceType, fields, cost, expertUserId, assignedBy } = params;
-    const wantEpisode = params.deviceEpisodeId ?? null;
     const body = async (tx: any) => {
-      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
-      if (!existing) throw new Error("المريض غير موجود");
-
-      // One active order per (patient, service) — enforced INSIDE the
-      // transaction (plus the partial unique index from migration 021), so two
-      // simultaneous clicks can't create duplicate orders.
-      // بناءٌ أوليٌّ واحد مفتوح — وصيانةُ جهازٍ قديم لا تزاحمه.
-      const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
-        .where(and(
-          eq(prostheticWorkOrders.patientId, patientId),
-          eq(prostheticWorkOrders.serviceType, serviceType),
-          sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
-          sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
-        )).limit(1);
-      if (openWo.length > 0) throw new ActiveAssignmentError();
-
-      // ══ الوضع يُحسم **داخل** المعاملة، خلف قفل الخيط ═══════════════════
-      // قراءة النقطة ترشيحٌ لا قرار: بينها وبين هنا قد تُفتح حلقة. ولو
-      // مضينا على قراءةٍ بائتة تقول «لا حلقة» لأنشأنا أمر بناءٍ يتيماً
-      // بينما حلقةٌ مفتوحة تنتظره — نصفُ حالةٍ لا يُصلحها شيء بعد وقوعها.
-      // فالقفل على صفّ الخيط — نقطة القفل نفسها التي يستعملها
-      // `startDeviceEpisode` — هو ما يجعل الطريقين متسلسلين حقاً.
-      const { episode } = await lockCaseAndReadOpenEpisode(tx, { patientId, serviceType });
-      if (wantEpisode !== null) {
-        if (!episode || episode.id !== wantEpisode) {
-          throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
-        }
-        // ══ **والحارسُ يقرأ المسار لا الحالةَ وحدها** (المرحلة الثالثة) ══
-        //  `awaiting_exam` على مسار المعاينة تعني «لم يفحصها طبيبٌ بعد»
-        //  فتُردّ. وعلى مسار «بلا معاينة» (٠٦٥) تعني «لا فحصَ مطلوبٌ أصلاً»
-        //  — والمالُ هناك يمرّ بمراجعةٍ ماليةٍ مستقلّة (٠٦٧) لا بالمعاينة.
-        //  والمسارُ يُقرأ من الصفّ **تحت القفل** لا من الطلب.
-        const noExamSellable = episode.servicePath === "no_exam"
-          && episode.status === "awaiting_exam";
-        if (episode.status !== "examined" && !noExamSellable) {
-          throw new DeviceEpisodeError(
-            "لا يمكن تخصيص الجهاز قبل معاينة الطبيب لهذا الطلب بالذات", 409,
-          );
-        }
-      } else if (episode) {
-        // حلقةٌ وُلدت بعد قراءة النقطة: المسار القديم لم يعد صالحاً.
-        throw new DeviceEpisodeError(
-          "تغيّرت حالة طلب الجهاز — حدّث الصفحة وأكمل الطلب الجديد", 409,
-        );
-      }
-
-      const [existingCase] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
-      const oldCaseCost = existingCase?.cost || 0;
-
-      // How the entered price moves patients.total_cost:
-      // - New case, human-priced case, or price >= current case cost:
-      //   delta semantics (total follows the price difference) — correct for
-      //   the new flow (case 0 → total += price) and for explicit re-pricing.
-      // - LEGACY trap: an 'auto' case that inherited the WHOLE old aggregate
-      //   (migration 017 put total_cost on the device case of a device+physio
-      //   patient, physio got 0). Entering the real device price there must
-      //   NOT shrink total_cost by the physio share — instead the excess is
-      //   parked back on the physio case and the total stays untouched.
-      // الجهاز الحيّ يُحاسَب على حلقته، لا على تراكم الخيط. والفخّ التاريخي
-      // أدناه لا يُطبَّق عليه أصلاً: هو علاجٌ لرقمٍ ورثته حالةٌ من ترحيل
-      // ٠١٧، ولا شأن له بجهازٍ يُباع اليوم بهويّته.
-      const episodeDelta = episode ? cost - episode.agreedCost : 0;
-      let totalDelta = episode ? episodeDelta : cost - oldCaseCost;
-      if (!episode && existingCase && existingCase.costSource !== "manual" && oldCaseCost > cost) {
-        const [physioCase] = await tx.select().from(patientCases)
-          .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
-        if (physioCase) {
-          await tx.update(patientCases)
-            .set({ cost: (physioCase.cost || 0) + (oldCaseCost - cost), updatedAt: new Date() })
-            .where(eq(patientCases.id, physioCase.id));
-          totalDelta = 0;
-        }
-      }
-
-      // Update device fields + flag + total_cost.
-      const patch: any = { ...fields };
-      if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
-      // ══ زيادةٌ ذرّية لا كتابةٌ مطلقة (المسار الجديد) ═══════════════════
-      // قفل الخيط يُسلسل حلقات النوع الواحد، ولا يُسلسل نوعين: طرفٌ ومسندٌ
-      // يُخصَّصان معاً يقفلان خيطين مختلفين ويتقدّمان جنباً إلى جنب. فلو
-      // كتب كلٌّ منهما `المقروء + فرقه` لمحا آخرُهما بيعَ الأول. القاعدة
-      // نفسها تجمع الآن، فلا قيمة مقروءة سلفاً تُكتب فوق قيمةٍ أحدث.
-      if (episode) {
-        patch.totalCost = sql`GREATEST(0, COALESCE(${patients.totalCost}, 0) + ${episodeDelta})`;
-      } else {
-        patch.totalCost = Math.max(0, (existing.totalCost || 0) + totalDelta);
-      }
-      const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
-      // Ledger the APPLIED delta (after the zero clamp), signed — a downward
-      // re-pricing is a real negative cost event and must date-stamp too.
-      // وللجهاز الحيّ: فرقُ حلقته هو، لا فرقُ المجموع قبل/بعد — فذاك قد
-      // يحمل زيادةَ معاملةٍ متزامنة فيُنسب بيعُ جهازٍ إلى جهازٍ آخر.
-      const appliedDelta = episode
-        ? episodeDelta
-        : (patient.totalCost || 0) - (existing.totalCost || 0);
-      if (appliedDelta !== 0) {
-        await tx.insert(costEntries).values({
-          patientId, branchId: existing.branchId, amount: appliedDelta,
-          source: "assign_manufacturing",
-          //  قسمُ البيع هو حالةُ نوعِ الخدمة نفسها (ترحيل ٠٥٦) — فيفترق
-          //  الطرفُ عن المسند في التقرير بدل أن يُجمعا في دلوٍ واحد.
-          caseId: existingCase?.id ?? null,
-          // القيد يحمل هوية الجهاز حين يكون البيع لجهازٍ حيّ. والمصدر
-          // كما هو عمداً: تقاريرُ الأقسام تبوّب عليه، وتغييره يحرّك أرقاماً
-          // لا علاقة لها بهذه المرحلة.
-          deviceEpisodeId: episode?.id ?? null,
-          notes: serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي",
-        });
-      }
-
-      // Build the case details from the freshly-updated patient fields.
-      const detailsForType: Record<string, any> = serviceType === "prosthetic" ? {
-        amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
-        siliconType: patient.siliconType, siliconSize: patient.siliconSize,
-        suspensionSystem: patient.suspensionSystem, footType: patient.footType,
-        footSize: patient.footSize, kneeJointType: patient.kneeJointType, injurySide: patient.injurySide,
-        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate, injuryType: patient.injuryType,
-      } : {
-        supportType: patient.supportType, injurySide: patient.injurySide,
-        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
-      };
-      const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
-
-      // الخيط تراكم: الجهاز الحيّ **يضيف** سعره ولا يستبدل ما قبله —
-      // وبالجمع في القاعدة للسبب نفسه أعلاه. أمّا المسار القديم فيكتب
-      // السعر كما كان يفعل دائماً.
-      const caseCostPatch = episode
-        ? sql`COALESCE(${patientCases.cost}, 0) + ${episodeDelta}`
-        : cost;
-
-      let caseId: number;
-      if (existingCase) {
-        caseId = existingCase.id;
-        // A human priced the device — 'manual' keeps the cost floor away.
-        await tx.update(patientCases).set({ cost: caseCostPatch as any, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-      } else {
-        const [nc] = await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: serviceType, cost, details: cleanDetails, costSource: "manual",
-        }).onConflictDoNothing().returning();
-        if (nc) {
-          caseId = nc.id;
-        } else {
-          // Unique-index race: fall back to the row the concurrent path made.
-          const [raced] = await tx.select().from(patientCases)
-            .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
-          caseId = raced.id;
-          await tx.update(patientCases).set({ cost, costSource: "manual", details: cleanDetails, updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-        }
-      }
-
-      // البيع يُثبَّت على الحلقة قبل فتح الأمر، فالسعر والحالة والأمر
-      // ينجحون معاً أو لا يبقى منهم شيء.
-      if (episode) {
-        await markEpisodeInManufacturing(tx, { episodeId: episode.id, agreedCost: cost });
-      }
-
-      const [wo] = await tx.insert(prostheticWorkOrders).values({
-        patientId, branchId: existing.branchId, expertUserId, serviceType,
-        status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
-        // بناءٌ أولي صراحةً لا اعتماداً على قيمة العمود الافتراضية، والرابط
-        // معه: أمرُ جهازٍ حيّ بلا هويّته يتيمٌ لا يُنهي حلقته أبداً.
-        purpose: "initial_build",
-        deviceEpisodeId: episode?.id ?? null,
-      }).returning();
-      const [created] = await tx.insert(prostheticWorkHistory).values({
-        workOrderId: wo.id, actionType: "created", fromStage: null, toStage: FIRST_STAGE,
-        notes: `تخصيص الطرف/المسند وإسناده للخبير ${(await tx.select({ displayName: systemUsers.displayName }).from(systemUsers).where(eq(systemUsers.id, expertUserId)))[0]?.displayName ?? "#" + expertUserId}`, performedBy: assignedBy,
-      }).returning({ id: prostheticWorkHistory.id });
-      // مسار إنشاء رابع — «تخصيص وإسناد خبير» من سجلّ المرضى.
-      await recordOrderCreatedEvent(tx, {
-        order: wo, stage: FIRST_STAGE, historyId: created.id,
+      const op = await startDeviceSaleOperationallyTx(tx, {
+        patientId: params.patientId,
+        serviceType: params.serviceType,
+        fields: params.fields,
+        expertUserId: params.expertUserId,
+        assignedBy: params.assignedBy,
+        deviceEpisodeId: params.deviceEpisodeId ?? null,
       });
-      return { patient, workOrderId: wo.id, deviceEpisodeId: episode?.id ?? null };
+      const { patient } = await applyDeviceSaleFinancialsTx(tx, {
+        operation: op, cost: params.cost,
+      });
+      return { patient, workOrderId: op.workOrderId, deviceEpisodeId: op.episodeId };
     };
     return params.tx ? await body(params.tx) : await db.transaction(body);
   }

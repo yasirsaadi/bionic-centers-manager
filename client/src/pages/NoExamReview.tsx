@@ -32,13 +32,14 @@ import {
   REVIEW_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS, RETURN_REASON_LABEL,
 } from "@shared/pending_charge";
 import { requestedItemLabel, componentLabel } from "@shared/prosthetic_parts";
+import { DEVICE_ORIGIN_LABELS, isDeviceOrigin } from "@shared/device_origin";
 
 export interface ChargeCard {
   id: number; patientId: number; patientName: string | null;
   patientCode: string | null; branchId: number | null; branchName: string | null;
   serviceType: string; operationKind: string;
   requestedItem: string | null; maintenanceComponent: string | null;
-  externalDevice: boolean; amount: number; note: string | null; status: string;
+  deviceOrigin: string | null; amount: number; note: string | null; status: string;
   createdByName: string | null; submittedAt: string; returnReason: string | null;
   returnedAt: string | null; returnedByName: string | null;
   workOrderId: number | null; appliedWorkOrderId: number | null;
@@ -69,7 +70,10 @@ export function operationLine(r: ChargeCard): string {
   if (r.operationKind === "maintenance") {
     const part = componentLabel(r.maintenanceComponent);
     const head = part ? `صيانة ${part}` : "صيانة";
-    return r.externalDevice ? `${head} — جهاز مصنوع خارج المركز` : head;
+    //  **والمنشأُ يُقال باسمه** — «صنعناه ولم نسجّله» ليس «صُنع خارجنا».
+    const origin = isDeviceOrigin(r.deviceOrigin) && r.deviceOrigin !== "registered"
+      ? DEVICE_ORIGIN_LABELS[r.deviceOrigin] : null;
+    return origin ? `${head} — ${origin}` : head;
   }
   return `بيع ${requestedItemLabel(r.requestedItem, r.serviceType)}`;
 }

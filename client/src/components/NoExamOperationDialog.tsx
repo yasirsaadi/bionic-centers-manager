@@ -13,6 +13,16 @@
 // «الأدابتر» إلى إحداهما فتُصان قطعةٌ لا تُباع. **والمساندُ الطبية بلا
 // أجزاء** — لا تُخترَع لها قائمةٌ لم يقلها أحد.
 //
+// ══ والطرفُ الكاملُ ليس من هذا الباب ═══════════════════════════════════
+// الجزءُ بديلٌ لقطعةٍ وُصفت يوماً — قالبٌ يبلى أو ركبةٌ تنكسر. أمّا **الطرفُ
+// الكاملُ فقرارٌ سريريٌّ من أوّله**: مستوى البتر والمفصلُ والقدمُ والمقاس.
+// فلا يُعرَض هنا إطلاقاً، **والخادمُ يردّه** ولو لُفِّق طلبٌ يتجاوز الشاشة.
+// **والمسندُ الكاملُ يبقى** — لا قائمةَ أجزاءٍ قانونيةً للمساند بعد.
+//
+// ══ ومنشأُ الجهاز ثلاثةٌ لا اثنان ══════════════════════════════════════
+// «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز». وخيارٌ واحد يجمعهما كان
+// يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق.
+//
 // ══ والصفرُ ليس «مجّاناً» ═══════════════════════════════════════════════
 // مربّعُ «بلا أجور» صريحٌ. فالعمليةُ بلا أجرٍ تُحفَظ وتنتهي **بلا صفٍّ
 // معلَّق ولا اعتمادٍ مسرحيّ**، والمبلغُ الحاضر موجبٌ دائماً.
@@ -36,6 +46,10 @@ import {
   PROSTHETIC_COMPONENTS, COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS,
 } from "@shared/prosthetic_parts";
 import {
+  DEVICE_ORIGINS, DEVICE_ORIGIN_LABELS, DEVICE_ORIGIN_HINTS, originHasEpisode,
+  type DeviceOrigin,
+} from "@shared/device_origin";
+import {
   PENDING_CHARGE_KIND_LABELS, SAVED_PENDING_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
@@ -55,8 +69,6 @@ interface Props {
   existingRequestedItem?: string | null;
 }
 
-const EXTERNAL = "__external__";
-
 export function NoExamOperationDialog({
   open, onOpenChange, patientId, branchId, serviceType,
   existingEpisodeId = null, existingRequestedItem = null,
@@ -68,6 +80,8 @@ export function NoExamOperationDialog({
     existingRequestedItem ?? (serviceType === "prosthetic" ? "" : FULL_DEVICE));
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
+  /** **بلا افتراض**: المنشأُ يُسأل ولا يُخمَّن — ولا يُقرأ من تاريخ المريض. */
+  const [origin, setOrigin] = useState<"" | DeviceOrigin>("");
   const [target, setTarget] = useState<string>("");
   const [charged, setCharged] = useState(true);
   const [amount, setAmount] = useState(0);
@@ -103,8 +117,8 @@ export function NoExamOperationDialog({
         const res = await apiRequest("POST", "/api/no-exam/maintenance", {
           patientId, serviceType, expertUserId: Number(expertId),
           maintenanceComponent: serviceType === "prosthetic" ? component : null,
-          externalDevice: target === EXTERNAL,
-          deviceEpisodeId: target === EXTERNAL || !target ? null : Number(target),
+          deviceOrigin: origin,
+          deviceEpisodeId: origin === "registered" && target ? Number(target) : null,
           note: note.trim() || null, ...money,
         });
         return res.json();
@@ -132,8 +146,8 @@ export function NoExamOperationDialog({
       toast({
         title: d?.charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
         description: d?.charge
-          ? "لم يُقيَّد المبلغ بعد — يظهر الآن في طابور مراجعة الطبيب، ويدخل الحسابات فور اعتماده."
-          : "العملية مسجَّلة بلا أجور، فلا مبلغ ينتظر مراجعة.",
+          ? "بدأ العمل وأمرُ التصنيع مفتوح. والمبلغ لم يُقيَّد بعد — يظهر الآن في طابور مراجعة الطبيب."
+          : "بدأ العمل وأمرُ التصنيع مفتوح، بلا أجور — فلا مبلغ ينتظر مراجعة.",
       });
     },
     onError: (err: any) => toast({
@@ -145,7 +159,9 @@ export function NoExamOperationDialog({
   const missingItem = kind === "device_sale" && serviceType === "prosthetic"
     && !existingEpisodeId && !requestedItem;
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
-  const missingTarget = kind === "maintenance" && !target;
+  //  المسجَّلُ وحده يحتاج جهازاً بعينه — والآخران بلا حلقة، فلا يُسألان عنها.
+  const missingTarget = kind === "maintenance"
+    && (!origin || (originHasEpisode(origin) && !target));
   const ready = Boolean(expertId) && !missingItem && !missingComponent && !missingTarget
     && (!charged || amount > 0);
 
@@ -161,8 +177,9 @@ export function NoExamOperationDialog({
         <div className="space-y-3">
           <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
             data-testid="no-exam-op-rule">
-            تُسجَّل العملية الآن ويُنجَز العمل. <b>والمبلغ لا يدخل المحاسبة</b>
-            {" "}حتى يراجعه طبيبٌ مخوَّل — لا كلفةَ على المريض ولا قيدَ ولا تقرير.
+            <b>يبدأ العمل الآن</b> — يُفتَح أمر التصنيع ويُسنَد للخبير فوراً.
+            {" "}<b>والمبلغ وحده ينتظر</b> مراجعة طبيبٍ مخوَّل: لا كلفةَ على
+            المريض ولا قيدَ ولا تقرير حتى يعتمده.
           </p>
 
           {/* ── ماذا جرى؟ ── */}
@@ -196,13 +213,26 @@ export function NoExamOperationDialog({
             ) : (
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">ما الذي بيع؟</Label>
+                {serviceType === "prosthetic" && (
+                  <p className="text-xs text-muted-foreground"
+                    data-testid="no-exam-op-item-hint">
+                    الأجزاء وحدها من هنا — <b>الطرف الصناعي الكامل يحتاج معاينة
+                    الطبيب</b> ويُفتَح من «طرف صناعي جديد».
+                  </p>
+                )}
                 <Select value={requestedItem} onValueChange={setRequestedItem}
                   disabled={serviceType !== "prosthetic"}>
                   <SelectTrigger data-testid="no-exam-op-item">
                     <SelectValue placeholder="اختر الجزء أو الجهاز الكامل" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={FULL_DEVICE}>{FULL_DEVICE_LABELS[serviceType]}</SelectItem>
+                    {/*  **والطرفُ الكاملُ ليس من هذا الباب**: قرارٌ سريريٌّ
+                        من أوّله، فيبقى للمساند وحدها حيث لا أجزاءَ لها. */}
+                    {serviceType === "medical_support" && (
+                      <SelectItem value={FULL_DEVICE}>
+                        {FULL_DEVICE_LABELS.medical_support}
+                      </SelectItem>
+                    )}
                     {/*  **الأجزاءُ للأطراف وحدها** — ولا تُخترَع للمساند. */}
                     {serviceType === "prosthetic" && PROSTHETIC_COMPONENTS.map((c) => (
                       <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>
@@ -231,22 +261,55 @@ export function NoExamOperationDialog({
                   </Select>
                 </div>
               )}
+              {/*  **منشأُ الجهاز — ثلاثُ حقائق لا اثنتان.** «صنعناه ولم
+                  نسجّله» ليس «صُنع خارج المركز»، ودمجُهما كان يصف عملَنا
+                  بأنه عملُ غيرنا. ولا يُستنتَج من تاريخ المريض. */}
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">الجهاز المُصان</Label>
-                <Select value={target} onValueChange={setTarget}>
-                  <SelectTrigger data-testid="no-exam-op-target">
-                    <SelectValue placeholder="اختر الجهاز" />
+                <Label className="text-sm font-medium">منشأ الجهاز المُصان</Label>
+                <Select value={origin}
+                  onValueChange={(v) => { setOrigin(v as DeviceOrigin); setTarget(""); }}>
+                  <SelectTrigger data-testid="no-exam-op-origin">
+                    <SelectValue placeholder="اختر منشأ الجهاز" />
                   </SelectTrigger>
                   <SelectContent>
-                    {devices.map((e) => (
-                      <SelectItem key={e.id} value={String(e.id)}>{describeEpisode(e)}</SelectItem>
+                    {DEVICE_ORIGINS.map((o) => (
+                      <SelectItem key={o} value={o}
+                        disabled={o === "registered" && devices.length === 0}>
+                        {DEVICE_ORIGIN_LABELS[o]}
+                      </SelectItem>
                     ))}
-                    {/*  **جهازٌ صُنع خارج المركز** — واقعةُ منشأٍ تُقال كما
-                        هي، ولا يُخترَع له أمرُ تصنيعٍ ولا تسليمٌ لم يقع. */}
-                    <SelectItem value={EXTERNAL}>جهاز مصنوع خارج المركز أو غير مسجَّل</SelectItem>
                   </SelectContent>
                 </Select>
+                {origin && (
+                  <p className="text-xs text-muted-foreground"
+                    data-testid={`no-exam-op-origin-hint-${origin}`}>
+                    {DEVICE_ORIGIN_HINTS[origin]}
+                  </p>
+                )}
+                {origin !== "registered" && origin !== "" && (
+                  <p className="text-xs text-muted-foreground">
+                    لا سجلّ لهذا الجهاز عندنا — <b>ولا يُخترَع له أمر تصنيع ولا
+                    تسليم لم يقع</b>. تُسجَّل الصيانة وحدها.
+                  </p>
+                )}
               </div>
+
+              {/*  **والمسجَّلُ وحده يُسأل عن جهازه بعينه.** */}
+              {origin === "registered" && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">الجهاز المسجَّل</Label>
+                  <Select value={target} onValueChange={setTarget}>
+                    <SelectTrigger data-testid="no-exam-op-target">
+                      <SelectValue placeholder="اختر الجهاز" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {devices.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>{describeEpisode(e)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </>
           )}
 
@@ -271,7 +334,9 @@ export function NoExamOperationDialog({
               onChange={(e) => { setCharged(!e.target.checked); if (e.target.checked) setAmount(0); }}
               data-testid="no-exam-op-no-charge" />
             <b>بلا أجور</b>
-            <span className="text-muted-foreground">— تُحفَظ العملية وتنتهي، بلا مراجعة</span>
+            <span className="text-muted-foreground">
+              — يبدأ العمل ويكتمل تسجيله، بلا مبلغ ولا مراجعة
+            </span>
           </label>
 
           {charged && (

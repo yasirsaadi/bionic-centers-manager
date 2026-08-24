@@ -19,6 +19,7 @@ import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 import {
   parseRequestedItem, requestedItemLabel, requestedItemLine,
+  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
 } from "@shared/prosthetic_parts";
 import { checkRequiredPatientData } from "@shared/patient_required";
 import { isServicePath, type ServicePath } from "@shared/service_path";
@@ -151,6 +152,18 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
           error: "حدّد مسار العملية: هل تحتاج معاينة طبية؟ (نعم / لا)",
           field: "servicePath",
         });
+      }
+
+      // ── **والطرفُ الكاملُ لا يُفتَح على مسار «بلا معاينة»** (٠٦٧) ──────
+      //  الجزءُ بديلٌ لقطعةٍ وُصفت يوماً، والطرفُ الكاملُ قرارٌ سريريٌّ من
+      //  أوّله. وفتحُ طلبٍ كهذا هنا كان يُنتج حلقةً لا يقبلها بابُ البيع
+      //  بعد لحظات — فيُردّ **الآن** بدل أن يُترك فخّاً.
+      //
+      //  **والمساندُ الطبية مختلفة**: لا قائمةَ أجزاءٍ قانونيةً لها بعد،
+      //  فالمسندُ الكاملُ يبقى مؤهَّلاً — ولا تُخترَع له أجزاءٌ لم يقلها أحد.
+      if (servicePath === "no_exam" && serviceType === "prosthetic"
+        && !isProstheticComponent(parsedItem.value)) {
+        return res.status(400).json({ error: NO_EXAM_FULL_PROSTHESIS_REFUSAL });
       }
 
       const patient = await patientScope(patientId);

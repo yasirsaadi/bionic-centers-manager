@@ -62,9 +62,9 @@ CREATE TABLE IF NOT EXISTS pending_service_charges (
   operation_kind        TEXT NOT NULL,
   requested_item        TEXT,
   maintenance_component TEXT,
-  -- **واقعةُ المنشأ** (البند ٦): جهازٌ صُنع خارج المركز يُصان عندنا بصدق،
-  -- بلا اختراع أمرِ تصنيعٍ ولا حلقةٍ مسلَّمة لم تقع.
-  external_device       BOOLEAN NOT NULL DEFAULT FALSE,
+  -- **لقطةُ منشأ الجهاز** — للعرض في الطابور. ومصدرُ الحقيقة أمرُ التصنيع:
+  -- صيانةٌ بلا أجرٍ لا تُنشئ صفّاً هنا أصلاً، فلو عاش المنشأُ هنا وحده لضاع.
+  device_origin         TEXT,
   -- **خبيرُ البيع** — يختاره الاستقبالُ لحظةَ العمل لا الطبيبُ لحظةَ المراجعة:
   -- الطبيبُ يراجع **المبلغ** لا مَن ينفّذ. لقطةُ رقمٍ بلا مفتاح (درسُ ٠٣٥).
   sale_expert_user_id   INTEGER,
@@ -90,12 +90,17 @@ CREATE TABLE IF NOT EXISTS pending_service_charges (
 ALTER TABLE pending_service_charges
   ADD COLUMN IF NOT EXISTS sale_expert_user_id INTEGER;
 
+--  إضافةٌ لقواعدَ شغّلت شكلاً أسبقَ من هذا الترحيل نفسِه. و«external_device»
+--  إن وُجد يُترك كما هو — **لا DROP** — ولا يقرؤه شيء بعد اليوم.
+ALTER TABLE pending_service_charges
+  ADD COLUMN IF NOT EXISTS device_origin TEXT;
+
 COMMENT ON TABLE pending_service_charges IS
   'المبلغ المعلق لعملية «بلا معاينة». خارج المحاسبة تماما حتى يعتمده طبيب مخول: لا cost_entries ولا total_cost ولا دفعة ولا قيد يومية.';
 COMMENT ON COLUMN pending_service_charges.applied_at IS
   'حارس التطبيق مرة واحدة بالضبط. غير فارغ = المبلغ قيد فعلا بالكاتب القانوني.';
-COMMENT ON COLUMN pending_service_charges.external_device IS
-  'الجهاز مصنوع خارج المركز — واقعة منشأ صريحة، فلا يخترع النظام تاريخ تصنيع لم يقع.';
+COMMENT ON COLUMN pending_service_charges.device_origin IS
+  'لقطة منشأ الجهاز للعرض: registered / center_unrecorded / external. ومصدر الحقيقة عمود prosthetic_work_orders.device_origin.';
 
 CREATE TABLE IF NOT EXISTS pending_service_charge_events (
   id            BIGSERIAL PRIMARY KEY,
@@ -162,10 +167,40 @@ BEGIN
       CHECK (operation_kind <> 'device_sale' OR sale_expert_user_id IS NOT NULL);
   END IF;
 
+  --  **ومنشأُ الجهاز ثلاثةٌ لا اثنان**: «صنعناه ولم نسجّله» ليس «صُنع
+  --  خارج المركز». ووسمُ الأوّل بالثاني يصف عملَنا بأنه عملُ غيرنا.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'psc_origin_check') THEN
+    ALTER TABLE pending_service_charges ADD CONSTRAINT psc_origin_check
+      CHECK (device_origin IS NULL
+             OR device_origin IN ('registered', 'center_unrecorded', 'external'));
+  END IF;
+
   --  وعكسُها: لا تطبيقَ بلا اعتماد.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'psc_applied_only_approved_check') THEN
     ALTER TABLE pending_service_charges ADD CONSTRAINT psc_applied_only_approved_check
       CHECK (applied_at IS NULL OR status = 'approved');
+  END IF;
+END $$;
+
+-- ══ **منشأُ الجهاز على السجلّ التشغيليّ** ═════════════════════════════════
+--  الصيانةُ بلا أجرٍ لا تُنشئ صفَّ مبلغٍ معلَّق، فلو عاش المنشأُ على ذلك
+--  الصفّ وحده لاختفى من السجلّ كلّما كانت الخدمةُ مجّانية. فمكانُه أمرُ
+--  التصنيع — الهويّةُ التشغيلية الدائمة للصيانة.
+--
+--  و«NULL» صدقٌ لا نقص: أوامرُ ما قبل هذا الترحيل لم تُسأل، والبناءُ
+--  الأوليُّ لا منشأَ له أصلاً — نحن نصنعه.
+ALTER TABLE prosthetic_work_orders
+  ADD COLUMN IF NOT EXISTS device_origin TEXT;
+
+COMMENT ON COLUMN prosthetic_work_orders.device_origin IS
+  'منشأ الجهاز المُصان: registered (له حلقة) / center_unrecorded (صنعناه قبل النظام) / external (صُنع خارج المركز). NULL = لم يُسأل أو بناء أولي.';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pwo_device_origin_check') THEN
+    ALTER TABLE prosthetic_work_orders ADD CONSTRAINT pwo_device_origin_check
+      CHECK (device_origin IS NULL
+             OR device_origin IN ('registered', 'center_unrecorded', 'external'));
   END IF;
 END $$;
 

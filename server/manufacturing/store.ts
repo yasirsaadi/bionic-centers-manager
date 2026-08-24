@@ -196,7 +196,25 @@ export async function validateExpertForBranch(
   expertUserId: number,
   branchId: number,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const [u] = await db.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
+  return await validateExpertForBranchTx(db, expertUserId, branchId);
+}
+
+/**
+ * **النسخةُ التي تقرأ داخل معاملة المُستدعي** — والقاعدةُ واحدة لا اثنتان.
+ *
+ * اعتمادُ مبلغٍ معلَّق (٠٦٧) قد يقع بعد يومٍ من إرساله: يُوقَف الخبيرُ أو
+ * يُنقَل بين اللحظتين. فيُعاد التحقّق **تحت القفل قبل قيد الدينار** — ولو
+ * قرأنا من خارج المعاملة لقرأنا لقطةً قد تشيخ قبل أن نكتب.
+ *
+ * والمنطقُ حرفٌ واحد لا يتكرّر: `validateExpertForBranch` تنادِيها بالاتصال
+ * العامّ، وهذه بمعاملةٍ مفتوحة.
+ */
+export async function validateExpertForBranchTx(
+  tx: any,
+  expertUserId: number,
+  branchId: number,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const [u] = await tx.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
   if (!u) return { ok: false, reason: "الخبير غير موجود" };
   if (!u.isActive) return { ok: false, reason: "حساب الخبير غير فعّال" };
   // Pure expert OR a user carrying the expert capability flag.
@@ -396,6 +414,16 @@ export async function createMaintenanceOrderWithVisit(params: {
   /** إقرارٌ صريح بأن الجهاز المُصان قديمٌ غير مسجَّل. */
   legacyUnrecordedDevice?: boolean;
   /**
+   * **منشأُ الجهاز المُصان** (ترحيل ٠٦٧) — يُحفَظ على الأمر نفسِه.
+   *
+   * ثلاثُ حقائق لا اثنتان: `registered` له حلقتُه · `center_unrecorded`
+   * **صنعناه نحن** قبل النظام · `external` صُنع خارج المركز. ووسمُ الثاني
+   * بالثالث يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق.
+   *
+   * و`undefined` تعني «لم يُسأل» — فيبقى العمودُ فارغاً صادقاً، ولا يُخمَّن.
+   */
+  deviceOrigin?: string | null;
+  /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
    * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
@@ -455,6 +483,8 @@ export async function createMaintenanceOrderWithVisit(params: {
       assignedBy: params.assignedBy,
       deviceEpisodeId: targetEpisodeId,
       maintenanceComponent: component,
+      //  **الواقعةُ على السجلّ التشغيليّ** — فتبقى ولو كانت الخدمةُ بلا أجر.
+      deviceOrigin: params.deviceOrigin ?? null,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,

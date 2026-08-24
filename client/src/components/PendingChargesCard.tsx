@@ -18,11 +18,12 @@ import {
   type PendingChargeStatus,
 } from "@shared/pending_charge";
 import { requestedItemLabel, componentLabel } from "@shared/prosthetic_parts";
+import { DEVICE_ORIGIN_LABELS, isDeviceOrigin } from "@shared/device_origin";
 
 interface Row {
   id: number; serviceType: string; operationKind: string;
   requestedItem: string | null; maintenanceComponent: string | null;
-  externalDevice: boolean; amount: number; note: string | null;
+  deviceOrigin: string | null; amount: number; note: string | null;
   status: PendingChargeStatus; createdByName: string | null; submittedAt: string;
   returnReason: string | null; returnedByName: string | null; returnedAt: string | null;
   reviewedByName: string | null; reviewedAt: string | null;
@@ -42,7 +43,10 @@ function line(r: Row): string {
   if (r.operationKind === "maintenance") {
     const part = componentLabel(r.maintenanceComponent);
     const head = part ? `صيانة ${part}` : "صيانة";
-    return r.externalDevice ? `${head} — جهاز مصنوع خارج المركز` : head;
+    //  **والمنشأُ يُقال باسمه** — «صنعناه ولم نسجّله» ليس «صُنع خارجنا».
+    const origin = isDeviceOrigin(r.deviceOrigin) && r.deviceOrigin !== "registered"
+      ? DEVICE_ORIGIN_LABELS[r.deviceOrigin] : null;
+    return origin ? `${head} — ${origin}` : head;
   }
   return `بيع ${requestedItemLabel(r.requestedItem, r.serviceType)}`;
 }

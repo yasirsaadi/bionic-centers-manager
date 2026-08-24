@@ -899,6 +899,19 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    */
   maintenanceComponent: text("maintenance_component"),
   /**
+   * **منشأُ الجهاز المُصان** (ترحيل ٠٦٧) — `registered` /
+   * `center_unrecorded` / `external`.
+   *
+   * ومكانُه هنا لا على صفّ المبلغ المعلَّق: صيانةٌ بلا أجرٍ لا تُنشئ ذلك
+   * الصفَّ أصلاً، فلو عاش المنشأُ هناك وحده لاختفى كلّما كانت الخدمةُ
+   * مجّانية. و«صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز» — وسمُ
+   * الأوّل بالثاني يصف عملَنا بأنه عملُ غيرنا.
+   *
+   * و`NULL` صدقٌ لا نقص: أوامرُ ما قبل الترحيل لم تُسأل، والبناءُ الأوليُّ
+   * لا منشأَ له — نحن نصنعه.
+   */
+  deviceOrigin: text("device_origin"),
+  /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
    * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
@@ -915,6 +928,11 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   //  مسجَّلٌ على الحلقة لا هنا. فعمودٌ مملوءٌ على بناءٍ يعني خلطاً بين بابين.
   check("prosthetic_work_orders_maint_component_purpose_check",
     sql`${t.maintenanceComponent} IS NULL OR ${t.purpose} = 'maintenance'`),
+  //  **ومنشأُ الجهاز ثلاثةٌ لا اثنان** (ترحيل ٠٦٧): «صنعناه ولم نسجّله»
+  //  ليس «صُنع خارج المركز». و`NULL` للقديم وللبناء الأوليّ.
+  check("pwo_device_origin_check", sql`
+    ${t.deviceOrigin} IS NULL
+    OR ${t.deviceOrigin} IN ('registered', 'center_unrecorded', 'external')`),
   //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة
   //  وحدها، فأوامرُ الصيانة القديمة بلا جزءٍ لا تثقله (ترحيل ٠٦٠).
   index("ix_wo_maint_component").on(t.maintenanceComponent)
@@ -1874,11 +1892,12 @@ export const pendingServiceCharges = pgTable("pending_service_charges", {
   requestedItem: text("requested_item"),
   maintenanceComponent: text("maintenance_component"),
   /**
-   * **جهازٌ صُنع خارج المركز** — واقعةُ منشأٍ صريحة.
+   * **لقطةُ منشأ الجهاز** — للعرض في طابور المراجعة.
    *
-   * فتُصان بصدق بلا اختراع أمرِ تصنيعٍ ولا حلقةٍ مسلَّمة لم تقع عندنا.
+   * ومصدرُ الحقيقة `prostheticWorkOrders.deviceOrigin`: الصيانةُ بلا أجرٍ
+   * لا تُنشئ صفّاً هنا أصلاً، فلا يجوز أن تعيش الواقعةُ هنا وحدها.
    */
-  externalDevice: boolean("external_device").notNull().default(false),
+  deviceOrigin: text("device_origin"),
   /**
    * **خبيرُ البيع** — يختاره الاستقبالُ لحظةَ العمل لا الطبيبُ لحظةَ
    * المراجعة: الطبيبُ يراجع **المبلغ** لا مَن ينفّذ. لقطةُ رقمٍ بلا مفتاح.
@@ -1916,6 +1935,10 @@ export const pendingServiceCharges = pgTable("pending_service_charges", {
     ${t.status} <> 'approved'
     OR (${t.appliedAt} IS NOT NULL AND ${t.reviewedBy} IS NOT NULL
         AND ${t.reviewedAt} IS NOT NULL)`),
+  //  **ومنشأُ الجهاز ثلاثةٌ لا اثنان.**
+  check("psc_origin_check", sql`
+    ${t.deviceOrigin} IS NULL
+    OR ${t.deviceOrigin} IN ('registered', 'center_unrecorded', 'external')`),
   //  **وبيعٌ يسمّي خبيرَه دائماً** — والاعتمادُ لا يُسنِد إلى مجهول.
   check("psc_sale_expert_check",
     sql`${t.operationKind} <> 'device_sale' OR ${t.saleExpertUserId} IS NOT NULL`),
