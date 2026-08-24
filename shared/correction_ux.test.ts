@@ -87,28 +87,55 @@ assert.ok(support.facts.includes("الطلب السابق: مسند طبي كا�
 // ══ (ب-٢) **هويّةُ الطلب البديل — بالمعرّف لا بالترشيح** ═════════════════
 //  المريضُ يملك خيوطاً متوازية، فـ«أوّلُ حلقةٍ مفتوحة» كانت تعرض مسندَه
 //  بوصفه الطلبَ الذي وُلد عن تصحيح طرفه.
-const REV_EV = (id: number | null | undefined, extra: any = {}) => ({
+//  **والحدثُ بمعرّفه كما يصل من الخادم** — `getEvents` تُرجع `ORDER BY id
+//  DESC`، أي **الأحدثُ أوّلاً**. والاختبارُ يصف ذلك الترتيبَ حرفياً.
+const REV_EV = (id: number | null | undefined, eventId?: number) => ({
+  ...(eventId === undefined ? {} : { id: eventId }),
   eventType: "administrative_reversal",
-  payload: { workOrderId: 5, ...(id === undefined ? {} : { replacementEpisodeId: id }), ...extra },
+  payload: { workOrderId: 5, ...(id === undefined ? {} : { replacementEpisodeId: id }) },
 });
-assert.equal(replacementEpisodeIdOf([REV_EV(88)]), 88);
-assert.equal(replacementEpisodeIdOf([{ eventType: "closed_without_purchase" }, REV_EV(88)]), 88);
+assert.equal(replacementEpisodeIdOf([REV_EV(88, 10)]), 88);
+assert.equal(replacementEpisodeIdOf(
+  [{ id: 11, eventType: "closed_without_purchase" }, REV_EV(88, 10)]), 88);
 //  **ولا تخمينَ حين لا استبدال**: إلغاءٌ كاملٌ بلا بديل ⟶ `null`.
-assert.equal(replacementEpisodeIdOf([REV_EV(undefined)]), null);
-assert.equal(replacementEpisodeIdOf([REV_EV(null)]), null);
-assert.equal(replacementEpisodeIdOf([{ eventType: "administrative_reversal" }]), null);
-assert.equal(replacementEpisodeIdOf([{ eventType: "converted", payload: { replacementEpisodeId: 9 } }]),
-  null, "حدثٌ آخر لا يمنح هويّةَ بديل");
+assert.equal(replacementEpisodeIdOf([REV_EV(undefined, 10)]), null);
+assert.equal(replacementEpisodeIdOf([REV_EV(null, 10)]), null);
+assert.equal(replacementEpisodeIdOf([{ id: 10, eventType: "administrative_reversal" }]), null);
+assert.equal(replacementEpisodeIdOf(
+  [{ id: 10, eventType: "converted", payload: { replacementEpisodeId: 9 } }]),
+null, "حدثٌ آخر لا يمنح هويّةَ بديل");
 assert.equal(replacementEpisodeIdOf([]), null);
 assert.equal(replacementEpisodeIdOf(null), null);
 assert.equal(replacementEpisodeIdOf(undefined), null);
-assert.equal(replacementEpisodeIdOf([REV_EV(0)]), null, "صفرٌ ليس معرّفاً");
-assert.equal(replacementEpisodeIdOf([REV_EV(-3)]), null, "ولا سالب");
-assert.equal(replacementEpisodeIdOf([REV_EV("abc" as any)]), null, "ولا نصٌّ");
-//  وتصحيحان متتاليان ⟶ الأحدثُ يصف القائمَ الآن.
-assert.equal(replacementEpisodeIdOf([REV_EV(88), REV_EV(91)]), 91);
-assert.equal(replacementEpisodeIdOf([REV_EV(88), REV_EV(undefined)]), 88,
-  "وإلغاءٌ لاحقٌ بلا بديل لا يمحو هويّةً كُتبت");
+assert.equal(replacementEpisodeIdOf([REV_EV(0, 10)]), null, "صفرٌ ليس معرّفاً");
+assert.equal(replacementEpisodeIdOf([REV_EV(-3, 10)]), null, "ولا سالب");
+assert.equal(replacementEpisodeIdOf([REV_EV("abc" as any, 10)]), null, "ولا نصٌّ");
+
+// ══ **التصحيحُ الأخيرُ هو القائم** — والترتيبُ لا يخدع ═══════════════════
+//  ١) الأحدثُ أوّلاً كما يصل فعلاً: بديلُ ٢٠٠ أحدثُ من بديل ١٠٠.
+assert.equal(replacementEpisodeIdOf([REV_EV(200, 20), REV_EV(100, 10)]), 200,
+  "الأحدثُ يسود ولو جاء أوّلاً في المصفوفة");
+//  والحكمُ بالمعرّف لا بالموضع: مصفوفةٌ مقلوبةٌ تعطي النتيجةَ نفسَها.
+assert.equal(replacementEpisodeIdOf([REV_EV(100, 10), REV_EV(200, 20)]), 200,
+  "ولا يتغيّر الحكمُ بترتيب المصفوفة ما دامت المعرّفات موجودة");
+
+//  ٢) **إلغاءٌ كاملٌ لاحقٌ بلا استبدال ⟶ لا بديلَ قائماً.**
+//     القاعدةُ الدلالية: التصحيحُ الأخير يصف الملفَّ الآن. فحلقةُ استبدالٍ
+//     أبطلها تصحيحٌ تالٍ لا يجوز أن تُعرَض «طلباً جديداً» — والصمتُ أصدق.
+assert.equal(replacementEpisodeIdOf([REV_EV(undefined, 20), REV_EV(100, 10)]), null,
+  "إلغاءٌ لاحقٌ بلا بديل ⟶ لا استبدالَ منسوبٌ إلى التصحيح القائم");
+
+//  ٣) أحداثٌ أحدثُ من أنواعٍ أخرى لا تمسّ هويّةَ آخر تصحيح.
+assert.equal(replacementEpisodeIdOf([
+  { id: 40, eventType: "reopened" },
+  { id: 30, eventType: "exam_price_corrected", payload: { replacementEpisodeId: 999 } },
+  REV_EV(200, 20),
+  REV_EV(100, 10),
+]), 200, "نوعٌ آخر أحدثُ لا يغيّر هويّةَ آخر تصحيحٍ إداريّ");
+
+//  وبلا معرّفاتٍ إطلاقاً (كائناتٌ مجرّدة) يُؤخَذ الأوّلُ وفق عقد «الأحدثُ
+//  أوّلاً» — لا الأخيرُ، وهو بالضبط ما كان مقلوباً.
+assert.equal(replacementEpisodeIdOf([REV_EV(200), REV_EV(100)]), 200);
 
 // ══ (ج) النيّة — خريطةٌ واحدة، وعنوانٌ يقول الأثر ═════════════════════════
 assert.equal(CORRECTION_INTENTS.length, 4);

@@ -392,24 +392,37 @@ export function purchasePresentation(f: {
 // `null`، فتُعرَض البطاقةُ التاريخية وحدها. **والصمتُ أصدقُ من ترشيح.**
 
 /**
- * `replacementEpisodeId` من حدث `administrative_reversal` لهذه المتابعة.
+ * `replacementEpisodeId` من **آخرِ** تصحيحٍ إداريّ لهذه المتابعة.
  *
- * والأحدثُ يسود حين تعدّدت الأحداث (تصحيحٌ سبقه تصحيح): الحمولةُ الأخيرة
- * هي التي تصف العمليةَ القائمة الآن.
+ * ══ القاعدةُ الدلالية: التصحيحُ الأخير هو القائم ═════════════════════════
+ * تصحيحٌ يتلوه تصحيح ⟶ الثاني هو ما يصف الملفَّ الآن. **وإلغاءٌ كاملٌ بلا
+ * استبدالٍ يتلو استبدالاً يعني أن لا طلبَ بديلاً قائماً بعد اليوم** — فلا
+ * يجوز أن تُعرَض حلقةُ استبدالٍ ألغاها التصحيحُ التالي. فتُقرأ حمولةُ
+ * **الأخير وحده**، لا أوّلُ حمولةٍ تحمل رقماً.
  *
- * @returns رقمَ الحلقة البديلة، أو `null` حين لا استبدالَ وقع.
+ * ══ ولا يُعتمَد على ترتيبٍ غير موثَّق ══════════════════════════════════
+ * `getEvents` تُرجع `ORDER BY id DESC` — **الأحدثُ أوّلاً**. ومسحٌ ساذجٌ
+ * يكتب فوق نتيجته في كلّ دورة كان يُبقي **الأقدمَ** فائزاً، وهو عكسُ
+ * المكتوب هنا بالضبط.
+ *
+ * فالحسمُ **بأكبر `id`** حين تتوفّر المعرّفات — وهي متوفّرةٌ في كلّ ما
+ * يأتي من الخادم — فلا يعتمد الحكمُ على ترتيبِ مصفوفةٍ قد يتغيّر. وحين لا
+ * معرّفَ إطلاقاً (كائناتٌ مجرّدة في اختبار) يُؤخَذ **أوّلُ** عنصرٍ وفق
+ * عقدِ «الأحدثُ أوّلاً».
+ *
+ * @returns رقمَ الحلقة البديلة للتصحيح الأخير، أو `null` حين لا استبدالَ فيه.
  */
 export function replacementEpisodeIdOf(
   events: readonly any[] | null | undefined,
 ): number | null {
   if (!Array.isArray(events)) return null;
-  let out: number | null = null;
-  for (const e of events) {
-    if (e?.eventType !== "administrative_reversal") continue;
-    const id = pos(e?.payload?.replacementEpisodeId);
-    if (id !== null) out = id;
-  }
-  return out;
+  const reversals = events.filter((e) => e?.eventType === "administrative_reversal");
+  if (reversals.length === 0) return null;
+  const withId = reversals.filter((e) => pos(e?.id) !== null);
+  const latest = withId.length > 0
+    ? withId.reduce((a, b) => ((pos(b?.id) as number) > (pos(a?.id) as number) ? b : a))
+    : reversals[0];
+  return pos(latest?.payload?.replacementEpisodeId);
 }
 
 /** «٢٠٢٦-٠٩-٠١» ⟵ التاريخُ وحده، للمواعيد المستقبلية داخل التفاصيل. */
