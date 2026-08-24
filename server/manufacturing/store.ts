@@ -781,6 +781,7 @@ export async function getOrderDetail(id: number) {
   //  فتُردّ الصفحةُ ٤٠٤ — وهو الصدق، الأمرُ باقٍ لكن ملفَّه خرج من النظام.
   const [patient] = await db.select(expertPatientColumns).from(patients)
     .where(and(eq(patients.id, order.patientId), activePatientDrizzle()));
+  if (!patient) return null;
   const timeline = await db.select({
     id: WH.id, actionType: WH.actionType, fromStage: WH.fromStage, toStage: WH.toStage,
     notes: WH.notes, performedBy: WH.performedBy, createdAt: WH.createdAt,

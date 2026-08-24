@@ -192,7 +192,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     } else {
       return res.status(403).json({ error: "غير مصرح" });
     }
-    res.json(await store.getOrderDetail(id));
+    //  **وأمرُ ملفٍّ في السلّة لا يُفتَح** (ترحيل ٠٦٨): الأمرُ باقٍ بسجلّه
+    //  ويعود بعينه عند الاستعادة، لكنّ صفحتَه لا تُعرَض على خبيرٍ ليعمل
+    //  عليها الآن — و`getOrderDetail` تعود `null` حين يغيب مريضُه الفعّال.
+    const detail = await store.getOrderDetail(id);
+    if (!detail) return res.status(404).json({ error: "الأمر غير موجود" });
+    res.json(detail);
   });
 
   // ---- create an order for an EXISTING patient --------------------------------

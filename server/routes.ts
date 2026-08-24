@@ -36,7 +36,7 @@ import {
 import { patientActiveOnDate } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
-import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION } from "@shared/patient_trash";
+import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import {
@@ -3023,6 +3023,17 @@ export async function registerRoutes(
     }
     input.shift = visitShift;
 
+    //  **ولا زيارةَ على ملفٍّ في السلّة** (ترحيل ٠٦٨) — نفسُ حارس الدفعة.
+    {
+      const live = await storage.getPatient(input.patientId);
+      if (!live) {
+        const any = await storage.getPatientAnyState(input.patientId);
+        return res.status(any ? 409 : 404).json({
+          message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
+        });
+      }
+    }
+
     // Track which system user created this visit (if logged in via system user)
     const sessionUserId = branchSession?.userId;
     if (sessionUserId && typeof sessionUserId === 'number') {
@@ -3351,6 +3362,19 @@ export async function registerRoutes(
     const isBranchManager = branchSession?.role === "branch_manager";
     const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
     
+    //  **ولا دفعةَ على ملفٍّ في السلّة** (ترحيل ٠٦٨): الحارسُ صريحٌ لا
+    //  مشتقٌّ من فحص «المتبقّي» أدناه — ذاك يتخطّى الملفَّ الغائب بصمت،
+    //  فكانت الدفعةُ تُسجَّل على محذوفٍ ولا يراها أحد.
+    {
+      const live = await storage.getPatient(input.patientId);
+      if (!live) {
+        const any = await storage.getPatientAnyState(input.patientId);
+        return res.status(any ? 409 : 404).json({
+          message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
+        });
+      }
+    }
+
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
     if (!isFreeSessions) {
       const patient = await storage.getPatient(input.patientId);
