@@ -209,8 +209,12 @@ CREATE INDEX IF NOT EXISTS ix_patients_restore_until
   WHERE deleted_at IS NOT NULL;
 
 --  ══ **إقصاءُ مالِ المحذوف نهائياً — حقيقةٌ دائمة على القيد** ══════════════
---  انظر الشرح في رأس الملفّ وفي server/accounting/ledger.ts. الافتراضُ
---  FALSE صادقٌ هنا: لا حذفَ نهائياً وقع قبل هذا العمود.
+--  انظر الشرح في رأس الملفّ وفي server/accounting/ledger.ts. **والافتراضُ
+--  FALSE هنا ليس ادّعاءَ علمٍ بالماضي** — حذوفٌ نهائيةٌ حقيقية وقعت عبر
+--  storage.deletePatient قبل هذا العمود يقيناً، ولا سبيلَ لتحديدها بعد أن
+--  انقطع الرابطُ بنزع journal_lines.patient_id حينها. فمعنى FALSE هنا
+--  دقيقٌ لا فضفاض: «لم يُوسَم بعد» لا «مؤكَّدٌ نظيف». التفصيلُ الكامل في
+--  رأس الملفّ.
 ALTER TABLE journal_entries
   ADD COLUMN IF NOT EXISTS purged_patient_money BOOLEAN NOT NULL DEFAULT FALSE;
 
