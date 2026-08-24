@@ -16,7 +16,10 @@
 import type { Express } from "express";
 import * as reversal from "./store";
 import { ReversalError } from "./store";
-import { isCorrectionIntent, isReversalMode, isReversalReasonCode } from "@shared/administrative_reversal";
+import {
+  CORRECTION_INTENT_MODE, CORRECTION_INTENT_REASON,
+  isCorrectionIntent, isReversalMode, isReversalReasonCode,
+} from "@shared/administrative_reversal";
 
 type Req = any;
 
@@ -102,21 +105,34 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       if (target.followupId === null && target.workOrderId === null && target.episodeId === null) {
         return res.status(400).json({ error: "حدّد العملية المطلوب تصحيحها" });
       }
+      //  ══ **النيّةُ تُترجَم بالخريطة المشتركة لا بشروطٍ هنا** ═══════════
+      //   الموظّفُ يصف ما يريد تصحيحه، والخادمُ يشتقّ الوضعَ والسبب. وسلسلةُ
+      //   `?:` هنا كانت نسخةً ثانيةً من الخريطة تنحرف عن الشاشة يوماً.
+      //
+      //   **والوضعُ الخام يبقى مقبولاً** لعميلٍ قديمٍ لم يُحدَّث بعد — فلا
+      //   تنكسر نافذةٌ مفتوحةٌ منذ ما قبل النشر.
       const intent = req.body?.intent;
-      const mode = intent === "purchase_mistake" ? "purchase_only"
-        : isCorrectionIntent(intent) ? "full_operation" : req.body?.mode;
+      const mode = isCorrectionIntent(intent)
+        ? CORRECTION_INTENT_MODE[intent] : req.body?.mode;
       if (!isReversalMode(mode)) {
         return res.status(400).json({ error: "اختر نوع التصحيح" });
       }
-      const reasonCode = intent === "purchase_mistake" ? "purchase_recorded_by_mistake"
-        : intent === "replace_requested_item" ? "wrong_service_or_device"
-          : intent === "work_order_mistake" ? "work_order_created_by_mistake"
-            : intent === "cancel_operation" ? "other" : req.body?.reasonCode;
+      const reasonCode = isCorrectionIntent(intent)
+        ? CORRECTION_INTENT_REASON[intent] : req.body?.reasonCode;
       if (!isReversalReasonCode(reasonCode)) {
         return res.status(400).json({ error: "اختر سبب التصحيح" });
       }
       const reasonNote = typeof req.body?.reasonNote === "string" ? req.body.reasonNote.trim() : "";
       if (!reasonNote) return res.status(400).json({ error: "اكتب سبب التصحيح" });
+
+      //  ══ **الاستبدالُ بلا بديلٍ ليس استبدالاً** ═══════════════════════
+      //   وابتلاعُه بصمت كان سيُنفّذ إلغاءً كاملاً بلا الطلب الجديد الذي
+      //   اختاره المسؤول — فيخرج المريضُ بلا عمليةٍ وبلا بديل.
+      const rawReplacement = typeof req.body?.replacementRequestedItem === "string"
+        ? req.body.replacementRequestedItem.trim() : "";
+      if (intent === "replace_requested_item" && rawReplacement === "") {
+        return res.status(400).json({ error: "اختر الجهاز أو الجزء الصحيح" });
+      }
 
       //  ══ **الإذنُ يُحمَل ولا يُفحَص هنا وحده** ═══════════════════════
       //  الفحصُ قبل فتح المعاملة نافذةٌ مفتوحة: قد يُنقَل المريضُ بين
@@ -139,8 +155,9 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         },
         actor: { userId: s.userId, userName: s.userName },
         audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
-        replacementRequestedItem: intent === "replace_requested_item"
-          ? req.body?.replacementRequestedItem : null,
+        //  **والبديلُ لا يُقبل إلّا مع نيّة الاستبدال**: قيمةٌ عالقةٌ في جسم
+        //  الطلب لا تفتح طلباً لم يطلبه أحد.
+        replacementRequestedItem: intent === "replace_requested_item" ? rawReplacement : null,
       });
       res.json(outcome);
     } catch (err: any) {

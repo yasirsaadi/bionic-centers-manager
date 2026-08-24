@@ -26,6 +26,7 @@
 // (`PriceTransition`) — نفسُ علاج شاشات الخصم.
 
 import { FOLLOWUP_REASON_LABELS, type FollowupReason } from "./followup";
+import { requestedItemLabel } from "./prosthetic_parts";
 
 /** ما تحتاجه الترجمةُ من صفّ الحدث — لا أكثر. */
 export interface FollowupEventLike {
@@ -271,11 +272,20 @@ export function followupEventView(
       if (why) out.facts.push(`سبب الإلغاء: ${why}`);
       break;
     }
+    //  ══ **حقائقُ التصحيح تُقرأ بلا معجم** ═══════════════════════════════
+    //   «طلب الاستبدال الجديد: #88» رقمٌ داخليّ لا يعني شيئاً لموظّفٍ ولا
+    //   لمدير. والذي يعنيهما: **ماذا كان وماذا صار**. فالعناوينُ من خريطة
+    //   الأجزاء القائمة (`requestedItemLabel`) — ولا معجمَ ثانٍ يُخترَع —
+    //   والأرقامُ الداخلية تبقى في الحمولة للتدقيق.
     case "administrative_reversal": {
+      const svc = typeof p.serviceType === "string" ? p.serviceType : undefined;
+      const prev = typeof p.previousRequestedItem === "string" ? p.previousRequestedItem : null;
+      if (prev) out.facts.push(`الطلب السابق: ${requestedItemLabel(prev, svc)}`);
+      const next = typeof p.replacementRequestedItem === "string"
+        ? p.replacementRequestedItem : null;
+      if (next) out.facts.push(`الطلب الجديد: ${requestedItemLabel(next, svc)}`);
       const wo = pos(p.workOrderId);
       if (wo !== null) out.facts.push(`أمر التصنيع السابق: #${wo}`);
-      const replacement = pos(p.replacementEpisodeId);
-      if (replacement !== null) out.facts.push(`طلب الاستبدال الجديد: #${replacement}`);
       const why = typeof e?.note === "string" ? e.note.trim() : "";
       if (why) out.facts.push(`سبب التصحيح: ${why}`);
       break;
