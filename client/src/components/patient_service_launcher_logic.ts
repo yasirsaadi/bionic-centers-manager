@@ -16,6 +16,7 @@
 
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import type { PendingChargeKind } from "@shared/pending_charge";
 
 /** المسارات الثلاثة القائمة — **لا رابع**. */
 export type ServiceFlow =
@@ -38,8 +39,16 @@ export type ServiceFlow =
    *
    * ولا تلغي البابين القائمين: «جهاز جديد» يفتح طلباً على مسار المعاينة،
    * و«صيانة» تحجز أجرَها فوراً. هذا بابُ المسار الثالث الذي فتحه ٠٦٥.
+   *
+   * `initialKind` **اختياريّ**: حين يُمرَّر (من مُوجِّه «ما سبب الحضور؟»
+   * بعد التسجيل مثلاً) يحسم «نوع العملية» مسبقاً في `NoExamOperationDialog`
+   * فلا يُعاد سؤالٌ أجاب عنه اختيارُ الزرّ بعينه. غيابُه يبقي السلوكَ
+   * القائم حرفاً: الموظّفُ يختار من داخل النافذة كما كان دائماً.
    */
-  | { kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support" };
+  | {
+      kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support";
+      initialKind?: PendingChargeKind;
+    };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
