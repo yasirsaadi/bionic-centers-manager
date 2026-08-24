@@ -178,7 +178,7 @@ async function branchOf(patientId: number): Promise<number | null> {
   const { db } = await import("../db");
   const { sql } = await import("drizzle-orm");
   const r = await db.execute<{ branch_id: number | null }>(sql`
-    SELECT branch_id FROM patients WHERE id = ${patientId}
+    SELECT branch_id FROM patients WHERE id = ${patientId} AND deleted_at IS NULL
   `);
   const v = (r.rows ?? [])[0]?.branch_id;
   return v === null || v === undefined ? null : Number(v);

@@ -14,6 +14,7 @@ import { db } from "../db";
 import { patients, visits, branches, followUpCalls } from "@shared/schema";
 import { and, eq, isNull, inArray, sql } from "drizzle-orm";
 import { getStartOfDayIraq } from "../timezone";
+import { activePatientDrizzle } from "../patients/active_patient";
 
 // A patient is considered "stopped" once 7 full days have passed since their
 // last visit (the reminder appears on the 7th day).
@@ -64,7 +65,8 @@ export async function computeActiveReminders(branchId?: number): Promise<Reminde
       visits,
       and(eq(visits.patientId, patients.id), isNull(visits.deletedAt))
     )
-    .where(and(...conditions))
+    //  **والمحذوفُ لا يُتَّصَل به** (ترحيل ٠٦٨) — الملفُّ خرج من النظام.
+    .where(and(...conditions, activePatientDrizzle()))
     .groupBy(patients.id, patients.name, patients.phone, patients.patientCode,
              patients.branchId);
 
@@ -133,7 +135,7 @@ export async function getReminderSnapshot(patientId: number): Promise<ReminderSn
       visits,
       and(eq(visits.patientId, patients.id), isNull(visits.deletedAt))
     )
-    .where(eq(patients.id, patientId))
+    .where(and(eq(patients.id, patientId), activePatientDrizzle()))
     .groupBy(patients.id, patients.isPhysiotherapy, patients.branchId);
 
   if (!row || !row.isPhysiotherapy || !row.lastVisit) return null;

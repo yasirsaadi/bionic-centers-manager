@@ -622,7 +622,18 @@ async function main() {
     await http("POST", `/api/patients/${pDel}/add-case-type`, S.recv,
       { caseType: "amputee", serviceCost: 120_000,
         amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
-    const del = await http("DELETE", `/api/patients/${pDel}`, S.admin);
+    //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+    //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+    //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+    await http("DELETE", `/api/patients/${pDel}`, S.admin,
+      { reason: "اختبار الكاسكيد" });
+    //  **والحذفُ النهائيُّ مقفلٌ حتى تنقضي مهلةُ الاستعادة** (المراجعة
+    //  الأخيرة، القسم أ): فتُدفَع المهلةُ إلى الماضي كي يختبر هذا القسمُ
+    //  الكاسكيدَ نفسَه لا بوّابةَ الانتظار.
+    await q(`UPDATE patients SET deleted_at = NOW() - interval '40 days',
+               restore_until = NOW() - interval '10 days' WHERE id=$1`, [pDel]);
+    const del = await http("POST", `/api/patient-trash/${pDel}/purge`,
+      S.admin, { reason: "اختبار الكاسكيد" });
     check(del.status === 200 || del.status === 204,
       "١٦. **حذفُ مريضٍ بقيدٍ مبوَّب ينجح**", String(del.status));
     same("   ولا قيدَ يتيم",

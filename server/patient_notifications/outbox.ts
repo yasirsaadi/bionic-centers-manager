@@ -29,6 +29,7 @@ import {
   type PatientNotificationDelivery,
 } from "@shared/schema";
 import type { DbTransaction } from "../events/store";
+import { belongsToActivePatientSql } from "../patients/active_patient";
 
 /**
  * **قناةُ تواصل المريض اليوم: واتساب وحدها.**
@@ -240,10 +241,16 @@ export async function claimDue(
     // القفل والتحديث في معاملة واحدة: القفل يصمد حتى الحفظ، فلا نافذة بين
     // «اخترتُ» و«حجزتُ» يقرأ فيها عاملٌ آخر الصفّ نفسه.
     const picked = await (tx as any).execute(sql`
-      SELECT id FROM patient_notification_deliveries
+      SELECT id FROM patient_notification_deliveries pnd
        WHERE channel IN (${channelList})${typeClause}
          AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW())
            OR (status = 'processing' AND locked_at < ${staleBefore}))
+         -- **ولا رسالةَ لملفٍّ في السلّة** (ترحيل ٠٦٨): الصفُّ يبقى
+         -- «pending» بلا محاولةٍ ولا رمزِ خطأ — فإن استُعيد الملفُّ أُرسل
+         -- **الصفُّ نفسُه** بلا تدخّل. والتصفيةُ **قبل LIMIT** لا بعد
+         -- الحجز، وإلّا حجز المحذوفُ الدفعةَ كلَّ دورةٍ وجوّع ما خلفه
+         -- (نفسُ درسِ القالب غير المعتمَد في ٤.ج).
+         AND ${belongsToActivePatientSql("pnd")}
        ORDER BY next_attempt_at
        FOR UPDATE SKIP LOCKED
        LIMIT ${limit}

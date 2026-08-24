@@ -28,7 +28,10 @@ const SERVER_ROOT = join(import.meta.dirname, "..");
 const SANCTIONED = [
   { op: "insert", file: "events/store.ts",  fn: "recordPatientEvent", count: 1 },
   { op: "update", file: "storage.ts",       fn: "mergePatients",      count: 1 },
-  { op: "delete", file: "storage.ts",       fn: "deletePatient",      count: 1 },
+  //  **`deletePatientTx` منذ مراجعة الذرّية (٢٠٢٦-٠٨-٢٤)** — الجسمُ
+  //  الذرّيُّ الذي يحوي الكاسكيدَ فعلياً. `deletePatient` صار غلافاً
+  //  رقيقاً يفتح معاملةً وينادي هذا الجسمَ، فلا DELETE في جسمه هو.
+  { op: "delete", file: "storage.ts",       fn: "deletePatientTx",    count: 1 },
 ] as const;
 
 let failures = 0;

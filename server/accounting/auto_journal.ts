@@ -246,7 +246,7 @@ export async function createJournalForPayment(
       try {
         const patientRes = await db.execute(sql`
           SELECT is_amputee, is_physiotherapy, is_medical_support
-          FROM patients WHERE id = ${payment.patientId}
+          FROM patients WHERE id = ${payment.patientId} AND deleted_at IS NULL
         `);
         const row = patientRes.rows?.[0] as any;
         if (row) {

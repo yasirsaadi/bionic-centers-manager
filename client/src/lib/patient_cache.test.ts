@@ -14,7 +14,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { invalidateAfterPatientDelete } from "./queryClient";
+import { invalidateAfterPatientTrashChange } from "./queryClient";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -70,7 +70,7 @@ console.log("\n═══ الذاكرة بعد حذف مريض ═══\n");
 console.log("── سجلّ المرضى ──");
 {
   const c = seeded();
-  invalidateAfterPatientDelete(c, GONE);
+  invalidateAfterPatientTrashChange(c, GONE);
   const missed = REGISTRY_KEYS.filter((k) => !stale(c, k));
   same("١. **كلُّ توليفةِ سجلٍّ محفوظة صارت بائتة** — بلا استثناء",
     missed.map((k) => k.join("|")), []);
@@ -92,7 +92,7 @@ console.log("── سجلّ المرضى ──");
 console.log("\n── صفحة المحذوف ──");
 {
   const c = seeded();
-  invalidateAfterPatientDelete(c, GONE);
+  invalidateAfterPatientTrashChange(c, GONE);
   for (const [label, key] of [
     ["صفّ المريض", ["/api/patients/:id", GONE]],
     ["حالاتُه", ["/api/patients/:id", GONE, "cases"]],
@@ -110,7 +110,7 @@ console.log("\n── صفحة المحذوف ──");
 console.log("\n── التنظيف مصوَّب لا كاسح ──");
 {
   const c = seeded();
-  invalidateAfterPatientDelete(c, GONE);
+  invalidateAfterPatientTrashChange(c, GONE);
   check("٥. **صفحةُ مريضٍ آخر باقية**", present(c, ["/api/patients/:id", OTHER]));
   check("٦. **وأوامرُ تصنيعه باقية**",
     present(c, [`/api/manufacturing/patient/${OTHER}/orders`]));
@@ -122,7 +122,7 @@ console.log("\n── التنظيف مصوَّب لا كاسح ──");
 console.log("\n── القوائم تُبطَل لا تُنزَع ──");
 {
   const c = seeded();
-  invalidateAfterPatientDelete(c, GONE);
+  invalidateAfterPatientTrashChange(c, GONE);
   check("٧. **قائمةُ المرضى القديمة باقيةٌ وبائتة**",
     present(c, ["/api/patients"]) && stale(c, ["/api/patients"]));
   check("٨. **وتوليفاتُ السجلّ باقيةٌ وبائتة**",
@@ -138,7 +138,7 @@ console.log("\n── الطوابير والعدّادات ──");
     ["/api/accounting/summary"], ["/api/reports/daily-summary"]]) {
     c.setQueryData(k, {});
   }
-  invalidateAfterPatientDelete(c, GONE);
+  invalidateAfterPatientTrashChange(c, GONE);
   const missed = [["/api/medical/pending"], ["/api/medical/worklist"],
     ["/api/followups"], ["/api/followups/governed"], ["/api/discounts"],
     ["/api/accounting/summary"], ["/api/reports/daily-summary"]]
@@ -151,36 +151,40 @@ console.log("\n── الطوابير والعدّادات ──");
 {
   const c = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let threw = false;
-  try { invalidateAfterPatientDelete(c, GONE); } catch { threw = true; }
+  try { invalidateAfterPatientTrashChange(c, GONE); } catch { threw = true; }
   check("١٠. **وذاكرةٌ فارغة تماماً لا ترمي**", !threw);
 }
 
 // ── ٧. **وطلبُ الحذف يستعمل هذا التنظيف فعلاً** ─────────────────────────
 console.log("\n── عقد طلب الحذف ──");
 {
-  const src = readFileSync(join(import.meta.dirname, "../hooks/use-patients.ts"), "utf8");
-  //  **دالّةُ الحذف وحدها**: الملفُّ يحمل طلباتٍ أخرى تُبطل القائمة القديمة
-  //  بحقٍّ (تعديلُ مريضٍ مثلاً)، فقصُّه إلى آخر الملفّ كان يخلط عملَ غيرها
-  //  بعملها.
-  const start = src.indexOf("export function useDeletePatient");
-  const after = src.indexOf("export function ", start + 10);
+  //  **ونقطةُ الاستدعاء انتقلت** (ترحيل ٠٦٨): الحذفُ صار نقلاً إلى السلّة،
+  //  ونافذتُه هي مَن ينظّف الذاكرة. والضماناتُ الثلاثةُ نفسُها تُفحَص عليها.
+  const src = readFileSync(join(import.meta.dirname,
+    "../components/DeletePatientDialog.tsx"), "utf8");
+  const start = src.indexOf("const del = useMutation");
+  const after = src.indexOf("const snap =", start + 10);
   const del = src.slice(start, after > 0 ? after : undefined);
-  check("١١. **طلبُ الحذف ينادي التنظيف الكامل**",
-    del.includes("invalidateAfterPatientDelete(queryClient, id)"),
+  check("١١. **نافذةُ الحذف تنادي التنظيف الكامل**",
+    del.includes("invalidateAfterPatientTrashChange(qc, patientId)"),
     del.slice(0, 700));
   //  **ولم يبقَ الإبطالُ الجزئي** الذي كان يترك السجلَّ كما هو.
   check("١٢. **ولم يبقَ إبطالُ القائمة وحدها**",
-    !/onSuccess[\s\S]{0,200}invalidateQueries\(\{\s*queryKey:\s*\[api\.patients\.list\.path\]/
-      .test(del),
+    !/invalidateQueries\(\{\s*queryKey:\s*\["\/api\/patients"\]\s*\}\)/.test(del),
     del.slice(0, 700));
   //  **ولا حذفَ متفائل**: التنظيفُ في `onSuccess` وحده — فلو ردّ الخادمُ
   //  خطأً بقي الصفُّ ظاهراً كما هو في القاعدة.
-  const idx = del.indexOf("invalidateAfterPatientDelete");
+  const idx = del.indexOf("invalidateAfterPatientTrashChange");
   const okIdx = del.indexOf("onSuccess");
   const mutIdx = del.indexOf("mutationFn");
   check("١٣. **ولا تنظيفَ قبل أن يؤكّد الخادم** — لا حذفَ متفائل",
     okIdx > 0 && idx > okIdx && !(idx > mutIdx && idx < okIdx),
     JSON.stringify({ mutIdx, okIdx, idx }));
+  //  **والاستعادةُ تنظّف بالدالّة نفسِها** — الاتجاهان لا ينحرفان.
+  const page = readFileSync(join(import.meta.dirname,
+    "../pages/PatientTrash.tsx"), "utf8");
+  check("١٤. **والاستعادةُ والحذفُ النهائيّ ينظّفان بالدالّة نفسِها**",
+    page.includes("invalidateAfterPatientTrashChange"), page.slice(0, 400));
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);

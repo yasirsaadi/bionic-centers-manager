@@ -9,6 +9,7 @@
 import { db } from "../db";
 import { expenses, invoices, patients, payments, visits, branches, anomalyDecisions } from "@shared/schema";
 import { and, eq, gte, lte, sql, desc, or, isNull } from "drizzle-orm";
+import { activePatientDrizzle } from "../patients/active_patient";
 
 export type AnomalySeverity = "high" | "medium" | "low";
 
@@ -249,6 +250,9 @@ async function detectPatientsWithoutPayments(branchId?: number): Promise<Anomaly
     sql`${patients.createdAt} < ${fourteenDaysAgo}`,
   ];
   if (branchId) conditions.push(eq(patients.branchId, branchId));
+  //  **ولا شذوذَ على ملفٍّ في السلّة** (ترحيل ٠٦٨): إنذارٌ عن مريضٍ أُخرج
+  //  من النظام يُرسل الموظّفَ يبحث عن ملفٍّ لا يراه.
+  conditions.push(activePatientDrizzle());
 
   const candidates = await db
     .select()
@@ -331,7 +335,7 @@ async function detectCostLedgerMismatch(branchId?: number): Promise<Anomaly[]> {
            COALESCE(SUM(ce.amount), 0) AS ledger, p.created_at
     FROM patients p
     LEFT JOIN cost_entries ce ON ce.patient_id = p.id
-    WHERE TRUE ${scope}
+    WHERE p.deleted_at IS NULL ${scope}
     GROUP BY p.id, p.name, p.branch_id, p.total_cost, p.created_at
     HAVING COALESCE(SUM(ce.amount), 0) <> COALESCE(p.total_cost, 0)
     ORDER BY ABS(COALESCE(SUM(ce.amount), 0) - COALESCE(p.total_cost, 0)) DESC

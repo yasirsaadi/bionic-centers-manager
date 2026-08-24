@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import { invalidateAfterPatientDelete } from "@/lib/queryClient";
 import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
 function getBranchSession() {
@@ -230,42 +229,6 @@ export function useUpdatePatient() {
       toast({
         title: "تم التحديث",
         description: "تم تحديث بيانات المريض بنجاح",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "خطأ",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-}
-
-// DELETE /api/patients/:id
-export function useDeletePatient() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/patients/${id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-
-      if (!res.ok) throw new Error("فشل في حذف المريض");
-      //  **الرقمُ يُعاد كي يعرف `onSuccess` مَن حُذف**: التنظيفُ يحتاج
-      //  المعرِّف لينزع صفحة المريض من الذاكرة، لا القوائمَ وحدها.
-      return id;
-    },
-    //  **ولا شيءَ يُنظَّف قبل أن يؤكّد الخادم**: لا حذفَ متفائل. فلو فشل
-    //  الحذف (كاسكيدٌ يرفض مثلاً) بقي الصفُّ ظاهراً كما هو في القاعدة.
-    onSuccess: (id) => {
-      invalidateAfterPatientDelete(queryClient, id);
-      toast({
-        title: "تم الحذف",
-        description: "تم حذف ملف المريض بنجاح",
       });
     },
     onError: (error) => {

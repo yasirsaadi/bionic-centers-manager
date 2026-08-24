@@ -43,14 +43,19 @@ export async function resolvePatientByPublicCode(
   const code = normalizePatientCode(input);
   if (!code) return null;
 
+  //  **والمحذوفُ لا يُحَلّ برمزه** (ترحيل ٠٦٨): هذا هو بابُ «البحث بالرمز»
+  //  الذي يقرؤه المساعدُ والشاشاتُ التشغيلية، فملفٌّ في السلّة لا يُفتَح
+  //  منه. **ورمزُه محجوزٌ على صفّه كما هو** — لا يُعاد استعمالُه ولا يصير
+  //  اسماً بديلاً، فيعود هو بعينه لحظةَ الاستعادة. وبابُ السلّة يقرأ
+  //  الرمزَ ببحثه هو.
   const res = await (runner as any).execute(sql`
     SELECT p.id, p.patient_code, p.branch_id, FALSE AS via_alias
-      FROM patients p WHERE p.patient_code = ${code}
+      FROM patients p WHERE p.patient_code = ${code} AND p.deleted_at IS NULL
     UNION ALL
     SELECT p.id, p.patient_code, p.branch_id, TRUE AS via_alias
       FROM patient_code_aliases a
       JOIN patients p ON p.id = a.patient_id
-     WHERE a.code = ${code}
+     WHERE a.code = ${code} AND p.deleted_at IS NULL
      ORDER BY via_alias
      LIMIT 1
   `);

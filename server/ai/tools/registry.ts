@@ -32,6 +32,7 @@ import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
 import { activeExamDrizzle } from "../../medical/active_exam";
+import { activePatientDrizzle } from "../../patients/active_patient";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -108,7 +109,9 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
     branchId: patients.branchId, classification: patients.patientClassification,
     isAmputee: patients.isAmputee, isMedicalSupport: patients.isMedicalSupport,
     isPhysiotherapy: patients.isPhysiotherapy, treatmentType: patients.treatmentType,
-  }).from(patients).where(eq(patients.id, patientId));
+  //  **والمحذوفُ لا يُقرأ من المساعد** (ترحيل ٠٦٨) — والمُحَلُّ بالرمز
+  //  يستثنيه أصلاً؛ وهذا الشرطُ الثاني يغلق سباقَ حذفٍ بين النداءين.
+  }).from(patients).where(and(eq(patients.id, patientId), activePatientDrizzle()));
   if (!p) return denied(NOT_FOUND);
 
   const [branch] = await db.select({ name: branches.name })
@@ -358,7 +361,7 @@ async function patientFinance(access: AiAccessContext, input: any): Promise<Tool
 
   //  ونطاقُ المال أضيق من نطاق العمل: غير المسؤول محصورٌ بفرعه المالي.
   const [row] = await db.select({ branchId: patients.branchId, totalCost: patients.totalCost })
-    .from(patients).where(eq(patients.id, hit.patientId));
+    .from(patients).where(and(eq(patients.id, hit.patientId), activePatientDrizzle()));
   if (!row) return denied(NOT_FOUND);
   //  **النطاق المالي يُطبَّق على المسؤول أيضاً.** فالمسؤول الذي ضيّق نطاقه
   //  إلى فرعٍ بعينه (كما تفعل نقطة المحادثة المالية) لا يقرأ مال فرعٍ آخر
@@ -409,7 +412,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
     const codeById = new Map<number, string>();
     if (shown.length > 0) {
       const rowsWithCode = await db.select({ id: patients.id, code: patients.patientCode })
-        .from(patients).where(inArray(patients.id, shown.map((r) => r.patientId)));
+        .from(patients).where(and(inArray(patients.id, shown.map((r) => r.patientId)), activePatientDrizzle()));
       for (const r of rowsWithCode) codeById.set(r.id, r.code);
     }
     out.doctorSpecialties = specialties;
@@ -469,7 +472,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
     const codesFor = async (ids: number[]) => {
       if (ids.length === 0) return [];
       const rows = await db.select({ code: patients.patientCode, name: patients.name })
-        .from(patients).where(inArray(patients.id, ids.slice(0, MAX_LIST_ITEMS)));
+        .from(patients).where(and(inArray(patients.id, ids.slice(0, MAX_LIST_ITEMS)), activePatientDrizzle()));
       return rows.map((r) => ({ patientCode: r.code, name: r.name }));
     };
     out.awaitingExam = {
@@ -509,7 +512,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
       const ids = uniq(stillAwaiting.map((r) => r.patientId)).slice(0, MAX_LIST_ITEMS);
       const rows = ids.length
         ? await db.select({ id: patients.id, code: patients.patientCode, name: patients.name })
-          .from(patients).where(inArray(patients.id, ids))
+          .from(patients).where(and(inArray(patients.id, ids), activePatientDrizzle()))
         : [];
       for (const r of rows) codeByPatient.set(r.id, { patientCode: r.code, name: r.name });
     }
@@ -556,6 +559,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
           eq(patientCases.status, "active"),
         ))
         .where(and(
+          activePatientDrizzle(),
           eq(patients.isPhysiotherapy, true),
           scope === null ? sql`TRUE`
             : scope.length === 0 ? sql`FALSE`

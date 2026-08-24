@@ -2241,7 +2241,9 @@ export async function listFollowups(params: {
       JOIN patients p ON p.id = f.patient_id
       LEFT JOIN branches b ON b.id = f.branch_id
       LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
-     WHERE ${scopeClause(params.scope)} AND ${filterClause}
+     -- **والمحذوفُ يخرج من قائمة المتابعات** (ترحيل ٠٦٨): صفُّها باقٍ
+     -- ويعود بعينه عند الاستعادة، ولا يُتَّصَل بمريضٍ أُخرج من النظام.
+     WHERE p.deleted_at IS NULL AND ${scopeClause(params.scope)} AND ${filterClause}
      ORDER BY
        --  **الرايةُ ترفع الملفَّ إلى الرأس**: مريضٌ قال للطبيب «أريده
        --  اليوم» يُتَّصَل به قبل مَن ينتظر موعدَ متابعةٍ بعد أسبوع.
@@ -2284,7 +2286,7 @@ export async function listPendingApprovals(scope: number[] | null): Promise<{
       JOIN post_exam_followups f ON f.id = r.followup_id
       JOIN patients p ON p.id = f.patient_id
       LEFT JOIN branches b ON b.id = f.branch_id
-     WHERE r.status = 'pending' AND ${scopeClause(scope)}
+     WHERE r.status = 'pending' AND p.deleted_at IS NULL AND ${scopeClause(scope)}
      ORDER BY r.requested_at ASC LIMIT 200
   `);
   return {
@@ -2348,6 +2350,7 @@ export async function recentPurchasesForDoctor(params: {
          ORDER BY id DESC LIMIT 1
       ) pset ON TRUE
      WHERE e.doctor_id = ${params.doctorUserId}
+       AND p.deleted_at IS NULL
        AND f.status = 'converted'
        AND f.converted_at IS NOT NULL
        AND f.converted_at >= NOW() - (${days} || ' days')::interval

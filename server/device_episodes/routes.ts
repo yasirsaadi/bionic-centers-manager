@@ -23,6 +23,7 @@ import {
 } from "@shared/prosthetic_parts";
 import { checkRequiredPatientData } from "@shared/patient_required";
 import { isServicePath, type ServicePath } from "@shared/service_path";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 type Req = any;
 
@@ -70,10 +71,23 @@ async function patientScope(patientId: number) {
     age: string | null; height: string | null; weight: string | null;
     is_amputee: boolean | null; amputation_site: string | null;
   }>(sql`
-    SELECT id, name, branch_id, age, height, weight, is_amputee, amputation_site
+    SELECT id, name, branch_id, age, height, weight, is_amputee, amputation_site,
+           deleted_at
       FROM patients WHERE id = ${patientId}
   `);
   return (r.rows ?? [])[0] ?? null;
+}
+
+/**
+ * **ملفٌّ في السلّة يُقال عنه ذلك** (ترحيل ٠٦٨) — لا «غير موجود».
+ *
+ * إخفاؤه بـ٤٠٤ يرسل الموظّفَ يبحث عن خطأٍ ليس هناك، وبابُه الاستعادةُ لا
+ * الالتفاف. ويُردّ **قبل** أيّ حراسةٍ أخرى فلا يُسأل عن مقاساتٍ لملفٍّ خرج.
+ */
+function trashGuard(res: any, patient: any): boolean {
+  if (!patient?.deleted_at) return false;
+  res.status(409).json({ error: PATIENT_IN_TRASH_ERROR });
+  return true;
 }
 
 function fail(res: any, err: unknown, fallback: string) {
@@ -103,6 +117,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       }
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+      if (trashGuard(res, patient)) return;
       if (!canReachBranch(req, patient.branch_id)) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
@@ -168,6 +183,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
 
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+      if (trashGuard(res, patient)) return;
       if (!canReachBranch(req, patient.branch_id)) {
         return res.status(403).json({ error: "لا يمكنك بدء جهاز لمريض فرع آخر" });
       }
@@ -257,6 +273,8 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
 
         const patient = await patientScope(patientId);
         if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+        if (trashGuard(res, patient)) return;
+      if (trashGuard(res, patient)) return;
         if (!canReachBranch(req, patient.branch_id)) {
           return res.status(403).json({ error: "لا يمكنك التعديل على مريض فرع آخر" });
         }

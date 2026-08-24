@@ -59,6 +59,11 @@ export function invalidatePatientData(
 }
 
 /**
+ * **تغيّرت حالةُ ملفٍّ في السلّة** — حذفاً أو استعادةً أو حذفاً نهائياً
+ * (ترحيل ٠٦٨). والثلاثةُ تنقل الملفَّ بين «فعّال» و«محذوف»، فتحتاج تنظيفَ
+ * الذاكرة نفسَه بالضبط: صفحةُ المريض تُنزَع (فتعيد الجلبَ بحالتها الجديدة)
+ * والقوائمُ والطوابيرُ والعدّاداتُ تُبطَل.
+ *
  * ملفٌّ حُذف — **اختفاءٌ في الحال، بلا تحديثِ صفحة**.
  *
  * ══ العطبُ الذي يغلقه (لاحظه المالك على الإنتاج) ═══════════════════════
@@ -80,7 +85,7 @@ export function invalidatePatientData(
  * تصيب كلّ صفحةٍ وكلّ بحثٍ وكلّ فرعٍ وكلّ تاريخ — فلا تبقى توليفةٌ محفوظةٌ
  * تحمل المحذوف.
  */
-export function invalidateAfterPatientDelete(
+export function invalidateAfterPatientTrashChange(
   client: QueryClient,
   patientId: number,
 ): void {
@@ -100,9 +105,12 @@ export function invalidateAfterPatientDelete(
   client.invalidateQueries({ queryKey: ["/api/followups"] });
   client.invalidateQueries({ queryKey: ["/api/followups/governed"] });
   client.invalidateQueries({ queryKey: ["/api/discounts"] });
-  //  والمال: كلفتُه وقيودُه ذهبت معه.
+  //  والمال: كلفتُه وقيودُه خرجت من المجاميع معه (أو عادت إليها).
   client.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
   client.invalidateQueries({ queryKey: ["/api/reports/daily-summary"] });
+  //  والسلّةُ نفسُها وشارتُها — الصفُّ دخلها أو خرج منها للتوّ.
+  client.invalidateQueries({ queryKey: ["/api/patient-trash"] });
+  client.invalidateQueries({ queryKey: ["/api/patient-trash/count"] });
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

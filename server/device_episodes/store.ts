@@ -26,6 +26,7 @@ import {
   FULL_DEVICE, type RequestedItem, type ProstheticComponent,
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 /** الاختصاصان اللذان يُشترى فيهما جهاز. العلاج الطبيعي لا حلقة له. */
 export const DEVICE_SERVICE_TYPES = ["prosthetic", "medical_support"] as const;
@@ -380,11 +381,13 @@ export async function startDeviceEpisode(params: {
   const component = componentOfRequest(requestedItem);
 
   return await db.transaction(async (tx) => {
-    const pat = await tx.execute<{ id: number; branch_id: number | null }>(sql`
-      SELECT id, branch_id FROM patients WHERE id = ${patientId}
+    const pat = await tx.execute<{ id: number; branch_id: number | null; deleted_at: string | null }>(sql`
+      SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
     `);
     const patient = (pat.rows ?? [])[0];
     if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
+    //  **ولا يُفتَح طلبُ جهازٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
+    if (patient.deleted_at) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
 
     //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
     const cs = await tx.execute<{ id: number; branch_id: number | null }>(sql`
@@ -1034,10 +1037,11 @@ export async function createReplacementEpisodeTx(
 
   //  ② المريضُ موجود، ومنه هويّةُ الفرع الاحتياطية.
   const pat = await tx.execute(sql`
-    SELECT id, branch_id FROM patients WHERE id = ${params.patientId}
+    SELECT id, branch_id, deleted_at FROM patients WHERE id = ${params.patientId}
   `);
-  const patient = (pat.rows ?? [])[0];
+  const patient = (pat.rows ?? [])[0] as any;
   if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
+  if (patient.deleted_at) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
 
   //  ③ **القفل على صفّ الخيط** — نقطةُ التسلسل نفسُها التي يستعملها
   //     `startDeviceEpisode`، فلا عرفَ قفلٍ ثانٍ. والانتماءُ يُثبَت في

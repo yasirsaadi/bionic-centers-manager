@@ -34,6 +34,11 @@ import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
 import { patientActiveOnDate } from "./patient_activity";
+//  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
+import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
+import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
+import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
+import { softDeletePatient, TrashError } from "./patients/trash_store";
 import {
   executeNewService, normalizeEntries, NewServiceError,
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
@@ -1523,7 +1528,9 @@ export async function registerRoutes(
     const visitDate = typeof req.query.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.visitDate)
       ? req.query.visitDate : null;
 
-    const conditions: any[] = [];
+    //  **والمحذوفُ لا يظهر في السجلّ** (ترحيل ٠٦٨) — لا في الصفحة ولا في
+    //  العدّاد ولا في نتيجة بحثٍ باسمٍ أو رمز. وبابُه «المحذوفات» وحدها.
+    const conditions: any[] = [activePatientDrizzle()];
     if (!isAdmin) {
       // Non-admins are always pinned to their own branch.
       conditions.push(eq(patients.branchId, branchSession?.branchId ?? -1));
@@ -1642,7 +1649,7 @@ export async function registerRoutes(
 
     // Tab-badge counts: patients in the selected branch scope, and of those,
     // patients with a visit on the selected day — independent of the search.
-    const badgeConds: any[] = [];
+    const badgeConds: any[] = [activePatientDrizzle()];
     if (!isAdmin) badgeConds.push(eq(patients.branchId, branchSession?.branchId ?? -1));
     else if (req.query.branchId && req.query.branchId !== "all") {
       const b = parseInt(String(req.query.branchId));
@@ -1706,9 +1713,12 @@ export async function registerRoutes(
         id: patients.id,
         name: patients.name,
         phone: patients.phone,
+        patientCode: patients.patientCode,
         branchId: patients.branchId,
         branchName: branches.name,
         createdAt: patients.createdAt,
+        deletedAt: patients.deletedAt,
+        restoreUntil: patients.restoreUntil,
       })
       .from(patients)
       .leftJoin(branches, eq(branches.id, patients.branchId))
@@ -1717,8 +1727,30 @@ export async function registerRoutes(
 
     // Only the ones the asker CANNOT already see: a namesake inside their own
     // branch is their own list's business, not a cross-branch warning.
-    const matches = mine === null ? [] : rows.filter((r) => !mine.includes(r.branchId));
-    res.json({ matches });
+    const matches = mine === null
+      ? []
+      : rows.filter((r) => !r.deletedAt && !mine.includes(r.branchId));
+
+    // ══ **والمحذوفُ يُنبَّه عليه ولا يُكشف** (ترحيل ٠٦٨) ═══════════════
+    //  الملفُّ في السلّة لا يظهر في السجلّ ولا في البحث، فموظّفُ الاستقبال
+    //  لا يراه ويفتح **ملفّاً ثانياً لنفس الشخص** بحسن نيّة — ثم يُستعاد
+    //  الأوّل بعد أسبوع فيصير للمريض ملفّان ومالُه في اثنين.
+    //
+    //  والتنبيهُ هنا **لا يمرّ بنفس منطق «عبر الفروع»**: المحذوفُ غائبٌ عن
+    //  السجلّ حتى داخل فرع السائل، فناظرُه في فرعه يستحقّ التنبيه أيضاً.
+    const trashHits = rows.filter((r) =>
+      r.deletedAt && (mine === null || mine.includes(r.branchId)));
+    //  ومَن يملك السلّة يرى الصفَّ ليقرّر: استعادةً أو ملفّاً جديداً.
+    //  ومَن لا يملكها يُقال له ما يكفي ليتوقّف — **بلا اسمٍ ولا رقمٍ ولا
+    //  فرعٍ ولا ذكرِ سلّةٍ أصلاً**.
+    const maySeeTrash = canTrashPatients((req.session as any).branchSession);
+    res.json({
+      matches,
+      inTrash: maySeeTrash ? trashHits : [],
+      inTrashCount: trashHits.length,
+      trashNotice: trashHits.length === 0 ? null
+        : maySeeTrash ? IN_TRASH_HINT : IN_TRASH_ESCALATION,
+    });
   });
 
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
@@ -2296,47 +2328,30 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨) — البابُ نفسُه والزرُّ نفسُه،
+   * والأثرُ صار قابلاً للرجوع ثلاثين يوماً.
+   *
+   * ولا شيءَ هنا ينادي الكاسكيدَ الهادم: `storage.deletePatient` بابُها
+   * الوحيد صار «حذف نهائي» في `/api/patient-trash/:id/purge`.
+   *
+   * **والصلاحيةُ روليّةٌ صريحة** (`canTrashPatients`): مسؤولٌ عام · مديرُ
+   * فرعٍ في نطاقه · طبيبٌ في نطاقه. وحلّت محلَّ علم `canDeletePatients`
+   * القديم — ذاك عَلَمُ **هدمٍ لا رجعةَ فيه**، وهذا فعلٌ يُرَدّ بضغطة.
+   * وكلُّ الحراسة في `deleteDecision` **تحت القفل** لا هنا.
+   */
   app.delete(api.patients.delete.path, isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
-    const ctx = getUserContext(req);
-    const permissions = getPermissions(req);
-    const patient = await storage.getPatient(id);
-
-    if (!patient) {
-      return res.status(404).json({ message: "Patient not found" });
-    }
-
-    // Check permission to delete patients
-    if (!permissions.canDeletePatients) {
-      return res.status(403).json({ message: "ليس لديك صلاحية لحذف المرضى" });
-    }
-
-    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient.branchId === ctx.branchId;
-    if (!canAccess) {
-      return res.status(403).json({ message: "غير مصرح لك بحذف هذا المريض" });
-    }
-
-    // Audit the delete BEFORE the cascade fires. deletePatient wipes
-    // payments, invoices, documents and visits along with the patient
-    // row — without this log, the cascade was completely silent and
-    // indistinguishable from data vanishing on its own.
-    const branchSession = (req.session as any).branchSession;
-    await logAudit({
-      entityType: "patient",
-      entityId: id,
-      action: "delete",
-      userId: branchSession?.userId ?? null,
-      userName: branchSession?.displayName ?? null,
-      branchId: patient.branchId,
-      oldValues: patient,
-      ipAddress: req.ip ?? null,
-      userAgent: req.get("user-agent") ?? null,
-    });
-
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "معرّف غير صالح" });
     try {
-      await storage.deletePatient(id);
-      res.status(204).send();
+      const out = await softDeletePatient({
+        patientId: id,
+        reason: (req.body as any)?.reason,
+        actor: trashActor(req),
+      });
+      res.json({ ok: true, ...out });
     } catch (err: any) {
+      if (err instanceof TrashError) return res.status(err.status).json({ message: err.message });
       console.error("Error deleting patient:", err);
       res.status(500).json({ message: "فشل في حذف المريض. حاول مرة أخرى." });
     }
@@ -3008,6 +3023,17 @@ export async function registerRoutes(
     }
     input.shift = visitShift;
 
+    //  **ولا زيارةَ على ملفٍّ في السلّة** (ترحيل ٠٦٨) — نفسُ حارس الدفعة.
+    {
+      const live = await storage.getPatient(input.patientId);
+      if (!live) {
+        const any = await storage.getPatientAnyState(input.patientId);
+        return res.status(any ? 409 : 404).json({
+          message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
+        });
+      }
+    }
+
     // Track which system user created this visit (if logged in via system user)
     const sessionUserId = branchSession?.userId;
     if (sessionUserId && typeof sessionUserId === 'number') {
@@ -3336,6 +3362,19 @@ export async function registerRoutes(
     const isBranchManager = branchSession?.role === "branch_manager";
     const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
     
+    //  **ولا دفعةَ على ملفٍّ في السلّة** (ترحيل ٠٦٨): الحارسُ صريحٌ لا
+    //  مشتقٌّ من فحص «المتبقّي» أدناه — ذاك يتخطّى الملفَّ الغائب بصمت،
+    //  فكانت الدفعةُ تُسجَّل على محذوفٍ ولا يراها أحد.
+    {
+      const live = await storage.getPatient(input.patientId);
+      if (!live) {
+        const any = await storage.getPatientAnyState(input.patientId);
+        return res.status(any ? 409 : 404).json({
+          message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
+        });
+      }
+    }
+
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
     if (!isFreeSessions) {
       const patient = await storage.getPatient(input.patientId);
@@ -3708,7 +3747,9 @@ export async function registerRoutes(
 
     // Pure SQL aggregates — previously this loaded EVERY patient and EVERY
     // payment into memory just to sum them, which made the dashboard slow.
-    const pWhere = enforced !== undefined ? sql`WHERE branch_id = ${enforced}` : sql``;
+    const branchWhere = enforced !== undefined ? sql`AND branch_id = ${enforced}` : sql``;
+    //  **والمحذوفُ خارج الطرفين** (ترحيل ٠٦٨): لا كلفتُه في «المبيعات» ولا
+    //  مدفوعُه في «الوارد» — وإلّا ظهر «المتبقّي» عن ملفٍّ أُخرج من النظام.
     const [patAgg, payAgg] = await Promise.all([
       db.execute(sql`
         SELECT COUNT(*)::int AS total,
@@ -3716,9 +3757,12 @@ export async function registerRoutes(
                COUNT(*) FILTER (WHERE is_amputee)::int AS amputees,
                COUNT(*) FILTER (WHERE is_physiotherapy)::int AS physiotherapy,
                COUNT(*) FILTER (WHERE is_medical_support)::int AS medical_support
-        FROM patients ${pWhere}
+        FROM patients WHERE deleted_at IS NULL ${branchWhere}
       `),
-      db.execute(sql`SELECT COALESCE(SUM(amount), 0)::bigint AS paid FROM payments ${pWhere}`),
+      db.execute(sql`
+        SELECT COALESCE(SUM(amount), 0)::bigint AS paid FROM payments pay
+         WHERE ${belongsToActivePatientSql("pay")} ${branchWhere}
+      `),
     ]);
     const p = patAgg.rows[0] as any;
     const totalPaid = Number((payAgg.rows[0] as any)?.paid ?? 0);
@@ -3760,24 +3804,28 @@ export async function registerRoutes(
       daily
         ? db.execute(sql`
             SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS sold
-            FROM cost_entries
-            WHERE created_at >= ${startOfDay} AND created_at < ${endOfDay}
+            FROM cost_entries ce
+            WHERE ce.created_at >= ${startOfDay} AND ce.created_at < ${endOfDay}
+              AND ${belongsToActivePatientSql("ce")}
             GROUP BY branch_id
           `)
         : db.execute(sql`
             SELECT branch_id, COALESCE(SUM(total_cost), 0)::bigint AS sold
-            FROM patients GROUP BY branch_id
+            FROM patients WHERE deleted_at IS NULL GROUP BY branch_id
           `),
       daily
         ? db.execute(sql`
             SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS paid
-            FROM payments
-            WHERE date >= ${startOfDay} AND date < ${endOfDay}
+            FROM payments pay
+            WHERE pay.date >= ${startOfDay} AND pay.date < ${endOfDay}
+              AND ${belongsToActivePatientSql("pay")}
             GROUP BY branch_id
           `)
         : db.execute(sql`
             SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS paid
-            FROM payments GROUP BY branch_id
+            FROM payments pay
+             WHERE ${belongsToActivePatientSql("pay")}
+             GROUP BY branch_id
           `),
     ]);
     const soldBy = new Map((soldRows.rows as any[]).map((r) => [Number(r.branch_id), Number(r.sold)]));
@@ -4109,6 +4157,7 @@ export async function registerRoutes(
               COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
             FROM patients 
             WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+              AND deleted_at IS NULL
           `)
         : await db.execute(sql`
             SELECT 
@@ -4118,6 +4167,7 @@ export async function registerRoutes(
               COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
             FROM patients 
             WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp
+              AND deleted_at IS NULL
           `);
       const newStats = newPatientsResult.rows[0] || { total: 0, amputees: 0, physiotherapy: 0, medical_support: 0 };
       
@@ -4144,6 +4194,7 @@ export async function registerRoutes(
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
             WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.branch_id = ${filterBranchId} AND v.deleted_at IS NULL
+              AND p.deleted_at IS NULL
           `)
         : await db.execute(sql`
             SELECT
@@ -4154,6 +4205,7 @@ export async function registerRoutes(
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
             WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.deleted_at IS NULL
+              AND p.deleted_at IS NULL
           `);
       const visitingStats = visitingBreakdownResult.rows[0] || { visiting_patients: 0, visiting_amputees: 0, visiting_physiotherapy: 0, visiting_medical_support: 0 };
       
@@ -4295,6 +4347,7 @@ export async function registerRoutes(
         WHERE v.visit_date >= ${startTs}::timestamp
           AND v.visit_date <  ${endTs}::timestamp
           AND v.deleted_at IS NULL
+          AND p.deleted_at IS NULL
           AND (${effectiveBranchId}::int IS NULL OR v.branch_id = ${effectiveBranchId}::int)
           AND (${employeeFilterId}::int IS NULL OR v.created_by = ${employeeFilterId}::int)
         ORDER BY v.visit_date ASC
@@ -5106,6 +5159,7 @@ export async function registerRoutes(
             FROM patients p
             WHERE p.branch_id = ${filterBranchId}
               AND p.patient_classification = 'new'
+              AND p.deleted_at IS NULL
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
             ORDER BY month ASC
           `)
@@ -5116,6 +5170,7 @@ export async function registerRoutes(
               COUNT(CASE WHEN COALESCE(p.total_cost, 0) > 0 THEN 1 END) as paid_count
             FROM patients p
             WHERE p.patient_classification = 'new'
+              AND p.deleted_at IS NULL
             GROUP BY TO_CHAR(p.created_at, 'YYYY-MM')
             ORDER BY month ASC
           `);
@@ -5168,7 +5223,13 @@ export async function registerRoutes(
           total: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
         })
         .from(payments)
-        .where(and(gte(payments.date, dayStart), lte(payments.date, dayEnd)))
+        //  **ولوحةُ المالك المباشرة تصفّي المحذوف كأيّ رقمٍ ماليّ فعّال**
+        //  (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب): دفعةُ مريضٍ حُذف اليوم لا تبقى
+        //  في «الوارد المباشر» بينما اختفت من كلّ شاشةٍ أخرى.
+        .where(and(
+          belongsToActivePatientSql("payments"),
+          gte(payments.date, dayStart), lte(payments.date, dayEnd),
+        ))
         .groupBy(payments.branchId),
     ]);
 
@@ -5487,9 +5548,10 @@ export async function registerRoutes(
       // Payments (income)
       const paymentsResult = await db.execute(sql`
         SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0)::int AS total
-        FROM payments
-        WHERE branch_id = ${branch.id}
-          AND (date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+        FROM payments pay
+        WHERE pay.branch_id = ${branch.id}
+          AND (pay.date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+          AND ${belongsToActivePatientSql("pay")}
       `);
       const pRow = paymentsResult.rows[0] as any;
 
@@ -5499,6 +5561,7 @@ export async function registerRoutes(
         FROM patients
         WHERE branch_id = ${branch.id}
           AND (created_at AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+          AND deleted_at IS NULL
       `);
       const ptRow = patientsResult.rows[0] as any;
 
@@ -7147,6 +7210,7 @@ export async function registerRoutes(
   registerPendingChargeRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
+  registerPatientTrashRoutes(app, isAuthenticated);
 
   // ══ تواصلُ المريض — **صادرٌ فقط، بلا نقطةٍ عامّة واحدة** ═══════════════
   //  لا webhook، ولا تذاكرَ ربط، ولا استهلاك، ولا أوامرَ واردة. الرقمُ

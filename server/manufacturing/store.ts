@@ -17,6 +17,7 @@ import {
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { buildPatientSearch, trigramReady } from "../patient_search/sql";
+import { activePatientDrizzle } from "../patients/active_patient";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
@@ -633,7 +634,11 @@ function daysSince(d: Date | string | null | undefined): number {
 
 // Builds the WHERE conditions common to expert / manager / admin listings.
 function orderConditions(f: OrderFilters) {
-  const c: any[] = [];
+  //  **والمحذوفُ يخرج من لوحة التصنيع** (ترحيل ٠٦٨): أمرُه باقٍ بسجلّه
+  //  ويعود بعينه عند الاستعادة، ولا يُعرَض على خبيرٍ ليعمل عليه الآن.
+  //  و`listOrders` تنضمّ إلى `patients` بـ`innerJoin` أصلاً، فالشرطُ يقع
+  //  على الصفّ المنضَمّ نفسِه.
+  const c: any[] = [activePatientDrizzle()];
   if (f.expertUserId !== undefined) c.push(eq(WO.expertUserId, f.expertUserId));
   if (f.branchId !== undefined) c.push(eq(WO.branchId, f.branchId));
   if (f.branchIds && f.branchIds.length > 0) c.push(inArray(WO.branchId, f.branchIds));
@@ -772,7 +777,11 @@ export async function getOrderDetail(id: number) {
     .where(eq(WO.id, id));
   if (!order) return null;
 
-  const [patient] = await db.select(expertPatientColumns).from(patients).where(eq(patients.id, order.patientId));
+  //  **وأمرُ ملفٍّ محذوفٍ لا يُفتَح** (ترحيل ٠٦٨): بلا مريضٍ يعود `null`
+  //  فتُردّ الصفحةُ ٤٠٤ — وهو الصدق، الأمرُ باقٍ لكن ملفَّه خرج من النظام.
+  const [patient] = await db.select(expertPatientColumns).from(patients)
+    .where(and(eq(patients.id, order.patientId), activePatientDrizzle()));
+  if (!patient) return null;
   const timeline = await db.select({
     id: WH.id, actionType: WH.actionType, fromStage: WH.fromStage, toStage: WH.toStage,
     notes: WH.notes, performedBy: WH.performedBy, createdAt: WH.createdAt,

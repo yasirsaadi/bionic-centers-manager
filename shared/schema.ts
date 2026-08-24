@@ -138,7 +138,104 @@ export const patients = pgTable("patients", {
   
   totalCost: integer("total_cost").default(0), // in IQD
   createdAt: timestamp("created_at").defaultNow(),
-});
+
+  // ══ سلّةُ المحذوفات — حالةٌ على الملفّ لا هدمٌ له (ترحيل ٠٦٨) ═══════════
+  /**
+   * **الحذفُ العاديّ لم يعد يهدم شيئاً.** `NULL` = ملفٌّ فعّال، وهو الشرطُ
+   * الوحيد الذي يفصل الفعّالَ عن المحذوف في كلّ قارئٍ تشغيليّ.
+   *
+   * **ولا صفَّ تابعاً واحداً يُمَسّ**: المعايناتُ بأختامها · أوامرُ التصنيع
+   * بسجلّها · الدفعاتُ وقيودُ الكلف · الفواتيرُ والأقساط · المبالغُ
+   * المعلَّقة · جهاتُ الاتصال — كلُّها تبقى بايتاً بايت، وتخرج من النظام
+   * الفعّال لأن **صاحبَها** خرج لا لأنها تغيّرت. والاستعادةُ تُزيل هذه
+   * الحالةَ فحسب، فتعود الصفوفُ نفسُها بمعرّفاتها ومبالغها.
+   */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedByUserId: integer("deleted_by_user_id"),
+  /**
+   * **لقطةُ اسمِ مَن حذف — لا `join`**: الحسابُ قد يُعاد تسميتُه أو يُحذف،
+   * ويبقى سطرُ السلّة مقروءاً. نفسُ درس `doctor_name` على المعاينة (٠٢٨).
+   */
+  deletedByName: text("deleted_by_name"),
+  deletedByRole: text("deleted_by_role"),
+  /** **إلزاميّ حين يكون الصفُّ محذوفاً** — تفرضه القاعدة لا الشاشةُ وحدها. */
+  deletedReason: text("deleted_reason"),
+  /**
+   * **نهايةُ مدّة الاستعادة** — يولّدها الخادمُ من ختم الحذف
+   * (`RESTORE_WINDOW_DAYS`)، وتُقارَن بـ`NOW()` في القاعدة داخل المعاملة.
+   * **فساعةُ المتصفّح لا تُقرَّر بها استعادةٌ ولا يُمنَع بها ملفّ.**
+   */
+  restoreUntil: timestamp("restore_until", { withTimezone: true }),
+  /**
+   * **لقطةُ الحال الماليّ يوم الحذف — للتدقيق والعرض وحدها.**
+   *
+   * والمالُ نفسُه يبقى في `payments` و`cost_entries` و`total_cost` كما هو،
+   * **فليست مصدرَ حقيقةٍ ماليّاً** ولا يُحسَب منها تقرير. تجيب سؤالاً واحداً
+   * بعد شهور: بماذا كان الملفُّ يوم حُذف؟
+   */
+  deletedTotalCost: integer("deleted_total_cost"),
+  deletedTotalPaid: integer("deleted_total_paid"),
+  deletedRemaining: integer("deleted_remaining"),
+  deletedPendingJson: jsonb("deleted_pending_json").$type<Record<string, number>>(),
+  /** أَلَزِم المسؤولُ العام لهذا الحذف؟ يُقرأ في السلّة بلا إعادة حساب. */
+  deletedNeededAdmin: boolean("deleted_needed_admin"),
+}, (t) => [
+  //  ══ **ولا بياناتِ حذفٍ نصفَ مكتوبة** (ترحيل ٠٦٨) ══════════════════════
+  //  صفٌّ محذوفٌ بلا سببٍ أو بلا مهلةِ استعادة يجعل السلّة تعرض فراغاً
+  //  ويجعل الاستعادةَ بلا حدّ. والقاعدةُ تمنع الحالةَ المستحيلة من الوجود.
+  check("patients_deleted_shape_check", sql`
+    ${t.deletedAt} IS NULL
+    OR (COALESCE(BTRIM(${t.deletedReason}), '') <> ''
+        AND ${t.restoreUntil} IS NOT NULL
+        AND ${t.restoreUntil} > ${t.deletedAt})`),
+  //  ══ وعكسُها: لا ذرّةَ حذفٍ — أحدَ عشرَ عموداً لا أربعة — على ملفٍّ فعّال
+  //     (تشديدٌ في نفس ٠٦٨، مراجعة ٢٠٢٦-٠٨-٢٤؛ راجع الشرحَ الكامل في
+  //     server/migrations/068_patient_trash.ts) ══════════════════════════
+  check("patients_active_clean_check", sql`
+    ${t.deletedAt} IS NOT NULL
+    OR (${t.restoreUntil} IS NULL
+        AND ${t.deletedByUserId} IS NULL
+        AND ${t.deletedByName} IS NULL
+        AND ${t.deletedByRole} IS NULL
+        AND ${t.deletedReason} IS NULL
+        AND ${t.deletedTotalCost} IS NULL
+        AND ${t.deletedTotalPaid} IS NULL
+        AND ${t.deletedRemaining} IS NULL
+        AND ${t.deletedPendingJson} IS NULL
+        AND ${t.deletedNeededAdmin} IS NULL)`),
+  //  ══ واللقطةُ الماليةُ تُكتب كاملةً أو لا تُكتب — لا نصفَ لقطة (تشديدٌ
+  //     في نفس ٠٦٨، مراجعة ٢٠٢٦-٠٨-٢٤) ═══════════════════════════════════
+  //  الحقولُ الخمسةُ تُكتب معاً دائماً حين `deletedAt` مكتوب
+  //  (`computeSnapshot` تضمنها جميعاً بلا مسارٍ جزئيّ)، مع مساواةِ الحساب
+  //  ووجودِ المفاتيح الخمسة داخل `deletedPendingJson` — فلا «NULL-كصفر»
+  //  ولا لقطةٌ ناقصة. **وأعمدةُ الفاعل بلا هذا الشرط عمداً**: نوعُ الجلسة
+  //  `TrashSessionLike` يُعلن `userId` و`role` و`displayName` اختياريةً
+  //  صراحةً، فإلزامُها هنا `NOT NULL` كان يدّعي ضماناً لا يملكه الكود.
+  check("patients_deleted_financial_snapshot_check", sql`
+    ${t.deletedAt} IS NULL
+    OR (${t.deletedTotalCost} IS NOT NULL
+        AND ${t.deletedTotalPaid} IS NOT NULL
+        AND ${t.deletedRemaining} IS NOT NULL
+        AND ${t.deletedPendingJson} IS NOT NULL
+        AND ${t.deletedNeededAdmin} IS NOT NULL
+        AND ${t.deletedRemaining} = ${t.deletedTotalCost} - ${t.deletedTotalPaid}
+        AND ${t.deletedPendingJson} ? 'pendingCharges'
+        AND ${t.deletedPendingJson} ? 'pendingDiscounts'
+        AND ${t.deletedPendingJson} ? 'pendingPriceRequests'
+        AND ${t.deletedPendingJson} ? 'openFollowups'
+        AND ${t.deletedPendingJson} ? 'openSettlements')`),
+  //  **فهرسُ الفعّالين — الجزئيّ هو المهمّ**: كلُّ قارئٍ تشغيليّ يصفّي «غير
+  //  محذوف»، وهم السوادُ الأعظم، فيخدمهم الفهرسُ بلا أن يثقله المحذوفون.
+  index("ix_patients_active_branch").on(t.branchId, t.createdAt.desc())
+    .where(sql`deleted_at IS NULL`),
+  //  وفهرسا السلّة: الأحدثُ حذفاً أوّلاً، إجمالاً وضمن الفرع.
+  index("ix_patients_trash").on(t.deletedAt.desc()).where(sql`deleted_at IS NOT NULL`),
+  index("ix_patients_trash_branch").on(t.branchId, t.deletedAt.desc())
+    .where(sql`deleted_at IS NOT NULL`),
+  //  ومهلةُ الاستعادة: «ما زال قابلاً للاستعادة» و«انقضت مدّته».
+  index("ix_patients_restore_until").on(t.restoreUntil)
+    .where(sql`deleted_at IS NOT NULL`),
+]);
 
 // ── Independent cases per patient (Phase 1 foundation) ──────────────────────
 // One patient identity, but each specialty (physiotherapy / prosthetic /
@@ -1010,7 +1107,16 @@ export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, 
 //  `patientCode` مُسقَطٌ من العقد عمداً (ترحيل ٠٥٢): الهوية العلنية يولّدها
 //  الخادم/القاعدة ولا يختارها عميل. وإسقاطُها هنا يجعل قيمةً ملفَّقة في جسم
 //  الطلب لا تصل النوعَ أصلاً — قبل أن تصل أي حراسة في التطبيق.
-export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true, patientCode: true }).extend({
+//  وحالةُ الحذف (ترحيل ٠٦٨) مُسقَطةٌ بالمبدأ نفسِه: **يكتبها مسارُ السلّة
+//  وحدَه في معاملته**. وقيمةٌ في جسم طلبٍ تدّعي أن هذا الملفَّ محذوفٌ — أو
+//  تُمدِّد مهلةَ استعادته — تدّعي قراراً لم يتّخذه أحد، فلا تصل النوعَ أصلاً.
+export const insertPatientSchema = createInsertSchema(patients).omit({
+  id: true, createdAt: true, patientCode: true,
+  deletedAt: true, deletedByUserId: true, deletedByName: true, deletedByRole: true,
+  deletedReason: true, restoreUntil: true,
+  deletedTotalCost: true, deletedTotalPaid: true, deletedRemaining: true,
+  deletedPendingJson: true, deletedNeededAdmin: true,
+}).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true }).extend({
@@ -1099,6 +1205,33 @@ export const journalEntries = pgTable("journal_entries", {
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdAt: timestamp("created_at").defaultNow(),
   postedAt: timestamp("posted_at"),
+  /**
+   * **حقيقةٌ دائمةٌ لا تُمحى** (ترحيل ٠٦٨، مراجعة ٢٠٢٦-٠٨-٢٤): هذا القيدُ
+   * كان **كلُّ** أسطره لمريضٍ واحدٍ حُذف بعدها حذفاً نهائياً.
+   *
+   * `storage.deletePatient` ينزع `journal_lines.patient_id` (يجعله
+   * `NULL`) قبل أن يُمحى صفُّ المريض — فتفقد `getTrialBalance` بعدها كلَّ
+   * سبيلٍ لمعرفة أن هذا القيدَ كان مالَ مريضٍ محذوف. **وبلا هذا العمود
+   * كان مالُ كلّ مريضٍ يُحذف نهائياً يعود صامتاً إلى القوائم الفعّالة.**
+   * فتُكتب الحقيقةُ **قبل** نزع الرابط مباشرةً، لا تُحسَب لاحقاً ولا
+   * تُصان بخلفيةٍ دورية. **ولا تُمسَح أبداً**: الحذفُ النهائيّ لا رجعةَ
+   * فيه، فالإقصاءُ الذي توثّقه لا رجعةَ فيه كذلك.
+   *
+   * ══ ومعنى `FALSE` — **تصحيحٌ تاريخيّ (مراجعة ٢٠٢٦-٠٨-٢٤)** ═══════════
+   * **ليس ادّعاءَ علمٍ بالماضي**: `storage.deletePatient` كانت المسارَ
+   * الوحيد للحذف النهائيّ **قبل** هذا الترحيل أيضاً (تُنادى مباشرةً من
+   * `DELETE /api/patients/:id`)، فحذوفٌ نهائيةٌ حقيقية وقعت قبل هذا
+   * العمود يقيناً. ونفسُ الكاسكيد نزع `journal_lines.patient_id` حينها
+   * أيضاً — فانقطع الرابطُ الوحيدُ الذي كان سيُحدِّد صاحبَ القيد، **ولا
+   * استدلالَ رجعيّاً يُخترَع** من مبلغٍ أو تاريخٍ أو أيّ قرينةٍ أخرى.
+   *
+   * فمعنى `FALSE` دقيقٌ لا فضفاض: «لم يُوسَم بآلية الحذف النهائيّ الجديدة
+   * (ما بعد ٠٦٨)» — **لا** «يقيناً لم يكن مالَ مريضٍ محذوفٍ نهائياً
+   * يوماً». القيودُ من قبل هذا العمود **مجهولةُ الحال**، لا مُبرَّأة —
+   * وهذا الترحيلُ لا يحاول إصلاح التاريخ، بل يحمي كلَّ حذفٍ نهائيّ من
+   * الآن فصاعداً فحسب.
+   */
+  purgedPatientMoney: boolean("purged_patient_money").notNull().default(false),
 });
 
 // سطور القيود - Journal Lines (كل قيد له عدة سطور، مدين أو دائن)

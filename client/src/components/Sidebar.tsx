@@ -1,11 +1,12 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2 } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
+import { canTrashPatients, TRASH_TITLE } from "@shared/patient_trash";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -98,6 +99,23 @@ export function Sidebar() {
   });
   const returnedCount = returnedData?.branch ?? 0;
 
+  //  ══ **شارةُ المحذوفات** (ترحيل ٠٦٨) ═══════════════════════════════
+  //  ملفٌّ في السلّة مهلتُه ثلاثون يوماً ثمّ تسقط الاستعادة. فالعددُ ظاهرٌ
+  //  على القائمة كي لا تنقضي مهلةُ ملفٍّ لأن أحداً لم يفتح الصفحة.
+  //  **ونفسُ شرط الخادم شكلاً** (`canTrashPatients`) فلا تظهر لمن يُردّ.
+  const trashEligible = canTrashPatients(branchSession as any);
+  const { data: trashData } = useQuery<{ count: number }>({
+    queryKey: ["/api/patient-trash/count"],
+    enabled: trashEligible,
+    refetchInterval: 10 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/patient-trash/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const trashCount = trashData?.count ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -140,6 +158,8 @@ export function Sidebar() {
     { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
+    //  **والمحذوفاتُ لمن يحذف ويستعيد** — مسؤولٌ أو مديرُ فرعٍ أو طبيب.
+    { label: TRASH_TITLE, icon: Trash2, href: "/patient-trash", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager", "doctor"] as const, badge: trashCount },
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
   ];
 

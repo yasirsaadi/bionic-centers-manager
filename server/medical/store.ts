@@ -28,6 +28,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
+import { activePatientDrizzle } from "../patients/active_patient";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
 } from "../device_episodes/store";
@@ -772,6 +773,8 @@ export async function getPendingExams(
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
     WHERE pc.status = 'active'
+      -- **والمحذوفُ يخرج من كلّ طابور** (ترحيل ٠٦٨).
+      AND p.deleted_at IS NULL
       AND ${scoped}
       AND ${filter}
   `);
@@ -835,7 +838,8 @@ export async function getDecidedExams(
     JOIN patients p ON p.id = me.patient_id
     LEFT JOIN patient_cases pc
       ON pc.patient_id = me.patient_id AND pc.case_type = me.case_type
-    WHERE ${scoped}
+    WHERE p.deleted_at IS NULL
+      AND ${scoped}
       AND ${activeExamSql("me")}
       AND (
         ${openExamined}
@@ -924,6 +928,7 @@ export async function getWorklist(
       -- قبل ٠٦٥) تنضمّ كما كانت — الغيابُ ليس إعفاءً.
      AND ep.service_path IS DISTINCT FROM 'no_exam'
     WHERE pc.status = 'active'
+      AND p.deleted_at IS NULL
       AND ${scoped}
       AND pc.case_type IN (${sql.join(
         specialties.map((s) => sql`${s}`),
@@ -1103,9 +1108,11 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
 export async function getPatientScope(
   patientId: number,
 ): Promise<{ id: number; name: string | null; branchId: number | null } | null> {
+  //  **ولا تُوقَّع معاينةٌ على ملفٍّ في السلّة**: هذه النقطةُ هي ما تقرؤه
+  //  طبقةُ الإذن قبل التوقيع، فغيابُ الصفّ منها يُردّ ٤٠٤ قبل أيّ كتابة.
   const [row] = await db
     .select({ id: patients.id, name: patients.name, branchId: patients.branchId })
     .from(patients)
-    .where(eq(patients.id, patientId));
+    .where(and(eq(patients.id, patientId), activePatientDrizzle()));
   return row ?? null;
 }
