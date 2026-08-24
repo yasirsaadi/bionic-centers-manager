@@ -1717,6 +1717,49 @@ export const postExamFollowups = pgTable("post_exam_followups", {
    * لقطةُ رقم بلا مفتاح أجنبي — نفس درس `proposedExpertUserId`.
    */
   selectedExpertUserId: integer("selected_expert_user_id"),
+  // ══ التفاصيلُ التجارية ومالكُ كلٍّ منها (ترحيل ٠٦٦) ═══════════════════
+  /**
+   * السعرُ **قبل** أيّ تعديل تجاريّ. `null` = لم يُسعَّر بعد.
+   *
+   * و`approvedPrice` أعلاه يبقى **مصدرَ الحقيقة الوحيد للمال** — هو ما
+   * يقيّده `assignManufacturing`. وهذا العمودُ يقول **ممّ تكوّن** ذلك الرقم،
+   * فلا سعرَ ثانٍ يُخترَع.
+   */
+  originalPrice: integer("original_price"),
+  /**
+   * `normal` / `discount` / `free` — و`null` = **لم يُسعَّر بعد**.
+   *
+   * **وهو الدليلُ لا الرقم**: صفرٌ مع `free` مجّانيٌّ صريحٌ مكتمل، وصفرٌ مع
+   * `null` ملفٌّ لم يُسعَّر. وكان الصفرُ يقول الاثنين معاً.
+   */
+  priceKind: text("price_kind"),
+  /**
+   * `doctor` = أدخله الطبيبُ في معاينته ⟶ **لا يكتب فوقه استقبالٌ ولا مديرُ
+   * فرع**، بل صاحبُه أو المسؤولُ العام · `staff` = أدخله الموظّفون ·
+   * `null` = فارغٌ يُكمله مَن حضر.
+   *
+   * **ومحفوظةٌ صريحةً لا مُستنتَجة**: «القيمةُ غير فارغة» لا تقول مَن كتبها.
+   */
+  priceOwner: text("price_owner"),
+  priceOwnerUserId: integer("price_owner_user_id"),
+  priceOwnerName: text("price_owner_name"),
+  expertOwner: text("expert_owner"),
+  expertOwnerUserId: integer("expert_owner_user_id"),
+  expertOwnerName: text("expert_owner_name"),
+  /**
+   * `bought` / `not_bought` — واقعةٌ مسجَّلة لا حالةٌ في الآلة.
+   *
+   * **تُحفَظ ولو نقص السعرُ أو الخبير**، فلا يُسأل المريضُ «أشتريتَ؟»
+   * مرّتين: يُكمل الموظّفُ ما ينقص، ويُتمّ الخادمُ البيعَ عند آخرِ ناقص.
+   * و`status` لا يكتسب حالةً جديدة — العرضُ يُشتقّ من هذين معاً.
+   */
+  purchaseDecision: text("purchase_decision"),
+  purchaseDecisionAt: timestamp("purchase_decision_at", { withTimezone: true }),
+  purchaseDecisionOwner: text("purchase_decision_owner"),
+  purchaseDecisionUserId: integer("purchase_decision_user_id"),
+  purchaseDecisionName: text("purchase_decision_name"),
+  /** السببُ الحرُّ الإلزاميّ عند «لم يشترِ» — والرمزُ الموروث في `closedReason`. */
+  notBoughtReasonText: text("not_bought_reason_text"),
   nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
   /** استثناءٌ صريح: «لا موعد متابعة» قرارٌ مُتَّخذ لا حقلٌ مُهمَل. */
   noScheduledFollowUp: boolean("no_scheduled_follow_up").notNull().default(false),
@@ -1753,6 +1796,35 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     ${t.status} <> 'follow_up'
     OR ${t.nextFollowUpAt} IS NOT NULL
     OR ${t.noScheduledFollowUp} = TRUE`),
+  //  ══ التفاصيلُ التجارية (ترحيل ٠٦٦) — القيمُ محروسةٌ في القاعدة ═══════
+  check("pef_price_kind_check",
+    sql`${t.priceKind} IS NULL OR ${t.priceKind} IN ('normal', 'discount', 'free')`),
+  check("pef_price_owner_check",
+    sql`${t.priceOwner} IS NULL OR ${t.priceOwner} IN ('doctor', 'staff')`),
+  check("pef_expert_owner_check",
+    sql`${t.expertOwner} IS NULL OR ${t.expertOwner} IN ('doctor', 'staff')`),
+  check("pef_decision_owner_check",
+    sql`${t.purchaseDecisionOwner} IS NULL OR ${t.purchaseDecisionOwner} IN ('doctor', 'staff')`),
+  check("pef_purchase_decision_check",
+    sql`${t.purchaseDecision} IS NULL OR ${t.purchaseDecision} IN ('bought', 'not_bought')`),
+  //  **مالكٌ بلا صاحبٍ سطرٌ لا يُسأل عنه أحد** — نفسُ قاعدة `purchaseInterest`.
+  check("pef_owner_pairs_check", sql`
+    (${t.priceOwner} IS NULL) = (${t.priceOwnerUserId} IS NULL)
+    AND (${t.expertOwner} IS NULL) = (${t.expertOwnerUserId} IS NULL)
+    AND (${t.purchaseDecisionOwner} IS NULL) = (${t.purchaseDecisionUserId} IS NULL)`),
+  //  خصمٌ أو تبرّعٌ بلا أصلٍ موجبٍ معلوم رقمٌ لا يفسّره أحد بعد سنة.
+  check("pef_price_kind_needs_original_check", sql`
+    ${t.priceKind} IS NULL
+    OR (${t.originalPrice} IS NOT NULL AND ${t.originalPrice} > 0)`),
+  //  والقرارُ لا يُسجَّل بلا ختمِ وقتٍ ولا مالك، و«لم يشترِ» بلا سببٍ مكتوب.
+  check("pef_decision_shape_check", sql`
+    ${t.purchaseDecision} IS NULL
+    OR (${t.purchaseDecisionAt} IS NOT NULL
+        AND ${t.purchaseDecisionOwner} IS NOT NULL
+        AND (${t.purchaseDecision} <> 'not_bought'
+             OR COALESCE(BTRIM(${t.notBoughtReasonText}), '') <> ''))`),
+  index("ix_pef_purchase_decision").on(t.purchaseDecision, t.branchId)
+    .where(sql`purchase_decision IS NOT NULL`),
   // ══ متابعةٌ حيّةٌ واحدة لكل جهاز — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة ══
   // نفس نمط `uq_pde_case_open`، وهو ما يجعل الإنشاء idempotent بنيوياً:
   // ضغطتان متزامنتان تُنتجان صفّاً واحداً لأن الثانية تصطدم بالفهرس.

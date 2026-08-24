@@ -29,6 +29,11 @@ import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
 } from "@shared/followup";
+import {
+  saleState, missingLabel, PURCHASE_DECISION_LABELS, PRICE_KIND_LABELS,
+  COMMERCIAL_FIELD_LABELS, canOverwriteCommercialField, ownerLabel,
+  examPathActions, examPathStatusLine, type CommercialField,
+} from "@shared/commercial";
 import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
@@ -67,6 +72,38 @@ const actorOf = (req: Req) => {
   const s = getSession(req);
   return { userId: s.userId, userName: s.userName };
 };
+
+/**
+ * الجلسةُ كما يقرؤها حارسُ المالكية (ترحيل ٠٦٦) — **من الجلسة الموقَّعة لا
+ * من الطلب**. تُمرَّر إلى كلّ كاتبٍ تجاريّ في المخزن، والمُترجِمُ يُلزم بها
+ * في التوقيع فلا يسقط الحارسُ بالسهو.
+ */
+const ownerSessionOf = (req: Req) => {
+  const s = getSession(req);
+  return {
+    userId: s.userId, role: s.role, isAdmin: s.isAdmin, permissions: s.permissions,
+  };
+};
+
+/**
+ * **الأفعالُ المتقاعدة على مسار المعاينة** (المرحلة الثانية).
+ *
+ * `defer` و«قبل السعر» و«يرغب بالشراء» كانت خطواتٍ حول واقعةٍ واحدة صار
+ * يُسجّلها الموظّفُ مباشرة: اشترى أو لم يشترِ. فتُردّ على العمليات الجديدة
+ * برسالةٍ تدلّ على البابِ الواحد.
+ *
+ * **والصفوفُ القديمة لا تُمَسّ**: حلقةٌ بلا مسار (`service_path IS NULL`) أو
+ * متابعةٌ بلا حلقة تبقى على أفعالها كلِّها حتى تنفد — فلا يُحبَس ملفٌّ في
+ * حالةٍ لا زرَّ لها.
+ */
+async function retiredOnExamPath(res: any, followupId: number): Promise<boolean> {
+  if (!(await store.isExamPathFollowup(followupId))) return false;
+  res.status(409).json({
+    error: "هذه العملية على المسار المبسّط — سجّل «اشترى» أو «لم يشترِ»"
+      + " من «تفاصيل البيع» مباشرة.",
+  });
+  return true;
+}
 
 /** يترجم خطأ العمل إلى ردٍّ صريح — والسباق يُقال للمستخدم لا يُبتلع. */
 function fail(res: any, err: unknown): boolean {
@@ -128,11 +165,77 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
     const rows = await store.getFollowupsForPatient(patientId);
-    const withDetail = await Promise.all(rows.map(async (f) => ({
-      ...f,
-      events: await store.getEvents(f.id),
-      priceRequests: await store.getPriceRequests(f.id),
-    })));
+    const s = getSession(req);
+    const owner = ownerSessionOf(req);
+    const withDetail = await Promise.all(rows.map(async (f) => {
+      //  ══ **الشاشةُ تقرأ ما يقرؤه الخادم** (المرحلة ٢) ══════════════════
+      //  ما بقي ناقصاً · وأيُّ حقلٍ مقفولٌ على مَن · والأفعالُ المتاحة —
+      //  كلُّها من الدوالّ التي تحرس النقاط نفسِها، فلا يظهر زرٌّ يُردّ ولا
+      //  يُخفى زرٌّ يُقبَل.
+      const examPath = f.episodeServicePath === "exam";
+      const st = saleState({
+        priceKind: f.priceKind, expertUserId: f.selectedExpertUserId,
+      });
+      const mayAct = canConfirmPurchase(s);
+      return {
+        ...f,
+        examPath,
+        missing: st.missing,
+        missingLabel: missingLabel(st.missing),
+        statusLine: examPath
+          ? examPathStatusLine({
+            status: f.status, decision: f.purchaseDecision, missing: st.missing,
+          })
+          : null,
+        actions: examPath
+          ? examPathActions({
+            session: owner, status: f.status, decision: f.purchaseDecision,
+            decisionField: {
+              owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
+              ownerName: f.purchaseDecisionName,
+            },
+            mayAct,
+          })
+          : null,
+        //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
+        locks: {
+          price: !canOverwriteCommercialField({
+            field: {
+              owner: f.priceOwner, ownerUserId: f.priceOwnerUserId,
+              ownerName: f.priceOwnerName,
+            }, session: owner,
+          }),
+          expert: !canOverwriteCommercialField({
+            field: {
+              owner: f.expertOwner, ownerUserId: f.expertOwnerUserId,
+              ownerName: f.expertOwnerName,
+            }, session: owner,
+          }),
+          decision: !canOverwriteCommercialField({
+            field: {
+              owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
+              ownerName: f.purchaseDecisionName,
+            }, session: owner,
+          }),
+        },
+        ownerLabels: {
+          price: ownerLabel({
+            owner: f.priceOwner, ownerUserId: f.priceOwnerUserId,
+            ownerName: f.priceOwnerName,
+          }),
+          expert: ownerLabel({
+            owner: f.expertOwner, ownerUserId: f.expertOwnerUserId,
+            ownerName: f.expertOwnerName,
+          }),
+          decision: ownerLabel({
+            owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
+            ownerName: f.purchaseDecisionName,
+          }),
+        },
+        events: await store.getEvents(f.id),
+        priceRequests: await store.getPriceRequests(f.id),
+      };
+    }));
     res.json(withDetail);
   });
 
@@ -175,6 +278,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     try {
       const updated = await store.recordDeferral({
         followupId: f.id,
@@ -216,6 +320,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     try {
       const updated = await store.recordPatientAcceptedPrice({
         followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
@@ -240,6 +345,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       const updated = await store.closeWithoutPurchase({
         followupId: f.id, reason: String(req.body?.reason ?? ""),
         note: str(req.body?.note), actor: actorOf(req),
+        //  حارسُ المالكية: لا يُقلَب قرارُ الطبيب «اشترى» إلى إغلاق.
+        session: ownerSessionOf(req),
       });
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",
@@ -302,6 +409,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     try {
       const updated = await store.selectExpert({
         followupId: f.id, expertUserId, actor: actorOf(req),
+        session: ownerSessionOf(req),
       });
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",
@@ -327,6 +435,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     try {
       const out = await store.signalPurchaseInterest({
         followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
@@ -341,6 +450,86 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         });
       }
       res.json(out);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ── **تفاصيلُ البيع: بابٌ واحد** (المرحلة الثانية، ترحيل ٠٦٦) ─────────
+  //
+  //  سعرٌ · خبيرٌ · قرارٌ — في نداءٍ واحد ومعاملةٍ واحدة. ومَن يُدخل آخرَ
+  //  حقلٍ ناقصٍ **يُتمّ البيعَ في المعاملة نفسِها**، فلا يُسأل «اشترى؟» ثانيةً.
+  //
+  //  **ولا اعتمادَ خصمٍ ولا طابورَ موافقات**: سعرٌ أو خصمٌ أو مجّانيّةٌ
+  //  يُدخلها مخوَّلٌ نافذةٌ فوراً. والطلباتُ القديمة المعلَّقة تبقى بمسارها.
+  //
+  //  **والمالكيةُ في المخزن**: مَن يجوز له الكتابةُ فوق حقلٍ يُحسَم من
+  //  الجلسة الموقَّعة تحت قفل الصفّ — لا من الشاشة ولا من جسم الطلب.
+  app.post("/api/followups/:id/commercial", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canConfirmPurchase(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    try {
+      const out = await store.setCommercialFields({
+        followupId: f.id,
+        patch: {
+          price: req.body?.price ?? null,
+          expertUserId: req.body?.expertUserId,
+          decision: req.body?.decision,
+          notBoughtReason: req.body?.notBoughtReason,
+          note: str(req.body?.note),
+        },
+        actor: actorOf(req),
+        session: ownerSessionOf(req),
+        //  ══ **مَن يكتب «بوصفه الطبيب»** ═══════════════════════════════
+        //  صاحبُ معاينةِ هذه المتابعة بعينه. فطبيبٌ آخر — ولو بنفس
+        //  الاختصاص — يكتب بوصفه موظّفاً، ولا يُقفِل حقلاً على زميله.
+        asDoctor: await store.isExamDoctorOf(f.id, s.userId),
+        validateExpert,
+        expertLabel: async (id: number) => {
+          const m = await import("../medical/store");
+          return (await m.userNames([id]))[id] ?? null;
+        },
+      });
+      //  ══ التدقيق: **حقلٌ حقلاً، بقيمته القديمة والجديدة** ═════════════
+      for (const field of out.changed) {
+        const label = COMMERCIAL_FIELD_LABELS[field as CommercialField];
+        const oldV = field === "price" ? f.approvedPrice
+          : field === "expert" ? f.selectedExpertUserId : f.purchaseDecision;
+        const newV = field === "price" ? out.followup.approvedPrice
+          : field === "expert" ? out.followup.selectedExpertUserId
+            : out.followup.purchaseDecision;
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          oldValues: { [field]: oldV }, newValues: { [field]: newV },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `تفاصيل البيع — ${label} لمتابعة #${f.id}: ${String(oldV ?? "غير محدد")}`
+            + ` ⟶ ${String(newV ?? "غير محدد")}`
+            + (field === "price" && out.followup.priceKind
+              ? ` (${PRICE_KIND_LABELS[out.followup.priceKind]})` : ""),
+        });
+      }
+      if (out.converted) {
+        await logAudit({
+          entityType: "prosthetic_work_order", entityId: out.workOrderId ?? 0,
+          action: "create", userId: s.userId, userName: s.userName, branchId: f.branchId,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `تم الشراء وبدأ التصنيع — متابعة #${f.id}`
+            + ` بسعر ${out.followup.approvedPrice.toLocaleString()} د.ع`
+            + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
+        });
+      }
+      res.json({
+        ...out.followup,
+        converted: out.converted,
+        workOrderId: out.workOrderId,
+        closed: out.closed,
+        missing: out.missing,
+        //  ورسالةٌ تقول ما بقي بالعربية — لا رمزَ حقلٍ إنجليزيّ.
+        missingLabel: missingLabel(out.missing),
+        decisionLabel: out.followup.purchaseDecision
+          ? PURCHASE_DECISION_LABELS[out.followup.purchaseDecision] : null,
+      });
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
@@ -362,6 +551,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     try {
       const out = await store.setCommercialPrice({
+        session: ownerSessionOf(req),
         followupId: f.id, finalPrice: Number(req.body.finalPrice),
         reason: str(req.body?.reason), note: str(req.body?.note),
         actor: actorOf(req),
@@ -491,6 +681,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       if (!okExpert.ok) return res.status(400).json({ error: okExpert.reason });
       try {
         workingFollowup = await store.selectExpert({
+          session: ownerSessionOf(req),
           followupId: f.id, expertUserId: askedExpert, actor: actorOf(req),
         });
         await logAudit({
@@ -526,6 +717,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       }
       try {
         workingFollowup = await store.setInitialCommercialPrice({
+          session: ownerSessionOf(req),
           followupId: f.id, originalPrice: asked, actor: actorOf(req),
         });
         await logAudit({

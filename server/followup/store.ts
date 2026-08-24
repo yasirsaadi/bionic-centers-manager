@@ -24,6 +24,13 @@ import {
   computeCommercialPrice, isFollowupReason, isTerminal,
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
+import {
+  computeCommercialOffer, canOverwriteCommercialField, ownershipRefusal,
+  parseFieldOwner, parsePriceKind, parsePurchaseDecision, saleState,
+  missingLabel, NOT_BOUGHT_LEGACY_REASON, COMMERCIAL_FIELD_LABELS,
+  type CommercialField, type CommercialSessionLike, type FieldOwner,
+  type PriceKind, type PurchaseDecision,
+} from "@shared/commercial";
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
 export class FollowupError extends Error {
@@ -62,6 +69,24 @@ export interface FollowupRow {
   purchaseInterestAt: string | null;
   purchaseInterestBy: number | null;
   purchaseInterestByName: string | null;
+  // ══ التفاصيلُ التجارية ومالكُ كلٍّ منها (ترحيل ٠٦٦) ═════════════════════
+  /** `null` = لم يُسعَّر بعد. و`approvedPrice` يبقى مصدرَ حقيقة المال وحده. */
+  originalPrice: number | null;
+  /** `normal`/`discount`/`free` — و`null` **لم يُسعَّر**، لا «مجّانيّ». */
+  priceKind: PriceKind | null;
+  priceOwner: FieldOwner | null;
+  priceOwnerUserId: number | null;
+  priceOwnerName: string | null;
+  expertOwner: FieldOwner | null;
+  expertOwnerUserId: number | null;
+  expertOwnerName: string | null;
+  /** `bought`/`not_bought` — واقعةٌ مسجَّلة تُحفَظ ولو نقص السعرُ أو الخبير. */
+  purchaseDecision: PurchaseDecision | null;
+  purchaseDecisionAt: string | null;
+  purchaseDecisionOwner: FieldOwner | null;
+  purchaseDecisionUserId: number | null;
+  purchaseDecisionName: string | null;
+  notBoughtReasonText: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,6 +117,25 @@ const toRow = (r: any): FollowupRow => ({
   purchaseInterestBy: r.purchase_interest_by === null || r.purchase_interest_by === undefined
     ? null : Number(r.purchase_interest_by),
   purchaseInterestByName: r.purchase_interest_by_name ?? null,
+  originalPrice: r.original_price === null || r.original_price === undefined
+    ? null : Number(r.original_price),
+  priceKind: parsePriceKind(r.price_kind),
+  priceOwner: parseFieldOwner(r.price_owner),
+  priceOwnerUserId: r.price_owner_user_id === null || r.price_owner_user_id === undefined
+    ? null : Number(r.price_owner_user_id),
+  priceOwnerName: r.price_owner_name ?? null,
+  expertOwner: parseFieldOwner(r.expert_owner),
+  expertOwnerUserId: r.expert_owner_user_id === null || r.expert_owner_user_id === undefined
+    ? null : Number(r.expert_owner_user_id),
+  expertOwnerName: r.expert_owner_name ?? null,
+  purchaseDecision: parsePurchaseDecision(r.purchase_decision),
+  purchaseDecisionAt: r.purchase_decision_at ?? null,
+  purchaseDecisionOwner: parseFieldOwner(r.purchase_decision_owner),
+  purchaseDecisionUserId: r.purchase_decision_user_id === null
+    || r.purchase_decision_user_id === undefined
+    ? null : Number(r.purchase_decision_user_id),
+  purchaseDecisionName: r.purchase_decision_name ?? null,
+  notBoughtReasonText: r.not_bought_reason_text ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -102,6 +146,10 @@ const SELECT_COLS = sql`id, patient_id, case_id, device_episode_id, medical_exam
   no_scheduled_follow_up, last_reason, last_note, last_contact_at, closed_reason,
   closed_at, converted_at, converted_work_order_id,
   purchase_interest_at, purchase_interest_by, purchase_interest_by_name,
+  original_price, price_kind, price_owner, price_owner_user_id, price_owner_name,
+  expert_owner, expert_owner_user_id, expert_owner_name,
+  purchase_decision, purchase_decision_at, purchase_decision_owner,
+  purchase_decision_user_id, purchase_decision_name, not_bought_reason_text,
   created_at, updated_at`;
 
 export interface Actor {
@@ -145,6 +193,33 @@ async function lockFollowup(
   const cur = toRow(row);
   if (!expect.includes(cur.status)) throw new FollowupError(CONFLICT, 409);
   return cur;
+}
+
+/**
+ * **حارسُ المالكية للكتّاب القدامى** (ترحيل ٠٦٦).
+ *
+ * `setCommercialPrice` و`selectExpert` و`closeWithoutPurchase` أبوابٌ قائمة
+ * قبل هذه المرحلة، ولا يجوز أن تبقى ثقوباً في القاعدة الجديدة: مديرُ فرعٍ
+ * يُردّ عن سعرٍ يملكه الطبيبُ من نافذةٍ ما، ثمّ يكتبه من نافذةٍ أخرى.
+ *
+ * **والحراسةُ في المخزن لا في النقطة**: النقطةُ قد تُنسى، والمخزنُ هو ما
+ * يمرّ منه كلُّ كاتب. و`session` **إلزاميّ** فلا يسقط الحارسُ بالسهو.
+ */
+function assertMayOverwrite(
+  cur: FollowupRow, field: CommercialField, session: CommercialSessionLike,
+): void {
+  const map = {
+    price: [cur.priceOwner, cur.priceOwnerUserId, cur.priceOwnerName],
+    expert: [cur.expertOwner, cur.expertOwnerUserId, cur.expertOwnerName],
+    decision: [cur.purchaseDecisionOwner, cur.purchaseDecisionUserId,
+      cur.purchaseDecisionName],
+  } as const;
+  const [owner, ownerUserId, ownerName] = map[field] as
+    [FieldOwner | null, number | null, string | null];
+  const ok = canOverwriteCommercialField({
+    field: { owner, ownerUserId, ownerName }, session,
+  });
+  if (!ok) throw new FollowupError(ownershipRefusal(field, ownerName), 403);
 }
 
 // ── الإنشاء ──────────────────────────────────────────────────────────────
@@ -259,6 +334,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     examSignedAt: string | null;
     selectedExpertName: string | null;
     requestedItem: string | null;
+    episodeServicePath: string | null;
   })[]
 > {
   const r = await db.execute(sql`
@@ -268,10 +344,14 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            f.last_reason, f.last_note, f.last_contact_at, f.closed_reason,
            f.closed_at, f.converted_at, f.converted_work_order_id,
            f.purchase_interest_at, f.purchase_interest_by, f.purchase_interest_by_name,
+           f.original_price, f.price_kind, f.price_owner, f.price_owner_user_id,
+           f.price_owner_name, f.expert_owner, f.expert_owner_user_id, f.expert_owner_name,
+           f.purchase_decision, f.purchase_decision_at, f.purchase_decision_owner,
+           f.purchase_decision_user_id, f.purchase_decision_name, f.not_bought_reason_text,
            f.created_at, f.updated_at,
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
            u.display_name AS selected_expert_name,
-           de.requested_item,
+           de.requested_item, de.service_path AS episode_service_path,
            cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
            cl.note AS closed_note
       FROM post_exam_followups f
@@ -302,6 +382,9 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     //  حسابٌ حُذف يترك رقماً بلا اسم — فيظهر الرقم ويختار الموظّف من جديد.
     selectedExpertName: x.selected_expert_name ?? null,
     requestedItem: x.requested_item ?? null,
+    //  **مسارُ العملية** (ترحيل ٠٦٥) — هو ما يفرّق العمليةَ المبسّطة عن
+    //  الموروثة، فتُقرأ الأفعالُ والأقفال منه لا من الحالة وحدها.
+    episodeServicePath: x.episode_service_path ?? null,
   }));
 }
 
@@ -1057,13 +1140,36 @@ export async function recordPatientAcceptedPrice(params: {
 /** إغلاقٌ بلا شراء — **بقرار إنسان دائماً**. لا كرون يغلق أحداً. */
 export async function closeWithoutPurchase(params: {
   followupId: number; reason: string; note?: string | null; actor: Actor;
+  /**
+   * **النصُّ الحرّ** حين يكون الإغلاق «لم يشترِ» بالمسار الجديد (ترحيل ٠٦٦).
+   *
+   * والرمزُ الموروث يبقى في `closed_reason` — القاعدةُ والتقاريرُ تقرؤه —
+   * لكنّ الواقعةَ الإنسانية هي هذا النصّ.
+   */
+  notBoughtReasonText?: string | null;
+  /** قرارُ «لم يشترِ» يُختَم على الصفّ في المعاملة نفسِها، ومعه مالكُه. */
+  decisionOwner?: FieldOwner | null;
+  /**
+   * حارسُ المالكية (ترحيل ٠٦٦) — **اختياريٌّ عمداً**: المنادي الداخليّ
+   * (`setCommercialFields` وإغلاقُ التصحيح الإداريّ) قد فحصها سلفاً أو يعمل
+   * بسلطةٍ أعلى، أمّا **نقطةُ REST فتمرّرها دائماً**.
+   */
+  session?: CommercialSessionLike;
+  tx?: any;
 }): Promise<FollowupRow> {
   if (!isFollowupReason(params.reason)) throw new FollowupError("سبب الإغلاق مطلوب", 400);
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, [
       "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
       "price_approval_pending", "purchase_approval_pending",
     ]);
+    //  ══ **ولا يُقلَب قرارُ الطبيب «اشترى» إلى إغلاق** (ترحيل ٠٦٦) ═══════
+    //  الطبيبُ سجّل أن المريضَ اشترى، والبيعُ ينتظر استكمالَ بياناته.
+    //  وإغلاقُه من موظّفٍ يمحو قراراً لم يملكه — فيُردّ، ويبقى الإغلاقُ
+    //  لصاحبه أو للمسؤول العام.
+    if (params.session && cur.purchaseDecision === "bought") {
+      assertMayOverwrite(cur, "decision", params.session);
+    }
     // ══ الطلب المعلَّق يُلغى **ولا يُرفض** ═══════════════════════════════
     // «مرفوض» حكمٌ على السعر لا يملكه إلا طبيبٌ أو مسؤول. وكان الإغلاق
     // يسمه `rejected` ويضع الاستعلامات أو مديرَ الفرع في `decided_by` —
@@ -1072,7 +1178,7 @@ export async function closeWithoutPurchase(params: {
     //
     // فـ`cancelled` أثرُ إغلاق الملفّ، و`rejected` يبقى **حصراً** من
     // `decidePriceChange` بيد مَن يعتمد. والمُلغي مسجَّلٌ بمن هو ولماذا.
-    const cancelled = await tx.execute<{ id: number; current_price: number; proposed_price: number }>(sql`
+    const cancelled = await tx.execute(sql`
       UPDATE price_change_requests
          SET status = 'cancelled', decided_at = NOW(), decided_by = ${params.actor.userId},
              decided_by_name = ${params.actor.userName},
@@ -1094,11 +1200,28 @@ export async function closeWithoutPurchase(params: {
         actor: params.actor,
       });
     }
+    //  **وقرارُ «لم يشترِ» يُختَم مع الإغلاق لا بعده** (ترحيل ٠٦٦): صفٌّ
+    //  مغلقٌ بلا قرارٍ مسجَّل كان يجعل الشاشةَ تعرض «لم يشترِ» بلا مالكٍ
+    //  يحرسه — فيقلبه أيُّ موظّف. والمالكيةُ تُكتب **مرّةً** ولا تُعاد.
+    const stampDecision = parseFieldOwner(params.decisionOwner);
+    const reasonText = String(params.notBoughtReasonText ?? "").trim() || null;
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET status = 'closed_without_purchase', closed_reason = ${params.reason},
              closed_at = NOW(), last_reason = ${params.reason},
-             last_note = ${params.note ?? null}, last_contact_at = NOW(), updated_at = NOW()
+             last_note = ${params.note ?? null}, last_contact_at = NOW(),
+             purchase_decision = CASE WHEN ${stampDecision}::text IS NULL
+               THEN purchase_decision ELSE 'not_bought' END,
+             purchase_decision_at = CASE WHEN ${stampDecision}::text IS NULL
+               THEN purchase_decision_at ELSE NOW() END,
+             purchase_decision_owner = CASE WHEN ${stampDecision}::text IS NULL
+               THEN purchase_decision_owner ELSE ${stampDecision}::text END,
+             purchase_decision_user_id = CASE WHEN ${stampDecision}::text IS NULL
+               THEN purchase_decision_user_id ELSE ${params.actor.userId}::int END,
+             purchase_decision_name = CASE WHEN ${stampDecision}::text IS NULL
+               THEN purchase_decision_name ELSE ${params.actor.userName}::text END,
+             not_bought_reason_text = COALESCE(${reasonText}::text, not_bought_reason_text),
+             updated_at = NOW()
        WHERE id = ${params.followupId} AND status = ${cur.status}
       RETURNING ${SELECT_COLS}
     `);
@@ -1108,10 +1231,13 @@ export async function closeWithoutPurchase(params: {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
       eventType: "closed_without_purchase", fromStatus: cur.status,
       toStatus: "closed_without_purchase", reason: params.reason,
-      note: params.note ?? null, actor: params.actor,
+      note: reasonText ?? params.note ?? null,
+      payload: reasonText ? { notBoughtReasonText: reasonText } : {},
+      actor: params.actor,
     });
     return toRow(row);
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 /**
@@ -1182,15 +1308,25 @@ export async function reopen(params: {
  */
 export async function selectExpert(params: {
   followupId: number; expertUserId: number; actor: Actor;
+  /** **إلزاميّ** — حارسُ المالكية يُقرأ منها لا من الطلب (ترحيل ٠٦٦). */
+  session: CommercialSessionLike;
+  tx?: any;
 }): Promise<FollowupRow> {
-  return await db.transaction(async (tx) => {
+  const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, [
       "awaiting_patient_decision", "follow_up", "price_approval_pending",
       "price_approved_waiting_patient", "purchase_approval_pending",
     ]);
+    //  خبيرٌ أسنَده الطبيبُ في معاينته لا يُبدِّله استقبالٌ ولا مديرُ فرع.
+    assertMayOverwrite(cur, "expert", params.session);
+    const keepOwner = cur.expertOwner !== null;
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
-         SET selected_expert_user_id = ${params.expertUserId}, updated_at = NOW()
+         SET selected_expert_user_id = ${params.expertUserId},
+             expert_owner = ${keepOwner ? cur.expertOwner : "staff"},
+             expert_owner_user_id = ${keepOwner ? cur.expertOwnerUserId : params.actor.userId},
+             expert_owner_name = ${keepOwner ? cur.expertOwnerName : params.actor.userName},
+             updated_at = NOW()
        WHERE id = ${params.followupId} AND status = ${cur.status}
       RETURNING ${SELECT_COLS}
     `);
@@ -1207,7 +1343,8 @@ export async function selectExpert(params: {
       actor: params.actor,
     });
     return toRow(row);
-  });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ── إشارةُ الطبيب ────────────────────────────────────────────────────────
@@ -1302,10 +1439,18 @@ const PRICEABLE: FollowupStatus[] = [
 export async function setCommercialPrice(params: {
   followupId: number; finalPrice: number; reason?: string | null;
   note?: string | null; actor: Actor;
+  /** **إلزاميّ** — حارسُ المالكية يُقرأ منها (ترحيل ٠٦٦). */
+  session: CommercialSessionLike;
 }): Promise<{ followup: FollowupRow; change: CommercialPriceChange }> {
   const reason = (params.reason ?? "").trim();
   return await db.transaction(async (tx) => {
     const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  ══ **ومديرُ الفرع ليس فوق توقيع الطبيب** (ترحيل ٠٦٦) ══════════════
+    //  هذه النقطةُ بابُ مدير الفرع لتحديد السعر التجاري، وكانت مطلقةً.
+    //  فسعرٌ أدخله الطبيبُ في معاينته صار يُقفَل عليه: يعدّله صاحبُه أو
+    //  المسؤولُ العام. وبلا هذا السطر كان الحارسُ الجديد نافذةً تُغلَق
+    //  وبجوارها نافذةٌ مفتوحة.
+    assertMayOverwrite(cur, "price", params.session);
 
     //  **الحسابُ تحت القفل على السعر المقفول**: لو حُسب قبله لأمكن أن
     //  يُسجَّل فرقٌ نُسب إلى سعرٍ تغيّر بينهما.
@@ -1430,6 +1575,8 @@ export async function setApprovedPriceForDiscount(params: {
  */
 export async function setInitialCommercialPrice(params: {
   followupId: number; originalPrice: number; actor: Actor; tx?: any;
+  /** **إلزاميّ** — حارسُ المالكية يُقرأ منها (ترحيل ٠٦٦). */
+  session: CommercialSessionLike;
 }): Promise<FollowupRow> {
   const price = Number(params.originalPrice);
   if (!Number.isInteger(price) || price <= 0) {
@@ -1437,17 +1584,30 @@ export async function setInitialCommercialPrice(params: {
   }
   const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, PRICEABLE);
+    //  ══ **والصفرُ لم يبقَ مرادفاً لـ«غير مسعَّر»** (ترحيل ٠٦٦) ══════════
+    //  جهازٌ تبرَّع به المركزُ صراحةً (`price_kind = 'free'`) سعرُه المعتمد
+    //  صفرٌ — وهذا الشرطُ كان سيقرؤه «لم يُسعَّر بعد» فيسمح لأيّ موظّفٍ أن
+    //  يكتب فوق تبرّعٍ قرّره غيرُه رقماً موجباً. **فالنوعُ هو الدليل**.
+    if (cur.priceKind !== null) {
+      throw new FollowupError(
+        "لهذا الجهاز سعر معتمد بالفعل — يُعدَّل من «تفاصيل البيع»", 409);
+    }
     //  **الشرطُ يُفحَص تحت القفل**: بين قراءة الشاشة وهذه اللحظة قد يكون
     //  مديرٌ سعّره، فلا يُكتب فوق سعرٍ صار موجباً.
     if (cur.approvedPrice > 0) {
       throw new FollowupError(
         "لهذا الجهاز سعر معتمد بالفعل — تخفيضه يمرّ بطلب خصم، ورفعه لمدير الفرع", 409);
     }
+    assertMayOverwrite(cur, "price", params.session);
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET approved_price = ${price}, price_source = 'reception_set',
+             original_price = ${price}, price_kind = 'normal',
+             price_owner = 'staff', price_owner_user_id = ${params.actor.userId},
+             price_owner_name = ${params.actor.userName},
              last_contact_at = NOW(), updated_at = NOW()
-       WHERE id = ${cur.id} AND status = ${cur.status} AND approved_price <= 0
+       WHERE id = ${cur.id} AND status = ${cur.status}
+         AND approved_price <= 0 AND price_kind IS NULL
       RETURNING ${SELECT_COLS}
     `);
     const row = (upd.rows ?? [])[0];
@@ -1703,6 +1863,333 @@ export async function confirmPurchase(params: {
     return { followup: toRow(row), workOrderId };
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+// ── التفاصيلُ التجارية: بابٌ واحد، ومالكٌ لكلّ حقل (ترحيل ٠٦٦) ───────────
+//
+// ══ لماذا بابٌ واحد ═════════════════════════════════════════════════════
+// كان لكلّ حقلٍ نقطتُه: سعرٌ من `commercial-price`، وخبيرٌ من `expert`،
+// وقرارٌ من `confirm-purchase` أو `close`. فمَن يُدخل الثلاثة يمرّ بثلاث
+// معاملات، ويستحيل أن يقع «آخرُ ناقصٍ يُتمّ البيع» ذرّياً — لأن الجهوزيّة
+// تُقاس بين معاملتين لا داخل واحدة.
+//
+// فصار بابٌ واحد يقفل الصفَّ مرّةً، ويفحص مالكيةَ كلّ حقلٍ يُلمَس، ويكتب،
+// **ثمّ يُتمّ البيعَ في المعاملة نفسِها إن اكتمل**. فضغطتان متزامنتان على
+// آخرِ حقلٍ ناقص تُنتجان **تحويلاً واحداً وقيدَ كلفةٍ واحداً**: الثانيةُ
+// تنتظر القفل، ثمّ تقرأ `converted` فتُردّ ٤٠٩.
+//
+// ══ وما لا يفعله ════════════════════════════════════════════════════════
+// **لا ينشئ طلبَ اعتمادِ خصمٍ إطلاقاً** (`service_discount_requests`): على
+// مسار المعاينة، سعرٌ أو خصمٌ أو مجّانيّةٌ يُدخلها مخوَّلٌ **نافذةٌ فوراً**.
+// والطلباتُ القديمة المعلَّقة تبقى مقروءةً وقابلةً للحسم بمسارها.
+//
+// **ولا مسارَ تصنيعٍ ثانٍ**: الإتمامُ ينادي `confirmPurchase` نفسَها بمعاملته.
+
+/** ما يجوز لمسِه — والمنتهيةُ خارجها، بابُها نظامُ التصحيح الإداريّ. */
+const COMMERCIAL_EDITABLE: FollowupStatus[] = [
+  "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
+  "price_approval_pending", "purchase_approval_pending",
+];
+
+const SEALED_MESSAGE = "تمّ البيع وبدأ التصنيع — لا تُعدَّل تفاصيله من هنا."
+  + " التصحيحُ من «تصحيح / إلغاء العملية».";
+const CLOSED_MESSAGE = "العملية مغلقة — أعد فتحها أوّلاً إن عاد المريض.";
+
+export interface CommercialPatch {
+  /** `{kind, originalPrice, finalPrice?}` — والغيابُ يعني «لا تلمس السعر». */
+  price?: { kind?: unknown; originalPrice?: unknown; finalPrice?: unknown } | null;
+  expertUserId?: unknown;
+  decision?: unknown;
+  /** إلزاميّ مع `not_bought` — الواقعةُ الإنسانية. */
+  notBoughtReason?: unknown;
+  note?: string | null;
+}
+
+export interface CommercialResult {
+  followup: FollowupRow;
+  /** ما بقي ناقصاً لإتمام البيع — فارغةٌ تعني «مكتمل». */
+  missing: CommercialField[];
+  converted: boolean;
+  workOrderId: number | null;
+  closed: boolean;
+  /** الحقولُ التي تغيّرت فعلاً — للتدقيق وللرسالة. */
+  changed: CommercialField[];
+}
+
+/**
+ * **يكتب ما لُمِس، ويُتمّ البيعَ إن اكتمل** — في معاملةٍ واحدة.
+ *
+ * `asDoctor` تقول إن الكاتبَ يكتب **بوصفه طبيبَ هذه المعاينة** (توقيعُها،
+ * أو تصحيحُ صاحبها لاحقاً). وما يُكتب حينها مالكُه `doctor` فيُقفَل على
+ * غيره. وما يكتبه الموظّفون مالكُه `staff` ويبقى لهم.
+ *
+ * **والمالكيةُ تُكتب مرّةً واحدة**: تصحيحُ المسؤولِ لسعرٍ يملكه الطبيبُ
+ * **لا يحوّله إلى `staff`** — وإلّا صار كلُّ تصحيحٍ إداريّ باباً يُسلّم
+ * القرارَ السريريَّ للاستقبال بلا أن ينتبه أحد. والمُصحِّحُ مسجَّلٌ في الحدث.
+ */
+export async function setCommercialFields(params: {
+  followupId: number;
+  patch: CommercialPatch;
+  actor: Actor;
+  session: CommercialSessionLike;
+  asDoctor: boolean;
+  /** يتحقّق أن الخبير **فعّالٌ في فرع المريض** — ويُمرَّر فتبقى الطبقةُ نقيّة. */
+  validateExpert: (
+    expertUserId: number, branchId: number | null,
+  ) => Promise<{ ok: boolean; reason?: string }>;
+  /** لقطةُ اسمٍ للخبير — للعرض في السجلّ لا للقرار. */
+  expertLabel?: (expertUserId: number) => Promise<string | null>;
+  tx?: any;
+}): Promise<CommercialResult> {
+  const patch = params.patch ?? {};
+  const touchesPrice = patch.price !== undefined && patch.price !== null;
+  const touchesExpert = patch.expertUserId !== undefined && patch.expertUserId !== null
+    && patch.expertUserId !== "";
+  const decision = parsePurchaseDecision(patch.decision);
+  const touchesDecision = patch.decision !== undefined && patch.decision !== null
+    && patch.decision !== "";
+  if (touchesDecision && decision === null) {
+    throw new FollowupError("قرار الشراء يجب أن يكون «اشترى» أو «لم يشترِ»", 400);
+  }
+  if (!touchesPrice && !touchesExpert && !touchesDecision) {
+    throw new FollowupError("لا يوجد ما يُحفَظ", 400);
+  }
+
+  const body = async (tx: any): Promise<CommercialResult> => {
+    //  قفلٌ واحد للصفّ كلِّه — نقطةُ التسلسل لكلّ حقلٍ فيه.
+    const r = await tx.execute(sql`
+      SELECT ${SELECT_COLS} FROM post_exam_followups
+       WHERE id = ${params.followupId} FOR UPDATE
+    `);
+    const raw = (r.rows ?? [])[0];
+    if (!raw) throw new FollowupError("المتابعة غير موجودة", 404);
+    const cur = toRow(raw);
+    //  **والمنتهيةُ تُردّ برسالةٍ تدلّ على البابِ الصحيح** لا بـ«تغيّرت الحالة».
+    if (cur.status === "converted") throw new FollowupError(SEALED_MESSAGE, 409);
+    if (isTerminal(cur.status)) throw new FollowupError(CLOSED_MESSAGE, 409);
+    if (!COMMERCIAL_EDITABLE.includes(cur.status)) {
+      throw new FollowupError(CONFLICT, 409);
+    }
+
+    // ── ① المالكيةُ تُفحَص **قبل أيّ كتابة** ─────────────────────────────
+    const guard = (field: CommercialField, owner: FieldOwner | null,
+      ownerUserId: number | null, ownerName: string | null) => {
+      const allowed = canOverwriteCommercialField({
+        field: { owner, ownerUserId, ownerName }, session: params.session,
+      });
+      if (!allowed) throw new FollowupError(ownershipRefusal(field, ownerName), 403);
+    };
+    if (touchesPrice) guard("price", cur.priceOwner, cur.priceOwnerUserId, cur.priceOwnerName);
+    if (touchesExpert) guard("expert", cur.expertOwner, cur.expertOwnerUserId, cur.expertOwnerName);
+    if (touchesDecision) {
+      guard("decision", cur.purchaseDecisionOwner, cur.purchaseDecisionUserId,
+        cur.purchaseDecisionName);
+    }
+
+    // ── ② التحقّق ─────────────────────────────────────────────────────────
+    let offer: ReturnType<typeof computeCommercialOffer> | null = null;
+    if (touchesPrice) {
+      offer = computeCommercialOffer({
+        kind: patch.price?.kind,
+        originalPrice: patch.price?.originalPrice,
+        finalPrice: patch.price?.finalPrice,
+      });
+      if (!offer.ok) throw new FollowupError(offer.error ?? "سعر غير صالح", 400);
+    }
+    let expertId: number | null = null;
+    let expertName: string | null = null;
+    if (touchesExpert) {
+      expertId = Number(patch.expertUserId);
+      if (!Number.isInteger(expertId) || expertId <= 0) {
+        throw new FollowupError("الخبير غير صالح", 400);
+      }
+      //  **والفرعُ من صفّ المريض لا من الطلب**: `cur.branchId` هويّةٌ رسمية
+      //  كُتبت عند فتح المتابعة، ولا يُقبل فرعٌ يعلنه العميل.
+      const v = await params.validateExpert(expertId, cur.branchId);
+      if (!v.ok) throw new FollowupError(v.reason ?? "الخبير غير صالح لهذا الفرع", 400);
+      expertName = params.expertLabel ? await params.expertLabel(expertId) : null;
+    }
+    const reasonText = String(patch.notBoughtReason ?? "").trim();
+    if (decision === "not_bought" && !reasonText) {
+      throw new FollowupError("سبب عدم الشراء مطلوب", 400);
+    }
+
+    // ── ③ الكتابة ────────────────────────────────────────────────────────
+    //  **المالكيةُ تُكتب مرّةً**: الفارغُ يأخذ مالكَه الآن، والمملوكُ يبقى.
+    const newOwner = (existing: FieldOwner | null): FieldOwner =>
+      existing ?? (params.asDoctor ? "doctor" : "staff");
+    const changed: CommercialField[] = [];
+    const sets: any[] = [];
+
+    if (offer) {
+      changed.push("price");
+      const owner = newOwner(cur.priceOwner);
+      const keepOwner = cur.priceOwner !== null;
+      sets.push(sql`original_price = ${offer.originalPrice}`);
+      sets.push(sql`price_kind = ${offer.kind}`);
+      sets.push(sql`approved_price = ${offer.finalPrice}`);
+      //  `priceSource` القائم يبقى مصدرَ العرض القديم — والجديدُ يقول
+      //  «من المعاينة» للطبيب و«أُدخل عند إتمام البيع» للموظّفين، بلا
+      //  قيمةٍ جديدة في العمود فلا ينكسر قارئٌ قديم.
+      sets.push(sql`price_source = ${owner === "doctor" ? "exam" : "reception_set"}`);
+      if (!keepOwner) {
+        sets.push(sql`price_owner = ${owner}`);
+        sets.push(sql`price_owner_user_id = ${params.actor.userId}`);
+        sets.push(sql`price_owner_name = ${params.actor.userName}`);
+      }
+    }
+    if (expertId !== null) {
+      changed.push("expert");
+      const owner = newOwner(cur.expertOwner);
+      sets.push(sql`selected_expert_user_id = ${expertId}`);
+      if (cur.expertOwner === null) {
+        sets.push(sql`expert_owner = ${owner}`);
+        sets.push(sql`expert_owner_user_id = ${params.actor.userId}`);
+        sets.push(sql`expert_owner_name = ${params.actor.userName}`);
+      }
+    }
+    //  قرارُ «اشترى» يُختَم هنا. و«لم يشترِ» يُختَم مع الإغلاق أدناه، فلا
+    //  يوجد صفٌّ لحظةً واحدة يقول «لم يشترِ» وهو مفتوح.
+    if (decision === "bought") {
+      changed.push("decision");
+      const owner = newOwner(cur.purchaseDecisionOwner);
+      sets.push(sql`purchase_decision = 'bought'`);
+      sets.push(sql`purchase_decision_at = NOW()`);
+      if (cur.purchaseDecisionOwner === null) {
+        sets.push(sql`purchase_decision_owner = ${owner}`);
+        sets.push(sql`purchase_decision_user_id = ${params.actor.userId}`);
+        sets.push(sql`purchase_decision_name = ${params.actor.userName}`);
+      }
+      //  عودةٌ عن «لم يشترِ» تمسح سببَه: نصٌّ يقول «اختار مركزاً آخر» على
+      //  صفٍّ اشترى فيه المريضُ كذبٌ يبقى في السجلّ.
+      sets.push(sql`not_bought_reason_text = NULL`);
+    }
+
+    let row = raw;
+    if (sets.length > 0) {
+      const upd = await tx.execute(sql`
+        UPDATE post_exam_followups
+           SET ${sql.join(sets, sql`, `)}, updated_at = NOW()
+         WHERE id = ${cur.id} AND status = ${cur.status}
+        RETURNING ${SELECT_COLS}
+      `);
+      row = (upd.rows ?? [])[0];
+      if (!row) throw new FollowupError(CONFLICT, 409);
+    }
+    let next = toRow(row);
+
+    // ── ④ الحدث: **حقلٌ حقلاً، بقيمته القديمة والجديدة** ─────────────────
+    for (const field of changed) {
+      const payload: Record<string, unknown> = { field, asDoctor: params.asDoctor };
+      if (field === "price") {
+        payload.oldApprovedPrice = cur.approvedPrice;
+        payload.oldPriceKind = cur.priceKind;
+        payload.originalPrice = next.originalPrice;
+        payload.finalPrice = next.approvedPrice;
+        payload.priceKind = next.priceKind;
+        payload.owner = next.priceOwner;
+      } else if (field === "expert") {
+        payload.oldExpertUserId = cur.selectedExpertUserId;
+        payload.newExpertUserId = next.selectedExpertUserId;
+        payload.expertName = expertName;
+        payload.owner = next.expertOwner;
+      } else {
+        payload.oldDecision = cur.purchaseDecision;
+        payload.decision = "bought";
+        payload.owner = next.purchaseDecisionOwner;
+      }
+      await appendEvent(tx, {
+        followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+        eventType: "commercial_field_set", fromStatus: cur.status, toStatus: cur.status,
+        note: patch.note ?? null, payload, actor: params.actor,
+      });
+    }
+
+    // ── ⑤ «لم يشترِ» ⟶ إغلاقٌ بلا تصنيعٍ ولا كلفةٍ ولا دينار ──────────────
+    if (decision === "not_bought") {
+      const closed = await closeWithoutPurchase({
+        followupId: cur.id,
+        //  الرمزُ الموروث محايدٌ عمداً — لا يدّعي سبباً لم يُقَل.
+        reason: NOT_BOUGHT_LEGACY_REASON,
+        note: patch.note ?? null,
+        notBoughtReasonText: reasonText,
+        decisionOwner: newOwner(cur.purchaseDecisionOwner),
+        actor: params.actor, tx,
+      });
+      return {
+        followup: closed, missing: [], converted: false, workOrderId: null,
+        closed: true, changed: [...changed, "decision"],
+      };
+    }
+
+    // ── ⑥ اكتمل ⟶ **يُتمّ البيعَ بالدالّة القانونية نفسِها** ─────────────
+    const state = saleState({
+      priceKind: next.priceKind, expertUserId: next.selectedExpertUserId,
+    });
+    if (next.purchaseDecision === "bought" && state.ready) {
+      const out = await confirmPurchase({
+        followupId: cur.id, note: patch.note ?? null, actor: params.actor,
+        //  **البابُ الصريحُ للصفر**: `free` قرارٌ له صاحبٌ وسعرٌ أصليّ —
+        //  لا ملفٌّ لم يُسعَّر. والنوعُ هو ما يفرّق، لا الرقم.
+        allowFreeDonation: next.priceKind === "free",
+        tx,
+      });
+      return {
+        followup: out.followup, missing: [], converted: true,
+        workOrderId: out.workOrderId, closed: false, changed,
+      };
+    }
+
+    return {
+      followup: next, missing: state.missing, converted: false,
+      workOrderId: null, closed: false, changed,
+    };
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
+ * **هل هذا الفاعلُ هو طبيبُ معاينةِ هذه المتابعة بعينها؟**
+ *
+ * وهو الشرطُ الذي يجعل الكتابةَ «بوصفِ الطبيب» فتُقفَل على غيره. وطبيبٌ
+ * آخر — ولو بنفس الاختصاص — يكتب بوصفه موظّفاً: توقيعُ زميله ليس مسوّدةً
+ * له، ولا يجوز أن يُقفِل هو حقلاً على صاحب المعاينة.
+ *
+ * **ويُقرأ من `medical_exams.doctor_id`** — الرابطُ الذي كتبه التوقيع، لا
+ * من دورٍ في الجلسة.
+ */
+export async function isExamDoctorOf(
+  followupId: number, userId: number | null,
+): Promise<boolean> {
+  if (typeof userId !== "number") return false;
+  const r = await db.execute(sql`
+    SELECT 1 FROM post_exam_followups f
+      JOIN medical_exams e ON e.id = f.medical_exam_id
+     WHERE f.id = ${followupId} AND e.doctor_id = ${userId}
+     LIMIT 1
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
+/**
+ * **مسارُ العملية** لهذه المتابعة — `exam` / `no_exam` / `null`.
+ *
+ * يُقرأ من حلقة الجهاز (ترحيل ٠٦٥). و`null` تعني «حلقةٌ سابقةٌ للترحيل أو
+ * لا حلقة» — وتلك تبقى على أفعالها القديمة كلِّها فلا يُحبَس ملفٌّ قديم.
+ */
+export async function followupServicePath(followupId: number): Promise<string | null> {
+  const r = await db.execute(sql`
+    SELECT e.service_path FROM post_exam_followups f
+      JOIN patient_device_episodes e ON e.id = f.device_episode_id
+     WHERE f.id = ${followupId}
+  `);
+  const v = (r.rows ?? [])[0]?.service_path;
+  return typeof v === "string" ? v : null;
+}
+
+/** هل هذه المتابعةُ على مسار المعاينة الجديد؟ */
+export async function isExamPathFollowup(followupId: number): Promise<boolean> {
+  return (await followupServicePath(followupId)) === "exam";
 }
 
 // ── الطوابير ─────────────────────────────────────────────────────────────
