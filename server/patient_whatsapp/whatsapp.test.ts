@@ -677,8 +677,13 @@ async function main() {
       (editSrc.match(/.*whatsappNotificationsEnabled.*/g) ?? []).join(" | "));
     check(/form\.setValue\("whatsappNotificationsEnabled", e\.target\.checked\)/.test(editSrc),
       "ر.٣ ويُكتب في النموذج فيدخل حمولة الحفظ");
-    check(/mutate\(\{ id: patientId, data: values \}/.test(editSrc),
-      "ر.٤ **والحفظُ يرسل النموذجَ كاملاً** — فالحقلُ في حمولة PUT");
+    //  الحمولةُ صارت `data` مبنيّةً من `values` (ترحيل ٠٦٥ أضاف حقلاً واحداً
+    //  يُرسَل بلمسةٍ فقط)، **وحقولُ النموذج كلُّها ما زالت فيها** — وهو
+    //  الثابتُ الذي يحرسه هذا الفحص: رايةُ واتساب تبلغ PUT.
+    check(/const data: any = \{ \.\.\.values \};/.test(editSrc)
+      && /mutate\(\{ id: patientId, data \}/.test(editSrc),
+      "ر.٤ **والحفظُ يرسل النموذجَ كاملاً** — فالحقلُ في حمولة PUT",
+      (editSrc.match(/.*mutate\(\{ id: patientId.*/g) ?? []).join(" | "));
     //  ولا بابَ ثانٍ: البطاقةُ حالةٌ تُقرأ لا شاشةُ إدارة.
     check(!/checkbox|onChange|mutate|apiRequest/.test(cardSrc),
       "ر.٥ **والبطاقةُ بلا أيّ زرٍّ أو تبديل**", cardSrc.slice(0, 120));

@@ -27,7 +27,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import {
   SERVICE_PATHS, isServicePath, parseServicePath, examRequirementOf,
-  operationNeedsExam, NO_EXAM_PENDING_BOUNDARY,
+  operationNeedsExam, NO_EXAM_PENDING_BOUNDARY, parsePriorCenterHistory,
 } from "@shared/service_path";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -97,7 +97,7 @@ async function http(method: string, path: string, session: any, body?: any) {
 /** مريضٌ بـSQL خام — للحالات التي تحتاج تصنيفاً أو ختمَ إنشاءٍ بعينه. */
 async function mkPatient(label: string, opts: {
   classification?: string | null; support?: boolean; physio?: boolean;
-  prior?: boolean; branch?: number;
+  prior?: boolean | null; branch?: number;
 } = {}) {
   const r = await q<{ id: number }>(
     `INSERT INTO patients (name, phone, referral_source, age, height, weight,
@@ -108,7 +108,9 @@ async function mkPatient(label: string, opts: {
     [`${MARK} ${label}`, MARK, opts.branch ?? 1, opts.physio !== true,
       opts.support === true, opts.physio === true,
       opts.classification === undefined ? "new" : opts.classification,
-      opts.prior === true]);
+      //  **والغيابُ `NULL` لا `false`**: الصفُّ المصنوع بـSQL خام يحاكي ملفَّ
+      //  ما قبل ٠٦٥ — ولم يُسأل أحدٌ عنه، فلا جوابَ يُنسَب إليه.
+      opts.prior === undefined ? null : opts.prior]);
   return r[0].id;
 }
 async function mkCase(patientId: number, caseType = "prosthetic", branch = 1) {
@@ -270,6 +272,14 @@ async function main() {
         operationNeedsExam({ servicePath: null, legacyRuleRequiresExam: true }),
         operationNeedsExam({ servicePath: null, legacyRuleRequiresExam: false }),
       ], [true, false]);
+    //  ══ وتاريخُ المريض السابق **ثلاثيٌّ بالمبدأ نفسِه** ═══════════════════
+    //  `NULL` = لم يُسأل · `TRUE`/`FALSE` = جوابٌ صريح. وكلُّ ما ليس بولياناً
+    //  يُقرأ `null` — فلا يُنسَب جوابٌ إلى مَن لم يُعطِه.
+    same("٦أ. **والرايةُ ثلاثيةٌ: البوليانُ الصريح وحده جواب**",
+      [parsePriorCenterHistory(true), parsePriorCenterHistory(false),
+        parsePriorCenterHistory(null), parsePriorCenterHistory(undefined),
+        parsePriorCenterHistory("true"), parsePriorCenterHistory(1)],
+      [true, false, null, null, null, null]);
 
     // ══════════════════════════════════════════════════════════════════
     //  أ. التسجيل — بلا «جديد/قديم»، ومع رايةِ التاريخ السابق
@@ -288,7 +298,11 @@ async function main() {
       `SELECT patient_classification c, had_prior_center_history h FROM patients WHERE id=$1`,
       [id]))[0];
     same("٨. والخادمُ يختمه «جديد» — صدقاً وأماناً", (await rowOf(pA)).c, "new");
-    same("٩. **(ب) ورايةُ التاريخ السابق `false` بلا تأشير**", (await rowOf(pA)).h, false);
+    //  ══ **(ب) التسجيلُ الجديد يكتب بولياناً صريحاً — لا `NULL` صامتة** ═══
+    //  المربّعُ ظاهرٌ في النموذج، فحفظُه بلا تأشيرٍ جوابٌ حقيقيّ «لا» —
+    //  بخلاف الصفّ القديم الذي لم يُسأل أصلاً.
+    same("٩. **(ب) تسجيلٌ بلا تأشير ⟶ `false` صريحة لا `NULL`**",
+      (await rowOf(pA)).h, false);
 
     const regB = await http("POST", "/api/patients", S.recv, {
       ...regBody, name: `${MARK} سبق تعامله`, phone: "07701110002",
@@ -589,6 +603,61 @@ async function main() {
         (await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [p]))[0].n, 0);
     }
     // ══════════════════════════════════════════════════════════════════
+    //  س. **الرايةُ ثلاثيةٌ حيّاً** — و`NULL` لا تتحوّل `FALSE` بحفظٍ عابر
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── س. تاريخُ المريض السابق: ثلاثيةٌ صادقة ──");
+    {
+      const hOf = async (id: number) => (await q(
+        `SELECT had_prior_center_history h FROM patients WHERE id=$1`, [id]))[0].h;
+
+      //  (أ) ملفُّ ما قبل ٠٦٥ — لم يُسأل، فلا جوابَ له.
+      const legacy = await mkPatient("ملفٌّ لم يُسأل");
+      same("٤٧. **(أ) صفُّ ما قبل ٠٦٥ يبقى `NULL` — لا `FALSE` مُخترَعة**",
+        await hOf(legacy), null);
+
+      //  (د) وحفظُ تعديلٍ لا علاقةَ له بالسؤال **لا يكتب جواباً**.
+      same("٤٨. **(د) تعديلٌ عابر (عنوان) لا يمسّ الراية**",
+        (await http("PUT", `/api/patients/${legacy}`, S.admin,
+          { address: "عنوانٌ جديد" })).status, 200);
+      same("   والرايةُ ما زالت `NULL`", await hOf(legacy), null);
+      //  والشاشةُ تُرسل `null` للصفّ الذي لم يلمسه الموظّف — والخادمُ يُسقطها.
+      same("٤٩. **و`null` صريحة تُسقَط في الخادم — لا تُكتب `FALSE`**",
+        (await http("PUT", `/api/patients/${legacy}`, S.admin,
+          { hadPriorCenterHistory: null })).status, 200);
+      same("   والفراغُ بقي فراغاً", await hOf(legacy), null);
+      same("٥٠. **وقيمةٌ ليست بولياناً تُسقَط كذلك**",
+        (await http("PUT", `/api/patients/${legacy}`, S.admin,
+          { hadPriorCenterHistory: "true" })).status, 200);
+      same("   ولا تُكتب", await hOf(legacy), null);
+
+      //  (هـ) ولمسُ الموظّف **هو** ما يجعلها جواباً — في الاتجاهين.
+      same("٥١. **(هـ) وتأشيرٌ متعمَّد يجعلها `TRUE`**",
+        (await http("PUT", `/api/patients/${legacy}`, S.admin,
+          { hadPriorCenterHistory: true })).status, 200);
+      same("   والقيمةُ حُفظت", await hOf(legacy), true);
+      same("٥٢. **وإزالتُه المتعمَّدة تجعلها `FALSE` صريحة**",
+        (await http("PUT", `/api/patients/${legacy}`, S.admin,
+          { hadPriorCenterHistory: false })).status, 200);
+      same("   والقيمةُ حُفظت", await hOf(legacy), false);
+
+      //  (ح) والتصنيفُ التاريخيّ لم يتغيّر بشيءٍ من هذا كلّه.
+      const classic = await mkPatient("تصنيفٌ محفوظ", { classification: "past" });
+      await http("PUT", `/api/patients/${classic}`, S.admin, { address: "ع" });
+      await http("PUT", `/api/patients/${classic}`, S.admin, { hadPriorCenterHistory: true });
+      same("٥٣. **(ح) والتصنيفُ التاريخيّ يبقى كما هو بعد كلّ ذلك**",
+        (await q(`SELECT patient_classification c FROM patients WHERE id=$1`, [classic]))[0].c,
+        "past");
+
+      //  ══ **والتصنيفُ لا يحكم عمليةً لها مسارٌ صريح** ═════════════════════
+      const decided = await mkPatient("قديمٌ بمسارٍ صريح", { classification: "past" });
+      await mkCase(decided, "prosthetic");
+      const ep = await http("POST", `/api/patients/${decided}/device-episodes`, S.recv,
+        { serviceType: "prosthetic", requestedItem: "full_device", servicePath: "exam" });
+      same("٥٤. **وتصنيفُ «قديم» لا يُعفي عمليةً مسارُها `exam`**",
+        [ep.status, (await pendingOf(S.recv, decided)).pending], [201, ["prosthetic"]]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  ن. **عقدُ الشاشات** — ما يراه الموظّفُ فعلاً
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ن. عقدُ الشاشات ──");
@@ -609,12 +678,27 @@ async function main() {
         && create.includes("PRIOR_CENTER_HISTORY_HINT"),
         "   بنصٍّ من المصدر المشترك لا مكتوبٍ مرّتين");
 
-      //  **وبابُ التصحيح الإداريّ لم يُغلَق**: الصفوفُ التاريخية تحتاج مَن
-      //  يصنّفها، والملفُّ يُصحَّح من «تعديل مريض» كما كان دائماً.
-      check(/name="patientClassification"/.test(edit),
-        "٤٣. **(ل) و«تعديل مريض» يبقى بابَ التصنيف التاريخيّ**");
+      //  ══ **(ز) ولا «جديد/قديم» في «تعديل مريض» أيضاً** ═══════════════
+      //  إبقاؤه هناك كان يُبقي التناقضَ قائماً: حقلٌ يقول شيئاً ويفعل آخر،
+      //  يراه الموظّفُ نفسُه في شاشةٍ ثانية. والقيمةُ التاريخية تبقى في
+      //  القاعدة **مقروءةً للتقارير** — ولا تُعرَض ولا تُعدَّل في مسار العمل.
+      check(!/name="patientClassification"/.test(edit),
+        "٤٣أ. **(ز) و«تعديل مريض» لم يعد يعرض «جديد/قديم»**");
+      check(!edit.includes("select-patient-classification"),
+        "   ولا منتقيَ تصنيفٍ فيه إطلاقاً");
       check(edit.includes("checkbox-prior-center-history"),
-        "   وفيه مربّعُ التاريخ السابق كذلك — لرايةٍ بلا بابِ تصحيحٍ فخّ");
+        "٤٣ب. وفيه مربّعُ التاريخ السابق — بابُ تصحيحِ الواقعة الإدارية");
+      //  **والصفُّ الذي لم يُسأل يقول ذلك بالعربية** لا يُعرَض «لا».
+      check(edit.includes("PRIOR_CENTER_HISTORY_UNKNOWN_LABEL")
+        && edit.includes("text-prior-center-history-unknown"),
+        "٤٣ج. **ويُعرَض «غير محدد — سجل قديم» لصفٍّ لم يُسأل**");
+      //  **ولا يُرسَل الحقلُ إلّا إن لمسه الموظّف** — وهو ما يمنع تحويلَ
+      //  `NULL` إلى `FALSE` بحفظِ تعديلٍ لا علاقةَ له بالسؤال.
+      check(/if \(priorTouched\) data\.hadPriorCenterHistory = priorHistory === true;/
+        .test(edit),
+        "٤٣د. **ولا يُرسَل إلّا بلمسةٍ من الموظّف — لا انعكاساً من النموذج**");
+      check(!/hadPriorCenterHistory: false,/.test(edit),
+        "   ولا يحمله النموذجُ في افتراضاته فيُرسَل مع كلّ حفظ");
 
       check(modal.includes("select-service-path")
         && modal.includes("SERVICE_PATH_QUESTION"),

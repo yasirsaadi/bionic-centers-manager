@@ -93,8 +93,14 @@ export const patients = pgTable("patients", {
    * ولا حلقةً مسلَّمة · ولا شراءً مؤكَّداً · ولا استثناءً في مسار العمل.
    * ولا يُشتقّ منها صفٌّ واحد في أيّ جدولٍ آخر — التفاصيلُ في
    * `shared/service_path.ts`.
+   *
+   * **ثلاثيةٌ كـ`servicePath`**: `NULL` = لم يُسأل (صفٌّ سابقٌ للترحيل) ·
+   * `TRUE`/`FALSE` = جوابٌ صريحٌ من الموظّف. و`FALSE` **ليست فراغاً**:
+   * ختمُها على صفٍّ قديم يقول «نعلم أنه لم يتعامل معنا» — وهذا كذب.
+   * والتسجيلُ الجديد يكتب بولياناً صريحاً دائماً، والتعديلُ لا يكتب إلّا
+   * بولياناً صريحاً (نقطةُ الخنق في `PUT /api/patients/:id`).
    */
-  hadPriorCenterHistory: boolean("had_prior_center_history").notNull().default(false),
+  hadPriorCenterHistory: boolean("had_prior_center_history"),
   generalNotes: text("general_notes"),
   
   // Branch tracking

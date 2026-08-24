@@ -10,6 +10,7 @@ import {
 } from "@shared/patient_required";
 import {
   PRIOR_CENTER_HISTORY_LABEL, PRIOR_CENTER_HISTORY_HINT,
+  PRIOR_CENTER_HISTORY_UNKNOWN_LABEL, parsePriorCenterHistory,
 } from "@shared/service_path";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useParams, useLocation, useSearch } from "wouter";
@@ -130,12 +131,22 @@ export default function EditPatient() {
   // component's placeholder defaults. Effects that write flags must wait for it.
   const [formLoaded, setFormLoaded] = useState(false);
 
+  // ══ **تاريخُ المريض السابق — ثلاثيّ، وخارجَ النموذج عن قصد** ═════════════
+  //  النموذجُ يرسل كائنَه **كاملاً** في كل حفظ. فلو كان هذا الحقلُ فيه لكان
+  //  ملفٌّ قديمٌ قيمتُه `NULL` («لم يُسأل») يُكتب `FALSE` («نعلم أنه لم
+  //  يتعامل معنا») بمجرّد تصحيح رقم هاتفه — جوابٌ يُنسَب إلى موظّفٍ لم يقله.
+  //
+  //  فحالةٌ محلّيةٌ تحفظ الثلاثيةَ كما هي، **ورايةُ لمسٍ** تقرّر الإرسال:
+  //  لم يُلمَس ⟶ الحقلُ **لا يُرسَل أصلاً** · لُمِس ⟶ بوليانٌ صريح.
+  //  والخادمُ يعيد فرضَ القاعدة نفسِها (يُسقط ما ليس بولياناً).
+  const [priorHistory, setPriorHistory] = useState<boolean | null>(null);
+  const [priorTouched, setPriorTouched] = useState(false);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       //  **القيمةُ الابتدائية من صفّ المريض** — تُملأ في `reset` أدناه.
       whatsappNotificationsEnabled: false,
-      hadPriorCenterHistory: false,
       name: "",
       phone: "",
       address: "",
@@ -151,7 +162,7 @@ export default function EditPatient() {
       totalCost: 0,
       injuryDate: "",
       injuryCause: "",
-      patientClassification: "",
+
       generalNotes: "",
       prostheticType: "",
       siliconType: "",
@@ -169,6 +180,13 @@ export default function EditPatient() {
   });
 
   useEffect(() => {
+    if (!patient) return;
+    //  الثلاثيةُ كما في الصفّ — ولا تُحوَّل `NULL` إلى `false` عند العرض.
+    setPriorHistory(parsePriorCenterHistory((patient as any).hadPriorCenterHistory));
+    setPriorTouched(false);
+  }, [patient]);
+
+  useEffect(() => {
     if (patient) {
       form.reset({
         name: patient.name,
@@ -176,9 +194,6 @@ export default function EditPatient() {
         //  من بيانات المريض الحالية، لا افتراضاً: ملفٌّ قديمٌ مطفأ يبقى مطفأً
         //  حتى يؤشّرها الموظّف بنفسه — ولا يُرفع بمجرّد فتح النموذج.
         whatsappNotificationsEnabled: (patient as any).whatsappNotificationsEnabled === true,
-        //  من صفّ المريض لا افتراضاً: ملفٌّ لم يُؤشَّر يبقى غيرَ مؤشَّر حتى
-        //  يقرّر الموظّفُ خلافَ ذلك.
-        hadPriorCenterHistory: (patient as any).hadPriorCenterHistory === true,
         address: patient.address || "",
         age: patient.age,
         weight: patient.weight || "",
@@ -194,7 +209,7 @@ export default function EditPatient() {
         totalCost: patient.totalCost || 0,
         injuryDate: patient.injuryDate || "",
         injuryCause: patient.injuryCause || "",
-        patientClassification: patient.patientClassification || "",
+
         generalNotes: patient.generalNotes || "",
         prostheticType: patient.prostheticType || "",
         siliconType: patient.siliconType || "",
@@ -334,7 +349,11 @@ export default function EditPatient() {
         return;
       }
     }
-    mutate({ id: patientId, data: values }, {
+    //  **الحقلُ لا يُرسَل إلّا إن لمسه الموظّف** — فحفظُ تعديلٍ لا علاقةَ له
+    //  بالسؤال يترك الفراغَ فراغاً. (والخادمُ يُسقط ما ليس بولياناً كذلك.)
+    const data: any = { ...values };
+    if (priorTouched) data.hadPriorCenterHistory = priorHistory === true;
+    mutate({ id: patientId, data }, {
       onSuccess: () => {
         setLocation(`/patients/${patientId}${branchParam}`);
       },
@@ -443,13 +462,27 @@ export default function EditPatient() {
                       <input
                         type="checkbox"
                         className="mt-0.5 h-4 w-4"
-                        checked={form.watch("hadPriorCenterHistory") === true}
-                        onChange={(e) =>
-                          form.setValue("hadPriorCenterHistory", e.target.checked)}
+                        checked={priorHistory === true}
+                        onChange={(e) => {
+                          //  **اللمسُ هو ما يجعل القيمةَ جواباً.**
+                          setPriorTouched(true);
+                          setPriorHistory(e.target.checked);
+                        }}
                         data-testid="checkbox-prior-center-history"
                       />
                       <span className="text-xs leading-relaxed">
                         <span className="font-medium">{PRIOR_CENTER_HISTORY_LABEL}</span>
+                        {/*  ══ **والصفُّ الذي لم يُسأل يقول ذلك** ══════════════
+                            «غير مؤشَّر» على ملفٍّ قديم كانت تُقرأ «لم يتعامل
+                            معنا»، والحقيقةُ أننا لم نسأله. فيُقال ما هو. */}
+                        {priorHistory === null && !priorTouched && (
+                          <span
+                            className="block mt-0.5 font-medium text-amber-700"
+                            data-testid="text-prior-center-history-unknown"
+                          >
+                            {PRIOR_CENTER_HISTORY_UNKNOWN_LABEL}
+                          </span>
+                        )}
                         <span className="block text-muted-foreground mt-0.5">
                           {PRIOR_CENTER_HISTORY_HINT}
                         </span>
@@ -958,30 +991,6 @@ export default function EditPatient() {
                       <FormControl>
                         <MoneyInput value={field.value ?? ""} onValueChange={field.onChange} className="bg-slate-50" placeholder="0" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {patient?.branchId && (
-                <FormField
-                  control={form.control}
-                  name="patientClassification"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t.patientForm.patientClassification}</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""}>
-                        <FormControl>
-                          <SelectTrigger className="bg-white" data-testid="select-patient-classification-edit">
-                            <SelectValue placeholder={t.patientForm.selectClassification} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="new">{t.patientForm.newPatient}</SelectItem>
-                          <SelectItem value="past">{t.patientForm.pastPatient}</SelectItem>
-                        </SelectContent>
-                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
