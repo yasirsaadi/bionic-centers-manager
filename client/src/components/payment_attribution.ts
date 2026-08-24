@@ -106,3 +106,22 @@ export const PAYMENT_CASE_QUESTION = "هذه الدفعة تخص أي حالة؟
 export function showsTreatmentTypes(a: PaymentAttribution): boolean {
   return a.mode === "physio" || a.mode === "unknown";
 }
+
+// ══ قفلُ حقل المبلغ يتبع **هذه الدفعة** لا كلَّ خدمةٍ حملها المريضُ يوماً
+// (حادثة إنتاج) ═══════════════════════════════════════════════════════════
+// مريضٌ يحمل علاجاً طبيعياً **و**أطرافاً معاً: النافذةُ كانت تقفل حقلَ
+// المبلغ لمجرّد أنّ العلمَ المرَضيّ `isPhysiotherapy=true` على ملفّه —
+// حتى حين تختار الاستقبالُ صراحةً «أطراف صناعية» لهذه الدفعة بعينها. فتظهر
+// الكتابةُ بصرياً بلا أن يظهر رقم: حقلٌ للقراءة فقط لا يقبل شيئاً.
+//
+// والقفلُ يجب أن يتبع **حالةَ هذه الدفعة المحسومة** (`resolvedCase`) لا
+// العلمَ التاريخيّ على المريض. فقط حين تكون الحالةُ «علاج طبيعي» فعلاً —
+// وحينها فقط إن لم تختر الاستقبالُ بندَ أطراف/مساند يدويّاً ضمن الجلسات
+// (`hasManualType`، لمريضِ العلاج الطبيعي العائد لتسديد رصيد جهازٍ قديم) —
+// يبقى المبلغُ محسوباً تلقائياً ومحمياً من غير المسؤول.
+export function isAutoPricedPhysiotherapyAmount(
+  resolvedCase: DeviceCaseType | "physiotherapy" | null,
+  hasManualType: boolean,
+): boolean {
+  return resolvedCase === "physiotherapy" && !hasManualType;
+}

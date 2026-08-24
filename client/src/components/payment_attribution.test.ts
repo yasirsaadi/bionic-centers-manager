@@ -13,7 +13,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   paymentAttribution, showsTreatmentTypes, PAYMENT_CASE_QUESTION,
-  CASE_PAYMENT_TAG, CASE_LABEL,
+  CASE_PAYMENT_TAG, CASE_LABEL, isAutoPricedPhysiotherapyAmount,
 } from "./payment_attribution";
 
 let failures = 0;
@@ -123,6 +123,99 @@ console.log("\n── عقد النافذة ──");
   check("٢٦. **والوسمُ يُشتقّ من الحالة حين تُخفى القائمة**",
     src.includes("CASE_PAYMENT_TAG[resolvedCase]"),
     (src.match(/.*autoTag.*/g) ?? []).join("\n"));
+}
+
+// ── ٧. **قفلُ المبلغ يتبع الدفعةَ لا تاريخَ المريض** (حادثة إنتاج) ──────
+// مريضٌ يحمل علاجاً طبيعياً وأطرافاً معاً: كان حقلُ المبلغ يُقفَل في دفعة
+// أطرافه لمجرّد أنّ isPhysiotherapy=true على ملفّه، رغم اختيار الاستقبال
+// الصريح لحالة «أطراف صناعية» لهذه الدفعة بعينها.
+console.log("\n── قفلُ مبلغ الدفعة (isAutoPricedPhysiotherapyAmount) ──");
+
+//  حالةٌ محسومة (auto) أو مُجابةٌ (ask+askedCase) — كما يشتقّها المكوّن.
+function resolvedCaseOf(
+  a: ReturnType<typeof paymentAttribution>, askedCase: string,
+): "prosthetic" | "medical_support" | "physiotherapy" | null {
+  return a.mode === "auto" ? a.caseType
+    : a.mode === "physio" ? "physiotherapy"
+      : a.mode === "ask" && askedCase ? (askedCase as any) : null;
+}
+
+//  ── المريضُ المختلط: علاجٌ طبيعي + أطراف — هو المريضُ الحقيقيّ على
+//     الإنتاج الذي فتح هذا العطب.
+{
+  const mixed = paymentAttribution({ isPhysiotherapy: true, isAmputee: true });
+  same("٢٧. **مختلطٌ (علاج طبيعي+أطراف) ⟶ يُسأل**", mixed.mode, "ask");
+  const resolved = resolvedCaseOf(mixed, "prosthetic");
+  same("٢٨. **واختيارُ «أطراف صناعية» يحسم الحالة**", resolved, "prosthetic");
+  check("٢٩. **فحقلُ المبلغ ليس محميّاً — الاستقبالُ يكتب يدوياً**",
+    !isAutoPricedPhysiotherapyAmount(resolved, false),
+    `isAutoPricedPhysiotherapyAmount("${resolved}", false)`);
+}
+
+//  ── مختلطٌ: علاجٌ طبيعي + مساند — نفسُ القاعدة على الحالة الأخرى.
+{
+  const mixed = paymentAttribution({ isPhysiotherapy: true, isMedicalSupport: true });
+  const resolved = resolvedCaseOf(mixed, "medical_support");
+  same("٣٠. **واختيارُ «مساند طبية» يحسمها كذلك**", resolved, "medical_support");
+  check("٣١. **فالمبلغُ يدويٌّ هنا أيضاً**",
+    !isAutoPricedPhysiotherapyAmount(resolved, false));
+}
+
+//  ── ونفسُ المريض المختلط، لو اختار الاستقبالُ «علاج طبيعي» — يبقى محمياً
+//     كما كان، بلا تغيير في سلوك التسعير التلقائي.
+{
+  const mixed = paymentAttribution({ isPhysiotherapy: true, isAmputee: true });
+  const resolved = resolvedCaseOf(mixed, "physiotherapy");
+  same("٣٢. **واختيارُ «علاج طبيعي» من نفس المريض المختلط**", resolved, "physiotherapy");
+  check("٣٣. **يبقى المبلغُ محمياً — سلوكُ العلاج الطبيعي كما هو**",
+    isAutoPricedPhysiotherapyAmount(resolved, false));
+}
+
+//  ── علاجٌ طبيعي خالص: يبقى محمياً كما كان قبل هذا التصحيح.
+{
+  const pure = paymentAttribution({ isPhysiotherapy: true });
+  const resolved = resolvedCaseOf(pure, "");
+  same("٣٤. **علاجٌ طبيعي خالص ⟶ الحالةُ معروفة تلقائياً**", resolved, "physiotherapy");
+  check("٣٥. **ومبلغُه محميٌّ لغير المسؤول كما قبل التصحيح**",
+    isAutoPricedPhysiotherapyAmount(resolved, false));
+  //  إلّا حين يختار الاستقبالُ بنداً يدوياً (أطراف/مساند) ضمن جلساته —
+  //  تسديدُ رصيدٍ قديم لمريضٍ علاجه الحاليّ طبيعيّ.
+  check("٣٦. **إلّا حين يحمل بنداً يدوياً (رصيدٌ قديم) — فيُفتَح**",
+    !isAutoPricedPhysiotherapyAmount(resolved, true));
+}
+
+//  ── أطرافٌ خالصةٌ: لم تكن محميّةً قبل التصحيح، وتبقى كذلك.
+{
+  const pure = paymentAttribution({ isAmputee: true });
+  const resolved = resolvedCaseOf(pure, "");
+  same("٣٧. **أطرافٌ خالصةٌ ⟶ الحالةُ معروفة تلقائياً**", resolved, "prosthetic");
+  check("٣٨. **ومبلغُها لم يكن محمياً ويبقى كذلك**",
+    !isAutoPricedPhysiotherapyAmount(resolved, false));
+}
+
+//  ── ملفٌّ بلا حالةٍ محسومة بعد (لم يُسأل السؤالُ أو لم يُجَب بعد): لا
+//     قفل — الإرسالُ نفسُه يُمنَع بسؤال منفصل (attribution.mode === "ask").
+check("٣٩. **وبلا حالةٍ محسومة (null) — لا قفل**",
+  !isAutoPricedPhysiotherapyAmount(null, false));
+
+//  ── وقاعدةُ الإداري: هذه الدالّةُ لا تعرف شيئاً عن isAdmin — القفلُ
+//     الفعليّ في الشاشة `!isAdmin && amountIsAutoPricedPhysio`، فالمسؤولُ
+//     يبقى قادراً على الكتابة دائماً بصرف النظر عن نتيجة هذه الدالّة.
+console.log("\n── عقدُ الربط في النافذة (readOnly) ──");
+{
+  const src = readFileSync(join(import.meta.dirname, "./PaymentModal.tsx"), "utf8");
+  check("٤٠. **النافذةُ تستورد `isAutoPricedPhysiotherapyAmount` ولا تكرّر القاعدة**",
+    src.includes("isAutoPricedPhysiotherapyAmount"));
+  check("٤١. **وحقلُ القفل القديم (العلمُ التاريخيّ) لم يعد يحرس شيئاً**",
+    !/readOnly=\{!isAdmin && isPhysiotherapy === true/.test(src),
+    (src.match(/readOnly=\{.*\}/g) ?? []).join("\n"));
+  check("٤٢. **وحقلُ `readOnly` مربوطٌ بمتغيّرٍ واحدٍ يشتقّ من الدالّة المشتركة**",
+    /readOnly=\{!isAdmin && amountIsAutoPricedPhysio\}/.test(src));
+  check("٤٣. **والمسؤولُ يتجاوز القفلَ دائماً** (`!isAdmin &&` تسبق الشرط)",
+    /readOnly=\{!isAdmin && amountIsAutoPricedPhysio\}/.test(src));
+  //  ولا نسخةَ ثانية من هذه القاعدة متفرّقة في المكوّن — استدعاءٌ واحد فقط.
+  const calls = (src.match(/isAutoPricedPhysiotherapyAmount\(/g) ?? []).length;
+  same("٤٤. **واستدعاءٌ واحدٌ فقط للدالّة — لا نسخةَ موازية**", calls, 1);
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);

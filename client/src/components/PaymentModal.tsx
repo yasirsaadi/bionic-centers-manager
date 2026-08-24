@@ -10,7 +10,8 @@ import {
 import { deviceServiceOfPaymentType } from "@shared/device_attribution";
 import {
   paymentAttribution, showsTreatmentTypes, PAYMENT_CASE_QUESTION,
-  CASE_PAYMENT_TAG, CASE_LABEL, type DeviceCaseType,
+  CASE_PAYMENT_TAG, CASE_LABEL, isAutoPricedPhysiotherapyAmount,
+  type DeviceCaseType,
 } from "@/components/payment_attribution";
 import {
   Dialog,
@@ -228,6 +229,13 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   // Whether any selected entry is a manual-amount (أطراف/مساند) type — used to
   // keep the amount field editable and hide session inputs.
   const hasManualType = treatmentEntries.some(e => MANUAL_AMOUNT_TYPES.has(e.treatmentType));
+
+  //  ══ **قفلُ المبلغ يتبع دفعةَ اليوم لا تاريخَ المريض كلَّه** ═══════════
+  //  مريضٌ يحمل علاجاً طبيعياً **و**أطرافاً معاً كان يُقفَل حقلُ المبلغ في
+  //  دفعة أطرافه لمجرّد أنّ العلم المرَضيّ isPhysiotherapy=true على ملفّه —
+  //  فتظهر الكتابةُ بصرياً بلا أن يظهر رقم (حادثة إنتاج). والقاعدةُ في
+  //  `payment_attribution` وحدها كي تُختبَر ولا تتكرّر هنا.
+  const amountIsAutoPricedPhysio = isAutoPricedPhysiotherapyAmount(resolvedCase, hasManualType);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     //  غموضٌ حقيقيّ بلا جواب: يُسأل ولا يُخمَّن.
@@ -508,10 +516,10 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
                   <FormLabel>{t.modals.paidAmount}</FormLabel>
                   <FormControl>
                     <MoneyInput
-                      className={`${!isAdmin && isPhysiotherapy === true && !hasManualType ? "bg-muted" : ""}`}
+                      className={`${!isAdmin && amountIsAutoPricedPhysio ? "bg-muted" : ""}`}
                       placeholder={t.modals.enterAmount}
                       data-testid="input-payment-amount"
-                      readOnly={!isAdmin && isPhysiotherapy === true && !hasManualType}
+                      readOnly={!isAdmin && amountIsAutoPricedPhysio}
                       value={field.value === 0 ? "" : field.value}
                       onValueChange={(n) => {
                         field.onChange(n);
