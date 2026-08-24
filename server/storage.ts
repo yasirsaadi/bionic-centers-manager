@@ -34,7 +34,10 @@ import {
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
 } from "@shared/schema";
-import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } from "drizzle-orm";
+//  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨). الشرحُ في الملفّ نفسِه.
+import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
@@ -407,6 +410,8 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
 
   const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
   if (!existing) throw new Error("المريض غير موجود");
+  //  **ولا عملَ على ملفٍّ في السلّة** (ترحيل ٠٦٨) — بابُه الاستعادة.
+  if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
 
   // One active order per (patient, service) — enforced INSIDE the
   // transaction (plus the partial unique index from migration 021), so two
@@ -599,6 +604,7 @@ export async function loadDeviceSaleOperationTx(tx: any, params: {
 }): Promise<DeviceSaleOperation> {
   const [existing] = await tx.select().from(patients).where(eq(patients.id, params.patientId));
   if (!existing) throw new DeviceEpisodeError("المريض غير موجود", 404);
+  if (existing.deletedAt) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
 
   // ══ **الحلقةُ بمعرّفها لا بـ«المفتوحة»** ═════════════════════════════
   //  «العمليةُ تمضي والمالُ ينتظر» يعني أن الجزءَ قد يُصنَّع **ويُسلَّم**
@@ -820,23 +826,27 @@ export class DatabaseStorage implements IStorage {
   // Windowed reads for the detailed financial report: only rows since
   // `cutoff` (null = full history). Keeps that report fast as data grows.
   async getPatientsSince(branchId: number, cutoff: Date | null): Promise<Patient[]> {
-    const conds = [eq(patients.branchId, branchId)];
+    const conds = [eq(patients.branchId, branchId), activePatientDrizzle()];
     if (cutoff) conds.push(gte(patients.createdAt, cutoff));
     return await db.select().from(patients).where(and(...conds)).orderBy(desc(patients.createdAt));
   }
+  //  **ومالُ المحذوف يخرج من كلّ قارئٍ تشغيليّ** (ترحيل ٠٦٨): الدفعةُ
+  //  والزيارةُ وقيدُ الكلفة صفوفٌ باقيةٌ بايتاً، لكنها تُصفّى **بانضمامها
+  //  إلى صفّ المريض** — فلا نسخةَ ثانية من حالة الحذف تنتشر في الجداول.
   async getPaymentsByBranchSince(branchId: number, cutoff: Date | null): Promise<Payment[]> {
-    const conds = [eq(payments.branchId, branchId)];
+    const conds = [eq(payments.branchId, branchId), belongsToActivePatientSql("payments")];
     if (cutoff) conds.push(gte(payments.date, cutoff));
     return await db.select().from(payments).where(and(...conds)).orderBy(desc(payments.date));
   }
   async getVisitsByBranchSince(branchId: number, cutoff: Date | null): Promise<Visit[]> {
-    const conds = [eq(visits.branchId, branchId), isNull(visits.deletedAt)];
+    const conds = [eq(visits.branchId, branchId), isNull(visits.deletedAt),
+      belongsToActivePatientSql("visits")];
     if (cutoff) conds.push(gte(visits.visitDate, cutoff));
     return await db.select().from(visits).where(and(...conds)).orderBy(desc(visits.visitDate));
   }
   // Dated cost-ledger rows for the daily report window (migration 033).
   async getCostEntriesByBranchSince(branchId: number, cutoff: Date | null) {
-    const conds = [eq(costEntries.branchId, branchId)];
+    const conds = [eq(costEntries.branchId, branchId), belongsToActivePatientSql("cost_entries")];
     if (cutoff) conds.push(gte(costEntries.createdAt, cutoff));
     return await db.select().from(costEntries).where(and(...conds)).orderBy(desc(costEntries.createdAt));
   }
@@ -847,7 +857,9 @@ export class DatabaseStorage implements IStorage {
     const rows = await db.select({
       patientId: payments.patientId,
       total: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
-    }).from(payments).where(inArray(payments.patientId, ids)).groupBy(payments.patientId);
+    }).from(payments)
+      .where(and(inArray(payments.patientId, ids), belongsToActivePatientSql("payments")))
+      .groupBy(payments.patientId);
     return new Map(rows.map((r) => [r.patientId, Number(r.total)]));
   }
   // Whole-history totals for a branch via SQL aggregates (no row loading).
@@ -855,8 +867,10 @@ export class DatabaseStorage implements IStorage {
     totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number;
   }> {
     const [pat, pay] = await Promise.all([
-      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(total_cost),0)::bigint AS s FROM patients WHERE branch_id = ${branchId}`),
-      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount),0)::bigint AS s FROM payments WHERE branch_id = ${branchId}`),
+      //  **والمحذوفُ خارج المجاميع** (ترحيل ٠٦٨): ملفٌّ أخرجه المالكُ من
+      //  النظام لا يبقى دَينُه في «إجمالي التكاليف» ولا مدفوعُه في الوارد.
+      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(total_cost),0)::bigint AS s FROM patients WHERE branch_id = ${branchId} AND deleted_at IS NULL`),
+      db.execute(sql`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount),0)::bigint AS s FROM payments pay WHERE pay.branch_id = ${branchId} AND ${belongsToActivePatientSql("pay")}`),
     ]);
     const p = pat.rows[0] as any, y = pay.rows[0] as any;
     return {
@@ -867,9 +881,23 @@ export class DatabaseStorage implements IStorage {
 
   async getPatients(branchId?: number): Promise<Patient[]> {
     if (branchId) {
-      return await db.select().from(patients).where(eq(patients.branchId, branchId)).orderBy(desc(patients.createdAt));
+      return await db.select().from(patients)
+        .where(and(eq(patients.branchId, branchId), activePatientDrizzle()))
+        .orderBy(desc(patients.createdAt));
     }
-    return await db.select().from(patients).orderBy(desc(patients.createdAt));
+    return await db.select().from(patients).where(activePatientDrizzle()).orderBy(desc(patients.createdAt));
+  }
+
+  /**
+   * **السلّة** (ترحيل ٠٦٨) — الأحدثُ حذفاً أوّلاً، ضمن الفرع أو كلِّ الفروع.
+   *
+   * وهي القارئُ الوحيد الذي يقلب الشرط عمداً. `branchId` غيابُه = كلُّ
+   * الفروع (المسؤولُ العام)، ووجودُه نطاقُ مديرِ الفرع أو الطبيب.
+   */
+  async getTrashedPatients(branchId?: number): Promise<Patient[]> {
+    const conds = [isNotNull(patients.deletedAt)];
+    if (branchId) conds.push(eq(patients.branchId, branchId));
+    return await db.select().from(patients).where(and(...conds)).orderBy(desc(patients.deletedAt));
   }
 
   // Batch-fetch by ID set — used by display-time inference paths that
@@ -877,7 +905,8 @@ export class DatabaseStorage implements IStorage {
   // for a known list of payments to avoid an N+1 lookup.
   async getPatientsByIds(ids: number[]): Promise<Patient[]> {
     if (ids.length === 0) return [];
-    return await db.select().from(patients).where(inArray(patients.id, ids));
+    return await db.select().from(patients)
+      .where(and(inArray(patients.id, ids), activePatientDrizzle()));
   }
 
   // Independent cases for a patient (Phase 1). Each row is one specialty with
@@ -1236,6 +1265,7 @@ export class DatabaseStorage implements IStorage {
     const body = async (tx: any) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
+      if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
       // Remember HOW MANY sessions were sold, not just their price (036). The
       // page's counter measures visits against this; before it existed the
       // counts were computed, charged for, and then discarded — so a priced
@@ -1330,7 +1360,26 @@ export class DatabaseStorage implements IStorage {
     return primary;
   }
 
+  /**
+   * **المريضُ الفعّال وحده** (ترحيل ٠٦٨) — نقطةُ الخنق التي تُخرج الملفَّ
+   * المحذوفَ من كلّ مسارٍ تشغيليّ دفعةً واحدة.
+   *
+   * إحدى وثلاثون نقطةً تنادي هذه الدالّة قبل أن تقرأ أو تكتب: الزيارةُ
+   * والدفعةُ والمعاينةُ وأمرُ التصنيع والوثيقةُ والخدمةُ الجديدة. فتصفيةُ
+   * الشرط هنا تكفي، **ولا يُترَك لكلّ نقطةٍ أن تتذكّره بنفسها**.
+   *
+   * ومَن أراد الصفَّ **مهما كانت حالته** — السلّةُ والاستعادةُ والحذفُ
+   * النهائيّ ولقطةُ التدقيق — ينادي `getPatientAnyState` صراحةً. فالاستثناءُ
+   * يُطلَب باسمه ولا يُنال بالسهو.
+   */
   async getPatient(id: number, tx?: any): Promise<Patient | undefined> {
+    const [patient] = await (tx ?? db).select().from(patients)
+      .where(and(eq(patients.id, id), activePatientDrizzle()));
+    return patient;
+  }
+
+  /** الصفُّ كما هو — محذوفاً كان أو فعّالاً. **لمسارِ السلّة وحده.** */
+  async getPatientAnyState(id: number, tx?: any): Promise<Patient | undefined> {
     const [patient] = await (tx ?? db).select().from(patients).where(eq(patients.id, id));
     return patient;
   }
@@ -1747,6 +1796,7 @@ export class DatabaseStorage implements IStorage {
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
+      if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
 
       const flagPatch: any = { ...fields };
       if (caseType === "amputee") flagPatch.isAmputee = true;
@@ -1986,6 +2036,7 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!p) throw new Error("المريض غير موجود");
+      if (p.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
       const [row] = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
       if (!row) throw new Error("لا توجد حالة من هذا النوع لهذا المريض");
@@ -2062,6 +2113,20 @@ export class DatabaseStorage implements IStorage {
       const [source] = await tx.select().from(patients).where(eq(patients.id, sourceId));
       const [target] = await tx.select().from(patients).where(eq(patients.id, targetId));
       if (!source || !target) throw new Error("أحد الملفين غير موجود");
+
+      // ══ **ولا دمجَ مع ملفٍّ في السلّة** (ترحيل ٠٦٨) ═══════════════════
+      // الدمجُ يحرّك الكلفَ والدفعاتِ والزياراتِ والحلقاتِ بين ملفّين ثمّ
+      // يُغلق المصدر. وملفٌّ محذوفٌ طرفاً فيه يكسر المعنى في الاتجاهين:
+      // مصدراً — يُسحب مالُ ملفٍّ أُخرج من النظام إلى ملفٍّ حيّ فيعود
+      // الدَّينُ من الباب الخلفيّ بلا استعادةٍ ولا قرار؛ وهدفاً — تُسكب
+      // بياناتٌ حيّة في ملفٍّ سيختفي، ويستعيده أحدٌ بعد أسبوعٍ فيجد فيه
+      // ما لم يكن فيه يوم حُذف.
+      //
+      // **ولا استعادةً تلقائية**: الاستعادةُ قرارٌ يُتّخذ بابُه هو، ولا
+      // تُنتزَع ضمناً من عمليةٍ أخرى.
+      if (source.deletedAt || target.deletedAt) {
+        throw new Error("أحد الملفين في المحذوفات — استعده أولاً ثم أعد الدمج");
+      }
 
       // ══ حلقتان مفتوحتان من النوع نفسه — يُفحَص **قبل أي تعديل** ═════════
       // `uq_pde_case_open` يسمح بشراءٍ مفتوحٍ واحد لكل خيط. فملفّان لكلٍّ
@@ -2548,7 +2613,8 @@ export class DatabaseStorage implements IStorage {
   }
   async getVisitsByBranch(branchId: number): Promise<Visit[]> {
     return await db.select().from(visits)
-      .where(and(eq(visits.branchId, branchId), isNull(visits.deletedAt)))
+      .where(and(eq(visits.branchId, branchId), isNull(visits.deletedAt),
+        belongsToActivePatientSql("visits")))
       .orderBy(desc(visits.visitDate));
   }
   async createVisit(insertVisit: InsertVisit, tx?: any): Promise<Visit> {
@@ -2608,7 +2674,8 @@ export class DatabaseStorage implements IStorage {
   }
   async getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]> {
     // Simplified date filtering for report
-    return await db.select().from(payments).where(eq(payments.branchId, branchId));
+    return await db.select().from(payments)
+      .where(and(eq(payments.branchId, branchId), belongsToActivePatientSql("payments")));
   }
   /**
    * دفعةٌ بهوية جهازٍ محسومةٍ **داخل معاملتها**.
@@ -3009,14 +3076,19 @@ export class DatabaseStorage implements IStorage {
     // patients still owe overall, and how much of everything sold has been
     // collected. These don't change when the user narrows the period — debt
     // is debt whichever week you look at it through.
+    //  **والمحذوفُ خارج الطرفين معاً** (ترحيل ٠٦٨): كلفتُه لا تُحسب ديناً
+    //  ومدفوعُه لا يُحسب تحصيلاً. وإسقاطُ أحدهما دون الآخر يقلب «نسبة
+    //  التحصيل» — وهي قسمةُ الثاني على الأول.
     const lifeCostQ = branchId
       ? await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients).where(eq(patients.branchId, branchId))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` }).from(patients);
+          .from(patients).where(and(eq(patients.branchId, branchId), activePatientDrizzle()))
+      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
+          .from(patients).where(activePatientDrizzle());
     const lifePaidQ = branchId
       ? await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments).where(eq(payments.branchId, branchId))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` }).from(payments);
+          .from(payments).where(and(eq(payments.branchId, branchId), belongsToActivePatientSql("payments")))
+      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+          .from(payments).where(belongsToActivePatientSql("payments"));
     const lifetimeCost = Number(lifeCostQ[0]?.total) || 0;
     const lifetimePaid = Number(lifePaidQ[0]?.total) || 0;
 
@@ -3356,19 +3428,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]> {
-    const conditions = [];
+    const conditions: any[] = [belongsToActivePatientSql("payments")];
     if (branchId) conditions.push(eq(payments.branchId, branchId));
     if (startDate) conditions.push(gte(payments.date, new Date(startDate)));
     if (endDate) conditions.push(lte(payments.date, new Date(endDate)));
 
-    if (conditions.length > 0) {
-      return await db.select().from(payments).where(and(...conditions)).orderBy(desc(payments.date));
-    }
-    return await db.select().from(payments).orderBy(desc(payments.date));
+    //  الشرطُ الأوّل قائمٌ دائماً (تصفيةُ المحذوف)، فلا فرعَ «بلا شروط».
+    return await db.select().from(payments).where(and(...conditions)).orderBy(desc(payments.date));
   }
 
   async getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]> {
-    const conditions = [isNull(visits.deletedAt)];
+    const conditions = [isNull(visits.deletedAt), belongsToActivePatientSql("visits")];
     if (branchId) conditions.push(eq(visits.branchId, branchId));
     if (startDate) conditions.push(gte(visits.visitDate, new Date(startDate)));
     if (endDate) conditions.push(lte(visits.visitDate, new Date(endDate)));
@@ -3563,7 +3633,7 @@ export class DatabaseStorage implements IStorage {
   async getBranchPatientCount(branchId: number): Promise<number> {
     const result = await db.select({ count: sql<number>`count(*)` })
       .from(patients)
-      .where(eq(patients.branchId, branchId));
+      .where(and(eq(patients.branchId, branchId), activePatientDrizzle()));
     return Number(result[0]?.count || 0);
   }
 
@@ -3703,7 +3773,9 @@ export class DatabaseStorage implements IStorage {
       })
       .from(surveyResponses)
       .leftJoin(patients, eq(patients.id, surveyResponses.patientId))
-      .where(branchClause)
+      //  المحذوفُ يخرج، والاستبيانُ بلا مريضٍ يبقى: في `LEFT JOIN` بلا
+      //  مطابقةٍ يكون `deleted_at` فارغاً فيمرّ الشرطُ — وهو المقصود.
+      .where(and(branchClause, activePatientDrizzle()))
       .orderBy(desc(surveyResponses.completedAt));
   }
 
@@ -3922,7 +3994,7 @@ export class DatabaseStorage implements IStorage {
       .from(followUpCalls)
       .leftJoin(patients, eq(patients.id, followUpCalls.patientId))
       .leftJoin(systemUsers, eq(systemUsers.id, followUpCalls.createdBy))
-      .where(branchClause)
+      .where(and(branchClause, activePatientDrizzle()))
       .orderBy(desc(followUpCalls.createdAt));
   }
 

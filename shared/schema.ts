@@ -138,7 +138,73 @@ export const patients = pgTable("patients", {
   
   totalCost: integer("total_cost").default(0), // in IQD
   createdAt: timestamp("created_at").defaultNow(),
-});
+
+  // ══ سلّةُ المحذوفات — حالةٌ على الملفّ لا هدمٌ له (ترحيل ٠٦٨) ═══════════
+  /**
+   * **الحذفُ العاديّ لم يعد يهدم شيئاً.** `NULL` = ملفٌّ فعّال، وهو الشرطُ
+   * الوحيد الذي يفصل الفعّالَ عن المحذوف في كلّ قارئٍ تشغيليّ.
+   *
+   * **ولا صفَّ تابعاً واحداً يُمَسّ**: المعايناتُ بأختامها · أوامرُ التصنيع
+   * بسجلّها · الدفعاتُ وقيودُ الكلف · الفواتيرُ والأقساط · المبالغُ
+   * المعلَّقة · جهاتُ الاتصال — كلُّها تبقى بايتاً بايت، وتخرج من النظام
+   * الفعّال لأن **صاحبَها** خرج لا لأنها تغيّرت. والاستعادةُ تُزيل هذه
+   * الحالةَ فحسب، فتعود الصفوفُ نفسُها بمعرّفاتها ومبالغها.
+   */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedByUserId: integer("deleted_by_user_id"),
+  /**
+   * **لقطةُ اسمِ مَن حذف — لا `join`**: الحسابُ قد يُعاد تسميتُه أو يُحذف،
+   * ويبقى سطرُ السلّة مقروءاً. نفسُ درس `doctor_name` على المعاينة (٠٢٨).
+   */
+  deletedByName: text("deleted_by_name"),
+  deletedByRole: text("deleted_by_role"),
+  /** **إلزاميّ حين يكون الصفُّ محذوفاً** — تفرضه القاعدة لا الشاشةُ وحدها. */
+  deletedReason: text("deleted_reason"),
+  /**
+   * **نهايةُ مدّة الاستعادة** — يولّدها الخادمُ من ختم الحذف
+   * (`RESTORE_WINDOW_DAYS`)، وتُقارَن بـ`NOW()` في القاعدة داخل المعاملة.
+   * **فساعةُ المتصفّح لا تُقرَّر بها استعادةٌ ولا يُمنَع بها ملفّ.**
+   */
+  restoreUntil: timestamp("restore_until", { withTimezone: true }),
+  /**
+   * **لقطةُ الحال الماليّ يوم الحذف — للتدقيق والعرض وحدها.**
+   *
+   * والمالُ نفسُه يبقى في `payments` و`cost_entries` و`total_cost` كما هو،
+   * **فليست مصدرَ حقيقةٍ ماليّاً** ولا يُحسَب منها تقرير. تجيب سؤالاً واحداً
+   * بعد شهور: بماذا كان الملفُّ يوم حُذف؟
+   */
+  deletedTotalCost: integer("deleted_total_cost"),
+  deletedTotalPaid: integer("deleted_total_paid"),
+  deletedRemaining: integer("deleted_remaining"),
+  deletedPendingJson: jsonb("deleted_pending_json").$type<Record<string, number>>(),
+  /** أَلَزِم المسؤولُ العام لهذا الحذف؟ يُقرأ في السلّة بلا إعادة حساب. */
+  deletedNeededAdmin: boolean("deleted_needed_admin"),
+}, (t) => [
+  //  ══ **ولا بياناتِ حذفٍ نصفَ مكتوبة** (ترحيل ٠٦٨) ══════════════════════
+  //  صفٌّ محذوفٌ بلا سببٍ أو بلا مهلةِ استعادة يجعل السلّة تعرض فراغاً
+  //  ويجعل الاستعادةَ بلا حدّ. والقاعدةُ تمنع الحالةَ المستحيلة من الوجود.
+  check("patients_deleted_shape_check", sql`
+    ${t.deletedAt} IS NULL
+    OR (COALESCE(BTRIM(${t.deletedReason}), '') <> ''
+        AND ${t.restoreUntil} IS NOT NULL
+        AND ${t.restoreUntil} > ${t.deletedAt})`),
+  //  وعكسُها: لا مهلةَ استعادةٍ ولا سببَ حذفٍ على ملفٍّ فعّال.
+  check("patients_active_clean_check", sql`
+    ${t.deletedAt} IS NOT NULL
+    OR (${t.restoreUntil} IS NULL AND ${t.deletedReason} IS NULL
+        AND ${t.deletedByUserId} IS NULL AND ${t.deletedByName} IS NULL)`),
+  //  **فهرسُ الفعّالين — الجزئيّ هو المهمّ**: كلُّ قارئٍ تشغيليّ يصفّي «غير
+  //  محذوف»، وهم السوادُ الأعظم، فيخدمهم الفهرسُ بلا أن يثقله المحذوفون.
+  index("ix_patients_active_branch").on(t.branchId, t.createdAt.desc())
+    .where(sql`deleted_at IS NULL`),
+  //  وفهرسا السلّة: الأحدثُ حذفاً أوّلاً، إجمالاً وضمن الفرع.
+  index("ix_patients_trash").on(t.deletedAt.desc()).where(sql`deleted_at IS NOT NULL`),
+  index("ix_patients_trash_branch").on(t.branchId, t.deletedAt.desc())
+    .where(sql`deleted_at IS NOT NULL`),
+  //  ومهلةُ الاستعادة: «ما زال قابلاً للاستعادة» و«انقضت مدّته».
+  index("ix_patients_restore_until").on(t.restoreUntil)
+    .where(sql`deleted_at IS NOT NULL`),
+]);
 
 // ── Independent cases per patient (Phase 1 foundation) ──────────────────────
 // One patient identity, but each specialty (physiotherapy / prosthetic /
@@ -1010,7 +1076,16 @@ export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, 
 //  `patientCode` مُسقَطٌ من العقد عمداً (ترحيل ٠٥٢): الهوية العلنية يولّدها
 //  الخادم/القاعدة ولا يختارها عميل. وإسقاطُها هنا يجعل قيمةً ملفَّقة في جسم
 //  الطلب لا تصل النوعَ أصلاً — قبل أن تصل أي حراسة في التطبيق.
-export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true, patientCode: true }).extend({
+//  وحالةُ الحذف (ترحيل ٠٦٨) مُسقَطةٌ بالمبدأ نفسِه: **يكتبها مسارُ السلّة
+//  وحدَه في معاملته**. وقيمةٌ في جسم طلبٍ تدّعي أن هذا الملفَّ محذوفٌ — أو
+//  تُمدِّد مهلةَ استعادته — تدّعي قراراً لم يتّخذه أحد، فلا تصل النوعَ أصلاً.
+export const insertPatientSchema = createInsertSchema(patients).omit({
+  id: true, createdAt: true, patientCode: true,
+  deletedAt: true, deletedByUserId: true, deletedByName: true, deletedByRole: true,
+  deletedReason: true, restoreUntil: true,
+  deletedTotalCost: true, deletedTotalPaid: true, deletedRemaining: true,
+  deletedPendingJson: true, deletedNeededAdmin: true,
+}).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });
 export const insertVisitSchema = createInsertSchema(visits).omit({ id: true, visitDate: true }).extend({

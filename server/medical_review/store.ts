@@ -16,6 +16,7 @@ import {
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 import { activeExamSql } from "../medical/active_exam";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 export class ReviewError extends Error {
   constructor(message: string, readonly status = 400) {
@@ -121,11 +122,13 @@ export async function createReviewRequest(params: {
   }
 
   return await db.transaction(async (tx) => {
-    const pat = await tx.execute<{ id: number; branch_id: number | null }>(sql`
-      SELECT id, branch_id FROM patients WHERE id = ${patientId}
+    const pat = await tx.execute<{ id: number; branch_id: number | null; deleted_at: string | null }>(sql`
+      SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
     `);
     const patient = (pat.rows ?? [])[0];
     if (!patient) throw new ReviewError("المريض غير موجود", 404);
+    //  **ولا طلبَ مراجعةٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
+    if (patient.deleted_at) throw new ReviewError(PATIENT_IN_TRASH_ERROR, 409);
     if (branchIds !== null && !branchIds.includes(Number(patient.branch_id))) {
       throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
     }
@@ -517,6 +520,8 @@ export async function listPendingReviews(params: {
          ORDER BY me.created_at DESC LIMIT 1
       ) le ON TRUE
      WHERE r.status = 'pending' AND r.requested_path = 'quick'
+       -- **والمحذوفُ يخرج من سطح الإشراف** (ترحيل ٠٦٨).
+       AND p.deleted_at IS NULL
        AND ${windowClause}
        AND ${scopeClause(branchIds, "r.branch_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
@@ -559,6 +564,7 @@ export async function listPendingFullRequests(params: {
       LEFT JOIN system_users cu ON cu.id = r.created_by
       LEFT JOIN system_users du ON du.id = r.decided_by
      WHERE (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+       AND p.deleted_at IS NULL
        AND ${scopeClause(params.branchIds, "r.branch_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
        AND NOT EXISTS (

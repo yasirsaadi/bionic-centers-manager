@@ -64,7 +64,7 @@ export async function examForPermission(examId: number): Promise<ExamForPermissi
            p.branch_id
       FROM medical_exams me
       JOIN patients p ON p.id = me.patient_id
-     WHERE me.id = ${examId}
+     WHERE me.id = ${examId} AND p.deleted_at IS NULL
   `);
   const row = (r.rows ?? [])[0];
   if (!row) return null;

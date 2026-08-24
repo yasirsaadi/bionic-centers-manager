@@ -726,6 +726,9 @@ export async function listRequests(params: {
       JOIN patients p ON p.id = r.patient_id
       LEFT JOIN branches b ON b.id = r.branch_id
      WHERE r.status = ${status} AND ${scopeClause(params.scope)}
+       -- **والمحذوفُ يخرج من طابور الاعتماد** (ترحيل ٠٦٨): الصفُّ باقٍ
+       -- بحاله ويعود بعينه عند الاستعادة، ولا يُعرَض على مُعتمِدٍ الآن.
+       AND p.deleted_at IS NULL
      ORDER BY r.requested_at ASC
      LIMIT 300
   `);

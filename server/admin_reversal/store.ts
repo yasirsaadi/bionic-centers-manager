@@ -24,6 +24,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { isExamCancelled } from "../medical/active_exam";
 import { writeExamCancellation } from "../medical/cancel_exam";
 import {
@@ -109,7 +110,9 @@ export async function resolveOperation(
            wo.status AS order_status, wo.current_stage, wo.started_at, wo.completed_at,
            wo.admin_void_reversal_id AS order_void
       FROM post_exam_followups f
-      JOIN patients p ON p.id = f.patient_id
+      -- **والمحذوفُ لا تُفتَح عليه نافذةُ تصحيح** (ترحيل ٠٦٨): بابُه
+      -- الاستعادةُ أوّلاً، ثمّ تصحيحُ عمليته كأيّ ملفٍّ حيّ.
+      JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
       LEFT JOIN patient_device_episodes e ON e.id = f.device_episode_id
       LEFT JOIN prosthetic_work_orders wo ON wo.id = f.converted_work_order_id
      WHERE ${byFollowup !== null ? sql`f.id = ${byFollowup}`
@@ -534,9 +537,11 @@ export async function executeReversal(params: {
     //  نطاقه. والفرعُ يُقرأ من **صفّ المريض المقفول** لا من الطلب ولا من
     //  لقطةٍ بائتة.
     const br = await tx.execute(sql`
-      SELECT branch_id FROM patients WHERE id = ${op.patientId} FOR UPDATE
+      SELECT branch_id, deleted_at FROM patients WHERE id = ${op.patientId} FOR UPDATE
     `);
     const liveBranch = (br.rows ?? [])[0]?.branch_id ?? null;
+    //  **وحُذف الملفُّ بين المعاينة والتنفيذ** ⟶ لا كتابةَ ولا نصفُ تصحيح.
+    if ((br.rows ?? [])[0]?.deleted_at) throw new ReversalError(PATIENT_IN_TRASH_ERROR, 409);
     if (!params.authz.isAdmin) {
       if (params.authz.role !== "branch_manager") {
         throw new ReversalError(

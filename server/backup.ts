@@ -3,6 +3,7 @@ import cron from "node-cron";
 import { db } from "./db";
 import { patients, branches, payments, expenses, systemSettings } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
+import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
 
@@ -134,7 +135,12 @@ async function generatePatientCSV(filter: BackupFilter = { type: "all" }): Promi
       branchName: branches.name,
     })
     .from(patients)
-    .leftJoin(branches, eq(patients.branchId, branches.id));
+    .leftJoin(branches, eq(patients.branchId, branches.id))
+    //  **والمحذوفُ خارج النسخة البريدية** (ترحيل ٠٦٨): هذه **تقريرٌ يُقرأ**
+    //  لا آليّةُ استرجاع — والاسترجاعُ من صفوف القاعدة نفسِها، وهي باقيةٌ
+    //  كما هي. فملفٌّ أخرجه المالكُ من النظام لا يعود إليه كلَّ ليلةٍ في
+    //  «جميع المرضى» ولا تدخل كلفتُه مجاميعَ الفروع.
+    .where(activePatientDrizzle());
 
   let filterDescription = "جميع المرضى";
 
@@ -284,6 +290,7 @@ export async function getNightlyReportData(): Promise<NightlyReportData> {
       physioCount: sql<string>`COUNT(CASE WHEN ${patients.isPhysiotherapy} = true THEN 1 END)`,
     })
     .from(patients)
+    .where(activePatientDrizzle())
     .groupBy(patients.branchId);
 
   const paymentStats = await db
@@ -292,6 +299,7 @@ export async function getNightlyReportData(): Promise<NightlyReportData> {
       totalPaid: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
     })
     .from(payments)
+    .where(belongsToActivePatientSql("payments"))
     .groupBy(payments.branchId);
 
   const expenseStats = await db

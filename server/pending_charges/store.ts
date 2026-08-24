@@ -28,6 +28,7 @@
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
+import { belongsToActivePatientSql } from "../patients/active_patient";
 import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
@@ -630,6 +631,10 @@ export async function listForReview(params: {
       JOIN patients p ON p.id = c.patient_id
       LEFT JOIN branches b ON b.id = c.branch_id
      WHERE c.status = 'pending_review'
+       -- **والمحذوفُ يخرج من الطابور** (ترحيل ٠٦٨): صفُّه باقٍ كما هو
+       -- ويعود بعينه عند الاستعادة، لكنّه لا يُعرَض على طبيبٍ ليعتمد مالاً
+       -- على ملفٍّ أُخرج من النظام.
+       AND p.deleted_at IS NULL
        AND ${scopeClause(params.scope)}
        AND c.service_type IN (${sql.join(params.specialties.map((x) => sql`${x}`), sql`, `)})
      ORDER BY c.id DESC
@@ -645,7 +650,7 @@ export async function listReturned(scope: number[] | null): Promise<ChargeCard[]
       FROM pending_service_charges c
       JOIN patients p ON p.id = c.patient_id
       LEFT JOIN branches b ON b.id = c.branch_id
-     WHERE c.status = 'returned' AND ${scopeClause(scope)}
+     WHERE c.status = 'returned' AND p.deleted_at IS NULL AND ${scopeClause(scope)}
      ORDER BY c.returned_at DESC, c.id DESC
      LIMIT 200
   `);
@@ -666,6 +671,8 @@ export async function returnedCounts(params: {
            COUNT(*) FILTER (WHERE c.created_by = ${params.userId})::int AS mine
       FROM pending_service_charges c
      WHERE c.status = 'returned' AND ${scopeClause(params.scope)}
+       -- الشارةُ تعدّ ما يُعرَض في الطابور بالضبط، فلا رقمٌ لا يقابله صفّ.
+       AND ${belongsToActivePatientSql("c")}
   `);
   const row = (r.rows ?? [])[0];
   return { branch: Number(row?.branch ?? 0), mine: Number(row?.mine ?? 0) };

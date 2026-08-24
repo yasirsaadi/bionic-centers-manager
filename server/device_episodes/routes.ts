@@ -71,7 +71,7 @@ async function patientScope(patientId: number) {
     is_amputee: boolean | null; amputation_site: string | null;
   }>(sql`
     SELECT id, name, branch_id, age, height, weight, is_amputee, amputation_site
-      FROM patients WHERE id = ${patientId}
+      FROM patients WHERE id = ${patientId} AND deleted_at IS NULL
   `);
   return (r.rows ?? [])[0] ?? null;
 }

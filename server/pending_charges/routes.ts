@@ -100,7 +100,7 @@ async function patientRow(patientId: number) {
     is_amputee: boolean | null; is_medical_support: boolean | null;
   }>(sql`
     SELECT id, name, branch_id, is_amputee, is_medical_support
-      FROM patients WHERE id = ${patientId}
+      FROM patients WHERE id = ${patientId} AND deleted_at IS NULL
   `);
   return (r.rows ?? [])[0] ?? null;
 }

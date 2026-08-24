@@ -4,6 +4,7 @@ import nodemailer from "nodemailer";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
+import { belongsToActivePatientSql } from "./patients/active_patient";
 
 const BRIEFING_EMAIL = "yasir.s81@gmail.com";
 
@@ -37,9 +38,10 @@ export async function getDailyIncomeData(targetDate?: string): Promise<DailyInco
   for (const branch of allBranches) {
     const paymentsResult = await db.execute(sql`
       SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0)::int AS total
-      FROM payments
-      WHERE branch_id = ${branch.id}
-        AND (date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+      FROM payments pay
+      WHERE pay.branch_id = ${branch.id}
+        AND (pay.date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+        AND ${belongsToActivePatientSql("pay")}
     `);
     const pRow = paymentsResult.rows[0] as any;
 
@@ -48,6 +50,7 @@ export async function getDailyIncomeData(targetDate?: string): Promise<DailyInco
       FROM patients
       WHERE branch_id = ${branch.id}
         AND (created_at AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+        AND deleted_at IS NULL
     `);
     const ptRow = patientsResult.rows[0] as any;
 
