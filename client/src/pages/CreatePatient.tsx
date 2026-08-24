@@ -7,6 +7,9 @@ import { useCreatePatient } from "@/hooks/use-patients";
 import { useToast } from "@/hooks/use-toast";
 import { amputationSiteOf } from "@/components/AmputationBuilder";
 import { checkRequiredPatientData, checkAmputationParts } from "@shared/patient_required";
+import {
+  PRIOR_CENTER_HISTORY_LABEL, PRIOR_CENTER_HISTORY_HINT,
+} from "@shared/service_path";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -187,7 +190,9 @@ export default function CreatePatient() {
       injuryDate: "",
       injuryCause: "",
       registrationDate: (() => { const now = new Date(); const baghdadOffset = 3 * 60 * 60 * 1000; const baghdadNow = new Date(now.getTime() + baghdadOffset); return `${baghdadNow.getUTCFullYear()}-${String(baghdadNow.getUTCMonth() + 1).padStart(2, '0')}-${String(baghdadNow.getUTCDate()).padStart(2, '0')}`; })(),
-      patientClassification: "",
+      //  «جديد/قديم» لم يعد يُسأل (ترحيل ٠٦٥) — يختمه الخادمُ `'new'`.
+      //  والواقعةُ التي يعرفها الموظّفُ فعلاً صارت المربّعَ أدناه.
+      hadPriorCenterHistory: false,
       generalNotes: "",
       prostheticType: "",
       siliconType: "",
@@ -410,18 +415,12 @@ export default function CreatePatient() {
   }, [treatmentEntries, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
-    // The classification is now the WORKFLOW SWITCH (owner, 2026-07-29):
-    // «مريض جديد» goes to the doctor first, «مريض قديم» goes straight to
-    // reception's تخصيص/expert. An unclassified patient would silently take
-    // the new-patient path, so the choice must be explicit.
-    if (!values.patientClassification) {
-      toast({
-        title: "اختر تصنيف المريض",
-        description: "جديد = معاينة الطبيب أولاً · قديم = تخصيص وإسناد مباشر من الاستعلامات.",
-        variant: "destructive",
-      });
-      return;
-    }
+    //  ══ **ولا سؤالَ «جديد أم قديم؟»** (ترحيل ٠٦٥) ═══════════════════════
+    //  كان جوابُه الإداريُّ يقرّر أمراً سريرياً: «قديم» تعني إعفاءً من
+    //  معاينة الطبيب عبر `isLegacyPatient`. وموظّفةُ الاستقبال تُسأل عن
+    //  ملفٍّ وتُجيب عن معاينة. فانفصل السؤالان: الواقعةُ الإدارية في مربّع
+    //  «سبق أن تعامل مع المركز»، والقرارُ السريريُّ يُسأل عند فتح كلّ طلبِ
+    //  جهاز على حدة («هل تحتاج هذه العملية معاينة طبية؟»).
     // ══ **البياناتُ التي لا يُصنَع جهازٌ بدونها — تُفحَص هنا لا بعد الردّ** ══
     //  الخادمُ يحرسها، لكنّ انتظارَ ٤٠٠ ليعرف الموظّفُ ما ينقص يعني ملءَ
     //  النموذج كلِّه ثم الاصطدام. والقاعدةُ **مشتركة** فلا تنحرف الشاشةُ عن
@@ -593,6 +592,31 @@ export default function CreatePatient() {
                         </span>
                         <span className="block text-muted-foreground mt-0.5">
                           بحفظ الملف سيُستخدم الرقم لإرسال رسائل الخدمة وتحديثاتها.
+                        </span>
+                      </span>
+                    </label>
+
+                    {/* ══ **تاريخُ المريض مع المركز — معلومةٌ لا قرار** ══════
+                        حلّ محلَّ «تصنيف المريض: جديد / قديم». ذاك كان يقول
+                        شيئاً ويفعل آخر: يُقرأ في التقارير «ملفُّه الورقيّ
+                        قديم»، ويعني في الخادم **إعفاءً من معاينة الطبيب**.
+                        وهذا يقول ما يعنيه بالضبط ولا يفعل شيئاً غيره. */}
+                    <label
+                      className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/30 p-2 cursor-pointer"
+                      data-testid="label-prior-center-history"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={form.watch("hadPriorCenterHistory") === true}
+                        onChange={(e) =>
+                          form.setValue("hadPriorCenterHistory", e.target.checked)}
+                        data-testid="checkbox-prior-center-history"
+                      />
+                      <span className="text-xs leading-relaxed">
+                        <span className="font-medium">{PRIOR_CENTER_HISTORY_LABEL}</span>
+                        <span className="block text-muted-foreground mt-0.5">
+                          {PRIOR_CENTER_HISTORY_HINT}
                         </span>
                       </span>
                     </label>
@@ -1501,34 +1525,6 @@ export default function CreatePatient() {
                     )}
                   />
                 </div>
-              )}
-
-              {defaultBranchId && (
-                <FormField
-                  control={form.control}
-                  name="patientClassification"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t.patientForm.patientClassification} <span className="text-red-500">*</span></FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""}>
-                        <FormControl>
-                          <SelectTrigger className="bg-white" data-testid="select-patient-classification">
-                            <SelectValue placeholder={t.patientForm.selectClassification} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="new">{t.patientForm.newPatient}</SelectItem>
-                          <SelectItem value="past">{t.patientForm.pastPatient}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {/* The classification routes the whole workflow now. */}
-                      <p className="text-xs text-muted-foreground">
-                        جديد = معاينة الطبيب أولاً · قديم = تخصيص وإسناد خبير مباشرة من الاستعلامات
-                      </p>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
               )}
 
               <FormField

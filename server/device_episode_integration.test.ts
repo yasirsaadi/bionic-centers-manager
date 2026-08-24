@@ -209,7 +209,7 @@ async function main() {
 
     // ١. الموظّف يفتح طلب جهاز جديد من الواجهة.
     const started = await http("POST", `/api/patients/${P}/device-episodes`, S.reception,
-      { serviceType: "prosthetic" });
+      { servicePath: "exam", serviceType: "prosthetic" });
     same("١. «جهاز جديد» فتح الطلب", started.status, 201);
     const dev2 = started.body.id;
     same("   بحالة «بانتظار معاينة» وتسلسل ٢",

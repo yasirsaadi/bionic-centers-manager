@@ -598,7 +598,7 @@ async function main() {
     const autoEp = await mk("جبار القديم العائد", {
       prosthetic: true, classification: "past", createdDaysAgo: 1200,
     });
-    const epRes = await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1, {
+    const epRes = await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1, { servicePath: "exam",
       serviceType: "prosthetic",
     });
     same("٢٠. بدءُ جهازٍ جديد ينجح", epRes.status, 201);
@@ -613,7 +613,7 @@ async function main() {
     //  على الحلقة المفتوحة أصلاً، والحارس هنا للتوثيق).
     same("   ولا حلقةَ ثانية مفتوحة",
       (await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1,
-        { serviceType: "prosthetic" })).status, 409);
+        { servicePath: "exam", serviceType: "prosthetic" })).status, 409);
 
     // ══ ٢١. التوجيه التلقائي — الصيانة والزيارة ════════════════════════
     console.log("\n── ٢١. توجيهٌ تلقائي: صيانة وزيارة ──");

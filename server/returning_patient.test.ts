@@ -206,7 +206,7 @@ async function main() {
       const before = await q(
         `SELECT count(*)::int AS n FROM patients WHERE referral_source=$1`, [MARK]);
       const r = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "full_device" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "full_device" });
       same("١. **الطلبُ يُقبل** لمريضٍ جهازُه مسلَّم", r.status, 201);
       const ep2 = await epRow(r.body?.id);
       same("٢. **حلقةٌ ثانيةٌ على الخيط نفسه** — لا خيطَ جديد",
@@ -243,7 +243,7 @@ async function main() {
       partPatient = p; partCase = c;
 
       const r = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "knee" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       same("٨. **طلبُ جزءٍ يمرّ بالبابِ نفسه** — لا نظامَ بيعٍ موازٍ", r.status, 201);
       partEpisode = r.body?.id;
       const ep = await epRow(partEpisode);
@@ -258,7 +258,7 @@ async function main() {
 
       //  **والمجهولُ يُردّ لا يُصحَّح**: تصحيحُه «طرفاً كاملاً» يقلب ثمنَه.
       const bad = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "elbow" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "elbow" });
       same("١١. **وقطعةٌ مخترَعة تُردّ ٤٠٠**", bad.status, 400);
       check(String(bad.body?.error ?? "").includes("القائمة"),
         "   (برسالةٍ تدلّ على القائمة)", JSON.stringify(bad.body));
@@ -268,10 +268,10 @@ async function main() {
       const p = await mkPatient("مسند", { support: true });
       await mkCase(p, "medical_support");
       const bad = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "medical_support", requestedItem: "knee" });
+        { servicePath: "exam", serviceType: "medical_support", requestedItem: "knee" });
       same("١٢. **وجزءُ طرفٍ على مسندٍ يُردّ**", bad.status, 400);
       const ok = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "medical_support", requestedItem: "full_device" });
+        { servicePath: "exam", serviceType: "medical_support", requestedItem: "full_device" });
       same("١٣. والمسندُ يمرّ بلا جزء", ok.status, 201);
       const ep = await epRow(ok.body?.id);
       same("   (وعمودُه فارغ)", [ep?.requested_item, ep?.component], ["full_device", null]);
@@ -533,7 +533,7 @@ async function main() {
 
       //  **والبابُ الصحيح مفتوح**: «خدمة جديدة» تعمل لنفس المريض.
       const ok = await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "foot" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "foot" });
       same("٥٠. **والبابُ الصحيح يعمل** — حلقةٌ جديدة بجزئها", ok.status, 201);
       const ep2 = await epRow(ok.body?.id);
       same("   (بترتيبها وجزئها)",
@@ -759,7 +759,7 @@ async function main() {
 
       //  ③ **ولا دورةَ تصنيعٍ جديدة بملفٍّ ناقص** — وهذه هي البوّابة.
       const blocked = await http("POST", `/api/patients/${lid}/device-episodes`,
-        S.reception, { serviceType: "prosthetic", requestedItem: "knee" });
+        S.reception, { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       same("٧٧. **وطلبُ جزءٍ جديد يُردّ حتى يكتمل الملفّ**", blocked.status, 400);
       check(String(blocked.body?.error ?? "").includes("أكمِل ملفّ المريض"),
         "   (برسالةٍ تدلّ على ما يجب فعله)", JSON.stringify(blocked.body));
@@ -778,7 +778,7 @@ async function main() {
       same("٧٩. **والإكمالُ في نداءٍ واحد يمرّ**", done.status, 200);
       same("٨٠. **وبعده يُفتح الطلب**",
         (await http("POST", `/api/patients/${lid}/device-episodes`, S.reception,
-          { serviceType: "prosthetic", requestedItem: "knee" })).status, 201);
+          { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" })).status, 201);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -834,7 +834,7 @@ async function main() {
       //  **ويدخل الدورةَ فوراً** — لأن ما يلزمها اكتمل في مسارها.
       same("   ويبدأ طلبَ جهازٍ فوراً بلا عائق",
         (await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
-          { serviceType: "prosthetic", requestedItem: "full_device" })).status, 201);
+          { servicePath: "exam", serviceType: "prosthetic", requestedItem: "full_device" })).status, 201);
     }
     {
       //  **والمساندُ والعلاجُ الطبيعي لا يُسألان عن بتر إطلاقاً.**
@@ -848,7 +848,7 @@ async function main() {
           { caseType: "medical_support" })).status, 200);
       //  **وحلقتُه محايدةٌ في القاعدة، مسمّاةٌ في الشاشة.**
       const ep = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
-        { serviceType: "medical_support" });
+        { servicePath: "exam", serviceType: "medical_support" });
       same("٨٦. **وحلقةُ المسند تُفتَح**", ep.status, 201);
       const row = await epRow(ep.body?.id);
       same("٨٧. **وقيمتُها محايدة — لا «طرف» على مسند**",
@@ -860,7 +860,7 @@ async function main() {
         String(rev?.reception_note ?? "").startsWith("المطلوب: مسند طبي كامل"), true);
       //  **وجزءُ طرفٍ عليه يُردّ** — لا يُصحَّح إلى «كامل».
       const bad = await http("POST", `/api/patients/${p.id}/device-episodes`, S.reception,
-        { serviceType: "medical_support", requestedItem: "knee" });
+        { servicePath: "exam", serviceType: "medical_support", requestedItem: "knee" });
       same("٨٩. **وطلبُ ركبةٍ على مسندٍ يُردّ**", bad.status, 400);
     }
 
@@ -878,7 +878,7 @@ async function main() {
       const ep = await mkDeliveredEpisode(p, c);
       await mkExam(p, c, ep);
       await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
-        { serviceType: "prosthetic", requestedItem: "knee" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       await http("POST", "/api/manufacturing/maintenance-visit", S.reception,
         { patientId: p, expertUserId: EXPERT, cost: 30000,
           maintenanceComponent: "adapter", deviceEpisodeId: ep });

@@ -894,7 +894,7 @@ async function main() {
 
     //  …حتى يفتح الاستعلامات حلقةً صراحةً، فتُفتح متابعةٌ لها.
     const ep = await http("POST", `/api/patients/${pRoutine}/device-episodes`, S.recv,
-      { serviceType: "prosthetic" });
+      { servicePath: "exam", serviceType: "prosthetic" });
     check(ep.status === 200 || ep.status === 201,
       "     (وفُتحت حلقةُ جهازٍ جديد صراحةً)", JSON.stringify({ s: ep.status, b: ep.body }));
     await signExam(pRoutine, S.doc, { deviceCost: 950_000 });
@@ -1815,7 +1815,7 @@ async function main() {
 
       //  الجهازُ الثاني: من بابه الحقيقيّ.
       const ep2 = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-        { serviceType: "prosthetic", requestedItem: "knee" });
+        { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       same("٨٠. **والجهازُ الثاني يُفتَح على الخيط نفسه**", ep2.status, 201);
       await signExam(p, S.doc, { deviceCost: 900_000 });
       const rows = (await http("GET", `/api/followups/patient/${p}`, S.admin)).body ?? [];

@@ -715,9 +715,19 @@ export async function getPendingExams(
   // devices fitted under the old workflow — it cannot forgive one for a
   // device requested today, or the doctor would be asked to approve
   // manufacturing he never looked at.
+  //  ══ **إلّا ما قيل صراحةً إنه لا يحتاجها** (ترحيل ٠٦٥) ══════════════
+  //  الجملةُ أعلاه بقيت صحيحة: طلبٌ جديد لا يعفيه ماضي صاحبه. لكنّ سؤالاً
+  //  جديداً صار يُطرَح على **الطلب نفسِه** عند فتحه: «أتحتاج هذه العملية
+  //  معاينةَ طبيب؟». فمَن أجاب «لا» لا يُساق إلى طابور الطبيب — ليس لأن
+  //  المريض قديم، بل لأن **هذه العملية بعينها** قيل إنها لا تحتاجه.
+  //
+  //  و`IS DISTINCT FROM` لا `<>`: حلقةُ ما قبل ٠٦٥ تحمل `NULL` (لم تُسأل)،
+  //  و`<>` كانت ستُقيَّم `NULL` فتُسقطها من الطابور — أي تُعفي بصمتٍ ما لم
+  //  يُعفِه أحد. فالغيابُ يُقرأ «تنتظر» تماماً كما كان قبل هذه المرحلة.
   const awaitingEpisode = sql`EXISTS (
     SELECT 1 FROM patient_device_episodes e
-     WHERE e.case_id = pc.id AND e.status = 'awaiting_exam')`;
+     WHERE e.case_id = pc.id AND e.status = 'awaiting_exam'
+       AND e.service_path IS DISTINCT FROM 'no_exam')`;
   // The old path stays EXACTLY as it was, but only for threads that carry no
   // episode at all. A thread whose episodes are all delivered/cancelled is
   // settled: its devices were handled, and it must not drag the patient back
@@ -909,6 +919,10 @@ export async function getWorklist(
     -- episode per thread, so a returning patient appears ONCE, never twice.
     LEFT JOIN patient_device_episodes ep
       ON ep.case_id = pc.id AND ep.status = 'awaiting_exam'
+      -- **والمسارُ يحسم لا التصنيف** (ترحيل ٠٦٥): طلبٌ قيل صراحةً إنه بلا
+      -- معاينة لا ينضمّ، فلا يظهر في قائمة عمل الطبيب. و«NULL» (حلقةُ ما
+      -- قبل ٠٦٥) تنضمّ كما كانت — الغيابُ ليس إعفاءً.
+     AND ep.service_path IS DISTINCT FROM 'no_exam'
     WHERE pc.status = 'active'
       AND ${scoped}
       AND pc.case_type IN (${sql.join(

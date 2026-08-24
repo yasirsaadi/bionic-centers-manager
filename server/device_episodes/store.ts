@@ -25,6 +25,7 @@ import {
   isRequestedItem, isProstheticComponent, componentOfRequest, parseRequestedItem,
   FULL_DEVICE, type RequestedItem, type ProstheticComponent,
 } from "@shared/prosthetic_parts";
+import { parseServicePath, type ServicePath } from "@shared/service_path";
 
 /** الاختصاصان اللذان يُشترى فيهما جهاز. العلاج الطبيعي لا حلقة له. */
 export const DEVICE_SERVICE_TYPES = ["prosthetic", "medical_support"] as const;
@@ -72,6 +73,13 @@ export interface DeviceEpisodeView {
   requestedItem: RequestedItem;
   /** الجزءُ وحده — `null` للجهاز الكامل. مشتقٌّ ومحروسٌ بقيدٍ يلازم الأوّل. */
   component: ProstheticComponent | null;
+  /**
+   * **مسارُ هذه العملية** (ترحيل ٠٦٥): `exam` · `no_exam` · أو `null`.
+   *
+   * و`null` **غيابُ سؤال** لا قيمةٌ ثالثة: حلقةٌ وُلدت قبل ٠٦٥ فتُقرأ
+   * بالقاعدة القديمة. التفصيلُ في `shared/service_path.ts`.
+   */
+  servicePath: ServicePath | null;
   branchId: number | null;
   createdAt: string | null;
   deliveredAt: string | null;
@@ -94,6 +102,9 @@ function toView(r: Record<string, any>): DeviceEpisodeView {
     //  فعلاً — أطرافاً كانت أو مساند.
     requestedItem: isRequestedItem(r.requested_item) ? r.requested_item : FULL_DEVICE,
     component: isProstheticComponent(r.component) ? r.component : null,
+    //  ولا تُخترَع قيمةٌ حين يسكت العمود: الحلقةُ التي لم تُسأل تبقى `null`،
+    //  فيقرؤها القارئُ بالقاعدة القديمة بدل أن يظنّها أُجيبت.
+    servicePath: parseServicePath(r.service_path),
     branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
     createdAt: iso(r.created_at),
     deliveredAt: iso(r.delivered_at),
@@ -114,7 +125,7 @@ export async function getOpenDeviceEpisode(
 ): Promise<DeviceEpisodeView | null> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
            e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
@@ -139,7 +150,7 @@ export async function listDeliveredEpisodes(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
            e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
@@ -164,7 +175,7 @@ export async function listPayableEpisodes(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
            e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
@@ -309,7 +320,7 @@ export async function getDeviceEpisodesForPatient(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
            e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
@@ -350,8 +361,17 @@ export async function startDeviceEpisode(params: {
    * وحدها: ما يصل من العميل لا يُوثَق به، وهذه هي الطبقةُ القانونية.
    */
   requestedItem?: RequestedItem | null;
+  /**
+   * **مسارُ هذه العملية** (ترحيل ٠٦٥): «أتحتاج معاينةَ طبيب؟».
+   *
+   * والغيابُ يُكتب `null` — **ولا يُخمَّن**: نافذةٌ قديمة لا ترسله، فيبقى
+   * صفُّها بلا جوابٍ يُقرأ بالقاعدة القديمة تماماً كما كان يُقرأ قبل هذه
+   * المرحلة. أمّا كتابةُ `'exam'` افتراضاً فادّعاءُ جوابٍ لم يُعطَ.
+   */
+  servicePath?: ServicePath | null;
 }): Promise<DeviceEpisodeView> {
   const { patientId, serviceType, createdBy } = params;
+  const servicePath = parseServicePath(params.servicePath);
   const parsed = parseRequestedItem(params.requestedItem, serviceType);
   if (!parsed.ok) throw new DeviceEpisodeError(parsed.error!, 400);
   const requestedItem: RequestedItem = parsed.value ?? FULL_DEVICE;
@@ -433,11 +453,11 @@ export async function startDeviceEpisode(params: {
     const ins = await tx.execute<Record<string, any>>(sql`
       INSERT INTO patient_device_episodes
         (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
-         requested_item, component, created_by, created_at, updated_at)
+         requested_item, component, service_path, created_by, created_at, updated_at)
       VALUES (${patientId}, ${caseRow.id}, ${caseRow.branch_id ?? patient.branch_id ?? null},
-              ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component},
+              ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
               ${createdBy}, NOW(), NOW())
-      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, branch_id,
+      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
                 created_at, delivered_at, cancelled_at, cancel_reason
     `);
     const row = (ins.rows ?? [])[0];
@@ -492,7 +512,7 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
          SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = ${reason},
              updated_at = NOW()
        WHERE id = ${episodeId}
-      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, branch_id,
+      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
                 created_at, delivered_at, cancelled_at, cancel_reason
     `);
     const row = (upd.rows ?? [])[0];
@@ -790,12 +810,15 @@ export async function ensureFirstDeviceEpisodeForSale(
   `);
   const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
 
+  //  **ومسارُها `'exam'` بالبرهان لا بالافتراض** (ترحيل ٠٦٥): لا تُنادى هذه
+  //  الدالّة إلّا من `confirmPurchase`، والمتابعةُ لا توجد إلّا عن معاينةٍ
+  //  موقّعة. فهذه العمليةُ مرّت بالطبيب فعلاً — وحالتُها `examined` تقول ذلك.
   const ins = await tx.execute(sql`
     INSERT INTO patient_device_episodes
       (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
-       requested_item, component, created_by, created_at, updated_at)
+       requested_item, component, service_path, created_by, created_at, updated_at)
     VALUES (${params.patientId}, ${caseRow.id}, ${caseRow.branch_id ?? null},
-            ${nextSeq}, 'examined', 0, ${requestedItem}, ${component},
+            ${nextSeq}, 'examined', 0, ${requestedItem}, ${component}, 'exam',
             ${params.createdBy}, NOW(), NOW())
     RETURNING id, case_id, patient_id, status, agreed_cost
   `);
@@ -844,6 +867,14 @@ export async function createReplacementEpisodeTx(
     serviceType: DeviceServiceType;
     /** ما طُلب صحيحاً — يُتحقَّق بالتصنيف القائم لا بقائمةٍ ثانية. */
     requestedItem: unknown;
+    /**
+     * **مسارُ الأصل، موروثاً كما هو** (ترحيل ٠٦٥).
+     *
+     * التصحيحُ يبدّل **ما طُلب** — طرفاً كاملاً إلى قالب — ولا يقول شيئاً
+     * عن حاجة الطلب إلى معاينة. فاختراعُ مسارٍ للبديل يقرّر نيابةً عن أحد،
+     * وإسقاطُه يُخرج طلباً كان يحتاج الطبيبَ من طابوره.
+     */
+    servicePath?: unknown;
     createdBy: number | null;
   },
 ): Promise<LockedEpisode> {
@@ -856,6 +887,7 @@ export async function createReplacementEpisodeTx(
   const requestedItem: RequestedItem = parsed.value;
   //  **والجزءُ مشتقٌّ لا مُدخَل** — بالدالّة نفسِها التي يستعملها بدءُ الحلقة.
   const component = componentOfRequest(requestedItem);
+  const servicePath = parseServicePath(params.servicePath);
 
   //  ② المريضُ موجود، ومنه هويّةُ الفرع الاحتياطية.
   const pat = await tx.execute(sql`
@@ -924,10 +956,10 @@ export async function createReplacementEpisodeTx(
   const ins = await tx.execute(sql`
     INSERT INTO patient_device_episodes
       (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
-       requested_item, component, created_by, created_at, updated_at)
+       requested_item, component, service_path, created_by, created_at, updated_at)
     VALUES (${params.patientId}, ${caseRow.id},
             ${caseRow.branch_id ?? patient.branch_id ?? null},
-            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component},
+            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
             ${params.createdBy}, NOW(), NOW())
     RETURNING id, case_id, patient_id, status, agreed_cost
   `);
@@ -1127,7 +1159,7 @@ export async function getDeviceEpisode(episodeId: number): Promise<
 > {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.patient_id, e.case_id, pc.case_type AS service_type, e.sequence_number,
-           e.status, e.agreed_cost, e.requested_item, e.component, e.branch_id, e.created_at, e.delivered_at,
+           e.status, e.agreed_cost, e.requested_item, e.component, e.service_path, e.branch_id, e.created_at, e.delivered_at,
            e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id

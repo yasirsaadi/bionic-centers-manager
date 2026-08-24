@@ -73,6 +73,9 @@ export interface ResolvedOperation {
   episodeStatus: string | null;
   episodeAgreedCost: number;
   episodeRequestedItem: string | null;
+  /**  مسارُ العملية (ترحيل ٠٦٥) — يورّثه البديلُ كما هو، ولا يُخترَع له
+   *   مسارٌ آخر: استبدالُ **ما طُلب** لا يغيّر أيحتاج الطلبُ معاينةً أم لا. */
+  episodeServicePath: string | null;
   episodeVoided: boolean;
   orderStatus: string | null;
   orderStage: string | null;
@@ -101,7 +104,7 @@ export async function resolveOperation(
            f.service_type, f.case_id, f.approved_price, f.medical_exam_id,
            f.device_episode_id, f.converted_work_order_id,
            p.name AS patient_name,
-           e.status AS episode_status, e.agreed_cost, e.requested_item,
+           e.status AS episode_status, e.agreed_cost, e.requested_item, e.service_path,
            e.admin_void_reversal_id AS episode_void,
            wo.status AS order_status, wo.current_stage, wo.started_at, wo.completed_at,
            wo.admin_void_reversal_id AS order_void
@@ -183,6 +186,8 @@ export async function resolveOperation(
     episodeAgreedCost: Number(row.agreed_cost ?? 0),
     episodeRequestedItem: row.requested_item === null || row.requested_item === undefined
       ? null : String(row.requested_item),
+    episodeServicePath: row.service_path === null || row.service_path === undefined
+      ? null : String(row.service_path),
     episodeVoided: row.episode_void !== null && row.episode_void !== undefined,
     orderStatus: row.order_status === null || row.order_status === undefined
       ? null : String(row.order_status),
@@ -705,6 +710,10 @@ export async function executeReversal(params: {
         caseId: op.caseId,
         serviceType: op.serviceType as DeviceServiceType,
         requestedItem: replacementItem,
+        //  **البديلُ يرث مسارَ الأصل**: التصحيحُ يبدّل ما طُلب، ولا يقول
+        //  شيئاً عن حاجة الطلب إلى معاينة. والأصلُ بلا مسار (حلقةُ ما قبل
+        //  ٠٦٥) يورّث `null` فيُقرأ بالقاعدة القديمة كما كان.
+        servicePath: op.episodeServicePath,
         createdBy: params.actor.userId,
       });
       replacementEpisodeId = created.id;

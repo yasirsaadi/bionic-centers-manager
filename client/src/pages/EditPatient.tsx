@@ -8,6 +8,9 @@ import { parseAmputationSite } from "@shared/case_fields";
 import {
   checkRequiredPatientData, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
+import {
+  PRIOR_CENTER_HISTORY_LABEL, PRIOR_CENTER_HISTORY_HINT,
+} from "@shared/service_path";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -132,6 +135,7 @@ export default function EditPatient() {
     defaultValues: {
       //  **القيمةُ الابتدائية من صفّ المريض** — تُملأ في `reset` أدناه.
       whatsappNotificationsEnabled: false,
+      hadPriorCenterHistory: false,
       name: "",
       phone: "",
       address: "",
@@ -172,6 +176,9 @@ export default function EditPatient() {
         //  من بيانات المريض الحالية، لا افتراضاً: ملفٌّ قديمٌ مطفأ يبقى مطفأً
         //  حتى يؤشّرها الموظّف بنفسه — ولا يُرفع بمجرّد فتح النموذج.
         whatsappNotificationsEnabled: (patient as any).whatsappNotificationsEnabled === true,
+        //  من صفّ المريض لا افتراضاً: ملفٌّ لم يُؤشَّر يبقى غيرَ مؤشَّر حتى
+        //  يقرّر الموظّفُ خلافَ ذلك.
+        hadPriorCenterHistory: (patient as any).hadPriorCenterHistory === true,
         address: patient.address || "",
         age: patient.age,
         weight: patient.weight || "",
@@ -421,6 +428,30 @@ export default function EditPatient() {
                         </span>
                         <span className="block text-muted-foreground mt-0.5">
                           عند تغيير الرقم تنتقل الإشعارات إلى الرقم الجديد تلقائياً.
+                        </span>
+                      </span>
+                    </label>
+
+                    {/* ══ **تاريخُ المريض مع المركز** ═══════════════════════
+                        المربّعُ نفسُه الذي في التسجيل — وهنا بابُ تصحيحه.
+                        **ولا يفعل شيئاً غير ما يقول**: لا يعفي من معاينة،
+                        ولا يُنشئ جهازاً ولا شراءً ولا حلقة. */}
+                    <label
+                      className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/30 p-2 cursor-pointer"
+                      data-testid="label-prior-center-history"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={form.watch("hadPriorCenterHistory") === true}
+                        onChange={(e) =>
+                          form.setValue("hadPriorCenterHistory", e.target.checked)}
+                        data-testid="checkbox-prior-center-history"
+                      />
+                      <span className="text-xs leading-relaxed">
+                        <span className="font-medium">{PRIOR_CENTER_HISTORY_LABEL}</span>
+                        <span className="block text-muted-foreground mt-0.5">
+                          {PRIOR_CENTER_HISTORY_HINT}
                         </span>
                       </span>
                     </label>

@@ -15,6 +15,10 @@ import {
   requestedItemOptions, requestedItemLabel, isRequestedItem, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
+import {
+  SERVICE_PATHS, SERVICE_PATH_QUESTION, SERVICE_PATH_HELP,
+  SERVICE_PATH_LABELS, SERVICE_PATH_HINTS, isServicePath, type ServicePath,
+} from "@shared/service_path";
 import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
 import { AdministrativeReversalDialog } from "./AdministrativeReversalDialog";
 import { activeOperationFocus } from "./device_flow_resume";
@@ -43,13 +47,15 @@ interface NewDeviceEpisodeModalProps {
    * والموزِّعُ والصفحةُ معاً. فمن يحفظ هو مَن يبقى، وهذه تُملأ منه.
    */
   initialRequestedItem?: string;
+  /** مسارُ العملية كما تُرك قبل الردّ — يُعاد إليه بالمنطق نفسه. */
+  initialServicePath?: string;
   /**
    * يفتح «تعديل مريض» حين ينقص الملفّ، **حاملاً الاختيارَ إلى مَن يحفظه**.
    *
    * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
    * يعود ليبدأ الطلبَ من أوّله.
    */
-  onEditPatient?: (requestedItem: RequestedItem | "") => void;
+  onEditPatient?: (requestedItem: RequestedItem | "", servicePath: ServicePath | "") => void;
 }
 
 //  ══ «طرف صناعي جديد **أو جزء جديد**» ═══════════════════════════════════
@@ -62,7 +68,8 @@ const LABEL = {
 } as const;
 
 export function NewDeviceEpisodeModal({
-  patientId, serviceType, open, onOpenChange, initialRequestedItem, onEditPatient,
+  patientId, serviceType, open, onOpenChange, initialRequestedItem,
+  initialServicePath, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -76,10 +83,23 @@ export function NewDeviceEpisodeModal({
   const resumed = (isRequestedItem(initialRequestedItem)
     ? initialRequestedItem : "") as RequestedItem | "";
   const [item, setItem] = useState<RequestedItem | "">(resumed);
+  //  ══ **هل تحتاج هذه العملية معاينة طبية؟** (ترحيل ٠٦٥) ═══════════════
+  //  سؤالٌ عن **هذا الطلب** لا عن المريض. وكان جوابُه يُؤخَذ من تصنيف
+  //  «جديد/قديم» في نموذج التسجيل — بُعدٍ إداريّ يُجاب عنه مرّةً واحدة في
+  //  حياة الملفّ، ثمّ يحكم كلَّ جهازٍ يُطلَب بعده. فمريضٌ قديم عاد يطلب
+  //  طرفاً كاملاً كان يمرّ بلا طبيب، ومريضٌ جديد يريد غلافاً بسيطاً كان
+  //  يُساق إلى الطابور.
+  //
+  //  **وبلا اختيارٍ مسبق**: قيمةٌ افتراضية تجعل الجواب يمرّ بضغطةٍ واحدة
+  //  في اتجاهٍ لم يقصده أحد — والاتجاهان كلاهما مُكلف.
+  const resumedPath = (isServicePath(initialServicePath)
+    ? initialServicePath : "") as ServicePath | "";
+  const [path, setPath] = useState<ServicePath | "">(resumedPath);
   useEffect(() => {
     if (!open) return;
     setItem(resumed);
-  }, [open, resumed]);
+    setPath(resumedPath);
+  }, [open, resumed, resumedPath]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
@@ -104,14 +124,15 @@ export function NewDeviceEpisodeModal({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/patients/${patientId}/device-episodes`, {
-        serviceType, requestedItem: chosen,
+        serviceType, requestedItem: chosen, servicePath: path,
       });
       return await res.json();
     },
     onSuccess: (episode: any) => {
       toast({
         title: "تم فتح طلب الجهاز",
-        description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)} — بانتظار معاينة الطبيب`,
+        description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)}`
+          + (path === "no_exam" ? " — بلا معاينة" : " — بانتظار معاينة الطبيب"),
       });
       // الحلقات نفسها، وقوائم انتظار الطبيب، وصفحة المريض: الطلب الجديد
       // يظهر في الثلاثة فوراً، فلا يبقى الموظّف يعيد التحميل ليصدّق.
@@ -168,7 +189,7 @@ export function NewDeviceEpisodeModal({
         //  **الاختيارُ يُسلَّم إلى مَن يبقى** — ثمّ تُفتح شاشةُ التعديل.
         //  ولا `onOpenChange(false)` هنا: مالكُ الحالة هو مَن يغلق المسار،
         //  فلا يقع الإغلاقُ مرّتين ولا يسبق التسليمَ.
-        if (onEditPatient) onEditPatient(item);
+        if (onEditPatient) onEditPatient(item, path);
         else onOpenChange(false);
       }}
     />
@@ -193,10 +214,13 @@ export function NewDeviceEpisodeModal({
               الخطوة التالية معاينة الطبيب، ثم تُحدَّد الكلفة والخبير في «تخصيص وإسناد خبير».
             </span>
             {/* التوجيه يقع مع الحفظ لا بزرٍّ لاحق — والسطر يقول ذلك صراحةً
-                كي لا يبحث الموظّف عن خطوةٍ ليست عليه. */}
-            <span className="block text-xs text-primary">
-              ويُرسَل طلبُ معاينةٍ كاملة إلى الطبيب تلقائياً مع الحفظ — لا حاجة لخطوة أخرى.
-            </span>
+                كي لا يبحث الموظّف عن خطوةٍ ليست عليه. **ويتبع المسارَ
+                المختار**: وعدٌ بطلبٍ لا يُرسَل أسوأُ من لا وعد. */}
+            {path !== "no_exam" && (
+              <span className="block text-xs text-primary">
+                ويُرسَل طلبُ معاينةٍ كاملة إلى الطبيب تلقائياً مع الحفظ — لا حاجة لخطوة أخرى.
+              </span>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -225,6 +249,30 @@ export function NewDeviceEpisodeModal({
             </p>
           </div>
         )}
+
+        {/*  ══ **هل تحتاج هذه العملية معاينة طبية؟** ════════════════════
+            السؤالُ على **العملية** لا على المريض، ويُطرَح لكلّ طلبٍ على
+            حدة. والاستقبالُ ومديرُ الفرع يجيبانه — **ولا تمنح إجابةُ «لا»
+            أيَّ صلاحيةٍ طبية**: هي توجيهُ مسارٍ لا قرارٌ سريريّ. */}
+        <div className="space-y-2 text-right" data-testid="block-service-path">
+          <Label className="font-semibold">
+            {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
+          </Label>
+          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
+            <SelectTrigger data-testid="select-service-path">
+              <SelectValue placeholder="اختر نعم أو لا" />
+            </SelectTrigger>
+            <SelectContent>
+              {SERVICE_PATHS.map((v) => (
+                <SelectItem key={v} value={v}>{SERVICE_PATH_LABELS[v]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {SERVICE_PATH_HELP}
+            {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
+          </p>
+        </div>
 
         {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════
             ملفٌّ قديمٌ بلا مقاساتٍ أو بلا تعريفِ بترٍ لا يدخل دورةَ تصنيعٍ
@@ -287,7 +335,7 @@ export function NewDeviceEpisodeModal({
           <AlertDialogCancel disabled={mutation.isPending}>إلغاء</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => { e.preventDefault(); mutation.mutate(); }}
-            disabled={mutation.isPending || (asksItem && !item)}
+            disabled={mutation.isPending || (asksItem && !item) || !path}
             data-testid="confirm-new-device"
           >
             {mutation.isPending ? "جارٍ الفتح…" : "فتح الطلب"}
