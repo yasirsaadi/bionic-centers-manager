@@ -598,6 +598,102 @@ export interface LockedEpisode {
   serviceType: string;
   status: string;
   agreedCost: number;
+  /**
+   * مسارُ العملية (ترحيل ٠٦٥) — يُقرأ تحت القفل لا من الطلب.
+   *
+   * ولمّا صار مسارُ «بلا معاينة» يُباع (المرحلة الثالثة) لزم أن يعرف
+   * الحارسُ **من أيّ مسارٍ** هذه الحلقة: `awaiting_exam` على مسار المعاينة
+   * تعني «لم يفحصها طبيبٌ بعد» فتُردّ، وعلى مسار «بلا معاينة» تعني
+   * «لا فحصَ مطلوبٌ أصلاً» فتمضي.
+   */
+  servicePath: ServicePath | null;
+  /**
+   * **ما طُلب بالضبط** (ترحيل ٠٦٠) — يُقرأ تحت القفل لا من الطلب.
+   *
+   * ولمّا صار مسارُ «بلا معاينة» يبيع (المرحلة الثالثة) لزم أن يعرف
+   * الحارسُ **ماذا** يُباع: الجزءُ بديلٌ لقطعةٍ وُصفت يوماً فيمضي، والطرفُ
+   * الكاملُ قرارٌ سريريٌّ من أوّله فيُردّ إلى مسار المعاينة.
+   */
+  requestedItem: string | null;
+  /**
+   * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — يملؤه التحميلُ الدقيق وحده.
+   *
+   * حلقةٌ أُبطلت إدارياً لا يُقيَّد عليها مالٌ متأخّر: بابُها التصحيحُ لا
+   * الاعتماد. والقارئُ العامّ لا يحتاجه، فيبقى اختيارياً ولا يُلزَم به
+   * كلُّ بانٍ قائم.
+   */
+  adminVoidReversalId?: number | null;
+}
+
+/**
+ * **الحلقةُ بعينها — مقفولةً بترتيب القفل القانونيّ** (المرحلة الثالثة).
+ *
+ * ══ لماذا لا تكفي «الحلقةُ المفتوحة» ═══════════════════════════════════
+ * `lockCaseAndReadOpenEpisode` تستثني `delivered` و`cancelled` عمداً: هي
+ * تجيب عن «أيُّ جهازٍ قيد الإجراء الآن؟».
+ *
+ * لكنّ مسارَ «بلا معاينة» يقول **العمليةُ تمضي والمالُ ينتظر** — فالجزءُ
+ * قد يُصنَّع **ويُسلَّم** قبل أن يفرغ الطبيبُ لمراجعة مبلغه. والبحثُ عن
+ * «حلقةٍ مفتوحة» حينها لا يجدها، **فيصير الجهازُ المسلَّمُ بحقٍّ غيرَ قابلٍ
+ * للاعتماد المالي أبداً**. والعملُ لا يُعاقَب لأنه أسرعُ من المراجع.
+ *
+ * ══ وترتيبُ القفل واحد لا اثنان ════════════════════════════════════════
+ * **الخيطُ أوّلاً ثمّ الحلقة** — نفسُ ترتيب `lockCaseAndReadOpenEpisode` و
+ * `startDeviceEpisode`. وترتيبان متعاكسان في نظامٍ واحد يصنعان جمودَ قفلٍ
+ * (deadlock) لا يظهر إلّا تحت الضغط.
+ *
+ * والهويّةُ تُفحَص هنا: الحلقةُ لهذا المريض ولهذا الخيط ومن هذا النوع.
+ */
+export async function lockCaseAndReadExactEpisode(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    episodeId: number;
+  },
+): Promise<{ caseId: number | null; episode: LockedEpisode | null; branchId: number | null }> {
+  //  ① الخيطُ أوّلاً — نقطةُ القفل القانونية.
+  const cs = await tx.execute(sql`
+    SELECT id, branch_id FROM patient_cases
+     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  if (!caseRow) return { caseId: null, episode: null, branchId: null };
+
+  //  ② ثمّ الحلقةُ بمعرّفها — **مهما كانت حالتُها**، فالمسلَّمُ يُعتمَد مالُه.
+  const r = await tx.execute(sql`
+    SELECT id, case_id, patient_id, branch_id, status, agreed_cost, service_path,
+           requested_item, admin_void_reversal_id
+      FROM patient_device_episodes
+     WHERE id = ${params.episodeId}
+     FOR UPDATE
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return { caseId: Number(caseRow.id), episode: null, branchId: null };
+  //  **ولا تُقبَل حلقةٌ من خيطٍ آخر** ولو حمل الطلبُ معرّفَها.
+  if (Number(row.case_id) !== Number(caseRow.id)
+    || Number(row.patient_id) !== params.patientId) {
+    return { caseId: Number(caseRow.id), episode: null, branchId: null };
+  }
+  return {
+    caseId: Number(caseRow.id),
+    branchId: row.branch_id === null || row.branch_id === undefined
+      ? null : Number(row.branch_id),
+    episode: {
+      id: Number(row.id),
+      caseId: Number(row.case_id),
+      patientId: Number(row.patient_id),
+      serviceType: params.serviceType,
+      status: String(row.status),
+      agreedCost: Number(row.agreed_cost ?? 0),
+      servicePath: parseServicePath(row.service_path),
+      requestedItem: row.requested_item ?? null,
+      adminVoidReversalId: row.admin_void_reversal_id === null
+        || row.admin_void_reversal_id === undefined
+        ? null : Number(row.admin_void_reversal_id),
+    },
+  };
 }
 
 /**
@@ -615,7 +711,7 @@ export async function lockOpenEpisodeForAssignment(
   params: { patientId: number; serviceType: DeviceServiceType },
 ): Promise<LockedEpisode | null> {
   const r = await tx.execute(sql`
-    SELECT e.id, e.case_id, e.patient_id, e.status, e.agreed_cost, pc.case_type
+    SELECT e.id, e.case_id, e.patient_id, e.status, e.agreed_cost, e.service_path, pc.case_type
       FROM patient_device_episodes e
       JOIN patient_cases pc
         ON pc.id = e.case_id
@@ -635,6 +731,8 @@ export async function lockOpenEpisodeForAssignment(
     serviceType: String(row.case_type),
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
+    requestedItem: row.requested_item ?? null,
   };
 }
 
@@ -666,7 +764,7 @@ export async function lockCaseAndReadOpenEpisode(
   if (!caseRow) return { caseId: null, episode: null };
 
   const r = await tx.execute(sql`
-    SELECT id, case_id, patient_id, status, agreed_cost
+    SELECT id, case_id, patient_id, status, agreed_cost, service_path, requested_item
       FROM patient_device_episodes
      WHERE case_id = ${caseRow.id}
        AND status NOT IN ('delivered', 'cancelled')
@@ -683,6 +781,8 @@ export async function lockCaseAndReadOpenEpisode(
       serviceType: params.serviceType,
       status: String(row.status),
       agreedCost: Number(row.agreed_cost ?? 0),
+      servicePath: parseServicePath(row.service_path),
+      requestedItem: row.requested_item ?? null,
     } : null,
   };
 }
@@ -698,9 +798,50 @@ export async function markEpisodeInManufacturing(
   tx: { execute: (q: any) => Promise<any> },
   params: { episodeId: number; agreedCost: number },
 ): Promise<void> {
+  await startEpisodeManufacturingTx(tx, { episodeId: params.episodeId });
+  await setEpisodeAgreedCostTx(tx, {
+    episodeId: params.episodeId, agreedCost: params.agreedCost,
+  });
+}
+
+/**
+ * **بدءُ التصنيع — واقعةٌ تشغيلية وحدها.**
+ *
+ * ══ لماذا انفصلت عن السعر (مسارُ «بلا معاينة»، المرحلة الثالثة) ═════════
+ * **العمليةُ تمضي والمالُ ينتظر**: بيعُ جزءٍ بلا معاينة يبدأ تصنيعُه لحظةَ
+ * تسجيله، ولا يدخل مبلغُه المحاسبةَ حتى يعتمده طبيب. فلو كتبنا `agreed_cost`
+ * لحظةَ البدء لصار الاعتمادُ بعدها يحسب فرقاً صفرياً — ولا يدخل المال أبداً.
+ *
+ * فـ`agreed_cost` معناه الدقيق **«كم من هذه الحلقة قُيِّد في المحاسبة»**،
+ * لا «بكم اتُّفق». ويبقى صفراً حتى تقع الكتابةُ المالية فعلاً.
+ *
+ * **ولا تغيّرَ لمُستدعٍ قائم**: `markEpisodeInManufacturing` تنادي الفعلين
+ * معاً بالترتيب نفسِه، فالمسارُ الذي يبيع ويقيّد في لحظةٍ واحدة كما كان.
+ */
+export async function startEpisodeManufacturingTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number },
+): Promise<void> {
   await tx.execute(sql`
     UPDATE patient_device_episodes
-       SET agreed_cost = ${params.agreedCost}, status = 'in_manufacturing', updated_at = NOW()
+       SET status = 'in_manufacturing', updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+}
+
+/**
+ * **الكلفةُ المقيَّدة على الحلقة — واقعةٌ مالية وحدها.**
+ *
+ * تُكتب في النصف المالي حصراً، فما لم يُعتمَد مبلغُه تبقى حلقتُه صفراً
+ * وتقول الحقيقة: لم يُقيَّد من هذا الجهاز دينار.
+ */
+export async function setEpisodeAgreedCostTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; agreedCost: number },
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET agreed_cost = ${params.agreedCost}, updated_at = NOW()
      WHERE id = ${params.episodeId}
   `);
 }
@@ -820,7 +961,7 @@ export async function ensureFirstDeviceEpisodeForSale(
     VALUES (${params.patientId}, ${caseRow.id}, ${caseRow.branch_id ?? null},
             ${nextSeq}, 'examined', 0, ${requestedItem}, ${component}, 'exam',
             ${params.createdBy}, NOW(), NOW())
-    RETURNING id, case_id, patient_id, status, agreed_cost
+    RETURNING id, case_id, patient_id, status, agreed_cost, service_path, requested_item
   `);
   const row = (ins.rows ?? [])[0];
   return {
@@ -830,6 +971,8 @@ export async function ensureFirstDeviceEpisodeForSale(
     serviceType: params.serviceType,
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
+    requestedItem: row.requested_item ?? null,
   };
 }
 
@@ -961,7 +1104,7 @@ export async function createReplacementEpisodeTx(
             ${caseRow.branch_id ?? patient.branch_id ?? null},
             ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
             ${params.createdBy}, NOW(), NOW())
-    RETURNING id, case_id, patient_id, status, agreed_cost
+    RETURNING id, case_id, patient_id, status, agreed_cost, service_path, requested_item
   `);
   const row = (ins.rows ?? [])[0];
   return {
@@ -971,6 +1114,8 @@ export async function createReplacementEpisodeTx(
     serviceType: params.serviceType,
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
+    requestedItem: row.requested_item ?? null,
   };
 }
 

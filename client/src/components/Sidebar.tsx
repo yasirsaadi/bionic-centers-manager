@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -77,6 +77,27 @@ export function Sidebar() {
   });
   const alertCount = alertData?.alertCount ?? 0;
 
+  //  ══ **شارةُ «مُعادة للتصحيح»** (ترحيل ٠٦٧) ═══════════════════════════
+  //  رسالةٌ تمرّ فتضيع، وطابورٌ بلا عددٍ ظاهر لا يُفتَح. فالعددُ على القائمة
+  //  نفسِها: **عددُ الفرع** هو الحاكم (المهمّةُ للفرع لا للموظّف)، ومَن
+  //  أنشأها يراها مُبرَزةً داخل الصفحة.
+  const returnedEligible = !!branchSession && (
+    branchSession.isAdmin
+    || branchSession.role === "branch_manager"
+    || permissions.canAddPatients
+  );
+  const { data: returnedData } = useQuery<{ branch: number; mine: number }>({
+    queryKey: ["/api/no-exam/returned/count"],
+    enabled: returnedEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/no-exam/returned/count", { credentials: "include" });
+      if (!res.ok) return { branch: 0, mine: 0 };
+      return res.json();
+    },
+  });
+  const returnedCount = returnedData?.branch ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -103,6 +124,20 @@ export function Sidebar() {
     { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },
     { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
+    //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
+    //  «معايناتي» و«مراجعة الطبيب»: سؤالٌ واحد له شاشتُه.
+    //
+    //  **والقائمةُ تطابق الخادمَ ولا تضيق عنه**: شرطُ الخادم شكلاً هو
+    //  «مسؤولٌ أو دورُه طبيب أو يحمل `canWriteMedicalExam`»، ثمّ يصفّي
+    //  بالاختصاص الحيّ والفرع. فاشتراطُ `canWriteMedicalExam` وحدها هنا كان
+    //  **يُخفي الشاشةَ عن طبيبٍ يقبله الخادم** — وهذه مراجعةٌ ماليةٌ لا
+    //  معاينةٌ تُوقَّع، فلا تُشترَط لها صلاحيةُ كتابة المعاينة.
+    //  ومَن لا اختصاصَ له يفتحها فيقرأ سببَ خلوّها — لا أن يبحث عن بابٍ
+    //  لا يراه. **ولا تتوسّع سلطةُ الخادم بحرف.**
+    { label: "مراجعة مبيعات بلا معاينة", icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["doctor"] as const },
+    //  **وطابورُ الاستقبال للمُعادات** — بعددٍ ظاهر، فيُعرَف أن هناك ما
+    //  ينتظر بلا فتح الصفحة.
+    { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
@@ -135,7 +170,18 @@ export function Sidebar() {
       //  مديرِ الفرع**، فالطبيبُ العاديّ لا يراها.
       const discountBypass = item.href === "/discount-approvals"
         && permissions.canApproveDiscount;
-      if (!matchesRole && !expertBypass && !discountBypass) return false;
+      //  **والمُعادات كذلك**: البوّابةُ في الخادم `canAddPatients` — وهي
+      //  ما يعنيه «استقبال» — فمَن يحملها يرى طابورَه ولو كان دورُه شيئاً
+      //  آخر. ولا تُفتَح لمن لا يملكها.
+      const returnedBypass = item.href === "/returned-charges"
+        && permissions.canAddPatients;
+      //  **والمراجعةُ المالية كذلك**: عَلَمُ `canWriteMedicalExam` يفتحها لمن
+      //  دورُه شيءٌ آخر — تماماً كما يقبله الخادم. فالقائمةُ والخادمُ لا
+      //  يختلفان على طبيبٍ مراجع.
+      const noExamReviewBypass = item.href === "/no-exam-review"
+        && permissions.canWriteMedicalExam;
+      if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
+        && !noExamReviewBypass) return false;
     }
     
     // Check branch settings for non-admin users

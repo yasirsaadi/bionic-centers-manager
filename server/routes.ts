@@ -25,6 +25,7 @@ import { registerMedicalReviewRoutes } from "./medical_review/routes";
 import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/routing";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
+import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
 import { registerDiscountRoutes, mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "./discounts/routes";
@@ -7141,6 +7142,9 @@ export async function registerRoutes(
   // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
   // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.
   registerFollowupRoutes(app, isAuthenticated);
+  //  **المراجعةُ المالية لعملياتِ «بلا معاينة»** (ترحيل ٠٦٧): العمليةُ
+  //  تمضي والمالُ ينتظر اعتمادَ طبيبٍ مخوَّل.
+  registerPendingChargeRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
 

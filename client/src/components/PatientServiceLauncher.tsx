@@ -10,6 +10,7 @@ import { AddCaseTypeModal } from "./AddCaseTypeModal";
 import { NewServiceModal } from "./NewServiceModal";
 import { VisitModal } from "./VisitModal";
 import { NewDeviceEpisodeModal } from "./NewDeviceEpisodeModal";
+import { NoExamOperationDialog } from "./NoExamOperationDialog";
 import {
   launcherOptions, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type ServiceFlow,
@@ -220,6 +221,17 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           initialServicePath={resumePath}
           onEditPatient={(requestedItem, servicePath) =>
             editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
+        />
+      )}
+
+      {/*  **بلا معاينة** (ترحيل ٠٦٧) — العملُ يُنجَز والمبلغُ ينتظر. */}
+      {flow?.kind === "no_exam_operation" && (
+        <NoExamOperationDialog
+          patientId={patient.id}
+          branchId={patient.branchId}
+          serviceType={flow.serviceType}
+          open
+          onOpenChange={closeFlow}
         />
       )}
 

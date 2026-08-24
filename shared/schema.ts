@@ -899,6 +899,31 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    */
   maintenanceComponent: text("maintenance_component"),
   /**
+   * **منشأُ الجهاز المُصان** (ترحيل ٠٦٧) — `registered` /
+   * `center_unrecorded` / `external`.
+   *
+   * ومكانُه هنا لا على صفّ المبلغ المعلَّق: صيانةٌ بلا أجرٍ لا تُنشئ ذلك
+   * الصفَّ أصلاً، فلو عاش المنشأُ هناك وحده لاختفى كلّما كانت الخدمةُ
+   * مجّانية. و«صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز» — وسمُ
+   * الأوّل بالثاني يصف عملَنا بأنه عملُ غيرنا.
+   *
+   * و`NULL` صدقٌ لا نقص: أوامرُ ما قبل الترحيل لم تُسأل، والبناءُ الأوليُّ
+   * لا منشأَ له — نحن نصنعه.
+   */
+  deviceOrigin: text("device_origin"),
+  /**
+   * **«بلا أجر» واقعةٌ تُحفَظ لا غيابُ صفّ** (ترحيل ٠٦٧).
+   *
+   * العمليةُ بلا أجر لا تُنشئ صفَّ مبلغٍ معلَّق — وغيابُ الصفّ ليس شهادة:
+   * مَن يقرأ الأمرَ بعد شهور لا يفرّق بين «قُرِّر مجّاناً صراحةً» و«لم
+   * يُسجَّل مبلغُه بعد».
+   *
+   * `NULL` لم يُسأل (قديمٌ أو خارج المسار) · `TRUE` بلا أجرٍ صراحةً ·
+   * `FALSE` بأجرٍ يمرّ بالمراجعة. **ولا قيمةَ افتراضية** تكتب معنىً على
+   * أمرٍ قديم لم يُسأل.
+   */
+  noExamNoCharge: boolean("no_exam_no_charge"),
+  /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
    * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
@@ -915,6 +940,11 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   //  مسجَّلٌ على الحلقة لا هنا. فعمودٌ مملوءٌ على بناءٍ يعني خلطاً بين بابين.
   check("prosthetic_work_orders_maint_component_purpose_check",
     sql`${t.maintenanceComponent} IS NULL OR ${t.purpose} = 'maintenance'`),
+  //  **ومنشأُ الجهاز ثلاثةٌ لا اثنان** (ترحيل ٠٦٧): «صنعناه ولم نسجّله»
+  //  ليس «صُنع خارج المركز». و`NULL` للقديم وللبناء الأوليّ.
+  check("pwo_device_origin_check", sql`
+    ${t.deviceOrigin} IS NULL
+    OR ${t.deviceOrigin} IN ('registered', 'center_unrecorded', 'external')`),
   //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة
   //  وحدها، فأوامرُ الصيانة القديمة بلا جزءٍ لا تثقله (ترحيل ٠٦٠).
   index("ix_wo_maint_component").on(t.maintenanceComponent)
@@ -1840,6 +1870,119 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     .where(sql`purchase_interest_at IS NOT NULL`),
   index("ix_pef_branch_status").on(t.branchId, t.status),
   index("ix_pef_due").on(t.nextFollowUpAt).where(sql`next_follow_up_at IS NOT NULL`),
+]);
+
+/**
+ * **المبلغُ المعلَّق لعمليةِ «بلا معاينة»** (ترحيل ٠٦٧).
+ *
+ * **العمليةُ تمضي. والمالُ لا يدخل المحاسبة حتى يعتمده طبيبٌ مخوَّل.**
+ *
+ * يعيش هذا الصفُّ **خارج المحاسبة تماماً**: لا `costEntries` ولا
+ * `patients.totalCost` ولا `patientCases.cost` ولا دفعةَ ولا قيدَ يومية —
+ * فكلُّ حاسبٍ يقرأ الدفاترَ القانونية يرى صفراً منه حتى لحظة الاعتماد.
+ *
+ * **ولا يُحمَّل على جدولٍ قائم**: `medicalReviewRequests` طلبُ مراجعةٍ
+ * سريرية، و`serviceDiscountRequests` اعتمادُ استثناءٍ على سعر. وهذه
+ * مراجعةُ **المبلغ نفسِه** مهما كان — معنىً ثالثٌ له صفُّه.
+ */
+export const pendingServiceCharges = pgTable("pending_service_charges", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  caseId: integer("case_id").references(() => patientCases.id),
+  /**
+   * لقطتا هويّةٍ **بلا مفتاحٍ أجنبيّ عمداً** — نفسُ درس
+   * `proposedExpertUserId` (٠٣٥) و`payments.visitId` (٠٣٨): كاسكيدُ حذف
+   * المريض يمرّ بترتيبٍ لا يحتمل مفتاحاً هنا، و`SET NULL` على صفٍّ مُدقَّق
+   * يمحو الهويّةَ التي وُضعت ليُقرأ بها.
+   */
+  deviceEpisodeId: integer("device_episode_id"),
+  workOrderId: integer("work_order_id"),
+  serviceType: text("service_type").notNull(),
+  /** `device_sale` بيعُ جزءٍ أو مسند · `maintenance` صيانةٌ أو إصلاح. */
+  operationKind: text("operation_kind").notNull(),
+  requestedItem: text("requested_item"),
+  maintenanceComponent: text("maintenance_component"),
+  /**
+   * **لقطةُ منشأ الجهاز** — للعرض في طابور المراجعة.
+   *
+   * ومصدرُ الحقيقة `prostheticWorkOrders.deviceOrigin`: الصيانةُ بلا أجرٍ
+   * لا تُنشئ صفّاً هنا أصلاً، فلا يجوز أن تعيش الواقعةُ هنا وحدها.
+   */
+  deviceOrigin: text("device_origin"),
+  /**
+   * **خبيرُ البيع** — يختاره الاستقبالُ لحظةَ العمل لا الطبيبُ لحظةَ
+   * المراجعة: الطبيبُ يراجع **المبلغ** لا مَن ينفّذ. لقطةُ رقمٍ بلا مفتاح.
+   */
+  saleExpertUserId: integer("sale_expert_user_id"),
+  /** **موجبٌ دائماً**: العمليةُ بلا أجر لا تُنشئ صفّاً أصلاً. */
+  amount: integer("amount").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("pending_review"),
+  createdBy: integer("created_by"),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  returnReason: text("return_reason"),
+  returnedAt: timestamp("returned_at", { withTimezone: true }),
+  returnedBy: integer("returned_by"),
+  returnedByName: text("returned_by_name"),
+  reviewedBy: integer("reviewed_by"),
+  reviewedByName: text("reviewed_by_name"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  /** **حارسُ التطبيق مرّةً واحدة بالضبط.** */
+  appliedAt: timestamp("applied_at", { withTimezone: true }),
+  appliedWorkOrderId: integer("applied_work_order_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("psc_status_check",
+    sql`${t.status} IN ('pending_review', 'returned', 'approved')`),
+  check("psc_kind_check", sql`${t.operationKind} IN ('device_sale', 'maintenance')`),
+  check("psc_service_check", sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
+  check("psc_amount_check", sql`${t.amount} > 0`),
+  check("psc_returned_shape_check", sql`
+    ${t.status} <> 'returned'
+    OR (COALESCE(BTRIM(${t.returnReason}), '') <> '' AND ${t.returnedAt} IS NOT NULL)`),
+  check("psc_approved_shape_check", sql`
+    ${t.status} <> 'approved'
+    OR (${t.appliedAt} IS NOT NULL AND ${t.reviewedBy} IS NOT NULL
+        AND ${t.reviewedAt} IS NOT NULL)`),
+  //  **ومنشأُ الجهاز ثلاثةٌ لا اثنان.**
+  check("psc_origin_check", sql`
+    ${t.deviceOrigin} IS NULL
+    OR ${t.deviceOrigin} IN ('registered', 'center_unrecorded', 'external')`),
+  //  **وبيعٌ يسمّي خبيرَه دائماً** — والاعتمادُ لا يُسنِد إلى مجهول.
+  check("psc_sale_expert_check",
+    sql`${t.operationKind} <> 'device_sale' OR ${t.saleExpertUserId} IS NOT NULL`),
+  check("psc_applied_only_approved_check",
+    sql`${t.appliedAt} IS NULL OR ${t.status} = 'approved'`),
+  //  **صفٌّ معلَّقٌ واحد لكلّ عملية** — فضغطتان تُنتجان واحداً.
+  uniqueIndex("uq_psc_open_work_order").on(t.workOrderId)
+    .where(sql`work_order_id IS NOT NULL AND status <> 'approved'`),
+  uniqueIndex("uq_psc_open_episode_sale").on(t.deviceEpisodeId)
+    .where(sql`device_episode_id IS NOT NULL AND operation_kind = 'device_sale' AND status <> 'approved'`),
+  index("ix_psc_branch_status").on(t.branchId, t.status, t.id.desc()),
+  index("ix_psc_patient").on(t.patientId),
+]);
+
+/** الرحلةُ كاملةً — فلا يمحو سببُ إعادةٍ سبباً قبله. */
+export const pendingServiceChargeEvents = pgTable("pending_service_charge_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  chargeId: integer("charge_id").references(() => pendingServiceCharges.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id"),
+  eventType: text("event_type").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  reason: text("reason"),
+  note: text("note"),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  actorUserId: integer("actor_user_id"),
+  actorName: text("actor_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("ix_psce_charge").on(t.chargeId, t.id.desc()),
+  index("ix_psce_patient").on(t.patientId, t.id.desc()),
 ]);
 
 export const POST_EXAM_FOLLOWUP_STATUSES = [

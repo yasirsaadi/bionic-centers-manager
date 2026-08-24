@@ -196,7 +196,25 @@ export async function validateExpertForBranch(
   expertUserId: number,
   branchId: number,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const [u] = await db.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
+  return await validateExpertForBranchTx(db, expertUserId, branchId);
+}
+
+/**
+ * **النسخةُ التي تقرأ داخل معاملة المُستدعي** — والقاعدةُ واحدة لا اثنتان.
+ *
+ * اعتمادُ مبلغٍ معلَّق (٠٦٧) قد يقع بعد يومٍ من إرساله: يُوقَف الخبيرُ أو
+ * يُنقَل بين اللحظتين. فيُعاد التحقّق **تحت القفل قبل قيد الدينار** — ولو
+ * قرأنا من خارج المعاملة لقرأنا لقطةً قد تشيخ قبل أن نكتب.
+ *
+ * والمنطقُ حرفٌ واحد لا يتكرّر: `validateExpertForBranch` تنادِيها بالاتصال
+ * العامّ، وهذه بمعاملةٍ مفتوحة.
+ */
+export async function validateExpertForBranchTx(
+  tx: any,
+  expertUserId: number,
+  branchId: number,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const [u] = await tx.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
   if (!u) return { ok: false, reason: "الخبير غير موجود" };
   if (!u.isActive) return { ok: false, reason: "حساب الخبير غير فعّال" };
   // Pure expert OR a user carrying the expert capability flag.
@@ -396,6 +414,23 @@ export async function createMaintenanceOrderWithVisit(params: {
   /** إقرارٌ صريح بأن الجهاز المُصان قديمٌ غير مسجَّل. */
   legacyUnrecordedDevice?: boolean;
   /**
+   * **منشأُ الجهاز المُصان** (ترحيل ٠٦٧) — يُحفَظ على الأمر نفسِه.
+   *
+   * ثلاثُ حقائق لا اثنتان: `registered` له حلقتُه · `center_unrecorded`
+   * **صنعناه نحن** قبل النظام · `external` صُنع خارج المركز. ووسمُ الثاني
+   * بالثالث يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق.
+   *
+   * و`undefined` تعني «لم يُسأل» — فيبقى العمودُ فارغاً صادقاً، ولا يُخمَّن.
+   */
+  deviceOrigin?: string | null;
+  /**
+   * **«بلا أجر» واقعةٌ تُحفَظ** (ترحيل ٠٦٧) — لا غيابُ صفّ معلَّق.
+   *
+   * `undefined` للصيانة كاملةِ الأجر بنقطتها القائمة: ليست من هذا المسار،
+   * فيبقى العمودُ `NULL` صادقاً ولا يُكتب عليها معنىً لم يُسأل عنه.
+   */
+  noExamNoCharge?: boolean;
+  /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
    * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
@@ -455,6 +490,9 @@ export async function createMaintenanceOrderWithVisit(params: {
       assignedBy: params.assignedBy,
       deviceEpisodeId: targetEpisodeId,
       maintenanceComponent: component,
+      //  **الواقعةُ على السجلّ التشغيليّ** — فتبقى ولو كانت الخدمةُ بلا أجر.
+      deviceOrigin: params.deviceOrigin ?? null,
+      noExamNoCharge: params.noExamNoCharge ?? null,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,
@@ -497,30 +535,60 @@ export async function createMaintenanceOrderWithVisit(params: {
     });
 
     if (params.cost > 0) {
-      // Book the fee: device case cost (manual — automation keeps off) + the
-      // patient total that totalRevenue actually sums. Same double-write the
-      // تخصيص confirmation performs.
-      const deviceCase = caseRows.find((c) => c.caseType === params.serviceType);
-      if (deviceCase) {
-        await tx.update(patientCases)
-          .set({ cost: sql`${patientCases.cost} + ${params.cost}`, costSource: "manual", updatedAt: new Date() })
-          .where(eq(patientCases.id, deviceCase.id));
-      }
-      await tx.update(patients)
-        .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
-        .where(eq(patients.id, params.patientId));
-      await tx.insert(costEntries).values({
+      await postMaintenanceFee(tx, {
         patientId: params.patientId, branchId: params.branchId,
-        amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+        serviceType: params.serviceType, cost: params.cost,
         deviceEpisodeId: targetEpisodeId,
-        //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي
-        //  نفسها التي رُفعت كلفتُها سطرين أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
-        caseId: deviceCase?.id ?? null,
       });
     }
     return workOrder;
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
+ * **قيدُ أجور الصيانة — الكتابةُ الواحدة** (استُخرجت في المرحلة الثالثة).
+ *
+ * كلفةُ حالة الجهاز (`manual` فتبقى الأتمتةُ بعيدة) + `patients.total_cost`
+ * الذي يجمعه `totalRevenue` + سطرٌ واحد في دفتر الكلف. وهي نفسُ الكتابة
+ * المزدوجة التي يؤدّيها تأكيدُ «تخصيص».
+ *
+ * ══ ولماذا صارت دالّةً مستقلّة ═══════════════════════════════════════════
+ * مسارُ «بلا معاينة» (المرحلة الثالثة) يفصل **العملَ التشغيليّ** عن **دخول
+ * المال**: الصيانةُ تُفتَح ويعمل الخبير، ويبقى المبلغُ معلّقاً حتى يعتمده
+ * طبيب. فلو نُسخت هذه الأسطرُ هناك لصار للصيانة حسابان ينحرف أحدُهما يوماً.
+ *
+ * **فالكتابةُ واحدة ولها نداءان**: الصيانةُ كاملةُ الأجر تناديها في معاملتها،
+ * والاعتمادُ يناديها في معاملته — بالمبلغ المعتمَد وبهويّة الجهاز نفسِها.
+ */
+export async function postMaintenanceFee(tx: any, params: {
+  patientId: number;
+  branchId: number;
+  serviceType: string;
+  cost: number;
+  deviceEpisodeId: number | null;
+}): Promise<void> {
+  if (!(params.cost > 0)) return;
+  const caseRows: { id: number; caseType: string }[] = await tx
+    .select({ id: patientCases.id, caseType: patientCases.caseType })
+    .from(patientCases).where(eq(patientCases.patientId, params.patientId));
+  const deviceCase = caseRows.find((c) => c.caseType === params.serviceType);
+  if (deviceCase) {
+    await tx.update(patientCases)
+      .set({ cost: sql`${patientCases.cost} + ${params.cost}`, costSource: "manual", updatedAt: new Date() })
+      .where(eq(patientCases.id, deviceCase.id));
+  }
+  await tx.update(patients)
+    .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
+    .where(eq(patients.id, params.patientId));
+  await tx.insert(costEntries).values({
+    patientId: params.patientId, branchId: params.branchId,
+    amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+    deviceEpisodeId: params.deviceEpisodeId,
+    //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي نفسها
+    //  التي رُفعت كلفتُها أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
+    caseId: deviceCase?.id ?? null,
+  });
 }
 
 // ---- order listing + enrichment ----------------------------------------------
