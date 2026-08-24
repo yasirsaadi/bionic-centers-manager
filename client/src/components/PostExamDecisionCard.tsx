@@ -46,6 +46,7 @@ import {
 } from "@/components/purchase_dialog_ui";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { Textarea } from "@/components/ui/textarea";
+import { computeCommercialOffer } from "@shared/commercial";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
@@ -149,7 +150,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
   //  ══ المسارُ المبسّط (المرحلة الثانية) ═══════════════════════════════════
-  const [cKind, setCKind] = useState<"normal" | "discount" | "free">("normal");
+  //  **ونفسُ الحالةِ الابتدائية الحقيقية هنا** (انظر `NewExamDialog`):
+  //  `""` = «غير محدد» فلا يُرسَل سعرٌ، والاختيارُ الصريحُ يُلزِم بياناته.
+  const [cKind, setCKind] = useState<"" | "normal" | "discount" | "free">("");
   const [cOriginal, setCOriginal] = useState("");
   const [cFinal, setCFinal] = useState("");
   const [cExpert, setCExpert] = useState("");
@@ -415,6 +418,18 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
   });
 
+  //  ══ **منعُ الإرسال بالقاعدة المشتركة نفسها** (المرحلة ٢) ═══════════════
+  //  ما تمنعه الشاشةُ يردّه الخادم، وما تقبله يقبله — دالّةٌ واحدة لا نسختان.
+  const cBlock: string | null = (() => {
+    if (dialog !== "commercial" || locks.price || cKind === "") return null;
+    const offer = computeCommercialOffer({
+      kind: cKind,
+      originalPrice: cOriginal === "" ? null : Number(cOriginal),
+      finalPrice: cKind === "discount" ? (cFinal === "" ? null : Number(cFinal)) : undefined,
+    });
+    return offer.ok ? null : (offer.error ?? "بيانات السعر غير مكتملة");
+  })();
+
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
   return (
@@ -530,8 +545,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               {examActions.includes("commercial") && (
                 <Button size="sm" variant="outline" disabled={busy}
                   onClick={() => {
-                    setCKind(active.priceKind === "discount" ? "discount"
-                      : active.priceKind === "free" ? "free" : "normal");
+                    //  الصفُّ المسعَّرُ يفتح على نوعه، وغيرُ المسعَّر على
+                    //  «غير محدد» — لا على `normal` التي تُوهم اختياراً.
+                    setCKind(active.priceKind ?? "");
                     setCOriginal(active.originalPrice != null
                       ? String(active.originalPrice)
                       : (active.approvedPrice > 0 ? String(active.approvedPrice) : ""));
@@ -816,11 +832,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold">نوع السعر</Label>
                   <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-c-kind">
-                    {([["normal", "السعر كما هو"], ["discount", "بخصم"], ["free", "مجاني"]] as const)
+                    {([["", "غير محدد"], ["normal", "السعر كما هو"],
+                      ["discount", "بخصم"], ["free", "مجاني"]] as const)
                       .map(([v, label]) => (
-                        <label key={v} className="flex items-center gap-1 cursor-pointer">
+                        <label key={v || "none"} className="flex items-center gap-1 cursor-pointer">
                           <input type="radio" name="c-kind" value={v} checked={cKind === v}
-                            onChange={() => setCKind(v)} data-testid={`radio-c-kind-${v}`} />
+                            onChange={() => setCKind(v)}
+                            data-testid={`radio-c-kind-${v || "none"}`} />
                           <span>{label}</span>
                         </label>
                       ))}
@@ -843,6 +861,18 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 {cKind === "free" && (
                   <p className="text-xs text-emerald-900" data-testid="text-c-free">
                     سيُقيَّد بقيمة <b>صفر</b>، ويبقى السعر الأصلي محفوظاً في السجلّ.
+                  </p>
+                )}
+                {cKind === "" && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-c-untouched">
+                    السعر غير محدد بعد — لن يُرسَل، ويبقى الملفّ بلا تسعير.
+                  </p>
+                )}
+                {/*  **والنقصُ يُقال قبل الضغط** — بالقاعدة المشتركة نفسها. */}
+                {cBlock && (
+                  <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+                    data-testid="text-c-block">
+                    {cBlock}
                   </p>
                 )}
               </>
@@ -870,13 +900,18 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             )}
           </div>
           <DialogFooter>
-            <Button disabled={busy} data-testid="button-save-commercial"
+            <Button disabled={busy || Boolean(cBlock)} data-testid="button-save-commercial"
               onClick={() => {
                 const body: any = {};
-                if (!locks.price && cOriginal !== "" && Number(cOriginal) > 0) {
+                //  **الاختيارُ الصريح يُرسَل ولو نقص** — فيُردّ الطلبُ كلُّه
+                //  ولا يُقبل نصفُه. وحذفُه عند النقص كان يحفظ الخبيرَ ويُسقط
+                //  قرارَ التسعير بصمت.
+                if (!locks.price && cKind !== "") {
                   body.price = {
-                    kind: cKind, originalPrice: Number(cOriginal),
-                    finalPrice: cKind === "discount" && cFinal !== "" ? Number(cFinal) : undefined,
+                    kind: cKind,
+                    originalPrice: cOriginal === "" ? null : Number(cOriginal),
+                    finalPrice: cKind === "discount"
+                      ? (cFinal === "" ? null : Number(cFinal)) : undefined,
                   };
                 }
                 if (!locks.expert && cExpert) body.expertUserId = Number(cExpert);

@@ -743,6 +743,146 @@ async function main() {
         0);
     }
     // ══════════════════════════════════════════════════════════════════
+    //  ي‌ب. **الاختيارُ الصريحُ لا يُسقَط بصمت** — علّةُ «غير محدد»
+    // ══════════════════════════════════════════════════════════════════
+    //  كانت الشاشةُ تبدأ بـ`normal` فاستحال أن يُعرَف: أاختار الطبيبُ أم لم
+    //  يلمس؟ ومَن اختار **بخصم** أو **مجّاني** ثمّ ترك الأصلَ فارغاً كان
+    //  اختيارُه يُحذَف من الحمولة بينما يُحفَظ خبيرُه وقرارُه — فيُقرأ الملفُّ
+    //  «غير مسعَّر» وقد قرّر الطبيبُ تبرّعاً.
+    console.log("\n── ي‌ب. النقصُ يُردّ ولا يُسقَط ──");
+    {
+      //  ① بلا لمسٍ للسعر إطلاقاً ⟶ المعاينةُ تُوقَّع والملفُّ بلا تسعير.
+      const p = await mkPatient("بلا تسعير");
+      await mkCase(p);
+      await startEpisode(p);
+      const ex = await signExam(p, "prosthetic", { expertUserId: EXPERT });
+      check(ex.status === 200 || ex.status === 201,
+        "٦١. **(١) بلا سعرٍ إطلاقاً ⟶ المعاينةُ تُوقَّع**", String(ex.status));
+      const fid = await followupOf(p);
+      same("   والملفُّ **غير مسعَّر** لا «مجّانيّ»",
+        [(await fRow(fid)).pk, (await fRow(fid)).op, (await fRow(fid)).p], [null, null, 0]);
+      same("   والخبيرُ حُفظ وحده", Number((await fRow(fid)).ex), EXPERT);
+      same("   وما ينقص «السعر»", (await http("GET", `/api/followups/patient/${p}`, S.recv))
+        .body?.[0]?.missing, ["price"]);
+    }
+    {
+      //  ② «مجّاني» بلا أصلٍ ⟶ **يُردّ**، ولا يُسقَط ولا يُحفَظ نصفُ الطلب.
+      const p = await mkPatient("مجّانيٌّ بلا أصل");
+      await mkCase(p);
+      await startEpisode(p);
+      const ex = await signExam(p, "prosthetic", {
+        price: { kind: "free", originalPrice: null },
+        expertUserId: EXPERT, decision: "bought",
+      });
+      same("٦٢. **(٢) «مجّاني» بلا سعرٍ أصليّ ⟶ ٤٠٠**", ex.status, 400);
+      check(String(ex.body?.error ?? "").includes("أصليّ"),
+        "   برسالةٍ تقول ما ينقص", JSON.stringify(ex.body));
+      //  **(٦) ولا نصفَ حمولةٍ يُقبل**: لا معاينةَ ولا متابعةَ ولا خبيرَ ولا قرار.
+      same("٦٣. **(٦) ولا شيءَ حُفظ — لا معاينةَ ولا متابعةَ ولا خبير**",
+        [(await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n,
+          await followupOf(p)],
+        [0, 0]);
+      same("   ولا دينارَ ولا أمر",
+        await moneyOf(p), { total: 0, orders: 0, cost_entries: 0, payments: 0, discounts: 0 });
+    }
+    {
+      //  ③ «بخصم» بلا أصل ⟶ يُردّ.
+      const p = await mkPatient("خصمٌ بلا أصل");
+      await mkCase(p);
+      await startEpisode(p);
+      const ex = await signExam(p, "prosthetic", {
+        price: { kind: "discount", originalPrice: null, finalPrice: 500_000 },
+        expertUserId: EXPERT,
+      });
+      same("٦٤. **(٣) «بخصم» بلا سعرٍ أصليّ ⟶ ٤٠٠**", ex.status, 400);
+      same("   ولا معاينةَ حُفظت",
+        (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n, 0);
+    }
+    {
+      //  ④ «بخصم» بأصلٍ بلا نهائيّ ⟶ يُردّ.
+      const p = await mkPatient("خصمٌ بلا نهائيّ");
+      await mkCase(p);
+      await startEpisode(p);
+      const ex = await signExam(p, "prosthetic", {
+        price: { kind: "discount", originalPrice: 900_000, finalPrice: null },
+      });
+      same("٦٥. **(٤) «بخصم» بلا سعرٍ نهائيّ ⟶ ٤٠٠**", ex.status, 400);
+      same("   ولا معاينةَ حُفظت",
+        (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n, 0);
+      //  وبأصلٍ ونهائيٍّ صحيحين يمرّ.
+      const ok = await signExam(p, "prosthetic", {
+        price: { kind: "discount", originalPrice: 900_000, finalPrice: 700_000 },
+      });
+      check(ok.status === 200 || ok.status === 201, "   وبالاثنين يمرّ", String(ok.status));
+      const fid = await followupOf(p);
+      same("   بالقيم الصحيحة",
+        [(await fRow(fid)).op, (await fRow(fid)).p, (await fRow(fid)).pk],
+        [900_000, 700_000, "discount"]);
+    }
+    {
+      //  ⑤ «مجّاني» بأصلٍ موجب ⟶ يُحفَظ صريحاً.
+      const p = await mkPatient("مجّانيٌّ صحيح");
+      await mkCase(p);
+      await startEpisode(p);
+      const ex = await signExam(p, "prosthetic", {
+        price: { kind: "free", originalPrice: 1_400_000 },
+      });
+      check(ex.status === 200 || ex.status === 201,
+        "٦٦. **(٥) «مجّاني» بأصلٍ موجب يمرّ**", String(ex.status));
+      const fid = await followupOf(p);
+      same("   ويُحفَظ صريحاً: نهائيٌّ صفرٌ وأصلٌ محفوظ",
+        [(await fRow(fid)).pk, (await fRow(fid)).op, (await fRow(fid)).p],
+        ["free", 1_400_000, 0]);
+      same("   **و«مكتملُ السعر» لا «ينقصه السعر»**",
+        (await http("GET", `/api/followups/patient/${p}`, S.recv)).body?.[0]?.missing,
+        ["expert"]);
+    }
+    {
+      //  ⑥ ونفسُ الحراسة على **نقطة التفاصيل** لا على التوقيع وحده.
+      const p = await mkPatient("نقصٌ من البطاقة");
+      await mkCase(p);
+      await startEpisode(p);
+      await signExam(p, "prosthetic", {});
+      const fid = await followupOf(p);
+      const bad = await commercial(fid,
+        { price: { kind: "free", originalPrice: null }, expertUserId: EXPERT }, S.recv);
+      same("٦٧. **(٦) والبطاقةُ كذلك: نقصٌ ⟶ ٤٠٠ ولا نصفَ يُقبل**", bad.status, 400);
+      same("   **ولا الخبيرُ حُفظ** — الطلبُ يُردّ كلُّه",
+        [(await fRow(fid)).ex, (await fRow(fid)).pk], [null, null]);
+    }
+    {
+      //  ⑦⑧ صاحبُ المعاينة يعدّل حقولَه من البطاقة، وغيرُه يُردّ.
+      const p = await mkPatient("تعديلُ صاحبها");
+      await mkCase(p);
+      await startEpisode(p);
+      await signExam(p, "prosthetic", {
+        price: { kind: "normal", originalPrice: 1_000_000 }, expertUserId: EXPERT,
+      });
+      const fid = await followupOf(p);
+      same("٦٨. **(٧) صاحبُ المعاينة يعدّل سعرَه من بطاقة التفاصيل قبل البيع**",
+        (await commercial(fid,
+          { price: { kind: "discount", originalPrice: 1_000_000, finalPrice: 820_000 } },
+          S.doc)).status, 200);
+      same("   والقيمُ تغيّرت والمالكيةُ باقيةٌ له",
+        [(await fRow(fid)).p, (await fRow(fid)).pk, (await fRow(fid)).po,
+          Number((await fRow(fid)).pou)],
+        [820_000, "discount", "doctor", DOC]);
+      same("   ويبدّل خبيرَه كذلك",
+        (await commercial(fid, { expertUserId: EXPERT2 }, S.doc)).status, 200);
+      same("٦٩. **(٨) ومديرُ الفرع والاستقبالُ يُردّان عنهما**",
+        [(await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.manager)).status,
+          (await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.recv)).status,
+          (await commercial(fid, { expertUserId: EXPERT }, S.manager)).status,
+          (await commercial(fid, { expertUserId: EXPERT }, S.recv)).status],
+        [403, 403, 403, 403]);
+      same("   **وطبيبٌ آخر ليس صاحبَها يُردّ كذلك**",
+        (await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.doc2)).status,
+        403);
+      same("   والقيمُ لم تتغيّر بعد كلّ ذلك",
+        [(await fRow(fid)).p, Number((await fRow(fid)).ex)], [820_000, EXPERT2]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  ك. **عقدُ الشاشات** — ما يراه الطبيبُ والموظّف
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ك. عقدُ الشاشات ──");
@@ -756,11 +896,28 @@ async function main() {
       //  والقيمُ تُبنى من قائمةٍ واحدة، فيُفحَص القالبُ والقائمةُ معاً — لا
       //  نصٌّ مسطَّح لا وجودَ له في المصدر.
       check(exam.includes("block-exam-commercial")
-        && exam.includes("radio-price-kind-${v}")
+        && exam.includes('radio-price-kind-${v || "none"}')
+        && /\["", "غير محدد"\]/.test(exam)
         && /\["normal", "السعر كما هو"\]/.test(exam)
         && /\["discount", "بخصم"\]/.test(exam)
         && /\["free", "مجاني"\]/.test(exam),
-        "٥١. نافذةُ المعاينة فيها نوعُ السعر: عاديّ · بخصم · مجّانيّ");
+        "٥١. نافذةُ المعاينة فيها: غير محدد · عاديّ · بخصم · مجّانيّ");
+      //  ══ **الحالةُ الابتدائية فراغٌ لا `normal`** ═══════════════════════
+      //  وهذا هو الفرقُ الذي بُني عليه كلُّ شيء: `normal` ابتداءً تجعل
+      //  «لم يلمس» و«اختار السعرَ كما هو» شيئاً واحداً.
+      check(/useState<"" \| "normal" \| "discount" \| "free">\(""\)/.test(exam),
+        "٥١أ. **والابتداءُ «غير محدد» لا «السعر كما هو»**");
+      check(/price: priceTouched\s*\?/.test(exam)
+        && !/const hasPrice = deviceCost !== ""/.test(exam),
+        "٥١ب. **والاختيارُ الصريح يُرسَل ولو نقص** — لا يُحذَف من الحمولة");
+      check(exam.includes("text-commercial-block")
+        && /computeCommercialOffer\(/.test(exam),
+        "٥١ج. ويُمنَع الإرسالُ قبل الشبكة **بالقاعدة المشتركة نفسها**");
+      const cardKind = read("client", "src", "components", "PostExamDecisionCard.tsx");
+      check(/useState<"" \| "normal" \| "discount" \| "free">\(""\)/.test(cardKind)
+        && /if \(!locks\.price && cKind !== ""\)/.test(cardKind)
+        && cardKind.includes("text-c-block"),
+        "٥١د. **ونافذةُ البطاقة بالقاعدة نفسِها** — لا علّةٌ باقيةٌ في نصفٍ ثانٍ");
       check(exam.includes("radio-purchase-decision")
         && exam.includes('radio-decision-${v || "none"}')
         && /\["bought", "اشترى"\]/.test(exam)
@@ -772,7 +929,10 @@ async function main() {
       check(exam.includes("input-not-bought-reason"),
         "٥٣. وسببُ عدم الشراء نصٌّ حرّ");
       //  **ولا سعرَ ثانٍ**: الأصلُ هو `deviceCost` نفسُه.
-      check(/originalPrice: Number\(deviceCost\)/.test(exam),
+      //  الأصلُ يُقرأ من `deviceCost` وحده — والفراغُ يُرسَل `null` صريحةً
+      //  ليردَّه الخادمُ، لا يُحذَف الكائنُ فيمضي نصفُ الطلب.
+      check(/originalPrice: deviceCost === "" \? null : Number\(deviceCost\)/.test(exam)
+        && !/id="exam-original-price"/.test(exam),
         "٥٤. **والسعرُ الأصليُّ هو حقلُ الكلفة نفسُه** — لا رقمَ يُكتب مرّتين");
       //  **ولا تُرسَل في التحرير**: تصحيحُ سعرِ ما بِيع بابُه الخاصّ (٢٣٩).
       check(/if \(isEdit \|\| !isDeviceSpecialty\) return undefined;/.test(exam),

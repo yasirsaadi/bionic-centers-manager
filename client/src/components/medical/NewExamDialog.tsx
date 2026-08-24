@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
+import { computeCommercialOffer } from "@shared/commercial";
 import {
   Dialog,
   DialogContent,
@@ -99,7 +100,16 @@ export function NewExamDialog({
   //  **والسعرُ حقلٌ واحد لا حقلان**: `deviceCost` أعلاه هو «السعر الأصلي»،
   //  والنوعُ يقول ماذا يُقيَّد منه — فلا سعرَ ثانٍ يُخترَع ولا يُطلب من
   //  الطبيب أن يكتب الرقمَ مرّتين.
-  const [priceKind, setPriceKind] = useState<"normal" | "discount" | "free">("normal");
+  //  ══ **«غير محدد» حالةٌ ابتدائيةٌ حقيقية لا نوعُ سعرٍ رابع** ═══════════
+  //  كان الابتداءُ `normal`، فاستحال أن يُعرَف: أاختار الطبيبُ «السعر كما
+  //  هو» أم لم يلمس التسعيرَ أصلاً؟ والفرقُ ليس تجميلياً: مَن اختار **بخصم**
+  //  أو **مجّاني** ثمّ ترك الأصلَ فارغاً كان اختيارُه **يُسقَط بصمت** بينما
+  //  يُحفَظ خبيرُه وقرارُه — فيُقرأ الملفُّ «غير مسعَّر» وقد قرّر الطبيبُ
+  //  تبرّعاً. فالفراغُ صار قيمةً معروضة، والاختيارُ الصريحُ يُلزِم بياناته.
+  //
+  //  **وهي في الشاشة وحدها**: المحفوظُ يبقى `normal`/`discount`/`free` لا
+  //  رابعَ لها، و«غير محدد» تعني «لا ترسل السعرَ إطلاقاً».
+  const [priceKind, setPriceKind] = useState<"" | "normal" | "discount" | "free">("");
   const [discountFinal, setDiscountFinal] = useState<string>("");
   const [decision, setDecision] = useState<"" | "bought" | "not_bought">("");
   const [notBoughtReason, setNotBoughtReason] = useState<string>("");
@@ -328,24 +338,44 @@ export function NewExamDialog({
   // Declared above the mutation that reads it, so the dependency is obvious.
   const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
 
-  //  ما يُرسَل فعلاً — **مبنيٌّ مرّةً ويُقرأ في موضعين** (الإرسالُ والتعطيل).
+  //  ما يُرسَل فعلاً — **مبنيٌّ مرّةً ويُقرأ في ثلاثة مواضع**: الإرسالُ،
+  //  وتعطيلُ الزرّ، ورسالةُ المنع.
+  const priceTouched = priceKind !== "";
   const commercialPayload = (() => {
     if (isEdit || !isDeviceSpecialty) return undefined;
-    const hasPrice = deviceCost !== "" && Number(deviceCost) > 0;
-    if (!hasPrice && !expertUserId && !decision) return undefined;
+    if (!priceTouched && !expertUserId && !decision) return undefined;
     return {
-      price: hasPrice
+      // ══ **الاختيارُ الصريح يُرسَل دائماً — ولو كان ناقصاً** ═════════════
+      //  وهذا هو جوهرُ الإصلاح: حذفُ الكائن عند النقص كان يجعل الخادمَ
+      //  يقبل الخبيرَ والقرارَ ويمضي، وقد قال الطبيبُ «مجّاني». فالنقصُ
+      //  يُرسَل كما هو ليُردَّ الطلبُ كلُّه — **ولا يُقبل نصفُه**.
+      price: priceTouched
         ? {
           kind: priceKind,
-          originalPrice: Number(deviceCost),
-          finalPrice: priceKind === "discount" && discountFinal !== ""
-            ? Number(discountFinal) : undefined,
+          originalPrice: deviceCost === "" ? null : Number(deviceCost),
+          finalPrice: priceKind === "discount"
+            ? (discountFinal === "" ? null : Number(discountFinal))
+            : undefined,
         }
         : null,
       expertUserId: expertUserId ? Number(expertUserId) : undefined,
       decision: decision || undefined,
       notBoughtReason: decision === "not_bought" ? notBoughtReason.trim() : undefined,
     };
+  })();
+
+  //  ══ **ويُمنَع الإرسالُ قبل الشبكة** — والخادمُ يبقى صاحبَ القرار ═══════
+  //  القاعدةُ **مشتركة** (`computeCommercialOffer`) فلا تنحرف الشاشةُ عن
+  //  الخادم في أيّ اتجاه: ما تمنعه هنا يردّه هناك، وما تقبله يقبله.
+  const commercialBlock: string | null = (() => {
+    if (!commercialPayload?.price) return null;
+    const offer = computeCommercialOffer({
+      kind: commercialPayload.price.kind,
+      originalPrice: commercialPayload.price.originalPrice,
+      finalPrice: commercialPayload.price.finalPrice,
+    });
+    if (offer.ok) return null;
+    return offer.error ?? "بيانات السعر غير مكتملة";
   })();
 
   const save = useMutation({
@@ -523,10 +553,14 @@ export function NewExamDialog({
                   {priceWarning}
                 </p>
               )}
+              {/*  ══ **والعبارةُ تتبع ما اختاره فعلاً** ═══════════════════
+                  كانت واحدةً لا تتغيّر: «كلفةٌ مقترحة لا تدخل الحسابات».
+                  وهي صادقةٌ ما دام الطبيبُ لم يحسم نوعَ السعر، وكاذبةٌ حين
+                  يحسمه — فما يحسمه **نافذٌ فوراً ومملوكٌ له**. */}
               <p className="text-xs text-muted-foreground">
-                كلفة <b>مقترحة</b>: تظهر لموظف الاستعلامات ولا تدخل الحسابات إلا حين
-                يعتمدها في «تخصيص وإسناد خبير» بعد موافقة المريض. فإن لم يدفع أو
-                غيّر رأيه، لا يبقى لها أثر في الأرقام.
+                {priceTouched
+                  ? "هذا هو السعر الأصلي المعتمد: يُسجَّل باسمك ولا يبدّله الاستقبال ولا مدير الفرع."
+                  : "كلفة مقترحة: تظهر لموظف الاستعلامات ولا تدخل الحسابات حتى يُحسَم نوع السعر أدناه أو يعتمدها في «تخصيص وإسناد خبير»."}
               </p>
 
               {/* The expert follows the same proposal rule as the price. */}
@@ -578,16 +612,17 @@ export function NewExamDialog({
                     <Label className="text-xs font-semibold">نوع السعر</Label>
                     <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-price-kind">
                       {([
+                        ["", "غير محدد"],
                         ["normal", "السعر كما هو"],
                         ["discount", "بخصم"],
                         ["free", "مجاني"],
                       ] as const).map(([v, label]) => (
-                        <label key={v} className="flex items-center gap-1 cursor-pointer">
+                        <label key={v || "none"} className="flex items-center gap-1 cursor-pointer">
                           <input
                             type="radio" name="exam-price-kind" value={v}
                             checked={priceKind === v}
                             onChange={() => setPriceKind(v)}
-                            data-testid={`radio-price-kind-${v}`}
+                            data-testid={`radio-price-kind-${v || "none"}`}
                           />
                           <span>{label}</span>
                         </label>
@@ -612,6 +647,18 @@ export function NewExamDialog({
                     {/*  **والصفرُ لا يُقال «مجّاناً» ضمناً**: المجّانيّةُ تُختار
                         صراحةً، والسعرُ الأصليُّ يبقى محفوظاً فيُعرَف قدرُ ما
                         تبرّع به المركز. */}
+                    {!priceTouched && (
+                      <p className="text-xs text-muted-foreground" data-testid="text-price-untouched">
+                        السعر غير محدد بعد — يُكمله موظّف الاستعلامات، ولا يُقفَل عليك.
+                      </p>
+                    )}
+                    {/*  **والنقصُ يُقال قبل الضغط** — لا بعد ردٍّ من الخادم. */}
+                    {commercialBlock && (
+                      <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+                        data-testid="text-commercial-block">
+                        {commercialBlock}
+                      </p>
+                    )}
                     {priceKind === "free" && (
                       <p className="text-xs text-emerald-900" data-testid="text-free-note">
                         سيُقيَّد الجهاز بقيمة <b>صفر</b>، ويبقى السعر الأصلي
@@ -694,7 +741,9 @@ export function NewExamDialog({
           </Button>
           <Button
             onClick={() => (priceMoved ? setConfirmPrice(true) : save.mutate())}
-            disabled={!specialty || !hasContent || save.isPending}
+            disabled={!specialty || !hasContent || save.isPending
+              || Boolean(commercialBlock)
+              || (decision === "not_bought" && !notBoughtReason.trim())}
             data-testid="button-save-medical-exam"
           >
             {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}
