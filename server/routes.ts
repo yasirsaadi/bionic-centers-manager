@@ -37,6 +37,8 @@ import { patientActiveOnDate } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION } from "@shared/patient_trash";
+import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
+import { softDeletePatient, TrashError } from "./patients/trash_store";
 import {
   executeNewService, normalizeEntries, NewServiceError,
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
@@ -2326,47 +2328,30 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨) — البابُ نفسُه والزرُّ نفسُه،
+   * والأثرُ صار قابلاً للرجوع ثلاثين يوماً.
+   *
+   * ولا شيءَ هنا ينادي الكاسكيدَ الهادم: `storage.deletePatient` بابُها
+   * الوحيد صار «حذف نهائي» في `/api/patient-trash/:id/purge`.
+   *
+   * **والصلاحيةُ روليّةٌ صريحة** (`canTrashPatients`): مسؤولٌ عام · مديرُ
+   * فرعٍ في نطاقه · طبيبٌ في نطاقه. وحلّت محلَّ علم `canDeletePatients`
+   * القديم — ذاك عَلَمُ **هدمٍ لا رجعةَ فيه**، وهذا فعلٌ يُرَدّ بضغطة.
+   * وكلُّ الحراسة في `deleteDecision` **تحت القفل** لا هنا.
+   */
   app.delete(api.patients.delete.path, isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
-    const ctx = getUserContext(req);
-    const permissions = getPermissions(req);
-    const patient = await storage.getPatient(id);
-
-    if (!patient) {
-      return res.status(404).json({ message: "Patient not found" });
-    }
-
-    // Check permission to delete patients
-    if (!permissions.canDeletePatients) {
-      return res.status(403).json({ message: "ليس لديك صلاحية لحذف المرضى" });
-    }
-
-    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient.branchId === ctx.branchId;
-    if (!canAccess) {
-      return res.status(403).json({ message: "غير مصرح لك بحذف هذا المريض" });
-    }
-
-    // Audit the delete BEFORE the cascade fires. deletePatient wipes
-    // payments, invoices, documents and visits along with the patient
-    // row — without this log, the cascade was completely silent and
-    // indistinguishable from data vanishing on its own.
-    const branchSession = (req.session as any).branchSession;
-    await logAudit({
-      entityType: "patient",
-      entityId: id,
-      action: "delete",
-      userId: branchSession?.userId ?? null,
-      userName: branchSession?.displayName ?? null,
-      branchId: patient.branchId,
-      oldValues: patient,
-      ipAddress: req.ip ?? null,
-      userAgent: req.get("user-agent") ?? null,
-    });
-
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "معرّف غير صالح" });
     try {
-      await storage.deletePatient(id);
-      res.status(204).send();
+      const out = await softDeletePatient({
+        patientId: id,
+        reason: (req.body as any)?.reason,
+        actor: trashActor(req),
+      });
+      res.json({ ok: true, ...out });
     } catch (err: any) {
+      if (err instanceof TrashError) return res.status(err.status).json({ message: err.message });
       console.error("Error deleting patient:", err);
       res.status(500).json({ message: "فشل في حذف المريض. حاول مرة أخرى." });
     }
@@ -7195,6 +7180,7 @@ export async function registerRoutes(
   registerPendingChargeRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
+  registerPatientTrashRoutes(app, isAuthenticated);
 
   // ══ تواصلُ المريض — **صادرٌ فقط، بلا نقطةٍ عامّة واحدة** ═══════════════
   //  لا webhook، ولا تذاكرَ ربط، ولا استهلاك، ولا أوامرَ واردة. الرقمُ

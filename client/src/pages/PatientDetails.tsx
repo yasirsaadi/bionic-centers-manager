@@ -1,7 +1,9 @@
-import { usePatient, useUploadDocument, useDeletePatient, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
+import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
+import { DeletePatientDialog } from "@/components/DeletePatientDialog";
+import { canTrashPatients } from "@shared/patient_trash";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
 import { PatientCaseChips, PatientCasePanel, type CaseRow } from "@/components/patient/PatientCasesTabs";
@@ -145,7 +147,6 @@ export default function PatientDetails() {
   const { data: patient, isLoading } = usePatient(Number(id));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
   const { mutate: deleteDocument } = useDeleteDocument();
-  const { mutate: deletePatient, isPending: isDeleting } = useDeletePatient();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
   const { mutate: deletePayment, isPending: isDeletingPayment } = useDeletePayment();
   const [editingPlan, setEditingPlan] = useState(false);
@@ -580,14 +581,6 @@ export default function PatientDetails() {
     return map[type] || type;
   };
 
-  const handleDelete = () => {
-    deletePatient(Number(id), {
-      onSuccess: () => {
-        setLocation(backUrl);
-      },
-    });
-  };
-
   if (isLoading) return <div className="p-8"><Skeleton className="h-96 w-full rounded-3xl" /></div>;
   if (!patient) return <div className="p-8 text-center text-muted-foreground">{t.patientDetails.patientNotFound}</div>;
 
@@ -639,33 +632,16 @@ export default function PatientDetails() {
             </Button>
           </Link>
         )}
-        {permissions.canDeletePatients && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" className="gap-2 text-red-600 border-red-200 hover:bg-red-50" data-testid="button-delete-patient">
-                <Trash2 className="w-4 h-4" />
-                {t.patientDetails.delete}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t.patientDetails.deleteConfirmTitle}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t.patientDetails.deleteConfirmDesc}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter className="gap-2">
-                <AlertDialogCancel>{t.treatmentPlan.cancel}</AlertDialogCancel>
-                <AlertDialogAction 
-                  onClick={handleDelete}
-                  className="bg-red-600 hover:bg-red-700"
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? t.patientDetails.deleting : t.patientDetails.yesDeletePatient}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+        {/*  ══ **الحذفُ صار سلّةً** (ترحيل ٠٦٨) ═════════════════════════
+              والصلاحيةُ روليّةٌ صريحة لا عَلَمُ `canDeletePatients`: ذاك
+              عَلَمُ هدمٍ لا رجعةَ فيه، وهذا فعلٌ يُرَدّ بضغطة. والنافذةُ
+              تقرأ الأثرَ من الخادم قبل أن تعرض زرّاً.  */}
+        {canTrashPatients(branchSession as any) && (
+          <DeletePatientDialog
+            patientId={patient.id}
+            patientName={patient.name}
+            onDeleted={() => setLocation(backUrl)}
+          />
         )}
         
         {/* Transfer Patient Button — admin or branch manager */}

@@ -125,12 +125,14 @@ export interface TrashFinancialSnapshot {
   pendingPriceRequests: number;
   /** متابعاتُ ما بعد المعاينة الحيّة بقرارٍ ماليٍّ لم يُحسَم. */
   openFollowups: number;
+  /** تصحيحاتٌ إدارية تركت رصيداً للمريض لم يُسوَّ بعد (ترحيل ٠٦٤). */
+  openSettlements: number;
 }
 
 export const EMPTY_SNAPSHOT: TrashFinancialSnapshot = {
   totalCost: 0, totalPaid: 0, remaining: 0,
   pendingCharges: 0, pendingDiscounts: 0,
-  pendingPriceRequests: 0, openFollowups: 0,
+  pendingPriceRequests: 0, openFollowups: 0, openSettlements: 0,
 };
 
 /**
@@ -143,7 +145,8 @@ export const EMPTY_SNAPSHOT: TrashFinancialSnapshot = {
  *
  * ══ وعملٌ ماليٌّ حيٌّ لم يُحسَم ══════════════════════════════════════════
  * مبلغٌ معلَّقٌ بانتظار طبيب · خصمٌ بانتظار اعتماد · طلبُ سعرٍ معلَّق ·
- * متابعةٌ حيّةٌ لم يُحسَم قرارُها. كلُّها تعني أن أحداً ما زال ينتظر قراراً
+ * متابعةٌ حيّةٌ لم يُحسَم قرارُها · رصيدٌ لم يُسوَّ بعد تصحيحٍ إداريّ.
+ * كلُّها تعني أن أحداً ما زال ينتظر قراراً
  * على مال هذا الملفّ، **فإخفاؤه بضغطةِ مديرٍ يُسقط قراراً معلّقاً بصمت**.
  *
  * **والمسؤولُ العام لا يُمنَع أبداً** — هو المخرجُ لا الحاجز.
@@ -153,7 +156,8 @@ export function requiresGlobalAdmin(s: TrashFinancialSnapshot): boolean {
     || s.pendingCharges > 0
     || s.pendingDiscounts > 0
     || s.pendingPriceRequests > 0
-    || s.openFollowups > 0;
+    || s.openFollowups > 0
+    || s.openSettlements > 0;
 }
 
 /** أسبابُ الاشتراط، بالعربية — فيُقرأ «لماذا» لا «لا يمكنك». */
@@ -165,6 +169,7 @@ export function globalAdminReasons(s: TrashFinancialSnapshot): string[] {
   if (s.pendingDiscounts > 0) out.push(`طلبات خصم معلّقة: ${s.pendingDiscounts}`);
   if (s.pendingPriceRequests > 0) out.push(`طلبات سعر معلّقة: ${s.pendingPriceRequests}`);
   if (s.openFollowups > 0) out.push(`متابعات بيع لم تُحسَم: ${s.openFollowups}`);
+  if (s.openSettlements > 0) out.push(`تسويات مالية معلّقة بعد تصحيح إداري: ${s.openSettlements}`);
   return out;
 }
 
