@@ -112,12 +112,14 @@ function main() {
   // ══ خريطة الخيارات ⇒ المسارات ════════════════════════════════════════
   console.log("\n── خريطة الخيار إلى مساره ──");
   const fresh = launcherOptions({});
-  //  عشرةٌ الآن لا تسعة: الصيانةُ صارت بنداً لكلّ قسمِ جهاز، فيعرف
-  //  الناظرُ أيَّ جهازٍ يصون قبل أن يفتح النافذة.
-  same("عشرة خيارات لا غير", fresh.map((o) => o.id), [
+  //  عشرةٌ ثمّ اثنتا عشرة: الصيانةُ صارت بنداً لكلّ قسمِ جهاز، وترحيلُ ٠٦٧
+  //  أضاف بابَ «بلا معاينة» لكلّ قسمٍ كذلك — بيعٌ أو صيانةٌ يُنجزها
+  //  الاستقبال ويبقى مبلغُها خارج المحاسبة حتى يعتمده طبيبٌ مخوَّل.
+  same("اثنا عشر خياراً لا غير", fresh.map((o) => o.id), [
     "prosthetic_case", "support_case",
     "new_prosthetic_device", "new_support_device",
     "maintenance_prosthetic", "maintenance_support",
+    "no_exam_prosthetic", "no_exam_support",
     "physio_case", "additional_therapy", "consultation", "other",
   ]);
   // ══ ثلاثةُ أقسامٍ لا رابع ═════════════════════════════════════════════
@@ -132,22 +134,26 @@ function main() {
     "prosthetic", "medical_support",
     "prosthetic", "medical_support",
     "prosthetic", "medical_support",
+    "prosthetic", "medical_support",
     "physiotherapy", "physiotherapy", "physiotherapy", "physiotherapy",
   ]);
   //  وكلُّ خدمةٍ غيرِ جهازٍ تقع تحت العلاج الطبيعي — لا واحدةَ خارجه.
   same("**وكلُّ ما ليس جهازاً فهو علاجٌ طبيعي**",
     fresh.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
     ["physiotherapy", "physiotherapy", "physiotherapy"]);
-  // **قائمة مغلقة**: ثلاث نقاط قائمة لا رابع، ولا «خدمة عامّة».
-  // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
-  same("٢٠. ولا نقطة خامسة يذهب إليها الموزِّع",
+  // **قائمة مغلقة**: خمس نقاط قائمة لا سادس، ولا «خدمة عامّة».
+  //  والخامسةُ بابُ «بلا معاينة» (٠٦٧) — نقطةٌ قائمةٌ بحدودها وحُرّاسها
+  //  كبقيّتها، لا نقطةٌ عامّة تجمع أربع قواعد مختلفة.
+  same("٢٠. ولا نقطة سادسة يذهب إليها الموزِّع",
     [...new Set(fresh.map((o) => o.flow.kind))].sort(),
-    ["case_type", "device_episode", "maintenance_visit", "new_service"]);
+    ["case_type", "device_episode", "maintenance_visit", "new_service",
+      "no_exam_operation"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
     "/api/manufacturing/maintenance-visit",
     "/api/patients/:patientId/device-episodes",
+    "/api/no-exam/device-sale",
   ]);
 
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.

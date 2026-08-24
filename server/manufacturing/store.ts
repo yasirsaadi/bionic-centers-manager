@@ -497,30 +497,60 @@ export async function createMaintenanceOrderWithVisit(params: {
     });
 
     if (params.cost > 0) {
-      // Book the fee: device case cost (manual — automation keeps off) + the
-      // patient total that totalRevenue actually sums. Same double-write the
-      // تخصيص confirmation performs.
-      const deviceCase = caseRows.find((c) => c.caseType === params.serviceType);
-      if (deviceCase) {
-        await tx.update(patientCases)
-          .set({ cost: sql`${patientCases.cost} + ${params.cost}`, costSource: "manual", updatedAt: new Date() })
-          .where(eq(patientCases.id, deviceCase.id));
-      }
-      await tx.update(patients)
-        .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
-        .where(eq(patients.id, params.patientId));
-      await tx.insert(costEntries).values({
+      await postMaintenanceFee(tx, {
         patientId: params.patientId, branchId: params.branchId,
-        amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+        serviceType: params.serviceType, cost: params.cost,
         deviceEpisodeId: targetEpisodeId,
-        //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي
-        //  نفسها التي رُفعت كلفتُها سطرين أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
-        caseId: deviceCase?.id ?? null,
       });
     }
     return workOrder;
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
+ * **قيدُ أجور الصيانة — الكتابةُ الواحدة** (استُخرجت في المرحلة الثالثة).
+ *
+ * كلفةُ حالة الجهاز (`manual` فتبقى الأتمتةُ بعيدة) + `patients.total_cost`
+ * الذي يجمعه `totalRevenue` + سطرٌ واحد في دفتر الكلف. وهي نفسُ الكتابة
+ * المزدوجة التي يؤدّيها تأكيدُ «تخصيص».
+ *
+ * ══ ولماذا صارت دالّةً مستقلّة ═══════════════════════════════════════════
+ * مسارُ «بلا معاينة» (المرحلة الثالثة) يفصل **العملَ التشغيليّ** عن **دخول
+ * المال**: الصيانةُ تُفتَح ويعمل الخبير، ويبقى المبلغُ معلّقاً حتى يعتمده
+ * طبيب. فلو نُسخت هذه الأسطرُ هناك لصار للصيانة حسابان ينحرف أحدُهما يوماً.
+ *
+ * **فالكتابةُ واحدة ولها نداءان**: الصيانةُ كاملةُ الأجر تناديها في معاملتها،
+ * والاعتمادُ يناديها في معاملته — بالمبلغ المعتمَد وبهويّة الجهاز نفسِها.
+ */
+export async function postMaintenanceFee(tx: any, params: {
+  patientId: number;
+  branchId: number;
+  serviceType: string;
+  cost: number;
+  deviceEpisodeId: number | null;
+}): Promise<void> {
+  if (!(params.cost > 0)) return;
+  const caseRows: { id: number; caseType: string }[] = await tx
+    .select({ id: patientCases.id, caseType: patientCases.caseType })
+    .from(patientCases).where(eq(patientCases.patientId, params.patientId));
+  const deviceCase = caseRows.find((c) => c.caseType === params.serviceType);
+  if (deviceCase) {
+    await tx.update(patientCases)
+      .set({ cost: sql`${patientCases.cost} + ${params.cost}`, costSource: "manual", updatedAt: new Date() })
+      .where(eq(patientCases.id, deviceCase.id));
+  }
+  await tx.update(patients)
+    .set({ totalCost: sql`COALESCE(${patients.totalCost}, 0) + ${params.cost}` })
+    .where(eq(patients.id, params.patientId));
+  await tx.insert(costEntries).values({
+    patientId: params.patientId, branchId: params.branchId,
+    amount: params.cost, source: "maintenance", notes: "أجور صيانة",
+    deviceEpisodeId: params.deviceEpisodeId,
+    //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي نفسها
+    //  التي رُفعت كلفتُها أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
+    caseId: deviceCase?.id ?? null,
+  });
 }
 
 // ---- order listing + enrichment ----------------------------------------------

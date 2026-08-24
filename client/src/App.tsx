@@ -43,6 +43,8 @@ const MyExams = lazy(() => import("@/pages/MyExams"));
 const MedicalReview = lazy(() => import("@/pages/MedicalReview"));
 const PostExamFollowups = lazy(() => import("@/pages/PostExamFollowups"));
 const DiscountApprovals = lazy(() => import("@/pages/DiscountApprovals"));
+const NoExamReview = lazy(() => import("@/pages/NoExamReview"));
+const ReturnedCharges = lazy(() => import("@/pages/ReturnedCharges"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 
@@ -133,6 +135,8 @@ function Router() {
             <Route path="/follow-ups" component={FollowUps} />
             <Route path="/post-exam-followups" component={PostExamFollowups} />
             <Route path="/discount-approvals" component={DiscountApprovals} />
+            <Route path="/no-exam-review" component={NoExamReview} />
+            <Route path="/returned-charges" component={ReturnedCharges} />
             <Route path="/my-exams" component={MyExams} />
             <Route path="/medical-review" component={MedicalReview} />
             <Route path="/manufacturing" component={Manufacturing} />

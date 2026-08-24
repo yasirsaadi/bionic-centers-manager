@@ -30,7 +30,16 @@ export type ServiceFlow =
    */
   | { kind: "maintenance_visit"; serviceType: "prosthetic" | "medical_support" }
   /** `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم. */
-  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" };
+  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" }
+  /**
+   * **عمليةٌ بلا معاينة** (ترحيل ٠٦٧) — بيعُ جزءٍ أو صيانةٌ يُنجزها
+   * الاستقبال بلا إرسال المريض إلى الطبيب، **ومبلغُها يبقى خارج المحاسبة**
+   * حتى يعتمده طبيبٌ مخوَّل.
+   *
+   * ولا تلغي البابين القائمين: «جهاز جديد» يفتح طلباً على مسار المعاينة،
+   * و«صيانة» تحجز أجرَها فوراً. هذا بابُ المسار الثالث الذي فتحه ٠٦٥.
+   */
+  | { kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support" };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
@@ -38,6 +47,7 @@ export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
   new_service: "/api/patients/:id/new-service",
   maintenance_visit: "/api/manufacturing/maintenance-visit",
   device_episode: "/api/patients/:patientId/device-episodes",
+  no_exam_operation: "/api/no-exam/device-sale",
 };
 
 export interface PatientServiceFlags {
@@ -146,6 +156,34 @@ function maintenanceOption(
   };
 }
 
+/**
+ * خيارُ «بلا معاينة» — **بيعٌ أو صيانةٌ بمبلغٍ ينتظر مراجعة الطبيب**.
+ *
+ * ويُعطَّل بحلقةٍ مفتوحة كما يُعطَّل «جهاز جديد»: طلبٌ قائمٌ يُكمَل ولا
+ * يُفتَح فوقه ثانٍ. والخادمُ يبقى صاحبَ القرار على السباق.
+ */
+function noExamOption(
+  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
+  hasCase: boolean, label: string,
+): LauncherOption {
+  const open = openEpisodeFor(p, serviceType);
+  //  والصيانةُ لا تعطّلها حلقةٌ مفتوحة — لكنّ النافذة واحدة، فالتعطيل
+  //  يتبع أضيقَ البابين صدقاً: طلبٌ قائم يُكمَل من بطاقته.
+  return {
+    id: serviceType === "prosthetic" ? "no_exam_prosthetic" : "no_exam_support",
+    label,
+    description: "بيع جزء أو صيانة بلا معاينة — يُنجَز العمل والمبلغ ينتظر اعتماد الطبيب",
+    group: serviceType,
+    flow: { kind: "no_exam_operation", serviceType },
+    disabled: !hasCase || open !== null,
+    disabledReason: !hasCase
+      ? "تُفتَح الحالة أولاً"
+      : open
+        ? OPEN_EPISODE_REASON[open.status]
+        : undefined,
+  };
+}
+
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
   const hasSupport = Boolean(p.isMedicalSupport);
@@ -184,6 +222,11 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
     //  من أن المريض يملك النوع فعلاً كما كان.
     maintenanceOption(p, "prosthetic", hasProsthetic, "صيانة طرف صناعي"),
     maintenanceOption(p, "medical_support", hasSupport, "صيانة مسند طبي"),
+    //  ══ **بلا معاينة** (ترحيل ٠٦٧) ═════════════════════════════════════
+    //  المريضُ الذي لا يحتاج طبيباً — قالبٌ يُباع أو ركبةٌ تُصلَّح — يُنجَز
+    //  عملُه الآن، **ويبقى مبلغُه خارج المحاسبة** حتى يراجعه طبيبٌ مخوَّل.
+    noExamOption(p, "prosthetic", hasProsthetic, "بيع أو صيانة بلا معاينة (أطراف)"),
+    noExamOption(p, "medical_support", hasSupport, "بيع أو صيانة بلا معاينة (مساند)"),
     {
       id: "physio_case",
       label: "علاج طبيعي",

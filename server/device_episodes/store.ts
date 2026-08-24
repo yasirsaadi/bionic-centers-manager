@@ -598,6 +598,15 @@ export interface LockedEpisode {
   serviceType: string;
   status: string;
   agreedCost: number;
+  /**
+   * مسارُ العملية (ترحيل ٠٦٥) — يُقرأ تحت القفل لا من الطلب.
+   *
+   * ولمّا صار مسارُ «بلا معاينة» يُباع (المرحلة الثالثة) لزم أن يعرف
+   * الحارسُ **من أيّ مسارٍ** هذه الحلقة: `awaiting_exam` على مسار المعاينة
+   * تعني «لم يفحصها طبيبٌ بعد» فتُردّ، وعلى مسار «بلا معاينة» تعني
+   * «لا فحصَ مطلوبٌ أصلاً» فتمضي.
+   */
+  servicePath: ServicePath | null;
 }
 
 /**
@@ -615,7 +624,7 @@ export async function lockOpenEpisodeForAssignment(
   params: { patientId: number; serviceType: DeviceServiceType },
 ): Promise<LockedEpisode | null> {
   const r = await tx.execute(sql`
-    SELECT e.id, e.case_id, e.patient_id, e.status, e.agreed_cost, pc.case_type
+    SELECT e.id, e.case_id, e.patient_id, e.status, e.agreed_cost, e.service_path, pc.case_type
       FROM patient_device_episodes e
       JOIN patient_cases pc
         ON pc.id = e.case_id
@@ -635,6 +644,7 @@ export async function lockOpenEpisodeForAssignment(
     serviceType: String(row.case_type),
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
   };
 }
 
@@ -666,7 +676,7 @@ export async function lockCaseAndReadOpenEpisode(
   if (!caseRow) return { caseId: null, episode: null };
 
   const r = await tx.execute(sql`
-    SELECT id, case_id, patient_id, status, agreed_cost
+    SELECT id, case_id, patient_id, status, agreed_cost, service_path
       FROM patient_device_episodes
      WHERE case_id = ${caseRow.id}
        AND status NOT IN ('delivered', 'cancelled')
@@ -683,6 +693,7 @@ export async function lockCaseAndReadOpenEpisode(
       serviceType: params.serviceType,
       status: String(row.status),
       agreedCost: Number(row.agreed_cost ?? 0),
+      servicePath: parseServicePath(row.service_path),
     } : null,
   };
 }
@@ -820,7 +831,7 @@ export async function ensureFirstDeviceEpisodeForSale(
     VALUES (${params.patientId}, ${caseRow.id}, ${caseRow.branch_id ?? null},
             ${nextSeq}, 'examined', 0, ${requestedItem}, ${component}, 'exam',
             ${params.createdBy}, NOW(), NOW())
-    RETURNING id, case_id, patient_id, status, agreed_cost
+    RETURNING id, case_id, patient_id, status, agreed_cost, service_path
   `);
   const row = (ins.rows ?? [])[0];
   return {
@@ -830,6 +841,7 @@ export async function ensureFirstDeviceEpisodeForSale(
     serviceType: params.serviceType,
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
   };
 }
 
@@ -961,7 +973,7 @@ export async function createReplacementEpisodeTx(
             ${caseRow.branch_id ?? patient.branch_id ?? null},
             ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
             ${params.createdBy}, NOW(), NOW())
-    RETURNING id, case_id, patient_id, status, agreed_cost
+    RETURNING id, case_id, patient_id, status, agreed_cost, service_path
   `);
   const row = (ins.rows ?? [])[0];
   return {
@@ -971,6 +983,7 @@ export async function createReplacementEpisodeTx(
     serviceType: params.serviceType,
     status: String(row.status),
     agreedCost: Number(row.agreed_cost ?? 0),
+    servicePath: parseServicePath(row.service_path),
   };
 }
 

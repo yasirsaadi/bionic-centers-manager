@@ -80,6 +80,7 @@ import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import PatientCommunicationCard from "@/components/PatientCommunicationCard";
 import { PostExamDecisionCard } from "@/components/PostExamDecisionCard";
+import { PendingChargesCard } from "@/components/PendingChargesCard";
 import { PendingDiscountBanner } from "@/components/PendingDiscountBanner";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -910,6 +911,13 @@ export default function PatientDetails() {
           يُقرأ في سياق ما قرّره الطبيب. والبطاقة تختفي وحدها حين لا متابعة. */}
       <div className="mb-6">
         <PostExamDecisionCard patientId={patient.id} />
+      </div>
+
+      {/*  ومبالغُ «بلا معاينة» تُقال صراحةً: المعلَّقُ **ليس على حساب
+          المريض بعد**، فلا يُظنّ مسجَّلاً ولا يُطالَب به مرّتين. والبطاقة
+          تختفي وحدها حين لا صفَّ للمريض. */}
+      <div className="mb-6">
+        <PendingChargesCard patientId={patient.id} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

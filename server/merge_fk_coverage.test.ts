@@ -58,6 +58,10 @@ const MERGE_DECISIONS: Record<string, string> = {
   "medical_exam_cancellations.patient_id": "repoint — الشاهدة تتبع معاينتها وصاحبَها",
   "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
   "patient_link_tokens.patient_id": "repoint — البصمة فريدة عالمياً فلا تتصادم",
+  //  المبلغُ المعلَّق ورحلتُه (ترحيل ٠٦٧): يتبعان صاحبَهما. وحذفُهما كان
+  //  يمحو مبلغاً ينتظره الطبيبُ فعلاً، وتركُهما يجعلهما يتيمين في الطابور.
+  "pending_service_charges.patient_id": "repoint — المبلغ المعلّق يتبع صاحبه",
+  "pending_service_charge_events.patient_id": "repoint — الرحلة تتبع صفّها وصاحبَه",
   "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",
   "patient_notification_deliveries.patient_id": "repoint — الصادر يتبع المريض، ولا تصادم فيه",
 
@@ -95,6 +99,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "medical_exams.case_id": "remap مقيَّد بـ patient_id للمصدر، داخل باب الختم",
   "patient_device_episodes.case_id": "remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل",
   "post_exam_followups.case_id": "remap من حالة المصدر إلى حالة الهدف",
+  "pending_service_charges.case_id": "remap من حالة المصدر إلى حالة الهدف (ترحيل ٠٦٧)",
   //  دفترُ الكلف (ترحيل ٠٥٦): القسمُ هو نوعُ الحالة، فالقيدُ يُرمَّم إليها
   //  **قبل** حذف حالات المصدر — و`ON DELETE SET NULL` شبكةُ أمانٍ لا خطّة.
   "cost_entries.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف، قبل الحذف",

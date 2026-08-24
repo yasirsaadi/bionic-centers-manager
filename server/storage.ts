@@ -31,7 +31,8 @@ import {
   type SurveyAnswer, type InsertSurveyAnswer,
   medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
-  patientNotificationDeliveries, patientCodeAliases,
+  patientNotificationDeliveries,
+  pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, gte, lte, sql, inArray } from "drizzle-orm";
 import { wantedServices } from "@shared/case_signals";
@@ -1126,6 +1127,16 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`
         DELETE FROM administrative_operation_reversals WHERE patient_id = ${id}
       `);
+      //  ══ المبالغُ المعلَّقة ورحلتُها (ترحيل ٠٦٧) ═══════════════════════
+      //  الحدثُ قبل صفّه (مفتاحٌ إلى `pending_service_charges`)، والصفُّ قبل
+      //  `patient_cases` و`patients` (مفتاحان إليهما). والقاعدةُ الملزمة في
+      //  CLAUDE.md تُوجب هذا السطر مع كلّ جدولٍ جديد يشير إلى المريض.
+      await tx.execute(sql`
+        DELETE FROM pending_service_charge_events WHERE patient_id = ${id}
+      `);
+      await tx.execute(sql`
+        DELETE FROM pending_service_charges WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followup_events WHERE patient_id = ${id}
       `);
@@ -1472,7 +1483,14 @@ export class DatabaseStorage implements IStorage {
         if (!episode || episode.id !== wantEpisode) {
           throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
         }
-        if (episode.status !== "examined") {
+        // ══ **والحارسُ يقرأ المسار لا الحالةَ وحدها** (المرحلة الثالثة) ══
+        //  `awaiting_exam` على مسار المعاينة تعني «لم يفحصها طبيبٌ بعد»
+        //  فتُردّ. وعلى مسار «بلا معاينة» (٠٦٥) تعني «لا فحصَ مطلوبٌ أصلاً»
+        //  — والمالُ هناك يمرّ بمراجعةٍ ماليةٍ مستقلّة (٠٦٧) لا بالمعاينة.
+        //  والمسارُ يُقرأ من الصفّ **تحت القفل** لا من الطلب.
+        const noExamSellable = episode.servicePath === "no_exam"
+          && episode.status === "awaiting_exam";
+        if (episode.status !== "examined" && !noExamSellable) {
           throw new DeviceEpisodeError(
             "لا يمكن تخصيص الجهاز قبل معاينة الطبيب لهذا الطلب بالذات", 409,
           );
@@ -1773,6 +1791,10 @@ export class DatabaseStorage implements IStorage {
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));
+        //  والمبلغُ المعلَّق يشير إلى الحالة كذلك (ترحيل ٠٦٧) — فيُنقَل معها
+        //  قبل حذف حالة المصدر، وإلّا سقط الدمجُ على مفتاحها.
+        await tx.update(pendingServiceCharges).set({ caseId: tc.id, updatedAt: new Date() })
+          .where(eq(pendingServiceCharges.caseId, sc.id));
 
         // ── حلقات الأجهزة (migration 049) ────────────────────────────────
         // الحلقة تشير إلى الحالة، فحذف حالة المصدر أسفلُ يكسر مفتاحها ما لم
@@ -2052,6 +2074,16 @@ export class DatabaseStorage implements IStorage {
       // التذاكر تتبع المريض بلا تعقيد: بصمتها فريدة عالمياً فلا تتصادم.
       await repoint("patientLinkTokens", patientLinkTokens, patientLinkTokens.patientId);
       await repoint("patientNotificationDeliveries", patientNotificationDeliveries, patientNotificationDeliveries.patientId);
+      //  ══ المبالغُ المعلَّقة (ترحيل ٠٦٧) — **تتبع صاحبَها** ═══════════════
+      //  الصفُّ يقول «هذه العمليةُ لهذا المريض وينتظر مبلغُها اعتماداً».
+      //  فبقاؤه مشيراً إلى ملفٍّ اندمج ثمّ اختفى يجعله يتيماً في الطابور،
+      //  وحذفُه يمحو مبلغاً ينتظره الطبيبُ فعلاً. فيُعاد توجيهُه — ومعه
+      //  رحلتُه، فلا يُقرأ صفٌّ بلا سببِ إعادته.
+      //
+      //  **و`case_id` يُعالَج بعد طيّ الحالات أدناه** — بالخريطة نفسها التي
+      //  تُعيد توجيه بقيّة أبناء الحالة، فلا يشير إلى حالةٍ حُذفت.
+      await repoint("pendingServiceCharges", pendingServiceCharges, pendingServiceCharges.patientId);
+      await repoint("pendingServiceChargeEvents", pendingServiceChargeEvents, pendingServiceChargeEvents.patientId);
       // أمّا جهات الاتصال فلها تصادم مشروع: الحساب نفسه مرتبطٌ ونشِط على
       // الملفّين. إعادة التوجيه وحدها كانت ستنتهك `uq_patient_contacts_active`
       // وتُسقط الدمج. المعالجة في وحدة التواصل حيث تُعرَف قيود الجدول:
