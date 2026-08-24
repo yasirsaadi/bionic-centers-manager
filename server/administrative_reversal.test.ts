@@ -1313,7 +1313,13 @@ async function main() {
       same("٧١. (صفُّ تصحيحٍ موجود)",
         (await q(`SELECT count(*)::int AS n FROM administrative_operation_reversals
                    WHERE patient_id=$1`, [d.patientId]))[0].n, 1);
-      const del = await http("DELETE", `/api/patients/${d.patientId}`, S.admin);
+      //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+      //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+      //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+      await http("DELETE", `/api/patients/${d.patientId}`, S.admin,
+        { reason: "اختبار الكاسكيد" });
+      const del = await http("POST", `/api/patient-trash/${d.patientId}/purge`,
+        S.admin, { reason: "اختبار الكاسكيد" });
       same("٧٢. **حذفُ مريضٍ له تصحيحٌ إداريّ ينجح**", del.status < 300, true);
       same("٧٣. **ولا صفَّ تصحيحٍ يتيمٌ بقي**",
         (await q(`SELECT count(*)::int AS n FROM administrative_operation_reversals

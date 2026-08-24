@@ -453,7 +453,13 @@ async function main() {
     await startEpisode(pM, "prosthetic");
     const exM = (await signExam(pM, "prosthetic", { deviceCost: 700000 })).body;
     same("م. الإلغاء يمرّ", (await cancel(exM.id, "خطأ", S.admin)).status, 200);
-    const del = await http("DELETE", `/api/patients/${pM}`, S.admin);
+    //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+    //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+    //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+    await http("DELETE", `/api/patients/${pM}`, S.admin,
+      { reason: "اختبار الكاسكيد" });
+    const del = await http("POST", `/api/patient-trash/${pM}/purge`,
+      S.admin, { reason: "اختبار الكاسكيد" });
     check(del.status === 200 || del.status === 204,
       "م.١ **وحذفُ المريض الكامل ما زال ينجح**", `${del.status} ${JSON.stringify(del.body)}`);
     same("   ولا صفَّ شاهدةٍ يتيم",

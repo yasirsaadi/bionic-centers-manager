@@ -889,7 +889,13 @@ async function main() {
     //  حذفُ المريض ودمجُه — القاعدةُ الملزمة في CLAUDE.md
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── حذفُ المريض ودمجُه ──");
-    const del = await http("DELETE", `/api/patients/${p2}`, S.admin);
+    //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+    //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+    //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+    await http("DELETE", `/api/patients/${p2}`, S.admin,
+      { reason: "اختبار الكاسكيد" });
+    const del = await http("POST", `/api/patient-trash/${p2}/purge`,
+      S.admin, { reason: "اختبار الكاسكيد" });
     check(del.status === 200 || del.status === 204,
       "**حذفُ مريضٍ يحمل صفوفاً معلّقة ينجح**", JSON.stringify(del.body));
     same("   ولا صفَّ يتيمٌ يبقى",

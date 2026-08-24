@@ -885,9 +885,14 @@ async function main() {
       const before = await moneyOf(p);
       check(before.orders === 1 && before.cost_entries === 1,
         "(مريضٌ بحلقتين وجزءٍ مطلوب وأمرِ صيانةٍ بجزئه)", JSON.stringify(before));
-      const del = await http("DELETE", `/api/patients/${p}`,
-        { ...S.manager, isAdmin: true, role: "admin",
-          permissions: { ...S.manager.permissions, canDeletePatients: true } });
+      //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+      //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+      //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+      const killer = { ...S.manager, isAdmin: true, role: "admin",
+        permissions: { ...S.manager.permissions, canDeletePatients: true } };
+      await http("DELETE", `/api/patients/${p}`, killer, { reason: "اختبار الكاسكيد" });
+      const del = await http("POST", `/api/patient-trash/${p}/purge`, killer,
+        { reason: "اختبار الكاسكيد" });
       check(del.status === 200 || del.status === 204,
         "٩٠. **حذفُ مريضٍ يحمل الأعمدة الجديدة ينجح**",
         `${del.status} ${JSON.stringify(del.body)}`);

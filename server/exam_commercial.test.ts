@@ -734,7 +734,13 @@ async function main() {
         price: { kind: "discount", originalPrice: 900_000, finalPrice: 700_000 },
         expertUserId: EXPERT, decision: "bought",
       });
-      const del = await http("DELETE", `/api/patients/${p}`, S.admin);
+      //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+      //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+      //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+      await http("DELETE", `/api/patients/${p}`, S.admin,
+        { reason: "اختبار الكاسكيد" });
+      const del = await http("POST", `/api/patient-trash/${p}/purge`,
+        S.admin, { reason: "اختبار الكاسكيد" });
       check(del.status === 200 || del.status === 204,
         "٥٠. **حذفُ مريضٍ بتفاصيلَ تجارية كاملة ينجح**",
         JSON.stringify({ s: del.status, b: del.body }));

@@ -451,7 +451,13 @@ async function main() {
       patientId: doomed, serviceType: "prosthetic", requestedPath: "quick", reviewKind: "follow_up",
     });
     same("١٤. له طلبُ مراجعة", dreq.status, 201);
-    const del = await http("DELETE", `/api/patients/${doomed}`, S.admin);
+    //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+    //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+    //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+    await http("DELETE", `/api/patients/${doomed}`, S.admin,
+      { reason: "اختبار الكاسكيد" });
+    const del = await http("POST", `/api/patient-trash/${doomed}/purge`,
+      S.admin, { reason: "اختبار الكاسكيد" });
     check(del.status === 200 || del.status === 204,
       "   **وحذفُه ينجح رغم الجدول الجديد**", String(del.status));
     same("   ولا صفَّ مراجعةٍ يتيم",

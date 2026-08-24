@@ -1888,7 +1888,13 @@ async function main() {
       { finalPrice: 200_000, reason: "خصم" });
     await http("POST", `/api/followups/${fDel.id}/purchase-interest`, S.doc, {});
     check(fDel !== null, "(مريضٌ بمتابعةٍ وتسعيرٍ وإشارةٍ وأحداث)", "");
-    const del = await http("DELETE", `/api/patients/${pDel}`, S.admin);
+    //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
+    //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
+    //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
+    await http("DELETE", `/api/patients/${pDel}`, S.admin,
+      { reason: "اختبار الكاسكيد" });
+    const del = await http("POST", `/api/patient-trash/${pDel}/purge`,
+      S.admin, { reason: "اختبار الكاسكيد" });
     check(del.status === 200 || del.status === 204,
       "٢٦. **حذفُ مريضٍ بمتابعةٍ كاملة ينجح** — الكاسكيد يشملها",
       JSON.stringify({ status: del.status, body: del.body }));
