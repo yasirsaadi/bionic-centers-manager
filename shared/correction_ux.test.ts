@@ -220,8 +220,12 @@ assert.ok(!/\.find\(\(e\) =>\s*e\.status === "awaiting_exam"/.test(card),
   "ولا ترشيحَ بالحالة وحدها");
 //  **ولا نافذةَ تصحيحٍ من بطاقةِ عمليةٍ صُحّحت سلفاً.**
 //  الفرعُ يبدأ عند شرط الحالة وينتهي حيث تبدأ البطاقةُ الحيّة.
+//  والحدُّ الأدنى `allowedActions(` وحده — بلا ما قبله: المرحلةُ الثانية
+//  أضافت إليه ثلاثيّةً (`examPath ? [] : allowedActions(`)، فمرساةٌ تحمل
+//  `const actions = ` كانت تفوت الفرعَ فيمتدّ إلى البطاقة الحيّة ويلتقط
+//  نافذةَ تصحيحٍ ليست فيه.
 const voidBranch = card.split('if (active.status === "closed_admin_void")')[1]
-  ?.split("const actions = allowedActions(")[0] ?? "";
+  ?.split("allowedActions(")[0] ?? "";
 assert.ok(voidBranch.length > 200, "فرعُ البطاقة التاريخية مقروء");
 assert.ok(!voidBranch.includes("AdministrativeReversalDialog"),
   "التصحيحُ تمّ — ولا يُفتَح عليه بابُ تنفيذٍ ثانٍ");

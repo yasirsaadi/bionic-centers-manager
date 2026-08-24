@@ -92,6 +92,17 @@ export function NewExamDialog({
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [deviceCost, setDeviceCost] = useState<string>("");
+  //  ══ **التفاصيلُ التجارية** (المرحلة الثانية) ═══════════════════════════
+  //  الطبيبُ يقول السعرَ ونوعَه والخبيرَ والقرار — كلُّها **اختيارية**، وما
+  //  يقوله يصير مملوكاً له فلا يكتب فوقه استقبالٌ ولا مديرُ فرع.
+  //
+  //  **والسعرُ حقلٌ واحد لا حقلان**: `deviceCost` أعلاه هو «السعر الأصلي»،
+  //  والنوعُ يقول ماذا يُقيَّد منه — فلا سعرَ ثانٍ يُخترَع ولا يُطلب من
+  //  الطبيب أن يكتب الرقمَ مرّتين.
+  const [priceKind, setPriceKind] = useState<"normal" | "discount" | "free">("normal");
+  const [discountFinal, setDiscountFinal] = useState<string>("");
+  const [decision, setDecision] = useState<"" | "bought" | "not_bought">("");
+  const [notBoughtReason, setNotBoughtReason] = useState<string>("");
   const [expertUserId, setExpertUserId] = useState<string>("");
   const [prefilled, setPrefilled] = useState(false);
   //  تصحيحُ سعرٍ بعد البيع يحرّك مالاً، فيمرّ بتأكيدٍ يقول كم ولماذا.
@@ -317,6 +328,26 @@ export function NewExamDialog({
   // Declared above the mutation that reads it, so the dependency is obvious.
   const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
 
+  //  ما يُرسَل فعلاً — **مبنيٌّ مرّةً ويُقرأ في موضعين** (الإرسالُ والتعطيل).
+  const commercialPayload = (() => {
+    if (isEdit || !isDeviceSpecialty) return undefined;
+    const hasPrice = deviceCost !== "" && Number(deviceCost) > 0;
+    if (!hasPrice && !expertUserId && !decision) return undefined;
+    return {
+      price: hasPrice
+        ? {
+          kind: priceKind,
+          originalPrice: Number(deviceCost),
+          finalPrice: priceKind === "discount" && discountFinal !== ""
+            ? Number(discountFinal) : undefined,
+        }
+        : null,
+      expertUserId: expertUserId ? Number(expertUserId) : undefined,
+      decision: decision || undefined,
+      notBoughtReason: decision === "not_bought" ? notBoughtReason.trim() : undefined,
+    };
+  })();
+
   const save = useMutation({
     mutationFn: async () => {
       const res = await fetch(
@@ -338,6 +369,11 @@ export function NewExamDialog({
             //  سببُ تصحيح سعرٍ بعد البيع — **والخادمُ يفرضه ولا يثق بوجود
             //  الحقل في الشاشة**: من يستدعي النقطةَ مباشرةً يُردّ مثلَ غيره.
             priceCorrectionReason: priceMoved ? priceCorrectionReason.trim() : undefined,
+            //  ══ **التفاصيلُ التجارية — للجهاز الجديد وحده** ═══════════════
+            //  ولا تُرسَل في التحرير: تصحيحُ سعرِ معاينةٍ بيعت بابُه الخاصّ
+            //  (`priceCorrectionReason` أعلاه)، وإرسالُها هنا كان سيفتح
+            //  مسارَين لقرارٍ واحد.
+            commercial: commercialPayload,
           }),
         },
       );
@@ -373,7 +409,16 @@ export function NewExamDialog({
         // The server could not retire the superseded case (it already carries a
         // work order or tagged payments) — the doctor has to know both are open.
         //  **وملاحظةُ السعر تُقال** — فيعرف الطبيبُ إن لم يتبعه الرقمُ التجاري.
-        description: [saved?.switchNote, saved?.priceNote].filter(Boolean).join(" · ") || undefined,
+        //  ونتيجةُ التفاصيلِ التجارية تُقال: أتمّ البيعُ؟ أم بقي ناقصٌ؟
+        //  أم تعذّر حفظُها فتُدخَل من بطاقة المريض؟ — **ولا يُبتلَع شيء**.
+        description: [
+          saved?.switchNote, saved?.priceNote,
+          saved?.commercial?.converted ? "تم الشراء وبدأ التصنيع" : null,
+          saved?.commercial?.closed ? "سُجّل «لم يشترِ» وأُغلق الملفّ" : null,
+          saved?.commercial?.missing?.length
+            ? `اشترى — بانتظار: ${saved.commercial.missingLabel}` : null,
+          saved?.commercialError,
+        ].filter(Boolean).join(" · ") || undefined,
       });
       onDone?.();
     },
@@ -504,14 +549,127 @@ export function NewExamDialog({
                     onClick={() => setExpertUserId("")}
                     data-testid="button-clear-exam-expert"
                   >
-                    مسح الاقتراح
+                    مسح الاختيار
                   </button>
                 )}
+                {/*  ══ **وما تكتبه هنا يصير لك** (المرحلة الثانية) ═════════
+                    كانت العبارةُ «اقتراحٌ يغيّره الموظّف»، وهي لم تبقَ صحيحة:
+                    خبيرٌ يسنِده الطبيبُ في معاينته يُقفَل على الاستقبال ومدير
+                    الفرع — يبدّله صاحبُه أو المسؤولُ العام. والفارغُ وحده
+                    يختاره الموظّف. */}
                 <p className="text-xs text-muted-foreground">
-                  اقتراح فقط: يظهر لموظف الاستعلامات مملوءاً ويمكنه إبقاؤه أو تغييره.
-                  وإن تركته فارغاً يختاره هو.
+                  ما تختاره هنا يُسجَّل باسمك ولا يبدّله الاستقبال ولا مدير الفرع.
+                  وإن تركته فارغاً يختاره الموظّف.
                 </p>
               </div>
+
+              {/*  ══ **تفاصيلُ البيع — يقولها الطبيبُ إن شاء** (المرحلة ٢) ══
+                  ولا شيءَ منها إلزاميّ: المعاينةُ السريرية تُوقَّع ولو تُركت
+                  فارغةً كلُّها، والاستقبالُ يُكملها. لكنّ ما يقوله الطبيبُ
+                  **يصير مملوكاً له** فلا يكتب فوقه استقبالٌ ولا مديرُ فرع.
+                  **ولا اعتمادَ ولا طابورَ موافقات**: ما يُدخله نافذٌ فوراً. */}
+              {!isEdit && (
+                <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3"
+                  data-testid="block-exam-commercial">
+                  <p className="text-sm font-bold text-emerald-900">تفاصيل البيع (اختيارية)</p>
+
+                  {/*  نوعُ السعر — والرقمُ أعلاه هو «الأصلي» دائماً. */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold">نوع السعر</Label>
+                    <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-price-kind">
+                      {([
+                        ["normal", "السعر كما هو"],
+                        ["discount", "بخصم"],
+                        ["free", "مجاني"],
+                      ] as const).map(([v, label]) => (
+                        <label key={v} className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio" name="exam-price-kind" value={v}
+                            checked={priceKind === v}
+                            onChange={() => setPriceKind(v)}
+                            data-testid={`radio-price-kind-${v}`}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {priceKind === "discount" && (
+                      <div className="pt-1">
+                        <Label htmlFor="exam-discount-final" className="text-xs">
+                          السعر بعد الخصم (د.ع)
+                        </Label>
+                        <MoneyInput
+                          id="exam-discount-final"
+                          allowEmpty
+                          placeholder="أقلّ من السعر الأصلي"
+                          value={discountFinal}
+                          onValueChange={(v) => setDiscountFinal(v === null ? "" : String(v))}
+                          className="bg-white"
+                          data-testid="input-exam-discount-final"
+                        />
+                      </div>
+                    )}
+                    {/*  **والصفرُ لا يُقال «مجّاناً» ضمناً**: المجّانيّةُ تُختار
+                        صراحةً، والسعرُ الأصليُّ يبقى محفوظاً فيُعرَف قدرُ ما
+                        تبرّع به المركز. */}
+                    {priceKind === "free" && (
+                      <p className="text-xs text-emerald-900" data-testid="text-free-note">
+                        سيُقيَّد الجهاز بقيمة <b>صفر</b>، ويبقى السعر الأصلي
+                        ({deviceCost === "" ? "غير محدد" : Number(deviceCost).toLocaleString()} د.ع)
+                        محفوظاً في السجلّ.
+                      </p>
+                    )}
+                  </div>
+
+                  {/*  ══ **القرار: اثنان لا ثالث** ══════════════════════════
+                      وتركُه فارغاً مشروعٌ تماماً — يعني «يُكمله الموظّف»، لا
+                      «رفض المريض». والصمتُ لا يُقرأ رفضاً في أيّ موضع. */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold">قرار المريض</Label>
+                    <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-purchase-decision">
+                      {([
+                        ["", "يكمله الموظّف لاحقاً"],
+                        ["bought", "اشترى"],
+                        ["not_bought", "لم يشترِ"],
+                      ] as const).map(([v, label]) => (
+                        <label key={v || "none"} className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio" name="exam-decision" value={v}
+                            checked={decision === v}
+                            onChange={() => setDecision(v)}
+                            data-testid={`radio-decision-${v || "none"}`}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {decision === "not_bought" && (
+                      <div className="pt-1">
+                        <Label htmlFor="exam-not-bought" className="text-xs">
+                          سبب عدم الشراء <span className="text-destructive">*</span>
+                        </Label>
+                        <Textarea
+                          id="exam-not-bought"
+                          value={notBoughtReason}
+                          onChange={(e) => setNotBoughtReason(e.target.value)}
+                          placeholder="اكتب ما قاله المريض"
+                          className="bg-white min-h-[60px]"
+                          data-testid="input-not-bought-reason"
+                        />
+                      </div>
+                    )}
+                    {/*  **و«اشترى» تُحفَظ ولو نقص السعرُ أو الخبير** — فلا
+                        يُسأل المريضُ مرّتين، ويُتمّ الخادمُ البيعَ عند آخرِ
+                        ناقصٍ يُكمله الموظّف. */}
+                    {decision === "bought" && (
+                      <p className="text-xs text-muted-foreground" data-testid="text-bought-note">
+                        إن نقص السعر أو الخبير فالقرار يُحفَظ كما هو، ويُتمّ البيع
+                        تلقائياً حين يُكمل الموظّف ما ينقص — بلا سؤالٍ ثانٍ.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

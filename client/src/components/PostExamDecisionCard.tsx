@@ -45,6 +45,7 @@ import {
   purchaseSubmitLabel,
 } from "@/components/purchase_dialog_ui";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
+import { Textarea } from "@/components/ui/textarea";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
@@ -81,6 +82,20 @@ interface Followup {
   closedReason: string | null;
   convertedWorkOrderId: number | null;
   requestedItem: string | null;
+  // ══ المسارُ المبسّط ومالكيةُ الحقول (المرحلة ٢) — **كلُّها من الخادم** ══
+  //  الشاشةُ لا تحسب قفلاً ولا فعلاً: تعرض ما قاله الخادمُ بالدوالّ التي
+  //  يحرس بها نقاطَه. فلا يظهر زرٌّ يُردّ ولا يُخفى زرٌّ يُقبَل.
+  examPath?: boolean;
+  actions?: string[] | null;
+  missing?: string[];
+  missingLabel?: string;
+  statusLine?: string | null;
+  locks?: { price?: boolean; expert?: boolean; decision?: boolean };
+  ownerLabels?: { price?: string | null; expert?: string | null; decision?: string | null };
+  originalPrice?: number | null;
+  priceKind?: "normal" | "discount" | "free" | null;
+  purchaseDecision?: "bought" | "not_bought" | null;
+  notBoughtReasonText?: string | null;
   events: any[];
   priceRequests: any[];
 }
@@ -133,6 +148,12 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [finalPrice, setFinalPrice] = useState("");
   const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
+  //  ══ المسارُ المبسّط (المرحلة الثانية) ═══════════════════════════════════
+  const [cKind, setCKind] = useState<"normal" | "discount" | "free">("normal");
+  const [cOriginal, setCOriginal] = useState("");
+  const [cFinal, setCFinal] = useState("");
+  const [cExpert, setCExpert] = useState("");
+  const [cReason, setCReason] = useState("");
 
   const { data: followups, isLoading } = useQuery<Followup[]>({
     queryKey: [`/api/followups/patient/${patientId}`],
@@ -349,7 +370,19 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     );
   }
 
-  const actions = allowedActions(session as any, active.status);
+  //  ══ **مسارُ المعاينة المبسّط** (المرحلة الثانية) ═══════════════════════
+  //  العمليةُ الجديدة أفعالُها ثلاثة: تفاصيلُ البيع · اشترى · لم يشترِ.
+  //  **والخادمُ هو مَن يقولها** (`active.actions`) — بالدوالّ التي تحرس
+  //  النقاطَ نفسَها، فلا يظهر زرٌّ يُردّ ولا يُخفى زرٌّ يُقبَل.
+  //
+  //  **والصفُّ الموروث يبقى على أفعاله كلِّها**: حلقةٌ بلا مسار أو متابعةٌ
+  //  بلا حلقة — وإلّا تجمّد ملفٌّ في حالةٍ لا زرَّ لها.
+  const examPath: boolean = active.examPath === true;
+  const examActions: string[] = Array.isArray(active.actions) ? active.actions : [];
+  const missing: string[] = Array.isArray(active.missing) ? active.missing : [];
+  const locks = active.locks ?? {};
+  const ownerLabels = active.ownerLabels ?? {};
+  const actions = examPath ? [] : allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
   //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
@@ -438,6 +471,102 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             <Field label="أمر التصنيع" value={`#${active.convertedWorkOrderId}`} />
           )}
         </div>
+
+        {/*  ══ **ما بقي ليُكمَل — سطرٌ لكلّ حقلٍ ومَن يملكه** (المرحلة ٢) ══
+            الموظّفُ لا يحتاج أن يفهم حالاتِ الآلة: يحتاج أن يرى ثلاثةَ
+            سطور — السعرُ والخبيرُ والقرار — وأيُّها مقفولٌ ولمن، وأيُّها
+            ينقص فيُكمله. والأقفالُ والملّاكُ **من الخادم** لا من تخمين. */}
+        {examPath && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-2"
+            data-testid="block-commercial-completion">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-bold text-emerald-900">تفاصيل البيع</p>
+              {active.statusLine && (
+                <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs text-emerald-900"
+                  data-testid="text-commercial-status-line">
+                  {active.statusLine}
+                </span>
+              )}
+            </div>
+            <div className="grid gap-2 text-sm sm:grid-cols-3">
+              {([
+                ["price", "السعر",
+                  active.priceKind
+                    ? (active.priceKind === "free"
+                      ? `مجاني (الأصلي ${Number(active.originalPrice ?? 0).toLocaleString()} د.ع)`
+                      : active.priceKind === "discount"
+                        ? `${active.approvedPrice.toLocaleString()} د.ع — بخصم من `
+                          + `${Number(active.originalPrice ?? 0).toLocaleString()}`
+                        : `${active.approvedPrice.toLocaleString()} د.ع`)
+                    : null],
+                ["expert", "الخبير",
+                  active.selectedExpertUserId
+                    ? (active.selectedExpertName ?? `#${active.selectedExpertUserId}`)
+                    : null],
+                ["decision", "القرار",
+                  active.purchaseDecision === "bought" ? "اشترى"
+                    : active.purchaseDecision === "not_bought" ? "لم يشترِ" : null],
+              ] as const).map(([key, label, value]) => (
+                <div key={key} className="rounded-md bg-white/70 px-2 py-1.5"
+                  data-testid={`field-commercial-${key}`}>
+                  <div className="text-xs text-muted-foreground">{label}</div>
+                  <div className="font-medium">
+                    {value ?? <span className="text-amber-700">غير محدد</span>}
+                  </div>
+                  {/*  «أدخله د. فلان» — ولا رمزَ مالكيةٍ خام يُعرَض. */}
+                  {(ownerLabels as any)[key] && (
+                    <div className="text-xs text-muted-foreground"
+                      data-testid={`text-owner-${key}`}>
+                      {(ownerLabels as any)[key]}
+                      {(locks as any)[key] ? " · مقفل" : ""}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/*  **والأزرارُ ثلاثةٌ لا أكثر** — ولا اعتمادَ ولا تأجيلَ ولا
+                «يرغب بالشراء». والخادمُ هو مَن أرسل هذه القائمة. */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {examActions.includes("commercial") && (
+                <Button size="sm" variant="outline" disabled={busy}
+                  onClick={() => {
+                    setCKind(active.priceKind === "discount" ? "discount"
+                      : active.priceKind === "free" ? "free" : "normal");
+                    setCOriginal(active.originalPrice != null
+                      ? String(active.originalPrice)
+                      : (active.approvedPrice > 0 ? String(active.approvedPrice) : ""));
+                    setCFinal(active.priceKind === "discount" ? String(active.approvedPrice) : "");
+                    setCExpert(active.selectedExpertUserId
+                      ? String(active.selectedExpertUserId) : "");
+                    setDialog("commercial");
+                  }}
+                  data-testid="button-open-commercial">
+                  <CircleDollarSign className="h-4 w-4" /> تفاصيل البيع
+                </Button>
+              )}
+              {examActions.includes("bought") && (
+                <Button size="sm" disabled={busy}
+                  onClick={() => submit(`/api/followups/${active.id}/commercial`,
+                    { decision: "bought" })}
+                  data-testid="button-decide-bought">
+                  <HandCoins className="h-4 w-4" /> اشترى
+                </Button>
+              )}
+              {examActions.includes("not_bought") && (
+                <Button size="sm" variant="outline" disabled={busy}
+                  onClick={() => { setCReason(""); setDialog("not_bought"); }}
+                  data-testid="button-decide-not-bought">
+                  <XCircle className="h-4 w-4" /> لم يشترِ
+                </Button>
+              )}
+            </div>
+            {missing.length > 0 && active.purchaseDecision === "bought" && (
+              <p className="text-xs text-amber-900" data-testid="text-commercial-missing">
+                يُتمّ البيعُ تلقائياً حين يُكمَل: <b>{active.missingLabel}</b> — بلا سؤالٍ ثانٍ.
+              </p>
+            )}
+          </div>
+        )}
 
         {/*  ══ **رايةُ الموافقة تقول أين وقف الملفّ فعلاً** ══════════════
             كان النصُّ واحداً لا يتغيّر: «المريض قرّر الإكمال، ينتظر إتمام
@@ -669,6 +798,124 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       </CardContent>
 
       {/* ── تأجيل ── */}
+      {/*  ══ **نافذةُ تفاصيل البيع** — سعرٌ ونوعُه وخبير (المرحلة ٢) ══════
+          ولا اعتمادَ ولا طابور: ما يُحفَظ هنا نافذٌ فوراً. وإن كان هذا آخرَ
+          ما ينقص وقرارُ المريض «اشترى» — **أتمّ الخادمُ البيعَ في المعاملة
+          نفسِها**، فلا يُسأل القرارُ ثانيةً. */}
+      <Dialog open={dialog === "commercial"} onOpenChange={(o) => !o && reset()}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader><DialogTitle>تفاصيل البيع</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            {locks.price ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900"
+                data-testid="text-price-locked">
+                {ownerLabels.price} — لا يمكن تعديل السعر من هنا.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">نوع السعر</Label>
+                  <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-c-kind">
+                    {([["normal", "السعر كما هو"], ["discount", "بخصم"], ["free", "مجاني"]] as const)
+                      .map(([v, label]) => (
+                        <label key={v} className="flex items-center gap-1 cursor-pointer">
+                          <input type="radio" name="c-kind" value={v} checked={cKind === v}
+                            onChange={() => setCKind(v)} data-testid={`radio-c-kind-${v}`} />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="c-original" className="text-xs">السعر الأصلي (د.ع)</Label>
+                  <MoneyInput id="c-original" allowEmpty value={cOriginal}
+                    onValueChange={(v) => setCOriginal(v === null ? "" : String(v))}
+                    className="bg-white" data-testid="input-c-original" />
+                </div>
+                {cKind === "discount" && (
+                  <div className="space-y-1">
+                    <Label htmlFor="c-final" className="text-xs">السعر بعد الخصم (د.ع)</Label>
+                    <MoneyInput id="c-final" allowEmpty value={cFinal}
+                      onValueChange={(v) => setCFinal(v === null ? "" : String(v))}
+                      className="bg-white" data-testid="input-c-final" />
+                  </div>
+                )}
+                {cKind === "free" && (
+                  <p className="text-xs text-emerald-900" data-testid="text-c-free">
+                    سيُقيَّد بقيمة <b>صفر</b>، ويبقى السعر الأصلي محفوظاً في السجلّ.
+                  </p>
+                )}
+              </>
+            )}
+            {locks.expert ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900"
+                data-testid="text-expert-locked">
+                {ownerLabels.expert} — لا يمكن تغيير الخبير من هنا.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="c-expert" className="text-xs">الخبير</Label>
+                <Select value={cExpert} onValueChange={setCExpert}>
+                  <SelectTrigger id="c-expert" className="bg-white" data-testid="select-c-expert">
+                    <SelectValue placeholder={(experts ?? []).length
+                      ? "اختر الخبير" : "لا يوجد خبير في هذا الفرع"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(experts ?? []).map((e: any) => (
+                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button disabled={busy} data-testid="button-save-commercial"
+              onClick={() => {
+                const body: any = {};
+                if (!locks.price && cOriginal !== "" && Number(cOriginal) > 0) {
+                  body.price = {
+                    kind: cKind, originalPrice: Number(cOriginal),
+                    finalPrice: cKind === "discount" && cFinal !== "" ? Number(cFinal) : undefined,
+                  };
+                }
+                if (!locks.expert && cExpert) body.expertUserId = Number(cExpert);
+                submit(`/api/followups/${active.id}/commercial`, body);
+              }}>
+              حفظ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/*  ══ **«لم يشترِ» بسببٍ حرٍّ إلزاميّ** ═══════════════════════════════
+          ولا قائمةَ أحدَ عشر رمزاً يختار منها الموظّفُ «سبب آخر» فلا يفيد
+          أحداً: يُكتب ما قاله المريضُ كما قاله. */}
+      <Dialog open={dialog === "not_bought"} onOpenChange={(o) => !o && reset()}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader><DialogTitle>لم يشترِ</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="c-reason" className="text-xs">
+              سبب عدم الشراء <span className="text-destructive">*</span>
+            </Label>
+            <Textarea id="c-reason" value={cReason} onChange={(e: any) => setCReason(e.target.value)}
+              placeholder="اكتب ما قاله المريض" className="bg-white min-h-[70px]"
+              data-testid="input-c-reason" />
+            <p className="text-xs text-muted-foreground">
+              يُغلَق الملفّ بلا تصنيعٍ ولا كلفةٍ ولا دينار — ويمكن إعادة فتحه إن عاد المريض.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="destructive" disabled={busy || !cReason.trim()}
+              data-testid="button-save-not-bought"
+              onClick={() => submit(`/api/followups/${active.id}/commercial`,
+                { decision: "not_bought", notBoughtReason: cReason.trim() })}>
+              تسجيل
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={dialog === "defer" || dialog === "close" || dialog === "reopen"}
         onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">

@@ -105,6 +105,11 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   //  قرارَ مديرٍ بالبيع بسعرٍ آخر.
   exam_price_corrected: "صحّح الطبيب السعر الأصلي",
   discount_price_applied: "تم اعتماد الخصم",
+  //  ══ **تفاصيلُ البيع — حقلٌ حقلاً** (المرحلة الثانية، ترحيل ٠٦٦) ═════
+  //  حدثٌ واحد لثلاثة حقول (سعرٌ · خبيرٌ · قرار)، والتفصيلُ في حمولته:
+  //  أيُّ حقلٍ تغيّر، ومِن ماذا إلى ماذا، ومَن يملكه بعدها. وجعلُ ثلاثةِ
+  //  أنواعٍ منه كان سيكرّر القاعدةَ ثلاثاً بلا فائدةٍ يقرؤها أحد.
+  commercial_field_set: "تفاصيل البيع",
   purchase_interest_signaled: "تم تسجيل موافقة المريض على الشراء",
   purchase_confirmed: "تم تأكيد الشراء",
   converted: "تم الشراء — بدأ التصنيع",
@@ -223,6 +228,43 @@ export function followupEventView(
       }
       const r = reasonLabel(e?.reason);
       if (r) out.facts.push(`السبب: ${r}`);
+      break;
+    }
+    case "commercial_field_set": {
+      //  **الحقلُ يُسمّى بالعربية** — لا `price` ولا `expert` خاماً.
+      const field = String(p.field ?? "");
+      if (field === "price") {
+        const from = Number(p.oldApprovedPrice), to = Number(p.finalPrice);
+        if (Number.isFinite(from) && Number.isFinite(to) && from !== to) {
+          out.transition = { from, to };
+        }
+        const kind = String(p.priceKind ?? "");
+        if (kind === "free") {
+          out.facts.push("مجاني (تبرّع)");
+          const orig = Number(p.originalPrice);
+          if (Number.isFinite(orig) && orig > 0) {
+            out.facts.push(`السعر الأصلي: ${money(orig)} د.ع`);
+          }
+        } else if (kind === "discount") {
+          const orig = Number(p.originalPrice);
+          if (Number.isFinite(orig) && orig > 0) {
+            out.facts.push(`بخصم من ${money(orig)} د.ع`);
+          }
+        } else if (kind === "normal" && Number.isFinite(to)) {
+          out.facts.push(`السعر: ${money(to)} د.ع`);
+        }
+      } else if (field === "expert") {
+        //  والاسمُ إن عُرف، وإلّا فالرقمُ — ولا اسمٌ يُخترَع.
+        const name = typeof p.expertName === "string" && p.expertName.trim()
+          ? p.expertName.trim() : null;
+        const id = Number(p.newExpertUserId);
+        out.facts.push(`الخبير: ${name ?? (Number.isFinite(id) ? `#${id}` : "غير محدد")}`);
+      } else if (field === "decision") {
+        out.facts.push("قرار المريض: اشترى");
+      }
+      //  **ومَن يملكه بعدها** — فيُقرأ من السطر لماذا صار مقفولاً.
+      if (p.owner === "doctor") out.facts.push("أدخله الطبيب");
+      else if (p.owner === "staff") out.facts.push("أدخله الموظّفون");
       break;
     }
     case "discount_price_applied": {

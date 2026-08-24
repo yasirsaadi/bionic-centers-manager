@@ -81,6 +81,7 @@
     "test:add-case-ui": "tsx client/src/components/add_case_type_ui.test.ts",
     "test:reception-agreement": "tsx server/reception_agreement.test.ts",
     "test:supervisor-ui": "tsx client/src/pages/supervisor_ui.test.ts",
+    "test:exam-commercial": "tsx server/exam_commercial.test.ts",
     "test:exam-cancellation": "tsx server/exam_cancellation.test.ts",
     "test:whatsapp": "tsx server/patient_whatsapp/whatsapp.test.ts",
     "test:device-flow-resume": "tsx client/src/components/device_flow_resume.test.ts"
