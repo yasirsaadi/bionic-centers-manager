@@ -48,8 +48,10 @@ import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
-  followupEventView, purchasePresentation, PURCHASE_STATE_TEXT,
+  followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
 } from "@shared/followup_events";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -78,6 +80,7 @@ interface Followup {
   lastContactAt: string | null;
   closedReason: string | null;
   convertedWorkOrderId: number | null;
+  requestedItem: string | null;
   events: any[];
   priceRequests: any[];
 }
@@ -165,7 +168,28 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const hasPendingDiscount = (discountRows?.requests ?? [])
     .some((r: any) => r?.status === "pending");
 
-  const active = (followups ?? [])[0] ?? null;
+  //  ══ **الطلبُ الحالي والتاريخُ معاً — لا اختيارَ بينهما** ═══════════════
+  //   بعد تصحيحٍ إداريّ باستبدال، للمريض حقيقتان: عمليةٌ ملغاة (تاريخ)
+  //   وطلبٌ جديد بانتظار المعاينة (حاضر). وعرضُ إحداهما وحدها يجعل الموظّفَ
+  //   يظنّ أن الأخرى لم تقع.
+  //
+  //   **والحاضرُ يُقرأ من مصدره القانونيّ**: نقطةُ الحلقات نفسُها التي
+  //   تقرؤها بقيةُ الشاشات، وبعناوين `requestedItemLabel` نفسِها — لا حقيقةٌ
+  //   تشغيليةٌ ثانية تُخترَع في هذه البطاقة.
+  const { data: episodeData } = useQuery<{
+    episodes: { id: number; serviceType: string; status: string; requestedItem: string }[];
+  }>({
+    queryKey: [`/api/patients/${patientId}/device-episodes`],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/device-episodes`, { credentials: "include" });
+      if (!res.ok) return { episodes: [] };
+      return res.json();
+    },
+  });
+
+  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
+  const active = (followups ?? []).find((f) => !terminal.has(f.status))
+    ?? (followups ?? [])[0] ?? null;
 
   //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
   //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً
@@ -222,6 +246,108 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     );
   }
   if (!active) return null;
+
+  // ══ **العمليةُ الملغاة إدارياً — تاريخٌ يُقرأ، لا بابٌ يُفتَح** ═════════
+  //
+  //  والبطاقةُ رماديةٌ عن قصد: لا «تم الشراء» أخضر، ولا مرحلةُ تصنيعٍ حيّة،
+  //  ولا سعرٌ يبدو مستحقّاً. العمليةُ وقعت وأُبطلت، وهذا كلُّ ما تقوله.
+  //
+  //  **ولا نافذةَ تصحيحٍ من هنا**: التصحيحُ تمّ. وفتحُ نافذةِ إجراءٍ على
+  //  عمليةٍ مصحَّحة يَعِد بفعلٍ لا يقع — يقرأ الموظّفُ «تفاصيل» فيجد نموذجَ
+  //  تنفيذٍ يردّه الخادمُ بـ«ملغاة إدارياً بالفعل». فالتفصيلُ هنا نصٌّ
+  //  مقروء، وسجلُّ الإجراءات الكامل في «سجلّ الإجراءات» أسفله.
+  if (active.status === "closed_admin_void") {
+    // ══ **الطلبُ البديل بهويّته لا بترشيح** ═════════════════════════════
+    //  المريضُ يملك خيوطاً متوازية — أطرافٌ ومساند — وقد يملك على الخيط
+    //  الواحد حلقةً مفتوحةً لسببٍ آخر. فـ«أوّلُ حلقةٍ مفتوحة» كان يعرض
+    //  **مسندَ المريض** بوصفه الطلبَ الذي وُلد عن تصحيح طرفه.
+    //
+    //  والهويّةُ الدقيقة كتبها التصحيحُ في حمولة حدثه داخل معاملته:
+    //  `replacementEpisodeId`. فتُقرأ منها وتُطابَق بالمعرّف على نقطة
+    //  الحلقات القانونية — **ولا يُخمَّن بديلٌ حين لا يوجد**.
+    const replacementId = replacementEpisodeIdOf(active.events);
+    const replacement = replacementId === null ? null
+      : (episodeData?.episodes ?? []).find((e) =>
+        Number(e.id) === replacementId
+        //  والطلبُ «حاضرٌ» ما دام مفتوحاً. وقد يُعايَن فيصير `examined` —
+        //  والهويّةُ لا تتبدّل، فهي بالمعرّف لا بالحالة.
+        && (e.status === "awaiting_exam" || e.status === "examined")) ?? null;
+
+    return (
+      <div id={POST_EXAM_CARD_ANCHOR} className="space-y-3">
+        {/*  ① **الحاضرُ أوّلاً** — الطلبُ القائم الذي وُلد عن التصحيح. */}
+        {replacement && (
+          <Card data-testid="card-current-device-request"
+            className="border-primary/40 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2 text-primary">
+                <ClipboardCheck className="h-5 w-5" /> طلب جديد
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+              <Field label="المطلوب"
+                value={requestedItemLabel(replacement.requestedItem, replacement.serviceType)} />
+              <Field label="الحالة"
+                value={replacement.status === "awaiting_exam"
+                  ? "بانتظار المعاينة" : "بانتظار التخصيص"} />
+              <Field label="الكلفة" value="—" hint="تُحدَّد بعد المعاينة" />
+            </CardContent>
+          </Card>
+        )}
+
+        {/*  ② **والتاريخُ بعده** — بلا لونٍ يوحي بعمليةٍ قائمة. */}
+        <Card data-testid="card-admin-void-history"
+          className="border-gray-200 bg-gray-50 text-gray-700">
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2">
+            <XCircle className="h-5 w-5" />
+            <span data-testid="text-admin-void-title">عملية ملغاة إدارياً</span>
+            <span className="mr-auto rounded-full bg-gray-200 px-2 py-0.5 text-xs">
+              {ADMIN_VOID_BADGE}
+            </span>
+          </CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+            <Field label="الطلب السابق"
+              value={requestedItemLabel(active.requestedItem, active.serviceType)} />
+            <Field label="السعر السابق" value={`${active.approvedPrice.toLocaleString()} د.ع`}
+              hint="عُكس بقيد معاكس" />
+            <Field label="أمر التصنيع السابق"
+              value={active.convertedWorkOrderId ? `#${active.convertedWorkOrderId}` : "—"} />
+            <Field label="سبب التصحيح" value={active.closedNote || active.lastNote || "—"} />
+            <Field label="من نفذ التصحيح" value={active.closedByName || "—"} />
+            <Field label="تاريخ التصحيح"
+              value={fmtDateTime(active.closedEventAt ?? active.lastContactAt)} />
+          </CardContent>
+          {(active.events ?? []).length > 0 && (
+            <CardContent className="pt-0">
+              <details className="text-xs" data-testid="details-admin-void-history">
+                <summary className="cursor-pointer text-muted-foreground">
+                  سجلّ الإجراءات ({active.events.length})
+                </summary>
+                <ul className="mt-2 space-y-2">
+                  {active.events.map((e: any) => {
+                    const v = followupEventView(e, () => null);
+                    return (
+                      <li key={e.id} className="border-r-2 border-muted pr-2 leading-relaxed"
+                        data-testid={`void-event-${e.id}`}>
+                        <div className="text-muted-foreground">{fmtDateTime(e.createdAt)}</div>
+                        <div className="font-medium text-foreground">{v.title}</div>
+                        {v.facts.length > 0 && (
+                          <div className="text-muted-foreground">{v.facts.join(" · ")}</div>
+                        )}
+                        {e.actorName && (
+                          <div className="text-muted-foreground">بواسطة: {e.actorName}</div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </details>
+            </CardContent>
+          )}
+        </Card>
+      </div>
+    );
+  }
 
   const actions = allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");

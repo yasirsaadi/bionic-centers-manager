@@ -21,6 +21,10 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import * as episodes from "./device_episodes/store";
 import { readFileSync } from "fs";
+//  **ما يُعرَض يُفحَص بالدوالّ التي تعرضه** — لا بنسخةٍ ثانيةٍ في الاختبار.
+import {
+  followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
+} from "@shared/followup_events";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -321,8 +325,7 @@ async function main() {
         JSON.stringify(pv.body?.impact?.purchase_only));
 
       const r = await execute({
-        followupId: d.followupId, mode: "purchase_only",
-        reasonCode: "purchase_recorded_by_mistake",
+        followupId: d.followupId, intent: "purchase_mistake",
         reasonNote: "ضُغط الشراء قبل إكمال المسار",
         stateStamp: pv.body?.stateStamp,
       });
@@ -401,6 +404,9 @@ async function main() {
       same("١٧. (البيعُ الخاطئ وقع)",
         (await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {})).status, 200);
       const wrongExam = await examIdOf(patientId);
+      //  **ودفع المريضُ عليه فعلاً** — فالتصحيحُ يواجه نقداً قُبض لا فرضاً.
+      await q(`INSERT INTO payments (patient_id, branch_id, amount, device_episode_id, notes)
+               VALUES ($1, 1, 400000, $2, 'دفعة على الجهاز الخاطئ')`, [patientId, wrongEpId]);
       const before = await shape(patientId);
       const wrongWo = Number(before.wos.find((w: any) =>
         Number(w.device_episode_id) === wrongEpId)?.id);
@@ -414,8 +420,8 @@ async function main() {
       const pv = await preview({ followupId: f.id });
       same("١٩. (المعاينةُ المسبقة تقرأ البيعَ الخاطئ)", pv.body?.saleAmount, 1_500_000);
       const r = await execute({
-        followupId: f.id, mode: "full_operation",
-        reasonCode: "wrong_service_or_device",
+        followupId: f.id, intent: "replace_requested_item",
+        replacementRequestedItem: "socket",
         reasonNote: "المريض يريد قالباً لا طرفاً كاملاً",
         stateStamp: pv.body?.stateStamp,
       });
@@ -444,16 +450,16 @@ async function main() {
         [s.total, s.eps.find((e: any) => Number(e.id) === oldEpId)?.status,
           s.eps.find((e: any) => Number(e.id) === oldEpId)?.cost],
         [before.total - 1_500_000, "delivered", 2_000_000]);
-      same("٢٨. **ولا دفعةَ حُذفت**", s.pays.length, 0);
+      same("٢٨. **ولا دفعةَ حُذفت ولا عُكست** — نقدٌ قُبض يبقى",
+        s.pays.map((p: any) => p.amount), [400_000]);
+      same("٢٨-ب. **ويُقال رصيداً يحتاج تسوية**",
+        [r.body?.requiresFinancialSettlement, r.body?.preservedPaidAmount], [true, 400_000]);
       same("٢٩. **وهويّةٌ واحدة تجمع التصحيح**",
         [s.revs.length, s.revs[0].mode], [1, "full_operation"]);
 
-      // ── ثمّ الطلبُ الصحيح: **قالب** ────────────────────────────────────
-      const socket = await http("POST", `/api/patients/${patientId}/device-episodes`, S.recv, {
-        serviceType: "prosthetic", requestedItem: "socket",
-      });
-      check(socket.status < 300, "٣٠. **ويُفتح الطلبُ الصحيح فوراً — قالب**",
-        JSON.stringify(socket.body));
+      // الطلب الصحيح وُلد في المعاملة نفسها؛ لا نداء HTTP ثانٍ من المتصفح.
+      check(Number(r.body?.replacementEpisodeId) > 0,
+        "٣٠. **ويُفتح الطلبُ الصحيح ذرّياً — قالب**", JSON.stringify(r.body));
       const s3 = await shape(patientId);
       const fresh = s3.eps.filter((e: any) =>
         Number(e.id) !== oldEpId && Number(e.id) !== wrongEpId);
@@ -462,6 +468,109 @@ async function main() {
         [1, "socket", "awaiting_exam"]);
       same("٣٢. **والجهازُ القديم المسلَّم باقٍ تاريخاً لا حاجزاً**",
         s3.eps.find((e: any) => Number(e.id) === oldEpId)?.status, "delivered");
+
+      // ══ **والطلبُ الجديد يبدأ من أوّل الطريق — لا يرث شيئاً** ══════════
+      //  وهذا جوهرُ «الجزءُ ليس طرفاً ثانياً»: لو ورث سعراً أو أمرَ تصنيعٍ
+      //  أو خبيراً لكان بيعاً جديداً لم يقرّره أحد.
+      const newEpId = Number(r.body?.replacementEpisodeId);
+      same("١٢١. **وهو الحلقةُ الجديدة بعينها**", Number(fresh[0]?.id), newEpId);
+      same("١٢٢. **بكلفةٍ صفر — لا سعرَ منسوخ**", Number(fresh[0]?.cost), 0);
+      same("١٢٣. **وتسلسلٌ جديد لا يُعيد ترقيمَ ما قبله**",
+        [Number(s3.eps.find((e: any) => Number(e.id) === oldEpId)?.sequence_number),
+          Number(s3.eps.find((e: any) => Number(e.id) === wrongEpId)?.sequence_number),
+          Number(fresh[0]?.sequence_number)], [1, 2, 3]);
+      same("١٢٤. **ولا أمرَ تصنيعٍ عليه**",
+        s3.wos.filter((w: any) => Number(w.device_episode_id) === newEpId).length, 0);
+      same("١٢٥. **ولا معاينةَ منسوخة** — المعاينةُ الوحيدة هي الملغاة",
+        [s3.exams.length, s3.cancels.length], [1, 1]);
+      same("١٢٦. **ولا دفعةَ ولا قيدَ كلفةٍ نُسبا إليه**",
+        [(await q(`SELECT count(*)::int AS n FROM payments WHERE device_episode_id=$1`,
+          [newEpId]))[0].n,
+        (await q(`SELECT count(*)::int AS n FROM cost_entries WHERE device_episode_id=$1`,
+          [newEpId]))[0].n], [0, 0]);
+      same("١٢٧. **ولا خبيرَ ولا متابعةَ حيّة** — المسارُ يبدأ بالمعاينة",
+        [(await q(`SELECT count(*)::int AS n FROM post_exam_followups
+                    WHERE patient_id=$1 AND status <> 'closed_admin_void'`, [patientId]))[0].n,
+        (await q(`SELECT count(*)::int AS n FROM patient_device_episodes
+                   WHERE id=$1 AND created_by=$2`, [newEpId, ADMIN]))[0].n], [0, 1]);
+
+      // ══ **وما يقرؤه الموظّف: حاضرٌ وتاريخٌ معاً، لا أحدُهما** ═══════════
+      const ev = await q<{ payload: any; note: string }>(
+        `SELECT payload, note FROM post_exam_followup_events
+          WHERE followup_id=$1 AND event_type='administrative_reversal'`, [f.id]);
+      same("١٢٨. **وحدثُ التصحيح يحمل ما كان وما صار — لا رقماً وحده**",
+        [ev[0]?.payload?.previousRequestedItem, ev[0]?.payload?.replacementRequestedItem,
+          ev[0]?.payload?.serviceType, Number(ev[0]?.payload?.replacementEpisodeId)],
+        ["full_device", "socket", "prosthetic", newEpId]);
+      const view = followupEventView({
+        eventType: "administrative_reversal", note: ev[0]?.note, payload: ev[0]?.payload,
+      });
+      check(view.facts.includes("الطلب السابق: طرف صناعي كامل")
+        && view.facts.includes("الطلب الجديد: القالب"),
+      "١٢٩. **ويُقرأ بالعربية بلا معجم**", view.facts.join(" | "));
+
+      //  **ولا حالةَ شراءٍ خضراء على العملية الملغاة** — وهذا ما كان يقع:
+      //  رقمُ الأمر التاريخيّ وحدَه كان يقول «تم الشراء — بدأ التصنيع».
+      const fus = await http("GET", `/api/followups/patient/${patientId}`, S.admin);
+      const voided = (fus.body ?? []).find((x: any) => Number(x.id) === f.id);
+      same("١٣٠. **والعرضُ يقول «ملغاة إدارياً» لا «تم الشراء»**",
+        purchasePresentation(voided), "admin_void");
+      same("١٣١. **ونصُّها بالعربية**",
+        PURCHASE_STATE_TEXT[purchasePresentation(voided)], "عملية ملغاة إدارياً");
+      same("١٣٢. **والمتابعةُ تحمل ما طُلب سابقاً للبطاقة التاريخية**",
+        voided?.requestedItem, "full_device");
+      //  والطلبُ الحاضر يُقرأ من نقطة الحلقات نفسِها التي تقرؤها البطاقة.
+      const eps = await http("GET", `/api/patients/${patientId}/device-episodes`, S.admin);
+      const openNow = (eps.body?.episodes ?? []).filter((e: any) =>
+        e.status === "awaiting_exam" || e.status === "examined");
+      same("١٣٣. **وطلبٌ حاضرٌ واحد: قالب بانتظار المعاينة**",
+        [openNow.length, openNow[0]?.requestedItem, openNow[0]?.agreedCost],
+        [1, "socket", 0]);
+
+      // ══ **تاريخُ التصنيع: يُقرأ ولا يُحسَب عملاً قائماً** ═══════════════
+      const cards = await http("GET", `/api/manufacturing/patient/${patientId}/orders`, S.admin);
+      const wrongCard = (cards.body ?? []).find((o: any) => Number(o.id) === wrongWo);
+      same("١٥٢. **الأمرُ الخاطئ يُعرَض مُبطَلاً إدارياً لا نشِطاً**",
+        [wrongCard?.active, Number(wrongCard?.adminVoidReversalId) > 0], [false, true]);
+      same("١٥٣. **وهويّتُه ومرحلتُه باقيتان تاريخاً**",
+        [Number(wrongCard?.id), typeof wrongCard?.currentStage === "string"], [wrongWo, true]);
+      same("١٥٤. **وسجلُّ مراحله لم يُمَسّ، وأُضيف إليه سطرُ الإبطال**",
+        (await q(`SELECT count(*)::int AS n FROM prosthetic_work_history WHERE work_order_id=$1
+                    AND notes LIKE 'إلغاء إداري للعملية%'`, [wrongWo]))[0].n, 1);
+      same("١٥٥. **ولا أمرَ نشطٌ ينافس الطلبَ الجديد**",
+        (cards.body ?? []).filter((o: any) => o.active).length, 0);
+      //  والجهازُ القديم المسلَّم يبقى مكتملاً — تصحيحُ اليوم لا يمسّ أمسِ.
+      same("١٥٦. **وأمرُ الجهاز القديم مكتملٌ كما كان**",
+        (cards.body ?? []).filter((o: any) => o.status === "completed"
+          && !o.adminVoidReversalId).length, 1);
+
+      // ══ **تاريخُ المعاينة: محفوظٌ، ومرفوعُ السلطة، ولا يُعاد استعماله** ══
+      const examsNow = await http("GET", `/api/medical/patients/${patientId}/exams`, S.admin);
+      same("١٥٧. **والمعاينةُ الملغاة خرجت من السجلّ الفعّال**",
+        (examsNow.body?.exams ?? []).length, 0);
+      const [rawExam] = await q<{ doctor_name: string; signed_at: string; version: number }>(
+        `SELECT doctor_name, signed_at, version FROM medical_exams WHERE id=$1`, [wrongExam]);
+      check(!!rawExam?.doctor_name && !!rawExam?.signed_at,
+        "١٥٨. **وتوقيعُ الطبيب واسمُه وختمُه باقٍ بايتاً بايت**", JSON.stringify(rawExam));
+      same("١٥٩. **ولا نسخةَ ولا ملحقَ حُذف**",
+        [(await q(`SELECT count(*)::int AS n FROM medical_exam_revisions WHERE exam_id=$1`,
+          [wrongExam]))[0].n,
+        (await q(`SELECT count(*)::int AS n FROM medical_exam_addenda WHERE exam_id=$1`,
+          [wrongExam]))[0].n], [0, 0]);
+      //  **ولا تُستعمَل معاينةُ الأمس للطلب الجديد**: المريضُ يعود إلى طابور
+      //  الطبيب، فيمضي القالبُ بالمسار الطبيعيّ نفسِه.
+      const pend = await http("GET", "/api/medical/pending", S.admin);
+      check(Array.isArray(pend.body?.pending?.[String(patientId)])
+        && pend.body.pending[String(patientId)].includes("prosthetic"),
+      "١٦٠. **والطلبُ الجديد يبدأ دورةَ المعاينة من أوّلها**",
+      JSON.stringify(pend.body?.pending?.[String(patientId)] ?? null));
+      //  ولا بوّابةَ تصنيعٍ مفتوحة بمعاينةٍ ملغاة: التخصيصُ يُردّ حتى تُوقَّع
+      //  معاينةٌ جديدة — وهو حارسُ ٠٦١ نفسُه، لم يُمَسّ.
+      const assign = await http("POST", `/api/manufacturing/orders`, S.recv, {
+        patientId, serviceType: "prosthetic", expertUserId: EXPERT, serviceCost: 100000,
+      });
+      check(assign.status >= 400, "١٦١. **ولا تصنيعَ قبل معاينةٍ جديدة**",
+        `${assign.status} ${JSON.stringify(assign.body)}`);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -929,6 +1038,232 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  م) **الاستبدالُ تحت التزامن، والفشلُ يُرجع كلَّ شيء.**
+    //
+    //  حلقةُ الجهاز لها ثوابتُ لا تُحرَس بالترتيب بل بالقفل والفهارس:
+    //  شراءٌ مفتوحٌ واحد لكلّ خيط، وتسلسلٌ لا يتكرّر. والتصحيحُ الإداريّ
+    //  يفتح حلقةً كأيّ فاتحٍ آخر — فيخضع لها لا يستثنى منها.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── م) التزامن والذرّية ──");
+    {
+      // (أ) **تصحيحان متزامنان بالاستبدال** ⟶ واحدٌ يمضي والآخر يُردّ،
+      //     ولا حلقتان بتسلسلٍ واحد.
+      const d = await soldOperation("تزامنُ الاستبدال", 500_000);
+      const pv = await preview({ followupId: d.followupId });
+      const body = {
+        followupId: d.followupId, intent: "replace_requested_item",
+        replacementRequestedItem: "socket", reasonNote: "سباق",
+        stateStamp: pv.body?.stateStamp,
+      };
+      const [x, y] = await Promise.all([executeRaw(body), executeRaw(body)]);
+      const codes = [x.status, y.status].sort();
+      same("١٣٤. **ضغطتان متزامنتان ⟶ واحدةٌ تمضي والأخرى تُردّ**",
+        [codes[0], codes[1] >= 400], [200, true]);
+      const sc = await shape(d.patientId);
+      same("١٣٥. **وصفُّ تصحيحٍ واحد، وقيدٌ سالبٌ واحد**",
+        [sc.revs.length,
+          sc.entries.filter((e: any) => e.source === "administrative_reversal").length], [1, 1]);
+      const seqs = sc.eps.map((e: any) => Number(e.sequence_number)).sort();
+      same("١٣٦. **ولا تسلسلَ مكرّر**", seqs.length, new Set(seqs).size);
+      same("١٣٧. **وحلقةٌ مفتوحةٌ واحدة لا اثنتان**",
+        sc.eps.filter((e: any) =>
+          !["delivered", "cancelled"].includes(String(e.status))).length, 1);
+
+      // (ب) **طلبُ جهازٍ جديد يسابق الاستبدال** ⟶ لا حلقتان مفتوحتان.
+      //     المسارُ العاديُّ والتصحيحُ يقفلان صفَّ الخيط نفسَه، فيتسلسلان.
+      const d2 = await soldOperation("سباقُ الطلب الجديد", 600_000);
+      const pv2 = await preview({ followupId: d2.followupId });
+      const [rev2, newReq] = await Promise.all([
+        executeRaw({
+          followupId: d2.followupId, intent: "replace_requested_item",
+          replacementRequestedItem: "knee", reasonNote: "سباق",
+          stateStamp: pv2.body?.stateStamp,
+        }),
+        http("POST", `/api/patients/${d2.patientId}/device-episodes`, S.recv, {
+          serviceType: "prosthetic", requestedItem: "tube",
+        }),
+      ]);
+      const s2 = await shape(d2.patientId);
+      same("١٣٨. **التصحيحُ نفّذ**", rev2.status, 200);
+      check(newReq.status >= 400 || s2.eps.filter((e: any) =>
+        !["delivered", "cancelled"].includes(String(e.status))).length === 1,
+      "١٣٩. **ولا يخرج المريضُ بطلبين مفتوحين**",
+      `${newReq.status} / ${JSON.stringify(s2.eps.map((e: any) => e.status))}`);
+      same("١٤٠. **والمفتوحةُ واحدةٌ بالضبط**",
+        s2.eps.filter((e: any) =>
+          !["delivered", "cancelled"].includes(String(e.status))).length, 1);
+
+      // (ج) **أمرُ بناءٍ قديمٍ نشطٌ بلا حلقة** ⟶ الاستبدال يُردّ نظيفاً،
+      //     ولا نصفَ تصحيح: ما عُكس يُرجَع كلُّه.
+      const d3 = await soldOperation("أمرٌ قديمٌ نشط", 700_000);
+      //  أمرُ الصفقة يُنهى أوّلاً — القاعدةُ لا تسمح بأمرَي بناءٍ مفتوحين
+      //  لخدمةٍ واحدة (`uq_pwo_one_open_build_per_service`)، وهو الحارسُ
+      //  الذي نختبر امتدادَه إلى فتح البديل.
+      await q(`UPDATE prosthetic_work_orders SET status='completed', completed_at=NOW()
+                WHERE id=$1`, [d3.workOrderId]);
+      await q(`INSERT INTO prosthetic_work_orders
+                 (patient_id, branch_id, expert_user_id, service_type, status, current_stage,
+                  purpose, device_episode_id, assigned_by)
+               VALUES ($1,1,$2,'prosthetic','active','order_received','initial_build',NULL,$3)`,
+        [d3.patientId, EXPERT, MGR]);
+      const beforeFail = await shape(d3.patientId);
+      const pv3 = await preview({ followupId: d3.followupId });
+      const failed = await executeRaw({
+        followupId: d3.followupId, intent: "replace_requested_item",
+        replacementRequestedItem: "socket", reasonNote: "يجب أن يُردّ",
+        stateStamp: pv3.body?.stateStamp,
+      });
+      same("١٤١. **أمرُ بناءٍ قديمٌ نشط يمنع فتحَ البديل** (٤٠٩)", failed.status, 409);
+      const afterFail = await shape(d3.patientId);
+      //  ══ **والفشلُ يُرجع كلَّ شيء** — لا صفَّ تصحيحٍ ولا قيدَ معاكسٍ ولا
+      //   إبطالَ أمرٍ ولا إغلاقَ متابعةٍ ولا إلغاءَ معاينة.
+      same("١٤٢. **ولا صفَّ تصحيحٍ بقي**", afterFail.revs.length, 0);
+      same("١٤٣. **ولا قيدَ معاكس**",
+        afterFail.entries.filter((e: any) => e.source === "administrative_reversal").length, 0);
+      same("١٤٤. **والمجموعُ وكلفةُ القسم كما كانا**",
+        [afterFail.total, afterFail.caseCost], [beforeFail.total, beforeFail.caseCost]);
+      same("١٤٥. **والمتابعةُ والحلقةُ والأمرُ على حالهم**",
+        [afterFail.fus[0].status, afterFail.eps[0].status,
+          afterFail.wos.find((w: any) => Number(w.id) === d3.workOrderId)?.status],
+        [beforeFail.fus[0].status, beforeFail.eps[0].status,
+          beforeFail.wos.find((w: any) => Number(w.id) === d3.workOrderId)?.status]);
+      same("١٤٦. **ولا معاينةَ أُلغيت**", afterFail.cancels.length, 0);
+      same("١٤٧. **ولا حلقةَ بديلةٌ وُلدت**", afterFail.eps.length, beforeFail.eps.length);
+
+      // (د) **هويّةُ الفرع من الملفّ لا من العملية الملغاة.**
+      const d4 = await soldOperation("فرعُ البديل", 300_000, { branchId: 2 });
+      const pv4 = await preview({ followupId: d4.followupId }, S.admin);
+      const r4 = await executeRaw({
+        followupId: d4.followupId, intent: "replace_requested_item",
+        replacementRequestedItem: "socket", reasonNote: "فرع",
+        stateStamp: pv4.body?.stateStamp,
+      }, S.admin);
+      same("١٤٨. (نُفّذ في الفرع الثاني)", r4.status, 200);
+      const [newEp4] = await q<{ branch_id: number }>(
+        `SELECT branch_id FROM patient_device_episodes WHERE id=$1`,
+        [Number(r4.body?.replacementEpisodeId)]);
+      same("١٤٩. **وفرعُ الحلقة الجديدة فرعُ خيط المريض الحيّ**",
+        Number(newEp4?.branch_id), 2);
+
+      // (هـ) **بلا بديلٍ صالح لا يُعرَض الاستبدال أصلاً** — والمساندُ بلا أجزاء.
+      const dSup = await mkPatient("مسندٌ بلا أجزاء");
+      await q(`UPDATE patients SET is_medical_support=true WHERE id=$1`, [dSup]);
+      const supCase = await mkCase(dSup, 1, "medical_support");
+      await q(`INSERT INTO patient_device_episodes
+                 (patient_id, case_id, branch_id, sequence_number, status, requested_item)
+               VALUES ($1,$2,1,1,'in_manufacturing','full_device')`, [dSup, supCase]);
+      const supEp = (await q<{ id: number }>(
+        `SELECT id FROM patient_device_episodes WHERE patient_id=$1`, [dSup]))[0].id;
+      await q(`INSERT INTO post_exam_followups
+                 (patient_id, branch_id, case_id, service_type, status, approved_price,
+                  price_source, device_episode_id)
+               VALUES ($1,1,$2,'medical_support','awaiting_patient_decision',0,'manager_set',$3)`,
+        [dSup, supCase, supEp]);
+      const supPv = await preview({ episodeId: Number(supEp) });
+      check(!(supPv.body?.availableIntents ?? []).includes("replace_requested_item"),
+        "١٥٠. **والمساندُ بلا أجزاء ⟶ لا استبدالَ يُعرَض**",
+        JSON.stringify(supPv.body?.availableIntents));
+      same("١٥١. **ولا قائمةَ بدائل فارغةٌ تُرسَل**",
+        (supPv.body?.replacementOptions ?? []).length, 0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ن) **هويّةُ الطلب البديل — بالمعرّف لا بالترشيح.**
+    //
+    //  المريضُ يملك خيوطاً متوازية: أطرافٌ ومساند. و«أوّلُ حلقةٍ مفتوحة»
+    //  كانت تعرض **مسندَه** بوصفه الطلبَ الذي وُلد عن تصحيح طرفه — عرضٌ
+    //  يكذب على قارئه. والهويّةُ الدقيقة كتبها التصحيحُ في حمولة حدثه.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ن) هويّة الطلب البديل ──");
+    {
+      /** ما تراه البطاقةُ فعلاً: أحداثُ المتابعة + نقطةُ الحلقات. */
+      const seenBy = async (patientId: number, followupId: number) => {
+        const fus = await http("GET", `/api/followups/patient/${patientId}`, S.admin);
+        const row = (fus.body ?? []).find((x: any) => Number(x.id) === followupId);
+        const eps = await http("GET", `/api/patients/${patientId}/device-episodes`, S.admin);
+        return { events: row?.events ?? [], episodes: eps.body?.episodes ?? [] };
+      };
+      /** منطقُ البطاقة نفسُه: الهويّةُ من الحدث ثمّ المطابقةُ بالمعرّف. */
+      const currentCard = (v: { events: any[]; episodes: any[] }) => {
+        const id = replacementEpisodeIdOf(v.events);
+        return id === null ? null
+          : v.episodes.find((e: any) => Number(e.id) === id
+            && (e.status === "awaiting_exam" || e.status === "examined")) ?? null;
+      };
+
+      // (أ) **حلقةُ مسندٍ مفتوحةٌ لا علاقةَ لها** — ولا تُعرَض بديلاً.
+      const a = await soldOperation("خيطان متوازيان", 800_000);
+      await q(`UPDATE patients SET is_medical_support=true WHERE id=$1`, [a.patientId]);
+      const supCase = await mkCase(a.patientId, 1, "medical_support");
+      const supEp = Number((await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, requested_item)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device') RETURNING id`,
+        [a.patientId, supCase]))[0].id);
+      const pvA = await preview({ followupId: a.followupId });
+      const rA = await execute({
+        followupId: a.followupId, intent: "replace_requested_item",
+        replacementRequestedItem: "socket", reasonNote: "المطلوب قالب",
+        stateStamp: pvA.body?.stateStamp,
+      });
+      same("١٦٢. (الاستبدالُ نُفّذ مع وجود مسندٍ مفتوح)", rA.status, 200);
+      const newA = Number(rA.body?.replacementEpisodeId);
+      const vA = await seenBy(a.patientId, a.followupId);
+      same("١٦٣. **الهويّةُ من الحدث هي الحلقةُ المُنشأة بعينها**",
+        replacementEpisodeIdOf(vA.events), newA);
+      same("١٦٤. **والبطاقةُ تعرض القالبَ لا المسند**",
+        [Number(currentCard(vA)?.id), currentCard(vA)?.requestedItem,
+          currentCard(vA)?.serviceType],
+        [newA, "socket", "prosthetic"]);
+      check(Number(currentCard(vA)?.id) !== supEp,
+        "١٦٥. **ولا تُنسَب حلقةُ خيطٍ آخر إلى هذا التصحيح إطلاقاً**",
+        `${currentCard(vA)?.id} vs ${supEp}`);
+      //  والمسندُ ما زال مفتوحاً فعلاً — فالعزلُ عرضٌ لا حذف.
+      same("١٦٦. **والمسندُ باقٍ مفتوحاً على خيطه**",
+        vA.episodes.find((e: any) => Number(e.id) === supEp)?.status, "awaiting_exam");
+
+      // (ب) **إلغاءٌ كاملٌ بلا استبدال** — ولا يُنسَب له طلبٌ قائم.
+      const b = await soldOperation("إلغاءٌ بلا بديل", 400_000);
+      await q(`UPDATE patients SET is_medical_support=true WHERE id=$1`, [b.patientId]);
+      const bSupCase = await mkCase(b.patientId, 1, "medical_support");
+      await q(`INSERT INTO patient_device_episodes
+                 (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, requested_item)
+               VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device')`, [b.patientId, bSupCase]);
+      const pvB = await preview({ followupId: b.followupId });
+      const rB = await execute({
+        followupId: b.followupId, intent: "cancel_operation",
+        reasonNote: "العملية كلها خاطئة", stateStamp: pvB.body?.stateStamp,
+      });
+      same("١٦٧. (الإلغاءُ الكامل نُفّذ)",
+        [rB.status, rB.body?.replacementEpisodeId], [200, null]);
+      const vB = await seenBy(b.patientId, b.followupId);
+      same("١٦٨. **ولا هويّةَ بديلٍ في الحدث**", replacementEpisodeIdOf(vB.events), null);
+      same("١٦٩. **فلا بطاقةَ «طلب جديد» تُنسَب إليه** — التاريخُ وحده",
+        currentCard(vB), null);
+      check(vB.episodes.some((e: any) => e.status === "awaiting_exam"),
+        "١٧٠. **مع أن للمريض حلقةً مفتوحةً فعلاً** — ولم تُختطَف",
+        JSON.stringify(vB.episodes.map((e: any) => e.status)));
+
+      // (ج) **هويّةٌ موجودةٌ وحلقةٌ لا تُوجَد** — لا يُخمَّن غيرُها.
+      const vC = { events: vA.events, episodes: vA.episodes.filter((e: any) => Number(e.id) !== newA) };
+      check(vC.episodes.length > 0, "١٧١. (وللمريض حلقاتٌ أخرى في القائمة)",
+        String(vC.episodes.length));
+      same("١٧٢. **البديلُ غيرُ موجود ⟶ لا بطاقةَ ولا ترشيحَ لغيره**",
+        currentCard(vC), null);
+      same("١٧٣. **والهويّةُ تبقى مقروءةً للتدقيق**",
+        replacementEpisodeIdOf(vC.events), newA);
+
+      // (د) **يُعايَن البديلُ لاحقاً** — الهويّةُ نفسُها لا تنتقل.
+      await q(`UPDATE patient_device_episodes SET status='examined' WHERE id=$1`, [newA]);
+      //  وحلقةُ خيطٍ آخر تُفتَح بعده — فالترشيحُ كان سيقفز إليها.
+      const vD = await seenBy(a.patientId, a.followupId);
+      same("١٧٤. **البديلُ المُعايَن يبقى هو الطلبَ الحاضر بعينه**",
+        [Number(currentCard(vD)?.id), currentCard(vD)?.status], [newA, "examined"]);
+      same("١٧٥. **ولم تنتقل الهويّةُ إلى المسند المفتوح**",
+        replacementEpisodeIdOf(vD.events), newA);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  ي٢) **بابُ بطاقة المعاينة** — والخادمُ هو مَن يقول متى يُفتَح.
     //
     //  البطاقةُ أحدُ الأبواب الثلاثة، **لكنّ معاينةً سريريةً ليست عمليةَ
@@ -1015,9 +1350,28 @@ async function main() {
         "٧٨-أ. **ولا اسمَ حدثٍ ولا حالةٍ داخلية في الشاشة إطلاقاً**", "");
       check(!/>\s*\{\s*(mode|reasonCode|m|c)\s*\}\s*</.test(dlg),
         "٧٨-ب. **ولا مفتاحٌ يُحقَن نصّاً** — العناوينُ من جداول الترجمة", "");
-      check(dlg.includes("REVERSAL_MODE_LABELS[m]")
-        && dlg.includes("REVERSAL_REASON_LABELS[c]"),
+      //  ══ **الحارسُ يتبع الشاشةَ القائمة لا الميتة** ════════════════════
+      //   كان يفحص وجودَ `REVERSAL_MODE_LABELS` و`REVERSAL_REASON_LABELS`
+      //   في النافذة — وهما جدولا الشاشة **السابقة** (سؤالان: «ما الخطأ؟»
+      //   ثم «نوع التصحيح؟»). والشاشةُ الآن تسأل سؤالاً واحداً بالنيّة،
+      //   والوضعُ والسببُ يُشتقّان في الخادم. **واختبارٌ يحرس واجهةً أُزيلت
+      //   يمنع التحسين ولا يحرس شيئاً.**
+      //
+      //   والثابتُ الحقيقيّ باقٍ: **ما يُعرَض يأتي من العقد المشترك**.
+      check(dlg.includes("CORRECTION_INTENT_LABELS[choice]")
+        && dlg.includes("CORRECTION_INTENT_EFFECTS[choice]"),
       "٧٨-ج. **وما يُعرَض يأتي من العقد المشترك**", "");
+      check(dlg.includes("CORRECTION_INTENT_MODE[intent]"),
+        "٧٨-د. **والنيّة تُترجَم بالخريطة المشتركة نفسِها** — لا شرطٌ محلّي", "");
+      check(dlg.includes("preview.availableIntents.map")
+        && dlg.includes("preview.replacementOptions.map"),
+      "٧٨-هـ. **والخيارات كلُّها من الخادم** — لا اشتقاقَ في الشاشة", "");
+      //  والملخّصُ يُقرأ قبل التأكيد، والتفصيلُ تحته — لا أحدهما بدل الآخر.
+      check(dlg.includes("سيتم:") && dlg.includes("تفاصيل ما سيحدث")
+        && dlg.includes("preview.summary[mode]"),
+      "٧٨-و. **وملخّصٌ قصيرٌ ظاهر، وتفصيلٌ كاملٌ مطويّ**", "");
+      check(dlg.includes("stateStamp: preview?.stateStamp"),
+        "٧٨-ز. **والختمُ ما زال يُرسَل** — العقدُ لم يضعف", "");
 
       const req = strip(readFileSync(
         "client/src/components/RequiredPatientDataDialog.tsx", "utf8"));

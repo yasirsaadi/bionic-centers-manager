@@ -16,33 +16,16 @@
 // **والحراسةُ في الخادم لا هنا**: ما في هذا الملفّ للعرض وللتحقّق معاً،
 // والفاعلُ يُقرأ من الجلسة الموقَّعة في الخادم دائماً.
 
-/** وضعا التصحيح — لا ثالثَ لهما. */
+/**
+ * وضعا التصحيح — لا ثالثَ لهما. **وهما اسمان داخليّان لا يصلان الشاشة**:
+ * الموظّفُ يصف ما يريد تصحيحه، والخادمُ يختار آليّةَ العكس الآمنة.
+ */
 export const REVERSAL_MODES = ["purchase_only", "full_operation"] as const;
 export type ReversalMode = (typeof REVERSAL_MODES)[number];
 
 export function isReversalMode(v: unknown): v is ReversalMode {
   return typeof v === "string" && (REVERSAL_MODES as readonly string[]).includes(v);
 }
-
-/**
- * **ما يقوله الوضعُ للموظّف** — لا اسمَ داخليّ يصل الشاشة.
- *
- * `purchase_only`: الطلبُ والمعاينةُ صحيحان، والخطأُ ضغطةُ «تم الشراء».
- * `full_operation`: العمليةُ كلُّها خاطئة — جهازٌ غيرُ الذي أراده المريض.
- */
-export const REVERSAL_MODE_LABELS: Record<ReversalMode, string> = {
-  purchase_only: "تراجع عن الشراء فقط",
-  full_operation: "إلغاء العملية بالكامل",
-};
-
-export const REVERSAL_MODE_HINTS: Record<ReversalMode, string> = {
-  purchase_only:
-    "الطلب والمعاينة صحيحان، لكن تم تسجيل الشراء قبل أوانه."
-    + " يعود الطلب إلى ما قبل الشراء، وتبقى المعاينة فعّالة.",
-  full_operation:
-    "العملية كلها خاطئة — جهاز أو خدمة غير التي يريدها المريض."
-    + " يُلغى الطلب والمعاينة من السجل الفعّال، ويبقى كل شيء مقروءاً في التاريخ.",
-};
 
 /** لماذا يُصحَّح — يُختار من قائمة، فتُقرأ التقاريرُ لا تُخمَّن. */
 export const REVERSAL_REASON_CODES = [
@@ -69,6 +52,75 @@ export const REVERSAL_REASON_LABELS: Record<ReversalReasonCode, string> = {
 /** نصُّ سببٍ للعرض — والمجهولُ يُقال «سبب آخر» لا يُطبع مفتاحُه. */
 export function reversalReasonLabel(code: unknown): string {
   return isReversalReasonCode(code) ? REVERSAL_REASON_LABELS[code] : "سبب آخر";
+}
+
+// ══ **النيّة: ما يريد الموظّفُ تصحيحه، بلغته** ═══════════════════════════
+//
+// سؤالان متتاليان — «ما الخطأ الذي وقع؟» ثم «نوع التصحيح؟» — يطلبان من
+// الموظّف أن يترجم خطأً يعرفه إلى آليّةِ عكسٍ لا يعرفها، ثم يعاقبانه إن
+// أخطأ الترجمة. فصار سؤالاً واحداً: **ماذا تريد أن تصحّح؟**
+//
+// والخادمُ يشتقّ الوضعَ والسبب من النيّة بالخريطتين أدناه — **مصدرٌ واحد
+// يقرؤه الطرفان**، فلا تُرسل الشاشةُ وضعاً يخالف ما فهمه الخادم.
+
+export const CORRECTION_INTENTS = [
+  "purchase_mistake", "replace_requested_item", "work_order_mistake", "cancel_operation",
+] as const;
+export type CorrectionIntent = (typeof CORRECTION_INTENTS)[number];
+
+export function isCorrectionIntent(v: unknown): v is CorrectionIntent {
+  return typeof v === "string" && (CORRECTION_INTENTS as readonly string[]).includes(v);
+}
+
+/**
+ * **العنوانُ يقول الأثرَ لا يُجمّله.**
+ *
+ * «تم إنشاء أمر تصنيع بالخطأ» وحدها كانت تُوهم أن أمر التصنيع وحده يُلغى،
+ * بينما الأثرُ الحقيقيّ إلغاءُ العملية التجارية والجهاز والمعاينة معاً.
+ * **ولا مسارَ ضيّقٌ يلغي أمر التصنيع وحده** في هذا النظام — فيُقال ذلك في
+ * العنوان نفسِه، لا في سطرٍ يُطوى.
+ */
+export const CORRECTION_INTENT_LABELS: Record<CorrectionIntent, string> = {
+  purchase_mistake: "تم تسجيل الشراء بالخطأ",
+  replace_requested_item: "تم اختيار جهاز أو جزء خاطئ",
+  work_order_mistake: "تم إنشاء أمر التصنيع بالخطأ — تُلغى العملية بالكامل",
+  cancel_operation: "سبب آخر — تُلغى العملية بالكامل",
+};
+
+/** سطرٌ تحت كلّ خيار يقول ماذا يقع فعلاً — بلا مصطلحٍ داخليّ. */
+export const CORRECTION_INTENT_EFFECTS: Record<CorrectionIntent, string> = {
+  purchase_mistake:
+    "يعود الطلب إلى ما قبل الشراء، وتبقى المعاينة والطلب كما هما.",
+  replace_requested_item:
+    "تُلغى العملية الحالية بالكامل، ويُفتح طلب جديد بالجهاز الصحيح بانتظار المعاينة.",
+  work_order_mistake:
+    "يُلغى الشراء وأمر التصنيع والمعاينة معاً — لا أمر التصنيع وحده.",
+  cancel_operation:
+    "تُلغى العملية بالكامل، ولا يُفتح طلب جديد.",
+};
+
+/** النيّة ⟶ آليّةُ العكس. **الخريطةُ واحدة يقرؤها الخادمُ والشاشة.** */
+export const CORRECTION_INTENT_MODE: Record<CorrectionIntent, ReversalMode> = {
+  purchase_mistake: "purchase_only",
+  replace_requested_item: "full_operation",
+  work_order_mistake: "full_operation",
+  cancel_operation: "full_operation",
+};
+
+/** النيّة ⟶ رمزُ السبب المخزَّن — فتبقى التقاريرُ تفرّق بين الأخطاء. */
+export const CORRECTION_INTENT_REASON: Record<CorrectionIntent, ReversalReasonCode> = {
+  purchase_mistake: "purchase_recorded_by_mistake",
+  replace_requested_item: "wrong_service_or_device",
+  work_order_mistake: "work_order_created_by_mistake",
+  cancel_operation: "other",
+};
+
+/**
+ * سطرُ «فتح طلب جديد: قالب» — **دالّةٌ واحدة** يستعملها ملخّصُ الشاشة قبل
+ * التنفيذ وحقائقُ الحدث بعده، فلا تُكتب العبارةُ مرّتين فتنحرفا.
+ */
+export function replacementSummaryLine(itemLabel: string): ReversalImpactLine {
+  return { kind: "check", text: `فتح طلب جديد: ${itemLabel} — بانتظار المعاينة` };
 }
 
 /**
@@ -137,8 +189,23 @@ export interface ReversalPreview {
   requiresFinancialSettlement: boolean;
   /** الأوضاعُ المتاحة لهذه العملية بعينها. */
   availableModes: ReversalMode[];
-  /** أثرُ كلّ وضعٍ سطراً سطراً. */
+  /**
+   * **النوايا المتاحة لهذه العملية بعينها** — يقرّرها الخادم.
+   *
+   * فلا تُعرَض «تراجع عن الشراء» لجهازٍ سُلِّم، ولا «استبدال» لعمليةٍ لا
+   * حلقةَ لها أو لا بديلَ في خدمتها: **خيارٌ يعرضه الخادمُ ثمّ يردّه هو
+   * نفسُه ليس خياراً بل فخّ.**
+   */
+  availableIntents: CorrectionIntent[];
+  /** ما طُلب فعلاً — المفتاحُ الخام، ليُستثنى من قائمة البدائل. */
+  requestedItem: string | null;
+  /** بدائلُ الاستبدال لهذه الخدمة، **من الخادم** بلا اشتقاقٍ في الشاشة. */
+  replacementOptions: { value: string; label: string }[];
+  /** أثرُ كلّ وضعٍ سطراً سطراً — التفصيلُ الكامل، يُطوى. */
   impact: Record<ReversalMode, ReversalImpactLine[]>;
+  /** **الملخّصُ القصير** الذي يُقرأ قبل التأكيد — ثلاثةُ أسطر أو أربعة. */
+  summary: Record<ReversalMode, ReversalImpactLine[]>;
+  replacementImpact: ReversalImpactLine[];
   /** حالةُ العملية اليوم كما تُقرأ. */
   currentStatusText: string;
   /** بدأ العملُ فعلاً على الأمر؟ */

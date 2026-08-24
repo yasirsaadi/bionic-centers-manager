@@ -27,13 +27,17 @@ import { logAudit } from "../accounting/ledger";
 import { isExamCancelled } from "../medical/active_exam";
 import { writeExamCancellation } from "../medical/cancel_exam";
 import {
-  markEpisodeAdministrativelyVoid, revertEpisodeToExamined,
+  markEpisodeAdministrativelyVoid, revertEpisodeToExamined, createReplacementEpisodeTx,
+  type DeviceServiceType,
 } from "../device_episodes/store";
 import { voidOrderAdministratively } from "../manufacturing/store";
-import { requestedItemLabel } from "@shared/prosthetic_parts";
+import {
+  FULL_DEVICE, requestedItemLabel, requestedItemOptions,
+} from "@shared/prosthetic_parts";
 import {
   FOLLOWUP_ADMIN_VOID_STATUS, REVERSAL_EVENT_TITLES, reversalCostNote,
-  reversalReasonLabel, type ReversalMode, type ReversalPreview,
+  reversalReasonLabel, replacementSummaryLine,
+  type CorrectionIntent, type ReversalMode, type ReversalPreview,
   type ReversalImpactLine,
 } from "@shared/administrative_reversal";
 
@@ -229,6 +233,56 @@ function purchaseOnlyPossible(op: ResolvedOperation): boolean {
     && !op.orderVoided;
 }
 
+/**
+ * **بدائلُ الاستبدال لهذه العملية** — من التصنيف القائم، ناقصاً ما طُلب.
+ *
+ * والمساندُ الطبية بلا أجزاء، فقائمتُها بندٌ واحد هو المطلوبُ نفسُه ⟶
+ * **بلا بديل** ⟶ لا يُعرَض «استبدال» أصلاً.
+ */
+function replacementOptionsOf(op: ResolvedOperation): { value: string; label: string }[] {
+  const current = op.episodeRequestedItem ?? FULL_DEVICE;
+  return requestedItemOptions(op.serviceType)
+    .filter((x) => x.value !== current)
+    .map((x) => ({ value: String(x.value), label: x.label }));
+}
+
+/**
+ * **هل يقبل هذا الملفُّ طلباً بديلاً؟**
+ *
+ * ══ والشرطُ واحدٌ يقرؤه العرضُ والتنفيذ معاً ═══════════════════════════
+ * خيارٌ تعرضه الشاشةُ ثمّ يردّه الخادمُ ليس خياراً بل فخّ: الموظّفُ يكتب
+ * سبباً ويؤكّد، فيُردّ برسالةٍ لا تدلّه على شيء. فالدالّةُ واحدة، وتُنادى
+ * في المعاينة المسبقة **وفي التنفيذ تحت القفل**.
+ *
+ * والحلقةُ شرطٌ لأن البديل يُفتَح على **خيطها** بعينه؛ والبديلُ شرطٌ لأن
+ * استبدالَ شيءٍ بنفسه ليس استبدالاً؛ والملغاةُ سلفاً لا تُصحَّح مرّتين.
+ */
+function replacementPossible(op: ResolvedOperation): boolean {
+  return op.deviceEpisodeId !== null
+    && op.caseId !== null
+    && !op.episodeVoided
+    && op.existingReversalId === null
+    && replacementOptionsOf(op).length > 0;
+}
+
+/**
+ * **النوايا المتاحة — من العملية بعينها لا من قائمةٍ ثابتة.**
+ *
+ * `purchase_mistake` حين يمكن التراجعُ عن الشراء فعلاً · `replace_requested_item`
+ * حين يوجد خيطٌ وحلقةٌ وبديل · `work_order_mistake` حين يوجد أمرُ تصنيعٍ
+ * أصلاً (فلا يُقال «أُنشئ أمرٌ بالخطأ» حيث لا أمر) · و`cancel_operation`
+ * البابُ الأخير الذي يبقى دائماً ما دامت العمليةُ لم تُصحَّح.
+ */
+function availableIntentsOf(op: ResolvedOperation): CorrectionIntent[] {
+  if (op.existingReversalId !== null) return [];
+  const out: CorrectionIntent[] = [];
+  if (purchaseOnlyPossible(op)) out.push("purchase_mistake");
+  if (replacementPossible(op)) out.push("replace_requested_item");
+  if (op.workOrderId !== null && !op.orderVoided) out.push("work_order_mistake");
+  out.push("cancel_operation");
+  return out;
+}
+
 // ── المعاينةُ المسبقة ────────────────────────────────────────────────────
 
 /**
@@ -318,6 +372,30 @@ export async function previewReversal(target: {
     ],
   };
 
+  //  ══ **الملخّصُ القصير — ما يُقرأ فعلاً قبل التأكيد** ══════════════════
+  //   التفصيلُ الكامل يُطوى تحت «تفاصيل ما سيحدث»، لكن المسارَ المؤسّسيّ
+  //   يبقى: يُعرَض الأثر ⟶ يُقرأ ⟶ يُنفَّذ **ذلك الأثرُ بعينه** بختمه.
+  //   وثلاثةُ أسطرٍ تُقرأ خيرٌ من خمسةَ عشرَ لا تُقرأ.
+  const summary: Record<ReversalMode, ReversalImpactLine[]> = {
+    purchase_only: [
+      { kind: "check", text: "إلغاء الشراء وأمر التصنيع الخاطئ" },
+      ...(sale > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(sale)} د.ع` }] : []),
+      { kind: "check", text: "إعادة الطلب والمعاينة إلى ما قبل الشراء" },
+      { kind: "check", text: "الاحتفاظ بكامل السجل السابق" },
+      ...(op.paidAmount > 0 && sale > 0
+        ? [{ kind: "warn" as const, text: "تبقى الدفعة كما هي — للمريض رصيد يحتاج تسوية" }]
+        : []),
+    ],
+    full_operation: [
+      { kind: "check", text: "إلغاء العملية الخاطئة بالكامل" },
+      ...(sale > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(sale)} د.ع` }] : []),
+      { kind: "check", text: "الاحتفاظ بكامل السجل السابق" },
+      ...(op.paidAmount > 0 && sale > 0
+        ? [{ kind: "warn" as const, text: "تبقى الدفعة كما هي — للمريض رصيد يحتاج تسوية" }]
+        : []),
+    ],
+  };
+
   return {
     patientId: op.patientId,
     patientName: op.patientName,
@@ -332,7 +410,17 @@ export async function previewReversal(target: {
     financialDelta: -sale,
     requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
     availableModes,
+    //  **الخادمُ يقرّر ما يُعرَض** — بالدالّة نفسِها التي تحرس التنفيذ.
+    availableIntents: availableIntentsOf(op),
+    requestedItem: op.episodeRequestedItem,
+    replacementOptions: replacementPossible(op) ? replacementOptionsOf(op) : [],
     impact,
+    summary,
+    replacementImpact: [
+      { kind: "check", text: "فتح طلب جهاز أو جزء جديد بكلفة صفر، بانتظار المعاينة" },
+      { kind: "check", text: "بدء الطلب الجديد بلا شراء ولا أمر تصنيع" },
+      { kind: "check", text: "عدم نسخ الدفعة أو الخصم أو الخبير أو المعاينة القديمة" },
+    ],
     currentStatusText: alreadyReversed ? "ملغاة إدارياً"
       : sold ? "تم الشراء — بدأ التصنيع" : "طلب قائم لم يُشترَ بعد",
     manufacturingStarted: started,
@@ -369,6 +457,7 @@ export interface ReversalOutcome {
   workOrderVoided: number | null;
   episodeId: number | null;
   examCancelled: number | null;
+  replacementEpisodeId: number | null;
 }
 
 /**
@@ -403,6 +492,7 @@ export async function executeReversal(params: {
   authz: ReversalAuthz;
   actor: { userId: number | null; userName: string | null };
   audit?: { ipAddress?: string | null; userAgent?: string | null };
+  replacementRequestedItem?: string | null;
 }): Promise<ReversalOutcome> {
   const reasonNote = String(params.reasonNote ?? "").trim();
   if (!reasonNote) throw new ReversalError("اكتب سبب التصحيح", 400);
@@ -455,6 +545,26 @@ export async function executeReversal(params: {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);
     }
     if (params.expectedStamp !== stampOf(op)) throw new ReversalError(DRIFT, 409);
+
+    // ══ **الاستبدالُ يُفحَص قبل أن تُكتب كلمة** ══════════════════════════
+    //  والشرطُ هو `replacementPossible` نفسُه الذي قرّر ما تعرضه الشاشة —
+    //  فلا يُعرَض خيارٌ يُردّ، ولا يُقبَل طلبٌ ملفَّق لم يُعرَض.
+    const replacementItem = params.replacementRequestedItem ?? null;
+    if (replacementItem !== null) {
+      if (params.mode !== "full_operation") {
+        throw new ReversalError(
+          "الاستبدال يقتضي إلغاء العملية الحالية بالكامل", 409,
+        );
+      }
+      if (!replacementPossible(op)) {
+        throw new ReversalError("لا يمكن فتح طلب بديل لهذه العملية", 409);
+      }
+      if (!replacementOptionsOf(op).some((x) => x.value === replacementItem)) {
+        throw new ReversalError(
+          "الطلب الصحيح غير صالح لهذه الخدمة أو مطابقٌ للطلب الحالي", 400,
+        );
+      }
+    }
 
     const sale = saleAmountOf(op);
     const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
@@ -575,6 +685,31 @@ export async function executeReversal(params: {
       if ((closed.rows ?? []).length === 0) throw new ReversalError(DRIFT, 409);
     }
 
+    // ── ⑥-ب **الطلبُ البديل — بالطبقة القانونية للحلقات لا بـSQL هنا** ──
+    //
+    //  للحلقة ثوابتُ دقيقة (شراءٌ مفتوحٌ واحد لكلّ خيط، وتسلسلٌ لا يتكرّر،
+    //  وجزءٌ يلازم نوعَ الخدمة، وأمرُ بناءٍ قديمٍ يمنع فتحَ ثانٍ). وكتابتُها
+    //  من هنا كانت تتخطّاها كلَّها — **وتُسقط الحارسَ المعماريّ** الذي يحصر
+    //  SQL الحلقات في ملفّها.
+    //
+    //  **وبعد الإبطال لا قبله**: الحارسُ يرفض فتحَ بديلٍ فوق حلقةٍ مفتوحة،
+    //  وهو الترتيبُ الصحيح لا مجرّد ترتيب.
+    //
+    //  **والفشلُ هنا يُرجع كلَّ شيء**: `DeviceEpisodeError` ترتفع من داخل
+    //  المعاملة، فيسقط صفُّ التصحيح والقيدُ المعاكس وإبطالُ الأمر وإغلاقُ
+    //  المتابعة معاً — ولا نصفُ تصحيح.
+    let replacementEpisodeId: number | null = null;
+    if (replacementItem !== null && op.caseId !== null) {
+      const created = await createReplacementEpisodeTx(tx, {
+        patientId: op.patientId,
+        caseId: op.caseId,
+        serviceType: op.serviceType as DeviceServiceType,
+        requestedItem: replacementItem,
+        createdBy: params.actor.userId,
+      });
+      replacementEpisodeId = created.id;
+    }
+
     // ── ⑦ حدثُ المتابعة — يقرؤه الجميع بلا مفتاحٍ خام ──────────────────
     await tx.execute(sql`
       INSERT INTO post_exam_followup_events
@@ -591,6 +726,12 @@ export async function executeReversal(params: {
                 deviceEpisodeId: op.deviceEpisodeId,
                 preservedPaidAmount: op.paidAmount,
                 requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
+                replacementEpisodeId, replacementRequestedItem: replacementItem,
+                //  **ما يقرؤه الموظّف يُشتقّ من هذين لا من رقمٍ داخليّ**:
+                //  «رقم الحلقة ٨٨» لا يعني شيئاً لأحد، و«الطلب الجديد: قالب»
+                //  يعني كلَّ شيء. والمفاتيحُ الداخلية تبقى للتدقيق.
+                previousRequestedItem: op.episodeRequestedItem ?? FULL_DEVICE,
+                serviceType: op.serviceType,
                 setByName: params.actor.userName,
               })}::jsonb,
               ${params.actor.userId}, ${params.actor.userName})
@@ -622,13 +763,19 @@ export async function executeReversal(params: {
         financialDelta: -sale, workOrderVoided,
         deviceEpisodeId: op.deviceEpisodeId, examCancelled,
         preservedPaidAmount: op.paidAmount,
+        replacementEpisodeId, replacementRequestedItem: replacementItem,
       },
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
       notes: `${REVERSAL_EVENT_TITLES[params.mode]} #${reversalId}`
         + ` لمريض #${op.patientId} — ${reversalReasonLabel(params.reasonCode)}: ${reasonNote}`
         + (sale > 0 ? ` · عُكست كلفة ${money(sale)} د.ع` : "")
-        + (op.paidAmount > 0 ? ` · دفعة ${money(op.paidAmount)} د.ع محفوظة وتحتاج تسوية` : ""),
+        + (op.paidAmount > 0 ? ` · دفعة ${money(op.paidAmount)} د.ع محفوظة وتحتاج تسوية` : "")
+        //  **والسطرُ يقول ماذا فُتح، لا رقمَ حلقةٍ داخليّاً وحده.**
+        + (replacementItem !== null
+          ? ` · ${replacementSummaryLine(
+            requestedItemLabel(replacementItem, op.serviceType)).text} (#${replacementEpisodeId})`
+          : ""),
       tx,
     });
 
@@ -637,7 +784,7 @@ export async function executeReversal(params: {
       financialDelta: -sale,
       requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
       preservedPaidAmount: op.paidAmount,
-      workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled,
+      workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled, replacementEpisodeId,
     };
   });
 }

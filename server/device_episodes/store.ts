@@ -811,6 +811,138 @@ export async function ensureFirstDeviceEpisodeForSale(
 }
 
 /**
+ * **حلقةُ الاستبدال بعد تصحيحٍ إداريّ** — تُنشأ هنا لا في المنسّق.
+ *
+ * ══ لماذا في هذا الملفّ ═════════════════════════════════════════════════
+ * كتابةُ الحلقات مركزية بحكمٍ مكتوب ومحروسٍ باختبار: للحلقة ثوابتُ دقيقة —
+ * شراءٌ مفتوحٌ واحد لكلّ خيط، وتسلسلٌ لا يتكرّر، وتصنيفُ جزءٍ يلازم نوعَ
+ * الخدمة — وتوزيعُ حراستها على منسّقاتٍ متعدّدة هو **كيف تنحرف الثوابت
+ * بصمت**. فالتصحيحُ الإداريّ يستعمل الحرّاسَ القائمة ولا ينسخها.
+ *
+ * ══ ولماذا `tx` بالإجبار لا اختياراً ════════════════════════════════════
+ * التصحيحُ يُبطل عمليةً ويعكس مالاً ثمّ يفتح الطلبَ الصحيح — **حدثٌ واحد**.
+ * ومعاملةٌ ثانيةٌ مستقلّة تعني أن تفشل هذه بعد نجاح تلك، فيبقى المريضُ بلا
+ * عمليةٍ وبلا بديل. فالمعاملةُ للمُستدعي، والفشلُ هنا يُرجع كلَّ شيء.
+ *
+ * ══ وتُنادى **بعد** إبطال الحلقة الخاطئة ════════════════════════════════
+ * وإلّا اصطدمت بحارس «حلقةٌ مفتوحةٌ قائمة» — وهو الحارسُ نفسُه الذي يحمي
+ * `uq_pde_case_open` في القاعدة. والترتيبُ ليس ترتيباً بل شرطُ صحّة.
+ *
+ * ══ وما لا تفعله ════════════════════════════════════════════════════════
+ * **لا تنسخ شيئاً من العملية الملغاة**: لا سعرَ ولا خبيرَ ولا معاينةَ ولا
+ * دفعةً ولا أمرَ تصنيع. الحلقةُ الجديدة تبدأ من أوّل الطريق —
+ * `awaiting_exam` بكلفةٍ صفر — وتمضي بالمسار الطبيعيّ نفسِه.
+ *
+ * @throws `DeviceEpisodeError` بحالاتٍ عملٍ محكومة (٤٠٤ / ٤٠٠ / ٤٠٩).
+ */
+export async function createReplacementEpisodeTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    /** الخيطُ بعينه — يُتحقَّق أنه لهذا المريض ولهذه الخدمة. */
+    caseId: number;
+    serviceType: DeviceServiceType;
+    /** ما طُلب صحيحاً — يُتحقَّق بالتصنيف القائم لا بقائمةٍ ثانية. */
+    requestedItem: unknown;
+    createdBy: number | null;
+  },
+): Promise<LockedEpisode> {
+  //  ① التصنيفُ أوّلاً — قبل أيّ قفلٍ أو كتابة. والمجهولُ يُردّ لا يُصحَّح.
+  const parsed = parseRequestedItem(params.requestedItem, params.serviceType);
+  if (!parsed.ok) throw new DeviceEpisodeError(parsed.error!, 400);
+  if (parsed.value === null) {
+    throw new DeviceEpisodeError("حدّد الجهاز أو الجزء الصحيح", 400);
+  }
+  const requestedItem: RequestedItem = parsed.value;
+  //  **والجزءُ مشتقٌّ لا مُدخَل** — بالدالّة نفسِها التي يستعملها بدءُ الحلقة.
+  const component = componentOfRequest(requestedItem);
+
+  //  ② المريضُ موجود، ومنه هويّةُ الفرع الاحتياطية.
+  const pat = await tx.execute(sql`
+    SELECT id, branch_id FROM patients WHERE id = ${params.patientId}
+  `);
+  const patient = (pat.rows ?? [])[0];
+  if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
+
+  //  ③ **القفل على صفّ الخيط** — نقطةُ التسلسل نفسُها التي يستعملها
+  //     `startDeviceEpisode`، فلا عرفَ قفلٍ ثانٍ. والانتماءُ يُثبَت في
+  //     الاستعلام نفسِه: الخيطُ لهذا المريض **ومن هذا النوع**.
+  const cs = await tx.execute(sql`
+    SELECT id, branch_id FROM patient_cases
+     WHERE id = ${params.caseId}
+       AND patient_id = ${params.patientId}
+       AND case_type = ${params.serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  if (!caseRow) {
+    throw new DeviceEpisodeError(
+      "حالة الجهاز غير موجودة أو لا تخصّ هذا المريض وهذه الخدمة", 409,
+    );
+  }
+
+  //  ④ حلقةٌ مفتوحةٌ قائمة ⟶ يُردّ. وهو حارسُ `uq_pde_case_open` نفسُه،
+  //     يمنع أن يخرج المريضُ بطلبين قيد الإجراء على خيطٍ واحد.
+  const open = await tx.execute(sql`
+    SELECT id FROM patient_device_episodes
+     WHERE case_id = ${caseRow.id} AND status NOT IN ('delivered', 'cancelled')
+     LIMIT 1
+  `);
+  if ((open.rows ?? []).length > 0) {
+    throw new DeviceEpisodeError(
+      "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — لا يمكن فتح طلب بديل فوقه", 409,
+    );
+  }
+
+  //  ⑤ **والطرفُ الآخر من السباق نفسِه**: أمرُ بناءٍ قديمٍ نشط بلا حلقة
+  //     يعني جهازاً يُصنَع الآن بالمسار القديم، ففتحُ بديلٍ فوقه يُنتج
+  //     جهازين قيد الإجراء أحدُهما بلا هويّة.
+  const legacyBuild = await tx.execute(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE patient_id = ${params.patientId}
+       AND service_type = ${params.serviceType}
+       AND purpose = 'initial_build'
+       AND status NOT IN ('completed', 'cancelled')
+       AND device_episode_id IS NULL
+     LIMIT 1
+  `);
+  if ((legacyBuild.rows ?? []).length > 0) {
+    throw new DeviceEpisodeError(
+      "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه قبل فتح الطلب البديل", 409,
+    );
+  }
+
+  //  ⑥ التسلسلُ يُحسَب **والقفلُ ممسوك** — فضغطتان لا تنتجان رقماً واحداً.
+  const mx = await tx.execute(sql`
+    SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+      FROM patient_device_episodes WHERE case_id = ${caseRow.id}
+  `);
+  const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+
+  //  ⑦ الفرعُ من صفّ الخيط أوّلاً ثمّ من صفّ المريض — الهويّةُ الرسمية،
+  //     لا ما حملته العمليةُ الملغاة.
+  const ins = await tx.execute(sql`
+    INSERT INTO patient_device_episodes
+      (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+       requested_item, component, created_by, created_at, updated_at)
+    VALUES (${params.patientId}, ${caseRow.id},
+            ${caseRow.branch_id ?? patient.branch_id ?? null},
+            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component},
+            ${params.createdBy}, NOW(), NOW())
+    RETURNING id, case_id, patient_id, status, agreed_cost
+  `);
+  const row = (ins.rows ?? [])[0];
+  return {
+    id: Number(row.id),
+    caseId: Number(row.case_id),
+    patientId: Number(row.patient_id),
+    serviceType: params.serviceType,
+    status: String(row.status),
+    agreedCost: Number(row.agreed_cost ?? 0),
+  };
+}
+
+/**
  * **البطلانُ الإداريّ للحلقة** (ترحيل ٠٦٤) — يرفع السلطةَ ولا يمحو الشهادة.
  *
  * حلقةٌ لم تُسلَّم بعد تأخذ `cancelled` **والوسمَ** معاً: تلك حالتُها

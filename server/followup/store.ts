@@ -258,6 +258,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     examDoctorName: string | null;
     examSignedAt: string | null;
     selectedExpertName: string | null;
+    requestedItem: string | null;
   })[]
 > {
   const r = await db.execute(sql`
@@ -270,21 +271,24 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            f.created_at, f.updated_at,
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
            u.display_name AS selected_expert_name,
+           de.requested_item,
            cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
            cl.note AS closed_note
       FROM post_exam_followups f
       LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
       LEFT JOIN system_users u ON u.id = f.selected_expert_user_id
+      LEFT JOIN patient_device_episodes de ON de.id = f.device_episode_id
       --  مَن سجّل «لم يشترِ» ومتى وبأي ملاحظة — من دفتر الأحداث نفسه.
       --  ولا جدولَ ملاحظاتٍ ثانٍ: دفترُ الأحداث يحمل الفاعل والسبب
       --  والملاحظة والزمن منذ ٠٥٣، وإنشاءُ ثانٍ يجعلهما ينحرفان.
       LEFT JOIN LATERAL (
         SELECT actor_name, created_at, note FROM post_exam_followup_events
-         WHERE followup_id = f.id AND event_type = 'closed_without_purchase'
+         WHERE followup_id = f.id
+           AND event_type IN ('closed_without_purchase', 'administrative_reversal')
          ORDER BY id DESC LIMIT 1
       ) cl ON TRUE
      WHERE f.patient_id = ${patientId}
-     ORDER BY (f.status NOT IN ('closed_without_purchase','converted','closed_exam_cancelled')) DESC, f.id DESC
+     ORDER BY (f.status NOT IN ('closed_without_purchase','converted','closed_exam_cancelled','closed_admin_void')) DESC, f.id DESC
   `);
   return (r.rows ?? []).map((x: any) => ({
     ...toRow(x),
@@ -297,6 +301,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     closedNote: x.closed_note ?? null,
     //  حسابٌ حُذف يترك رقماً بلا اسم — فيظهر الرقم ويختار الموظّف من جديد.
     selectedExpertName: x.selected_expert_name ?? null,
+    requestedItem: x.requested_item ?? null,
   }));
 }
 

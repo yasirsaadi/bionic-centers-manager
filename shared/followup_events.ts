@@ -26,6 +26,7 @@
 // (`PriceTransition`) — نفسُ علاج شاشات الخصم.
 
 import { FOLLOWUP_REASON_LABELS, type FollowupReason } from "./followup";
+import { requestedItemLabel } from "./prosthetic_parts";
 
 /** ما تحتاجه الترجمةُ من صفّ الحدث — لا أكثر. */
 export interface FollowupEventLike {
@@ -113,6 +114,7 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   //  مسجَّل على الملف» فيظنّ أن أحداً لمس الملفَّ ولا يعرف أن المعاينة
   //  التي وُلد عنها سقطت — وهو الخبرُ الوحيد الذي يحتاجه.
   closed_exam_cancelled: "أُغلقت المتابعة بسبب إلغاء المعاينة",
+  administrative_reversal: "أُلغيت العملية إدارياً",
   reopened: "أُعيد فتح الملف",
   //  ══ مسارٌ قديم — يُقرأ ولا يُنشأ ═══════════════════════════════════
   patient_accepted_price: "وافق المريض على السعر (مسار قديم)",
@@ -270,6 +272,24 @@ export function followupEventView(
       if (why) out.facts.push(`سبب الإلغاء: ${why}`);
       break;
     }
+    //  ══ **حقائقُ التصحيح تُقرأ بلا معجم** ═══════════════════════════════
+    //   «طلب الاستبدال الجديد: #88» رقمٌ داخليّ لا يعني شيئاً لموظّفٍ ولا
+    //   لمدير. والذي يعنيهما: **ماذا كان وماذا صار**. فالعناوينُ من خريطة
+    //   الأجزاء القائمة (`requestedItemLabel`) — ولا معجمَ ثانٍ يُخترَع —
+    //   والأرقامُ الداخلية تبقى في الحمولة للتدقيق.
+    case "administrative_reversal": {
+      const svc = typeof p.serviceType === "string" ? p.serviceType : undefined;
+      const prev = typeof p.previousRequestedItem === "string" ? p.previousRequestedItem : null;
+      if (prev) out.facts.push(`الطلب السابق: ${requestedItemLabel(prev, svc)}`);
+      const next = typeof p.replacementRequestedItem === "string"
+        ? p.replacementRequestedItem : null;
+      if (next) out.facts.push(`الطلب الجديد: ${requestedItemLabel(next, svc)}`);
+      const wo = pos(p.workOrderId);
+      if (wo !== null) out.facts.push(`أمر التصنيع السابق: #${wo}`);
+      const why = typeof e?.note === "string" ? e.note.trim() : "";
+      if (why) out.facts.push(`سبب التصحيح: ${why}`);
+      break;
+    }
     case "reopened": {
       out.facts.push(e?.toStatus === "follow_up"
         ? "عاد للمتابعة بموعد" : "عاد بانتظار قرار المريض");
@@ -306,6 +326,7 @@ export function followupEventView(
   //  معنونةً «سبب الإلغاء» — والسطرُ الواحد مرّتين ضجيجٌ كذلك.
   const note = typeof e?.note === "string" ? e.note.trim() : "";
   if (note && type !== "closed_without_purchase" && type !== "closed_exam_cancelled"
+    && type !== "administrative_reversal"
     //  ومن تصحيح السعر: خرج أعلاه معنوناً «سبب التصحيح» — ومرّتين ضجيج.
     && type !== "exam_price_corrected") {
     out.facts.push(note);
@@ -323,12 +344,15 @@ export function followupEventView(
 // والحلُّ **اشتقاقٌ من الحالة الحقيقية** لا نصٌّ محفوظ. والحالةُ هي مصدر
 // الحقيقة: `converted` (أو وجودُ أمر تصنيع) تعني «تمّ» ولا تحتمل غير ذلك.
 
-export type PurchasePresentation = "converted" | "discount_pending" | "awaiting";
+export type PurchasePresentation = "converted" | "discount_pending" | "awaiting" | "admin_void" | "exam_cancelled" | "closed";
 
 export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   converted: "تم الشراء — بدأ التصنيع",
   discount_pending: "المريض وافق على الشراء — بانتظار اعتماد الخصم",
   awaiting: "المريض وافق على الشراء — بانتظار إتمام إجراءات البيع",
+  admin_void: "عملية ملغاة إدارياً",
+  exam_cancelled: "المعاينة ملغاة",
+  closed: "أُغلقت العملية بدون شراء",
 };
 
 /**
@@ -343,9 +367,62 @@ export function purchasePresentation(f: {
   convertedWorkOrderId?: number | null;
   hasPendingDiscount?: boolean;
 } | null | undefined): PurchasePresentation {
+  if (f?.status === "closed_admin_void") return "admin_void";
+  if (f?.status === "closed_exam_cancelled") return "exam_cancelled";
+  if (f?.status === "closed_without_purchase") return "closed";
   if (f?.status === "converted" || pos(f?.convertedWorkOrderId) !== null) return "converted";
   if (f?.hasPendingDiscount === true) return "discount_pending";
   return "awaiting";
+}
+
+// ══ **هويّةُ الطلب البديل — من الحدث الذي كتبه التصحيح** ══════════════════
+//
+// ══ العطبُ الذي تغلقه ══════════════════════════════════════════════════
+// كانت البطاقةُ تعرض «الطلب الجديد» بأوّل حلقةٍ مفتوحةٍ للمريض. والمريضُ
+// يملك **خيوطاً متوازية**: أطرافٌ ومساند. فمريضٌ صُحّح طلبُ طرفه، وله مسندٌ
+// مفتوحٌ لا علاقةَ له، كان يُعرَض له **مسندُه** بوصفه «الطلب الجديد» الذي
+// وُلد عن التصحيح. عرضٌ يكذب على قارئه، ولا يُصلحه ترشيحٌ بنوع الخدمة:
+// حلقةُ أطرافٍ أخرى مفتوحةٌ لسببٍ آخر تكذب المثلَ.
+//
+// **والهويّةُ الدقيقة موجودةٌ سلفاً**: التصحيحُ كتب `replacementEpisodeId`
+// في حمولة حدثه داخل معاملته. فتُقرأ منها ولا تُخمَّن — ولا مصدرَ حقيقةٍ
+// ثانٍ يُخترَع ولا ترحيلَ يُضاف.
+//
+// **وحين لا يوجد بديلٌ لا يُخمَّن أحد**: إلغاءٌ كاملٌ بلا استبدال يُرجع
+// `null`، فتُعرَض البطاقةُ التاريخية وحدها. **والصمتُ أصدقُ من ترشيح.**
+
+/**
+ * `replacementEpisodeId` من **آخرِ** تصحيحٍ إداريّ لهذه المتابعة.
+ *
+ * ══ القاعدةُ الدلالية: التصحيحُ الأخير هو القائم ═════════════════════════
+ * تصحيحٌ يتلوه تصحيح ⟶ الثاني هو ما يصف الملفَّ الآن. **وإلغاءٌ كاملٌ بلا
+ * استبدالٍ يتلو استبدالاً يعني أن لا طلبَ بديلاً قائماً بعد اليوم** — فلا
+ * يجوز أن تُعرَض حلقةُ استبدالٍ ألغاها التصحيحُ التالي. فتُقرأ حمولةُ
+ * **الأخير وحده**، لا أوّلُ حمولةٍ تحمل رقماً.
+ *
+ * ══ ولا يُعتمَد على ترتيبٍ غير موثَّق ══════════════════════════════════
+ * `getEvents` تُرجع `ORDER BY id DESC` — **الأحدثُ أوّلاً**. ومسحٌ ساذجٌ
+ * يكتب فوق نتيجته في كلّ دورة كان يُبقي **الأقدمَ** فائزاً، وهو عكسُ
+ * المكتوب هنا بالضبط.
+ *
+ * فالحسمُ **بأكبر `id`** حين تتوفّر المعرّفات — وهي متوفّرةٌ في كلّ ما
+ * يأتي من الخادم — فلا يعتمد الحكمُ على ترتيبِ مصفوفةٍ قد يتغيّر. وحين لا
+ * معرّفَ إطلاقاً (كائناتٌ مجرّدة في اختبار) يُؤخَذ **أوّلُ** عنصرٍ وفق
+ * عقدِ «الأحدثُ أوّلاً».
+ *
+ * @returns رقمَ الحلقة البديلة للتصحيح الأخير، أو `null` حين لا استبدالَ فيه.
+ */
+export function replacementEpisodeIdOf(
+  events: readonly any[] | null | undefined,
+): number | null {
+  if (!Array.isArray(events)) return null;
+  const reversals = events.filter((e) => e?.eventType === "administrative_reversal");
+  if (reversals.length === 0) return null;
+  const withId = reversals.filter((e) => pos(e?.id) !== null);
+  const latest = withId.length > 0
+    ? withId.reduce((a, b) => ((pos(b?.id) as number) > (pos(a?.id) as number) ? b : a))
+    : reversals[0];
+  return pos(latest?.payload?.replacementEpisodeId);
 }
 
 /** «٢٠٢٦-٠٩-٠١» ⟵ التاريخُ وحده، للمواعيد المستقبلية داخل التفاصيل. */

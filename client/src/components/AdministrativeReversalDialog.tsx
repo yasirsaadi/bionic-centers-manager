@@ -12,8 +12,9 @@ import {
 import { ShieldAlert, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
-  REVERSAL_MODE_LABELS, REVERSAL_MODE_HINTS, REVERSAL_REASON_CODES,
-  REVERSAL_REASON_LABELS, type ReversalMode, type ReversalPreview,
+  CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS, CORRECTION_INTENT_MODE,
+  replacementSummaryLine,
+  type CorrectionIntent, type ReversalMode, type ReversalPreview,
 } from "@shared/administrative_reversal";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
@@ -51,13 +52,14 @@ export function AdministrativeReversalDialog({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ReversalMode | "">("");
-  const [reasonCode, setReasonCode] = useState<string>("");
+  const [intent, setIntent] = useState<CorrectionIntent | "">("");
+  const [replacementRequestedItem, setReplacementRequestedItem] = useState("");
   const [reasonNote, setReasonNote] = useState("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
-    setMode(""); setReasonCode(""); setReasonNote("");
+    setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -86,6 +88,15 @@ export function AdministrativeReversalDialog({
     if (modes.length === 1 && !mode) setMode(modes[0]);
   }, [preview, mode]);
 
+  //  **النيّة ⟶ الوضع بالخريطة المشتركة** — نفسِها التي يقرؤها الخادم،
+  //  فلا تُرسل الشاشةُ وضعاً يخالف ما سيشتقّه هو.
+  useEffect(() => {
+    if (!intent) return;
+    setMode(CORRECTION_INTENT_MODE[intent]);
+    //  تبديلُ النيّة يُسقط بديلاً اختير لنيّةٍ أخرى.
+    if (intent !== "replace_requested_item") setReplacementRequestedItem("");
+  }, [intent]);
+
   const run = useMutation({
     mutationFn: async () => {
       const res = await fetch("/api/admin/operation-reversal/execute", {
@@ -93,7 +104,7 @@ export function AdministrativeReversalDialog({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          ...target, mode, reasonCode, reasonNote: reasonNote.trim(),
+          ...target, intent, replacementRequestedItem, reasonNote: reasonNote.trim(),
           stateStamp: preview?.stateStamp,
         }),
       });
@@ -102,8 +113,9 @@ export function AdministrativeReversalDialog({
     },
     onSuccess: (out: any) => {
       toast({
-        title: mode === "purchase_only"
-          ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
+        title: intent === "replace_requested_item"
+          ? `تم تصحيح العملية وفتح طلب جديد: ${replacementLabel || "الطلب الصحيح"}`
+          : mode === "purchase_only" ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
         description: out?.requiresFinancialSettlement
           ? "الدفعة المسجلة لم تُحذف — للمريض رصيد يحتاج تسوية مالية."
           : "عادت الحالة الصحيحة، وبقيت جميع السجلات في التاريخ.",
@@ -126,8 +138,27 @@ export function AdministrativeReversalDialog({
     }),
   });
 
-  const lines = mode && preview ? preview.impact[mode] ?? [] : [];
-  const canRun = Boolean(mode) && Boolean(reasonCode) && reasonNote.trim().length > 0
+  //  **البدائلُ من الخادم** — هو مَن يعرف ما طُلب وما يقبله، ولا تشتقّها
+  //  الشاشةُ من خريطةٍ ثانية.
+  const replacementLabel = (preview?.replacementOptions ?? [])
+    .find((x) => x.value === replacementRequestedItem)?.label ?? "";
+  const replacing = intent === "replace_requested_item";
+
+  //  ══ **الملخّصُ يُقرأ، والتفصيلُ يُطوى** ═══════════════════════════════
+  //   العقدُ المؤسّسيّ باقٍ كما هو: معاينةٌ ⟶ ختمٌ ⟶ تنفيذُ ذلك الأثر بعينه.
+  //   الذي تغيّر أن **ما يُقرأ فعلاً** صار ثلاثةَ أسطر بدل خمسةَ عشر — ولا
+  //   شيءَ أُخفي: التفصيلُ كلُّه تحت «تفاصيل ما سيحدث».
+  const summaryLines = mode && preview ? [
+    ...(preview.summary[mode] ?? []),
+    ...(replacing && replacementLabel ? [replacementSummaryLine(replacementLabel)] : []),
+  ] : [];
+  const lines = mode && preview ? [
+    ...(preview.impact[mode] ?? []),
+    ...(replacing ? preview.replacementImpact : []),
+    ...(replacing && replacementLabel ? [replacementSummaryLine(replacementLabel)] : []),
+  ] : [];
+  const canRun = Boolean(intent) && reasonNote.trim().length > 0
+    && (!replacing || Boolean(replacementRequestedItem))
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -187,48 +218,58 @@ export function AdministrativeReversalDialog({
               )}
             </div>
 
-            {/* ① ما الخطأ؟ */}
+            {/* الموظف يصف المقصود، والخادم يختار آلية العكس الآمنة. */}
             <div className="space-y-2">
-              <Label className="font-semibold">ما الخطأ الذي وقع؟ *</Label>
-              <Select value={reasonCode} onValueChange={setReasonCode}>
-                <SelectTrigger data-testid="select-reversal-reason">
-                  <SelectValue placeholder="اختر سبب التصحيح" />
-                </SelectTrigger>
-                <SelectContent>
-                  {REVERSAL_REASON_CODES.map((c) => (
-                    <SelectItem key={c} value={c}>{REVERSAL_REASON_LABELS[c]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* ② أيُّ تصحيح؟ */}
-            <div className="space-y-2">
-              <Label className="font-semibold">نوع التصحيح *</Label>
+              <Label className="font-semibold">ما الذي تريد تصحيحه؟ *</Label>
               <div className="space-y-2">
-                {preview.availableModes.map((m) => (
+                {preview.availableIntents.map((choice) => (
                   <button
-                    key={m}
+                    key={choice}
                     type="button"
-                    onClick={() => setMode(m)}
-                    data-testid={`option-mode-${m}`}
+                    onClick={() => setIntent(choice)}
+                    data-testid={`option-intent-${choice}`}
                     className={`w-full rounded-lg border p-3 text-right transition ${
-                      mode === m ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
+                      intent === choice ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
                   >
-                    <div className="font-semibold">{REVERSAL_MODE_LABELS[m]}</div>
-                    <div className="text-xs text-muted-foreground">{REVERSAL_MODE_HINTS[m]}</div>
+                    <div className="font-semibold">{CORRECTION_INTENT_LABELS[choice]}</div>
+                    {/*  **وما يقع يُقال تحت الخيار لا بعد التأكيد.** */}
+                    <div className="text-xs text-muted-foreground">
+                      {CORRECTION_INTENT_EFFECTS[choice]}
+                    </div>
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* ③ الأثرُ الحقيقيّ — من الخادم حرفياً */}
+            {replacing && (
+              <div className="space-y-2">
+                <Label className="font-semibold">الطلب الصحيح *</Label>
+                <Select value={replacementRequestedItem} onValueChange={setReplacementRequestedItem}>
+                  <SelectTrigger data-testid="select-replacement-item">
+                    <SelectValue placeholder="اختر الجهاز أو الجزء" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/*  **القائمةُ من الخادم** — هو مَن يعرف ما طُلب وما يقبله. */}
+                    {preview.replacementOptions.map((x) => (
+                      <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  يُفتح طلبٌ جديد بكلفة صفر بانتظار المعاينة. ولا يُنسخ إليه سعرٌ
+                  ولا خبيرٌ ولا معاينةٌ ولا دفعةٌ من العملية الملغاة.
+                </p>
+              </div>
+            )}
+
+            {/*  ══ ③ **الملخّصُ يُقرأ قبل التأكيد** — والتفصيلُ تحته يُطوى ══
+                لا شيءَ أُخفي: كلُّ سطرٍ في التفصيل موجود، والمعروضُ فوقه هو
+                ما يقرؤه المسؤولُ فعلاً في ثانيتين. والاثنان من الخادم. */}
             {mode && (
-              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3"
-                data-testid="box-reversal-impact">
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
                 <div className="text-sm font-semibold text-amber-900">سيتم:</div>
-                <ul className="space-y-1 text-sm">
-                  {lines.map((l, i) => (
+                <ul className="space-y-1 text-sm" data-testid="box-reversal-summary">
+                  {summaryLines.map((l, i) => (
                     <li key={i} className={`flex items-start gap-2 ${
                       l.kind === "warn" ? "text-amber-900 font-medium" : "text-foreground"}`}>
                       {l.kind === "warn"
@@ -238,6 +279,22 @@ export function AdministrativeReversalDialog({
                     </li>
                   ))}
                 </ul>
+                <details data-testid="box-reversal-impact">
+                  <summary className="cursor-pointer text-xs font-semibold text-amber-900">
+                    تفاصيل ما سيحدث
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {lines.map((l, i) => (
+                      <li key={i} className={`flex items-start gap-2 ${
+                        l.kind === "warn" ? "text-amber-900 font-medium" : "text-foreground"}`}>
+                        {l.kind === "warn"
+                          ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          : <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />}
+                        <span>{l.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
             )}
 
