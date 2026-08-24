@@ -75,7 +75,32 @@ export const patients = pgTable("patients", {
   medicalCondition: text("medical_condition").notNull(),
   injuryCause: text("injury_cause"),
   injuryDate: date("injury_date"),
+  /**
+   * **بُعدُ تقريرٍ تاريخيّ** («جديد» / «قديم») — يبقى مقروءاً كما هو.
+   *
+   * ولم يعد نموذجُ التسجيل يسأله (ترحيل ٠٦٥): كان جوابُه الإداريُّ يقع
+   * أثراً سريرياً عبر `isLegacyPatient` فيُعفي من المعاينة مَن لم يُقصَد
+   * إعفاؤه. والسؤالُ السريريُّ صار على الحلقة (`servicePath`)، وهذا العمود
+   * بقي لما بُني له أصلاً: التقارير، والصفوفُ القائمة، وتصحيحُ الإدارة من
+   * «تعديل مريض». والخادمُ يختم الجديدَ `'new'` — وهو الصدق: الصفُّ أُنشئ
+   * اليوم.
+   */
   patientClassification: text("patient_classification"),
+  /**
+   * **سبق أن تعامل أو اشترى من المركز قبل تسجيله في النظام** (ترحيل ٠٦٥).
+   *
+   * واقعةٌ إدارية وحدها. **ولا تعني**: إعفاءً من معاينة · ولا جهازاً قائماً ·
+   * ولا حلقةً مسلَّمة · ولا شراءً مؤكَّداً · ولا استثناءً في مسار العمل.
+   * ولا يُشتقّ منها صفٌّ واحد في أيّ جدولٍ آخر — التفاصيلُ في
+   * `shared/service_path.ts`.
+   *
+   * **ثلاثيةٌ كـ`servicePath`**: `NULL` = لم يُسأل (صفٌّ سابقٌ للترحيل) ·
+   * `TRUE`/`FALSE` = جوابٌ صريحٌ من الموظّف. و`FALSE` **ليست فراغاً**:
+   * ختمُها على صفٍّ قديم يقول «نعلم أنه لم يتعامل معنا» — وهذا كذب.
+   * والتسجيلُ الجديد يكتب بولياناً صريحاً دائماً، والتعديلُ لا يكتب إلّا
+   * بولياناً صريحاً (نقطةُ الخنق في `PUT /api/patients/:id`).
+   */
+  hadPriorCenterHistory: boolean("had_prior_center_history"),
   generalNotes: text("general_notes"),
   
   // Branch tracking
@@ -205,6 +230,18 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    * `patientCases`)، و`CHECK` لا تقرأ جدولاً آخر — فيُحرَس في المخزن.
    */
   component: text("component"),
+  /**
+   * **مسارُ هذه العملية بعينها** (ترحيل ٠٦٥): `exam` أو `no_exam`.
+   *
+   * سؤالٌ عن **الطلب** لا عن صاحبه: «هل يحتاج هذا الجهازُ تقييمَ طبيب قبل
+   * المتابعة؟». يُسأل مرّةً عند فتح الطلب، ويحسم بعدها طابورَ الطبيب
+   * وبوّابةَ التصنيع — **بلا رجوعٍ إلى تصنيف المريض في أيّ اتجاه**.
+   *
+   * **و`NULL` غيابُ سؤالٍ لا قيمةٌ ثالثة**: حلقةٌ وُلدت قبل ٠٦٥ لم يُسأل
+   * عنها أحد ومسارُها غيرُ معلوم، فتُقرأ **بالقاعدة القديمة حرفاً بحرف**
+   * (`isLegacyPatient`). ولا تُكتب `NULL` على حلقةٍ جديدة أبداً.
+   */
+  servicePath: text("service_path"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
@@ -239,6 +276,10 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
   //  التطابق حين حاول كتابته فقُبل.
   check("patient_device_episodes_component_check",
     sql`(${t.requestedItem} = 'full_device' AND ${t.component} IS NULL) OR (${t.requestedItem} <> 'full_device' AND ${t.component} IS NOT NULL AND ${t.component} = ${t.requestedItem})`),
+  //  مسارُ العملية (ترحيل ٠٦٥): قيمتان تُكتبان، و`NULL` للحلقة التي وُلدت
+  //  قبل السؤال — مقبولةٌ صراحةً لأنها غيابُ جوابٍ لا جوابٌ ثالث.
+  check("patient_device_episodes_service_path_check",
+    sql`${t.servicePath} IS NULL OR ${t.servicePath} IN ('exam', 'no_exam')`),
   uniqueIndex("uq_pde_case_seq").on(t.caseId, t.sequenceNumber),
   // **شراءٌ مفتوحٌ واحد لكل خيط** — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة.
   uniqueIndex("uq_pde_case_open")

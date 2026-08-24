@@ -498,24 +498,52 @@ async function main() {
     // ══ ٨. تصنيفُ المريض ═══════════════════════════════════════════════
     console.log("\n── ٨. تصنيف المريض ──");
     //  الطولُ والوزن إلزاميّان منذ هذا الترحيل — الطرفُ يُصنَع عليهما.
+    const classOfEarly = async (id: number) =>
+      (await q(`SELECT patient_classification c FROM patients WHERE id=$1`, [id]))[0]?.c ?? null;
     const base = {
       name: `${MARK} بلا تصنيف`, age: "30", height: "170", weight: "70",
       medicalCondition: "x",
       referralSource: MARK, branchId: 1, phone: "07709999999",
     };
-    same("١٣. **إنشاءُ مريضٍ بلا تصنيف يُردّ**",
-      (await http("POST", "/api/patients", S.recv, base)).status, 400);
-    same("   وبقيمةٍ مخترَعة يُردّ كذلك",
-      (await http("POST", "/api/patients", S.recv,
-        { ...base, patientClassification: "unspecified" })).status, 400);
-    const okNew = await http("POST", "/api/patients", S.recv,
-      { ...base, patientClassification: "new" });
+    //  ══ **ولم يعد التسجيلُ يسأله أصلاً** (ترحيل ٠٦٥) ═══════════════════
+    //  كان جوابُه الإداريُّ يقرّر إعفاءً سريرياً عبر `isLegacyPatient`. فصار
+    //  السؤالُ السريريُّ على الحلقة (`servicePath`)، وصارت الواقعةُ الإدارية
+    //  مربّعاً صريحاً (`hadPriorCenterHistory`). والعمودُ يبقى للتقارير،
+    //  ويختمه الخادمُ `'new'` — صدقاً (الصفُّ أُنشئ اليوم) وأماناً (`'past'`
+    //  كانت ستمنح كلَّ مسجَّلٍ جديد إعفاءَ المعاينة).
+    const okNew = await http("POST", "/api/patients", S.recv, base);
     check(okNew.status === 200 || okNew.status === 201,
-      "١٤. **و«جديد» يُقبل**", String(okNew.status));
+      "١٣. **إنشاءُ مريضٍ بلا تصنيف يمرّ** — لم يعد يُسأل", String(okNew.status));
+    same("   والخادمُ ختمه «جديد»", await classOfEarly(Number(okNew.body?.id)), "new");
+    //  **ولا يُقبل من العميل في أيّ اتجاه**: «قديم» في جسم الطلب كانت
+    //  ستدّعي إعفاءً لم يقرّره أحد.
     const okPast = await http("POST", "/api/patients", S.recv,
       { ...base, name: `${MARK} قديم`, phone: "07708888888", patientClassification: "past" });
     check(okPast.status === 200 || okPast.status === 201,
-      "   و«قديم» يُقبل", String(okPast.status));
+      "١٤. و«قديم» في جسم الطلب لا يُردّ", String(okPast.status));
+    same("   **لكنّه لا يُكتب** — الخادمُ يختم «جديد»",
+      await classOfEarly(Number(okPast.body?.id)), "new");
+    same("   وقيمةٌ مخترَعة لا تُكتب كذلك",
+      await (async () => {
+        const r = await http("POST", "/api/patients", S.recv,
+          { ...base, name: `${MARK} مخترَع`, phone: "07707777777",
+            patientClassification: "unspecified" });
+        return await classOfEarly(Number(r.body?.id));
+      })(), "new");
+    //  ══ **والواقعةُ الإدارية تُحفَظ كما قالها الموظّف — ولا تفعل شيئاً** ══
+    const okPrior = await http("POST", "/api/patients", S.recv,
+      { ...base, name: `${MARK} سبق تعامله`, phone: "07706666666",
+        hadPriorCenterHistory: true });
+    check(okPrior.status === 200 || okPrior.status === 201,
+      "١٤أ. **ومربّعُ «سبق أن تعامل مع المركز» يُقبل**", String(okPrior.status));
+    same("   والقيمةُ حُفظت",
+      (await q(`SELECT had_prior_center_history h FROM patients WHERE id=$1`,
+        [Number(okPrior.body?.id)]))[0].h, true);
+    same("   **وتصنيفُه مع ذلك «جديد»** — الواقعةُ لا تُغيّر العمود",
+      await classOfEarly(Number(okPrior.body?.id)), "new");
+    same("   **والافتراضُ `false` لمن لم يُؤشَّر**",
+      (await q(`SELECT had_prior_center_history h FROM patients WHERE id=$1`,
+        [Number(okNew.body?.id)]))[0].h, false);
     //  والصفوفُ القديمة الفارغة **لا تُخمَّن ولا تُملأ**.
     const pNull = await mk("تصنيفٌ فارغ");
     await q(`UPDATE patients SET patient_classification = NULL WHERE id = $1`, [pNull]);

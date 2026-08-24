@@ -1025,7 +1025,7 @@ async function main() {
     {
       const p = await mkPatient("ملفٌّ ناقص", 1, false);
       await mkCase(p);
-      const r = await http("POST", `/api/patients/${p}/device-episodes`, S.recv, {
+      const r = await http("POST", `/api/patients/${p}/device-episodes`, S.recv, { servicePath: "exam",
         serviceType: "prosthetic", requestedItem: "socket",
       });
       same("٦٨. **الحراسةُ لم تُضعَف** — الملفُّ الناقص يُردّ ٤٠٠", r.status, 400);
@@ -1079,7 +1079,7 @@ async function main() {
           replacementRequestedItem: "knee", reasonNote: "سباق",
           stateStamp: pv2.body?.stateStamp,
         }),
-        http("POST", `/api/patients/${d2.patientId}/device-episodes`, S.recv, {
+        http("POST", `/api/patients/${d2.patientId}/device-episodes`, S.recv, { servicePath: "exam",
           serviceType: "prosthetic", requestedItem: "tube",
         }),
       ]);
@@ -1395,8 +1395,9 @@ async function main() {
       //  فالنافذةُ **تُسلّم** اختيارَها إلى مالكِ الحالة و**تُملأ** منه،
       //  والحفظُ في `sessionStorage` عند الموزِّع. وتفصيلُ المنطق مُختبَرٌ
       //  حيّاً في `npm run test:device-flow-resume`.
-      check(modal.includes("onEditPatient(item)"),
-        "٨٤. **وتسلّم اختيارَ الموظّف إلى مَن يبقى بعد تغيّر المسار**", "");
+      check(modal.includes("onEditPatient(item, path)"),
+        "٨٤. **وتسلّم اختيارَ الموظّف إلى مَن يبقى بعد تغيّر المسار**"
+        + " — القطعةَ ومسارَها معاً (ترحيل ٠٦٥)", "");
       check(modal.includes("initialRequestedItem"),
         "٨٤-ب. **وتُملأ منه عند العودة**", "");
       const launcher = strip(readFileSync("client/src/components/PatientServiceLauncher.tsx", "utf8"));

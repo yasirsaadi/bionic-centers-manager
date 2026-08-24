@@ -64,6 +64,8 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   const [, setLocation] = useLocation();
   /** الجزءُ المستأنَف بعد العودة من «تعديل مريض» — يُملأ من التخزين لا غير. */
   const [resumeItem, setResumeItem] = useState<string>("");
+  /** ومسارُ العملية المستأنَف معه — بالمنطق نفسِه (ترحيل ٠٦٥). */
+  const [resumePath, setResumePath] = useState<string>("");
 
   // ══ **العودةُ من «تعديل مريض» تُستأنف حيث تُرك المسار** ═════════════════
   //  حفظُ التعديل يغيّر المسار، فتُفكَّك الصفحةُ والموزِّعُ والنافذةُ معاً.
@@ -73,6 +75,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
     const resume = takeDeviceFlowResume(sessionResumeStore(), patient.id);
     if (!resume) return;
     setResumeItem(resume.requestedItem);
+    setResumePath(resume.servicePath);
     setFlow({ kind: "device_episode", serviceType: resume.serviceType });
   }, [patient.id]);
 
@@ -92,6 +95,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
     setPickerOpen(false);
     //  اختيارٌ جديد بيدِ الموظّف ⟶ لا استئنافَ قديمٌ يملأ القائمة.
     setResumeItem("");
+    setResumePath("");
     setFlow(option.flow);
   }
 
@@ -99,6 +103,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
     if (open) return;
     setFlow(null);
     setResumeItem("");
+    setResumePath("");
     //  إغلاقٌ بيدِ الموظّف قرارٌ صريح — فلا تُفتح النافذةُ عليه ثانيةً
     //  بلقطةٍ بقيت من محاولةٍ سابقة.
     clearDeviceFlowResume(sessionResumeStore());
@@ -113,9 +118,11 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
    */
   function editPatientAndResume(
     serviceType: "prosthetic" | "medical_support", requestedItem: string,
+    servicePath: string,
   ) {
     saveDeviceFlowResume(sessionResumeStore(), {
       patientId: patient.id, serviceType, requestedItem,
+      servicePath: servicePath as any,
     });
     setFlow(null);
     const branch = typeof window === "undefined"
@@ -210,8 +217,9 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           open
           onOpenChange={closeFlow}
           initialRequestedItem={resumeItem}
-          onEditPatient={(requestedItem) =>
-            editPatientAndResume(flow.serviceType, requestedItem)}
+          initialServicePath={resumePath}
+          onEditPatient={(requestedItem, servicePath) =>
+            editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
         />
       )}
 

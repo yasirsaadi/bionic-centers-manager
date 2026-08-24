@@ -21,6 +21,7 @@ import {
   parseRequestedItem, requestedItemLabel, requestedItemLine,
 } from "@shared/prosthetic_parts";
 import { checkRequiredPatientData } from "@shared/patient_required";
+import { isServicePath, type ServicePath } from "@shared/service_path";
 
 type Req = any;
 
@@ -135,6 +136,23 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const parsedItem = parseRequestedItem(req.body?.requestedItem, serviceType);
       if (!parsedItem.ok) return res.status(400).json({ error: parsedItem.error });
 
+      // ── **هل تحتاج هذه العملية معاينة طبية؟** (ترحيل ٠٦٥) ────────────
+      //  سؤالٌ عن **الطلب** لا عن صاحبه. وكان الجوابُ يُستنتَج من تصنيف
+      //  المريض «جديد/قديم» — بُعدٍ إداريّ تُجيب عنه موظّفةُ الاستقبال بصدق،
+      //  فيقع أثرٌ سريريٌّ لم تقصده. فصار يُسأل هنا مرّةً لكلّ عملية.
+      //
+      //  **وإلزاميّ على الكتابة الجديدة**: الغيابُ لا يُقرأ افتراضاً في
+      //  اتجاهٍ ولا في الآخر — «معاينة» افتراضاً يسوق للطبيب مَن لا يحتاجه،
+      //  و«بلا معاينة» افتراضاً يُسقط شرطاً سريرياً بصمت. فيُردّ ويُسأل.
+      const servicePath: ServicePath | null = isServicePath(req.body?.servicePath)
+        ? req.body.servicePath : null;
+      if (!servicePath) {
+        return res.status(400).json({
+          error: "حدّد مسار العملية: هل تحتاج معاينة طبية؟ (نعم / لا)",
+          field: "servicePath",
+        });
+      }
+
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (!canReachBranch(req, patient.branch_id)) {
@@ -162,7 +180,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const session = getSession(req);
       const episode = await episodes.startDeviceEpisode({
         patientId, serviceType, createdBy: session.userId,
-        requestedItem: parsedItem.value,
+        requestedItem: parsedItem.value, servicePath,
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
@@ -171,16 +189,23 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       //  اختصاصين مختلفين له طلبان يقرأ الطبيبُ فرقَهما.
       //  ويشمل **المريض القديم**: استثناؤه يرفع الإلزام عن الانتظار
       //  التلقائي، ولا يُخرجه من طلبٍ صرّح به الاستقبال بفعله.
-      const routing = await routeServiceToDoctorReview(req, {
-        patientId, caseType: serviceType,
-        reviewKind: "new_device", requestedPath: "full",
-        //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
-        //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
-        receptionNote: [requestedItemLine(episode.requestedItem, serviceType),
-          typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
-          .filter(Boolean).join(" — "),
-        deviceEpisodeId: episode.id,
-      });
+      //  **والتوجيهُ يتبع مسارَ العملية لا تاريخَ المريض** (ترحيل ٠٦٥):
+      //  مساره `exam` ⟶ طلبُ معاينةٍ كاملة كما كان حرفاً بحرف، ولو كان
+      //  المريضُ مصنَّفاً «قديماً». ومساره `no_exam` ⟶ **لا طلبَ ولا
+      //  طابور**: العمليةُ قيلت صراحةً إنها لا تحتاج الطبيب، فسَوقُها إليه
+      //  يُغرق قائمتَه بما لا قرارَ له فيه.
+      const routing = servicePath === "exam"
+        ? await routeServiceToDoctorReview(req, {
+          patientId, caseType: serviceType,
+          reviewKind: "new_device", requestedPath: "full",
+          //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
+          //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
+          receptionNote: [requestedItemLine(episode.requestedItem, serviceType),
+            typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
+            .filter(Boolean).join(" — "),
+          deviceEpisodeId: episode.id,
+        })
+        : { request: null as { id: number } | null };
 
       await logAudit({
         entityType: "patient_device_episode",
@@ -194,6 +219,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         userAgent: req.get("user-agent") ?? null,
         notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType)})`
           + ` للمريض ${patient.name ?? patientId}`
+          + (servicePath === "exam" ? " — المسار: يحتاج معاينة" : " — المسار: بلا معاينة")
           + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),
       });
 

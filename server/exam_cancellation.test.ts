@@ -124,7 +124,7 @@ async function mk(name: string, opts: {
 
 const startEpisode = (patientId: number, serviceType: string) =>
   http("POST", `/api/patients/${patientId}/device-episodes`, S.recv,
-    { serviceType, requestedItem: "full_device" });
+    { servicePath: "exam", serviceType, requestedItem: "full_device" });
 
 const signExam = (patientId: number, caseType: string, extra: any = {}, session: any = S.doc) =>
   http("POST", `/api/medical/patients/${patientId}/exams`, session, {

@@ -535,23 +535,23 @@ async function main() {
     const pX = await mkPatient("خ. عبر النقاط");
     await mkCase(pX, "medical_support");
     const started = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
-      { serviceType: "medical_support" });
+      { servicePath: "exam", serviceType: "medical_support" });
     same("النقطة تبدأ الجهاز وتعيد 201", started.status, 201);
     same("   بالحلقة المنشأة", [started.body?.sequenceNumber, started.body?.status, started.body?.agreedCost],
       [1, "awaiting_exam", 0]);
     const again = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
-      { serviceType: "medical_support" });
+      { servicePath: "exam", serviceType: "medical_support" });
     same("والثانية تُردّ بـ409", again.status, 409);
     same("   برسالة عربية", again.body?.error, "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد");
 
     const badType = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
-      { serviceType: "physiotherapy" });
+      { servicePath: "exam", serviceType: "physiotherapy" });
     same("والعلاج الطبيعي ليس جهازاً", badType.status, 400);
 
     same("وخبير الأطراف لا يبدأ جهازاً بنفسه",
-      (await http("POST", `/api/patients/${pX}/device-episodes`, S.expert, { serviceType: "prosthetic" })).status, 403);
+      (await http("POST", `/api/patients/${pX}/device-episodes`, S.expert, { servicePath: "exam", serviceType: "prosthetic" })).status, 403);
     same("ولا موظّف فرعٍ آخر",
-      (await http("POST", `/api/patients/${pX}/device-episodes`, S.otherBranch, { serviceType: "prosthetic" })).status, 403);
+      (await http("POST", `/api/patients/${pX}/device-episodes`, S.otherBranch, { servicePath: "exam", serviceType: "prosthetic" })).status, 403);
 
     const list = await http("GET", `/api/patients/${pX}/device-episodes`, S.manager);
     same("والقراءة تعيد الحلقات بحقولها المحدودة", list.status, 200);
@@ -560,9 +560,13 @@ async function main() {
     //  المريض — يقرؤه الطبيبُ في طلبه والخبيرُ في أمره (ترحيل ٠٦٠).
     same("   وبلا أي حقل سريري أو مالي زائد",
       Object.keys(list.body?.episodes?.[0] ?? {}).sort(),
+      //  و`servicePath` (ترحيل ٠٦٥) حقلُ **توجيهٍ** لا سريريٌّ ولا ماليّ:
+      //  يقول أتحتاج هذه العمليةُ معاينةً أم لا، ولا يحمل تشخيصاً ولا سعراً.
       ["agreedCost", "branchId", "cancelReason", "cancelledAt", "caseId", "component",
        "createdAt", "deliveredAt", "id", "requestedItem", "sequenceNumber",
-       "serviceType", "status"]);
+       "servicePath", "serviceType", "status"]);
+    same("   ومسارُ العملية محفوظٌ كما اختاره الموظّف",
+      list.body?.episodes?.[0]?.servicePath, "exam");
     //  **والمساندُ الطبية لا أجزاءَ لها** — تبقى على الطرف الكامل حتماً.
     same("   والمسند طلبٌ كاملٌ بلا جزء",
       [list.body?.episodes?.[0]?.requestedItem, list.body?.episodes?.[0]?.component],

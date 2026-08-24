@@ -27,6 +27,7 @@ import {
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
 import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
+import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
 import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 import * as discountStore from "../discounts/store";
 import {
@@ -281,8 +282,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(409).json({ error: bypassMessage(gov.status) });
     }
     if (live) {
+      //  **والرسالةُ تقول مسارَ هذا الطلب بعينه** (ترحيل ٠٦٥): إحالةُ صاحبِ
+      //  طلبٍ «بلا معاينة» إلى «بعد المعاينة» تدلّه على بابٍ لن يُفتَح له.
       return res.status(409).json({
-        error: "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
+        error: live.servicePath === "no_exam"
+          ? NO_EXAM_PENDING_BOUNDARY
+          : "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
       });
     }
 
@@ -403,6 +408,17 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     const legacyExempt = await isLegacyPatient(patientId);
     if (liveEpisode) {
+      // ══ **الحدُّ المؤقّت للمسار بلا معاينة** (ترحيل ٠٦٥) ═══════════════
+      //  الطلبُ يُفتَح ويُعرَف ويُوثَّق — وذاك كلُّ ما بُني له في هذه المرحلة.
+      //  أمّا تسعيرُه واعتمادُه المالي فطبقةٌ لم تُبنَ بعد، فلا يُفتَح له بابُ
+      //  التخصيص. **ولا يُمرَّر عبر إعفاء «المريض القديم»**: المرورُ من هناك
+      //  كان سيُنتج جهازاً مصنَّعاً بسعرٍ لم يعتمده أحد وبلا معاينةٍ ولا
+      //  مراجعة — وهو بالضبط ما جاءت هذه المرحلة لتفصله.
+      //
+      //  **ولا أثرَ مالياً**: يُردّ قبل أيّ كتابة — لا أمرَ ولا كلفةَ ولا قيد.
+      if (liveEpisode.servicePath === "no_exam") {
+        return res.status(409).json({ error: NO_EXAM_PENDING_BOUNDARY });
+      }
       // الإعفاء التاريخي **لا يسري هنا**: مريضٌ قديم طلب جهازاً جديداً
       // صراحةً يمرّ بمعاينة ذلك الجهاز، وإلّا خصّصنا جهازاً لم يره طبيب.
       if (liveEpisode.status !== "examined") {
