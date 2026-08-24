@@ -5223,7 +5223,13 @@ export async function registerRoutes(
           total: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
         })
         .from(payments)
-        .where(and(gte(payments.date, dayStart), lte(payments.date, dayEnd)))
+        //  **ولوحةُ المالك المباشرة تصفّي المحذوف كأيّ رقمٍ ماليّ فعّال**
+        //  (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب): دفعةُ مريضٍ حُذف اليوم لا تبقى
+        //  في «الوارد المباشر» بينما اختفت من كلّ شاشةٍ أخرى.
+        .where(and(
+          belongsToActivePatientSql("payments"),
+          gte(payments.date, dayStart), lte(payments.date, dayEnd),
+        ))
         .groupBy(payments.branchId),
     ]);
 

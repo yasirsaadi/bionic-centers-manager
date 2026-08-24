@@ -1318,6 +1318,11 @@ async function main() {
       //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
       await http("DELETE", `/api/patients/${d.patientId}`, S.admin,
         { reason: "اختبار الكاسكيد" });
+      //  **والحذفُ النهائيُّ مقفلٌ حتى تنقضي مهلةُ الاستعادة** (المراجعة
+      //  الأخيرة، القسم أ): فتُدفَع المهلةُ إلى الماضي كي يختبر هذا القسمُ
+      //  الكاسكيدَ نفسَه لا بوّابةَ الانتظار.
+      await q(`UPDATE patients SET deleted_at = NOW() - interval '40 days',
+                 restore_until = NOW() - interval '10 days' WHERE id=$1`, [d.patientId]);
       const del = await http("POST", `/api/patient-trash/${d.patientId}/purge`,
         S.admin, { reason: "اختبار الكاسكيد" });
       same("٧٢. **حذفُ مريضٍ له تصحيحٌ إداريّ ينجح**", del.status < 300, true);

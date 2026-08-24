@@ -26,6 +26,7 @@ import { registerRoutes } from "./routes";
 import {
   RESTORE_WINDOW_DAYS, TRASH_TITLE, DELETE_REASON_LABEL, RESTORE_LABEL,
   PURGE_LABEL, RESTORE_EXPIRED_MESSAGE, GLOBAL_ADMIN_REQUIRED_MESSAGE,
+  PURGE_BEFORE_EXPIRY_MESSAGE,
   PATIENT_IN_TRASH_ERROR, IN_TRASH_HINT, IN_TRASH_ESCALATION,
   canTrashPatients, canRestorePatients, canPurgePatients,
   requiresGlobalAdmin, globalAdminReasons, daysLeft, isRestorable, parseReason,
@@ -117,6 +118,10 @@ const S: Record<string, any> = {
 async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
   const { rows } = await pool.query(text, params);
   return rows as T[];
+}
+/** أترفض القاعدةُ هذه الكتابة؟ — يُستعمَل لإثبات قيود CHECK مباشرةً (قسم ع). */
+async function violates(text: string, params: any[] = []): Promise<boolean> {
+  try { await q(text, params); return false; } catch { return true; }
 }
 async function http(method: string, path: string, session: any, body?: any) {
   const res = await fetch(BASE + path, {
@@ -778,14 +783,38 @@ async function main() {
     same("س١. الحذفُ النهائيُّ على ملفٍّ فعّال ⟶ ٤٠٩",
       (await purge(kill.id, S.admin)).status, 409);
     await del(kill.id, S.admin, "ملف تجريبي");
-    same("س٢. ومديرُ الفرع لا يملكه", (await purge(kill.id, S.mgr)).status, 403);
-    same("س٣. والطبيبُ كذلك", (await purge(kill.id, S.doc)).status, 403);
-    same("س٤. وبلا سبب ⟶ ٤٠٠", (await purge(kill.id, S.admin, "  ")).status, 400);
+
+    // ══ **بوّابةُ المهلة — لا يتخطّاها أحد** ═══════════════════════════════
+    //  حذفٌ نهائيّ فوريٌّ بعد النقل إلى السلّة مباشرةً — والمهلةُ ثلاثون
+    //  يوماً لم تنقضِ بعد. **ولا يُستثنى المسؤولُ العام**: لو استطاع
+    //  تجاوزَها لصار «حذف نهائي» بابَ حذفٍ فوريّ بزيّ سلّة، والوعدُ الذي
+    //  تراه الشاشةُ («يمكن استعادته خلال ثلاثين يوماً») كذباً.
+    const freshPurge = await purge(kill.id, S.admin, "محاولة مبكّرة");
+    same("س٢. **وحذفٌ نهائيّ فوريّ يُردّ ٤٠٩** — المهلةُ لم تنقضِ",
+      [freshPurge.status, freshPurge.body?.message],
+      [409, PURGE_BEFORE_EXPIRY_MESSAGE]);
+    same("س٣. **والصفُّ باقٍ في السلّة** — لم يُهدَم شيء",
+      (await q(`SELECT count(*)::int n FROM patients WHERE id=$1 AND deleted_at IS NOT NULL`,
+        [kill.id]))[0].n, 1);
+
+    same("س٤. ومديرُ الفرع لا يملك الحذف النهائي أصلاً — بصرف النظر عن المهلة",
+      (await purge(kill.id, S.mgr)).status, 403);
+    same("س٥. والطبيبُ كذلك", (await purge(kill.id, S.doc)).status, 403);
+    same("س٦. وبلا سبب ⟶ ٤٠٠", (await purge(kill.id, S.admin, "  ")).status, 400);
+
+    // ══ والمهلةُ تنقضي — البابُ يُفتَح الآن حصراً ═══════════════════════════
+    await q(`UPDATE patients SET deleted_at = NOW() - interval '40 days',
+               restore_until = NOW() - interval '10 days' WHERE id=$1`, [kill.id]);
+
+    same("س٧. **وحتى بعد الانقضاء لا يملكه مديرُ الفرع**",
+      (await purge(kill.id, S.mgr)).status, 403);
+    same("س٨. ولا الطبيب", (await purge(kill.id, S.doc)).status, 403);
+
     const pg = await purge(kill.id, S.admin, "ملف تجريبي — يُحذف نهائياً");
-    same("س٥. والمسؤولُ ينفّذه", pg.status, 200);
-    same("س٦. **والصفُّ ذهب فعلاً**",
+    same("س٩. **والمسؤولُ ينفّذه بعد انقضاء المهلة**", pg.status, 200);
+    same("س١٠. **والصفُّ ذهب فعلاً**",
       (await q(`SELECT count(*)::int n FROM patients WHERE id=$1`, [kill.id]))[0].n, 0);
-    same("س٧. وتوابعُه معه — الكاسكيدُ المُختبَر نفسُه",
+    same("س١١. وتوابعُه معه — الكاسكيدُ المُختبَر نفسُه",
       [(await q(`SELECT count(*)::int n FROM visits WHERE patient_id=$1`, [kill.id]))[0].n,
       (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [kill.id]))[0].n,
       (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [kill.id]))[0].n,
@@ -796,11 +825,11 @@ async function main() {
        WHERE entity_type='patient' AND entity_id=$1 AND action='purge' ORDER BY id DESC LIMIT 1`,
       [kill.id]);
     check(pgAudit !== undefined && String(pgAudit.notes ?? "").includes("حذف نهائي"),
-      "س٨. **والتدقيقُ كُتب قبل الهدم** — فبقي بعده");
-    same("س٩. **والسجلُّ الجنائيُّ للزيارات التقط الحذف الحقيقي**",
+      "س١٢. **والتدقيقُ كُتب قبل الهدم** — فبقي بعده");
+    same("س١٣. **والسجلُّ الجنائيُّ للزيارات التقط الحذف الحقيقي**",
       (await q(`SELECT count(*)::int n FROM visits_forensic_log WHERE visit_id=$1`,
         [killVisit.id]))[0].n, 1);
-    same("س١٠. والجنائيُّ للمعاينات كذلك",
+    same("س١٤. والجنائيُّ للمعاينات كذلك",
       (await q(`SELECT count(*)::int n FROM medical_exams_forensic_log WHERE exam_id=$1`,
         [killExam.id]))[0].n, 1);
 
@@ -815,10 +844,24 @@ async function main() {
       //  DELETE ولا TRUNCATE»، فقراءةُ الملفّ كلِّه تُمسك كلماتِ الشرح لا
       //  الجُملَ المنفَّذة — وهذا حارسٌ يصرخ على نفسه.
       const body = m.slice(m.indexOf("export const sql"));
-      check(!/\bDROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX|SCHEMA)\b/i.test(body)
+      //  **DROP CONSTRAINT مستثنًى من قائمة الهدم**: لا يمحو بياناً — يُزال
+      //  به قيدٌ ليُعاد تعريفُه فوراً بصياغةٍ أدقّ (تشديدُ الشكل، القسم ز).
+      //  الهدمُ الحقيقيُّ الذي يُحظَر هنا هو TABLE/COLUMN/INDEX/SCHEMA.
+      check(!/\bDROP\s+(TABLE|COLUMN|INDEX|SCHEMA)\b/i.test(body)
         && !/\bDELETE\s+FROM\b/i.test(body) && !/\bTRUNCATE\b/i.test(body)
         && !/\bUPDATE\s+patients\s+SET\b/i.test(body),
-        "ع٢. **وهو إضافيٌّ بالكامل** — لا DROP ولا DELETE ولا TRUNCATE ولا كتابةَ على صفٍّ قائم");
+        "ع٢. **وهو إضافيٌّ بالكامل** — لا DROP جدولٍ أو عمودٍ أو فهرسٍ، ولا DELETE ولا TRUNCATE ولا كتابةَ على صفٍّ قائم");
+      //  **وكلُّ DROP CONSTRAINT في الملفّ مقرونٌ فوراً بـADD CONSTRAINT
+      //  بالاسم نفسِه** — إعادةُ تعريفٍ لا إزالة، ولا نافذةَ زمنيةٍ بلا قيد.
+      //  **العدُّ على الجملة المنفَّذة فعلاً** (`ALTER TABLE ... DROP
+      //  CONSTRAINT`) لا على أيّ ذكرٍ للعبارة — وإلّا أمسك شرحَ هذا القسم
+      //  نفسِه («DROP CONSTRAINT IF EXISTS» داخل تعليقٍ توثيقيّ) بوصفه جملةً.
+      const allDrops = (body.match(/\bALTER\s+TABLE\s+\w+\s+DROP\s+CONSTRAINT\b/gi) ?? []).length;
+      const pairedDrops = [...body.matchAll(
+        /ALTER TABLE \w+ DROP CONSTRAINT IF EXISTS (\w+);\s*\n\s*ALTER TABLE \w+ ADD CONSTRAINT \1\b/g,
+      )].length;
+      check(allDrops === 2 && pairedDrops === allDrops,
+        "ع٢ب. **وكلُّ DROP CONSTRAINT (اثنان بالضبط) مقرونٌ بـADD CONSTRAINT بالاسم نفسِه فوراً** — لا إزالةَ صِرفة");
       check(/ADD COLUMN IF NOT EXISTS/.test(m) && /CREATE INDEX IF NOT EXISTS/.test(m),
         "ع٣. وقابلٌ للتشغيل مرّتين");
       check(!/DEFAULT/i.test(body.slice(body.indexOf("ALTER TABLE patients"),
@@ -830,8 +873,9 @@ async function main() {
       same("ع٥. والأعمدةُ الأحدَ عشرَ قائمة", cols.length, 11);
       const cons = await q<{ n: string }>(
         `SELECT conname n FROM pg_constraint WHERE conrelid='patients'::regclass
-          AND conname IN ('patients_deleted_shape_check','patients_active_clean_check')`);
-      same("ع٦. والقيدان يحرسان الشكل", cons.length, 2);
+          AND conname IN ('patients_deleted_shape_check','patients_active_clean_check',
+                           'patients_deleted_financial_snapshot_check')`);
+      same("ع٦. والقيودُ الثلاثةُ تحرس الشكل", cons.length, 3);
       //  والقاعدةُ نفسُها ترفض الحالةَ المستحيلة، لا الشيفرةُ وحدها.
       let rejected = false;
       const guinea = await mkPatient("قيدُ القاعدة");
@@ -849,6 +893,67 @@ async function main() {
           AND indexname IN ('ix_patients_active_branch','ix_patients_trash',
                             'ix_patients_trash_branch','ix_patients_restore_until')`);
       same("ع٩. والفهارسُ الأربعةُ الجزئية قائمة", idx.length, 4);
+
+      //  ── تشديدُ الشكل (مراجعة القسم ز) — أشكالٌ مستحيلةٌ تُردّها القاعدةُ
+      //     نفسُها، لا مراجعةُ كودٍ لاحقة ────────────────────────────────
+      //  «guinea» ما زال فعّالاً (deleted_at IS NULL) — عمودان كانا مكشوفين
+      //  تماماً في الصياغة الأولى للقيد (أربعةٌ من أحدَ عشر فقط).
+      check(await violates(`UPDATE patients SET deleted_by_role='admin' WHERE id=$1`, [guinea.id]),
+        "ع١٠. **وعمودٌ لم يكن محروساً إطلاقاً** (`deleted_by_role`) على ملفٍّ فعّال يُردّ الآن");
+      check(await violates(`UPDATE patients SET deleted_total_cost=5000 WHERE id=$1`, [guinea.id]),
+        "ع١١. وكذلك أيُّ حقلٍ من اللقطة المالية الخمسة (`deleted_total_cost` مثالاً)");
+
+      //  ومريضٌ محذوفٌ فعلياً عبر المسار الحقيقي — لا سطراً مصطنعاً — لنُثبت
+      //  أن اللقطةَ لا تُنقَص حقلاً واحداً بعد كتابتها الصحيحة الكاملة.
+      const shapeP = await mkPatient("تشديدُ الشكل");
+      const delRes = await del(shapeP.id, S.mgr, "لاختبار قيود الشكل");
+      same("ع١٢. الحذفُ الحقيقيُّ ينجح فيُنشئ لقطةً كاملةً صحيحة", delRes.status, 200);
+      const before = await trashState(shapeP.id);
+
+      check(await violates(`UPDATE patients SET deleted_total_paid=NULL WHERE id=$1`, [shapeP.id]),
+        "ع١٣. **ولا يُنقَص `deleted_total_paid` وحده من لقطةٍ مكتوبة** — نصفُ لقطةٍ مرفوض");
+      check(await violates(`UPDATE patients SET deleted_total_cost=NULL WHERE id=$1`, [shapeP.id]),
+        "ع١٤. ولا `deleted_total_cost` وحده");
+      check(await violates(`UPDATE patients SET deleted_remaining=NULL WHERE id=$1`, [shapeP.id]),
+        "ع١٥. ولا `deleted_remaining` وحده");
+      check(await violates(`UPDATE patients SET deleted_pending_json=NULL WHERE id=$1`, [shapeP.id]),
+        "ع١٦. ولا `deleted_pending_json` وحده");
+      check(await violates(`UPDATE patients SET deleted_needed_admin=NULL WHERE id=$1`, [shapeP.id]),
+        "ع١٧. ولا `deleted_needed_admin` وحده");
+
+      //  ومساواةُ الحساب نفسِها مفروضة — لا مجرّدَ «موجودة أم لا».
+      check(await violates(
+        `UPDATE patients SET deleted_remaining = deleted_remaining + 1 WHERE id=$1`, [shapeP.id]),
+        "ع١٨. **ومساواةُ الحساب مفروضة**: `remaining` مخالفٌ لـ`cost − paid` يُردّ رغم عدم NULL");
+
+      //  وشكلُ الـJSON كاملٌ لا شبهُ اكتمال: `{}` تمرّ من `IS NOT NULL` وحدَه
+      //  ولا تمرّ من فحص المفاتيح الخمسة.
+      check(await violates(`UPDATE patients SET deleted_pending_json='{}'::jsonb WHERE id=$1`,
+        [shapeP.id]),
+        "ع١٩. **و`{}` فارغةٌ ترُدّها القاعدة** رغم أنها ليست NULL");
+      check(await violates(`UPDATE patients SET deleted_pending_json=
+        '{"pendingCharges":0,"pendingDiscounts":0,"pendingPriceRequests":0,"openFollowups":0}'::jsonb
+        WHERE id=$1`, [shapeP.id]),
+        "ع٢٠. وناقصةٌ مفتاحاً واحداً من خمسة (`openSettlements` غائب) تُردّ كذلك");
+
+      //  وبعد كلّ هذه المحاولات المرفوضة، الصفُّ **سليمٌ بلا خدش** — كلُّ
+      //  محاولةٍ عولجت بمعاملتها الخاصة وتراجعت وحدها.
+      const after = await trashState(shapeP.id);
+      same("ع٢١. **والصفُّ بعد كلّ المحاولات المرفوضة نفسُه حرفياً**", after, before);
+
+      //  وكتابةٌ صحيحةٌ كاملة — حتى من خارج مسار التطبيق — تنجح: القيدُ
+      //  حقيقةُ شكلٍ في القاعدة، لا حارسٌ يثق بمصدر الكتابة.
+      const manual = await mkPatient("كتابةٌ يدويّةٌ صحيحة", { cost: 9000 });
+      const validWrite = !(await violates(`UPDATE patients SET
+          deleted_at = NOW(), restore_until = NOW() + interval '30 days',
+          deleted_reason = 'كتابةٌ يدويّةٌ لاختبار الشكل الصحيح',
+          deleted_by_user_id = $2, deleted_by_name = 'يدويّ', deleted_by_role = 'admin',
+          deleted_total_cost = 9000, deleted_total_paid = 3000, deleted_remaining = 6000,
+          deleted_pending_json = '{"pendingCharges":0,"pendingDiscounts":0,
+            "pendingPriceRequests":0,"openFollowups":0,"openSettlements":0}'::jsonb,
+          deleted_needed_admin = true
+        WHERE id=$1`, [manual.id, ADMIN]));
+      check(validWrite, "ع٢٢. **وكتابةٌ يدويّةٌ مطابقةُ الشكل تماماً تنجح** — القيدُ لا يرفض الصحيح");
     }
 
     // ══ ف. عقدُ الشاشات ═══════════════════════════════════════════════════
@@ -883,6 +988,23 @@ async function main() {
       check(/storage\.deletePatient\s*\(/.test(trashStore)
         && trashStore.indexOf("logAudit") < trashStore.lastIndexOf("storage.deletePatient("),
         "ف٨. والكاسكيدُ يُنادى من «الحذف النهائي» وحده، بعد سطر التدقيق");
+      //  **والزرُّ لا يُعرَض إلّا بعد انقضاء المهلة** — الخادمُ سيردّه لو
+      //  ضُغط أثناءها، فالشاشةُ لا تعرض ما سيُردّ.
+      check(/mayPurge\s*&&\s*!r\.restorable/.test(page),
+        "ف٩. **وزرُّ «حذف نهائي» مشروطٌ بانقضاء المهلة** — لا يُعرَض أثناءها");
+      //  **ولا زرَّ «فتح الملف»** — الوجهةُ `/patients/:id` تُردّ ٤٠٤ عمداً
+      //  لملفٍّ محذوف، فزرٌّ يعد بفتحها وعدٌ كاذب (القسمُ F من المراجعة).
+      //  **والفحصُ على الكودِ الفعليّ لا على النصّ**: تعليقُ الشرح أعلاه
+      //  يذكر العبارةَ نفسَها فلا يصحّ فحصُ سلسلةٍ نصّية بسيطة.
+      check(!page.includes("data-testid={`button-open-")
+        && !/href=\{`\/patients\/\$\{r\.id\}`\}/.test(page)
+        && !page.includes('import { Link } from "wouter"'),
+        "ف١٠. **ولا زرَّ «فتح الملف»** — وجهتُه تُردّ ٤٠٤ حتماً لملفٍّ محذوف");
+      //  **والبوّابةُ نفسُها موثَّقةٌ في مخزن السلّة** — رسالتُها المشتركة.
+      const trashStoreGate = trashStore.includes("PURGE_BEFORE_EXPIRY_MESSAGE")
+        && trashStore.includes("still_within_window");
+      check(trashStoreGate,
+        "ف١١. ومخزنُ السلّة يفرض بوّابةَ المهلة بالرسالة المشتركة نفسِها");
     }
   } finally {
     await cleanup();

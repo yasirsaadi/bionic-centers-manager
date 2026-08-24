@@ -14,7 +14,6 @@
 // والمحوُ فعلٌ يقرّره المسؤولُ العام صراحةً بسببٍ مكتوب وتأكيدٍ ثانٍ.
 
 import { useState } from "react";
-import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,7 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidateAfterPatientTrashChange } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  Trash2, Undo2, Loader2, Search, ShieldAlert, ExternalLink, AlertTriangle, Clock,
+  Trash2, Undo2, Loader2, Search, ShieldAlert, AlertTriangle, Clock,
 } from "lucide-react";
 import {
   TRASH_TITLE, RESTORE_LABEL, PURGE_LABEL, PURGE_REASON_LABEL,
@@ -272,6 +271,14 @@ export default function PatientTrash() {
                   )}
                 </div>
 
+                {/*  ══ لا «فتح الملف» من هنا ══════════════════════════════
+                      الملفُّ محذوفٌ فعلاً من النظام الفعّال، وصفحتُه العادية
+                      `/patients/:id` تُردّ ٤٠٤ عمداً (نقطةُ الخنق
+                      `storage.getPatient` تستثني المحذوف بلا استثناء). فزرٌّ
+                      يعد بفتحها كان وعداً كاذباً يقود إلى صفحةِ خطأ — والبطاقةُ
+                      هنا تحمل أصلاً كلَّ ما يلزم للقرار: مَن حذف ومتى ولماذا
+                      واللقطةَ المالية. أرشيفٌ للقراءة يُفتَح منه الملفُّ لاحقاً
+                      قرارُ منتجٍ منفصل، لا جزءٌ من هذه المرحلة.  */}
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <Button
                     variant="default"
@@ -283,13 +290,11 @@ export default function PatientTrash() {
                     <Undo2 className="w-4 h-4" />
                     {RESTORE_LABEL}
                   </Button>
-                  <Link href={`/patients/${r.id}`}>
-                    <Button variant="ghost" className="gap-2" data-testid={`button-open-${r.id}`}>
-                      <ExternalLink className="w-4 h-4" />
-                      فتح الملف
-                    </Button>
-                  </Link>
-                  {mayPurge && (
+                  {/*  ══ والحذفُ النهائيّ لا يُعرَض إلّا بعد انقضاء المهلة ══
+                        بابُه المهلةُ المنقضية فقط — الخادمُ يفرض هذا بصرامة
+                        (`PURGE_BEFORE_EXPIRY_MESSAGE`، ٤٠٩ ولو كان الطالبُ
+                        المسؤولَ العام)، والزرُّ لا يُعرَض أصلاً وهو سيُردّ.  */}
+                  {mayPurge && !r.restorable && (
                     <Button
                       variant="outline"
                       className="gap-2 text-red-600 border-red-200 hover:bg-red-50 mr-auto"

@@ -1750,6 +1750,26 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(surveyAnswers).where(inArray(surveyAnswers.responseId, respIds));
         await tx.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
       }
+      //  ══ **إقصاءُ مالِ هذا المريض عن القوائم الفعّالة إلى الأبد**
+      //  (مراجعة ٢٠٢٦-٠٨-٢٤ — راجع `server/accounting/ledger.ts:
+      //  PATIENT_DELETION_EXCLUSION`) ═══════════════════════════════════
+      //  **قبل** نزع الرابط في السطر التالي — بعده لا سبيل لمعرفة أن هذا
+      //  القيد كان مالَ هذا المريض، فيعود صامتاً إلى ميزان المراجعة.
+      //
+      //  تُوسَم القيودُ التي كانت **كلُّ** أسطرها لهذا المريض وحده — الحالةُ
+      //  التي يكتبها كلُّ كاتبٍ آليّ (دفعة · فاتورة · دفعةُ فاتورة) دائماً —
+      //  فالإقصاءُ على القيد الكامل لا يكسر توازنَ مدينه ودائنه أبداً.
+      //  **وقيدٌ يدويّ خلط عدّة مرضى في أسطره لا يُوسَم**: لا نخمّن نصيبَ
+      //  مريضٍ واحدٍ من قيدٍ مختلط، ولا يختفي مالُ مريضٍ آخرَ فعّالٍ شاركه.
+      await tx.execute(sql`
+        UPDATE journal_entries SET purged_patient_money = TRUE
+         WHERE id IN (
+           SELECT jl.entry_id FROM journal_lines jl
+            GROUP BY jl.entry_id
+           HAVING COUNT(*) FILTER (WHERE jl.patient_id IS DISTINCT FROM ${id}) = 0
+                  AND COUNT(*) FILTER (WHERE jl.patient_id = ${id}) > 0
+         )
+      `);
       await tx.update(journalLines).set({ patientId: null }).where(eq(journalLines.patientId, id));
       // The event log FKs the patient (migration 044). It is the patient's own
       // narrative, so it goes with them. Nothing references patient_events, so
@@ -2928,13 +2948,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Installment Plans
+  //  **وخططُ التقسيط النشِطة تصفّي المحذوف كأيّ قائمةٍ ماليةٍ فعّالة**
+  //  (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب). والصفُّ نفسُه يبقى، ويظهر ثانيةً عند
+  //  الاستعادة — نفسُ قاعدة الفواتير والدفعات.
   async getInstallmentPlans(branchId?: number): Promise<InstallmentPlan[]> {
-    if (branchId) {
-      return await db.select().from(installmentPlans)
-        .where(eq(installmentPlans.branchId, branchId))
-        .orderBy(desc(installmentPlans.createdAt));
-    }
-    return await db.select().from(installmentPlans).orderBy(desc(installmentPlans.createdAt));
+    const conds: any[] = [belongsToActivePatientSql("installment_plans")];
+    if (branchId) conds.push(eq(installmentPlans.branchId, branchId));
+    return await db.select().from(installmentPlans)
+      .where(and(...conds))
+      .orderBy(desc(installmentPlans.createdAt));
   }
 
   async getInstallmentPlansByPatient(patientId: number): Promise<InstallmentPlan[]> {
@@ -3054,20 +3076,25 @@ export class DatabaseStorage implements IStorage {
       ? new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000 + shift)
       : null;
 
-    const paidConds = [];
+    //  **والمحذوفُ خارج تدفّق الفترة أيضاً** (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب):
+    //  الشرطُ السابق كان يصفّي أرقامَ «المخزون» (الدَّين ونسبة التحصيل)
+    //  وحدها ويترك أرقامَ «التدفّق» (الوارد والمبيعات لفترةٍ) تقرأ دفعاتِ
+    //  وقيودَ المحذوفين. فمريضٌ حُذف اليوم يبقى مبلغُه في «وارد اليوم» حتى
+    //  بعد خروجه من كلّ شاشةٍ أخرى — تناقضٌ لا يراه المستخدمُ سببَه.
+    const paidConds: any[] = [belongsToActivePatientSql("payments")];
     if (branchId) paidConds.push(eq(payments.branchId, branchId));
     if (rangeStart) paidConds.push(gte(payments.date, rangeStart));
     if (endExclusive) paidConds.push(sql`${payments.date} < ${endExclusive}`);
-    const paidWhere = paidConds.length > 0 ? and(...paidConds) : sql`TRUE`;
+    const paidWhere = and(...paidConds);
     const paidQuery = await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
       .from(payments).where(paidWhere);
     const totalPaid = Number(paidQuery[0]?.total) || 0;
 
-    const revConds = [];
+    const revConds: any[] = [belongsToActivePatientSql("cost_entries")];
     if (branchId) revConds.push(eq(costEntries.branchId, branchId));
     if (rangeStart) revConds.push(gte(costEntries.createdAt, rangeStart));
     if (endExclusive) revConds.push(sql`${costEntries.createdAt} < ${endExclusive}`);
-    const revWhereFlow = revConds.length > 0 ? and(...revConds) : sql`TRUE`;
+    const revWhereFlow = and(...revConds);
     const revQuery = await db.select({ total: sql<string>`COALESCE(SUM(${costEntries.amount}), 0)` })
       .from(costEntries).where(revWhereFlow);
     const totalRevenue = Number(revQuery[0]?.total) || 0;
@@ -3174,7 +3201,7 @@ export class DatabaseStorage implements IStorage {
         LEFT JOIN patient_cases c ON c.id = e.case_id
         LEFT JOIN patient_device_episodes pe ON pe.id = e.device_episode_id
         LEFT JOIN patient_cases ec ON ec.id = pe.case_id
-       WHERE TRUE${bRevBranch}${bRevStart}${bRevEnd}
+       WHERE ${belongsToActivePatientSql("e")}${bRevBranch}${bRevStart}${bRevEnd}
        GROUP BY 1
     `);
     const revenueByDept = (revenueRowsRaw.rows ?? []).map((r: any) => ({
@@ -3247,12 +3274,14 @@ export class DatabaseStorage implements IStorage {
     // (filtered by branch) so the UI can show "from X to today, Y days".
     let effectiveStartDate: string | null = startDate ?? null;
     if (!effectiveStartDate) {
-      const earliestPaymentCond = branchId ? [eq(payments.branchId, branchId)] : [];
+      //  **ولا دفعةَ محذوفٍ تُمدِّد نافذةَ التقرير الفعّال** (مراجعة
+      //  ٢٠٢٦-٠٨-٢٤): مريضٌ حُذف قبل سنتين ودفعتُه هي الأقدم في الفرع كانت
+      //  تجعل «من X إلى اليوم» يبدأ من تاريخٍ لا يخصّ أيّ ملفٍّ فعّال اليوم.
+      const earliestPaymentCond: any[] = [belongsToActivePatientSql("payments")];
+      if (branchId) earliestPaymentCond.push(eq(payments.branchId, branchId));
       const earliestExpenseCond = branchId ? [eq(expenses.branchId, branchId)] : [];
-      const earliestPaymentQ = earliestPaymentCond.length > 0
-        ? await db.select({ min: sql<string>`MIN(${payments.date})` })
-            .from(payments).where(and(...earliestPaymentCond))
-        : await db.select({ min: sql<string>`MIN(${payments.date})` }).from(payments);
+      const earliestPaymentQ = await db.select({ min: sql<string>`MIN(${payments.date})` })
+        .from(payments).where(and(...earliestPaymentCond));
       const earliestExpenseQ = earliestExpenseCond.length > 0
         ? await db.select({ min: sql<string>`MIN(${expenses.expenseDate})` })
             .from(expenses).where(and(...earliestExpenseCond))
@@ -3329,7 +3358,13 @@ export class DatabaseStorage implements IStorage {
     // to Baghdad we get exactly the calendar day the user typed.
     const dayStart = new Date(`${date}T00:00:00+03:00`);
     const dayEnd = new Date(`${date}T23:59:59.999+03:00`);
-    const branchFilter = branchId ? eq(payments.branchId, branchId) : sql`TRUE`;
+    //  **نقطةُ خنقٍ واحدة**: كلُّ استعلامات الدفعات الأربعة أدناه (اليوم ·
+    //  ما قبله للترحيل · التوزيع بالنوع) تشترك في `branchFilter` نفسِه، فلا
+    //  ينسى أحدُها تصفيةَ المحذوف بينما يتذكّرها غيرُه (مراجعة ٢٠٢٦-٠٨-٢٤).
+    const branchFilter = and(
+      belongsToActivePatientSql("payments"),
+      branchId ? eq(payments.branchId, branchId) : sql`TRUE`,
+    );
     const expBranchFilter = branchId ? eq(expenses.branchId, branchId) : sql`TRUE`;
 
     // Today's total payments
@@ -3448,18 +3483,18 @@ export class DatabaseStorage implements IStorage {
 
   // ======================= INVOICE METHODS =======================
 
+  //  **والفواتيرُ خارج القوائم الفعّالة معه** (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب):
+  //  صفُّ الفاتورة يبقى كما هو، لكن قائمةَ المحاسبة النشِطة لا تحمل فاتورةَ
+  //  ملفٍّ خرج من النظام — نفسُ القاعدة على الدفعة وقيد الكلفة.
   async getInvoices(branchId?: number, status?: string, patientId?: number, startDate?: string, endDate?: string): Promise<Invoice[]> {
-    const conditions = [];
+    const conditions: any[] = [belongsToActivePatientSql("invoices")];
     if (branchId) conditions.push(eq(invoices.branchId, branchId));
     if (status) conditions.push(eq(invoices.status, status));
     if (patientId) conditions.push(eq(invoices.patientId, patientId));
     if (startDate) conditions.push(gte(invoices.invoiceDate, startDate));
     if (endDate) conditions.push(lte(invoices.invoiceDate, endDate));
 
-    if (conditions.length > 0) {
-      return await db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
-    }
-    return await db.select().from(invoices).orderBy(desc(invoices.createdAt));
+    return await db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
   }
 
   async getInvoiceById(id: number): Promise<Invoice | undefined> {
@@ -3528,22 +3563,18 @@ export class DatabaseStorage implements IStorage {
     paidAmount: number;
     pendingAmount: number;
   }> {
-    const conditions = [];
+    //  **ونفسُ التصفية على إحصاء الفواتير** — يقرأها التقريرُ الشهريّ للمساعد
+    //  الذكيّ (`ai/monthly_report.ts`) أيضاً، فانحرافُها هنا ينحرف هناك.
+    const conditions: any[] = [belongsToActivePatientSql("invoices")];
     if (branchId) conditions.push(eq(invoices.branchId, branchId));
     if (startDate) conditions.push(gte(invoices.invoiceDate, startDate));
     if (endDate) conditions.push(lte(invoices.invoiceDate, endDate));
 
-    const query = conditions.length > 0
-      ? await db.select({
-          totalInvoices: sql<number>`COUNT(*)::integer`,
-          totalAmount: sql<number>`COALESCE(SUM(${invoices.total}), 0)::integer`,
-          paidAmount: sql<number>`COALESCE(SUM(${invoices.paidAmount}), 0)::integer`
-        }).from(invoices).where(and(...conditions))
-      : await db.select({
-          totalInvoices: sql<number>`COUNT(*)::integer`,
-          totalAmount: sql<number>`COALESCE(SUM(${invoices.total}), 0)::integer`,
-          paidAmount: sql<number>`COALESCE(SUM(${invoices.paidAmount}), 0)::integer`
-        }).from(invoices);
+    const query = await db.select({
+      totalInvoices: sql<number>`COUNT(*)::integer`,
+      totalAmount: sql<number>`COALESCE(SUM(${invoices.total}), 0)::integer`,
+      paidAmount: sql<number>`COALESCE(SUM(${invoices.paidAmount}), 0)::integer`
+    }).from(invoices).where(and(...conditions));
 
     const result = query[0] || { totalInvoices: 0, totalAmount: 0, paidAmount: 0 };
     

@@ -25,6 +25,7 @@ import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import {
   RESTORE_WINDOW_DAYS, RESTORE_EXPIRED_MESSAGE, GLOBAL_ADMIN_REQUIRED_MESSAGE,
+  PURGE_BEFORE_EXPIRY_MESSAGE,
   canTrashPatients, canPurgePatients, canRestorePatients,
   requiresGlobalAdmin, globalAdminReasons, parseReason,
   type TrashFinancialSnapshot, type TrashSessionLike,
@@ -339,10 +340,14 @@ export async function restorePatient(params: {
 
 /**
  * **الفعلُ الوحيدُ في هذا المسار الذي لا رجعةَ فيه** — للمسؤول العام وحده،
- * من داخل السلّة، بسببٍ مكتوب.
+ * من داخل السلّة، بسببٍ مكتوب، **وبعد انقضاء مهلة الاستعادة**.
  *
  * ولا يُنفَّذ على ملفٍّ فعّال: بابُ الإخراج هو السلّة، ثمّ الهدمُ بقرارٍ
  * ثانٍ منفصل. فلا ضغطةٌ واحدة تمحو ملفّاً حيّاً.
+ *
+ * **ولا على ملفٍّ ما زالت مهلتُه قائمة** — ولو كان الطالبُ المسؤولَ العام
+ * نفسَه: ثلاثون يوماً ضمانةٌ لا عدّاداً يُقفَز فوقه، وإلّا صار «حذف
+ * نهائي» فتحاً فورياً لباب السلّة يبطل الوعد الذي تراه الشاشة.
  *
  * **والتدقيقُ يُكتب قبل الهدم**، لأن الكاسكيد يمحو كلَّ ما يمكن أن يُقرأ
  * بعده. و`storage.deletePatient` تفتح معاملتَها — فسطرُ التدقيق مستقلٌّ
@@ -362,6 +367,26 @@ export async function purgePatient(params: {
   if (!row) throw new TrashError("المريض غير موجود", 404);
   if (!row.deletedAt) {
     throw new TrashError("الحذف النهائي من المحذوفات فقط — انقل الملف إلى المحذوفات أولاً", 409);
+  }
+
+  //  ══ **ومهلةُ الاستعادة ثلاثون يوماً لا يتخطّاها أحد** ═══════════════
+  //  الحذفُ النهائيُّ بابٌ يُفتَح **بعد** انقضاء المهلة فقط — وإلّا صار
+  //  «حذفاً نهائياً فورياً» بزيّ سلّة، والوعدُ الذي تراه الشاشةُ («يمكن
+  //  استعادته خلال ثلاثين يوماً») كذباً يكشفه أوّلُ مسؤولٍ يضغط الزرّ.
+  //
+  //  **والمسؤولُ العام لا يُستثنى من هذا الشرط** — خلافاً لاشتراط
+  //  الالتزام الماليّ في `deleteDecision` الذي يُستثنى منه هو وحده: ذاك
+  //  سلطةٌ مالية، وهذه مهلةٌ زمنيّة للجميع بلا استثناء.
+  //
+  //  **والقاعدةُ هي الحَكَم**: `NOW() > restore_until` يُقرأ من الخادم لا
+  //  يُقاس بساعة العميل ولا بطرحِ تواريخَ في جافاسكربت.
+  const gate = await db.execute<{ still_within_window: boolean }>(sql`
+    SELECT (NOW() <= restore_until) AS still_within_window
+      FROM patients WHERE id = ${patientId}
+  `);
+  const stillWithinWindow = (gate.rows ?? [])[0]?.still_within_window === true;
+  if (stillWithinWindow) {
+    throw new TrashError(PURGE_BEFORE_EXPIRY_MESSAGE, 409);
   }
 
   const snapshot = await computeSnapshot(patientId);

@@ -891,6 +891,11 @@ async function main() {
       const killer = { ...S.manager, isAdmin: true, role: "admin",
         permissions: { ...S.manager.permissions, canDeletePatients: true } };
       await http("DELETE", `/api/patients/${p}`, killer, { reason: "اختبار الكاسكيد" });
+      //  **والحذفُ النهائيُّ مقفلٌ حتى تنقضي مهلةُ الاستعادة** (المراجعة
+      //  الأخيرة، القسم أ): فتُدفَع المهلةُ إلى الماضي كي يختبر هذا القسمُ
+      //  الكاسكيدَ نفسَه لا بوّابةَ الانتظار.
+      await q(`UPDATE patients SET deleted_at = NOW() - interval '40 days',
+                 restore_until = NOW() - interval '10 days' WHERE id=$1`, [p]);
       const del = await http("POST", `/api/patient-trash/${p}/purge`, killer,
         { reason: "اختبار الكاسكيد" });
       check(del.status === 200 || del.status === 204,
