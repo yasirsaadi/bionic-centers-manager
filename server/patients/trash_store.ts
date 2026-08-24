@@ -349,9 +349,26 @@ export async function restorePatient(params: {
  * نفسَه: ثلاثون يوماً ضمانةٌ لا عدّاداً يُقفَز فوقه، وإلّا صار «حذف
  * نهائي» فتحاً فورياً لباب السلّة يبطل الوعد الذي تراه الشاشة.
  *
- * **والتدقيقُ يُكتب قبل الهدم**، لأن الكاسكيد يمحو كلَّ ما يمكن أن يُقرأ
- * بعده. و`storage.deletePatient` تفتح معاملتَها — فسطرُ التدقيق مستقلٌّ
- * سابقٌ لها عمداً، وهو ترتيبُ نقطة الحذف القائمة نفسُه.
+ * ══ **معاملةٌ واحدة ذرّية من القفل إلى الهدم — لا خمسُ عملياتٍ منفصلة**
+ *    (تصحيحٌ ٢٠٢٦-٠٨-٢٤: الصياغةُ الأولى فتحت القفلَ والفحصَ واللقطةَ
+ *    والتدقيقَ في اتصالاتٍ/معاملاتٍ مستقلّة ثمّ نادت `storage.deletePatient`
+ *    التي تفتح معاملتَها **الخاصّة**؛ فضغطتان متزامنتان كانتا قد تُنتجان
+ *    حذفَين حقيقيّين أو تدقيقاً يتيماً بلا هدم) ═══════════════════════
+ * قفلُ صفّ المريض (`SELECT ... FOR UPDATE`) **أوّلُ عملٍ على القاعدة هنا
+ * ولا عمل قبله** — ثمّ يُفحَص تحت القفل نفسِه: أموجود؟ أمحذوفٌ فعلاً؟
+ * أانقضت مهلتُه؟ فحسابُ اللقطة المالية وكتابةُ سطر التدقيق والهدمُ الكاملُ
+ * (`storage.deletePatientTx` — الجسمُ الذرّيُّ نفسُه الذي ينادِيه
+ * `storage.deletePatient` من معاملته الخاصّة في كلّ مسارٍ آخر، **بلا حرفٍ
+ * يتغيّر فيه**) تقع كلُّها **في هذه المعاملة بعينها**: تنجح معاً أو تتراجع
+ * معاً. فشلٌ في أيّ نقطةٍ من الكاسكيد يُسقط سطرَ التدقيق أعلاه معه —
+ * **لا يبقى تدقيقٌ يزعم حذفاً نهائياً لم يقع فعلاً**.
+ *
+ * وضغطتان متزامنتان تتسلسلان على القفل: الثانيةُ تنتظر، فإن أنجزت الأولى
+ * الهدمَ وغادر الصفُّ فعلاً، تعود الثانيةُ بصفرِ صفوفٍ ⟶ ٤٠٤ («المريض غير
+ * موجود») — لا هدمٌ مضاعف ولا سطرُ تدقيقٍ ثانٍ.
+ *
+ * **والقاعدةُ هي الحَكَم**: `NOW() > restore_until` يُقرأ من الخادم تحت
+ * القفل نفسِه، لا يُقاس بساعة العميل ولا بطرحِ تواريخَ في جافاسكربت.
  */
 export async function purgePatient(params: {
   patientId: number; reason: unknown; actor: TrashActor;
@@ -363,50 +380,57 @@ export async function purgePatient(params: {
   const parsed = parseReason(params.reason);
   if (!parsed.ok) throw new TrashError("سبب الحذف النهائي مطلوب", 400);
 
-  const row = await storage.getPatientAnyState(patientId);
-  if (!row) throw new TrashError("المريض غير موجود", 404);
-  if (!row.deletedAt) {
-    throw new TrashError("الحذف النهائي من المحذوفات فقط — انقل الملف إلى المحذوفات أولاً", 409);
-  }
+  return await db.transaction(async (tx: any) => {
+    //  **القفلُ أوّلاً — قبل أيّ قراءةٍ أخرى تقرّر شيئاً.**
+    const gate = await tx.execute(sql`
+      SELECT id, deleted_at, (NOW() > restore_until) AS window_expired
+        FROM patients WHERE id = ${patientId} FOR UPDATE
+    `);
+    const gateRow: any = (gate.rows ?? [])[0];
+    if (!gateRow) throw new TrashError("المريض غير موجود", 404);
+    if (!gateRow.deleted_at) {
+      throw new TrashError("الحذف النهائي من المحذوفات فقط — انقل الملف إلى المحذوفات أولاً", 409);
+    }
+    //  ══ **ومهلةُ الاستعادة ثلاثون يوماً لا يتخطّاها أحد** ═══════════════
+    //  الحذفُ النهائيُّ بابٌ يُفتَح **بعد** انقضاء المهلة فقط — وإلّا صار
+    //  «حذفاً نهائياً فورياً» بزيّ سلّة، والوعدُ الذي تراه الشاشةُ («يمكن
+    //  استعادته خلال ثلاثين يوماً») كذباً يكشفه أوّلُ مسؤولٍ يضغط الزرّ.
+    //
+    //  **والمسؤولُ العام لا يُستثنى من هذا الشرط** — خلافاً لاشتراط
+    //  الالتزام الماليّ في `deleteDecision` الذي يُستثنى منه هو وحده: ذاك
+    //  سلطةٌ مالية، وهذه مهلةٌ زمنيّة للجميع بلا استثناء.
+    if (gateRow.window_expired !== true) {
+      throw new TrashError(PURGE_BEFORE_EXPIRY_MESSAGE, 409);
+    }
 
-  //  ══ **ومهلةُ الاستعادة ثلاثون يوماً لا يتخطّاها أحد** ═══════════════
-  //  الحذفُ النهائيُّ بابٌ يُفتَح **بعد** انقضاء المهلة فقط — وإلّا صار
-  //  «حذفاً نهائياً فورياً» بزيّ سلّة، والوعدُ الذي تراه الشاشةُ («يمكن
-  //  استعادته خلال ثلاثين يوماً») كذباً يكشفه أوّلُ مسؤولٍ يضغط الزرّ.
-  //
-  //  **والمسؤولُ العام لا يُستثنى من هذا الشرط** — خلافاً لاشتراط
-  //  الالتزام الماليّ في `deleteDecision` الذي يُستثنى منه هو وحده: ذاك
-  //  سلطةٌ مالية، وهذه مهلةٌ زمنيّة للجميع بلا استثناء.
-  //
-  //  **والقاعدةُ هي الحَكَم**: `NOW() > restore_until` يُقرأ من الخادم لا
-  //  يُقاس بساعة العميل ولا بطرحِ تواريخَ في جافاسكربت.
-  const gate = await db.execute<{ still_within_window: boolean }>(sql`
-    SELECT (NOW() <= restore_until) AS still_within_window
-      FROM patients WHERE id = ${patientId}
-  `);
-  const stillWithinWindow = (gate.rows ?? [])[0]?.still_within_window === true;
-  if (stillWithinWindow) {
-    throw new TrashError(PURGE_BEFORE_EXPIRY_MESSAGE, 409);
-  }
+    //  **حالُ الصفّ كاملةً — الآن، تحت القفل نفسِه** (لا قبل فتح المعاملة):
+    //  للّقطة المالية وسطر التدقيق. نفسُ الدالّة `getPatientAnyState`
+    //  القائمة، لكن **بمعاملةِ هذا الاستدعاء** لا بقراءةٍ منفصلة سابقة.
+    const row = await storage.getPatientAnyState(patientId, tx);
+    // (لن يقع هذا بعد نجاح القفل أعلاه — حارسٌ إضافيّ لا أكثر.)
+    if (!row) throw new TrashError("المريض غير موجود", 404);
+    const snapshot = await computeSnapshot(patientId, tx);
 
-  const snapshot = await computeSnapshot(patientId);
-  await logAudit({
-    entityType: "patient", entityId: patientId, action: "purge",
-    userId: actor.userId ?? null, userName: actor.displayName ?? null,
-    branchId: row.branchId ?? null,
-    oldValues: {
-      patient: row,
-      financialAtPurge: snapshot,
-      deletedAt: row.deletedAt, deletedReason: row.deletedReason,
-      deletedByName: row.deletedByName,
-    },
-    ipAddress: actor.ipAddress ?? null, userAgent: actor.userAgent ?? null,
-    notes: `حذف نهائي — ${parsed.value}`,
+    await logAudit({
+      entityType: "patient", entityId: patientId, action: "purge",
+      userId: actor.userId ?? null, userName: actor.displayName ?? null,
+      branchId: row.branchId ?? null,
+      oldValues: {
+        patient: row,
+        financialAtPurge: snapshot,
+        deletedAt: row.deletedAt, deletedReason: row.deletedReason,
+        deletedByName: row.deletedByName,
+      },
+      ipAddress: actor.ipAddress ?? null, userAgent: actor.userAgent ?? null,
+      notes: `حذف نهائي — ${parsed.value}`,
+      tx,
+    });
+
+    //  **الكاسكيدُ الذرّيُّ نفسُه — في هذه المعاملة بعينها، لا معاملةً
+    //  ثانية.** فشلٌ هنا يُسقط سطرَ التدقيق أعلاه معه تلقائياً.
+    await storage.deletePatientTx(tx, patientId);
+    return { patientId };
   });
-
-  //  **الكاسكيدُ المُختبَر نفسُه بلا حرفٍ يتغيّر.**
-  await storage.deletePatient(patientId);
-  return { patientId };
 }
 
 // ── ⑦ قراءةُ السلّة ──────────────────────────────────────────────────────

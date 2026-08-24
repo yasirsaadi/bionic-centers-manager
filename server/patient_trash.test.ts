@@ -977,17 +977,23 @@ async function main() {
       check(details.includes("DeletePatientDialog")
         && !/permissions\.canDeletePatients/.test(details),
         "ف٦. وصفحةُ المريض تفتح النافذةَ الجديدة ولا تحرس بالعَلَم القديم");
-      //  **حارسٌ معماريّ**: لا كاسكيدَ هادمٌ في مسار الحذف العاديّ.
+      //  **حارسٌ معماريّ**: لا كاسكيدَ هادمٌ في مسار الحذف العاديّ — لا
+      //  الغلافُ العامّ `deletePatient` ولا الجسمُ الذرّيُّ `deletePatientTx`.
       const routes = readFileSync(join(process.cwd(), "server/routes.ts"), "utf8");
       const delBlock = routes.slice(routes.indexOf("app.delete(api.patients.delete.path"),
         routes.indexOf("app.delete(api.patients.delete.path") + 1400);
-      check(!/storage\.deletePatient\s*\(/.test(delBlock),
-        "ف٧. **ولا `storage.deletePatient` في نقطة الحذف العاديّ**");
+      check(!/storage\.deletePatient\w*\s*\(/.test(delBlock),
+        "ف٧. **ولا `storage.deletePatient` (ولا `deletePatientTx`) في نقطة الحذف العاديّ**");
       const trashStore = readFileSync(join(process.cwd(),
         "server/patients/trash_store.ts"), "utf8");
-      check(/storage\.deletePatient\s*\(/.test(trashStore)
-        && trashStore.indexOf("logAudit") < trashStore.lastIndexOf("storage.deletePatient("),
-        "ف٨. والكاسكيدُ يُنادى من «الحذف النهائي» وحده، بعد سطر التدقيق");
+      //  **والكاسكيدُ الذرّيُّ يُنادى من «الحذف النهائي» وحده، بعد سطر
+      //  التدقيق، ومن معاملته المفتوحة هو** — لا `storage.deletePatient`
+      //  (الغلافُ الذي يفتح معاملةً ثانية مستقلّة) بل `deletePatientTx`
+      //  مباشرةً بتمرير `tx` نفسِها (مراجعة الذرّية ٢٠٢٦-٠٨-٢٤).
+      check(/storage\.deletePatientTx\s*\(\s*tx\s*,/.test(trashStore)
+        && !/storage\.deletePatient\s*\(/.test(trashStore)
+        && trashStore.indexOf("logAudit") < trashStore.lastIndexOf("storage.deletePatientTx("),
+        "ف٨. والكاسكيدُ الذرّيُّ يُنادى من «الحذف النهائي» وحده، بعد سطر التدقيق، ومن معاملته هو");
       //  **والزرُّ لا يُعرَض إلّا بعد انقضاء المهلة** — الخادمُ سيردّه لو
       //  ضُغط أثناءها، فالشاشةُ لا تعرض ما سيُردّ.
       check(/mayPurge\s*&&\s*!r\.restorable/.test(page),
@@ -1002,9 +1008,39 @@ async function main() {
         "ف١٠. **ولا زرَّ «فتح الملف»** — وجهتُه تُردّ ٤٠٤ حتماً لملفٍّ محذوف");
       //  **والبوّابةُ نفسُها موثَّقةٌ في مخزن السلّة** — رسالتُها المشتركة.
       const trashStoreGate = trashStore.includes("PURGE_BEFORE_EXPIRY_MESSAGE")
-        && trashStore.includes("still_within_window");
+        && trashStore.includes("window_expired");
       check(trashStoreGate,
         "ف١١. ومخزنُ السلّة يفرض بوّابةَ المهلة بالرسالة المشتركة نفسِها");
+
+      //  ══ حارسٌ معماريّ على ذرّية «الحذف النهائي» (مراجعة ٢٠٢٦-٠٨-٢٤) ═══
+      //  الفحصُ على جسم `purgePatient` وحده — لا الملفّ كلّه — فلا تُمسك
+      //  به عباراتُ الشرح في التعليقات التوثيقية أعلى الدالّة.
+      const purgeStart = trashStore.indexOf("export async function purgePatient");
+      const purgeEnd = trashStore.indexOf("\n// ── ⑦", purgeStart);
+      const purgeBody = trashStore.slice(purgeStart, purgeEnd > 0 ? purgeEnd : purgeStart + 4000);
+      check(/FOR UPDATE/.test(purgeBody),
+        "ف١٢. **`purgePatient` يقفل صفّ المريض بـ`FOR UPDATE`** — لا قراءةً عارية قبل القرار");
+      check(/await\s+db\.transaction\s*\(/.test(purgeBody),
+        "ف١٣. **وكلُّ ذلك داخل معاملةٍ واحدة** (`db.transaction`) — لا معاملاتٍ متعدّدة");
+      //  **والفحصُ على المقطع الفعليّ لنداء `logAudit`** — من بداية النداء
+      //  إلى القوسِ الذي يُغلقه (`});` بعد `tx,`) — لا رجماً بتخمين نمطٍ
+      //  عامّ قد يلتقط أو يفوت حسب صياغة الحقول الأخرى.
+      const logAuditStart = purgeBody.indexOf("logAudit({");
+      const logAuditEnd = purgeBody.indexOf("});", logAuditStart);
+      const logAuditCall = logAuditStart >= 0 && logAuditEnd >= 0
+        ? purgeBody.slice(logAuditStart, logAuditEnd) : "";
+      check(/storage\.getPatientAnyState\s*\(\s*patientId\s*,\s*tx\s*\)/.test(purgeBody)
+        && /computeSnapshot\s*\(\s*patientId\s*,\s*tx\s*\)/.test(purgeBody)
+        && /(^|[^a-zA-Z])tx\s*,?\s*$/.test(logAuditCall.trimEnd()),
+        "ف١٤. وقراءةُ الحال ولقطتُه المالية وسطرُ التدقيق كلُّها بمعاملة القفل نفسِها");
+      //  والترتيبُ الفعليّ داخل الجسم: استعلامُ القفل (وفيه الفحصُ معاً —
+      //  جملةٌ واحدة) ⟵ اللقطةُ ⟵ التدقيقُ ⟵ الكاسكيدُ — كلُّ سابقٍ قبل
+      //  لاحقه حرفياً في نصّ الدالّة. («window_expired» جزءُ عمود السطر
+      //  الذي يحمل «FOR UPDATE» نفسِه، فلا ترتيبَ بينهما يُفحَص.)
+      const order = ["FOR UPDATE", "computeSnapshot", "logAudit",
+        "storage.deletePatientTx"].map((m) => purgeBody.indexOf(m));
+      check(order.every((idx) => idx >= 0) && order.every((idx, i) => i === 0 || idx > order[i - 1]),
+        "ف١٥. **والترتيبُ الفعليّ في الكود** قفلٌ ثمّ لقطةٌ ثمّ تدقيقٌ ثمّ كاسكيد");
     }
   } finally {
     await cleanup();

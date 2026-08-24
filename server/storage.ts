@@ -1611,13 +1611,21 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deletePatient(id: number): Promise<void> {
-    // ONE transaction: a patient delete either fully completes or leaves
-    // NOTHING destroyed. Previously each child delete auto-committed, so a
-    // late FK failure (e.g. the patient_cases reference added in migration
-    // 017) would leave the patient stripped of payments/visits/documents but
-    // still present — irreversible partial destruction.
-    await db.transaction(async (tx) => {
+  /**
+   * **الجسمُ الذرّيُّ للكاسكيد** — لقطاعةٍ مفتوحة من المستدعي، لا معاملةً
+   * تفتحها هذه الدالّةُ نفسُها. `deletePatient` أدناه هو الغلافُ العامّ
+   * المُختبَر (يفتح معاملتَه الخاصة وينادي هذه بلا حرفٍ في جسمها)، وهو
+   * البابُ الذي تستعمله كلُّ استدعاءاتِ التطبيق واختباراتِه القائمة —
+   * **لم يتغيّر بحرف**.
+   *
+   * ونفسُ الجسم حرفياً ينادِيه أيضاً `purgePatient`
+   * (`server/patients/trash_store.ts`) من معاملته هو المفتوحة أصلاً: فقفلُ
+   * صفّ المريض (`FOR UPDATE`) وفحصُ حالته وكتابةُ سطر تدقيق «حذف نهائي»
+   * والهدمُ الكامل هنا **يقعون في معاملةٍ واحدة لا تنقسم أبداً** — تنجح
+   * الأربعةُ معاً أو تتراجع الأربعةُ معاً، ولا يبقى سطرُ تدقيقٍ يزعم هدماً
+   * لم يقع، ولا نصفَ هدمٍ صامت.
+   */
+  async deletePatientTx(tx: any, id: number): Promise<void> {
       // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) — **أوّلاً** ═══════════════
       // الجداول الثلاثة تشير إلى `patients` و`patient_cases`
       // و`patient_device_episodes` معاً، فلا موضع لها إلا قبل ثلاثتها. وهي
@@ -1689,7 +1697,7 @@ export class DatabaseStorage implements IStorage {
         .from(medicalExams)
         .where(eq(medicalExams.patientId, id));
       if (examRows.length > 0) {
-        const examIds = examRows.map((e) => e.id);
+        const examIds = examRows.map((e: { id: number }) => e.id);
         await tx.delete(medicalExamAddenda).where(inArray(medicalExamAddenda.examId, examIds));
         await tx.delete(medicalExamRevisions).where(inArray(medicalExamRevisions.examId, examIds));
         //  شواهدُ الإلغاء (ترحيل ٠٦١) — **صراحةً لا اتّكالاً على الكاسكيد**.
@@ -1722,7 +1730,7 @@ export class DatabaseStorage implements IStorage {
         .from(prostheticWorkOrders)
         .where(eq(prostheticWorkOrders.patientId, id));
       if (woRows.length > 0) {
-        const woIds = woRows.map((w) => w.id);
+        const woIds = woRows.map((w: { id: number }) => w.id);
         await tx.delete(prostheticWorkHistory).where(inArray(prostheticWorkHistory.workOrderId, woIds));
         await tx.delete(prostheticReworkEvents).where(inArray(prostheticReworkEvents.workOrderId, woIds));
         await tx.delete(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, id));
@@ -1746,7 +1754,7 @@ export class DatabaseStorage implements IStorage {
         .from(surveyResponses)
         .where(eq(surveyResponses.patientId, id));
       if (respRows.length > 0) {
-        const respIds = respRows.map((r) => r.id);
+        const respIds = respRows.map((r: { id: number }) => r.id);
         await tx.delete(surveyAnswers).where(inArray(surveyAnswers.responseId, respIds));
         await tx.delete(surveyResponses).where(eq(surveyResponses.patientId, id));
       }
@@ -1793,6 +1801,22 @@ export class DatabaseStorage implements IStorage {
       // فلا يُعاد الرمز المحذوف لمريضٍ آخر أبداً.
       await tx.delete(patientCodeAliases).where(eq(patientCodeAliases.patientId, id));
       await tx.delete(patients).where(eq(patients.id, id));
+  }
+
+  async deletePatient(id: number): Promise<void> {
+    // ONE transaction: a patient delete either fully completes or leaves
+    // NOTHING destroyed. Previously each child delete auto-committed, so a
+    // late FK failure (e.g. the patient_cases reference added in migration
+    // 017) would leave the patient stripped of payments/visits/documents but
+    // still present — irreversible partial destruction.
+    //
+    // الغلافُ العامّ — يفتح معاملتَه الخاصّة وينادي الجسمَ الذرّيَّ أعلاه.
+    // هذا هو البابُ الذي تستعمله كلُّ نقاط REST واختباراتُ الكاسكيد القائمة
+    // — بلا حرفٍ تغيّر فيه. ومَن يحتاج ضمّ الهدم إلى معاملةٍ أوسع (مثل
+    // `purgePatient` بعد قفل الصفّ وكتابة سطر التدقيق) ينادي `deletePatientTx`
+    // مباشرةً من معاملته المفتوحة هو، لا هذه الدالّة.
+    await db.transaction(async (tx) => {
+      await this.deletePatientTx(tx, id);
     });
   }
 

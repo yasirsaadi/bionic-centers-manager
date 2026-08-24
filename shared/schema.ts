@@ -188,11 +188,42 @@ export const patients = pgTable("patients", {
     OR (COALESCE(BTRIM(${t.deletedReason}), '') <> ''
         AND ${t.restoreUntil} IS NOT NULL
         AND ${t.restoreUntil} > ${t.deletedAt})`),
-  //  وعكسُها: لا مهلةَ استعادةٍ ولا سببَ حذفٍ على ملفٍّ فعّال.
+  //  ══ وعكسُها: لا ذرّةَ حذفٍ — أحدَ عشرَ عموداً لا أربعة — على ملفٍّ فعّال
+  //     (تشديدٌ في نفس ٠٦٨، مراجعة ٢٠٢٦-٠٨-٢٤؛ راجع الشرحَ الكامل في
+  //     server/migrations/068_patient_trash.ts) ══════════════════════════
   check("patients_active_clean_check", sql`
     ${t.deletedAt} IS NOT NULL
-    OR (${t.restoreUntil} IS NULL AND ${t.deletedReason} IS NULL
-        AND ${t.deletedByUserId} IS NULL AND ${t.deletedByName} IS NULL)`),
+    OR (${t.restoreUntil} IS NULL
+        AND ${t.deletedByUserId} IS NULL
+        AND ${t.deletedByName} IS NULL
+        AND ${t.deletedByRole} IS NULL
+        AND ${t.deletedReason} IS NULL
+        AND ${t.deletedTotalCost} IS NULL
+        AND ${t.deletedTotalPaid} IS NULL
+        AND ${t.deletedRemaining} IS NULL
+        AND ${t.deletedPendingJson} IS NULL
+        AND ${t.deletedNeededAdmin} IS NULL)`),
+  //  ══ واللقطةُ الماليةُ تُكتب كاملةً أو لا تُكتب — لا نصفَ لقطة (تشديدٌ
+  //     في نفس ٠٦٨، مراجعة ٢٠٢٦-٠٨-٢٤) ═══════════════════════════════════
+  //  الحقولُ الخمسةُ تُكتب معاً دائماً حين `deletedAt` مكتوب
+  //  (`computeSnapshot` تضمنها جميعاً بلا مسارٍ جزئيّ)، مع مساواةِ الحساب
+  //  ووجودِ المفاتيح الخمسة داخل `deletedPendingJson` — فلا «NULL-كصفر»
+  //  ولا لقطةٌ ناقصة. **وأعمدةُ الفاعل بلا هذا الشرط عمداً**: نوعُ الجلسة
+  //  `TrashSessionLike` يُعلن `userId` و`role` و`displayName` اختياريةً
+  //  صراحةً، فإلزامُها هنا `NOT NULL` كان يدّعي ضماناً لا يملكه الكود.
+  check("patients_deleted_financial_snapshot_check", sql`
+    ${t.deletedAt} IS NULL
+    OR (${t.deletedTotalCost} IS NOT NULL
+        AND ${t.deletedTotalPaid} IS NOT NULL
+        AND ${t.deletedRemaining} IS NOT NULL
+        AND ${t.deletedPendingJson} IS NOT NULL
+        AND ${t.deletedNeededAdmin} IS NOT NULL
+        AND ${t.deletedRemaining} = ${t.deletedTotalCost} - ${t.deletedTotalPaid}
+        AND ${t.deletedPendingJson} ? 'pendingCharges'
+        AND ${t.deletedPendingJson} ? 'pendingDiscounts'
+        AND ${t.deletedPendingJson} ? 'pendingPriceRequests'
+        AND ${t.deletedPendingJson} ? 'openFollowups'
+        AND ${t.deletedPendingJson} ? 'openSettlements')`),
   //  **فهرسُ الفعّالين — الجزئيّ هو المهمّ**: كلُّ قارئٍ تشغيليّ يصفّي «غير
   //  محذوف»، وهم السوادُ الأعظم، فيخدمهم الفهرسُ بلا أن يثقله المحذوفون.
   index("ix_patients_active_branch").on(t.branchId, t.createdAt.desc())
@@ -1186,10 +1217,19 @@ export const journalEntries = pgTable("journal_entries", {
    * تُصان بخلفيةٍ دورية. **ولا تُمسَح أبداً**: الحذفُ النهائيّ لا رجعةَ
    * فيه، فالإقصاءُ الذي توثّقه لا رجعةَ فيه كذلك.
    *
-   * `DEFAULT FALSE` هنا **حقيقةٌ لا تخمين**: لا حذفَ نهائياً وقع في هذا
-   * النظام قبل هذا العمود، فكلُّ صفٍّ قائم لم يُكتب عبر كاسكيدِ حذفٍ فعلاً
-   * — خلافَ أعمدة `patients` في نفس الترحيل التي كانت ستدّعي علماً بحذفٍ
-   * لم يقع.
+   * ══ ومعنى `FALSE` — **تصحيحٌ تاريخيّ (مراجعة ٢٠٢٦-٠٨-٢٤)** ═══════════
+   * **ليس ادّعاءَ علمٍ بالماضي**: `storage.deletePatient` كانت المسارَ
+   * الوحيد للحذف النهائيّ **قبل** هذا الترحيل أيضاً (تُنادى مباشرةً من
+   * `DELETE /api/patients/:id`)، فحذوفٌ نهائيةٌ حقيقية وقعت قبل هذا
+   * العمود يقيناً. ونفسُ الكاسكيد نزع `journal_lines.patient_id` حينها
+   * أيضاً — فانقطع الرابطُ الوحيدُ الذي كان سيُحدِّد صاحبَ القيد، **ولا
+   * استدلالَ رجعيّاً يُخترَع** من مبلغٍ أو تاريخٍ أو أيّ قرينةٍ أخرى.
+   *
+   * فمعنى `FALSE` دقيقٌ لا فضفاض: «لم يُوسَم بآلية الحذف النهائيّ الجديدة
+   * (ما بعد ٠٦٨)» — **لا** «يقيناً لم يكن مالَ مريضٍ محذوفٍ نهائياً
+   * يوماً». القيودُ من قبل هذا العمود **مجهولةُ الحال**، لا مُبرَّأة —
+   * وهذا الترحيلُ لا يحاول إصلاح التاريخ، بل يحمي كلَّ حذفٍ نهائيّ من
+   * الآن فصاعداً فحسب.
    */
   purgedPatientMoney: boolean("purged_patient_money").notNull().default(false),
 });

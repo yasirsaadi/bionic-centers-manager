@@ -87,7 +87,8 @@
     "test:whatsapp": "tsx server/patient_whatsapp/whatsapp.test.ts",
     "test:device-flow-resume": "tsx client/src/components/device_flow_resume.test.ts",
     "test:patient-trash": "tsx server/patient_trash.test.ts",
-    "test:patient-trash-money": "tsx server/patient_trash_money.test.ts"
+    "test:patient-trash-money": "tsx server/patient_trash_money.test.ts",
+    "test:patient-trash-atomicity": "tsx server/patient_trash_purge_atomicity.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
