@@ -91,7 +91,14 @@ const S: Record<string, any> = {
   recv: {
     userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "ريام",
-    permissions: { canViewPatients: true, canAddPatients: true, canDeletePatients: true },
+    //  `canAddPayments: true` — الافتراضُ الحقيقيّ لحساب استقبال (مطابقٌ
+    //  لعمود `system_users.can_add_payments` الذي قيمتُه الافتراضية
+    //  TRUE)، ولازمٌ الآن كي يبلغ طلبُ الدفعة في قسم «ز» حارسَ السلّة
+    //  أصلاً بدل أن يُردّ ٤٠٣ من بوّابة الصلاحية قبله.
+    permissions: {
+      canViewPatients: true, canAddPatients: true, canDeletePatients: true,
+      canAddPayments: true,
+    },
   },
   acc: {
     userId: ACC, role: "accountant", isAdmin: false, branchId: 1, accessibleBranches: [1],

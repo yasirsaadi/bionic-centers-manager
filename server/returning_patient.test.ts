@@ -48,10 +48,13 @@ const S = {
     accessibleBranches: [1], displayName: "mgr",
     permissions: { canViewPatients: true, canAddPatients: true, canEditVisits: true },
   },
+  //  `canAddPayments: true` — الافتراضُ الحقيقيّ لحساب استقبال، ولازمٌ
+  //  الآن كي تبلغ طلباتُ الدفعة هنا حراسها التالية (لا ترتدّ ٤٠٣ من بوّابة
+  //  الصلاحية أوّلاً).
   reception: {
     userId: RECEPTION, role: "reception", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "recv",
-    permissions: { canViewPatients: true, canAddPatients: true },
+    permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true },
   },
 };
 

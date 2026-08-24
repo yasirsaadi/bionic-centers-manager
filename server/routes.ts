@@ -3361,19 +3361,41 @@ export async function registerRoutes(
     const isAdmin = branchSession?.isAdmin;
     const isBranchManager = branchSession?.role === "branch_manager";
     const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
-    
+
+    // ══ **مَن يملك كتابة دفعة أصلاً؟** ═══════════════════════════════════
+    // `isAuthenticated` وحدها تتحقّق من وجود جلسة، لا من الصلاحية — أيّ
+    // حسابٍ مسجَّل الدخول كان يستطيع فتح هذه النقطة مباشرةً (تجاوز زرّ
+    // الواجهة المخفيّ) ولو لم يحمل `canAddPayments` على صفّه. نفسُ بوّابة
+    // `/api/patients/:id/new-service` حرفياً — لا صلاحية محاسبةٍ أوسع
+    // (`canManageAccounting`) تُشترَط هنا، وهذه صلاحيةُ الإضافة وحدها.
+    const canAddPaymentPermission =
+      isAdmin || isBranchManager || branchSession?.permissions?.canAddPayments === true;
+    if (!canAddPaymentPermission) {
+      return res.status(403).json({ message: "ليس لديك صلاحية لإضافة دفعات" });
+    }
+
     //  **ولا دفعةَ على ملفٍّ في السلّة** (ترحيل ٠٦٨): الحارسُ صريحٌ لا
     //  مشتقٌّ من فحص «المتبقّي» أدناه — ذاك يتخطّى الملفَّ الغائب بصمت،
     //  فكانت الدفعةُ تُسجَّل على محذوفٍ ولا يراها أحد.
-    {
-      const live = await storage.getPatient(input.patientId);
-      if (!live) {
-        const any = await storage.getPatientAnyState(input.patientId);
-        return res.status(any ? 409 : 404).json({
-          message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
-        });
-      }
+    const livePatient = await storage.getPatient(input.patientId);
+    if (!livePatient) {
+      const any = await storage.getPatientAnyState(input.patientId);
+      return res.status(any ? 409 : 404).json({
+        message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
+      });
     }
+
+    // ══ **نطاقُ الفرع من صفّ المريض المقفول لا من جسم الطلب** ═══════════
+    // `input.branchId` قيمةٌ يرسلها العميل، ولا سلطة لها وحدها: طلبٌ
+    // مصنوعٌ يدوياً كان يستطيع أن يسجّل دفعةً على فرعٍ لا يصل إليه صاحبُه.
+    // الفرعُ الحقيقيّ هو فرعُ المريض نفسه — نفسُ نمط `/new-service`
+    // (`accessibleBranchesFor`)، فلا تُخترَع سياسةُ فروعٍ ثانية.
+    const allowedBranchesForPayment = accessibleBranchesFor(req);
+    if (allowedBranchesForPayment !== null && !allowedBranchesForPayment.includes(livePatient.branchId)) {
+      return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+    }
+    // والصفُّ يُكتب بفرع المريض الحقيقيّ دائماً — لا بما أرسله العميل.
+    input.branchId = livePatient.branchId;
 
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
     if (!isFreeSessions) {
