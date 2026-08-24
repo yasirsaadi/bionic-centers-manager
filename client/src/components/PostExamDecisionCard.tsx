@@ -48,7 +48,7 @@ import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
-  followupEventView, purchasePresentation, PURCHASE_STATE_TEXT,
+  followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
 } from "@shared/followup_events";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
@@ -186,8 +186,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       return res.json();
     },
   });
-  const openEpisode = (episodeData?.episodes ?? [])
-    .find((e) => e.status === "awaiting_exam" || e.status === "examined") ?? null;
 
   const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
   const active = (followups ?? []).find((f) => !terminal.has(f.status))
@@ -259,10 +257,26 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  تنفيذٍ يردّه الخادمُ بـ«ملغاة إدارياً بالفعل». فالتفصيلُ هنا نصٌّ
   //  مقروء، وسجلُّ الإجراءات الكامل في «سجلّ الإجراءات» أسفله.
   if (active.status === "closed_admin_void") {
+    // ══ **الطلبُ البديل بهويّته لا بترشيح** ═════════════════════════════
+    //  المريضُ يملك خيوطاً متوازية — أطرافٌ ومساند — وقد يملك على الخيط
+    //  الواحد حلقةً مفتوحةً لسببٍ آخر. فـ«أوّلُ حلقةٍ مفتوحة» كان يعرض
+    //  **مسندَ المريض** بوصفه الطلبَ الذي وُلد عن تصحيح طرفه.
+    //
+    //  والهويّةُ الدقيقة كتبها التصحيحُ في حمولة حدثه داخل معاملته:
+    //  `replacementEpisodeId`. فتُقرأ منها وتُطابَق بالمعرّف على نقطة
+    //  الحلقات القانونية — **ولا يُخمَّن بديلٌ حين لا يوجد**.
+    const replacementId = replacementEpisodeIdOf(active.events);
+    const replacement = replacementId === null ? null
+      : (episodeData?.episodes ?? []).find((e) =>
+        Number(e.id) === replacementId
+        //  والطلبُ «حاضرٌ» ما دام مفتوحاً. وقد يُعايَن فيصير `examined` —
+        //  والهويّةُ لا تتبدّل، فهي بالمعرّف لا بالحالة.
+        && (e.status === "awaiting_exam" || e.status === "examined")) ?? null;
+
     return (
       <div id={POST_EXAM_CARD_ANCHOR} className="space-y-3">
         {/*  ① **الحاضرُ أوّلاً** — الطلبُ القائم الذي وُلد عن التصحيح. */}
-        {openEpisode && (
+        {replacement && (
           <Card data-testid="card-current-device-request"
             className="border-primary/40 bg-primary/5">
             <CardHeader className="pb-2">
@@ -272,9 +286,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               <Field label="المطلوب"
-                value={requestedItemLabel(openEpisode.requestedItem, openEpisode.serviceType)} />
+                value={requestedItemLabel(replacement.requestedItem, replacement.serviceType)} />
               <Field label="الحالة"
-                value={openEpisode.status === "awaiting_exam"
+                value={replacement.status === "awaiting_exam"
                   ? "بانتظار المعاينة" : "بانتظار التخصيص"} />
               <Field label="الكلفة" value="—" hint="تُحدَّد بعد المعاينة" />
             </CardContent>

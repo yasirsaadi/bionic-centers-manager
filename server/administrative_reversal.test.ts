@@ -22,7 +22,9 @@ import { registerRoutes } from "./routes";
 import * as episodes from "./device_episodes/store";
 import { readFileSync } from "fs";
 //  **ما يُعرَض يُفحَص بالدوالّ التي تعرضه** — لا بنسخةٍ ثانيةٍ في الاختبار.
-import { followupEventView, purchasePresentation, PURCHASE_STATE_TEXT } from "@shared/followup_events";
+import {
+  followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
+} from "@shared/followup_events";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -1163,6 +1165,102 @@ async function main() {
         JSON.stringify(supPv.body?.availableIntents));
       same("١٥١. **ولا قائمةَ بدائل فارغةٌ تُرسَل**",
         (supPv.body?.replacementOptions ?? []).length, 0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ن) **هويّةُ الطلب البديل — بالمعرّف لا بالترشيح.**
+    //
+    //  المريضُ يملك خيوطاً متوازية: أطرافٌ ومساند. و«أوّلُ حلقةٍ مفتوحة»
+    //  كانت تعرض **مسندَه** بوصفه الطلبَ الذي وُلد عن تصحيح طرفه — عرضٌ
+    //  يكذب على قارئه. والهويّةُ الدقيقة كتبها التصحيحُ في حمولة حدثه.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ن) هويّة الطلب البديل ──");
+    {
+      /** ما تراه البطاقةُ فعلاً: أحداثُ المتابعة + نقطةُ الحلقات. */
+      const seenBy = async (patientId: number, followupId: number) => {
+        const fus = await http("GET", `/api/followups/patient/${patientId}`, S.admin);
+        const row = (fus.body ?? []).find((x: any) => Number(x.id) === followupId);
+        const eps = await http("GET", `/api/patients/${patientId}/device-episodes`, S.admin);
+        return { events: row?.events ?? [], episodes: eps.body?.episodes ?? [] };
+      };
+      /** منطقُ البطاقة نفسُه: الهويّةُ من الحدث ثمّ المطابقةُ بالمعرّف. */
+      const currentCard = (v: { events: any[]; episodes: any[] }) => {
+        const id = replacementEpisodeIdOf(v.events);
+        return id === null ? null
+          : v.episodes.find((e: any) => Number(e.id) === id
+            && (e.status === "awaiting_exam" || e.status === "examined")) ?? null;
+      };
+
+      // (أ) **حلقةُ مسندٍ مفتوحةٌ لا علاقةَ لها** — ولا تُعرَض بديلاً.
+      const a = await soldOperation("خيطان متوازيان", 800_000);
+      await q(`UPDATE patients SET is_medical_support=true WHERE id=$1`, [a.patientId]);
+      const supCase = await mkCase(a.patientId, 1, "medical_support");
+      const supEp = Number((await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, requested_item)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device') RETURNING id`,
+        [a.patientId, supCase]))[0].id);
+      const pvA = await preview({ followupId: a.followupId });
+      const rA = await execute({
+        followupId: a.followupId, intent: "replace_requested_item",
+        replacementRequestedItem: "socket", reasonNote: "المطلوب قالب",
+        stateStamp: pvA.body?.stateStamp,
+      });
+      same("١٦٢. (الاستبدالُ نُفّذ مع وجود مسندٍ مفتوح)", rA.status, 200);
+      const newA = Number(rA.body?.replacementEpisodeId);
+      const vA = await seenBy(a.patientId, a.followupId);
+      same("١٦٣. **الهويّةُ من الحدث هي الحلقةُ المُنشأة بعينها**",
+        replacementEpisodeIdOf(vA.events), newA);
+      same("١٦٤. **والبطاقةُ تعرض القالبَ لا المسند**",
+        [Number(currentCard(vA)?.id), currentCard(vA)?.requestedItem,
+          currentCard(vA)?.serviceType],
+        [newA, "socket", "prosthetic"]);
+      check(Number(currentCard(vA)?.id) !== supEp,
+        "١٦٥. **ولا تُنسَب حلقةُ خيطٍ آخر إلى هذا التصحيح إطلاقاً**",
+        `${currentCard(vA)?.id} vs ${supEp}`);
+      //  والمسندُ ما زال مفتوحاً فعلاً — فالعزلُ عرضٌ لا حذف.
+      same("١٦٦. **والمسندُ باقٍ مفتوحاً على خيطه**",
+        vA.episodes.find((e: any) => Number(e.id) === supEp)?.status, "awaiting_exam");
+
+      // (ب) **إلغاءٌ كاملٌ بلا استبدال** — ولا يُنسَب له طلبٌ قائم.
+      const b = await soldOperation("إلغاءٌ بلا بديل", 400_000);
+      await q(`UPDATE patients SET is_medical_support=true WHERE id=$1`, [b.patientId]);
+      const bSupCase = await mkCase(b.patientId, 1, "medical_support");
+      await q(`INSERT INTO patient_device_episodes
+                 (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, requested_item)
+               VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device')`, [b.patientId, bSupCase]);
+      const pvB = await preview({ followupId: b.followupId });
+      const rB = await execute({
+        followupId: b.followupId, intent: "cancel_operation",
+        reasonNote: "العملية كلها خاطئة", stateStamp: pvB.body?.stateStamp,
+      });
+      same("١٦٧. (الإلغاءُ الكامل نُفّذ)",
+        [rB.status, rB.body?.replacementEpisodeId], [200, null]);
+      const vB = await seenBy(b.patientId, b.followupId);
+      same("١٦٨. **ولا هويّةَ بديلٍ في الحدث**", replacementEpisodeIdOf(vB.events), null);
+      same("١٦٩. **فلا بطاقةَ «طلب جديد» تُنسَب إليه** — التاريخُ وحده",
+        currentCard(vB), null);
+      check(vB.episodes.some((e: any) => e.status === "awaiting_exam"),
+        "١٧٠. **مع أن للمريض حلقةً مفتوحةً فعلاً** — ولم تُختطَف",
+        JSON.stringify(vB.episodes.map((e: any) => e.status)));
+
+      // (ج) **هويّةٌ موجودةٌ وحلقةٌ لا تُوجَد** — لا يُخمَّن غيرُها.
+      const vC = { events: vA.events, episodes: vA.episodes.filter((e: any) => Number(e.id) !== newA) };
+      check(vC.episodes.length > 0, "١٧١. (وللمريض حلقاتٌ أخرى في القائمة)",
+        String(vC.episodes.length));
+      same("١٧٢. **البديلُ غيرُ موجود ⟶ لا بطاقةَ ولا ترشيحَ لغيره**",
+        currentCard(vC), null);
+      same("١٧٣. **والهويّةُ تبقى مقروءةً للتدقيق**",
+        replacementEpisodeIdOf(vC.events), newA);
+
+      // (د) **يُعايَن البديلُ لاحقاً** — الهويّةُ نفسُها لا تنتقل.
+      await q(`UPDATE patient_device_episodes SET status='examined' WHERE id=$1`, [newA]);
+      //  وحلقةُ خيطٍ آخر تُفتَح بعده — فالترشيحُ كان سيقفز إليها.
+      const vD = await seenBy(a.patientId, a.followupId);
+      same("١٧٤. **البديلُ المُعايَن يبقى هو الطلبَ الحاضر بعينه**",
+        [Number(currentCard(vD)?.id), currentCard(vD)?.status], [newA, "examined"]);
+      same("١٧٥. **ولم تنتقل الهويّةُ إلى المسند المفتوح**",
+        replacementEpisodeIdOf(vD.events), newA);
     }
 
     // ══════════════════════════════════════════════════════════════════

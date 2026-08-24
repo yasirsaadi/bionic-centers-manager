@@ -17,7 +17,9 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { purchasePresentation, followupEventView, PURCHASE_STATE_TEXT } from "./followup_events";
+import {
+  purchasePresentation, followupEventView, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
+} from "./followup_events";
 import {
   CORRECTION_INTENTS, CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS,
   CORRECTION_INTENT_MODE, CORRECTION_INTENT_REASON, isCorrectionIntent,
@@ -81,6 +83,32 @@ const support = followupEventView({
   payload: { previousRequestedItem: "full_device", serviceType: "medical_support" },
 });
 assert.ok(support.facts.includes("الطلب السابق: مسند طبي كامل"), support.facts.join(" | "));
+
+// ══ (ب-٢) **هويّةُ الطلب البديل — بالمعرّف لا بالترشيح** ═════════════════
+//  المريضُ يملك خيوطاً متوازية، فـ«أوّلُ حلقةٍ مفتوحة» كانت تعرض مسندَه
+//  بوصفه الطلبَ الذي وُلد عن تصحيح طرفه.
+const REV_EV = (id: number | null | undefined, extra: any = {}) => ({
+  eventType: "administrative_reversal",
+  payload: { workOrderId: 5, ...(id === undefined ? {} : { replacementEpisodeId: id }), ...extra },
+});
+assert.equal(replacementEpisodeIdOf([REV_EV(88)]), 88);
+assert.equal(replacementEpisodeIdOf([{ eventType: "closed_without_purchase" }, REV_EV(88)]), 88);
+//  **ولا تخمينَ حين لا استبدال**: إلغاءٌ كاملٌ بلا بديل ⟶ `null`.
+assert.equal(replacementEpisodeIdOf([REV_EV(undefined)]), null);
+assert.equal(replacementEpisodeIdOf([REV_EV(null)]), null);
+assert.equal(replacementEpisodeIdOf([{ eventType: "administrative_reversal" }]), null);
+assert.equal(replacementEpisodeIdOf([{ eventType: "converted", payload: { replacementEpisodeId: 9 } }]),
+  null, "حدثٌ آخر لا يمنح هويّةَ بديل");
+assert.equal(replacementEpisodeIdOf([]), null);
+assert.equal(replacementEpisodeIdOf(null), null);
+assert.equal(replacementEpisodeIdOf(undefined), null);
+assert.equal(replacementEpisodeIdOf([REV_EV(0)]), null, "صفرٌ ليس معرّفاً");
+assert.equal(replacementEpisodeIdOf([REV_EV(-3)]), null, "ولا سالب");
+assert.equal(replacementEpisodeIdOf([REV_EV("abc" as any)]), null, "ولا نصٌّ");
+//  وتصحيحان متتاليان ⟶ الأحدثُ يصف القائمَ الآن.
+assert.equal(replacementEpisodeIdOf([REV_EV(88), REV_EV(91)]), 91);
+assert.equal(replacementEpisodeIdOf([REV_EV(88), REV_EV(undefined)]), 88,
+  "وإلغاءٌ لاحقٌ بلا بديل لا يمحو هويّةً كُتبت");
 
 // ══ (ج) النيّة — خريطةٌ واحدة، وعنوانٌ يقول الأثر ═════════════════════════
 assert.equal(CORRECTION_INTENTS.length, 4);
@@ -155,6 +183,14 @@ assert.ok(card.includes('data-testid="card-admin-void-history"'));
 assert.ok(card.includes("عملية ملغاة إدارياً"));
 assert.ok(card.includes('data-testid="card-current-device-request"'),
   "والطلبُ الحالي يُعرَض مع التاريخ لا بدلاً عنه");
+//  **وهويّتُه من الحدث لا من ترشيح**: أوّلُ حلقةٍ مفتوحة كانت تعرض مسندَ
+//  المريض بوصفه بديلَ طرفه.
+assert.ok(card.includes("replacementEpisodeIdOf(active.events)"),
+  "الهويّةُ من حدث التصحيح");
+assert.ok(card.includes("Number(e.id) === replacementId"),
+  "وتُطابَق بالمعرّف على نقطة الحلقات");
+assert.ok(!/\.find\(\(e\) =>\s*e\.status === "awaiting_exam"/.test(card),
+  "ولا ترشيحَ بالحالة وحدها");
 //  **ولا نافذةَ تصحيحٍ من بطاقةِ عمليةٍ صُحّحت سلفاً.**
 //  الفرعُ يبدأ عند شرط الحالة وينتهي حيث تبدأ البطاقةُ الحيّة.
 const voidBranch = card.split('if (active.status === "closed_admin_void")')[1]
