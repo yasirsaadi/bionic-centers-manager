@@ -18,8 +18,7 @@ import { routeServiceToDoctorReview } from "../medical_review/routing";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 import {
-  parseRequestedItem, requestedItemLabel, requestedItemLine,
-  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
+  parseRequestedItem, requestedItemLabel, requestedItemLine, noExamSaleRefusal,
 } from "@shared/prosthetic_parts";
 import { checkRequiredPatientData } from "@shared/patient_required";
 import { isServicePath, type ServicePath } from "@shared/service_path";
@@ -169,17 +168,18 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         });
       }
 
-      // ── **والطرفُ الكاملُ لا يُفتَح على مسار «بلا معاينة»** (٠٦٧) ──────
-      //  الجزءُ بديلٌ لقطعةٍ وُصفت يوماً، والطرفُ الكاملُ قرارٌ سريريٌّ من
+      // ── **والجهازُ الكاملُ لا يُفتَح على مسار «بلا معاينة»** (٠٦٧) ─────
+      //  الجزءُ بديلٌ لقطعةٍ وُصفت يوماً، والجهازُ الكاملُ قرارٌ سريريٌّ من
       //  أوّله. وفتحُ طلبٍ كهذا هنا كان يُنتج حلقةً لا يقبلها بابُ البيع
       //  بعد لحظات — فيُردّ **الآن** بدل أن يُترك فخّاً.
       //
-      //  **والمساندُ الطبية مختلفة**: لا قائمةَ أجزاءٍ قانونيةً لها بعد،
-      //  فالمسندُ الكاملُ يبقى مؤهَّلاً — ولا تُخترَع له أجزاءٌ لم يقلها أحد.
-      if (servicePath === "no_exam" && serviceType === "prosthetic"
-        && !isProstheticComponent(parsedItem.value)) {
-        return res.status(400).json({ error: NO_EXAM_FULL_PROSTHESIS_REFUSAL });
-      }
+      //  **وطرفاً كان أو مسنداً** (قرارُ المالك بعد ٢٤٩): كان الاستثناءُ
+      //  يُخرج المساندَ لأنها «بلا قائمة أجزاء» — وهو قلبٌ للحجّة: غيابُ
+      //  الأجزاء يعني ألّا بيعَ بلا معاينة للمساند أصلاً، لا أن يُباع
+      //  أشدُّ ما يحتاج الطبيبَ فيها. والقاعدةُ في `shared` لا هنا.
+      const saleRefusal = servicePath === "no_exam"
+        ? noExamSaleRefusal(serviceType, parsedItem.value) : null;
+      if (saleRefusal) return res.status(400).json({ error: saleRefusal });
 
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });

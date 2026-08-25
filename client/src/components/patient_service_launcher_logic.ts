@@ -27,6 +27,7 @@
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import type { PendingChargeKind } from "@shared/pending_charge";
+import { noExamSaleAllowed } from "@shared/prosthetic_parts";
 
 /** المسارات التي يفتحها الموزِّع — **قائمة مغلقة**. */
 export type ServiceFlow =
@@ -205,7 +206,13 @@ export function resumableNoExamSale(
   if (!Number.isFinite(id) || id <= 0) return null;
   const item = typeof found.requestedItem === "string" && found.requestedItem.trim()
     ? found.requestedItem : null;
-  return item ? { episodeId: id, requestedItem: item } : null;
+  if (!item) return null;
+  //  **ولا يُستأنَف ما لا يُباع.** حلقةٌ موروثة بمسار `no_exam` وطلبٍ «جهازٍ
+  //  كامل» يردّها الخادمُ عند البيع (قرارُ المالك بعد ٢٤٩). فاستئنافُها هنا
+  //  كان يُعبّئ نموذجاً مآلُه ٤٠٩ محتوم — وبابُها المعاينةُ أو التصحيحُ
+  //  الإداريّ كما تقول رسالةُ الردّ. والقاعدةُ من `shared` لا نسخةٌ منها.
+  if (!noExamSaleAllowed(serviceType, item)) return null;
+  return { episodeId: id, requestedItem: item };
 }
 
 // ══ تذكرة الإرسال: **واحدة لكل فتح** ═════════════════════════════════════

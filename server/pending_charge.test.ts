@@ -27,7 +27,7 @@ import {
   RETURNED_QUEUE_TITLE,
 } from "@shared/pending_charge";
 import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
-import { NO_EXAM_FULL_PROSTHESIS_REFUSAL } from "@shared/prosthetic_parts";
+import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 import {
   DEVICE_ORIGINS, DEVICE_ORIGIN_LABELS, isDeviceOrigin, originHasEpisode,
   parseDeviceOrigin,
@@ -848,12 +848,17 @@ async function main() {
     await mkCase(pSup, "medical_support");
     same("**وجزءُ طرفٍ على مسندٍ يُردّ لا يُصحَّح**",
       (await startNoExam(pSup, "medical_support", "knee")).status, 400);
-    const epSup = (await startNoExam(pSup, "medical_support", "full_device")).body?.id;
-    const chSup = (await sale({
-      patientId: pSup, serviceType: "medical_support", deviceEpisodeId: epSup,
-      expertUserId: EXPERT, charged: true, amount: 250_000,
+    //  **ولا بيعَ للمساند بلا معاينة إطلاقاً** (قرارُ المالك بعد ٢٤٩) —
+    //  فلا يبقى لها من هذا الباب إلّا **الصيانة**، وهي التي تُختبَر هنا:
+    //  جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
+    same("**ولا مسندَ كاملٍ يُفتَح بلا معاينة**",
+      (await startNoExam(pSup, "medical_support", "full_device")).status, 400);
+    const chSup = (await http("POST", "/api/no-exam/maintenance", S.recv, {
+      patientId: pSup, serviceType: "medical_support", expertUserId: EXPERT,
+      maintenanceComponent: null, deviceOrigin: "center_unrecorded",
+      deviceEpisodeId: null, charged: true, amount: 250_000,
     })).body?.charge?.id;
-    check(chSup > 0, "والمسندُ الكاملُ يمرّ");
+    check(chSup > 0, "وصيانةُ المسند تمرّ — وهي بابُها الوحيد هنا");
     check((await http("GET", "/api/no-exam/review", S.docSup)).body?.rows
       ?.some((r: any) => r.id === chSup), "**وطبيبُ المساند يراه هو**");
     check(!(await http("GET", "/api/no-exam/review", S.docSup)).body?.rows
@@ -954,18 +959,58 @@ async function main() {
       (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
         [pF]))[0].n, 0);
 
-    //  (و) والمسندُ الكاملُ بلا أجر — المبدأُ نفسُه حيث يقبله النموذج.
-    const pSF = await mkPatient("مسند بلا أجر", { support: true });
+    //  ══ (و) **والمسندُ الكاملُ لا يُباع بلا معاينة إطلاقاً** ═════════════
+    //  قرارُ المالك بعد ٢٤٩. وكان يُقبل هنا لأن «المساندَ بلا قائمة أجزاء»
+    //  — وهو قلبٌ للحجّة: غيابُ الأجزاء يعني ألّا بيعَ بلا معاينة لها أصلاً،
+    //  لا أن يُباع منها **أشدُّ** ما يحتاج الطبيب. و«بلا أجر» لا يغيّر شيئاً:
+    //  المجّانيُّ عمليةٌ تقع، والمنعُ عن الفعل لا عن المال.
+    const pSF = await mkPatient("مسند كامل بلا معاينة", { support: true });
     await mkCase(pSF, "medical_support");
-    const epSF = (await startNoExam(pSF, "medical_support", "full_device")).body?.id;
-    const supFree = await sale({
-      patientId: pSF, serviceType: "medical_support", deviceEpisodeId: epSF,
+    const supEp = await startNoExam(pSF, "medical_support", "full_device");
+    same("و. **فتحُ طلبِ مسندٍ كاملٍ بلا معاينة يُردّ ٤٠٠**",
+      [supEp.status, supEp.body?.error],
+      [400, noExamSaleRefusal("medical_support", "full_device")]);
+    check((supEp.body?.error ?? "").includes("مسند طبي كامل"),
+      "   **والرسالةُ تسمّي المسندَ لا الطرف**", String(supEp.body?.error));
+    same("   ولا حلقةَ وُلدت", (await q(
+      `SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`,
+      [pSF]))[0].n, 0);
+    same("   ولا أثرَ مالياً", await moneyOnly(pSF), ZERO_MONEY_ONLY);
+
+    //  **وحلقةُ مسندٍ موروثة** فُتحت قبل هذا الحارس تُردّ عند البيع ٤٠٩،
+    //  **ولا يُغيَّر مسارُها بصمت** — بابُها المعاينةُ أو التصحيحُ الإداريّ.
+    const supCase = (await q(
+      `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`,
+      [pSF]))[0].id;
+    const supLegacyEp = (await q(
+      `INSERT INTO patient_device_episodes
+         (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+          requested_item, component, service_path, created_at, updated_at)
+       VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',NULL,'no_exam',NOW(),NOW())
+       RETURNING id`, [pSF, supCase]))[0].id;
+    const supLegacySale = await sale({
+      patientId: pSF, serviceType: "medical_support", deviceEpisodeId: supLegacyEp,
       expertUserId: EXPERT, charged: false,
     });
-    check(supFree.status === 201 && supFree.body?.charge === null
-      && supFree.body?.workOrderId > 0,
-      "و. **والمسندُ الكاملُ بلا أجر كذلك**", JSON.stringify(supFree.body));
-    same("   والمالُ صفر", await moneyOnly(pSF), ZERO_MONEY_ONLY);
+    same("و.ب **والموروثةُ لا تُباع من هنا ولو بلا أجر** — ٤٠٩ برسالتها",
+      [supLegacySale.status, supLegacySale.body?.error],
+      [409, noExamSaleRefusal("medical_support", "full_device")]);
+    same("   وتبقى كما وُجدت بلا تحويلِ مسار",
+      await episodeOf(supLegacyEp),
+      { status: "awaiting_exam", service_path: "no_exam", requested_item: "full_device" });
+    same("   ولا أمرَ تصنيعٍ ولا دينار",
+      (({ total, ledger_rows, orders }) => [total, ledger_rows, orders])(await moneyOf(pSF)),
+      [0, 0, 0]);
+
+    //  **وصيانةُ المسند لم تُمَسّ** — جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
+    const supMaint = await http("POST", "/api/no-exam/maintenance", S.recv, {
+      patientId: pSF, serviceType: "medical_support", expertUserId: EXPERT,
+      maintenanceComponent: null, deviceOrigin: "external",
+      deviceEpisodeId: null, charged: true, amount: 40_000,
+    });
+    check(supMaint.status === 201 && supMaint.body?.charge?.id > 0,
+      "و.ج **وصيانةُ المسند تمضي كما كانت** — المنعُ على البيع وحده",
+      JSON.stringify(supMaint.body));
 
     // ══════════════════════════════════════════════════════════════════
     //  (ز–ي) حارسُ الطرف الكامل
@@ -975,9 +1020,10 @@ async function main() {
     await mkCase(pG);
     const fullEp = await startNoExam(pG, "prosthetic", "full_device");
     same("ز. **فتحُ طلبِ طرفٍ كامل بلا معاينة يُردّ ٤٠٠**",
-      [fullEp.status, fullEp.body?.error], [400, NO_EXAM_FULL_PROSTHESIS_REFUSAL]);
-    check(NO_EXAM_FULL_PROSTHESIS_REFUSAL.includes("معاينة")
-      && NO_EXAM_FULL_PROSTHESIS_REFUSAL.includes("تصحيح"),
+      [fullEp.status, fullEp.body?.error],
+      [400, noExamSaleRefusal("prosthetic", "full_device")]);
+    check((fullEp.body?.error ?? "").includes("معاينة")
+      && (fullEp.body?.error ?? "").includes("تصحيح"),
       "   **والرسالةُ تدلّ على البابين**: مسارُ المعاينة أو التصحيحُ الإداريّ");
     same("   ولا حلقةَ وُلدت", (await q(
       `SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [pG]))[0].n, 0);
@@ -999,7 +1045,7 @@ async function main() {
     });
     same("ي. **والموروثةُ لا تُباع من هنا** — تُردّ ٤٠٩ برسالتها",
       [legacySale.status, legacySale.body?.error],
-      [409, NO_EXAM_FULL_PROSTHESIS_REFUSAL]);
+      [409, noExamSaleRefusal("prosthetic", "full_device")]);
     same("   **ولا يُغيَّر مسارُها بصمت** — تبقى كما وُجدت",
       await episodeOf(legacyEp),
       { status: "awaiting_exam", service_path: "no_exam", requested_item: "full_device" });
@@ -1445,13 +1491,21 @@ async function main() {
         "client/src/components/NoExamOperationDialog.tsx"), "utf8");
       check(dialog.includes("PROSTHETIC_COMPONENTS") && dialog.includes("COMPONENT_LABELS"),
         "**ونافذةُ الاستقبال تقرأ قائمةَ الأجزاء القائمة** — لا قائمةَ ثانية");
-      check(/serviceType === "prosthetic" && PROSTHETIC_COMPONENTS\.map/.test(dialog),
+      check(/PROSTHETIC_COMPONENTS\.map/.test(dialog),
         "   **والأجزاءُ للأطراف وحدها** — لا تُخترَع للمساند");
-      //  **(ح) والطرفُ الكاملُ لا يُعرَض في بيع الأطراف بلا معاينة.**
-      check(/serviceType === "medical_support" && \(\s*<SelectItem value=\{FULL_DEVICE\}/.test(dialog),
-        "**(ح) والجهازُ الكاملُ للمساند وحدها** — لا يُعرَض للأطراف إطلاقاً");
+      //  ══ **(ح) ولا «جهاز كامل» يُعرَض للبيع لأيّ قسم** ═══════════════════
+      //  قرارُ المالك بعد ٢٤٩: الطرفُ الكاملُ والمسندُ الكاملُ كلاهما قرارٌ
+      //  سريريّ. وكان المسندُ يُعرَض هنا لأنه الشيءُ الوحيد الذي لا أجزاءَ
+      //  دونه — فتبيع النافذةُ بلا معاينةٍ أشدَّ ما يحتاج الطبيب.
+      check(!/<SelectItem value=\{FULL_DEVICE\}/.test(dialog),
+        "**(ح) ولا «جهاز كامل» في قائمة البيع لأيّ قسم**",
+        (dialog.match(/.*FULL_DEVICE.*/g) ?? []).join("\n"));
       check(dialog.includes("الطرف الصناعي الكامل يحتاج معاينة"),
         "   والشاشةُ تقول لماذا وتدلّ على بابه");
+      //  **والمساندُ لا تبلغ حقلَ البيع أصلاً** — حارسٌ بنيويّ في النافذة.
+      check(/const fixedKind: Kind \| null = serviceType === "medical_support"\s*\?\s*"maintenance"/
+        .test(dialog),
+      "   **والمساندُ صيانةٌ حتماً في النافذة** — ولو وصلها `initialKind` ملفَّق");
       //  ومنشأُ الجهاز ثلاثةٌ في القائمة، بلا خيارٍ يجمع اثنين.
       check(dialog.includes("DEVICE_ORIGINS") && dialog.includes("DEVICE_ORIGIN_LABELS"),
         "**ومنشأُ الجهاز من القائمة الواحدة** — ثلاثةٌ لا اثنان");

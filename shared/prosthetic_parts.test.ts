@@ -20,7 +20,7 @@ import {
   FULL_DEVICE_LABELS, FULL_DEVICE_NEUTRAL_LABEL, DEVICE_SERVICE_TYPES,
   isProstheticComponent, isRequestedItem, requestedItemLabel, componentLabel,
   componentOfRequest, parseRequestedItem, parseComponent, requestedItemLine,
-  requestedItemOptions,
+  requestedItemOptions, noExamSaleRefusal, noExamSaleAllowed, noExamSaleServiceTypes,
 } from "./prosthetic_parts";
 
 let failures = 0;
@@ -178,6 +178,71 @@ console.log("\n── مطابقةُ القاعدة ──");
   //  **ولا أثرَ للاسم القديم في المخطّط** — وإلّا انحرف عن الترحيل.
   check("٤٤. **ولا `full_prosthesis` في المخطّط**",
     !schema.includes("full_prosthesis"), "");
+}
+
+// ── ٧. قاعدةُ البيع بلا معاينة — الجهازُ الكاملُ ممنوعٌ في القسمين ──────
+//
+// ══ الواقعةُ التي صحّحها المالك (بعد ٢٤٩) ══════════════════════════════
+// كان الاستثناءُ يقول: «المساندُ بلا قائمة أجزاء، فالمسندُ الكاملُ يبقى
+// مؤهَّلاً للبيع بلا معاينة». وهذا **قلبٌ للحجّة**: غيابُ الأجزاء يعني ألّا
+// بيعَ بلا معاينة للمساند أصلاً — لا أن يُباع منها **أشدُّ** ما يحتاج
+// الطبيب. فالمسموحُ اليومَ: **جزءُ طرفٍ صناعيّ وحده**.
+console.log("\n── البيعُ بلا معاينة: الجزءُ وحده ──");
+
+//  (أ) الطرفُ الكامل يُردّ — كما كان.
+check("٤٥. **الطرفُ الكاملُ + بلا معاينة ⟶ يُردّ**",
+  noExamSaleRefusal("prosthetic", FULL_DEVICE) !== null, "");
+check("٤٥.ب ورسالتُه تسمّيه باسمه وتدلّ على البابين",
+  (noExamSaleRefusal("prosthetic", FULL_DEVICE) ?? "").includes("طرف صناعي كامل")
+  && (noExamSaleRefusal("prosthetic", FULL_DEVICE) ?? "").includes("معاينة")
+  && (noExamSaleRefusal("prosthetic", FULL_DEVICE) ?? "").includes("تصحيح"),
+  noExamSaleRefusal("prosthetic", FULL_DEVICE) ?? "");
+
+//  (ب) **والمسندُ الكاملُ يُردّ كذلك** — وهذا هو التصحيح.
+check("٤٦. **والمسندُ الكاملُ + بلا معاينة ⟶ يُردّ أيضاً**",
+  noExamSaleRefusal("medical_support", FULL_DEVICE) !== null, "");
+check("٤٦.ب **ورسالتُه تسمّي المسندَ لا الطرف** — رسالةٌ واحدةٌ صادقةٌ للقسمين",
+  (noExamSaleRefusal("medical_support", FULL_DEVICE) ?? "").includes("مسند طبي كامل"),
+  noExamSaleRefusal("medical_support", FULL_DEVICE) ?? "");
+
+//  (ج) وجزءُ الطرف يبقى مسموحاً — القاعدةُ ضيّقت ما يجب ولم تكنس غيره.
+same("٤٧. **وكلُّ جزءِ طرفٍ يبقى مسموحاً بلا معاينة**",
+  PROSTHETIC_COMPONENTS.filter((c) => noExamSaleRefusal("prosthetic", c) !== null), []);
+
+//  (د) والغيابُ يُقرأ «كاملاً» فيُردّ — صفٌّ قديمٌ بلا `requested_item`.
+check("٤٨. **والطلبُ الغائب يُقرأ كاملاً فيُردّ** — لا يُصحَّح بصمت",
+  noExamSaleRefusal("prosthetic", null) !== null
+  && noExamSaleRefusal("medical_support", undefined) !== null, "");
+
+//  (هـ) **ولا جزءَ يُقبل على مسند** — الحارسُ من وجهٍ ثانٍ.
+same("٤٩. **ولا جزءَ طرفٍ يمرّ على مسندٍ بحجّة أنه جزء**",
+  PROSTHETIC_COMPONENTS.filter((c) => noExamSaleAllowed("medical_support", c)), []);
+
+//  (و) والقائمةُ المشتقّة تقول أيُّ قسمٍ له بيعٌ بلا معاينة أصلاً — تقرؤها
+//  الشاشةُ فلا تعرض باباً يردّه الخادمُ بعد ضغطتين.
+same("٥٠. **والأطرافُ وحدها قسمٌ له بيعٌ بلا معاينة**",
+  [...noExamSaleServiceTypes], ["prosthetic"]);
+check("٥١. و`noExamSaleAllowed` مرآةُ القاعدة لا نسخةٌ ثانية منها",
+  DEVICE_SERVICE_TYPES.every((s) => REQUESTED_ITEMS.every((i) =>
+    noExamSaleAllowed(s, i) === (noExamSaleRefusal(s, i) === null))), "");
+
+//  (ز) **والخادمُ يقرأ هذه القاعدةَ بعينها** في بابَيه معاً — لا شرطاً
+//  مكتوباً بيدٍ ثانية ينحرف عنها يوماً.
+{
+  const epRoutes = readFileSync(
+    join(import.meta.dirname, "../server/device_episodes/routes.ts"), "utf8");
+  const storage = readFileSync(join(import.meta.dirname, "../server/storage.ts"), "utf8");
+  check("٥٢. **بابُ فتح الطلب ينادي القاعدة المشتركة**",
+    epRoutes.includes("noExamSaleRefusal(serviceType, parsedItem.value)"), "");
+  check("٥٣. **وبابُ البيع تحت القفل ينادِيها هو أيضاً**",
+    storage.includes("noExamSaleRefusal(serviceType, episode.requestedItem)"), "");
+  //  **ولا بقيّةَ للشرط القديم** المقصور على الأطراف في أيٍّ منهما.
+  check("٥٤. **ولا شرطَ `serviceType === \"prosthetic\"` باقياً في الحارسين**",
+    !/serviceType === "prosthetic"\s*\n?\s*&& !isProstheticComponent/.test(epRoutes)
+    && !/serviceType === "prosthetic"\s*\n?\s*&& !isProstheticComponent/.test(storage), "");
+  check("٥٥. **ولا ثابتَ `NO_EXAM_FULL_PROSTHESIS_REFUSAL` مهجورٌ في المستودع**",
+    !epRoutes.includes("NO_EXAM_FULL_PROSTHESIS_REFUSAL")
+    && !storage.includes("NO_EXAM_FULL_PROSTHESIS_REFUSAL"), "");
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);

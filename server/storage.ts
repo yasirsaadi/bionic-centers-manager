@@ -57,9 +57,7 @@ import {
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
-import {
-  isProstheticComponent, NO_EXAM_FULL_PROSTHESIS_REFUSAL,
-} from "@shared/prosthetic_parts";
+import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -458,14 +456,17 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
         "لا يمكن تخصيص الجهاز قبل معاينة الطبيب لهذا الطلب بالذات", 409,
       );
     }
-    // ══ **والطرفُ الكاملُ لا يُباع بلا معاينة** (المرحلة الثالثة) ══════
+    // ══ **والجهازُ الكاملُ لا يُباع بلا معاينة** (المرحلة الثالثة) ══════
     //  الجزءُ بديلٌ لقطعةٍ وُصفت يوماً، والجهازُ الكاملُ قرارٌ سريريٌّ من
     //  أوّله: مقاسٌ ونوعُ بترٍ ومفصلٌ وقدم. فطلبُه على مسار «بلا معاينة»
     //  **يُردّ ولا يُصحَّح بصمت** — وتصحيحُ مساره بابُه التصحيحُ الإداريّ.
-    if (noExamSellable && serviceType === "prosthetic"
-      && !isProstheticComponent(episode.requestedItem)) {
-      throw new DeviceEpisodeError(NO_EXAM_FULL_PROSTHESIS_REFUSAL, 409);
-    }
+    //
+    //  **وطرفاً كان أو مسنداً** (قرارُ المالك بعد ٢٤٩): والحلقةُ الموروثة
+    //  التي فُتحت قبل هذا الحارس تُردّ هنا عند البيع — فلا يُغيَّر مسارُها
+    //  بصمت، وبابُها المعاينةُ أو التصحيحُ الإداريّ كما تقول الرسالة.
+    const saleRefusal = noExamSellable
+      ? noExamSaleRefusal(serviceType, episode.requestedItem) : null;
+    if (saleRefusal) throw new DeviceEpisodeError(saleRefusal, 409);
   } else if (episode) {
     // حلقةٌ وُلدت بعد قراءة النقطة: المسار القديم لم يعد صالحاً.
     throw new DeviceEpisodeError(
