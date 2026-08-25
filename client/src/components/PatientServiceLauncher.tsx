@@ -141,6 +141,17 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   }
 
   /**
+   * **«تغيير سبب الحضور»** — من نافذة «جهاز جديد» حين فُتحت بمسارٍ ثابت
+   * (`fromReceptionRouting`). تُغلق النافذةَ **بنفس منطق الإغلاق العاديّ**
+   * (بلا فتح ولا إلغاء أيّ حلقة — لا نداءَ شبكةٍ هنا إطلاقاً) ثمّ تعيد فتح
+   * مُوجِّه «سبب الحضور» نفسَه ليختار الموظّفُ سبباً آخر بدقّة.
+   */
+  function changeReceptionRoutingReason() {
+    closeFlow(false);
+    setRoutingOpen(true);
+  }
+
+  /**
    * **نقصُ الملفّ ⟶ شاشةُ التعديل القائمة، والاختيارُ محفوظ.**
    *
    * ولا شاشةَ تعديلٍ ثانية تُخترَع: المسارُ `/patients/:id/edit` نفسُه الذي
@@ -166,8 +177,10 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
       {/*  ══ **«ما سبب حضور المريض اليوم؟»** ═══════════════════════════════
           يُفتَح تلقائياً مرّةً واحدة بعد تسجيل مريض أطرافٍ أو مسانِد جديد
           (`routingOpen` من العلم أعلاه)، ويبقى متاحاً يدوياً من الرابط
-          داخل «إضافة خدمة جديدة». ثلاثةُ خياراتٍ فقط، وكلٌّ منها يفتح
-          مساراً **قائماً** — لا نافذة عمل هنا، تماماً كبقيّة هذا الملفّ. */}
+          داخل «إضافة خدمة جديدة»، **ومن زرّ «تغيير سبب الحضور»** داخل
+          نافذة «جهاز جديد» حين فُتحت من هذا المُوجِّه بعينه. ثلاثةُ
+          خياراتٍ فقط، وكلٌّ منها يفتح مساراً **قائماً** — لا نافذة عمل
+          هنا، تماماً كبقيّة هذا الملفّ. */}
       {routingServiceType && (
         <Dialog open={routingOpen} onOpenChange={setRoutingOpen}>
           <DialogContent className="sm:max-w-[480px]" dir="rtl">
@@ -293,6 +306,8 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           onOpenChange={closeFlow}
           initialRequestedItem={resumeItem}
           initialServicePath={resumePath}
+          fromReceptionRouting={flow.fromReceptionRouting}
+          onChangeReason={changeReceptionRoutingReason}
           onEditPatient={(requestedItem, servicePath) =>
             editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
         />

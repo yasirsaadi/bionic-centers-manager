@@ -48,13 +48,27 @@ interface NewDeviceEpisodeModalProps {
    */
   initialRequestedItem?: string;
   /**
-   * قيمةٌ ابتدائية لمحدِّد «هل تحتاج هذه العملية معاينة؟» — **تعبئةٌ لا
-   * قفل**: الموظّفُ يبقى حرّاً في تبديلها من داخل النافذة. تأتي إمّا من
-   * استئنافٍ بعد «تعديل مريض» (القيمةُ كما تُركت قبل الردّ)، أو من
-   * مُوجِّه «سبب حضور المريض اليوم؟» حين يختار «يحتاج معاينة طبية»
-   * (اقتراحٌ لا حسم) — بالمنطق نفسه في الحالتين.
+   * قيمةٌ ابتدائية لمحدِّد «هل تحتاج هذه العملية معاينة؟». في المسار
+   * العاديّ (الاستئنافُ بعد «تعديل مريض»، أو الفتحُ من «إضافة خدمة
+   * جديدة») تبقى قابلةً للتبديل من داخل النافذة. وفي مسار
+   * `fromReceptionRouting` تصير **القيمة المعروضة ثابتةً** بلا محدِّدٍ
+   * إطلاقاً — انظر تعليقه أدناه.
    */
   initialServicePath?: string;
+  /**
+   * **هذه النافذةُ فُتحت من مُوجِّه «سبب الحضور» باختيار «يحتاج معاينة
+   * طبية» بعينها.** فمسارُ المعاينة يُعرَض **ثابتاً** «معاينة طبية» بلا
+   * محدِّدٍ إطلاقاً: تبديلُه داخلياً إلى «بلا معاينة» لا يقول أهو بيعُ
+   * جزءٍ أم صيانة، وقد يفتح حلقةً بمسارٍ ناقص المعنى قبل تسجيل العملية
+   * الصحيحة. فبدلاً من محدِّد، زرُّ «تغيير سبب الحضور» (`onChangeReason`)
+   * يعيد الموظّفَ إلى المُوجِّه نفسِه ليختار السببَ الصحيح بدقّة.
+   */
+  fromReceptionRouting?: boolean;
+  /**
+   * يُغلق هذه النافذة **بلا فتح ولا إلغاء أيّ حلقة** ويعيد فتح مُوجِّه
+   * «سبب الحضور» — يُستعمَل فقط حين `fromReceptionRouting`.
+   */
+  onChangeReason?: () => void;
   /**
    * يفتح «تعديل مريض» حين ينقص الملفّ، **حاملاً الاختيارَ إلى مَن يحفظه**.
    *
@@ -75,7 +89,7 @@ const LABEL = {
 
 export function NewDeviceEpisodeModal({
   patientId, serviceType, open, onOpenChange, initialRequestedItem,
-  initialServicePath, onEditPatient,
+  initialServicePath, fromReceptionRouting, onChangeReason, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -260,26 +274,50 @@ export function NewDeviceEpisodeModal({
         {/*  ══ **هل تحتاج هذه العملية معاينة طبية؟** ════════════════════
             السؤالُ على **العملية** لا على المريض، ويُطرَح لكلّ طلبٍ على
             حدة. والاستقبالُ ومديرُ الفرع يجيبانه — **ولا تمنح إجابةُ «لا»
-            أيَّ صلاحيةٍ طبية**: هي توجيهُ مسارٍ لا قرارٌ سريريّ. */}
-        <div className="space-y-2 text-right" data-testid="block-service-path">
-          <Label className="font-semibold">
-            {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
-          </Label>
-          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
-            <SelectTrigger data-testid="select-service-path">
-              <SelectValue placeholder="اختر نعم أو لا" />
-            </SelectTrigger>
-            <SelectContent>
-              {SERVICE_PATHS.map((v) => (
-                <SelectItem key={v} value={v}>{SERVICE_PATH_LABELS[v]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {SERVICE_PATH_HELP}
-            {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
-          </p>
-        </div>
+            أيَّ صلاحيةٍ طبية**: هي توجيهُ مسارٍ لا قرارٌ سريريّ.
+            ومَن جاء من مُوجِّه «سبب الحضور» باختيار «يحتاج معاينة طبية»
+            بعينها **لا يرى محدِّداً هنا إطلاقاً**: مسارُه ثابتٌ «معاينة
+            طبية»، وتصحيحُه الحقيقيّ من زرّ «تغيير سبب الحضور» الذي يعيده
+            إلى المُوجِّه نفسِه ليختار بيعاً أو صيانةً بدقّة — لا من قلب
+            هذا المحدِّد داخلياً إلى «بلا معاينة» الذي لا يقول أيَّهما. */}
+        {fromReceptionRouting ? (
+          <div className="space-y-1.5 text-right" data-testid="block-service-path-fixed">
+            <p className="text-sm">
+              <span className="font-semibold">المسار:</span>{" "}
+              <span className="font-medium text-primary" data-testid="text-service-path-fixed">
+                معاينة طبية
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => onChangeReason?.()}
+              data-testid="button-change-reason"
+              className="text-xs text-primary underline underline-offset-2"
+            >
+              تغيير سبب الحضور
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2 text-right" data-testid="block-service-path">
+            <Label className="font-semibold">
+              {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
+            </Label>
+            <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
+              <SelectTrigger data-testid="select-service-path">
+                <SelectValue placeholder="اختر نعم أو لا" />
+              </SelectTrigger>
+              <SelectContent>
+                {SERVICE_PATHS.map((v) => (
+                  <SelectItem key={v} value={v}>{SERVICE_PATH_LABELS[v]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {SERVICE_PATH_HELP}
+              {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
+            </p>
+          </div>
+        )}
 
         {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════
             ملفٌّ قديمٌ بلا مقاساتٍ أو بلا تعريفِ بترٍ لا يدخل دورةَ تصنيعٍ

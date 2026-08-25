@@ -93,22 +93,28 @@ function main() {
   // ══ إلى أيّ مسارٍ قائم يذهب كلّ خيار ═══════════════════════════════════
   console.log("\n── وجهةُ كلّ خيار ──");
 
-  same("٦. **«يحتاج معاينة طبية» ⇒ نافذةُ «جهاز جديد» القائمة، بمسارٍ معبَّأً مسبقاً بـ«نعم»**",
+  same("٦. **«يحتاج معاينة طبية» ⇒ نافذةُ «جهاز جديد» القائمة، بمسارٍ ثابت «معاينة طبية»**",
     pro.find((c) => c.id === "exam_required")?.flow,
-    { kind: "device_episode", serviceType: "prosthetic", initialServicePath: "exam" });
+    {
+      kind: "device_episode", serviceType: "prosthetic",
+      initialServicePath: "exam", fromReceptionRouting: true,
+    });
   same("والمساندُ كذلك",
     sup.find((c) => c.id === "exam_required")?.flow,
-    { kind: "device_episode", serviceType: "medical_support", initialServicePath: "exam" });
+    {
+      kind: "device_episode", serviceType: "medical_support",
+      initialServicePath: "exam", fromReceptionRouting: true,
+    });
   //  **والمطلوبُ وحده يبقى مفتوحاً**: لا `requestedItem` مضبوطٌ مسبقاً —
-  //  النافذةُ القائمةُ تسأل عن «ما المطلوب؟» كما كانت تفعل دائماً. والتعبئةُ
+  //  النافذةُ القائمةُ تسأل عن «ما المطلوب؟» كما كانت تفعل دائماً. والثباتُ
   //  على مسار المعاينة وحده، لا على المطلوب.
   {
     const flow = pro.find((c) => c.id === "exam_required")?.flow as any;
     check(!("requestedItem" in flow),
       "٧. **ولا يُفرَض مطلوبٌ سلفاً** — النافذةُ تسأل «ما المطلوب؟» كما كانت",
       JSON.stringify(flow));
-    same("والمسارُ معبَّأٌ بـ«exam» بالضبط — لا قيمةً أخرى، وقابلٌ للتبديل من داخل النافذة",
-      flow.initialServicePath, "exam");
+    same("والمسارُ «exam» بالضبط، وعلمُ الثبات مرفوع", flow.initialServicePath, "exam");
+    same("و`fromReceptionRouting` صريحةٌ `true`", flow.fromReceptionRouting, true);
   }
 
   same("٨. **«شراء جزء من طرف صناعي» ⇒ نافذةُ «بلا معاينة» بنوع بيع محسوم**",
@@ -129,80 +135,80 @@ function main() {
     [...new Set(pro.filter((c) => c.id !== "exam_required").map((c) => c.flow.kind))],
     ["no_exam_operation"]);
 
-  // ══ مسارُ المعاينة تعبئةٌ قابلة للتعديل — لا قفل ═══════════════════════
-  //  **تصحيحٌ لاحق**: القفلُ الذي فرضته نسخةٌ سابقة كان أشدَّ من اللازم —
-  //  توجيهُ الاستقبال قرارٌ تشغيليّ يصحَّح بحرّية، لا قرارٌ طبيٌّ موقَّع.
-  //  فصار محدِّدُ «هل تحتاج معاينة؟» **معبَّأً** بـ«exam» حين يأتي من
-  //  «يحتاج معاينة طبية»، ويبقى **مفتوحاً** كأيّ محدِّدٍ آخر — بالآلية
-  //  نفسها التي تُعيد الاختيارَ بعد «تعديل مريض» (`initialServicePath`)،
-  //  لا مفهوماً ثانياً موازياً باسم «قفل».
-  console.log("\n── مسارُ المعاينة تعبئةٌ قابلة للتعديل — لا قفل ──");
+  // ══ مسارُ المعاينة ثابتٌ من مُوجِّه الحضور — بلا محدِّدٍ داخليّ ═══════════
+  //  **تصحيحٌ لاحق**: تبديلُ المسار داخل النافذة من «exam» إلى «no_exam»
+  //  لا يقول أهو بيعُ جزءٍ أم صيانة، وقد يترك حلقةً مفتوحةً بمسارٍ ناقص
+  //  المعنى قبل تسجيل العملية الصحيحة. فصار مسارُ «يحتاج معاينة طبية»
+  //  **ثابتاً** بلا محدِّدٍ إطلاقاً، وزرُّ «تغيير سبب الحضور» يعيد الموظّفَ
+  //  إلى المُوجِّه نفسِه ليختار بدقّة — لا تبديلاً داخلياً.
+  console.log("\n── مسارُ المعاينة ثابتٌ من مُوجِّه الحضور — بلا محدِّدٍ داخليّ ──");
 
-  //  (أ) الاسمُ القديم اختفى بالكامل من الملفّات الأربعة التي كان يعبرها.
-  check(!code(ROUTING).includes("lockedServicePath"),
-    "١٢.ب **ولا أثرَ لـ\"lockedServicePath\" في reception_routing.ts كشيفرةٍ فعلية**");
-  check(!code(LAUNCHER_LOGIC).includes("lockedServicePath"),
-    "وفي patient_service_launcher_logic.ts كذلك");
-  check(!code(DEVICE_EPISODE_MODAL).includes("lockedServicePath"),
-    "وفي NewDeviceEpisodeModal.tsx كذلك");
-  const launcherCodeForResume = code(LAUNCHER);
-  check(!launcherCodeForResume.includes("lockedServicePath"),
-    "وفي PatientServiceLauncher.tsx كذلك");
-
-  //  (ب) والمحدِّدُ داخل النافذة بلا `disabled` إطلاقاً — يقبل exam ⟷
-  //  no_exam بحرّية، ولا شارةَ «محسوم» تبقى بجواره.
   const deviceModalCode = code(DEVICE_EPISODE_MODAL);
+  const launcherCodeForRouting = code(LAUNCHER);
+
+  //  (١) النافذةُ القائمة اكتسبت خاصّيتين اختياريتين فقط.
+  check(/fromReceptionRouting\?: boolean;/.test(deviceModalCode),
+    "١٢.ب **والنافذةُ القائمة اكتسبت خاصّيتين اختياريتين فقط** — `fromReceptionRouting` و`onChangeReason`");
+  check(/onChangeReason\?: \(\) => void;/.test(deviceModalCode),
+    "وكلتاهما بلا مسّ أيّ خاصّيةٍ قائمة");
+
+  //  (٢) ومحدِّدُ «هل تحتاج معاينة؟» **يختفي بالكامل** حين `fromReceptionRouting`
+  //  — لا `disabled` على محدِّدٍ ظاهر، بل غيابٌ تامّ واستبدالٌ بنصٍّ ثابت.
+  check(/\{fromReceptionRouting \? \(/.test(deviceModalCode),
+    "١٢.ج **ومحدِّدُ «هل تحتاج معاينة؟» يختفي بالكامل حين `fromReceptionRouting`** — لا `disabled`، بل غيابٌ تامّ");
+  check(/data-testid="text-service-path-fixed"[\s\S]{0,20}>\s*معاينة طبية/.test(deviceModalCode),
+    "١٢.د **ويظهر بدلاً منه نصّ «معاينة طبية» ثابتاً بمعرِّفه الخاصّ**");
+
+  //  (٣) وزرُّ «تغيير سبب الحضور» موجودٌ بنصّه ومعرِّفه، وينادي `onChangeReason`
+  //  فحسب — لا `mutation.mutate()` ولا أيّ نداءٍ آخر.
+  check(/data-testid="button-change-reason"/.test(deviceModalCode)
+    && /تغيير سبب الحضور/.test(deviceModalCode),
+    "١٢.هـ **وزرُّ «تغيير سبب الحضور» موجودٌ بنصّه ومعرِّفه**");
+  check(/onClick=\{\(\) => onChangeReason\?\.\(\)\}/.test(deviceModalCode),
+    "١٢.و وينادي `onChangeReason` فحسب");
+  //  **ولا نداءَ تحويلٍ (`mutation.mutate`) إلّا من زرّ «فتح الطلب» نفسِه** —
+  //  فتغييرُ السبب لا يُنشئ حلقةً بأيّ حال، ولا يُلغي أخرى.
+  const mutateCalls = (deviceModalCode.match(/mutation\.mutate\(\)/g) ?? []).length;
+  same("١٢.ز **و`mutation.mutate()` تُستدعى مرّةً واحدة بالضبط — من «فتح الطلب»** — لا من «تغيير سبب الحضور»",
+    mutateCalls, 1);
+
+  //  (٤) والموزِّعُ ينفّذ «تغيير سبب الحضور» **بلا شبكة**: إغلاقٌ عاديّ
+  //  (بمنطق `closeFlow` القائم — لا فتحَ ولا إلغاءَ لأيّ حلقة) ثمّ إعادةُ
+  //  فتح **حوار `routingOpen` نفسِه** — لا حواراً ثانياً.
+  check(/function changeReceptionRoutingReason\(\) \{\s*closeFlow\(false\);\s*setRoutingOpen\(true\);\s*\}/.test(launcherCodeForRouting),
+    "١٢.ح **`changeReceptionRoutingReason` تُغلق بمنطق `closeFlow` القائم ثمّ تفتح المُوجِّهَ** — لا حلقةَ تُفتَح ولا تُلغى");
+  check(/onChangeReason=\{changeReceptionRoutingReason\}/.test(launcherCodeForRouting),
+    "١٢.ط **والنافذةُ تستدعيها عبر الخاصّية نفسِها** — لا سلكاً موازياً");
+  check(/fromReceptionRouting=\{flow\.fromReceptionRouting\}/.test(launcherCodeForRouting),
+    "١٢.ي والموزِّعُ يمرّر ما قرّره المُوجِّه بلا تعديل");
+  check(/Dialog open=\{routingOpen\} onOpenChange=\{setRoutingOpen\}/.test(launcherCodeForRouting),
+    "١٢.ك **والمُوجِّهُ المُعاد فتحُه هو نفسُ حوار `routingOpen` القائم** — لا نسخةٌ ثانية");
+
+  //  (٥) والمسارُ العاديّ («إضافة خدمة جديدة» أو الاستئناف بعد «تعديل
+  //  مريض») يبقى **بلا** `fromReceptionRouting` — فيرى محدِّدَ «هل تحتاج
+  //  معاينة؟» حرّاً بلا `disabled` كما كان دائماً.
   check(/<Select value=\{path\} onValueChange=\{\(v\) => setPath\(v as ServicePath\)\}>/.test(deviceModalCode),
-    "١٢.ج **ومحدِّدُ «هل تحتاج معاينة؟» بلا `disabled` إطلاقاً — exam ⟷ no_exam بحرّية**");
-  check(!/text-service-path-locked/.test(deviceModalCode),
-    "ولا شارةَ «محسوم/مقفول» متبقّية بجواره");
-
-  //  (ج) والقيمةُ الابتدائية تعبئةٌ عادية من `resumedPath` وحده — لا
-  //  مصدرين يتنازعان الأولوية.
-  check(/const \[path, setPath\] = useState<ServicePath \| "">\(resumedPath\);/.test(deviceModalCode),
-    "١٢.د **والقيمةُ الابتدائية من `resumedPath` وحدها** — بلا أولويةٍ لمصدرٍ آخر");
-  check(/setPath\(resumedPath\);/.test(deviceModalCode),
-    "وتعودُ إليها نفسِها عند كل إعادة فتح");
-  const setPathCalls = (deviceModalCode.match(/setPath\(/g) ?? []).length;
-  same("١٢.هـ وكلُّ نداءات `setPath` اثنان لا أكثر — إعادةُ فتحٍ، ومحدِّدٌ واحد",
-    setPathCalls, 2);
-
-  //  (د) واستئنافُ «تعديل مريض» يحفظ **الاختيارَ الحاليّ** لا الأصليّ:
-  //  النافذةُ تسلّم `path` الحيَّ عند التوجّه للتعديل، والموزِّعُ يحفظه كما
-  //  وصله بلا تعديل — فتبديلٌ إلى «no_exam» ثمّ عودةٌ من «تعديل مريض»
-  //  يستأنف «no_exam» بعينها لا «exam» الأصليّة.
-  check(/onEditPatient\(item, path\);/.test(deviceModalCode),
-    "١٢.و **والنافذةُ تسلّم الاختيارَ الحيَّ (`path`) عند التوجّه لتعديل المريض** — لا قيمةً أصليةً محفوظة جانباً");
-  check(/servicePath: servicePath as any,/.test(launcherCodeForResume),
-    "١٢.ز والموزِّعُ يحفظ القيمةَ كما وصلته بلا تعديل");
-
-  //  (هـ) وموزِّعُ الخدمات يزرع تعبئةَ المُوجِّه في **حالة الاستئناف
-  //  نفسها** (`resumePath`) عند الاختيار — لا حقلاً موازياً، ولا يُمرَّر
-  //  شيءٌ باسم القفل إلى النافذة بعد اليوم.
-  check(!/lockedServicePath=\{/.test(launcherCodeForResume),
-    "١٢.ح **ولا `lockedServicePath` يُمرَّر إلى النافذة من الموزِّع بعد الآن**");
-  check(/newFlow\.kind === "device_episode" && newFlow\.initialServicePath/.test(launcherCodeForResume),
-    "١٢.ط **و`chooseFlow` يزرع تعبئةَ المُوجِّه في `resumePath` عند الاختيار**");
-  check(/initialServicePath=\{resumePath\}/.test(launcherCodeForResume),
-    "١٢.ي والنافذةُ تقرأ هذه التعبئةَ عبر `initialServicePath` القائم — بلا خاصّيةٍ جديدة");
-
-  //  ══ **والمسارُ العاديّ القائم يبقى بلا تعبئة** — «طرف صناعي جديد أو
-  //  جزء جديد» في القائمة الكاملة يفتح النافذةَ نفسَها **بلا**
-  //  `initialServicePath` على الحلقة، فتسأل «هل تحتاج معاينة؟» كما كانت
-  //  تماماً قبل مُوجِّه سبب الحضور. ═══════════════════════════════════════
+    "١٢.ل **والمسارُ العاديّ ما زال يعرض محدِّداً حرّاً بلا `disabled`** — exam ⟷ no_exam كما كان");
   {
     const normalFlow = opt(launcherOptions({ isAmputee: true }), "new_prosthetic_device").flow as any;
-    check(!("initialServicePath" in normalFlow),
-      "١٢.ك **والمسارُ العاديّ («طرف صناعي جديد أو جزء جديد») يبقى بلا تعبئة**",
+    check(!("fromReceptionRouting" in normalFlow) && !("initialServicePath" in normalFlow),
+      "١٢.م **والمسارُ العاديّ («طرف صناعي جديد أو جزء جديد») يبقى بلا أيّ حقلٍ إضافي**",
       JSON.stringify(normalFlow));
     same("وهو نفسُه — بلا حرفٍ يتغيّر", normalFlow,
       { kind: "device_episode", serviceType: "prosthetic" });
   }
-  //  والاستئنافُ بعد «تعديل مريض» (`takeDeviceFlowResume`) كذلك: الحلقةُ
-  //  التي يبنيها `flow` نفسُه لا تحمل `initialServicePath` — القيمةُ تصل
-  //  عبر `resumePath` وحدها، بالمنطق القائم من قبل هذا الإصلاح.
-  check(/setFlow\(\{ kind: "device_episode", serviceType: resume\.serviceType \}\);/.test(launcherCodeForResume),
-    "١٢.ل **والاستئنافُ بعد «تعديل مريض» أيضاً بلا حقلٍ إضافي على `flow`** — يسأل كما كان");
+  check(/setFlow\(\{ kind: "device_episode", serviceType: resume\.serviceType \}\);/.test(launcherCodeForRouting),
+    "١٢.ن **والاستئنافُ بعد «تعديل مريض» أيضاً بلا حقلٍ إضافي على `flow`** — يسأل بمحدِّدٍ حرّ");
+
+  //  ولا أثرَ لـ`lockedServicePath` — الاسمُ الذي رُفض في تصحيحٍ أسبق —
+  //  في أيٍّ من الملفّات الأربعة.
+  for (const [label, src] of [
+    ["reception_routing.ts", ROUTING], ["patient_service_launcher_logic.ts", LAUNCHER_LOGIC],
+    ["NewDeviceEpisodeModal.tsx", DEVICE_EPISODE_MODAL], ["PatientServiceLauncher.tsx", LAUNCHER],
+  ] as const) {
+    check(!code(src).includes("lockedServicePath"),
+      `١٢.س **ولا أثرَ لـ"lockedServicePath" في ${label}**`);
+  }
 
   // ══ (ب) بلا «شراء طرف صناعي كامل» بين الخيارات ═════════════════════════
   console.log("\n── بلا «شراء طرف صناعي كامل» ──");
