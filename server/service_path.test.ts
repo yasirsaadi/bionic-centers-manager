@@ -430,12 +430,32 @@ async function main() {
         { serviceType: "medical_support", servicePath: "exam" });
       same("٢٢. **(ي) المسندُ بمسار المعاينة**", r.status, 201);
       same("   ويظهر في طابوره", (await pendingOf(S.recv, p)).pending, ["medical_support"]);
+      //  ══ **ولا مسندَ يُفتَح بلا معاينة بعد اليوم** (قرارُ المالك بعد ٢٤٩) ═
+      //  لا قائمةَ أجزاءٍ للمساند، فلا يبقى لها ما يُطلَب إلّا الجهازُ كاملاً
+      //  — وهو قرارٌ سريريّ. فالنقطةُ تردّ ٤٠٠ ولا حلقةَ تُفتَح.
       const p2 = await mkPatient("مسندٌ بلا معاينة", { support: true });
       await mkCase(p2, "medical_support");
       const r2 = await http("POST", `/api/patients/${p2}/device-episodes`, S.recv,
         { serviceType: "medical_support", servicePath: "no_exam" });
-      same("٢٣. **والمسندُ بلا معاينة خارجَه**", r2.status, 201);
-      same("   لا إلزاميّ ولا هادئ", await pendingOf(S.recv, p2), { pending: null, optional: null });
+      same("٢٣. **والمسندُ لا يُفتَح بلا معاينة إطلاقاً** — ٤٠٠ لا ٢٠١", r2.status, 400);
+      check(String(r2.body?.error ?? "").includes("مسند طبي كامل"),
+        "   ورسالتُه تسمّي المسندَ لا الطرف", String(r2.body?.error));
+      same("   ولا حلقةَ وُلدت", (await q<{ n: number }>(
+        `SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`,
+        [p2]))[0].n, 0);
+      //  **والصفُّ الموروث** (فُتح قبل هذا الحارس) ما زال يُقرأ بقاعدة ٠٦٥:
+      //  «بلا معاينة» ⟶ **ليس** بانتظار معاينة. والحارسُ منع الميلادَ ولم
+      //  يُعِد تفسيرَ ما وُلد.
+      const c2 = (await q<{ id: number }>(
+        `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`,
+        [p2]))[0].id;
+      await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+                 sequence_number, status, agreed_cost, requested_item, component,
+                 service_path, created_by)
+               VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',NULL,'no_exam',$3)`,
+      [p2, c2, MANAGER]);
+      same("٢٣.ب **والموروثةُ تبقى خارجَ الطابور** — القاعدةُ لم تتغيّر",
+        await pendingOf(S.recv, p2), { pending: null, optional: null });
       check(!(await worklistHas(p2, "medical_support")), "   ولا في قائمة عمل الطبيب");
     }
 

@@ -24,15 +24,23 @@
 // يفتح نافذةَ «جهاز جديد» على مسار المعاينة دائماً. والموظّفُ يحدّد
 // **المطلوب** فيها (طرفٌ كاملٌ أو جزء) كما كان.
 //
-// ══ والمساندُ الطبية بلا قائمةِ أجزاء — ولن تُخترَع هنا ══════════════════
-// لا تصنيفَ أجزاءٍ قانونياً للمساند في هذا المستودع (`NoExamOperationDialog`
-// تعرض `FULL_DEVICE` وحده لها). فخيارُ «شراء مسند طبي» يفتح النافذةَ نفسَها
-// بنوعِ خدمةٍ `medical_support`، وهي التي تقرّر البقاءَ بلا قائمة أجزاء —
-// هذا الملفّ لا يضيف قائمةً ولا يفترضها.
+// ══ والمساندُ الطبية بلا شراءٍ بلا معاينة ═══════════════════════════════
+// كان الخيارُ «شراء مسند طبي» يفتح نافذةَ «بلا معاينة» بنوعِ خدمةٍ
+// `medical_support`، فتعرض له **الجهازَ الكاملَ** لأنه الشيءُ الوحيد الذي
+// لا أجزاءَ دونه. وهذا يبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب.
+//
+// **وقرارُ المالك (بعد ٢٤٩)**: المسندُ الكاملُ كالطرف الكامل — يحتاج معاينة.
+// ولا قائمةَ أجزاءٍ قانونيةً للمساند، فلا يبقى لها ما يُباع بلا معاينة
+// أصلاً — **ولن تُخترَع لها أجزاءٌ هنا ولا في أيّ ملفّ**.
+//
+// فالخيارُ حُذف، ولم يُترك معطَّلاً: بابٌ يردّه الخادمُ بعد ضغطتين ليس
+// باباً. والقائمةُ تُشتقّ من قاعدة `shared/prosthetic_parts` نفسِها
+// (`noExamSaleServiceTypes`) لا من شرطٍ مكتوبٍ بيدٍ ثانية هنا ينحرف عنها.
 
 import type { ServiceFlow } from "./patient_service_launcher_logic";
 import type { ResumeStore } from "./device_flow_resume";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import { noExamSaleServiceTypes } from "@shared/prosthetic_parts";
 
 /** عنوانُ السؤال كما يراه الاستقبال — ثابتٌ واحد يُستعمَل في كلّ سطح. */
 export const RECEPTION_ROUTING_QUESTION = "ما سبب حضور المريض اليوم؟";
@@ -79,6 +87,8 @@ export function receptionRoutingDepartments(p: {
 
 const SALE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   prosthetic: "شراء جزء من طرف صناعي",
+  //  لا يُعرَض — المساندُ خارجَ `noExamSaleServiceTypes`. ويبقى العنوانُ
+  //  هنا كي يظلّ السجلّ مكتملَ الشكل، ولا يصير غيابُه هو الحارس.
   medical_support: "شراء مسند طبي",
 };
 const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
@@ -87,7 +97,7 @@ const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
 };
 
 /**
- * **ثلاثةُ خياراتٍ لا رابع** — بالترتيب الذي يُعرَض به دائماً.
+ * **خياراتُ القسم** — بالترتيب الذي تُعرَض به دائماً.
  *
  * و«يحتاج معاينة طبية» يفتح نافذة «جهاز جديد» على **مسار المعاينة دائماً**:
  * لا سؤالَ داخلها عن المسار، ولا تبديلَ إلى «بلا معاينة» من قلبها — ذلك
@@ -95,25 +105,30 @@ const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
  * ناقص المعنى قبل تسجيل العملية الصحيحة. ومَن تبيّن له غيرُ ذلك يضغط
  * «تغيير سبب الحضور» فيعود إلى هذا المُوجِّه ليختار بدقّة.
  *
- * وكلاهما الآخران (البيع والصيانة) يذهب إلى **نافذةٍ واحدة موجودة**
+ * والآخران (البيع والصيانة) يذهبان إلى **نافذةٍ واحدة موجودة**
  * (`no_exam_operation` ⟶ `NoExamOperationDialog`) بنوعٍ محسومٍ سلفاً
  * (`initialKind`) — فلا يُعاد سؤال «بيعٌ أم صيانة؟» بعد أن أجاب عنه
  * اختيارُ الزرّ بعينه.
+ *
+ * **والبيعُ لا يُعرَض إلّا لقسمٍ له ما يُباع بلا معاينة** — وهي الأطرافُ
+ * وحدها اليوم. فالأطرافُ ثلاثة، والمساندُ اثنان: معاينةٌ وصيانة. والمسندُ
+ * الكاملُ بابُه «يحتاج معاينة طبية» ككلّ جهازٍ كامل.
  */
 export function receptionRoutingChoices(
   serviceType: ReceptionRoutingServiceType,
 ): ReceptionRoutingChoice[] {
+  const sellsWithoutExam = noExamSaleServiceTypes.includes(serviceType);
   return [
     {
       id: "exam_required",
       label: "يحتاج معاينة طبية",
       flow: { kind: "device_episode", serviceType },
     },
-    {
-      id: "device_sale",
+    ...(sellsWithoutExam ? [{
+      id: "device_sale" as const,
       label: SALE_LABEL[serviceType],
-      flow: { kind: "no_exam_operation", serviceType, initialKind: "device_sale" },
-    },
+      flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "device_sale" as const },
+    }] : []),
     {
       id: "maintenance",
       label: MAINTENANCE_LABEL[serviceType],

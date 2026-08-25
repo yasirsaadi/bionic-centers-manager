@@ -13,11 +13,15 @@
 // «الأدابتر» إلى إحداهما فتُصان قطعةٌ لا تُباع. **والمساندُ الطبية بلا
 // أجزاء** — لا تُخترَع لها قائمةٌ لم يقلها أحد.
 //
-// ══ والطرفُ الكاملُ ليس من هذا الباب ═══════════════════════════════════
-// الجزءُ بديلٌ لقطعةٍ وُصفت يوماً — قالبٌ يبلى أو ركبةٌ تنكسر. أمّا **الطرفُ
+// ══ والجهازُ الكاملُ ليس من هذا الباب — طرفاً كان أو مسنداً ═════════════
+// الجزءُ بديلٌ لقطعةٍ وُصفت يوماً — قالبٌ يبلى أو ركبةٌ تنكسر. أمّا **الجهازُ
 // الكاملُ فقرارٌ سريريٌّ من أوّله**: مستوى البتر والمفصلُ والقدمُ والمقاس.
 // فلا يُعرَض هنا إطلاقاً، **والخادمُ يردّه** ولو لُفِّق طلبٌ يتجاوز الشاشة.
-// **والمسندُ الكاملُ يبقى** — لا قائمةَ أجزاءٍ قانونيةً للمساند بعد.
+//
+// **والمساندُ الطبية لا تُباع من هنا إطلاقاً** (قرارُ المالك بعد ٢٤٩): كانت
+// النافذةُ تعرض لها «مسنداً كاملاً» لأنه الشيءُ الوحيد الذي لا أجزاءَ دونه —
+// فتبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب. فصار استعمالُها للمساند
+// **الصيانةَ وحدها**: جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
 //
 // ══ ومنشأُ الجهاز ثلاثةٌ لا اثنان ══════════════════════════════════════
 // «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز». وخيارٌ واحد يجمعهما كان
@@ -71,9 +75,8 @@ interface Props {
   existingRequestedItem?: string | null;
   /**
    * **«نوع العملية» محسومٌ قبل فتح النافذة** — من مُوجِّه «ما سبب حضور
-   * المريض اليوم؟» بعد التسجيل مثلاً. يُعطَّل معه المحدِّدُ فلا يُعاد
-   * سؤالٌ أجاب عنه اختيارُ الزرّ بعينه — نفسُ منطق `existingEpisodeId`
-   * أدناه بالضبط، لسببٍ مختلف.
+   * المريض اليوم؟» بعد التسجيل مثلاً. فلا يُعاد سؤالٌ أجاب عنه اختيارُ
+   * الزرّ بعينه — نفسُ منطق `existingEpisodeId` أدناه بالضبط، لسببٍ مختلف.
    */
   initialKind?: Kind;
 }
@@ -84,10 +87,21 @@ export function NoExamOperationDialog({
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [kind, setKind] = useState<Kind>(
-    initialKind ?? (existingEpisodeId ? "device_sale" : "maintenance"));
-  const [requestedItem, setRequestedItem] = useState<string>(
-    existingRequestedItem ?? (serviceType === "prosthetic" ? "" : FULL_DEVICE));
+
+  //  ══ **نوعُ العملية محسومٌ متى كان معلوماً** ═══════════════════════════
+  //  ثلاثةُ أسبابٍ تحسمه، وكلُّها تسبق فتحَ النافذة:
+  //    · **المساندُ الطبية** — لا بيعَ لها بلا معاينة إطلاقاً، فصيانةٌ حتماً.
+  //      وهذا حارسٌ **بنيويّ** لا مجرّد إخفاءِ خيار: ولو وصلها `initialKind`
+  //      ملفَّقٌ بـ`device_sale` لبقيت صيانة، فلا تُنتج الشاشةُ ما يردّه الخادم.
+  //    · **حلقةٌ قائمة تُستأنَف** — بيعٌ بحكم وجودها.
+  //    · **اختيارُ المُوجِّه** — أجاب الموظّفُ بضغطته.
+  const fixedKind: Kind | null = serviceType === "medical_support"
+    ? "maintenance"
+    : (initialKind ?? (existingEpisodeId ? "device_sale" : null));
+
+  const [kind, setKind] = useState<Kind>(fixedKind ?? "maintenance");
+  //  البيعُ للأطراف وحدها الآن، فلا قيمةَ ابتدائية «كاملة» تُحشى للمساند.
+  const [requestedItem, setRequestedItem] = useState<string>(existingRequestedItem ?? "");
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
   /** **بلا افتراض**: المنشأُ يُسأل ولا يُخمَّن — ولا يُقرأ من تاريخ المريض. */
@@ -97,7 +111,14 @@ export function NoExamOperationDialog({
   const [amount, setAmount] = useState(0);
   const [note, setNote] = useState("");
 
-  const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
+  //  ══ **حالاتُ الخبير أربعٌ تُقال، لا واحدةٌ تُخفي ثلاثاً** ══════════════
+  //  كانت `data: experts = []` تسوّي بين «يُحمَّل الآن» و«فشل الطلب» و«لا
+  //  خبيرَ في هذا الفرع»: قائمةٌ فارغة في الحالات الثلاث. فيقف الموظّفُ أمام
+  //  حقلٍ لا يفتح ولا يقول لماذا — فيظنّ النظامَ معطَّلاً، أو ينتظر شيئاً لن
+  //  يأتي، أو يعيد المحاولة على خطأ شبكةٍ لا يعرف أنه وقع.
+  //
+  //  **ولا يُخمَّن خبير** في أيٍّ منها: الغيابُ يُقال غياباً.
+  const expertQuery = useQuery<{ id: number; displayName: string }[]>({
     queryKey: ["/api/manufacturing/experts", branchId],
     enabled: open && Boolean(branchId),
     queryFn: async () => {
@@ -107,6 +128,11 @@ export function NoExamOperationDialog({
       return res.json();
     },
   });
+  const experts = expertQuery.data ?? [];
+  //  `enabled: false` تُبقي الحالةَ `pending` بلا جلب — فلا تُقرأ «تحميلاً».
+  const expertsLoading = expertQuery.isLoading || expertQuery.isFetching;
+  const expertsFailed = expertQuery.isError;
+  const expertsEmpty = expertQuery.isSuccess && experts.length === 0;
 
   //  أجهزةُ الصيانة: المسلَّمُ وحدَه — وما لم يُسلَّم بعد ليس محلَّ صيانة.
   const { options: devices } = useDeviceEpisodes(
@@ -150,8 +176,11 @@ export function NoExamOperationDialog({
       //  حلقةً بنفسه فينحرف عن حُرّاس الأوّل.
       let episodeId = existingEpisodeId;
       if (!episodeId) {
+        //  **ولا احتياطَ بـ`full_device`**: كان الاحتياطُ يرسل «جهازاً كاملاً»
+        //  حين يفرغ الحقل — أي **يطلب بالضبط ما يردّه الخادم**. والحقلُ لا
+        //  يفرغ أصلاً (`missingItem` تمنع الإرسال)، فالاحتياطُ كذبةٌ لا حارس.
         const ep = await apiRequest("POST", `/api/patients/${patientId}/device-episodes`, {
-          serviceType, requestedItem: requestedItem || FULL_DEVICE, servicePath: "no_exam",
+          serviceType, requestedItem, servicePath: "no_exam",
         });
         episodeId = (await ep.json())?.id ?? null;
       }
@@ -178,8 +207,7 @@ export function NoExamOperationDialog({
     }),
   });
 
-  const missingItem = kind === "device_sale" && serviceType === "prosthetic"
-    && !existingEpisodeId && !requestedItem;
+  const missingItem = kind === "device_sale" && !existingEpisodeId && !requestedItem;
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
   //  المسجَّلُ وحده يحتاج جهازاً بعينه — والآخران بلا حلقة، فلا يُسألان عنها.
   const missingTarget = kind === "maintenance"
@@ -205,22 +233,39 @@ export function NoExamOperationDialog({
           </p>
 
           {/* ── ماذا جرى؟ ── */}
+          {/*  **والمحسومُ يُقال نصّاً لا محدِّداً معطَّلاً.** المحدِّدُ المعطَّل
+              يبدو عطباً في الشاشة — يضغطه الموظّفُ فلا يفتح، فيظنّ النظامَ
+              مكسوراً أو صلاحيتَه ناقصة. والنصُّ يقول القرارَ ومَن اتّخذه. */}
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">نوع العملية</Label>
-            <Select value={kind} onValueChange={(v) => setKind(v as Kind)}
-              disabled={Boolean(existingEpisodeId) || initialKind !== undefined}>
-              <SelectTrigger data-testid="no-exam-op-kind">
-                <SelectValue placeholder="اختر" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="device_sale">
-                  {PENDING_CHARGE_KIND_LABELS.device_sale} — جزء أو جهاز
-                </SelectItem>
-                <SelectItem value="maintenance">
-                  {PENDING_CHARGE_KIND_LABELS.maintenance} — إصلاح جهاز قائم
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            {fixedKind ? (
+              <p className="text-sm rounded-md border bg-slate-50 px-3 py-2"
+                data-testid="no-exam-op-kind-fixed">
+                <b>{PENDING_CHARGE_KIND_LABELS[fixedKind]}</b>
+                <span className="text-muted-foreground">
+                  {" — "}
+                  {serviceType === "medical_support"
+                    ? "المساند الطبية لا تُباع بلا معاينة، فالصيانة وحدها من هنا"
+                    : existingEpisodeId
+                      ? "استكمالٌ لطلبٍ مفتوح على هذا المريض"
+                      : "محسومٌ من سبب الحضور الذي اخترته"}
+                </span>
+              </p>
+            ) : (
+              <Select value={kind} onValueChange={(v) => setKind(v as Kind)}>
+                <SelectTrigger data-testid="no-exam-op-kind">
+                  <SelectValue placeholder="اختر" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="device_sale">
+                    {PENDING_CHARGE_KIND_LABELS.device_sale} — جزء من طرف صناعي
+                  </SelectItem>
+                  <SelectItem value="maintenance">
+                    {PENDING_CHARGE_KIND_LABELS.maintenance} — إصلاح جهاز قائم
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* ── البيع: ما المطلوب؟ ── */}
@@ -235,28 +280,20 @@ export function NoExamOperationDialog({
             ) : (
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">ما الذي بيع؟</Label>
-                {serviceType === "prosthetic" && (
-                  <p className="text-xs text-muted-foreground"
-                    data-testid="no-exam-op-item-hint">
-                    الأجزاء وحدها من هنا — <b>الطرف الصناعي الكامل يحتاج معاينة
-                    الطبيب</b> ويُفتَح من «طرف صناعي جديد».
-                  </p>
-                )}
-                <Select value={requestedItem} onValueChange={setRequestedItem}
-                  disabled={serviceType !== "prosthetic"}>
+                <p className="text-xs text-muted-foreground"
+                  data-testid="no-exam-op-item-hint">
+                  الأجزاء وحدها من هنا — <b>الطرف الصناعي الكامل يحتاج معاينة
+                  الطبيب</b> ويُفتَح من «يحتاج معاينة طبية».
+                </p>
+                {/*  **والقائمةُ أجزاءُ الأطراف وحدها.** لا «جهاز كامل» فيها
+                    لأيّ قسم: هو قرارٌ سريريٌّ من أوّله. ولا أجزاءَ للمساند
+                    تُخترَع — ولذلك لا يبلغ المسندُ هذا الحقلَ إطلاقاً. */}
+                <Select value={requestedItem} onValueChange={setRequestedItem}>
                   <SelectTrigger data-testid="no-exam-op-item">
-                    <SelectValue placeholder="اختر الجزء أو الجهاز الكامل" />
+                    <SelectValue placeholder="اختر الجزء" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/*  **والطرفُ الكاملُ ليس من هذا الباب**: قرارٌ سريريٌّ
-                        من أوّله، فيبقى للمساند وحدها حيث لا أجزاءَ لها. */}
-                    {serviceType === "medical_support" && (
-                      <SelectItem value={FULL_DEVICE}>
-                        {FULL_DEVICE_LABELS.medical_support}
-                      </SelectItem>
-                    )}
-                    {/*  **الأجزاءُ للأطراف وحدها** — ولا تُخترَع للمساند. */}
-                    {serviceType === "prosthetic" && PROSTHETIC_COMPONENTS.map((c) => (
+                    {PROSTHETIC_COMPONENTS.map((c) => (
                       <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>
                     ))}
                   </SelectContent>
@@ -336,18 +373,35 @@ export function NoExamOperationDialog({
           )}
 
           {/* ── مَن ينفّذ ── */}
+          {/*  **أربعُ حالاتٍ تُقال بأسمائها.** والقائمةُ الفارغة كانت تقولها
+              كلَّها بصوتٍ واحد: حقلٌ لا يفتح ولا يشرح. */}
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">الخبير المسؤول</Label>
-            <Select value={expertId} onValueChange={setExpertId}>
-              <SelectTrigger data-testid="no-exam-op-expert">
-                <SelectValue placeholder="اختر الخبير" />
-              </SelectTrigger>
-              <SelectContent>
-                {experts.map((e) => (
-                  <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {expertsLoading ? (
+              <p className="text-sm text-muted-foreground flex items-center gap-2"
+                data-testid="no-exam-op-expert-loading">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> جارٍ تحميل الخبراء…
+              </p>
+            ) : expertsFailed ? (
+              <p className="text-sm text-destructive" data-testid="no-exam-op-expert-error">
+                تعذّر تحميل قائمة الخبراء — تحقّق من الاتصال وأعد فتح النافذة.
+              </p>
+            ) : expertsEmpty ? (
+              <p className="text-sm text-destructive" data-testid="no-exam-op-expert-empty">
+                لا يوجد خبير متاح لهذا الفرع
+              </p>
+            ) : (
+              <Select value={expertId} onValueChange={setExpertId}>
+                <SelectTrigger data-testid="no-exam-op-expert">
+                  <SelectValue placeholder="اختر الخبير" />
+                </SelectTrigger>
+                <SelectContent>
+                  {experts.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* ── المبلغ ── */}

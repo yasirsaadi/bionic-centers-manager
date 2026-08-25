@@ -23,6 +23,7 @@ import {
   nextSubmissionToken, mintSubmissionToken,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
+import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -253,6 +254,20 @@ function main() {
   same("وبلا حلقاتٍ إطلاقاً ⟶ لا استئناف",
     [resumableNoExamSale([], "prosthetic"), resumableNoExamSale(null, "prosthetic"),
       resumableNoExamSale(undefined, "prosthetic")], [null, null, null]);
+  //  ══ **ولا يُستأنَف ما لا يُباع** (قرارُ المالك بعد ٢٤٩) ═════════════════
+  //  حلقةٌ موروثة بمسار `no_exam` وطلبِ «جهازٍ كامل» يردّها الخادمُ عند
+  //  البيع. فاستئنافُها كان يعبّئ نموذجاً مآلُه ٤٠٩ محتوم — وبابُها
+  //  المعاينةُ أو التصحيحُ الإداريّ كما تقول رسالةُ الردّ.
+  same("١٠.ج **وطلبُ «طرفٍ كامل» لا يُستأنَف بيعاً** — يردّه الخادمُ حتماً",
+    resumableNoExamSale([{ ...HALF[0], requestedItem: "full_device" }], "prosthetic"), null);
+  same("١٠.د **ولا طلبُ «مسندٍ كامل»** — ولا بيعَ للمساند بلا معاينة أصلاً",
+    resumableNoExamSale(
+      [{ ...HALF[0], serviceType: "medical_support", requestedItem: "full_device" }],
+      "medical_support"), null);
+  //  **والأجزاءُ تبقى تُستأنَف** — الضيقُ على ما يجب وحده، بلا كنسِ ما حوله.
+  same("١٠.هـ وكلُّ جزءِ طرفٍ يبقى قابلاً للاستئناف",
+    PROSTHETIC_COMPONENTS.filter((c) => resumableNoExamSale(
+      [{ ...HALF[0], requestedItem: c }], "prosthetic")?.requestedItem !== c), []);
 
   //  **والموزِّعُ يمرّرها إلى النافذة القائمة** — ولا يُنشئ حلقةً ثانية.
   check(/resumableNoExamSale\(episodeData\?\.episodes, flow\.serviceType\)/.test(launcherCode),

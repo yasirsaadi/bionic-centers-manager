@@ -84,12 +84,22 @@ function main() {
     "يحتاج معاينة طبية", "شراء جزء من طرف صناعي", "صيانة طرف صناعي",
   ]);
 
+  //  ══ **والمساندُ اثنان لا ثلاثة** (قرارُ المالك بعد ٢٤٩) ═══════════════
+  //  كان لها «شراء مسند طبي»، يفتح نافذةَ «بلا معاينة» فتعرض له **الجهازَ
+  //  الكاملَ** لأنه الشيءُ الوحيد الذي لا أجزاءَ دونه — فتبيع بلا معاينةٍ
+  //  أشدَّ ما يحتاج الطبيب. والمسندُ الكاملُ كالطرف الكامل: معاينةٌ أوّلاً.
   const sup = receptionRoutingChoices("medical_support");
-  same("٤. **وثلاثةُ خياراتٍ للمساند لا رابع**", sup.map((c) => c.id),
-    ["exam_required", "device_sale", "maintenance"]);
+  same("٤. **وخياران للمساند لا ثلاثة — ولا بيعَ بلا معاينة فيها**",
+    sup.map((c) => c.id), ["exam_required", "maintenance"]);
   same("٥. وعناوينُها بالضبط", sup.map((c) => c.label), [
-    "يحتاج معاينة طبية", "شراء مسند طبي", "صيانة مسند طبي",
+    "يحتاج معاينة طبية", "صيانة مسند طبي",
   ]);
+  check(!sup.some((c) => c.label.includes("شراء")),
+    "**ولا عنوانَ شراءٍ يبلغ الشاشة إطلاقاً** — لا معطَّلاً ولا ظاهراً",
+    JSON.stringify(sup.map((c) => c.label)));
+  check(!sup.some((c) => (c.flow as any).initialKind === "device_sale"),
+    "**ولا مسارَ بيعٍ يخرج من توجيه المساند**",
+    JSON.stringify(sup.map((c) => c.flow)));
 
   // ══ إلى أيّ مسارٍ قائم يذهب كلّ خيار ═══════════════════════════════════
   console.log("\n── وجهةُ كلّ خيار ──");
@@ -119,9 +129,8 @@ function main() {
   same("٩. **«صيانة طرف صناعي» ⇒ النافذةُ نفسُها بنوع صيانة محسوم**",
     pro.find((c) => c.id === "maintenance")?.flow,
     { kind: "no_exam_operation", serviceType: "prosthetic", initialKind: "maintenance" });
-  same("١٠. **«شراء مسند طبي» ⇒ النافذةُ نفسُها لخدمة المساند**",
-    sup.find((c) => c.id === "device_sale")?.flow,
-    { kind: "no_exam_operation", serviceType: "medical_support", initialKind: "device_sale" });
+  same("١٠. **ولا خيارَ بيعٍ للمساند أصلاً** — القاعدةُ من `shared` لا شرطٌ محلّيّ",
+    sup.find((c) => c.id === "device_sale"), undefined);
   same("١١. **«صيانة مسند طبي» ⇒ النافذةُ نفسُها لخدمة المساند**",
     sup.find((c) => c.id === "maintenance")?.flow,
     { kind: "no_exam_operation", serviceType: "medical_support", initialKind: "maintenance" });
@@ -179,14 +188,19 @@ function main() {
   same("١٧.ب **ومجموعتان بعنوانيهما الرسميّين**",
     dualGroups.map((g) => [g.serviceType, g.label]),
     [["prosthetic", "الأطراف الصناعية"], ["medical_support", "المساند الطبية"]]);
-  same("١٧.ج **وستّةُ خيارات لا ثلاثة** — لا يضيع قسمٌ منهما",
+  //  **وخمسةُ خيارات**: ثلاثةٌ للأطراف واثنان للمساند — بلا بيعٍ بلا معاينة
+  //  في الثانية. والمهمُّ أن **القسمين معاً** حاضران بخياراتِ كلٍّ الصحيحة.
+  same("١٧.ج **وخياراتُ القسمين معاً** — لا يضيع قسمٌ منهما ولا تُخلَط قواعدُهما",
     dualGroups.flatMap((g) => g.choices.map((c) => `${g.serviceType}:${c.id}`)),
     ["prosthetic:exam_required", "prosthetic:device_sale", "prosthetic:maintenance",
-      "medical_support:exam_required", "medical_support:device_sale",
-      "medical_support:maintenance"]);
-  same("وصاحبُ قسمٍ واحد يرى ثلاثةً فقط",
+      "medical_support:exam_required", "medical_support:maintenance"]);
+  same("وصاحبُ الأطراف وحدها يرى ثلاثةً",
     receptionRoutingGroups(PRO).flatMap((g) => g.choices.map((c) => c.id)),
     ["exam_required", "device_sale", "maintenance"]);
+  //  **ولا تُضاف صيانةُ الأطراف لصاحب المساند** — القسمُ الغائبُ غائبٌ كلُّه.
+  same("وصاحبُ المساند وحدها يرى خيارَيه هو لا خيارَ أطرافٍ واحداً",
+    receptionRoutingGroups(SUP).flatMap((g) => g.choices.map((c) => c.label)),
+    ["يحتاج معاينة طبية", "صيانة مسند طبي"]);
   //  **ولا أثرَ للتفضيل الصامت في المصدر** — لا هنا ولا في الموزِّع.
   const routingCode = code(ROUTING);
   check(!/isAmputee\s*\)\s*return "prosthetic"/.test(routingCode)
@@ -211,14 +225,16 @@ function main() {
   check(!routingCode.includes("شراء طرف صناعي كامل"),
     "١٤. ولا هذا النصّ بعينه **كشيفرةٍ فعلية** في مصدر الموزِّع — لا كتعليقٍ شارح");
   //  **والمنطقُ لا النصُّ وحده**: مسار البيع (`device_sale`) لا يفتح إلّا
-  //  نافذةَ «بلا معاينة»، وتلك — بلا أيّ تغيير هنا — لا تعرض `FULL_DEVICE`
-  //  للأطراف مطلقاً (السطرُ الوحيد الذي يعرضه مقصورٌ على `medical_support`).
-  check(/serviceType === "medical_support" && \(\s*<SelectItem value=\{FULL_DEVICE\}>/.test(NO_EXAM_DIALOG)
-    || /medical_support" &&[\s\S]{0,80}<SelectItem value=\{FULL_DEVICE\}>/.test(NO_EXAM_DIALOG),
-    "١٥. **والطرفُ الكاملُ مقصورٌ على المساند وحدها في نافذة البيع**",
-    (NO_EXAM_DIALOG.match(/.*FULL_DEVICE.*/g) ?? []).join("\n"));
-  check(/serviceType === "prosthetic" && PROSTHETIC_COMPONENTS\.map/.test(NO_EXAM_DIALOG),
-    "١٦. وقائمةُ بيع الأطراف من `PROSTHETIC_COMPONENTS` وحدها — لا الجهاز الكامل بينها");
+  //  نافذةَ «بلا معاينة»، وتلك لم يعد فيها `FULL_DEVICE` معروضاً **لأيّ
+  //  قسم** (قرارُ المالك بعد ٢٤٩) — لا للأطراف ولا للمساند.
+  const noExamDialogCode = code(NO_EXAM_DIALOG);
+  check(!/<SelectItem value=\{FULL_DEVICE\}>/.test(noExamDialogCode),
+    "١٥. **ولا «جهاز كامل» معروضٌ للبيع في النافذة لأيّ قسم**",
+    (noExamDialogCode.match(/.*FULL_DEVICE.*/g) ?? []).join("\n"));
+  check(!/FULL_DEVICE_LABELS\.medical_support/.test(noExamDialogCode),
+    "١٥.ب **ولا «مسند طبي كامل» بينها بعد اليوم** — بابُه المعاينة");
+  check(/PROSTHETIC_COMPONENTS\.map/.test(noExamDialogCode),
+    "١٦. وقائمةُ البيع من `PROSTHETIC_COMPONENTS` وحدها — لا الجهاز الكامل بينها");
   //  **وبابُ الطرف الكامل هو المعاينة**: خيارُ «يحتاج معاينة طبية» يفتح
   //  نافذةً مسارُها `"exam"` ثابت — فلا سبيلَ لطرفٍ كاملٍ إلى `no_exam`.
   check(/servicePath: "exam"/.test(deviceModalCode)
@@ -236,6 +252,57 @@ function main() {
   check(/\{serviceType === "prosthetic" && \(\s*<div className="space-y-1\.5">\s*<Label className="text-sm font-medium">الجزء المراد صيانته<\/Label>/.test(NO_EXAM_DIALOG),
     "١٩. **ومحدِّدُ جزء الصيانة مقصورٌ على الأطراف وحدها في النافذة القائمة**",
     (NO_EXAM_DIALOG.match(/.*الجزء المراد صيانته.*/g) ?? []).join("\n"));
+
+  // ══ (هـ٢) والمساندُ لا تبلغ بيعاً من هذه النافذة إطلاقاً ════════════════
+  //  ثلاثُ طبقاتٍ متعاضدة، ولا واحدةٌ تكفي وحدها:
+  //    · التوجيهُ لا يعرض الخيار (أُثبت في ٤ و١٠ أعلاه)
+  //    · والنافذةُ تحسم النوعَ صيانةً ولو وصلها `initialKind` ملفَّق
+  //    · والخادمُ يردّ (`test:parts` و`test:pending-charge`)
+  console.log("\n── والمساندُ لا تُباع من نافذة «بلا معاينة» ──");
+  check(/serviceType === "medical_support"\s*\?\s*"maintenance"/.test(noExamDialogCode),
+    "١٩.ب **والمساندُ صيانةٌ حتماً قبل أن يُقرأ `initialKind` أصلاً**");
+  //  **والترتيبُ هو الحارس**: لو قُرئ `initialKind` أوّلاً لسبق البيعُ المنعَ.
+  {
+    const m = noExamDialogCode.match(
+      /const fixedKind: Kind \| null =([\s\S]{0,220}?);\n/);
+    const body = m?.[1] ?? "";
+    check(body.indexOf("medical_support") >= 0
+      && body.indexOf("medical_support") < body.indexOf("initialKind"),
+    "١٩.ج **وشرطُ المساند يسبق `initialKind` في التعبير** — فلا يلتفّ عليه",
+    body.trim());
+  }
+  //  والحقلُ الذي يسأل «ما الذي بيع؟» لا يُعرَض إلّا حين يكون النوعُ بيعاً،
+  //  والمساندُ لا تبلغه — فلا محدِّدَ معطَّلٌ فيه ولا قيمةٌ «كاملة» تُحشى له.
+  check(!/disabled=\{serviceType !== "prosthetic"\}/.test(noExamDialogCode),
+    "١٩.د **ولا محدِّدَ بيعٍ معطَّلٍ للمساند** — الحقلُ لا يبلغها لا أنه يُعطَّل لها");
+  check(!/serviceType === "prosthetic" \? "" : FULL_DEVICE/.test(noExamDialogCode),
+    "١٩.هـ **ولا «جهازٌ كامل» يُحشى قيمةً ابتدائية للمساند**");
+  check(!/requestedItem \|\| FULL_DEVICE/.test(noExamDialogCode),
+    "١٩.و **ولا احتياطَ بـ`full_device` في الإرسال** — كان يطلب ما يردّه الخادم");
+
+  // ══ (هـ٣) حالاتُ الخبير أربعٌ تُقال، لا واحدةٌ تُخفي ثلاثاً ══════════════
+  //  كانت `data: experts = []` تسوّي بين «يُحمَّل» و«فشل» و«لا خبيرَ في
+  //  الفرع»: حقلٌ فارغٌ لا يفتح ولا يشرح، فيظنّ الموظّفُ النظامَ معطَّلاً.
+  console.log("\n── حالاتُ حقل الخبير ──");
+  check(!/const \{ data: experts = \[\] \}/.test(noExamDialogCode),
+    "٢٠.أ **ولا قائمةٌ فارغة تبتلع ثلاثَ حالات**");
+  for (const [id, label] of [
+    ["no-exam-op-expert-loading", "التحميلُ يُقال"],
+    ["no-exam-op-expert-error", "وفشلُ الطلب يُقال"],
+    ["no-exam-op-expert-empty", "وخلوُّ الفرع يُقال"],
+    ["no-exam-op-expert", "ويبقى الحقلُ الطبيعيّ حين يوجد خبير"],
+  ] as const) {
+    check(noExamDialogCode.includes(`data-testid="${id}"`), `٢٠. ${label} (${id})`);
+  }
+  check(noExamDialogCode.includes("لا يوجد خبير متاح لهذا الفرع"),
+    "٢٠.ب **وبالنصّ الذي طلبه المالك حرفاً**");
+  check(/expertsLoading \? \([\s\S]{0,400}?expertsFailed \? \([\s\S]{0,400}?expertsEmpty \? \(/
+    .test(noExamDialogCode),
+  "٢٠.ج **وبترتيبٍ يفرّق بينها**: تحميلٌ ثمّ فشلٌ ثمّ خلوّ ثمّ الحقل");
+  //  **ولا يُخمَّن خبير** في أيٍّ من الحالات الثلاث.
+  check(!/expertId, setExpertId\] = useState<string>\((?!""\))/.test(noExamDialogCode)
+    && /const \[expertId, setExpertId\] = useState<string>\(""\)/.test(noExamDialogCode),
+  "٢٠.د **ولا خبيرَ مُخمَّنٌ افتراضاً** — الغيابُ يُقال غياباً");
 
   // ══ (و) العلمُ الأحاديّ الاستعمال ═══════════════════════════════════════
   console.log("\n── العلمُ الأحاديّ الاستعمال ──");
@@ -301,12 +368,23 @@ function main() {
   check(!routingCode.includes("/api/"),
     "٣٩. **وملفُّ منطق التوجيه بلا أيّ نقطة نهاية** — موزِّعٌ فوق موزِّع لا نظامٌ ثانٍ");
 
-  // والنافذةُ القائمة (`NoExamOperationDialog`) تقبل النوعَ المحسوم وتُعطِّل
-  // محدِّده — ولا نافذةَ جديدة أُنشئت لهذا الغرض.
+  // والنافذةُ القائمة (`NoExamOperationDialog`) تقبل النوعَ المحسوم وتقولُه
+  // نصّاً — ولا نافذةَ جديدة أُنشئت لهذا الغرض.
   check(/initialKind\?: Kind;/.test(NO_EXAM_DIALOG),
     "٤٠. **والنافذةُ القائمة اكتسبت خاصّيةً اختيارية واحدة فقط**");
-  check(/disabled=\{Boolean\(existingEpisodeId\) \|\| initialKind !== undefined\}/.test(NO_EXAM_DIALOG),
-    "٤١. ومحدِّدُ «نوع العملية» يُعطَّل حين يُحسَم مسبقاً — فلا يُعاد سؤالٌ أُجيب عنه");
+  //  ══ **والمحسومُ نصٌّ يُقرأ لا محدِّدٌ معطَّل** ═══════════════════════════
+  //  المحدِّدُ المعطَّل يبدو عطباً: يضغطه الموظّفُ فلا يفتح، فيظنّ الشاشةَ
+  //  مكسورةً أو صلاحيتَه ناقصة. والنصُّ يقول القرارَ وسببَه.
+  check(/data-testid="no-exam-op-kind-fixed"/.test(noExamDialogCode),
+    "٤١. **ونوعُ العملية المحسومُ يُعرَض نصّاً صريحاً**");
+  check(!/disabled=\{Boolean\(existingEpisodeId\) \|\| initialKind !== undefined\}/
+    .test(noExamDialogCode),
+  "٤١.ب **ولا محدِّدَ معطَّلٍ يبدو مكسوراً** — الحقلُ المحسوم لا يُعرَض حقلاً");
+  check(/const fixedKind: Kind \| null = serviceType === "medical_support"\s*\?\s*"maintenance"/
+    .test(noExamDialogCode),
+  "٤١.ج **والمساندُ صيانةٌ حتماً — حارسٌ بنيويّ لا إخفاءُ خيار**");
+  check(/\{fixedKind \? \(/.test(noExamDialogCode),
+    "٤١.د والنصُّ يحلّ محلّ المحدِّد متى حُسم النوع");
   check(/type Kind = PendingChargeKind;/.test(NO_EXAM_DIALOG),
     "٤٢. **ونوعُ العملية من `shared/pending_charge` القانونيّ — لا نسخةٌ محلّية**");
   check(/initialKind\?: PendingChargeKind;/.test(LAUNCHER_LOGIC),
