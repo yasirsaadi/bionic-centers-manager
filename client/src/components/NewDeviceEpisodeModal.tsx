@@ -15,10 +15,6 @@ import {
   requestedItemOptions, requestedItemLabel, isRequestedItem, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
-import {
-  SERVICE_PATHS, SERVICE_PATH_QUESTION, SERVICE_PATH_HELP,
-  SERVICE_PATH_LABELS, SERVICE_PATH_HINTS, isServicePath, type ServicePath,
-} from "@shared/service_path";
 import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
 import { AdministrativeReversalDialog } from "./AdministrativeReversalDialog";
 import { activeOperationFocus } from "./device_flow_resume";
@@ -34,6 +30,17 @@ import { useBranchSession } from "@/components/BranchGate";
 //
 // والنتيجة حلقةٌ بحالة «بانتظار معاينة»: تظهر للطبيب في قائمة عمله، ويمضي
 // المسار من هناك كما بُني في مراحله السابقة.
+//
+// ══ **ومسارُها «معاينة» دائماً — بلا سؤال** ═════════════════════════════
+// هذه النافذةُ لا تُفتَح إلّا من «يحتاج معاينة طبية» في مُوجِّه سبب الحضور.
+// وكانت تسأل بعده «هل تحتاج هذه العملية معاينة طبية؟» — سؤالٌ أجابه
+// الموظّفُ بضغطته قبل لحظة، وتبديلُ جوابه هنا إلى «بلا معاينة» **لا يقول
+// أهو بيعُ جزءٍ أم صيانة**، فيفتح حلقةً بمسارٍ ناقص المعنى تسبق تسجيل
+// العملية الصحيحة (وهو ما وقع في الإنتاج فعلاً).
+//
+// فالمسارُ ثابتٌ ويُعرَض ثابتاً، وتصحيحُ الوجهة من زرّ **«تغيير سبب
+// الحضور»**: يغلق هذه النافذة **بلا فتح ولا إلغاء أيّ حلقة** ويعيد فتح
+// المُوجِّه نفسِه ليختار الموظّفُ بيعاً أو صيانةً بدقّة.
 
 interface NewDeviceEpisodeModalProps {
   patientId: number;
@@ -48,25 +55,8 @@ interface NewDeviceEpisodeModalProps {
    */
   initialRequestedItem?: string;
   /**
-   * قيمةٌ ابتدائية لمحدِّد «هل تحتاج هذه العملية معاينة؟». في المسار
-   * العاديّ (الاستئنافُ بعد «تعديل مريض»، أو الفتحُ من «إضافة خدمة
-   * جديدة») تبقى قابلةً للتبديل من داخل النافذة. وفي مسار
-   * `fromReceptionRouting` تصير **القيمة المعروضة ثابتةً** بلا محدِّدٍ
-   * إطلاقاً — انظر تعليقه أدناه.
-   */
-  initialServicePath?: string;
-  /**
-   * **هذه النافذةُ فُتحت من مُوجِّه «سبب الحضور» باختيار «يحتاج معاينة
-   * طبية» بعينها.** فمسارُ المعاينة يُعرَض **ثابتاً** «معاينة طبية» بلا
-   * محدِّدٍ إطلاقاً: تبديلُه داخلياً إلى «بلا معاينة» لا يقول أهو بيعُ
-   * جزءٍ أم صيانة، وقد يفتح حلقةً بمسارٍ ناقص المعنى قبل تسجيل العملية
-   * الصحيحة. فبدلاً من محدِّد، زرُّ «تغيير سبب الحضور» (`onChangeReason`)
-   * يعيد الموظّفَ إلى المُوجِّه نفسِه ليختار السببَ الصحيح بدقّة.
-   */
-  fromReceptionRouting?: boolean;
-  /**
    * يُغلق هذه النافذة **بلا فتح ولا إلغاء أيّ حلقة** ويعيد فتح مُوجِّه
-   * «سبب الحضور» — يُستعمَل فقط حين `fromReceptionRouting`.
+   * «سبب الحضور» ليختار الموظّفُ سبباً آخر بدقّة.
    */
   onChangeReason?: () => void;
   /**
@@ -75,7 +65,7 @@ interface NewDeviceEpisodeModalProps {
    * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
    * يعود ليبدأ الطلبَ من أوّله.
    */
-  onEditPatient?: (requestedItem: RequestedItem | "", servicePath: ServicePath | "") => void;
+  onEditPatient?: (requestedItem: RequestedItem | "") => void;
 }
 
 //  ══ «طرف صناعي جديد **أو جزء جديد**» ═══════════════════════════════════
@@ -89,7 +79,7 @@ const LABEL = {
 
 export function NewDeviceEpisodeModal({
   patientId, serviceType, open, onOpenChange, initialRequestedItem,
-  initialServicePath, fromReceptionRouting, onChangeReason, onEditPatient,
+  onChangeReason, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -103,24 +93,10 @@ export function NewDeviceEpisodeModal({
   const resumed = (isRequestedItem(initialRequestedItem)
     ? initialRequestedItem : "") as RequestedItem | "";
   const [item, setItem] = useState<RequestedItem | "">(resumed);
-  //  ══ **هل تحتاج هذه العملية معاينة طبية؟** (ترحيل ٠٦٥) ═══════════════
-  //  سؤالٌ عن **هذا الطلب** لا عن المريض. وكان جوابُه يُؤخَذ من تصنيف
-  //  «جديد/قديم» في نموذج التسجيل — بُعدٍ إداريّ يُجاب عنه مرّةً واحدة في
-  //  حياة الملفّ، ثمّ يحكم كلَّ جهازٍ يُطلَب بعده. فمريضٌ قديم عاد يطلب
-  //  طرفاً كاملاً كان يمرّ بلا طبيب، ومريضٌ جديد يريد غلافاً بسيطاً كان
-  //  يُساق إلى الطابور.
-  //
-  //  **وبلا اختيارٍ مسبق افتراضيّ**: القيمةُ الابتدائية تأتي من
-  //  `initialServicePath` وحده (استئنافٌ أو تعبئةُ مُوجِّهٍ) وتبقى قابلةً
-  //  للتبديل الكامل — لا قيمةَ تُفرَض بضغطةٍ واحدة في اتجاهٍ لم يقصده أحد.
-  const resumedPath = (isServicePath(initialServicePath)
-    ? initialServicePath : "") as ServicePath | "";
-  const [path, setPath] = useState<ServicePath | "">(resumedPath);
   useEffect(() => {
     if (!open) return;
     setItem(resumed);
-    setPath(resumedPath);
-  }, [open, resumed, resumedPath]);
+  }, [open, resumed]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
@@ -144,8 +120,10 @@ export function NewDeviceEpisodeModal({
 
   const mutation = useMutation({
     mutationFn: async () => {
+      //  **`"exam"` ثابتةٌ لا حالة**: هذه النافذةُ بابُ مسار المعاينة وحده،
+      //  فلا قيمةَ تأتي من الشاشة ولا من استئنافٍ محفوظ.
       const res = await apiRequest("POST", `/api/patients/${patientId}/device-episodes`, {
-        serviceType, requestedItem: chosen, servicePath: path,
+        serviceType, requestedItem: chosen, servicePath: "exam",
       });
       return await res.json();
     },
@@ -153,7 +131,7 @@ export function NewDeviceEpisodeModal({
       toast({
         title: "تم فتح طلب الجهاز",
         description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)}`
-          + (path === "no_exam" ? " — بلا معاينة" : " — بانتظار معاينة الطبيب"),
+          + " — بانتظار معاينة الطبيب",
       });
       // الحلقات نفسها، وقوائم انتظار الطبيب، وصفحة المريض: الطلب الجديد
       // يظهر في الثلاثة فوراً، فلا يبقى الموظّف يعيد التحميل ليصدّق.
@@ -210,7 +188,7 @@ export function NewDeviceEpisodeModal({
         //  **الاختيارُ يُسلَّم إلى مَن يبقى** — ثمّ تُفتح شاشةُ التعديل.
         //  ولا `onOpenChange(false)` هنا: مالكُ الحالة هو مَن يغلق المسار،
         //  فلا يقع الإغلاقُ مرّتين ولا يسبق التسليمَ.
-        if (onEditPatient) onEditPatient(item, path);
+        if (onEditPatient) onEditPatient(item);
         else onOpenChange(false);
       }}
     />
@@ -235,13 +213,10 @@ export function NewDeviceEpisodeModal({
               الخطوة التالية معاينة الطبيب، ثم تُحدَّد الكلفة والخبير في «تخصيص وإسناد خبير».
             </span>
             {/* التوجيه يقع مع الحفظ لا بزرٍّ لاحق — والسطر يقول ذلك صراحةً
-                كي لا يبحث الموظّف عن خطوةٍ ليست عليه. **ويتبع المسارَ
-                المختار**: وعدٌ بطلبٍ لا يُرسَل أسوأُ من لا وعد. */}
-            {path !== "no_exam" && (
-              <span className="block text-xs text-primary">
-                ويُرسَل طلبُ معاينةٍ كاملة إلى الطبيب تلقائياً مع الحفظ — لا حاجة لخطوة أخرى.
-              </span>
-            )}
+                كي لا يبحث الموظّف عن خطوةٍ ليست عليه. */}
+            <span className="block text-xs text-primary">
+              ويُرسَل طلبُ معاينةٍ كاملة إلى الطبيب تلقائياً مع الحفظ — لا حاجة لخطوة أخرى.
+            </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -271,53 +246,27 @@ export function NewDeviceEpisodeModal({
           </div>
         )}
 
-        {/*  ══ **هل تحتاج هذه العملية معاينة طبية؟** ════════════════════
-            السؤالُ على **العملية** لا على المريض، ويُطرَح لكلّ طلبٍ على
-            حدة. والاستقبالُ ومديرُ الفرع يجيبانه — **ولا تمنح إجابةُ «لا»
-            أيَّ صلاحيةٍ طبية**: هي توجيهُ مسارٍ لا قرارٌ سريريّ.
-            ومَن جاء من مُوجِّه «سبب الحضور» باختيار «يحتاج معاينة طبية»
-            بعينها **لا يرى محدِّداً هنا إطلاقاً**: مسارُه ثابتٌ «معاينة
-            طبية»، وتصحيحُه الحقيقيّ من زرّ «تغيير سبب الحضور» الذي يعيده
-            إلى المُوجِّه نفسِه ليختار بيعاً أو صيانةً بدقّة — لا من قلب
-            هذا المحدِّد داخلياً إلى «بلا معاينة» الذي لا يقول أيَّهما. */}
-        {fromReceptionRouting ? (
-          <div className="space-y-1.5 text-right" data-testid="block-service-path-fixed">
-            <p className="text-sm">
-              <span className="font-semibold">المسار:</span>{" "}
-              <span className="font-medium text-primary" data-testid="text-service-path-fixed">
-                معاينة طبية
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={() => onChangeReason?.()}
-              data-testid="button-change-reason"
-              className="text-xs text-primary underline underline-offset-2"
-            >
-              تغيير سبب الحضور
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2 text-right" data-testid="block-service-path">
-            <Label className="font-semibold">
-              {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
-            </Label>
-            <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
-              <SelectTrigger data-testid="select-service-path">
-                <SelectValue placeholder="اختر نعم أو لا" />
-              </SelectTrigger>
-              <SelectContent>
-                {SERVICE_PATHS.map((v) => (
-                  <SelectItem key={v} value={v}>{SERVICE_PATH_LABELS[v]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {SERVICE_PATH_HELP}
-              {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
-            </p>
-          </div>
-        )}
+        {/*  ══ **المسار ثابت — ولا محدِّدَ هنا إطلاقاً** ════════════════
+            «يحتاج معاينة طبية» أجاب عن السؤال بضغطته. وتصحيحُ الوجهة من
+            «تغيير سبب الحضور» الذي يعيد إلى المُوجِّه ليختار بيعاً أو
+            صيانةً بدقّة — لا من محدِّدٍ هنا يقلبه إلى «بلا معاينة» بلا أن
+            يقول أيَّهما. */}
+        <div className="space-y-1.5 text-right" data-testid="block-service-path-fixed">
+          <p className="text-sm">
+            <span className="font-semibold">المسار:</span>{" "}
+            <span className="font-medium text-primary" data-testid="text-service-path-fixed">
+              معاينة طبية
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => onChangeReason?.()}
+            data-testid="button-change-reason"
+            className="text-xs text-primary underline underline-offset-2"
+          >
+            تغيير سبب الحضور
+          </button>
+        </div>
 
         {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════
             ملفٌّ قديمٌ بلا مقاساتٍ أو بلا تعريفِ بترٍ لا يدخل دورةَ تصنيعٍ
@@ -380,7 +329,7 @@ export function NewDeviceEpisodeModal({
           <AlertDialogCancel disabled={mutation.isPending}>إلغاء</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => { e.preventDefault(); mutation.mutate(); }}
-            disabled={mutation.isPending || (asksItem && !item) || !path}
+            disabled={mutation.isPending || (asksItem && !item)}
             data-testid="confirm-new-device"
           >
             {mutation.isPending ? "جارٍ الفتح…" : "فتح الطلب"}

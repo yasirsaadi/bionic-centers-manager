@@ -26,28 +26,19 @@
 // «بلا استئناف» لا «تعطّل».
 
 import { isDeviceServiceKind, isRequestedItem, type DeviceServiceKind } from "@shared/prosthetic_parts";
-import { isServicePath, type ServicePath } from "@shared/service_path";
 
-/** ما يلزم لاستئناف نافذة «جهاز جديد» تماماً حيث تُركت. */
+/**
+ * ما يلزم لاستئناف نافذة «جهاز جديد» تماماً حيث تُركت.
+ *
+ * **حقلان لا ثالث**: القسمُ وما طُلب. ولا `servicePath` بينهما — النافذةُ
+ * لا تُفتَح إلّا من «يحتاج معاينة طبية»، فمسارُها `"exam"` دائماً ولا
+ * يُسأل عنه ولا يُحفَظ. وحفظُ ثابتٍ ثم قراءتُه ادّعاءُ خيارٍ لا وجود له.
+ */
 export interface DeviceFlowResume {
   patientId: number;
   serviceType: DeviceServiceKind;
   /** `""` = لم يُختَر جزءٌ بعد — وهي حالةٌ مشروعة تُحفَظ كما هي. */
   requestedItem: string;
-  /**
-   * مسارُ العملية كما اختاره الموظّفُ قبل أن يُردّ (ترحيل ٠٦٥).
-   *
-   * `""` = لم يُجَب بعد. **ولا يُخمَّن عند العودة**: السؤالُ يبقى مطروحاً
-   * فارغاً لا مُجاباً نيابةً عن أحد.
-   */
-  servicePath: ServicePath | "";
-  /**
-   * هل جاء هذا الطلبُ من مُوجِّه «سبب حضور المريض اليوم؟» باختيار «يحتاج
-   * معاينة طبية» بعينها؟ **اختياريّ**، ويُحفَظ ويُستأنَف كما هو — فمَن
-   * غادر إلى «تعديل مريض» ونافذتُه تعرض «المسار: معاينة طبية» الثابت
-   * يعود إلى الشكل نفسِه، لا إلى محدِّدٍ حرٍّ لم يكن أمامه أصلاً.
-   */
-  fromReceptionRouting?: boolean;
 }
 
 export const DEVICE_FLOW_RESUME_KEY = "bcm.device_flow_resume";
@@ -83,10 +74,6 @@ export function saveDeviceFlowResume(store: ResumeStore | null, r: DeviceFlowRes
       //  الجزءُ المخزَّن قيمةٌ من القائمة أو لا شيء — ولا نصَّ حرّ يعود
       //  فيُضبَط به `Select` على قيمةٍ لا يعرفها.
       requestedItem: isRequestedItem(r.requestedItem) ? r.requestedItem : "",
-      servicePath: isServicePath(r.servicePath) ? r.servicePath : "",
-      //  بوليانٌ صريح فقط — أيّ قيمةٍ أخرى (`undefined` مثلاً) تُكتب
-      //  `false`، فلا يُخمَّن مسارُ مُوجِّهٍ لم يُقَل.
-      fromReceptionRouting: r.fromReceptionRouting === true,
     } satisfies DeviceFlowResume));
   } catch {
     /* بلا استئناف — ولا تعطُّل. */
@@ -124,8 +111,6 @@ export function takeDeviceFlowResume(
     patientId: Number(patientId),
     serviceType: parsed.serviceType,
     requestedItem: isRequestedItem(parsed.requestedItem) ? parsed.requestedItem : "",
-    servicePath: isServicePath(parsed.servicePath) ? parsed.servicePath : "",
-    fromReceptionRouting: parsed.fromReceptionRouting === true,
   };
 }
 

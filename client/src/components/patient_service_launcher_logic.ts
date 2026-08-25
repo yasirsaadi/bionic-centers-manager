@@ -1,70 +1,55 @@
 // منطق «إضافة خدمة جديدة» — **خالص، بلا React ولا شبكة**.
 //
 // ══ ما هذا الملفّ ═══════════════════════════════════════════════════════
-// النافذة الجديدة **موزِّع لا منفّذ**: تختار الخدمة فتفتح المسار القائم لها،
-// ولا تحمل منطق عمل ولا تنادي نقطة نهاية بنفسها. وهذا الملفّ هو قرار
-// التوزيع وحده: أي خيار ⇒ أي مسار، ومتى يُعطَّل ولماذا.
+// النافذة **موزِّع لا منفّذ**: تختار الخدمة فتفتح المسار القائم لها، ولا
+// تحمل منطق عمل ولا تنادي نقطة نهاية بنفسها. وهذا الملفّ هو قرار التوزيع
+// وحده: أي خيار ⇒ أي مسار، ومتى يُعرَض ولماذا.
 //
 // وأُخرِج إلى ملفّ مستقلّ للسبب نفسه الذي أُخرِج لأجله منطق بطاقة التواصل:
 // المشروع بلا مشغّل DOM، فقرارٌ داخل مكوّن React لا يُختبَر. وهنا يُختبَر
 // دخلاً وخرجاً — والخريطة نفسها تصير وثيقةً تنفيذية لا تعليقاً يشيخ.
 //
 // ══ ولا مسار جديد إطلاقاً ═══════════════════════════════════════════════
-// هذا **توحيد لنقطة الدخول في الواجهة، لا توحيد للخلفية**. النقاط الثلاث
-// القائمة تبقى كما هي بحدودها وتحقّقاتها ومحاسبتها، وكلّ خيار يذهب إلى
-// نقطته الصحيحة — ولا نقطة «خدمة عامّة» تجمعها.
+// هذا **توحيد لنقطة الدخول في الواجهة، لا توحيد للخلفية**. النقاط القائمة
+// تبقى كما هي بحدودها وتحقّقاتها ومحاسبتها — ولا نقطة «خدمة عامّة» تجمعها.
+//
+// ══ وعملياتُ الأجهزة ليست من هذا الباب ══════════════════════════════════
+// **بابُ عمليات الأجهزة واحد: «ما سبب حضور المريض اليوم؟»** (انظر
+// `reception_routing.ts`). وكانت هذه القائمة تعرض ستّةَ أبوابٍ موازية له —
+// «طرف صناعي جديد أو جزء جديد» و«مسند طبي جديد» وصيانتَيهما و«بيع أو صيانة
+// بلا معاينة» لكلّ قسم — فيختار الموظّفُ بابَه بالعادة لا بالمعنى، وتُفتَح
+// العمليةُ نفسُها من أربعة مداخل لكلٍّ سلوكُه.
+//
+// فبقيت هنا **الخدماتُ الإضافية على الملفّ وحدها**: فتحُ خيط اختصاصٍ لم
+// يُفتَح بعد، وجلساتٌ إضافية، واستشارة، وخدمةٌ أخرى. **ونقاطُ النهاية لم
+// تُحذَف** — الشاشةُ توقّفت عن تكرارها، والخادمُ وتاريخُه كما هما.
 
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import type { PendingChargeKind } from "@shared/pending_charge";
-import type { ServicePath } from "@shared/service_path";
 
-/** المسارات الثلاثة القائمة — **لا رابع**. */
+/** المسارات التي يفتحها الموزِّع — **قائمة مغلقة**. */
 export type ServiceFlow =
   /** `POST /api/patients/:id/add-case-type` — قرارٌ بلا مال ولا أمر تصنيع. */
   | { kind: "case_type"; caseType: "amputee" | "medical_support" | "physiotherapy" }
   /** `POST /api/patients/:id/new-service` — قيدٌ مالي على خيطٍ قائم. */
   | { kind: "new_service"; serviceType: "additional_therapy" | "consultation" | "other" }
   /**
-   * `POST /api/manufacturing/maintenance-visit` — زيارة وأمر صيانة معاً.
-   * و`serviceType` يضبط النافذة على جهاز القسم الذي اختير منه — والخادم
-   * يبقى صاحب القرار: يتحقّق أن المريض يملك النوع فعلاً.
-   */
-  | { kind: "maintenance_visit"; serviceType: "prosthetic" | "medical_support" }
-  /**
-   * `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم.
+   * `POST /api/patients/:patientId/device-episodes` — طلبُ جهازٍ **على مسار
+   * المعاينة**.
    *
-   * `initialServicePath` **اختياريّ**: قيمةٌ ابتدائية لمحدِّد «هل تحتاج
-   * معاينة؟» — يستعمله الاستئنافُ بعد «تعديل مريض» كما كان، ويبقى قابلاً
-   * للتبديل من داخل النافذة في المسار العاديّ («إضافة خدمة جديدة»).
-   *
-   * `fromReceptionRouting` **اختياريّ**: حين يُمرَّر `true` (من مُوجِّه «ما
-   * سبب الحضور؟» عند اختيار «يحتاج معاينة طبية» بعينها) يُفتَح
-   * `NewDeviceEpisodeModal` بمسارٍ **ثابت** «معاينة طبية» بلا محدِّدٍ
-   * إطلاقاً — فتبديلُ المسار داخلياً إلى «بلا معاينة» لا يقول أهو بيعُ
-   * جزءٍ أم صيانة، وقد يترك حلقةً مفتوحة بمسارٍ ناقص المعنى. فبدلاً من
-   * محدِّدٍ داخليّ، زرُّ «تغيير سبب الحضور» **يغلق هذه النافذة بلا فتح ولا
-   * إلغاء أيّ حلقة** ويعيد فتح المُوجِّه نفسَه ليختار الاستقبالُ السببَ
-   * الصحيح بدقّة. واختيارُ **المطلوب** (طرفٌ كاملٌ أو جزء) يبقى مفتوحاً
-   * كما كان في الحالتين. غيابُهما يبقي السلوكَ القائم حرفاً.
+   * ولا يُفتَح إلّا من «يحتاج معاينة طبية» في مُوجِّه سبب الحضور، فمسارُه
+   * `"exam"` دائماً ولا يُسأل عنه داخل النافذة. تفصيلُه في
+   * `NewDeviceEpisodeModal`.
    */
-  | {
-      kind: "device_episode"; serviceType: "prosthetic" | "medical_support";
-      initialServicePath?: ServicePath;
-      fromReceptionRouting?: boolean;
-    }
+  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" }
   /**
    * **عمليةٌ بلا معاينة** (ترحيل ٠٦٧) — بيعُ جزءٍ أو صيانةٌ يُنجزها
    * الاستقبال بلا إرسال المريض إلى الطبيب، **ومبلغُها يبقى خارج المحاسبة**
    * حتى يعتمده طبيبٌ مخوَّل.
    *
-   * ولا تلغي البابين القائمين: «جهاز جديد» يفتح طلباً على مسار المعاينة،
-   * و«صيانة» تحجز أجرَها فوراً. هذا بابُ المسار الثالث الذي فتحه ٠٦٥.
-   *
-   * `initialKind` **اختياريّ**: حين يُمرَّر (من مُوجِّه «ما سبب الحضور؟»
-   * بعد التسجيل مثلاً) يحسم «نوع العملية» مسبقاً في `NoExamOperationDialog`
-   * فلا يُعاد سؤالٌ أجاب عنه اختيارُ الزرّ بعينه. غيابُه يبقي السلوكَ
-   * القائم حرفاً: الموظّفُ يختار من داخل النافذة كما كان دائماً.
+   * `initialKind` **اختياريّ**: يحسم «نوع العملية» مسبقاً من اختيار الزرّ
+   * في مُوجِّه سبب الحضور، فلا يُعاد سؤالٌ أجاب عنه الموظّفُ بضغطته.
    */
   | {
       kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support";
@@ -75,31 +60,36 @@ export type ServiceFlow =
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
   case_type: "/api/patients/:id/add-case-type",
   new_service: "/api/patients/:id/new-service",
-  maintenance_visit: "/api/manufacturing/maintenance-visit",
   device_episode: "/api/patients/:patientId/device-episodes",
   no_exam_operation: "/api/no-exam/device-sale",
 };
+
+/**
+ * حلقةُ جهازٍ كما تصل الشاشةَ من `GET /api/patients/:id/device-episodes`.
+ *
+ * الحقول اختياريةٌ عمداً: قارئٌ قديم قد لا يمرّرها كلَّها، و**الغائبُ لا
+ * يُخمَّن** — يُقرأ «غيرَ معلوم» فيسقط من كلّ قرارٍ يحتاجه.
+ */
+export interface PatientEpisodeSummary {
+  id?: number;
+  serviceType: string;
+  status: string;
+  servicePath?: string | null;
+  requestedItem?: string | null;
+}
 
 export interface PatientServiceFlags {
   isAmputee?: boolean | null;
   isMedicalSupport?: boolean | null;
   isPhysiotherapy?: boolean | null;
-  /**
-   * حلقات المريض. الحلقة المفتوحة وحدها تعطّل «جهاز جديد» — والمسلَّمة
-   * والملغاة **لا تعطّلانه**: أن يكون له جهازٌ سابق هو بالضبط سبب فتح
-   * الجديد، لا مانعه.
-   */
-  episodes?: { serviceType: string; status: string }[] | null;
+  /** حلقات المريض — تُقرأ لاستئناف بيعٍ ناقص، لا لبناء القائمة. */
+  episodes?: PatientEpisodeSummary[] | null;
 }
 
 /**
  * مجموعاتُ الموزِّع — **هي الأقسامُ الثلاثة نفسها، لا غير**.
  *
- * كان ثلاثةً من نوعٍ آخر: «خدمات الأجهزة» تجمع الطرفَ والمسندَ في واحد،
- * و«العلاج الطبيعي»، و«خدمات أخرى» تعيش خارج التصنيف كلّه — فالاستشارةُ
- * لا تنتمي إلى قسم، ومديرُ المساند لا يرى بابَه مستقلاً.
- *
- * والآن الأسماءُ هي `Department` حرفياً، فلا خريطةَ بين الشاشة والتقرير.
+ * والأسماءُ هي `Department` حرفياً، فلا خريطةَ بين الشاشة والتقرير.
  */
 export type LauncherGroup = Department;
 
@@ -110,172 +100,56 @@ export interface LauncherOption {
   description: string;
   group: LauncherGroup;
   flow: ServiceFlow;
-  disabled: boolean;
-  /** يُعرَض مكان الوصف حين يكون الخيار معطَّلاً — ولا يُترك بلا سبب. */
-  disabledReason?: string;
 }
 
 export const GROUP_LABELS: Record<LauncherGroup, string> = DEPARTMENT_LABELS;
 
 /**
- * **حالةٌ قائمة لا تُنشأ ثانيةً.**
+ * **ما يُعرَض هو ما يمكن فعله — لا أكثر.**
  *
- * الخادم يردّ 409 على نوعٍ مفعَّل سلفاً، وفهرس `patient_cases` الفريد يمنع
- * الصفّ المكرَّر. فالتعطيل هنا ليس حمايةً — هو صدقٌ في الواجهة: زرٌّ يفتح
- * نافذةً لتنتهي برسالة خطأ أسوأ من زرٍّ يقول سببه ابتداءً.
+ * كانت القائمة تعرض كلَّ خيارٍ دائماً ثمّ تُطفئ ما لا ينطبق بسببٍ مكتوب.
+ * وبدا ذلك صدقاً، لكنّه في شاشةٍ من اثني عشر بنداً صار ضجيجاً: صاحبُ
+ * الحالات الثلاث يفتح القائمة فيرى نصفَها رمادياً يقول له ما **لا** يستطيع.
  *
- * و**الجهاز الثاني ليس هذا الباب**: مَن يحمل طرفاً ويريد طرفاً جديداً
- * يحتاج حلقة تصنيع مستقلّة — وهي مرحلةٌ قادمة بذاتها. و`new-service`
- * ليست بديلاً عنها (الخادم يرفض `new_prosthetic` أصلاً وهذا صواب)، فلا
- * يُفتَح لها باب جانبي هنا.
+ * فصار غيرُ القابل للتنفيذ **يختفي**: حالةٌ قائمةٌ لا تُعرَض ثانيةً، وجلساتٌ
+ * إضافية لا تُعرَض لمن لا علاج له. والقائمةُ تقصر فتُقرأ.
+ *
+ * **ولا حارسَ سقط بذلك**: الخادمُ يردّ النوعَ المكرَّر ٤٠٩ كما كان، وفهرسُ
+ * `patient_cases` الفريد يمنع الصفَّ الثاني. الاختفاءُ عرضٌ لا حماية.
  */
-const DEVICE_EXISTS = "الخدمة موجودة على ملف المريض — لطلب جهاز جديد استعمل «جهاز جديد» أدناه";
-
-/** حالاتُ الحلقة المفتوحة ورسالةُ كلٍّ منها للموظّف. */
-const OPEN_EPISODE_REASON: Record<string, string> = {
-  awaiting_exam: "هناك طلب جهاز قائم بانتظار معاينة الطبيب",
-  examined: "هناك طلب جهاز مُعايَن بانتظار التخصيص وإسناد الخبير",
-  in_manufacturing: "هناك جهاز قيد التصنيع لهذه الخدمة",
-};
-
-/** الحلقة المفتوحة لهذه الخدمة إن وُجدت — المسلَّمة والملغاة ليستا مانعاً. */
-export function openEpisodeFor(
-  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
-): { serviceType: string; status: string } | null {
-  const list = Array.isArray(p.episodes) ? p.episodes : [];
-  return list.find((e) => e.serviceType === serviceType && e.status in OPEN_EPISODE_REASON) ?? null;
-}
-
-/** خيارُ «جهاز جديد» — يظهر فقط لمن يملك الخيط أصلاً. */
-function newDeviceOption(
-  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
-  hasCase: boolean, label: string,
-): LauncherOption {
-  const open = openEpisodeFor(p, serviceType);
-  return {
-    id: serviceType === "prosthetic" ? "new_prosthetic_device" : "new_support_device",
-    label,
-    description: "فتح طلب جهاز جديد على نفس الحالة — يبدأ بمعاينة الطبيب",
-    group: serviceType,
-    flow: { kind: "device_episode", serviceType },
-    disabled: !hasCase || open !== null,
-    disabledReason: !hasCase
-      ? "تُفتَح الحالة أولاً"
-      : open
-        ? OPEN_EPISODE_REASON[open.status]
-        : undefined,
-  };
-}
-
-/** خيارُ الصيانة لقسمٍ بعينه — يظهر لمن يملك جهازَ ذلك القسم. */
-function maintenanceOption(
-  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
-  hasCase: boolean, label: string,
-): LauncherOption {
-  return {
-    id: serviceType === "prosthetic" ? "maintenance_prosthetic" : "maintenance_support",
-    label,
-    description: "فتح زيارة وأمر صيانة",
-    group: serviceType,
-    flow: { kind: "maintenance_visit", serviceType },
-    disabled: !hasCase,
-    disabledReason: hasCase ? undefined
-      : serviceType === "prosthetic"
-        ? "لا يوجد طرف صناعي على ملف المريض"
-        : "لا يوجد مسند طبي على ملف المريض",
-  };
-}
-
-/**
- * خيارُ «بلا معاينة» — **بيعٌ أو صيانةٌ بمبلغٍ ينتظر مراجعة الطبيب**.
- *
- * ويُعطَّل بحلقةٍ مفتوحة كما يُعطَّل «جهاز جديد»: طلبٌ قائمٌ يُكمَل ولا
- * يُفتَح فوقه ثانٍ. والخادمُ يبقى صاحبَ القرار على السباق.
- */
-function noExamOption(
-  p: PatientServiceFlags, serviceType: "prosthetic" | "medical_support",
-  hasCase: boolean, label: string,
-): LauncherOption {
-  const open = openEpisodeFor(p, serviceType);
-  //  والصيانةُ لا تعطّلها حلقةٌ مفتوحة — لكنّ النافذة واحدة، فالتعطيل
-  //  يتبع أضيقَ البابين صدقاً: طلبٌ قائم يُكمَل من بطاقته.
-  return {
-    id: serviceType === "prosthetic" ? "no_exam_prosthetic" : "no_exam_support",
-    label,
-    description: "بيع جزء أو صيانة بلا معاينة — يُنجَز العمل والمبلغ ينتظر اعتماد الطبيب",
-    group: serviceType,
-    flow: { kind: "no_exam_operation", serviceType },
-    disabled: !hasCase || open !== null,
-    disabledReason: !hasCase
-      ? "تُفتَح الحالة أولاً"
-      : open
-        ? OPEN_EPISODE_REASON[open.status]
-        : undefined,
-  };
-}
-
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
   const hasSupport = Boolean(p.isMedicalSupport);
   const hasPhysio = Boolean(p.isPhysiotherapy);
 
-  return [
-    {
+  const all: (LauncherOption | null)[] = [
+    hasProsthetic ? null : {
       id: "prosthetic_case",
-      label: "أطراف صناعية",
-      description: "إضافة حالة أطراف للمريض",
+      label: "إضافة حالة أطراف صناعية",
+      description: "فتح خيط اختصاص الأطراف على ملفّ المريض — بلا مال ولا أمر تصنيع",
       group: "prosthetic",
       flow: { kind: "case_type", caseType: "amputee" },
-      disabled: hasProsthetic,
-      disabledReason: hasProsthetic ? DEVICE_EXISTS : undefined,
     },
-    {
+    hasSupport ? null : {
       id: "support_case",
-      label: "مساند طبية",
-      description: "إضافة حالة مساند للمريض",
+      label: "إضافة حالة مساند طبية",
+      description: "فتح خيط اختصاص المساند على ملفّ المريض — بلا مال ولا أمر تصنيع",
       group: "medical_support",
       flow: { kind: "case_type", caseType: "medical_support" },
-      disabled: hasSupport,
-      disabledReason: hasSupport ? DEVICE_EXISTS : undefined,
     },
-    //  **«أو جزء جديد»** — المريضُ العائد نادراً ما يطلب طرفاً كاملاً:
-    //  تنكسر ركبةٌ أو يبلى غلاف. والاسمُ القديم كان يقول له إن هذا ليس
-    //  بابَه فيذهب إلى «صيانة» — وشراءُ قطعةٍ **بيعٌ لا صيانة**.
-    newDeviceOption(p, "prosthetic", hasProsthetic, "طرف صناعي جديد أو جزء جديد"),
-    newDeviceOption(p, "medical_support", hasSupport, "مسند طبي جديد"),
-    //  ══ الصيانةُ تُنسَب لقسم جهازها ══════════════════════════════════
-    //  كانت بنداً واحداً تحت «خدمات الأجهزة»، فلا يعرف الناظرُ أيَّ قسمٍ
-    //  تخصّ. والآن بندٌ تحت كلّ قسمٍ يملكه المريض، يحمل نوعَه معه.
-    //
-    //  **والاختيارُ الآمن القائم محفوظ**: صاحبُ النوعين تُفتح له نافذتُه
-    //  مضبوطةً على ما اختاره من القائمة لا مخمَّنةً، والخادمُ يعيد التحقّق
-    //  من أن المريض يملك النوع فعلاً كما كان.
-    maintenanceOption(p, "prosthetic", hasProsthetic, "صيانة طرف صناعي"),
-    maintenanceOption(p, "medical_support", hasSupport, "صيانة مسند طبي"),
-    //  ══ **بلا معاينة** (ترحيل ٠٦٧) ═════════════════════════════════════
-    //  المريضُ الذي لا يحتاج طبيباً — قالبٌ يُباع أو ركبةٌ تُصلَّح — يُنجَز
-    //  عملُه الآن، **ويبقى مبلغُه خارج المحاسبة** حتى يراجعه طبيبٌ مخوَّل.
-    noExamOption(p, "prosthetic", hasProsthetic, "بيع أو صيانة بلا معاينة (أطراف)"),
-    noExamOption(p, "medical_support", hasSupport, "بيع أو صيانة بلا معاينة (مساند)"),
-    {
+    hasPhysio ? null : {
       id: "physio_case",
-      label: "علاج طبيعي",
-      description: "إضافة حالة علاج طبيعي للمريض",
+      label: "إضافة حالة علاج طبيعي",
+      description: "فتح خيط اختصاص العلاج الطبيعي على ملفّ المريض",
       group: "physiotherapy",
       flow: { kind: "case_type", caseType: "physiotherapy" },
-      disabled: hasPhysio,
-      // مَن له علاجٌ قائم لا يحتاج حالةً ثانية بل جلساتٍ عليها — والرسالة
-      // تدلّه على الخيار الذي تحته مباشرةً بدل أن تقف عند المنع.
-      disabledReason: hasPhysio ? "الخدمة موجودة على ملف المريض — أضِف جلسات إضافية بدلاً منها" : undefined,
     },
-    {
+    !hasPhysio ? null : {
       id: "additional_therapy",
       label: "جلسات علاج طبيعي إضافية",
       description: "زيادة جلسات على خطة العلاج القائمة",
       group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "additional_therapy" },
-      disabled: !hasPhysio,
-      disabledReason: hasPhysio ? undefined : "تُفتَح حالة علاج طبيعي أولاً",
     },
     {
       id: "consultation",
@@ -283,7 +157,6 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       description: "تسجيل استشارة على ملف المريض",
       group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "consultation" },
-      disabled: false,
     },
     {
       id: "other",
@@ -291,53 +164,49 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
       description: "خدمة لا مسار خاصّ لها",
       group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "other" },
-      disabled: false,
     },
   ];
+
+  return all.filter((o): o is LauncherOption => o !== null);
 }
 
-// ══ الصيانة: أيّ جهاز؟ ═══════════════════════════════════════════════════
-
-export type MaintenanceServiceType = "prosthetic" | "medical_support";
-
-/** ما يملكه المريض فعلاً — وهو وحده ما يجوز أن يُصان. */
-export function ownedDeviceTypes(p: PatientServiceFlags): MaintenanceServiceType[] {
-  return [
-    p.isAmputee ? "prosthetic" : null,
-    p.isMedicalSupport ? "medical_support" : null,
-  ].filter(Boolean) as MaintenanceServiceType[];
-}
+// ══ استئنافُ بيعٍ بلا معاينة بقي ناقصاً ══════════════════════════════════
 
 /**
- * هل يُسأل الموظّف عن نوع الجهاز؟ **فقط حين يملك المريض الاثنين.**
+ * **الحلقةُ التي فُتحت ولم تكتمل — تُستأنَف هي، ولا تُفتَح ثانية.**
  *
- * صاحبُ نوعٍ واحد لا يُسأل سؤالاً جوابه واحد — والسلوك يبقى كما كان تماماً.
- */
-export function needsMaintenanceChoice(p: PatientServiceFlags): boolean {
-  return ownedDeviceTypes(p).length > 1;
-}
-
-/**
- * ما يُرسَل إلى نقطة الصيانة — **مرآةٌ لقاعدة الخادم حرفاً**.
+ * ── العطبُ الذي تغلقه ──────────────────────────────────────────────────
+ * المسارُ القديم كان يفتح حلقةَ `no_exam` أوّلاً ثمّ يسجّل مبلغَها. فإن
+ * انقطع بينهما — إغلاقُ نافذة، خطأُ شبكة، موظّفٌ تركها — بقي على الملفّ
+ * صفٌّ حيّ: جزءٌ مطلوبٌ بمسار «بلا معاينة»، **بلا سعرٍ ولا خبيرٍ ولا أمر
+ * تصنيع**. وهذا وقع في الإنتاج فعلاً.
  *
- * `null` تعني «لا تُرسِل»: إمّا لأن المريض لا يملك النوع المختار، وإمّا
- * لأنه يحمل الاثنين ولم يُحدَّد بعد. والخادم يردّ 400 في الحالتين، فلا
- * تبني الواجهة طلباً تعرف أنه سيُرفض.
+ * ولا يجوز حذفُه (عمليةٌ حقيقية وُثّقت) ولا فتحُ ثانٍ فوقه (فهرسُ
+ * `uq_pde_case_open` يمنع، والمعنى يمنع قبله). فيُستأنَف **هو بعينه**:
+ * تُفتَح نافذةُ «بلا معاينة» على معرّفه، فتُكمِل خبيرَه ومبلغَه وأمرَه.
+ *
+ * ── ولا يُخمَّن المطلوب أبداً ────────────────────────────────────────────
+ * ما طُلب مكتوبٌ على الصفّ، فيُقرأ منه حرفاً. وحلقةٌ وصلت بلا `requestedItem`
+ * أو بلا معرّفٍ رقميّ **لا تُستأنَف**: فتحُ نافذةٍ على مجهولٍ كان سيسجّل
+ * بيعَ قطعةٍ لم يطلبها أحد. والخادمُ يردّ الطلبَ الثاني ٤٠٩ برسالته، وهو
+ * أصدقُ من تخمينٍ يمرّ.
  */
-export function resolveMaintenanceServiceType(
-  p: PatientServiceFlags,
-  chosen?: string | null,
-): MaintenanceServiceType | null {
-  const owned = ownedDeviceTypes(p);
-  if (owned.length === 0) return null;
-  if (chosen) return owned.includes(chosen as MaintenanceServiceType) ? (chosen as MaintenanceServiceType) : null;
-  return owned.length === 1 ? owned[0] : null;
+export function resumableNoExamSale(
+  episodes: PatientEpisodeSummary[] | null | undefined,
+  serviceType: "prosthetic" | "medical_support",
+): { episodeId: number; requestedItem: string } | null {
+  const list = Array.isArray(episodes) ? episodes : [];
+  const found = list.find((e) =>
+    e.serviceType === serviceType
+    && e.status === "awaiting_exam"
+    && e.servicePath === "no_exam");
+  if (!found) return null;
+  const id = Number(found.id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const item = typeof found.requestedItem === "string" && found.requestedItem.trim()
+    ? found.requestedItem : null;
+  return item ? { episodeId: id, requestedItem: item } : null;
 }
-
-export const MAINTENANCE_TYPE_LABELS: Record<MaintenanceServiceType, string> = {
-  prosthetic: "طرف صناعي",
-  medical_support: "مسند طبي",
-};
 
 // ══ تذكرة الإرسال: **واحدة لكل فتح** ═════════════════════════════════════
 

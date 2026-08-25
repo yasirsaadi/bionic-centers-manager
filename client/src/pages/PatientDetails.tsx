@@ -69,12 +69,14 @@ import {
   AlertCircle,
   ArrowLeftRight,
   Plus,
-  X
+  X,
+  HelpCircle
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { PatientServiceLauncher } from "@/components/PatientServiceLauncher";
+import { RECEPTION_ROUTING_QUESTION } from "@/components/reception_routing";
 import { PhysioPlanDialog } from "@/components/PhysioPlanDialog";
 import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -138,6 +140,15 @@ export default function PatientDetails() {
   const backUrl = fromBranch ? `/patients?branch=${fromBranch}` : "/patients";
   const branchSession = useBranchSession();
   const permissions = usePermissions();
+  //  ══ **مُوجِّهُ «سبب الحضور» يُفتَح من رأس الصفحة كذلك** ═══════════════
+  //  الحالةُ هنا لأنّ الزرَّ في الرأس والحوارَ داخل الموزِّع أسفلَ الصفحة —
+  //  فتُمرَّر إليه إدارةً بدل أن يُبنى حوارٌ ثانٍ بنسخةٍ ثانية من الخيارات.
+  const [routingOpen, setRoutingOpen] = useState(false);
+  //  والتبويبُ صار مُداراً لسببٍ واحد: الموزِّعُ (وحوارُه) يعيش داخل تبويب
+  //  «الزيارات»، وتبويبُ Radix غيرُ النشط **يُفكَّك**. فزرُّ الرأس يعيد
+  //  التبويبَ إلى مكانه ثمّ يفتح الحوار — وإلّا ضُغط الزرُّ من «المدفوعات»
+  //  فلا يظهر شيء. ولا حوارَ ثانٍ يُبنى لأجل ذلك.
+  const [tab, setTab] = useState("visits");
   const isAdmin = branchSession?.isAdmin || false;
   // Branch managers should be able to perform "admin-style" actions
   // within their own branch (delete visit, edit visit, etc.). The
@@ -792,6 +803,25 @@ export default function PatientDetails() {
               {/*  الهوية العلنية بجانب الاسم — هي ما يُقال ويُطبع ويُبحث به،
                   أمّا رقم الصفّ الداخلي فيبقى داخلياً. */}
               <PatientCodeBadge code={(patient as any).patientCode} />
+              {/*  ══ **بابُ عمليات الأجهزة، بجوار الاسم** ═════════════════
+                  السؤالُ الأول الذي يُطرَح على كل مريض أطرافٍ أو مساند —
+                  فمكانُه حيث تقع العينُ أوّلاً، لا داخل تبويبٍ وقائمة.
+                  **والحوارُ هو حوارُ الموزِّع بعينه** (`routingOpen` تُمرَّر
+                  إليه أدناه)، لا نسخةٌ ثانية تنحرف عنه.
+                  والبوّابةُ `canAddPatients` نفسُها بلا توسيع.
+                  ويلتفّ تحت الاسم في الشاشات الصغيرة بحكم `flex-wrap`. */}
+              {permissions.canAddPatients
+                && (!!patient.isAmputee || !!patient.isMedicalSupport) && (
+                <Button
+                  size="sm"
+                  className="gap-1.5 h-8 print:hidden"
+                  onClick={() => { setTab("visits"); setRoutingOpen(true); }}
+                  data-testid="button-header-reception-routing"
+                >
+                  <HelpCircle className="w-3.5 h-3.5" />
+                  {RECEPTION_ROUTING_QUESTION}
+                </Button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> {t.patientDetails.age}: {patient.age}</span>
@@ -1086,7 +1116,7 @@ export default function PatientDetails() {
 
         {/* Right Column: Tabs (Payments, Documents) */}
         <div className="lg:col-span-2">
-          <Tabs defaultValue="visits" className="w-full">
+          <Tabs value={tab} onValueChange={setTab} className="w-full">
             <TabsList className="w-full justify-start h-12 bg-white border border-border/60 p-1 rounded-xl mb-6 shadow-sm flex-wrap gap-1">
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.visitHistory}
@@ -1113,7 +1143,11 @@ export default function PatientDetails() {
               {permissions.canAddPatients && (
               <div className="flex justify-end gap-2 mb-4 flex-wrap">
                 <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
-                <PatientServiceLauncher patient={patient} />
+                <PatientServiceLauncher
+                  patient={patient}
+                  routingOpen={routingOpen}
+                  onRoutingOpenChange={setRoutingOpen}
+                />
               </div>
               )}
 

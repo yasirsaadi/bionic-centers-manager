@@ -182,17 +182,31 @@ check("٣٦. **والحلقةُ تصل النافذةَ مع المعاينة**"
   examDlg.includes("deviceEpisodeId?: number | null;"));
 
 // ── ٩. **والصفرُ ليس سعرَ صيانةٍ عادياً** ────────────────────────────────
+//
+// **وقد انتقل الحقلُ لا القاعدة**: نافذةُ الزيارة لم تعد تفتح صيانةً — بابُها
+// «ما سبب حضور المريض اليوم؟» ⟶ «صيانة …» ⟶ `NoExamOperationDialog`. فيُفحَص
+// الثابتُ حيث يعيش الآن، لا حيث كان.
 console.log("\n── أجور الصيانة ──");
+const noExamOp = read("./NoExamOperationDialog.tsx");
 check("٣٧. **ولا وعدَ بأن الصفر مبلغٌ مقبول**",
-  !visit.includes("صفر أو أي مبلغ"),
-  (visit.match(/.*صفر.*/g) ?? []).join("\n"));
-check("٣٨. **بل يُقال إنه يجب أن يكون موجباً**",
-  visit.includes("يجب أن يكون موجباً"));
+  !visit.includes("صفر أو أي مبلغ") && !noExamOp.includes("صفر أو أي مبلغ"),
+  (noExamOp.match(/.*صفر.*/g) ?? []).join("\n"));
+check("٣٨. **بل يُقال إنه يجب أن يكون أكبر من صفر**",
+  noExamOp.includes("المبلغ يجب أن يكون أكبر من صفر"));
 check("٣٩. **والشاشةُ تمنع الإرسال بصفر**",
-  visit.includes("if (maintCost <= 0) {"),
-  (visit.match(/.*maintCost <= 0.*/g) ?? []).join("\n"));
-check("٤٠. **وحقلُ الخصم يبقى متاحاً من سعرٍ أصليٍّ موجب**",
-  visit.includes("{maintCost > 0 && (") && visit.includes("<ServiceDiscountFields originalPrice={maintCost}"));
+  noExamOp.includes("(!charged || amount > 0)"),
+  (noExamOp.match(/.*amount > 0.*/g) ?? []).join("\n"));
+check("٤٠. **والمجّانيُّ يُختار صراحةً — لا يُترَك صفراً**",
+  noExamOp.includes('data-testid="no-exam-op-no-charge"')
+  && noExamOp.includes("بلا أجور"));
+//  **ونافذةُ الزيارة خلت من الصيانة كلِّها** — فلا بابَ ثانٍ بقاعدةٍ ثانية.
+check("٤٠.ب **ولا أثرَ لأجور الصيانة في نافذة الزيارة**",
+  !visit.includes("maintCost") && !visit.includes("ServiceDiscountFields"),
+  (visit.match(/.*maintCost.*/g) ?? []).join("\n"));
+//  والخادمُ يبقى الحارسَ الأخير على البابين معاً.
+const mfgRoutes = read("../../../server/manufacturing/routes.ts");
+check("٤٠.ج **والخادمُ يردّ الصفرَ على نقطة الصيانة القائمة كما كان**",
+  /cost <= 0/.test(mfgRoutes));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

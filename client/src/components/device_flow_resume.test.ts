@@ -79,16 +79,17 @@ function main() {
 
   const s = fakeStore();
   saveDeviceFlowResume(s, {
-    patientId: 41, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
+    patientId: 41, serviceType: "prosthetic", requestedItem: "socket",
   });
   check(s.map.has(DEVICE_FLOW_RESUME_KEY), "١. تُحفَظ تحت مفتاحٍ واحد معروف");
 
-  same("٢. وتُقرأ لصاحبها كما حُفظت",
+  //  **حقلان لا ثالث**: القسمُ وما طُلب. ومسارُ العملية لم يعد بينهما —
+  //  النافذةُ لا تُفتَح إلّا من «يحتاج معاينة طبية»، فمسارُها ثابتٌ
+  //  `"exam"` لا يُسأل عنه ولا يُحفَظ. وحفظُ ثابتٍ ثمّ قراءتُه ادّعاءُ
+  //  خيارٍ لا وجود له.
+  same("٢. وتُقرأ لصاحبها كما حُفظت — القسمُ وما طُلب وحدهما",
     takeDeviceFlowResume(s, 41),
-    {
-      patientId: 41, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
-      fromReceptionRouting: false,
-    });
+    { patientId: 41, serviceType: "prosthetic", requestedItem: "socket" });
 
   // **تُستهلَك مرّةً واحدة**: وإلّا لاحقت النافذةُ الموظّفَ في كلّ تحميل.
   same("٣. **ولا تُقرأ مرّتين**", takeDeviceFlowResume(s, 41), null);
@@ -96,76 +97,56 @@ function main() {
 
   // مريضٌ آخر لا يرث نافذةَ غيره — **وتُمسَح كذلك** فلا تنفجر لاحقاً.
   saveDeviceFlowResume(s, {
-    patientId: 41, serviceType: "prosthetic", requestedItem: "knee", servicePath: "no_exam",
+    patientId: 41, serviceType: "prosthetic", requestedItem: "knee",
   });
   same("٤. ولا تُعطى لمريضٍ آخر", takeDeviceFlowResume(s, 99), null);
   check(!s.map.has(DEVICE_FLOW_RESUME_KEY), "وتُمسَح عند عدم التطابق أيضاً");
 
   // مسحٌ صريح — إغلاقُ الموظّف قرارٌ يُحترَم.
   saveDeviceFlowResume(s, {
-    patientId: 7, serviceType: "medical_support", requestedItem: "", servicePath: "",
+    patientId: 7, serviceType: "medical_support", requestedItem: "",
   });
   clearDeviceFlowResume(s);
   same("٥. والإغلاقُ الصريح يمسحها", takeDeviceFlowResume(s, 7), null);
 
   // «بلا اختيار» حالةٌ مشروعة تُحفَظ كما هي — والمساندُ لا أجزاءَ لها.
   saveDeviceFlowResume(s, {
-    patientId: 7, serviceType: "medical_support", requestedItem: "", servicePath: "",
+    patientId: 7, serviceType: "medical_support", requestedItem: "",
   });
   same("٦. و«بلا اختيار» تُحفَظ ولا تُخترَع قيمة",
     takeDeviceFlowResume(s, 7),
-    {
-      patientId: 7, serviceType: "medical_support", requestedItem: "", servicePath: "",
-      fromReceptionRouting: false,
-    });
+    { patientId: 7, serviceType: "medical_support", requestedItem: "" });
 
   // قيمةٌ ليست من القائمة لا تعود — وإلّا ضُبط `Select` على ما لا يعرفه.
   saveDeviceFlowResume(s, { patientId: 7, serviceType: "prosthetic", requestedItem: "banana" } as any);
   same("٧. وقيمةٌ خارج القائمة تُنظَّف إلى فراغ",
     takeDeviceFlowResume(s, 7)?.requestedItem, "");
 
-  //  ══ ومسارُ العملية بالمنطق نفسِه (ترحيل ٠٦٥) ══════════════════════════
-  //  يُحفَظ ليعود الموظّفُ إلى جوابه، **ولا يُخمَّن**: مسارٌ مخترَع كان
-  //  سيوجّه طلباً بلا أن يقرّره أحد.
+  //  ══ **ولا مسارَ عمليةٍ في اللقطة بعد اليوم** ══════════════════════════
+  //  كان يُحفَظ ويُستعاد حين كانت النافذةُ تسأل عنه. وقد توقّفت: بابُها
+  //  الوحيد «يحتاج معاينة طبية»، فالمسارُ `"exam"` ثابتٌ في نداء الشبكة.
+  //  فحقلٌ محفوظٌ لقيمةٍ لا تتغيّر مفهومٌ ثانٍ لشيءٍ واحد — أُزيل.
+  //
+  //  **وقيمةٌ قديمة في `sessionStorage` لا تُعيد المفهوم**: تُقرأ اللقطةُ
+  //  بحقولها الثلاثة ويُهمَل ما عداها، فلا لقطةٌ من جلسةٍ سابقة تُحيي
+  //  مساراً لم يعد يُسأل عنه.
   saveDeviceFlowResume(s, {
-    patientId: 12, serviceType: "prosthetic", requestedItem: "knee", servicePath: "no_exam",
-  });
-  same("٧أ. **ومسارُ العملية يعود كما تُرك**",
-    takeDeviceFlowResume(s, 12)?.servicePath, "no_exam");
-  saveDeviceFlowResume(s, {
-    patientId: 12, serviceType: "prosthetic", requestedItem: "knee", servicePath: "maybe",
+    patientId: 12, serviceType: "prosthetic", requestedItem: "knee",
+    servicePath: "no_exam", fromReceptionRouting: true,
   } as any);
-  same("٧ب. **ومسارٌ مخترَع يُنظَّف إلى فراغ — لا يُخمَّن**",
-    takeDeviceFlowResume(s, 12)?.servicePath, "");
+  same("٧أ. **ولقطةٌ تحمل حقولاً متقاعدة تُقرأ بحقولها الثلاثة وحدها**",
+    takeDeviceFlowResume(s, 12),
+    { patientId: 12, serviceType: "prosthetic", requestedItem: "knee" });
 
-  //  ══ و`fromReceptionRouting` بالمنطق نفسِه ══════════════════════════════
-  //  **العطبُ الذي يُصلَح هنا**: نافذةٌ فُتحت من مُوجِّه «سبب الحضور»
-  //  وتعرض «المسار: معاينة طبية» الثابت — فيذهب الموظّفُ إلى «تعديل
-  //  مريض» ويعود، فتفقد اللقطةُ العلمَ وتظهر النافذةُ بمحدِّدٍ حرٍّ لم يكن
-  //  أمامها أصلاً. فصار العلمُ جزءاً من اللقطة نفسِها، يُحفَظ ويعود معها.
-  saveDeviceFlowResume(s, {
-    patientId: 15, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
-    fromReceptionRouting: true,
-  });
-  same("٧ج. **ومسارُ المُوجِّه يعود `true` كما حُفظ**",
-    takeDeviceFlowResume(s, 15)?.fromReceptionRouting, true);
-
-  //  والمسارُ العاديّ (بلا مُوجِّه) لا يحمل العلمَ أصلاً — والقراءةُ تُثبته
-  //  `false` صراحةً، لا `undefined` غامضة تلتبس بخطأ.
-  saveDeviceFlowResume(s, {
-    patientId: 16, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
-  });
-  same("٧د. **والمسارُ العاديّ يعود `false` صراحةً — لا `undefined`**",
-    takeDeviceFlowResume(s, 16)?.fromReceptionRouting, false);
-
-  //  وقيمةٌ غيرُ بوليانية (لو وصلت من طريقٍ ملتوٍ) تُنظَّف إلى `false` —
-  //  نفسُ حراسة بقيّة الحقول: لا يُخمَّن، ولا يُقبَل ما ليس بوليان.
-  saveDeviceFlowResume(s, {
-    patientId: 17, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
-    fromReceptionRouting: "yes",
+  //  والمكتوبُ في التخزين نفسُه بلا الحقلين — لا يُحفَظان ثمّ يُهمَلان.
+  const sShape = fakeStore();
+  saveDeviceFlowResume(sShape, {
+    patientId: 12, serviceType: "prosthetic", requestedItem: "knee",
+    servicePath: "no_exam", fromReceptionRouting: true,
   } as any);
-  same("٧هـ. وقيمةٌ غيرُ بوليانية تُنظَّف إلى `false`",
-    takeDeviceFlowResume(s, 17)?.fromReceptionRouting, false);
+  same("٧ب. **ولا يُكتَبان في التخزين أصلاً**",
+    Object.keys(JSON.parse(sShape.map.get(DEVICE_FLOW_RESUME_KEY)!)).sort(),
+    ["patientId", "requestedItem", "serviceType"]);
 
   // نوعُ خدمةٍ مخترَع لا يُحفَظ أصلاً.
   const s2 = fakeStore();
@@ -224,8 +205,8 @@ function main() {
     "١٥. والاختيارُ يصل النافذةَ من مالكِ الحالة");
   check(/takeDeviceFlowResume\(sessionResumeStore\(\), patient\.id\)/.test(launcher),
     "١٦. **والموزِّعُ يقرأ اللقطةَ عند التركيب** — فتعود النافذةُ مفتوحةً");
-  check(/setFlow\(\{\s*kind: "device_episode", serviceType: resume\.serviceType,\s*fromReceptionRouting: resume\.fromReceptionRouting,\s*\}\);/.test(launcher),
-    "ويعيد فتحَ مسار الجهاز نفسِه، **ومعه علمُ المُوجِّه كما حُفظ** — لا مسارٍ آخر ولا علمٍ يضيع");
+  check(/setFlow\(\{ kind: "device_episode", serviceType: resume\.serviceType \}\)/.test(launcher),
+    "ويعيد فتحَ مسار الجهاز نفسِه لا مسارٍ آخر");
   check(/saveDeviceFlowResume\(sessionResumeStore\(\)/.test(launcher),
     "١٧. وهو مَن يحفظها قبل مغادرة الصفحة");
 
@@ -235,8 +216,8 @@ function main() {
   const edit = read("..", "pages", "EditPatient.tsx");
   check(/setLocation\(`\/patients\/\$\{patientId\}\$\{branchParam\}`\)/.test(code(edit)),
     "وحفظُ التعديل يعيد إلى صفحة المريض تلقائياً — بلا خطوةٍ على الموظّف");
-  check(/onEditPatient\(item, path\)/.test(modal),
-    "١٩. والنافذةُ تسلّم **ما اختاره الموظّف بعينه** — القطعةَ ومسارَها معاً");
+  check(/onEditPatient\(item\)/.test(modal),
+    "١٩. والنافذةُ تسلّم **ما اختاره الموظّف بعينه** — القطعةَ المطلوبة");
   check(/onComplete=\{\(\) => \{[\s\S]{0,400}?onEditPatient/.test(MODAL),
     "وتسليمُه من زرّ «إكمال البيانات الآن» نفسِه");
   check(/إكمال البيانات الآن/.test(REQUIRED),
@@ -247,14 +228,14 @@ function main() {
     "٢٠. **والموزِّعُ يمرّر `onEditPatient` فعلاً**", modalUsage);
   check(/initialRequestedItem=\{resumeItem\}/.test(modalUsage),
     "ويمرّر الجزءَ المستأنَف معه", modalUsage);
-  //  **وعلمُ المُوجِّه الحاليّ يُسلَّم معها** — فتُكتب اللقطةُ به قبل
-  //  المغادرة إلى «تعديل مريض»، لا بمصدرٍ ثانٍ ينحرف عنه.
-  check(/editPatientAndResume\(\s*flow\.serviceType, requestedItem, servicePath, flow\.fromReceptionRouting,\s*\)/.test(modalUsage),
-    "٢٠أ. **ويسلّم `flow.fromReceptionRouting` الحاليّ إلى `editPatientAndResume`**", modalUsage);
-  check(/function editPatientAndResume\(\s*serviceType: "prosthetic" \| "medical_support", requestedItem: string,\s*servicePath: string, fromReceptionRouting\?: boolean,\s*\) \{/.test(launcher),
-    "٢٠ب. **ودالّةُ `editPatientAndResume` تقبل العلمَ اختيارياً** — بلا كسر الاستدعاءات القديمة");
-  check(/servicePath: servicePath as any, fromReceptionRouting,/.test(launcher),
-    "٢٠ج. وتكتبه في اللقطة المحفوظة كما استلمته — بلا تعديل");
+  //  **والقسمُ وما طُلب وحدهما يعبران** — لا مسارَ عمليةٍ ولا علمَ مُوجِّه:
+  //  النافذةُ بابُها واحد، فمسارُها ثابتٌ لا يُحفَظ ولا يُستعاد.
+  check(/editPatientAndResume\(flow\.serviceType, requestedItem\)/.test(modalUsage),
+    "٢٠أ. **ويسلّم القسمَ وما طُلب وحدهما**", modalUsage);
+  check(/function editPatientAndResume\(\s*serviceType: "prosthetic" \| "medical_support", requestedItem: string,\s*\) \{/.test(launcher),
+    "٢٠ب. **ودالّةُ `editPatientAndResume` بمعاملين لا أربعة**");
+  check(/saveDeviceFlowResume\(sessionResumeStore\(\), \{\s*patientId: patient\.id, serviceType, requestedItem,\s*\}\);/.test(launcher),
+    "٢٠ج. وتكتب اللقطةَ بحقولها الثلاثة كما استلمتها — بلا تعديل");
 
   //  واختيارٌ جديد أو إغلاقٌ صريح ⟶ لا لقطةَ قديمة تفتح نافذةً بعد ساعة.
   check(/clearDeviceFlowResume\(sessionResumeStore\(\)\)/.test(launcher),

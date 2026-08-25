@@ -2,24 +2,24 @@
 // `npm run test:service-launcher` — بلا قاعدة بيانات وبلا شبكة.
 //
 // ══ ما يغطّيه ═══════════════════════════════════════════════════════════
-// (أ) **قرار التوزيع** خالصاً: أي خيار ⇒ أي مسار، ومتى يُعطَّل ولماذا،
-//     وقاعدةُ الصيانة لمن يحمل جهازين.
-// (ب) **عقد الواجهة** قراءةً للمصدر: زرّان لا ثلاثة، ولا زرّ «إضافة نوع
-//     حالة» بعد اليوم، والموزِّع **لا ينادي نقطة نهاية واحدة**، ولا نقطة
-//     «خدمة عامّة» أُنشئت، والبوّابة لم تتوسّع.
+// (أ) **قرار التوزيع** خالصاً: أي خيار ⇒ أي مسار، ومتى يُعرَض ومتى يختفي.
+// (ب) **ولا بابَ ثانياً لعمليات الأجهزة**: «إضافة خدمة جديدة» لم تعد تعرض
+//     جهازاً جديداً ولا صيانةً ولا بيعاً بلا معاينة، ونافذةُ الزيارة لم
+//     تعد تفتح صيانة. البابُ الوحيد «ما سبب حضور المريض اليوم؟».
+// (ج) **واستئنافُ بيعٍ ناقص** يقع على الحلقة نفسِها لا على ثانيةٍ فوقها.
+// (د) **عقد الواجهة** قراءةً للمصدر: الموزِّع **لا ينادي نقطة نهاية واحدة**،
+//     ولا نقطة «خدمة عامّة» أُنشئت، والبوّابة لم تتوسّع.
 //
 // ══ وما لا يغطّيه — معلَنٌ لا مسكوتٌ عنه ════════════════════════════════
 // **تصيير React نفسه**: المشروع بلا مشغّل DOM، وإضافته لأجل نافذة واحدة
 // تغييرٌ بنيوي أكبر من الميزة. فالضغط الفعلي على البطاقة وفتح النافذة
-// **مفحوصان ساكناً لا مُشغَّلين**. وما يقبل الفحص الحيّ (الصيانة ونوع
-// الجهاز، و«إضافة نوع حالة» بلا مال) مفحوصٌ على Postgres في
-// `npm run test:maintenance-service`.
+// **مفحوصان ساكناً لا مُشغَّلين**. وحقيقةُ «بانتظار معاينة» مفحوصةٌ حيّاً
+// على Postgres في `npm run test:service-path`.
 
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  launcherOptions, ownedDeviceTypes, needsMaintenanceChoice,
-  resolveMaintenanceServiceType, FLOW_ENDPOINTS, GROUP_LABELS,
+  launcherOptions, resumableNoExamSale, FLOW_ENDPOINTS, GROUP_LABELS,
   nextSubmissionToken, mintSubmissionToken,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
@@ -58,7 +58,8 @@ const ADD_CASE = read("AddCaseTypeModal.tsx");
 const MFG_ROUTES = read("..", "..", "..", "server", "manufacturing", "routes.ts");
 const SERVER_ROUTES = read("..", "..", "..", "server", "routes.ts");
 
-const opt = (list: LauncherOption[], id: string) => list.find((o) => o.id === id)!;
+const opt = (list: LauncherOption[], id: string) => list.find((o) => o.id === id);
+const ids = (list: LauncherOption[]) => list.map((o) => o.id);
 
 function main() {
   // ══ (أ) صفحة المريض: زرّان لا ثلاثة ═══════════════════════════════════
@@ -92,10 +93,9 @@ function main() {
   console.log("\n── الموزِّع لا يحمل منطق عمل ──");
   const launcherCode = code(LAUNCHER);
   const newServiceCode = code(NEW_SERVICE);
-  // **لا يكتب** — وهذا هو الثابت. صار يقرأ حلقات المريض ليعطّل «جهاز
-  // جديد» بسببٍ مفهوم بدل زرٍّ يفتح نافذةً لتنتهي برسالة خطأ؛ وقراءةٌ
-  // للعرض شيءٌ وتنفيذُ الخدمة شيءٌ آخر. فالممنوع هو الكتابة: لا طفرة،
-  // ولا `apiRequest`، ولا `fetch` يدوي.
+  // **لا يكتب** — وهذا هو الثابت. صار يقرأ حلقات المريض ليستأنف بيعاً
+  // ناقصاً؛ وقراءةٌ للعرض شيءٌ وتنفيذُ الخدمة شيءٌ آخر. فالممنوع هو
+  // الكتابة: لا طفرة، ولا `apiRequest`، ولا `fetch` يدوي.
   for (const forbidden of ["fetch(", "apiRequest(", "useMutation"]) {
     check(!launcherCode.includes(forbidden),
       `ولا «${forbidden}» في الموزِّع`, launcherCode.slice(0, 120));
@@ -103,224 +103,208 @@ function main() {
   const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
   same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض",
     launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
-  for (const flow of ["AddCaseTypeModal", "NewServiceModal", "VisitModal", "NewDeviceEpisodeModal"]) {
+  for (const flow of ["AddCaseTypeModal", "NewServiceModal", "NewDeviceEpisodeModal",
+    "NoExamOperationDialog"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);
   }
-  check(/initialPurpose="maintenance"/.test(launcherCode),
-    "١٢. والصيانة تفتح نافذة الزيارة على غرض الصيانة");
 
-  // ══ خريطة الخيارات ⇒ المسارات ════════════════════════════════════════
-  console.log("\n── خريطة الخيار إلى مساره ──");
+  // ══ ١. لا بابَ ثانياً لعمليات الأجهزة في «إضافة خدمة جديدة» ═══════════
+  console.log("\n── «إضافة خدمة جديدة»: خدماتُ الملفّ وحدها ──");
   const fresh = launcherOptions({});
-  //  عشرةٌ ثمّ اثنتا عشرة: الصيانةُ صارت بنداً لكلّ قسمِ جهاز، وترحيلُ ٠٦٧
-  //  أضاف بابَ «بلا معاينة» لكلّ قسمٍ كذلك — بيعٌ أو صيانةٌ يُنجزها
-  //  الاستقبال ويبقى مبلغُها خارج المحاسبة حتى يعتمده طبيبٌ مخوَّل.
-  same("اثنا عشر خياراً لا غير", fresh.map((o) => o.id), [
-    "prosthetic_case", "support_case",
+  same("١.أ **خمسةُ خيارات لمن لا حالةَ له — ولا واحدٌ منها عمليةُ جهاز**",
+    ids(fresh),
+    ["prosthetic_case", "support_case", "physio_case", "consultation", "other"]);
+
+  //  **الأبوابُ الستّة الموازية اختفت** — بمعرّفاتها بعينها، فلا يعود
+  //  واحدٌ منها بالسهو تحت اسمٍ آخر.
+  const RETIRED = [
     "new_prosthetic_device", "new_support_device",
     "maintenance_prosthetic", "maintenance_support",
     "no_exam_prosthetic", "no_exam_support",
-    "physio_case", "additional_therapy", "consultation", "other",
-  ]);
+  ];
+  for (const flags of [
+    {}, { isAmputee: true }, { isMedicalSupport: true },
+    { isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true },
+    { isAmputee: true, episodes: [{ serviceType: "prosthetic", status: "delivered" }] },
+  ] as any[]) {
+    const got = ids(launcherOptions(flags));
+    const leaked = RETIRED.filter((id) => got.includes(id));
+    same(`١.ب ولا بابَ جهازٍ يظهر مهما كان الملفّ — ${JSON.stringify(flags).slice(0, 46)}`,
+      leaked, []);
+  }
+
+  //  **والمنطقُ لا المعرّفاتُ وحدها**: لا مسارَ جهازٍ ولا «بلا معاينة» ولا
+  //  صيانةٍ يخرج من هذه القائمة إطلاقاً — أياً كان اسمُه.
+  const ALLOWED_KINDS = ["case_type", "new_service"];
+  for (const flags of [
+    {}, { isAmputee: true }, { isPhysiotherapy: true },
+    { isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true },
+  ] as any[]) {
+    const kinds = [...new Set(launcherOptions(flags).map((o) => o.flow.kind))].sort();
+    same(`١.ج **ولا مسارَ إلّا نوعَ حالةٍ أو خدمةً على الملفّ** — ${JSON.stringify(flags).slice(0, 40)}`,
+      kinds.filter((k) => !ALLOWED_KINDS.includes(k)), []);
+  }
+  //  ومَن لا حالةَ له يرى البابين معاً — فالقائمةُ لم تُفرَّغ، بل نُقّيت.
+  same("١.د ومَن لا حالةَ له يرى البابين: نوعَ حالةٍ وخدمةً",
+    [...new Set(fresh.map((o) => o.flow.kind))].sort(), ALLOWED_KINDS);
+
+  // ══ ٢. الحالةُ القائمة **تختفي** — لا تُعرَض رماديةً ═══════════════════
+  console.log("\n── الحالة القائمة تختفي ──");
+  const hasAll = launcherOptions({
+    isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true,
+  });
+  same("٢.أ **صاحبُ الحالات الثلاث لا يرى واحدةً منها** — ويرى ما يستطيع فعلاً",
+    ids(hasAll), ["additional_therapy", "consultation", "other"]);
+  //  **ولا خيارَ معطَّل في القائمة إطلاقاً** — البنيةُ نفسُها لم تعد تحمل
+  //  `disabled`، فلا سبيلَ لعرض ما لا يُنفَّذ.
+  for (const flags of [
+    {}, { isAmputee: true }, { isPhysiotherapy: true },
+    { isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true },
+  ] as any[]) {
+    const withFlag = launcherOptions(flags).filter((o) => "disabled" in (o as any));
+    same("٢.ب ولا بندَ يحمل `disabled` إطلاقاً", withFlag.map((o) => o.id), []);
+  }
+  same("٢.ج وصاحبُ الأطراف وحدها لا يرى «إضافة حالة أطراف»",
+    ids(launcherOptions({ isAmputee: true })),
+    ["support_case", "physio_case", "consultation", "other"]);
+
+  //  والجلساتُ الإضافية **تظهر لصاحب العلاج وحده** — لا معطَّلةً لغيره.
+  check(!!opt(hasAll, "additional_therapy"), "٢.د والجلساتُ الإضافية لصاحب العلاج");
+  check(!opt(fresh, "additional_therapy"),
+    "**ولا تُعرَض لمن لا علاجَ له** — لا معطَّلةً ولا مذكورة");
+
   // ══ ثلاثةُ أقسامٍ لا رابع ═════════════════════════════════════════════
-  //  «خدمات أخرى» زالت: الاستشارةُ والخدمةُ الأخرى والجلساتُ الإضافية
-  //  كلُّها علاجٌ طبيعي تنظيمياً ومالياً، فلا مجموعةَ تعيش خارج التصنيف.
   same("وثلاثةُ أقسامٍ بأسمائها الرسمية", Object.keys(GROUP_LABELS),
     ["prosthetic", "medical_support", "physiotherapy"]);
   same("**ولا مجموعةَ رابعة إطلاقاً**",
     [...new Set(fresh.map((o) => o.group))].sort(),
     ["medical_support", "physiotherapy", "prosthetic"]);
-  same("والمجموعات كما طُلبت", fresh.map((o) => o.group), [
-    "prosthetic", "medical_support",
-    "prosthetic", "medical_support",
-    "prosthetic", "medical_support",
-    "prosthetic", "medical_support",
-    "physiotherapy", "physiotherapy", "physiotherapy", "physiotherapy",
-  ]);
-  //  وكلُّ خدمةٍ غيرِ جهازٍ تقع تحت العلاج الطبيعي — لا واحدةَ خارجه.
-  same("**وكلُّ ما ليس جهازاً فهو علاجٌ طبيعي**",
-    fresh.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
+  //  وكلُّ خدمةٍ غيرِ حالةٍ تقع تحت العلاج الطبيعي — لا واحدةَ خارجه.
+  same("**وكلُّ ما ليس حالةً فهو علاجٌ طبيعي تنظيمياً**",
+    hasAll.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
     ["physiotherapy", "physiotherapy", "physiotherapy"]);
-  // **قائمة مغلقة**: خمس نقاط قائمة لا سادس، ولا «خدمة عامّة».
-  //  والخامسةُ بابُ «بلا معاينة» (٠٦٧) — نقطةٌ قائمةٌ بحدودها وحُرّاسها
-  //  كبقيّتها، لا نقطةٌ عامّة تجمع أربع قواعد مختلفة.
-  same("٢٠. ولا نقطة سادسة يذهب إليها الموزِّع",
-    [...new Set(fresh.map((o) => o.flow.kind))].sort(),
-    ["case_type", "device_episode", "maintenance_visit", "new_service",
-      "no_exam_operation"]);
+
+  // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
+  same("٢٠. ولا نقطة خامسة يعرفها الموزِّع",
+    Object.keys(FLOW_ENDPOINTS).sort(),
+    ["case_type", "device_episode", "new_service", "no_exam_operation"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
-    "/api/manufacturing/maintenance-visit",
     "/api/patients/:patientId/device-episodes",
     "/api/no-exam/device-sale",
   ]);
+  //  **و«maintenance-visit» خرجت من خريطة الموزِّع** — ولم تُحذَف من الخادم.
+  check(!Object.values(FLOW_ENDPOINTS).includes("/api/manufacturing/maintenance-visit"),
+    "٢٠.أ **ولا صيانةَ في خريطة الموزِّع بعد اليوم**");
 
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.
-  same("٤. أطراف ⇒ add-case-type/amputee", opt(fresh, "prosthetic_case").flow,
+  same("٤. أطراف ⇒ add-case-type/amputee", opt(fresh, "prosthetic_case")!.flow,
     { kind: "case_type", caseType: "amputee" });
-  same("٥. مساند ⇒ add-case-type/medical_support", opt(fresh, "support_case").flow,
+  same("٥. مساند ⇒ add-case-type/medical_support", opt(fresh, "support_case")!.flow,
     { kind: "case_type", caseType: "medical_support" });
-  same("٦. علاج طبيعي ⇒ add-case-type/physiotherapy", opt(fresh, "physio_case").flow,
+  same("٦. علاج طبيعي ⇒ add-case-type/physiotherapy", opt(fresh, "physio_case")!.flow,
     { kind: "case_type", caseType: "physiotherapy" });
-  same("وثلاثتها مُتاحة لمن لا يحملها",
-    ["prosthetic_case", "support_case", "physio_case"].map((id) => opt(fresh, id).disabled),
-    [false, false, false]);
 
   // ٨-١٠. الخدمات المالية ⇒ `new-service` بأنواعها الثلاثة القائمة.
   same("٨. جلسات إضافية ⇒ new-service/additional_therapy",
-    opt(fresh, "additional_therapy").flow, { kind: "new_service", serviceType: "additional_therapy" });
+    opt(hasAll, "additional_therapy")!.flow,
+    { kind: "new_service", serviceType: "additional_therapy" });
   same("٩. استشارة ⇒ new-service/consultation",
-    opt(fresh, "consultation").flow, { kind: "new_service", serviceType: "consultation" });
+    opt(fresh, "consultation")!.flow, { kind: "new_service", serviceType: "consultation" });
   same("١٠. خدمة أخرى ⇒ new-service/other",
-    opt(fresh, "other").flow, { kind: "new_service", serviceType: "other" });
-  same("والاستشارة والخدمة الأخرى متاحتان دائماً",
-    [opt(fresh, "consultation").disabled, opt(fresh, "other").disabled], [false, false]);
-
-  // ١١. الصيانة **لا تمرّ بـ`new-service` إطلاقاً**.
-  //  وبندُ كلّ قسمٍ يحمل نوعَ جهازه معه، فتُفتح النافذة مضبوطةً لا مخمَّنة.
-  same("١١. الصيانة ⇒ maintenance-visit لا new-service",
-    [opt(fresh, "maintenance_prosthetic").flow, opt(fresh, "maintenance_support").flow],
-    [{ kind: "maintenance_visit", serviceType: "prosthetic" },
-      { kind: "maintenance_visit", serviceType: "medical_support" }]);
-  const serviceTypes = fresh.filter((o) => o.flow.kind === "new_service")
+    opt(fresh, "other")!.flow, { kind: "new_service", serviceType: "other" });
+  const serviceTypes = hasAll.filter((o) => o.flow.kind === "new_service")
     .map((o) => (o.flow as any).serviceType).sort();
   same("وأنواع new-service ثلاثة لا رابع لها",
     serviceTypes, ["additional_therapy", "consultation", "other"]);
   check(!serviceTypes.includes("maintenance") && !serviceTypes.includes("new_prosthetic"),
     "**ولا `maintenance` ولا `new_prosthetic` بينها**", serviceTypes.join(", "));
 
-  // ══ ٧. الحالة القائمة لا تُنشأ ثانيةً ═════════════════════════════════
-  console.log("\n── الحالة القائمة ──");
-  const hasAll = launcherOptions({ isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true });
-  same("٧. ثلاثتها معطَّلة لمن يحملها",
-    ["prosthetic_case", "support_case", "physio_case"].map((id) => opt(hasAll, id).disabled),
-    [true, true, true]);
-  for (const id of ["prosthetic_case", "support_case", "physio_case"]) {
-    check(!!opt(hasAll, id).disabledReason?.includes("الخدمة موجودة على ملف المريض"),
-      `و«${opt(hasAll, id).label}» تقول سببها`, String(opt(hasAll, id).disabledReason));
+  // ══ ٨-٩. استئنافُ بيعٍ بلا معاينة بقي ناقصاً ══════════════════════════
+  //  حلقةٌ `awaiting_exam` بمسار `no_exam` = عمليةٌ فُتحت ولم تُكمَل: بلا
+  //  سعرٍ ولا خبيرٍ ولا أمر تصنيع. تُستأنَف **هي بعينها**.
+  console.log("\n── استئنافُ البيع الناقص ──");
+  const HALF = [{
+    id: 77, serviceType: "prosthetic", status: "awaiting_exam",
+    servicePath: "no_exam", requestedItem: "socket",
+  }];
+  same("٩. **الحلقةُ الناقصة تُستأنَف بمعرّفها وبما طُلب فيها حرفاً**",
+    resumableNoExamSale(HALF, "prosthetic"), { episodeId: 77, requestedItem: "socket" });
+  same("ولا تُستأنَف لقسمٍ آخر", resumableNoExamSale(HALF, "medical_support"), null);
+
+  //  **ولا يُخمَّن المطلوب أبداً**: صفٌّ بلا `requestedItem` لا يُستأنَف —
+  //  فتحُ نافذةٍ على مجهولٍ كان سيسجّل بيعَ قطعةٍ لم يطلبها أحد.
+  same("١٠.أ وصفٌّ بلا مطلوبٍ لا يُستأنَف — ولا يُخمَّن له شيء",
+    resumableNoExamSale([{ ...HALF[0], requestedItem: null }], "prosthetic"), null);
+  same("ولا صفٌّ بلا معرّفٍ رقميّ",
+    resumableNoExamSale([{ ...HALF[0], id: undefined }] as any, "prosthetic"), null);
+
+  //  **ومسارُ المعاينة ليس ناقصاً** — طلبٌ ينتظر الطبيب يمضي بمساره.
+  same("١٠.ب وحلقةُ مسار المعاينة لا تُستأنَف بيعاً",
+    resumableNoExamSale([{ ...HALF[0], servicePath: "exam" }], "prosthetic"), null);
+  //  وحلقةُ ما قبل ٠٦٥ (`null`) ليست بيعاً بلا معاينة — لم تُسأل أصلاً.
+  same("ولا حلقةُ ما قبل ٠٦٥ (بلا مسار)",
+    resumableNoExamSale([{ ...HALF[0], servicePath: null }], "prosthetic"), null);
+  for (const status of ["in_manufacturing", "delivered", "cancelled", "examined"]) {
+    same(`وحلقةٌ «${status}» ليست عمليةً ناقصة`,
+      resumableNoExamSale([{ ...HALF[0], status }], "prosthetic"), null);
   }
-  for (const id of ["prosthetic_case", "support_case"]) {
-    check(!!opt(hasAll, id).disabledReason?.includes("جهاز جديد"),
-      "وصاحبُ الحالة يُحال إلى «جهاز جديد» لا إلى بابٍ مغلق");
-  }
-  // ولا واحدٌ من المعطَّلات يحمل مساراً يُنفَّذ سهواً.
-  same("والمعطَّل لا يُفتَح", hasAll.filter((o) => o.disabled && !o.disabledReason).length, 0);
+  same("وبلا حلقاتٍ إطلاقاً ⟶ لا استئناف",
+    [resumableNoExamSale([], "prosthetic"), resumableNoExamSale(null, "prosthetic"),
+      resumableNoExamSale(undefined, "prosthetic")], [null, null, null]);
 
-  // ══ «جهاز جديد» — الحلقة المفتوحة وحدها تمنعه ═════════════════════════
-  console.log("\n── جهاز جديد ──");
-  const withCase = { isAmputee: true } as any;
-  same("صاحبُ الحالة بلا حلقة ⟶ «طرف صناعي جديد» متاح",
-    opt(launcherOptions(withCase), "new_prosthetic_device").disabled, false);
-  same("ومَن لا حالة له ⟶ معطَّل بسببه",
-    opt(launcherOptions({}), "new_prosthetic_device").disabledReason, "تُفتَح الحالة أولاً");
+  //  **والموزِّعُ يمرّرها إلى النافذة القائمة** — ولا يُنشئ حلقةً ثانية.
+  check(/resumableNoExamSale\(episodeData\?\.episodes, flow\.serviceType\)/.test(launcherCode),
+    "١٠.ج **والموزِّعُ يقرأ الاستئنافَ من حلقات المريض نفسِها**");
+  check(/existingEpisodeId=\{saleResume\?\.episodeId \?\? null\}/.test(launcherCode)
+    && /existingRequestedItem=\{saleResume\?\.requestedItem \?\? null\}/.test(launcherCode),
+    "ويمرّرهما إلى نافذة «بلا معاينة» القائمة");
+  //  ولا يُستأنَف على مسار الصيانة — تلك لا تفتح حلقةً أصلاً.
+  check(/flow\.initialKind === "device_sale"/.test(launcherCode),
+    "١٠.د **والاستئنافُ لمسار البيع وحده** — الصيانةُ لا حلقةَ لها");
 
-  for (const [status, reason] of [
-    ["awaiting_exam", "بانتظار معاينة الطبيب"],
-    ["examined", "بانتظار التخصيص"],
-    ["in_manufacturing", "قيد التصنيع"],
-  ] as const) {
-    const withOpen = launcherOptions({
-      isAmputee: true, episodes: [{ serviceType: "prosthetic", status }],
-    } as any);
-    const o = opt(withOpen, "new_prosthetic_device");
-    same(`وحلقةٌ «${status}» تمنع فتح جهازٍ ثانٍ`, o.disabled, true);
-    check(!!o.disabledReason?.includes(reason), "   وتقول السبب", String(o.disabledReason));
-  }
-
-  // **جوهر الميزة**: الجهاز المسلَّم لا يمنع الجديد — هو سببه لا مانعه.
-  for (const status of ["delivered", "cancelled"] as const) {
-    same(`وحلقةٌ «${status}» لا تمنع الجهاز التالي`,
-      opt(launcherOptions({
-        isAmputee: true, episodes: [{ serviceType: "prosthetic", status }],
-      } as any), "new_prosthetic_device").disabled, false);
-  }
-
-  // ولا تخلط الخدمتان: حلقةُ مسندٍ مفتوحة لا تمنع طرفاً جديداً.
-  const crossed = launcherOptions({
-    isAmputee: true, isMedicalSupport: true,
-    episodes: [{ serviceType: "medical_support", status: "in_manufacturing" }],
-  } as any);
-  same("وحلقةُ المسند لا تمنع الطرف الجديد", opt(crossed, "new_prosthetic_device").disabled, false);
-  same("وتمنع المسند الجديد وحده", opt(crossed, "new_support_device").disabled, true);
-  same("و«جهاز جديد» يذهب إلى نقطة الحلقات",
-    opt(crossed, "new_prosthetic_device").flow,
-    { kind: "device_episode", serviceType: "prosthetic" });
-
-  // ٨.ب الجلسات الإضافية تحتاج علاجاً قائماً — والعكس بالعكس.
-  same("٨.ب الجلسات الإضافية متاحة لصاحب العلاج", opt(hasAll, "additional_therapy").disabled, false);
-  same("ومعطَّلة لمن لا علاج له", opt(fresh, "additional_therapy").disabled, true);
-  check(!!opt(fresh, "additional_therapy").disabledReason?.includes("تُفتَح حالة علاج طبيعي"),
-    "برسالةٍ تدلّ على الخطوة الأولى");
-  check(!!opt(hasAll, "physio_case").disabledReason?.includes("جلسات إضافية"),
-    "وصاحبُ العلاج يُحال إلى الجلسات لا إلى حالةٍ ثانية");
-
-  // ══ ١٣-١٧. الصيانة: أيّ جهاز؟ ════════════════════════════════════════
-  console.log("\n── الصيانة ونوع الجهاز ──");
-  const PRO = { isAmputee: true }, SUP = { isMedicalSupport: true };
-  const DUAL = { isAmputee: true, isMedicalSupport: true }, NONE = { isPhysiotherapy: true };
-
-  same("١٣. طرفٌ فقط ⇒ prosthetic بلا سؤال", resolveMaintenanceServiceType(PRO), "prosthetic");
-  same("ولا يُسأل", needsMaintenanceChoice(PRO), false);
-  same("١٤. مسندٌ فقط ⇒ medical_support بلا سؤال", resolveMaintenanceServiceType(SUP), "medical_support");
-  same("ولا يُسأل", needsMaintenanceChoice(SUP), false);
-  same("١٥. والاثنان ⇒ يُطلَب التحديد", needsMaintenanceChoice(DUAL), true);
-  same("ولا يُخمَّن بلا تحديد", resolveMaintenanceServiceType(DUAL), null);
-  same("١٦. واختيار الطرف ⇒ prosthetic", resolveMaintenanceServiceType(DUAL, "prosthetic"), "prosthetic");
-  same("١٧. واختيار المسند ⇒ medical_support", resolveMaintenanceServiceType(DUAL, "medical_support"), "medical_support");
-  same("١٨. ونوعٌ لا يملكه ⇒ لا يُرسَل", resolveMaintenanceServiceType(PRO, "medical_support"), null);
-  same("وقيمةٌ مخترَعة ⇒ لا تُرسَل", resolveMaintenanceServiceType(DUAL, "orthosis"), null);
-  same("وبلا جهاز ⇒ لا صيانة", resolveMaintenanceServiceType(NONE), null);
-  same("والصيانة معطَّلة لمن لا جهاز له",
-    [opt(launcherOptions(NONE), "maintenance_prosthetic").disabled,
-      opt(launcherOptions(NONE), "maintenance_support").disabled], [true, true]);
-  //  وصاحبُ الطرف يرى صيانةَ طرفه متاحةً وصيانةَ المسند معطَّلة — فالنسبةُ
-  //  إلى القسم صارت مرئيةً قبل الضغط لا بعده.
-  same("ومتاحة لصاحب الجهاز في قسمه وحده",
-    [opt(launcherOptions(PRO), "maintenance_prosthetic").disabled,
-      opt(launcherOptions(PRO), "maintenance_support").disabled], [false, true]);
-  same("وما يملكه يُقرأ بترتيبٍ ثابت", ownedDeviceTypes(DUAL), ["prosthetic", "medical_support"]);
-
-  // والنافذة تسأل فعلاً وترسل النوع — لا تكتفي بالمنطق.
+  // ══ ٨. نافذةُ الزيارة: مراجعةٌ ومتابعةٌ فقط ═══════════════════════════
+  console.log("\n── لا صيانةَ في نافذة الزيارة ──");
   const visitCode = code(VISIT);
-  check(/needsMaintenanceChoice\(/.test(visitCode), "ونافذة الزيارة تسأل حين يلزم");
-  check(/serviceType: svc/.test(visitCode), "وترسل النوع إلى نقطة الصيانة");
-  check(/resolveMaintenanceServiceType\(/.test(visitCode), "بالقاعدة نفسها لا بقاعدةٍ ثانية");
+  for (const gone of [
+    "select-visit-purpose", "select-maintenance-device", "select-maintenance-expert",
+    "select-maintenance-component", "input-maintenance-cost", "maintenance-discount",
+    "submitMaintenance", "maintenance-visit",
+  ]) {
+    check(!visitCode.includes(gone), `٨.أ **ولا «${gone}» في نافذة الزيارة**`);
+  }
+  //  والعدُّ على **الشيفرة الفعلية**: التعليقُ الذي يشرح أن النقطة لم
+  //  تُحذَف من الخادم يذكرها بالاسم، وعدُّه كان سيقيس غير ما وُضع له.
+  same("٨.ب **ولا نداءَ لنقطة الصيانة منها إطلاقاً**",
+    (visitCode.match(/\/api\/manufacturing\/maintenance-visit/g) ?? []).length, 0);
+  check(!/initialPurpose|initialMaintServiceType/.test(visitCode),
+    "٨.ج ولا خاصّيةَ توجيهٍ إلى الصيانة بقيت في عقدها");
+  //  **ولا يفتحها الموزِّعُ أصلاً** — الصيانةُ بابُها المُوجِّه.
+  check(!launcherCode.includes("<VisitModal"),
+    "٨.د **والموزِّعُ لم يعد يفتح نافذةَ الزيارة** — لا صيانةً ولا غيرَها");
+  check(!/maintenance_visit/.test(launcherCode)
+    && !/maintenance_visit/.test(code(read("patient_service_launcher_logic.ts"))),
+    "٨.هـ **ومسارُ `maintenance_visit` أُزيل من الموزِّع ومنطقه** — بلا شيفرةٍ ميتة");
+  //  وتبقى نافذةُ الزيارة تدلّ على البابِ الصحيح بدل أن تصمت.
+  check(visitCode.includes("visit-maintenance-hint"),
+    "٨.و وتدلّ الموظّفَ على «ما سبب حضور المريض اليوم؟» بدل بابٍ اختفى");
 
-  // ══ الخادم: المرآة والحدود ═══════════════════════════════════════════
-  console.log("\n── الخادم ──");
+  // ══ الخادم: النقاط باقيةٌ كما هي — الشاشةُ وحدها كفّت ═════════════════
+  console.log("\n── الخادم لم يُمَسّ ──");
   const mfg = MFG_ROUTES;
-  // الاشتقاق الصامت يُبحَث عنه **داخل معالج الصيانة وحده**: نقطتا الإنشاء
-  // والتخصيص تستعملان التعبير نفسه مشروعاً (بعد قبول نوعٍ صريح أوّلاً)،
-  // ولم يُطلَب مسّهما — فمسحٌ على الملفّ كلّه كان سيقيس غير ما وُضع له.
-  // والتجريد لأن تعليق الإصلاح نفسه يقتبس السطر القديم ليشرحه.
-  const maintHandler = code(MFG_ROUTES).slice(
-    MFG_ROUTES.indexOf('app.post("/api/manufacturing/maintenance-visit"') > -1
-      ? code(MFG_ROUTES).indexOf('app.post("/api/manufacturing/maintenance-visit"') : 0,
-  ).split(/\n  app\.(?:post|patch|get|put|delete)\(/)[0];
-  check(maintHandler.length > 500, "ومعالج الصيانة اقتُطع فعلاً", String(maintHandler.length));
-  check(!/isAmputee \? "prosthetic" : patient\.isMedicalSupport \? "medical_support"/.test(maintHandler),
-    "**والاشتقاق الصامت اختفى من معالج الصيانة**");
-  check(/isAmputee \? "prosthetic" : patient\.isMedicalSupport \? "medical_support"/.test(code(MFG_ROUTES)),
-    "وبقي حيث كان مشروعاً — نقطتا الإنشاء والتخصيص لم تُمَسّا");
-  check(/owned\.includes\(requestedService as any\)/.test(mfg),
-    "١٨.ب والخادم يتحقّق أن المريض يملك النوع فعلاً");
-  check(/حدّد نوع الجهاز/.test(MFG_ROUTES), "ويردّ طالباً التحديد لصاحب الاثنين");
-
-  // ٢٠. ولا نقطة خدمات عامّة أُنشئت، والثلاث القائمة كما هي.
   const srv = SERVER_ROUTES;
   for (const ep of ["/api/patients/:id/add-case-type", "/api/patients/:id/new-service"]) {
     check(srv.includes(`"${ep}"`), `٢٠. و«${ep}» باقية كما هي`);
   }
-  check(mfg.includes('"/api/manufacturing/maintenance-visit"'), "و«maintenance-visit» باقية كما هي");
+  check(mfg.includes('"/api/manufacturing/maintenance-visit"'),
+    "٢٠.ب **و«maintenance-visit» باقيةٌ في الخادم** — لم تُحذَف، الشاشةُ كفّت عن فتح بابٍ ثانٍ إليها");
+  check(/owned\.includes\(requestedService as any\)/.test(mfg),
+    "وحارسُها يتحقّق أن المريض يملك النوع فعلاً — كما كان");
   const generic = [...srv.matchAll(/app\.(post|put|patch)\("([^"]*service[^"]*)"/g)].map((m) => m[2]);
-  same("٢٠.ب ولا نقطة خدمات عامّة جديدة", generic, ["/api/patients/:id/new-service"]);
+  same("٢٠.ج ولا نقطة خدمات عامّة جديدة", generic, ["/api/patients/:id/new-service"]);
 
   // ٢١. محاسبة الخدمة لم تُمَسّ: الأنواع الثلاثة والرفض القائم كما هما.
-  //  الخريطتان انتقلتا إلى بيتهما القانوني (2026-08-21) — العناوينُ إلى
-  //  `shared/service_taxonomy.ts` ليقرأها الخادمُ والشاشتان، والتحويلاتُ إلى
-  //  `server/new_service/store.ts` مع الكتابة التي تحرسها. **والفحصُ يتبعهما
-  //  ولا يلين**: نفسُ الحرف، في الملفّ الذي صار مصدرَه.
   const taxonomy = read("..", "..", "..", "shared", "service_taxonomy.ts");
   const newSrvStore = read("..", "..", "..", "server", "new_service", "store.ts");
   check(/additional_therapy: "جلسات علاج إضافية"/.test(taxonomy), "٢١. وأنواع الخدمة الثلاثة كما هي");
@@ -328,18 +312,17 @@ function main() {
     "**والخادم ما زال يرفض `new_prosthetic` في new-service**");
   check(/maintenance: "الصيانة تُسجَّل من/.test(newSrvStore),
     "ويرفض `maintenance` فيها كذلك — والموزِّع لا يحاول");
-  //  **والنقطةُ تناديهما فعلاً** — وإلّا كان الحرفُ حيّاً في ملفٍّ ميت.
   check(/NEW_SERVICE_REDIRECTS\[serviceType\]/.test(srv)
     && /NEW_SERVICE_LABELS\[serviceType\]/.test(srv),
   "٢١.ب والنقطة تقرأ الخريطتين من مصدرهما لا من نسخةٍ محلّية");
 
-  // ٢٢. وworkflow التصنيع لم يُمَسّ: الإصلاح في اختيار النوع لا في الأمر.
+  // ٢٢. وworkflow التصنيع لم يُمَسّ: الإصلاح في الواجهة لا في الأمر.
   for (const untouched of ["createMaintenanceOrderWithVisit", "purpose: \"maintenance\"", "ActiveOrderError"]) {
     check(read("..", "..", "..", "server", "manufacturing", "store.ts").includes(untouched),
       `٢٢. و«${untouched}» في مسار التصنيع كما هو`);
   }
 
-  // ══ النوافذ الثلاث: الوضعان معاً، والمنطق واحد ═══════════════════════
+  // ══ النوافذ: الوضعان معاً، والمنطق واحد ══════════════════════════════
   console.log("\n── النوافذ تُدار من الخارج بلا ازدواج منطق ──");
   for (const [name, src] of [
     ["VisitModal", visitCode], ["NewServiceModal", code(NEW_SERVICE)], ["AddCaseTypeModal", code(ADD_CASE)],
@@ -350,18 +333,34 @@ function main() {
     check(/if \(!controlled\) setOpenSelf\(v\); onOpenChange\?\.\(v\);/.test(src),
       `وتبقى عاملةً بزرّها بلا إدارة — «${name}»`);
   }
-  // نداءٌ واحد لكل نافذة: التوجيه غيّر **مَن يفتح** لا **ماذا يجري**.
-  // العدّ على **عنوان النداء** لا على ذكر الاسم: `data-testid` ونصوصٌ أخرى
-  // تحمل الاسم نفسه، وعدّها كان سيقيس شيئاً غير الذي وُضع له.
   same("ونافذة نوع الحالة تنادي مسارها مرّةً واحدة",
     (ADD_CASE.match(/\/api\/patients\/\$\{[^}]+\}\/add-case-type/g) ?? []).length, 1);
   same("ونافذة الخدمة كذلك",
     (NEW_SERVICE.match(/\/api\/patients\/\$\{[^}]+\}\/new-service/g) ?? []).length, 1);
-  same("ونافذة الزيارة تنادي الصيانة مرّةً واحدة",
-    (VISIT.match(/"\/api\/manufacturing\/maintenance-visit"/g) ?? []).length, 1);
   check(/serviceCost: 0, paidNow: 0/.test(code(ADD_CASE)),
     "١٩. و«إضافة نوع حالة» ما زالت ترسل صفراً — قرارٌ بلا مال");
 
+  // ══ ١٨. تحديثُ ما تغيّر بعد عمليةٍ بلا معاينة ═════════════════════════
+  console.log("\n── تحديثُ الشاشة بعد العملية ──");
+  const noExam = code(read("NoExamOperationDialog.tsx"));
+  //  العمليةُ تفتح أمرَ تصنيعٍ فوراً، وبطاقةُ التصنيع في صفحة المريض تقرأ
+  //  مفتاحاً **خاصّاً بالمريض** — وكان التحديثُ يمسّ القائمةَ العامّة وحدها،
+  //  فيحفظ الموظّفُ العمليةَ ولا يرى أمرَها حتى يحدّث المتصفّح بيده.
+  check(noExam.includes("`/api/manufacturing/patient/${patientId}/orders`"),
+    "١٨. **ويُحدَّث سجلُّ تصنيع هذا المريض بعينه** — لا القائمةُ العامّة وحدها");
+  check(noExam.includes("`/api/manufacturing/patient/${patientId}/summary`"),
+    "وملخّصُه كذلك");
+  for (const kept of [
+    "`/api/patients/${patientId}/device-episodes`",
+    "`/api/patients/${patientId}/pending-charges`",
+    '"/api/no-exam/review"',
+  ]) {
+    check(noExam.includes(kept), `وما كان يُحدَّث بقي — ${kept}`);
+  }
+  //  والبطاقةُ تقرأ المفتاحَ نفسَه فعلاً — وإلّا كان التحديثُ لمفتاحٍ لا أحد يقرؤه.
+  check(read("manufacturing", "PatientWorkOrderCard.tsx")
+    .includes("`/api/manufacturing/patient/${patientId}/orders`"),
+  "١٨.ب **والبطاقةُ تقرأ هذا المفتاحَ بعينه** — فالتحديثُ يصل إلى ما يُعرَض");
 
   // ══ تذكرة الإرسال: واحدة لكل فتح ═════════════════════════════════════
   // العطب: التذكرة كانت تُسكّ في `onOpenChange(true)` وحده، والموزِّع يركّب
@@ -371,34 +370,27 @@ function main() {
   let minted = 0;
   const mint = () => `tok-${++minted}`;
 
-  // ١. النافذة المُدارة تُركَّب مفتوحةً ⇒ تذكرةٌ من أول لحظة.
   let tok = nextSubmissionToken("", true, mint);
   check(tok !== "", "١. نافذةٌ رُكِّبت مفتوحةً ⇒ تذكرة غير فارغة", tok);
   same("وسُكَّت مرّةً واحدة", minted, 1);
 
-  // ٢. الفتح نفسه مهما تكرّر التقييم ⇒ التذكرة نفسها، بلا سكٍّ ثانٍ.
   const stable = [tok, nextSubmissionToken(tok, true, mint), nextSubmissionToken(tok, true, mint)];
   same("٢. والفتح نفسه لا يولّد ثانيةً", [...new Set(stable)].length, 1);
   same("ولا سكّ إضافي", minted, 1);
 
-  // ٣. إغلاقٌ ثم فتح ⇒ تذكرة **جديدة**، فلا تُعاد المستهلَكة.
   const closed = nextSubmissionToken(tok, false, mint);
   same("٣. والإغلاق يُفرغها", closed, "");
   const reopened = nextSubmissionToken(closed, true, mint);
   check(reopened !== "" && reopened !== tok, "وفتحٌ جديد ⇒ تذكرة جديدة", `${tok} → ${reopened}`);
   same("سُكَّت مرّتين لا أكثر", minted, 2);
-  // ولا تُعاد المستهلَكة: الخادم يردّ «مسجَّلة سابقاً» على خدمةٍ حقيقية لو
-  // أُعيدت — فالتصفير عند الإغلاق ليس ترتيباً بل صحّةُ عمل.
   same("والمغلقة تبقى فارغة مهما تكرّر التقييم",
     [nextSubmissionToken("", false, mint), nextSubmissionToken("x", false, mint)], ["", ""]);
   same("ولا سكّ في المغلقة", minted, 2);
 
-  // والسكّ الحقيقي يعطي قيمةً مفردة لا فارغة.
   const real = [mintSubmissionToken(), mintSubmissionToken()];
   check(real.every((x) => typeof x === "string" && x.length >= 8), "والسكّ الحقيقي يعطي معرّفاً", real.join(" "));
   check(real[0] !== real[1], "ومفرداً في كل مرّة");
 
-  // والنافذة تستعملها فعلاً بأثرٍ على **حالة** الفتح لا على حدثه.
   check(/useEffect\(\(\) => \{\s*setSubmissionToken\(\(prev\) => nextSubmissionToken\(prev, open, mintSubmissionToken\)\);/.test(newServiceCode),
     "ونافذة الخدمة تسكّها بأثرٍ يتبع حالة الفتح", "");
   check(!/if \(next\) \{[\s\S]{0,200}setSubmissionToken/.test(newServiceCode),
@@ -411,15 +403,11 @@ function main() {
   check(!/isPhysiotherapy/.test(newServiceCode),
     "**ولا أثر لـ`isPhysiotherapy` في منطق النافذة**",
     (newServiceCode.match(/.*isPhysiotherapy.*/g) ?? []).join(" | "));
-  // والقيد على **نافذة الخدمة** وحدها: نافذة الزيارة تستعمل العلم لمنطقها
-  // هي (نوع العلاج في زيارة المراجعة) — وذاك استعمالٌ صحيح لم يُطلَب مسّه.
   const newServiceUsage = launcherCode.match(/<NewServiceModal[\s\S]*?\/>/)?.[0] ?? "";
   check(newServiceUsage.length > 40, "واستعمال نافذة الخدمة مقروء", newServiceUsage);
   check(!/isPhysiotherapy/.test(newServiceUsage),
     "ولا يمرّرها الموزِّع إليها — فلا علمَ يقرّر وضعاً", newServiceUsage);
 
-  // كل قرارٍ خاصّ بالجلسات صار على `isPhysioService` — ولا واحد بقي معلّقاً
-  // على علم المريض. والعدّ يمنع أن يُنسى أحدها في تعديلٍ لاحق.
   const physioDecisions = (newServiceCode.match(/isPhysioService/g) ?? []).length;
   check(physioDecisions >= 10, "٦-٨. وكل قرارات الجلسات تمرّ به", String(physioDecisions));
   for (const gated of [
@@ -438,17 +426,12 @@ function main() {
     "١٠. والموجَّه يُعرَض نصّاً لا قائمةً تُختار");
   check(/data-testid="text-service-type-locked"/.test(newServiceCode),
     "بعنصرٍ مقروء لا مُدخَل");
-  // والقائمة تبقى للمسار المستقلّ وحده.
   check(/data-testid="select-service-type"/.test(newServiceCode),
     "والقائمة باقية للمسار المستقلّ");
   check(/serviceType: initialServiceType \?\? values\.serviceType/.test(newServiceCode),
     "١١-١٢. **والمُرسَل هو الموجَّه لا حالة النموذج**");
   check(/const selectedServiceType = initialServiceType \?\? form\.watch\("serviceType"\)/.test(newServiceCode),
     "ووضع الجلسات يتبع الموجَّه كذلك");
-  // ١٥. والموزِّع ما زال يعطّل الجلسات الإضافية لمن لا علاج له — فالقفل
-  // يحرس ما تحرسه الأهلية، ولا يُغني أحدهما عن الآخر.
-  same("١٥. والموزِّع ما زال يعطّلها بلا علاج طبيعي",
-    opt(launcherOptions({}), "additional_therapy").disabled, true);
 
   // ══ ١٣. والخادم لا يعتمد على الواجهة ═════════════════════════════════
   check(/serviceType === "additional_therapy" && !patient\.isPhysiotherapy/.test(srv),
