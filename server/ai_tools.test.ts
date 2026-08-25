@@ -227,8 +227,16 @@ async function main() {
     await mkOrder(pOther.id, 1, EXP2);
 
     //  مريضٌ بانتظار معاينة أطراف — لقائمة الطبيب وطوابير الاستقبال.
+    //
+    //  **وينتظر لأنه طلب جهازاً، لا لأنه سُجّل**: فتحُ خيط الاختصاص وحده
+    //  قرارٌ هيكليّ بلا طلب — لا جهازَ طُلب ولا شيءَ ينتظره الطبيب. فيُفتَح
+    //  له طلبٌ حقيقيّ على **مسار المعاينة** ليصير منتظِراً بحقّ.
     const pWait = await mkPatient("بانتظار معاينة", 1);
-    await mkCase(pWait.id, 1);
+    const cWait = await mkCase(pWait.id, 1);
+    await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+               sequence_number, status, agreed_cost, requested_item, service_path, created_by)
+             VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device','exam',$3)`,
+      [pWait.id, cWait, ADMIN]);
 
     //  اسمٌ بديل: رمزٌ قديم يجب أن يصل إلى p1 برمزه الحالي.
     const OLD = "WB-90111";

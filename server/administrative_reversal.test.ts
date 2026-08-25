@@ -1406,9 +1406,11 @@ async function main() {
       //  فالنافذةُ **تُسلّم** اختيارَها إلى مالكِ الحالة و**تُملأ** منه،
       //  والحفظُ في `sessionStorage` عند الموزِّع. وتفصيلُ المنطق مُختبَرٌ
       //  حيّاً في `npm run test:device-flow-resume`.
-      check(modal.includes("onEditPatient(item, path)"),
+      //  **والمسارُ لم يعد بين ما يُسلَّم**: النافذةُ لا تُفتَح إلّا من
+      //  «يحتاج معاينة طبية»، فمسارُها `"exam"` ثابتٌ لا يُختار ولا يُحفَظ.
+      check(modal.includes("onEditPatient(item)"),
         "٨٤. **وتسلّم اختيارَ الموظّف إلى مَن يبقى بعد تغيّر المسار**"
-        + " — القطعةَ ومسارَها معاً (ترحيل ٠٦٥)", "");
+        + " — القطعةَ المطلوبة", "");
       check(modal.includes("initialRequestedItem"),
         "٨٤-ب. **وتُملأ منه عند العودة**", "");
       const launcher = strip(readFileSync("client/src/components/PatientServiceLauncher.tsx", "utf8"));

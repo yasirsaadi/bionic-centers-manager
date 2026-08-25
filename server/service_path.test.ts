@@ -711,15 +711,19 @@ async function main() {
       check(!/hadPriorCenterHistory: false,/.test(edit),
         "   ولا يحمله النموذجُ في افتراضاته فيُرسَل مع كلّ حفظ");
 
-      check(modal.includes("select-service-path")
-        && modal.includes("SERVICE_PATH_QUESTION"),
-        "٤٤. **والسؤالُ يُطرَح عند فتح كلّ طلبِ جهاز**");
-      check(modal.includes("SERVICE_PATH_HELP"),
-        "   بالتلميح الذي طلبه المالك حرفاً");
-      check(/servicePath: path/.test(modal),
-        "٤٥. **وما يُرسَل هو ما اختاره الموظّف — لا قيمةٌ افتراضية**");
-      check(/\|\| !path/.test(modal),
-        "   ولا يُحفَظ الطلبُ قبل أن يُجاب");
+      //  ══ **والسؤالُ لم يعد يُطرَح في هذه النافذة** ═══════════════════
+      //  صارت لا تُفتَح إلّا من «يحتاج معاينة طبية» في مُوجِّه سبب الحضور،
+      //  فمسارُها محسومٌ بالضغطة التي فتحتها. وإعادةُ طرحه هنا كانت تسمح
+      //  بقلبه إلى «بلا معاينة» **بلا أن يقول أهو بيعُ جزءٍ أم صيانة** —
+      //  فتُفتَح حلقةٌ ناقصةُ المعنى تسبق تسجيل العملية الصحيحة.
+      check(!modal.includes("select-service-path")
+        && !modal.includes("SERVICE_PATH_QUESTION"),
+        "٤٤. **ولا محدِّدَ مسارٍ في نافذة طلب الجهاز** — البابُ مسارُ المعاينة وحده");
+      check(/servicePath: "exam"/.test(modal),
+        "٤٥. **والمُرسَل ثابتٌ `\"exam\"`** — لا حالةُ شاشةٍ ولا استئنافٌ محفوظ");
+      check(modal.includes("text-service-path-fixed")
+        && modal.includes("button-change-reason"),
+        "٤٥ب. ويُعرَض المسارُ ثابتاً ومعه «تغيير سبب الحضور»");
 
       //  ══ **(ي) والعلاجُ الطبيعي معزولٌ في الشيفرة لا في النيّة** ══════
       for (const f of [
@@ -731,6 +735,119 @@ async function main() {
         const body = read(...f);
         check(!/service_path|servicePath|ServicePath/.test(body),
           `٤٦. **ولا أثرَ للمسار في ${f[f.length - 1]}** — العلاجُ الطبيعي لم يُمَسّ`);
+      }
+    }
+
+    // ══ (ك) **«بانتظار معاينة» — حقيقةٌ واحدة في ثلاثة أمكنة** ═══════════
+    //
+    //  ثلاثةُ قرّاءٍ يجيبون عن السؤال نفسِه: شارةُ السجلّ
+    //  (`getPendingExams`)، وقائمةُ عمل الطبيب (`getWorklist`)، وبطاقةُ
+    //  المريض (`getPendingForPatient`). وكانوا يختلفون — فيقرأ الموظّفُ على
+    //  البطاقة غيرَ ما يراه الطبيبُ في قائمته.
+    //
+    //  والقاعدةُ المشتركة الآن:
+    //    • تسجيلُ المريض أو فتحُ نوع حالةٍ **وحده لا يعني انتظاراً**.
+    //    • حلقةٌ بمسار `exam` ⟶ تنتظر.
+    //    • حلقةٌ بمسار `no_exam` ⟶ **لا** تنتظر.
+    //    • وخيطٌ سابقٌ لحقبة المسار يبقى على قاعدته القديمة حرفاً.
+    {
+      console.log("\n── (ك) بانتظار معاينة: القرّاء الثلاثة يتّفقون ──");
+
+      /** بطاقةُ المريض — `getPendingForPatient` عبر نقطتها الحقيقية. */
+      const cardPending = async (patientId: number): Promise<string[]> => {
+        const r = await http("GET", `/api/medical/patients/${patientId}/exams`, S.manager);
+        return (r.body?.pending ?? []) as string[];
+      };
+      /** حلقةٌ بمسارٍ صريح — عكسُ `mkLegacyEpisode` التي تحاكي ما قبل ٠٦٥. */
+      async function mkPathEpisode(
+        patientId: number, caseId: number, path: "exam" | "no_exam", item = "full_device",
+      ) {
+        //  والجزءُ يلازم اسمَه في العمود المشتقّ — قيدُ القاعدة يفرضه (٠٦٠).
+        const component = item === "full_device" ? null : item;
+        const r = await q<{ id: number }>(
+          `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+             status, agreed_cost, requested_item, component, service_path, created_by)
+           VALUES ($1,$2,1,1,'awaiting_exam',0,$3,$4,$5,$6) RETURNING id`,
+          [patientId, caseId, item, component, path, MANAGER]);
+        return r[0].id;
+      }
+      /** الأجوبةُ الثلاثة معاً — فالاتّفاقُ يُقاس لا يُفترَض. */
+      const threeAnswers = async (patientId: number, caseType: string) => {
+        const registry = (await pendingOf(S.manager, patientId)).pending ?? [];
+        return {
+          registry: (registry as string[]).includes(caseType),
+          worklist: await worklistHas(patientId, caseType),
+          card: (await cardPending(patientId)).includes(caseType),
+        };
+      };
+
+      //  ① **تسجيلٌ وحده — بلا طلبِ جهاز**: خيطُ أطرافٍ وُلد الآن (بعد
+      //  حقبة المسار) ولا حلقةَ عليه. لا أحدَ ينتظر شيئاً.
+      {
+        const p = await mkPatient("لا طلبَ بعد");
+        await mkCase(p, "prosthetic");
+        same("١١. **تسجيلٌ/فتحُ حالةٍ وحده ⟶ ليس بانتظار معاينة** — والثلاثة متّفقون",
+          await threeAnswers(p, "prosthetic"),
+          { registry: false, worklist: false, card: false });
+      }
+
+      //  ② **طلبٌ على مسار المعاينة** — ينتظر في المواضع الثلاثة.
+      {
+        const p = await mkPatient("طلبٌ بمعاينة");
+        const c = await mkCase(p, "prosthetic");
+        await mkPathEpisode(p, c, "exam");
+        same("١٢. **حلقةٌ بمسار `exam` ⟶ بانتظار معاينة في الثلاثة**",
+          await threeAnswers(p, "prosthetic"),
+          { registry: true, worklist: true, card: true });
+      }
+
+      //  ③ **طلبٌ قيل صراحةً إنه بلا معاينة** — لا ينتظر في أيٍّ منها.
+      //  وهذا هو العطبُ الأصل: بطاقةُ المريض كانت تقول «بانتظار معاينة»
+      //  بينما الطابورُ وقائمةُ الطبيب يستثنيانه بحقّ.
+      {
+        const p = await mkPatient("طلبٌ بلا معاينة");
+        const c = await mkCase(p, "prosthetic");
+        await mkPathEpisode(p, c, "no_exam", "socket");
+        same("١٣. **حلقةٌ بمسار `no_exam` ⟶ ليست بانتظار معاينة في أيٍّ منها**",
+          await threeAnswers(p, "prosthetic"),
+          { registry: false, worklist: false, card: false });
+      }
+
+      //  ④ **خيطٌ سابقٌ لحقبة المسار** — لم يكن يملك أن يفتح حلقة، فغيابُها
+      //  عنه لا يقول «لم يُطلَب شيء». يبقى على قاعدته القديمة: ينتظر.
+      {
+        const p = await mkPatient("خيطٌ قبل الحقبة");
+        const c = await mkCase(p, "prosthetic");
+        await q(`UPDATE patient_cases SET created_at = TIMESTAMP '2020-01-01' WHERE id=$1`, [c]);
+        same("١٤. **وخيطُ ما قبل الحقبة يبقى على سلوكه القديم حرفاً** — ينتظر",
+          await threeAnswers(p, "prosthetic"),
+          { registry: true, worklist: true, card: true });
+      }
+
+      //  ⑤ **وحلقةُ ما قبل ٠٦٥ (`NULL`) لم تُمَسّ**: الغيابُ ليس إعفاءً.
+      {
+        const p = await mkPatient("حلقةٌ بلا مسار");
+        const c = await mkCase(p, "prosthetic");
+        await mkLegacyEpisode(p, c);
+        same("١٤ب. **وحلقةٌ بلا مسار (NULL) ما زالت تنتظر** — الغيابُ ليس إعفاءً",
+          await threeAnswers(p, "prosthetic"),
+          { registry: true, worklist: true, card: true });
+      }
+
+      //  ⑥ **والعلاجُ الطبيعي لم يتغيّر بحرف**: لا حلقاتِ أجهزةٍ له، وقاعدةُ
+      //  «تسجيلٌ وحده لا يعني انتظاراً» **تستثنيه صراحةً** — فبطاقتُه تبقى
+      //  تقول «بانتظار معاينة» كما كانت قبل هذه التمريرة بالضبط. ولولا
+      //  الاستثناءُ لانقلبت إلى «لا ينتظر»، وذاك تغييرٌ لم يُطلَب.
+      //
+      //  والشارةُ الإلزامية تبقى مطفأةً كما كانت (فزايد خير — قرار المالك).
+      //  و`worklist` هنا `false` **لسببٍ آخر لا علاقةَ له بهذا التغيير**:
+      //  طبيبُ هذا الاختبار اختصاصُه أطرافٌ ومساند، فلا تصله حالةُ علاج.
+      {
+        const p = await mkPatient("علاجٌ طبيعي", { physio: true });
+        await mkCase(p, "physiotherapy");
+        same("١٥. **والعلاجُ الطبيعي كما كان** — بطاقتُه تنتظر، وشارتُه مطفأة",
+          await threeAnswers(p, "physiotherapy"),
+          { registry: false, worklist: false, card: true });
       }
     }
   } finally {

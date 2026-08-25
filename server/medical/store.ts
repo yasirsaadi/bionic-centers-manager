@@ -594,6 +594,56 @@ export async function examSystemActivatedAt(): Promise<Date | null> {
   return examActivationCache;
 }
 
+// ══ متى بدأت حقبةُ «مسار العملية»؟ (ترحيل ٠٦٥) ═══════════════════════════
+//
+// ── العطبُ الذي تغلقه ──────────────────────────────────────────────────
+// «خيطُ اختصاصٍ مفتوحٌ بلا معاينة» كان يعني «ينتظر الطبيب». وكان ذلك صحيحاً
+// يوم كان فتحُ الخيط **هو** طلبَ الجهاز. ثمّ صار الطلبُ حلقةً مستقلّة
+// (`patient_device_episodes`) تُفتَح بمسارٍ صريح — فصار تسجيلُ المريض أو
+// إضافةُ نوع حالةٍ له **قراراً هيكلياً بلا طلب**: لا جهازَ طُلب، ولا شيءَ
+// ينتظره الطبيب. ومع ذلك بقي المريضُ يظهر «بانتظار معاينة» فور تسجيله،
+// فامتلأ الطابورُ بمن لم يطلب شيئاً وفقدت الشارةُ معناها.
+//
+// ── ولا يُخمَّن الماضي ──────────────────────────────────────────────────
+// وخيطٌ فُتح **قبل** هذه الحقبة لم يكن يملك أن يفتح حلقةً أصلاً، فغيابُها
+// عنه لا يقول «لم يُطلَب شيء» — يقول «لم يكن هناك ما يُطلَب به». فيبقى
+// على قاعدته القديمة حرفاً بحرف.
+//
+// والحدُّ الفاصل **واقعةٌ قائمة لا علمٌ جديد**: لحظةُ تطبيق الترحيل في هذه
+// القاعدة بعينها — نفسُ مصدر `examSystemActivatedAt` ونفسُ حراسته.
+let servicePathEraCache: Date | null | undefined;
+
+export async function servicePathEraStartedAt(): Promise<Date | null> {
+  if (servicePathEraCache !== undefined) return servicePathEraCache;
+  try {
+    const r = await db.execute<{ applied_at: string | Date }>(sql`
+      SELECT applied_at FROM _migrations
+       WHERE name = '065_service_path_and_prior_history' LIMIT 1
+    `);
+    const v = (r.rows ?? [])[0]?.applied_at;
+    servicePathEraCache = v ? new Date(v) : null;
+  } catch {
+    servicePathEraCache = null;
+  }
+  return servicePathEraCache;
+}
+
+/**
+ * **خيطٌ بلا حلقةٍ إطلاقاً — أيُقرأ «ينتظر معاينة»؟**
+ *
+ * `TRUE` فقط لمن تبقى القاعدةُ القديمة سارية عليه:
+ * - **العلاجُ الطبيعي** — لا حلقاتِ أجهزةٍ له أصلاً، فمسارُه لم يتغيّر بحرف.
+ * - **خيطُ أجهزةٍ سابقٌ للحقبة** — لم يكن يملك أن يفتح حلقة.
+ *
+ * وخيطُ أجهزةٍ **وُلد بعدها بلا حلقة** = تسجيلٌ أو إضافةُ نوعٍ لم يتبعها
+ * طلب ⟶ لا ينتظر أحداً. وبلا حقبةٍ معروفة (قاعدةٌ بلا سجلّ ترحيل) تبقى
+ * القاعدةُ القديمة كما هي — **ولا يُضيَّق شيءٌ على شكٍّ**.
+ */
+function preServicePathThreadSql(era: Date | null) {
+  if (!era) return sql`TRUE`;
+  return sql`(pc.case_type = 'physiotherapy' OR pc.created_at < ${era})`;
+}
+
 export async function isLegacyPatient(patientId: number): Promise<boolean> {
   const [p] = await db
     .select({ createdAt: patients.createdAt, classification: patients.patientClassification })
@@ -760,7 +810,14 @@ export async function getPendingExams(
             AND me2.case_type = r.service_type
             AND me2.created_at >= COALESCE(r.decided_at, r.created_at)
             AND ${activeExamSql("me2")}))`;
-  const legacyPath = sql`(${noEpisodes} AND ${legacyOnly ? isExempt : sql`NOT ${isExempt}`} AND ${neverExamined})`;
+  //  **وتسجيلُ المريض وحده لا يعني انتظاراً** (أعلاه): خيطُ أجهزةٍ وُلد في
+  //  حقبة المسار بلا حلقةٍ قطّ لم يُطلَب فيه جهاز. والقائمةُ **الاختيارية**
+  //  لا تُضيَّق بهذا: هي «يجوز أن تُكتَب» لا «تنتظر»، وسحبُ إمكانيةٍ من
+  //  الطبيب ليس ما يُصلحه هذا التغيير.
+  const preServicePath = preServicePathThreadSql(await servicePathEraStartedAt());
+  const legacyPath = legacyOnly
+    ? sql`(${noEpisodes} AND ${isExempt} AND ${neverExamined})`
+    : sql`(${noEpisodes} AND NOT ${isExempt} AND ${neverExamined} AND ${preServicePath})`;
   // The optional list is for the exempt only; a mandatory awaiting-exam
   // episode belongs in the amber queue, never in the quiet one.
   //  والمنتظِرُ معاينةً كاملة يقع في الطابور الإلزامي دائماً — لا في الهادئة.
@@ -961,6 +1018,10 @@ export async function getWorklist(
         OR (
           NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
           AND ${notLegacyWl}
+          -- **وتسجيلُ المريض وحده لا يضع أحداً في قائمة عمل الطبيب**: خيطُ
+          -- أجهزةٍ وُلد في حقبة المسار بلا حلقةٍ قطّ لم يُطلَب فيه جهاز.
+          -- والسابقُ للحقبة يبقى على قاعدته حرفاً، والعلاجُ الطبيعي كذلك.
+          AND ${preServicePathThreadSql(await servicePathEraStartedAt())}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
@@ -1038,25 +1099,64 @@ export async function branchNames(): Promise<Record<number, string>> {
   return out;
 }
 
-/** Which specialties of THIS patient are still waiting for an exam. */
+/**
+ * Which specialties of THIS patient are still waiting for an exam.
+ *
+ * ══ **وتقول ما يقوله الطابورُ وقائمةُ الطبيب — حرفاً** ═══════════════════
+ * كانت هذه الدالّةُ تخالف أختيها في موضعين، فيقرأ الموظّفُ على بطاقة
+ * المريض غيرَ ما يقرؤه في السجلّ وغيرَ ما يراه الطبيبُ في قائمته:
+ *
+ * ① **كلُّ حلقةٍ `awaiting_exam` كانت تعني انتظاراً** — بلا نظرٍ إلى
+ *    مسارها. فعمليةٌ قيل عنها صراحةً «بلا معاينة» (ترحيل ٠٦٥) كانت تضع
+ *    المريضَ «بانتظار معاينة» على بطاقته وحدها، بينما الطابورُ وقائمةُ
+ *    الطبيب يستثنيانها بحقّ. وهذا هو العطبُ الأصلُ في هذا الملفّ.
+ * ② **ولم تكن تعرف طلبَ المراجعة الكاملة** (ترحيل ٠٥٥): طلبٌ أرسله
+ *    الاستقبالُ أو أحاله الطبيبُ يُلزِم في الطابور وفي قائمة العمل، ولا
+ *    يظهر على بطاقة صاحبه.
+ *
+ * والقاعدةُ الآن واحدةٌ في المواضع الثلاثة.
+ */
 export async function getPendingForPatient(patientId: number): Promise<string[]> {
   // The legacy exemption is evaluated INSIDE the query now, not as an early
   // return. Returning [] up front was the bug: it answered "waits on no one"
   // before ever looking at whether the patient had just requested a new
   // device — and a new device is never exempt, whoever asked for it.
   const legacy = await isLegacyPatient(patientId);
+  const preServicePath = preServicePathThreadSql(await servicePathEraStartedAt());
   const rows = await db.execute<{ case_type: string }>(sql`
     SELECT pc.case_type
     FROM patient_cases pc
     WHERE pc.patient_id = ${patientId}
       AND pc.status = 'active'
       AND (
+        -- ① الحلقةُ المنتظِرة — **ما لم يُقَل صراحةً إنها بلا معاينة**.
+        --    و«IS DISTINCT FROM» لا المساواةُ النافية: حلقةُ ما قبل ٠٦٥
+        --    تحمل NULL (لم تُسأل)، والنافيةُ كانت ستُقيَّم NULL فتُعفيها
+        --    بصمتٍ — أي تُسقط عن عمليةٍ شرطاً وُلدت تحته.
         EXISTS (
           SELECT 1 FROM patient_device_episodes e
-           WHERE e.case_id = pc.id AND e.status = 'awaiting_exam')
+           WHERE e.case_id = pc.id AND e.status = 'awaiting_exam'
+             AND e.service_path IS DISTINCT FROM 'no_exam')
+        -- ② طلبُ معاينةٍ كاملة لم يُحسَم — يُلزِم مهما كان تصنيفُ المريض،
+        --    ويخرج بتوقيع معاينةٍ **بعد** لحظة الطلب لا بواحدةٍ سبقته.
+        OR EXISTS (
+          SELECT 1 FROM medical_review_requests r
+           WHERE r.patient_id = pc.patient_id
+             AND r.service_type = pc.case_type
+             AND (r.status = 'escalated'
+                  OR (r.status = 'pending' AND r.requested_path = 'full'))
+             AND NOT EXISTS (
+               SELECT 1 FROM medical_exams me2
+                WHERE me2.patient_id = r.patient_id
+                  AND me2.case_type = r.service_type
+                  AND me2.created_at >= COALESCE(r.decided_at, r.created_at)
+                  AND ${activeExamSql("me2")}))
         OR (
           ${!legacy}
           AND NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+          -- **وتسجيلُ المريض وحده لا يعني انتظاراً** — كما في الطابور
+          -- وقائمة الطبيب بالضبط.
+          AND ${preServicePath}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id

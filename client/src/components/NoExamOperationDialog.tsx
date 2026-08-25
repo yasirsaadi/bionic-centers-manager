@@ -112,11 +112,23 @@ export function NoExamOperationDialog({
   const { options: devices } = useDeviceEpisodes(
     open ? patientId : undefined, serviceType, ["delivered"]);
 
+  //  ══ **كلُّ ما تغيّر يُحدَّث — لا بعضُه** ═══════════════════════════════
+  //  العمليةُ تفتح أمرَ تصنيعٍ فوراً، وبطاقةُ التصنيع في صفحة المريض تقرأ
+  //  مفتاحاً **خاصّاً بالمريض** (`/api/manufacturing/patient/:id/orders`).
+  //  وكان التحديثُ يمسّ القائمةَ العامّة وحدها، فيحفظ الموظّفُ العمليةَ
+  //  ولا يرى أمرَها حتى يحدّث المتصفّح بيده — فيظنّها لم تقع فيعيدها.
+  //
+  //  والحلقةُ تنتقل من «بانتظار معاينة» إلى التصنيع، فتتغيّر معها شارةُ
+  //  الانتظار — ومفتاحُها يُحدَّث كذلك.
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}/device-episodes`] });
     qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}/pending-charges`] });
     qc.invalidateQueries({ queryKey: ["/api/no-exam/review"] });
     qc.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
+    qc.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
+    qc.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+    qc.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+    qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
     qc.invalidateQueries({ queryKey: ["/api/patients"] });
   };
 
