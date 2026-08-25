@@ -50,6 +50,19 @@ interface NewDeviceEpisodeModalProps {
   /** مسارُ العملية كما تُرك قبل الردّ — يُعاد إليه بالمنطق نفسه. */
   initialServicePath?: string;
   /**
+   * **مسارُ المعاينة محسومٌ ومقفولٌ** — من مُوجِّه «سبب حضور المريض
+   * اليوم؟» حين يختار الموظّفُ «يحتاج معاينة طبية» بعينها. ذلك الاختيارُ
+   * أجاب عن سؤال «هل تحتاج هذه العملية معاينة؟» بنفسه، فلا يُعاد طرحُه
+   * ولا يُسمَح بتبديله إلى «بلا معاينة» من هذه النافذة — يبقى اختيارُ
+   * **المطلوب** (طرفٌ كاملٌ أو جزء) مفتوحاً كما كان دائماً.
+   *
+   * يتفوّق على `initialServicePath` حين يوجدان معاً. وغيابُه يُبقي
+   * السلوكَ القائم حرفاً: النافذةُ تسأل كما كانت من كلّ باب آخر
+   * («طرف صناعي جديد أو جزء جديد» في القائمة الكاملة، أو الاستئناف بعد
+   * «تعديل مريض»).
+   */
+  lockedServicePath?: ServicePath;
+  /**
    * يفتح «تعديل مريض» حين ينقص الملفّ، **حاملاً الاختيارَ إلى مَن يحفظه**.
    *
    * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
@@ -69,7 +82,7 @@ const LABEL = {
 
 export function NewDeviceEpisodeModal({
   patientId, serviceType, open, onOpenChange, initialRequestedItem,
-  initialServicePath, onEditPatient,
+  initialServicePath, lockedServicePath, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -94,12 +107,15 @@ export function NewDeviceEpisodeModal({
   //  في اتجاهٍ لم يقصده أحد — والاتجاهان كلاهما مُكلف.
   const resumedPath = (isServicePath(initialServicePath)
     ? initialServicePath : "") as ServicePath | "";
-  const [path, setPath] = useState<ServicePath | "">(resumedPath);
+  //  ══ **القفل يتفوّق على الاستئناف** ══════════════════════════════════
+  //  «يحتاج معاينة طبية» من مُوجِّه «سبب الحضور» حسم هذا السؤالَ بعينه —
+  //  فقيمتُه هي البداية دائماً، ولا يعود إليها الاستئنافُ ليكتب فوقها.
+  const [path, setPath] = useState<ServicePath | "">(lockedServicePath ?? resumedPath);
   useEffect(() => {
     if (!open) return;
     setItem(resumed);
-    setPath(resumedPath);
-  }, [open, resumed, resumedPath]);
+    setPath(lockedServicePath ?? resumedPath);
+  }, [open, resumed, resumedPath, lockedServicePath]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
@@ -258,7 +274,8 @@ export function NewDeviceEpisodeModal({
           <Label className="font-semibold">
             {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
           </Label>
-          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
+          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}
+            disabled={Boolean(lockedServicePath)}>
             <SelectTrigger data-testid="select-service-path">
               <SelectValue placeholder="اختر نعم أو لا" />
             </SelectTrigger>
@@ -268,10 +285,16 @@ export function NewDeviceEpisodeModal({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">
-            {SERVICE_PATH_HELP}
-            {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
-          </p>
+          {lockedServicePath ? (
+            <p className="text-xs text-primary" data-testid="text-service-path-locked">
+              محسومٌ باختيار «يحتاج معاينة طبية» — لا يُسأل ثانيةً.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {SERVICE_PATH_HELP}
+              {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
+            </p>
+          )}
         </div>
 
         {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════

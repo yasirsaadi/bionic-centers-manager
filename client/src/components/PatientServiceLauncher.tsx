@@ -288,6 +288,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           onOpenChange={closeFlow}
           initialRequestedItem={resumeItem}
           initialServicePath={resumePath}
+          lockedServicePath={flow.lockedServicePath}
           onEditPatient={(requestedItem, servicePath) =>
             editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
         />

@@ -17,6 +17,7 @@
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import type { PendingChargeKind } from "@shared/pending_charge";
+import type { ServicePath } from "@shared/service_path";
 
 /** المسارات الثلاثة القائمة — **لا رابع**. */
 export type ServiceFlow =
@@ -30,8 +31,19 @@ export type ServiceFlow =
    * يبقى صاحب القرار: يتحقّق أن المريض يملك النوع فعلاً.
    */
   | { kind: "maintenance_visit"; serviceType: "prosthetic" | "medical_support" }
-  /** `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم. */
-  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" }
+  /**
+   * `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم.
+   *
+   * `lockedServicePath` **اختياريّ**: حين يُمرَّر (من مُوجِّه «ما سبب
+   * الحضور؟» عند اختيار «يحتاج معاينة طبية») يُقفَل سؤالُ «هل تحتاج
+   * معاينة؟» داخل `NewDeviceEpisodeModal` على القيمة نفسها — فلا يُعاد
+   * طرحُه ولا يُبدَّل. واختيارُ **المطلوب** (طرفٌ كاملٌ أو جزء) يبقى
+   * مفتوحاً كما كان. غيابُه يبقي السلوكَ القائم حرفاً.
+   */
+  | {
+      kind: "device_episode"; serviceType: "prosthetic" | "medical_support";
+      lockedServicePath?: ServicePath;
+    }
   /**
    * **عمليةٌ بلا معاينة** (ترحيل ٠٦٧) — بيعُ جزءٍ أو صيانةٌ يُنجزها
    * الاستقبال بلا إرسال المريض إلى الطبيب، **ومبلغُها يبقى خارج المحاسبة**
