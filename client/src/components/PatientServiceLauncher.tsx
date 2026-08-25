@@ -18,6 +18,10 @@ import {
 import {
   saveDeviceFlowResume, takeDeviceFlowResume, clearDeviceFlowResume, sessionResumeStore,
 } from "./device_flow_resume";
+import {
+  RECEPTION_ROUTING_QUESTION, receptionRoutingChoices, receptionRoutingServiceType,
+  takeReceptionRoutingPending,
+} from "./reception_routing";
 
 // موزِّع خدمات المريض — **باب واحد إلى المسارات القائمة**.
 //
@@ -60,6 +64,8 @@ const GROUP_ORDER: LauncherGroup[] = ["prosthetic", "medical_support", "physioth
 
 export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** مُوجِّهُ «ما سبب حضور المريض اليوم؟» — بعد التسجيل تلقائياً، أو يدوياً من هنا لاحقاً. */
+  const [routingOpen, setRoutingOpen] = useState(false);
   /** المسار المفتوح الآن — واحدٌ لا أكثر. */
   const [flow, setFlow] = useState<ServiceFlow | null>(null);
   const [, setLocation] = useLocation();
@@ -71,14 +77,32 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   // ══ **العودةُ من «تعديل مريض» تُستأنف حيث تُرك المسار** ═════════════════
   //  حفظُ التعديل يغيّر المسار، فتُفكَّك الصفحةُ والموزِّعُ والنافذةُ معاً.
   //  فاللقطةُ في `sessionStorage` لا في `useState` — وتُقرأ مرّةً واحدة عند
-  //  التركيب ثمّ تُمسَح، فلا تلاحق الموظّفَ نافذةٌ في كلّ تحميل.
+  //  التركيب ثمّ تُمسَح، فلا تلاحق الموظّفَ نافذةٌ في كلّ تحميل. **ومعها
+  //  `fromReceptionRouting`**: مَن غادر ونافذتُه تعرض «المسار: معاينة
+  //  طبية» الثابت يعود إلى الشكل نفسِه — لا إلى محدِّدٍ حرٍّ لم يكن أمامه.
   useEffect(() => {
     const resume = takeDeviceFlowResume(sessionResumeStore(), patient.id);
     if (!resume) return;
     setResumeItem(resume.requestedItem);
     setResumePath(resume.servicePath);
-    setFlow({ kind: "device_episode", serviceType: resume.serviceType });
+    setFlow({
+      kind: "device_episode", serviceType: resume.serviceType,
+      fromReceptionRouting: resume.fromReceptionRouting,
+    });
   }, [patient.id]);
+
+  //  القسمُ الذي يُطرَح له سؤالُ التوجيه — أطرافٌ أو مسانِد، والعلاجُ
+  //  الطبيعي لا يُمَسّ. `null` تعني لا مُوجِّه لهذا المريض إطلاقاً.
+  const routingServiceType = receptionRoutingServiceType(patient);
+
+  // ══ **المُوجِّهُ يُفتَح مرّةً واحدة بعد التسجيل مباشرةً** ═════════════════
+  //  العلمُ في `sessionStorage`، ونفسُ نمط الاستئناف أعلاه: القراءةُ تمسح
+  //  دائماً، فتحديثُ الصفحة أو فتحُ مريضٍ آخر بعده لا يعيد فتحه.
+  useEffect(() => {
+    if (!routingServiceType) return;
+    const pending = takeReceptionRoutingPending(sessionResumeStore(), patient.id);
+    if (pending) setRoutingOpen(true);
+  }, [patient.id, routingServiceType]);
 
   // حلقات المريض — تُقرأ لتعطيل «جهاز جديد» بسببٍ مفهوم حين يكون له طلبٌ
   // قائم. والخادم يبقى صاحب القرار: يردّ 409 على السباق مهما قالت الواجهة.
@@ -89,15 +113,26 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
 
   const options = launcherOptions({ ...patient, episodes: episodeData?.episodes ?? [] });
 
-  function choose(option: LauncherOption) {
-    if (option.disabled) return;
-    // تُغلَق نافذة الاختيار أوّلاً ثم تُفتح نافذة المسار: نافذتان فوق
+  /** فتحُ مسارٍ — من القائمة الكاملة أو من مُوجِّه «سبب الحضور»، سيّان. */
+  function chooseFlow(newFlow: ServiceFlow) {
+    // تُغلَق نوافذُ الاختيار أوّلاً ثم تُفتح نافذة المسار: نافذتان فوق
     // بعضهما تتنازعان حبس التركيز فتبقى الثانية غير قابلة للكتابة.
     setPickerOpen(false);
+    setRoutingOpen(false);
     //  اختيارٌ جديد بيدِ الموظّف ⟶ لا استئنافَ قديمٌ يملأ القائمة.
     setResumeItem("");
-    setResumePath("");
-    setFlow(option.flow);
+    //  **إلّا تعبئةً اقترحها المُوجِّه نفسُه** (`initialServicePath` على
+    //  «جهاز جديد» حين يأتي من «يحتاج معاينة طبية») — تُزرَع في حالة
+    //  الاستئناف القائمة نفسِها فتملأ محدِّد النافذة مبدئياً، وتبقى قابلةً
+    //  للتبديل كأيّ استئنافٍ آخر: لا مفهومَ ثانٍ باسم «قفل».
+    setResumePath(newFlow.kind === "device_episode" && newFlow.initialServicePath
+      ? newFlow.initialServicePath : "");
+    setFlow(newFlow);
+  }
+
+  function choose(option: LauncherOption) {
+    if (option.disabled) return;
+    chooseFlow(option.flow);
   }
 
   function closeFlow(open: boolean) {
@@ -111,19 +146,33 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   }
 
   /**
+   * **«تغيير سبب الحضور»** — من نافذة «جهاز جديد» حين فُتحت بمسارٍ ثابت
+   * (`fromReceptionRouting`). تُغلق النافذةَ **بنفس منطق الإغلاق العاديّ**
+   * (بلا فتح ولا إلغاء أيّ حلقة — لا نداءَ شبكةٍ هنا إطلاقاً) ثمّ تعيد فتح
+   * مُوجِّه «سبب الحضور» نفسَه ليختار الموظّفُ سبباً آخر بدقّة.
+   */
+  function changeReceptionRoutingReason() {
+    closeFlow(false);
+    setRoutingOpen(true);
+  }
+
+  /**
    * **نقصُ الملفّ ⟶ شاشةُ التعديل القائمة، والاختيارُ محفوظ.**
    *
    * ولا شاشةَ تعديلٍ ثانية تُخترَع: المسارُ `/patients/:id/edit` نفسُه الذي
    * يفتحه زرُّ «تعديل» في رأس الصفحة — بفرعه إن جاء الموظّفُ من فرع، فحفظُ
    * التعديل يعيده إلى `/patients/:id` حيث يُستأنَف الطلب.
+   *
+   * و`fromReceptionRouting` يُحفَظ كما وصل — فمسارٌ فُتح من مُوجِّه «سبب
+   * الحضور» يعود بنافذته الثابتة نفسِها، لا بمحدِّدٍ حرٍّ لم يكن أمامه.
    */
   function editPatientAndResume(
     serviceType: "prosthetic" | "medical_support", requestedItem: string,
-    servicePath: string,
+    servicePath: string, fromReceptionRouting?: boolean,
   ) {
     saveDeviceFlowResume(sessionResumeStore(), {
       patientId: patient.id, serviceType, requestedItem,
-      servicePath: servicePath as any,
+      servicePath: servicePath as any, fromReceptionRouting,
     });
     setFlow(null);
     const branch = typeof window === "undefined"
@@ -133,6 +182,39 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
 
   return (
     <>
+      {/*  ══ **«ما سبب حضور المريض اليوم؟»** ═══════════════════════════════
+          يُفتَح تلقائياً مرّةً واحدة بعد تسجيل مريض أطرافٍ أو مسانِد جديد
+          (`routingOpen` من العلم أعلاه)، ويبقى متاحاً يدوياً من الرابط
+          داخل «إضافة خدمة جديدة»، **ومن زرّ «تغيير سبب الحضور»** داخل
+          نافذة «جهاز جديد» حين فُتحت من هذا المُوجِّه بعينه. ثلاثةُ
+          خياراتٍ فقط، وكلٌّ منها يفتح مساراً **قائماً** — لا نافذة عمل
+          هنا، تماماً كبقيّة هذا الملفّ. */}
+      {routingServiceType && (
+        <Dialog open={routingOpen} onOpenChange={setRoutingOpen}>
+          <DialogContent className="sm:max-w-[480px]" dir="rtl">
+            <DialogHeader>
+              <DialogTitle className="text-xl text-primary">
+                {RECEPTION_ROUTING_QUESTION}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-2 mt-2">
+              {receptionRoutingChoices(routingServiceType).map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  onClick={() => chooseFlow(choice.flow)}
+                  data-testid={`reception-routing-${choice.id}`}
+                  className="w-full text-right rounded-lg border px-3 py-2.5 transition-colors
+                    hover:bg-slate-50 hover:border-primary/40"
+                >
+                  <div className="text-sm font-medium">{choice.label}</div>
+                </button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogTrigger asChild>
           <Button
@@ -151,6 +233,19 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           <p className="text-xs text-muted-foreground -mt-2">
             اختر الخدمة، وتُفتح لك نافذتها المعتادة مباشرةً.
           </p>
+
+          {/*  **نفسُ الخيارات الثلاثة تبقى متاحةً من هنا** — رابطٌ يعيد فتح
+              مُوجِّه «سبب الحضور» نفسِه، لا قائمةً موازية. */}
+          {routingServiceType && (
+            <button
+              type="button"
+              onClick={() => { setPickerOpen(false); setRoutingOpen(true); }}
+              data-testid="link-reception-routing"
+              className="text-xs text-primary underline underline-offset-2 -mt-2 text-right w-fit"
+            >
+              {RECEPTION_ROUTING_QUESTION}
+            </button>
+          )}
 
           <div className="space-y-4 mt-2">
             {GROUP_ORDER.map((group) => {
@@ -219,8 +314,12 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           onOpenChange={closeFlow}
           initialRequestedItem={resumeItem}
           initialServicePath={resumePath}
+          fromReceptionRouting={flow.fromReceptionRouting}
+          onChangeReason={changeReceptionRoutingReason}
           onEditPatient={(requestedItem, servicePath) =>
-            editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
+            editPatientAndResume(
+              flow.serviceType, requestedItem, servicePath, flow.fromReceptionRouting,
+            )}
         />
       )}
 
@@ -230,6 +329,7 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           patientId={patient.id}
           branchId={patient.branchId}
           serviceType={flow.serviceType}
+          initialKind={flow.initialKind}
           open
           onOpenChange={closeFlow}
         />

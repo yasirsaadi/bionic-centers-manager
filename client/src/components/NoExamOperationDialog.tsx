@@ -51,11 +51,13 @@ import {
 } from "@shared/device_origin";
 import {
   PENDING_CHARGE_KIND_LABELS, SAVED_PENDING_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
+  type PendingChargeKind,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 
 type Service = "prosthetic" | "medical_support";
-type Kind = "device_sale" | "maintenance";
+/** نفسُ نوعِ العملية القانونيّ — بلا نسخةٍ محلّية منه. */
+type Kind = PendingChargeKind;
 
 interface Props {
   open: boolean;
@@ -67,15 +69,23 @@ interface Props {
   existingEpisodeId?: number | null;
   /** الطلبُ المسجَّل على تلك الحلقة — يُعرَض ولا يُسأل عنه ثانيةً. */
   existingRequestedItem?: string | null;
+  /**
+   * **«نوع العملية» محسومٌ قبل فتح النافذة** — من مُوجِّه «ما سبب حضور
+   * المريض اليوم؟» بعد التسجيل مثلاً. يُعطَّل معه المحدِّدُ فلا يُعاد
+   * سؤالٌ أجاب عنه اختيارُ الزرّ بعينه — نفسُ منطق `existingEpisodeId`
+   * أدناه بالضبط، لسببٍ مختلف.
+   */
+  initialKind?: Kind;
 }
 
 export function NoExamOperationDialog({
   open, onOpenChange, patientId, branchId, serviceType,
-  existingEpisodeId = null, existingRequestedItem = null,
+  existingEpisodeId = null, existingRequestedItem = null, initialKind,
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [kind, setKind] = useState<Kind>(existingEpisodeId ? "device_sale" : "maintenance");
+  const [kind, setKind] = useState<Kind>(
+    initialKind ?? (existingEpisodeId ? "device_sale" : "maintenance"));
   const [requestedItem, setRequestedItem] = useState<string>(
     existingRequestedItem ?? (serviceType === "prosthetic" ? "" : FULL_DEVICE));
   const [component, setComponent] = useState<string>("");
@@ -186,7 +196,7 @@ export function NoExamOperationDialog({
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">نوع العملية</Label>
             <Select value={kind} onValueChange={(v) => setKind(v as Kind)}
-              disabled={Boolean(existingEpisodeId)}>
+              disabled={Boolean(existingEpisodeId) || initialKind !== undefined}>
               <SelectTrigger data-testid="no-exam-op-kind">
                 <SelectValue placeholder="اختر" />
               </SelectTrigger>

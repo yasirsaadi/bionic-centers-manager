@@ -39,6 +39,8 @@ import { Loader2, ArrowRight, ArrowLeft, Building2, Plus, X } from "lucide-react
 import { z } from "zod";
 import { useEffect, useState } from "react";
 import { useBranchSession } from "@/components/BranchGate";
+import { markReceptionRoutingPending } from "@/components/reception_routing";
+import { sessionResumeStore } from "@/components/device_flow_resume";
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -471,6 +473,14 @@ export default function CreatePatient() {
     };
     mutate(submitData as any, {
       onSuccess: (data) => {
+        //  ══ **«ما سبب حضور المريض اليوم؟» — يُطرَح فور الحفظ** ══════════
+        //  علمٌ أحاديّ الاستعمال في `sessionStorage`: `PatientServiceLauncher`
+        //  يقرؤه ويمسحه عند فتح صفحة هذا المريض بعينه، فيفتح مُوجِّهاً
+        //  صغيراً — أو لا يفتح شيئاً إن كانت حالتُه علاجاً طبيعياً، إذ
+        //  المُوجِّه للأطراف والمساند وحدهما. والتخزينُ غيرُ المشروط هنا
+        //  متعمَّد: القرارَ يتّخذه المُوجِّه من حالة المريض الفعلية، لا من
+        //  تخمينٍ هنا يكرّر شرطاً موجوداً هناك أصلاً.
+        markReceptionRoutingPending(sessionResumeStore(), data.id);
         setLocation(`/patients/${data.id}`);
       },
     });

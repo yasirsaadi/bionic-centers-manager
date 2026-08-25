@@ -85,7 +85,10 @@ function main() {
 
   same("٢. وتُقرأ لصاحبها كما حُفظت",
     takeDeviceFlowResume(s, 41),
-    { patientId: 41, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam" });
+    {
+      patientId: 41, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
+      fromReceptionRouting: false,
+    });
 
   // **تُستهلَك مرّةً واحدة**: وإلّا لاحقت النافذةُ الموظّفَ في كلّ تحميل.
   same("٣. **ولا تُقرأ مرّتين**", takeDeviceFlowResume(s, 41), null);
@@ -111,7 +114,10 @@ function main() {
   });
   same("٦. و«بلا اختيار» تُحفَظ ولا تُخترَع قيمة",
     takeDeviceFlowResume(s, 7),
-    { patientId: 7, serviceType: "medical_support", requestedItem: "", servicePath: "" });
+    {
+      patientId: 7, serviceType: "medical_support", requestedItem: "", servicePath: "",
+      fromReceptionRouting: false,
+    });
 
   // قيمةٌ ليست من القائمة لا تعود — وإلّا ضُبط `Select` على ما لا يعرفه.
   saveDeviceFlowResume(s, { patientId: 7, serviceType: "prosthetic", requestedItem: "banana" } as any);
@@ -131,6 +137,35 @@ function main() {
   } as any);
   same("٧ب. **ومسارٌ مخترَع يُنظَّف إلى فراغ — لا يُخمَّن**",
     takeDeviceFlowResume(s, 12)?.servicePath, "");
+
+  //  ══ و`fromReceptionRouting` بالمنطق نفسِه ══════════════════════════════
+  //  **العطبُ الذي يُصلَح هنا**: نافذةٌ فُتحت من مُوجِّه «سبب الحضور»
+  //  وتعرض «المسار: معاينة طبية» الثابت — فيذهب الموظّفُ إلى «تعديل
+  //  مريض» ويعود، فتفقد اللقطةُ العلمَ وتظهر النافذةُ بمحدِّدٍ حرٍّ لم يكن
+  //  أمامها أصلاً. فصار العلمُ جزءاً من اللقطة نفسِها، يُحفَظ ويعود معها.
+  saveDeviceFlowResume(s, {
+    patientId: 15, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
+    fromReceptionRouting: true,
+  });
+  same("٧ج. **ومسارُ المُوجِّه يعود `true` كما حُفظ**",
+    takeDeviceFlowResume(s, 15)?.fromReceptionRouting, true);
+
+  //  والمسارُ العاديّ (بلا مُوجِّه) لا يحمل العلمَ أصلاً — والقراءةُ تُثبته
+  //  `false` صراحةً، لا `undefined` غامضة تلتبس بخطأ.
+  saveDeviceFlowResume(s, {
+    patientId: 16, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
+  });
+  same("٧د. **والمسارُ العاديّ يعود `false` صراحةً — لا `undefined`**",
+    takeDeviceFlowResume(s, 16)?.fromReceptionRouting, false);
+
+  //  وقيمةٌ غيرُ بوليانية (لو وصلت من طريقٍ ملتوٍ) تُنظَّف إلى `false` —
+  //  نفسُ حراسة بقيّة الحقول: لا يُخمَّن، ولا يُقبَل ما ليس بوليان.
+  saveDeviceFlowResume(s, {
+    patientId: 17, serviceType: "prosthetic", requestedItem: "socket", servicePath: "exam",
+    fromReceptionRouting: "yes",
+  } as any);
+  same("٧هـ. وقيمةٌ غيرُ بوليانية تُنظَّف إلى `false`",
+    takeDeviceFlowResume(s, 17)?.fromReceptionRouting, false);
 
   // نوعُ خدمةٍ مخترَع لا يُحفَظ أصلاً.
   const s2 = fakeStore();
@@ -189,8 +224,8 @@ function main() {
     "١٥. والاختيارُ يصل النافذةَ من مالكِ الحالة");
   check(/takeDeviceFlowResume\(sessionResumeStore\(\), patient\.id\)/.test(launcher),
     "١٦. **والموزِّعُ يقرأ اللقطةَ عند التركيب** — فتعود النافذةُ مفتوحةً");
-  check(/setFlow\(\{ kind: "device_episode", serviceType: resume\.serviceType \}\)/.test(launcher),
-    "ويعيد فتحَ مسار الجهاز نفسِه لا مسارٍ آخر");
+  check(/setFlow\(\{\s*kind: "device_episode", serviceType: resume\.serviceType,\s*fromReceptionRouting: resume\.fromReceptionRouting,\s*\}\);/.test(launcher),
+    "ويعيد فتحَ مسار الجهاز نفسِه، **ومعه علمُ المُوجِّه كما حُفظ** — لا مسارٍ آخر ولا علمٍ يضيع");
   check(/saveDeviceFlowResume\(sessionResumeStore\(\)/.test(launcher),
     "١٧. وهو مَن يحفظها قبل مغادرة الصفحة");
 
@@ -212,6 +247,14 @@ function main() {
     "٢٠. **والموزِّعُ يمرّر `onEditPatient` فعلاً**", modalUsage);
   check(/initialRequestedItem=\{resumeItem\}/.test(modalUsage),
     "ويمرّر الجزءَ المستأنَف معه", modalUsage);
+  //  **وعلمُ المُوجِّه الحاليّ يُسلَّم معها** — فتُكتب اللقطةُ به قبل
+  //  المغادرة إلى «تعديل مريض»، لا بمصدرٍ ثانٍ ينحرف عنه.
+  check(/editPatientAndResume\(\s*flow\.serviceType, requestedItem, servicePath, flow\.fromReceptionRouting,\s*\)/.test(modalUsage),
+    "٢٠أ. **ويسلّم `flow.fromReceptionRouting` الحاليّ إلى `editPatientAndResume`**", modalUsage);
+  check(/function editPatientAndResume\(\s*serviceType: "prosthetic" \| "medical_support", requestedItem: string,\s*servicePath: string, fromReceptionRouting\?: boolean,\s*\) \{/.test(launcher),
+    "٢٠ب. **ودالّةُ `editPatientAndResume` تقبل العلمَ اختيارياً** — بلا كسر الاستدعاءات القديمة");
+  check(/servicePath: servicePath as any, fromReceptionRouting,/.test(launcher),
+    "٢٠ج. وتكتبه في اللقطة المحفوظة كما استلمته — بلا تعديل");
 
   //  واختيارٌ جديد أو إغلاقٌ صريح ⟶ لا لقطةَ قديمة تفتح نافذةً بعد ساعة.
   check(/clearDeviceFlowResume\(sessionResumeStore\(\)\)/.test(launcher),

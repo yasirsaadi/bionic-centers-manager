@@ -16,6 +16,8 @@
 
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import type { PendingChargeKind } from "@shared/pending_charge";
+import type { ServicePath } from "@shared/service_path";
 
 /** المسارات الثلاثة القائمة — **لا رابع**. */
 export type ServiceFlow =
@@ -29,8 +31,28 @@ export type ServiceFlow =
    * يبقى صاحب القرار: يتحقّق أن المريض يملك النوع فعلاً.
    */
   | { kind: "maintenance_visit"; serviceType: "prosthetic" | "medical_support" }
-  /** `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم. */
-  | { kind: "device_episode"; serviceType: "prosthetic" | "medical_support" }
+  /**
+   * `POST /api/patients/:patientId/device-episodes` — جهازٌ جديد على خيطٍ قائم.
+   *
+   * `initialServicePath` **اختياريّ**: قيمةٌ ابتدائية لمحدِّد «هل تحتاج
+   * معاينة؟» — يستعمله الاستئنافُ بعد «تعديل مريض» كما كان، ويبقى قابلاً
+   * للتبديل من داخل النافذة في المسار العاديّ («إضافة خدمة جديدة»).
+   *
+   * `fromReceptionRouting` **اختياريّ**: حين يُمرَّر `true` (من مُوجِّه «ما
+   * سبب الحضور؟» عند اختيار «يحتاج معاينة طبية» بعينها) يُفتَح
+   * `NewDeviceEpisodeModal` بمسارٍ **ثابت** «معاينة طبية» بلا محدِّدٍ
+   * إطلاقاً — فتبديلُ المسار داخلياً إلى «بلا معاينة» لا يقول أهو بيعُ
+   * جزءٍ أم صيانة، وقد يترك حلقةً مفتوحة بمسارٍ ناقص المعنى. فبدلاً من
+   * محدِّدٍ داخليّ، زرُّ «تغيير سبب الحضور» **يغلق هذه النافذة بلا فتح ولا
+   * إلغاء أيّ حلقة** ويعيد فتح المُوجِّه نفسَه ليختار الاستقبالُ السببَ
+   * الصحيح بدقّة. واختيارُ **المطلوب** (طرفٌ كاملٌ أو جزء) يبقى مفتوحاً
+   * كما كان في الحالتين. غيابُهما يبقي السلوكَ القائم حرفاً.
+   */
+  | {
+      kind: "device_episode"; serviceType: "prosthetic" | "medical_support";
+      initialServicePath?: ServicePath;
+      fromReceptionRouting?: boolean;
+    }
   /**
    * **عمليةٌ بلا معاينة** (ترحيل ٠٦٧) — بيعُ جزءٍ أو صيانةٌ يُنجزها
    * الاستقبال بلا إرسال المريض إلى الطبيب، **ومبلغُها يبقى خارج المحاسبة**
@@ -38,8 +60,16 @@ export type ServiceFlow =
    *
    * ولا تلغي البابين القائمين: «جهاز جديد» يفتح طلباً على مسار المعاينة،
    * و«صيانة» تحجز أجرَها فوراً. هذا بابُ المسار الثالث الذي فتحه ٠٦٥.
+   *
+   * `initialKind` **اختياريّ**: حين يُمرَّر (من مُوجِّه «ما سبب الحضور؟»
+   * بعد التسجيل مثلاً) يحسم «نوع العملية» مسبقاً في `NoExamOperationDialog`
+   * فلا يُعاد سؤالٌ أجاب عنه اختيارُ الزرّ بعينه. غيابُه يبقي السلوكَ
+   * القائم حرفاً: الموظّفُ يختار من داخل النافذة كما كان دائماً.
    */
-  | { kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support" };
+  | {
+      kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support";
+      initialKind?: PendingChargeKind;
+    };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
