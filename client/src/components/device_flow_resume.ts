@@ -41,6 +41,13 @@ export interface DeviceFlowResume {
    * فارغاً لا مُجاباً نيابةً عن أحد.
    */
   servicePath: ServicePath | "";
+  /**
+   * هل جاء هذا الطلبُ من مُوجِّه «سبب حضور المريض اليوم؟» باختيار «يحتاج
+   * معاينة طبية» بعينها؟ **اختياريّ**، ويُحفَظ ويُستأنَف كما هو — فمَن
+   * غادر إلى «تعديل مريض» ونافذتُه تعرض «المسار: معاينة طبية» الثابت
+   * يعود إلى الشكل نفسِه، لا إلى محدِّدٍ حرٍّ لم يكن أمامه أصلاً.
+   */
+  fromReceptionRouting?: boolean;
 }
 
 export const DEVICE_FLOW_RESUME_KEY = "bcm.device_flow_resume";
@@ -77,6 +84,9 @@ export function saveDeviceFlowResume(store: ResumeStore | null, r: DeviceFlowRes
       //  فيُضبَط به `Select` على قيمةٍ لا يعرفها.
       requestedItem: isRequestedItem(r.requestedItem) ? r.requestedItem : "",
       servicePath: isServicePath(r.servicePath) ? r.servicePath : "",
+      //  بوليانٌ صريح فقط — أيّ قيمةٍ أخرى (`undefined` مثلاً) تُكتب
+      //  `false`، فلا يُخمَّن مسارُ مُوجِّهٍ لم يُقَل.
+      fromReceptionRouting: r.fromReceptionRouting === true,
     } satisfies DeviceFlowResume));
   } catch {
     /* بلا استئناف — ولا تعطُّل. */
@@ -115,6 +125,7 @@ export function takeDeviceFlowResume(
     serviceType: parsed.serviceType,
     requestedItem: isRequestedItem(parsed.requestedItem) ? parsed.requestedItem : "",
     servicePath: isServicePath(parsed.servicePath) ? parsed.servicePath : "",
+    fromReceptionRouting: parsed.fromReceptionRouting === true,
   };
 }
 

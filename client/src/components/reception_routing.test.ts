@@ -197,8 +197,8 @@ function main() {
     same("وهو نفسُه — بلا حرفٍ يتغيّر", normalFlow,
       { kind: "device_episode", serviceType: "prosthetic" });
   }
-  check(/setFlow\(\{ kind: "device_episode", serviceType: resume\.serviceType \}\);/.test(launcherCodeForRouting),
-    "١٢.ن **والاستئنافُ بعد «تعديل مريض» أيضاً بلا حقلٍ إضافي على `flow`** — يسأل بمحدِّدٍ حرّ");
+  check(/setFlow\(\{\s*kind: "device_episode", serviceType: resume\.serviceType,\s*fromReceptionRouting: resume\.fromReceptionRouting,\s*\}\);/.test(launcherCodeForRouting),
+    "١٢.ن **والاستئنافُ بعد «تعديل مريض» يستعيد `fromReceptionRouting` من اللقطة** — لا يُسقِطه");
 
   //  ولا أثرَ لـ`lockedServicePath` — الاسمُ الذي رُفض في تصحيحٍ أسبق —
   //  في أيٍّ من الملفّات الأربعة.

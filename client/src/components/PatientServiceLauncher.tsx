@@ -77,13 +77,18 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
   // ══ **العودةُ من «تعديل مريض» تُستأنف حيث تُرك المسار** ═════════════════
   //  حفظُ التعديل يغيّر المسار، فتُفكَّك الصفحةُ والموزِّعُ والنافذةُ معاً.
   //  فاللقطةُ في `sessionStorage` لا في `useState` — وتُقرأ مرّةً واحدة عند
-  //  التركيب ثمّ تُمسَح، فلا تلاحق الموظّفَ نافذةٌ في كلّ تحميل.
+  //  التركيب ثمّ تُمسَح، فلا تلاحق الموظّفَ نافذةٌ في كلّ تحميل. **ومعها
+  //  `fromReceptionRouting`**: مَن غادر ونافذتُه تعرض «المسار: معاينة
+  //  طبية» الثابت يعود إلى الشكل نفسِه — لا إلى محدِّدٍ حرٍّ لم يكن أمامه.
   useEffect(() => {
     const resume = takeDeviceFlowResume(sessionResumeStore(), patient.id);
     if (!resume) return;
     setResumeItem(resume.requestedItem);
     setResumePath(resume.servicePath);
-    setFlow({ kind: "device_episode", serviceType: resume.serviceType });
+    setFlow({
+      kind: "device_episode", serviceType: resume.serviceType,
+      fromReceptionRouting: resume.fromReceptionRouting,
+    });
   }, [patient.id]);
 
   //  القسمُ الذي يُطرَح له سؤالُ التوجيه — أطرافٌ أو مسانِد، والعلاجُ
@@ -157,14 +162,17 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
    * ولا شاشةَ تعديلٍ ثانية تُخترَع: المسارُ `/patients/:id/edit` نفسُه الذي
    * يفتحه زرُّ «تعديل» في رأس الصفحة — بفرعه إن جاء الموظّفُ من فرع، فحفظُ
    * التعديل يعيده إلى `/patients/:id` حيث يُستأنَف الطلب.
+   *
+   * و`fromReceptionRouting` يُحفَظ كما وصل — فمسارٌ فُتح من مُوجِّه «سبب
+   * الحضور» يعود بنافذته الثابتة نفسِها، لا بمحدِّدٍ حرٍّ لم يكن أمامه.
    */
   function editPatientAndResume(
     serviceType: "prosthetic" | "medical_support", requestedItem: string,
-    servicePath: string,
+    servicePath: string, fromReceptionRouting?: boolean,
   ) {
     saveDeviceFlowResume(sessionResumeStore(), {
       patientId: patient.id, serviceType, requestedItem,
-      servicePath: servicePath as any,
+      servicePath: servicePath as any, fromReceptionRouting,
     });
     setFlow(null);
     const branch = typeof window === "undefined"
@@ -309,7 +317,9 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           fromReceptionRouting={flow.fromReceptionRouting}
           onChangeReason={changeReceptionRoutingReason}
           onEditPatient={(requestedItem, servicePath) =>
-            editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
+            editPatientAndResume(
+              flow.serviceType, requestedItem, servicePath, flow.fromReceptionRouting,
+            )}
         />
       )}
 
