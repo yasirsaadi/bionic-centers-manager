@@ -47,21 +47,14 @@ interface NewDeviceEpisodeModalProps {
    * والموزِّعُ والصفحةُ معاً. فمن يحفظ هو مَن يبقى، وهذه تُملأ منه.
    */
   initialRequestedItem?: string;
-  /** مسارُ العملية كما تُرك قبل الردّ — يُعاد إليه بالمنطق نفسه. */
-  initialServicePath?: string;
   /**
-   * **مسارُ المعاينة محسومٌ ومقفولٌ** — من مُوجِّه «سبب حضور المريض
-   * اليوم؟» حين يختار الموظّفُ «يحتاج معاينة طبية» بعينها. ذلك الاختيارُ
-   * أجاب عن سؤال «هل تحتاج هذه العملية معاينة؟» بنفسه، فلا يُعاد طرحُه
-   * ولا يُسمَح بتبديله إلى «بلا معاينة» من هذه النافذة — يبقى اختيارُ
-   * **المطلوب** (طرفٌ كاملٌ أو جزء) مفتوحاً كما كان دائماً.
-   *
-   * يتفوّق على `initialServicePath` حين يوجدان معاً. وغيابُه يُبقي
-   * السلوكَ القائم حرفاً: النافذةُ تسأل كما كانت من كلّ باب آخر
-   * («طرف صناعي جديد أو جزء جديد» في القائمة الكاملة، أو الاستئناف بعد
-   * «تعديل مريض»).
+   * قيمةٌ ابتدائية لمحدِّد «هل تحتاج هذه العملية معاينة؟» — **تعبئةٌ لا
+   * قفل**: الموظّفُ يبقى حرّاً في تبديلها من داخل النافذة. تأتي إمّا من
+   * استئنافٍ بعد «تعديل مريض» (القيمةُ كما تُركت قبل الردّ)، أو من
+   * مُوجِّه «سبب حضور المريض اليوم؟» حين يختار «يحتاج معاينة طبية»
+   * (اقتراحٌ لا حسم) — بالمنطق نفسه في الحالتين.
    */
-  lockedServicePath?: ServicePath;
+  initialServicePath?: string;
   /**
    * يفتح «تعديل مريض» حين ينقص الملفّ، **حاملاً الاختيارَ إلى مَن يحفظه**.
    *
@@ -82,7 +75,7 @@ const LABEL = {
 
 export function NewDeviceEpisodeModal({
   patientId, serviceType, open, onOpenChange, initialRequestedItem,
-  initialServicePath, lockedServicePath, onEditPatient,
+  initialServicePath, onEditPatient,
 }: NewDeviceEpisodeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -103,19 +96,17 @@ export function NewDeviceEpisodeModal({
   //  طرفاً كاملاً كان يمرّ بلا طبيب، ومريضٌ جديد يريد غلافاً بسيطاً كان
   //  يُساق إلى الطابور.
   //
-  //  **وبلا اختيارٍ مسبق**: قيمةٌ افتراضية تجعل الجواب يمرّ بضغطةٍ واحدة
-  //  في اتجاهٍ لم يقصده أحد — والاتجاهان كلاهما مُكلف.
+  //  **وبلا اختيارٍ مسبق افتراضيّ**: القيمةُ الابتدائية تأتي من
+  //  `initialServicePath` وحده (استئنافٌ أو تعبئةُ مُوجِّهٍ) وتبقى قابلةً
+  //  للتبديل الكامل — لا قيمةَ تُفرَض بضغطةٍ واحدة في اتجاهٍ لم يقصده أحد.
   const resumedPath = (isServicePath(initialServicePath)
     ? initialServicePath : "") as ServicePath | "";
-  //  ══ **القفل يتفوّق على الاستئناف** ══════════════════════════════════
-  //  «يحتاج معاينة طبية» من مُوجِّه «سبب الحضور» حسم هذا السؤالَ بعينه —
-  //  فقيمتُه هي البداية دائماً، ولا يعود إليها الاستئنافُ ليكتب فوقها.
-  const [path, setPath] = useState<ServicePath | "">(lockedServicePath ?? resumedPath);
+  const [path, setPath] = useState<ServicePath | "">(resumedPath);
   useEffect(() => {
     if (!open) return;
     setItem(resumed);
-    setPath(lockedServicePath ?? resumedPath);
-  }, [open, resumed, resumedPath, lockedServicePath]);
+    setPath(resumedPath);
+  }, [open, resumed, resumedPath]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
   const [blockNote, setBlockNote] = useState<string>("");
@@ -274,8 +265,7 @@ export function NewDeviceEpisodeModal({
           <Label className="font-semibold">
             {SERVICE_PATH_QUESTION} <span className="text-destructive">*</span>
           </Label>
-          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}
-            disabled={Boolean(lockedServicePath)}>
+          <Select value={path} onValueChange={(v) => setPath(v as ServicePath)}>
             <SelectTrigger data-testid="select-service-path">
               <SelectValue placeholder="اختر نعم أو لا" />
             </SelectTrigger>
@@ -285,16 +275,10 @@ export function NewDeviceEpisodeModal({
               ))}
             </SelectContent>
           </Select>
-          {lockedServicePath ? (
-            <p className="text-xs text-primary" data-testid="text-service-path-locked">
-              محسومٌ باختيار «يحتاج معاينة طبية» — لا يُسأل ثانيةً.
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {SERVICE_PATH_HELP}
-              {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {SERVICE_PATH_HELP}
+            {path && <span className="block mt-0.5">{SERVICE_PATH_HINTS[path]}</span>}
+          </p>
         </div>
 
         {/*  ══ **ما ينقص الملفَّ يُقال هنا ويبقى** ═══════════════════════

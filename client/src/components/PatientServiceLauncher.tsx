@@ -116,7 +116,12 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
     setRoutingOpen(false);
     //  اختيارٌ جديد بيدِ الموظّف ⟶ لا استئنافَ قديمٌ يملأ القائمة.
     setResumeItem("");
-    setResumePath("");
+    //  **إلّا تعبئةً اقترحها المُوجِّه نفسُه** (`initialServicePath` على
+    //  «جهاز جديد» حين يأتي من «يحتاج معاينة طبية») — تُزرَع في حالة
+    //  الاستئناف القائمة نفسِها فتملأ محدِّد النافذة مبدئياً، وتبقى قابلةً
+    //  للتبديل كأيّ استئنافٍ آخر: لا مفهومَ ثانٍ باسم «قفل».
+    setResumePath(newFlow.kind === "device_episode" && newFlow.initialServicePath
+      ? newFlow.initialServicePath : "");
     setFlow(newFlow);
   }
 
@@ -288,7 +293,6 @@ export function PatientServiceLauncher({ patient }: PatientServiceLauncherProps)
           onOpenChange={closeFlow}
           initialRequestedItem={resumeItem}
           initialServicePath={resumePath}
-          lockedServicePath={flow.lockedServicePath}
           onEditPatient={(requestedItem, servicePath) =>
             editPatientAndResume(flow.serviceType, requestedItem, servicePath)}
         />
