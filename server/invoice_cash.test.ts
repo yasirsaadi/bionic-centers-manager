@@ -84,7 +84,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { createJournalForPayment } from "./accounting/auto_journal";
+import { createJournalForPayment, createJournalForInvoice } from "./accounting/auto_journal";
 
 const PORT = 6891;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -188,6 +188,13 @@ async function journalTypesFor(sourceId: number): Promise<Record<string, number>
   const m: Record<string, number> = {};
   for (const r of rows) m[r.source_type] = Number(r.n);
   return m;
+}
+/** حالاتُ قيود نوعٍ بعينه على مصدرٍ بعينه — `posted` تعني «لم يُعكَس بعد». */
+async function journalStatusesFor(sourceType: string, sourceId: number): Promise<string[]> {
+  const rows = await q<{ status: string }>(
+    `SELECT status FROM journal_entries WHERE source_type = $1 AND source_id = $2 ORDER BY id`,
+    [sourceType, sourceId]);
+  return rows.map((r) => r.status);
 }
 async function journalLinesFor(sourceType: string, sourceId: number): Promise<{ debit: number; credit: number; code: string }[]> {
   const rows = await q<{ debit: string; credit: string; code: string }>(
@@ -463,6 +470,97 @@ async function main() {
       [linesK.filter((l) => l.debit > 0).reduce((s, l) => s + l.debit, 0),
         linesK.filter((l) => l.credit > 0).reduce((s, l) => s + l.credit, 0)],
       [70_000, 70_000]);
+
+    // ══ ك. الحذفُ بعد التسوية المالية — ممنوع ═══════════════════════════════
+    // العطبُ المكتشَف: `reverseJournalForSource` يعكس قيداً واحداً فقط
+    // (`LIMIT 1`)، فحذفُ فاتورةٍ بقبضتين كان سيُبقي صفَّي دفعتيها ويعكس قيدَ
+    // إحداهما وحدها — فيختلف الوارِدُ التشغيليّ عن الدفتر المزدوج.
+    console.log("\n── ك. الحذفُ بعد التسوية المالية — ممنوع ──");
+
+    // ── ك.أ: فاتورةٌ بقبضةٍ واحدة ناجحة ──
+    const invK1 = await insertIssuedInvoice(p1, 1, 100_000);
+    await createJournalForInvoice({
+      id: invK1.id, invoiceNumber: invK1.invoiceNumber, patientId: p1, branchId: 1,
+      invoiceDate: new Date().toISOString().split("T")[0], subtotal: 100_000, discount: 0,
+      total: 100_000, paidAmount: 0, status: "pending",
+    } as any, [], ADMIN);
+    const rK1collect = await http("POST", `/api/invoices/${invK1.id}/collect`, S.recv1, { amount: 100_000 });
+    same("ك.أ١. القبضُ الكاملُ يُمهِّد ينجح", rK1collect.status, 200);
+
+    const paidBeforeK1 = (await paymentsFor(invK1.id)).length;
+    const invoiceJournalBeforeK1 = await journalStatusesFor("invoice", invK1.id);
+    const paymentJournalBeforeK1 = await journalStatusesFor("invoice_payment", invK1.id);
+
+    const rK1del = await http("DELETE", `/api/invoices/${invK1.id}`, S.mgr1);
+    same("ك.أ٢. **الحذفُ يُردّ ٤٠٩** — فاتورةٌ عليها قبضةٌ واحدة", rK1del.status, 409);
+    check(typeof rK1del.body?.error === "string" && rK1del.body.error.length > 0,
+      "ك.أ٣. برسالةٍ عربية واضحة");
+
+    const invK1After = await invoiceRow(invK1.id);
+    check(invK1After !== undefined, "ك.أ٤. **والفاتورةُ ما زالت موجودة**");
+    same("ك.أ٥. **وصفُّ الدفعة ما زال موجوداً**", (await paymentsFor(invK1.id)).length, paidBeforeK1);
+    same("ك.أ٦. **وقيدُ الإصدار لم يتغيّر** (لا عكسَ)",
+      await journalStatusesFor("invoice", invK1.id), invoiceJournalBeforeK1);
+    same("ك.أ٧. **وقيدُ القبض لم يتغيّر** (لا عكسَ)",
+      await journalStatusesFor("invoice_payment", invK1.id), paymentJournalBeforeK1);
+    same("   وكلاهما ما زالا `posted` — لم يُعكَس شيء",
+      [invoiceJournalBeforeK1, paymentJournalBeforeK1], [["posted"], ["posted"]]);
+
+    // ── ك.ب: فاتورةٌ بقبضتين جزئيّتين ناجحتين — الحالةُ التي تُثبت إغلاق العطب ──
+    const invK2 = await insertIssuedInvoice(p1, 1, 100_000);
+    const rK2a = await http("POST", `/api/invoices/${invK2.id}/collect`, S.recv1, { amount: 40_000 });
+    const rK2b = await http("POST", `/api/invoices/${invK2.id}/collect`, S.mgr1, { amount: 60_000 });
+    same("ك.ب١. القبضتان الجزئيّتان تنجحان معاً", [rK2a.status, rK2b.status], [200, 200]);
+    same("ك.ب٢. **وصفّا دفعةٍ حقيقيّان اثنان**", (await paymentsFor(invK2.id)).length, 2);
+
+    const paymentJournalsBeforeK2 = await journalStatusesFor("invoice_payment", invK2.id);
+    same("ك.ب٣. **وقيدا قبضٍ منشوران اثنان قبل محاولة الحذف**", paymentJournalsBeforeK2, ["posted", "posted"]);
+
+    const rK2del = await http("DELETE", `/api/invoices/${invK2.id}`, S.admin);
+    same("ك.ب٤. **الحذفُ يُردّ ٤٠٩ أيضاً** — قبضتان لا واحدة", rK2del.status, 409);
+
+    same("ك.ب٥. **صفّا الدفعتين معاً ما زالا موجودين** — لا صفَّ اختفى", (await paymentsFor(invK2.id)).length, 2);
+    same("ك.ب٦. **وقيدا القبض معاً ما زالا `posted`** — لا عكسَ جزئيّ لأحدهما",
+      await journalStatusesFor("invoice_payment", invK2.id), ["posted", "posted"]);
+    // ولا قيدَ عكسٍ (`reversal`) وُلد يشير إلى أيٍّ منهما.
+    const reversalsK2 = await q<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM journal_entries
+         WHERE source_type = 'reversal' AND source_id IN (
+           SELECT id FROM journal_entries WHERE source_type = 'invoice_payment' AND source_id = $1
+         )`, [invK2.id]);
+    same("ك.ب٧. **ولا قيدَ عكسٍ واحداً وُلد** لأيٍّ من القبضتين", Number(reversalsK2[0].n), 0);
+
+    // ── ك.ج: تناقضٌ تاريخيّ دفاعيّ — paid_amount صفرٌ وصفُّ دفعةٍ موجود ──
+    const invK3 = await insertIssuedInvoice(p1, 1, 50_000);
+    // صفُّ دفعةٍ يُدرَج مباشرةً (محاكاةً لانحرافٍ تاريخيّ) بلا تحديث
+    // `paid_amount` — بالضبط ما يحرسه الفحصُ الثاني في `invoiceHasFinancialSettlement`.
+    await q(
+      `INSERT INTO payments (patient_id, branch_id, amount, date, invoice_id)
+       VALUES ($1,1,50000,NOW(),$2)`,
+      [p1, invK3.id]);
+    const invK3Before = await invoiceRow(invK3.id);
+    same("ك.ج١. **`paid_amount` = صفرٌ فعلاً** — التناقضُ التاريخيُّ مقصود", invK3Before.paid_amount, 0);
+
+    const rK3del = await http("DELETE", `/api/invoices/${invK3.id}`, S.admin);
+    same("ك.ج٢. **ويُردّ ٤٠٩ رغم أن `paid_amount` صفرٌ** — الفحصُ الثاني وحده كافٍ", rK3del.status, 409);
+    check((await invoiceRow(invK3.id)) !== undefined, "ك.ج٣. والفاتورةُ ما زالت موجودة");
+    same("ك.ج٤. وصفُّ الدفعة اليتيم ما زال موجوداً", (await paymentsFor(invK3.id)).length, 1);
+
+    // ── ك.د: فاتورةٌ بلا مالٍ إطلاقاً — سلوكُ الحذف القديم كما هو ──
+    const invK4 = await insertIssuedInvoice(p1, 1, 75_000);
+    await createJournalForInvoice({
+      id: invK4.id, invoiceNumber: invK4.invoiceNumber, patientId: p1, branchId: 1,
+      invoiceDate: new Date().toISOString().split("T")[0], subtotal: 75_000, discount: 0,
+      total: 75_000, paidAmount: 0, status: "pending",
+    } as any, [], ADMIN);
+    same("ك.د١. **بلا `paid_amount` وبلا صفّ دفعةٍ**",
+      [(await invoiceRow(invK4.id)).paid_amount, (await paymentsFor(invK4.id)).length], [0, 0]);
+
+    const rK4del = await http("DELETE", `/api/invoices/${invK4.id}`, S.admin);
+    same("ك.د٢. **والحذفُ ينجح كما كان دائماً** — لا تغييرَ على الفاتورة غير المقبوضة", rK4del.status, 200);
+    same("ك.د٣. **والفاتورةُ حُذفت فعلاً**", await invoiceRow(invK4.id), undefined);
+    same("ك.د٤. **وقيدُ الإصدار عُكس كما كان** — سلوكُ الحذف القديم سليمٌ بلا مساس",
+      await journalStatusesFor("invoice", invK4.id), ["reversed"]);
 
   } finally {
     await cleanup();

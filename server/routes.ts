@@ -64,7 +64,7 @@ import {
   createJournalForVendorPayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
-import { collectInvoicePayment, createInvoiceWithCash, InvoiceCashError } from "./accounting/invoice_cash";
+import { collectInvoicePayment, createInvoiceWithCash, invoiceHasFinancialSettlement, InvoiceCashError } from "./accounting/invoice_cash";
 import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
@@ -5923,6 +5923,23 @@ export async function registerRoutes(
       if (!isAdmin && branchSession?.branchId && existing && existing.branchId !== branchSession.branchId) {
         return res.status(403).json({ error: "لا يمكنك حذف فاتورة من فرع آخر" });
       }
+
+      // ══ الحذفُ الصريحُ ليس آليّةَ عكسٍ ماليّ (٢٠٢٦-٠٨-٢٦) ═══════════════
+      // القبضُ على فاتورةٍ صار يكتب صفَّ دفعةٍ حقيقياً وقيدَ `invoice_payment`
+      // (`applyInvoiceCashTx`)، و`reverseJournalForSource` أدناه يعكس **قيداً
+      // واحداً فقط** (`LIMIT 1`). ففاتورةٌ عليها قبضتان كانت ستُحذَف وصفّا
+      // دفعتيها يبقيان قائمين، بينما يُعكَس قيدُ إحداهما وحدها — فيختلف
+      // الوارِدُ التشغيليّ عن الدفتر المزدوج. **ولا حلَّ لهذا هنا**: لا حذفَ
+      // للدفعات ولا عكسَ جماعيّاً لها — تلك آليّةُ إلغاءٍ محاسبيّ لم تُبنَ
+      // بعد. القاعدةُ الآمنة الوحيدة الآن: **فاتورةٌ عليها مالٌ مسجَّل لا
+      // تُحذَف صراحةً** حتى تُبنى تلك الآليّة. فاتورةٌ لم تُقبَض عليها قطّ
+      // (`paid_amount = 0` ولا صفَّ دفعةٍ) تبقى على سلوكها القائم بلا تغيير.
+      if (existing && await invoiceHasFinancialSettlement(existing)) {
+        return res.status(409).json({
+          error: "لا يمكن حذف فاتورة عليها دفعات. يجب معالجة الدفعات أو إلغاء الفاتورة محاسبياً أولاً.",
+        });
+      }
+
       // Reverse related journal entries first (safe to fail, logged)
       await reverseJournalForSource("invoice", id, userId, "حذف الفاتورة");
       await reverseJournalForSource("invoice_payment", id, userId, "حذف الفاتورة");
