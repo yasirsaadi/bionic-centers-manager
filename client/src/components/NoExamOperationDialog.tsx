@@ -60,7 +60,7 @@ import {
 } from "@shared/device_origin";
 import {
   PENDING_CHARGE_KIND_LABELS, SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
-  SAVED_REVIEW_FAILED_MESSAGE, SAVED_REVIEW_FAILED_HINT,
+  reviewFailedCopy,
   type PendingChargeKind,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
@@ -205,9 +205,11 @@ export function NoExamOperationDialog({
       //  مغلقة). والذي تعذّر سطرٌ إخباريٌّ للطبيب. ونجاحٌ لا يُميَّز عن نجاح
       //  كان سيُخفي عن الموظّف أن حركةً لن تصل شاشتَه — فلا يبلّغ أحداً.
       if (d?.reviewRouted === false) {
+        //  **والصياغةُ تتبع ما وقع**: «بلا أجور» لا يُقال لها «حُفظ المبلغ».
+        const copy = reviewFailedCopy(d?.amount ?? null);
         toast({
-          title: SAVED_REVIEW_FAILED_MESSAGE,
-          description: SAVED_REVIEW_FAILED_HINT,
+          title: copy.title,
+          description: copy.hint,
           variant: "destructive",
           duration: 12_000,
         });

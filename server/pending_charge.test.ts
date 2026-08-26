@@ -30,6 +30,8 @@ import {
   LEGACY_QUEUE_TITLE, LEGACY_QUEUE_HINT, RETURNED_QUEUE_TITLE,
   SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
   SAVED_REVIEW_FAILED_MESSAGE, SAVED_REVIEW_FAILED_HINT,
+  SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE, SAVED_NO_CHARGE_REVIEW_FAILED_HINT,
+  reviewFailedCopy, PENDING_CHARGE_KINDS,
 } from "@shared/pending_charge";
 import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 
@@ -356,6 +358,25 @@ async function main() {
       && LEGACY_QUEUE_HINT.includes("مباشرةً"),
     "   وشرحُه يقول إن الجديدَ لا يمرّ من هنا", LEGACY_QUEUE_HINT);
     check(RETURNED_QUEUE_TITLE.includes("مُعادة"), "   وطابورُ المُعادات كما هو");
+
+    //  ══ **ووصفُ نوعَي العملية صادقٌ بعد ٢٥٠** ═══════════════════════════
+    //  كان مكتوباً «بيعُ جزءِ طرفٍ صناعيّ **أو مسندٍ طبيّ كامل**» — وقد بطل
+    //  شقُّه الثاني: الجهازُ الكاملُ يحتاج معاينة، فلم يبقَ للمساند إلّا
+    //  الصيانة. ووصفٌ كاذبٌ في العقد المشترك يُقرأ إذناً فيُبنى عليه.
+    same("١.ب **ونوعان لا ثالث**", [...PENDING_CHARGE_KINDS],
+      ["device_sale", "maintenance"]);
+    {
+      const kindsDoc = PENDING_MODULE.slice(
+        PENDING_MODULE.indexOf("`device_sale`"),
+        PENDING_MODULE.indexOf("export const PENDING_CHARGE_KINDS"));
+      check(!/بيعُ جزءِ طرفٍ صناعيّ أو مسندٍ طبيّ كامل/.test(kindsDoc),
+        "١.ج **ولا وصفَ يقول إن البيع يشمل مسنداً كاملاً**", kindsDoc.slice(0, 160));
+      check(/بيعُ جزءِ طرفٍ صناعيّ وحده/.test(kindsDoc),
+        "١.د **بل «جزءُ طرفٍ صناعيّ وحده»**");
+      check(/لم يبقَ للمساند من هذا المسار إلّا \*\*الصيانة\*\*|إلّا \*\*الصيانة\*\*/
+        .test(kindsDoc),
+      "١.هـ **ويقول إن المساند صيانةٌ وحدها**");
+    }
 
     //  **ورسائلُ الحفظ تقول ما وقع** — ولا «ينتظر» فيها.
     same("٢. **رسالةُ الحفظ بمبلغ**", SAVED_CHARGED_MESSAGE,
@@ -952,6 +973,22 @@ async function main() {
       same("   ولا صفَّ معلَّقاً يُستحدَث تعويضاً",
         (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
           [pN]))[0].n, 0);
+      //  ── (م٨.ب) **وعمليةٌ بلا أجور تفشل مراجعتُها** ⟶ تحذيرٌ صادقٌ لها ──
+      //  المهمُّ أن الردَّ يميّزها: لا مبلغَ هناك، فلا يُقال «حُفظ المبلغ».
+      const pNF = await mkPatient("بلا أجورٍ بفشل سجلّ");
+      await mkCase(pNF);
+      const epNF = (await startNoExam(pNF, "prosthetic", "adapter")).body?.id;
+      const saleNF = await sale({
+        patientId: pNF, serviceType: "prosthetic", deviceEpisodeId: epNF,
+        expertUserId: EXPERT, charged: false,
+      });
+      same("م٨.ب **بلا أجور: تنجح وتحذّر، والمبلغُ `null` في الردّ**",
+        [saleNF.status, saleNF.body?.reviewRouted, saleNF.body?.amount],
+        [201, false, null]);
+      same("م٨.ج **والعملُ نهائيٌّ بلا دينار ولا سجلّ**",
+        (({ orders, total, ledger_rows, reviews }) => [orders, total, ledger_rows, reviews])(
+          await moneyOf(pNF)), [1, 0, 0, 0]);
+
       //  **ولا أمرَ تصنيعٍ ثانٍ ولا دينارَ ثانٍ** — الإعادةُ نداءُ السجلّ وحده.
       same("م٩. **والصيانةُ كذلك تحذّر وتبقى نهائية**", await (async () => {
         const pO = await mkPatient("صيانةٌ بفشل سجلّ");
@@ -1051,7 +1088,7 @@ async function main() {
     //  ── وعقدُ الشاشة على التحذير ──
     const dialogWarn = readFileSync(join(process.cwd(),
       "client/src/components/NoExamOperationDialog.tsx"), "utf8");
-    check(dialogWarn.includes("SAVED_REVIEW_FAILED_MESSAGE")
+    check(dialogWarn.includes("reviewFailedCopy")
       && dialogWarn.includes("d?.reviewRouted === false"),
     "ن١١. **والشاشةُ تحذّر حين لا يُسجَّل السجلّ**");
     check(/reviewRouted === false[\s\S]{0,320}variant: "destructive"/.test(dialogWarn),
@@ -1061,6 +1098,37 @@ async function main() {
     "ن١٣. **وبالنصّ الذي طلبه المالك حرفاً**", SAVED_REVIEW_FAILED_MESSAGE);
     check(SAVED_REVIEW_FAILED_HINT.includes("لا تُعِد تسجيل العملية"),
       "ن١٤. **ولا يُطلَب من الموظّف تكرارُ العملية**", SAVED_REVIEW_FAILED_HINT);
+
+    //  ══ **و«بلا أجور» لها صياغتُها الصادقة** ══════════════════════════════
+    //  الصياغةُ الواحدة كانت تَعِد بمالٍ لم يقع على عمليةٍ أُعفيت منه صراحةً.
+    check(SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE
+      === "تم حفظ العملية بلا أجور بنجاح، لكن تعذّر تسجيلها في المراجعة الإشرافية.",
+    "ن١٤.أ **وتحذيرُ «بلا أجور» يقول «بلا أجور»**",
+    SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE);
+    check(!SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE.includes("المبلغ")
+      && !SAVED_NO_CHARGE_REVIEW_FAILED_HINT.includes("المبلغ محفوظ"),
+    "ن١٤.ب **ولا يَعِد بمالٍ لم يقع** — لا في العنوان ولا في الشرح",
+    `${SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE} | ${SAVED_NO_CHARGE_REVIEW_FAILED_HINT}`);
+    check(SAVED_NO_CHARGE_REVIEW_FAILED_HINT.includes("لا مبلغ عليها"),
+      "ن١٤.ج **بل يقول صراحةً إنها بلا مبلغ**", SAVED_NO_CHARGE_REVIEW_FAILED_HINT);
+    //  **وكلاهما يقول: لا تُعِد تسجيل العملية.**
+    for (const [label, hint] of [
+      ["بمبلغ", SAVED_REVIEW_FAILED_HINT],
+      ["بلا أجور", SAVED_NO_CHARGE_REVIEW_FAILED_HINT],
+    ] as const) {
+      check(hint.includes("لا تُعِد تسجيل العملية"),
+        `ن١٤.د **و«${label}» تقول «لا تُعِد تسجيل العملية»**`, hint);
+    }
+    //  **والاختيارُ دالّةٌ واحدة يقرؤها كلُّ سطح** — لا شرطٌ يتكرّر فينحرف.
+    same("ن١٤.هـ **و`reviewFailedCopy` تختار بالمبلغ**",
+      [reviewFailedCopy(150_000).title, reviewFailedCopy(null).title,
+        reviewFailedCopy(undefined).title],
+      [SAVED_REVIEW_FAILED_MESSAGE, SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE,
+        SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE]);
+    check(dialogWarn.includes("reviewFailedCopy(d?.amount ?? null)"),
+      "ن١٤.و **والشاشةُ تنادِيها بمبلغ الردّ** — لا نصَّ منسوخٌ فيها");
+    check(!dialogWarn.includes("SAVED_REVIEW_FAILED_MESSAGE"),
+      "   ولا تختار الصياغةَ بنفسها");
     //  **ومحاولتان لا أكثر** في الخادم.
     check(/for \(let attempt = 1; attempt <= 2; attempt\+\+\)/.test(CHARGE_ROUTES),
       "ن١٥. **ومحاولتان لا أكثر** — لا حلقةَ إعادةٍ مفتوحة");
