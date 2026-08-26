@@ -84,7 +84,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { createJournalForPayment, createJournalForInvoice } from "./accounting/auto_journal";
+import { createJournalForPayment, createJournalForInvoice, createJournalForInvoicePayment } from "./accounting/auto_journal";
 
 const PORT = 6891;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -213,6 +213,33 @@ async function paymentsFor(invoiceId: number): Promise<any[]> {
 async function invoiceRow(id: number): Promise<any> {
   const [r] = await q(`SELECT * FROM invoices WHERE id = $1`, [id]);
   return r;
+}
+
+//  ══ إثباتُ السباق مضبوطاً — لا ضغطتين متزامنتين بلا حكم ═══════════════════
+//  «و» أثبتت أن ضغطتين متزامنتين لا تتجاوزان معاً — لكن أيّتهما تفوز هناك
+//  غيرُ محكومة (والقفلُ يكفي لإثبات ذلك). وهذا القسم يحتاج أكثر: إثبات
+//  **الاتجاهين** كلٍّ على حدة — القبضُ يفوز مرّةً، والحذفُ يفوز مرّةً أخرى.
+//  فيُمسَك القفلُ يدوياً عبر اتّصالٍ خام (`pool.connect()`، معاملةٌ مفتوحة لا
+//  تُغلَق)، فيضمن أيّهما بدأ `FOR UPDATE` أوّلاً — ثمّ يُطلَق الطلبُ الحقيقيُّ
+//  (`/collect` أو `DELETE`) وهو يصطدم بالقفل نفسِه (`lockInvoiceTx` تحديداً،
+//  الدالّةُ الواحدة التي يستعملها البابان)، ثمّ يُحرَّر القفلُ بعد أن يكتب
+//  الاتّصالُ الخام **نفسَ الأثر** الذي كانت الكتابةُ «الفائزة» ستتركه —
+//  فيقرأ الطلبُ المنتظِر الحالةَ الحقيقية بعد استيقاظه، لا افتراضاً.
+//
+//  والإثباتُ أن الطلبَ المنتظِر **حقّاً** يصطدم بالقفل (لا ينجح بالصدفة قبل
+//  أن يُمسَك) عبر `pg_stat_activity.wait_event_type = 'Lock'` — لا عدّاً
+//  زمنياً أعمى.
+async function waitForBlockedLockWaiter(excludePid: number, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = await q<{ pid: number }>(
+      `SELECT pid FROM pg_stat_activity
+        WHERE pid <> $1 AND wait_event_type = 'Lock' AND query ILIKE '%FROM invoices%FOR UPDATE%'`,
+      [excludePid]);
+    if (rows.length > 0) return;
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error("انتهت المهلةُ بانتظار أن يصطدم الطلبُ المتزامن بقفل الصفّ — السباقُ لم يُضبَط");
 }
 
 async function main() {
@@ -561,6 +588,87 @@ async function main() {
     same("ك.د٣. **والفاتورةُ حُذفت فعلاً**", await invoiceRow(invK4.id), undefined);
     same("ك.د٤. **وقيدُ الإصدار عُكس كما كان** — سلوكُ الحذف القديم سليمٌ بلا مساس",
       await journalStatusesFor("invoice", invK4.id), ["reversed"]);
+
+    // ══ ل. السباقُ محكوماً — أيّهما يقفل أوّلاً يحسم، لا الصدفة ═══════════════
+    // العطبُ المُكتشَف بعد «ك»: فحصُ التسوية كان يُقرأ **قبل** معاملة الحذف
+    // بلا قفل، فقبضٌ متزامنٌ (`collectInvoicePayment`، تقفل صفَّها `FOR
+    // UPDATE`) قد ينجز بين القراءة والحذف — فتُحذَف فاتورةٌ وصفُّ دفعتها
+    // الجديد يبقى يتيماً. هذا القسمُ يضبط الفوزَ صراحةً بالاتجاهين معاً.
+    console.log("\n── ل. السباقُ محكوماً — أيّهما يقفل أوّلاً يحسم ──");
+
+    // ── ل.أ: القبضُ يفوز أوّلاً — الحذفُ ينتظر ثمّ يرى تسويةً حقيقية ──
+    const invL1 = await insertIssuedInvoice(p1, 1, 100_000);
+    const rc1 = await pool.connect();
+    try {
+      await rc1.query("BEGIN");
+      const { rows: pidRows1 } = await rc1.query("SELECT pg_backend_pid() AS pid");
+      const rc1Pid = Number(pidRows1[0].pid);
+      //  **القبضُ يقفل الصفَّ أوّلاً — بيقين، لا سباقاً** — الحذفُ لم يُطلَق بعد.
+      await rc1.query("SELECT id FROM invoices WHERE id = $1 FOR UPDATE", [invL1.id]);
+
+      //  والآن يُطلَق الحذفُ الحقيقيّ — سيصطدم بالقفل الذي تحمله `rc1`.
+      const deleteRacePromise = http("DELETE", `/api/invoices/${invL1.id}`, S.admin);
+      await waitForBlockedLockWaiter(rc1Pid);
+
+      //  ومن داخل معاملة القفل، القبضُ «يفوز»: **نفسُ أثر** `applyInvoiceCashTx`
+      //  الحقيقيّ — صفُّ دفعةٍ حقيقيّ + تحديثُ الفاتورة — ثمّ COMMIT يُحرِّر القفل.
+      await rc1.query(
+        `INSERT INTO payments (patient_id, branch_id, amount, date, invoice_id, notes)
+         VALUES ($1,1,$2,NOW(),$3,'قبض فاتورة رقم (سباقٌ محكوم — القبض أوّلاً)')`,
+        [p1, 40_000, invL1.id]);
+      await rc1.query(`UPDATE invoices SET paid_amount = $1, status = 'partial' WHERE id = $2`,
+        [40_000, invL1.id]);
+      await rc1.query("COMMIT");
+      //  والقيدُ المحاسبيّ بعد الـCOMMIT — نفسُ ترتيب `/collect` الحقيقيّ.
+      await createJournalForInvoicePayment(
+        { id: invL1.id, invoiceNumber: invL1.invoiceNumber, branchId: 1, patientId: p1 } as any,
+        40_000, ADMIN);
+
+      const rDel = await deleteRacePromise;
+      same("ل.أ١. **الحذفُ ينتظر القفل ثمّ يقرأ التسويةَ الحقيقية فيُرفَض ٤٠٩**", rDel.status, 409);
+
+      const invL1After = await invoiceRow(invL1.id);
+      check(invL1After !== undefined, "ل.أ٢. **والفاتورةُ ما زالت موجودة**");
+      same("ل.أ٣. **والقبضُ نجح مرّةً واحدة بمقداره بالضبط**", invL1After?.paid_amount, 40_000);
+      const payL1 = await paymentsFor(invL1.id);
+      same("ل.أ٤. **وصفُّ دفعةٍ حقيقيّ واحد مربوطٌ بالفاتورة — لا يتيم**", payL1.length, 1);
+      same("ل.أ٥. **وقيدُ قبضٍ واحدٌ فقط، منشورٌ لا مُعكَس** — لا تكرارَ ولا عكسَ جزئيّ",
+        await journalStatusesFor("invoice_payment", invL1.id), ["posted"]);
+    } finally {
+      rc1.release();
+    }
+
+    // ── ل.ب: الحذفُ يفوز أوّلاً — القبضُ ينتظر ثمّ لا يجد فاتورةً، ولا يتيمَ يبقى ──
+    const invL2 = await insertIssuedInvoice(p1, 1, 100_000);
+    const rc2 = await pool.connect();
+    try {
+      await rc2.query("BEGIN");
+      const { rows: pidRows2 } = await rc2.query("SELECT pg_backend_pid() AS pid");
+      const rc2Pid = Number(pidRows2[0].pid);
+      //  **الحذفُ يقفل الصفَّ أوّلاً — بيقين** — القبضُ لم يُطلَق بعد.
+      await rc2.query("SELECT id FROM invoices WHERE id = $1 FOR UPDATE", [invL2.id]);
+
+      //  والآن يُطلَق القبضُ الحقيقيّ — سيصطدم بالقفل الذي تحمله `rc2`.
+      const collectRacePromise = http("POST", `/api/invoices/${invL2.id}/collect`, S.recv1, { amount: 50_000 });
+      await waitForBlockedLockWaiter(rc2Pid);
+
+      //  ومن داخل معاملة القفل، الحذفُ «يفوز»: **نفسُ أثر** `deleteInvoiceIfUntouched`
+      //  الحقيقيّ لفاتورةٍ نظيفة — حذفُ البنود ثمّ الفاتورة — ثمّ COMMIT يُحرِّر القفل.
+      await rc2.query(`DELETE FROM invoice_items WHERE invoice_id = $1`, [invL2.id]);
+      await rc2.query(`DELETE FROM invoices WHERE id = $1`, [invL2.id]);
+      await rc2.query("COMMIT");
+
+      const rCollect = await collectRacePromise;
+      same("ل.ب١. **القبضُ ينتظر القفل ثمّ يجد الفاتورةَ غائبةً فيفشل ٤٠٤**", rCollect.status, 404);
+
+      check((await invoiceRow(invL2.id)) === undefined, "ل.ب٢. **والفاتورةُ محذوفةٌ فعلاً**");
+      same("ل.ب٣. **ولا صفَّ دفعةٍ وُلد إطلاقاً — لا يتيمَ يشير إلى فاتورةٍ محذوفة**",
+        (await paymentsFor(invL2.id)).length, 0);
+      same("ل.ب٤. **ولا قيدَ قبضٍ وُلد** — لا مالَ تحرّك فلا شيء يُعكَس أو يُكرَّر",
+        (await journalStatusesFor("invoice_payment", invL2.id)).length, 0);
+    } finally {
+      rc2.release();
+    }
 
   } finally {
     await cleanup();

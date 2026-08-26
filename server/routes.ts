@@ -64,7 +64,7 @@ import {
   createJournalForVendorPayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
-import { collectInvoicePayment, createInvoiceWithCash, invoiceHasFinancialSettlement, InvoiceCashError } from "./accounting/invoice_cash";
+import { collectInvoicePayment, createInvoiceWithCash, deleteInvoiceIfUntouched, InvoiceCashError } from "./accounting/invoice_cash";
 import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
@@ -5918,46 +5918,36 @@ export async function registerRoutes(
 
     const id = parseInt(req.params.id);
     try {
-      const existing = await storage.getInvoiceById(id);
-      // Branch isolation for branch_manager.
-      if (!isAdmin && branchSession?.branchId && existing && existing.branchId !== branchSession.branchId) {
-        return res.status(403).json({ error: "لا يمكنك حذف فاتورة من فرع آخر" });
-      }
+      // ══ الحذفُ الصريحُ ليس آليّةَ عكسٍ ماليّ، والفحصُ يقع تحت القفل نفسِه
+      // الذي يستعمله القبضُ (٢٠٢٦-٠٨-٢٦) ══════════════════════════════════
+      // كان الفحصُ («أعليها تسوية؟») يُقرأ هنا بلا قفل، ثمّ يُفتَح حذفٌ لاحقاً
+      // منفصل — نافذةٌ حقيقية: قبضٌ متزامنٌ (`collectInvoicePayment`، الذي
+      // يقفل الصفَّ `FOR UPDATE`) قد ينجز دفعتَه بين القراءة وبين الحذف، فتُحذَف
+      // فاتورةٌ وصفُّ دفعتها الجديد يبقى يتيماً (`payments.invoice_id` بلا
+      // مفتاحٍ أجنبيّ عمداً — درسُ ٠٣٨). `deleteInvoiceIfUntouched` تنادي
+      // **نفسَ** قفل `collectInvoicePayment`، فالفحصُ والحذفُ قرارٌ ذرّيٌّ
+      // واحد لا يتنازعه قبضٌ متزامن. التفصيلُ في `accounting/invoice_cash.ts`.
+      await deleteInvoiceIfUntouched({
+        invoiceId: id,
+        isAdmin: Boolean(isAdmin),
+        sessionBranchId: branchSession?.branchId ?? null,
+        actor: {
+          userId, userName: branchSession?.displayName ?? null,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        },
+      });
 
-      // ══ الحذفُ الصريحُ ليس آليّةَ عكسٍ ماليّ (٢٠٢٦-٠٨-٢٦) ═══════════════
-      // القبضُ على فاتورةٍ صار يكتب صفَّ دفعةٍ حقيقياً وقيدَ `invoice_payment`
-      // (`applyInvoiceCashTx`)، و`reverseJournalForSource` أدناه يعكس **قيداً
-      // واحداً فقط** (`LIMIT 1`). ففاتورةٌ عليها قبضتان كانت ستُحذَف وصفّا
-      // دفعتيها يبقيان قائمين، بينما يُعكَس قيدُ إحداهما وحدها — فيختلف
-      // الوارِدُ التشغيليّ عن الدفتر المزدوج. **ولا حلَّ لهذا هنا**: لا حذفَ
-      // للدفعات ولا عكسَ جماعيّاً لها — تلك آليّةُ إلغاءٍ محاسبيّ لم تُبنَ
-      // بعد. القاعدةُ الآمنة الوحيدة الآن: **فاتورةٌ عليها مالٌ مسجَّل لا
-      // تُحذَف صراحةً** حتى تُبنى تلك الآليّة. فاتورةٌ لم تُقبَض عليها قطّ
-      // (`paid_amount = 0` ولا صفَّ دفعةٍ) تبقى على سلوكها القائم بلا تغيير.
-      if (existing && await invoiceHasFinancialSettlement(existing)) {
-        return res.status(409).json({
-          error: "لا يمكن حذف فاتورة عليها دفعات. يجب معالجة الدفعات أو إلغاء الفاتورة محاسبياً أولاً.",
-        });
-      }
-
-      // Reverse related journal entries first (safe to fail, logged)
+      // القيدان خارج معاملة الحذف عمداً — عرفُ «الآمن للفشل» القائم
+      // (`createJournalEntry`/`reverseJournalEntry` يفتحان مسبحَ اتّصالٍ
+      // خاصّاً بهما، فلا ينضمّان إلى معاملة الحذف). والذرّيةُ التي تهمّ
+      // محفوظةٌ فعلاً: القفلُ أعلاه أثبت — قبل أن يُكتب حرفٌ — أن لا مالَ على
+      // الفاتورة، فحذفُها ليس عمليةَ عكسٍ ماليّ يحتاج تزامناً مع هذا القيد.
       await reverseJournalForSource("invoice", id, userId, "حذف الفاتورة");
       await reverseJournalForSource("invoice_payment", id, userId, "حذف الفاتورة");
 
-      // Delete items first, then invoice
-      await storage.deleteInvoiceItems(id);
-      await storage.deleteInvoice(id);
-      await logAudit({
-        entityType: "invoice",
-        entityId: id,
-        action: "delete",
-        userId,
-        userName: branchSession?.displayName ?? null,
-        branchId: existing?.branchId ?? null,
-        oldValues: existing ? { total: existing.total } : null,
-      });
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof InvoiceCashError) return res.status(err.status).json({ error: err.message });
       res.status(400).json({ error: err.message });
     }
   });

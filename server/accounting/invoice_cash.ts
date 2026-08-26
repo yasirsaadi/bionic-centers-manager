@@ -173,16 +173,27 @@ export async function applyInvoiceCashTx(
 }
 
 /**
- * **هل على الفاتورة تسويةٌ مالية؟** — الحارسُ الوحيد الذي يقف أمام
- * `DELETE /api/invoices/:id` (٢٠٢٦-٠٨-٢٦).
+ * **هل على الفاتورة تسويةٌ مالية؟** — الحارسُ الذي يقف أمام حذف الفاتورة.
  *
- * ══ لماذا شرطان لا شرطٌ واحد ═══════════════════════════════════════════
- * `paid_amount > 0` يكفي عادةً، لكنه **قيمةٌ مشتقّة** تُكتب من نفس الكتابة
- * التي تُنشئ صفَّ الدفعة (`applyInvoiceCashTx`) — فرصةٌ لانحرافٍ تاريخيّ
- * (تعديلٌ يدويّ قديم، أو صفٌّ من مسارٍ سابق) تترك `paid_amount = 0` بينما
- * صفُّ دفعةٍ حقيقيّ **لا يزال يشير** إلى هذه الفاتورة. فالفحصُ الثاني —
- * وجودُ صفٍّ في `payments` بـ`invoice_id` هذه الفاتورة — **دفاعيٌّ صريح**:
- * لا يفترض أن العمودَ المشتقَّ صادقٌ دائماً.
+ * ══ `tx` إلزاميّ — لا نسخةَ خارج القفل (٢٠٢٦-٠٨-٢٦، إغلاقُ سباق) ══════════
+ * كانت هذه الدالّةُ تُقرأ **قبل** معاملة الحذف، ومعاملةُ الحذف تُفتَح
+ * لاحقاً منفصلة. فسباقٌ كان ممكناً: يقرأ الحذفُ «لا تسوية»، ثمّ يقفل قبضٌ
+ * متزامنٌ صفَّ الفاتورة وينجز دفعتَه ويُنهي معاملتَه، ثمّ يمضي الحذفُ على
+ * قراءةٍ باتت كاذبة — فتُحذَف الفاتورةُ وصفُّ الدفعة الجديد يبقى يشير إلى
+ * فاتورةٍ لم تعد موجودة (`payments.invoice_id` بلا مفتاحٍ أجنبيّ عمداً،
+ * فلا شيء يمنع ذلك على مستوى القاعدة).
+ *
+ * فصار التوقيعُ نفسُه يمنع الاستعمالَ الخطأ: **لا `tx` ⟶ لا تُستدعى**.
+ * البابُ الوحيد الآن `deleteInvoiceIfUntouched` أدناه، وتُنادى **تحت نفس
+ * قفل الصفّ** (`lockInvoiceTx`) الذي يستعمله `collectInvoicePayment` بعينه
+ * — فلا يمكن لقراءةٍ هنا وكتابةٍ هناك أن تتزاحما على الفاتورة نفسِها.
+ *
+ * ══ ولماذا شرطان لا شرطٌ واحد ════════════════════════════════════════════
+ * `paid_amount > 0` يكفي عادةً، لكنه **قيمةٌ مشتقّة** — فرصةٌ لانحرافٍ
+ * تاريخيّ (تعديلٌ يدويّ قديم، أو صفٌّ من مسارٍ سابق) تترك `paid_amount = 0`
+ * بينما صفُّ دفعةٍ حقيقيّ **لا يزال يشير** إلى هذه الفاتورة. فالفحصُ
+ * الثاني — وجودُ صفٍّ في `payments` بـ`invoice_id` هذه الفاتورة —
+ * **دفاعيٌّ صريح**: لا يفترض أن العمودَ المشتقَّ صادقٌ دائماً.
  *
  * ══ وما لا تفعله هذه الدالّة ═════════════════════════════════════════════
  * لا تحذف شيئاً ولا تعكس شيئاً ولا تُخمِّن نيّةً («ربما يريد استرجاع
@@ -190,10 +201,11 @@ export async function applyInvoiceCashTx(
  * والقرارُ (منعُ الحذف) يتّخذه المستدعي.
  */
 export async function invoiceHasFinancialSettlement(
+  tx: any,
   invoice: { id: number; paidAmount: number | null },
 ): Promise<boolean> {
   if ((invoice.paidAmount ?? 0) > 0) return true;
-  const r = await db.execute(sql`SELECT 1 FROM payments WHERE invoice_id = ${invoice.id} LIMIT 1`);
+  const r = await tx.execute(sql`SELECT 1 FROM payments WHERE invoice_id = ${invoice.id} LIMIT 1`);
   return (r.rows ?? []).length > 0;
 }
 
@@ -218,6 +230,101 @@ export async function collectInvoicePayment(params: {
     }
 
     return await applyInvoiceCashTx(tx, invoice, params.amount, params.actor);
+  });
+}
+
+/**
+ * **البابُ الوحيد لحذف فاتورةٍ لم تُمسَّ مالياً بعد** (٢٠٢٦-٠٨-٢٦).
+ *
+ * ══ العطبُ الذي يغلقه — سباقٌ بين حارسٍ وقفل ═══════════════════════════════
+ * كان الفحصُ («أعليها تسوية؟») يقع **قبل** معاملة الحذف بلا قفل، ومعاملةُ
+ * الحذف تُفتَح لاحقاً منفصلة. فتسلسلٌ كهذا كان ممكناً:
+ *
+ *   ١) الحذفُ يقرأ الفاتورةَ: لا تسويةَ بعد.
+ *   ٢) قبضٌ متزامنٌ يقفل الصفَّ (`collectInvoicePayment`)، يُنجز دفعتَه،
+ *      يُنهي معاملتَه.
+ *   ٣) الحذفُ يمضي على قراءةٍ باتت كاذبة: يحذف الفاتورة.
+ *
+ * فتبقى الدفعةُ الحقيقية التي أُنشئت في (٢) صفّاً يشير بـ`invoice_id` إلى
+ * فاتورةٍ لم تعد موجودة — و`payments.invoice_id` **بلا مفتاحٍ أجنبيّ عمداً**
+ * (نفسُ درسِ ٠٣٨: الكاسكيدُ يحذف الفواتير قبل الدفعات)، فلا شيء في القاعدة
+ * يمنع هذا اليتم.
+ *
+ * ══ فالحلّ: نفسُ القفل، لا فحصٌ ثم قفلٌ لاحق ═══════════════════════════════
+ * تنادي `lockInvoiceTx` **بعينها** التي ينادِيها `collectInvoicePayment` —
+ * فالحذفُ والقبضُ يتنازعان قفلَ الصفّ نفسَه، لا قفلين مختلفين قد يتعايشان.
+ * أيّهما يصل أوّلاً يُنهي معاملتَه كاملةً قبل أن يبدأ الآخر يقرأ: لا تداخل.
+ *
+ * **قبضٌ يفوز أوّلاً** ⟶ يُنجز دفعتَه ويُحرّك `paid_amount`، ثمّ يقرأ الحذفُ
+ * (بعد انتظاره القفل) الصفَّ **المحدَّث** فيرى تسويةً حقيقية ⟶ يُرفَض ٤٠٩.
+ * **حذفٌ يفوز أوّلاً** ⟶ يرى فاتورةً نظيفة فيحذفها فعلاً، والقبضُ المتزامن
+ * (بعد انتظاره القفل) يجد الصفَّ **غائباً** فـ`lockInvoiceTx` تعيد `undefined`
+ * ⟶ `collectInvoicePayment` يرمي «الفاتورة غير موجودة» — ولا صفَّ دفعةٍ
+ * يُكتب، ولا يتيمَ يبقى.
+ *
+ * ══ وما تفعله بالضبط، بالترتيب، تحت القفل نفسِه ═══════════════════════════
+ * قفلُ الصفّ ⟶ فحصُ نطاق الفرع من الصفّ **المقفول** (لا قراءةٍ سابقة) ⟶
+ * `invoiceHasFinancialSettlement` (إلزاميّةُ `tx` تمنع استعمالَها بلا قفل) ⟶
+ * حذفُ البنود ثمّ الفاتورة ⟶ سطرُ تدقيقٍ **داخل المعاملة نفسِها** (فلا يُكتب
+ * تدقيقُ حذفٍ لم يقع، ولا يقع حذفٌ بلا أثر).
+ *
+ * ══ وما يبقى خارج هذه المعاملة عمداً ═══════════════════════════════════════
+ * عكسُ قيدَي `invoice` و`invoice_payment` — عرفُ «الآمن للفشل» القائم:
+ * `createJournalEntry`/`reverseJournalEntry` يفتحان مسبحَ اتّصالٍ خاصّاً بهما
+ * فلا يمكن أن ينضمّا إلى معاملة الحذف. **والذرّيةُ التي تهمّ محفوظةٌ فعلاً**:
+ * القفلُ يثبت — قبل أن يُكتب حرفٌ — أن لا مالَ على الفاتورة، فحذفُها ليس
+ * عمليةَ عكسٍ ماليّ. المستدعي ينادي `reverseJournalForSource` **بعد** نجاح
+ * هذه الدالّة، تماماً كما كان — والترتيبُ بين الحذف والعكس لم يكن ذرّياً يوماً
+ * (كلاهما مستقلّان أصلاً)، فتأخيرُ العكس إلى ما بعد الحذف الذرّيّ لا يُضعف
+ * شيئاً كان قائماً.
+ */
+export async function deleteInvoiceIfUntouched(params: {
+  invoiceId: number;
+  /** **نفسُ الشرط القديم بحرفه** — لا يُستبدَل بـ`accessibleBranches` المتعدّد
+   *  الذي يستعمله `/collect`؛ فرعُ الجلسة الواحد هو ما كان يُفحَص هنا دائماً. */
+  isAdmin: boolean;
+  sessionBranchId: number | null;
+  actor: InvoiceCashActor;
+}): Promise<{ deleted: boolean; invoiceBranchId: number | null; invoiceTotal: number | null }> {
+  return await db.transaction(async (tx) => {
+    const invoice = await lockInvoiceTx(tx, params.invoiceId);
+
+    //  **فاتورةٌ غير موجودة أصلاً تمضي كما كانت** — سلوكٌ سابقٌ لهذه الدفعة:
+    //  الحذفُ على معرّفٍ غير موجود كان (وما زال) عمليةً لا أثرَ لها تُرجع
+    //  نجاحاً. لا يُخترَع هنا ٤٠٤ لم يكن موجوداً.
+    if (invoice) {
+      if (!params.isAdmin && params.sessionBranchId && invoice.branchId !== params.sessionBranchId) {
+        throw new InvoiceCashError("لا يمكنك حذف فاتورة من فرع آخر", 403);
+      }
+      if (await invoiceHasFinancialSettlement(tx, invoice)) {
+        throw new InvoiceCashError(
+          "لا يمكن حذف فاتورة عليها دفعات. يجب معالجة الدفعات أو إلغاء الفاتورة محاسبياً أولاً.",
+          409,
+        );
+      }
+    }
+
+    await storage.deleteInvoiceItems(params.invoiceId, tx);
+    await storage.deleteInvoice(params.invoiceId, tx);
+
+    await logAudit({
+      entityType: "invoice",
+      entityId: params.invoiceId,
+      action: "delete",
+      userId: params.actor.userId ?? null,
+      userName: params.actor.userName ?? null,
+      branchId: invoice?.branchId ?? null,
+      oldValues: invoice ? { total: invoice.total } : null,
+      ipAddress: params.actor.ipAddress ?? null,
+      userAgent: params.actor.userAgent ?? null,
+      tx,
+    });
+
+    return {
+      deleted: true,
+      invoiceBranchId: invoice?.branchId ?? null,
+      invoiceTotal: invoice?.total ?? null,
+    };
   });
 }
 

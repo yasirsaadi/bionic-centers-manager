@@ -3537,8 +3537,8 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteInvoice(id: number): Promise<void> {
-    await db.delete(invoices).where(eq(invoices.id, id));
+  async deleteInvoice(id: number, tx?: any): Promise<void> {
+    await (tx ?? db).delete(invoices).where(eq(invoices.id, id));
   }
 
   async getNextInvoiceNumber(): Promise<string> {
@@ -3577,8 +3577,8 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async deleteInvoiceItems(invoiceId: number): Promise<void> {
-    await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+  async deleteInvoiceItems(invoiceId: number, tx?: any): Promise<void> {
+    await (tx ?? db).delete(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
   }
 
   // Invoice Stats
