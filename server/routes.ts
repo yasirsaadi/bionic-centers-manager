@@ -64,6 +64,7 @@ import {
   createJournalForVendorPayment,
   reverseJournalForSource,
 } from "./accounting/auto_journal";
+import { collectInvoicePayment, createInvoiceWithCash, InvoiceCashError } from "./accounting/invoice_cash";
 import { isAiEnabled } from "./ai/provider";
 import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
@@ -277,6 +278,17 @@ export async function registerRoutes(
     if (list.length > 0) return list;
     return branchSession?.branchId ? [branchSession.branchId] : [];
   };
+
+  // Who may collect cash against an invoice — the ONE predicate for both
+  // /api/invoices/:id/collect and its deprecated alias /api/invoices/:id/payment
+  // (invoice cash truth, 2026-08-26). Kept in one place so the two doors
+  // can never drift on who is allowed through them.
+  const canCollectInvoice = (branchSession: any): boolean =>
+    Boolean(
+      branchSession?.isAdmin
+      || branchSession?.permissions?.canManageAccounting
+      || branchSession?.permissions?.canAddPayments,
+    );
 
   // Helper to check permissions from session
   const getPermissions = (req: any) => {
@@ -5718,7 +5730,18 @@ export async function registerRoutes(
       // for any existing client; new code passes false explicitly when
       // the invoice is for a specific service rather than the full
       // patient account.
-      const { items, applyPriorCredit, ...invoiceData } = req.body;
+      //
+      // paidNow is an auxiliary cash-at-creation hint (invoice cash truth,
+      // 2026-08-26): an up-front amount the patient pays the moment the
+      // invoice is issued. It used to be replayed as a SEPARATE call to the
+      // old, now-deprecated /payment endpoint AFTER the invoice already
+      // existed — a window where the invoice could be created (and prior
+      // credit applied) while the up-front cash failed to attach, reported
+      // to the user as a generic creation error. It is now processed in the
+      // SAME server operation as creation, items, and prior-credit
+      // allocation (createInvoiceWithCash): either all of it commits, or
+      // none of it does.
+      const { items, applyPriorCredit, paidNow, ...invoiceData } = req.body;
       const shouldApplyCredit = applyPriorCredit !== false;
 
       // Non-admins can only file invoices for their own branch — pin
@@ -5736,76 +5759,38 @@ export async function registerRoutes(
         ? String(branchSession.userId)
         : user?.claims?.sub || "unknown";
 
-      const invoice = await storage.createInvoice(invoiceData);
+      const actor = {
+        userId, userName: branchSession?.displayName ?? null,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      };
 
-      // Add invoice items
-      const createdItems = [];
-      if (items && Array.isArray(items)) {
-        for (const item of items) {
-          const created = await storage.createInvoiceItem({
-            ...item,
-            invoiceId: invoice.id,
-          });
-          createdItems.push(created);
-        }
-      }
-
-      // Auto-apply prior credit. Many patients pay session-by-session
-      // (recorded in the payments table) BEFORE we issue them an
-      // invoice. Without this step, the new invoice would show
-      // paidAmount = 0 even though they've effectively paid most or
-      // all of it. We compute the unallocated credit and apply it as
-      // paidAmount automatically.
-      //
-      //   credit = sum(payments) - sum(paidAmount on patient's other invoices)
-      //   applied = min(credit, invoice.total)
-      //
-      // Note: the original session payments already created their own
-      // Cr Revenue / Dr Cash journal entries. Issuing this invoice now
-      // creates Dr AR / Cr Revenue for the full total. That double-
-      // counts revenue when prior credit applies. Accepting this for
-      // now — the alternative is a full deposit/customer-credit
-      // refactor of the accounting model. We mirror the existing
-      // user practice of writing both session payments and invoices.
-      let creditApplied = 0;
-      if (shouldApplyCredit && invoice.patientId) {
-        const [allPayments, allInvoicesForPatient] = await Promise.all([
-          storage.getPaymentsByPatientId(invoice.patientId),
-          storage.getInvoices(undefined, undefined, invoice.patientId),
-        ]);
-        const sessionPaid = allPayments.reduce((s, p) => s + p.amount, 0);
-        const otherInvoicesPaid = allInvoicesForPatient
-          .filter((i) => i.id !== invoice.id)
-          .reduce((s, i) => s + (i.paidAmount || 0), 0);
-        const availableCredit = Math.max(0, sessionPaid - otherInvoicesPaid);
-        creditApplied = Math.min(availableCredit, invoice.total);
-        if (creditApplied > 0) {
-          const newStatus = creditApplied >= invoice.total ? "paid" : "partial";
-          await storage.updateInvoice(invoice.id, {
-            paidAmount: creditApplied,
-            status: newStatus,
-          });
-          invoice.paidAmount = creditApplied;
-          invoice.status = newStatus;
-        }
-      }
-
-      // Auto-journal: Dr AR / Cr Revenue (safe to fail, logged)
-      await createJournalForInvoice(invoice, createdItems, userId);
-
-      // Audit log on invoice create.
-      await logAudit({
-        entityType: "invoice",
-        entityId: invoice.id,
-        action: "create",
-        userId,
-        userName: branchSession?.displayName ?? null,
-        branchId: invoice.branchId,
-        newValues: { total: invoice.total, patientId: invoice.patientId, itemCount: createdItems.length, creditApplied },
+      // Note: prior-credit allocation still double-counts revenue when it
+      // applies (the original session payments already posted their own
+      // Cr Revenue / Dr Cash entries, and issuing this invoice posts a
+      // second Dr AR / Cr Revenue for the full total) — a pre-existing
+      // accounting-model note this PR does not touch. paidNow is unrelated:
+      // it is fresh cash collected right now, and posts its own correct
+      // Dr Cash / Cr AR entry below, same as /collect.
+      const result = await createInvoiceWithCash({
+        invoiceData,
+        items: Array.isArray(items) ? items : [],
+        applyPriorCredit: shouldApplyCredit,
+        paidNow: Number(paidNow) > 0 ? Number(paidNow) : 0,
+        actor,
       });
 
-      res.json({ ...invoice, creditApplied });
+      // Auto-journal (safe to fail, logged) — issuance first, then the
+      // up-front collection's own entry, exactly like /collect's ordering.
+      await createJournalForInvoice(result.invoice, result.items, userId);
+      if (result.payment) {
+        await createJournalForInvoicePayment(result.invoice, result.payment.amount, userId);
+      }
+
+      res.json({ ...result.invoice, creditApplied: result.creditApplied });
     } catch (err: any) {
+      if (err instanceof InvoiceCashError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       res.status(400).json({ error: err.message });
     }
   });
@@ -5895,54 +5880,27 @@ export async function registerRoutes(
   // invoice_id) and updates the invoice's paidAmount/status with it.
   app.post("/api/invoices/:id/collect", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
-    const isAdmin = branchSession?.isAdmin;
-    const canCollect = isAdmin || branchSession?.permissions?.canManageAccounting || branchSession?.permissions?.canAddPayments;
-    if (!canCollect) return res.status(403).json({ error: "غير مصرح لك بتسجيل القبض" });
+    if (!canCollectInvoice(branchSession)) return res.status(403).json({ error: "غير مصرح لك بتسجيل القبض" });
 
     try {
       const id = parseInt(req.params.id);
-      const invoice = await storage.getInvoiceById(id);
-      if (!invoice) return res.status(404).json({ error: "الفاتورة غير موجودة" });
-
-      const allowedInv = accessibleBranchesFor(req);
-      if (allowedInv !== null && !allowedInv.includes(invoice.branchId)) {
-        return res.status(403).json({ error: "لا يمكنك القبض على فاتورة من فرع آخر" });
-      }
-
-      const amount = Math.round(Number(req.body?.amount) || 0);
-      const remaining = invoice.total - (invoice.paidAmount || 0);
-      if (amount <= 0) return res.status(400).json({ error: "أدخل مبلغاً صحيحاً" });
-      if (amount > remaining) {
-        return res.status(400).json({ error: `المبلغ أكبر من المتبقي على الفاتورة (${remaining.toLocaleString("en-US")} د.ع)` });
-      }
-
-      const payment = await storage.createPayment({
-        patientId: invoice.patientId,
-        branchId: invoice.branchId,
-        amount,
-        notes: `قبض فاتورة رقم ${invoice.invoiceNumber ?? id}`,
+      const result = await collectInvoicePayment({
         invoiceId: id,
-      } as any);
-      await createJournalForPayment(payment, branchSession?.userId ?? null);
-
-      const newPaid = (invoice.paidAmount || 0) + amount;
-      const updatedInvoice = await storage.updateInvoice(id, {
-        paidAmount: newPaid,
-        status: newPaid >= invoice.total ? "paid" : "partial",
+        amount: Number(req.body?.amount) || 0,
+        allowedBranches: accessibleBranchesFor(req),
+        actor: {
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        },
       });
 
-      await logAudit({
-        entityType: "invoice", entityId: id, action: "update",
-        userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-        branchId: invoice.branchId,
-        oldValues: { paidAmount: invoice.paidAmount, status: invoice.status },
-        newValues: { paidAmount: newPaid, status: updatedInvoice?.status, paymentId: payment.id },
-        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `قبض ${amount.toLocaleString("en-US")} د.ع على الفاتورة`,
-      });
+      // Auto-journal: Dr Cash / Cr AR (safe to fail, logged) — after COMMIT,
+      // same safe-to-fail convention as every other auto-journal call.
+      await createJournalForInvoicePayment(result.invoice, result.newPaid - result.previousPaid, branchSession?.userId ?? null);
 
-      res.json({ invoice: updatedInvoice, payment });
+      res.json({ invoice: result.invoice, payment: result.payment });
     } catch (err: any) {
+      if (err instanceof InvoiceCashError) return res.status(err.status).json({ error: err.message });
       console.error("Error collecting invoice payment:", err);
       res.status(500).json({ error: "تعذّر تسجيل القبض" });
     }
@@ -5987,51 +5945,49 @@ export async function registerRoutes(
     }
   });
 
-  // Record payment for invoice — admin or accountant (canManageAccounting)
+  // ---- «تسجيل دفعة» على فاتورة — DEPRECATED COMPATIBILITY ALIAS -------------
+  // Invoice cash truth (2026-08-26): this endpoint used to be a SECOND,
+  // independent money implementation — it wrote the correct journal
+  // (Dr Cash / Cr AR) but created NO real `payments` row (so the cash was
+  // invisible to الوارد/branch cash readers), skipped branch-scope checks
+  // entirely, and validated overpayment more weakly than /collect.
+  //
+  // It is kept ONLY for any stale client still calling it — the CURRENT
+  // Accounting.tsx never does (invoice creation sends paidNow to POST
+  // /api/invoices directly; see createInvoiceWithCash). It now delegates to
+  // the EXACT SAME canonical writer as /collect — same permissions, same
+  // server-side branch scope, same row lock, same overpayment rule, same
+  // real payment row, same journal, same audit. There is no independent
+  // money logic left here to drift. May be removed once nothing calls it.
   app.post("/api/invoices/:id/payment", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
-    const isAdmin = branchSession?.isAdmin;
-    const canRecord = isAdmin || branchSession?.permissions?.canManageAccounting;
-    const userId = branchSession?.userId ?? null;
-
-    if (!canRecord) {
+    if (!canCollectInvoice(branchSession)) {
       return res.status(403).json({ error: "غير مصرح لك بتسجيل المدفوعات" });
     }
 
-    const id = parseInt(req.params.id);
-    const { amount } = req.body;
-
     try {
-      const invoice = await storage.getInvoiceById(id);
-      if (!invoice) {
-        return res.status(404).json({ error: "الفاتورة غير موجودة" });
-      }
-
-      const paymentAmount = Number(amount) || 0;
-      if (paymentAmount <= 0) {
-        return res.status(400).json({ error: "مبلغ الدفعة يجب أن يكون أكبر من صفر" });
-      }
-
-      const newPaidAmount = (invoice.paidAmount || 0) + paymentAmount;
-      let newStatus = 'partial';
-
-      if (newPaidAmount >= invoice.total) {
-        newStatus = 'paid';
-      } else if (newPaidAmount === 0) {
-        newStatus = 'pending';
-      }
-
-      const updated = await storage.updateInvoice(id, {
-        paidAmount: newPaidAmount,
-        status: newStatus
+      const id = parseInt(req.params.id);
+      const result = await collectInvoicePayment({
+        invoiceId: id,
+        amount: Number(req.body?.amount) || 0,
+        allowedBranches: accessibleBranchesFor(req),
+        actor: {
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        },
       });
 
       // Auto-journal: Dr Cash / Cr AR (safe to fail, logged)
-      await createJournalForInvoicePayment(invoice, paymentAmount, userId);
+      await createJournalForInvoicePayment(result.invoice, result.newPaid - result.previousPaid, branchSession?.userId ?? null);
 
-      res.json(updated);
+      // Response shape preserved for whatever stale client still calls this
+      // (the bare updated invoice, not the {invoice, payment} wrapper /collect
+      // returns) — a compatibility alias changes behaviour, not contract.
+      res.json(result.invoice);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      if (err instanceof InvoiceCashError) return res.status(err.status).json({ error: err.message });
+      console.error("Error recording invoice payment (deprecated /payment alias):", err);
+      res.status(500).json({ error: "تعذّر تسجيل الدفعة" });
     }
   });
 

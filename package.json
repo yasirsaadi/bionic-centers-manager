@@ -10,6 +10,7 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "test:db-safety": "tsx server/db_safety.test.ts",
+    "test:invoice-cash": "tsx server/invoice_cash.test.ts",
     "test:manufacturing": "tsx server/manufacturing/isolation.test.ts",
     "test:mold-stage": "tsx server/manufacturing/mold_stage.test.ts",
     "test:stages": "tsx server/manufacturing/stages.test.ts",

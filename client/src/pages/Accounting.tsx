@@ -2018,17 +2018,14 @@ export default function Accounting() {
   // Invoice mutations
   const createInvoiceMutation = useMutation({
     mutationFn: async (data: any) => {
-      // Strip the client-only "paidNow" hint before sending — the server
-      // doesn't accept it on the invoice schema. We replay it as a
-      // proper payment call after the invoice is created so the AR/Cash
-      // journal entries land correctly.
-      const { paidNow, ...invoicePayload } = data;
-      const res = await apiRequest("POST", "/api/invoices", invoicePayload);
-      const invoice = await res.json();
-      if (paidNow && paidNow > 0 && invoice?.id) {
-        await apiRequest("POST", `/api/invoices/${invoice.id}/payment`, { amount: paidNow });
-      }
-      return invoice;
+      // paidNow travels straight through to the server now (invoice cash
+      // truth, 2026-08-26): creation, items, prior-credit allocation, and
+      // any up-front cash are one atomic server operation
+      // (server/accounting/invoice_cash.ts: createInvoiceWithCash), so
+      // there is no separate /payment call and no window where the invoice
+      // exists but the up-front cash failed to attach.
+      const res = await apiRequest("POST", "/api/invoices", data);
+      return res.json();
     },
     onSuccess: (invoice: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });

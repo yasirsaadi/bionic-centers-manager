@@ -2710,8 +2710,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Payments
-  async getPaymentsByPatientId(patientId: number): Promise<Payment[]> {
-    return await db.select().from(payments).where(eq(payments.patientId, patientId)).orderBy(desc(payments.date));
+  async getPaymentsByPatientId(patientId: number, tx?: any): Promise<Payment[]> {
+    return await (tx ?? db).select().from(payments).where(eq(payments.patientId, patientId)).orderBy(desc(payments.date));
   }
   async getPaymentsByPatientIds(patientIds: number[]): Promise<Payment[]> {
     if (patientIds.length === 0) return [];
@@ -3511,7 +3511,7 @@ export class DatabaseStorage implements IStorage {
   //  **والفواتيرُ خارج القوائم الفعّالة معه** (مراجعة ٢٠٢٦-٠٨-٢٤ — القسم ب):
   //  صفُّ الفاتورة يبقى كما هو، لكن قائمةَ المحاسبة النشِطة لا تحمل فاتورةَ
   //  ملفٍّ خرج من النظام — نفسُ القاعدة على الدفعة وقيد الكلفة.
-  async getInvoices(branchId?: number, status?: string, patientId?: number, startDate?: string, endDate?: string): Promise<Invoice[]> {
+  async getInvoices(branchId?: number, status?: string, patientId?: number, startDate?: string, endDate?: string, tx?: any): Promise<Invoice[]> {
     const conditions: any[] = [belongsToActivePatientSql("invoices")];
     if (branchId) conditions.push(eq(invoices.branchId, branchId));
     if (status) conditions.push(eq(invoices.status, status));
@@ -3519,7 +3519,7 @@ export class DatabaseStorage implements IStorage {
     if (startDate) conditions.push(gte(invoices.invoiceDate, startDate));
     if (endDate) conditions.push(lte(invoices.invoiceDate, endDate));
 
-    return await db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
+    return await (tx ?? db).select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
   }
 
   async getInvoiceById(id: number): Promise<Invoice | undefined> {
@@ -3527,13 +3527,13 @@ export class DatabaseStorage implements IStorage {
     return invoice;
   }
 
-  async createInvoice(insertInvoice: InsertInvoice): Promise<Invoice> {
-    const [invoice] = await db.insert(invoices).values(insertInvoice).returning();
+  async createInvoice(insertInvoice: InsertInvoice, tx?: any): Promise<Invoice> {
+    const [invoice] = await (tx ?? db).insert(invoices).values(insertInvoice).returning();
     return invoice;
   }
 
-  async updateInvoice(id: number, invoice: Partial<InsertInvoice>): Promise<Invoice | undefined> {
-    const [updated] = await db.update(invoices).set(invoice).where(eq(invoices.id, id)).returning();
+  async updateInvoice(id: number, invoice: Partial<InsertInvoice>, tx?: any): Promise<Invoice | undefined> {
+    const [updated] = await (tx ?? db).update(invoices).set(invoice).where(eq(invoices.id, id)).returning();
     return updated;
   }
 
@@ -3572,8 +3572,8 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(invoiceItems.invoiceId, invoiceIds));
   }
 
-  async createInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem> {
-    const [created] = await db.insert(invoiceItems).values(item).returning();
+  async createInvoiceItem(item: InsertInvoiceItem, tx?: any): Promise<InvoiceItem> {
+    const [created] = await (tx ?? db).insert(invoiceItems).values(item).returning();
     return created;
   }
 
