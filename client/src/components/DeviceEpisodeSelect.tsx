@@ -42,21 +42,35 @@ export function describeEpisode(e: DeviceEpisodeOption): string {
   return parts.join(" · ");
 }
 
-/** يقرأ حلقات المريض ويصفّيها بالخدمة والحالات المقبولة لهذا الغرض. */
+/**
+ * يقرأ حلقات المريض ويصفّيها بالخدمة والحالات المقبولة لهذا الغرض.
+ *
+ * ══ **وحالةُ الاستعلام تخرج معه — لا `[]` تُخفي فشلاً أو تحميلاً** ═══════
+ * `data?.episodes ?? []` وحدها كانت تجعل «لم يصل ردٌّ بعد» و«لم يصل ردٌّ
+ * أبداً» و«وصل ردٌّ حقيقيٌّ بصفر عناصر» **الشيءَ نفسَه** لمن يقرأ
+ * `options.length`. فمُستدعياً يبني قراراً على «صفر» (كإخفاء مُنتقي جهاز
+ * وافتراض «غير مسجَّل») كان يبنيه أحياناً على استعلامٍ لم يُعرَف مصيرُه
+ * بعد. `isSuccess`/`isError`/`isLoading`/`isFetching` تُصدَّر كما هي من
+ * `react-query` — فلا يُعاد اختراعُ آلة حالةٍ ثانية تنحرف عن الأولى.
+ */
 export function useDeviceEpisodes(
   patientId: number | undefined,
   serviceType: "prosthetic" | "medical_support" | null,
   allowedStatuses: readonly string[],
 ) {
-  const { data } = useQuery<{ episodes: DeviceEpisodeOption[] }>({
+  const query = useQuery<{ episodes: DeviceEpisodeOption[] }>({
     queryKey: [`/api/patients/${patientId}/device-episodes`],
     enabled: Boolean(patientId && serviceType),
   });
-  const all = data?.episodes ?? [];
+  const all = query.data?.episodes ?? [];
   const options = serviceType
     ? all.filter((e) => e.serviceType === serviceType && allowedStatuses.includes(e.status))
     : [];
-  return { options, hasOptions: options.length > 0 };
+  return {
+    options, hasOptions: options.length > 0,
+    isLoading: query.isLoading, isFetching: query.isFetching,
+    isSuccess: query.isSuccess, isError: query.isError,
+  };
 }
 
 interface DeviceEpisodeSelectProps {

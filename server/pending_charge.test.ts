@@ -16,7 +16,10 @@
 //   • **ح**: وحارسُ الجهاز الكامل (٢٥٠) باقٍ في القسمين.
 //   • **س**: ومنشأُ الجهاز أُزيل من الصيانة الجديدة (قرارُ المالك
 //     2026-08-26) — لا حقل، لا هويّةَ تُخترَع، والهويّةُ الدقيقةُ للمسجَّل
-//     ما زالت تُتحقَّق، والتاريخُ يبقى مقروءاً بلا مساس.
+//     ما زالت تُتحقَّق، والتاريخُ يبقى مقروءاً بلا مساس. **وسدُّ ثغرة
+//     الهويّة الصامتة**: النقطةُ تفرض نيّةً صريحة الآن — معرّفٌ صالحٌ أو
+//     إقرارُ `legacyUnrecordedDevice`، لا استنتاجٌ من غيابِ أحدِهما،
+//     وتردّ ٤٠٠ على الغموض والتناقض معاً (س.ح، س.ط).
 //   • **ط**: والعلاجُ الطبيعي معزولٌ تماماً.
 //   • **ي**: وحذفُ المريض الكامل يعمل (القاعدةُ الملزمة في CLAUDE.md).
 //   • **ك–ل**: وعقدُ الشاشات والحارسُ المعماريّ — ولا محاسبةَ ثانية.
@@ -500,7 +503,7 @@ async function main() {
     const maintB = await maint({
       patientId: pB, serviceType: "prosthetic", expertUserId: EXPERT,
       maintenanceComponent: "knee",
-      deviceEpisodeId: null, charged: true, amount: 75_000,
+      deviceEpisodeId: null, legacyUnrecordedDevice: true, charged: true, amount: 75_000,
     });
     check(maintB.status === 201 && maintB.body?.workOrderId > 0,
       "ب١. **الصيانةُ تُفتَح بأمرها**", JSON.stringify(maintB.body));
@@ -534,7 +537,7 @@ async function main() {
     const maintC = await maint({
       patientId: pC, serviceType: "medical_support", expertUserId: EXPERT,
       maintenanceComponent: null,
-      deviceEpisodeId: null, charged: true, amount: 40_000,
+      deviceEpisodeId: null, legacyUnrecordedDevice: true, charged: true, amount: 40_000,
     });
     check(maintC.status === 201, "ج١. **صيانةُ المسند تمضي**", JSON.stringify(maintC.body));
     same("ج١.ب **وأمرُها بلا منشأ جهاز**",
@@ -618,7 +621,7 @@ async function main() {
     const bodyF = {
       patientId: pF, serviceType: "prosthetic", expertUserId: EXPERT,
       maintenanceComponent: "tube",
-      deviceEpisodeId: null, charged: true, amount: 30_000,
+      deviceEpisodeId: null, legacyUnrecordedDevice: true, charged: true, amount: 30_000,
     };
     const raceF = await Promise.all([maint(bodyF), maint(bodyF)]);
     same("هـ٥. **وصيانتان متزامنتان ⟶ واحدةٌ تمرّ**",
@@ -815,7 +818,7 @@ async function main() {
     await mkCase(pS1);
     const maintS1 = await maint({
       patientId: pS1, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "socket", deviceEpisodeId: null,
+      maintenanceComponent: "socket", deviceEpisodeId: null, legacyUnrecordedDevice: true,
       charged: true, amount: 55_000,
     });
     check(maintS1.status === 201, "س١. **صيانةٌ تنجح بلا `deviceOrigin` في الجسم**",
@@ -829,7 +832,7 @@ async function main() {
     await mkCase(pS2);
     const maintS2 = await maint({
       patientId: pS2, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "foot", deviceEpisodeId: null,
+      maintenanceComponent: "foot", deviceEpisodeId: null, legacyUnrecordedDevice: true,
       charged: true, amount: 40_000,
     });
     check(maintS2.status === 201, "س٢. **صفرُ حلقاتٍ ⟶ الصيانةُ تمضي بلا هويّة جهاز**",
@@ -878,7 +881,7 @@ async function main() {
        RETURNING id`, [pS4, caseS4]))[0].id;
     const maintS4 = await maint({
       patientId: pS4, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "tube", deviceEpisodeId: null,
+      maintenanceComponent: "tube", deviceEpisodeId: null, legacyUnrecordedDevice: true,
       charged: true, amount: 20_000,
     });
     check(maintS4.status === 201,
@@ -935,7 +938,7 @@ async function main() {
     await mkCase(pS1b);
     await maint({
       patientId: pS1b, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "socket", deviceEpisodeId: null,
+      maintenanceComponent: "socket", deviceEpisodeId: null, legacyUnrecordedDevice: true,
       charged: true, amount: 15_000,
     });
     same("   وبقي كما هو بعد عمليةٍ جديدة على مريضٍ آخر",
@@ -957,6 +960,39 @@ async function main() {
     same("س٩. **والصفُّ الموروثُ يظهر في الطابور بمنشئه الأصليّ بلا تغيير**",
       cardS7?.deviceOrigin, "center_unrecorded");
 
+    //  (س.ح) **نيّةٌ غامضة تُردّ ٤٠٠** — لا معرّفَ جهازٍ ولا إقرارَ «غير
+    //  مسجَّل»: الشاشةُ القديمة كانت ترسل هذا الشكلَ بالضبط حين لم يصل
+    //  ردُّ استعلام الأجهزة بعد. **والخادمُ لم يعد يقبله صامتاً.**
+    const pS8 = await mkPatient("نيّةٌ غامضة — لا شيء");
+    await mkCase(pS8);
+    const maintS8 = await maint({
+      patientId: pS8, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "knee", charged: true, amount: 25_000,
+      // ولا deviceEpisodeId ولا legacyUnrecordedDevice — نيّةٌ غامضة عمداً.
+    });
+    same("س١٠. **ولا معرّفَ ولا إقرارَ ⟶ ٤٠٠**", maintS8.status, 400);
+    same("   ولا مالَ تحرّك ولا أمرَ فُتح",
+      (({ ledger_rows, orders }) => [ledger_rows, orders])(await moneyOf(pS8)), [0, 0]);
+
+    //  (س.ط) **ومعرّفٌ صالحٌ مع إقرارِ «غير مسجَّل» معاً ⟶ ٤٠٠** — تناقضٌ
+    //  صريح، لا يُرجَّح أحدُهما على الآخر.
+    const pS9 = await mkPatient("تناقضٌ — معرّفٌ وإقرارٌ معاً");
+    const caseS9 = await mkCase(pS9);
+    const deliveredS9 = (await q<{ id: number }>(`INSERT INTO patient_device_episodes
+        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+         requested_item, component, service_path, created_at, updated_at)
+       VALUES ($1,$2,1,1,'delivered',200000,'socket','socket','exam',NOW(),NOW())
+       RETURNING id`, [pS9, caseS9]))[0].id;
+    const maintS9 = await maint({
+      patientId: pS9, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "knee", deviceEpisodeId: deliveredS9,
+      legacyUnrecordedDevice: true, charged: true, amount: 25_000,
+    });
+    same("س١١. **ومعرّفٌ وإقرارٌ معاً ⟶ ٤٠٠**", maintS9.status, 400);
+    const mS9 = await moneyOf(pS9);
+    same("   ولا مالَ تحرّك ولا أمرَ فُتح", [mS9.ledger_rows, mS9.orders], [0, 0]);
+    same("   والحلقةُ المسلَّمة بلا مساس", (await episodeOf(deliveredS9))?.status, "delivered");
+
     // ══════════════════════════════════════════════════════════════════
     //  (ط) العلاجُ الطبيعي معزولٌ تماماً
     // ══════════════════════════════════════════════════════════════════
@@ -972,7 +1008,7 @@ async function main() {
       (await maint({
         patientId: pK, serviceType: "physiotherapy", expertUserId: EXPERT,
         maintenanceComponent: null,
-        deviceEpisodeId: null, charged: true, amount: 10_000,
+        deviceEpisodeId: null, legacyUnrecordedDevice: true, charged: true, amount: 10_000,
       })).status, 400);
     same("ط٣. ولا مالَ ولا سجلَّ مراجعة", await moneyOnly(pK), ZERO_MONEY_ONLY);
     //  **والقيدُ في القاعدة يمنعه** ولو التُفَّ على النقطة.
@@ -1173,7 +1209,7 @@ async function main() {
         const r = await maint({
           patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
           maintenanceComponent: "foot",
-          deviceEpisodeId: null, charged: true, amount: 20_000,
+          deviceEpisodeId: null, legacyUnrecordedDevice: true, charged: true, amount: 20_000,
         });
         const m = await moneyOf(pO);
         const ord = await orderOf(r.body.workOrderId);
@@ -1346,6 +1382,13 @@ async function main() {
       "   ولا استيرادَ من `shared/device_origin` في النقاط");
     check(!/deviceOrigin\s*:\s*DeviceOrigin/.test(PENDING_STORE),
       "ل١٠. **ولا `createMaintenanceOperation` تطلبه بارامتراً**");
+    //  (ل١١) **والنقطةُ تفرض نيّةً صريحة** — معرّفٌ صالحٌ أو إقرارٌ، لا
+    //  استنتاجٌ من غياب أحدِهما (الحارسُ المضاف لسدّ ثغرة الهويّة).
+    check(CHARGE_ROUTES.includes("legacyUnrecordedDevice"),
+      "ل١١. **والنقطةُ تقرأ `legacyUnrecordedDevice` صراحةً**");
+    check(/hasEpisodeId && legacyUnrecordedDevice/.test(CHARGE_ROUTES)
+      && /!hasEpisodeId && !legacyUnrecordedDevice/.test(CHARGE_ROUTES),
+    "   وتردّ ٤٠٠ على التناقض والغموض معاً — لا حالةً ثالثة تمرّ");
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);

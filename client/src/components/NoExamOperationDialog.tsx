@@ -62,13 +62,14 @@ import {
   type PendingChargeKind,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
+import {
+  UNREGISTERED_DEVICE, devicePhaseOf, maintenanceDeviceSelectorVisible,
+  maintenanceDeviceMissing, maintenanceDeviceRequestFields,
+} from "./maintenance_device_target";
 
 type Service = "prosthetic" | "medical_support";
 /** نفسُ نوعِ العملية القانونيّ — بلا نسخةٍ محلّية منه. */
 type Kind = PendingChargeKind;
-
-/** خيارُ «لا هويّةَ مسجَّلة» في مُنتقي جهاز الصيانة — قيمةٌ محلّية للشاشة. */
-const UNREGISTERED_DEVICE = "__unregistered_device__";
 
 interface Props {
   open: boolean;
@@ -142,9 +143,15 @@ export function NoExamOperationDialog({
   const expertsFailed = expertQuery.isError;
   const expertsEmpty = expertQuery.isSuccess && experts.length === 0;
 
-  //  أجهزةُ الصيانة: المسلَّمُ وحدَه — وما لم يُسلَّم بعد ليس محلَّ صيانة.
-  const { options: devices } = useDeviceEpisodes(
+  //  ══ **أجهزةُ الصيانة: المسلَّمُ وحدَه** — وما لم يُسلَّم بعد ليس محلَّ
+  //  صيانة. **وحالةُ الاستعلام تخرج معه**: `devicePhase` لا يقرأ «صفرَ
+  //  أجهزة» إلّا بعد نجاحٍ حقيقيّ — تحميلٌ أو فشلٌ يبقيان «غير معلوم»
+  //  فيُغلقان بابَ حفظِ الصيانة حتى يُعرَف الجوابُ يقيناً.
+  const deviceQuery = useDeviceEpisodes(
     open ? patientId : undefined, serviceType, ["delivered"]);
+  const devices = deviceQuery.options;
+  const devicePhase = devicePhaseOf(deviceQuery);
+  const deviceState = { phase: devicePhase, deviceCount: devices.length, selectedTarget: target };
 
   //  ══ **كلُّ ما تغيّر يُحدَّث — لا بعضُه** ═══════════════════════════════
   //  العمليةُ تفتح أمرَ تصنيعٍ فوراً، وبطاقةُ التصنيع في صفحة المريض تقرأ
@@ -170,13 +177,16 @@ export function NoExamOperationDialog({
     mutationFn: async () => {
       const money = charged ? { charged: true, amount } : { charged: false };
       if (kind === "maintenance") {
+        //  **هويّةُ الجهاز من الدالّة القانونية نفسِها التي تحرس `ready`** —
+        //  لا حسابٌ ثانٍ هنا قد ينحرف عنها. وهي لا تُرجع `null` إن وصلنا
+        //  هذا السطر أصلاً (الزرُّ كان سيبقى معطَّلاً)، لكنّ الحارسَ يبقى
+        //  صريحاً بدل افتراضِ توافقٍ صامت.
+        const deviceFields = maintenanceDeviceRequestFields(deviceState);
+        if (!deviceFields) throw new Error("بيانات الجهاز غير مكتملة — أعد المحاولة");
         const res = await apiRequest("POST", "/api/no-exam/maintenance", {
           patientId, serviceType, expertUserId: Number(expertId),
           maintenanceComponent: serviceType === "prosthetic" ? component : null,
-          //  **المسجَّلُ وحده يحمل معرّفاً.** والاختيارُ الصريح لـ«غير
-          //  مسجَّل»، أو غيابُ أيّ جهازٍ مؤهَّل أصلاً، كلاهما يعني الشيءَ
-          //  نفسَه هنا: صيانةٌ بلا هويّة جهاز. ولا سؤالَ عن المنشأ بعد اليوم.
-          deviceEpisodeId: target && target !== UNREGISTERED_DEVICE ? Number(target) : null,
+          ...deviceFields,
           note: note.trim() || null, ...money,
         });
         return res.json();
@@ -232,9 +242,10 @@ export function NoExamOperationDialog({
 
   const missingItem = kind === "device_sale" && !existingEpisodeId && !requestedItem;
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
-  //  **والحقلُ إلزاميٌّ فقط حين له معنى**: أيّ حلقةٍ مسلَّمة قائمة تفرض
-  //  اختياراً (جهازٌ بعينه أو «غير مسجَّل»)، وغيابُها التامّ لا يفرض شيئاً.
-  const missingTarget = kind === "maintenance" && devices.length > 0 && !target;
+  //  **والحقلُ ناقصٌ حتى يُعرَف جوابُه يقيناً** — لا قبل أن ينجح استعلامُ
+  //  الأجهزة فعلاً. `maintenanceDeviceMissing` هي الحارسُ الوحيد؛ لا حسابٌ
+  //  محلّيٌّ ثانٍ قد ينحرف عنها.
+  const missingTarget = kind === "maintenance" && maintenanceDeviceMissing(deviceState);
   const ready = Boolean(expertId) && !missingItem && !missingComponent && !missingTarget
     && (!charged || amount > 0);
 
@@ -347,8 +358,19 @@ export function NoExamOperationDialog({
                   المسجَّل لا يُسأل عنه بعد اليوم: تمييزٌ بلا قيمةٍ تشغيلية
                   وسببُ التباسٍ فقط (قرارُ المالك 2026-08-26). وحين لا حلقةَ
                   مسلَّمة أصلاً **لا يظهر حقلٌ إطلاقاً** — لا خيارَ حقيقياً
-                  ليُعرَض، ولا يُساق الموظّفُ لتأكيد البديهة. */}
-              {devices.length > 0 && (
+                  ليُعرَض، ولا يُساق الموظّفُ لتأكيد البديهة.
+                  **ولا شيءَ من هذا يُقال قبل أن ينجح استعلامُ الأجهزة
+                  فعلاً**: تحميلٌ أو فشلٌ لا يُقرَآن «صفرَ أجهزة» أبداً. */}
+              {devicePhase === "loading" ? (
+                <p className="text-sm text-muted-foreground flex items-center gap-2"
+                  data-testid="no-exam-op-device-loading">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> جارٍ تحميل أجهزة المريض…
+                </p>
+              ) : devicePhase === "error" ? (
+                <p className="text-sm text-destructive" data-testid="no-exam-op-device-error">
+                  تعذّر تحميل أجهزة المريض — تحقّق من الاتصال وأعد فتح النافذة.
+                </p>
+              ) : maintenanceDeviceSelectorVisible(deviceState) && (
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium">الجهاز المراد صيانته</Label>
                   <Select value={target} onValueChange={setTarget}>

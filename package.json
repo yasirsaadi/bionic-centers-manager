@@ -92,7 +92,8 @@
     "test:patient-trash-money": "tsx server/patient_trash_money.test.ts",
     "test:patient-trash-atomicity": "tsx server/patient_trash_purge_atomicity.test.ts",
     "test:payment-guard": "tsx server/payment_permission_branch.test.ts",
-    "test:reception-routing": "tsx client/src/components/reception_routing.test.ts"
+    "test:reception-routing": "tsx client/src/components/reception_routing.test.ts",
+    "test:maintenance-device-target": "tsx client/src/components/maintenance_device_target.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -412,12 +412,36 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       //  الشيءَ نفسَه هنا: صيانةٌ بلا هويّة جهاز. **ولا تُلتقط له حلقةُ جهازٍ
       //  آخر ولا يُخترَع له تاريخُ تصنيعٍ لم يقع.**
       //
+      //  ══ **وغيابُ المعرّف وحده لم يعد كافياً** — يجب أن يُصرَّح به ═══════
+      //  الشاشةُ كانت تعرف «صفر أجهزة» من طرفها فترسل معرّفاً فارغاً بصمت،
+      //  وهذا كان يخلط بين «الاستعلامُ نجح بصفرٍ» و«الاستعلامُ لم يصل ردُّه
+      //  بعد» — فحالُ الشبكةِ يقرِّر هويّةَ جهازٍ لم تُعرَف قطّ. فصار على
+      //  العميل أن **يُصرِّح صراحةً**: إمّا معرّفٌ صحيح، أو `legacyUnrecordedDevice
+      //  === true`. **واحدةٌ من اثنتين لا صفرٌ ولا كلاهما.**
+      //
       //  والمُحلِّلُ القانونيّ (`resolveDeviceTargetTx`، يُنادى من داخل
-      //  `createMaintenanceOrderWithVisit`) يتحقّق من أيّ معرّفٍ وصل: أنه
-      //  لهذا المريض وهذه الخدمة وحالتُه تصلح للصيانة — تحت القفل، لا هنا.
+      //  `createMaintenanceOrderWithVisit`) يبقى هو المرجعَ الفعليّ: يتحقّق
+      //  من أيّ معرّفٍ وصل أنه لهذا المريض وهذه الخدمة وحالتُه تصلح للصيانة
+      //  — تحت القفل، لا هنا. وهذا الحارسُ لا يستبدله بل يمنع وصولَ نيّةٍ
+      //  غامضة إليه أصلاً.
       const rawEpisode = req.body?.deviceEpisodeId;
-      const deviceEpisodeId = Number.isFinite(Number(rawEpisode)) && Number(rawEpisode) > 0
-        ? Number(rawEpisode) : null;
+      const hasEpisodeId = rawEpisode !== undefined && rawEpisode !== null && rawEpisode !== "";
+      if (hasEpisodeId
+        && !(Number.isInteger(Number(rawEpisode)) && Number(rawEpisode) > 0)) {
+        return res.status(400).json({ error: "معرّف جهاز غير صالح" });
+      }
+      const legacyUnrecordedDevice = req.body?.legacyUnrecordedDevice === true;
+      if (hasEpisodeId && legacyUnrecordedDevice) {
+        return res.status(400).json({
+          error: "طلبٌ متناقض: جهازٌ محدَّد و«جهاز غير مسجَّل» معاً — اختر أحدهما لا كليهما",
+        });
+      }
+      if (!hasEpisodeId && !legacyUnrecordedDevice) {
+        return res.status(400).json({
+          error: "حدّد الجهاز المسجَّل المراد صيانته — أو أقرّ صراحةً أنه غير مسجَّل في النظام",
+        });
+      }
+      const deviceEpisodeId = hasEpisodeId ? Number(rawEpisode) : null;
 
       const out = await store.createMaintenanceOperation({
         patientId, branchId: patient.branch_id ?? null,
