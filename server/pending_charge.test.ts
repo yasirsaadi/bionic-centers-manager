@@ -14,6 +14,9 @@
 //   • **ز**: والصفوفُ الموروثة تبقى بايتاً بايت، ويُنهيها الاستقبالُ ومديرُ
 //     الفرع والمسؤول ضمن نطاقهم — **والطبيبُ يُردّ ٤٠٣**.
 //   • **ح**: وحارسُ الجهاز الكامل (٢٥٠) باقٍ في القسمين.
+//   • **س**: ومنشأُ الجهاز أُزيل من الصيانة الجديدة (قرارُ المالك
+//     2026-08-26) — لا حقل، لا هويّةَ تُخترَع، والهويّةُ الدقيقةُ للمسجَّل
+//     ما زالت تُتحقَّق، والتاريخُ يبقى مقروءاً بلا مساس.
 //   • **ط**: والعلاجُ الطبيعي معزولٌ تماماً.
 //   • **ي**: وحذفُ المريض الكامل يعمل (القاعدةُ الملزمة في CLAUDE.md).
 //   • **ك–ل**: وعقدُ الشاشات والحارسُ المعماريّ — ولا محاسبةَ ثانية.
@@ -50,7 +53,9 @@ if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
 }
 
 let failures = 0;
+let totalChecks = 0;
 function check(cond: boolean, msg: string, detail = "") {
+  totalChecks++;
   if (!cond) failures++;
   console.log(`${cond ? "✅" : "❌ FAIL"}  ${msg}${cond ? "" : `\n      ${detail}`}`);
 }
@@ -494,12 +499,14 @@ async function main() {
     const caseB = await mkCase(pB);
     const maintB = await maint({
       patientId: pB, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "knee", deviceOrigin: "external",
+      maintenanceComponent: "knee",
       deviceEpisodeId: null, charged: true, amount: 75_000,
     });
     check(maintB.status === 201 && maintB.body?.workOrderId > 0,
       "ب١. **الصيانةُ تُفتَح بأمرها**", JSON.stringify(maintB.body));
     same("ب٢. ورسالتُها تقول إن المبلغ سُجِّل", maintB.body?.message, SAVED_CHARGED_MESSAGE);
+    same("ب٢.ب **وأمرُها بلا منشأ جهاز** — لم يُسأل عنه (قرارُ المالك 2026-08-26)",
+      (await orderOf(maintB.body.workOrderId))?.origin, null);
     same("ب٣. **ZERO pending_service_charges**",
       (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
         [pB]))[0].n, 0);
@@ -526,10 +533,12 @@ async function main() {
     await mkCase(pC, "medical_support");
     const maintC = await maint({
       patientId: pC, serviceType: "medical_support", expertUserId: EXPERT,
-      maintenanceComponent: null, deviceOrigin: "center_unrecorded",
+      maintenanceComponent: null,
       deviceEpisodeId: null, charged: true, amount: 40_000,
     });
     check(maintC.status === 201, "ج١. **صيانةُ المسند تمضي**", JSON.stringify(maintC.body));
+    same("ج١.ب **وأمرُها بلا منشأ جهاز**",
+      (await orderOf(maintC.body.workOrderId))?.origin, null);
     same("ج٢. **ZERO pending charges**",
       (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
         [pC]))[0].n, 0);
@@ -608,7 +617,7 @@ async function main() {
     await mkCase(pF);
     const bodyF = {
       patientId: pF, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "tube", deviceOrigin: "external",
+      maintenanceComponent: "tube",
       deviceEpisodeId: null, charged: true, amount: 30_000,
     };
     const raceF = await Promise.all([maint(bodyF), maint(bodyF)]);
@@ -617,6 +626,9 @@ async function main() {
     const mF = await moneyOf(pF);
     same("هـ٦. **وأجرٌ واحد وأمرٌ واحد**",
       [mF.total, mF.ledger_rows, mF.orders], [30_000, 1, 1]);
+    same("هـ٦.ب **وبلا منشأ جهاز على الفائزة**",
+      (await q(`SELECT device_origin FROM prosthetic_work_orders WHERE patient_id=$1`,
+        [pF]))[0]?.device_origin, null);
 
     // ══════════════════════════════════════════════════════════════════
     //  (و) اعترافُ الطبيب لا يحرّك ديناراً
@@ -793,6 +805,159 @@ async function main() {
       (({ ledger_rows, orders }) => [ledger_rows, orders])(await moneyOf(pI)), [0, 0]);
 
     // ══════════════════════════════════════════════════════════════════
+    //  (س) منشأُ الجهاز أُزيل من الصيانة الجديدة (قرارُ المالك 2026-08-26)
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── س. منشأُ الجهاز أُزيل من الصيانة الجديدة ──");
+
+    //  (س.أ) **صيانةٌ جديدة تنجح بلا حقل `deviceOrigin` إطلاقاً** — والمريضُ
+    //  بلا أيّ حلقة مسجَّلة، فلا حقلَ يُطلَب ولا هويّةَ تُخترَع.
+    const pS1 = await mkPatient("صيانة بلا حقل منشأ");
+    await mkCase(pS1);
+    const maintS1 = await maint({
+      patientId: pS1, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "socket", deviceEpisodeId: null,
+      charged: true, amount: 55_000,
+    });
+    check(maintS1.status === 201, "س١. **صيانةٌ تنجح بلا `deviceOrigin` في الجسم**",
+      JSON.stringify(maintS1.body));
+    same("   وأمرُها `device_origin = NULL`",
+      (await orderOf(maintS1.body.workOrderId))?.origin, null);
+
+    //  (س.ب) **صفرُ حلقاتٍ مسلَّمة ⟶ لا حقلَ يُطلَب ولا هويّةَ تُخترَع** —
+    //  دليلٌ صريح إضافي على مريضٍ ثانٍ (وقد أثبتته (ب)/(ج)/(هـ٥) ضمناً).
+    const pS2 = await mkPatient("صفر أجهزة مسجلة");
+    await mkCase(pS2);
+    const maintS2 = await maint({
+      patientId: pS2, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "foot", deviceEpisodeId: null,
+      charged: true, amount: 40_000,
+    });
+    check(maintS2.status === 201, "س٢. **صفرُ حلقاتٍ ⟶ الصيانةُ تمضي بلا هويّة جهاز**",
+      JSON.stringify(maintS2.body));
+    const ordS2 = await orderOf(maintS2.body.workOrderId);
+    same("   والأمرُ بلا حلقة وبلا منشأ", [ordS2?.de, ordS2?.origin], [null, null]);
+
+    //  (س.ج) **مريضٌ بحلقةٍ مسلَّمة ⟶ يختار الجهاز بعينه** — هويّةٌ دقيقة
+    //  تُربَط، ومنشأٌ لا يُكتب رغم ذلك.
+    const pS3 = await mkPatient("جهاز مسلَّم يُختار بعينه");
+    const caseS3 = await mkCase(pS3);
+    const deliveredS3 = (await q<{ id: number }>(`INSERT INTO patient_device_episodes
+        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+         requested_item, component, service_path, created_at, updated_at)
+       VALUES ($1,$2,1,1,'delivered',300000,'socket','socket','exam',NOW(),NOW())
+       RETURNING id`, [pS3, caseS3]))[0].id;
+    const maintS3 = await maint({
+      patientId: pS3, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "knee", deviceEpisodeId: deliveredS3,
+      charged: true, amount: 65_000,
+    });
+    check(maintS3.status === 201, "س٣. **والصيانةُ تربط الحلقةَ المسلَّمة بعينها**",
+      JSON.stringify(maintS3.body));
+    const ordS3 = await orderOf(maintS3.body.workOrderId);
+    same("   `device_episode_id` مطابقٌ و`device_origin` لا يزال NULL",
+      [ordS3?.de, ordS3?.origin], [deliveredS3, null]);
+    //  **والسجلُّ الاسترجاعيُّ للطبيب لا يذكر منشأً** — لا الحرفَ ولا معناه.
+    const [revS3] = await q(`SELECT reception_note note FROM medical_review_requests
+      WHERE patient_id=$1`, [pS3]);
+    check(!String(revS3?.note ?? "").includes("منشأ"),
+      "س٤. **والسجلُّ الاسترجاعيُّ خالٍ من كلمة «منشأ»**", String(revS3?.note));
+    for (const frag of ["صيانة بلا معاينة", "الركبة", "65,000"]) {
+      check(String(revS3?.note ?? "").includes(frag), `   وفيه «${frag}»`, String(revS3?.note));
+    }
+
+    //  (س.د) **ونفسُ نمط المريض يملك حلقةً مؤهَّلة ولا يختارها صراحةً** —
+    //  «جهاز غير مسجَّل في النظام»: لا حلقةَ تُربَط ولا منشأَ يُخترَع، رغم
+    //  أن حلقةً مؤهَّلة قائمة (وهذا بالضبط ما كانت الشاشةُ القديمة تستوجب
+    //  له اختيار «صُنع خارج/غير مسجَّل»).
+    const pS4 = await mkPatient("يختار جهازاً غير مسجَّل رغم توفر حلقة");
+    const caseS4 = await mkCase(pS4);
+    const deliveredS4 = (await q<{ id: number }>(`INSERT INTO patient_device_episodes
+        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+         requested_item, component, service_path, created_at, updated_at)
+       VALUES ($1,$2,1,1,'delivered',250000,'socket','socket','exam',NOW(),NOW())
+       RETURNING id`, [pS4, caseS4]))[0].id;
+    const maintS4 = await maint({
+      patientId: pS4, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "tube", deviceEpisodeId: null,
+      charged: true, amount: 20_000,
+    });
+    check(maintS4.status === 201,
+      "س٥. **وحلقةٌ مؤهَّلة قائمة، لكنّ الموظّف اختار «غير مسجَّل» صراحةً**",
+      JSON.stringify(maintS4.body));
+    const ordS4 = await orderOf(maintS4.body.workOrderId);
+    same("   فلا حلقةَ رُبطت ولا منشأَ اختُرع", [ordS4?.de, ordS4?.origin], [null, null]);
+    same("   والحلقةُ المسلَّمةُ الأصليةُ باقيةٌ على حالها بلا مساس",
+      (await episodeOf(deliveredS4))?.status, "delivered");
+
+    //  (س.هـ) **ومعرّفُ حلقةٍ تخصّ مريضاً آخر يُردّ من الخادم** — لا يُصدَّق
+    //  ما يصل من العميل، ولا يُخمَّن جهازٌ لصاحبه الحقيقيّ.
+    const pS5 = await mkPatient("جهازٌ مزوَّر لمريض آخر");
+    await mkCase(pS5);
+    const maintS5 = await maint({
+      patientId: pS5, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "knee", deviceEpisodeId: deliveredS3,
+      charged: true, amount: 30_000,
+    });
+    same("س٦. **ومعرّفُ حلقةِ مريضٍ آخر يُردّ ٤٠٠**",
+      [maintS5.status, (await moneyOf(pS5)).ledger_rows], [400, 0]);
+
+    //  (س.و) **وحلقةٌ لم تُسلَّم بعد (`in_manufacturing`) تُردّ كذلك** — ما
+    //  لم يُسلَّم ليس محلَّ صيانة.
+    const pS6 = await mkPatient("جهازٌ لم يُسلَّم بعد");
+    const caseS6 = await mkCase(pS6);
+    const notDeliveredS6 = (await q<{ id: number }>(`INSERT INTO patient_device_episodes
+        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+         requested_item, component, service_path, created_at, updated_at)
+       VALUES ($1,$2,1,1,'in_manufacturing',150000,'socket','socket','exam',NOW(),NOW())
+       RETURNING id`, [pS6, caseS6]))[0].id;
+    const maintS6 = await maint({
+      patientId: pS6, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "knee", deviceEpisodeId: notDeliveredS6,
+      charged: true, amount: 30_000,
+    });
+    same("س٧. **وحلقةٌ قيدَ التصنيع تُردّ ٤٠٠** — ليست جهازاً يُصان بعد",
+      [maintS6.status, (await moneyOf(pS6)).ledger_rows], [400, 0]);
+
+    //  (س.ز) **وصفٌّ تاريخيٌّ يحمل منشأً حقيقياً — لا يُمحى ولا يُعاد كتابتُه.**
+    //  يُحقَن كأمرٍ كُتب قبل هذا القرار، ويبقى مقروءاً بقيمته الأصلية عبر
+    //  عملياتٍ جديدة على مرضى آخرين لا تلمسه.
+    const pS7 = await mkPatient("أمرُ صيانةٍ تاريخيّ بمنشأ محفوظ");
+    const legacyOrderId = (await q<{ id: number }>(`INSERT INTO prosthetic_work_orders
+        (patient_id, branch_id, expert_user_id, service_type, purpose, status,
+         current_stage, maintenance_component, device_origin)
+       VALUES ($1,1,$2,'prosthetic','maintenance','completed','delivered','knee','external')
+       RETURNING id`, [pS7, EXPERT]))[0].id;
+    same("س٨. **والصفُّ التاريخيُّ يُقرأ بمنشئه الأصليّ**",
+      (await orderOf(legacyOrderId))?.origin, "external");
+    //  **وعمليةٌ جديدة على مريضٍ آخر تماماً لا تلمسه** — إثباتٌ أن لا مسارَ
+    //  جديد يكتب فوق صفٍّ قديم.
+    const pS1b = await mkPatient("عمليةٌ جديدة لا تلمس التاريخ");
+    await mkCase(pS1b);
+    await maint({
+      patientId: pS1b, serviceType: "prosthetic", expertUserId: EXPERT,
+      maintenanceComponent: "socket", deviceEpisodeId: null,
+      charged: true, amount: 15_000,
+    });
+    same("   وبقي كما هو بعد عمليةٍ جديدة على مريضٍ آخر",
+      (await orderOf(legacyOrderId))?.origin, "external");
+
+    //  **والطابورُ الموروثُ يقرأ منشأه كذلك** — صفٌّ حُقن بمنشأ
+    //  `center_unrecorded` (نفسُ نمط حقن (ز))، ويظهر بقيمته الأصلية عبر
+    //  النقطة الحقيقية `GET /api/no-exam/review` — نفسُ ما تعرضه
+    //  `PendingChargesCard`/`NoExamReview`.
+    const legacyChargeS7 = (await q<{ id: number }>(`INSERT INTO pending_service_charges
+        (patient_id, branch_id, work_order_id, service_type, operation_kind,
+         maintenance_component, device_origin, sale_expert_user_id, amount, status,
+         created_by, created_by_name)
+       VALUES ($1,1,$2,'prosthetic','maintenance','ankle','center_unrecorded',$3,
+               60000,'pending_review',$4,'ريام') RETURNING id`,
+      [pS7, legacyOrderId, EXPERT, RECV]))[0].id;
+    const reviewListS7 = await http("GET", "/api/no-exam/review", S.recv);
+    const cardS7 = (reviewListS7.body?.rows ?? []).find((r: any) => r.id === legacyChargeS7);
+    same("س٩. **والصفُّ الموروثُ يظهر في الطابور بمنشئه الأصليّ بلا تغيير**",
+      cardS7?.deviceOrigin, "center_unrecorded");
+
+    // ══════════════════════════════════════════════════════════════════
     //  (ط) العلاجُ الطبيعي معزولٌ تماماً
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ط. العلاجُ الطبيعي معزول ──");
@@ -806,7 +971,7 @@ async function main() {
     same("ط٢. **ولا صيانة**",
       (await maint({
         patientId: pK, serviceType: "physiotherapy", expertUserId: EXPERT,
-        maintenanceComponent: null, deviceOrigin: "external",
+        maintenanceComponent: null,
         deviceEpisodeId: null, charged: true, amount: 10_000,
       })).status, 400);
     same("ط٣. ولا مالَ ولا سجلَّ مراجعة", await moneyOnly(pK), ZERO_MONEY_ONLY);
@@ -880,6 +1045,18 @@ async function main() {
     "ك٣. **ورسالتا الحفظ من المصدر المشترك** — لا نصَّ منسوخ");
     check(!dialogCode.includes("SAVED_PENDING_MESSAGE"),
       "   ولا أثرَ للرسالة القديمة");
+
+    //  (ك٣.ب) **ولا أثرَ لسؤال منشأ الجهاز في نافذة العملية** — أُزيل كاملاً
+    //  (قرارُ المالك 2026-08-26).
+    for (const banned of ["منشأ الجهاز", "DEVICE_ORIGIN", "DeviceOrigin",
+      "originHasEpisode", "device_origin"]) {
+      check(!dialogCode.includes(banned),
+        `ك٣.ب **ولا «${banned}» في نافذة العملية**`);
+    }
+    check(dialogCode.includes("جهاز غير مسجل في النظام"),
+      "ك٣.ج **بل خيارٌ واحد صريح: «جهاز غير مسجل في النظام»** — بلا سؤال منشأ");
+    check(!DIALOG.includes(`from "@shared/device_origin"`),
+      "ك٣.د **ولا استيرادَ من `shared/device_origin` في النافذة إطلاقاً**");
 
     //  (ك٤) **وتحديثُ كلّ ما تغيّر** — بطاقةُ التصنيع والمحاسبةُ والملفّ.
     for (const key of ["/device-episodes", "/pending-charges",
@@ -995,12 +1172,14 @@ async function main() {
         await mkCase(pO);
         const r = await maint({
           patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
-          maintenanceComponent: "foot", deviceOrigin: "external",
+          maintenanceComponent: "foot",
           deviceEpisodeId: null, charged: true, amount: 20_000,
         });
         const m = await moneyOf(pO);
-        return [r.status, r.body?.reviewRouted, m.total, m.ledger_rows, m.orders, m.reviews];
-      })(), [201, false, 20_000, 1, 1, 0]);
+        const ord = await orderOf(r.body.workOrderId);
+        return [r.status, r.body?.reviewRouted, m.total, m.ledger_rows, m.orders, m.reviews,
+          ord?.origin];
+      })(), [201, false, 20_000, 1, 1, 0, null]);
     } finally {
       await q(`DROP TRIGGER IF EXISTS _test_review_gate_trg ON medical_review_requests`);
       await q(`DROP FUNCTION IF EXISTS _test_review_gate()`);
@@ -1159,6 +1338,14 @@ async function main() {
     check(!/INSERT INTO medical_exams|insertExam|createExam/.test(CHARGE_ROUTES)
       && !/INSERT INTO medical_exams/.test(PENDING_STORE),
     "ل٨. **ولا معاينةَ تُنشأ من منسّق العمليات**");
+    //  (ل٩) **ولا نقطةُ الصيانة تقرأ `deviceOrigin` من جسم الطلب** — أُزيل
+    //  السؤالُ كاملاً من الخادم (قرارُ المالك 2026-08-26).
+    check(!/deviceOrigin|DEVICE_ORIGIN|parseDeviceOrigin|originHasEpisode/.test(CHARGE_ROUTES),
+      "ل٩. **ولا `deviceOrigin` في نقاط «بلا معاينة»**");
+    check(!/from "@shared\/device_origin"/.test(CHARGE_ROUTES),
+      "   ولا استيرادَ من `shared/device_origin` في النقاط");
+    check(!/deviceOrigin\s*:\s*DeviceOrigin/.test(PENDING_STORE),
+      "ل١٠. **ولا `createMaintenanceOperation` تطلبه بارامتراً**");
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
@@ -1166,6 +1353,7 @@ async function main() {
     httpServer.close();
   }
 
+  console.log(`\nإجماليُّ التأكيدات: ${totalChecks}`);
   console.log(`\n${failures === 0
     ? "✅ كل فحوص «بلا معاينة» نجحت" : `❌ ${failures} فشل`}`);
   await pool.end();

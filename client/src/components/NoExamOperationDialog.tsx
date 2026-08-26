@@ -28,9 +28,11 @@
 // فتبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب. فصار استعمالُها للمساند
 // **الصيانةَ وحدها**: جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
 //
-// ══ ومنشأُ الجهاز ثلاثةٌ لا اثنان ══════════════════════════════════════
-// «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز». وخيارٌ واحد يجمعهما كان
-// يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق.
+// ══ ومنشأُ الجهاز لم يعد يُسأل عنه (قرارُ المالك 2026-08-26) ═══════════════
+// كان هنا سؤالُ «منشأ الجهاز» بثلاثة خيارات — بلا قيمةٍ تشغيلية للاستقبال
+// وسببُ التباسٍ فقط. فبقي ما يفيد وحده: هويّةُ **الجهاز المسجَّل** حين
+// وُجد، و«جهاز غير مسجَّل في النظام» حين لا هويّةَ له — بلا سؤال من أين.
+// والتفصيلُ التاريخيّ في `shared/device_origin.ts`، الباقي للقراءة القديمة.
 //
 // ══ والصفرُ ليس «مجّاناً» ═══════════════════════════════════════════════
 // مربّعُ «بلا أجور» صريحٌ. فالعمليةُ بلا أجرٍ تُحفَظ وتنتهي **بلا صفٍّ
@@ -55,10 +57,6 @@ import {
   PROSTHETIC_COMPONENTS, COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS,
 } from "@shared/prosthetic_parts";
 import {
-  DEVICE_ORIGINS, DEVICE_ORIGIN_LABELS, DEVICE_ORIGIN_HINTS, originHasEpisode,
-  type DeviceOrigin,
-} from "@shared/device_origin";
-import {
   PENDING_CHARGE_KIND_LABELS, SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
   reviewFailedCopy,
   type PendingChargeKind,
@@ -68,6 +66,9 @@ import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 type Service = "prosthetic" | "medical_support";
 /** نفسُ نوعِ العملية القانونيّ — بلا نسخةٍ محلّية منه. */
 type Kind = PendingChargeKind;
+
+/** خيارُ «لا هويّةَ مسجَّلة» في مُنتقي جهاز الصيانة — قيمةٌ محلّية للشاشة. */
+const UNREGISTERED_DEVICE = "__unregistered_device__";
 
 interface Props {
   open: boolean;
@@ -110,8 +111,9 @@ export function NoExamOperationDialog({
   const [requestedItem, setRequestedItem] = useState<string>(existingRequestedItem ?? "");
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
-  /** **بلا افتراض**: المنشأُ يُسأل ولا يُخمَّن — ولا يُقرأ من تاريخ المريض. */
-  const [origin, setOrigin] = useState<"" | DeviceOrigin>("");
+  //  **هويّةُ الجهاز** — معرّفُ حلقةٍ مسلَّمة، أو `UNREGISTERED_DEVICE` حين
+  //  يختار الموظّفُ صراحةً «جهاز غير مسجَّل في النظام». بلا افتراض: تبقى
+  //  فارغةً حتى يختار أحدُهما.
   const [target, setTarget] = useState<string>("");
   const [charged, setCharged] = useState(true);
   const [amount, setAmount] = useState(0);
@@ -171,8 +173,10 @@ export function NoExamOperationDialog({
         const res = await apiRequest("POST", "/api/no-exam/maintenance", {
           patientId, serviceType, expertUserId: Number(expertId),
           maintenanceComponent: serviceType === "prosthetic" ? component : null,
-          deviceOrigin: origin,
-          deviceEpisodeId: origin === "registered" && target ? Number(target) : null,
+          //  **المسجَّلُ وحده يحمل معرّفاً.** والاختيارُ الصريح لـ«غير
+          //  مسجَّل»، أو غيابُ أيّ جهازٍ مؤهَّل أصلاً، كلاهما يعني الشيءَ
+          //  نفسَه هنا: صيانةٌ بلا هويّة جهاز. ولا سؤالَ عن المنشأ بعد اليوم.
+          deviceEpisodeId: target && target !== UNREGISTERED_DEVICE ? Number(target) : null,
           note: note.trim() || null, ...money,
         });
         return res.json();
@@ -228,9 +232,9 @@ export function NoExamOperationDialog({
 
   const missingItem = kind === "device_sale" && !existingEpisodeId && !requestedItem;
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
-  //  المسجَّلُ وحده يحتاج جهازاً بعينه — والآخران بلا حلقة، فلا يُسألان عنها.
-  const missingTarget = kind === "maintenance"
-    && (!origin || (originHasEpisode(origin) && !target));
+  //  **والحقلُ إلزاميٌّ فقط حين له معنى**: أيّ حلقةٍ مسلَّمة قائمة تفرض
+  //  اختياراً (جهازٌ بعينه أو «غير مسجَّل»)، وغيابُها التامّ لا يفرض شيئاً.
+  const missingTarget = kind === "maintenance" && devices.length > 0 && !target;
   const ready = Boolean(expertId) && !missingItem && !missingComponent && !missingTarget
     && (!charged || amount > 0);
 
@@ -339,43 +343,14 @@ export function NoExamOperationDialog({
                   </Select>
                 </div>
               )}
-              {/*  **منشأُ الجهاز — ثلاثُ حقائق لا اثنتان.** «صنعناه ولم
-                  نسجّله» ليس «صُنع خارج المركز»، ودمجُهما كان يصف عملَنا
-                  بأنه عملُ غيرنا. ولا يُستنتَج من تاريخ المريض. */}
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">منشأ الجهاز المُصان</Label>
-                <Select value={origin}
-                  onValueChange={(v) => { setOrigin(v as DeviceOrigin); setTarget(""); }}>
-                  <SelectTrigger data-testid="no-exam-op-origin">
-                    <SelectValue placeholder="اختر منشأ الجهاز" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DEVICE_ORIGINS.map((o) => (
-                      <SelectItem key={o} value={o}
-                        disabled={o === "registered" && devices.length === 0}>
-                        {DEVICE_ORIGIN_LABELS[o]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {origin && (
-                  <p className="text-xs text-muted-foreground"
-                    data-testid={`no-exam-op-origin-hint-${origin}`}>
-                    {DEVICE_ORIGIN_HINTS[origin]}
-                  </p>
-                )}
-                {origin !== "registered" && origin !== "" && (
-                  <p className="text-xs text-muted-foreground">
-                    لا سجلّ لهذا الجهاز عندنا — <b>ولا يُخترَع له أمر تصنيع ولا
-                    تسليم لم يقع</b>. تُسجَّل الصيانة وحدها.
-                  </p>
-                )}
-              </div>
-
-              {/*  **والمسجَّلُ وحده يُسأل عن جهازه بعينه.** */}
-              {origin === "registered" && (
+              {/*  **الجهازُ المسجَّلُ وحده يحتاج هويّةً دقيقة** — ومنشأ غيرِ
+                  المسجَّل لا يُسأل عنه بعد اليوم: تمييزٌ بلا قيمةٍ تشغيلية
+                  وسببُ التباسٍ فقط (قرارُ المالك 2026-08-26). وحين لا حلقةَ
+                  مسلَّمة أصلاً **لا يظهر حقلٌ إطلاقاً** — لا خيارَ حقيقياً
+                  ليُعرَض، ولا يُساق الموظّفُ لتأكيد البديهة. */}
+              {devices.length > 0 && (
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">الجهاز المسجَّل</Label>
+                  <Label className="text-sm font-medium">الجهاز المراد صيانته</Label>
                   <Select value={target} onValueChange={setTarget}>
                     <SelectTrigger data-testid="no-exam-op-target">
                       <SelectValue placeholder="اختر الجهاز" />
@@ -384,6 +359,7 @@ export function NoExamOperationDialog({
                       {devices.map((e) => (
                         <SelectItem key={e.id} value={String(e.id)}>{describeEpisode(e)}</SelectItem>
                       ))}
+                      <SelectItem value={UNREGISTERED_DEVICE}>جهاز غير مسجل في النظام</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

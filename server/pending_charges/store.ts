@@ -44,7 +44,6 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
-import type { DeviceOrigin } from "@shared/device_origin";
 
 export class ChargeError extends Error {
   status: number;
@@ -272,23 +271,24 @@ export async function createDeviceSaleOperation(p: CreateBase & {
  * `uq_pwo_one_open_legacy_maint` (ترحيل ٠٥١) تمنعان أمرَ صيانةٍ مفتوحاً
  * ثانياً على الجهاز نفسِه — والأجرُ داخل معاملة الأمر، فيرتدّ معه.
  *
- * ══ **ومنشأُ الجهاز يُحفَظ على الأمر** (ترحيل ٠٦٧) ═══════════════════════
- * ثلاثُ حقائق لا اثنتان: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل النظام ·
- * صُنع خارج المركز. ووسمُ الثاني بالثالث كان يصف عملَنا بأنه عملُ غيرنا.
+ * ══ **ومنشأُ الجهاز لم يعد يُسأل عنه** (قرارُ المالك 2026-08-26) ═════════
+ * كان ترحيلُ ٠٦٧ يفرض ثلاثَ حقائق: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل
+ * النظام · صُنع خارج المركز. **وقرارُ المالك: التمييزُ بلا قيمةٍ تشغيلية
+ * للاستقبال ويسبّب الالتباسَ فقط** — فصيانةٌ جديدة **لا تكتب** `deviceOrigin`
+ * إطلاقاً، ويبقى `prosthetic_work_orders.device_origin` = `NULL` على أمرها،
+ * تماماً كما هو على الصيانة كاملة الأجر من نقطتها القائمة (لم تسأل عن
+ * المنشأ يوماً). **والقراءةُ التاريخية باقية**: صفوفٌ كُتبت قبل هذا القرار
+ * تبقى بقيمتها، ويقرؤها العرضُ الموروث وإكمالُ الصفّ القديم في
+ * `loadMaintenanceOperationTx`/`approveCharge` كما كانا.
  *
- * **ومكانُه السجلُّ التشغيليّ لا صفُّ المال**: صيانةٌ بلا أجرٍ لا تُنشئ صفّاً
- * معلَّقاً أصلاً، فلو عاشت الواقعةُ هناك وحدها لاختفت كلّما كانت الخدمةُ
- * مجّانية. والصفُّ يأخذ لقطةً منها للعرض ولا يصير مصدرَ حقيقةٍ ثانياً.
- *
- * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — لا لواحدٍ
- * صنعناه ولا لواحدٍ صُنع خارجنا. الغيابُ يُقال غياباً.
+ * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — الغيابُ
+ * يُقال غياباً، كما كان قبل هذا القرار وبعده سواء.
  */
 export async function createMaintenanceOperation(p: CreateBase & {
   expertUserId: number;
   visitNotes: string;
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
-  deviceOrigin: DeviceOrigin;
 }): Promise<{ workOrderId: number; deviceEpisodeId: number | null; amount: number | null }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
@@ -307,11 +307,11 @@ export async function createMaintenanceOperation(p: CreateBase & {
       //  لا يُستدَلّ عليها بغياب صفّ.
       cost: p.amount ?? 0,
       deviceEpisodeId: p.deviceEpisodeId,
-      //  جهازٌ بلا حلقة — صنعناه ولم نسجّله، أو صُنع خارجنا: المخرجُ القائم
-      //  نفسُه، بلا اختراع. والفرقُ بينهما يقوله `deviceOrigin` لا هذه الراية.
+      //  **جهازٌ بلا معرّف — سواءٌ لعدم وجود جهازٍ مسجَّل أصلاً أو لاختيار
+      //  «غير مسجَّل» صراحةً** — المخرجُ القائم نفسُه، بلا اختراع. ومنشأُ
+      //  الجهاز لا يُسأل عنه بعد اليوم فلا حقلَ يمرّره هنا.
       legacyUnrecordedDevice: p.deviceEpisodeId === null,
       maintenanceComponent: p.maintenanceComponent,
-      deviceOrigin: p.deviceOrigin,
       noExamNoCharge: p.amount === null,
       tx,
     });

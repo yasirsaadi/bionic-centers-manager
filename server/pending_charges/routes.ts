@@ -32,7 +32,6 @@ import {
 import {
   parseComponent, isDeviceServiceKind, componentLabel, requestedItemLabel,
 } from "@shared/prosthetic_parts";
-import { parseDeviceOrigin, originHasEpisode, DEVICE_ORIGIN_LABELS } from "@shared/device_origin";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
 type Req = any;
@@ -218,13 +217,17 @@ async function routeRetrospectiveReview(req: Req, p: {
   return { routed: false };
 }
 
-/** سطرُ الحقائق الذي يقرؤه الطبيب — من العناوين المشتركة لا من معجمٍ ثانٍ. */
+/**
+ * سطرُ الحقائق الذي يقرؤه الطبيب — من العناوين المشتركة لا من معجمٍ ثانٍ.
+ *
+ * **ولا منشأَ جهازٍ فيه** (قرارُ المالك 2026-08-26): الصيانةُ الجديدة لا
+ * تسأل الاستقبالَ عن ذلك، فلا شيءَ يُقال عنه هنا.
+ */
 function retrospectiveNote(p: {
   serviceType: "prosthetic" | "medical_support";
   kind: "device_sale" | "maintenance";
   requestedItem?: string | null;
   maintenanceComponent?: string | null;
-  deviceOrigin?: string | null;
   amount: number | null;
   expertName: string | null;
 }): string {
@@ -234,9 +237,6 @@ function retrospectiveNote(p: {
   if (p.kind === "maintenance") {
     const comp = componentLabel(p.maintenanceComponent);
     if (comp) parts.push(`الجزء: ${comp}`);
-    const origin = p.deviceOrigin
-      ? DEVICE_ORIGIN_LABELS[p.deviceOrigin as keyof typeof DEVICE_ORIGIN_LABELS] : null;
-    if (origin) parts.push(`منشأ الجهاز: ${origin}`);
   } else {
     parts.push(`المُباع: ${requestedItemLabel(p.requestedItem, p.serviceType)}`);
   }
@@ -405,22 +405,19 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!amount.ok) return res.status(400).json({ error: amount.error });
 
-      //  ══ **منشأُ الجهاز — ثلاثُ حقائق لا اثنتان** (ترحيل ٠٦٧) ═════════
-      //  «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز»: وسمُ الأوّل بالثاني
-      //  يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق. **ولا يُستنتَج
-      //  من `had_prior_center_history`** — تلك عن المريض وهذه عن الجهاز.
-      const originParsed = parseDeviceOrigin(req.body?.deviceOrigin);
-      if (!originParsed.ok) return res.status(400).json({ error: originParsed.error });
-      const deviceOrigin = originParsed.value;
+      //  ══ **والجهازُ يُختار لا يُخمَّن — ومنشؤه لا يُسأل عنه بعد اليوم**
+      //  (قرارُ المالك 2026-08-26) ═══════════════════════════════════════
+      //  المسجَّلُ وحده يحمل معرّفاً؛ وغيابُه — سواءٌ لعدم وجود جهازٍ مسجَّل
+      //  أصلاً أو لاختيار «جهاز غير مسجَّل في النظام» صراحةً من الشاشة — يعني
+      //  الشيءَ نفسَه هنا: صيانةٌ بلا هويّة جهاز. **ولا تُلتقط له حلقةُ جهازٍ
+      //  آخر ولا يُخترَع له تاريخُ تصنيعٍ لم يقع.**
+      //
+      //  والمُحلِّلُ القانونيّ (`resolveDeviceTargetTx`، يُنادى من داخل
+      //  `createMaintenanceOrderWithVisit`) يتحقّق من أيّ معرّفٍ وصل: أنه
+      //  لهذا المريض وهذه الخدمة وحالتُه تصلح للصيانة — تحت القفل، لا هنا.
       const rawEpisode = req.body?.deviceEpisodeId;
-      //  **والمسجَّلُ وحده يحمل حلقة** — والآخران بلا هويّة، ولا تُلتقط لهما
-      //  حلقةُ جهازٍ آخر ولا يُخترَع لهما تاريخُ تصنيعٍ لم يقع.
-      const deviceEpisodeId = originHasEpisode(deviceOrigin)
-        ? (Number.isFinite(Number(rawEpisode)) ? Number(rawEpisode) : null)
-        : null;
-      if (originHasEpisode(deviceOrigin) && deviceEpisodeId === null) {
-        return res.status(400).json({ error: "اختر الجهاز المسجَّل المراد صيانته" });
-      }
+      const deviceEpisodeId = Number.isFinite(Number(rawEpisode)) && Number(rawEpisode) > 0
+        ? Number(rawEpisode) : null;
 
       const out = await store.createMaintenanceOperation({
         patientId, branchId: patient.branch_id ?? null,
@@ -432,7 +429,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         visitNotes: typeof req.body?.notes === "string" && req.body.notes.trim()
           ? req.body.notes.trim() : "صيانة طرف/مسند",
         maintenanceComponent: comp.value,
-        deviceEpisodeId, deviceOrigin,
+        deviceEpisodeId,
       });
 
       await logAudit({
@@ -443,7 +440,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType,
           operationKind: "maintenance",
-          maintenanceComponent: comp.value, deviceOrigin,
+          maintenanceComponent: comp.value,
           amount: out.amount ?? 0,
         },
         notes: out.amount !== null
@@ -458,7 +455,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         reviewKind: "maintenance",
         note: [retrospectiveNote({
           serviceType, kind: "maintenance", amount: out.amount,
-          maintenanceComponent: comp.value, deviceOrigin,
+          maintenanceComponent: comp.value,
           expertName: await expertDisplayName(expertUserId),
         }), note].filter(Boolean).join(" · "),
         deviceEpisodeId: out.deviceEpisodeId, workOrderId: out.workOrderId,
