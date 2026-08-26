@@ -1,13 +1,17 @@
-// **مراجعة مبيعات وخدمات بلا معاينة** — طابورُ الطبيب المالي.
+// **مبالغ سابقة بانتظار الإكمال** — طابورٌ موروثٌ يفرغ ولا يمتلئ.
 //
-// ══ سؤالٌ واحد، وشاشةٌ له وحده ═════════════════════════════════════════
-// «أهذا المبلغُ مشروع؟» — لا أكثر. فلا تخلط بـ«معايناتي» (سجلٌّ سريريٌّ
-// يُوقَّع) ولا بـ«مراجعة الطبيب» الإشرافية (اعترافٌ بحركة مريض) ولا
-// بـ«اعتماد الخصومات» (استثناءٌ على سعرٍ قائم). كلُّ خلطٍ منها يجعل الطابورَ
-// يمتلئ بما لا قرارَ فيه، فلا يُقرأ.
+// ══ وليست مراجعةً طبية ═════════════════════════════════════════════════
+// كانت هذه الشاشةُ «مراجعة مبيعات وخدمات بلا معاينة» ويقف عليها **طبيب**:
+// المالُ لا يصير حقيقياً حتى يضغط. وقد أُلغيت تلك السلطة (قرارُ المالك):
+// **المبلغُ يُقيَّد لحظةَ إدخاله من الاستعلامات**، ولا صفَّ جديد يدخل هنا.
+//
+// فما بقي **مبالغُ عملياتٍ وقعت قبل التغيير** ولم تُكمَل. ومَن يُنهيها
+// الاستقبالُ ومديرُ الفرع والمسؤول ضمن فروعهم — لا طبيب، ولا اختصاصَ
+// طبّياً يُسأل عنه أحد.
 //
 // ══ وفعلان لا أكثر ═════════════════════════════════════════════════════
-// **اعتماد** ⟶ يُقيَّد المبلغُ لحظتَها بالكاتب القانونيّ.
+// **إكمال** ⟶ يُقيَّد المبلغُ لحظتَها بالكاتب القانونيّ **نفسِه** الذي
+//   تناديه العملياتُ الجديدة — فلا نسخةَ ثانية من المحاسبة.
 // **إعادة للتصحيح** ⟶ بسببٍ مكتوب، ولا دينارَ يتحرّك ولا عمليةَ تُهدَم.
 //
 // ولا آلةَ رفضٍ ثالثة: العمليةُ وقعت فعلاً — صيانةٌ أُجريت أو جزءٌ بيع —
@@ -29,7 +33,8 @@ import {
   Wallet, Loader2, Check, Undo2, ShieldAlert, ExternalLink, PackageOpen, Wrench,
 } from "lucide-react";
 import {
-  REVIEW_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS, RETURN_REASON_LABEL,
+  LEGACY_QUEUE_TITLE, LEGACY_QUEUE_HINT, PENDING_CHARGE_ACTION_LABELS,
+  RETURN_REASON_LABEL,
 } from "@shared/pending_charge";
 import { requestedItemLabel, componentLabel } from "@shared/prosthetic_parts";
 import { DEVICE_ORIGIN_LABELS, isDeviceOrigin } from "@shared/device_origin";
@@ -116,7 +121,7 @@ export default function NoExamReview() {
       });
     },
     onError: (err: any) => toast({
-      title: "تعذّر الاعتماد", description: err?.message ?? "حاول مرة أخرى",
+      title: "تعذّر الإكمال", description: err?.message ?? "حاول مرة أخرى",
       variant: "destructive",
     }),
   });
@@ -159,15 +164,15 @@ export default function NoExamReview() {
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <Wallet className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold text-primary">{REVIEW_QUEUE_TITLE}</h1>
+        <h1 className="text-xl font-bold text-primary">{LEGACY_QUEUE_TITLE}</h1>
         {rows.length > 0 && (
           <Badge variant="secondary" data-testid="no-exam-review-count">{rows.length}</Badge>
         )}
       </div>
-      <p className="text-sm text-muted-foreground">
-        عملياتٌ أُنجزت للمريض بلا معاينة، وتنتظر مراجعتك <b>للمبلغ وحده</b>.
-        {" "}<b>ولم يدخل أيٌّ منها المحاسبة بعد</b> — لا كلفةَ مريض ولا قيدَ
-        دفتر ولا تقرير. وهذه ليست معاينةً طبية.
+      <p className="text-sm text-muted-foreground" data-testid="legacy-queue-hint">
+        {LEGACY_QUEUE_HINT}
+        {" "}ولم يدخل أيٌّ منها المحاسبة بعد — لا كلفةَ مريض ولا قيدَ دفتر ولا
+        تقرير، حتى يُكمَل هنا.
       </p>
 
       {isLoading ? (
@@ -177,7 +182,7 @@ export default function NoExamReview() {
       ) : rows.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-sm text-muted-foreground"
           data-testid="text-no-exam-review-empty">
-          لا يوجد مبلغ بانتظار مراجعتك.
+          لا توجد مبالغ سابقة بانتظار الإكمال.
         </CardContent></Card>
       ) : (
         <div className="space-y-3">

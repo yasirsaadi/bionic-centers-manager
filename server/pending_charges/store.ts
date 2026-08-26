@@ -1,28 +1,39 @@
 /**
- * **المراجعةُ المالية لعملياتِ «بلا معاينة»** — طبقةُ البيانات الوحيدة.
+ * **عملياتُ «بلا معاينة»** — طبقةُ البيانات الوحيدة.
  *
- * **العمليةُ تمضي. والمالُ لا يدخل المحاسبة حتى يعتمده طبيبٌ مخوَّل.**
+ * ══ القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ═══════════════════════
+ * **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
+ * فقط.**
  *
- * ══ ولا حسابَ ثانٍ يُكتب هنا ═══════════════════════════════════════════════
- * الاعتمادُ ينادي **الكاتبَ القانونيّ القائم** لنوع العملية:
- *   صيانة  ⟶ `postMaintenanceFee` — الكتابةُ نفسُها التي تناديها الصيانةُ
- *             كاملةُ الأجر، لا نسخةٌ ثانية.
- *   بيعُ جزء ⟶ `applyDeviceSaleFinancialsTx` — النصفُ الماليُّ من الكاتب
- *             القانونيّ للبيع، يُطبَّق على **أمر العمل القائم**.
+ * والقاعدةُ القديمة — «العمليةُ تمضي والمالُ ينتظر» — لم تعد سارية: كانت
+ * تُبقي مالاً مشروعاً وقع فعلاً **خارج الدفتر والتقارير** حتى يفرغ طبيبٌ
+ * لشاشةٍ ماليّةٍ ليست من عمله.
+ *
+ * ══ ولا حسابَ ثانٍ يُكتب هنا (وهذا لم يتغيّر) ═════════════════════════════
+ * الكاتبُ **القانونيُّ القائم** لكلّ نوع، يُنادى في **معاملة العملية نفسِها**:
+ *   صيانة   ⟶ `postMaintenanceFee` من داخل `createMaintenanceOrderWithVisit`
+ *              — الكتابةُ نفسُها التي تناديها الصيانةُ كاملةُ الأجر.
+ *   بيعُ جزء ⟶ `applyDeviceSaleFinancialsTx` على أمر العمل الذي فتحته
+ *              `startDeviceSaleOperationallyTx` قبلها بسطر.
  * فلا حسابُ دفترٍ يُكرَّر، ولا ينحرف أحدُ النسختين يوماً.
  *
- * ══ والعملُ يبدأ لحظتَه — البيعُ كالصيانة ═══════════════════════════════
- * **العمليةُ تمضي**: بيعُ الجزء يفتح أمرَ تصنيعه **الآن**، فالخبيرُ يبدأ
- * والمريضُ لا ينتظر قرارَ طبيبٍ لم يُطلَب منه أصلاً. وذاك هو معنى المسار.
- *
- * وهذا صار ممكناً لأن `storage` فصلت البيعَ نصفين (المرحلة الثالثة):
+ * ══ ونصفا البيع كما هما ═════════════════════════════════════════════════
  *   `startDeviceSaleOperationallyTx` — الأمرُ والحلقةُ والسجلّ، **بلا دينار**.
  *   `applyDeviceSaleFinancialsTx`    — المجموعُ والكلفةُ والقيد، **بلا عمل**.
- * ومسارُ المعاينة يركّبهما في `assignManufacturing` كما كان بحرفه.
+ * ومسارُ المعاينة يركّبهما في `assignManufacturing` كما كان بحرفه، وهذا
+ * المسارُ يركّبهما بالترتيب عينه.
  *
- * **والصفرُ لا يُخترَع**: الأمرُ يُفتَح بلا سعرٍ إطلاقاً — لا بسعر صفر —
- * و`agreed_cost` على الحلقة يعني «كم قُيِّد في المحاسبة» فيبقى صفراً صادقاً
- * حتى يقع القيد. فلا التباسَ بين «مجّانيّ» و«لم يُدخَل» (المرحلة الثانية).
+ * ══ والصفرُ لا يُخترَع ═══════════════════════════════════════════════════
+ * «بلا أجور» تعني **لا قيدَ ولا كلفةَ ولا دينار** — لا سعراً صفرياً ملفَّقاً.
+ * وهي واقعةٌ تُحفَظ على أمر العمل (`no_exam_no_charge`) فلا يُستدَلّ عليها
+ * بغياب صفّ. ولا التباسَ بين «مجّانيّ» و«لم يُدخَل».
+ *
+ * ══ والصفوفُ المعلَّقة تاريخٌ لا مسار ═══════════════════════════════════
+ * `createDeviceSaleOperation` و`createMaintenanceOperation` **لا تكتبان في
+ * `pending_service_charges` إطلاقاً**. والدوالُّ الباقية أدناه
+ * (`approveCharge` · `returnCharge` · `resubmitCharge` · القراءات) تخدم
+ * **الصفوفَ الموروثة المفتوحة وحدها** حتى يُنهيها إنسان — ومَن يُنهيها
+ * الاستقبالُ ومديرُ الفرع والمسؤول، لا طبيب.
  */
 
 import { db } from "../db";
@@ -183,66 +194,33 @@ interface CreateBase {
 }
 
 /**
- * يكتب صفَّ المبلغ المعلَّق — **ولا يمسّ ديناراً**.
+ * **بيعُ جزءٍ على مسار «بلا معاينة» — العملُ والمالُ معاً في معاملةٍ واحدة.**
  *
- * ولا يُنشأ صفٌّ لعمليةٍ بلا أجر: `amount === null` تعني «لا مال هنا»،
- * فالعمليةُ تكتمل تشغيلياً وتنتهي. **ولا اعتمادَ لصفر.**
- */
-async function insertCharge(tx: any, p: CreateBase & {
-  operationKind: PendingChargeKind;
-  deviceEpisodeId: number | null;
-  workOrderId: number | null;
-  requestedItem: string | null;
-  maintenanceComponent: string | null;
-  deviceOrigin: string | null;
-  saleExpertUserId: number | null;
-}): Promise<ChargeRow | null> {
-  if (p.amount === null) return null;
-  //  **والفهرسُ الجزئيّ هو الحارس** — ضغطتان متزامنتان تصطدمان به، فتُقرأ
-  //  اصطدامتُه رسالةً عربيةً صريحة لا خطأَ خادمٍ عارياً في السجلّ.
-  const ins = await tx.execute(sql`
-    INSERT INTO pending_service_charges
-      (patient_id, branch_id, case_id, device_episode_id, work_order_id, service_type,
-       operation_kind, requested_item, maintenance_component, device_origin,
-       sale_expert_user_id, amount, note, status, created_by, created_by_name)
-    VALUES (${p.patientId}, ${p.branchId}, ${p.caseId}, ${p.deviceEpisodeId},
-            ${p.workOrderId}, ${p.serviceType}, ${p.operationKind}, ${p.requestedItem},
-            ${p.maintenanceComponent}, ${p.deviceOrigin}, ${p.saleExpertUserId},
-            ${p.amount}, ${p.note},
-            'pending_review', ${p.actor.userId}, ${p.actor.userName})
-    RETURNING ${COLS}
-  `).catch(asChargeError);
-  const row = (ins.rows ?? [])[0];
-  if (!row) throw new ChargeError("لهذه العملية مبلغ معلّق بالفعل", 409);
-  const charge = toRow(row);
-  await appendEvent(tx, {
-    chargeId: charge.id, patientId: charge.patientId, branchId: charge.branchId,
-    eventType: "created", toStatus: "pending_review", note: p.note,
-    payload: {
-      amount: charge.amount, operationKind: charge.operationKind,
-      requestedItem: charge.requestedItem,
-      maintenanceComponent: charge.maintenanceComponent,
-      deviceOrigin: charge.deviceOrigin,
-    },
-    actor: p.actor,
-  });
-  return charge;
-}
-
-/**
- * **بيعُ جزءٍ (أو مسندٍ كامل) على مسار «بلا معاينة»**.
+ * ══ القاعدةُ الجديدة (قرارُ المالك) ═════════════════════════════════════
+ * **المبلغُ الذي يُدخله الاستقبالُ نهائيٌّ لحظتَه.** فلا صفَّ معلَّقاً يُنشأ،
+ * ولا طابورَ اعتماد، ولا مالَ يقع خارج الدفتر بانتظار مَن يفرغ له.
  *
- * **أمرُ التصنيع يُفتَح الآن** بخبيره وسجلِّه، وتنتقل الحلقةُ إلى التصنيع —
- * والسببُ في رأس الملفّ: العمليةُ تمضي ولا تنتظر المراجع. **والمعلَّقُ هو
- * المبلغُ المقترَح وحده**، فلا كلفةَ ولا قيدَ ولا دينار.
+ * ══ ونصفا البيع القائمان بلا نسخةٍ ثانية ════════════════════════════════
+ * `startDeviceSaleOperationallyTx` تفتح الأمرَ وتنقل الحلقة (بلا دينار)، ثمّ
+ * `applyDeviceSaleFinancialsTx` تقيّد الكلفةَ على المريض والحالة والحلقة
+ * ودفترِ القيود — **وهما الكاتبان اللذان يناديهما مسارُ المعاينة نفسُه**
+ * (`assignManufacturing` تركّبهما بالترتيب عينه). فلا محاسبةَ ثانية تنحرف.
+ *
+ * ══ ومرّةً واحدة بالضبط ═════════════════════════════════════════════════
+ * المالُ يقع **في معاملة فتح الأمر نفسِها**. فحارسُ الأمر النشط وقفلُ الخيط
+ * و`uq_pde_case_open` — التي تمنع أمراً ثانياً — تمنع قيداً ثانياً معه:
+ * ضغطتان متزامنتان ⟶ الثانيةُ ترتدّ قبل أن تكتب ديناراً، ولا نصفَ كتابة.
  *
  * والهويّةُ الدقيقة هي الحلقةُ بما طُلب بالضبط، ويُتحقَّق **تحت القفل
  * القانونيّ** (الخيطُ ثمّ الحلقة) أنها لهذا المريض وأن مسارَها `no_exam`.
  */
-export async function createDeviceSaleCharge(p: CreateBase & {
+export async function createDeviceSaleOperation(p: CreateBase & {
   deviceEpisodeId: number;
   saleExpertUserId: number;
-}): Promise<{ charge: ChargeRow | null; workOrderId: number }> {
+}): Promise<{
+  workOrderId: number; deviceEpisodeId: number; amount: number | null;
+  requestedItem: string | null;
+}> {
   const store = await import("../storage");
   return await db.transaction(async (tx) => {
     //  ══ **ترتيبُ قفلٍ واحد لا اثنان** ═══════════════════════════════════
@@ -252,7 +230,7 @@ export async function createDeviceSaleCharge(p: CreateBase & {
     //
     //  فحُذف. والحُرّاسُ كلُّها داخل `startDeviceSaleOperationallyTx`:
     //  انتماءُ الحلقة (بقفل الخيط) · مسارُها (`expectServicePath`) ·
-    //  حالتُها · الطرفُ الكامل · وفرعُها. **وما طُلب يُقرأ من هناك** —
+    //  حالتُها · الجهازُ الكامل · وفرعُها. **وما طُلب يُقرأ من هناك** —
     //  من الصفّ المقفول لا من قراءةٍ سابقةٍ له.
     const op = await store.startDeviceSaleOperationallyTx(tx, {
       patientId: p.patientId,
@@ -266,27 +244,33 @@ export async function createDeviceSaleCharge(p: CreateBase & {
       noExamNoCharge: p.amount === null,
     });
 
-    const charge = await insertCharge(tx, {
-      ...p, operationKind: "device_sale",
-      deviceEpisodeId: p.deviceEpisodeId,
-      //  **والصفُّ يشير إلى أمرِ عمله** — فالاعتمادُ يقيّد على أمرٍ قائم
-      //  ولا يُنشئ ثانياً.
+    //  **والمالُ هنا، لا في طابور** — بالكاتب القانونيّ نفسِه وفي المعاملة
+    //  نفسِها. و«بلا أجور» تبقى واقعةً صريحة: لا قيدَ ولا صفَّ ولا دينار.
+    if (p.amount !== null) {
+      await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: p.amount });
+    }
+    return {
       workOrderId: op.workOrderId,
-      requestedItem: op.requestedItem,
-      maintenanceComponent: null, deviceOrigin: null,
-      saleExpertUserId: p.saleExpertUserId,
-      caseId: op.caseId,
-    });
-    return { charge, workOrderId: op.workOrderId };
+      deviceEpisodeId: p.deviceEpisodeId,
+      amount: p.amount,
+      //  **وما طُلب يُقرأ من الصفّ المقفول** لا من جسم الطلب — فالسجلُّ
+      //  الاسترجاعيُّ يسمّي ما بِيع فعلاً لا ما ادّعاه العميل.
+      requestedItem: op.requestedItem ?? null,
+    };
   });
 }
 
 /**
- * **صيانةٌ على مسار «بلا معاينة»** — العملُ يُفتَح الآن، والأجرُ ينتظر.
+ * **صيانةٌ على مسار «بلا معاينة» — العملُ والأجرُ معاً.**
  *
- * والأمرُ يُفتَح بأجرٍ **صفر** عبر الكاتب القانونيّ نفسِه، فلا سطرَ محاسبةٍ
- * يُكتب (`postMaintenanceFee` تخرج مبكّراً عند الصفر). ثمّ يُقيَّد الأجرُ عند
- * الاعتماد بالدالّة نفسِها.
+ * والأمرُ يُفتَح **بأجره الحقيقيّ** عبر الكاتب القانونيّ نفسِه
+ * (`createMaintenanceOrderWithVisit` تنادي `postMaintenanceFee` داخل معاملتها،
+ * وهي تخرج مبكّراً عند الصفر) — وهو **الكاتبُ عينه** الذي تناديه الصيانةُ
+ * كاملةُ الأجر من نقطتها القائمة. فلا نسخةَ ثانية من محاسبة الصيانة.
+ *
+ * **ومرّةً واحدة**: `uq_pwo_one_open_maint_per_episode` و
+ * `uq_pwo_one_open_legacy_maint` (ترحيل ٠٥١) تمنعان أمرَ صيانةٍ مفتوحاً
+ * ثانياً على الجهاز نفسِه — والأجرُ داخل معاملة الأمر، فيرتدّ معه.
  *
  * ══ **ومنشأُ الجهاز يُحفَظ على الأمر** (ترحيل ٠٦٧) ═══════════════════════
  * ثلاثُ حقائق لا اثنتان: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل النظام ·
@@ -299,13 +283,13 @@ export async function createDeviceSaleCharge(p: CreateBase & {
  * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — لا لواحدٍ
  * صنعناه ولا لواحدٍ صُنع خارجنا. الغيابُ يُقال غياباً.
  */
-export async function createMaintenanceCharge(p: CreateBase & {
+export async function createMaintenanceOperation(p: CreateBase & {
   expertUserId: number;
   visitNotes: string;
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
   deviceOrigin: DeviceOrigin;
-}): Promise<{ charge: ChargeRow | null; workOrderId: number }> {
+}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; amount: number | null }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
     const order = await mfg.createMaintenanceOrderWithVisit({
@@ -317,9 +301,11 @@ export async function createMaintenanceCharge(p: CreateBase & {
       assignedBy: p.actor.userId,
       visitNotes: p.visitNotes,
       visitDate: new Date(),
-      //  **صفرٌ هنا ليس سعراً ملفَّقاً**: الأجرُ لم يدخل المحاسبة بعد، وهو
-      //  ما يعنيه هذا المسار بالضبط. والمبلغُ المقترح في الصفّ المعلَّق.
-      cost: 0,
+      //  **الأجرُ الحقيقيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
+      //  الدالّة. و«بلا أجور» صفرٌ صريح: الكاتبُ يخرج مبكّراً فلا قيدَ ولا
+      //  كلفةَ ولا دينار — وهي واقعةٌ تُحفَظ على الأمر (`noExamNoCharge`)
+      //  لا يُستدَلّ عليها بغياب صفّ.
+      cost: p.amount ?? 0,
       deviceEpisodeId: p.deviceEpisodeId,
       //  جهازٌ بلا حلقة — صنعناه ولم نسجّله، أو صُنع خارجنا: المخرجُ القائم
       //  نفسُه، بلا اختراع. والفرقُ بينهما يقوله `deviceOrigin` لا هذه الراية.
@@ -329,16 +315,11 @@ export async function createMaintenanceCharge(p: CreateBase & {
       noExamNoCharge: p.amount === null,
       tx,
     });
-    const charge = await insertCharge(tx, {
-      ...p, operationKind: "maintenance",
-      deviceEpisodeId: order.deviceEpisodeId ?? null,
+    return {
       workOrderId: order.id,
-      requestedItem: null,
-      maintenanceComponent: p.maintenanceComponent,
-      deviceOrigin: p.deviceOrigin,
-      saleExpertUserId: null,
-    });
-    return { charge, workOrderId: order.id };
+      deviceEpisodeId: order.deviceEpisodeId ?? null,
+      amount: p.amount,
+    };
   });
 }
 
@@ -616,15 +597,17 @@ const toCard = (r: any): ChargeCard => ({
 });
 
 /**
- * **طابورُ الطبيب** — الأحدثُ أوّلاً، ضمن اختصاصاته وفروعه.
+ * **طابورُ الإكمال الموروث** — الأحدثُ أوّلاً، ضمن فروع المنادي.
  *
- * ولا يخلط بمعايناته ولا بمراجعته الإشرافية ولا بالخصومات: هذا سؤالٌ واحد
- * — «أهذا المبلغُ مشروع؟» — وله شاشتُه.
+ * ══ ولا فلترةَ باختصاصٍ طبّيّ بعد اليوم ════════════════════════════════
+ * كانت هذه القائمةُ تُقصَر على اختصاصات الطبيب لأنه كان المعتمِد. وقد خرج
+ * من هذا المسار (قرارُ المالك)، فصار الحاكمُ **نطاقَ الفرع وحده**: مَن
+ * يُنهي الصفَّ اليومَ هو الاستقبالُ ومديرُ الفرع والمسؤول، ولا اختصاصَ
+ * طبّياً يُسأل عنه أحدُهم.
+ *
+ * **ولا صفَّ جديد يدخل هنا** — ما بقي مبالغُ عملياتٍ وقعت قبل التغيير.
  */
-export async function listForReview(params: {
-  specialties: string[]; scope: number[] | null;
-}): Promise<ChargeCard[]> {
-  if (params.specialties.length === 0) return [];
+export async function listLegacyOpen(scope: number[] | null): Promise<ChargeCard[]> {
   const r = await db.execute(sql`
     SELECT ${CARD_COLS}, p.name AS patient_name, p.patient_code, b.name AS branch_name
       FROM pending_service_charges c
@@ -632,11 +615,10 @@ export async function listForReview(params: {
       LEFT JOIN branches b ON b.id = c.branch_id
      WHERE c.status = 'pending_review'
        -- **والمحذوفُ يخرج من الطابور** (ترحيل ٠٦٨): صفُّه باقٍ كما هو
-       -- ويعود بعينه عند الاستعادة، لكنّه لا يُعرَض على طبيبٍ ليعتمد مالاً
-       -- على ملفٍّ أُخرج من النظام.
+       -- ويعود بعينه عند الاستعادة، لكنّه لا يُعرَض ليُقيَّد مالٌ على ملفٍّ
+       -- أُخرج من النظام.
        AND p.deleted_at IS NULL
-       AND ${scopeClause(params.scope)}
-       AND c.service_type IN (${sql.join(params.specialties.map((x) => sql`${x}`), sql`, `)})
+       AND ${scopeClause(scope)}
      ORDER BY c.id DESC
      LIMIT 200
   `);
