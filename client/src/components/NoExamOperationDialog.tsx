@@ -60,6 +60,7 @@ import {
 } from "@shared/device_origin";
 import {
   PENDING_CHARGE_KIND_LABELS, SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
+  SAVED_REVIEW_FAILED_MESSAGE, SAVED_REVIEW_FAILED_HINT,
   type PendingChargeKind,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
@@ -199,6 +200,19 @@ export function NoExamOperationDialog({
     onSuccess: (d: any) => {
       invalidate();
       onOpenChange(false);
+      //  ══ **والسجلُّ الإشرافيُّ الناقص يُقال — ولا يُطلَب تكرارُ العملية** ══
+      //  العمليةُ والمبلغُ محفوظان يقيناً (وقعا قبل هذا الردّ في معاملةٍ
+      //  مغلقة). والذي تعذّر سطرٌ إخباريٌّ للطبيب. ونجاحٌ لا يُميَّز عن نجاح
+      //  كان سيُخفي عن الموظّف أن حركةً لن تصل شاشتَه — فلا يبلّغ أحداً.
+      if (d?.reviewRouted === false) {
+        toast({
+          title: SAVED_REVIEW_FAILED_MESSAGE,
+          description: SAVED_REVIEW_FAILED_HINT,
+          variant: "destructive",
+          duration: 12_000,
+        });
+        return;
+      }
       //  **ولا شرحَ محاسبيّ في الإشعار** — الرسالةُ تقول ما وقع وتنتهي.
       toast({
         title: d?.amount != null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,

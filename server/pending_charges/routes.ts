@@ -165,8 +165,20 @@ function finalizeGate(req: Req) {
  * ══ ولماذا بعدُ لا قبل ═══════════════════════════════════════════════════
  * هذا **إخبارٌ لا إذن**. فلو وقع قبل اكتمال العملية لصار — ولو بلا قصد —
  * بوّابةً: شيئاً يمكن أن يفشل فيمنع عملاً مشروعاً ومالاً مستحقّاً. فيُنادى
- * بعد `COMMIT`، ويُبتلَع فشلُه **صراحةً ومسجَّلاً**: تعذُّرُ كتابة سطرٍ
- * إخباريٍّ لا يُبطل بيعاً وقع وقُيِّد مالُه.
+ * بعد `COMMIT`، ولا يُبطل شيئاً حين يفشل.
+ *
+ * ══ ومحاولةٌ ثانيةٌ واحدة، ثمّ يُقال الفشلُ صراحةً ═════════════════════════
+ * **ولا يُبتلَع صامتاً**: نجاحٌ لا يُميَّز عن نجاح يُخفي عن الموظّف أن حركةً
+ * لن تصل إلى شاشة الطبيب. فتُعاد المحاولةُ **مرّةً واحدة** — انقطاعُ شبكةٍ
+ * عابرٌ لا يستحقّ سجلّاً ضائعاً — ثمّ يُرفَع `routed: false` لتقول الشاشةُ
+ * ما وقع وما لم يقع.
+ *
+ * **والإعادةُ لا تُنتج صفّاً ثانياً**: `ensureReviewRouting` تُمسك ٤٠٩ وتُرجع
+ * الطلبَ المعلَّق القائم كما هو (فهارسُ التفرّد الجزئية هي الحارس). فمحاولةٌ
+ * أولى نجحت ثمّ انقطع الردُّ ⟶ الثانيةُ تقرأ الأولى ولا تكتب فوقها.
+ *
+ * **ولا يُعاد شيءٌ ماليٌّ أو تشغيليّ هنا**: لا أمرَ تصنيعٍ ولا قيدَ ولا دينار
+ * — المُعادُ نداءُ السجلّ وحده.
  *
  * ══ ولا تصنيفَ سريريٍّ يُخترَع ══════════════════════════════════════════
  * الصيانةُ لها `maintenance` الصادق. أمّا **بيعُ جزء** فليس «جهازاً جديداً»
@@ -184,22 +196,26 @@ async function routeRetrospectiveReview(req: Req, p: {
   deviceEpisodeId?: number | null;
   workOrderId?: number | null;
 }): Promise<{ routed: boolean }> {
-  try {
-    await routeServiceToDoctorReview(req, {
-      patientId: p.patientId,
-      caseType: p.serviceType,
-      reviewKind: p.reviewKind,
-      requestedPath: "quick",
-      receptionNote: p.note,
-      deviceEpisodeId: p.deviceEpisodeId ?? null,
-      workOrderId: p.workOrderId ?? null,
-    });
-    return { routed: true };
-  } catch (err) {
-    //  **لا يُبطل شيئاً** — العمليةُ والمالُ وقعا وصحّا قبل هذا السطر.
-    console.error("[no-exam] تعذّر توجيه السجلّ الاسترجاعي للطبيب:", err);
-    return { routed: false };
+  //  محاولتان لا أكثر: الأولى، ثمّ واحدةٌ تلتقط العابرَ من انقطاع الشبكة.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await routeServiceToDoctorReview(req, {
+        patientId: p.patientId,
+        caseType: p.serviceType,
+        reviewKind: p.reviewKind,
+        requestedPath: "quick",
+        receptionNote: p.note,
+        deviceEpisodeId: p.deviceEpisodeId ?? null,
+        workOrderId: p.workOrderId ?? null,
+      });
+      return { routed: true };
+    } catch (err) {
+      //  **لا يُبطل شيئاً** — العمليةُ والمالُ وقعا وصحّا قبل هذا السطر.
+      console.error(
+        `[no-exam] تعذّر توجيه السجلّ الاسترجاعي للطبيب (محاولة ${attempt}/2):`, err);
+    }
   }
+  return { routed: false };
 }
 
 /** سطرُ الحقائق الذي يقرؤه الطبيب — من العناوين المشتركة لا من معجمٍ ثانٍ. */
