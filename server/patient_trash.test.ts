@@ -684,13 +684,16 @@ async function main() {
     same("ي١٥. **وصفُّ المبلغ باقٍ بحاله** — يعود بعينه عند الاستعادة",
       (await q(`SELECT status FROM pending_service_charges WHERE patient_id=$1`, [pend.id]))[0]?.status,
       "pending_review");
-    check(!JSON.stringify((await http("GET", "/api/no-exam/review", S.doc)).body ?? {})
-      .includes(`"patientId":${pend.id}`), "ي١٦. وخرج من طابور الطبيب");
+    //  **والطابورُ صار للاستقبال ومديرِ الفرع والمسؤول** — لا للطبيب
+    //  (قرارُ المالك: لا معتمِدَ طبّيّ للمال). والمقصودُ هنا واحدٌ لم يتغيّر:
+    //  الملفُّ في السلّة يخرج من الطابور، ويعود بعينه عند الاستعادة.
+    check(!JSON.stringify((await http("GET", "/api/no-exam/review", S.admin)).body ?? {})
+      .includes(`"patientId":${pend.id}`), "ي١٦. وخرج من طابور الإكمال");
     same("ي١٧. **وأمرُ تصنيعه لم يُلغَ**",
       (await q(`SELECT status FROM prosthetic_work_orders WHERE id=$1`, [pWo.id]))[0]?.status,
       "in_progress");
     await restore(pend.id, S.admin);
-    check(JSON.stringify((await http("GET", "/api/no-exam/review", S.doc)).body ?? {})
+    check(JSON.stringify((await http("GET", "/api/no-exam/review", S.admin)).body ?? {})
       .includes(`"patientId":${pend.id}`), "ي١٨. والاستعادةُ تعيده إلى الطابور نفسِه");
 
     // ══ ك. المهلةُ تنقضي فتسقط الاستعادةُ وحدها ═══════════════════════════

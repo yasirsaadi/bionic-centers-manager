@@ -59,8 +59,19 @@ export interface ReviewCard extends ReviewRow {
   patientClassification: string | null;
   /** الجهاز الحالي أو السابق كما هو مسجَّل على الخيط. */
   caseDetails: Record<string, any> | null;
-  /** حلقةُ الجهاز إن كانت مرساةً: رقمُها في الخيط وحالتُها. */
-  episode: { id: number; sequenceNumber: number; status: string } | null;
+  /** حلقةُ الجهاز إن كانت مرساةً: رقمُها في الخيط وحالتُها وما طُلب فيها. */
+  episode: {
+    id: number; sequenceNumber: number; status: string;
+    /**
+     * **ما طُلب** (`patient_device_episodes.requested_item`، ترحيل ٠٦٠) —
+     * لقطةٌ للعرض لا سلطة.
+     *
+     * تقرؤها البطاقةُ لتسمّي الحركةَ باسمها: «بيع جزء من طرف صناعي — القالب»
+     * بدل «أخرى — أمر تصنيع» التي لا تقول للمشرف شيئاً. **ولا يُنتزَع الجزءُ
+     * من نصٍّ حرّ**: العمودُ المحروسُ بقيدٍ في القاعدة هو المصدر.
+     */
+    requestedItem: string | null;
+  } | null;
   /** أمرُ التصنيع/الصيانة إن كان مرساةً. */
   workOrder: {
     id: number; purpose: string; status: string; currentStage: string;
@@ -495,6 +506,7 @@ export async function listPendingReviews(params: {
            cu.display_name AS created_by_name,
            du.display_name AS decided_by_name,
            e.sequence_number AS ep_seq, e.status AS ep_status,
+           e.requested_item AS ep_item,
            wo.purpose AS wo_purpose, wo.status AS wo_status,
            wo.current_stage AS wo_stage, wo.expert_user_id AS wo_expert,
            xu.display_name AS wo_expert_name,
@@ -676,6 +688,7 @@ function toCard(r: Record<string, any>): ReviewCard {
         id: Number(r.device_episode_id),
         sequenceNumber: Number(r.ep_seq ?? 0),
         status: String(r.ep_status ?? ""),
+        requestedItem: r.ep_item ?? null,
       }
       : null,
     workOrder: r.work_order_id

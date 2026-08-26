@@ -1,22 +1,22 @@
 /**
- * نقاط REST لعملياتِ **«بلا معاينة»** ومراجعةِ مبالغها.
+ * نقاط REST لعملياتِ **«بلا معاينة»**.
  *
- * **العمليةُ تمضي. والمالُ لا يدخل المحاسبة حتى يعتمده طبيبٌ مخوَّل.**
+ * ══ القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ═══════════════════════
+ * **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
+ * فقط.**
  *
  * ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
- *   إنشاءُ العملية وتصحيحُها  — استقبال · مدير فرع · مسؤول (ضمن الفرع)
- *   مراجعةُ المبلغ            — طبيبٌ يملك **اختصاصَ الجهاز** ويصل **فرعَ
- *                               العملية** · مسؤول
+ *   إنشاءُ العملية **ومبلغِها**   — استقبال · مدير فرع · مسؤول (ضمن الفرع)
+ *   إكمالُ صفٍّ موروثٍ معلَّق      — **الثلاثةُ أنفسُهم** (ضمن الفرع)
+ *
+ * **ولا معتمِدَ طبّيٌّ للمال بعد اليوم.** ومَن يتّفق على السعر هو مَن
+ * يقيّده — والطبيبُ يرى الحركةَ بعد وقوعها في «مراجعة حركة مرضى الأطراف
+ * والمساند» القائمة، اعترافاً لا إذناً.
  *
  * **ولا صلاحيةَ طبيةٍ تُمنَح لأحد**: اختيارُ المسار توجيهٌ تشغيليّ (٠٦٥)،
- * والمراجعةُ هنا **ماليّة لا سريرية** — فلا `medical_exams` تُنشأ ولا
- * `service_path` يتغيّر ولا يصير الطلبُ طلبَ معاينة.
+ * ولا `medical_exams` تُنشأ ولا `service_path` يتغيّر.
  *
- * **والاختصاصُ يُقرأ من القاعدة عند كلّ طلب** (`doctorSpecialties`) لا من
- * الجلسة: سحبُ المنح يسري فوراً لا عند الدخول التالي — القاعدةُ نفسُها
- * التي يعمل بها إلغاءُ المعاينة (٠٦١).
- *
- * **ونطاقُ الفرع يُقرأ من صفّ العملية** لا مما يعلنه الطلب.
+ * **ونطاقُ الفرع يُقرأ من صفّ المريض/العملية** لا مما يعلنه الطلب.
  */
 
 import type { Express } from "express";
@@ -24,13 +24,16 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { ChargeError } from "./store";
 import * as mfg from "../manufacturing/store";
-import { doctorSpecialties } from "../medical/store";
+import { routeServiceToDoctorReview } from "../medical_review/routing";
 import {
-  canOperateNoExam, canCorrectReturned, mayReviewShape, parsePendingAmount,
-  SAVED_PENDING_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
+  canOperateNoExam, canCorrectReturned, canFinalizeLegacyCharge, parsePendingAmount,
+  SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
 } from "@shared/pending_charge";
-import { parseComponent, isDeviceServiceKind } from "@shared/prosthetic_parts";
-import { parseDeviceOrigin, originHasEpisode } from "@shared/device_origin";
+import {
+  parseComponent, isDeviceServiceKind, componentLabel, requestedItemLabel,
+} from "@shared/prosthetic_parts";
+import { parseDeviceOrigin, originHasEpisode, DEVICE_ORIGIN_LABELS } from "@shared/device_origin";
+import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
 type Req = any;
 
@@ -105,6 +108,20 @@ async function patientRow(patientId: number) {
   return (r.rows ?? [])[0] ?? null;
 }
 
+/**
+ * اسمُ الخبير للعرض في السجلّ الاسترجاعيّ — **لقطةٌ للقراءة لا سلطة**.
+ *
+ * والغيابُ يُقال غياباً: حسابٌ حُذف بعدها يترك السطرَ بلا اسم، ولا يُخمَّن.
+ */
+async function expertDisplayName(expertUserId: number): Promise<string | null> {
+  const { db } = await import("../db");
+  const { sql } = await import("drizzle-orm");
+  const r = await db.execute<{ display_name: string | null }>(sql`
+    SELECT display_name FROM system_users WHERE id = ${expertUserId}
+  `);
+  return (r.rows ?? [])[0]?.display_name ?? null;
+}
+
 /** حالةُ المريض من نوع الخدمة — نقرأ منها `case_id` للقيد ولا نخترعها. */
 async function caseIdFor(patientId: number, serviceType: string): Promise<number | null> {
   const { db } = await import("../db");
@@ -119,47 +136,129 @@ async function caseIdFor(patientId: number, serviceType: string): Promise<number
 }
 
 /**
- * **أهليّةُ المراجعة** — تُحسَب في الخادم، وتُفحَص **تحت قفل الصفّ**.
+ * **أهليّةُ إكمال صفٍّ موروث** — تُفحَص **تحت قفل الصفّ**.
  *
- * اختصاصٌ × فرع: الاختصاصُ من القاعدة الآن، والفرعُ من صفّ العملية نفسِه.
- * ولا «طبيبٌ مسؤولٌ عن المريض» يُخترَع — علاقةٌ كهذه تُعطّل المريضَ كلّما
- * غاب صاحبُها.
+ * ══ ولا اختصاصَ طبّياً يُسأل عنه ═══════════════════════════════════════
+ * كانت الأهليّةُ «طبيبٌ باختصاص الجهاز × فرع العملية». وقد خرج الطبيبُ من
+ * سلطة المال (قرارُ المالك)، فبقي **الفرعُ وحده** حاكماً — والبوّابةُ هي
+ * بوّابةُ الإنشاء نفسُها: مَن يسجّل عمليةً ومبلغَها اليوم يُنهي مبلغَ
+ * عمليةٍ سُجِّلت أمس.
+ *
+ * **والفرعُ من صفّ العملية نفسِه** لا مما يعلنه الطلب — والفحصُ تحت القفل
+ * لأن المريضَ قد يُنقَل بين قراءة النقطة وكتابة المعاملة.
  */
-function reviewGate(req: Req) {
+function finalizeGate(req: Req) {
   return async (charge: store.ChargeRow): Promise<{ ok: boolean; reason?: string }> => {
-    const s = getSession(req);
-    if (!mayReviewShape(chargeSession(req))) {
-      return { ok: false, reason: "مراجعة المبالغ لطبيبٍ مخوَّل أو للمسؤول" };
+    if (!canFinalizeLegacyCharge(chargeSession(req))) {
+      return { ok: false, reason: "إكمال المبالغ السابقة للاستقبال ومدير الفرع والمسؤول" };
     }
     if (!canReachBranch(req, charge.branchId)) {
-      return { ok: false, reason: "غير مصرح لك بمراجعة عمليات فرع آخر" };
-    }
-    if (s.isAdmin) return { ok: true };
-    const specialties = await doctorSpecialties(s.userId);
-    if (!specialties.includes(charge.serviceType as any)) {
-      return {
-        ok: false,
-        reason: charge.serviceType === "prosthetic"
-          ? "هذه العملية على اختصاص الأطراف الصناعية — وهو ليس من اختصاصاتك"
-          : "هذه العملية على اختصاص المساند الطبية — وهو ليس من اختصاصاتك",
-      };
+      return { ok: false, reason: "غير مصرح لك بعمليات فرع آخر" };
     }
     return { ok: true };
   };
+}
+
+/**
+ * **السجلُّ الاسترجاعيُّ للطبيب — بعد أن صارت العمليةُ صحيحةً بالكامل.**
+ *
+ * ══ ولماذا بعدُ لا قبل ═══════════════════════════════════════════════════
+ * هذا **إخبارٌ لا إذن**. فلو وقع قبل اكتمال العملية لصار — ولو بلا قصد —
+ * بوّابةً: شيئاً يمكن أن يفشل فيمنع عملاً مشروعاً ومالاً مستحقّاً. فيُنادى
+ * بعد `COMMIT`، ولا يُبطل شيئاً حين يفشل.
+ *
+ * ══ ومحاولةٌ ثانيةٌ واحدة، ثمّ يُقال الفشلُ صراحةً ═════════════════════════
+ * **ولا يُبتلَع صامتاً**: نجاحٌ لا يُميَّز عن نجاح يُخفي عن الموظّف أن حركةً
+ * لن تصل إلى شاشة الطبيب. فتُعاد المحاولةُ **مرّةً واحدة** — انقطاعُ شبكةٍ
+ * عابرٌ لا يستحقّ سجلّاً ضائعاً — ثمّ يُرفَع `routed: false` لتقول الشاشةُ
+ * ما وقع وما لم يقع.
+ *
+ * **والإعادةُ لا تُنتج صفّاً ثانياً**: `ensureReviewRouting` تُمسك ٤٠٩ وتُرجع
+ * الطلبَ المعلَّق القائم كما هو (فهارسُ التفرّد الجزئية هي الحارس). فمحاولةٌ
+ * أولى نجحت ثمّ انقطع الردُّ ⟶ الثانيةُ تقرأ الأولى ولا تكتب فوقها.
+ *
+ * **ولا يُعاد شيءٌ ماليٌّ أو تشغيليّ هنا**: لا أمرَ تصنيعٍ ولا قيدَ ولا دينار
+ * — المُعادُ نداءُ السجلّ وحده.
+ *
+ * ══ ولا تصنيفَ سريريٍّ يُخترَع ══════════════════════════════════════════
+ * الصيانةُ لها `maintenance` الصادق. أمّا **بيعُ جزء** فليس «جهازاً جديداً»
+ * (ذاك يستوجب معاينةً كاملة ويُردّ هنا)، ولا صيانةً، ولا تعديلاً. فيُستعمَل
+ * `other` العامُّ **الصادق**، وتُكتب العمليةُ بالعربية في `receptionNote`.
+ * ولا قيمةٌ جديدة تُضاف إلى `REVIEW_KINDS` لتصف ما ليس سريرياً أصلاً.
+ *
+ * **ولا معاينةَ تُنشأ** بسبب هذا السطر، ولا `service_path` يتغيّر.
+ */
+async function routeRetrospectiveReview(req: Req, p: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  reviewKind: "maintenance" | "other";
+  note: string;
+  deviceEpisodeId?: number | null;
+  workOrderId?: number | null;
+}): Promise<{ routed: boolean }> {
+  //  محاولتان لا أكثر: الأولى، ثمّ واحدةٌ تلتقط العابرَ من انقطاع الشبكة.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await routeServiceToDoctorReview(req, {
+        patientId: p.patientId,
+        caseType: p.serviceType,
+        reviewKind: p.reviewKind,
+        requestedPath: "quick",
+        receptionNote: p.note,
+        deviceEpisodeId: p.deviceEpisodeId ?? null,
+        workOrderId: p.workOrderId ?? null,
+      });
+      return { routed: true };
+    } catch (err) {
+      //  **لا يُبطل شيئاً** — العمليةُ والمالُ وقعا وصحّا قبل هذا السطر.
+      console.error(
+        `[no-exam] تعذّر توجيه السجلّ الاسترجاعي للطبيب (محاولة ${attempt}/2):`, err);
+    }
+  }
+  return { routed: false };
+}
+
+/** سطرُ الحقائق الذي يقرؤه الطبيب — من العناوين المشتركة لا من معجمٍ ثانٍ. */
+function retrospectiveNote(p: {
+  serviceType: "prosthetic" | "medical_support";
+  kind: "device_sale" | "maintenance";
+  requestedItem?: string | null;
+  maintenanceComponent?: string | null;
+  deviceOrigin?: string | null;
+  amount: number | null;
+  expertName: string | null;
+}): string {
+  const parts: string[] = [
+    `${DEPARTMENT_LABELS[p.serviceType]} — ${p.kind === "maintenance" ? "صيانة" : "بيع"} بلا معاينة`,
+  ];
+  if (p.kind === "maintenance") {
+    const comp = componentLabel(p.maintenanceComponent);
+    if (comp) parts.push(`الجزء: ${comp}`);
+    const origin = p.deviceOrigin
+      ? DEVICE_ORIGIN_LABELS[p.deviceOrigin as keyof typeof DEVICE_ORIGIN_LABELS] : null;
+    if (origin) parts.push(`منشأ الجهاز: ${origin}`);
+  } else {
+    parts.push(`المُباع: ${requestedItemLabel(p.requestedItem, p.serviceType)}`);
+  }
+  if (p.expertName) parts.push(`الخبير: ${p.expertName}`);
+  //  **والمبلغ يُقال كما وقع** — مسجَّلاً لا معلَّقاً، أو «بلا أجور» صريحة.
+  parts.push(p.amount === null
+    ? "بلا أجور"
+    : `المبلغ: ${p.amount.toLocaleString("en-US")} د.ع — مسجَّل على حساب المريض`);
+  return parts.join(" · ");
 }
 
 export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) {
   // ══ ① إنشاءُ عملية «بلا معاينة» ════════════════════════════════════════
 
   /**
-   * **بيعُ جزءٍ (أو مسندٍ كامل) على مسار «بلا معاينة»**.
+   * **بيعُ جزءٍ على مسار «بلا معاينة» — العملُ والمالُ معاً.**
    *
    * **العملُ يبدأ الآن**: يُفتَح أمرُ التصنيع بخبيره وسجلِّه، وتدخل الحلقةُ
-   * دورتَها التشغيلية — فالمريضُ لا ينتظر قرارَ طبيبٍ لم يُطلَب منه أصلاً.
+   * دورتَها التشغيلية. **والمبلغُ يُقيَّد معه في المعاملة نفسِها** — كلفةُ
+   * المريض والحالةِ والحلقةِ وقيدُ الدفتر، بالكاتب القانونيّ القائم.
    *
-   * **والمعلَّقُ هو المبلغُ وحده**: لا كلفةَ مريضٍ ولا كلفةَ حالةٍ ولا قيدَ
-   * دفترٍ ولا دينار. والاعتمادُ يُدخل المالَ على **العملية نفسِها** — لا
-   * يُنشئ أمراً ثانياً.
+   * ثمّ يُوجَّه للطبيب سجلٌّ **استرجاعيٌّ** بعد أن صار كلُّ ذلك صحيحاً.
    */
   app.post("/api/no-exam/device-sale", isAuthenticated, async (req: Req, res) => {
     try {
@@ -194,7 +293,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!amount.ok) return res.status(400).json({ error: amount.error });
 
-      const out = await store.createDeviceSaleCharge({
+      const out = await store.createDeviceSaleOperation({
         patientId, branchId: patient.branch_id ?? null,
         caseId: await caseIdFor(patientId, serviceType),
         serviceType, amount: amount.amount,
@@ -204,22 +303,39 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
 
       await logAudit({
-        entityType: "pending_service_charge",
-        entityId: out.charge?.id ?? out.workOrderId, action: "create",
+        entityType: "no_exam_operation",
+        entityId: out.workOrderId, action: "create",
         userId: getSession(req).userId, userName: getSession(req).userName ?? null,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: {
           patientId, serviceType, workOrderId: out.workOrderId,
-          operationKind: "device_sale", amount: out.charge?.amount ?? 0,
-          requestedItem: out.charge?.requestedItem ?? null,
+          operationKind: "device_sale", amount: out.amount ?? 0,
+          deviceEpisodeId: out.deviceEpisodeId,
         },
-        notes: out.charge
-          ? `بيع بلا معاينة — بدأ العمل، ومبلغٌ معلّق ${out.charge.amount} د.ع`
+        notes: out.amount !== null
+          ? `بيع بلا معاينة — بدأ العمل وقُيِّد المبلغ ${out.amount} د.ع`
           : "بيع بلا معاينة — بدأ العمل، بلا أجور",
       });
+
+      //  **بعد أن صحّ كلُّ شيء** — إخبارٌ لا إذن، وفشلُه لا يُبطل العملية.
+      const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+      const review = await routeRetrospectiveReview(req, {
+        patientId, serviceType,
+        //  بيعُ جزءٍ ليس «جهازاً جديداً» ولا صيانةً ولا تعديلاً — فالعامُّ
+        //  الصادقُ وحده، والتفصيلُ بالعربية في الملاحظة.
+        reviewKind: "other",
+        note: [retrospectiveNote({
+          serviceType, kind: "device_sale", amount: out.amount,
+          requestedItem: out.requestedItem,
+          expertName: await expertDisplayName(expertUserId),
+        }), note].filter(Boolean).join(" · "),
+        deviceEpisodeId: out.deviceEpisodeId, workOrderId: out.workOrderId,
+      });
+
       return res.status(201).json({
-        ok: true, charge: out.charge, workOrderId: out.workOrderId,
-        message: out.charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
+        ok: true, workOrderId: out.workOrderId, amount: out.amount,
+        charge: null, reviewRouted: review.routed,
+        message: out.amount !== null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
       });
     } catch (err) {
       fail(res, err, "تعذّر تسجيل العملية");
@@ -306,7 +422,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "اختر الجهاز المسجَّل المراد صيانته" });
       }
 
-      const out = await store.createMaintenanceCharge({
+      const out = await store.createMaintenanceOperation({
         patientId, branchId: patient.branch_id ?? null,
         caseId: await caseIdFor(patientId, serviceType),
         serviceType, amount: amount.amount,
@@ -320,71 +436,81 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
 
       await logAudit({
-        entityType: "pending_service_charge",
-        entityId: out.charge?.id ?? out.workOrderId, action: "create",
+        entityType: "no_exam_operation",
+        entityId: out.workOrderId, action: "create",
         userId: getSession(req).userId, userName: getSession(req).userName ?? null,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType,
+          operationKind: "maintenance",
           maintenanceComponent: comp.value, deviceOrigin,
-          amount: out.charge?.amount ?? 0,
+          amount: out.amount ?? 0,
         },
-        notes: out.charge
-          ? `صيانة بلا معاينة — أجور معلّقة ${out.charge.amount} د.ع`
+        notes: out.amount !== null
+          ? `صيانة بلا معاينة — قُيِّدت الأجور ${out.amount} د.ع`
           : "صيانة بلا معاينة — بلا أجور",
       });
 
+      const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+      const review = await routeRetrospectiveReview(req, {
+        patientId, serviceType,
+        //  **والصيانةُ لها تصنيفُها الصادق** — لا يُخترَع لها غيرُه.
+        reviewKind: "maintenance",
+        note: [retrospectiveNote({
+          serviceType, kind: "maintenance", amount: out.amount,
+          maintenanceComponent: comp.value, deviceOrigin,
+          expertName: await expertDisplayName(expertUserId),
+        }), note].filter(Boolean).join(" · "),
+        deviceEpisodeId: out.deviceEpisodeId, workOrderId: out.workOrderId,
+      });
+
       return res.status(201).json({
-        ok: true, charge: out.charge, workOrderId: out.workOrderId,
-        message: out.charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
+        ok: true, workOrderId: out.workOrderId, amount: out.amount,
+        charge: null, reviewRouted: review.routed,
+        message: out.amount !== null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
       });
     } catch (err) {
       fail(res, err, "تعذّر تسجيل الصيانة");
     }
   });
 
-  // ══ ② طابورُ الطبيب — المراجعةُ المالية وحدها ═══════════════════════════
+  // ══ ② الطابورُ الموروث — إكمالُ مبالغَ سُجِّلت قبل التغيير ═══════════════
+  //
+  //  **ولا صفَّ جديد يدخله**: العملياتُ الجديدة تُقيَّد مبالغُها لحظتَها.
+  //  وما بقي هنا مالٌ حقيقيٌّ لعملياتٍ وقعت، ينتظر إنساناً يُنهيه — والإنسانُ
+  //  هو الاستقبالُ ومديرُ الفرع والمسؤول، لا طبيب.
 
   /**
-   * **شاشةٌ لسؤالٍ واحد**: «أهذا المبلغُ مشروع؟».
+   * **طابورُ الإكمال الموروث** — بنطاق الفرع وحده.
    *
-   * ولا تخلط بمعايناته (`/my-exams`) ولا بمراجعته الإشرافية
-   * (`/medical-review`) ولا باعتماد الخصومات — كلُّ خلطٍ منها يجعل الطابورَ
-   * لا يُقرأ.
+   * ولا يُقصَر على اختصاصٍ طبّيّ بعد اليوم: الطبيبُ خرج من سلطة المال،
+   * فقصرُ القائمة على اختصاصاته كان سيُخفي صفوفاً عمّن صار يملك إنهاءها.
    */
   app.get("/api/no-exam/review", isAuthenticated, async (req: Req, res) => {
     try {
-      if (!mayReviewShape(chargeSession(req))) return res.json({ rows: [], specialties: [] });
-      const s = getSession(req);
-      //  المسؤولُ يراجع الاختصاصين معاً بسلطته؛ وغيرُه باختصاصه المقروء
-      //  من القاعدة **الآن** لا من جلسته.
-      const specialties = s.isAdmin
-        ? ["prosthetic", "medical_support"]
-        : (await doctorSpecialties(s.userId)).filter(
-          (x) => x === "prosthetic" || x === "medical_support");
-      const rows = await store.listForReview({
-        specialties: specialties as string[], scope: branchScope(req),
-      });
-      res.json({ rows, specialties });
+      if (!canFinalizeLegacyCharge(chargeSession(req))) return res.json({ rows: [] });
+      res.json({ rows: await store.listLegacyOpen(branchScope(req)) });
     } catch (err) {
-      fail(res, err, "تعذّر تحميل طابور المراجعة");
+      fail(res, err, "تعذّر تحميل المبالغ السابقة");
     }
   });
 
-  /** **الاعتماد** — ويُقيَّد المبلغُ مرّةً واحدة بالضبط بالكاتب القانونيّ. */
+  /** **الإكمال** — ويُقيَّد المبلغُ مرّةً واحدة بالضبط بالكاتب القانونيّ. */
   app.post("/api/no-exam/charges/:id/approve", isAuthenticated, async (req: Req, res) => {
     try {
       const chargeId = Number(req.params.id);
       if (!Number.isFinite(chargeId)) return res.status(400).json({ error: "معرّف غير صالح" });
-      //  ردٌّ مبكّر لمن ليس مراجعاً أصلاً — والحارسُ الأخير تحت القفل.
-      if (!mayReviewShape(chargeSession(req))) {
-        return res.status(403).json({ error: "مراجعة المبالغ لطبيبٍ مخوَّل أو للمسؤول" });
+      //  ردٌّ مبكّر لمن ليس مخوَّلاً أصلاً — والحارسُ الأخير تحت القفل.
+      if (!canFinalizeLegacyCharge(chargeSession(req))) {
+        return res.status(403).json({
+          error: "إكمال المبالغ السابقة للاستقبال ومدير الفرع والمسؤول",
+        });
       }
       //  **ولا لقطةَ قبل القفل**: الخبيرُ والهويّةُ يُقرآن من الصفّ المقفول
       //  داخل المعاملة ويُعاد التحقّق منهما هناك — فما قُرئ قبل القفل قد
       //  يشيخ قبل أن يُكتب دينار.
       const out = await store.approveCharge({
-        chargeId, actor: actorOf(req), eligible: reviewGate(req),
+        chargeId, actor: actorOf(req), eligible: finalizeGate(req),
       });
       await logAudit({
         entityType: "pending_service_charge", entityId: chargeId, action: "update",
@@ -394,7 +520,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         newValues: {
           status: "approved", amount: out.charge.amount, workOrderId: out.workOrderId,
         },
-        notes: `اعتماد مبلغ عملية بلا معاينة — ${out.charge.amount} د.ع`,
+        notes: `إكمال مبلغ سابق بلا معاينة — ${out.charge.amount} د.ع`,
       });
       res.json({ ok: true, charge: out.charge, workOrderId: out.workOrderId });
     } catch (err) {
@@ -407,12 +533,14 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
     try {
       const chargeId = Number(req.params.id);
       if (!Number.isFinite(chargeId)) return res.status(400).json({ error: "معرّف غير صالح" });
-      if (!mayReviewShape(chargeSession(req))) {
-        return res.status(403).json({ error: "مراجعة المبالغ لطبيبٍ مخوَّل أو للمسؤول" });
+      if (!canFinalizeLegacyCharge(chargeSession(req))) {
+        return res.status(403).json({
+          error: "إكمال المبالغ السابقة للاستقبال ومدير الفرع والمسؤول",
+        });
       }
       const charge = await store.returnCharge({
         chargeId, reason: String(req.body?.reason ?? ""),
-        actor: actorOf(req), eligible: reviewGate(req),
+        actor: actorOf(req), eligible: finalizeGate(req),
       });
       await logAudit({
         entityType: "pending_service_charge", entityId: chargeId, action: "update",

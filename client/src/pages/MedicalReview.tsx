@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
+import { componentLabel } from "@shared/prosthetic_parts";
 import {
   REVIEW_KIND_LABELS,
   type ReviewDecision, type ReviewKind, type ReviewPath,
@@ -35,7 +36,11 @@ interface ReviewCard {
   createdByName: string | null;
   createdAt: string;
   caseDetails: Record<string, any> | null;
-  episode: { id: number; sequenceNumber: number; status: string } | null;
+  episode: {
+    id: number; sequenceNumber: number; status: string;
+    /** ما طُلب في الحلقة (ترحيل ٠٦٠) — تُسمّى به الحركةُ بلغة الأرض. */
+    requestedItem: string | null;
+  } | null;
   workOrder: {
     id: number; purpose: string; status: string; currentStage: string;
     expertUserId: number | null; expertName: string | null;
@@ -64,7 +69,19 @@ function accent(caseType: string) {
 function actionLine(r: ReviewCard): string {
   const kind = REVIEW_KIND_LABELS[r.reviewKind] ?? "زيارة";
   if (r.workOrder) {
-    return r.workOrder.purpose === "maintenance" ? `${kind} — أمر صيانة` : `${kind} — أمر تصنيع`;
+    if (r.workOrder.purpose === "maintenance") return `${kind} — أمر صيانة`;
+    //  ══ **وبيعُ الجزء يُسمّى بيعَ جزء** ═══════════════════════════════════
+    //  بيعُ جزءٍ بلا معاينة يُخزَّن `reviewKind = "other"` — وهو الصادقُ في
+    //  القاعدة (ليس جهازاً جديداً ولا صيانةً ولا تعديلاً، ولا قيمةَ تُخترَع
+    //  له). لكنّ عرضَه «أخرى — أمر تصنيع» لا يقول للمشرف شيئاً.
+    //
+    //  فالاسمُ يُشتقّ من **العمود المحروس على حلقة الجهاز** المرساة نفسِها
+    //  (`patient_device_episodes.requested_item`، ترحيل ٠٦٠) وبالعناوين
+    //  المشتركة — **لا من نصٍّ حرٍّ يُنتزَع منه الجزء**. و`componentLabel`
+    //  تُرجع `null` للجهاز الكامل، فالبناءُ الكاملُ يبقى على صيغته حرفاً.
+    const part = componentLabel(r.episode?.requestedItem);
+    if (part) return `بيع جزء من طرف صناعي — ${part}`;
+    return `${kind} — أمر تصنيع`;
   }
   if (r.visit) return `${kind} — زيارة`;
   if (r.episode) return `${kind} — طلب جهاز`;

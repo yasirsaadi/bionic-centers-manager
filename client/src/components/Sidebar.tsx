@@ -7,6 +7,7 @@ import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { canTrashPatients, TRASH_TITLE } from "@shared/patient_trash";
+import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -147,14 +148,15 @@ export function Sidebar() {
     //
     //  **والقائمةُ تطابق الخادمَ ولا تضيق عنه**: شرطُ الخادم شكلاً هو
     //  «مسؤولٌ أو دورُه طبيب أو يحمل `canWriteMedicalExam`»، ثمّ يصفّي
-    //  بالاختصاص الحيّ والفرع. فاشتراطُ `canWriteMedicalExam` وحدها هنا كان
-    //  **يُخفي الشاشةَ عن طبيبٍ يقبله الخادم** — وهذه مراجعةٌ ماليةٌ لا
-    //  معاينةٌ تُوقَّع، فلا تُشترَط لها صلاحيةُ كتابة المعاينة.
-    //  ومَن لا اختصاصَ له يفتحها فيقرأ سببَ خلوّها — لا أن يبحث عن بابٍ
-    //  لا يراه. **ولا تتوسّع سلطةُ الخادم بحرف.**
-    { label: "مراجعة مبيعات بلا معاينة", icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["doctor"] as const },
-    //  **وطابورُ الاستقبال للمُعادات** — بعددٍ ظاهر، فيُعرَف أن هناك ما
-    //  ينتظر بلا فتح الصفحة.
+    //  ══ **طابورُ الإكمال الموروث — خرج من عمل الطبيب** ══════════════════
+    //  كان «مراجعة مبيعات بلا معاينة» ويقف عليه طبيبٌ ليجعل المالَ حقيقياً.
+    //  وقد أُلغيت تلك السلطة (قرارُ المالك): المبلغُ يُقيَّد لحظةَ إدخاله من
+    //  الاستعلامات، ولا صفَّ جديد يدخل هذا الطابور.
+    //
+    //  فما بقي فيه **مبالغُ عملياتٍ وقعت قبل التغيير** تنتظر إنساناً يُنهيها
+    //  — والإنسانُ هو الاستقبالُ ومديرُ الفرع والمسؤول، بالبوّابة نفسِها
+    //  التي يقبلها الخادم (`canAddPatients`). **ولا يراه الطبيبُ بدوره.**
+    { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const },
     { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
@@ -195,11 +197,12 @@ export function Sidebar() {
       //  آخر. ولا تُفتَح لمن لا يملكها.
       const returnedBypass = item.href === "/returned-charges"
         && permissions.canAddPatients;
-      //  **والمراجعةُ المالية كذلك**: عَلَمُ `canWriteMedicalExam` يفتحها لمن
-      //  دورُه شيءٌ آخر — تماماً كما يقبله الخادم. فالقائمةُ والخادمُ لا
-      //  يختلفان على طبيبٍ مراجع.
+      //  **والطابورُ الموروث كذلك**: بوّابتُه في الخادم `canAddPatients` —
+      //  وهي ما يعنيه «استقبال» — فمَن يحملها يراه ولو كان دورُه شيئاً آخر.
+      //  **ولا يُفتَح بـ`canWriteMedicalExam` بعد اليوم**: تلك صلاحيةُ كتابةِ
+      //  سجلٍّ سريريّ، ولا تمنح سلطةً ماليّة.
       const noExamReviewBypass = item.href === "/no-exam-review"
-        && permissions.canWriteMedicalExam;
+        && permissions.canAddPatients;
       if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
         && !noExamReviewBypass) return false;
     }

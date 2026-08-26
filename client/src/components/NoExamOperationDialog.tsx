@@ -1,7 +1,12 @@
 // **عمليةٌ بلا معاينة** — نافذةُ الاستقبال الواحدة.
 //
-// ══ القاعدةُ الحاكمة ═══════════════════════════════════════════════════
-// **العمليةُ تمضي. والمالُ لا يدخل المحاسبة حتى يعتمده طبيبٌ مخوَّل.**
+// ══ القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ════════════════════
+// **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
+// فقط.**
+//
+// وكانت: «العمليةُ تمضي والمالُ ينتظر». وأثرُها أن مالاً مشروعاً وقع فعلاً
+// يبقى خارج الدفتر حتى يفرغ طبيبٌ لشاشةٍ ماليّةٍ ليست من عمله. فمَن اتّفق
+// على السعر هو مَن يقيّده — والمبلغُ نهائيٌّ لحظةَ إدخاله.
 //
 // ══ وخطواتٌ قليلة عن قصد ═══════════════════════════════════════════════
 // ماذا جرى؟ (بيعُ جزءٍ أم صيانة) · على أيّ جهاز · بكم · ثمّ حفظ. خمسون
@@ -54,7 +59,8 @@ import {
   type DeviceOrigin,
 } from "@shared/device_origin";
 import {
-  PENDING_CHARGE_KIND_LABELS, SAVED_PENDING_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
+  PENDING_CHARGE_KIND_LABELS, SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
+  reviewFailedCopy,
   type PendingChargeKind,
 } from "@shared/pending_charge";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
@@ -194,11 +200,24 @@ export function NoExamOperationDialog({
     onSuccess: (d: any) => {
       invalidate();
       onOpenChange(false);
+      //  ══ **والسجلُّ الإشرافيُّ الناقص يُقال — ولا يُطلَب تكرارُ العملية** ══
+      //  العمليةُ والمبلغُ محفوظان يقيناً (وقعا قبل هذا الردّ في معاملةٍ
+      //  مغلقة). والذي تعذّر سطرٌ إخباريٌّ للطبيب. ونجاحٌ لا يُميَّز عن نجاح
+      //  كان سيُخفي عن الموظّف أن حركةً لن تصل شاشتَه — فلا يبلّغ أحداً.
+      if (d?.reviewRouted === false) {
+        //  **والصياغةُ تتبع ما وقع**: «بلا أجور» لا يُقال لها «حُفظ المبلغ».
+        const copy = reviewFailedCopy(d?.amount ?? null);
+        toast({
+          title: copy.title,
+          description: copy.hint,
+          variant: "destructive",
+          duration: 12_000,
+        });
+        return;
+      }
+      //  **ولا شرحَ محاسبيّ في الإشعار** — الرسالةُ تقول ما وقع وتنتهي.
       toast({
-        title: d?.charge ? SAVED_PENDING_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
-        description: d?.charge
-          ? "بدأ العمل وأمرُ التصنيع مفتوح. والمبلغ لم يُقيَّد بعد — يظهر الآن في طابور مراجعة الطبيب."
-          : "بدأ العمل وأمرُ التصنيع مفتوح، بلا أجور — فلا مبلغ ينتظر مراجعة.",
+        title: d?.amount != null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
       });
     },
     onError: (err: any) => toast({
@@ -228,8 +247,8 @@ export function NoExamOperationDialog({
           <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
             data-testid="no-exam-op-rule">
             <b>يبدأ العمل الآن</b> — يُفتَح أمر التصنيع ويُسنَد للخبير فوراً.
-            {" "}<b>والمبلغ وحده ينتظر</b> مراجعة طبيبٍ مخوَّل: لا كلفةَ على
-            المريض ولا قيدَ ولا تقرير حتى يعتمده.
+            {" "}<b>والمبلغ يُسجَّل مباشرةً</b> على حساب المريض.
+            {" "}والطبيب يراه لاحقاً ضمن المراجعة الإشرافية فقط.
           </p>
 
           {/* ── ماذا جرى؟ ── */}
@@ -411,7 +430,7 @@ export function NoExamOperationDialog({
               data-testid="no-exam-op-no-charge" />
             <b>بلا أجور</b>
             <span className="text-muted-foreground">
-              — يبدأ العمل ويكتمل تسجيله، بلا مبلغ ولا مراجعة
+              — يبدأ العمل ويكتمل تسجيله، بلا مبلغ على حساب المريض
             </span>
           </label>
 
