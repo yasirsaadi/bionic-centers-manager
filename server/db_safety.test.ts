@@ -20,7 +20,7 @@ import { join } from "path";
 import {
   resolveDatabaseUrl, resolvedDatabaseUrlSource, isPermittedTestDatabaseUrl,
   isTestEntryPoint, checkDatabaseSafety, assertDatabaseSafeForEntryPoint,
-  DATABASE_URL_VARS,
+  inspectDatabaseUrl, DATABASE_URL_VARS,
 } from "./db_url";
 
 let failures = 0;
@@ -60,12 +60,82 @@ same("٦. ويُقال أيُّ متغيّرٍ فاز",
     resolvedDatabaseUrlSource({})],
   ["EXTERNAL_DATABASE_URL", "DATABASE_URL", null]);
 
-console.log("\n── ١. عُرفُ القواعد المسموحة — كما هو في ٤٥ ملفّ اختبار ──");
-same("٧. `localhost` · `127.0.0.1` · واسمٌ يحمل `test` ⟶ مسموح",
+console.log("\n── ١. قاعدةُ السماح — تفكيكُ الرابط لا مطابقةُ سلسلةٍ فرعية ──");
+same("٧. المضيفُ المحلّيُّ بأيّ منفذ ⟶ مسموح",
   [LOCAL, LOCAL_IP, NAMED_TEST].map(isPermittedTestDatabaseUrl), [true, true, true]);
 same("٨. ورابطُ الإنتاج ⟶ ممنوع", isPermittedTestDatabaseUrl(PROD), false);
 same("٩. والغائبُ ممنوع", [isPermittedTestDatabaseUrl(null), isPermittedTestDatabaseUrl(undefined)],
   [false, false]);
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ١.ب **الشرطُ الموروث كان يمرّر هذه كلَّها** — والمطابقةُ على نصّ الرابط
+//  كلِّه هي العطب. كلُّ صفٍّ هنا يُقارَن بالشرط القديم صراحةً فلا يُدَّعى
+//  التشديدُ بل يُثبَت.
+// ══════════════════════════════════════════════════════════════════════════
+console.log("\n── ١.ب مسموحٌ ومرفوض، صفّاً صفّاً ──");
+{
+  const LEGACY = /test|localhost|127\.0\.0\.1/;
+
+  const ALLOW: [string, string][] = [
+    ["المضيفُ بالضبط localhost بأيّ منفذ", "postgres://postgres:postgres@localhost:55432/bionic_test"],
+    ["   وبلا منفذٍ أصلاً", "postgres://u:p@localhost/neondb"],
+    ["المضيفُ بالضبط 127.0.0.1 بأيّ منفذ", "postgres://u:p@127.0.0.1:5432/anything"],
+    ["قاعدةٌ بعيدةٌ اسمُها bionic_test", "postgres://u:p@db.example.com/bionic_test"],
+    ["قاعدةٌ بعيدةٌ اسمُها bionic-test", "postgres://u:p@db.example.com/bionic-test"],
+    ["قاعدةٌ بعيدةٌ اسمُها test", "postgres://u:p@db.example.com/test"],
+    ["قاعدةٌ بعيدةٌ اسمُها test_bionic", "postgresql://u:p@db.example.com/test_bionic"],
+  ];
+  for (const [label, url] of ALLOW) {
+    check(isPermittedTestDatabaseUrl(url), `✔ ${label}`, JSON.stringify(inspectDatabaseUrl(url)));
+  }
+
+  //  **الإيجابياتُ الكاذبةُ التي كان الشرطُ القديم يقبلها** — لكلٍّ سببُ ردٍّ
+  //  مسمّىً، فلا يُردّ الرابطُ لسببٍ غير الذي نظنّه.
+  const REFUSE: [string, string, string][] = [
+    ["مضيفٌ latest-prod.example.com — «test» داخل «latest»",
+      "postgres://u:p@latest-prod.example.com/neondb", "remote_not_test_named"],
+    ["مضيفٌ notlocalhost.example.com — «localhost» مبتلَعة",
+      "postgres://u:p@notlocalhost.example.com/prod", "remote_not_test_named"],
+    ["قاعدةٌ اسمُها latest", "postgres://u:p@db.example.com/latest", "remote_not_test_named"],
+    ["قاعدةٌ اسمُها contest", "postgres://u:p@db.example.com/contest", "remote_not_test_named"],
+    ["قاعدةٌ اسمُها attestation",
+      "postgres://u:p@db.example.com/attestation", "remote_not_test_named"],
+    ["إنتاجٌ و?application_name=test في الاستعلام",
+      "postgres://u:p@ep-x.aws.neon.tech/neondb?sslmode=require&application_name=test",
+      "remote_not_test_named"],
+    ["مضيفٌ يحمل test واسمُ القاعدة production",
+      "postgres://u:p@testhost.example.com/production", "remote_not_test_named"],
+    ["مستخدمٌ اسمُه test والقاعدةُ إنتاج",
+      "postgres://test:p@db.example.com/production", "remote_not_test_named"],
+    ["رابطٌ لا يُفكَّك", "host=localhost dbname=test", "unparseable"],
+    ["نصٌّ ليس رابطاً أصلاً", "bionic_test", "unparseable"],
+    ["مخطَّطٌ ليس postgres", "mysql://u:p@localhost/test", "non_postgres_scheme"],
+    ["مضيفٌ بعيدٌ بلا اسمِ قاعدة", "postgres://u:p@db.example.com/", "no_database_name"],
+  ];
+  for (const [label, url, why] of REFUSE) {
+    const v = inspectDatabaseUrl(url);
+    check(!v.permitted && v.rejection === why, `✘ ${label}`,
+      `rejection=${v.rejection ?? "(none)"} expected=${why}`);
+    //  **والشرطُ القديم كان يقبلها** — إلّا ما لا يحوي الكلمةَ أصلاً.
+    if (LEGACY.test(url)) {
+      check(true, `   (وكان الشرطُ الموروث يمرّرها)`);
+    }
+  }
+
+  //  **المطابقةُ الكاملة للمضيف المحلّيّ** — لا احتواء، ولا حساسيةَ لحالة الأحرف.
+  same("المضيفُ يُطابَق كاملاً لا احتواءً",
+    ["postgres://u:p@LOCALHOST/x", "postgres://u:p@localhost.example.com/prod",
+      "postgres://u:p@127.0.0.1.example.com/prod"].map(isPermittedTestDatabaseUrl),
+    [true, false, false]);
+
+  //  **والمحلّيُّ يُسمَح مهما كان اسمُ قاعدته** — قاعدةٌ على جهاز المطوّر.
+  check(isPermittedTestDatabaseUrl("postgres://u:p@localhost:5432/production"),
+    "والمحلّيُّ مسموحٌ ولو سُمّيت قاعدتُه production");
+
+  //  **واسمُ القاعدة وحده يُفحَص للبعيد** — يُقرأ من المسار لا من الاستعلام.
+  same("واسمُ القاعدة يُقرأ من مقطع المسار وحده",
+    inspectDatabaseUrl("postgres://u:p@db.example.com/neondb?x=bionic_test").database, "neondb");
+}
 
 console.log("\n── ٢. كشفُ نقطةِ دخولِ الاختبار ──");
 same("١٠. **`tsx <path>.test.ts` ⟶ اختبار**", isTestEntryPoint(TEST_ARGV), true);
