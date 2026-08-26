@@ -1,16 +1,30 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
+import { resolveDatabaseUrl, assertDatabaseSafeForEntryPoint } from "./db_url";
 
 const { Pool } = pg;
 
-const connectionString = process.env.EXTERNAL_DATABASE_URL || process.env.DATABASE_URL;
+//  **الأسبقيةُ لم تتغيّر بحرف** — `EXTERNAL_DATABASE_URL || DATABASE_URL` كما
+//  كانت، لكنّها صارت تُقرأ من مكانٍ واحد (`./db_url`) يقرؤه حارسُ الاختبارات
+//  نفسُه. فلا نسختان تنحرفان: كان الحارسُ يفحص متغيّراً والمسبحُ يستعمل آخر.
+const connectionString = resolveDatabaseUrl(process.env);
 
 if (!connectionString) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
+
+//  ══ **الحارسُ قبل المسبح — لا بعده** ══════════════════════════════════════
+//  يرمي **قبل** `new Pool(...)`، فلا اتّصالَ يُفتَح ولا استعلامَ يُنفَّذ على
+//  قاعدةٍ حيّة حين تكون العمليةُ اختباراً. وهو اختباريٌّ وحده: خارجَ نقطة
+//  دخولِ `*.test.ts` يمرّ دائماً، فلا يتغيّر تشغيلُ التطوير ولا الإنتاج ولا
+//  البناء بحرف.
+//
+//  **وهذا هو خطُّ الدفاع المعتمَد** — لا الحُرّاسُ المحلّيّون في الاختبارات:
+//  تلك تفحص `DATABASE_URL` وحده بينما المسبحُ قد يستعمل `EXTERNAL_DATABASE_URL`.
+assertDatabaseSafeForEntryPoint({ env: process.env, argv: process.argv });
 
 export const pool = new Pool({ connectionString });
 
