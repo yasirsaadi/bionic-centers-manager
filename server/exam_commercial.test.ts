@@ -1067,6 +1067,9 @@ async function main() {
         readFileSync(join(import.meta.dirname, "..", ...parts), "utf8");
       const exam = read("client", "src", "components", "medical", "NewExamDialog.tsx");
       const card = read("client", "src", "components", "PostExamDecisionCard.tsx");
+      //  ══ **المرحلة الخامسة** — كتلةُ «إتمام البيع»/«لم يشترِ» صارت في
+      //  مكوّنٍ مشترك تستهلكه البطاقة **وطابورُ «بانتظار الحسم»** معاً.
+      const shared = read("client", "src", "components", "ExamPathDecisionActions.tsx");
 
       //  ① نافذةُ الطبيب تبقى طبّيةً محضة — **لا أثرَ فيها لأيّ مفهومٍ
       //  تجاريّ إطلاقاً** (لم تُمَسّ في هذه المرحلة، مُختبَرةٌ مجدَّداً هنا
@@ -1106,32 +1109,37 @@ async function main() {
           `٧١. **ولا أثرَ لـ\`${gone}\`** في بطاقة المريض`, gone);
       }
       //  والبابُ الواحدُ الباقي: خبيرٌ · سعرٌ أصليّ · مقدارُ خصم · نهائيٌّ
-      //  للقراءة فقط (معاينةٌ حيّة، لا حقلٌ يُكتب فيه).
-      check(card.includes("block-exam-path-sale")
-        && card.includes("button-open-complete-sale")
-        && card.includes("select-complete-sale-expert")
-        && card.includes("input-complete-sale-original")
-        && card.includes("input-complete-sale-discount")
-        && card.includes("text-complete-sale-final")
-        && card.includes("text-complete-sale-free")
-        && card.includes("button-save-complete-sale"),
-        "٧٢. **وبابٌ واحد**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم + نهائيٌّ للقراءة");
+      //  للقراءة فقط (معاينةٌ حيّة، لا حقلٌ يُكتب فيه). **والمكانُ الآن
+      //  المكوّنُ المشترك** (المرحلة الخامسة)، وبطاقةُ المريض تستدعيه فقط.
+      check(card.includes("<ExamPathDecisionActions"),
+        "٧٢أ. **وبطاقةُ المريض تستدعي المكوّنَ المشترك** لا تكتب حوارَ البيع بنفسها");
+      check(shared.includes("block-exam-path-sale")
+        && shared.includes("button-open-complete-sale")
+        && shared.includes("select-complete-sale-expert")
+        && shared.includes("input-complete-sale-original")
+        && shared.includes("input-complete-sale-discount")
+        && shared.includes("text-complete-sale-final")
+        && shared.includes("text-complete-sale-free")
+        && shared.includes("button-save-complete-sale"),
+        "٧٢. **وبابٌ واحد**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم + نهائيٌّ للقراءة"
+        + " (المكوّنُ المشترك)");
       //  «لم يشترِ» بقي فعلاً منفصلاً، ببابه المستقلّ الجديد `/not-bought`.
-      check(card.includes("button-decide-not-bought") && card.includes("input-c-reason")
-        && card.includes("button-save-not-bought") && card.includes("/not-bought`"),
-        "٧٣. **و«لم يشترِ» منفصلٌ ببابه المستقلّ** `/not-bought`");
-      check(card.includes("/complete-sale`"),
+      check(shared.includes("button-decide-not-bought") && shared.includes("input-c-reason")
+        && shared.includes("button-save-not-bought") && shared.includes("/not-bought`"),
+        "٧٣. **و«لم يشترِ» منفصلٌ ببابه المستقلّ** `/not-bought` (المكوّنُ المشترك)");
+      check(shared.includes("/complete-sale`"),
         "٧٤. **والحفظُ ينادي `/complete-sale` القانونية**");
       //  والأفعالُ من الخادم لا من حسابٍ في الشاشة — لم يتغيّر.
       check(/const examActions: string\[\] = Array\.isArray\(active\.actions\)/.test(card),
         "٧٥. **والأفعالُ يقولها الخادم** — لا تحسبها الشاشة");
       check(/const actions = examPath \? \[\] : allowedActions\(/.test(card),
         "٧٦. **وأفعالُ المسار القديم تُخفى على العملية المبسّطة** — ولا تُحذَف من الموروث");
-      //  والمجّانيُّ صريحٌ دائماً — في نافذة الإتمام (معاينةً) وبعد البيع
-      //  (نتيجةً) معاً — لا صفرٌ يُقرأ «غير مسعَّر».
-      check(card.includes("مجاني — ٠ د.ع") && card.includes("مجاني (٠ د.ع)"),
+      //  والمجّانيُّ صريحٌ دائماً — في نافذة الإتمام (معاينةً، المكوّنُ
+      //  المشترك) وبعد البيع (نتيجةً، البطاقةُ نفسُها) معاً — لا صفرٌ يُقرأ
+      //  «غير مسعَّر».
+      check(shared.includes("مجاني — ٠ د.ع") && card.includes("مجاني (٠ د.ع)"),
         "٧٧. **والمجّانيُّ صريحٌ دائماً** — لا صفرٌ صامت");
-      check(!/owner === "doctor"/.test(card),
+      check(!/owner === "doctor"/.test(card) && !/owner === "doctor"/.test(shared),
         "   ولا تحسب الشاشةُ المالكيةَ بنفسها");
     }
     void convertedFollowup;

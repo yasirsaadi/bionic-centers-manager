@@ -58,8 +58,7 @@ import {
   purchaseSubmitLabel,
 } from "@/components/purchase_dialog_ui";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
-import { Textarea } from "@/components/ui/textarea";
-import { deriveOfferFromDiscount } from "@shared/commercial";
+import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
@@ -67,8 +66,9 @@ import {
 } from "@shared/followup_events";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
+import { canCompleteReceptionSale } from "@shared/commercial";
 import {
-  allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
+  allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
@@ -170,13 +170,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [finalPrice, setFinalPrice] = useState("");
   const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
-  //  ══ إتمامُ البيع المبسّط (المرحلة الثانية) ═══════════════════════════════
-  //  خبيرٌ + سعرٌ أصليّ + مقدارُ خصم فقط. لا حالةَ لنوع السعر ولا للسعر
-  //  النهائيّ — ذاك معاينةٌ حيّة تُشتقّ لا تُخزَّن (`csOffer` أدناه).
-  const [cOriginal, setCOriginal] = useState("");
-  const [cDiscount, setCDiscount] = useState("");
-  const [cExpert, setCExpert] = useState("");
-  const [cReason, setCReason] = useState("");
+  //  ══ «إتمام البيع» / «لم يشترِ» — نُقلا إلى `ExamPathDecisionActions`
+  //  (المرحلة الخامسة) ═══════════════════════════════════════════════════
+  //  الحالةُ والنافذتان ومعاينةُ السعر صارت داخل ذلك المكوّن — يستهلكه هذا
+  //  الملفّ وطابورُ «بانتظار الحسم» الجديد معاً، بلا نسخةٍ ثانية من المنطق.
 
   const { data: followups, isLoading } = useQuery<Followup[]>({
     queryKey: [`/api/followups/patient/${patientId}`],
@@ -422,6 +419,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  بلا حلقة — وإلّا تجمّد ملفٌّ في حالةٍ لا زرَّ لها.
   const examPath: boolean = active.examPath === true;
   const examActions: string[] = Array.isArray(active.actions) ? active.actions : [];
+  //  **الكتلةُ التجاريةُ ليست للطبيب العاديّ** (تصحيحٌ لاحق ثانٍ): `examActions`
+  //  فارغةٌ للطبيب أيضاً (يردّها الخادمُ `canCompleteReceptionSale` القانونية)،
+  //  فكان الشرطُ أعلاه (`!isTerminal`) يفتح الكتلةَ له على صفٍّ حيّ ليقرأ رسالةَ
+  //  حجبٍ لا تخصّه — هو أصلاً بلا دورٍ تجاريّ لا محجوباً ولا مطلَقاً. فالمالكيةُ
+  //  التجاريةُ التاريخية (رسالةُ الحجب) للاستقبال/المحاسب/المدير/المسؤول وحدهم؛
+  //  والطبيبُ لا يرى الكتلةَ إطلاقاً — لا زرَّها ولا رسالتَها. **نفسُ الدالّة
+  //  القانونية التي تحرس النقطة**، لا قائمةَ أدوارٍ ثانية.
+  const mayUseExamPathCommercialDecision = canCompleteReceptionSale(session as any);
   const actions = examPath ? [] : allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
@@ -453,15 +458,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
 
   const preview = computeCommercialPrice({
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
-  });
-
-  //  ══ **السعرُ النهائيّ معاينةٌ حيّة بالدالّة التي يعتمدها الخادم** ══════
-  //  (المرحلة الثانية) — `deriveOfferFromDiscount` نفسُها التي تشتقّ الثلاثة
-  //  في `completeReceptionSale`، فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
-  //  **ولا يُرسَل هذا الناتجُ في الطلب أبداً** — الخادمُ يشتقّه من جديد.
-  const csOffer = deriveOfferFromDiscount({
-    originalPrice: cOriginal === "" ? null : Number(cOriginal),
-    discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
   });
 
   const submit = (path: string, body: any) => act.mutate({ path, body });
@@ -525,70 +521,36 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             لا زرَّين منفصلَين («تفاصيل البيع» ثمّ «اشترى») لخطوتين حول
             واقعةٍ واحدة: **زرٌّ واحد**. حفظُه **هو** قرارُ الشراء وبدءُ
             التصنيع معاً — والخادمُ هو مَن يرسل هذه القائمة فلا يظهر زرٌّ
-            يُردّ ولا يُخفى زرٌّ يُقبَل. */}
-        {examPath && examActions.length > 0 && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-2"
-            data-testid="block-exam-path-sale">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-bold text-emerald-900">إتمام البيع</p>
-              {active.statusLine && (
-                <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs text-emerald-900"
-                  data-testid="text-commercial-status-line">
-                  {active.statusLine}
-                </span>
-              )}
-            </div>
-            {/*  ══ **ملاحظاتُ الطبيب من المعاينة — سياقٌ للقراءة فقط** ══════
-                (تصحيحٌ 2026-08-28) — نصُّ `medical_exams.notes` **لهذه
-                المعاينة بعينها** (`post_exam_followups.medical_exam_id`)، لا
-                «آخرُ معاينةٍ للمريض»: مريضٌ بجهازين له معاينتان ولكلٍّ
-                متابعتُه ونصُّها. الطبيبُ يكتب فيه أحياناً سعراً تقريبياً
-                ناقشه أو تفضيلاً ذكره المريض — **وهذا سياقٌ لا حقيقةٌ مالية**:
-                لا يُقرأ برمجياً ولا يُشتقّ منه سعرٌ أو خصمٌ أو خبير، والبيعُ
-                الفعليُّ من الحقول الصريحة أدناه وحدها. فارغةٌ ⟶ لا تُعرَض. */}
-            {active.examNotes && active.examNotes.trim() && (
-              <div className="rounded-md border border-emerald-300 bg-white/70 p-2.5 text-sm"
-                data-testid="block-exam-note">
-                <p className="text-xs font-semibold text-emerald-900">
-                  ملاحظاتُ الطبيب من المعاينة
-                </p>
-                <p className="mt-1 whitespace-pre-wrap text-foreground"
-                  data-testid="text-exam-note">
-                  {active.examNotes}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground" data-testid="text-exam-note-hint">
-                  للاطلاع فقط — السعر المعتمد هو المسجل في إتمام البيع.
-                </p>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {examActions.includes("complete_sale") && (
-                <Button size="sm" disabled={busy}
-                  onClick={() => {
-                    //  **تعبئةٌ مسبقة** من أيّ بياناتٍ محفوظةٍ سابقاً — نادرٌ
-                    //  (صفٌّ لُمس من بابٍ قديم) لكنّه لا يُطمَس.
-                    setCOriginal(active.originalPrice != null
-                      ? String(active.originalPrice)
-                      : (active.approvedPrice > 0 ? String(active.approvedPrice) : ""));
-                    setCDiscount(active.priceKind && active.originalPrice
-                      ? String(Math.max(0, active.originalPrice - active.approvedPrice)) : "");
-                    setCExpert(active.selectedExpertUserId
-                      ? String(active.selectedExpertUserId) : "");
-                    setDialog("complete_sale");
-                  }}
-                  data-testid="button-open-complete-sale">
-                  <HandCoins className="h-4 w-4" /> إتمام البيع
-                </Button>
-              )}
-              {examActions.includes("not_bought") && (
-                <Button size="sm" variant="outline" disabled={busy}
-                  onClick={() => { setCReason(""); setDialog("not_bought"); }}
-                  data-testid="button-decide-not-bought">
-                  <XCircle className="h-4 w-4" /> لم يشترِ
-                </Button>
-              )}
-            </div>
-          </div>
+            يُردّ ولا يُخفى زرٌّ يُقبَل.
+            ══ **الشرطُ من حالة الصفّ لا من طول `actions`** (تصحيحٌ لاحق)
+            ═══════════════════════════════════════════════════════════════
+            `examActions` فارغةٌ في حالتين مختلفتين: صفٌّ **منتهٍ** (تحوّل
+            أو أُغلق — لا شأنَ لهذه الكتلة به، الملخّصُ أدناه يتكفّل) أو
+            صفٌّ **حيٌّ محجوبٌ** بملكيةٍ تجاريةٍ موروثة (يحتاج المسؤولَ
+            العام). فالتمييزُ من `isTerminal(active.status)` — لا من طول
+            المصفوفة، وإلّا اختفت الملاحظةُ ورسالةُ الحجب معاً عن صفٍّ حيّ.
+            ══ **وشرطٌ ثالث: مَن ينظر أصلاً** (تصحيحٌ لاحقٌ ثانٍ) ══════════
+            صفٌّ حيٌّ محجوب فارغُ `examActions` للطبيب العاديّ أيضاً — بلا
+            هذا الشرط كان يدخل الكتلةَ فيقرأ رسالةَ حجبٍ لا تخصّه: هو أصلاً
+            بلا سلطةٍ تجارية، لا محجوباً عنها ولا مطلَقاً فيها. فالكتلةُ
+            التجاريةُ كلُّها (الأزرار وملاحظةُ الطبيب ورسالةُ الحجب) تبقى
+            حصراً لمن يملك `canCompleteReceptionSale` — نفسُ الدالّة
+            القانونية التي تحرس `/complete-sale`/`/not-bought` والطابورَ. */}
+        {examPath && !isTerminal(active.status) && mayUseExamPathCommercialDecision && (
+          <ExamPathDecisionActions
+            followupId={active.id}
+            patientId={patientId}
+            branchId={activeBranchId}
+            actions={examActions}
+            examNotes={active.examNotes}
+            statusLine={active.statusLine}
+            prefill={{
+              originalPrice: active.originalPrice ?? null,
+              approvedPrice: active.approvedPrice,
+              priceKind: active.priceKind ?? null,
+              selectedExpertUserId: active.selectedExpertUserId ?? null,
+            }}
+          />
         )}
 
         {/*  ══ **رايةُ الموافقة تقول أين وقف الملفّ فعلاً** ══════════════
@@ -849,116 +811,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         )}
       </CardContent>
 
+      {/*  «إتمام البيع» و«لم يشترِ» ونافذتاهما انتقلتا إلى
+          `ExamPathDecisionActions` أعلاه (المرحلة الخامسة). */}
+
       {/* ── تأجيل ── */}
-      {/*  ══ **نافذةُ «إتمام البيع» — بابٌ واحد** (المرحلة الثانية) ═══════
-          الخبيرُ والسعرُ الأصليّ ومقدارُ الخصم فقط. **لا نوعَ سعرٍ يُختار
-          ولا سعرَ نهائيّاً يُكتب** — النهائيُّ معاينةٌ حيّة تحت الحقول
-          (`csOffer`)، ولا يُرسَل في الطلب: الخادمُ يشتقّه ويعتمده وحده.
-          **وحفظٌ واحد = بيعٌ كامل**: لا خطوةَ «حفظ التفاصيل» ثم «اشترى». */}
-      <Dialog open={dialog === "complete_sale"} onOpenChange={(o) => !o && reset()}>
-        <DialogContent dir="rtl" className="max-w-md">
-          <DialogHeader><DialogTitle>إتمام البيع</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label htmlFor="cs-expert" className="text-xs">الخبير</Label>
-              <Select value={cExpert} onValueChange={setCExpert}>
-                <SelectTrigger id="cs-expert" className="bg-white"
-                  data-testid="select-complete-sale-expert">
-                  <SelectValue placeholder={(experts ?? []).length
-                    ? "اختر الخبير" : "لا يوجد خبير في هذا الفرع"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(experts ?? []).map((e: any) => (
-                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cs-original" className="text-xs">السعر الأصلي (د.ع)</Label>
-              <MoneyInput id="cs-original" allowEmpty value={cOriginal}
-                onValueChange={(v) => setCOriginal(v === null ? "" : String(v))}
-                className="bg-white" data-testid="input-complete-sale-original" />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cs-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
-              <MoneyInput id="cs-discount" allowEmpty value={cDiscount}
-                onValueChange={(v) => setCDiscount(v === null ? "" : String(v))}
-                className="bg-white" data-testid="input-complete-sale-discount" />
-            </div>
-            {/*  ══ **السعرُ النهائيّ — للقراءة فقط** ═══════════════════════
-                معاينةٌ حيّة تُحسَب هنا، لا حقلٌ يُكتب فيه. */}
-            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
-              data-testid="text-complete-sale-final">
-              <span className="text-muted-foreground">السعر النهائي: </span>
-              {csOffer.ok ? (
-                csOffer.kind === "free" ? (
-                  <b className="text-emerald-800" data-testid="text-complete-sale-free">
-                    مجاني — ٠ د.ع
-                  </b>
-                ) : (
-                  <b>{csOffer.finalPrice?.toLocaleString()} د.ع</b>
-                )
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )}
-            </div>
-            {cOriginal !== "" && !csOffer.ok && (
-              <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
-                data-testid="text-complete-sale-error">
-                {csOffer.error}
-              </p>
-            )}
-            <div className="space-y-1">
-              <Label htmlFor="cs-note" className="text-xs">ملاحظة (اختياري)</Label>
-              <Input id="cs-note" value={note} onChange={(e) => setNote(e.target.value)}
-                data-testid="input-complete-sale-note" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button disabled={busy || !cExpert || !csOffer.ok}
-              data-testid="button-save-complete-sale"
-              onClick={() => submit(`/api/followups/${active.id}/complete-sale`, {
-                originalPrice: Number(cOriginal),
-                discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
-                expertUserId: Number(cExpert),
-                note: note || undefined,
-              })}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/*  ══ **«لم يشترِ» بسببٍ حرٍّ إلزاميّ** ═══════════════════════════════
-          ولا قائمةَ أحدَ عشر رمزاً يختار منها الموظّفُ «سبب آخر» فلا يفيد
-          أحداً: يُكتب ما قاله المريضُ كما قاله. **وبابُها المستقلّ**
-          `/not-bought` (المرحلة الثانية) — لا `/commercial` القديمة. */}
-      <Dialog open={dialog === "not_bought"} onOpenChange={(o) => !o && reset()}>
-        <DialogContent dir="rtl" className="max-w-md">
-          <DialogHeader><DialogTitle>لم يشترِ</DialogTitle></DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="c-reason" className="text-xs">
-              سبب عدم الشراء <span className="text-destructive">*</span>
-            </Label>
-            <Textarea id="c-reason" value={cReason} onChange={(e: any) => setCReason(e.target.value)}
-              placeholder="اكتب ما قاله المريض" className="bg-white min-h-[70px]"
-              data-testid="input-c-reason" />
-            <p className="text-xs text-muted-foreground">
-              يُغلَق الملفّ بلا تصنيعٍ ولا كلفةٍ ولا دينار — ويمكن إعادة فتحه إن عاد المريض.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="destructive" disabled={busy || !cReason.trim()}
-              data-testid="button-save-not-bought"
-              onClick={() => submit(`/api/followups/${active.id}/not-bought`,
-                { reason: cReason.trim(), note: note || undefined })}>
-              تسجيل
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={dialog === "defer" || dialog === "close" || dialog === "reopen"}
         onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">

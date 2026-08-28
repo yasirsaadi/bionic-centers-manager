@@ -778,29 +778,55 @@ async function main() {
         join(import.meta.dirname, "..", "client", "src", "components",
           "PostExamDecisionCard.tsx"),
         "utf8");
+      //  ══ **المرحلة الخامسة — الكتلةُ انتقلت إلى مكوّنٍ مشترك** ═══════════
+      //  «إتمام البيع»/«لم يشترِ» ونافذتاهما ونصُّ ملاحظة الطبيب صارت في
+      //  `ExamPathDecisionActions.tsx` — تستهلكه بطاقةُ المريض **وطابورُ
+      //  «بانتظار الحسم»** معاً، فلا نسخةٌ ثانية من هذه الواجهة تنحرف يوماً.
+      //  العقدُ صار على المكوّن المشترك، لا على البطاقة وحدها.
+      const shared = readFileSync(
+        join(import.meta.dirname, "..", "client", "src", "components",
+          "ExamPathDecisionActions.tsx"),
+        "utf8");
       check(
-        card.includes("button-open-complete-sale")
-        && card.includes("select-complete-sale-expert")
-        && card.includes("input-complete-sale-original")
-        && card.includes("input-complete-sale-discount")
-        && card.includes("text-complete-sale-final")
-        && card.includes("button-save-complete-sale")
-        && card.includes("button-decide-not-bought")
-        && card.includes("input-c-reason")
+        shared.includes("button-open-complete-sale")
+        && shared.includes("select-complete-sale-expert")
+        && shared.includes("input-complete-sale-original")
+        && shared.includes("input-complete-sale-discount")
+        && shared.includes("text-complete-sale-final")
+        && shared.includes("button-save-complete-sale")
+        && shared.includes("button-decide-not-bought")
+        && shared.includes("input-c-reason")
         //  **ولا** زرَّ «اشترى» منفصل، ولا محدِّدَ نوع سعر، ولا حقلَ سعرٍ
         //  نهائيٍّ قابلاً للتحرير.
-        && !card.includes("button-decide-bought")
-        && !card.includes("radio-c-kind")
-        && !card.includes("input-c-final"),
+        && !shared.includes("button-decide-bought")
+        && !shared.includes("radio-c-kind")
+        && !shared.includes("input-c-final"),
         "   **إتمامُ البيع بابٌ واحد**: خبيرٌ + سعرٌ أصليّ + خصم + نهائيٌّ للقراءة"
-        + " + «لم يشترِ» منفصلة — ولا زرَّ «اشترى» مستقلّ ولا محدِّدَ نوع سعر");
+        + " + «لم يشترِ» منفصلة — ولا زرَّ «اشترى» مستقلّ ولا محدِّدَ نوع سعر"
+        + " (المكوّنُ المشترك)");
       check(
-        card.includes("block-exam-note") && card.includes("text-exam-note")
-        && card.includes("text-exam-note-hint") && card.includes("active.examNotes"),
-        "١١. **ملاحظةُ الطبيب تُعرَض للقراءة فقط في بطاقة البيع** (`block-exam-note`)");
+        shared.includes("block-exam-note") && shared.includes("text-exam-note")
+        && shared.includes("text-exam-note-hint"),
+        "١١. **ملاحظةُ الطبيب تُعرَض للقراءة فقط في المكوّن المشترك** (`block-exam-note`)");
       check(
-        /للاطلاع فقط.*السعر المعتمد هو المسجل في إتمام البيع/.test(card),
+        card.includes("examNotes={active.examNotes}"),
+        "١١ب. **وبطاقةُ المريض تُمرِّر `active.examNotes` بعينها** — لا نصّاً آخر");
+      check(
+        /للاطلاع فقط.*السعر المعتمد هو المسجل في إتمام البيع/.test(shared),
         "١٢. **ونصٌّ صريحٌ يقول إنها للاطّلاع فقط والسعرُ المعتمد من إتمام البيع**");
+      //  ══ **إثباتُ إعادة الاستعمال — لا نسخةٌ ثانية** (المرحلة الخامسة) ════
+      //  البطاقةُ وطابورُ «بانتظار الحسم» يستوردان المكوّنَ نفسَه بالاسم
+      //  نفسِه — لا تعريفَين محلّيَّين متطابقين صدفةً.
+      const queuePage = readFileSync(
+        join(import.meta.dirname, "..", "client", "src", "pages", "PostExamFollowups.tsx"),
+        "utf8");
+      check(
+        card.includes('from "@/components/ExamPathDecisionActions"')
+        && queuePage.includes('from "@/components/ExamPathDecisionActions"')
+        && !card.includes("button-open-complete-sale")
+        && !queuePage.includes("button-save-complete-sale"),
+        "١٣ب. **وبطاقةُ المريض وطابورُ «بانتظار الحسم» يستوردان `ExamPathDecisionActions`"
+        + " نفسَه** — لا تكرارَ لأزرار البيع في أيٍّ منهما مباشرةً");
       check(
         !/purchaseState === "converted" && !active\.purchaseInterestAt/.test(card)
         && /purchaseState === "converted" && \(/.test(card),
@@ -810,15 +836,22 @@ async function main() {
       //  بلا `branchId` إطلاقاً، ونقطةُ الخبراء تشترطه صراحةً للمسؤول العام
       //  فتردّه ٤٠٠ ويتحوّل عند العميل إلى قائمةٍ فارغة — مسؤولٌ يملك صلاحية
       //  البيع فعلياً ولا يستطيع اختيار خبير من الشاشة.
+      //  **والفحصُ الآن على المكوّن المشترك** — هو من يحمل استعلامَ الخبراء
+      //  لبطاقة البيع فعلياً منذ المرحلة الخامسة؛ وبطاقةُ المريض تبقي
+      //  استعلامها الخاصّ (لـ`expertNameOf` ونافذة إسناد الخبير القديمة)
+      //  بنفس النمط، فالفحصُ عليها لا يتضرّر أيضاً.
       check(
-        !/fetch\(\s*"\/api\/manufacturing\/experts"\s*,\s*\{\s*credentials/.test(card),
-        "٦. **ولا استعلامَ خبراء بلا فرع بعد اليوم** — الطلبُ القديم بلا `branchId` غاب");
+        !/fetch\(\s*"\/api\/manufacturing\/experts"\s*,\s*\{\s*credentials/.test(shared)
+        && !/fetch\(\s*"\/api\/manufacturing\/experts"\s*,\s*\{\s*credentials/.test(card),
+        "٦. **ولا استعلامَ خبراء بلا فرع بعد اليوم** — الطلبُ القديم بلا `branchId` غاب"
+        + " (المكوّنُ المشترك والبطاقة معاً)");
       check(
-        /queryKey:\s*\["\/api\/manufacturing\/experts",\s*activeBranchId\]/.test(card),
-        "٧. **ومفتاحُ الاستعلام يحمل هويّةَ الفرع الفعّال** — لا مفتاحٌ عامّ واحد لكلّ الفروع");
+        /queryKey:\s*\["\/api\/manufacturing\/experts",\s*branchId\]/.test(shared),
+        "٧. **ومفتاحُ استعلام المكوّن المشترك يحمل هويّةَ فرع العملية**"
+        + " — لا مفتاحٌ عامّ واحد لكلّ الفروع");
       check(
-        /\/api\/manufacturing\/experts\?branchId=\$\{activeBranchId\}/.test(card),
-        "٨. **والطلبُ الفعليّ يحمل `?branchId=<فرع المتابعة الفعّالة>`**");
+        /\/api\/manufacturing\/experts\?branchId=\$\{branchId\}/.test(shared),
+        "٨. **والطلبُ الفعليّ في المكوّن المشترك يحمل `?branchId=<فرع العملية>`**");
     }
 
     // ══════════════════════════════════════════════════════════════════

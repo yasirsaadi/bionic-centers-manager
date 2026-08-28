@@ -341,14 +341,25 @@ console.log("\n── إلغاء المعاينة ──");
     Boolean(FOLLOWUP_STATUS_LABELS.closed_exam_cancelled)
       && !LATIN.test(FOLLOWUP_STATUS_LABELS.closed_exam_cancelled),
     FOLLOWUP_STATUS_LABELS.closed_exam_cancelled);
-  //  وللونٍ يقرؤه الطابورُ بالنظرة — في الشاشتين معاً لا في واحدة.
-  for (const [n, f] of [
-    ["٦٢", "../client/src/pages/PostExamFollowups.tsx"],
-    ["٦٣", "../client/src/components/PostExamDecisionCard.tsx"],
-  ] as const) {
+  //  وللونٍ يقرؤه الطابورُ بالنظرة — في بطاقة المريض، حيث لا تزال هذه
+  //  الحالةُ تُعرَض ضمن جدول ألوانٍ كامل لكلّ الحالات.
+  {
+    const f = "../client/src/components/PostExamDecisionCard.tsx";
     const src = readFileSync(join(import.meta.dirname, f), "utf8");
-    check(`${n}. ولها لونٌ في ${f.split("/").pop()}`,
+    check(`٦٣. ولها لونٌ في ${f.split("/").pop()}`,
       /closed_exam_cancelled:\s*"bg-/.test(src));
+  }
+  //  ══ **المرحلة الخامسة** — `PostExamFollowups.tsx` لم يعد يعرض جدولَ
+  //  ألوانٍ لكلّ حالة إطلاقاً (صار طابورَ تبويبين لا شاشةَ آلة حالات)، وهذه
+  //  الحالةُ تحديداً **لا تصل هذا الطابور أبداً** — واقعةٌ تاريخية/إدارية لا
+  //  قرارَ شراء (`shared/decision_queue.ts: RESOLVED_STATUSES`). فسؤالُ
+  //  «أَلها لونٌ هناك؟» صار سؤالاً خاطئاً؛ الفحصُ الصحيح أنها غائبةٌ كليةً.
+  {
+    const f = "../client/src/pages/PostExamFollowups.tsx";
+    const src = readFileSync(join(import.meta.dirname, f), "utf8");
+    check("٦٢. **وطابورُ «بانتظار الحسم» لا يذكر هذه الحالة إطلاقاً**"
+      + " — مُستبعَدةٌ من مصدرها في الخادم لا مموَّهةٌ بلونٍ في الشاشة",
+      !src.includes("closed_exam_cancelled"));
   }
 }
 

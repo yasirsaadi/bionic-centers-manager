@@ -155,6 +155,14 @@ const SELECT_COLS = sql`id, patient_id, case_id, device_episode_id, medical_exam
 export interface Actor {
   userId: number | null;
   userName: string | null;
+  /**
+   * **لقطةُ دورٍ اختياريّة** (المرحلة الخامسة) — تُقرأ من الجلسة الموقَّعة
+   * لحظةَ الفعل نفسِه، لا من `system_users.role` لاحقاً (ذاك يتغيّر: محاسبٌ
+   * يصير مديرَ فرع). تُكتب فقط في حمولة حدثِ الحسم النهائيّ
+   * (`converted`/`closed_without_purchase`) — لا عمودَ جديداً ولا حالةً
+   * تجاريةً جديدة، القسم 4.l.
+   */
+  role?: string | null;
 }
 
 /** يُلحق حدثاً. **يُنادى داخل معاملة المُستدعي دائماً** فلا ينفصل عن انتقاله. */
@@ -1147,6 +1155,57 @@ export async function recordPatientAcceptedPrice(params: {
   });
 }
 
+// ── إلغاءُ طلبِ سعرٍ موروثٍ ما زال معلَّقاً — حارسُ تناسقٍ مشترك ─────────────
+//
+// ══ لماذا هذه الدالّة (تصحيحٌ لاحق، المرحلة الخامسة) ═══════════════════════
+// صفٌّ حُسم — بيعاً أو إغلاقاً — لا يجوز أن يترك خلفه طلبَ سعرٍ حقيقياً
+// `pending`: تاريخٌ مستحيل يقول «المتابعة محسومة» و«طلبُ سعرها ما زال ينتظر
+// اعتماداً» معاً. كانت `closeWithoutPurchase` وحدها تحرس هذا — و`CONFIRMABLE`
+// حين قبلت `price_approval_pending` (المرحلة الخامسة، لفتح بابِ إتمامٍ
+// مباشر لصفوفٍ موروثة) فتحت طريقاً ثانياً للحسم **بلا** هذا الحارس: بيعٌ
+// عبر `completeReceptionSale` على صفٍّ يحمل طلبَ سعرٍ حقيقيّاً معلَّقاً.
+//
+// فصار الحارسُ دالّةً واحدة يستدعيها الطرفان — لا نسختين تنحرفان.
+/**
+ * **`cancelled` لا `rejected`**: لم يرفض أحدٌ السعرَ — الطلبُ صار بلا موضوع
+ * لأن الحسمَ وقع بمسارٍ آخر (بيعٌ أو إغلاق). و`rejected` يبقى **حصراً** من
+ * `decidePriceChange` بيد مَن يعتمد فعلاً — خرقُ هذه القاعدة في السجلّ كان
+ * سيُظهر موظّفاً رفض سعراً ليست له صلاحيةُ رفضه.
+ *
+ * **تُنادى دائماً داخل معاملة المُستدعي** — والمُستدعي مسؤولٌ أن يكون الحسمُ
+ * نفسُه قد كُتب فعلاً (أو سيُكتب) في المعاملة ذاتها: فشلُ أيّ خطوةٍ لاحقة
+ * يُسقط الإلغاءَ معه تلقائياً — لا صفَّ يُلغى وحسمٌ يتراجع.
+ */
+async function cancelPendingPriceRequestsTx(tx: any, params: {
+  followupId: number; patientId: number; branchId: number | null;
+  fromStatus: string | null; toStatus: string;
+  decisionNote: string; eventNote: string; reason?: string | null;
+  actor: Actor;
+}): Promise<void> {
+  const cancelled = await tx.execute(sql`
+    UPDATE price_change_requests
+       SET status = 'cancelled', decided_at = NOW(), decided_by = ${params.actor.userId},
+           decided_by_name = ${params.actor.userName},
+           decision_note = ${params.decisionNote}
+     WHERE followup_id = ${params.followupId} AND status = 'pending'
+    RETURNING id, current_price, proposed_price
+  `);
+  for (const req of (cancelled.rows ?? [])) {
+    await appendEvent(tx, {
+      followupId: params.followupId, patientId: params.patientId, branchId: params.branchId,
+      eventType: "price_request_cancelled", fromStatus: params.fromStatus,
+      toStatus: params.toStatus, reason: params.reason ?? null,
+      note: params.eventNote,
+      payload: {
+        requestId: Number(req.id),
+        currentPrice: Number(req.current_price),
+        proposedPrice: Number(req.proposed_price),
+      },
+      actor: params.actor,
+    });
+  }
+}
+
 /** إغلاقٌ بلا شراء — **بقرار إنسان دائماً**. لا كرون يغلق أحداً. */
 export async function closeWithoutPurchase(params: {
   followupId: number; reason: string; note?: string | null; actor: Actor;
@@ -1188,28 +1247,14 @@ export async function closeWithoutPurchase(params: {
     //
     // فـ`cancelled` أثرُ إغلاق الملفّ، و`rejected` يبقى **حصراً** من
     // `decidePriceChange` بيد مَن يعتمد. والمُلغي مسجَّلٌ بمن هو ولماذا.
-    const cancelled = await tx.execute(sql`
-      UPDATE price_change_requests
-         SET status = 'cancelled', decided_at = NOW(), decided_by = ${params.actor.userId},
-             decided_by_name = ${params.actor.userName},
-             decision_note = 'أُلغي تلقائياً بإغلاق ملفّ المتابعة بلا شراء'
-       WHERE followup_id = ${params.followupId} AND status = 'pending'
-      RETURNING id, current_price, proposed_price
-    `);
-    for (const req of (cancelled.rows ?? [])) {
-      await appendEvent(tx, {
-        followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
-        eventType: "price_request_cancelled", fromStatus: cur.status,
-        toStatus: "closed_without_purchase", reason: params.reason,
-        note: "أُلغي بإغلاق ملفّ المتابعة — لا يُعدّ رفضاً للسعر",
-        payload: {
-          requestId: Number(req.id),
-          currentPrice: Number(req.current_price),
-          proposedPrice: Number(req.proposed_price),
-        },
-        actor: params.actor,
-      });
-    }
+    // (الآليّةُ مشتركةٌ مع `completeReceptionSale` — `cancelPendingPriceRequestsTx` أعلاه.)
+    await cancelPendingPriceRequestsTx(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      fromStatus: cur.status, toStatus: "closed_without_purchase",
+      decisionNote: "أُلغي تلقائياً بإغلاق ملفّ المتابعة بلا شراء",
+      eventNote: "أُلغي بإغلاق ملفّ المتابعة — لا يُعدّ رفضاً للسعر",
+      reason: params.reason, actor: params.actor,
+    });
     //  **وقرارُ «لم يشترِ» يُختَم مع الإغلاق لا بعده** (ترحيل ٠٦٦): صفٌّ
     //  مغلقٌ بلا قرارٍ مسجَّل كان يجعل الشاشةَ تعرض «لم يشترِ» بلا مالكٍ
     //  يحرسه — فيقلبه أيُّ موظّف. والمالكيةُ تُكتب **مرّةً** ولا تُعاد.
@@ -1242,7 +1287,10 @@ export async function closeWithoutPurchase(params: {
       eventType: "closed_without_purchase", fromStatus: cur.status,
       toStatus: "closed_without_purchase", reason: params.reason,
       note: reasonText ?? params.note ?? null,
-      payload: reasonText ? { notBoughtReasonText: reasonText } : {},
+      payload: {
+        ...(reasonText ? { notBoughtReasonText: reasonText } : {}),
+        actorRole: params.actor.role ?? null,
+      },
       actor: params.actor,
     });
     return toRow(row);
@@ -1720,6 +1768,10 @@ const CONFIRMABLE: FollowupStatus[] = [
   "price_approved_waiting_patient",
   //  توافقٌ رجعي: صفوفٌ احتُجزت قبل هذا التبسيط تُستأنف من مكانها.
   "purchase_approval_pending",
+  //  توافقٌ رجعي (المرحلة الخامسة): صفوفٌ أقدم توقّفت عند اعتماد السعر —
+  //  كانت `COMMERCIAL_EDITABLE` تقبلها فتدخل هذه الدالّة، لكنّ هذه القائمة
+  //  كانت تنساها فتُردّ ٤٠٩ لطابور «بانتظار الحسم» رغم أنها حيّةٌ فعلاً.
+  "price_approval_pending",
 ];
 
 /**
@@ -1867,7 +1919,10 @@ export async function confirmPurchase(params: {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
       eventType: "converted", fromStatus: cur.status,
       toStatus: "converted",
-      payload: { workOrderId, approvedPrice: cur.approvedPrice },
+      payload: {
+        workOrderId, approvedPrice: cur.approvedPrice,
+        actorRole: params.actor.role ?? null,
+      },
       actor: params.actor,
     });
     return { followup: toRow(row), workOrderId };
@@ -2272,34 +2327,63 @@ export async function completeReceptionSale(params: {
     throw new FollowupError("الخبير مطلوب لإتمام البيع", 400);
   }
 
-  const result = await setCommercialFields({
-    followupId: params.followupId,
-    patch: {
-      price: { kind: offer.kind, originalPrice: offer.originalPrice, finalPrice: offer.finalPrice },
-      expertUserId: expertId,
-      decision: "bought",
-      note: params.note ?? null,
-    },
-    actor: params.actor,
-    session: params.session,
-    asDoctor: false,
-    validateExpert: params.validateExpert,
-    expertLabel: params.expertLabel,
-    tx: params.tx,
-  });
+  //  ══ **معاملةٌ واحدة تشمل البيعَ وإلغاءَ أيّ طلبِ سعرٍ موروثٍ معلَّق**
+  //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+  //  صفٌّ موروثٌ في `price_approval_pending` (`CONFIRMABLE` قبِلته في هذه
+  //  المرحلة) قد يحمل طلبَ سعرٍ حقيقياً `pending` لم يُعتمَد بعد. فلا يجوز
+  //  أن يتحوّل الملفُّ فعلاً ويبقى ذلك الطلبُ معلَّقاً — تاريخٌ مستحيل يقول
+  //  «حُسم» و«ينتظر اعتماداً» معاً. **والإلغاءُ لا يقع إلا بعد أن يثبت البيعُ
+  //  فعلاً** (`result.converted === true`) وفي المعاملة نفسِها: فشلُ البيع
+  //  (أو أيّ خطوةٍ بعده) يُسقط الإلغاءَ معه — لا نصفَ أثر.
+  const body = async (tx: any): Promise<CommercialResult> => {
+    //  لقطةٌ وصفيّة للحالة قبل الكتابة — **للسجلّ فقط**، لا حارسَ تزامنٍ:
+    //  الحارسُ الحقيقيّ هو قفل `setCommercialFields` أدناه (`FOR UPDATE`).
+    const peek = await tx.execute(sql`
+      SELECT status FROM post_exam_followups WHERE id = ${params.followupId}
+    `);
+    const beforeStatus = (peek.rows ?? [])[0]?.status ?? null;
 
-  //  السعرُ والخبيرُ والقرارُ الثلاثة تُلمَس معاً دائماً في هذا الباب، فناقصةً
-  //  بعد هذا الحفظ تناقضٌ منطقيّ لا حالةً شرعية — تُقال صراحةً بدل أن يعود
-  //  البيعُ «معلَّقاً» بصمت.
-  if (!result.converted) {
-    throw new FollowupError(
-      "تعذّر إتمام البيع" + (result.missing.length
-        ? ` — بيانات ناقصة: ${missingLabel(result.missing)}`
-        : ""),
-      409,
-    );
-  }
-  return result;
+    const result = await setCommercialFields({
+      followupId: params.followupId,
+      patch: {
+        price: { kind: offer.kind, originalPrice: offer.originalPrice, finalPrice: offer.finalPrice },
+        expertUserId: expertId,
+        decision: "bought",
+        note: params.note ?? null,
+      },
+      actor: params.actor,
+      session: params.session,
+      asDoctor: false,
+      validateExpert: params.validateExpert,
+      expertLabel: params.expertLabel,
+      tx,
+    });
+
+    //  السعرُ والخبيرُ والقرارُ الثلاثة تُلمَس معاً دائماً في هذا الباب،
+    //  فناقصةً بعد هذا الحفظ تناقضٌ منطقيّ لا حالةً شرعية — تُقال صراحةً
+    //  بدل أن يعود البيعُ «معلَّقاً» بصمت. **وهذا الرميُ يُسقط المعاملةَ
+    //  كلَّها** فلا يُلغى طلبُ سعرٍ لبيعٍ لم يقع.
+    if (!result.converted) {
+      throw new FollowupError(
+        "تعذّر إتمام البيع" + (result.missing.length
+          ? ` — بيانات ناقصة: ${missingLabel(result.missing)}`
+          : ""),
+        409,
+      );
+    }
+
+    await cancelPendingPriceRequestsTx(tx, {
+      followupId: params.followupId, patientId: result.followup.patientId,
+      branchId: result.followup.branchId,
+      fromStatus: beforeStatus, toStatus: "converted",
+      decisionNote: "أُلغي تلقائياً بإتمام البيع عبر المسار المبسّط",
+      eventNote: "أُلغي بإتمام البيع عبر المسار المبسّط — لا يُعدّ رفضاً للسعر",
+      actor: params.actor,
+    });
+
+    return result;
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 /**

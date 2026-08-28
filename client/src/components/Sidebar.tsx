@@ -8,6 +8,14 @@ import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { canTrashPatients, TRASH_TITLE } from "@shared/patient_trash";
 import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
+import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
+//  ══ **الأهليّةُ من الدالّة القانونية نفسِها — لا قائمةُ أدوارٍ ثانية**
+//  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+//  كانت الشارةُ والصفُّ يُعيدان كتابةَ شرط `canCompleteReceptionSale`
+//  يدوياً (`isAdmin || role في reception/accountant/branch_manager`) —
+//  متطابقٌ اليوم، لكنّه ينحرف صامتاً إن تغيّرت القاعدةُ القانونية في
+//  `shared/commercial.ts` ولم يتذكّر أحدٌ هذا الملفّ.
+import { canCompleteReceptionSale } from "@shared/commercial";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -117,6 +125,42 @@ export function Sidebar() {
   });
   const trashCount = trashData?.count ?? 0;
 
+  //  ══ **شارةُ «بانتظار الحسم»** (المرحلة الخامسة) ═══════════════════════
+  //  **نفسُ الدالّة القانونية بعينها** — لا نسخةٌ يدوية من قائمة الأدوار.
+  //  `canCompleteReceptionSale` هي مَن تفتح البابين `/complete-sale`/
+  //  `/not-bought` فعلياً (`shared/commercial.ts`)، فانحرافُها لاحقاً يسري
+  //  إلى الشريط الجانبيّ من تلقاء نفسه — لا الطبيب.
+  //  والعدّادُ **كلَّ الفروع** بلا فلترةٍ محليّة، مهما ضيّق الموظّفُ الصفحةَ
+  //  بفرعٍ واحد؛ الخادمُ يفرض ذلك (`/api/followups/decision-queue/count`
+  //  لا تقبل فلتراً).
+  const decisionQueueEligible = canCompleteReceptionSale(branchSession as any);
+  const { data: decisionQueueData } = useQuery<{ count: number }>({
+    queryKey: ["/api/followups/decision-queue", "count"],
+    enabled: decisionQueueEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/followups/decision-queue/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const decisionQueueCount = decisionQueueData?.count ?? 0;
+
+  //  ══ **شارةُ الطابور الموروث** (المرحلة الخامسة) ═══════════════════════
+  //  نفسُ أهليّة «مُعادة للتصحيح» بالضبط — كلاهما `canOperateNoExam` اليوم
+  //  (`shared/pending_charge.ts`)، فلا حاجةَ لشرطٍ ثانٍ منفصل.
+  const { data: legacyReviewData } = useQuery<{ count: number }>({
+    queryKey: ["/api/no-exam/review", "count"],
+    enabled: returnedEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/no-exam/review/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const legacyReviewCount = legacyReviewData?.count ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -137,7 +181,14 @@ export function Sidebar() {
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
-    { label: "متابعة ما بعد المعاينة", icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager", "doctor", "accountant"] as const },
+    //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
+    //  المعاينة») ══════════════════════════════════════════════════════
+    //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل
+    //  `canCompleteReceptionSale` — الطبيبُ يكتب معاينته ويخرج، ولا زرَّ
+    //  بيعٍ له في هذه الصفحة أصلاً. **`eligible` لا `roles`**: القاعدةُ
+    //  التي تفتح البابين نفسِهما (`shared/commercial.ts`) — لا قائمةَ
+    //  أدوارٍ ثانية تنحرف عنها صامتة لو تغيّرت القاعدةُ لاحقاً.
+    { label: DECISION_QUEUE_SIDEBAR_LABEL, icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, eligible: decisionQueueEligible, badge: decisionQueueCount },
     //  اعتمادُ الخصم لمديرِ الفرع والمخوَّل — والمسؤولُ يرى كلَّ شيء أصلاً.
     //  والطبيبُ العاديّ لا يراه: الخصمُ قرارٌ ماليٌّ لا سريريّ.
     { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },
@@ -156,8 +207,11 @@ export function Sidebar() {
     //  فما بقي فيه **مبالغُ عملياتٍ وقعت قبل التغيير** تنتظر إنساناً يُنهيها
     //  — والإنسانُ هو الاستقبالُ ومديرُ الفرع والمسؤول، بالبوّابة نفسِها
     //  التي يقبلها الخادم (`canAddPatients`). **ولا يراه الطبيبُ بدوره.**
-    { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const },
-    { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount },
+    //  ══ **شارةٌ بلا صفّ عند الصفر** (المرحلة الخامسة) ══════════════════
+    //  طابورٌ فارغٌ لا يستحقّ سطراً في الشريط الجانبيّ — `hideWhenZero`
+    //  تُخفي الصفَّ كلَّه لا الشارةَ وحدها (كانت الشارةُ تختفي والصفُّ يبقى).
+    { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: legacyReviewCount, hideWhenZero: true },
+    { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount, hideWhenZero: true },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     //  **والمحذوفاتُ لمن يحذف ويستعيد** — مسؤولٌ أو مديرُ فرعٍ أو طبيب.
@@ -206,7 +260,15 @@ export function Sidebar() {
       if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
         && !noExamReviewBypass) return false;
     }
-    
+
+    //  ══ **أهليّةٌ من دالّةٍ قانونية — لا قائمةَ أدوار** (تصحيحٌ لاحق) ═════
+    //  عكسُ `roles` أعلاه تماماً: هذا العنصرُ (الآن «بانتظار الحسم» وحدها)
+    //  لا يحمل قائمةَ أدوارٍ مكتوبةً هنا أصلاً — القرارُ بالكامل من محمولٍ
+    //  جاهزٍ (`eligible`) حسبته الدالّةُ القانونية نفسُها التي تحرس النقطة.
+    if (typeof (item as any).eligible === "boolean" && !(item as any).eligible) {
+      return false;
+    }
+
     // Check branch settings for non-admin users
     if (!branchSession?.isAdmin && item.settingKey && branchSettings) {
       const settingValue = branchSettings[item.settingKey];
@@ -223,7 +285,14 @@ export function Sidebar() {
         return false;
       }
     }
-    
+
+    //  ══ **صفٌّ يختفي عند الصفر** (المرحلة الخامسة) ══════════════════════
+    //  طابورٌ فارغ لا يستحقّ سطراً — لا الشارةَ وحدها. القيمةُ نفسُها التي
+    //  يعرضها البادج (`badge`)، فلا مصدرَ عدٍّ ثانٍ يختلف عنه.
+    if ((item as any).hideWhenZero && ((item as any).badge ?? 0) <= 0) {
+      return false;
+    }
+
     return true;
   });
 

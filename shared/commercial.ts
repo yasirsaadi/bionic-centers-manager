@@ -375,23 +375,75 @@ export const EXAM_PATH_ACTION_LABELS: Record<ExamPathAction, string> = {
   not_bought: "لم يشترِ",
 };
 
-/** الأفعالُ المتاحة لهذه الجلسة على عمليةٍ حيّة من مسار المعاينة. */
+/**
+ * الأفعالُ المتاحة لهذه الجلسة على عمليةٍ حيّة من مسار المعاينة.
+ *
+ * ══ ⚠ تصحيحٌ لاحق — `complete_sale` يلزم الحقولَ الثلاثة لا القرارَ وحده
+ * ═══════════════════════════════════════════════════════════════════════
+ * `setCommercialFields` (الكاتبُ الحقيقيّ خلف `/complete-sale`) يكتب
+ * **السعرَ والخبيرَ والقرارَ معاً دائماً** — وتفحص المالكيةَ لكلّ حقلٍ لمسته
+ * على حِدة. فكان عرضُ الزرّ من فحص مالكية القرار وحدها **كاذباً**: صفٌّ
+ * موروثٌ قرارُه فارغٌ (يُكمله مَن حضر) لكنّ سعرَه أو خبيرَه ما زال مملوكاً
+ * للطبيب من قبل هذا التبسيط — كان الزرُّ يظهر ويردّه الخادمُ ٤٠٣.
+ *
+ * فصار الشرطان مختلفين:
+ * - `not_bought` يحتاج **القرارَ وحده** — لا يكتب سعراً ولا خبيراً.
+ * - `complete_sale` يحتاج **القرارَ والسعرَ والخبيرَ معاً** — الحقولُ
+ *   الثلاثة التي يلمسها الحفظُ فعلياً.
+ *
+ * فلصفٍّ موروث: قد تُعرَض `["not_bought"]` وحدها (سعرٌ أو خبيرٌ محجوبان)،
+ * أو `[]` (القرارُ نفسُه محجوب)، أو الاثنان معاً كصفٍّ جديدٍ عاديّ — **ولا
+ * يُفرَض تلازمٌ بينهما بعد اليوم**. وغيابُ `priceField`/`expertField` من
+ * منادٍ لم يُحدَّث بعد يُقرأ «غيرَ مملوك» (نفسُ افتراض حقلٍ فارغ) فلا ينكسر.
+ */
 export function examPathActions(params: {
   session: CommercialSessionLike | null | undefined;
   status: string;
   /** مالكُ القرار — يمنع قلبَ ما قرّره الطبيب على صفٍّ موروث. */
   decisionField?: OwnedField | null;
+  /** مالكُ السعر — `complete_sale` يكتبه، فيُشترَط معه. */
+  priceField?: OwnedField | null;
+  /** مالكُ الخبير — كذلك. */
+  expertField?: OwnedField | null;
   mayAct: boolean;
 }): ExamPathAction[] {
   if (!params.mayAct) return [];
   //  المنتهيةُ لا فعلَ عليها هنا: تصحيحُها بابُه نظامُ التصحيح الإداريّ.
   if (params.status === "converted" || params.status.startsWith("closed_")) return [];
-  //  **بابٌ واحد فحسب**: حفظُ البيع هو نفسُه قرارُ «اشترى»، فلا حاجةَ لقراءة
-  //  قرارٍ سابق لإخفاء زرٍّ ثانٍ — كلاهما يظهران معاً أو لا يظهر شيء.
-  const mayDecide = canOverwriteCommercialField({
-    field: params.decisionField ?? null, session: params.session,
-  });
-  return mayDecide ? ["complete_sale", "not_bought"] : [];
+  const mayOverwrite = (field: OwnedField | null | undefined) =>
+    canOverwriteCommercialField({ field: field ?? null, session: params.session });
+  //  «لم يشترِ» يحتاج القرارَ وحده — وبلا هذا لا فعلَ إطلاقاً على الصفّ.
+  if (!mayOverwrite(params.decisionField)) return [];
+  const actions: ExamPathAction[] = [];
+  if (mayOverwrite(params.priceField) && mayOverwrite(params.expertField)) {
+    actions.push("complete_sale");
+  }
+  actions.push("not_bought");
+  return actions;
+}
+
+/**
+ * **رسالةٌ إنسانيةٌ عند حجب فعلٍ بملكيةٍ تجاريةٍ موروثة** — تصحيحٌ لاحق.
+ *
+ * صفٌّ موروثٌ حيٌّ (لم ينتهِ) قد يحمل سعراً أو خبيراً ما زال مملوكاً للطبيب
+ * من قبل هذا التبسيط (القسم 4.h)، فيحجب `examPathActions` بعضَ الأفعال أو
+ * كلَّها. **والصفُّ يبقى ظاهراً في الطابور** — الحجبُ ليس سبباً لإخفائه —
+ * لكنّ الموظّف يحتاج جملةً تشرح **بلا** كودِ مالكيةٍ (`doctor`/`staff`) ولا
+ * اسمِ حالةٍ داخليّ. `null` حين لا حجب (الفعلان معاً، أو صفٌّ لم يُلمَس بعد).
+ *
+ * **دالّةٌ خالصة على `actions` وحدها** — لا تحتاج حقولَ المالكية الخام، فلا
+ * يُضطَرّ العميلُ لتلقّيها أصلاً ليعرض هذه الجملة.
+ *
+ * `readonly string[]` عمداً لا `ExamPathAction[]`: العميلُ يتلقّى `actions`
+ * كما بعثها الخادمُ (JSON غيرُ مطبوع)، فتضييقُ النوع هنا كان يفرض على كلّ
+ * مستهلكٍ عميلٍ تحويلاً لا حاجةَ له — الدالّةُ لا تفعل أكثر من `.includes`.
+ */
+export function examPathBlockedMessage(actions: readonly string[]): string | null {
+  if (actions.includes("complete_sale")) return null;
+  if (actions.includes("not_bought")) {
+    return "بيانات تجارية قديمة محفوظة — إتمام البيع يحتاج المسؤول العام.";
+  }
+  return "بيانات تجارية قديمة محفوظة — يحتاج الحسم إلى المسؤول العام.";
 }
 
 // ── مَن يُتمّ البيع المبسّط — إدارةٌ وتحصيلٌ، لا طبيبَ إطلاقاً ────────────
