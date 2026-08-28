@@ -305,10 +305,10 @@ async function main() {
 
     // ٦. **وبينما الجديد يُصنَّع**: صيانةٌ على القديم المسلَّم.
     console.log("\n── التعايش: صيانة القديم أثناء تصنيع الجديد ──");
-    const maint = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    const maint = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: P, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 75_000, notes: "صيانة الطرف القديم", deviceEpisodeId: dev1,
+      originalPrice: 75_000, discountAmount: 0, note: "صيانة الطرف القديم", deviceEpisodeId: dev1,
     });
     same("٦. الصيانة فُتحت رغم أن الجديد قيد التصنيع", maint.status, 201);
 
@@ -409,10 +409,10 @@ async function main() {
     const d1 = await mkEpisode(pm, cm, 1, "delivered", 0);
     const d2 = await mkEpisode(pm, cm, 2, "delivered", 0);
     const races = await Promise.all(Array.from({ length: 4 }, () =>
-      http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 25_000, notes: "صيانة متزامنة", deviceEpisodeId: d1,
+        originalPrice: 25_000, discountAmount: 0, note: "صيانة متزامنة", deviceEpisodeId: d1,
       })));
     same("أربع محاولات على الجهاز نفسه ⟶ نجاح واحد", races.filter((r) => r.status === 201).length, 1);
     check(!races.some((r) => JSON.stringify(r.body ?? "").includes("duplicate key")),
@@ -420,25 +420,25 @@ async function main() {
     same("   وأمرُ صيانةٍ واحد",
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 1);
 
-    const second = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    const second = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 25_000, notes: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
+      originalPrice: 25_000, discountAmount: 0, note: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
     });
     same("وجهازٌ مسلَّمٌ آخر ⟶ صيانته الخاصّة تُفتح معه", second.status, 201);
     same("   فصار أمرا صيانة متوازيان",
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 2);
 
-    const noChoice = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    const noChoice = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000, notes: "بلا اختيار",
+      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, note: "بلا اختيار",
     });
     same("وصيانةٌ بلا اختيارٍ ومعه أجهزة مسجَّلة ⟶ مرفوضة", noChoice.status, 400);
     same("وجهازٌ غير مسلَّم لا يُصان",
-      (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
-        notes: "صيانة ملغى", deviceEpisodeId: cancelledEp,
+        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0,
+        note: "صيانة ملغى", deviceEpisodeId: cancelledEp,
       })).status, 400);
 
     // ══════════ المعرّف الصريح لا يُتجاهَل أبداً ═══════════════════════
@@ -467,10 +467,10 @@ async function main() {
         (SELECT count(*)::int FROM visits WHERE patient_id=$1) AS vis,
         (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ce,
         (SELECT COALESCE(total_cost,0) FROM patients WHERE id=$1) AS total`, [pOnlyMfg]);
-    const explicitMfg = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    const explicitMfg = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 50_000, notes: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
+      originalPrice: 50_000, discountAmount: 0, note: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
     });
     same("٢. وجهازٌ قيد التصنيع كهدف صيانة ⟶ يُردّ ٤٠٠", explicitMfg.status, 400);
     const afterM = await q(`SELECT
@@ -481,10 +481,10 @@ async function main() {
     same("   ولا أمر ولا زيارة ولا قيد ولا حركة مالية", afterM, beforeM);
 
     same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
-      (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+      (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", cost: 25_000,
-        notes: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
+        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0,
+        note: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
       })).status, 400);
 
     // ══════════ الصيانة لها بابٌ واحد ═════════════════════════════════
@@ -521,25 +521,50 @@ async function main() {
     same("   ولا دفعةَ بلا هوية بعد التخصيص",
       (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND device_episode_id IS NULL`, [pRace]))[0].n, 1);
 
-    // الصيانة: التسليم يسبق فتصير أجهزةٌ مسلَّمة موجودة، فصيانةٌ بلا هدف تُردّ.
+    // ⚠ (المرحلة الثالثة) — كانت الصيانةُ بلا حقلٍ إطلاقاً تُستدَلّ ضمناً:
+    // «لا جهازَ مسجَّل بعد ⟶ اعتبرها قديمة»، ثم يرتدّ الاستدلالُ نفسُه بعد
+    // التسليم. **والبابُ الجديد لا يستدلّ أبداً**: نيّةٌ صريحة دائماً —
+    // فغيابُ الحقلين معاً ٤٠٠ عند اللحظتين كلتيهما بالضبط لنفس السبب (بلا
+    // نيّة)، لا لاختلاف الأهلية. **والإقرارُ الصريح** يبقى موثوقاً بلا قيد
+    // — حتى بعد أن صار للخيط جهازٌ مسلَّم آخر — لأن `resolveDeviceTargetTx`
+    // (غيرُ مُمَسٍّ) يُرجع «قديم» فوراً حين يصل صريحاً، بلا فحص أهليةٍ ثانٍ:
+    // الموظّفُ الذي يجزم أن هذا الجهاز غير مسجَّل أدرى من التخمين. والسباقُ
+    // الحقيقيُّ للاستدلال الضمنيّ (لا تدخّل حقلٍ) مُثبَتٌ مباشرةً على الدالّة
+    // نفسِها أدناه — بلا مرورٍ بهذا الباب الذي لم يعد يستعمله.
     const pRaceM = await mkPatient("سباق الصيانة");
     const cRaceM = await mkCase(pRaceM, 0);
-    same("٦. قبل التسليم: لا جهاز مسجَّل ⟶ صيانةٌ بلا هدف مسموحة",
-      (await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    same("٦. قبل التسليم: بلا نيّةٍ صريحة ⟶ ٤٠٠ دائماً (لا استدلال بعد اليوم)",
+      (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-        cost: 25_000, notes: "صيانة إرث",
-      })).status, 201);
-    await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
-    await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
-    const maintAfterDeliver = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+        originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث",
+      })).status, 400);
+    const legacyExplicit = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 25_000, notes: "صيانة بعد التسليم",
+      originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث",
+      legacyUnrecordedDevice: true,
     });
-    same("   وبعده: صار جهازٌ مسلَّم ⟶ صيانةٌ بلا هدف تُردّ", maintAfterDeliver.status, 400);
-    same("   ولا أمر صيانةٍ ثانٍ",
-      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pRaceM]))[0].n, 1);
+    same("   وبإقرارٍ صريح ⟶ ٢٠١", legacyExplicit.status, 201);
+    await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
+    await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
+    const maintAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      maintenanceComponent: "knee",
+      patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
+      originalPrice: 25_000, discountAmount: 0, note: "صيانة بعد التسليم",
+    });
+    same("   وبعده: بلا نيّةٍ صريحة ⟶ ٤٠٠ كذلك — السببُ نفسُه لا اختلاف أهليةٍ",
+      maintAfterDeliver.status, 400);
+    const legacyAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      maintenanceComponent: "knee",
+      patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
+      originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث ثانية",
+      legacyUnrecordedDevice: true,
+    });
+    same("   **والإقرارُ الصريح لا يزال موثوقاً** رغم وجود جهازٍ مسلَّم الآن",
+      legacyAfterDeliver.status, 201);
+    same("   فأمرا صيانةٍ اثنان — كلاهما بإقرارٍ صريح",
+      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pRaceM]))[0].n, 2);
 
     // ══════════ سباقٌ حقيقي: التسليم مقابل صيانةٍ بلا هدف ═════════════
     // ليس «قبل ثم بعد» — بل معاملتان مفتوحتان معاً وحاجزٌ صريح بينهما.
@@ -597,10 +622,10 @@ async function main() {
     same("   ثم أُثبِت التسليم بعده", (await epRow(eTrue))?.status, "delivered");
 
     //  والاتجاه المعاكس: بعد أن استقرّ التسليم، صيانةٌ بلا هدف تُردّ.
-    const afterTrue = await http("POST", `/api/manufacturing/maintenance-visit`, S.reception, {
+    const afterTrue = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 25_000, notes: "بعد التسليم",
+      originalPrice: 25_000, discountAmount: 0, note: "بعد التسليم",
     });
     same("   وبعد استقراره: صيانةٌ بلا هدف تُردّ ٤٠٠", afterTrue.status, 400);
 

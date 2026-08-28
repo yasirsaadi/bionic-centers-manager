@@ -42,21 +42,43 @@ export function describeEpisode(e: DeviceEpisodeOption): string {
   return parts.join(" · ");
 }
 
-/** يقرأ حلقات المريض ويصفّيها بالخدمة والحالات المقبولة لهذا الغرض. */
+/**
+ * يقرأ حلقات المريض ويصفّيها بالخدمة والحالات المقبولة لهذا الغرض.
+ *
+ * ══ حالةُ الاستعلام كاملةً — لا `options`/`hasOptions` وحدهما ═══════════
+ * كانت هذه الدالّة تُرجع القائمةَ المصفّاة فقط، فلا يفرّق المستدعي بين
+ * «لا أجهزةَ فعلاً» و«ما زال يُحمَّل» و«فشل الطلب» — الثلاثةُ `hasOptions:
+ * false` بصوتٍ واحد. ومَن يبني عليها زرَّ حفظٍ (الصيانةُ المبسّطة، المرحلة
+ * الثالثة) يحتاج الفرقَ: تحميلٌ يُعطِّل الحفظَ لا يُسقِط الخيارَ، وفشلٌ
+ * يُظهر رسالةً لا صفراً صامتاً، و**استقرارٌ ناجحٌ بصفر** هو وحده «غير
+ * مسجَّل» الحقيقيّ.
+ *
+ * **`options`/`hasOptions` بقيتا كما هما بحرفهما** — `PaymentModal.tsx` و
+ * `VisitModal.tsx` يستهلكانهما فقط، والحقولُ الجديدة إضافيةٌ لا تُغيّر
+ * شكلهما.
+ */
 export function useDeviceEpisodes(
   patientId: number | undefined,
   serviceType: "prosthetic" | "medical_support" | null,
   allowedStatuses: readonly string[],
 ) {
-  const { data } = useQuery<{ episodes: DeviceEpisodeOption[] }>({
-    queryKey: [`/api/patients/${patientId}/device-episodes`],
-    enabled: Boolean(patientId && serviceType),
-  });
+  const { data, isLoading, isFetching, isError, isSuccess, refetch } =
+    useQuery<{ episodes: DeviceEpisodeOption[] }>({
+      queryKey: [`/api/patients/${patientId}/device-episodes`],
+      enabled: Boolean(patientId && serviceType),
+    });
   const all = data?.episodes ?? [];
   const options = serviceType
     ? all.filter((e) => e.serviceType === serviceType && allowedStatuses.includes(e.status))
     : [];
-  return { options, hasOptions: options.length > 0 };
+  return {
+    options, hasOptions: options.length > 0,
+    //  `enabled: false` تُبقي `isLoading` صحيحةً بلا جلبٍ فعليّ — فلا
+    //  تُقرأ «تحميلاً» ما لم يكن مريضٌ وخدمةٌ معلومَين فعلاً.
+    isLoading: Boolean(patientId && serviceType) && isLoading,
+    isFetching: Boolean(patientId && serviceType) && isFetching,
+    isError, isSuccess, refetch,
+  };
 }
 
 interface DeviceEpisodeSelectProps {

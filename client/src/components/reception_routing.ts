@@ -41,6 +41,7 @@ import type { ServiceFlow } from "./patient_service_launcher_logic";
 import type { ResumeStore } from "./device_flow_resume";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import { noExamSaleServiceTypes } from "@shared/prosthetic_parts";
+import { canCompleteMaintenance, type MaintenanceSessionLike } from "@shared/maintenance";
 
 /** عنوانُ السؤال كما يراه الاستقبال — ثابتٌ واحد يُستعمَل في كلّ سطح. */
 export const RECEPTION_ROUTING_QUESTION = "ما سبب حضور المريض اليوم؟";
@@ -113,11 +114,19 @@ const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
  * **والبيعُ لا يُعرَض إلّا لقسمٍ له ما يُباع بلا معاينة** — وهي الأطرافُ
  * وحدها اليوم. فالأطرافُ ثلاثة، والمساندُ اثنان: معاينةٌ وصيانة. والمسندُ
  * الكاملُ بابُه «يحتاج معاينة طبية» ككلّ جهازٍ كامل.
+ *
+ * **والصيانةُ تُعرَض لمن يملك `canCompleteMaintenance` فقط** (المرحلة
+ * الثالثة، `shared/maintenance.ts`) — استقبالٌ أو محاسبٌ أو مديرُ فرع، أو
+ * المسؤولُ العامّ بلا قيد. **والطبيبُ لا يراها هنا إطلاقاً**: لا سلطةَ له
+ * على الصيانة المبسّطة من أوّلها، والخادمُ يبقى الحارسَ الأخير على أيّ حال
+ * (`session` غيابُها يُخفي الخيارَ احتياطاً لا افتراضَ صلاحية).
  */
 export function receptionRoutingChoices(
   serviceType: ReceptionRoutingServiceType,
+  session?: MaintenanceSessionLike | null,
 ): ReceptionRoutingChoice[] {
   const sellsWithoutExam = noExamSaleServiceTypes.includes(serviceType);
+  const mayMaintain = canCompleteMaintenance(session);
   return [
     {
       id: "exam_required",
@@ -129,27 +138,28 @@ export function receptionRoutingChoices(
       label: SALE_LABEL[serviceType],
       flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "device_sale" as const },
     }] : []),
-    {
-      id: "maintenance",
+    ...(mayMaintain ? [{
+      id: "maintenance" as const,
       label: MAINTENANCE_LABEL[serviceType],
-      flow: { kind: "no_exam_operation", serviceType, initialKind: "maintenance" },
-    },
+      flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "maintenance" as const },
+    }] : []),
   ];
 }
 
 /**
- * ما تعرضه الشاشة: مجموعةٌ لكلّ قسمٍ يملكه المريض، بخياراتها الثلاثة.
+ * ما تعرضه الشاشة: مجموعةٌ لكلّ قسمٍ يملكه المريض، بخياراتها.
  *
- * فارغةٌ لمن لا قسمَ جهازٍ له إطلاقاً — فلا يُفتَح له مُوجِّه.
+ * فارغةٌ لمن لا قسمَ جهازٍ له إطلاقاً — فلا يُفتَح له مُوجِّه. **و`session`
+ * تمرَّر إلى كلّ قسمٍ بلا تكرارِ منطق الصلاحية** — نفسُ الجلسة، نفسُ القرار.
  */
 export function receptionRoutingGroups(p: {
   isAmputee?: boolean | null;
   isMedicalSupport?: boolean | null;
-}): ReceptionRoutingGroup[] {
+}, session?: MaintenanceSessionLike | null): ReceptionRoutingGroup[] {
   return receptionRoutingDepartments(p).map((serviceType) => ({
     serviceType,
     label: DEPARTMENT_LABELS[serviceType],
-    choices: receptionRoutingChoices(serviceType),
+    choices: receptionRoutingChoices(serviceType, session),
   }));
 }
 

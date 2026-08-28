@@ -70,6 +70,13 @@ const PRO = { isAmputee: true };
 const SUP = { isMedicalSupport: true };
 const DUAL = { isAmputee: true, isMedicalSupport: true };
 
+//  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — خيارُ «صيانة» صار مشروطاً
+//  بـ`canCompleteMaintenance` (`shared/maintenance.ts`). ما يلي جلسةٌ
+//  مخوَّلة (استقبال) تُمرَّر صراحةً فيما تبقّى من هذا الملفّ — فما كان
+//  يثبته قبل هذه المرحلة (شكلُ الخيارات الثلاثة/الاثنين) يبقى مُثبَتاً
+//  بحرفه، والتغطيةُ الجديدة (الإخفاءُ عن غير المخوَّل) في القسم أدناه.
+const RECEPTION = { role: "reception", isAdmin: false };
+
 function main() {
   // ══ (أ) القرار: ثلاثةُ خيارات لكلّ قسم ═════════════════════════════════
   console.log("\n── قرارُ التوجيه ──");
@@ -77,7 +84,7 @@ function main() {
   same("١. والسؤالُ نصّاً واحداً ثابتاً",
     RECEPTION_ROUTING_QUESTION, "ما سبب حضور المريض اليوم؟");
 
-  const pro = receptionRoutingChoices("prosthetic");
+  const pro = receptionRoutingChoices("prosthetic", RECEPTION);
   same("٢. **ثلاثةُ خياراتٍ للأطراف لا رابع**", pro.map((c) => c.id),
     ["exam_required", "device_sale", "maintenance"]);
   same("٣. وعناوينُها بالضبط", pro.map((c) => c.label), [
@@ -88,7 +95,7 @@ function main() {
   //  كان لها «شراء مسند طبي»، يفتح نافذةَ «بلا معاينة» فتعرض له **الجهازَ
   //  الكاملَ** لأنه الشيءُ الوحيد الذي لا أجزاءَ دونه — فتبيع بلا معاينةٍ
   //  أشدَّ ما يحتاج الطبيب. والمسندُ الكاملُ كالطرف الكامل: معاينةٌ أوّلاً.
-  const sup = receptionRoutingChoices("medical_support");
+  const sup = receptionRoutingChoices("medical_support", RECEPTION);
   same("٤. **وخياران للمساند لا ثلاثة — ولا بيعَ بلا معاينة فيها**",
     sup.map((c) => c.id), ["exam_required", "maintenance"]);
   same("٥. وعناوينُها بالضبط", sup.map((c) => c.label), [
@@ -184,7 +191,7 @@ function main() {
     receptionRoutingDepartments({ isPhysiotherapy: true } as any), []);
   same("وبلا أيّ علمٍ ⟶ لا قسم", receptionRoutingDepartments({}), []);
 
-  const dualGroups = receptionRoutingGroups(DUAL);
+  const dualGroups = receptionRoutingGroups(DUAL, RECEPTION);
   same("١٧.ب **ومجموعتان بعنوانيهما الرسميّين**",
     dualGroups.map((g) => [g.serviceType, g.label]),
     [["prosthetic", "الأطراف الصناعية"], ["medical_support", "المساند الطبية"]]);
@@ -195,11 +202,11 @@ function main() {
     ["prosthetic:exam_required", "prosthetic:device_sale", "prosthetic:maintenance",
       "medical_support:exam_required", "medical_support:maintenance"]);
   same("وصاحبُ الأطراف وحدها يرى ثلاثةً",
-    receptionRoutingGroups(PRO).flatMap((g) => g.choices.map((c) => c.id)),
+    receptionRoutingGroups(PRO, RECEPTION).flatMap((g) => g.choices.map((c) => c.id)),
     ["exam_required", "device_sale", "maintenance"]);
   //  **ولا تُضاف صيانةُ الأطراف لصاحب المساند** — القسمُ الغائبُ غائبٌ كلُّه.
   same("وصاحبُ المساند وحدها يرى خيارَيه هو لا خيارَ أطرافٍ واحداً",
-    receptionRoutingGroups(SUP).flatMap((g) => g.choices.map((c) => c.label)),
+    receptionRoutingGroups(SUP, RECEPTION).flatMap((g) => g.choices.map((c) => c.label)),
     ["يحتاج معاينة طبية", "صيانة مسند طبي"]);
   //  **ولا أثرَ للتفضيل الصامت في المصدر** — لا هنا ولا في الموزِّع.
   const routingCode = code(ROUTING);
@@ -214,8 +221,23 @@ function main() {
     "١٧.و **والموزِّعُ يعرض المجموعاتِ كلَّها**");
   check(/routingSections\.length > 1 &&/.test(launcherCode),
     "ويُظهر العناوينَ حين تتعدّد وحدها — فلا عنوانٌ زائدٌ لقسمٍ واحد");
-  check(/receptionRoutingGroups\(patient\)/.test(launcherCode),
-    "بالقاعدة نفسِها لا بقاعدةٍ ثانية");
+  check(/receptionRoutingGroups\(patient, branchSession\)/.test(launcherCode),
+    "بالقاعدة نفسِها لا بقاعدةٍ ثانية — والجلسةُ تمرّ لتصفية الصيانة (المرحلة الثالثة)");
+
+  //  ══ **والصيانةُ تُخفى عمّن لا يملك `canCompleteMaintenance`** (المرحلة
+  //  الثالثة) — الطبيبُ مثلاً، أو جلسةٌ غائبة. والخيارانِ الآخران (المعاينة
+  //  والبيع) لا علاقةَ لهما بهذه الصلاحية فيبقيان كما هما.
+  console.log("\n── الصيانة تُخفى عمّن لا يملكها ──");
+  const doctorSession = { role: "doctor", isAdmin: false };
+  const proForDoctor = receptionRoutingChoices("prosthetic", doctorSession);
+  same("١٧.ز **الطبيبُ لا يرى خيار الصيانة**",
+    proForDoctor.map((c) => c.id), ["exam_required", "device_sale"]);
+  const proNoSession = receptionRoutingChoices("prosthetic");
+  same("١٧.ح **وجلسةٌ غائبة كذلك تُخفيه احتياطاً**",
+    proNoSession.map((c) => c.id), ["exam_required", "device_sale"]);
+  const proForAdmin = receptionRoutingChoices("prosthetic", { isAdmin: true });
+  same("١٧.ط **والمسؤولُ العامّ يراه بلا قيد**",
+    proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance"]);
 
   // ══ (د) بلا «شراء طرف صناعي كامل» بين الخيارات ═════════════════════════
   console.log("\n── بلا «شراء طرف صناعي كامل» ──");

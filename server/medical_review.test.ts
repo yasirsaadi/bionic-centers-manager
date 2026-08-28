@@ -626,25 +626,28 @@ async function main() {
       (await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1,
         { servicePath: "exam", serviceType: "prosthetic" })).status, 409);
 
-    // ══ ٢١. التوجيه التلقائي — الصيانة والزيارة ════════════════════════
-    console.log("\n── ٢١. توجيهٌ تلقائي: صيانة وزيارة ──");
+    // ══ ٢١. التوجيه التلقائي — الزيارةُ وحدها؛ الصيانةُ لم تعد منه ═══════
+    //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — كانت هذه الفقرةُ تثبت أن
+    //  الصيانةَ صارت تصل الطبيبَ (إصلاحُ ٠٥٥: كانت لا تصله إطلاقاً). **والآن
+    //  عكسُ ذلك تماماً**: الصيانةُ المبسّطة (`/api/no-exam/maintenance`)
+    //  لا تنادي توجيهَ المراجعة إطلاقاً — لا سلطةَ للطبيب عليها من أوّلها.
+    //  فالإثباتُ الصحيح اليوم غيابُها عن الطابور لا حضورُها.
+    console.log("\n── ٢١. توجيهٌ تلقائي: الزيارةُ وحدها؛ الصيانةُ خارج المراجعة ──");
     const autoMaint = await mk("رحيم الصيانة التلقائية", {
       prosthetic: true, classification: "past", createdDaysAgo: 800,
     });
-    const mvRes = await http("POST", "/api/manufacturing/maintenance-visit", S.recv1, {
+    const mvRes = await http("POST", "/api/no-exam/maintenance", S.recv1, {
       maintenanceComponent: "knee",
       patientId: autoMaint, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 25_000, notes: "صرير في المفصل", legacyUnrecordedDevice: true,
-      reviewPath: "quick", reviewKind: "maintenance", reviewNote: "يشكو صريراً",
+      originalPrice: 25_000, discountAmount: 0, note: "صرير في المفصل",
+      legacyUnrecordedDevice: true,
     });
     same("٢١. فتحُ الصيانة ينجح", mvRes.status, 201);
     const mvReq = (await q(`SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoMaint]));
-    same("   **وطلبُ المراجعة أُنشئ مع أمر الصيانة**", mvReq.length, 1);
-    same("   مربوطاً بأمره", Number(mvReq[0].work_order_id), Number(mvRes.body?.id));
-    same("   بتصنيف الموظّف", mvReq[0].requested_path, "quick");
-    same("   وملاحظتِه", mvReq[0].reception_note, "يشكو صريراً");
-    check(((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.patientId === autoMaint),
-      "   **والصيانةُ تصل الطبيب — وكانت لا تصله إطلاقاً**");
+    same("   **وبلا طلبِ مراجعةٍ إطلاقاً** — الصيانةُ لا تنادي التوجيه من أوّلها",
+      mvReq.length, 0);
+    check(!((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.patientId === autoMaint),
+      "   **والصيانةُ لا تصل الطبيب** — لا سلطةَ له عليها");
 
     //  وزيارةُ الجهاز العادية كذلك.
     const visitRes = await http("POST", "/api/visits", S.recv1, {

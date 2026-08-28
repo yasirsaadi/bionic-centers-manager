@@ -21,6 +21,7 @@ import {
 import {
   RECEPTION_ROUTING_QUESTION, receptionRoutingGroups, takeReceptionRoutingPending,
 } from "./reception_routing";
+import { useBranchSession } from "./BranchGate";
 
 // موزِّع خدمات المريض — **بابان لا أكثر**.
 //
@@ -106,9 +107,15 @@ export function PatientServiceLauncher({
     setFlow({ kind: "device_episode", serviceType: resume.serviceType });
   }, [patient.id]);
 
+  //  ══ **جلسةُ الفرع — لتصفية خيار «صيانة» وحده** (المرحلة الثالثة) ═════
+  //  `canCompleteMaintenance` تُفحَص هنا لإخفاء الزرّ عمّن سيردّه الخادمُ —
+  //  والخادمُ يبقى الحارسَ الأخير على أيّ حال، فغيابُ الجلسة هنا يُخفي
+  //  الخيارَ احتياطاً لا افتراضَ صلاحية.
+  const branchSession = useBranchSession();
+
   //  أقسامُ الأجهزة التي يملكها المريض — **كلُّها**، بلا تفضيلٍ صامت
   //  للأطراف. وفارغةٌ لمريض العلاج الطبيعي وحده، فلا مُوجِّه له إطلاقاً.
-  const routingSections = receptionRoutingGroups(patient);
+  const routingSections = receptionRoutingGroups(patient, branchSession);
   const hasRouting = routingSections.length > 0;
 
   // ══ **المُوجِّهُ يُفتَح مرّةً واحدة بعد التسجيل مباشرةً** ═════════════════

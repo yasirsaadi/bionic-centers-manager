@@ -1021,6 +1021,21 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    */
   noExamNoCharge: boolean("no_exam_no_charge"),
   /**
+   * **الشروطُ التجاريةُ المُهيكَلة للصيانة المبسّطة** (ترحيل ٠٦٩، المرحلة
+   * الثالثة) — `originalPrice`/`finalPrice`/`kind` بدل مبلغٍ خامٍ لا يقول
+   * أعاديٌّ هو أم بخصمٍ أم مجّانيّ صراحةً. نفسُ دلالة `price_kind` على
+   * `post_exam_followups` (ترحيل ٠٦٦) — لا مفردات ثانية.
+   *
+   * **`NULL` على الثلاثة معاً** لأوامر الصيانة قبل هذا الترحيل، ولاعتماد
+   * الخصم الموروث (`server/discounts/store.ts` ينادي
+   * `createMaintenanceOrderWithVisit` مباشرةً بلا هذه الحقول) — صدقٌ لا نقص:
+   * لم تُسجَّل بهذا الشكل يوم وقعت. ولا خصمَ يُخزَّن عموداً ثالثاً: يُشتقّ
+   * `original - final` دائماً.
+   */
+  maintenanceOriginalPrice: integer("maintenance_original_price"),
+  maintenanceFinalPrice: integer("maintenance_final_price"),
+  maintenancePriceKind: text("maintenance_price_kind"),
+  /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
    * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
@@ -1042,6 +1057,28 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   check("pwo_device_origin_check", sql`
     ${t.deviceOrigin} IS NULL
     OR ${t.deviceOrigin} IN ('registered', 'center_unrecorded', 'external')`),
+  //  ══ الشروطُ التجاريةُ المُهيكَلة للصيانة (ترحيل ٠٦٩) — أربعةُ قيود ═════
+  //  الثلاثةُ معاً أو لا شيء.
+  check("maintenance_commercial_shape_check", sql`
+    (${t.maintenanceOriginalPrice} IS NULL AND ${t.maintenanceFinalPrice} IS NULL
+     AND ${t.maintenancePriceKind} IS NULL)
+    OR (${t.maintenanceOriginalPrice} IS NOT NULL AND ${t.maintenanceFinalPrice} IS NOT NULL
+        AND ${t.maintenancePriceKind} IS NOT NULL)`),
+  //  الغرضُ صيانةٌ حين تكون موجودة — لا سعرَ مهيكلاً على بناءٍ أوّل.
+  check("maintenance_commercial_purpose_check",
+    sql`${t.maintenanceOriginalPrice} IS NULL OR ${t.purpose} = 'maintenance'`),
+  //  الحدودُ الآمنة — نفسُ ثوابت computeCommercialOffer بحرفها.
+  check("maintenance_commercial_bounds_check", sql`
+    ${t.maintenanceOriginalPrice} IS NULL
+    OR (${t.maintenanceOriginalPrice} > 0 AND ${t.maintenanceFinalPrice} >= 0
+        AND ${t.maintenanceFinalPrice} <= ${t.maintenanceOriginalPrice})`),
+  //  النوعُ لا يكذب على العلاقة بين الأصليّ والنهائيّ.
+  check("maintenance_commercial_kind_check", sql`
+    ${t.maintenancePriceKind} IS NULL
+    OR (${t.maintenancePriceKind} = 'normal' AND ${t.maintenanceFinalPrice} = ${t.maintenanceOriginalPrice})
+    OR (${t.maintenancePriceKind} = 'discount' AND ${t.maintenanceFinalPrice} > 0
+        AND ${t.maintenanceFinalPrice} < ${t.maintenanceOriginalPrice})
+    OR (${t.maintenancePriceKind} = 'free' AND ${t.maintenanceFinalPrice} = 0)`),
   //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة
   //  وحدها، فأوامرُ الصيانة القديمة بلا جزءٍ لا تثقله (ترحيل ٠٦٠).
   index("ix_wo_maint_component").on(t.maintenanceComponent)

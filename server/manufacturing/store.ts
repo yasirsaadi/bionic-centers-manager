@@ -432,6 +432,16 @@ export async function createMaintenanceOrderWithVisit(params: {
    */
   noExamNoCharge?: boolean;
   /**
+   * **الشروطُ التجاريةُ المُهيكَلة** (ترحيل ٠٦٩، المرحلة الثالثة) — للصيانة
+   * المبسّطة وحدها. `undefined`/`null` لكلّ نداءٍ آخر (اعتمادُ الخصم
+   * الموروث عبر `server/discounts/store.ts`، أو صيانةٌ لا تحمل هذا الشكل)،
+   * فتبقى الأعمدةُ الثلاثة `NULL` — صدقٌ لا نقص.
+   *
+   * `finalPrice` **لا يُقرأ من هنا** — هو `params.cost` نفسُه، فلا مصدرَ
+   * حقيقةٍ ثانٍ للرقم الذي يقيّده `postMaintenanceFee` أدناه.
+   */
+  commercialTerms?: { originalPrice: number; kind: "normal" | "discount" | "free" } | null;
+  /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
    * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
@@ -494,6 +504,11 @@ export async function createMaintenanceOrderWithVisit(params: {
       //  **الواقعةُ على السجلّ التشغيليّ** — فتبقى ولو كانت الخدمةُ بلا أجر.
       deviceOrigin: params.deviceOrigin ?? null,
       noExamNoCharge: params.noExamNoCharge ?? null,
+      //  **الشروطُ التجاريةُ المُهيكَلة** (ترحيل ٠٦٩) — `finalPrice` هو
+      //  `params.cost` نفسُه، فلا رقمَ ثانياً يُخترَع أو ينحرف عنه.
+      maintenanceOriginalPrice: params.commercialTerms?.originalPrice ?? null,
+      maintenanceFinalPrice: params.commercialTerms ? params.cost : null,
+      maintenancePriceKind: params.commercialTerms?.kind ?? null,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,

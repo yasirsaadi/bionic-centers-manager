@@ -58,6 +58,7 @@ const NEW_SERVICE = read("NewServiceModal.tsx");
 const ADD_CASE = read("AddCaseTypeModal.tsx");
 const MFG_ROUTES = read("..", "..", "..", "server", "manufacturing", "routes.ts");
 const SERVER_ROUTES = read("..", "..", "..", "server", "routes.ts");
+const PENDING_CHARGE_ROUTES = read("..", "..", "..", "server", "pending_charges", "routes.ts");
 
 const opt = (list: LauncherOption[], id: string) => list.find((o) => o.id === id);
 const ids = (list: LauncherOption[]) => list.map((o) => o.id);
@@ -314,8 +315,13 @@ function main() {
   }
   check(mfg.includes('"/api/manufacturing/maintenance-visit"'),
     "٢٠.ب **و«maintenance-visit» باقيةٌ في الخادم** — لم تُحذَف، الشاشةُ كفّت عن فتح بابٍ ثانٍ إليها");
-  check(/owned\.includes\(requestedService as any\)/.test(mfg),
-    "وحارسُها يتحقّق أن المريض يملك النوع فعلاً — كما كان");
+  //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — النقطةُ القديمةُ نفسُها تقاعدت
+  //  لعموم المستخدمين (٤٠٩) بدل تنفيذ الصيانة، فحرسُ «يملك النوع فعلاً»
+  //  انتقل مع المنطق كلِّه إلى `/api/no-exam/maintenance` — البابُ الحيّ
+  //  الوحيد اليوم. هذا امتدادٌ لهذه المرحلة على نقطةٍ تقاعدت، لا نقضٌ لِما
+  //  أثبتته «٢٠.ب» أعلاه (النقطةُ القديمة **لم تُحذَف**، بابُها فقط أُغلق).
+  check(/owned\.includes\(requested as any\)/.test(PENDING_CHARGE_ROUTES),
+    "وحارسُها يتحقّق أن المريض يملك النوع فعلاً — انتقل إلى الباب الحيّ الجديد");
   const generic = [...srv.matchAll(/app\.(post|put|patch)\("([^"]*service[^"]*)"/g)].map((m) => m[2]);
   same("٢٠.ج ولا نقطة خدمات عامّة جديدة", generic, ["/api/patients/:id/new-service"]);
 

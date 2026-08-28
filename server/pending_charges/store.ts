@@ -44,7 +44,7 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
-import type { DeviceOrigin } from "@shared/device_origin";
+import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
 export class ChargeError extends Error {
   status: number;
@@ -261,37 +261,96 @@ export async function createDeviceSaleOperation(p: CreateBase & {
 }
 
 /**
- * **صيانةٌ على مسار «بلا معاينة» — العملُ والأجرُ معاً.**
+ * **الصيانةُ المبسّطة — العملُ والمبلغُ النهائيّ معاً، حفظةً واحدة.**
+ * (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨ — تُلغي «الأجرُ ينتظر الطبيب».)
  *
- * والأمرُ يُفتَح **بأجره الحقيقيّ** عبر الكاتب القانونيّ نفسِه
+ * والأمرُ يُفتَح **بمبلغه النهائيّ** عبر الكاتب القانونيّ نفسِه
  * (`createMaintenanceOrderWithVisit` تنادي `postMaintenanceFee` داخل معاملتها،
  * وهي تخرج مبكّراً عند الصفر) — وهو **الكاتبُ عينه** الذي تناديه الصيانةُ
- * كاملةُ الأجر من نقطتها القائمة. فلا نسخةَ ثانية من محاسبة الصيانة.
+ * الموروثة وكاتبُ اعتماد الخصم القديم. فلا نسخةَ ثانية من محاسبة الصيانة.
  *
  * **ومرّةً واحدة**: `uq_pwo_one_open_maint_per_episode` و
  * `uq_pwo_one_open_legacy_maint` (ترحيل ٠٥١) تمنعان أمرَ صيانةٍ مفتوحاً
- * ثانياً على الجهاز نفسِه — والأجرُ داخل معاملة الأمر، فيرتدّ معه.
+ * ثانياً على الجهاز نفسِه — والمبلغُ داخل معاملة الأمر، فيرتدّ معه.
  *
- * ══ **ومنشأُ الجهاز يُحفَظ على الأمر** (ترحيل ٠٦٧) ═══════════════════════
- * ثلاثُ حقائق لا اثنتان: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل النظام ·
- * صُنع خارج المركز. ووسمُ الثاني بالثالث كان يصف عملَنا بأنه عملُ غيرنا.
+ * ══ **بلا مراجعةٍ لاحقة، وبلا منشأ جهاز** (المرحلة الثالثة) ═══════════════
+ * لا `routeRetrospectiveReview` تُنادى من هنا — الطبيبُ بلا سلطةٍ على هذا
+ * المسار إطلاقاً، فلا حاجةَ لإخباره. و`deviceOrigin` **دائماً `null`** على
+ * الصفوف الجديدة: سؤالُ منشأ الجهاز تقاعد مع نافذة «تفاصيل البيع» القديمة.
  *
- * **ومكانُه السجلُّ التشغيليّ لا صفُّ المال**: صيانةٌ بلا أجرٍ لا تُنشئ صفّاً
- * معلَّقاً أصلاً، فلو عاشت الواقعةُ هناك وحدها لاختفت كلّما كانت الخدمةُ
- * مجّانية. والصفُّ يأخذ لقطةً منها للعرض ولا يصير مصدرَ حقيقةٍ ثانياً.
+ * ══ **والشروطُ التجاريةُ مُهيكَلة** (ترحيل ٠٦٩) ═══════════════════════════
+ * `originalPrice`/`discountAmount`/`priceKind`/`finalPrice` — مُشتقّةٌ سلفاً
+ * في الخادم عبر `deriveMaintenanceOffer` (`shared/maintenance.ts`، إعادةُ
+ * تصديرٍ لـ`deriveOfferFromDiscount` من المرحلة الثانية). تُكتب على أمر
+ * العمل نفسِه في المعاملة نفسِها — لا سطرَ ثانياً ولا تحديثاً لاحقاً.
  *
- * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — لا لواحدٍ
- * صنعناه ولا لواحدٍ صُنع خارجنا. الغيابُ يُقال غياباً.
+ * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله. الغيابُ يُقال
+ * غياباً.
+ *
+ * ══ تصحيحٌ لاحق — حارسان معامَليّان قبل الكاتب القانونيّ ═════════════════
+ * مراجعةٌ حيّة كشفت ثغرتين هادئتين على هذا المسار تحديداً (المرحلة
+ * الثالثة)، لا على مسار الصيانة الموروث ولا على بيع الجزء:
+ *
+ * ١) **الحالةُ الفعلية، لا عَلَمُ المريض وحده.** `patients.is_amputee`/
+ *    `is_medical_support` مجرّد عَلَمَين تقرأهما النقطةُ لتقترح
+ *    `serviceType` مبكّراً — وقد ينحرفان عن `patient_cases` الحقيقية
+ *    (ملفٌّ قديم لم يُزامَن، أو حالةٌ سُحبت بـ`deleteCaseType` وبقي العَلَمُ
+ *    صحيحاً بالخطأ). ولو وصل هذا الانحرافُ إلى `createMaintenanceOrderWithVisit`
+ *    بلا فحصٍ هنا، كان مخرجُه الموروث (`caseRows.find(...) ?? physiotherapy
+ *    ?? caseRows[0]`) يُسند الزيارةَ والكلفةَ لحالةٍ **لا تخصّ هذه الصيانة
+ *    فعلاً** — والمخرجُ الموروث يبقى كما هو لعملائه الأصليين (الصيانةُ
+ *    كاملةُ الأجر، واعتمادُ الخصم الموروث)؛ هذا حارسٌ **قبله** خاصٌّ
+ *    بالمرحلة الثالثة وحدها، لا تعديلٌ فيه.
+ * ٢) **الخبير تحت القفل، لا لقطةَ الطلب.** النقطةُ تتحقّق منه قبل فتح
+ *    المعاملة لرسالةِ خطأٍ مبكرة — لكنّ تلك قراءةٌ خارج القفل، وقد يتغيّر
+ *    حالُ الخبير بين تلك القراءة وهذه الكتابة. فيُعاد التحقّق هنا
+ *    بالدالّة المعامَلية القانونية نفسِها التي يستعملها اعتمادُ بيع الجزء
+ *    الموروث أعلاه (`validateExpertForBranchTx`) — لا نسخةَ ثانية.
+ *
+ * وكلاهما **قبل** أيّ نداءٍ لـ`createMaintenanceOrderWithVisit`: رفضٌ هنا
+ * يعني صفرَ كتابة — لا أمرَ ولا زيارةَ ولا قيدَ ولا لمسَ كلفة.
  */
-export async function createMaintenanceOperation(p: CreateBase & {
+export async function createMaintenanceOperation(p: {
+  patientId: number;
+  branchId: number | null;
+  serviceType: "prosthetic" | "medical_support";
   expertUserId: number;
-  visitNotes: string;
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
-  deviceOrigin: DeviceOrigin;
-}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; amount: number | null }> {
+  legacyUnrecordedDevice: boolean;
+  /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveMaintenanceOffer` — لا حسابَ هنا. */
+  originalPrice: number;
+  priceKind: "normal" | "discount" | "free";
+  /** = `originalPrice - discountAmount`؛ هو ما يُقيَّد فعلاً (`cost`). */
+  finalPrice: number;
+  visitNotes: string;
+  actor: Actor;
+}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; finalPrice: number }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
+    //  ══ **الحارسُ الأوّل — حالةٌ حقيقية بعينها، لا فرعٌ مخمَّن** ══════════
+    //  القفلُ (`FOR UPDATE`) يمنع أيضاً أن يسحب `deleteCaseType` هذه
+    //  الحالةَ من تحت هذه المعاملة بين هذا الفحص وكتابة `postMaintenanceFee`
+    //  لاحقاً — فلا نصفَ صيانةٍ على حالةٍ اختفت للتوّ.
+    const caseCheck = await tx.execute(sql`
+      SELECT id FROM patient_cases
+       WHERE patient_id = ${p.patientId} AND case_type = ${p.serviceType} AND status = 'active'
+       FOR UPDATE
+    `);
+    if (!(caseCheck.rows ?? [])[0]) {
+      throw new ChargeError(
+        `لا توجد حالة ${DEPARTMENT_LABELS[p.serviceType]} نشطة مسجَّلة لهذا المريض`
+        + " — راجع الملفّ إدارياً قبل تسجيل الصيانة",
+        400,
+      );
+    }
+
+    //  ══ **الحارسُ الثاني — الخبيرُ يُعاد التحقّق منه تحت القفل** ═════════
+    const expertCheck = await mfg.validateExpertForBranchTx(tx, p.expertUserId, p.branchId ?? 0);
+    if (!expertCheck.ok) {
+      throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
+    }
+
     const order = await mfg.createMaintenanceOrderWithVisit({
       patientId: p.patientId,
       branchId: p.branchId ?? 0,
@@ -301,24 +360,25 @@ export async function createMaintenanceOperation(p: CreateBase & {
       assignedBy: p.actor.userId,
       visitNotes: p.visitNotes,
       visitDate: new Date(),
-      //  **الأجرُ الحقيقيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
-      //  الدالّة. و«بلا أجور» صفرٌ صريح: الكاتبُ يخرج مبكّراً فلا قيدَ ولا
-      //  كلفةَ ولا دينار — وهي واقعةٌ تُحفَظ على الأمر (`noExamNoCharge`)
-      //  لا يُستدَلّ عليها بغياب صفّ.
-      cost: p.amount ?? 0,
+      //  **المبلغُ النهائيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
+      //  الدالّة، وتخرج مبكّراً عند الصفر (مجّانيّ صريح: لا قيدَ ولا كلفةَ
+      //  ولا دينار، لكنّ الأمرَ والزيارةَ يُفتحان دائماً — عملٌ حقيقيّ بقيمة صفر).
+      cost: p.finalPrice,
       deviceEpisodeId: p.deviceEpisodeId,
-      //  جهازٌ بلا حلقة — صنعناه ولم نسجّله، أو صُنع خارجنا: المخرجُ القائم
-      //  نفسُه، بلا اختراع. والفرقُ بينهما يقوله `deviceOrigin` لا هذه الراية.
-      legacyUnrecordedDevice: p.deviceEpisodeId === null,
+      legacyUnrecordedDevice: p.legacyUnrecordedDevice,
       maintenanceComponent: p.maintenanceComponent,
-      deviceOrigin: p.deviceOrigin,
-      noExamNoCharge: p.amount === null,
+      //  **تقاعد سؤالُ المنشأ** مع تبسيط الصيانة — لا يُسأل ولا يُخترَع.
+      deviceOrigin: null,
+      //  **توافقٌ تاريخيٌّ فقط**: مجّانيٌّ ⟶ `true`، وإلّا `false` — صفٌّ
+      //  جديد يعرف قيمتَه دائماً، فلا `NULL` «لم يُسأل» على صفٍّ سُئل فعلاً.
+      noExamNoCharge: p.priceKind === "free",
+      commercialTerms: { originalPrice: p.originalPrice, kind: p.priceKind },
       tx,
     });
     return {
       workOrderId: order.id,
       deviceEpisodeId: order.deviceEpisodeId ?? null,
-      amount: p.amount,
+      finalPrice: p.finalPrice,
     };
   });
 }
