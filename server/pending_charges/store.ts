@@ -44,7 +44,6 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
-import type { DeviceOrigin } from "@shared/device_origin";
 
 export class ChargeError extends Error {
   status: number;
@@ -261,35 +260,48 @@ export async function createDeviceSaleOperation(p: CreateBase & {
 }
 
 /**
- * **صيانةٌ على مسار «بلا معاينة» — العملُ والأجرُ معاً.**
+ * **الصيانةُ المبسّطة — العملُ والمبلغُ النهائيّ معاً، حفظةً واحدة.**
+ * (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨ — تُلغي «الأجرُ ينتظر الطبيب».)
  *
- * والأمرُ يُفتَح **بأجره الحقيقيّ** عبر الكاتب القانونيّ نفسِه
+ * والأمرُ يُفتَح **بمبلغه النهائيّ** عبر الكاتب القانونيّ نفسِه
  * (`createMaintenanceOrderWithVisit` تنادي `postMaintenanceFee` داخل معاملتها،
  * وهي تخرج مبكّراً عند الصفر) — وهو **الكاتبُ عينه** الذي تناديه الصيانةُ
- * كاملةُ الأجر من نقطتها القائمة. فلا نسخةَ ثانية من محاسبة الصيانة.
+ * الموروثة وكاتبُ اعتماد الخصم القديم. فلا نسخةَ ثانية من محاسبة الصيانة.
  *
  * **ومرّةً واحدة**: `uq_pwo_one_open_maint_per_episode` و
  * `uq_pwo_one_open_legacy_maint` (ترحيل ٠٥١) تمنعان أمرَ صيانةٍ مفتوحاً
- * ثانياً على الجهاز نفسِه — والأجرُ داخل معاملة الأمر، فيرتدّ معه.
+ * ثانياً على الجهاز نفسِه — والمبلغُ داخل معاملة الأمر، فيرتدّ معه.
  *
- * ══ **ومنشأُ الجهاز يُحفَظ على الأمر** (ترحيل ٠٦٧) ═══════════════════════
- * ثلاثُ حقائق لا اثنتان: مسجَّلٌ له حلقتُه · **صنعناه نحن** قبل النظام ·
- * صُنع خارج المركز. ووسمُ الثاني بالثالث كان يصف عملَنا بأنه عملُ غيرنا.
+ * ══ **بلا مراجعةٍ لاحقة، وبلا منشأ جهاز** (المرحلة الثالثة) ═══════════════
+ * لا `routeRetrospectiveReview` تُنادى من هنا — الطبيبُ بلا سلطةٍ على هذا
+ * المسار إطلاقاً، فلا حاجةَ لإخباره. و`deviceOrigin` **دائماً `null`** على
+ * الصفوف الجديدة: سؤالُ منشأ الجهاز تقاعد مع نافذة «تفاصيل البيع» القديمة.
  *
- * **ومكانُه السجلُّ التشغيليّ لا صفُّ المال**: صيانةٌ بلا أجرٍ لا تُنشئ صفّاً
- * معلَّقاً أصلاً، فلو عاشت الواقعةُ هناك وحدها لاختفت كلّما كانت الخدمةُ
- * مجّانية. والصفُّ يأخذ لقطةً منها للعرض ولا يصير مصدرَ حقيقةٍ ثانياً.
+ * ══ **والشروطُ التجاريةُ مُهيكَلة** (ترحيل ٠٦٩) ═══════════════════════════
+ * `originalPrice`/`discountAmount`/`priceKind`/`finalPrice` — مُشتقّةٌ سلفاً
+ * في الخادم عبر `deriveMaintenanceOffer` (`shared/maintenance.ts`، إعادةُ
+ * تصديرٍ لـ`deriveOfferFromDiscount` من المرحلة الثانية). تُكتب على أمر
+ * العمل نفسِه في المعاملة نفسِها — لا سطرَ ثانياً ولا تحديثاً لاحقاً.
  *
- * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله — لا لواحدٍ
- * صنعناه ولا لواحدٍ صُنع خارجنا. الغيابُ يُقال غياباً.
+ * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله. الغيابُ يُقال
+ * غياباً.
  */
-export async function createMaintenanceOperation(p: CreateBase & {
+export async function createMaintenanceOperation(p: {
+  patientId: number;
+  branchId: number | null;
+  serviceType: "prosthetic" | "medical_support";
   expertUserId: number;
-  visitNotes: string;
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
-  deviceOrigin: DeviceOrigin;
-}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; amount: number | null }> {
+  legacyUnrecordedDevice: boolean;
+  /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveMaintenanceOffer` — لا حسابَ هنا. */
+  originalPrice: number;
+  priceKind: "normal" | "discount" | "free";
+  /** = `originalPrice - discountAmount`؛ هو ما يُقيَّد فعلاً (`cost`). */
+  finalPrice: number;
+  visitNotes: string;
+  actor: Actor;
+}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; finalPrice: number }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
     const order = await mfg.createMaintenanceOrderWithVisit({
@@ -301,24 +313,25 @@ export async function createMaintenanceOperation(p: CreateBase & {
       assignedBy: p.actor.userId,
       visitNotes: p.visitNotes,
       visitDate: new Date(),
-      //  **الأجرُ الحقيقيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
-      //  الدالّة. و«بلا أجور» صفرٌ صريح: الكاتبُ يخرج مبكّراً فلا قيدَ ولا
-      //  كلفةَ ولا دينار — وهي واقعةٌ تُحفَظ على الأمر (`noExamNoCharge`)
-      //  لا يُستدَلّ عليها بغياب صفّ.
-      cost: p.amount ?? 0,
+      //  **المبلغُ النهائيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
+      //  الدالّة، وتخرج مبكّراً عند الصفر (مجّانيّ صريح: لا قيدَ ولا كلفةَ
+      //  ولا دينار، لكنّ الأمرَ والزيارةَ يُفتحان دائماً — عملٌ حقيقيّ بقيمة صفر).
+      cost: p.finalPrice,
       deviceEpisodeId: p.deviceEpisodeId,
-      //  جهازٌ بلا حلقة — صنعناه ولم نسجّله، أو صُنع خارجنا: المخرجُ القائم
-      //  نفسُه، بلا اختراع. والفرقُ بينهما يقوله `deviceOrigin` لا هذه الراية.
-      legacyUnrecordedDevice: p.deviceEpisodeId === null,
+      legacyUnrecordedDevice: p.legacyUnrecordedDevice,
       maintenanceComponent: p.maintenanceComponent,
-      deviceOrigin: p.deviceOrigin,
-      noExamNoCharge: p.amount === null,
+      //  **تقاعد سؤالُ المنشأ** مع تبسيط الصيانة — لا يُسأل ولا يُخترَع.
+      deviceOrigin: null,
+      //  **توافقٌ تاريخيٌّ فقط**: مجّانيٌّ ⟶ `true`، وإلّا `false` — صفٌّ
+      //  جديد يعرف قيمتَه دائماً، فلا `NULL` «لم يُسأل» على صفٍّ سُئل فعلاً.
+      noExamNoCharge: p.priceKind === "free",
+      commercialTerms: { originalPrice: p.originalPrice, kind: p.priceKind },
       tx,
     });
     return {
       workOrderId: order.id,
       deviceEpisodeId: order.deviceEpisodeId ?? null,
-      amount: p.amount,
+      finalPrice: p.finalPrice,
     };
   });
 }

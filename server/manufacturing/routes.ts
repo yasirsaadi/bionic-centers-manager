@@ -26,12 +26,10 @@ import {
   MAINTENANCE_DONE_STAGES,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
-import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
 import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
-import { routeServiceToDoctorReview, classifyFromBody } from "../medical_review/routing";
 import * as discountStore from "../discounts/store";
 import {
-  episodeDiscountRef, serviceDiscountRef, maintenanceDiscountRef,
+  episodeDiscountRef, serviceDiscountRef,
 } from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
 
@@ -594,198 +592,29 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
-  // ---- maintenance visit (order + visit row created ATOMICALLY) ---------------
-  // Reception opens this from the patient's "new visit" flow. Both the
-  // maintenance work order and the visit row are written in one transaction, so
-  // a returning patient's صيانة is never half-recorded.
+  // ---- maintenance visit — RETIRED for normal actors (المرحلة الثالثة) -------
+  // كانت الصيانةُ تُفتَح من هنا بأجرها الكامل مباشرةً، أو تمرّ بنظام الخصم
+  // القديم (طلبٌ معلَّق يعتمده مديرُ فرعٍ أو المسؤول)، ثمّ تُوجَّه إلزامياً
+  // إلى مراجعة الطبيب. **البابُ الموحَّد الآن** `/api/no-exam/maintenance`
+  // (`server/pending_charges/routes.ts`): جهازٌ ⟵ جزءٌ إن لزم ⟵ خبيرٌ ⟵
+  // سعرٌ أصليّ وخصمٌ ⟵ حفظٌ واحد، بلا طبيبٍ وبلا طابور.
+  //
+  // **ولا شاشةَ حيّةٍ تصل هذه النقطة أصلاً** — راجع تعليق `VisitModal.tsx`
+  // أعلى الملفّ: الصيانةُ بابُها «ما سبب حضور المريض اليوم؟» منذ توحيد
+  // ٠٦٥، وهذه النقطةُ بقيت حيّةً وقتها **لخدمة اعتماد الخصم الموروث فقط**.
+  //
+  // **والكاتبُ القانونيّ `createMaintenanceOrderWithVisit` باقٍ بلا تغييرٍ
+  // في تعريفه القديم** — `server/discounts/store.ts` ينادِيه مباشرةً (لا
+  // عبر هذه النقطة) لتنفيذ خصمٍ موروثٍ مُعتمَد، فتقاعدُ هذا البابِ الواحد
+  // لا يمسّ ذلك المسار بحرف.
   app.post("/api/manufacturing/maintenance-visit", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s) && Boolean(s.permissions?.canAddPatients);
     if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
-    const patientId = parseInt(req.body?.patientId);
-    const expertUserId = parseInt(req.body?.expertUserId);
-    // Optional: the delivery date is committed by the EXPERT at the mold stage
-    // (same model as initial builds) — reception no longer invents one here.
-    const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
-    if (Number.isNaN(patientId) || Number.isNaN(expertUserId)) return res.status(400).json({ error: "بيانات ناقصة" });
-    if (expectedDeliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
-      return res.status(400).json({ error: "تاريخ غير صالح" });
-    }
-    const patient = await storage.getPatient(patientId);
-    if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    // ── أيّ جهاز يُصان؟ ─────────────────────────────────────────────────
-    // كان السطر `isAmputee ? prosthetic : medical_support` — فمريضٌ يحمل
-    // **الاثنين** تُقيَّد صيانة مسنده على خيط الأطراف دائماً: أجورها تُنسَب
-    // لحالة الأطراف، وحارسُ «أمر نشط واحد لكل خدمة» يمنع صيانة المسند لأن
-    // للأطراف أمراً مفتوحاً. الأولوية الصامتة لم تكن قراراً، بل أول شرطٍ
-    // في تعبير ثلاثي.
-    //
-    // الآن: صاحب نوعٍ واحد يبقى تلقائياً كما كان — لا سؤال ولا تغيير سلوك.
-    // وصاحب الاثنين **يجب أن يُصرَّح** بنوعه، ويُتحقَّق أنه يملكه فعلاً.
-    // والصمت في حالة الاثنين يُردّ بـ400 لا يُخمَّن: التخمين هو العطب نفسه.
-    const owned = [
-      patient.isAmputee ? "prosthetic" : null,
-      patient.isMedicalSupport ? "medical_support" : null,
-    ].filter(Boolean) as ("prosthetic" | "medical_support")[];
-    if (owned.length === 0) return res.status(400).json({ error: "الصيانة لمرضى الأطراف والمساند فقط" });
-    const requestedService = strOrU(req.body?.serviceType);
-    let serviceType: "prosthetic" | "medical_support";
-    if (requestedService) {
-      if (!owned.includes(requestedService as any)) {
-        return res.status(400).json({ error: "هذا النوع غير مفعّل على ملف المريض" });
-      }
-      serviceType = requestedService as "prosthetic" | "medical_support";
-    } else if (owned.length === 1) {
-      serviceType = owned[0];
-    } else {
-      return res.status(400).json({ error: "المريض يحمل طرفاً ومسنداً — حدّد نوع الجهاز المراد صيانته" });
-    }
-    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
-    const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
-    if (!v.ok) return res.status(400).json({ error: v.reason });
-
-    // Visit date: honour a chosen Baghdad calendar day, else now.
-    const BAGHDAD = 3 * 60 * 60 * 1000;
-    const customDate = strOrU(req.body?.customDate);
-    let visitDate = new Date();
-    if (customDate && /^\d{4}-\d{2}-\d{2}$/.test(customDate)) {
-      const nowB = new Date(Date.now() + BAGHDAD);
-      const todayB = nowB.toISOString().split("T")[0];
-      if (customDate !== todayB) {
-        const [y, m, d] = customDate.split("-").map(Number);
-        visitDate = new Date(Date.UTC(y, m - 1, d, nowB.getUTCHours(), nowB.getUTCMinutes(), nowB.getUTCSeconds()) - BAGHDAD);
-      }
-    }
-    const visitNotes = strOrU(req.body?.notes) ?? "صيانة طرف/مسند";
-    // أجور الصيانة — reception / manager / admin set it here (the roles this
-    // endpoint already admits). The amount **must be positive**: zero alone is
-    // never "free" — a free maintenance is chosen explicitly as
-    // «مجاني (تبرع من دكتور ياسر)» from a positive original price and goes
-    // through the same approval as a discount (see the guard below). A
-    // full-price job is booked inside the same transaction that opens the
-    // maintenance episode.
-    const cost = Math.max(0, Math.round(Number(req.body?.cost) || 0));
-
-    // ── **أيُّ جزءٍ يُصان؟** (ترحيل ٠٦٠) ────────────────────────────────
-    //  كانت الصيانة تُفتَح بلا أن يُقال، فيصل الخبيرَ أمرٌ عليه أن يسأل عنه
-    //  ويبقى السجلُّ عاجزاً عن «كم ركبةً صُلّحت». والمخزن يعيد التحقّق داخل
-    //  معاملته، وهذا الفحصُ هنا ليردّ برسالةٍ واضحة قبل أن يبدأ شيء.
-    const compParsed = parseComponent(req.body?.maintenanceComponent);
-    if (!compParsed.ok) return res.status(400).json({ error: compParsed.error });
-    if (serviceType === "prosthetic" && !compParsed.value) {
-      return res.status(400).json({ error: "حدّد الجزء المراد صيانته" });
-    }
-
-    // ══ **والصفرُ وحده لا يعني «مجّاناً» أبداً** ═════════════════════════
-    //  كانت الصيانةُ تُقبل بصفر مباشرةً، فتُفتَح **بلا اعتماد**: لا سببَ
-    //  مسجَّل، ولا معتمِد، ولا سطرَ في تقرير «كم تبرّعنا». والتبرّعُ قرارٌ
-    //  ماليّ له بابُه — وصفرٌ صامتٌ يلتفّ على الباب كلِّه.
-    //
-    //  فالسعرُ الأصليّ **موجبٌ دائماً**، والمجّانيّ يُختار صراحةً منه:
-    //  «مجاني (تبرع من دكتور ياسر)» ⟶ طلبٌ معلَّق ⟶ اعتماد. والقاعدةُ
-    //  نفسُها التي تحرس بيعَ جهازٍ بخصم — لا استثناءَ للصيانة.
-    if (cost <= 0) {
-      return res.status(400).json({
-        error: "أجور الصيانة يجب أن تكون مبلغاً موجباً."
-          + " والمجّاني يُختار صراحةً «مجاني (تبرع من دكتور ياسر)» من سعرٍ أصليّ موجب،"
-          + " فيمرّ بالاعتماد.",
-      });
-    }
-
-    // ══ ── خصمٌ أو تبرّع على أجور الصيانة ── ═══════════════════════════
-    //  **الصيانةُ كانت تحجز كلفتها مباشرةً** بلا اعتماد — فخصمُها قرارٌ
-    //  يقع بلا أثرٍ يُراجَع، بينما بيعُ جهازٍ بخصمٍ يمرّ بطابور. والباب
-    //  الآن واحد: طلبٌ معلَّق **بلا أمرٍ ولا زيارةٍ ولا كلفةٍ ولا قيد**،
-    //  والاعتمادُ ينادي `createMaintenanceOrderWithVisit` نفسها.
-    const dsc = req.body?.discount;
-    const wantsFree = dsc?.isFree === true;
-    const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
-      && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== cost;
-    if (wantsFree || wantsCut) {
-      try {
-        const out = await discountStore.submitDiscount({
-          patientId, department: serviceType as any, branchId: patient.branchId,
-          //  **مرجعٌ يمنع طلبين معلَّقين على الصيانة نفسها** — والفهرسُ
-          //  الفريد في ٠٥٨ يفرضه على (مريض، قسم، مرجع).
-          contextRef: maintenanceDiscountRef(serviceType),
-          originalPrice: cost,
-          finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
-          isFree: wantsFree,
-          reason: String(dsc?.reason ?? ""), note: strOrU(dsc?.note) ?? null,
-          //  **ما يلزم للاستئناف فقط — ولا سعر**: المعتمَدُ على الصفّ هو
-          //  المصدر، ونسخةٌ هنا كانت ستنحرف عند «تعديل واعتماد».
-          payload: {
-            kind: "maintenance", expertUserId,
-            deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
-            legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
-            maintenanceComponent: compParsed.value,
-            visitNotes, expectedDeliveryDate,
-          },
-          actor: {
-            userId: s.userId ?? null,
-            userName: (req.session as any)?.branchSession?.displayName ?? null,
-          },
-          actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
-          audit: {
-            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-            note: (row) => discountAuditNote(row, "طلب واعتماد"),
-          },
-        });
-        return res.status(201).json({
-          ok: true, pendingApproval: out.status === "pending",
-          discountRequestId: out.request.id, discountStatus: out.request.status,
-          id: out.applied?.workOrderId ?? null,
-        });
-      } catch (e: any) {
-        if (e?.name === "DiscountError") return res.status(e.status).json({ error: e.message });
-        if (e instanceof DeviceEpisodeError) return res.status(e.status).json({ error: e.message });
-        if (e instanceof store.ActiveOrderError) {
-          return res.status(409).json({ error: "لدى المريض أمر صيانة نشط لهذا الجهاز — أكمِله أو ألغِه أولاً" });
-        }
-        throw e;
-      }
-    }
-
-    // أيّ جهازٍ يُصان — **يُحسَم داخل المعاملة** لا هنا. النقطة تمرّر ما
-    // اختاره الموظّف كما وصل، والطبقة تقفل وتتحقّق وتقرّر. فلا لقطةٌ تشيخ
-    // بين القراءة والكتابة.
-    try {
-      const order = await store.createMaintenanceOrderWithVisit({
-        patientId, branchId: patient.branchId, serviceType, expertUserId,
-        expectedDeliveryDate, assignedBy: s.userId ?? null, visitNotes, visitDate, cost,
-        deviceEpisodeId: req.body?.deviceEpisodeId ?? null,
-        legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice === true,
-        maintenanceComponent: compParsed.value,
-      });
-      // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ──────────────────────────
-      //  **الصيانة كانت لا تصل الطبيب إطلاقاً** — لا حلقةَ جديدة تُنشأ ولا
-      //  خيطَ ينفتح، فلا شيء يضع المريض في قائمة أحد. وهي أكثر ما يعود به
-      //  المريض. فتُوجَّه الآن مع أمرها، بتصنيف الاستقبال: أكثرُها روتينيٌّ
-      //  فمسارُه سريع، وما فيه جرحٌ أو ألمٌ أو تغيّرُ قياس يختاره الموظّف
-      //  «معاينة كاملة» فيذهب إلى طابور المعاينة مباشرةً.
-      const mCls = classifyFromBody(req.body, "maintenance");
-      const routing = await routeServiceToDoctorReview(req, {
-        patientId, caseType: serviceType,
-        reviewKind: mCls.reviewKind, requestedPath: mCls.requestedPath,
-        receptionNote: mCls.receptionNote ?? visitNotes,
-        workOrderId: order.id,
-      });
-      await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,
-        `إنشاء أمر صيانة${compParsed.value ? ` (${componentLabel(compParsed.value)})` : ""}`
-          + ` + زيارة لمريض #${patientId} للخبير #${expertUserId}`
-          + ` (أجور الصيانة ${cost.toLocaleString("en-US")} د.ع)`
-          + (routing.request ? ` — طلب مراجعة #${routing.request.id}` : ""));
-      res.status(201).json({ ...order, reviewRequestId: routing.request?.id ?? null });
-    } catch (err: any) {
-      // جهازٌ غير صالح للصيانة — جوابُ عملٍ من داخل المعاملة.
-      if (err instanceof DeviceEpisodeError) {
-        return res.status(err.status).json({ error: err.message });
-      }
-      if (err instanceof store.ActiveOrderError) {
-        return res.status(409).json({ error: "لدى المريض أمر صيانة نشط لهذا الجهاز — أكمِله أو ألغِه أولاً" });
-      }
-      throw err;
-    }
+    return res.status(409).json({
+      error: "هذه النقطة تقاعدت — سجّل الصيانة من «ما سبب حضور المريض اليوم؟» ⟵ صيانة"
+        + " (POST /api/no-exam/maintenance)",
+    });
   });
 
   // Resolves an order + checks the caller may WRITE to it (assigned expert,

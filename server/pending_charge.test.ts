@@ -1,6 +1,14 @@
 // **عملياتُ «بلا معاينة»** — حيّاً على Postgres وعلى النقاط الحقيقية.
 // قاعدة محلّية: `npm run test:pending-charge`.
 //
+// ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — القاعدةُ أدناه («الطبيبُ يراجع
+// الحركةَ إشرافياً») **تبقى حرفياً لبيعِ الجزء وحده**. الصيانةُ صار لها
+// عقدٌ وسلوكٌ مبسّطان (`originalPrice`/`discountAmount`، **بلا مراجعةٍ
+// طبيةٍ إطلاقاً**) — التغطيةُ الشاملةُ لهما في
+// `server/simplified_maintenance.test.ts`. وما بقي من قسمَي الصيانة هنا
+// (ب، ج) عُدِّل ليطابق العقدَ الحاليّ ويثبت الثابتَ المشترك مع بيعِ الجزء:
+// **ZERO pending_service_charges** ومحاسبةٌ فوريةٌ بالكاتب القانونيّ نفسِه.
+//
 // ══ الثابتُ الذي يحرسه (قرارُ المالك — يُلغي ما قبله) ══════════════════════
 // **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
 // فقط.**
@@ -34,6 +42,7 @@ import {
   reviewFailedCopy, PENDING_CHARGE_KINDS,
 } from "@shared/pending_charge";
 import { noExamSaleRefusal } from "@shared/prosthetic_parts";
+import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 
 /** مصادرُ الحقيقة التي يقرؤها الحارسُ المعماريّ — مرّةً واحدة. */
 const PENDING_MODULE = readFileSync(
@@ -489,17 +498,25 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  (ب) صيانةُ أطرافٍ بمبلغ
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ب. صيانةُ أطرافٍ بمبلغ ──");
+    //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — الصيانةُ صارت بابها الموحَّد
+    //  `/api/no-exam/maintenance` بعقدٍ جديد (`originalPrice`/`discountAmount`
+    //  بدل `charged`/`amount`، ونيّةُ جهازٍ صريحة بدل `deviceOrigin`)، **وبلا
+    //  سجلٍّ استرجاعيٍّ للطبيب إطلاقاً** — لا سلطةَ له على هذا المسار من
+    //  أوّله. التغطيةُ الشاملةُ للعقد الجديد في
+    //  `server/simplified_maintenance.test.ts` (٩٩ تأكيداً)؛ وما بقي هنا
+    //  يثبت الثابتَ المشترك مع بيعِ الجزء: **ZERO pending_service_charges**
+    //  ومحاسبةُ الصيانة بكاتبها القانونيّ نفسِه.
+    console.log("\n── ب. صيانةُ أطرافٍ بمبلغ (العقدُ الحاليّ) ──");
     const pB = await mkPatient("صيانة أطراف");
     const caseB = await mkCase(pB);
     const maintB = await maint({
       patientId: pB, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "knee", deviceOrigin: "external",
-      deviceEpisodeId: null, charged: true, amount: 75_000,
+      maintenanceComponent: "knee", legacyUnrecordedDevice: true,
+      originalPrice: 75_000, discountAmount: 0,
     });
     check(maintB.status === 201 && maintB.body?.workOrderId > 0,
       "ب١. **الصيانةُ تُفتَح بأمرها**", JSON.stringify(maintB.body));
-    same("ب٢. ورسالتُها تقول إن المبلغ سُجِّل", maintB.body?.message, SAVED_CHARGED_MESSAGE);
+    same("ب٢. ورسالتُها الموحَّدة", maintB.body?.message, MAINTENANCE_SUCCESS_MESSAGE);
     same("ب٣. **ZERO pending_service_charges**",
       (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
         [pB]))[0].n, 0);
@@ -510,24 +527,18 @@ async function main() {
       [pB]);
     same("ب٥. **وبمصدر `maintenance` على حالته**", [ceB?.source, ceB?.c],
       ["maintenance", caseB]);
-    same("ب٦. **وسجلٌّ استرجاعيٌّ بتصنيف الصيانة الصادق**", mB.reviews, 1);
-    const [revB] = await q(`SELECT review_kind rk, requested_path rp, reception_note note
-      FROM medical_review_requests WHERE patient_id=$1`, [pB]);
-    same("   `maintenance` · `quick`", [revB?.rk, revB?.rp], ["maintenance", "quick"]);
-    for (const frag of ["الركبة", "صيانة بلا معاينة", "75,000"]) {
-      check(String(revB?.note ?? "").includes(frag), `   وفيه «${frag}»`, String(revB?.note));
-    }
+    same("ب٦. **وبلا سجلٍّ استرجاعيٍّ إطلاقاً** — الطبيبُ بلا سلطةٍ على الصيانة",
+      mB.reviews, 0);
 
     // ══════════════════════════════════════════════════════════════════
     //  (ج) صيانةُ مسندٍ بمبلغ — السلوكُ نفسُه
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ج. صيانةُ مسندٍ بمبلغ ──");
+    console.log("\n── ج. صيانةُ مسندٍ بمبلغ (العقدُ الحاليّ) ──");
     const pC = await mkPatient("صيانة مسند", { support: true });
     await mkCase(pC, "medical_support");
     const maintC = await maint({
       patientId: pC, serviceType: "medical_support", expertUserId: EXPERT,
-      maintenanceComponent: null, deviceOrigin: "center_unrecorded",
-      deviceEpisodeId: null, charged: true, amount: 40_000,
+      legacyUnrecordedDevice: true, originalPrice: 40_000, discountAmount: 0,
     });
     check(maintC.status === 201, "ج١. **صيانةُ المسند تمضي**", JSON.stringify(maintC.body));
     same("ج٢. **ZERO pending charges**",
@@ -536,12 +547,7 @@ async function main() {
     const mC = await moneyOf(pC);
     same("ج٣. **والمالُ فوريٌّ مرّةً واحدة**",
       [mC.total, mC.case_cost, mC.ledger_rows], [40_000, 40_000, 1]);
-    same("ج٤. **وسجلٌّ استرجاعيٌّ لطبيب المساند**", mC.reviews, 1);
-    const [revC] = await q(`SELECT service_type st, reception_note note
-      FROM medical_review_requests WHERE patient_id=$1`, [pC]);
-    same("   على اختصاصه هو", revC?.st, "medical_support");
-    check(String(revC?.note ?? "").includes("المساند الطبية"),
-      "   وبعنوان قسمه", String(revC?.note));
+    same("ج٤. **وبلا سجلٍّ استرجاعيٍّ لأيّ طبيب**", mC.reviews, 0);
 
     // ══════════════════════════════════════════════════════════════════
     //  (د) عمليةٌ بلا أجر — عملٌ بلا دينار، وسجلٌّ يقول ذلك
@@ -604,12 +610,14 @@ async function main() {
       [mE.total, mE.ledger_rows, mE.orders, mE.reviews], [120_000, 1, 1, 1]);
 
     //  (هـ٥) **وضغطتان على الصيانة** — فهرسُ ٠٥١ يمنع أمراً مفتوحاً ثانياً.
+    //  بالعقد الحاليّ (المرحلة الثالثة) — التغطيةُ الكاملة للتزامن في
+    //  `server/simplified_maintenance.test.ts` (القسم ل).
     const pF = await mkPatient("تزامن الصيانة");
     await mkCase(pF);
     const bodyF = {
       patientId: pF, serviceType: "prosthetic", expertUserId: EXPERT,
-      maintenanceComponent: "tube", deviceOrigin: "external",
-      deviceEpisodeId: null, charged: true, amount: 30_000,
+      maintenanceComponent: "tube", legacyUnrecordedDevice: true,
+      originalPrice: 30_000, discountAmount: 0,
     };
     const raceF = await Promise.all([maint(bodyF), maint(bodyF)]);
     same("هـ٥. **وصيانتان متزامنتان ⟶ واحدةٌ تمرّ**",
@@ -803,11 +811,11 @@ async function main() {
         patientId: pK, serviceType: "physiotherapy", deviceEpisodeId: 1,
         expertUserId: EXPERT, charged: true, amount: 10_000,
       })).status, 400);
-    same("ط٢. **ولا صيانة**",
+    same("ط٢. **ولا صيانة** (بالعقد الحاليّ)",
       (await maint({
         patientId: pK, serviceType: "physiotherapy", expertUserId: EXPERT,
-        maintenanceComponent: null, deviceOrigin: "external",
-        deviceEpisodeId: null, charged: true, amount: 10_000,
+        maintenanceComponent: null, legacyUnrecordedDevice: true,
+        originalPrice: 10_000, discountAmount: 0,
       })).status, 400);
     same("ط٣. ولا مالَ ولا سجلَّ مراجعة", await moneyOnly(pK), ZERO_MONEY_ONLY);
     //  **والقيدُ في القاعدة يمنعه** ولو التُفَّ على النقطة.
@@ -989,18 +997,25 @@ async function main() {
         (({ orders, total, ledger_rows, reviews }) => [orders, total, ledger_rows, reviews])(
           await moneyOf(pNF)), [1, 0, 0, 0]);
 
-      //  **ولا أمرَ تصنيعٍ ثانٍ ولا دينارَ ثانٍ** — الإعادةُ نداءُ السجلّ وحده.
-      same("م٩. **والصيانةُ كذلك تحذّر وتبقى نهائية**", await (async () => {
-        const pO = await mkPatient("صيانةٌ بفشل سجلّ");
-        await mkCase(pO);
-        const r = await maint({
-          patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
-          maintenanceComponent: "foot", deviceOrigin: "external",
-          deviceEpisodeId: null, charged: true, amount: 20_000,
-        });
-        const m = await moneyOf(pO);
-        return [r.status, r.body?.reviewRouted, m.total, m.ledger_rows, m.orders, m.reviews];
-      })(), [201, false, 20_000, 1, 1, 0]);
+      //  ⚠ **(المرحلة الثالثة)** — كان هنا إثباتُ أن الصيانةَ تحذّر وتبقى
+      //  نهائية حين يفشل سجلُّها الاسترجاعي، بنفس منطق بيع الجزء أعلاه.
+      //  **والصيانةُ لم تعد تنادي السجلَّ الاسترجاعيّ إطلاقاً** — فالسيناريو
+      //  نفسُه لم يعد ممكناً. والأدقّ الآن عكسُه تماماً: صيانةٌ تُسجَّل بنجاحٍ
+      //  تامّ **بينما بوّابةُ السجلّ لا تزال مخرَّبة** (`setFailures(50)` من
+      //  الفقرة السابقة) — إثباتٌ مباشر أن الصيانة مستقلّةٌ عن آلية المراجعة
+      //  الاسترجاعية كلِّها، لا أنها تحتملها بلطف.
+      same("م٩. **والصيانةُ لا تتأثّر إطلاقاً ببوّابة السجلّ المخرَّبة**",
+        await (async () => {
+          const pO = await mkPatient("صيانةٌ مع بوّابةٍ مخرَّبة");
+          await mkCase(pO);
+          const r = await maint({
+            patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
+            maintenanceComponent: "foot", legacyUnrecordedDevice: true,
+            originalPrice: 20_000, discountAmount: 0,
+          });
+          const m = await moneyOf(pO);
+          return [r.status, m.total, m.ledger_rows, m.orders, m.reviews];
+        })(), [201, 20_000, 1, 1, 0]);
     } finally {
       await q(`DROP TRIGGER IF EXISTS _test_review_gate_trg ON medical_review_requests`);
       await q(`DROP FUNCTION IF EXISTS _test_review_gate()`);
@@ -1057,8 +1072,12 @@ async function main() {
       cardQ?.episode?.requestedItem, "silicone");
     same("   وتصنيفُها المخزَّن `other` كما هو — بلا قيمةٍ مخترَعة",
       cardQ?.reviewKind, "other");
+    //  ⚠ **(المرحلة الثالثة)** — كانت هذه بطاقةَ صيانةٍ (`pB`) تصل طابورَ
+    //  الطبيب استرجاعياً. **والصيانةُ لم تعد تصله إطلاقاً**: لا سلطةَ له
+    //  عليها من أوّلها، فالإثباتُ الأصحّ الآن غيابُها لا حضورُها.
     const cardB = (queue.body?.rows ?? []).find((r: any) => r.patientId === pB);
-    same("ن٣. **وبطاقةُ الصيانة تحمل غرضَها**", cardB?.workOrder?.purpose, "maintenance");
+    same("ن٣. **وصيانةُ `pB` لا تصل طابورَ الطبيب إطلاقاً** — لا سجلَّ لها",
+      Boolean(cardB), false);
 
     //  **وعقدُ الشاشة**: تشتقّ العنوانَ من العمود بالعناوين المشتركة.
     const REVIEW_UI = readFileSync(join(process.cwd(),
@@ -1141,9 +1160,16 @@ async function main() {
       "ل٢. ولا لمسَ `total_cost` مباشرةً");
     check(PENDING_STORE.includes("applyDeviceSaleFinancialsTx"),
       "ل٣. **بل ينادي `applyDeviceSaleFinancialsTx`** للبيع");
+    //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — `createMaintenanceOperation`
+    //  تحوّلت من عقدٍ خامٍ (`amount: number | null`) إلى شروطٍ تجاريةٍ
+    //  مُهيكَلة (`originalPrice`/`priceKind`/`finalPrice`، مُشتقّةٌ بـ
+    //  `deriveMaintenanceOffer` قبل الوصول إلى هذه الدالّة أصلاً). والفحصُ
+    //  هنا يتبع الشكلَ الجديد بحرفه — والجوهرُ لم يتغيّر: الأجرُ الحقيقيّ
+    //  يصل الكاتبَ القانونيّ نفسَه، لا صفراً ملفَّقاً. التفصيلُ في
+    //  `server/simplified_maintenance.test.ts`.
     check(PENDING_STORE.includes("createMaintenanceOrderWithVisit")
-      && PENDING_STORE.includes("cost: p.amount ?? 0"),
-    "ل٤. **ويمرّر الأجرَ إلى الكاتب القانونيّ للصيانة**");
+      && PENDING_STORE.includes("cost: p.finalPrice"),
+    "ل٤. **ويمرّر المبلغَ النهائيّ إلى الكاتب القانونيّ للصيانة**");
     //  (ل٥) **ولا `INSERT INTO pending_service_charges` في مسار الإنشاء**.
     check(!/INSERT INTO pending_service_charges/i.test(PENDING_STORE),
       "ل٥. **ولا صفَّ معلَّقٌ يُكتب في المخزن إطلاقاً** — لا مسارَ يعيده");

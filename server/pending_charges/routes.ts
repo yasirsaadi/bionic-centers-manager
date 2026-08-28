@@ -1,17 +1,24 @@
 /**
- * نقاط REST لعملياتِ **«بلا معاينة»**.
+ * نقاط REST لعملياتِ **«بلا معاينة»** — بيعُ جزءٍ، **والصيانةُ المبسّطة**.
  *
- * ══ القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ═══════════════════════
+ * ══ بيعُ الجزء — القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ══════════
  * **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
- * فقط.**
+ * فقط.** هذا يبقى كما هو لبيع الجزء (`/api/no-exam/device-sale`) وللطابور
+ * الموروث (② أدناه) بحرفه.
+ *
+ * ══ الصيانةُ — قاعدةٌ أبسط (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨) ═══════════════════
+ * **جهازٌ ⟵ جزءٌ إن لزم ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ حفظٌ واحد.** لا مراجعةَ
+ * لاحقة ولا طبيبَ ولا طابور — الأمرُ يُفتَح والمبلغُ النهائيّ يُقيَّد معاً
+ * في المعاملة نفسِها. `/api/no-exam/maintenance` هو البابُ الوحيد.
  *
  * ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
- *   إنشاءُ العملية **ومبلغِها**   — استقبال · مدير فرع · مسؤول (ضمن الفرع)
- *   إكمالُ صفٍّ موروثٍ معلَّق      — **الثلاثةُ أنفسُهم** (ضمن الفرع)
+ *   إنشاءُ بيع الجزء **ومبلغِه**   — استقبال · مدير فرع · مسؤول (ضمن الفرع)
+ *   إتمامُ الصيانة **ومبلغِها**    — استقبال · محاسب · مدير فرع · مسؤول (ضمن الفرع)
+ *   إكمالُ صفٍّ موروثٍ معلَّق      — استقبال · مدير فرع · مسؤول (ضمن الفرع)
  *
- * **ولا معتمِدَ طبّيٌّ للمال بعد اليوم.** ومَن يتّفق على السعر هو مَن
- * يقيّده — والطبيبُ يرى الحركةَ بعد وقوعها في «مراجعة حركة مرضى الأطراف
- * والمساند» القائمة، اعترافاً لا إذناً.
+ * **ولا معتمِدَ طبّيٌّ للمال في أيٍّ منها.** بيعُ الجزء يُخبَر الطبيبَ
+ * استرجاعياً بعد وقوعه (اعترافاً لا إذناً)؛ **والصيانةُ لا تُخبره إطلاقاً**
+ * — لا سلطةَ له عليها من أوّلها.
  *
  * **ولا صلاحيةَ طبيةٍ تُمنَح لأحد**: اختيارُ المسار توجيهٌ تشغيليّ (٠٦٥)،
  * ولا `medical_exams` تُنشأ ولا `service_path` يتغيّر.
@@ -32,8 +39,12 @@ import {
 import {
   parseComponent, isDeviceServiceKind, componentLabel, requestedItemLabel,
 } from "@shared/prosthetic_parts";
-import { parseDeviceOrigin, originHasEpisode, DEVICE_ORIGIN_LABELS } from "@shared/device_origin";
+import { DEVICE_ORIGIN_LABELS } from "@shared/device_origin";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import {
+  canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
+  MAINTENANCE_SUCCESS_MESSAGE,
+} from "@shared/maintenance";
 
 type Req = any;
 
@@ -343,16 +354,36 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
   });
 
   /**
-   * **صيانةٌ على مسار «بلا معاينة»** — العملُ يُفتَح الآن، والأجرُ ينتظر.
+   * **الصيانةُ المبسّطة — بابٌ واحد، حفظةٌ واحدة، بلا مراجعة لاحقة.**
+   * (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨ — تُلغي «الأجرُ ينتظر الطبيب».)
    *
-   * والفرقُ عن `/api/manufacturing/maintenance-visit` فرقُ **مال** لا عمل:
-   * تلك تحجز الأجرَ في المحاسبة فوراً (أو تمرّ بنظام الخصم)، وهذه تُبقيه
-   * خارجَها حتى يراجعه الطبيب. والكاتبُ التشغيليُّ واحدٌ في البابين.
+   * جهازٌ ⟵ جزءٌ إن لزم ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ حفظٌ واحد يفتح أمرَ
+   * العمل ويقيّد المبلغَ النهائيّ معه في المعاملة نفسِها. **بلا اعتمادٍ
+   * لاحق ولا مراجعةٍ طبية ولا طابور**: الاستقبالُ والمحاسبُ ومديرُ الفرع
+   * والمسؤولُ متكافئون تماماً — والطبيبُ بلا سلطةٍ هنا إطلاقاً، ولو نادى
+   * النقطةَ مباشرةً.
+   *
+   * والسعرُ يُشتقّ بـ`deriveMaintenanceOffer` (= `deriveOfferFromDiscount`
+   * من المرحلة الثانية) — لا حسابَ ثانٍ. والجهازُ يُحسَم بـ
+   * `resolveDeviceTargetTx` القانونيّة (داخل `createMaintenanceOrderWithVisit`).
    */
   app.post("/api/no-exam/maintenance", isAuthenticated, async (req: Req, res) => {
     try {
-      if (!canOperateNoExam(chargeSession(req))) {
-        return res.status(403).json({ error: "غير مصرح" });
+      if (!canCompleteMaintenance(chargeSession(req))) {
+        return res.status(403).json({
+          error: "إتمام الصيانة للاستقبال والمحاسب ومدير الفرع والمسؤول",
+        });
+      }
+      //  ══ **الحقولُ القديمة تُرفَض صراحةً** ══════════════════════════════
+      //  عميلٌ بائتٌ يرسل `charged`/`amount`/`deviceOrigin` (العقدُ الذي
+      //  تقاعد مع هذه المرحلة) يستحقّ رسالةً تدلّه على العقد الجديد — لا
+      //  أن تُقرأ بصمت فيصير مبلغٌ قديم سعراً نهائياً لعمليةٍ لم تُشتقّ.
+      if (req.body?.charged !== undefined || req.body?.amount !== undefined
+        || req.body?.deviceOrigin !== undefined) {
+        return res.status(400).json({
+          error: "هذا العقدُ قديم — أرسل originalPrice وdiscountAmount بدل"
+            + " charged/amount/deviceOrigin",
+        });
       }
       const patientId = Number(req.body?.patientId);
       const expertUserId = Number(req.body?.expertUserId);
@@ -400,39 +431,32 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "حدّد الجزء المراد صيانته" });
       }
 
-      const amount = parsePendingAmount({
-        charged: req.body?.charged, amount: req.body?.amount,
+      //  ══ **الجهازُ — نيّةٌ صريحة، لا افتراض** ══════════════════════════
+      //  فحصُ شكلٍ مبكّر فقط: الحسمُ الدقيق (الانتماء والحالة `delivered`)
+      //  يقع تحت القفل داخل `resolveDeviceTargetTx`.
+      const target = parseMaintenanceDeviceTarget({
+        deviceEpisodeId: req.body?.deviceEpisodeId,
+        legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice,
       });
-      if (!amount.ok) return res.status(400).json({ error: amount.error });
+      if (!target.ok) return res.status(400).json({ error: target.error });
 
-      //  ══ **منشأُ الجهاز — ثلاثُ حقائق لا اثنتان** (ترحيل ٠٦٧) ═════════
-      //  «صنعناه ولم نسجّله» **ليس** «صُنع خارج المركز»: وسمُ الأوّل بالثاني
-      //  يصف عملَنا بأنه عملُ غيرنا في كلّ تقريرِ ضمانٍ لاحق. **ولا يُستنتَج
-      //  من `had_prior_center_history`** — تلك عن المريض وهذه عن الجهاز.
-      const originParsed = parseDeviceOrigin(req.body?.deviceOrigin);
-      if (!originParsed.ok) return res.status(400).json({ error: originParsed.error });
-      const deviceOrigin = originParsed.value;
-      const rawEpisode = req.body?.deviceEpisodeId;
-      //  **والمسجَّلُ وحده يحمل حلقة** — والآخران بلا هويّة، ولا تُلتقط لهما
-      //  حلقةُ جهازٍ آخر ولا يُخترَع لهما تاريخُ تصنيعٍ لم يقع.
-      const deviceEpisodeId = originHasEpisode(deviceOrigin)
-        ? (Number.isFinite(Number(rawEpisode)) ? Number(rawEpisode) : null)
-        : null;
-      if (originHasEpisode(deviceOrigin) && deviceEpisodeId === null) {
-        return res.status(400).json({ error: "اختر الجهاز المسجَّل المراد صيانته" });
-      }
+      //  ══ **السعرُ — يُشتقّ في الخادم من مُدخَلين فقط** (المرحلة الثانية) ══
+      //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً.
+      const offer = deriveMaintenanceOffer({
+        originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
+      });
+      if (!offer.ok) return res.status(400).json({ error: offer.error });
+
+      const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
       const out = await store.createMaintenanceOperation({
-        patientId, branchId: patient.branch_id ?? null,
-        caseId: await caseIdFor(patientId, serviceType),
-        serviceType, amount: amount.amount,
-        note: typeof req.body?.note === "string" ? req.body.note.trim() || null : null,
-        actor: actorOf(req),
-        expertUserId,
-        visitNotes: typeof req.body?.notes === "string" && req.body.notes.trim()
-          ? req.body.notes.trim() : "صيانة طرف/مسند",
+        patientId, branchId: patient.branch_id ?? null, serviceType, expertUserId,
         maintenanceComponent: comp.value,
-        deviceEpisodeId, deviceOrigin,
+        deviceEpisodeId: target.deviceEpisodeId,
+        legacyUnrecordedDevice: target.legacyUnrecordedDevice,
+        originalPrice: offer.originalPrice!, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
+        visitNotes: note || "صيانة طرف/مسند",
+        actor: actorOf(req),
       });
 
       await logAudit({
@@ -440,34 +464,36 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         entityId: out.workOrderId, action: "create",
         userId: getSession(req).userId, userName: getSession(req).userName ?? null,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        //  **حقيقةٌ مُهيكَلة كاملة** — لا نصَّ تدقيقٍ وحده: الجهازُ (أو
+        //  الإقرارُ الصريح بعدم التسجيل)، والجزءُ، والخبيرُ، والأصليُّ
+        //  والخصمُ والنهائيُّ والنوعُ، ومَن ومتى ورقمُ الأمر.
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType,
           operationKind: "maintenance",
-          maintenanceComponent: comp.value, deviceOrigin,
-          amount: out.amount ?? 0,
+          maintenanceComponent: comp.value,
+          deviceEpisodeId: out.deviceEpisodeId,
+          legacyUnrecordedDevice: target.legacyUnrecordedDevice,
+          expertUserId,
+          originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
+          finalPrice: offer.finalPrice, priceKind: offer.kind,
+          note: note || null,
         },
-        notes: out.amount !== null
-          ? `صيانة بلا معاينة — قُيِّدت الأجور ${out.amount} د.ع`
-          : "صيانة بلا معاينة — بلا أجور",
+        notes: offer.kind === "free"
+          ? `صيانة — مجّاني (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
+          : `صيانة — ${offer.finalPrice!.toLocaleString("en-US")} د.ع`
+            + (offer.kind === "discount"
+              ? ` (بعد خصم ${offer.discountAmount!.toLocaleString("en-US")}`
+                + ` من ${offer.originalPrice!.toLocaleString("en-US")})`
+              : ""),
       });
 
-      const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
-      const review = await routeRetrospectiveReview(req, {
-        patientId, serviceType,
-        //  **والصيانةُ لها تصنيفُها الصادق** — لا يُخترَع لها غيرُه.
-        reviewKind: "maintenance",
-        note: [retrospectiveNote({
-          serviceType, kind: "maintenance", amount: out.amount,
-          maintenanceComponent: comp.value, deviceOrigin,
-          expertName: await expertDisplayName(expertUserId),
-        }), note].filter(Boolean).join(" · "),
-        deviceEpisodeId: out.deviceEpisodeId, workOrderId: out.workOrderId,
-      });
-
+      //  **بلا مراجعةٍ لاحقة** — لا `routeRetrospectiveReview` هنا: الطبيبُ
+      //  بلا سلطةٍ على هذا المسار من أوّله، فلا حاجةَ لإخباره.
       return res.status(201).json({
-        ok: true, workOrderId: out.workOrderId, amount: out.amount,
-        charge: null, reviewRouted: review.routed,
-        message: out.amount !== null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
+        ok: true, workOrderId: out.workOrderId, deviceEpisodeId: out.deviceEpisodeId,
+        originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
+        finalPrice: offer.finalPrice, priceKind: offer.kind,
+        message: MAINTENANCE_SUCCESS_MESSAGE,
       });
     } catch (err) {
       fail(res, err, "تعذّر تسجيل الصيانة");

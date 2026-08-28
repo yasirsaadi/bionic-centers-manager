@@ -252,12 +252,13 @@ async function main() {
       (await q(`SELECT is_physiotherapy FROM patients WHERE id=$1`, [pBare]))[0].is_physiotherapy, true);
 
     // ══ ٣. الصيانةُ تُبوَّب على قسم جهازها ══════════════════════════════
+    //  ⚠ (المرحلة الثالثة) — البابُ الحيّ صار `/api/no-exam/maintenance`
+    //  بعقدها الجديد؛ والتبويبُ محلُّ هذا الفحص لم يتغيّر بحرف.
     console.log("\n── ٣. الصيانة ──");
-    const mv = await http("POST", "/api/manufacturing/maintenance-visit", S.recv, {
+    const mv = await http("POST", "/api/no-exam/maintenance", S.recv, {
       maintenanceComponent: "knee",
       patientId: pPro, expertUserId: EXPERT, serviceType: "prosthetic",
-      cost: 75_000, legacyUnrecordedDevice: true, notes: "صيانة",
-      reviewPath: "quick", reviewKind: "maintenance",
+      originalPrice: 75_000, discountAmount: 0, legacyUnrecordedDevice: true, note: "صيانة",
     });
     same("٣. فتحُ الصيانة ينجح", mv.status, 201);
     same("   **وأجورُها مبوَّبةٌ أطرافاً**",
