@@ -126,16 +126,45 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
   return r[0].id;
 }
 
-/** يوقّع معاينةً **عبر نقطتها الحقيقية** — فالمتابعة تُفتح كما تُفتح إنتاجاً. */
+/**
+ * يوقّع معاينةً **عبر نقطتها الحقيقية** — فالمتابعة تُفتح كما تُفتح إنتاجاً.
+ *
+ * ══ **والسعرُ صار خطوةً منفصلة عن التوقيع** ═══════════════════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md)، والنقطةُ تتجاهله لو وصل. فيُثبَّت هنا **بعد**
+ * التوقيع على الصفَّين معاً — `medical_exams.device_cost` بالباب المراقَب،
+ * و`post_exam_followups.approved_price` (`price_source='exam'` الذي لم
+ * يتغيّر) — تماماً كما كانت `ensureFollowupForSignedExam` تكتبهما معاً
+ * وقت التوقيع بالضبط. فيبقى هذا الملفُّ يختبر **طبقةَ المتابعة نفسَها**
+ * (المالكية، الاعتماد، التزامن) بلا لمس ٤٠+ موضع استدعاء.
+ */
 async function signExam(patientId: number, session: any, opts: {
   caseType?: string; deviceCost?: number;
 } = {}) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
     caseType: opts.caseType ?? "prosthetic",
     diagnosis: "بتر تحت الركبة",
-    deviceCost: opts.deviceCost ?? 1_500_000,
     prescription: {},
   });
+  const price = opts.deviceCost ?? 1_500_000;
+  if (res.status < 300 && res.body?.id) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+      await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+        [res.body.id, price]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [res.body.id, price]);
+  }
+  return res;
 }
 
 /** متابعةُ مريضٍ الحيّة كما تصل الواجهة. */
@@ -798,10 +827,33 @@ async function main() {
     console.log("\n── الخبير ──");
     const pExp = await mkPatient("الخبير");
     await mkCase(pExp);
-    await http("POST", `/api/medical/patients/${pExp}/exams`, S.doc, {
-      caseType: "prosthetic", diagnosis: "بتر", deviceCost: 700_000,
-      prescription: {}, proposedExpertUserId: EXPERT,
+    const expSigned = await http("POST", `/api/medical/patients/${pExp}/exams`, S.doc, {
+      caseType: "prosthetic", diagnosis: "بتر", prescription: {},
     });
+    //  ══ **اقتراحُ السعر والخبير صارا خطوةً منفصلة عن التوقيع** ═══════════
+    //  الشاشةُ الطبّية لا ترسل `deviceCost`/`proposedExpertUserId` عند
+    //  التوقيع بعد اليوم (القسمُ 4.b/4.f) — فيُثبَّتان هنا بعده مباشرةً،
+    //  على الصفَّين معاً تماماً كما كانت `ensureFollowupForSignedExam`
+    //  تكتبهما وقت التوقيع.
+    {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+        await client.query(
+          `UPDATE medical_exams SET device_cost=$2, proposed_expert_user_id=$3 WHERE id=$1`,
+          [expSigned.body.id, 700_000, EXPERT]);
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
+      await q(`UPDATE post_exam_followups
+                 SET approved_price=700000, selected_expert_user_id=$2
+                 WHERE medical_exam_id=$1`, [expSigned.body.id, EXPERT]);
+    }
     const fExp = await followupOf(pExp);
     same("ب٢. **خبيرُ الطبيب المقترَح يُبذَر في المتابعة**",
       fExp?.selectedExpertUserId, EXPERT);

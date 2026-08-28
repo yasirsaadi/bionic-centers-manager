@@ -6,8 +6,28 @@
 // ولكلّ حقلٍ تجاريٍّ **مالك**: ما أدخله الطبيبُ لا يكتب فوقه استقبالٌ ولا
 // مديرُ فرع — بل صاحبُه أو المسؤولُ العام. وما تركه فارغاً يُكمله مَن حضر.
 //
+// ══ **تعديلٌ جوهريّ (مرحلةُ «معاينةٌ طبّيةٌ محضة»)** ═══════════════════════
+// كان الطبيبُ يستطيع أن يُدخل التفاصيلَ التجارية **عند التوقيع نفسه**، عبر
+// حقل `commercial` في جسم `POST /api/medical/patients/:id/exams` — وهذا
+// الملفُّ وُلد أصلاً ليختبر ذلك المسار. **وقد أُزيل ذلك المسارُ بالكامل**
+// (القسم 4.b/4.f في CLAUDE.md): الطبيبُ يشخّص ويصف ويوقّع فقط، ولا سعرَ ولا
+// خبيرَ ولا قرارَ شراء يصل الخادمَ من نافذته بعد اليوم — ولو أرسله عميلٌ
+// قديم، **يُتجاهَل تماماً** (لا يُقرأ، لا يُتحقَّق منه، لا يُكتب، ولا يُسقِط
+// المعاينةَ إن كان فاسداً).
+//
+// **والبابُ القانونيُّ الواحد الباقي**: `POST /api/followups/:id/commercial`
+// (`server/followup/routes.ts` ⟶ `setCommercialFields`) — **لم يتغيّر بحرف**،
+// وهو ما تنادِيه بطاقةُ المريض اليوم لأيّ فاعلٍ (الطبيبُ نفسُه إن أراد
+// لاحقاً، أو الاستقبال، أو المدير). فكلُّ سيناريوهات هذا الملفّ التي كانت
+// تُبنى بحمولةٍ تجاريةٍ مرفقة بالتوقيع تحوّلت إلى **خطوتين**: توقيعٌ نظيف،
+// ثمّ نداءٌ مباشر إلى `/commercial` — وهذا يثبت أن `setCommercialFields`
+// وأحكامَ المالكية (`asDoctor` تُشتقّ من `isExamDoctorOf` بصرف النظر عن
+// الطريق الذي وصلتَ منه) **لم تُمَسّ إطلاقاً**، وستبقى صالحةً لمرحلة
+// الاستعلامات القادمة كما هي.
+//
 // وما يُثبته هنا:
-//   • مالكيةُ الحقول الثلاثة في الاتجاهين (أ–ح).
+//   • **ولا مسؤوليةَ تجارية على التوقيع مهما وصل في جسمه** — قسمٌ جديد (ي‌ب).
+//   • مالكيةُ الحقول الثلاثة في الاتجاهين (أ–ح) — عبر البابِ الباقي وحده.
 //   • «اشترى» كاملاً ⟶ أمرُ تصنيعٍ **واحد** وقيدُ كلفةٍ **واحد**، بلا اعتماد.
 //   • «اشترى» ناقصاً ⟶ القرارُ **يُحفَظ**، ولا مالَ ولا تصنيع، ثمّ يُكمله
 //     الموظّف فيُتمّ الخادمُ البيعَ **ذرّياً** — وضغطتان تُنتجان تحويلاً واحداً.
@@ -117,16 +137,44 @@ const startEpisode = (patientId: number, serviceType = "prosthetic", item = "ful
   http("POST", `/api/patients/${patientId}/device-episodes`, S.recv,
     { serviceType, requestedItem: item, servicePath: "exam" });
 
-/** توقيعُ معاينةٍ — ومعها التفاصيلُ التجارية إن أُرسلت. */
-const signExam = (patientId: number, caseType = "prosthetic", commercial?: any,
-  session: any = S.doc) =>
+/**
+ * توقيعُ معاينةٍ — **سريريّةٌ محضةٌ**. لا حمولةَ تجاريةً في هذه الدالّة على
+ * الإطلاق: النقطةُ الحقيقية لم تعد تقرأ شيئاً تجارياً من جسمها (القسمُ
+ * ي‌ب أدناه يثبت ذلك بنداءٍ خامٍ مباشر). تفاصيلُ البيع تصل من الآن فصاعداً
+ * عبر `commercial()` وحدها.
+ */
+const signExam = (patientId: number, caseType = "prosthetic", session: any = S.doc) =>
   http("POST", `/api/medical/patients/${patientId}/exams`, session, {
     caseType, diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
-    ...(commercial === undefined ? {} : { commercial }),
   });
 
 const commercial = (followupId: number, patch: any, session: any) =>
   http("POST", `/api/followups/${followupId}/commercial`, session, patch);
+
+/**
+ * يكتب `device_cost`/`proposed_expert_user_id` مباشرةً على معاينةٍ موقّعة —
+ * **لمحاكاة صفٍّ من قبل هذا التبسيط وحده**. الترِكرُ (٠٢٨) يرفض أيّ
+ * `UPDATE` على `medical_exams` لم يفتح البابَ المراقَب صراحةً، فيُفتح هنا
+ * تماماً كما توثّق CLAUDE.md — `BEGIN` + `SET LOCAL app.allow_exam_edit`
+ * على **معاملةٍ واحدة** على نفس الاتصال، لا نداءين منفصلين قد يذهبان إلى
+ * اتصالين مختلفين من المجمّع.
+ */
+async function sealedOverrideWrite(examId: number, deviceCost: number, expertId: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+    await client.query(
+      `UPDATE medical_exams SET device_cost=$2, proposed_expert_user_id=$3 WHERE id=$1`,
+      [examId, deviceCost, expertId]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 async function fRow(id: number) {
   const [r] = await q(`SELECT approved_price::int p, original_price::int op, price_kind pk,
@@ -287,20 +335,23 @@ async function main() {
       }), `${PENDING_SALE_DATA_LABEL} — الخبير`);
 
     // ══════════════════════════════════════════════════════════════════
-    //  أ. **(أ)(ج)(هـ)(ز)** الطبيبُ يُدخل الثلاثة ⟶ مقفولةٌ على غيره
+    //  أ. **(أ)(ج)(هـ)(ز)** الطبيبُ يُدخل الثلاثة من بطاقة التفاصيل ⟶
+    //     مقفولةٌ على غيره
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── أ. ما أدخله الطبيبُ مقفولٌ على غيره ──");
     {
       const p = await mkPatient("مالكيةُ الطبيب");
       await mkCase(p);
       same("١١. طلبُ الجهاز على مسار المعاينة", (await startEpisode(p)).status, 201);
-      //  الطبيبُ يوقّع ومعه السعرُ والخبيرُ والقرار «لم يُقرَّر بعد».
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "normal", originalPrice: 1_500_000 },
-        expertUserId: EXPERT,
-      });
+      //  التوقيعُ سريريٌّ محضٌ — بلا سعرٍ ولا خبيرٍ في جسمه.
+      const ex = await signExam(p, "prosthetic");
       check(ex.status === 200 || ex.status === 201, "١٢. المعاينةُ وُقّعت", String(ex.status));
       const fid = await followupOf(p);
+      //  والطبيبُ يُدخل السعرَ والخبيرَ من بطاقة التفاصيل — البابُ الوحيد.
+      const set = await commercial(fid,
+        { price: { kind: "normal", originalPrice: 1_500_000 }, expertUserId: EXPERT }, S.doc);
+      check(set.status === 200, "   والطبيبُ يُدخل سعرَه وخبيرَه من بطاقة التفاصيل",
+        String(set.status));
       const row = await fRow(fid);
       same("١٣. والسعرُ والخبيرُ محفوظان بمالكِهما «الطبيب»",
         [row.p, row.op, row.pk, row.po, Number(row.pou), row.ex, row.eo, Number(row.eou)],
@@ -361,10 +412,10 @@ async function main() {
       const p = await mkPatient("إغلاقٌ ممنوع");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {
-        price: { kind: "normal", originalPrice: 1_000_000 }, decision: "bought",
-      });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await commercial(fid,
+        { price: { kind: "normal", originalPrice: 1_000_000 }, decision: "bought" }, S.doc);
       same("٢٠أ. الصفُّ مفتوحٌ وقرارُه للطبيب",
         [(await fRow(fid)).status, (await fRow(fid)).pdo],
         ["awaiting_patient_decision", "doctor"]);
@@ -385,7 +436,7 @@ async function main() {
       const p = await mkPatient("فراغٌ يُكمَل");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {});  //  بلا سعرٍ ولا خبيرٍ ولا قرار
+      await signExam(p, "prosthetic");  //  بلا سعرٍ ولا خبيرٍ ولا قرار
       const fid = await followupOf(p);
       same("٢١. الصفُّ يبدأ بلا سعرٍ ولا مالك",
         [(await fRow(fid)).pk, (await fRow(fid)).po, (await fRow(fid)).ex], [null, null, null]);
@@ -422,14 +473,14 @@ async function main() {
       const p = await mkPatient("اشترى كاملاً");
       const c = await mkCase(p);
       await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
+      await signExam(p, "prosthetic");
+      const fid = await followupOf(p);
+      const set = await commercial(fid, {
         price: { kind: "normal", originalPrice: 2_000_000 },
         expertUserId: EXPERT, decision: "bought",
-      });
-      same("٢٦. **(ط) التوقيعُ نفسُه أتمّ البيع**",
-        [ex.body?.commercial?.converted, typeof ex.body?.commercial?.workOrderId],
-        [true, "number"]);
-      const fid = await followupOf(p);
+      }, S.doc);
+      same("٢٦. **(ط) إكمالُ الحقول الثلاثة معاً أتمّ البيع**",
+        [set.body?.converted, typeof set.body?.workOrderId], [true, "number"]);
       convertedFollowup = fid;
       const row = await fRow(fid);
       same("٢٧. والمتابعةُ `converted` بأمرها", [row.status, typeof Number(row.wo)],
@@ -460,13 +511,12 @@ async function main() {
       const p = await mkPatient("اشترى بلا خبير");
       await mkCase(p);
       await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "normal", originalPrice: 1_100_000 }, decision: "bought",
-      });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      const set = await commercial(fid,
+        { price: { kind: "normal", originalPrice: 1_100_000 }, decision: "bought" }, S.doc);
       same("٣٠. **(ي) القرارُ حُفظ ولم يُتمّ البيع**",
-        [ex.body?.commercial?.converted, ex.body?.commercial?.missing,
-          (await fRow(fid)).pd, (await fRow(fid)).status],
+        [set.body?.converted, set.body?.missing, (await fRow(fid)).pd, (await fRow(fid)).status],
         [false, ["expert"], "bought", "awaiting_patient_decision"]);
       same("   **ولا مالَ ولا تصنيع**",
         await moneyOf(p), { total: 0, orders: 0, cost_entries: 0, payments: 0, discounts: 0 });
@@ -497,8 +547,9 @@ async function main() {
       const p = await mkPatient("اشترى بلا سعر");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", { expertUserId: EXPERT, decision: "bought" });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await commercial(fid, { expertUserId: EXPERT, decision: "bought" }, S.doc);
       same("٣٣. **(ك) ناقصُ السعر — القرارُ محفوظٌ والمالُ صفر**",
         [(await fRow(fid)).pd, (await fRow(fid)).pk, (await moneyOf(p)).orders], ["bought", null, 0]);
       const done = await commercial(fid,
@@ -515,10 +566,10 @@ async function main() {
       const p = await mkPatient("ضغطتان متزامنتان");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {
-        price: { kind: "normal", originalPrice: 1_300_000 }, decision: "bought",
-      });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await commercial(fid,
+        { price: { kind: "normal", originalPrice: 1_300_000 }, decision: "bought" }, S.doc);
       const [a, b] = await Promise.all([
         commercial(fid, { expertUserId: EXPERT }, S.recv),
         commercial(fid, { expertUserId: EXPERT }, S.recv),
@@ -541,8 +592,9 @@ async function main() {
       const p = await mkPatient("لم يشترِ");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", { price: { kind: "normal", originalPrice: 800_000 } });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await commercial(fid, { price: { kind: "normal", originalPrice: 800_000 } }, S.doc);
       same("٣٥. **(م) بلا سببٍ ⟶ ٤٠٠**",
         (await commercial(fid, { decision: "not_bought" }, S.recv)).status, 400);
       same("   والصفُّ ما زال مفتوحاً", (await fRow(fid)).status, "awaiting_patient_decision");
@@ -566,11 +618,12 @@ async function main() {
       const p = await mkPatient("طبيبٌ قال لم يشترِ");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {
+      await signExam(p, "prosthetic");
+      const fid = await followupOf(p);
+      await commercial(fid, {
         price: { kind: "normal", originalPrice: 950_000 }, expertUserId: EXPERT,
         decision: "not_bought", notBoughtReason: "اختار مركزاً آخر",
-      });
-      const fid = await followupOf(p);
+      }, S.doc);
       same("٣٨. **(ع) والطبيبُ أغلقه بمالكيّته**",
         [(await fRow(fid)).status, (await fRow(fid)).pd, (await fRow(fid)).pdo,
           Number((await fRow(fid)).pdu)],
@@ -592,16 +645,17 @@ async function main() {
       const p = await mkPatient("تبرّعٌ صريح");
       const c = await mkCase(p);
       await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
+      await signExam(p, "prosthetic");
+      const fid = await followupOf(p);
+      const set = await commercial(fid, {
         price: { kind: "free", originalPrice: 1_800_000 },
         expertUserId: EXPERT, decision: "bought",
-      });
-      const fid = await followupOf(p);
+      }, S.doc);
       const row = await fRow(fid);
       same("٤١. **(ر) النهائيُّ صفرٌ والأصلُ محفوظ — ولا اعتمادَ**",
         [row.p, row.op, row.pk, (await moneyOf(p)).discounts], [0, 1_800_000, "free", 0]);
       same("٤٢. **والبيعُ تمّ بلا أن يُقرأ «غير مسعَّر»**",
-        [ex.body?.commercial?.converted, row.status], [true, "converted"]);
+        [set.body?.converted, row.status], [true, "converted"]);
       const m = await moneyOf(p);
       same("   بأمرٍ واحد وكلفةٍ صفر", [m.orders, m.total], [1, 0]);
       same("   وكلفةُ الخيط صفر",
@@ -612,8 +666,9 @@ async function main() {
       const p = await mkPatient("تبرّعٌ لا يُكتب فوقه");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", { price: { kind: "free", originalPrice: 600_000 } });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await commercial(fid, { price: { kind: "free", originalPrice: 600_000 } }, S.doc);
       const sneak = await http("POST", `/api/followups/${fid}/confirm-purchase`, S.recv,
         { initialPrice: 600_000, expertUserId: EXPERT });
       check(sneak.status >= 400 || (await fRow(fid)).op === 600_000,
@@ -631,24 +686,24 @@ async function main() {
       await mkCase(p, "medical_support");
       same("٤٤. المسندُ يمرّ بالمسار نفسه",
         (await startEpisode(p, "medical_support")).status, 201);
-      const ex = await signExam(p, "medical_support", {
+      await signExam(p, "medical_support");
+      const fid = await followupOf(p);
+      const set = await commercial(fid, {
         price: { kind: "normal", originalPrice: 400_000 },
         expertUserId: EXPERT, decision: "bought",
-      });
-      same("   ويُتمّ بيعَه كالأطراف", ex.body?.commercial?.converted, true);
+      }, S.doc);
+      same("   ويُتمّ بيعَه كالأطراف", set.body?.converted, true);
     }
     {
-      //  **العلاجُ الطبيعي لا يستقبل هذه الحقول إطلاقاً** — تُسقَط في الخادم.
+      //  **العلاجُ الطبيعي لا متابعةَ بيعٍ له إطلاقاً** — لا حلقةَ جهازٍ له.
       const p = await mkPatient("علاجٌ طبيعي");
       await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [p]);
       await mkCase(p, "physiotherapy");
-      const ex = await signExam(p, "physiotherapy", {
-        price: { kind: "normal", originalPrice: 250_000 }, decision: "bought",
-      }, S.doc2);
+      const ex = await signExam(p, "physiotherapy", S.doc2);
       check(ex.status === 200 || ex.status === 201,
         "٤٥. **معاينةُ العلاج الطبيعي تُوقَّع**", String(ex.status));
-      same("   **ولا تفاصيلَ تجارية تُطبَّق عليها ولا متابعةَ بيع**",
-        [ex.body?.commercial, await followupOf(p), (await moneyOf(p)).orders], [null, 0, 0]);
+      same("   **ولا متابعةَ بيعٍ لها ولا أثرَ ماليّ**",
+        [await followupOf(p), (await moneyOf(p)).orders], [0, 0]);
     }
     {
       //  **ومسارُ «بلا معاينة» يبقى عند حدّه** — لا متابعةَ ولا مال.
@@ -673,7 +728,7 @@ async function main() {
       const p = await mkPatient("أفعالٌ متقاعدة");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {});
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
       for (const [path, body] of [
         ["defer", { reason: "needs_time", noScheduledFollowUp: true }],
@@ -692,7 +747,7 @@ async function main() {
       await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
                  sequence_number, status, agreed_cost, requested_item, created_by)
                VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',$3)`, [p, c, MANAGER]);
-      await signExam(p, "prosthetic", {});
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
       check(fid > 0, "٤٨. متابعةٌ على حلقةٍ بلا مسار", String(fid));
       same("   **وأفعالُها القديمة باقية** — `defer` تعمل",
@@ -730,10 +785,12 @@ async function main() {
       const p = await mkPatient("حذفٌ كامل");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {
+      await signExam(p, "prosthetic");
+      const fid = await followupOf(p);
+      await commercial(fid, {
         price: { kind: "discount", originalPrice: 900_000, finalPrice: 700_000 },
         expertUserId: EXPERT, decision: "bought",
-      });
+      }, S.doc);
       //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
       //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
       //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
@@ -753,124 +810,141 @@ async function main() {
         (await q(`SELECT count(*)::int n FROM post_exam_followups WHERE patient_id=$1`, [p]))[0].n,
         0);
     }
+
     // ══════════════════════════════════════════════════════════════════
-    //  ي‌ب. **الاختيارُ الصريحُ لا يُسقَط بصمت** — علّةُ «غير محدد»
+    //  ي‌ب. **بلا مسؤوليةٍ تجارية على التوقيع — مهما وصل في الجسم**
     // ══════════════════════════════════════════════════════════════════
-    //  كانت الشاشةُ تبدأ بـ`normal` فاستحال أن يُعرَف: أاختار الطبيبُ أم لم
-    //  يلمس؟ ومَن اختار **بخصم** أو **مجّاني** ثمّ ترك الأصلَ فارغاً كان
-    //  اختيارُه يُحذَف من الحمولة بينما يُحفَظ خبيرُه وقرارُه — فيُقرأ الملفُّ
-    //  «غير مسعَّر» وقد قرّر الطبيبُ تبرّعاً.
-    console.log("\n── ي‌ب. النقصُ يُردّ ولا يُسقَط ──");
+    //  كان هذا القسمُ يثبت أن تسعيراً ناقصاً أو متناقضاً في جسم التوقيع
+    //  يُردّ **قبل** أن تُوقَّع المعاينة (٤٠٠، ولا معاينةَ ولا متابعةَ
+    //  تُحفَظ) — وأن سعراً/خبيراً كاملَين يُطبَّقان **معها**. وذاك بالضبط
+    //  الاقترانُ الذي أزالته هذه المرحلة: **لا شيءَ تجاريّ يُقرأ من جسم
+    //  التوقيع بعد اليوم، صحيحاً كان أم فاسداً، كاملاً أم ناقصاً** — فيسقط
+    //  سؤالُ «هل يُقبل أم يُردّ؟» لأن الجوابَ «لا يُقرأ أصلاً». والمعاينةُ
+    //  **تنجح دائماً** ما دام محتواها السريريُّ سليماً.
+    console.log("\n── ي‌ب. لا مسؤوليةَ تجارية على التوقيع ──");
     {
-      //  ① بلا لمسٍ للسعر إطلاقاً ⟶ المعاينةُ تُوقَّع والملفُّ بلا تسعير.
-      const p = await mkPatient("بلا تسعير");
+      //  ① حمولةٌ **كاملةٌ وصالحة** — لو وصلت البابَ القديم كانت ستُتمّ
+      //  البيعَ في الطلب نفسه (كالقسم ج أعلاه، قبل هذه المرحلة). والآن:
+      //  تُتجاهَل تماماً، بأسماء الحقول القديمة كلِّها معاً.
+      const p = await mkPatient("حمولةٌ تجاريةٌ كاملة تُتجاهَل");
       await mkCase(p);
       await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", { expertUserId: EXPERT });
-      check(ex.status === 200 || ex.status === 201,
-        "٦١. **(١) بلا سعرٍ إطلاقاً ⟶ المعاينةُ تُوقَّع**", String(ex.status));
-      const fid = await followupOf(p);
-      same("   والملفُّ **غير مسعَّر** لا «مجّانيّ»",
-        [(await fRow(fid)).pk, (await fRow(fid)).op, (await fRow(fid)).p], [null, null, 0]);
-      same("   والخبيرُ حُفظ وحده", Number((await fRow(fid)).ex), EXPERT);
-      same("   وما ينقص «السعر»", (await http("GET", `/api/followups/patient/${p}`, S.recv))
-        .body?.[0]?.missing, ["price"]);
-    }
-    {
-      //  ② «مجّاني» بلا أصلٍ ⟶ **يُردّ**، ولا يُسقَط ولا يُحفَظ نصفُ الطلب.
-      const p = await mkPatient("مجّانيٌّ بلا أصل");
-      await mkCase(p);
-      await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "free", originalPrice: null },
-        expertUserId: EXPERT, decision: "bought",
+      const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc, {
+        caseType: "prosthetic", diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
+        deviceCost: 2_000_000,
+        proposedExpertUserId: EXPERT,
+        commercial: {
+          price: { kind: "normal", originalPrice: 2_000_000 },
+          expertUserId: EXPERT, decision: "bought",
+        },
       });
-      same("٦٢. **(٢) «مجّاني» بلا سعرٍ أصليّ ⟶ ٤٠٠**", ex.status, 400);
-      check(String(ex.body?.error ?? "").includes("أصليّ"),
-        "   برسالةٍ تقول ما ينقص", JSON.stringify(ex.body));
-      //  **(٦) ولا نصفَ حمولةٍ يُقبل**: لا معاينةَ ولا متابعةَ ولا خبيرَ ولا قرار.
-      same("٦٣. **(٦) ولا شيءَ حُفظ — لا معاينةَ ولا متابعةَ ولا خبير**",
-        [(await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n,
-          await followupOf(p)],
-        [0, 0]);
-      same("   ولا دينارَ ولا أمر",
+      check(ex.status === 200 || ex.status === 201,
+        "٦١. **(١) المعاينةُ تُوقَّع بحمولةٍ تجاريةٍ كاملة كأنها لم تصل**",
+        String(ex.status));
+      same("   **ولا `commercial` في الردّ** — النقطةُ لا تعرف هذا المفهوم بعد اليوم",
+        Object.prototype.hasOwnProperty.call(ex.body ?? {}, "commercial"), false);
+      const fid = await followupOf(p);
+      check(fid > 0, "   ومتابعةُ البيع فُتحت كالمعتاد (طلبُ جهازٍ على مسار المعاينة)",
+        String(fid));
+      const row = await fRow(fid);
+      same("٦٢. **(٢) بلا سعرٍ ولا خبيرٍ ولا قرارٍ — ولا مالكيةَ لأحد**",
+        [row.pk, row.op, row.p, row.eo, row.ex, row.pd, row.pdo],
+        [null, null, 0, null, null, null, null]);
+      same("   **ولا أمرَ تصنيعٍ ولا قيدَ كلفةٍ ولا دينار** — البيعُ لم يبدأ",
         await moneyOf(p), { total: 0, orders: 0, cost_entries: 0, payments: 0, discounts: 0 });
+      //  وحقلا المعاينة القديمان («المرحلة ١») كذلك: لا يُكتبان من هذا الطلب.
+      const examRow = (await q<{ dc: number | null; pe: number | null }>(
+        `SELECT device_cost dc, proposed_expert_user_id pe FROM medical_exams WHERE id=$1`,
+        [ex.body.id]))[0];
+      same("٦٣. **(٣) و`medical_exams.device_cost`/`proposed_expert_user_id` بلا قيمة**",
+        [examRow.dc, examRow.pe], [null, null]);
     }
     {
-      //  ③ «بخصم» بلا أصل ⟶ يُردّ.
-      const p = await mkPatient("خصمٌ بلا أصل");
+      //  ② حمولةٌ **فاسدة** (مجّانيّ بلا سعرٍ أصليّ، أو قرارٌ بلا معنى) —
+      //  لو وصلت البابَ القديم كانت ستُسقط المعاينةَ كلَّها بـ٤٠٠. والآن:
+      //  لا تُقرأ لتُرفَض.
+      const p = await mkPatient("حمولةٌ تجاريةٌ فاسدة لا تُسقِط شيئاً");
       await mkCase(p);
       await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "discount", originalPrice: null, finalPrice: 500_000 },
-        expertUserId: EXPERT,
-      });
-      same("٦٤. **(٣) «بخصم» بلا سعرٍ أصليّ ⟶ ٤٠٠**", ex.status, 400);
-      same("   ولا معاينةَ حُفظت",
-        (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n, 0);
-    }
-    {
-      //  ④ «بخصم» بأصلٍ بلا نهائيّ ⟶ يُردّ.
-      const p = await mkPatient("خصمٌ بلا نهائيّ");
-      await mkCase(p);
-      await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "discount", originalPrice: 900_000, finalPrice: null },
-      });
-      same("٦٥. **(٤) «بخصم» بلا سعرٍ نهائيّ ⟶ ٤٠٠**", ex.status, 400);
-      same("   ولا معاينةَ حُفظت",
-        (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n, 0);
-      //  وبأصلٍ ونهائيٍّ صحيحين يمرّ.
-      const ok = await signExam(p, "prosthetic", {
-        price: { kind: "discount", originalPrice: 900_000, finalPrice: 700_000 },
-      });
-      check(ok.status === 200 || ok.status === 201, "   وبالاثنين يمرّ", String(ok.status));
-      const fid = await followupOf(p);
-      same("   بالقيم الصحيحة",
-        [(await fRow(fid)).op, (await fRow(fid)).p, (await fRow(fid)).pk],
-        [900_000, 700_000, "discount"]);
-    }
-    {
-      //  ⑤ «مجّاني» بأصلٍ موجب ⟶ يُحفَظ صريحاً.
-      const p = await mkPatient("مجّانيٌّ صحيح");
-      await mkCase(p);
-      await startEpisode(p);
-      const ex = await signExam(p, "prosthetic", {
-        price: { kind: "free", originalPrice: 1_400_000 },
+      const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc, {
+        caseType: "prosthetic", diagnosis: "تشخيصٌ سريريّ",
+        commercial: {
+          price: { kind: "free", originalPrice: null },
+          decision: "قرارٌ لا معنى له",
+        },
       });
       check(ex.status === 200 || ex.status === 201,
-        "٦٦. **(٥) «مجّاني» بأصلٍ موجب يمرّ**", String(ex.status));
-      const fid = await followupOf(p);
-      same("   ويُحفَظ صريحاً: نهائيٌّ صفرٌ وأصلٌ محفوظ",
-        [(await fRow(fid)).pk, (await fRow(fid)).op, (await fRow(fid)).p],
-        ["free", 1_400_000, 0]);
-      same("   **و«مكتملُ السعر» لا «ينقصه السعر»**",
-        (await http("GET", `/api/followups/patient/${p}`, S.recv)).body?.[0]?.missing,
-        ["expert"]);
+        "٦٤. **(٤) وحمولةٌ فاسدةٌ لا تُسقِط المعاينةَ أبداً**", String(ex.status));
+      same("   والمعاينةُ محفوظةٌ فعلاً",
+        (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p]))[0].n, 1);
+      same("   والمتابعةُ بلا تسعير — لا «مجّانيّ» ولا أيّ قيمة",
+        [(await fRow(await followupOf(p))).pk, (await fRow(await followupOf(p))).status],
+        [null, "awaiting_patient_decision"]);
     }
     {
-      //  ⑥ ونفسُ الحراسة على **نقطة التفاصيل** لا على التوقيع وحده.
-      const p = await mkPatient("نقصٌ من البطاقة");
+      //  ③ **والعلاجُ الطبيعي كذلك** — لا فرقَ بين أنواع الاختصاص، لأن لا
+      //  اختصاصٍ يقرأ هذا الحقلَ بعد اليوم.
+      const p = await mkPatient("علاجٌ طبيعي بحمولةٍ تجارية");
+      await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [p]);
+      await mkCase(p, "physiotherapy");
+      const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc2, {
+        caseType: "physiotherapy", diagnosis: "تشخيصٌ سريريّ",
+        commercial: { price: { kind: "normal", originalPrice: 250_000 }, decision: "bought" },
+      });
+      check(ex.status === 200 || ex.status === 201,
+        "٦٥. **(٥) ومعاينةُ العلاج الطبيعي كذلك** — ولو حمل الطلبُ تسعيراً",
+        String(ex.status));
+      same("   **ولا متابعةَ بيعٍ لها أصلاً**",
+        [await followupOf(p), (await moneyOf(p)).orders], [0, 0]);
+    }
+    {
+      //  ④ **وتعديلُ معاينةٍ موجودة لا يمحو كلفتَها القديمة بصمت.**
+      //  معاينةٌ من **قبل** هذا التبسيط تحمل سعراً حقيقياً — والشاشةُ
+      //  الجديدة لا ترسل الحقلَ إطلاقاً عند التعديل، فيجب أن يبقى الرقمُ
+      //  القديم كما هو، لا أن يُقرأ غيابُه محواً.
+      const p = await mkPatient("تعديلُ معاينةٍ تحمل سعراً قديماً");
+      await mkCase(p);
+      const ex = await signExam(p, "prosthetic");
+      const examId = ex.body.id;
+      //  لقطةُ «قبل هذا التبسيط»: سعرٌ وخبيرٌ كُتبا مباشرةً على المعاينة —
+      //  تماماً كما كان الطبيبُ يكتبهما من النافذة قبل هذه المرحلة.
+      await sealedOverrideWrite(examId, 1234000, EXPERT);
+      //  والشاشةُ الجديدةُ تعدّل التشخيصَ وحده — بلا `deviceCost` في الجسم.
+      const edit = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+        caseType: "prosthetic", diagnosis: "تشخيصٌ مُعدَّل",
+      });
+      check(edit.status === 200, "٦٦. **(٦) والتعديلُ ينجح**", JSON.stringify(edit.body));
+      const after = (await q<{ dc: number | null; pe: number | null }>(
+        `SELECT device_cost dc, proposed_expert_user_id pe FROM medical_exams WHERE id=$1`,
+        [examId]))[0];
+      same("   **ولا يُمحى الرقمُ القديم لمجرّد أن الشاشةَ لم ترسله**",
+        [after.dc, after.pe], [1234000, EXPERT]);
+    }
+    {
+      //  ⑤ **ونفسُ الحراسة تبقى فعّالة على نقطة التفاصيل** — حيث
+      //  المسؤوليةُ التجاريةُ الحقيقية تقع الآن. الخصمُ غيرُ الصالح
+      //  والمجّانيّةُ بلا أصلٍ ما زالا يُردّان **هناك**.
+      const p = await mkPatient("نقصٌ يُردّ من البطاقة");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {});
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
       const bad = await commercial(fid,
         { price: { kind: "free", originalPrice: null }, expertUserId: EXPERT }, S.recv);
-      same("٦٧. **(٦) والبطاقةُ كذلك: نقصٌ ⟶ ٤٠٠ ولا نصفَ يُقبل**", bad.status, 400);
+      same("٦٧. **(٧) والبطاقةُ كذلك: نقصٌ ⟶ ٤٠٠ ولا نصفَ يُقبل**", bad.status, 400);
       same("   **ولا الخبيرُ حُفظ** — الطلبُ يُردّ كلُّه",
         [(await fRow(fid)).ex, (await fRow(fid)).pk], [null, null]);
     }
     {
-      //  ⑦⑧ صاحبُ المعاينة يعدّل حقولَه من البطاقة، وغيرُه يُردّ.
+      //  ⑥⑦ صاحبُ المعاينة يعدّل حقولَه من البطاقة، وغيرُه يُردّ.
       const p = await mkPatient("تعديلُ صاحبها");
       await mkCase(p);
       await startEpisode(p);
-      await signExam(p, "prosthetic", {
-        price: { kind: "normal", originalPrice: 1_000_000 }, expertUserId: EXPERT,
-      });
+      await signExam(p, "prosthetic");
       const fid = await followupOf(p);
-      same("٦٨. **(٧) صاحبُ المعاينة يعدّل سعرَه من بطاقة التفاصيل قبل البيع**",
+      await commercial(fid,
+        { price: { kind: "normal", originalPrice: 1_000_000 }, expertUserId: EXPERT }, S.doc);
+      same("٦٨. **(٨) صاحبُ المعاينة يعدّل سعرَه من بطاقة التفاصيل قبل البيع**",
         (await commercial(fid,
           { price: { kind: "discount", originalPrice: 1_000_000, finalPrice: 820_000 } },
           S.doc)).status, 200);
@@ -880,7 +954,7 @@ async function main() {
         [820_000, "discount", "doctor", DOC]);
       same("   ويبدّل خبيرَه كذلك",
         (await commercial(fid, { expertUserId: EXPERT2 }, S.doc)).status, 200);
-      same("٦٩. **(٨) ومديرُ الفرع والاستقبالُ يُردّان عنهما**",
+      same("٦٩. **(٩) ومديرُ الفرع والاستقبالُ يُردّان عنهما**",
         [(await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.manager)).status,
           (await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.recv)).status,
           (await commercial(fid, { expertUserId: EXPERT }, S.manager)).status,
@@ -903,53 +977,33 @@ async function main() {
       const exam = read("client", "src", "components", "medical", "NewExamDialog.tsx");
       const card = read("client", "src", "components", "PostExamDecisionCard.tsx");
 
-      //  ① نافذةُ الطبيب: نوعُ السعر · القرار · وسببُ عدم الشراء.
-      //  والقيمُ تُبنى من قائمةٍ واحدة، فيُفحَص القالبُ والقائمةُ معاً — لا
-      //  نصٌّ مسطَّح لا وجودَ له في المصدر.
-      check(exam.includes("block-exam-commercial")
-        && exam.includes('radio-price-kind-${v || "none"}')
-        && /\["", "غير محدد"\]/.test(exam)
-        && /\["normal", "السعر كما هو"\]/.test(exam)
-        && /\["discount", "بخصم"\]/.test(exam)
-        && /\["free", "مجاني"\]/.test(exam),
-        "٥١. نافذةُ المعاينة فيها: غير محدد · عاديّ · بخصم · مجّانيّ");
-      //  ══ **الحالةُ الابتدائية فراغٌ لا `normal`** ═══════════════════════
-      //  وهذا هو الفرقُ الذي بُني عليه كلُّ شيء: `normal` ابتداءً تجعل
-      //  «لم يلمس» و«اختار السعرَ كما هو» شيئاً واحداً.
-      check(/useState<"" \| "normal" \| "discount" \| "free">\(""\)/.test(exam),
-        "٥١أ. **والابتداءُ «غير محدد» لا «السعر كما هو»**");
-      check(/price: priceTouched\s*\?/.test(exam)
-        && !/const hasPrice = deviceCost !== ""/.test(exam),
-        "٥١ب. **والاختيارُ الصريح يُرسَل ولو نقص** — لا يُحذَف من الحمولة");
-      check(exam.includes("text-commercial-block")
-        && /computeCommercialOffer\(/.test(exam),
-        "٥١ج. ويُمنَع الإرسالُ قبل الشبكة **بالقاعدة المشتركة نفسها**");
-      const cardKind = read("client", "src", "components", "PostExamDecisionCard.tsx");
-      check(/useState<"" \| "normal" \| "discount" \| "free">\(""\)/.test(cardKind)
-        && /if \(!locks\.price && cKind !== ""\)/.test(cardKind)
-        && cardKind.includes("text-c-block"),
-        "٥١د. **ونافذةُ البطاقة بالقاعدة نفسِها** — لا علّةٌ باقيةٌ في نصفٍ ثانٍ");
-      check(exam.includes("radio-purchase-decision")
-        && exam.includes('radio-decision-${v || "none"}')
-        && /\["bought", "اشترى"\]/.test(exam)
-        && /\["not_bought", "لم يشترِ"\]/.test(exam)
-        && /\["", "يكمله الموظّف لاحقاً"\]/.test(exam),
-        "٥٢. **والقرارُ اثنان ومعهما «يكمله الموظّف»** — ولا ثالثَ");
-      check(!/radio-decision-(defer|interest|approve)/.test(exam),
-        "   ولا تأجيلَ ولا «يرغب بالشراء» ولا اعتماد");
-      check(exam.includes("input-not-bought-reason"),
-        "٥٣. وسببُ عدم الشراء نصٌّ حرّ");
-      //  **ولا سعرَ ثانٍ**: الأصلُ هو `deviceCost` نفسُه.
-      //  الأصلُ يُقرأ من `deviceCost` وحده — والفراغُ يُرسَل `null` صريحةً
-      //  ليردَّه الخادمُ، لا يُحذَف الكائنُ فيمضي نصفُ الطلب.
-      check(/originalPrice: deviceCost === "" \? null : Number\(deviceCost\)/.test(exam)
-        && !/id="exam-original-price"/.test(exam),
-        "٥٤. **والسعرُ الأصليُّ هو حقلُ الكلفة نفسُه** — لا رقمَ يُكتب مرّتين");
-      //  **ولا تُرسَل في التحرير**: تصحيحُ سعرِ ما بِيع بابُه الخاصّ (٢٣٩).
-      check(/if \(isEdit \|\| !isDeviceSpecialty\) return undefined;/.test(exam),
-        "٥٥. **ولا تُرسَل في التحرير ولا للعلاج الطبيعي**");
+      //  ① نافذةُ الطبيب صارت طبّيةً محضة — **لا أثرَ فيها لأيّ مفهومٍ
+      //  تجاريّ إطلاقاً**، لا الأسماءُ القديمة (`priceKind`، `expertUserId`،
+      //  `deviceCost`، …) ولا مفرداتُها العربية («نوع السعر»، «قرار
+      //  المريض»، «مجاني»، …).
+      for (const gone of [
+        "priceKind", "discountFinal", "notBoughtReason", "expertUserId", "deviceCost",
+        "commercialPayload", "confirmPrice", "priceCorrectionReason", "computeCommercialOffer",
+        "MoneyInput", "block-exam-commercial", "radio-price-kind", "radio-purchase-decision",
+        "input-not-bought-reason", "select-exam-expert", "input-exam-device-cost",
+      ]) {
+        check(!exam.includes(gone),
+          `٥١. **ولا أثرَ لـ\`${gone}\`** في نموذج المعاينة`, gone);
+      }
+      for (const gone of ["نوع السعر", "قرار المريض", "تفاصيل البيع", "الخبير المقترح", "مجاني"]) {
+        check(!exam.includes(gone),
+          `٥١أ. **ولا عبارةَ «${gone}»** في نموذج المعاينة`, gone);
+      }
+      //  ② وما بقي حصراً: الاختصاص · الوصفةُ السريرية · الحقولُ السرديّة.
+      check(exam.includes("select-exam-specialty") && exam.includes("<PrescriptionFields")
+        && exam.includes("EXAM_FIELDS.map"),
+        "٥١ب. **والذي بقي سريريٌّ محضٌ**: الاختصاص والوصفةُ والحقولُ السرديّة");
+      check(/body: JSON\.stringify\(\{\s*caseType: specialty,\s*\.\.\.form,\s*prescription: rx,\s*\}\)/
+        .test(exam),
+        "٥١ج. **وجسمُ الحفظ ثلاثةُ حقولٍ سريرية لا أكثر**",
+        (exam.match(/body: JSON\.stringify\(\{[\s\S]{0,150}/) ?? [""])[0]);
 
-      //  ② بطاقةُ المريض: ثلاثةُ سطورٍ وثلاثةُ أزرار، والأقفالُ من الخادم.
+      //  ③ ونقطةُ التفاصيل التجارية (بطاقةُ المريض) كما كانت — لم تُمَسّ.
       check(card.includes("block-commercial-completion")
         && card.includes("field-commercial-${key}")
         && /\["price", "السعر",/.test(card)

@@ -113,6 +113,29 @@ async function mkExam(patientId: number, caseId: number, deviceCost: number | nu
     [patientId, caseId, DOCTOR, deviceCost, episodeId]);
   return r[0].id;
 }
+/**
+ * توقيعُ الطبيب لم يعد يقبل `deviceCost` (القسمُ 4.b/4.f في CLAUDE.md).
+ * فحين يحتاج سيناريو **يمرّ بالنقطة الحقيقية** (لا `mkExam` الخام) إلى
+ * سعرٍ على المعاينة الموقّعة، يُكتب بعدها بالباب المراقَب — نفسُ ما
+ * توثّقه CLAUDE.md حرفياً — ثمّ يُثبَّت على المتابعة أيضاً بمصدرها
+ * الأصليّ (`price_source='exam'`) لمطابقة ما كانت `ensureFollowupForSignedExam`
+ * تكتبه معاً في الصفَّين وقت التوقيع.
+ */
+async function sealedDeviceCostWrite(examId: number, deviceCost: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+    await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+      [examId, deviceCost]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 async function epRow(id: number) {
   const [r] = await q(`SELECT id, status, agreed_cost, delivered_at FROM patient_device_episodes WHERE id=$1`, [id]);
   return r ?? null;
@@ -220,12 +243,17 @@ async function main() {
 
     // ٢. الطبيب يوقّع معاينة الجهاز الجديد.
     const exam = await http("POST", `/api/medical/patients/${P}/exams`, S.doctor, {
-      caseType: "prosthetic", diagnosis: "بتر تحت الركبة", deviceCost: 1_500_000,
+      caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
       prescription: { prostheticType: "تحت الركبة" },
     });
     same("٢. المعاينة وُقّعت", exam.status, 200);
     same("   ومرتبطة بالجهاز الجديد", exam.body?.deviceEpisodeId, dev2);
     same("   والحلقة صارت «مُعايَنة»", (await epRow(dev2))?.status, "examined");
+    //  السعرُ لم يعد يصل التوقيعَ — يُثبَّت هنا على الصفَّين معاً كي يبقى
+    //  سيناريو «البيع يمرّ بمتابعة ما بعد المعاينة» أدناه كما كان بالضبط.
+    await sealedDeviceCostWrite(exam.body.id, 1_500_000);
+    await q(`UPDATE post_exam_followups SET approved_price=1500000
+               WHERE medical_exam_id=$1`, [exam.body.id]);
 
     // ٣. البيع يمرّ بمتابعة ما بعد المعاينة (ترحيل ٠٥٣).
     //

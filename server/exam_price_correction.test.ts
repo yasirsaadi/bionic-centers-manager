@@ -116,15 +116,54 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
      VALUES ($1,$2,$3,0,'manual','active') RETURNING id`, [patientId, branchId, caseType]);
   return r[0].id;
 }
+/**
+ * يكتب `device_cost` مباشرةً على معاينةٍ موقّعة — الترِكرُ (٠٢٨) يرفض أيّ
+ * `UPDATE` على `medical_exams` لم يفتح البابَ المراقَب صراحةً، فيُفتح هنا
+ * تماماً كما توثّق CLAUDE.md — `BEGIN` + `SET LOCAL app.allow_exam_edit`
+ * على معاملةٍ واحدة على نفس الاتصال.
+ */
+async function sealedDeviceCostWrite(examId: number, deviceCost: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+    await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+      [examId, deviceCost]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * ══ **السعرُ الابتدائيُّ صار خطوةً منفصلة عن التوقيع** ═══════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md) — والملفُّ هذا يختبر **تصحيحَ** السعر لا نشأتَه.
+ * فيُثبَّت السعرُ الابتدائيُّ هنا بلقطةٍ مباشرة على الصفَّين اللذين كانت
+ * `ensureFollowupForSignedExam` تكتبهما معاً وقت التوقيع بالضبط
+ * (`medical_exams.device_cost` و`post_exam_followups.approved_price` مع
+ * `price_source='exam'` الذي لم يتغيّر) — بلا المرور بمسار `PATCH`
+ * وتصنيفِه، وهو نفسُه موضوعُ الاختبار لاحقاً ولا يجوز أن يتداخل مع تثبيت
+ * السعر الأوّل.
+ */
 async function signExam(patientId: number, session: any, opts: {
   caseType?: string; deviceCost?: number;
 } = {}) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+  const ex = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
     caseType: opts.caseType ?? "prosthetic",
     diagnosis: "بتر تحت الركبة",
-    deviceCost: opts.deviceCost ?? 1_500_000,
     prescription: {},
   });
+  const price = opts.deviceCost ?? 1_500_000;
+  if (ex.status < 300 && ex.body?.id) {
+    await sealedDeviceCostWrite(ex.body.id, price);
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [ex.body.id, price]);
+  }
+  return ex;
 }
 async function followupsOf(patientId: number, session: any = S.admin) {
   const r = await http("GET", `/api/followups/patient/${patientId}`, session);
@@ -647,26 +686,49 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  ل) **عقدُ الشاشة** — بلا قاعدة بيانات: ما يقوله الملفُّ المصدريّ.
     // ══════════════════════════════════════════════════════════════════
+    //  ══ **تعديلٌ جوهريّ (مرحلةُ «معاينةٌ طبّيةٌ محضة»)** ═══════════════════
+    //  كانت هذه النافذةُ تحمل نافذةَ «تصحيح سعر بعد البيع» كاملةً — قفلَها
+    //  وتحذيرَها وحقلَ سببها. **وقد أُزيلت بالكامل** (القسم 4.b/4.f في
+    //  CLAUDE.md، ضمن إزالة كلّ مسؤوليةٍ تجارية عن الطبيب): لا حقلَ سعرٍ في
+    //  نموذج المعاينة إطلاقاً بعد اليوم، فلا معنى لِـ«تصحيحه» من هناك.
+    //
+    //  **والآليةُ الخادميةُ التي تختبرها الأقسامُ أ–ك أعلاه لم تُمَسّ** —
+    //  هي «المسارُ القانونيُّ الآمن» الذي تحتفظ به CLAUDE.md صراحةً لمرحلة
+    //  الاستعلامات القادمة (`PATCH /api/medical/exams/:id` ما زال يقبل
+    //  `deviceCost`/`priceCorrectionReason` صراحةً حين يُرسَلان، ومنطقُ
+    //  `classifyExamPriceChange`/`applyExamPriceCorrectionAfterSale` كما هو
+    //  بالضبط) — وهذا القسمُ وحده، الذي كان يفحص واجهةً حذفتها هذه المرحلة،
+    //  صار يفحص **غيابها**.
     console.log("\n── ل) عقد الشاشة ──");
     {
       const src = readFileSync("client/src/components/medical/NewExamDialog.tsx", "utf8");
       const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-      check(!/soldAlready\s*\?\s*\{\s*why/.test(code),
-        "٦١. **القفلُ العامُّ بالبيع أُزيل** — لا `soldAlready ⟶ priceLock`", "");
-      check(/discountPending\s*\?\s*\{/.test(code),
-        "٦٢. **والقفلُ باقٍ للمانع الحقيقيّ وحده** (طلبٌ معلَّق)", "");
-      check(code.includes("تم البيع وبدأت إجراءات التصنيع. تصحيح هذا السعر سيحدّث كلفة الجهاز"),
-        "٦٣. **وتحذيرُ ما بعد البيع مكتوبٌ بنصّه**", "");
-      check(code.includes("السعر التجاري الحالي ناتج عن قرار مستقل"),
-        "٦٤. **وعبارةُ القرار التجاري كذلك** — لا حقلٌ فعّالٌ يُخفي أثرَه", "");
-      check(code.includes("تصحيح سعر بعد البيع"),
-        "٦٥. **ونافذةُ التأكيد بعنوانها**", "");
-      check(code.includes("سبب التصحيح *") && code.includes("خطأ في إدخال السعر أثناء المعاينة"),
-        "٦٦. **والسببُ إلزاميٌّ بحقله ومثاله**", "");
-      check(code.includes("priceCorrectionReason"),
-        "٦٧. **ويُرسَل بحقلٍ مخصَّص**", "");
+      for (const gone of [
+        "priceLock", "priceWarning", "soldAlready", "discountPending", "confirmPrice",
+        "priceCorrectionReason", "afterSaleCorrection", "activeFollowup", "followupRows",
+      ]) {
+        check(!code.includes(gone),
+          `٦١. **ولا أثرَ لـ\`${gone}\`** — لا قفلَ سعرٍ ولا تصحيحَ بعد بيعٍ في النافذة`, gone);
+      }
+      for (const gone of [
+        "تم البيع وبدأت إجراءات التصنيع", "السعر التجاري الحالي ناتج عن قرار مستقل",
+        "تصحيح سعر بعد البيع", "سبب التصحيح",
+      ]) {
+        check(!code.includes(gone),
+          `٦٢. **ولا عبارةَ «${gone}»** — نافذةُ التصحيح بابُها الآن نقطةُ \`PATCH\` وحدها`,
+          gone);
+      }
+      //  **والبابُ الخادميُّ الذي كانت تنادِيه هذه النافذةُ لم يُغلَق ولم
+      //  يُعَد بناؤه** — يبقى يقبل `deviceCost`/`priceCorrectionReason`
+      //  صراحةً حين يصلانه من أيّ عميلٍ آخر، تماماً كما أثبتته الأقسامُ
+      //  أ–ك أعلاه عبر النقطة الحقيقية مباشرةً.
+      const routes = readFileSync("server/medical/routes.ts", "utf8");
+      check(routes.includes("classifyExamPriceChange") && routes.includes("priceCorrectionReason"),
+        "٦٣. **والمنطقُ الخادميُّ باقٍ بلا إعادة بناء** — جاهزٌ لمرحلةٍ قادمة");
+      //  **وهذا لم يتغيّر**: التوقيعُ نفسُه ما زال يُحدِّث بطاقةَ المريض
+      //  وقائمةَ حلقاته بعد النجاح — لا علاقةَ له بحقل السعر المحذوف.
       check(/device-episodes/.test(code) && /\/api\/followups\/patient\//.test(code),
-        "٦٨. **وبعد النجاح تُحدَّث المتابعةُ والحلقة** — بلا تحديثٍ يدويّ", "");
+        "٦٤. **وبعد النجاح تُحدَّث المتابعةُ والحلقة** — بلا تحديثٍ يدويّ", "");
     }
   } finally {
     server.close();

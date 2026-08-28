@@ -32,10 +32,6 @@ import { canSuperviseReview } from "@shared/medical_review";
 import { cancelledExamIds, isExamCancelled } from "./active_exam";
 import { cancelExam, ExamCancelError } from "./cancel_exam";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
-import {
-  computeCommercialOffer, parsePurchaseDecision, missingLabel,
-  PRICE_KIND_LABELS, PURCHASE_DECISION_LABELS,
-} from "@shared/commercial";
 
 type Req = any;
 
@@ -98,18 +94,16 @@ function clean(value: unknown): string | null {
 }
 
 /**
- * The device price, accepted for أطراف/مساند ONLY.
+ * ══ **مقصورتان على تعديل معاينةٍ موقّعة سلفاً — لا على توقيع معاينةٍ جديدة** ═
  *
- * Physiotherapy is untouched by design: its price is computed per session by
- * reception in «الكلفة والجلسات», so a cost arriving on a physiotherapy exam is
- * dropped rather than honoured — the doctor's form does not offer the field
- * there, and the server must not trust that it didn't.
- */
-/**
- * The doctor's suggested manufacturing expert — أطراف/مساند only, and only if
- * the id really is an active expert reachable from the patient's branch. An
- * unusable suggestion is dropped rather than refused: it is a convenience for
- * reception, never a gate, and a signed clinical record must not fail over it.
+ * الطبيبُ لم يعد يكتب سعراً ولا خبيراً عند التوقيع: `POST .../exams` أدناه
+ * لا يقرأ `deviceCost` ولا `proposedExpertUserId` من الجسم إطلاقاً، مهما
+ * وصل فيه. وما بقي لهاتين الدالّتين مسارٌ إداريٌّ ضيّقٌ واحد على
+ * `PATCH /api/medical/exams/:examId`: تصحيحُ رقمٍ كتبه طبيبٌ **يوماً**، على
+ * معاينةٍ **قديمة** ما زالت تحمله من قبل هذا التبسيط. والمنطقُ الماليُّ
+ * المرتبط بذلك التصحيح (`classifyExamPriceChange` وما بعدها) يبقى كما هو
+ * بالضبط — بلا إعادة بناء — تحسّباً لإعادة استعماله في مرحلة الاستعلامات
+ * القادمة (انظر ملاحظة `deviceCost`/`proposedExpertUserId` في نقطة PATCH).
  */
 async function parseProposedExpert(
   raw: unknown,
@@ -390,65 +384,25 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
-      const deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
-      const proposedExpertUserId = await parseProposedExpert(
-        req.body?.proposedExpertUserId, caseType, patient.branchId,
-      );
       const doctorName = session.userName?.trim() || "طبيب";
 
-      // ══ **التفاصيلُ التجارية — يُدخلها الطبيبُ في معاينته** (المرحلة ٢) ══
-      //  سعرٌ (عاديّ / بخصم / مجّانيّ) · خبيرٌ · قرارُ الشراء. **كلُّها
-      //  اختيارية**: المعاينةُ السريرية تُوقَّع ولو تُركت فارغةً كلُّها.
+      // ══ **بلا مسؤوليةٍ تجارية على الإطلاق** ═══════════════════════════════
+      //  الطبيبُ يشخّص ويصف ويوقّع فقط. لا سعرَ ولا خصمَ ولا نوعَ سعرٍ ولا
+      //  خبيرَ ولا قرارَ شراء يُقرأ من هذا الجسم — ولو وصل فيه (`deviceCost`،
+      //  `proposedExpertUserId`، `commercial`، أو أيّ اسمٍ آخر): يُتجاهَل
+      //  تماماً، لا يُقرأ ولا يُتحقَّق منه ولا يُكتب في أيّ صفّ. فعميلٌ قديم
+      //  ما زال يرسل هذه الحقول لا يُعطَّل (المعاينةُ تُحفَظ سريرياً كما هي)
+      //  ولا يُصدَّق ضمناً (لا أثرَ لِما أرسله).
       //
-      //  **وللأطراف والمساند وحدها**: العلاجُ الطبيعي لا حلقةَ له ولا متابعةَ
-      //  بيع، فالحقولُ تُسقَط من جسم الطلب إسقاطاً — لا تُعرَض ولا تُقبَل.
-      //
-      //  **والتحقّقُ قبل أوّل كتابة**: خصمٌ غيرُ صالح أو خبيرٌ من فرعٍ آخر
-      //  يُردّ **قبل** أن تُوقَّع المعاينة. فلا سجلٌّ سريريٌّ يُختَم ثمّ يُقال
-      //  لصاحبه إن نصفَه سقط.
-      const commercial = isDeviceServiceType(caseType) ? req.body?.commercial : null;
-      //  **وكائنٌ فارغٌ ليس نيّةً**: نافذةٌ ترسل `commercial: {}` حين لم يلمس
-      //  الطبيبُ شيئاً، ومناداةُ البابِ التجاريّ بلا حقلٍ واحد تُنتج ٤٠٠
-      //  يُبتلَع في السجلّ ويُقلق قارئَه بلا سبب.
-      const filled = (v: unknown) => v !== undefined && v !== null && v !== "";
-      const wantsCommercial = Boolean(commercial && typeof commercial === "object"
-        && (filled(commercial.price) || filled(commercial.expertUserId)
-          || filled(commercial.decision)));
-      let precheckedExpert: number | null = null;
-      if (wantsCommercial) {
-        if (commercial.price) {
-          const offer = computeCommercialOffer({
-            kind: commercial.price?.kind,
-            originalPrice: commercial.price?.originalPrice,
-            finalPrice: commercial.price?.finalPrice,
-          });
-          if (!offer.ok) return res.status(400).json({ error: offer.error });
-        }
-        if (commercial.expertUserId !== undefined && commercial.expertUserId !== null
-          && commercial.expertUserId !== "") {
-          const id = Number(commercial.expertUserId);
-          if (!Number.isInteger(id) || id <= 0) {
-            return res.status(400).json({ error: "الخبير غير صالح" });
-          }
-          //  **والفرعُ من صفّ المريض لا من الطلب** — نفسُ تحقّق «تخصيص».
-          const v = patient.branchId === null
-            ? { ok: false, reason: "المريض بلا فرع — لا يمكن إسناد خبير" }
-            : await (await import("../manufacturing/store"))
-              .validateExpertForBranch(id, patient.branchId);
-          if (!v.ok) return res.status(400).json({ error: v.reason });
-          precheckedExpert = id;
-        }
-        const dec = parsePurchaseDecision(commercial.decision);
-        if (commercial.decision !== undefined && commercial.decision !== null
-          && commercial.decision !== "" && dec === null) {
-          return res.status(400).json({ error: "قرار الشراء يجب أن يكون «اشترى» أو «لم يشترِ»" });
-        }
-        if (dec === "not_bought"
-          && !String(commercial.notBoughtReason ?? "").trim()) {
-          return res.status(400).json({ error: "سبب عدم الشراء مطلوب" });
-        }
-      }
-      void precheckedExpert;
+      //  تلك المسؤوليةُ كلُّها من عمل الاستعلامات بعد المعاينة — بطاقةُ
+      //  المريض ونقطةُ `POST /api/followups/:id/commercial`
+      //  (`server/followup/routes.ts`) هي البابُ الوحيد لأيّ تفصيلٍ تجاريّ،
+      //  **ولم تتغيّر بحرف**: أوّلُ حلقةٍ ماليةٍ تفتحها هذه المعاينةُ
+      //  (`ensureFollowupForSignedExam` في `server/followup/store.ts`) تبقى
+      //  تُنشَأ **بلا سعرٍ ولا خبير** — `deviceCost`/`proposedExpertUserId`
+      //  أدناه يُمرَّران `null` صراحةً، فلا فرقَ بين مريضٍ كان الطبيبُ
+      //  ليقترح له سعراً يوماً ومريضٍ آخر، لأن الاقتراحَ لم يعد يصل الخادمَ
+      //  إطلاقاً. راجع القسم 4.f/4.b في CLAUDE.md لتفصيل ذلك النظام القائم.
 
       // ORDER MATTERS. The prescription is applied FIRST, because when the
       // doctor decides a specialty the patient had no case for, applying it is
@@ -466,8 +420,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         doctorId: session.userId,
         doctorName,
         prescription,
-        deviceCost,
-        proposedExpertUserId,
+        deviceCost: null,
+        proposedExpertUserId: null,
         ...body,
       });
 
@@ -497,85 +451,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         console.error("[medical] closing review requests after exam failed:", linkErr);
       }
 
-      // ══ **التفاصيلُ التجارية تُطبَّق بالبابِ القانونيّ الواحد** ═════════
-      //  `setCommercialFields` نفسُها التي يناديها الاستقبال — لا نسخةَ ثانية
-      //  من كتابةِ سعرٍ أو إتمامِ بيع. و`asDoctor` تجعل ما يكتبه الطبيبُ
-      //  مملوكاً له فيُقفَل على غيره.
-      //
-      //  **وبعد ثبوت المعاينة لا داخلها**: إتمامُ البيع مالٌ وأمرُ تصنيع،
-      //  ووضعُه في نقطة الحفظ التي يُبتلَع خطؤها كان سيجعل فشلاً مالياً
-      //  يمرّ صامتاً. فيقع في معاملته هو، ونتيجتُه تُقال في الردّ.
-      let commercialOut: any = null;
-      let commercialError: string | null = null;
-      if (wantsCommercial) {
-        try {
-          const fid = (await store.followupIdsForExams([exam.id]))[exam.id] ?? null;
-          if (fid === null) {
-            commercialError = "لا توجد متابعة بيع لهذه المعاينة — أدخِل التفاصيل من بطاقة المريض";
-          } else {
-            const fstore = await import("../followup/store");
-            const out = await fstore.setCommercialFields({
-              followupId: fid,
-              patch: {
-                price: commercial.price ?? null,
-                expertUserId: commercial.expertUserId,
-                decision: commercial.decision,
-                notBoughtReason: commercial.notBoughtReason,
-                note: clean(commercial.note),
-              },
-              actor: { userId: session.userId, userName: doctorName },
-              session: {
-                userId: session.userId, role: session.role,
-                isAdmin: session.isAdmin,
-                permissions: (req.session as any)?.branchSession?.permissions ?? {},
-              },
-              asDoctor: true,
-              validateExpert: async (id: number, branchId: number | null) => {
-                if (branchId === null) {
-                  return { ok: false, reason: "المريض بلا فرع — لا يمكن إسناد خبير" };
-                }
-                const m = await import("../manufacturing/store");
-                return await m.validateExpertForBranch(id, branchId);
-              },
-              expertLabel: async (id: number) => (await store.userNames([id]))[id] ?? null,
-            });
-            commercialOut = {
-              followupId: fid, converted: out.converted, workOrderId: out.workOrderId,
-              closed: out.closed, missing: out.missing,
-              missingLabel: missingLabel(out.missing),
-              approvedPrice: out.followup.approvedPrice,
-              priceKind: out.followup.priceKind,
-              purchaseDecision: out.followup.purchaseDecision,
-            };
-            await logAudit({
-              entityType: "post_exam_followup", entityId: fid, action: "update",
-              userId: session.userId, userName: doctorName, branchId: exam.branchId,
-              ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-              notes: `تفاصيل البيع من معاينة #${exam.id}`
-                + (out.followup.priceKind
-                  ? ` — ${PRICE_KIND_LABELS[out.followup.priceKind]}`
-                  + ` ${out.followup.approvedPrice.toLocaleString()} د.ع` : "")
-                + (out.followup.purchaseDecision
-                  ? ` — ${PURCHASE_DECISION_LABELS[out.followup.purchaseDecision]}` : "")
-                + (out.converted ? ` — بدأ التصنيع (أمر #${out.workOrderId})` : "")
-                + (out.missing.length > 0 ? ` — بانتظار: ${missingLabel(out.missing)}` : ""),
-            });
-          }
-        } catch (cErr: any) {
-          //  **يُقال ولا يُبتلَع**: المعاينةُ ثبتت، والتفاصيلُ لم تُسجَّل —
-          //  فيعرف الطبيبُ أن عليه إدخالَها من بطاقة المريض.
-          console.error("[medical] applying doctor commercial failed:", cErr);
-          commercialError = cErr?.message || "تعذّر حفظ تفاصيل البيع — أدخِلها من بطاقة المريض";
-        }
-      }
+      // ══ **ولا بابَ تجارياً ثانياً يُفتَح هنا** ═══════════════════════════
+      //  المعاينةُ ثبتت سريرياً تماماً. المتابعةُ التي فتحها التوقيعُ (إن
+      //  فُتحت أصلاً — `ensureFollowupForSignedExam` داخل `store.createExam`،
+      //  بلا تغيير) تبقى **بلا سعرٍ ولا خبير**، بانتظار الاستعلامات من
+      //  بطاقة المريض. لا نداءَ هنا إلى `setCommercialFields` ولا إلى أيّ
+      //  دالّةٍ مالية أخرى — فلا مجالَ لفشلٍ ماليٍّ صامتٍ يُبتلَع، لأن لا
+      //  شيءَ مالياً يقع أصلاً.
 
       // `switchNote` is surfaced, not swallowed: when the superseded case could
       // not be retired (it already carries a work order or tagged payments) the
       // doctor must know both cases are still open.
-      res.json({
-        ...exam, switchNote: applied.switchNote ?? null,
-        commercial: commercialOut, commercialError,
-      });
+      res.json({ ...exam, switchNote: applied.switchNote ?? null });
     } catch (err: any) {
       console.error("[medical] POST exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر حفظ المعاينة" });
@@ -657,10 +544,22 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         req.body?.prescription && typeof req.body.prescription === "object"
           ? (req.body.prescription as Record<string, any>)
           : {};
-      let deviceCost = parseDeviceCost(req.body?.deviceCost, caseType);
-      const proposedExpertUserId = await parseProposedExpert(
-        req.body?.proposedExpertUserId, caseType, exam.branchId,
-      );
+      //  ══ **الغيابُ يعني «لم يُلمَس» لا «امحُه»** ═══════════════════════════
+      //  الشاشةُ الطبّية الجديدة لم تعد ترسل `deviceCost`/`proposedExpertUserId`
+      //  إطلاقاً (القسمُ 4.b/4.f في CLAUDE.md) — فتغيّرت دلالةُ الغياب: لم يعد
+      //  يعني «الطبيبُ محا الرقم» بل «هذه الشاشةُ لا تعرف هذا الحقل». وبلا هذا
+      //  الحرس كان كلُّ تعديلٍ نصّيّ بسيط (تصحيحُ فقرةٍ في التشخيص مثلاً) يمسح
+      //  كلفةَ جهازٍ ومقترَحَ خبيرٍ حقيقيَّين كتبهما طبيبٌ قبل هذا التبسيط —
+      //  بياناتٌ تاريخيةٌ حيّة، لا مسوَّدةٌ تُعاد كتابتُها كلَّ مرّة. فالحقلُ
+      //  الغائبُ يبقى على قيمته الحالية بلا تغيير، والحاضرُ (من أيّ عميلٍ آخر
+      //  ما زال يرسله) يُقرَأ ويُطبَّق كما كان تماماً — والمنطقُ أدناه
+      //  (`classifyExamPriceChange` وما بعدها) لم يُمَسّ بحرف.
+      let deviceCost = req.body?.deviceCost === undefined
+        ? exam.deviceCost
+        : parseDeviceCost(req.body?.deviceCost, caseType);
+      const proposedExpertUserId = req.body?.proposedExpertUserId === undefined
+        ? exam.proposedExpertUserId
+        : await parseProposedExpert(req.body?.proposedExpertUserId, caseType, exam.branchId);
 
       // ══ **تصحيحُ الطبيب لسعره الأصلي** ═══════════════════════════════
       //  الواقعة: كتب ٦,٠٠٠,٠٠٠ ثم صحّحها إلى ٦,٥٠٠,٠٠٠ — ولم يتغيّر سعرُ
