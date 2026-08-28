@@ -16,6 +16,11 @@ import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
 //  متطابقٌ اليوم، لكنّه ينحرف صامتاً إن تغيّرت القاعدةُ القانونية في
 //  `shared/commercial.ts` ولم يتذكّر أحدٌ هذا الملفّ.
 import { canCompleteReceptionSale } from "@shared/commercial";
+//  ══ **«خصومات سابقة»** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═══════════════════
+//  نفسُ المبدأ أعلاه بالضبط: `canApproveServiceDiscount` هي الدالّةُ
+//  القانونية التي تحرس `/api/discounts/:id/decide` فعلياً
+//  (`shared/discount.ts`)، فالأهليّةُ هنا منها لا من قائمة أدوارٍ يدوية.
+import { canApproveServiceDiscount, DISCOUNT_HISTORY_TITLE } from "@shared/discount";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -161,6 +166,25 @@ export function Sidebar() {
   });
   const legacyReviewCount = legacyReviewData?.count ?? 0;
 
+  //  ══ **شارةُ «خصومات سابقة»** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═══════════════
+  //  طابورُ اعتماد الخصومات تقاعد: كلُّ خصمٍ جديد يُطبَّق فوراً في نفس
+  //  معاملة الحفظ (`applyDiscountImmediately`)، فلا صفَّ `pending` جديداً
+  //  يُنشئه عملٌ حيّ بعد اليوم. وما بقي هو بقيّةٌ من قبل التغيير وحدها —
+  //  فالعنصرُ **يختفي كلَّه عند الصفر**، نفسُ نمط الطابور الموروث الآخر
+  //  بالضبط (`hideWhenZero`)، لا شارةٌ باقيةٌ على صفرٍ دائم.
+  const discountHistoryEligible = canApproveServiceDiscount(branchSession as any);
+  const { data: discountHistoryData } = useQuery<{ count: number }>({
+    queryKey: ["/api/discounts/pending", "count"],
+    enabled: discountHistoryEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/discounts/pending/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const discountHistoryCount = discountHistoryData?.count ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -189,9 +213,14 @@ export function Sidebar() {
     //  التي تفتح البابين نفسِهما (`shared/commercial.ts`) — لا قائمةَ
     //  أدوارٍ ثانية تنحرف عنها صامتة لو تغيّرت القاعدةُ لاحقاً.
     { label: DECISION_QUEUE_SIDEBAR_LABEL, icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, eligible: decisionQueueEligible, badge: decisionQueueCount },
-    //  اعتمادُ الخصم لمديرِ الفرع والمخوَّل — والمسؤولُ يرى كلَّ شيء أصلاً.
-    //  والطبيبُ العاديّ لا يراه: الخصمُ قرارٌ ماليٌّ لا سريريّ.
-    { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },
+    //  ══ **«خصومات سابقة»** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — كانت «اعتماد
+    //  الخصومات») ══════════════════════════════════════════════════════
+    //  طابورُ اعتمادٍ حيّ لم يعد له وجود: الخصمُ يُطبَّق فوراً عند الحفظ،
+    //  ولا صفَّ جديداً يراه أحدٌ هنا. `eligible` من الدالّة القانونية نفسِها
+    //  لا قائمةَ أدوارٍ يدوية، و`hideWhenZero` يُسقط العنصرَ كلَّه حين يفرغ
+    //  الطابورُ الموروث — نفسُ نمط «بانتظار الحسم» و«مبالغ سابقة بانتظار
+    //  الإكمال» معاً.
+    { label: DISCOUNT_HISTORY_TITLE, icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, eligible: discountHistoryEligible, badge: discountHistoryCount, hideWhenZero: true },
     { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
@@ -241,11 +270,6 @@ export function Sidebar() {
     if (itemRoles && !branchSession?.isAdmin) {
       const matchesRole = itemRoles.includes(branchSession?.role ?? "");
       const expertBypass = itemRoles.includes("prosthetics_expert") && permissions.canWorkAsExpert;
-      //  والخصمُ كذلك: عَلَمُ `canApproveDiscount` يفتح الشاشةَ لمن دورُه شيءٌ
-      //  آخر — طبيبٌ خُوِّل صراحةً مثلاً. **ولا يُفتَح بالدور وحده لغير
-      //  مديرِ الفرع**، فالطبيبُ العاديّ لا يراها.
-      const discountBypass = item.href === "/discount-approvals"
-        && permissions.canApproveDiscount;
       //  **والمُعادات كذلك**: البوّابةُ في الخادم `canAddPatients` — وهي
       //  ما يعنيه «استقبال» — فمَن يحملها يرى طابورَه ولو كان دورُه شيئاً
       //  آخر. ولا تُفتَح لمن لا يملكها.
@@ -257,7 +281,7 @@ export function Sidebar() {
       //  سجلٍّ سريريّ، ولا تمنح سلطةً ماليّة.
       const noExamReviewBypass = item.href === "/no-exam-review"
         && permissions.canAddPatients;
-      if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
+      if (!matchesRole && !expertBypass && !returnedBypass
         && !noExamReviewBypass) return false;
     }
 

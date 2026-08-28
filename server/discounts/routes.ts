@@ -97,6 +97,17 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
     res.json({ requests: rows });
   });
 
+  // ── عددُ الطابور الموروث — للشريط الجانبيّ ─────────────────────────────
+  //  **قراءةٌ فقط، بلا سرّ ماليّ**: عددُ صفوفٍ لا مبلغٌ، بنفس نطاق الفرع
+  //  ونفسِ أهليّة الحسم التاريخيّ اللذين تفحصهما `/api/discounts` نفسُها.
+  //  هذا بابُ استنزافٍ لطابورٍ متقاعد — لا طابورَ عملٍ جديد.
+  app.get("/api/discounts/pending/count", isAuthenticated, async (req: Req, res) => {
+    const s = getDiscountSession(req);
+    if (!canApproveServiceDiscount(s)) return res.json({ count: 0 });
+    const count = await store.countPendingLegacy(discountBranchScope(req));
+    res.json({ count });
+  });
+
   // ── طلباتُ مريضٍ واحد — شارةُ «خصم بانتظار الاعتماد» في ملفّه ─────────
   //  **قراءةٌ ضمن نطاق الفرع لكلّ من يفتح الملفّ**: الشارةُ معلومةٌ تشغيلية
   //  (الخدمة موقوفة) لا رقمٌ ماليّ يُحجَب.

@@ -16,7 +16,9 @@
 //     حسابٌ فعّال، صفةُ خبير — ولا رقمَ من العميل يُصدَّق.
 // (٦) **وأولُ سعرٍ عددٌ صحيحٌ موجب**، ولا يُستبدَل سعرٌ قائمٌ برقمٍ مزوَّر.
 // (٧) **وأقلُّ من الأصلي يمرّ ببابِ الخصم**، والمجّانيُّ ببابِ التبرّع —
-//     ولا تصنيعَ قبل الاعتماد، ورايةُ الرغبة تُرفع تلقائياً بلا زرّ.
+//     ويُطبَّقان **فوراً** ويُتمّان البيعَ في النداء نفسه (تصحيحٌ تشغيليّ
+//     ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل)، ورايةُ الرغبة تُرفع تلقائياً
+//     بلا زرّ.
 // (٨) **وأمرُ تصنيعٍ واحد**، والضغطةُ المزدوجة لا تُنتج ثانياً.
 
 import express from "express";
@@ -495,51 +497,67 @@ async function main() {
         2_000_000);
     }
 
-    // ══ ط. **أقلُّ من الأصلي ⟶ بابُ الخصم، والمجّانيُّ ⟶ بابُ التبرّع** ══
+    // ══ ط. **أقلُّ من الأصلي ⟶ يُطبَّق فوراً، والمجّانيُّ كذلك** ══════════
     //  ولا بابَ ثالثاً: النافذةُ تعيد استعمال المسار القائم لا تكرّره.
-    console.log("\n── الخصم والتبرّع من النافذة نفسها ──");
+    //
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
+    //  كان الخصمُ من هذه النافذة يفتح طلباً معلَّقاً بلا تصنيعٍ ولا كلفة،
+    //  ينتظر مديرَ الفرع. اليوم **لا طابورَ يخصّ الخصمَ وحده**: مَن وصل
+    //  هذه النافذةَ اجتاز `canConfirmPurchase` بالفعل — نفسُ بوّابة السعر
+    //  الكامل — فخصمُه يُطبَّق فوراً بحفظٍ واحد يُتمّ البيعَ معه
+    //  (`applyDiscountImmediately`، `npm run test:discount`).
+    console.log("\n── الخصم والتبرّع من النافذة نفسها — يُطبَّقان فوراً ──");
     {
       const { pid, f } = await scenario("خصم", { price: 1_000_000, expert: true });
       const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
         { discount: { finalPrice: 700_000, reason: "negotiation", note: "مساومة" } });
-      same("ط. **أقلُّ من الأصلي ⟶ طلبُ خصمٍ معلَّق**",
-        [r.status, r.body?.pendingApproval, r.body?.discountStatus], [200, true, "pending"]);
-      same("   **ولا تصنيعَ ولا كلفةَ قبل الاعتماد**",
+      same("ط. **أقلُّ من الأصلي ⟶ يُطبَّق فوراً ويكتمل البيع**",
+        [r.status, r.body?.ok, Boolean(r.body?.workOrderId)], [200, true, true]);
+      same("   **وأمرُ تصنيعٍ وُلد فوراً، والكلفةُ حُجزت بالسعر المخفَّض**",
         [(await ordersOf(pid)).length, (await followupOf(pid))?.status,
           Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost)],
-        [0, "awaiting_patient_decision", 0]);
-      //  ══ **ورايةُ «يرغب بالشراء» تُرفع تلقائياً** — بلا زرٍّ ثانٍ ══
+        [1, "converted", 700_000]);
+      //  **وصفُّ الخصم مختومٌ `approved` — لا `pending` أبداً خارج معاملته.**
+      const row = await q<{ status: string; approved_final_price: number }>(
+        `SELECT status, approved_final_price FROM service_discount_requests WHERE patient_id=$1`,
+        [pid]);
+      same("   وسطرُ التدقيق مكتملٌ معتمَداً بالسعر نفسه",
+        [row[0]?.status, Number(row[0]?.approved_final_price)], ["approved", 700_000]);
+      //  ══ ورايةُ «يرغب بالشراء» تُرفع كذلك — واقعةٌ وقعت لا نيّةٌ معلَّقة ══
       const evs = eventTypes(await followupOf(pid));
-      same("ي. **ورايةُ الرغبة تُرفع تلقائياً — بلا زرّ**",
+      same("ي. **ورايةُ الرغبة تُرفع أيضاً — بلا زرّ**",
         evs.filter((t: string) => t === "purchase_interest_signaled").length, 1);
       check(Boolean((await followupOf(pid))?.purchaseInterestAt),
         "   والصفُّ يحملها مقروءةً", JSON.stringify(await followupOf(pid)));
-      //  **وتكرارُها لا يضاعفها** — طلبُ خصمٍ ثانٍ بعد إلغاء الأوّل.
-      await q(`UPDATE service_discount_requests SET status='cancelled'
-               WHERE patient_id = $1 AND status='pending'`, [pid]);
+      //  **وضغطةٌ ثانيةٌ بعد التحويل تُردّ بتعارضٍ صريح** — لا طلبَ خصمٍ
+      //  ثانٍ يُنشأ ولا شيءَ يتضاعف.
       const again = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
         { discount: { finalPrice: 650_000, reason: "negotiation" } });
-      same("   **وطلبٌ ثانٍ لا يضاعف الراية**",
-        [again.status,
+      same("   **وضغطةٌ ثانيةٌ بعد التحويل تُردّ لا تُضاعف شيئاً**",
+        [again.status, (await ordersOf(pid)).length,
           eventTypes(await followupOf(pid))
             .filter((t: string) => t === "purchase_interest_signaled").length],
-        [200, 1]);
+        [409, 1, 1]);
     }
     {
       const { pid, f } = await scenario("تبرّع", { price: 1_000_000, expert: true });
       const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
         { discount: { isFree: true, reason: "humanitarian" } });
-      same("ك. **والمجّانيُّ يمرّ ببابِ التبرّع الصريح**",
-        [r.status, r.body?.pendingApproval, r.body?.discountStatus], [200, true, "pending"]);
-      const row = await q<{ is_free: boolean; proposed_final_price: number }>(
-        `SELECT is_free, proposed_final_price FROM service_discount_requests
+      same("ك. **والمجّانيُّ يمرّ ببابِ التبرّع الصريح ويكتمل فوراً**",
+        [r.status, r.body?.ok, Boolean(r.body?.workOrderId)], [200, true, true]);
+      const row = await q<{ status: string; is_free: boolean; approved_final_price: number }>(
+        `SELECT status, is_free, approved_final_price FROM service_discount_requests
            WHERE patient_id=$1`, [pid]);
-      same("   وصفُّه معلَّمٌ مجّانياً بصفرٍ صريح",
-        [row[0]?.is_free, Number(row[0]?.proposed_final_price)], [true, 0]);
-      same("   **ولا تصنيعَ قبل الاعتماد**", (await ordersOf(pid)).length, 0);
+      same("   وصفُّه معتمَدٌ ومعلَّمٌ مجّانياً بصفرٍ صريح",
+        [row[0]?.status, row[0]?.is_free, Number(row[0]?.approved_final_price)],
+        ["approved", true, 0]);
+      same("   **وأمرُ تصنيعٍ وُلد فوراً بكلفةٍ صفر**",
+        [(await ordersOf(pid)).length,
+          Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost)],
+        [1, 0]);
     }
     //  **والخصمُ في النداء نفسه الذي يحمل أولَ سعرٍ وخبيراً** — الحالةُ (د)
-    //  مع خصم: أشدُّ ما تحمله النافذةُ دفعةً واحدة.
+    //  مع خصم: أشدُّ ما تحمله النافذةُ دفعةً واحدة، ويكتمل معاً بحفظٍ واحد.
     {
       const { pid, f } = await scenario("د-مع-خصم", { price: 0, expert: false });
       const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {
@@ -547,24 +565,39 @@ async function main() {
         discount: { finalPrice: 800_000, reason: "humanitarian" },
       });
       const after = await followupOf(pid);
-      same("ل. **سعرٌ أوّلُ وخبيرٌ وخصمٌ في نداءٍ واحد**",
-        [r.status, r.body?.pendingApproval, after?.approvedPrice, after?.selectedExpertUserId],
-        [200, true, 1_000_000, EXPERT]);
+      //  **والسعرُ النهائيُّ على المتابعة هو المخفَّض** — `setApprovedPriceForDiscount`
+      //  يكتب فوق أوّل سعرٍ بمصدرٍ `approved_change`؛ الأصليُّ (١ مليون)
+      //  يبقى على صفّ الخصم وحده (الفحصُ أدناه)، لا على المتابعة.
+      same("ل. **سعرٌ أوّلُ وخبيرٌ وخصمٌ في نداءٍ واحد — يكتمل فوراً**",
+        [r.status, r.body?.ok, after?.approvedPrice, after?.selectedExpertUserId, after?.status],
+        [200, true, 800_000, EXPERT, "converted"]);
       //  **والخصمُ محسوبٌ على السعر المحفوظ لا على رقمٍ من الطلب.**
-      const row = await q<{ original_price: number }>(
-        `SELECT original_price FROM service_discount_requests WHERE patient_id=$1`, [pid]);
-      same("   **والأصليُّ في الطلب هو المحفوظ لا المُرسَل**",
-        Number(row[0]?.original_price), 1_000_000);
-      same("   ولا تصنيعَ قبل الاعتماد", (await ordersOf(pid)).length, 0);
+      const row = await q<{ original_price: number; status: string }>(
+        `SELECT original_price, status FROM service_discount_requests WHERE patient_id=$1`, [pid]);
+      same("   **والأصليُّ في الطلب هو المحفوظ لا المُرسَل، ومعتمَدٌ فوراً**",
+        [Number(row[0]?.original_price), row[0]?.status], [1_000_000, "approved"]);
+      same("   وأمرُ تصنيعٍ وُلد بالسعر المخفَّض",
+        [(await ordersOf(pid)).length,
+          Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost)],
+        [1, 800_000]);
     }
-    //  **والمحاسبُ يطلب الخصم كذلك ولا يعتمده** — طلبُه يبقى معلَّقاً.
+    //  ══ والمحاسبُ يطبّق خصمَه بنفسه — القاعدةُ انقلبت ═══════════════════
+    //  كان «يطلب الخصم ولا يعتمده» — طبقةُ إذنٍ ثانية لم تعد موجودة. مَن
+    //  يملك تنفيذ العملية بسعرها الكامل (والمحاسبُ منهم، القسم ب أعلاه)
+    //  يملك تنفيذَها بخصمٍ صحيح أيضاً — بلا وسيط.
     {
       const { pid, f } = await scenario("خصم-المحاسب", { price: 900_000, expert: true });
       const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.acct,
         { discount: { finalPrice: 700_000, reason: "negotiation" } });
-      same("م. **والمحاسبُ يرفع طلبَ الخصم — ولا يعتمده بنفسه**",
-        [r.status, r.body?.discountStatus], [200, "pending"]);
-      same("   ولا تصنيعَ", (await ordersOf(pid)).length, 0);
+      same("م. **والمحاسبُ يطبّق خصمَه فوراً كأيّ فاعلٍ آخر — لا يرفعه لأحد**",
+        [r.status, r.body?.ok], [200, true]);
+      same("   وأمرُ تصنيعٍ وُلد بالسعر المخفَّض",
+        [(await ordersOf(pid)).length,
+          Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost)],
+        [1, 700_000]);
+      const row = await q<{ status: string }>(
+        `SELECT status FROM service_discount_requests WHERE patient_id=$1`, [pid]);
+      same("   وسطرُ التدقيق معتمَدٌ لا معلَّق", row[0]?.status, "approved");
     }
 
     // ══ ن. **أمرٌ واحد، والضغطةُ المزدوجة لا تُنتج ثانياً** ══════════════

@@ -64,7 +64,7 @@ import {
 } from "@shared/commercial";
 import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
-import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
+import { discountAuditNote } from "../discounts/routes";
 import { actorRoleSnapshotOf, isDecisionQueueState } from "@shared/decision_queue";
 
 type Req = any;
@@ -1002,7 +1002,26 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== workingFollowup.approvedPrice;
     if (wantsFree || wantsCut) {
       try {
-        const out = await discountStore.submitDiscount({
+        //  ══ ورايةُ «يرغب بالشراء» تُرفع **قبل** التطبيق — لا بعده ══════
+        //  (تصحيحٌ: كانت تُرفَع بعد `applyDiscountImmediately`، فتصطدم
+        //  دائماً بحالة `converted` التي بلغها الملفُّ للتوّ — فلا تُرفَع
+        //  أبداً عملياً. `signalPurchaseInterest` تشترط حالةً «حيّة» ما
+        //  تزال `awaiting_patient_decision`، وهي حالةُ الملفّ الآن بالضبط،
+        //  قبل أن يحوّله التطبيقُ الفوريّ.) البيعُ سيقع فعلاً بعد سطورٍ،
+        //  فالرايةُ توثّق واقعةً حقيقية لا نيّة معلَّقة. idempotent وفشلُها
+        //  لا يُفشل شيئاً — هي ترتيبُ طابورٍ لا مال؛ وضغطةٌ ثانية على ملفٍّ
+        //  تحوّل بالفعل تصطدم بهذا السطر ذاته فتمضي بصمتٍ إلى الحارس
+        //  الحقيقيّ داخل `applyDiscountImmediately` (٤٠٩ بلا نصفِ أثر).
+        try {
+          await store.signalPurchaseInterest({ followupId: f.id, actor: actorOf(req) });
+        } catch (e) {
+          console.error("[followup] purchase-interest signal failed:", e);
+        }
+        //  **التطبيقُ فوريّ دائماً** — `canConfirmPurchase` فُحصت في رأس
+        //  المعالج بالفعل (نفسُ بوّابة إتمام البيع كاملِ السعر تماماً)،
+        //  فلا فحصَ ثانياً هنا. وهذا البابُ لصفوفٍ موروثةٍ فقط أصلاً
+        //  (`retiredOnExamPath` يردّ مسارَ المعاينة قبل أن يصل الطلبُ هنا).
+        const out = await discountStore.applyDiscountImmediately({
           patientId: f.patientId, department: f.serviceType as any,
           branchId: f.branchId, contextRef: followupDiscountRef(f.id),
           originalPrice: workingFollowup.approvedPrice,
@@ -1017,45 +1036,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
             followupId: f.id, expertUserId: workingFollowup.selectedExpertUserId,
           },
           actor: actorOf(req),
-          actorMayApprove: mayApproveDiscountHere(req, f.branchId),
-          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا يُعتمد
-          //  خصمٌ ويتحرّك مالٌ بإذنٍ لا أثرَ له.
+          //  **سطرُ التدقيق داخل المعاملة** — فلا يتحرّك مالٌ بإذنٍ لا أثرَ له.
           audit: {
             ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-            note: (row) => discountAuditNote(row, "طلب واعتماد"),
+            note: (row) => discountAuditNote(row, "تطبيقٌ فوريّ"),
           },
         });
-        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك، فسطرُه أفضلُ جهدٍ
-        //  كبقيّة النظام — ولا يستطيع أن يُفشل ما نجح.
-        if (out.status === "pending") {
-          await logAudit({
-            entityType: "service_discount", entityId: out.request.id,
-            action: "create",
-            userId: s.userId, userName: s.userName, branchId: f.branchId,
-            newValues: {
-              patientId: f.patientId, followupId: f.id,
-              department: f.serviceType, status: out.request.status,
-            },
-            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-            notes: discountAuditNote(out.request, "طلب"),
-          });
-        }
-        //  ══ ورايةُ «يرغب بالشراء» تُرفع تلقائياً — **بلا زرٍّ ثانٍ** ══
-        //  مَن طلب خصماً لمريضٍ فقد أعلن أن المريض يريد الشراء. فبدل أن
-        //  يُطلَب من الموظّف أن يضغط زرّاً إضافياً ليقول ما قاله فعله،
-        //  تُرفع الرايةُ هنا — **idempotent** (الثانيةُ لا تُنشئ حدثاً ولا
-        //  تغيّر صاحبَها)، و**فشلُها لا يُفشل شيئاً**: هي ترتيبُ طابورٍ
-        //  لا مال.
-        if (out.status === "pending") {
-          try {
-            await store.signalPurchaseInterest({ followupId: f.id, actor: actorOf(req) });
-          } catch (e) {
-            console.error("[followup] purchase-interest signal failed:", e);
-          }
-        }
         return res.json({
-          ok: true, pendingApproval: out.status === "pending",
-          discountRequestId: out.request.id, discountStatus: out.request.status,
+          ok: true,
+          discountRequestId: out.request.id,
           workOrderId: out.applied?.workOrderId ?? null,
           followup: out.applied?.followup ?? workingFollowup,
         });

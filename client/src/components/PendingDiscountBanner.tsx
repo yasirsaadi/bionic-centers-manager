@@ -1,17 +1,19 @@
-// شريطُ «خصم بانتظار الاعتماد» في ملفّ المريض.
+// شريطُ «خصمٌ سابقٌ لم يُكمَل» في ملفّ المريض.
 //
-// ══ لماذا يظهر في الملفّ لا في الطابور وحده ═════════════════════════════
-// الموظّف الذي أرسل الطلب يفتح ملفَّ المريض بعد يومين فيراه بلا كلفةٍ وبلا
-// أمر تصنيع، فيظنّ أن حفظَه ضاع فيعيد الإدخال — أو يتّصل بالمريض ليعتذر.
-// والسطرُ هنا يقول له **لماذا الملفُّ ساكن**: الخدمةُ موقوفةٌ بانتظار قرار،
-// ومَن طلبها ومتى.
+// ══ تاريخٌ لا عملٌ حيّ (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═════════════════════
+// طابورُ اعتماد الخصومات **تقاعد**: كلُّ خصمٍ يُدخله موظّفٌ مخوَّلٌ اليوم
+// يُطبَّق فوراً في نفس معاملة الحفظ (`applyDiscountImmediately`) ولا يُترك
+// صفّاً معلَّقاً يراه أحدٌ خارج تلك المعاملة أبداً — فصفٌّ بحالة `pending`
+// يُقرأ هنا **لا يمكن أن يكون من عمليةٍ جديدة**، هو بالضرورة بقيّةٌ من
+// قبل هذا التغيير.
 //
-// **ولا يعرض شيئاً لم يقع**: يظهر للمعلَّق وحده، ويختفي بمجرّد الحسم —
-// فالمعتمَدُ صار كلفةً حقيقيةً تُقرأ في مكانها من الملفّ.
+// ولذلك بقي هذا الشريط: مَن يفتح ملفَّ مريضٍ قديم قد يجد طلبَ خصمٍ من تلك
+// الحقبة لم يُحسَم بعد، فيقول له السطرُ **لماذا الملفُّ ساكن** ويوجّهه إلى
+// «خصومات سابقة» لإكماله — لا يعرض شيئاً عن عمليةٍ يُدخلها اليوم.
 
 import { useQuery } from "@tanstack/react-query";
 import { BadgePercent, HeartHandshake } from "lucide-react";
-import { discountReasonLabel, FREE_DONATION_LABEL } from "@shared/discount";
+import { discountReasonLabel, DISCOUNT_HISTORY_TITLE, FREE_DONATION_LABEL } from "@shared/discount";
 import { PriceTransition } from "@/components/PriceTransition";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
@@ -50,7 +52,7 @@ export function PendingDiscountBanner({ patientId }: { patientId: number }) {
           data-testid={`pending-discount-${r.id}`}>
           <div className="flex items-center gap-2 font-bold">
             {r.isFree ? <HeartHandshake className="w-4 h-4" /> : <BadgePercent className="w-4 h-4" />}
-            {r.isFree ? "خدمة مجّانية بانتظار الاعتماد" : "خصم بانتظار الاعتماد"}
+            {r.isFree ? "طلبُ خدمةٍ مجّانية سابقٌ لم يُكمَل" : "طلبُ خصمٍ سابقٌ لم يُكمَل"}
             <span className="font-normal text-xs">
               — {DEPARTMENT_LABELS[r.department as keyof typeof DEPARTMENT_LABELS] ?? r.department}
             </span>
@@ -70,8 +72,8 @@ export function PendingDiscountBanner({ patientId }: { patientId: number }) {
           {r.note && <p className="mt-1 text-xs" dir="auto" style={{ unicodeBidi: "plaintext" }}>{r.note}</p>}
           <p className="mt-1 text-xs">
             طلبها {r.requestedByName ?? "—"} · {fmt(r.requestedAt)} —
-            <b> لم تُسجَّل كلفة ولم تبدأ الخدمة</b>؛ تُنفَّذ فور اعتماد المسؤول أو مدير الفرع
-            من صفحة «اعتماد الخصومات».
+            <b> لم تُسجَّل كلفة ولم تبدأ الخدمة</b>؛ من فترةٍ سابقة على التطبيق
+            الفوريّ، أكمِله من «{DISCOUNT_HISTORY_TITLE}».
           </p>
         </div>
       ))}

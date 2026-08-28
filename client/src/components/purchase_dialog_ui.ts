@@ -95,11 +95,13 @@ export function purchaseBody(params: {
   };
 }
 
-/** نصُّ الزرّ — «إرسال للاعتماد» حين يوجد خصم، وإلّا «تأكيد وبدء التصنيع». */
+/**
+ * نصُّ الزرّ — **واحدٌ بلا خصم أو معه** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨):
+ * الخصمُ يُطبَّق فوراً كالسعر الكامل تماماً، فلا فرقَ يعرضه الزرّ.
+ */
 export function purchaseSubmitLabel(params: {
   followup: PurchaseFollowupLike | null | undefined;
   firstPrice: number; discount: DiscountDraft;
 }): string {
-  const original = purchaseOriginalPrice(params.followup, params.firstPrice);
-  return hasDiscount(params.discount, original) ? "إرسال للاعتماد" : "تأكيد وبدء التصنيع";
+  return "تأكيد وبدء التصنيع";
 }

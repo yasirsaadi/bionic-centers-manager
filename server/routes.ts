@@ -28,7 +28,7 @@ import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
-import { registerDiscountRoutes, mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "./discounts/routes";
+import { registerDiscountRoutes, discountAuditNote } from "./discounts/routes";
 import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
@@ -2607,7 +2607,10 @@ export async function registerRoutes(
           });
         }
         try {
-          const out = await discountStore.submitDiscount({
+          //  **التطبيقُ فوريّ دائماً** (قرارُ المالك ٢٠٢٦-٠٨-٢٨) — لا طابورَ
+          //  اعتمادٍ للخصم بعد اليوم: مَن وصل هنا اجتاز `canAccess` أعلاه
+          //  بالفعل، وهي نفسُ بوّابة السعر الكامل تماماً — فلا فحصَ ثانياً.
+          const out = await discountStore.applyDiscountImmediately({
             patientId, department: "physiotherapy", branchId: patient.branchId,
             //  **مرجعٌ من رمز الإرسالة**: ضغطةٌ واحدة = طلبٌ واحد.
             contextRef: newServiceDiscountRef(submissionToken, serviceType),
@@ -2616,7 +2619,7 @@ export async function registerRoutes(
             isFree: wantsFree,
             reason: String(dsc?.reason ?? ""),
             note: typeof dsc?.note === "string" && dsc.note.trim() ? dsc.note.trim() : null,
-            //  **ولا سعرَ في الحمولة**: المعتمَدُ على الصفّ هو المصدر.
+            //  **ولا سعرَ في الحمولة**: المطبَّقُ على الصفّ هو المصدر.
             payload: {
               kind: "new_service", serviceType,
               entries: validEntries.map((e) => ({
@@ -2625,22 +2628,24 @@ export async function registerRoutes(
               serviceNotes: notes ?? null,
               paymentTreatmentType: paymentTreatmentType ?? null,
               sessionCount: sessionCount ?? null,
+              //  **حقيقةُ الدفع لا السعرُ المتَّفق عليه**: نفسُ الحقل الذي
+              //  يرسله المسارُ كاملُ السعر أدناه — لا افتراضَ أن الخصمَ يعني
+              //  قبضاً كاملاً. (لا أثرَ له فعلياً هنا: هذه إرسالةٌ فيزيويّة
+              //  ببنودٍ دائماً، والبنودُ تُحصَّل بحصّتها المخصَّصة كما كانت.)
+              initialPayment: req.body?.initialPayment ?? null,
             },
             actor: {
               userId: branchSession?.userId ?? null,
               userName: branchSession?.displayName ?? null,
             },
-            actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
             audit: {
               ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-              note: (row) => discountAuditNote(row, "طلب واعتماد"),
+              note: (row) => discountAuditNote(row, "تطبيقٌ فوريّ"),
             },
           });
           return res.status(201).json({
             success: true,
-            pendingApproval: out.status === "pending",
             discountRequestId: out.request.id,
-            discountStatus: out.request.status,
             newTotalCost: out.applied?.newTotalCost ?? patient.totalCost ?? 0,
             openedPhysiotherapyCase: out.applied?.openedPhysiotherapyCase ?? false,
           });
@@ -2743,7 +2748,9 @@ export async function registerRoutes(
         && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== totalCost;
       if (wantsFree || wantsCut) {
         try {
-          const out = await discountStore.submitDiscount({
+          //  **التطبيقُ فوريّ دائماً** — `canAccess` أعلاه (نفسُ بوّابة
+          //  الحفظ بلا خصم) فحصت الإذنَ بالفعل، فلا فحصَ ثانياً هنا.
+          const out = await discountStore.applyDiscountImmediately({
             patientId, department: "physiotherapy", branchId: patient.branchId,
             contextRef: null,
             originalPrice: totalCost,
@@ -2752,30 +2759,17 @@ export async function registerRoutes(
             reason: String(dsc?.reason ?? ""), note: strOrNull(dsc?.note),
             payload: { entries },
             actor: { userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null },
-            actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
-            //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا كلفةٌ
-            //  تُقيَّد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+            //  **سطرُ التدقيق يُكتب داخل المعاملة** — فلا كلفةٌ تُقيَّد
+            //  بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
             audit: {
               ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-              note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+              note: (row: any) => discountAuditNote(row, "تطبيقٌ فوريّ"),
             },
           });
-          //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
-          if (out.status === "pending") {
-            await logAudit({
-              entityType: "service_discount", entityId: out.request.id,
-              action: "create",
-              userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-              branchId: patient.branchId, ipAddress: req.ip ?? null,
-              userAgent: req.get("user-agent") ?? null,
-              newValues: { patientId, department: "physiotherapy", status: out.request.status },
-              notes: discountAuditNote(out.request, "طلب"),
-            });
-          }
           return res.json({
-            ok: true, pendingApproval: out.status === "pending",
-            discountRequestId: out.request.id, discountStatus: out.request.status,
-            totalCost: out.status === "approved" ? (out.request.approvedFinalPrice ?? 0) : 0,
+            ok: true,
+            discountRequestId: out.request.id,
+            totalCost: out.request.approvedFinalPrice ?? 0,
             patient: out.applied?.patient ?? null,
           });
         } catch (e: any) {

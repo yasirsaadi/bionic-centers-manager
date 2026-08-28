@@ -219,10 +219,10 @@ console.log("\n── حالة الشراء ──");
 same("٣٨. **قبل الإتمام**",
   PURCHASE_STATE_TEXT[purchasePresentation({ status: "awaiting_patient_decision" })],
   "المريض وافق على الشراء — بانتظار إتمام إجراءات البيع");
-same("٣٩. **وخصمٌ معلَّق**",
+same("٣٩. **وخصمٌ سابقٌ لم يُكمَل** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — لا «اعتماد»)",
   PURCHASE_STATE_TEXT[purchasePresentation({
     status: "awaiting_patient_decision", hasPendingDiscount: true })],
-  "المريض وافق على الشراء — بانتظار اعتماد الخصم");
+  "المريض وافق على الشراء — خصمٌ سابقٌ بانتظار الإكمال");
 same("٤٠. **وبعد التحويل: «تم الشراء — بدأ التصنيع»**",
   PURCHASE_STATE_TEXT[purchasePresentation({ status: "converted" })],
   "تم الشراء — بدأ التصنيع");

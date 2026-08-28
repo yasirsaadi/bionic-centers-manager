@@ -60,9 +60,15 @@ check(/\.\.\.\(wantsDiscount \? \{ discount: discountPayload\(discount\) \} : \{
   "   والحمولةُ تُبنى بالدالّة المشتركة لا بيدٍ محلّية");
 check(/discountBlocked\(discount, standardPrice\)/.test(NEW_SERVICE),
   "٤. والإرسالُ يُمنع قبل اكتمال بيانات الخصم — نفسُ قواعد الخادم");
-check(/res\?\.pendingApproval/.test(NEW_SERVICE)
-  && /أُرسل الطلب للاعتماد/.test(NEW_SERVICE),
-"٥. **والمعلَّقُ يُقال صراحةً**: لا «تمت» على خدمةٍ لم تقع بعد");
+//  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
+//  كان هذا الفحصُ يثبت أن النافذةَ تقول «أُرسل الطلب للاعتماد» عن خدمةٍ
+//  خصمُها معلَّق. اليوم لا طلبَ ولا انتظار: الخصمُ يُطبَّق فوراً كالسعر
+//  الكامل، فالفحصُ صار عكسَه — **غيابُ** لغة الانتظار.
+check(!/res\?\.pendingApproval/.test(NEW_SERVICE)
+  && !/أُرسل الطلب للاعتماد/.test(NEW_SERVICE),
+"٥. **ولا لغةَ انتظارٍ بعد اليوم**: لا رايةَ `pendingApproval` تُقرأ ولا عبارةَ «أُرسل الطلب للاعتماد» باقية");
+check(/يُطبَّق فوراً كالسعر الكامل تماماً/.test(NEW_SERVICE),
+  "   **والنجاحُ واحدٌ لا يتفرّع**: الخدمةُ وقعت فعلاً بحلول الردّ، خصماً كانت أو بسعرها الكامل");
 //  والصفرُ وحده ليس تبرّعاً — لا وعدَ في النصّ بأنه مقبول.
 check(!/صفر أو أي مبلغ/.test(NEW_SERVICE),
   "٦. ولا عبارةَ تَعِد بأن الصفر وحده مقبول");
@@ -88,13 +94,17 @@ for (const [re, msg] of [
   [/\{r\.note\}/, "   وملاحظتُه"],
   [/\{r\.branchName\}/, "   والفرع"],
 ] as [RegExp, string][]) check(re.test(APPROVALS), msg);
-check(/<Check className="w-4 h-4" \/> اعتماد/.test(APPROVALS),
-  "١٠. **والاعتمادُ فعلٌ أوّليّ بضغطةٍ واحدة**");
-const approveAt = APPROVALS.indexOf("اعتماد\n");
-const rejectAt = APPROVALS.indexOf("<X className=\"w-4 h-4\" /> رفض");
-const modifyAt = APPROVALS.indexOf("تعديل واعتماد", rejectAt);
+//  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — «خصومات سابقة» لا «اعتماد الخصومات» ═════
+//  هذا الصفُّ **موروثٌ**: طابورُ الاعتماد الحيّ تقاعد، فالبطاقةُ تُكمل
+//  بقيّةً من قبل التغيير — والأزرارُ تقوله («إكمال»/«إلغاء» لا «اعتماد»/
+//  «رفض»).
+check(/<Check className="w-4 h-4" \/> إكمال وتطبيق السعر/.test(APPROVALS),
+  "١٠. **والإكمالُ فعلٌ أوّليّ بضغطةٍ واحدة**");
+const approveAt = APPROVALS.indexOf("إكمال وتطبيق السعر\n");
+const rejectAt = APPROVALS.indexOf("<X className=\"w-4 h-4\" /> إلغاء الطلب");
+const modifyAt = APPROVALS.indexOf("تعديل وإكمال", rejectAt);
 check(approveAt > 0 && rejectAt > approveAt && modifyAt > rejectAt,
-  "   والرفضُ بعده، و«تعديل واعتماد» **ثانويٌّ خلفهما**",
+  "   والإلغاءُ بعده، و«تعديل وإكمال» **ثانويٌّ خلفهما**",
   `approve=${approveAt} reject=${rejectAt} modify=${modifyAt}`);
 check(/variant="ghost" disabled=\{decide\.isPending\}\s*\n\s*className="gap-1 text-muted-foreground"\s*\n\s*data-testid=\{`modify-/.test(APPROVALS),
   "   وشكلُه ثانويّ فعلاً (ghost) لا أساسيّ");

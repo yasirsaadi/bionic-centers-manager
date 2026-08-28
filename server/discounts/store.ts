@@ -152,6 +152,15 @@ export interface DiscountPayload {
   serviceNotes?: string | null;
   paymentTreatmentType?: string | null;
   sessionCount?: number | null;
+  /**
+   * «خدمة جديدة» **بلا بنود** (استشارة/خدمة أخرى) — ما دفعه المريضُ فعلاً
+   * الآن، لا افتراضَ أن الخصمَ يعني تحصيلَ كامل السعر المتَّفق عليه. غائبٌ
+   * أو صفرٌ يعني «لم يُحصَّل شيءٌ الآن» — الفرقُ يبقى ديناً على المريض،
+   * لا مالاً ملفَّقاً في الوارد. **والبنودُ (الجلساتُ الإضافية) تتجاهل هذا
+   * الحقلَ تماماً** — دفعتُها بمقدار الحصّة المخصَّصة لكلّ بندٍ، كما كانت
+   * حرفياً قبل هذه المرحلة.
+   */
+  initialPayment?: number | null;
 }
 
 //  مفاتيحُ المواصفات المسموحة — نفسُ قائمتَي «تخصيص»، فلا تدخل الحمولةُ
@@ -188,6 +197,10 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
       ? raw.paymentTreatmentType.trim().slice(0, 200) : null;
     const n = Number(raw?.sessionCount);
     out.sessionCount = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    //  **حقيقةُ الدفع الحاليّة — لا افتراضَ تحصيلٍ كامل**: غيابُها أو صفرٌ
+    //  يعني «لم يُدفَع الآن»، لا «دُفع كاملَ السعر المتَّفق عليه».
+    const ip = Number(raw?.initialPayment);
+    out.initialPayment = Number.isFinite(ip) && ip > 0 ? Math.round(ip) : null;
     return out;
   }
   if (dept === "physiotherapy") {
@@ -244,100 +257,6 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
   return out;
 }
 
-// ── الطلب ────────────────────────────────────────────────────────────────
-
-/**
- * تسجيلُ طلبِ خصمٍ أو تبرّع — **بلا أثرٍ ماليٍّ إطلاقاً**.
- *
- * لا كلفةَ مريض ولا كلفةَ حالة ولا قيدَ دفتر ولا دفعةَ ولا أمرَ تصنيع ولا
- * جلساتٍ مشتراة. الصفُّ هنا **طلبُ إذن** يبقى إلى أن يُحسَم.
- *
- * ولا يُنادى إلّا حين يوجد خصمٌ فعلاً: مساواةُ النهائيّ للأصليّ ليست خصماً،
- * والمسارُ الطبيعي يمضي في نقطته كما كان بلا مرورٍ من هنا.
- */
-export async function requestDiscount(params: {
-  patientId: number; department: Department; caseId?: number | null;
-  branchId: number | null; contextRef?: string | null;
-  originalPrice: number; finalPrice?: number | null; isFree?: boolean;
-  reason: string; note?: string | null;
-  payload: any; actor: Actor;
-}): Promise<{ request: DiscountRow; calc: ServiceDiscount }> {
-  if (!isDepartment(params.department)) {
-    throw new DiscountError("القسم غير صالح", 400);
-  }
-  const calc = computeServiceDiscount({
-    originalPrice: params.originalPrice,
-    finalPrice: params.finalPrice,
-    isFree: params.isFree,
-  });
-  if (!calc.ok) throw new DiscountError(calc.error ?? "قيمة الخصم غير صالحة", 400);
-  if (!calc.needsApproval) {
-    throw new DiscountError("لا يوجد خصم — أكمل الخدمة بسعرها الطبيعي مباشرة", 400);
-  }
-  //  **سببُ التبرّع يكتبه النظام** لا الموظّف: عبارةٌ واحدة في التقرير.
-  const reason = calc.isFree ? FREE_DONATION_REASON : String(params.reason ?? "");
-  if (!calc.isFree && !isDiscountReason(reason)) {
-    throw new DiscountError("سبب الخصم مطلوب — اختر سبباً من القائمة", 400);
-  }
-  const payload = sanitizePayload(params.department, params.payload);
-
-  // ══ **التسلسلُ مع تصحيح الطبيب لسعره** ═══════════════════════════════
-  //  البابان يحرّكان الرقمَ نفسه من طرفين: الطبيبُ يصحّح الأصلَ، والموظّفُ
-  //  يطلب خصماً **محسوباً على ذلك الأصل**. وبلا نقطةِ تسلسلٍ مشتركة كان
-  //  التداخلُ يُنتج طلباً معلَّقاً أساسُه رقمٌ لم يعد قائماً — يُعتمَد بعدها
-  //  فيُخصَم من سعرٍ خاطئ.
-  //
-  //  فالقفلُ على **صفّ المتابعة** — النقطةُ التي يأخذها التصحيحُ أيضاً:
-  //  مَن ظفر بها أوّلاً مضى، والآخر يقرأ الحالةَ الجديدة فيُردّ.
-  //  والصيانةُ بلا متابعة، فتمضي كما كانت بلا قفلٍ زائد.
-  const followupId = Number(payload?.followupId);
-  const lockedInsert = async (tx: any) => {
-    if (Number.isFinite(followupId) && followupId > 0) {
-      const f = await tx.execute(sql`
-        SELECT approved_price, converted_work_order_id
-          FROM post_exam_followups WHERE id = ${followupId} FOR UPDATE
-      `);
-      const row = (f.rows ?? [])[0] as any;
-      if (!row) throw new DiscountError("المتابعة غير موجودة", 404);
-      if (row.converted_work_order_id !== null) {
-        throw new DiscountError("تم اعتماد البيع بالفعل — حدّث الصفحة", 409);
-      }
-      //  **ولا طلبَ على أساسٍ بائت**: السعرُ الأصلي المحسوب عليه الخصم يجب
-      //  أن يكون هو المكتوب على الصفّ الآن، بعد القفل لا قبله.
-      const live = Number(row.approved_price ?? 0);
-      if (live !== calc.originalPrice) {
-        throw new DiscountError(
-          `تغيّر السعر الأصلي إلى ${live.toLocaleString("en-US")} د.ع أثناء الطلب`
-          + " — حدّث الصفحة وأعد حساب الخصم", 409,
-        );
-      }
-    }
-    const r = await tx.execute(sql`
-      INSERT INTO service_discount_requests
-        (patient_id, case_id, branch_id, department, context_ref,
-         original_price, proposed_final_price, discount_amount, discount_percentage,
-         is_free, reason, note, status, payload, requested_by, requested_by_name)
-      VALUES (${params.patientId}, ${params.caseId ?? null}, ${params.branchId},
-              ${params.department}, ${params.contextRef ?? null},
-              ${calc.originalPrice}, ${calc.finalPrice}, ${calc.discountAmount},
-              ${calc.discountPercentage}, ${calc.isFree}, ${reason},
-              ${params.note ?? null}, 'pending', ${JSON.stringify(payload)}::jsonb,
-              ${params.actor.userId}, ${params.actor.userName})
-      RETURNING ${COLS}
-    `);
-    return toRow((r.rows ?? [])[0]);
-  };
-
-  try {
-    return { request: await db.transaction(lockedInsert), calc };
-  } catch (e: any) {
-    if (e?.code === "23505") {
-      throw new DiscountError("يوجد طلب خصم معلَّق لهذه الخدمة بالفعل", 409);
-    }
-    throw e;
-  }
-}
-
 // ── القرار ───────────────────────────────────────────────────────────────
 
 /**
@@ -386,7 +305,7 @@ export interface DecisionAudit {
   note: (row: DiscountRow, decision: "approve" | "reject") => string;
 }
 
-export async function decideDiscount(params: {
+export interface DecideDiscountParams {
   requestId: number; decision: "approve" | "reject";
   /** «تعديل واعتماد»: سعرٌ يخالف المقترح. */
   finalPrice?: number | null;
@@ -402,11 +321,23 @@ export async function decideDiscount(params: {
    * عمليةٍ نجحت. فصار السطرُ جزءاً من الحزمة: ينجح معها أو تسقط معه.
    */
   audit: DecisionAudit;
-}): Promise<{ request: DiscountRow; applied: any }> {
-  //  **معاملةٌ واحدة**: القفلُ والتنفيذُ والختم. والمساراتُ القائمة كلُّها
-  //  تقبل معاملةَ مُستدعيها (`tx`) فتنضمّ إليها بدل أن تفتح معاملاتها —
-  //  وهو النمطُ الذي بُني له `assignManufacturing.tx` أصلاً منذ ٠٥٣.
-  return await db.transaction(async (tx) => {
+}
+
+/**
+ * **جوهرُ الحسم** — تأخذ معاملةَ المُستدعي فتنضمّ إليها بدل أن تفتح
+ * معاملتَها الخاصّة.
+ *
+ * ══ ولها مستدعيان لا واحد (تصحيحٌ تشغيليّ — تقاعدُ الاعتماد المؤجَّل) ══
+ * البابُ التاريخيّ `/api/discounts/:id/decide` يعمل على صفٍّ **موجودٍ
+ * مسبقاً** بحالة `pending` — يفتح معاملتَه هو (`decideDiscount` أدناه).
+ * والتطبيقُ الفوريّ `applyDiscountImmediately` يُدرج صفّاً `pending` **ثم
+ * يحسمه فوراً بهذه الدالّة نفسها، في نفس معاملته هو** — فلا نسخةَ ثانية من
+ * منطق «نفّذ ثم اختم»، ولا لحظةَ يكون الصفُّ فيها مرئياً معلَّقاً لأيّ
+ * جلسةٍ أخرى (لم يُلتَزم بعد).
+ */
+async function decideDiscountTx(
+  tx: any, params: DecideDiscountParams,
+): Promise<{ request: DiscountRow; applied: any }> {
     const cur = await tx.execute(sql`
       SELECT ${COLS} FROM service_discount_requests
        WHERE id = ${params.requestId} FOR UPDATE
@@ -478,7 +409,23 @@ export async function decideDiscount(params: {
     //  سقط سقط كلُّ شيء معه — ولا يُقال للمستخدم «لم يتغيّر شيء» وقد تغيّر.
     await writeDecisionAudit(tx, req, approved, "approve", params);
     return { request: approved, applied };
-  });
+}
+
+/**
+ * حسمُ طلبٍ **موروثٍ قائم** — اعتماداً أو رفضاً أو تعديلاً واعتماداً.
+ *
+ * البابُ الوحيد الذي يُنشئ معاملتَه الخاصّة (`decideDiscountTx` تنضمّ إلى
+ * معاملة مُستدعيها). يبقى للتاريخ: صفوفٌ `pending` قائمةٌ من قبل تقاعد
+ * الاعتماد المؤجَّل، تُحسَم من `/api/discounts/:id/decide` كما كانت
+ * دائماً — لا شيء هنا تغيّر لهذا الطريق.
+ */
+export async function decideDiscount(
+  params: DecideDiscountParams,
+): Promise<{ request: DiscountRow; applied: any }> {
+  //  **معاملةٌ واحدة**: القفلُ والتنفيذُ والختم. والمساراتُ القائمة كلُّها
+  //  تقبل معاملةَ مُستدعيها (`tx`) فتنضمّ إليها بدل أن تفتح معاملاتها —
+  //  وهو النمطُ الذي بُني له `assignManufacturing.tx` أصلاً منذ ٠٥٣.
+  return await db.transaction((tx) => decideDiscountTx(tx, params));
 }
 
 /** سطرُ تدقيق القرار — **بمعاملة الحسم**، فلا يُبتلع خطؤه. */
@@ -563,8 +510,15 @@ async function applyApproved(
       notes: payload.serviceNotes ?? null,
       paymentTreatmentType: payload.paymentTreatmentType ?? null,
       sessionCount: payload.sessionCount ?? null,
-      //  خدمةٌ نُفِّذت ⟹ قُبض ثمنُها المعتمد. والمجّانيّ يمرّ بعلمه.
-      initialPayment: finalPrice,
+      //  ══ **حقيقةُ الدفع لا السعرُ المتَّفق عليه** (تصحيحٌ تشغيليّ) ═══════
+      //  كان هذا `finalPrice` — أي «خصمٌ يعني بالضرورة قبضاً كاملاً» —
+      //  فيَظهر واردٌ لم يُقبَض فعلاً. الحقيقةُ حقلان مختلفان: كم اتُّفق
+      //  عليه (`finalPrice`، يبقى كلفةَ الخدمة أعلاه) وكم قُبض فعلاً
+      //  (`payload.initialPayment` كما دخله الموظّفُ، أو لا شيء إن غاب).
+      //  **والبنودُ (`entries` أعلاه، حين توجد) تتجاهل هذا الحقل أصلاً**
+      //  — دفعتُها من حصّة كلّ بندٍ المخصَّصة، كما كانت قبل هذه المرحلة
+      //  بحرفها (جلساتُ العلاج الطبيعي تُحصَّل لحظتها بالتعريف).
+      initialPayment: payload.initialPayment ?? null,
       isFree: req.isFree,
       actor,
       tx,
@@ -656,48 +610,126 @@ async function applyApproved(
   return { kind: "device", workOrderId: out.workOrderId };
 }
 
-// ── البابُ الواحد للنقاط القائمة ─────────────────────────────────────────
+// ── التطبيقُ الفوريّ (قرارُ المالك ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل) ──
 
 /**
- * **إرسالةٌ واحدة من الموظّف** — تُنشئ الطلب، وتعتمده فوراً إن كان المرسِل
- * مخوَّلاً بالاعتماد أصلاً.
+ * **إرسالةٌ واحدة من الموظّف = خصمٌ مطبَّقٌ فوراً.**
  *
- * ══ لماذا لا تُطلَب ضغطتان من المدير ═══════════════════════════════════
- * مديرُ الفرع الذي يخصم بنفسه يملك الإذن قبل أن يضغط. فإرسالُه إلى طابورٍ
- * ليعتمد نفسه طقسٌ فارغ يعلّم الجميع أن الطابور شكليّ. **والتدقيق لا
- * يُختصر**: الصفُّ يُكتب كاملاً — السببُ والسعران والفرقُ ومَن أذن ومتى —
- * فيُقرأ الخصمُ الذاتيّ في التقرير كما يُقرأ غيرُه.
+ * ══ القاعدةُ الحاكمة ═══════════════════════════════════════════════════
+ * مَن يملك سلطةَ تنفيذ العملية بسعرها الكامل اليوم يملك سلطةَ تنفيذها
+ * بخصمٍ أو مجّاناً — **بلا طابورٍ يخصّ الخصمَ وحده**. البوّابةُ تُفحَص في
+ * نقطة الاتصال (نفسُ فحصِ العملية الكاملة تماماً) **قبل** الوصول إلى هذا
+ * الملفّ؛ فحين تصل الكتابةُ إلى هنا تكون الإجازةُ قد صدرت بالفعل. **ولا
+ * فحصَ ثانياً هنا**: هذه الدالّةُ لا تقرأ دوراً ولا صلاحيةً إطلاقاً — طبقةُ
+ * إذنٍ ثانية كانت ستُبقي معنى الاعتماد القديم حيّاً باسمٍ آخر.
  *
- * ══ ومَن لا يملك الإذن ينتظر ═══════════════════════════════════════════
- * صفٌّ `pending` بلا أثرٍ ماليٍّ إطلاقاً. والخدمةُ لا تُنفَّذ حتى يُعتمد.
+ * ══ ولماذا يبقى صفٌّ في `service_discount_requests` رغم ذلك ══════════════
+ * **تدقيقٌ مُهيكَل لا طابورُ عمل**: السببُ والسعران والفرقُ ومَن نفّذ ومتى —
+ * يُقرأ في التقرير تماماً كما كان يُقرأ الاعتمادُ الذاتيّ قبل هذه المرحلة.
+ * والصفُّ **يُدرَج ويُختَم `approved` في نفس المعاملة**، فلا يصير مرئياً
+ * `pending` لأيّ جلسةٍ أخرى قط — لا فرقَ عملياً بين هذا وبين خدمةٍ بلا خصمٍ
+ * إطلاقاً إلّا سطرَ التاريخ هذا.
+ *
+ * ══ وذرّيةٌ كاملة — **لا نصفَ كتابة، ولا صفَّ معلَّقاً بعد فشل** ═══════════
+ * الإدراجُ ثم التنفيذُ ثم الختمُ ثم التدقيق **معاملةٌ واحدة** (`decideDiscountTx`
+ * تنضمّ إلى معاملة هذه الدالّة). سقوطٌ في أيّ خطوة يرجع كلَّ شيء: لا خدمةَ،
+ * لا كلفةَ، لا أمرَ تصنيع، لا دفعةَ، **ولا صفَّ خصمٍ ولو ناقصاً** — فلا
+ * يبقى أحدٌ ينتظر شيئاً لم يقع.
  */
-export async function submitDiscount(params: {
+export async function applyDiscountImmediately(params: {
   patientId: number; department: Department; caseId?: number | null;
   branchId: number | null; contextRef?: string | null;
   originalPrice: number; finalPrice?: number | null; isFree?: boolean;
   reason: string; note?: string | null;
   payload: any; actor: Actor;
-  /**
-   * **يقرّره المُستدعي لا هذا الملفّ**: البوّابةُ تُفحَص في النقطة مع نطاق
-   * الفرع معاً — فمديرُ فرعٍ آخر ليس مخوَّلاً هنا ولو حمل الدور.
-   */
-  actorMayApprove: boolean;
-  /** يُمرَّر إلى الاعتماد المباشر فيُكتب سطرُه داخل معاملته. */
+  /** يُكتب داخل معاملة التطبيق نفسِها — لا بعدها. */
   audit: DecisionAudit;
-}): Promise<{
-  status: "pending" | "approved"; request: DiscountRow;
-  calc: ServiceDiscount; applied: any;
-}> {
-  const { request, calc } = await requestDiscount(params);
-  if (!params.actorMayApprove) {
-    return { status: "pending", request, calc, applied: null };
+}): Promise<{ request: DiscountRow; calc: ServiceDiscount; applied: any }> {
+  if (!isDepartment(params.department)) {
+    throw new DiscountError("القسم غير صالح", 400);
   }
-  const out = await decideDiscount({
-    requestId: request.id, decision: "approve",
-    note: "اعتماد مباشر — المُرسِل مخوَّل بالاعتماد", actor: params.actor,
-    audit: params.audit,
+  const calc = computeServiceDiscount({
+    originalPrice: params.originalPrice,
+    finalPrice: params.finalPrice,
+    isFree: params.isFree,
   });
-  return { status: "approved", request: out.request, calc, applied: out.applied };
+  if (!calc.ok) throw new DiscountError(calc.error ?? "قيمة الخصم غير صالحة", 400);
+  if (!calc.needsApproval) {
+    throw new DiscountError("لا يوجد خصم — أكمل الخدمة بسعرها الطبيعي مباشرة", 400);
+  }
+  //  **سببُ التبرّع يكتبه النظام** لا الموظّف: عبارةٌ واحدة في التقرير.
+  const reason = calc.isFree ? FREE_DONATION_REASON : String(params.reason ?? "");
+  if (!calc.isFree && !isDiscountReason(reason)) {
+    throw new DiscountError("سبب الخصم مطلوب — اختر سبباً من القائمة", 400);
+  }
+  const payload = sanitizePayload(params.department, params.payload);
+
+  // ══ **التسلسلُ مع تصحيح الطبيب لسعره** — كما كان قبل هذه المرحلة ══════
+  //  البابان يحرّكان الرقمَ نفسه من طرفين: الطبيبُ يصحّح الأصلَ، والموظّفُ
+  //  يطبّق خصماً **محسوباً على ذلك الأصل**. فالقفلُ على **صفّ المتابعة** —
+  //  النقطةُ التي يأخذها التصحيحُ أيضاً — يمنع الخصمَ من أن يُحسَب على رقمٍ
+  //  لم يعد قائماً. والصيانةُ بلا متابعة، فتمضي بلا قفلٍ زائد.
+  const followupId = Number(payload?.followupId);
+  const body = async (tx: any) => {
+    if (Number.isFinite(followupId) && followupId > 0) {
+      const f = await tx.execute(sql`
+        SELECT approved_price, converted_work_order_id
+          FROM post_exam_followups WHERE id = ${followupId} FOR UPDATE
+      `);
+      const row = (f.rows ?? [])[0] as any;
+      if (!row) throw new DiscountError("المتابعة غير موجودة", 404);
+      if (row.converted_work_order_id !== null) {
+        throw new DiscountError("تم اعتماد البيع بالفعل — حدّث الصفحة", 409);
+      }
+      //  **ولا تطبيقَ على أساسٍ بائت**: السعرُ الأصلي المحسوب عليه الخصم
+      //  يجب أن يكون هو المكتوب على الصفّ الآن، بعد القفل لا قبله.
+      const live = Number(row.approved_price ?? 0);
+      if (live !== calc.originalPrice) {
+        throw new DiscountError(
+          `تغيّر السعر الأصلي إلى ${live.toLocaleString("en-US")} د.ع أثناء الحفظ`
+          + " — حدّث الصفحة وأعد حساب الخصم", 409,
+        );
+      }
+    }
+
+    //  **الإدراجُ `pending`، لكن بلا أن يُرى كذلك أبداً**: لا يُلتَزم إلّا
+    //  بعد أن يُحسَم إلى `approved` أسطراً لاحقاً في المعاملة نفسِها — أيّ
+    //  جلسةٍ أخرى لا ترى هذه المعاملةَ قبل التزامها بحكم عزل Postgres.
+    const ins = await tx.execute(sql`
+      INSERT INTO service_discount_requests
+        (patient_id, case_id, branch_id, department, context_ref,
+         original_price, proposed_final_price, discount_amount, discount_percentage,
+         is_free, reason, note, status, payload, requested_by, requested_by_name)
+      VALUES (${params.patientId}, ${params.caseId ?? null}, ${params.branchId},
+              ${params.department}, ${params.contextRef ?? null},
+              ${calc.originalPrice}, ${calc.finalPrice}, ${calc.discountAmount},
+              ${calc.discountPercentage}, ${calc.isFree}, ${reason},
+              ${params.note ?? null}, 'pending', ${JSON.stringify(payload)}::jsonb,
+              ${params.actor.userId}, ${params.actor.userName})
+      RETURNING id
+    `);
+    const requestId = Number((ins.rows ?? [])[0]?.id);
+
+    //  **نفسُ جوهر الحسم** — تنفيذٌ عبر الكاتب القانونيّ ثمّ ختمٌ `approved`
+    //  ثم تدقيقٌ، كلُّها في هذه المعاملة بعينها.
+    const out = await decideDiscountTx(tx, {
+      requestId, decision: "approve",
+      note: "تطبيقٌ فوريّ — الموظّفُ مخوَّلٌ بهذه العملية أصلاً",
+      actor: params.actor, audit: params.audit,
+    });
+    return out;
+  };
+
+  try {
+    const out = await db.transaction(body);
+    return { request: out.request, calc, applied: out.applied };
+  } catch (e: any) {
+    if (e?.code === "23505") {
+      throw new DiscountError(
+        "يوجد طلبُ خصمٍ سابقٌ معلَّقٌ لهذه العملية — أكمِله من «خصومات سابقة» أولاً", 409);
+    }
+    throw e;
+  }
 }
 
 // ── القراءة ──────────────────────────────────────────────────────────────
@@ -748,6 +780,24 @@ export async function listForPatient(patientId: number): Promise<DiscountRow[]> 
      ORDER BY id DESC LIMIT 50
   `);
   return (r.rows ?? []).map(toRow);
+}
+
+/**
+ * **عددُ الطابور الموروث بدقّة** — للشريط الجانبيّ ولمرجعية التحقّق قبل
+ * إطلاق واتساب (لا شيء يُنشئه بعد هذه المرحلة؛ هي `COUNT(*)` حيّة على ما
+ * تبقّى من قبلها فقط).
+ *
+ * نفسُ نطاق الفرع ونفسُ فلترة المريض المحذوف اللذين تستعملهما `listRequests`
+ * — مصدرُ حقيقةٍ واحد للعدّ، لا حسابٌ ثانٍ ينحرف عنه.
+ */
+export async function countPendingLegacy(scope: number[] | null): Promise<number> {
+  const r = await db.execute(sql`
+    SELECT COUNT(*)::int AS n
+      FROM service_discount_requests r
+      JOIN patients p ON p.id = r.patient_id
+     WHERE r.status = 'pending' AND ${scopeClause(scope)} AND p.deleted_at IS NULL
+  `);
+  return Number((r.rows ?? [])[0]?.n ?? 0);
 }
 
 /**

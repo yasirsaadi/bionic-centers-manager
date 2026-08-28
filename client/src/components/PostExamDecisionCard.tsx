@@ -281,12 +281,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
       qc.invalidateQueries({ queryKey: ["/api/discounts"] });
       qc.invalidateQueries({ queryKey: [`/api/discounts/patient/${patientId}`] });
-      toast(data?.pendingApproval
-        ? {
-          title: "أُرسل طلب الخصم للاعتماد",
-          description: "لم يبدأ التصنيع ولم تُقيَّد كلفة — يبدأ فور اعتماد المسؤول أو مدير الفرع.",
-        }
-        : { title: "تمّ الحفظ" });
+      //  **والخصمُ يُطبَّق فوراً كالسعر الكامل تماماً** — لا ردَّ انتظارٍ
+      //  بعد اليوم؛ هذا الحفظُ هو التنفيذ.
+      toast({ title: "تمّ الحفظ" });
       reset();
     },
     onError: (err: any) => {
@@ -560,7 +557,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             المعلَّق بيعاً لم يُسجَّل.
 
             والنصُّ الآن **مشتقٌّ من الحالة** لا محفوظ: تحوّل ⟶ تمّ · خصمٌ
-            معلَّق ⟶ بانتظار الاعتماد · وإلّا ⟶ بانتظار إتمام البيع. */}
+            سابقٌ لم يُكمَل (بقيّةٌ من قبل التطبيق الفوريّ) ⟶ يُقال بصراحة ·
+            وإلّا ⟶ بانتظار إتمام البيع. */}
         {active.purchaseInterestAt && (
           <p className={`rounded-md px-3 py-2 text-sm ${purchaseState === "converted"
             ? "bg-green-100 text-green-900" : purchaseState === "discount_pending"
@@ -1054,8 +1052,10 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               </div>
             )}
 
-            {/*  والخصمُ هنا **لا يمرّ إلى التصنيع مباشرةً**: يُنشئ طلباً
-                يعتمده المسؤولُ أو مديرُ الفرع، ولا يبدأ شيءٌ قبله. */}
+            {/*  ══ والخصمُ يُطبَّق فوراً كالسعر الكامل تماماً (تصحيحٌ تشغيليّ) ══
+                لا طابورَ اعتمادٍ بعد اليوم: مَن يصل هذه النافذةَ اجتاز
+                `canConfirmPurchase` بالفعل — نفسُ بوّابة تأكيد الشراء
+                كامل السعر — فحفظُه هو التنفيذ. */}
             {originalPrice > 0 && (
               <ServiceDiscountFields originalPrice={originalPrice}
                 value={discount} onChange={setDiscount} testIdPrefix="purchase-discount" />
