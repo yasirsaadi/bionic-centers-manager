@@ -14,6 +14,19 @@
 //
 // وهذا **عرضٌ لا حراسة**: الخادم يفحص كلّ كتابة مهما أظهرت الواجهة —
 // و`allowedActions` مشتركةٌ بينهما فلا تنحرف قاعدةٌ عن قاعدة.
+//
+// ══ ⚠ مسارُ المعاينة الجديد — بابٌ واحد لا ثلاثة (المرحلة الثانية) ═══════
+// كانت «تفاصيل البيع» و«اشترى» زرَّين منفصلَين لخطوتين حول واقعةٍ واحدة.
+// **صارا فعلاً واحداً «إتمام البيع»**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم،
+// وحفظٌ واحد = قرارُ «اشترى» + بدءُ التصنيع معاً. **ولا نوعَ سعرٍ يُختار
+// ولا سعرَ نهائيّاً يُكتب** — النهائيُّ معاينةٌ حيّة فقط
+// (`deriveOfferFromDiscount`، الدالّةُ التي يعتمدها الخادم بنفسها)، ولا
+// يُرسَل في الطلب أبداً. و«لم يشترِ» بقي الفعلَ الوحيد المنفصل، بسببٍ حرٍّ
+// إلزاميّ. **وهذا البابُ للاستقبال والمحاسب ومديرِ الفرع والمسؤول العام —
+// الطبيبُ لا يراه أبداً** (تصحيحٌ 2026-08-28 أضاف المحاسبَ؛ القسم 4.h/4.f/4.i
+// في CLAUDE.md). **وكلُّ الأزرار القديمة على هذا المسار تقاعدت للجميع بلا
+// استثناء** — لا فرقَ هنا بين مَن يملك `complete_sale`/`not_bought` ومَن لا
+// يملكهما: كلاهما يرى البابين الجديدين وحدهما إن كانا مصرَّحَين، أو لا شيء.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,7 +59,7 @@ import {
 } from "@/components/purchase_dialog_ui";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { Textarea } from "@/components/ui/textarea";
-import { computeCommercialOffer } from "@shared/commercial";
+import { deriveOfferFromDiscount } from "@shared/commercial";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
@@ -97,6 +110,14 @@ interface Followup {
   priceKind?: "normal" | "discount" | "free" | null;
   purchaseDecision?: "bought" | "not_bought" | null;
   notBoughtReasonText?: string | null;
+  // ══ ملاحظاتُ الطبيب من هذه المعاينة بعينها (تصحيحٌ 2026-08-28) ══════════
+  //  سياقٌ للبائع لا حقيقةٌ مالية — تُعرَض كما كُتبت، وللقراءة فقط.
+  examNotes?: string | null;
+  //  فرعُ **هذه المتابعة بعينها** — موجودٌ في القاعدة والاستجابة من قبل
+  //  (`toRow`)، لم يكن مكتوباً في هذا العقد فقط. يُستعمَل لقائمة الخبراء
+  //  (تصحيحٌ 2026-08-28) — لا فرعَ الجلسة، فمسؤولٌ متعدّدَ الفروع يجب أن
+  //  يرى خبراءَ العملية التي يبيعها لا افتراضَ جلسته.
+  branchId: number | null;
   events: any[];
   priceRequests: any[];
 }
@@ -149,12 +170,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [finalPrice, setFinalPrice] = useState("");
   const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
-  //  ══ المسارُ المبسّط (المرحلة الثانية) ═══════════════════════════════════
-  //  **ونفسُ الحالةِ الابتدائية الحقيقية هنا** (انظر `NewExamDialog`):
-  //  `""` = «غير محدد» فلا يُرسَل سعرٌ، والاختيارُ الصريحُ يُلزِم بياناته.
-  const [cKind, setCKind] = useState<"" | "normal" | "discount" | "free">("");
+  //  ══ إتمامُ البيع المبسّط (المرحلة الثانية) ═══════════════════════════════
+  //  خبيرٌ + سعرٌ أصليّ + مقدارُ خصم فقط. لا حالةَ لنوع السعر ولا للسعر
+  //  النهائيّ — ذاك معاينةٌ حيّة تُشتقّ لا تُخزَّن (`csOffer` أدناه).
   const [cOriginal, setCOriginal] = useState("");
-  const [cFinal, setCFinal] = useState("");
+  const [cDiscount, setCDiscount] = useState("");
   const [cExpert, setCExpert] = useState("");
   const [cReason, setCReason] = useState("");
 
@@ -167,15 +187,39 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     },
   });
 
+  //  ══ **المتابعةُ الفعّالة تُحسَب هنا** — قبل قائمة الخبراء التي تحتاج
+  //  فرعَها (تصحيحٌ 2026-08-28) ═══════════════════════════════════════════
+  //  حسابٌ عاديّ لا خطّاف React، فنقلُه فوق باقي الاستعلامات آمنٌ ولا يخالف
+  //  قاعدة الخطّافات. والتكرارُ اللاحق حُذف — هذا هو المصدر الوحيد الآن.
+  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
+  const active = (followups ?? []).find((f) => !terminal.has(f.status))
+    ?? (followups ?? [])[0] ?? null;
+
+  //  ══ **قائمةُ الخبراء بفرع العملية المُباعة — لا فرع الجلسة** (تصحيحٌ
+  //  2026-08-28) ═══════════════════════════════════════════════════════════
+  //  كانت تُقرأ بلا `branchId` — ونقطةُ الخبراء تشترطه صراحةً للمسؤول العام
+  //  (لا فرعَ ثابتاً له)، فيُردّ ٤٠٠ ويتحوّل عند العميل إلى قائمةٍ فارغة:
+  //  مسؤولٌ يملك صلاحية البيع فعلياً لكن لا يستطيع اختيار خبير من الشاشة.
+  //
+  //  والإصلاحُ فرعُ **المتابعة الفعّالة بعينها** — لا فرع جلسة الفاعل: حتى
+  //  الاستقبال ومديرُ الفرع يستفيدان، فمديرَ فرعٍ متعدّد الفروع يرى خبراء
+  //  العملية التي يبيعها لا افتراضَ جلسته. والخادمُ يبقى الحارسَ الحقيقيَّ
+  //  دائماً (`validateExpertForBranch` عند `/complete-sale`) — هذا الطلبُ
+  //  لجلب القائمة فقط، وليس مصدرَ ثقةٍ لسلطة البيع.
+  const activeBranchId = active?.branchId ?? null;
   const { data: experts } = useQuery<any[]>({
-    queryKey: ["/api/manufacturing/experts"],
+    //  **مفتاحٌ يحمل الفرع** — فتنقّل المسؤول بين مريضَي فرعين لا يُبقي
+    //  ذاكرةَ التخزين المؤقّت خبراءَ الفرع الأوّل معروضةً على الثاني.
+    queryKey: ["/api/manufacturing/experts", activeBranchId],
     queryFn: async () => {
-      const res = await fetch("/api/manufacturing/experts", { credentials: "include" });
+      const res = await fetch(`/api/manufacturing/experts?branchId=${activeBranchId}`,
+        { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-    //  تُقرأ دائماً: الاستعلامات تغيّر الخبير من البطاقة نفسها.
-    enabled: true,
+    //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة وفرعُها — خبراءُ فرعٍ خاطئ
+    //  (أو طلبٌ بلا فرع يُردّه الخادم ٤٠٠) أسوأ من قائمةٍ فارغة مؤقّتة.
+    enabled: activeBranchId !== null,
   });
 
   //  **الخصمُ المعلَّق معلومةُ حالةٍ لا زينة**: بيعٌ رُفع له طلبُ خصمٍ لم
@@ -210,10 +254,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       return res.json();
     },
   });
-
-  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
-  const active = (followups ?? []).find((f) => !terminal.has(f.status))
-    ?? (followups ?? [])[0] ?? null;
 
   //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
   //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً
@@ -382,9 +422,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  بلا حلقة — وإلّا تجمّد ملفٌّ في حالةٍ لا زرَّ لها.
   const examPath: boolean = active.examPath === true;
   const examActions: string[] = Array.isArray(active.actions) ? active.actions : [];
-  const missing: string[] = Array.isArray(active.missing) ? active.missing : [];
-  const locks = active.locks ?? {};
-  const ownerLabels = active.ownerLabels ?? {};
   const actions = examPath ? [] : allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
@@ -418,17 +455,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     previousPrice: active.approvedPrice, finalPrice: Number(finalPrice),
   });
 
-  //  ══ **منعُ الإرسال بالقاعدة المشتركة نفسها** (المرحلة ٢) ═══════════════
-  //  ما تمنعه الشاشةُ يردّه الخادم، وما تقبله يقبله — دالّةٌ واحدة لا نسختان.
-  const cBlock: string | null = (() => {
-    if (dialog !== "commercial" || locks.price || cKind === "") return null;
-    const offer = computeCommercialOffer({
-      kind: cKind,
-      originalPrice: cOriginal === "" ? null : Number(cOriginal),
-      finalPrice: cKind === "discount" ? (cFinal === "" ? null : Number(cFinal)) : undefined,
-    });
-    return offer.ok ? null : (offer.error ?? "بيانات السعر غير مكتملة");
-  })();
+  //  ══ **السعرُ النهائيّ معاينةٌ حيّة بالدالّة التي يعتمدها الخادم** ══════
+  //  (المرحلة الثانية) — `deriveOfferFromDiscount` نفسُها التي تشتقّ الثلاثة
+  //  في `completeReceptionSale`، فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
+  //  **ولا يُرسَل هذا الناتجُ في الطلب أبداً** — الخادمُ يشتقّه من جديد.
+  const csOffer = deriveOfferFromDiscount({
+    originalPrice: cOriginal === "" ? null : Number(cOriginal),
+    discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+  });
 
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
@@ -487,15 +521,16 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           )}
         </div>
 
-        {/*  ══ **ما بقي ليُكمَل — سطرٌ لكلّ حقلٍ ومَن يملكه** (المرحلة ٢) ══
-            الموظّفُ لا يحتاج أن يفهم حالاتِ الآلة: يحتاج أن يرى ثلاثةَ
-            سطور — السعرُ والخبيرُ والقرار — وأيُّها مقفولٌ ولمن، وأيُّها
-            ينقص فيُكمله. والأقفالُ والملّاكُ **من الخادم** لا من تخمين. */}
-        {examPath && (
+        {/*  ══ **إتمامُ البيع — بابٌ واحد** (المرحلة الثانية) ═══════════════
+            لا زرَّين منفصلَين («تفاصيل البيع» ثمّ «اشترى») لخطوتين حول
+            واقعةٍ واحدة: **زرٌّ واحد**. حفظُه **هو** قرارُ الشراء وبدءُ
+            التصنيع معاً — والخادمُ هو مَن يرسل هذه القائمة فلا يظهر زرٌّ
+            يُردّ ولا يُخفى زرٌّ يُقبَل. */}
+        {examPath && examActions.length > 0 && (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-2"
-            data-testid="block-commercial-completion">
+            data-testid="block-exam-path-sale">
             <div className="flex items-center gap-2">
-              <p className="text-sm font-bold text-emerald-900">تفاصيل البيع</p>
+              <p className="text-sm font-bold text-emerald-900">إتمام البيع</p>
               {active.statusLine && (
                 <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs text-emerald-900"
                   data-testid="text-commercial-status-line">
@@ -503,69 +538,46 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 </span>
               )}
             </div>
-            <div className="grid gap-2 text-sm sm:grid-cols-3">
-              {([
-                ["price", "السعر",
-                  active.priceKind
-                    ? (active.priceKind === "free"
-                      ? `مجاني (الأصلي ${Number(active.originalPrice ?? 0).toLocaleString()} د.ع)`
-                      : active.priceKind === "discount"
-                        ? `${active.approvedPrice.toLocaleString()} د.ع — بخصم من `
-                          + `${Number(active.originalPrice ?? 0).toLocaleString()}`
-                        : `${active.approvedPrice.toLocaleString()} د.ع`)
-                    : null],
-                ["expert", "الخبير",
-                  active.selectedExpertUserId
-                    ? (active.selectedExpertName ?? `#${active.selectedExpertUserId}`)
-                    : null],
-                ["decision", "القرار",
-                  active.purchaseDecision === "bought" ? "اشترى"
-                    : active.purchaseDecision === "not_bought" ? "لم يشترِ" : null],
-              ] as const).map(([key, label, value]) => (
-                <div key={key} className="rounded-md bg-white/70 px-2 py-1.5"
-                  data-testid={`field-commercial-${key}`}>
-                  <div className="text-xs text-muted-foreground">{label}</div>
-                  <div className="font-medium">
-                    {value ?? <span className="text-amber-700">غير محدد</span>}
-                  </div>
-                  {/*  «أدخله د. فلان» — ولا رمزَ مالكيةٍ خام يُعرَض. */}
-                  {(ownerLabels as any)[key] && (
-                    <div className="text-xs text-muted-foreground"
-                      data-testid={`text-owner-${key}`}>
-                      {(ownerLabels as any)[key]}
-                      {(locks as any)[key] ? " · مقفل" : ""}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            {/*  **والأزرارُ ثلاثةٌ لا أكثر** — ولا اعتمادَ ولا تأجيلَ ولا
-                «يرغب بالشراء». والخادمُ هو مَن أرسل هذه القائمة. */}
-            <div className="flex flex-wrap gap-2 pt-1">
-              {examActions.includes("commercial") && (
-                <Button size="sm" variant="outline" disabled={busy}
+            {/*  ══ **ملاحظاتُ الطبيب من المعاينة — سياقٌ للقراءة فقط** ══════
+                (تصحيحٌ 2026-08-28) — نصُّ `medical_exams.notes` **لهذه
+                المعاينة بعينها** (`post_exam_followups.medical_exam_id`)، لا
+                «آخرُ معاينةٍ للمريض»: مريضٌ بجهازين له معاينتان ولكلٍّ
+                متابعتُه ونصُّها. الطبيبُ يكتب فيه أحياناً سعراً تقريبياً
+                ناقشه أو تفضيلاً ذكره المريض — **وهذا سياقٌ لا حقيقةٌ مالية**:
+                لا يُقرأ برمجياً ولا يُشتقّ منه سعرٌ أو خصمٌ أو خبير، والبيعُ
+                الفعليُّ من الحقول الصريحة أدناه وحدها. فارغةٌ ⟶ لا تُعرَض. */}
+            {active.examNotes && active.examNotes.trim() && (
+              <div className="rounded-md border border-emerald-300 bg-white/70 p-2.5 text-sm"
+                data-testid="block-exam-note">
+                <p className="text-xs font-semibold text-emerald-900">
+                  ملاحظاتُ الطبيب من المعاينة
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-foreground"
+                  data-testid="text-exam-note">
+                  {active.examNotes}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground" data-testid="text-exam-note-hint">
+                  للاطلاع فقط — السعر المعتمد هو المسجل في إتمام البيع.
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {examActions.includes("complete_sale") && (
+                <Button size="sm" disabled={busy}
                   onClick={() => {
-                    //  الصفُّ المسعَّرُ يفتح على نوعه، وغيرُ المسعَّر على
-                    //  «غير محدد» — لا على `normal` التي تُوهم اختياراً.
-                    setCKind(active.priceKind ?? "");
+                    //  **تعبئةٌ مسبقة** من أيّ بياناتٍ محفوظةٍ سابقاً — نادرٌ
+                    //  (صفٌّ لُمس من بابٍ قديم) لكنّه لا يُطمَس.
                     setCOriginal(active.originalPrice != null
                       ? String(active.originalPrice)
                       : (active.approvedPrice > 0 ? String(active.approvedPrice) : ""));
-                    setCFinal(active.priceKind === "discount" ? String(active.approvedPrice) : "");
+                    setCDiscount(active.priceKind && active.originalPrice
+                      ? String(Math.max(0, active.originalPrice - active.approvedPrice)) : "");
                     setCExpert(active.selectedExpertUserId
                       ? String(active.selectedExpertUserId) : "");
-                    setDialog("commercial");
+                    setDialog("complete_sale");
                   }}
-                  data-testid="button-open-commercial">
-                  <CircleDollarSign className="h-4 w-4" /> تفاصيل البيع
-                </Button>
-              )}
-              {examActions.includes("bought") && (
-                <Button size="sm" disabled={busy}
-                  onClick={() => submit(`/api/followups/${active.id}/commercial`,
-                    { decision: "bought" })}
-                  data-testid="button-decide-bought">
-                  <HandCoins className="h-4 w-4" /> اشترى
+                  data-testid="button-open-complete-sale">
+                  <HandCoins className="h-4 w-4" /> إتمام البيع
                 </Button>
               )}
               {examActions.includes("not_bought") && (
@@ -576,11 +588,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 </Button>
               )}
             </div>
-            {missing.length > 0 && active.purchaseDecision === "bought" && (
-              <p className="text-xs text-amber-900" data-testid="text-commercial-missing">
-                يُتمّ البيعُ تلقائياً حين يُكمَل: <b>{active.missingLabel}</b> — بلا سؤالٍ ثانٍ.
-              </p>
-            )}
           </div>
         )}
 
@@ -604,14 +611,43 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {` (${fmt(active.purchaseInterestAt)})`}
           </p>
         )}
-        {/*  **والتحوّلُ يُقال ولو لم تُرفع رايةٌ قطّ**: بيعٌ تمّ مباشرةً بلا
-            إشارةٍ مسبقة كان يمرّ بلا سطرٍ يقول إنه تمّ. */}
-        {purchaseState === "converted" && !active.purchaseInterestAt && (
-          <p className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900"
+        {/*  **ملخّصُ البيعِ يُعرَض دائماً بعد التحوّل — لا يُخفيه رايةٌ قديمة**
+            (تصحيحٌ 2026-08-28). كان يُقرأ بشرط «ولم تُرفع رايةُ يرغب
+            بالشراء» فيختفي كلُّ سطرٍ يذكر السعرَ والخصمَ والخبير عن أيّ ملفٍّ
+            رُفعت له تلك الرايةُ يوماً — بيعٌ حقيقيّ يبقى غيرَ مقروء. فصار
+            يُعرَض لكلّ متابعةٍ تحوّلت، **بجانب** بطاقة الرايةِ التاريخية
+            أعلاه لا بدلاً عنها. */}
+        {purchaseState === "converted" && (
+          <div className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900 space-y-2"
             data-testid="text-purchase-done">
-            ✅ تم الشراء — بدأ التصنيع
-            {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
-          </p>
+            <div>
+              ✅ تم الشراء — بدأ التصنيع
+              {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
+            </div>
+            {/*  ══ **تفاصيلُ البيع بعد الإتمام** (المرحلة الثانية) ══════════
+                السعرُ الأصليّ والخصمُ والنهائيّ والخبير — والمجّانيُّ صريحٌ،
+                لا صفرٌ يُقرأ «غير مسعَّر». ولمسارِ المعاينة وحده — الصفوفُ
+                القديمة لا تكتسب عرضاً لم تحمل بياناته. */}
+            {examPath && active.priceKind && (
+              <div className="grid gap-1.5 text-xs sm:grid-cols-4" data-testid="grid-sale-summary">
+                <SaleField label="السعر الأصلي"
+                  value={`${Number(active.originalPrice ?? active.approvedPrice).toLocaleString()} د.ع`}
+                  testId="text-sale-original" />
+                <SaleField label="الخصم"
+                  value={`${Math.max(0, Number(active.originalPrice ?? 0) - active.approvedPrice)
+                    .toLocaleString()} د.ع`}
+                  testId="text-sale-discount" />
+                <SaleField label="السعر النهائي"
+                  value={active.priceKind === "free"
+                    ? "مجاني (٠ د.ع)" : `${active.approvedPrice.toLocaleString()} د.ع`}
+                  testId="text-sale-final" />
+                <SaleField label="الخبير"
+                  value={active.selectedExpertName
+                    ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "—")}
+                  testId="text-sale-expert" />
+              </div>
+            )}
+          </div>
         )}
 
         {/*  **النتيجةُ تبقى مقروءةً بعد الإغلاق** — بسببها وملاحظتها ومَن
@@ -814,110 +850,81 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       </CardContent>
 
       {/* ── تأجيل ── */}
-      {/*  ══ **نافذةُ تفاصيل البيع** — سعرٌ ونوعُه وخبير (المرحلة ٢) ══════
-          ولا اعتمادَ ولا طابور: ما يُحفَظ هنا نافذٌ فوراً. وإن كان هذا آخرَ
-          ما ينقص وقرارُ المريض «اشترى» — **أتمّ الخادمُ البيعَ في المعاملة
-          نفسِها**، فلا يُسأل القرارُ ثانيةً. */}
-      <Dialog open={dialog === "commercial"} onOpenChange={(o) => !o && reset()}>
+      {/*  ══ **نافذةُ «إتمام البيع» — بابٌ واحد** (المرحلة الثانية) ═══════
+          الخبيرُ والسعرُ الأصليّ ومقدارُ الخصم فقط. **لا نوعَ سعرٍ يُختار
+          ولا سعرَ نهائيّاً يُكتب** — النهائيُّ معاينةٌ حيّة تحت الحقول
+          (`csOffer`)، ولا يُرسَل في الطلب: الخادمُ يشتقّه ويعتمده وحده.
+          **وحفظٌ واحد = بيعٌ كامل**: لا خطوةَ «حفظ التفاصيل» ثم «اشترى». */}
+      <Dialog open={dialog === "complete_sale"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl" className="max-w-md">
-          <DialogHeader><DialogTitle>تفاصيل البيع</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>إتمام البيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            {locks.price ? (
-              <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900"
-                data-testid="text-price-locked">
-                {ownerLabels.price} — لا يمكن تعديل السعر من هنا.
+            <div className="space-y-1">
+              <Label htmlFor="cs-expert" className="text-xs">الخبير</Label>
+              <Select value={cExpert} onValueChange={setCExpert}>
+                <SelectTrigger id="cs-expert" className="bg-white"
+                  data-testid="select-complete-sale-expert">
+                  <SelectValue placeholder={(experts ?? []).length
+                    ? "اختر الخبير" : "لا يوجد خبير في هذا الفرع"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(experts ?? []).map((e: any) => (
+                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cs-original" className="text-xs">السعر الأصلي (د.ع)</Label>
+              <MoneyInput id="cs-original" allowEmpty value={cOriginal}
+                onValueChange={(v) => setCOriginal(v === null ? "" : String(v))}
+                className="bg-white" data-testid="input-complete-sale-original" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cs-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
+              <MoneyInput id="cs-discount" allowEmpty value={cDiscount}
+                onValueChange={(v) => setCDiscount(v === null ? "" : String(v))}
+                className="bg-white" data-testid="input-complete-sale-discount" />
+            </div>
+            {/*  ══ **السعرُ النهائيّ — للقراءة فقط** ═══════════════════════
+                معاينةٌ حيّة تُحسَب هنا، لا حقلٌ يُكتب فيه. */}
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
+              data-testid="text-complete-sale-final">
+              <span className="text-muted-foreground">السعر النهائي: </span>
+              {csOffer.ok ? (
+                csOffer.kind === "free" ? (
+                  <b className="text-emerald-800" data-testid="text-complete-sale-free">
+                    مجاني — ٠ د.ع
+                  </b>
+                ) : (
+                  <b>{csOffer.finalPrice?.toLocaleString()} د.ع</b>
+                )
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </div>
+            {cOriginal !== "" && !csOffer.ok && (
+              <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+                data-testid="text-complete-sale-error">
+                {csOffer.error}
               </p>
-            ) : (
-              <>
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">نوع السعر</Label>
-                  <div className="flex flex-wrap gap-3 text-sm" data-testid="radio-c-kind">
-                    {([["", "غير محدد"], ["normal", "السعر كما هو"],
-                      ["discount", "بخصم"], ["free", "مجاني"]] as const)
-                      .map(([v, label]) => (
-                        <label key={v || "none"} className="flex items-center gap-1 cursor-pointer">
-                          <input type="radio" name="c-kind" value={v} checked={cKind === v}
-                            onChange={() => setCKind(v)}
-                            data-testid={`radio-c-kind-${v || "none"}`} />
-                          <span>{label}</span>
-                        </label>
-                      ))}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="c-original" className="text-xs">السعر الأصلي (د.ع)</Label>
-                  <MoneyInput id="c-original" allowEmpty value={cOriginal}
-                    onValueChange={(v) => setCOriginal(v === null ? "" : String(v))}
-                    className="bg-white" data-testid="input-c-original" />
-                </div>
-                {cKind === "discount" && (
-                  <div className="space-y-1">
-                    <Label htmlFor="c-final" className="text-xs">السعر بعد الخصم (د.ع)</Label>
-                    <MoneyInput id="c-final" allowEmpty value={cFinal}
-                      onValueChange={(v) => setCFinal(v === null ? "" : String(v))}
-                      className="bg-white" data-testid="input-c-final" />
-                  </div>
-                )}
-                {cKind === "free" && (
-                  <p className="text-xs text-emerald-900" data-testid="text-c-free">
-                    سيُقيَّد بقيمة <b>صفر</b>، ويبقى السعر الأصلي محفوظاً في السجلّ.
-                  </p>
-                )}
-                {cKind === "" && (
-                  <p className="text-xs text-muted-foreground" data-testid="text-c-untouched">
-                    السعر غير محدد بعد — لن يُرسَل، ويبقى الملفّ بلا تسعير.
-                  </p>
-                )}
-                {/*  **والنقصُ يُقال قبل الضغط** — بالقاعدة المشتركة نفسها. */}
-                {cBlock && (
-                  <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
-                    data-testid="text-c-block">
-                    {cBlock}
-                  </p>
-                )}
-              </>
             )}
-            {locks.expert ? (
-              <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900"
-                data-testid="text-expert-locked">
-                {ownerLabels.expert} — لا يمكن تغيير الخبير من هنا.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                <Label htmlFor="c-expert" className="text-xs">الخبير</Label>
-                <Select value={cExpert} onValueChange={setCExpert}>
-                  <SelectTrigger id="c-expert" className="bg-white" data-testid="select-c-expert">
-                    <SelectValue placeholder={(experts ?? []).length
-                      ? "اختر الخبير" : "لا يوجد خبير في هذا الفرع"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(experts ?? []).map((e: any) => (
-                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="space-y-1">
+              <Label htmlFor="cs-note" className="text-xs">ملاحظة (اختياري)</Label>
+              <Input id="cs-note" value={note} onChange={(e) => setNote(e.target.value)}
+                data-testid="input-complete-sale-note" />
+            </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || Boolean(cBlock)} data-testid="button-save-commercial"
-              onClick={() => {
-                const body: any = {};
-                //  **الاختيارُ الصريح يُرسَل ولو نقص** — فيُردّ الطلبُ كلُّه
-                //  ولا يُقبل نصفُه. وحذفُه عند النقص كان يحفظ الخبيرَ ويُسقط
-                //  قرارَ التسعير بصمت.
-                if (!locks.price && cKind !== "") {
-                  body.price = {
-                    kind: cKind,
-                    originalPrice: cOriginal === "" ? null : Number(cOriginal),
-                    finalPrice: cKind === "discount"
-                      ? (cFinal === "" ? null : Number(cFinal)) : undefined,
-                  };
-                }
-                if (!locks.expert && cExpert) body.expertUserId = Number(cExpert);
-                submit(`/api/followups/${active.id}/commercial`, body);
-              }}>
-              حفظ
+            <Button disabled={busy || !cExpert || !csOffer.ok}
+              data-testid="button-save-complete-sale"
+              onClick={() => submit(`/api/followups/${active.id}/complete-sale`, {
+                originalPrice: Number(cOriginal),
+                discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+                expertUserId: Number(cExpert),
+                note: note || undefined,
+              })}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -925,7 +932,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
 
       {/*  ══ **«لم يشترِ» بسببٍ حرٍّ إلزاميّ** ═══════════════════════════════
           ولا قائمةَ أحدَ عشر رمزاً يختار منها الموظّفُ «سبب آخر» فلا يفيد
-          أحداً: يُكتب ما قاله المريضُ كما قاله. */}
+          أحداً: يُكتب ما قاله المريضُ كما قاله. **وبابُها المستقلّ**
+          `/not-bought` (المرحلة الثانية) — لا `/commercial` القديمة. */}
       <Dialog open={dialog === "not_bought"} onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl" className="max-w-md">
           <DialogHeader><DialogTitle>لم يشترِ</DialogTitle></DialogHeader>
@@ -943,8 +951,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogFooter>
             <Button variant="destructive" disabled={busy || !cReason.trim()}
               data-testid="button-save-not-bought"
-              onClick={() => submit(`/api/followups/${active.id}/commercial`,
-                { decision: "not_bought", notBoughtReason: cReason.trim() })}>
+              onClick={() => submit(`/api/followups/${active.id}/not-bought`,
+                { reason: cReason.trim(), note: note || undefined })}>
               تسجيل
             </Button>
           </DialogFooter>
@@ -1231,6 +1239,16 @@ function Field({ label, value, hint }: { label: string; value: string; hint?: st
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="font-medium">{value}</div>
       {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}
+
+/** مثل `Field` — بمعرّف اختبارٍ صريح، لملخّص البيع بعد الإتمام (المرحلة ٢). */
+function SaleField({ label, value, testId }: { label: string; value: string; testId: string }) {
+  return (
+    <div className="rounded-md bg-white/70 px-2 py-1" data-testid={testId}>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-medium text-green-900">{value}</div>
     </div>
   );
 }

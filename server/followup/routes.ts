@@ -2,21 +2,47 @@
 //
 // ══ الصلاحيات — مفروضةٌ هنا لا في الواجهة ═══════════════════════════════
 //
-//   قراءةُ الملفّ                — استقبال · مدير فرع · طبيب · مسؤول
-//   المتابعة التجارية            — استقبال · مدير فرع · **طبيبٌ مخوَّل** · مسؤول
-//   (تأجيل · إغلاق · إعادة فتح · تواصل · إسناد خبير · تأكيد شراء)
-//   **تحديدُ السعر التجاري**     — **مدير الفرع في فرعه** · مسؤول — ولا غير
+//   قراءةُ الملفّ                — استقبال · محاسب · مدير فرع · طبيب · مسؤول
+//   المتابعة التجارية (الصفوفُ    — استقبال · مدير فرع · **طبيبٌ مخوَّل** · مسؤول
+//   الموروثة — `service_path`
+//   ≠ `exam` فقط)
+//   (تأجيل · إغلاق · إعادة فتح · تواصل · إسناد خبير · تأكيد شراء ·
+//    تحديد السعر التجاري)
 //   إشارةُ «يرغب بالشراء الآن»   — طبيبٌ مخوَّل · مسؤول
 //   حسمُ طلبِ سعرٍ قديمٍ معلَّق    — طبيبٌ مخوَّل · مسؤول (توافقٌ رجعي)
 //
-// **والقاعدةُ في سطر**: الطبيبُ **يستطيع ولا يُطلَب منه**. يشارك في العمل
-// التشغيلي إن حضر — مريضٌ واقفٌ أمامه والاستعلامات مشغول — **ولا حالةَ في
-// هذا المسار تنتظره**: الاستقبالُ ومديرُ الفرع يُتمّان كلَّ شيءٍ وحدهما.
+// ══ ⚠ **مسارُ المعاينة الجديد (`service_path = 'exam'`) — المرحلة الثانية،
+//    وتصحيحُها 2026-08-28** ═══════════════════════════════════════════════
 //
-// والسعرُ التجاري وحده خارجَه: «بكم نبيع» قرارُ مَن يدير الفرع ويحاسَب على
-// إيراده. وطبيبٌ يحمل `isAdmin` يسعّر — **بسلطته لا بدوره**.
+//   إتمامُ البيع / «لم يشترِ»    — **استقبال · محاسب · مدير فرع · مسؤول
+//   (`/complete-sale`, `/not-bought`)  عام — ولا الطبيبُ إطلاقاً**
+//   (`canCompleteReceptionSale`، مصدرُ الحقيقة الواحد — والبابان الجديدان
+//   يتحقّقان صراحةً من `service_path = 'exam'` قبل أيّ كتابة).
 //
-// **وسلطةُ المسؤول تُفحَص أوّلاً** في كل بوّابة، فلا يقيّدها دورٌ عاديّ.
+//   **وكلُّ بابٍ تجاريٍّ قديم — `/expert`, `/commercial`,
+//   `/commercial-price`, `/confirm-purchase`, `/approve-purchase`, `/close`،
+//   ومعها `/defer`, `/accept-price`, `/purchase-interest` — متقاعدٌ على
+//   هذا المسار للجميع بلا استثناءٍ للدور، ولو كان مسؤولاً عاماً.**
+//   `retiredOnExamPath` هي الحارسُ الواحد لكلّها: **عقدُ مسارٍ لا قيدُ
+//   صلاحية** — الردُّ ٤٠٩ لا ٤٠٣، لأن المشكلة «هذا البابُ ليس بابَ هذه
+//   العملية» لا «أنت لا تملك صلاحية».
+//
+// **والقاعدةُ في سطر لهذا المسار**: لا سلطةَ تجاريةً للطبيب إطلاقاً على
+// الإطلاق — لا من الأبواب الجديدة ولا من القديمة (القسم 4.h/4.f/4.i في
+// CLAUDE.md). **والمحاسبُ كالاستقبال تماماً هنا** — كلاهما يكلّم المريض
+// ويقرّر البيع، وهذا خلاف بابِ «تحديد السعر التجاري» القديم (مديرُ الفرع/
+// المسؤول حصراً) الذي **بقي محصوراً بحرفه للصفوف الموروثة وحدها** (ولا
+// يجوز أن يُستعمَل على مسار المعاينة إطلاقاً بعد اليوم — مثله كمثل بقية
+// الأبواب القديمة). الاستعلاماتُ (استقبالٌ أو محاسبٌ أو مديرُ فرع) تختار
+// الخبيرَ وتُدخل السعرَ الأصليّ ومقدارَ الخصم، والخادمُ يشتقّ الباقي ويبيع
+// ذرّياً. **وصفوفُ المسار القديم لا تُمَسّ**: تبقى على قاعدة الصلاحيات
+// الموروثة أعلاه بحرفها — بما فيها الطبيب.
+//
+// **وسلطةُ المسؤول تُفحَص أوّلاً** في كل بوّابة، فلا يقيّدها دورٌ عاديّ —
+// ومَن يحمل `isAdmin` يمرّ **بهذه السلطة لا بدوره**، طبيباً كان أم غيره.
+// **والطبيبُ المسؤولُ الفعليّ في النظام القائم يحمل `isAdmin`**، فسلطتُه
+// التجاريةُ الكاملة تمرّ من هنا — لا من دورٍ طبّيٍّ خاص، ولا من هويّةٍ
+// مكتوبةٍ في الكود.
 //
 // ونطاقُ الفرع مفروضٌ في كل نقطة: يُقرأ فرع المتابعة من صفّها لا من الطلب.
 
@@ -32,7 +58,8 @@ import {
 import {
   saleState, missingLabel, PURCHASE_DECISION_LABELS, PRICE_KIND_LABELS,
   COMMERCIAL_FIELD_LABELS, canOverwriteCommercialField, ownerLabel,
-  examPathActions, examPathStatusLine, type CommercialField,
+  examPathActions, examPathStatusLine, canCompleteReceptionSale,
+  type CommercialField,
 } from "@shared/commercial";
 import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
@@ -86,21 +113,36 @@ const ownerSessionOf = (req: Req) => {
 };
 
 /**
- * **الأفعالُ المتقاعدة على مسار المعاينة** (المرحلة الثانية).
+ * **الأبوابُ المتقاعدة على مسار المعاينة — للجميع بلا استثناءٍ للدور**
+ * (المرحلة الثانية، وتصحيحُها 2026-08-28).
  *
- * `defer` و«قبل السعر» و«يرغب بالشراء» كانت خطواتٍ حول واقعةٍ واحدة صار
- * يُسجّلها الموظّفُ مباشرة: اشترى أو لم يشترِ. فتُردّ على العمليات الجديدة
- * برسالةٍ تدلّ على البابِ الواحد.
+ * `defer` · «قبل السعر» · «يرغب بالشراء» · **«إغلاقٌ بلا شراء» القديم**
+ * (`/close`) — ومعها الآن `/expert` و`/commercial` و`/commercial-price`
+ * و`/confirm-purchase`/`/approve-purchase` — كانت خطواتٍ حول واقعةٍ واحدة
+ * صار يُسجّلها الموظّفُ مباشرة: اشترى (`/complete-sale`) أو لم يشترِ
+ * (`/not-bought`، سببٌ حرٌّ إلزاميّ لا رمزٌ من قائمةٍ ثابتة). فتُردّ على
+ * العمليات الجديدة برسالةٍ تدلّ على البابِ الواحد.
+ *
+ * **وهذا عقدُ مسارٍ لا قيدُ صلاحية** — الردُّ ٤٠٩ لا ٤٠٣، وللجميع بلا
+ * استثناء: **الاستقبالُ والمحاسبُ ومديرُ الفرع والمسؤولُ العام يُردّون عن
+ * هذه الأبواب على عمليةٍ من المسار الجديد بعينه تماماً كالطبيب** — لا لأنهم
+ * لا يملكون الصلاحية (يملكونها، عبر `/complete-sale` و`/not-bought`)، بل
+ * لأن البابَ القديم نفسَه تقاعد على هذا المسار. **تصحيحٌ عن تصميمٍ أوّل** كان
+ * يستثني الاستقبالَ ومديرَ الفرع والمسؤولَ من هذا التقاعد بحارسٍ دوريٍّ منفصل
+ * (`blockedOnNewExamPath`، مُزال) — فبابان فقط يُتمّان البيعَ على هذا
+ * المسار، ولا ثالثَ ولو لمسؤولٍ عام.
  *
  * **والصفوفُ القديمة لا تُمَسّ**: حلقةٌ بلا مسار (`service_path IS NULL`) أو
  * متابعةٌ بلا حلقة تبقى على أفعالها كلِّها حتى تنفد — فلا يُحبَس ملفٌّ في
- * حالةٍ لا زرَّ لها.
+ * حالةٍ لا زرَّ لها، وتبقى `/expert`/`/commercial`/`/commercial-price`/
+ * `/confirm-purchase`/`/close` مفتوحةً لها بقاعدة الصلاحيات الموروثة أعلاه
+ * بحرفها — بما فيها الطبيب.
  */
 async function retiredOnExamPath(res: any, followupId: number): Promise<boolean> {
   if (!(await store.isExamPathFollowup(followupId))) return false;
   res.status(409).json({
     error: "هذه العملية على المسار المبسّط — سجّل «اشترى» أو «لم يشترِ»"
-      + " من «تفاصيل البيع» مباشرة.",
+      + " من «إتمام البيع» مباشرة في بطاقة المريض.",
   });
   return true;
 }
@@ -176,7 +218,11 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       const st = saleState({
         priceKind: f.priceKind, expertUserId: f.selectedExpertUserId,
       });
-      const mayAct = canConfirmPurchase(s);
+      //  **صلاحيةُ المسار الجديد لا القديمة**: البيعُ على مسار المعاينة
+      //  بابان فقط (`/complete-sale`, `/not-bought`)، ومَن يفتحهما
+      //  `canCompleteReceptionSale` — لا `canConfirmPurchase` الموروثة
+      //  (تشمل الطبيبَ لصفوفٍ قديمة لا علاقة لها بهذا المسار).
+      const mayAct = canCompleteReceptionSale(owner);
       return {
         ...f,
         examPath,
@@ -189,7 +235,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           : null,
         actions: examPath
           ? examPathActions({
-            session: owner, status: f.status, decision: f.purchaseDecision,
+            session: owner, status: f.status,
             decisionField: {
               owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
               ownerName: f.purchaseDecisionName,
@@ -335,12 +381,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
-  // ── إغلاق بلا شراء ───────────────────────────────────────────────────
+  // ── إغلاق بلا شراء — **متقاعدٌ على مسار المعاينة** (المرحلة الثانية) ──
   app.post("/api/followups/:id/close", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     try {
       const updated = await store.closeWithoutPurchase({
         followupId: f.id, reason: String(req.body?.reason ?? ""),
@@ -397,6 +444,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     const expertUserId = Number(req.body?.expertUserId);
     if (!Number.isFinite(expertUserId)) {
       return res.status(400).json({ error: "معرّف الخبير مطلوب" });
@@ -468,6 +516,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!canConfirmPurchase(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
     try {
       const out = await store.setCommercialFields({
         followupId: f.id,
@@ -533,6 +582,111 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { if (!fail(res, e)) throw e; }
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  **إتمامُ البيع المبسّط — بابٌ واحد** (المرحلة الثانية)
+  //
+  //  الاستقبالُ يختار الخبير ويُدخل السعرَ الأصليّ ومقدارَ الخصم فقط.
+  //  **لا `finalPrice` ولا `priceKind` ولا قرارَ شراء يُقبَل من العميل** —
+  //  الثلاثةُ تُشتَقّ في الخادم (`deriveOfferFromDiscount`) ثمّ تُسلَّم إلى
+  //  `setCommercialFields` القانونية بوصفها بياناتِ السيرفر لا الطلب. وحفظٌ
+  //  واحد = بيعٌ كامل: لا خطوةَ «تفاصيل البيع» ثم خطوةَ «اشترى» منفصلتين —
+  //  الحفظُ **هو** قرارُ «اشترى»، ويبدأ التصنيعُ في المعاملة نفسِها عبر
+  //  `storage.assignManufacturing` (المسارُ القانونيُّ الوحيد، بلا نسخةٍ
+  //  ثانية من المحاسبة).
+  // ══════════════════════════════════════════════════════════════════════
+  app.post("/api/followups/:id/complete-sale", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCompleteReceptionSale(s)) {
+      return res.status(403).json({
+        error: "إتمامُ البيع للاستقبال والمحاسب ومدير الفرع والمسؤول العام — لا الطبيب",
+      });
+    }
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    try {
+      const out = await store.completeReceptionSale({
+        followupId: f.id,
+        originalPrice: req.body?.originalPrice,
+        discountAmount: req.body?.discountAmount,
+        expertUserId: req.body?.expertUserId,
+        note: str(req.body?.note),
+        actor: actorOf(req),
+        session: ownerSessionOf(req),
+        validateExpert,
+        expertLabel: async (id: number) => {
+          const m = await import("../medical/store");
+          return (await m.userNames([id]))[id] ?? null;
+        },
+      });
+      const discountAmount = (out.followup.originalPrice ?? 0) - out.followup.approvedPrice;
+      await logAudit({
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
+        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: {
+          approvedPrice: f.approvedPrice, priceKind: f.priceKind,
+          selectedExpertUserId: f.selectedExpertUserId, purchaseDecision: f.purchaseDecision,
+        },
+        newValues: {
+          originalPrice: out.followup.originalPrice, approvedPrice: out.followup.approvedPrice,
+          priceKind: out.followup.priceKind, selectedExpertUserId: out.followup.selectedExpertUserId,
+          purchaseDecision: "bought",
+        },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `إتمامُ بيعٍ مبسّط لمتابعة #${f.id} — سعرٌ أصليّ`
+          + ` ${out.followup.originalPrice?.toLocaleString() ?? "—"} د.ع`
+          + ` وخصمٌ ${discountAmount.toLocaleString()} د.ع`
+          + ` ⟶ نهائيّ ${out.followup.approvedPrice.toLocaleString()} د.ع`
+          + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
+      });
+      await logAudit({
+        entityType: "prosthetic_work_order", entityId: out.workOrderId ?? 0,
+        action: "create", userId: s.userId, userName: s.userName, branchId: f.branchId,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `تم الشراء وبدأ التصنيع — متابعة #${f.id} بسعر`
+          + ` ${out.followup.approvedPrice.toLocaleString()} د.ع`
+          + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
+      });
+      res.json({
+        ...out.followup,
+        converted: out.converted,
+        workOrderId: out.workOrderId,
+        decisionLabel: PURCHASE_DECISION_LABELS.bought,
+      });
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ── «لم يشترِ» — فعلٌ منفصل، بسببٍ حرٍّ إلزاميّ (المرحلة الثانية) ─────
+  //  يُغلق الملفَّ بلا تصنيعٍ ولا كلفةٍ ولا دينار. السببُ نصٌّ حرٌّ يُكتب كما
+  //  قاله المريض — لا رمزٌ من قائمةٍ ثابتة كما كان البابُ القديم `/close`.
+  app.post("/api/followups/:id/not-bought", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCompleteReceptionSale(s)) {
+      return res.status(403).json({
+        error: "«لم يشترِ» للاستقبال والمحاسب ومدير الفرع والمسؤول العام — لا الطبيب",
+      });
+    }
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    try {
+      const updated = await store.completeReceptionNotBought({
+        followupId: f.id,
+        reason: req.body?.reason,
+        note: str(req.body?.note),
+        actor: actorOf(req),
+        session: ownerSessionOf(req),
+      });
+      await logAudit({
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
+        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: { status: f.status },
+        newValues: { status: "closed_without_purchase", reason: str(req.body?.reason) },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `«لم يشترِ» — متابعة #${f.id}: ${str(req.body?.reason) ?? ""}`,
+      });
+      res.json({ ...updated, decisionLabel: PURCHASE_DECISION_LABELS.not_bought });
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
   // ── تحديدُ السعر التجاري — **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ──────
   //  الطبيبُ يملك القرار السريري، والفرعُ يملك القرار التجاري. فلا صفَّ
   //  طلبٍ يُنشأ ولا حالةَ انتظارٍ تُحتجَز ولا طابورَ يمتلئ.
@@ -546,6 +700,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     //  ونطاقُ الفرع يُقرأ من صفّ المتابعة: مديرُ فرعٍ آخر يُردّ هنا.
     const f = await loadInScope(req, res);
     if (!f) return;
+    //  وهذا البابُ متقاعدٌ كذلك على مسار المعاينة — القسم 4.i: تحديدُ السعر
+    //  التجاري القديم يبقى محصوراً بالصفوف الموروثة وحدها.
+    if (await retiredOnExamPath(res, f.id)) return;
     if (req.body?.finalPrice === undefined || req.body?.finalPrice === null) {
       return res.status(400).json({ error: "السعر النهائي مطلوب" });
     }
@@ -644,6 +801,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const f = await loadInScope(req, res);
     if (!f) return;
+    if (await retiredOnExamPath(res, f.id)) return;
 
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
