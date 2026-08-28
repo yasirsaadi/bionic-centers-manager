@@ -95,7 +95,8 @@
     "test:payment-guard": "tsx server/payment_permission_branch.test.ts",
     "test:reception-routing": "tsx client/src/components/reception_routing.test.ts",
     "test:reception-sale": "tsx server/reception_sale.test.ts",
-    "test:maintenance-simplify": "tsx server/simplified_maintenance.test.ts"
+    "test:maintenance-simplify": "tsx server/simplified_maintenance.test.ts",
+    "test:maintenance-device-target": "tsx client/src/components/maintenance_device_target.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

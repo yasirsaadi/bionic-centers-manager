@@ -44,6 +44,7 @@ import {
   isPendingChargeKind, isEditableByReception,
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
+import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
 export class ChargeError extends Error {
   status: number;
@@ -285,6 +286,29 @@ export async function createDeviceSaleOperation(p: CreateBase & {
  *
  * ولا يُخترَع أمرُ تصنيعٍ ولا حلقةٌ مسلَّمة لجهازٍ لم نسجّله. الغيابُ يُقال
  * غياباً.
+ *
+ * ══ تصحيحٌ لاحق — حارسان معامَليّان قبل الكاتب القانونيّ ═════════════════
+ * مراجعةٌ حيّة كشفت ثغرتين هادئتين على هذا المسار تحديداً (المرحلة
+ * الثالثة)، لا على مسار الصيانة الموروث ولا على بيع الجزء:
+ *
+ * ١) **الحالةُ الفعلية، لا عَلَمُ المريض وحده.** `patients.is_amputee`/
+ *    `is_medical_support` مجرّد عَلَمَين تقرأهما النقطةُ لتقترح
+ *    `serviceType` مبكّراً — وقد ينحرفان عن `patient_cases` الحقيقية
+ *    (ملفٌّ قديم لم يُزامَن، أو حالةٌ سُحبت بـ`deleteCaseType` وبقي العَلَمُ
+ *    صحيحاً بالخطأ). ولو وصل هذا الانحرافُ إلى `createMaintenanceOrderWithVisit`
+ *    بلا فحصٍ هنا، كان مخرجُه الموروث (`caseRows.find(...) ?? physiotherapy
+ *    ?? caseRows[0]`) يُسند الزيارةَ والكلفةَ لحالةٍ **لا تخصّ هذه الصيانة
+ *    فعلاً** — والمخرجُ الموروث يبقى كما هو لعملائه الأصليين (الصيانةُ
+ *    كاملةُ الأجر، واعتمادُ الخصم الموروث)؛ هذا حارسٌ **قبله** خاصٌّ
+ *    بالمرحلة الثالثة وحدها، لا تعديلٌ فيه.
+ * ٢) **الخبير تحت القفل، لا لقطةَ الطلب.** النقطةُ تتحقّق منه قبل فتح
+ *    المعاملة لرسالةِ خطأٍ مبكرة — لكنّ تلك قراءةٌ خارج القفل، وقد يتغيّر
+ *    حالُ الخبير بين تلك القراءة وهذه الكتابة. فيُعاد التحقّق هنا
+ *    بالدالّة المعامَلية القانونية نفسِها التي يستعملها اعتمادُ بيع الجزء
+ *    الموروث أعلاه (`validateExpertForBranchTx`) — لا نسخةَ ثانية.
+ *
+ * وكلاهما **قبل** أيّ نداءٍ لـ`createMaintenanceOrderWithVisit`: رفضٌ هنا
+ * يعني صفرَ كتابة — لا أمرَ ولا زيارةَ ولا قيدَ ولا لمسَ كلفة.
  */
 export async function createMaintenanceOperation(p: {
   patientId: number;
@@ -304,6 +328,29 @@ export async function createMaintenanceOperation(p: {
 }): Promise<{ workOrderId: number; deviceEpisodeId: number | null; finalPrice: number }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
+    //  ══ **الحارسُ الأوّل — حالةٌ حقيقية بعينها، لا فرعٌ مخمَّن** ══════════
+    //  القفلُ (`FOR UPDATE`) يمنع أيضاً أن يسحب `deleteCaseType` هذه
+    //  الحالةَ من تحت هذه المعاملة بين هذا الفحص وكتابة `postMaintenanceFee`
+    //  لاحقاً — فلا نصفَ صيانةٍ على حالةٍ اختفت للتوّ.
+    const caseCheck = await tx.execute(sql`
+      SELECT id FROM patient_cases
+       WHERE patient_id = ${p.patientId} AND case_type = ${p.serviceType} AND status = 'active'
+       FOR UPDATE
+    `);
+    if (!(caseCheck.rows ?? [])[0]) {
+      throw new ChargeError(
+        `لا توجد حالة ${DEPARTMENT_LABELS[p.serviceType]} نشطة مسجَّلة لهذا المريض`
+        + " — راجع الملفّ إدارياً قبل تسجيل الصيانة",
+        400,
+      );
+    }
+
+    //  ══ **الحارسُ الثاني — الخبيرُ يُعاد التحقّق منه تحت القفل** ═════════
+    const expertCheck = await mfg.validateExpertForBranchTx(tx, p.expertUserId, p.branchId ?? 0);
+    if (!expertCheck.ok) {
+      throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
+    }
+
     const order = await mfg.createMaintenanceOrderWithVisit({
       patientId: p.patientId,
       branchId: p.branchId ?? 0,

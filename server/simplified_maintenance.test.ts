@@ -37,6 +37,9 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { canCompleteMaintenance, MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 import { deriveOfferFromDiscount } from "@shared/commercial";
+//  **قسم س** ينادي المخزن مباشرةً — متجاوزاً نقطة REST وفحصَها المبكّر —
+//  ليثبت أن الحارسَ المعامَليّ نفسَه هو السلطة، لا الفحصُ المبكّر وحده.
+import * as pendingChargeStore from "./pending_charges/store";
 
 const DIALOG_SRC = readFileSync(
   join(process.cwd(), "client/src/components/NoExamOperationDialog.tsx"), "utf8");
@@ -764,6 +767,110 @@ async function main() {
         "ن٧. ولا نداءَ فعلياً لِـ`routeRetrospectiveReview` من داخلها — بلا مراجعةٍ لاحقة");
       check(!/canOperateNoExam/.test(maintHandler),
         "ن٨. ولا اعتمادَ على `canOperateNoExam` — `canCompleteMaintenance` وحدها");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── س. الحارسان المعامَليّان — تصحيحٌ لاحق على PR #257 ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  الحالةُ الحقيقية (patient_cases) لا عَلَمُ المريض وحده، والخبيرُ
+    //  يُعاد التحقّق منه تحت القفل — كلاهما داخل معاملة `createMaintenanceOperation`
+    //  نفسِها، قبل أيّ نداءٍ لـ`createMaintenanceOrderWithVisit`.
+    {
+      //  س١. عَلَمُ «أطراف» مرفوعٌ بلا أيّ حالةٍ مسجَّلة إطلاقاً — لا
+      //  فرعَ يُخترَع ولا خطأَ خامس يُسنَد إليه شيء.
+      const pid = await mkPatient("س١-لا-حالة-إطلاقاً");
+      const before = await moneyOf(pid);
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "socket",
+        legacyUnrecordedDevice: true, originalPrice: 30_000, discountAmount: 0,
+      });
+      same("س١. عَلَمُ «أطراف» بلا حالةٍ مسجَّلة ⇒ 400", r.status, 400);
+      check(String(r.body?.error ?? "").includes("لا توجد حالة"),
+        "    برسالةٍ تسمّي غياب الحالة", JSON.stringify(r.body));
+      same("    وصفرُ كتابة تماماً — لا أمر ولا زيارة ولا كلفة ولا قيد ولا مجموع",
+        await moneyOf(pid), before);
+    }
+    {
+      //  س٢. عَلَمُ «أطراف» + حالةُ علاجٍ طبيعي فقط — **لا يُسنَد إليها
+      //  بصمت** (مخرجُ `createMaintenanceOrderWithVisit` الموروث كان
+      //  سيفعل ذلك بالضبط لولا هذا الحارس).
+      const pid = await mkPatient("س٢-فيزيو-بلا-اطراف");
+      await mkCase(pid, "physiotherapy");
+      const before = await moneyOf(pid);
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "socket",
+        legacyUnrecordedDevice: true, originalPrice: 30_000, discountAmount: 0,
+      });
+      same("س٢. حالةُ فيزيو فقط لمريضٍ يحمل عَلَم «أطراف» ⇒ 400 — لا إسنادَ لها",
+        r.status, 400);
+      same("    وصفرُ كتابة", await moneyOf(pid), before);
+    }
+    {
+      //  س٣. نفسُها للمساند — نفسُ الحارس، نفسُ الرفض.
+      const pid = await mkPatient("س٣-فيزيو-بلا-مساند", { support: true });
+      await mkCase(pid, "physiotherapy");
+      const before = await moneyOf(pid);
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, serviceType: "medical_support",
+        legacyUnrecordedDevice: true, originalPrice: 30_000, discountAmount: 0,
+      });
+      same("س٣. حالةُ فيزيو فقط لمريضٍ يحمل عَلَم «مساند» ⇒ 400", r.status, 400);
+      same("    وصفرُ كتابة", await moneyOf(pid), before);
+    }
+    {
+      //  س٤. الحالةُ الصحيحة بعينها موجودة ⇒ ينجح، وكلُّ الأرقام تتطابق.
+      const pid = await mkPatient("س٤-حالة-صحيحة");
+      await mkCase(pid, "prosthetic");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "socket",
+        legacyUnrecordedDevice: true, originalPrice: 37_000, discountAmount: 0,
+      });
+      same("س٤. الحالةُ الصحيحة موجودة ⇒ 201", r.status, 201);
+      const money = await moneyOf(pid);
+      same("    كلفةُ الحالة = مجموعُ المريض = القيدُ = السعرُ النهائيّ",
+        [money.total, money.case_cost, money.ledger], [37_000, 37_000, 37_000]);
+      const order = await orderOf(r.body.workOrderId);
+      same("    والحقلُ المُهيكَل على الأمر يطابق (أصليّ/نهائيّ/نوع)",
+        [order.mop, order.mfp, order.mpk], [37_000, 37_000, "normal"]);
+
+      //  ومجّانيّةٌ حقيقية بنفس الحارس — كلُّ الفروق صفرٌ والعمليةُ تقع مع ذلك.
+      const pidFree = await mkPatient("س٤ب-مجاني-حالة-صحيحة");
+      await mkCase(pidFree, "prosthetic");
+      const beforeFree = await moneyOf(pidFree);
+      const rFree = await maint({
+        patientId: pidFree, expertUserId: EXPERT, maintenanceComponent: "socket",
+        legacyUnrecordedDevice: true, originalPrice: 20_000, discountAmount: 20_000,
+      });
+      same("    ومجّانيّةٌ حقيقية بنفس الحارس ⇒ 201", rFree.status, 201);
+      const moneyFree = await moneyOf(pidFree);
+      same("    والفروقُ الماليةُ كلُّها صفر",
+        [moneyFree.total - beforeFree.total, moneyFree.case_cost - beforeFree.case_cost,
+          moneyFree.ledger - beforeFree.ledger], [0, 0, 0]);
+      same("    والأمرُ والزيارةُ مع ذلك قائمان — عملٌ حقيقيّ بقيمة صفر",
+        [moneyFree.orders - beforeFree.orders, moneyFree.visits - beforeFree.visits], [1, 1]);
+    }
+    {
+      //  س٥. الخبيرُ يُعاد التحقّق منه تحت القفل — لا الفحصَ المبكّر وحده.
+      //  نداءٌ مباشر للمخزن، **متجاوزاً نقطة REST وفحصَها المبكّر تماماً** —
+      //  فلو كان هذا الحارسُ المعامَليّ غائباً لكتب خبيرٌ فاسدٌ ديناراً.
+      const pid = await mkPatient("س٥-خبير-تحت-القفل");
+      await mkCase(pid, "prosthetic");
+      const before = await moneyOf(pid);
+      let threw = false, msg = "";
+      try {
+        await pendingChargeStore.createMaintenanceOperation({
+          patientId: pid, branchId: 1, serviceType: "prosthetic",
+          //  خبيرٌ لا يعمل في الفرع ١ إطلاقاً — ولم يمرّ بأيّ فحصٍ مبكّر هنا.
+          expertUserId: EXPERT_OTHER_BRANCH,
+          maintenanceComponent: "socket", deviceEpisodeId: null, legacyUnrecordedDevice: true,
+          originalPrice: 15_000, priceKind: "normal", finalPrice: 15_000,
+          visitNotes: "س٥", actor: { userId: RECV, userName: "ريام" },
+        });
+      } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
+      check(threw, "س٥. الخبيرُ غيرُ الصالح لفرع العملية يُرفَض من داخل المعاملة نفسِها",
+        msg);
+      same("    وصفرُ كتابة — لا أمرَ ولا زيارةَ ولا كلفةَ ولا قيدَ ولا لمسَ إجمالي",
+        await moneyOf(pid), before);
     }
   } finally {
     await cleanup();

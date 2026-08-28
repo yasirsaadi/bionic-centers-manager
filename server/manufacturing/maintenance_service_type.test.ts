@@ -101,6 +101,18 @@ async function mkPatient(name: string, flags: {
   return rows[0].id;
 }
 
+/**
+ * **حالةٌ نشطة مطابقة** (تصحيحٌ لاحق على PR #257) — `createMaintenanceOperation`
+ * صار يشترط صفَّ `patient_cases` الحقيقيّ لا العَلَم وحده (لا يُخمَّن سندٌ من
+ * عَلَمٍ قد ينحرف)، فالأعلامُ وحدها لم تعد تكفي لفتح صيانةٍ عبر `/api/no-exam/
+ * maintenance`. مطابقٌ لِـ`mkCase` في `simplified_maintenance.test.ts`.
+ */
+async function mkCase(patientId: number, caseType: "prosthetic" | "medical_support", branch = 1) {
+  await pool.query(
+    `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+     VALUES ($1,$3,$2,0,'manual','active')`, [patientId, caseType, branch]);
+}
+
 async function ordersOf(patientId: number) {
   return db.select().from(WO).where(eq(WO.patientId, patientId));
 }
@@ -154,6 +166,7 @@ async function main() {
     // ══ ١٣. طرفٌ فقط ⇒ prosthetic تلقائياً — بلا سؤال ولا تغيير سلوك ═══
     console.log("\n── صاحب نوعٍ واحد: كما كان تماماً ──");
     const pPro = await mkPatient("مريض طرف فقط", { amputee: true });
+    await mkCase(pPro, "prosthetic");
     //  **والجزءُ المُصان إلزاميٌّ للأطراف** (ترحيل ٠٦٠): يُثبَت أوّلاً أن
     //  الطلبَ بلا جزءٍ يُردّ، ثم يمضي المسارُ القديم كما هو مع الجزء.
     let r = await maint({ patientId: pPro, expertUserId: EXPERT, cost: 25_000 });
@@ -174,6 +187,7 @@ async function main() {
 
     // ══ ١٤. مسندٌ فقط ⇒ medical_support تلقائياً ═════════════════════════
     const pSup = await mkPatient("مريض مسند فقط", { support: true });
+    await mkCase(pSup, "medical_support");
     r = await maint({ patientId: pSup, expertUserId: EXPERT, cost: 25_000 });
     same("١٤. مسندٌ فقط ⇒ 201 بلا تحديد نوع", r.status, 201);
     same("ونوعه medical_support", (await ordersOf(pSup)).map((o) => o.serviceType), ["medical_support"]);
@@ -181,6 +195,8 @@ async function main() {
     // ══ ١٥. الاثنان معاً ⇒ **يُطلَب التحديد** ولا يُخمَّن ════════════════
     console.log("\n── صاحب الاثنين: لا تخمين ──");
     const pDual = await mkPatient("مريض طرف ومسند", { amputee: true, support: true });
+    await mkCase(pDual, "prosthetic");
+    await mkCase(pDual, "medical_support");
     r = await maint({ patientId: pDual, expertUserId: EXPERT, cost: 25_000 });
     same("١٥. الاثنان بلا تحديد ⇒ 400", r.status, 400);
     check(String(r.json?.error ?? "").includes("حدّد نوع الجهاز"), "برسالةٍ تطلب التحديد", JSON.stringify(r.json));
