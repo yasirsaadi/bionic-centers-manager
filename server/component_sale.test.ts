@@ -7,7 +7,7 @@
 // يفتح الحلقةَ وأمرَ العمل ويقيّد المبلغ معاً — بلا طبيبٍ، بلا مراجعةٍ
 // استرجاعية، بلا نداءين منفصلين (فتحُ حلقةٍ ثمّ بيعُها).
 //
-// وما يُثبته هنا، بندَ بندٍ (أ–ع):
+// وما يُثبته هنا، بندَ بندٍ (أ–ف):
 //   • **أ**: تكافؤُ الأدوار الأربعة، ورفضُ الطبيب المطلق ولو نادى النقطةَ
 //     مباشرةً، ورفضُ دورٍ آخر (خبير).
 //   • **ب**: النطاقُ — كلُّ جزءٍ من الثمانية يُقبَل، والمجهولُ والجهازُ
@@ -26,6 +26,11 @@
 //     يشير إليها بخبيرها.
 //   • **ح**: الخبيرُ يُعاد التحقّق منه تحت القفل — نداءٌ مباشر للمخزن يتجاوز
 //     الفحصَ المبكّر تماماً.
+//   • **ف**: الفرعُ الفعليّ للعملية — لا لقطةُ `params.branchId` قبل
+//     المعاملة (تصحيحٌ لاحق). فرعٌ خاطئ مُرسَلٌ مباشرةً (حلقةً جديدة أو
+//     موروثة) يُرفَض بصفر كتابة، وفرعٌ صحيح يمرّ، والمسؤولُ يُتمّ بيعاً
+//     حقيقياً في فرعٍ غير فرع جلسته، والأدوارُ المحجوزة بفرعها كما كانت
+//     حرفياً، وفرعٌ فارغ (`NULL`) مصطنَع يُرفَض صراحةً لا يُخمَّن.
 //   • **ط**: لا خيطَ أطرافٍ ⟵ صفرُ كتابة؛ والعلاجُ الطبيعيّ وحده لا يتلقّى
 //     كلفةً.
 //   • **ي**: الفروقُ الماليةُ الموجبة تتطابق عبر خمسة مصادر؛ والمجّانيّ
@@ -610,6 +615,135 @@ async function main() {
       } catch { threw = true; }
       check(threw, "ح٣. خبيرٌ غيرُ موجودٍ يُرفَض من داخل المعاملة");
       same("    وصفرُ كتابة", await moneyOf(pid), ZERO);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ف. الفرعُ الفعليّ للعملية — لا لقطةُ ما قبل المعاملة (تصحيحٌ لاحق) ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  كانت `validateExpertForBranchTx` تُراجَع بـ`params.branchId` — فرعٌ
+    //  قرأه الخادمُ **قبل** فتح المعاملة. فنداءٌ مباشر (أو مريضٌ نُقل بين تلك
+    //  القراءة وهذا القفل) يمرّر فرعاً لا يطابق العمليةَ الحقيقية، والحارسُ
+    //  المفترَض أن يكون نهائياً يصدّق سلطةً بائتة. فصار الفرعُ الفعليُّ
+    //  يُشتقّ من الحلقة المقفولة نفسِها، ويُقارَن بما أذن له الطالبُ قبل أيّ
+    //  كتابة — والاثنان يمرّان عبر نداءٍ مباشر للمخزن، متجاوزَين فحصَ النقطة
+    //  المبكّر تماماً، تماماً كقسم ح أعلاه.
+    {
+      //  ══ ف١. `branchId` خاطئ لحلقةٍ **جديدة** — العمليةُ حقاً في فرع ١. ══
+      const pid = await mkPatient("ف-فرع-خاطئ-حلقة-جديدة"); // فرع ١ افتراضياً
+      await mkCase(pid, "prosthetic"); // فرع ١ افتراضياً
+      const before = await moneyOf(pid);
+      let threw = false, msg = "";
+      try {
+        await pendingChargeStore.createComponentSaleOperation({
+          patientId: pid, branchId: 2, // ⟵ خاطئ عمداً
+          expertUserId: EXPERT_OTHER_BRANCH, // خبيرُ فرع ٢ — سيُقبَل لو صدّقنا الفرعَ الخاطئ
+          originalPrice: 200_000, priceKind: "normal", finalPrice: 200_000,
+          note: null, actor: { userId: RECV, userName: "ريام" },
+          component: "knee" as any, existingEpisodeId: null,
+        });
+      } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
+      check(threw, "ف١. branchId=٢ مُرسَلٌ مباشرةً لعمليةٍ حقيقتُها فرعٌ ١ ⟶ يُرفَض", msg);
+      same("    وصفرُ كتابة بالضبط — لا حلقةَ ولا أمرَ ولا قيدَ ولا لمسَ كلفةِ حالةٍ ولا إجماليّ",
+        await moneyOf(pid), before);
+    }
+    {
+      //  ══ ف٢. نفسُها لحلقةٍ **موروثة** — الحلقةُ المقفولة فرعُها ١ حقاً. ══
+      const pid = await mkPatient("ف-فرع-خاطئ-حلقة-موروثة");
+      const caseId = await mkCase(pid, "prosthetic"); // فرع ١
+      const epId = await mkLegacyNoExamEpisode(pid, caseId, "socket", 1);
+      const before = await moneyOf(pid);
+      let threw = false, msg = "";
+      try {
+        await pendingChargeStore.createComponentSaleOperation({
+          patientId: pid, branchId: 2, // ⟵ خاطئ: الحلقةُ المقفولة فرعُها ١
+          expertUserId: EXPERT_OTHER_BRANCH,
+          originalPrice: 150_000, priceKind: "normal", finalPrice: 150_000,
+          note: null, actor: { userId: RECV, userName: "ريام" },
+          component: null, existingEpisodeId: epId,
+        });
+      } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
+      check(threw, "ف٢. ونفسُ الرفض عند استئناف حلقةٍ موروثة بفرعٍ مخالف", msg);
+      same("    وصفرُ أثرٍ ماليّ أو تشغيليّ — الحلقةُ اليتيمة بقيت كما كانت بالضبط",
+        await moneyOf(pid), before);
+      const ep = await episodeOf(epId);
+      same("    والحلقةُ نفسُها لم تتحرّك من awaiting_exam", ep.status, "awaiting_exam");
+    }
+    {
+      //  ══ ف٣. وفرعٌ صحيحٌ مطابق يمرّ كالمعتاد — الحارسُ الجديد لا يمنع عملاً
+      //  سليماً. ══
+      const pid = await mkPatient("ف-فرع-صحيح-يمر");
+      await mkCase(pid, "prosthetic");
+      const before = await moneyOf(pid);
+      const out = await pendingChargeStore.createComponentSaleOperation({
+        patientId: pid, branchId: 1, // ⟵ صحيحٌ ومطابق
+        expertUserId: EXPERT,
+        originalPrice: 300_000, priceKind: "normal", finalPrice: 300_000,
+        note: null, actor: { userId: RECV, userName: "ريام" },
+        component: "knee" as any, existingEpisodeId: null,
+      });
+      check(Boolean(out.workOrderId) && Boolean(out.deviceEpisodeId),
+        "ف٣. فرعٌ صحيحٌ مطابق ⟶ العمليةُ تمضي بنجاح", JSON.stringify(out));
+      const after = await moneyOf(pid);
+      same("    والمالُ تحرّك بمقدار السعر كاملاً، وحلقةٌ وأمرٌ فُتحا",
+        [after.total - before.total, after.episodes - before.episodes, after.orders - before.orders],
+        [300_000, 1, 1]);
+    }
+    {
+      //  ══ ف٤. المسؤولُ العامّ عبر **النقطة الحقيقية** يُتمّ بيعاً في فرعٍ ٢
+      //  فعلاً حين يكون المريضُ والعمليةُ حقاً في فرع ٢ والخبيرُ صالحٌ له —
+      //  فرعُ جلسته الافتراضيّ ١، وسلطتُه غيرُ مقيَّدةٍ بفرعٍ واحد. ══
+      const pid = await mkPatient("ف-مسؤول-فرع٢-حقيقي", { branch: 2 });
+      await mkCase(pid, "prosthetic", 2);
+      const r = await sale({
+        patientId: pid, component: "knee", expertUserId: EXPERT_OTHER_BRANCH,
+        originalPrice: 400_000, discountAmount: 0,
+      }, S.admin);
+      check(r.status === 201, "ف٤. المسؤولُ يُتمّ بيعاً حقيقياً في فرع ٢ عبر النقطة الحقيقية", JSON.stringify(r.body));
+      const ep = await episodeOf(r.body.deviceEpisodeId);
+      same("    والحلقةُ فعلاً على فرع ٢", ep.b, 2);
+    }
+    {
+      //  ══ ف٥/ف٦. الأدوارُ المحجوزة بفرعها تبقى كما كانت — تصحيحُ الفرع
+      //  الفعليّ لا يوسّع صلاحيةَ أحد ولا يضيّقها. ══
+      const pid = await mkPatient("ف-فرع-٢-باستقبالين", { branch: 2 });
+      await mkCase(pid, "prosthetic", 2);
+      const r1 = await sale({
+        patientId: pid, component: "knee", expertUserId: EXPERT_OTHER_BRANCH,
+        originalPrice: 100_000, discountAmount: 0,
+      }, S.recv); // استقبالُ فرع ١
+      check(r1.status === 403, "ف٥. استقبالُ فرع ١ يُردّ ٤٠٣ على مريض فرع ٢ — كما كان قبل هذا التصحيح", String(r1.status));
+      same("    وصفرُ كتابة", await moneyOf(pid), ZERO);
+      const r2 = await sale({
+        patientId: pid, component: "socket", expertUserId: EXPERT_OTHER_BRANCH,
+        originalPrice: 100_000, discountAmount: 0,
+      }, S.recvBranch2); // استقبالُ فرع ٢ نفسِه
+      check(r2.status === 201, "ف٦. واستقبالُ فرع ٢ نفسِه يُتمّها بنجاح", JSON.stringify(r2.body));
+    }
+    {
+      //  ══ ف٧. فرعٌ فارغ (`NULL`) على حلقةٍ قابلةٍ للاستئناف — خللٌ مصطنَع لا
+      //  يُنتجه أيّ مسارٍ حيّ اليوم (`startDeviceEpisodeTx` يكتب الفرعَ دائماً
+      //  من `patients.branch_id` غيرِ القابل لـ`NULL`، ولا تحديثٌ لاحقٌ
+      //  يمسحه — انظر تعليقَ الدالّة). فيُزرَع هنا بالـSQL مباشرةً ليثبت أن
+      //  الحارسَ **يرفض صراحةً** بدل أن يخمِّن من `params.branchId`. ══
+      const pid = await mkPatient("ف-فرع-فارغ-مصطنع");
+      const caseId = await mkCase(pid, "prosthetic");
+      const [ep] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,NULL,1,'awaiting_exam',0,'socket','socket','no_exam',$3) RETURNING id`,
+        [pid, caseId, RECV]);
+      const before = await moneyOf(pid);
+      let threw = false, msg = "";
+      try {
+        await pendingChargeStore.createComponentSaleOperation({
+          patientId: pid, branchId: 1, expertUserId: EXPERT,
+          originalPrice: 100_000, priceKind: "normal", finalPrice: 100_000,
+          note: null, actor: { userId: RECV, userName: "ريام" },
+          component: null, existingEpisodeId: ep.id,
+        });
+      } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
+      check(threw, "ف٧. حلقةٌ بفرعٍ NULL تُرفَض صراحةً — لا تُخمَّن من params.branchId", msg);
+      same("    وصفرُ كتابة", await moneyOf(pid), before);
     }
 
     // ══════════════════════════════════════════════════════════════════
