@@ -109,11 +109,37 @@ async function mkPatient(label: string, branchId = 1) {
   return r[0].id;
 }
 
+/**
+ * `deviceCost` — كلفةُ المعاينة (صفرٌ يعني «سكت الطبيب»).
+ *
+ * ══ **والسعرُ صار خطوةً منفصلة عن التوقيع** ═══════════════════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md)، فيُثبَّت هنا بعده مباشرةً على الصفَّين معاً —
+ * تماماً كما كانت `ensureFollowupForSignedExam` تكتبهما وقت التوقيع، بما
+ * فيه الصفرُ («سكت الطبيب» ⟶ `approved_price=0`، وهو الافتراضُ أصلاً).
+ */
 async function signExam(patientId: number, session: any, deviceCost: number) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
-    caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
-    deviceCost, prescription: {},
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
   });
+  if (res.status < 300 && res.body?.id) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+      await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+        [res.body.id, deviceCost]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [res.body.id, deviceCost]);
+  }
+  return res;
 }
 
 async function followupOf(patientId: number, session: any = S.admin) {

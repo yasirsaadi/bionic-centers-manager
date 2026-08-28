@@ -127,6 +127,34 @@ async function mkExam(patientId: number, caseId: number | null, opts: {
   return rows[0].id;
 }
 
+/**
+ * يكتب `device_cost` مباشرةً على معاينةٍ موقّعة عبر النقطة الحقيقية —
+ * الترِكرُ (٠٢٨) يرفض أيّ `UPDATE` على `medical_exams` لم يفتح البابَ
+ * المراقَب صراحةً، فيُفتح هنا كما توثّق CLAUDE.md.
+ *
+ * **لماذا لا `mkExam` وحدها**: توقيعُ الطبيب عبر `POST .../exams` لم يعد
+ * يقبل `deviceCost` (القسمُ 4.b/4.f) — لكنّ هذا القسمَ يختبر **ربطَ
+ * التوقيع بالحلقة المنتظرة**، وهو سلوكٌ حيٌّ في النقطة نفسها لا يظهر عبر
+ * إدراجٍ خام. فيُوقَّع عبر النقطة الحقيقية أوّلاً (يثبت الربط)، ثم يُكتب
+ * السعرُ بالباب المراقَب كي تبقى `latestDeviceCostForEpisode` قابلةً
+ * للفحص كما كانت.
+ */
+async function sealedDeviceCostWrite(examId: number, deviceCost: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+    await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+      [examId, deviceCost]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 async function episodeRow(id: number) {
   const r = await q(`SELECT id, patient_id, case_id, sequence_number, status, agreed_cost,
                             delivered_at, cancelled_at, cancel_reason, created_by
@@ -337,7 +365,7 @@ async function main() {
     same("ق. وقبل المعاينة `hasSignedExamForEpisode` = false",
       await medical.hasSignedExamForEpisode(eL.id), false);
     const signed = await http("POST", `/api/medical/patients/${pL}/exams`, S.doctor, {
-      caseType: "prosthetic", diagnosis: "بتر تحت الركبة", deviceCost: 900000,
+      caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
       prescription: { prostheticType: "تحت الركبة" },
     });
     same("ل. التوقيع نجح", signed.status, 200);
@@ -345,6 +373,9 @@ async function main() {
     same("   والحلقة صارت `examined`", (await episodeRow(eL.id))?.status, "examined");
     same("ق. وبعدها `hasSignedExamForEpisode` = true",
       await medical.hasSignedExamForEpisode(eL.id), true);
+    //  السعرُ لم يعد يصل التوقيعَ (القسمُ 4.b/4.f) — يُثبَّت هنا بالباب
+    //  المراقَب كي يبقى فحصُ `latestDeviceCostForEpisode` نفسِها صالحاً.
+    await sealedDeviceCostWrite(signed.body.id, 900000);
     same("ع. و`latestDeviceCostForEpisode` يقرأ سعر معاينتها",
       await medical.latestDeviceCostForEpisode(eL.id), 900000);
     same("ف. و`prescribedSpecsForEpisode` يقرأ وصفتها",

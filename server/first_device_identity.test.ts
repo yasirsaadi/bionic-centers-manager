@@ -104,10 +104,34 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
      VALUES ($1,$2,$3,0,'manual','active') RETURNING id`, [patientId, branchId, caseType]);
   return r[0].id;
 }
+/**
+ * ══ **والسعرُ صار خطوةً منفصلة عن التوقيع** ═══════════════════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md)، فيُثبَّت هنا بعده على الصفَّين معاً — تماماً كما
+ * كانت `ensureFollowupForSignedExam` تكتبهما وقت التوقيع بالضبط.
+ */
 async function signExam(patientId: number, session: any, deviceCost = 1_700_000) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
-    caseType: "prosthetic", diagnosis: "بتر تحت الركبة", deviceCost, prescription: {},
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
   });
+  if (res.status < 300 && res.body?.id) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+      await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+        [res.body.id, deviceCost]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [res.body.id, deviceCost]);
+  }
+  return res;
 }
 async function followupsOf(patientId: number) {
   const r = await http("GET", `/api/followups/patient/${patientId}`, S.admin);
@@ -269,7 +293,11 @@ async function main() {
       await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
       await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      //  **والمصحِّحُ مديرُ الفرع** — الطبيبُ العاديّ فقد هذا الحقلَ كاملاً
+      //  (القسم 4.h، تنقيحٌ ثانٍ)؛ الآليّةُ المختبَرة هنا (تصحيحُ ٢٣٩) بلا
+      //  تغيير، وقسمُ الصلاحية المخصَّص لهذا الفارق في
+      //  `exam_price_correction.test.ts`.
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 1_750_000, priceCorrectionReason: "خطأ في إدخال السعر أثناء المعاينة",
       });
@@ -439,8 +467,10 @@ async function main() {
           total: s.total, caseCost: s.caseCost }));
 
       //  ══ ثمّ يمضي تصحيحُ ٢٣٩ على الملفّ المُصلَح ═════════════════════
+      //  **بمديرِ الفرع** — نفسُ الفارق أعلاه: الطبيبُ العاديّ فقد هذا
+      //  الحقلَ (القسم 4.h، تنقيحٌ ثانٍ)، والآليّةُ المختبَرة هنا لا تتغيّر.
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 1_750_000, priceCorrectionReason: "خطأ في إدخال السعر أثناء المعاينة",
       });
@@ -618,7 +648,11 @@ async function main() {
         [s.total, s.caseCost, s.wos[0]?.device_episode_id],
         [before.total, before.caseCost, null]);
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      //  **بمديرِ الفرع كذلك** — طلبٌ من الطبيب العاديّ نفسِه كان سيُتجاهَل
+      //  بصمت (٢٠٠ بلا أثر) لا يُردّ ٤٠٩، لأن حقلَه التجاريّ صار مُتجاوَزاً
+      //  قبل بلوغ تصنيف «الملتبس» أصلاً — فلا يبقى هذا الفحصُ فحصاً لِما
+      //  يصفه عنوانُ القسم (الملتبسُ يُردّ) لو تُرك بحساب الطبيب.
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 550_000, priceCorrectionReason: "تصحيح",
       });

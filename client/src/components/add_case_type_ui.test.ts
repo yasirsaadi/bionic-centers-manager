@@ -161,24 +161,23 @@ check("٣٠. **والباني المشترك هو المعروض**",
 check("٣١. **والنصُّ القديم غيرُ المفهوم يبقى معروضاً** — يعرف الموظّف ما يستبدله",
   edit.includes('data-testid="text-legacy-amputation"'));
 
-// ── ٨. **قفلُ سعر المعاينة على جهازه هو** ───────────────────────────────
-//  المريضُ العائد يملك أكثر من طرف. وأخذُ `followupRows[0]` كان يقفل سعرَ
-//  الجهاز الثاني لأن الأول بِيع — قفلٌ لا علاقةَ له بما يُحرَّر.
-console.log("\n── قفل سعر المعاينة ──");
-check("٣٢. **ولا تُؤخَذ أولُ متابعةٍ للمريض**",
-  !examDlg.includes("(followupRows ?? [])[0]"),
-  (examDlg.match(/.*followupRows.*/g) ?? []).join("\n"));
-check("٣٣. **بل متابعةُ المعاينة المحرَّرة نفسِها**",
-  examDlg.includes("Number(f?.medicalExamId) === Number(exam.id)")
-    && examDlg.includes("Number(f?.deviceEpisodeId) === Number(exam.deviceEpisodeId)"),
-  (examDlg.match(/.*medicalExamId.*/g) ?? []).join("\n"));
-check("٣٤. **والطلبُ المعلَّق بمرجع هذا الجهاز** — لا بأيّ طلبٍ للمريض",
-  examDlg.includes("deviceRefs.includes(String(r?.contextRef))")
-    && !examDlg.includes('.some((r: any) => r?.status === "pending")'),
-  (examDlg.match(/.*discountPending =.*/g) ?? []).join("\n"));
-check("٣٥. **والمراجعُ من المصدر المشترك** — لا هويّةٌ تُخترَع",
-  examDlg.includes("deviceDiscountRefs({") && examDlg.includes("@shared/discount"));
-check("٣٦. **والحلقةُ تصل النافذةَ مع المعاينة**",
+// ── ٨. **قفلُ سعر المعاينة على جهازه — تقاعد مع إزالة كلّ تسعيرٍ من النافذة** ──
+//  كان هذا القسمُ يثبت أن قفلَ تصحيح السعر بعد البيع يُطابِق متابعةَ
+//  المعاينة **بعينها** لا أوّلَ متابعةٍ للمريض — كي لا يُقفَل سعرُ جهازٍ
+//  ثانٍ بسبب بيع الأوّل. وبعد أن فقد نموذجُ المعاينة كلَّ حقلٍ تجاريّ — لا
+//  سعرَ ولا خصمَ ولا خبيرَ ولا تصحيحاً بعد البيع (القسمُ 4.b/4.f في
+//  CLAUDE.md، وترحيلُ الاختبار الكامل في `test:exam-commercial`) — سقطت
+//  المشكلةُ بسقوط سببها: لا شيءَ يُقفَل على جهازٍ لأن لا شيءَ يُكتَب أصلاً.
+console.log("\n── ولا تسعيرَ يُقفَل على جهاز ──");
+check("٣٢. **ولا أثرَ لآلة قفل السعر في النافذة**",
+  !examDlg.includes("followupRows") && !examDlg.includes("activeFollowup")
+    && !examDlg.includes("priceLock") && !examDlg.includes("deviceDiscountRefs"),
+  [...examDlg.matchAll(/.*(followupRows|activeFollowup|priceLock|deviceDiscountRefs).*/g)]
+    .map((m) => m[0]).join("\n"));
+check("٣٣. **ولا حقلَ سعرٍ ولا خبيرٍ ولا قرارَ شراء إطلاقاً**",
+  !examDlg.includes("commercialPayload") && !examDlg.includes("priceKind")
+    && !examDlg.includes("expertUserId") && !examDlg.includes("MoneyInput"));
+check("٣٤. **والحلقةُ تبقى تصل النافذةَ مع المعاينة** — هويّةٌ سريرية لا تجارية",
   examDlg.includes("deviceEpisodeId?: number | null;"));
 
 // ── ٩. **والصفرُ ليس سعرَ صيانةٍ عادياً** ────────────────────────────────

@@ -114,15 +114,39 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
            VALUES ($1,$2,$3,0,'manual','active')`, [patientId, branchId, caseType]);
 }
 
+/**
+ * ══ **`opts.deviceCost` صار خطوةً منفصلة عن التوقيع** ═══════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md)، فيُثبَّت هنا بعده — على الصفَّين معاً — **فقط
+ * حين يمرّره المستدعي رقماً فعلياً**، فيبقى `signExam(p, S.doc,
+ * { deviceCost: undefined })` يعني «لم يُسعَّر» تماماً كما كان.
+ */
 async function signExam(patientId: number, session: any, opts: {
   caseType?: string; deviceCost?: number; prescription?: any;
 } = {}) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
     caseType: opts.caseType ?? "prosthetic",
     diagnosis: "بتر تحت الركبة",
-    deviceCost: opts.deviceCost,
     prescription: opts.prescription ?? {},
   });
+  if (typeof opts.deviceCost === "number" && res.status < 300 && res.body?.id) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+      await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+        [res.body.id, opts.deviceCost]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [res.body.id, opts.deviceCost]);
+  }
+  return res;
 }
 
 /** ترتيبُ المفاتيح في JSONB لا يُعتَدّ به — تُقارَن الخطّةُ مطبَّعة. */

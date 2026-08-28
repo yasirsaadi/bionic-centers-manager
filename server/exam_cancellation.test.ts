@@ -126,10 +126,38 @@ const startEpisode = (patientId: number, serviceType: string) =>
   http("POST", `/api/patients/${patientId}/device-episodes`, S.recv,
     { servicePath: "exam", serviceType, requestedItem: "full_device" });
 
-const signExam = (patientId: number, caseType: string, extra: any = {}, session: any = S.doc) =>
-  http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+/**
+ * ══ **`extra.deviceCost` صار خطوةً منفصلة عن التوقيع** ═══════════════════
+ * الشاشةُ الطبّية لا ترسل `deviceCost` عند التوقيع بعد اليوم (القسمُ
+ * 4.b/4.f في CLAUDE.md)، والنقطةُ تتجاهله لو وصل. فحين يمرّر أحد
+ * السيناريوهات `deviceCost` هنا، يُثبَّت بعد التوقيع مباشرةً بالباب
+ * المراقَب — على الصفَّين معاً كما كانت `ensureFollowupForSignedExam`
+ * تكتبهما — فتبقى معنى «معاينةٌ تحمل سعراً» الذي تختبره الحالاتُ أدناه
+ * كما هو، بلا لمس ٢٥+ موضع استدعاء.
+ */
+async function signExam(patientId: number, caseType: string, extra: any = {}, session: any = S.doc) {
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
     caseType, diagnosis: "تشخيص", plan: "خطة", ...extra,
   });
+  if (typeof extra?.deviceCost === "number" && res.status < 300 && res.body?.id) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.allow_exam_edit = 'on'`);
+      await client.query(`UPDATE medical_exams SET device_cost=$2 WHERE id=$1`,
+        [res.body.id, extra.deviceCost]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [res.body.id, extra.deviceCost]);
+  }
+  return res;
+}
 
 const cancel = (examId: number, reason: string, session: any = S.doc) =>
   http("POST", `/api/medical/exams/${examId}/cancel`, session, { reason });
