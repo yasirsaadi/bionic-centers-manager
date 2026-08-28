@@ -332,7 +332,7 @@ export async function getDeviceEpisodesForPatient(
 }
 
 /**
- * بدء جهاز جديد على خيط قائم.
+ * بدء جهاز جديد على خيط قائم — **التنفيذُ القانونيّ، تحت قفل مُستدعيه**.
  *
  * ══ الحماية من السباق ═════════════════════════════════════════════════
  * طلبان متزامنان لنفس المريض والنوع كانا سيقرآن `MAX(sequence)+1` نفسه
@@ -345,32 +345,44 @@ export async function getDeviceEpisodesForPatient(
  *
  * وخلف القفل يقف فهرسان في القاعدة نفسها — `uq_pde_case_open` و
  * `uq_pde_case_seq` — فحتى لو أُلغي القفل يوماً تبقى الثوابت محروسة.
+ *
+ * ══ `tx` بالإجبار لا اختياراً (المرحلة الرابعة — بيعُ الجزء المبسّط) ═════
+ * بيعُ جزءٍ بلا معاينة صار حدثاً واحداً: فتحُ الحلقة، وبدءُ أمر التصنيع،
+ * وتقييدُ الكلفة، معاً أو لا شيء منها. فلو فتحت هذه الدالّة معاملتَها
+ * الخاصّة لصار كلُّ استدعاءٍ من منسّقٍ أكبر معاملتين مستقلّتين — تنجح
+ * الأولى وتفشل الثانية فتبقى حلقةٌ يتيمة بلا أمر ولا مال. فصار المنطقُ
+ * القانونيّ هنا يأخذ `tx` جاهزةً من مُستدعيه، و`startDeviceEpisode` أدناه
+ * هو **الغلافُ المتوافق**: يفتح معاملته الخاصّة لمن لا يحتاج غيرها (مسارُ
+ * المعاينة القائم، بلا تغيير) — نفسُ المنطق بحرفه، لا نسخةٌ ثانية منه.
  */
-export async function startDeviceEpisode(params: {
-  patientId: number;
-  serviceType: DeviceServiceType;
-  createdBy: number | null;
-  /**
-   * **ما طُلب** — جهازٌ كامل أو جزءٌ بعينه (ترحيل ٠٦٠).
-   *
-   * الغيابُ يُقرأ «جهازاً كاملاً»: نافذةٌ قديمة مفتوحةٌ منذ ما قبل النشر لا
-   * ترسله، ولا يجوز أن تُردّ وهي تفعل ما كانت تفعله دائماً.
-   *
-   * **والجزءُ على مسندٍ طبيّ يُردّ لا يُصحَّح**: تصحيحُه إلى «كامل» — كما
-   * كان يفعل هذا السطر — يمرّر طلباً لم يقصده أحد، ويكتب في السجلّ أن
-   * المريض طلب مسنداً كاملاً وهو طلب ركبة. والحارسُ هنا لا في النقطة
-   * وحدها: ما يصل من العميل لا يُوثَق به، وهذه هي الطبقةُ القانونية.
-   */
-  requestedItem?: RequestedItem | null;
-  /**
-   * **مسارُ هذه العملية** (ترحيل ٠٦٥): «أتحتاج معاينةَ طبيب؟».
-   *
-   * والغيابُ يُكتب `null` — **ولا يُخمَّن**: نافذةٌ قديمة لا ترسله، فيبقى
-   * صفُّها بلا جوابٍ يُقرأ بالقاعدة القديمة تماماً كما كان يُقرأ قبل هذه
-   * المرحلة. أمّا كتابةُ `'exam'` افتراضاً فادّعاءُ جوابٍ لم يُعطَ.
-   */
-  servicePath?: ServicePath | null;
-}): Promise<DeviceEpisodeView> {
+export async function startDeviceEpisodeTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number;
+    serviceType: DeviceServiceType;
+    createdBy: number | null;
+    /**
+     * **ما طُلب** — جهازٌ كامل أو جزءٌ بعينه (ترحيل ٠٦٠).
+     *
+     * الغيابُ يُقرأ «جهازاً كاملاً»: نافذةٌ قديمة مفتوحةٌ منذ ما قبل النشر لا
+     * ترسله، ولا يجوز أن تُردّ وهي تفعل ما كانت تفعله دائماً.
+     *
+     * **والجزءُ على مسندٍ طبيّ يُردّ لا يُصحَّح**: تصحيحُه إلى «كامل» — كما
+     * كان يفعل هذا السطر — يمرّر طلباً لم يقصده أحد، ويكتب في السجلّ أن
+     * المريض طلب مسنداً كاملاً وهو طلب ركبة. والحارسُ هنا لا في النقطة
+     * وحدها: ما يصل من العميل لا يُوثَق به، وهذه هي الطبقةُ القانونية.
+     */
+    requestedItem?: RequestedItem | null;
+    /**
+     * **مسارُ هذه العملية** (ترحيل ٠٦٥): «أتحتاج معاينةَ طبيب؟».
+     *
+     * والغيابُ يُكتب `null` — **ولا يُخمَّن**: نافذةٌ قديمة لا ترسله، فيبقى
+     * صفُّها بلا جوابٍ يُقرأ بالقاعدة القديمة تماماً كما كان يُقرأ قبل هذه
+     * المرحلة. أمّا كتابةُ `'exam'` افتراضاً فادّعاءُ جوابٍ لم يُعطَ.
+     */
+    servicePath?: ServicePath | null;
+  },
+): Promise<DeviceEpisodeView> {
   const { patientId, serviceType, createdBy } = params;
   const servicePath = parseServicePath(params.servicePath);
   const parsed = parseRequestedItem(params.requestedItem, serviceType);
@@ -380,92 +392,107 @@ export async function startDeviceEpisode(params: {
   //  هنا يمنع أن يُكتب العمودان بيدين فينحرفا.
   const component = componentOfRequest(requestedItem);
 
-  return await db.transaction(async (tx) => {
-    const pat = await tx.execute<{ id: number; branch_id: number | null; deleted_at: string | null }>(sql`
-      SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
-    `);
-    const patient = (pat.rows ?? [])[0];
-    if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
-    //  **ولا يُفتَح طلبُ جهازٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
-    if (patient.deleted_at) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
+  const pat = await tx.execute(sql`
+    SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
+  `);
+  const patient = (pat.rows ?? [])[0];
+  if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
+  //  **ولا يُفتَح طلبُ جهازٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
+  if (patient.deleted_at) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
 
-    //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
-    const cs = await tx.execute<{ id: number; branch_id: number | null }>(sql`
-      SELECT id, branch_id FROM patient_cases
-       WHERE patient_id = ${patientId} AND case_type = ${serviceType}
-       FOR UPDATE
-    `);
-    const caseRow = (cs.rows ?? [])[0];
-    if (!caseRow) {
-      throw new DeviceEpisodeError(
-        "لا توجد حالة من هذا النوع على ملف المريض — أضف نوع الحالة أولاً", 400,
-      );
-    }
+  //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
+  const cs = await tx.execute(sql`
+    SELECT id, branch_id FROM patient_cases
+     WHERE patient_id = ${patientId} AND case_type = ${serviceType}
+     FOR UPDATE
+  `);
+  const caseRow = (cs.rows ?? [])[0];
+  if (!caseRow) {
+    throw new DeviceEpisodeError(
+      "لا توجد حالة من هذا النوع على ملف المريض — أضف نوع الحالة أولاً", 400,
+    );
+  }
 
-    const open = await tx.execute<{ id: number; status: string }>(sql`
-      SELECT id, status FROM patient_device_episodes
-       WHERE case_id = ${caseRow.id} AND status NOT IN ('delivered', 'cancelled')
-       LIMIT 1
-    `);
-    if ((open.rows ?? []).length > 0) {
-      //  ══ **رسالةٌ تقول ماذا يفعل، لا ماذا منعه** (ترحيل ٠٦٤) ═══════════
-      //  «لدى المريض جهاز قيد الإجراء» جملةٌ صحيحة لا تفيد: الموظّفُ لا
-      //  يعرف أيَّ جهاز، ولا كيف يفتحه، ولا أن للمدير باباً يصحّحه إن كان
-      //  خطأً. فالسياقُ المنظَّم يُرسَل معها لتبني الشاشةُ عليه أزرارَها.
-      const e = new DeviceEpisodeError(
-        "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد", 409,
-      );
-      (e as any).code = "active_device_operation";
-      (e as any).activeEpisodeId = Number((open.rows ?? [])[0].id);
-      const wo = await tx.execute<{ id: number }>(sql`
-        SELECT id FROM prosthetic_work_orders
-         WHERE device_episode_id = ${Number((open.rows ?? [])[0].id)}
-           AND status NOT IN ('completed', 'cancelled')
-         LIMIT 1
-      `);
-      (e as any).activeWorkOrderId = (wo.rows ?? [])[0]?.id ?? null;
-      throw e;
-    }
-
-    //  **والطرف الآخر من السباق نفسه.** أمرُ بناءٍ قديمٍ نشط — بلا حلقة —
-    //  يعني جهازاً يُصنَع الآن بالمسار القديم. ففتحُ حلقةٍ فوقه يُنتج
-    //  الحالة النصفية عينها التي يمنعها الحارس المقابل: جهازان قيد
-    //  الإجراء، أحدهما بهوية وأحدهما بلا. والقفل على الخيط أعلاه يجعل
-    //  الحسم للأسبق: مَن ظفر بالقفل أوّلاً مضى، والآخر يُردّ صراحةً.
-    const legacyBuild = await tx.execute<{ id: number }>(sql`
+  const open = await tx.execute(sql`
+    SELECT id, status FROM patient_device_episodes
+     WHERE case_id = ${caseRow.id} AND status NOT IN ('delivered', 'cancelled')
+     LIMIT 1
+  `);
+  if ((open.rows ?? []).length > 0) {
+    //  ══ **رسالةٌ تقول ماذا يفعل، لا ماذا منعه** (ترحيل ٠٦٤) ═══════════
+    //  «لدى المريض جهاز قيد الإجراء» جملةٌ صحيحة لا تفيد: الموظّفُ لا
+    //  يعرف أيَّ جهاز، ولا كيف يفتحه، ولا أن للمدير باباً يصحّحه إن كان
+    //  خطأً. فالسياقُ المنظَّم يُرسَل معها لتبني الشاشةُ عليه أزرارَها.
+    const e = new DeviceEpisodeError(
+      "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد", 409,
+    );
+    (e as any).code = "active_device_operation";
+    (e as any).activeEpisodeId = Number((open.rows ?? [])[0].id);
+    const wo = await tx.execute(sql`
       SELECT id FROM prosthetic_work_orders
-       WHERE patient_id = ${patientId}
-         AND service_type = ${serviceType}
-         AND purpose = 'initial_build'
+       WHERE device_episode_id = ${Number((open.rows ?? [])[0].id)}
          AND status NOT IN ('completed', 'cancelled')
-         AND device_episode_id IS NULL
        LIMIT 1
     `);
-    if ((legacyBuild.rows ?? []).length > 0) {
-      throw new DeviceEpisodeError(
-        "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه قبل بدء جهاز جديد", 409,
-      );
-    }
+    (e as any).activeWorkOrderId = (wo.rows ?? [])[0]?.id ?? null;
+    throw e;
+  }
 
-    const mx = await tx.execute<{ next: number }>(sql`
-      SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
-        FROM patient_device_episodes WHERE case_id = ${caseRow.id}
-    `);
-    const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+  //  **والطرف الآخر من السباق نفسه.** أمرُ بناءٍ قديمٍ نشط — بلا حلقة —
+  //  يعني جهازاً يُصنَع الآن بالمسار القديم. ففتحُ حلقةٍ فوقه يُنتج
+  //  الحالة النصفية عينها التي يمنعها الحارس المقابل: جهازان قيد
+  //  الإجراء، أحدهما بهوية وأحدهما بلا. والقفل على الخيط أعلاه يجعل
+  //  الحسم للأسبق: مَن ظفر بالقفل أوّلاً مضى، والآخر يُردّ صراحةً.
+  const legacyBuild = await tx.execute(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE patient_id = ${patientId}
+       AND service_type = ${serviceType}
+       AND purpose = 'initial_build'
+       AND status NOT IN ('completed', 'cancelled')
+       AND device_episode_id IS NULL
+     LIMIT 1
+  `);
+  if ((legacyBuild.rows ?? []).length > 0) {
+    throw new DeviceEpisodeError(
+      "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه قبل بدء جهاز جديد", 409,
+    );
+  }
 
-    const ins = await tx.execute<Record<string, any>>(sql`
-      INSERT INTO patient_device_episodes
-        (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
-         requested_item, component, service_path, created_by, created_at, updated_at)
-      VALUES (${patientId}, ${caseRow.id}, ${caseRow.branch_id ?? patient.branch_id ?? null},
-              ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
-              ${createdBy}, NOW(), NOW())
-      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
-                created_at, delivered_at, cancelled_at, cancel_reason
-    `);
-    const row = (ins.rows ?? [])[0];
-    return toView({ ...row, service_type: serviceType });
-  });
+  const mx = await tx.execute(sql`
+    SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+      FROM patient_device_episodes WHERE case_id = ${caseRow.id}
+  `);
+  const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+
+  const ins = await tx.execute(sql`
+    INSERT INTO patient_device_episodes
+      (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+       requested_item, component, service_path, created_by, created_at, updated_at)
+    VALUES (${patientId}, ${caseRow.id}, ${caseRow.branch_id ?? patient.branch_id ?? null},
+            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
+            ${createdBy}, NOW(), NOW())
+    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
+              created_at, delivered_at, cancelled_at, cancel_reason
+  `);
+  const row = (ins.rows ?? [])[0];
+  return toView({ ...row, service_type: serviceType });
+}
+
+/**
+ * **الغلافُ المتوافق**: يفتح معاملته الخاصّة حول `startDeviceEpisodeTx`.
+ *
+ * لكلّ مُستدعٍ لا يحتاج أن يُشارك هذه الكتابةَ معاملةً أكبر — وهو كلُّ
+ * مُستدعٍ قائم قبل المرحلة الرابعة. المنطقُ القانونيّ كلُّه في الدالّة
+ * أعلاه؛ هذه سطرٌ واحد لا أكثر.
+ */
+export async function startDeviceEpisode(params: {
+  patientId: number;
+  serviceType: DeviceServiceType;
+  createdBy: number | null;
+  requestedItem?: RequestedItem | null;
+  servicePath?: ServicePath | null;
+}): Promise<DeviceEpisodeView> {
+  return await db.transaction((tx) => startDeviceEpisodeTx(tx, params));
 }
 
 /**
@@ -845,6 +872,36 @@ export async function setEpisodeAgreedCostTx(
   await tx.execute(sql`
     UPDATE patient_device_episodes
        SET agreed_cost = ${params.agreedCost}, updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+}
+
+/**
+ * **الحقيقةُ المُهيكَلة لبيع الجزء المبسّط** — الأصلُ ونوعُه (ترحيل ٠٧٠).
+ *
+ * `agreed_cost` يبقى النهائيَّ الفعليَّ وحده — تكتبه `setEpisodeAgreedCostTx`
+ * أعلاه ولا تُكرَّر هنا. وهذه تكتب **ممّ تكوّن**: السعرُ الأصليُّ قبل أيّ
+ * خصم، ونوعُه (`normal` / `discount` / `free`) — الدليلُ على العلاقة بين
+ * الأصلي والنهائي، لا رقمٌ ثانٍ له. `discountAmount` **يُشتقّ** دائماً
+ * (`originalPrice - agreedCost`)، ولا عمودَ رابعاً يخزّنه.
+ *
+ * وتُنادى **داخل معاملة البيع نفسِها** — بعد `setEpisodeAgreedCostTx` أو
+ * قبلها لا فرق، فكلاهما تحت القفل نفسِه على الصفّ — لا بعد `COMMIT` ولا من
+ * طلبٍ ثانٍ: القيودُ في القاعدة (٠٧٠) تمنع نصفَ كتابةٍ من النجاح أصلاً.
+ */
+export async function setEpisodeComponentSaleTermsTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    episodeId: number;
+    originalPrice: number;
+    kind: "normal" | "discount" | "free";
+  },
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET component_sale_original_price = ${params.originalPrice},
+           component_sale_price_kind = ${params.kind},
+           updated_at = NOW()
      WHERE id = ${params.episodeId}
   `);
 }

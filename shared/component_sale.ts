@@ -1,0 +1,94 @@
+/**
+ * **بيعُ جزءٍ من طرفٍ صناعي، مبسّطاً** (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨) —
+ * منطقٌ خالص، بلا React ولا شبكة ولا قاعدة.
+ *
+ * ══ القاعدةُ الحاكمة ═════════════════════════════════════════════════════
+ * جزءٌ ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ سعرٌ نهائيّ يشتقّه الخادم ⟵ **حفظٌ
+ * واحد** يفتح الحلقةَ وأمرَ العمل ويقيّد المبلغ النهائي معاً في معاملةٍ
+ * واحدة. **بلا طبيبٍ، بلا مراجعةٍ طبية، بلا مراجعةٍ استرجاعية، بلا اعتماد
+ * خصم، بلا طابور «بلا أجور»، بلا خطوتَي إنشاءٍ ثمّ بيع.** الاستقبالُ
+ * والمحاسبُ ومديرُ الفرع والمسؤولُ متكافئون تماماً هنا.
+ *
+ * ══ نطاقٌ ضيّق بعمد ═══════════════════════════════════════════════════════
+ * **جزءٌ من طرفٍ صناعي وحده** — `PROSTHETIC_COMPONENTS` (٨ قيم) من
+ * `shared/prosthetic_parts.ts`، ولا قائمةَ ثانية. الجهازُ الكاملُ (طرفاً
+ * كان أو مسنداً) قرارٌ سريريٌّ من أوّله ويبقى يمرّ بمسار المعاينة —
+ * `noExamSaleRefusal` (نفسُ الملفّ المشترك) يبقى صاحبَ السلطة، ولا تُضعِفه
+ * هذه الوحدة بحرف. والمسندُ الطبيّ بلا قائمة أجزاء أصلاً فلا بيعَ بلا
+ * معاينة له في هذه المرحلة.
+ *
+ * ══ ولماذا ملفٌّ مستقلّ لا امتدادٌ لـ`shared/maintenance.ts` أو
+ *    `shared/commercial.ts` ═══════════════════════════════════════════════
+ * الصلاحيةُ هنا **قدرةٌ قائمةٌ بذاتها**: نفسُ منطق `canCompleteMaintenance`
+ * حرفاً بحرف (نفسُ الأدوار الثلاثة + `isAdmin`)، لكن دالّةٌ مستقلّة عمداً —
+ * فيتطوّر بيعُ الجزء وصيانةُ الأجهزة وبيعُ ما بعد المعاينة كلٌّ على حِدة،
+ * بلا أن يخشى تعديلُ أحدها كسرَ الآخرَين (نفسُ القرار المعماريّ الذي فرّق
+ * `canCompleteMaintenance` عن `canCompleteReceptionSale` رغم تطابق منطقهما
+ * حرفاً بحرف).
+ */
+
+import { deriveOfferFromDiscount, type DiscountOffer } from "./commercial";
+import { isProstheticComponent, type ProstheticComponent } from "./prosthetic_parts";
+
+/** رسالةُ النجاح — سطرٌ واحد يقرؤه الموظّف، لا صياغةَ اعتمادٍ ولا مراجعة. */
+export const COMPONENT_SALE_SUCCESS_MESSAGE = "تم تسجيل بيع الجزء وفتح أمر العمل";
+
+export interface ComponentSaleSessionLike {
+  role?: string | null;
+  isAdmin?: boolean | null;
+}
+
+/**
+ * **صلاحيةُ إتمام بيع الجزء المبسّط** — دالّةٌ مخصَّصة قائمة بذاتها، **لا
+ * امتداداً لـ`canOperateNoExam`** (`shared/pending_charge.ts`).
+ *
+ * ══ ولماذا لا تلك ═══════════════════════════════════════════════════════
+ * `canOperateNoExam` تعتمد `permissions.canAddPatients` — علمٌ عامّ قد
+ * يحمله مَن ليس استقبالاً (مديرُ فرعٍ **طبيبٍ** مثلاً، أو حسابٌ خاصّ)، فتمنح
+ * بيعَ الجزء ضمناً لمن لا ينبغي أن يملكه. وهذه صريحةٌ بدور: `reception` أو
+ * `accountant` أو `branch_manager`، أو المسؤولُ العامّ بلا قيد — **والطبيبُ
+ * ليس منها إطلاقاً** ولو حمل `canAddPatients` أو `canWriteMedicalExam` أو
+ * أيّ علمٍ آخر. سلطتُه الوحيدة هنا `isAdmin` إن كان هو المسؤولَ العامّ
+ * فعلاً — لا دورٌ طبّيٌّ خاصّ، ولا هويّةٌ مكتوبةٌ في الكود (لا اسمَ ولا
+ * بريدَ ولا معرّفَ مستخدمٍ ثابتاً في أيّ ملفّ من هذه المرحلة).
+ *
+ * **ولا `canCompleteMaintenance` ولا `canCompleteReceptionSale`** رغم تطابق
+ * المنطق حرفاً بحرف — كلٌّ منها قدرةٌ مستقلّة لبابها بنفس القرار المعماريّ
+ * الذي فرّق تلك الدالّتين عن بعضهما، فتعديلُ صلاحية بابٍ لا يُغيّر غيره.
+ */
+export function canCompleteComponentSale(
+  s: ComponentSaleSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return s?.role === "reception" || s?.role === "accountant" || s?.role === "branch_manager";
+}
+
+// ── السعر — نفسُ اشتقاق المرحلة الثانية بحرفه، بلا حسابٍ ثانٍ ─────────────
+
+/**
+ * **بلا حسابٍ ثانٍ**: تُسلِّم مباشرةً لـ`deriveOfferFromDiscount`
+ * (`shared/commercial.ts`). **وهذا إعادةُ تصديرٍ لا نسخة** — أيّ تعديلٍ على
+ * قواعد الاشتقاق (عاديّ/بخصم/مجّانيّ، والحدودُ الآمنة) يسري هنا تلقائياً
+ * بلا صيانة ملفَّين، بنفس نمط `shared/maintenance.ts: deriveMaintenanceOffer`.
+ */
+export const deriveComponentSaleOffer = deriveOfferFromDiscount;
+export type ComponentSaleOffer = DiscountOffer;
+
+// ── الجزء — واحدٌ من الثمانية، إلزاميّ دائماً ──────────────────────────────
+
+/**
+ * تحقّقٌ صريح: الجزءُ **واحدٌ من الثمانية في `PROSTHETIC_COMPONENTS`**،
+ * ولا شيءَ غيره — **إلزاميٌّ دائماً** هنا (خلافاً لصيانةٍ قد تخصّ مسنداً
+ * بلا جزء)، فبيعُ جزءٍ بلا تحديدِ أيِّ جزءٍ سؤالٌ بلا جواب. الطرفُ الكاملُ
+ * (`full_device`) ليس من بينها بتاتاً: `noExamSaleRefusal` بابُه المستقلّ
+ * ولا تكرارَ لمنطقه هنا.
+ */
+export function parseComponentSaleComponent(v: unknown): {
+  ok: boolean; value: ProstheticComponent | null; error?: string;
+} {
+  if (isProstheticComponent(v)) return { ok: true, value: v };
+  return {
+    ok: false, value: null,
+    error: "حدّد الجزء المراد بيعه — اختر من القائمة",
+  };
+}

@@ -1,18 +1,26 @@
 // **عمليةٌ بلا معاينة** — نافذةُ الاستقبال الواحدة.
 //
-// ══ بيعُ الجزء — القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ═══════════
-// **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
-// فقط.** هذا يبقى حرفياً لبيع الجزء (`kind === "device_sale"`) — الفرعُ
-// أدناه لم يُمَسّ في هذه المرحلة.
+// ══ بيعُ الجزء — حفظٌ واحد (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨) ═══════════════════
+// جزءٌ ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ سعرٌ نهائيّ يشتقّه الخادم ⟵ حفظٌ واحد.
+// **بلا طبيبٍ، بلا مراجعةٍ استرجاعية، وبلا نداءين منفصلين** (فتحُ الحلقة ثمّ
+// بيعُها) — النقطةُ `/api/no-exam/device-sale` تفتح الحلقةَ وأمرَ العمل
+// وتقيّد المبلغ معاً في نداءٍ واحد. حلقةٌ موروثة فتحها الشكلُ القديم ولم
+// تكتمل ⟶ تُستأنَف بمعرّفها (`existingEpisodeId`) بلا فتح ثانية.
 //
-// ══ الصيانةُ — قاعدةٌ أبسط (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨) ═══════════════════
+// ══ الصيانةُ — قاعدةٌ مطابقة (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨) ═══════════════════
 // جهازٌ ⟵ جزءٌ إن لزم ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ حفظٌ واحد. **بلا سؤال
 // منشأ الجهاز، بلا مربّع «بلا أجور»، بلا حقل سعرٍ نهائيٍّ قابلٍ للتحرير،
 // وبلا مراجعةٍ لاحقة** — النقطةُ `/api/no-exam/maintenance` تفتح أمرَ
 // العمل وتقيّد المبلغَ النهائيّ في نداءٍ واحد.
 //
+// ══ والسعرُ نمطٌ واحد يشترك فيه البابان (منذ المرحلة الرابعة) ═══════════
+// أصليّ + خصمٌ ⟶ نهائيّ يُشتقّ في الخادم (`deriveOfferFromDiscount`،
+// `shared/commercial.ts`) — لا حقلَ سعرٍ نهائيٍّ يُكتب يدوياً في أيّ باب،
+// ولا حسابَ ثانياً في الواجهة. المعاينةُ الحيّة هنا لعرضٍ فوريّ فقط؛ الخادمُ
+// يشتقّ ويعتمد وحده.
+//
 // ══ وخطواتٌ قليلة عن قصد ═══════════════════════════════════════════════
-// ماذا جرى؟ (بيعُ جزءٍ أم صيانة) · على أيّ جهاز · بكم · ثمّ حفظ. خمسون
+// ماذا جرى؟ (بيعُ جزءٍ أم صيانة) · على أيّ جهاز/جزء · بكم · ثمّ حفظ. خمسون
 // مريضاً في اليوم لا يمرّون بنموذجٍ طويل، ونموذجٌ طويل يُملأ بلا قراءة.
 //
 // ══ ولا قائمةَ أجزاءٍ ثانية ════════════════════════════════════════════
@@ -46,16 +54,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Wallet } from "lucide-react";
-import {
-  PROSTHETIC_COMPONENTS, COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS,
-} from "@shared/prosthetic_parts";
-import {
-  PENDING_CHARGE_KIND_LABELS, SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
-  reviewFailedCopy,
-  type PendingChargeKind,
-} from "@shared/pending_charge";
+import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_parts";
+import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
 import { deriveOfferFromDiscount } from "@shared/commercial";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
+import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 import {
   devicePhaseOf, maintenanceDeviceBlocksSave, resolveMaintenanceDeviceTarget,
@@ -104,19 +107,22 @@ export function NoExamOperationDialog({
 
   const [kind, setKind] = useState<Kind>(fixedKind ?? "maintenance");
   //  البيعُ للأطراف وحدها الآن، فلا قيمةَ ابتدائية «كاملة» تُحشى للمساند.
+  //  **والاسمُ محليٌّ يخصّ الجزءَ المراد بيعه** — لا يصطدم بحالة الصيانة
+  //  `component` أدناه (حقلٌ مختلفٌ تماماً: الجزء المراد صيانته).
   const [requestedItem, setRequestedItem] = useState<string>(existingRequestedItem ?? "");
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
-  const [charged, setCharged] = useState(true);
-  const [amount, setAmount] = useState(0);
   const [note, setNote] = useState("");
 
-  //  ══ **الصيانةُ المبسّطة — حقولها الخاصّة** (المرحلة الثالثة) ═══════════
-  //  جهازٌ يُختار من قائمة، وسعرٌ أصليّ وخصمٌ يُشتقّان في الخادم — لا حقلَ
-  //  سعرٍ نهائيٍّ يُكتب هنا، ولا مربّعَ «بلا أجور».
-  const [deviceSelection, setDeviceSelection] = useState<string>("");
+  //  ══ **السعرُ — أصليّ وخصمٌ، مشتركان بين بيع الجزء والصيانة** ══════════
+  //  (المرحلة الرابعة) نفسُ الاشتقاق حرفياً في البابين — فلا حسابَ مكرَّر
+  //  ولا حقلَ سعرٍ نهائيٍّ يُكتب يدوياً في أيٍّ منهما.
   const [originalPrice, setOriginalPrice] = useState(0);
   const [discountAmount, setDiscountAmount] = useState(0);
+
+  //  ══ **الصيانةُ المبسّطة — حقلها الخاصّ** (المرحلة الثالثة) ═══════════
+  //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
+  const [deviceSelection, setDeviceSelection] = useState<string>("");
 
   //  ══ **حالاتُ الخبير أربعٌ تُقال، لا واحدةٌ تُخفي ثلاثاً** ══════════════
   //  كانت `data: experts = []` تسوّي بين «يُحمَّل الآن» و«فشل الطلب» و«لا
@@ -170,9 +176,9 @@ export function NoExamOperationDialog({
   };
 
   //  **السعرُ يُشتقّ حيّاً هنا للمعاينة فقط** — نفسُ الاشتقاق الذي يعيده
-  //  الخادمُ ويعتمده وحده؛ لا يُرسَل في الطلب.
-  const offer = kind === "maintenance"
-    ? deriveOfferFromDiscount({ originalPrice, discountAmount }) : null;
+  //  الخادمُ ويعتمده وحده؛ لا يُرسَل في الطلب. **مشتركٌ بين البابين** منذ
+  //  المرحلة الرابعة — الحسابُ والحدودُ الآمنة واحدةٌ بحرفها.
+  const offer = deriveOfferFromDiscount({ originalPrice, discountAmount });
 
   const save = useMutation({
     mutationFn: async () => {
@@ -191,54 +197,33 @@ export function NoExamOperationDialog({
         });
         return res.json();
       }
-      //  **بيعٌ بلا معاينة**: يُفتَح الطلبُ بالباب القائم (`device-episodes`)
-      //  بمساره الصريح، ثمّ يُسجَّل مبلغُه المعلَّق. **ولا بابَ ثالث** يفتح
-      //  حلقةً بنفسه فينحرف عن حُرّاس الأوّل.
-      const money = charged ? { charged: true, amount } : { charged: false };
-      let episodeId = existingEpisodeId;
-      if (!episodeId) {
-        //  **ولا احتياطَ بـ`full_device`**: كان الاحتياطُ يرسل «جهازاً كاملاً»
-        //  حين يفرغ الحقل — أي **يطلب بالضبط ما يردّه الخادم**. والحقلُ لا
-        //  يفرغ أصلاً (`missingItem` تمنع الإرسال)، فالاحتياطُ كذبةٌ لا حارس.
-        const ep = await apiRequest("POST", `/api/patients/${patientId}/device-episodes`, {
-          serviceType, requestedItem, servicePath: "no_exam",
-        });
-        episodeId = (await ep.json())?.id ?? null;
-      }
-      if (!episodeId) throw new Error("تعذّر فتح طلب الجهاز");
+      //  ══ **بيعُ جزءٍ من طرفٍ صناعي — حفظٌ واحد** (المرحلة الرابعة) ══════
+      //  لا نداءَ فتحِ حلقةٍ منفصلاً قبله: `existingEpisodeId` وحده يُرسَل
+      //  حين تُستأنَف حلقةٌ موروثة (فتحها الشكلُ القديم ذو النداءين ولم
+      //  يكتمل بيعُها)؛ وإلّا فالجزءُ المطلوب يُرسَل، فتُفتَح الحلقةُ وتُباع
+      //  معاً في معاملة الخادم نفسِها. **ولا سعرَ نهائيّاً ولا نوعَ سعرٍ
+      //  يُرسَلان أبداً** — الخادمُ يشتقّهما من `originalPrice`/`discountAmount`
+      //  وحدهما ويعتمدهما وحده.
       const res = await apiRequest("POST", "/api/no-exam/device-sale", {
-        patientId, serviceType, deviceEpisodeId: episodeId,
-        expertUserId: Number(expertId), note: note.trim() || null, ...money,
+        patientId,
+        ...(existingEpisodeId
+          ? { existingEpisodeId }
+          : { component: requestedItem }),
+        expertUserId: Number(expertId),
+        originalPrice, discountAmount,
+        note: note.trim() || null,
       });
       return res.json();
     },
-    onSuccess: (d: any) => {
+    onSuccess: () => {
       invalidate();
       onOpenChange(false);
-      //  **الصيانةُ لا مراجعةَ لاحقةً لها** — لا `reviewRouted` تُقرأ، ورسالةُ
-      //  النجاح واحدة: «تم تسجيل الصيانة وفتح أمر العمل».
-      if (kind === "maintenance") {
-        toast({ title: MAINTENANCE_SUCCESS_MESSAGE });
-        return;
-      }
-      //  ══ **والسجلُّ الإشرافيُّ الناقص يُقال — ولا يُطلَب تكرارُ العملية** ══
-      //  العمليةُ والمبلغُ محفوظان يقيناً (وقعا قبل هذا الردّ في معاملةٍ
-      //  مغلقة). والذي تعذّر سطرٌ إخباريٌّ للطبيب. ونجاحٌ لا يُميَّز عن نجاح
-      //  كان سيُخفي عن الموظّف أن حركةً لن تصل شاشتَه — فلا يبلّغ أحداً.
-      if (d?.reviewRouted === false) {
-        //  **والصياغةُ تتبع ما وقع**: «بلا أجور» لا يُقال لها «حُفظ المبلغ».
-        const copy = reviewFailedCopy(d?.amount ?? null);
-        toast({
-          title: copy.title,
-          description: copy.hint,
-          variant: "destructive",
-          duration: 12_000,
-        });
-        return;
-      }
-      //  **ولا شرحَ محاسبيّ في الإشعار** — الرسالةُ تقول ما وقع وتنتهي.
+      //  **بلا مراجعةٍ لاحقة في أيّ من البابين** — لا `reviewRouted` تُقرأ:
+      //  الطبيبُ بلا سلطةٍ على أيّ منهما من أوّلهما (المرحلتان الثالثة
+      //  والرابعة)، فلا حاجةَ لإخباره حيّاً ولا استرجاعياً. ونجاحٌ واحد
+      //  يُقال بصياغةٍ واحدة.
       toast({
-        title: d?.amount != null ? SAVED_CHARGED_MESSAGE : SAVED_NO_CHARGE_MESSAGE,
+        title: kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
       });
     },
     onError: (err: any) => toast({
@@ -251,10 +236,9 @@ export function NoExamOperationDialog({
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
   const maintenanceDeviceUnready = kind === "maintenance"
     && maintenanceDeviceBlocksSave({ phase: devicePhase, selection: deviceSelection });
-  const maintenanceOfferReady = kind !== "maintenance" || Boolean(offer?.ok);
+  //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   const ready = Boolean(expertId) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && maintenanceOfferReady
-    && (kind !== "device_sale" || !charged || amount > 0);
+    && !maintenanceDeviceUnready && Boolean(offer.ok);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -275,9 +259,8 @@ export function NoExamOperationDialog({
           ) : (
             <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
               data-testid="no-exam-op-rule">
-              <b>يبدأ العمل الآن</b> — يُفتَح أمر التصنيع ويُسنَد للخبير فوراً.
-              {" "}<b>والمبلغ يُسجَّل مباشرةً</b> على حساب المريض.
-              {" "}والطبيب يراه لاحقاً ضمن المراجعة الإشرافية فقط.
+              <b>حفظةٌ واحدة</b> — يُفتَح أمرُ العمل ويُسنَد للخبير فوراً، ويُقيَّد
+              {" "}المبلغُ النهائيّ على حساب المريض معه، <b>بلا مراجعةٍ لاحقة</b>.
             </p>
           )}
 
@@ -317,18 +300,18 @@ export function NoExamOperationDialog({
             )}
           </div>
 
-          {/* ── البيع: ما المطلوب؟ ── */}
+          {/* ── البيع: ما الجزء المراد بيعه؟ ── */}
           {kind === "device_sale" && (
             existingEpisodeId ? (
               <p className="text-sm text-muted-foreground" data-testid="no-exam-op-existing">
                 الطلب القائم: <b>{existingRequestedItem
-                  && existingRequestedItem !== FULL_DEVICE
-                  ? COMPONENT_LABELS[existingRequestedItem as keyof typeof COMPONENT_LABELS]
-                  : FULL_DEVICE_LABELS[serviceType]}</b>
+                  ? (COMPONENT_LABELS[existingRequestedItem as keyof typeof COMPONENT_LABELS]
+                    ?? existingRequestedItem)
+                  : "—"}</b>
               </p>
             ) : (
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">ما الذي بيع؟</Label>
+                <Label className="text-sm font-medium">الجزء المراد بيعه</Label>
                 <p className="text-xs text-muted-foreground"
                   data-testid="no-exam-op-item-hint">
                   الأجزاء وحدها من هنا — <b>الطرف الصناعي الكامل يحتاج معاينة
@@ -449,78 +432,47 @@ export function NoExamOperationDialog({
             )}
           </div>
 
-          {/* ── المبلغ: بيعُ الجزء على حاله القديم ── */}
-          {kind === "device_sale" && (
-            <>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={!charged}
-                  onChange={(e) => { setCharged(!e.target.checked); if (e.target.checked) setAmount(0); }}
-                  data-testid="no-exam-op-no-charge" />
-                <b>بلا أجور</b>
-                <span className="text-muted-foreground">
-                  — يبدأ العمل ويكتمل تسجيله، بلا مبلغ على حساب المريض
-                </span>
-              </label>
-
-              {charged && (
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">المبلغ (د.ع)</Label>
-                  <MoneyInput value={amount} onValueChange={setAmount} data-testid="no-exam-op-amount" />
-                  {!(amount > 0) && (
-                    <p className="text-xs text-destructive" data-testid="no-exam-op-amount-error">
-                      المبلغ يجب أن يكون أكبر من صفر — والعملية بلا أجر تُحفَظ بمربّع «بلا أجور».
-                    </p>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── السعر: الصيانة المبسّطة — أصليّ وخصمٌ، والنهائيّ يُشتقّ ── */}
-          {kind === "maintenance" && (
-            <>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">السعر الأصلي (د.ع)</Label>
-                <MoneyInput value={originalPrice} onValueChange={setOriginalPrice}
-                  data-testid="no-exam-op-original-price" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
-                <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
-                  data-testid="no-exam-op-discount-amount" />
-                <p className="text-xs text-muted-foreground">
-                  صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
-                </p>
-              </div>
-              <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
-                data-testid="no-exam-op-final-price">
-                {offer?.ok ? (
-                  offer.kind === "free" ? (
-                    <span><b>مجاني</b> — السعر النهائي: 0 د.ع</span>
-                  ) : (
-                    <span>
-                      السعر النهائي: <b>{offer.finalPrice!.toLocaleString("en-US")} د.ع</b>
-                      {offer.kind === "discount" && (
-                        <span className="text-muted-foreground">
-                          {" "}(بعد خصم {discountAmount.toLocaleString("en-US")} من{" "}
-                          {originalPrice.toLocaleString("en-US")})
-                        </span>
-                      )}
+          {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين ── */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">السعر الأصلي (د.ع)</Label>
+            <MoneyInput value={originalPrice} onValueChange={setOriginalPrice}
+              data-testid="no-exam-op-original-price" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
+            <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
+              data-testid="no-exam-op-discount-amount" />
+            <p className="text-xs text-muted-foreground">
+              صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
+            </p>
+          </div>
+          <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
+            data-testid="no-exam-op-final-price">
+            {offer.ok ? (
+              offer.kind === "free" ? (
+                <span><b>مجاني</b> — السعر النهائي: 0 د.ع</span>
+              ) : (
+                <span>
+                  السعر النهائي: <b>{offer.finalPrice!.toLocaleString("en-US")} د.ع</b>
+                  {offer.kind === "discount" && (
+                    <span className="text-muted-foreground">
+                      {" "}(بعد خصم {discountAmount.toLocaleString("en-US")} من{" "}
+                      {originalPrice.toLocaleString("en-US")})
                     </span>
-                  )
-                ) : (
-                  <span className="text-muted-foreground">
-                    {offer?.error ?? "أدخل السعر الأصلي ومقدار الخصم"}
-                  </span>
-                )}
-              </div>
-            </>
-          )}
+                  )}
+                </span>
+              )
+            ) : (
+              <span className="text-muted-foreground">
+                {offer.error ?? "أدخل السعر الأصلي ومقدار الخصم"}
+              </span>
+            )}
+          </div>
 
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">ملاحظة (اختياري)</Label>
             <Input value={note} onChange={(e) => setNote(e.target.value)}
-              placeholder={kind === "maintenance" ? "ملاحظةٌ على الزيارة" : "ما يحتاج الطبيب أن يعرفه عن المبلغ"}
+              placeholder={kind === "maintenance" ? "ملاحظةٌ على الزيارة" : "ملاحظةٌ على العملية"}
               data-testid="no-exam-op-note" />
           </div>
         </div>
@@ -530,7 +482,7 @@ export function NoExamOperationDialog({
             onClick={() => save.mutate()}>
             {save.isPending
               ? <Loader2 className="h-4 w-4 animate-spin" />
-              : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ العملية"}
+              : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
           </Button>
         </DialogFooter>
       </DialogContent>

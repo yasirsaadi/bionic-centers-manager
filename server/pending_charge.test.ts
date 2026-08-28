@@ -1,30 +1,44 @@
 // **عملياتُ «بلا معاينة»** — حيّاً على Postgres وعلى النقاط الحقيقية.
 // قاعدة محلّية: `npm run test:pending-charge`.
 //
-// ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — القاعدةُ أدناه («الطبيبُ يراجع
-// الحركةَ إشرافياً») **تبقى حرفياً لبيعِ الجزء وحده**. الصيانةُ صار لها
-// عقدٌ وسلوكٌ مبسّطان (`originalPrice`/`discountAmount`، **بلا مراجعةٍ
-// طبيةٍ إطلاقاً**) — التغطيةُ الشاملةُ لهما في
-// `server/simplified_maintenance.test.ts`. وما بقي من قسمَي الصيانة هنا
-// (ب، ج) عُدِّل ليطابق العقدَ الحاليّ ويثبت الثابتَ المشترك مع بيعِ الجزء:
-// **ZERO pending_service_charges** ومحاسبةٌ فوريةٌ بالكاتب القانونيّ نفسِه.
+// ⚠ **(المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨)** — القاعدةُ التاريخية أدناه («الطبيبُ
+// يراجع الحركةَ إشرافياً») **لم تعد سارية لبيع الجزء أيضاً**: التغطيةُ
+// الشاملةُ الجديدة (حفظٌ واحد، `originalPrice`/`discountAmount`،
+// `canCompleteComponentSale`، **بلا طبيبٍ إطلاقاً — لا حيّاً ولا استرجاعياً**)
+// في `server/component_sale.test.ts` (٩٦ تأكيداً). والصيانةُ صار لها عقدٌ
+// وسلوكٌ مبسّطان منذ المرحلة الثالثة (`server/simplified_maintenance.test.ts`).
+// **وما بقي هنا** يثبت أموراً لم تمسّها المرحلتان الثالثة والرابعة: الطابورَ
+// الموروث (ز)، وحارسَ الجهاز الكامل (ح)، وعزلَ العلاج الطبيعي (ط)، وحذفَ
+// المريض (ي)، وعقدَ الشاشات المتبقّي (ك)، وثوابتَ `ensureReviewRouting`
+// نفسِها (م — التي يستعملها مسارُ المعاينة، لا بيعُ الجزء بعد اليوم)،
+// والحارسَ المعماريّ (ل) — مُحدَّثاً ليقول الحقيقةَ الجديدة.
 //
-// ══ الثابتُ الذي يحرسه (قرارُ المالك — يُلغي ما قبله) ══════════════════════
-// **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
-// فقط.**
+// ══ الثابتُ الذي يحرسه اليوم ═══════════════════════════════════════════════
+// **بيعُ الجزء والمالُ يقعان لحظتَهما من الاستعلامات، ولا معتمِدَ طبّيٌّ
+// للمال إطلاقاً — لا حيّاً ولا استرجاعياً.**
 //
-// وما يُثبته هنا، بندَ بندٍ (أ–ل):
-//   • **أ–ج**: بيعُ جزءٍ وصيانةُ طرفٍ ومسندٍ بمبلغ ⟶ المالُ يقع **لحظتَه**
-//     بالكاتب القانونيّ نفسِه، مرّةً واحدة بالضبط، **وبلا صفٍّ معلَّقٍ واحد**.
-//   • **د**: و«بلا أجور» ⟶ عملٌ يكتمل بلا دينار، وسجلٌّ يقول ذلك.
-//   • **هـ**: والتكرارُ والتزامنُ ⟶ لا مالَ مرّتين ولا أمرَ ثانٍ ولا سجلَّ ثانٍ.
-//   • **و**: و«تمت المراجعة» اعترافٌ ⟶ لا كلفةَ ولا قيدَ ولا أمرَ يتغيّر.
+// وما يُثبته هنا، بندَ بندٍ:
+//   • **أ–ج**: بيعُ جزءٍ (بعقده الجديد) وصيانةُ طرفٍ ومسندٍ ⟶ المالُ يقع
+//     **لحظتَه** بالكاتب القانونيّ نفسِه، مرّةً واحدة بالضبط، **وبلا صفٍّ
+//     معلَّقٍ واحد، وبلا سجلِّ مراجعةٍ طبّية واحد**.
+//   • **د**: و«مجّانيّ» (خصمٌ = الأصل) ⟶ عملٌ يكتمل بلا دينار، والواقعةُ
+//     محفوظةٌ على الأمر صراحةً.
+//   • **هـ**: والتكرارُ والتزامنُ ⟶ لا مالَ مرّتين ولا أمرَ ثانٍ.
+//   • **و**: و«تمت المراجعة» (على سجلٍّ تاريخيّ) اعترافٌ ⟶ لا كلفةَ ولا
+//     قيدَ ولا أمرَ يتغيّر — خاصّيةٌ في نقطة المراجعة نفسِها، مستقلّةٌ عمّن
+//     أنشأ السجلّ.
 //   • **ز**: والصفوفُ الموروثة تبقى بايتاً بايت، ويُنهيها الاستقبالُ ومديرُ
 //     الفرع والمسؤول ضمن نطاقهم — **والطبيبُ يُردّ ٤٠٣**.
-//   • **ح**: وحارسُ الجهاز الكامل (٢٥٠) باقٍ في القسمين.
+//   • **ح**: وحارسُ الجهاز الكامل باقٍ — عند فتح الطلب وعند البيع معاً.
 //   • **ط**: والعلاجُ الطبيعي معزولٌ تماماً.
 //   • **ي**: وحذفُ المريض الكامل يعمل (القاعدةُ الملزمة في CLAUDE.md).
-//   • **ك–ل**: وعقدُ الشاشات والحارسُ المعماريّ — ولا محاسبةَ ثانية.
+//   • **ك**: وعقدُ الشاشات المتبقّي — طابورُ القائمة الجانبية وصفحتُه.
+//   • **م**: وثوابتُ `ensureReviewRouting` (التفرّدُ على المرساة) — تخدم
+//     مسارَ المعاينة اليوم، لا بيعَ الجزء.
+//   • **ن**: وبطاقةُ المشرف — بيعُ الجزء **لا يصل** طابورَ الطبيب إطلاقاً
+//     بعد اليوم (كالصيانة تماماً)، وصياغةُ الصفحة التاريخية لم تُمَسّ.
+//   • **الحارسُ المعماريّ**: لا محاسبةَ ثانية، ولا استدعاءَ مراجعةٍ
+//     استرجاعية من بيع الجزء بعد اليوم.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -33,16 +47,14 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import {
-  parsePendingAmount, canOperateNoExam, canFinalizeLegacyCharge,
+  canFinalizeLegacyCharge,
   PENDING_CHARGE_STATUSES, PENDING_CHARGE_STATUS_LABELS, PENDING_CHARGE_ACTIONS,
   LEGACY_QUEUE_TITLE, LEGACY_QUEUE_HINT, RETURNED_QUEUE_TITLE,
-  SAVED_CHARGED_MESSAGE, SAVED_NO_CHARGE_MESSAGE,
-  SAVED_REVIEW_FAILED_MESSAGE, SAVED_REVIEW_FAILED_HINT,
-  SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE, SAVED_NO_CHARGE_REVIEW_FAILED_HINT,
-  reviewFailedCopy, PENDING_CHARGE_KINDS,
+  PENDING_CHARGE_KINDS,
 } from "@shared/pending_charge";
 import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
+import { canCompleteComponentSale, COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 
 /** مصادرُ الحقيقة التي يقرؤها الحارسُ المعماريّ — مرّةً واحدة. */
 const PENDING_MODULE = readFileSync(
@@ -181,14 +193,44 @@ const startNoExam = (patientId: number, serviceType = "prosthetic", item = "sock
   http("POST", `/api/patients/${patientId}/device-episodes`, session,
     { serviceType, requestedItem: item, servicePath: "no_exam" });
 
-const startExamPath = (patientId: number, serviceType = "prosthetic", item = "full_device") =>
-  http("POST", `/api/patients/${patientId}/device-episodes`, S.recv,
-    { serviceType, requestedItem: item, servicePath: "exam" });
-
+/**
+ * **بيعُ جزءٍ — العقدُ الجديد** (المرحلة الرابعة): حفظٌ واحد يفتح الحلقةَ
+ * ويبيعها معاً. لا `startNoExam` قبله ولا `deviceEpisodeId`/`charged`/
+ * `amount` — `component`/`originalPrice`/`discountAmount` وحدها، أو
+ * `existingEpisodeId` لاستئناف حلقةٍ موروثة.
+ */
 const sale = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/device-sale", session, body);
 const maint = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/maintenance", session, body);
+
+/**
+ * **زرعٌ مباشر بالـSQL لعمليةٍ «تشغيليةٍ فقط»** — حلقةٌ في التصنيع وأمرُ
+ * عملٍ قائمان، **بلا دينارٍ مقيَّد بعد**. هذا هو الشكلُ الذي كان يتركه
+ * الشكلُ القديم ذو النداءين خلفه حين ينجح النداءُ الأوّل (فتحُ الحلقة) ولا
+ * يُستكمَل الثاني (تسجيلُ المبلغ) — ولا بابَ حيّاً يُنتجه اليوم (المرحلة
+ * الرابعة تكتب الاثنين معاً ذرّياً)، فقصّة «صفٍّ موروثٍ ينتظر مالَه» (القسم
+ * ز) تُستأنَف بزرعه هكذا لا بمحاولة إعادة إنتاجه عبر بابٍ حيّ.
+ */
+async function mkOperationalOnly(
+  patientId: number, caseId: number, item: string, expertId = EXPERT,
+) {
+  const [ep] = await q<{ id: number }>(
+    `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+       sequence_number, status, agreed_cost, requested_item, component,
+       service_path, created_by)
+     VALUES ($1,$2,1,
+       (SELECT COALESCE(MAX(sequence_number),0)+1 FROM patient_device_episodes WHERE case_id=$2),
+       'in_manufacturing',0,$3,$3,'no_exam',$4)
+     RETURNING id`,
+    [patientId, caseId, item, RECV]);
+  const [wo] = await q<{ id: number }>(
+    `INSERT INTO prosthetic_work_orders (patient_id, branch_id, service_type, expert_user_id,
+       status, current_stage, purpose, device_episode_id, assigned_by)
+     VALUES ($1,1,'prosthetic',$2,'active','pending','initial_build',$3,$4) RETURNING id`,
+    [patientId, expertId, ep.id, RECV]);
+  return { episodeId: ep.id, workOrderId: wo.id };
+}
 
 /**
  * **الثابتُ المحاسبيّ** — كلُّ ما يُفترَض أن يبقى صفراً قبل الاعتماد.
@@ -241,13 +283,11 @@ const orderOf = async (id: number) => {
     FROM prosthetic_work_orders WHERE id=$1`, [id]);
   return r ?? null;
 };
-const historyCount = (workOrderId: number) =>
-  q(`SELECT count(*)::int n FROM prosthetic_work_history WHERE work_order_id=$1`,
-    [workOrderId]).then((r) => r[0].n);
 const ZERO_MONEY = {
   total: 0, case_cost: 0, ledger: 0, ledger_rows: 0, paid: 0, payment_rows: 0,
   journal_rows: 0, orders: 0, discounts: 0, exams: 0, reviews: 0,
 };
+void ZERO_MONEY;
 
 async function chargeRow(id: number) {
   const [r] = await q(`SELECT status, amount::int amount, applied_at, reviewed_by,
@@ -260,11 +300,6 @@ async function chargeRow(id: number) {
 const eventsOf = (id: number) =>
   q(`SELECT event_type, from_status, to_status, reason, payload FROM
        pending_service_charge_events WHERE charge_id=$1 ORDER BY id`, [id]);
-const episodeOf = async (id: number) => {
-  const [r] = await q(`SELECT status, service_path, requested_item FROM
-    patient_device_episodes WHERE id=$1`, [id]);
-  return r ?? null;
-};
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
@@ -369,9 +404,6 @@ async function main() {
     check(RETURNED_QUEUE_TITLE.includes("مُعادة"), "   وطابورُ المُعادات كما هو");
 
     //  ══ **ووصفُ نوعَي العملية صادقٌ بعد ٢٥٠** ═══════════════════════════
-    //  كان مكتوباً «بيعُ جزءِ طرفٍ صناعيّ **أو مسندٍ طبيّ كامل**» — وقد بطل
-    //  شقُّه الثاني: الجهازُ الكاملُ يحتاج معاينة، فلم يبقَ للمساند إلّا
-    //  الصيانة. ووصفٌ كاذبٌ في العقد المشترك يُقرأ إذناً فيُبنى عليه.
     same("١.ب **ونوعان لا ثالث**", [...PENDING_CHARGE_KINDS],
       ["device_sale", "maintenance"]);
     {
@@ -387,64 +419,48 @@ async function main() {
       "١.هـ **ويقول إن المساند صيانةٌ وحدها**");
     }
 
-    //  **ورسائلُ الحفظ تقول ما وقع** — ولا «ينتظر» فيها.
-    same("٢. **رسالةُ الحفظ بمبلغ**", SAVED_CHARGED_MESSAGE,
-      "تم حفظ العملية وتسجيل المبلغ على حساب المريض.");
-    same("   ورسالةُ «بلا أجور»", SAVED_NO_CHARGE_MESSAGE, "تم حفظ العملية بلا أجور.");
-    for (const bad of ["ينتظر", "بانتظار", "اعتماد", "مراجعة"]) {
-      check(!SAVED_CHARGED_MESSAGE.includes(bad) && !SAVED_NO_CHARGE_MESSAGE.includes(bad),
-        `   ولا «${bad}» في أيٍّ منهما`);
-    }
-
-    //  **والمبلغُ الموجبُ وحده** — والصفرُ ليس «مجّاناً» (قاعدةُ ٠٦٦).
-    same("٣. «بلا أجور» ⟶ لا مبلغ",
-      parsePendingAmount({ charged: false, amount: 99 }), { ok: true, amount: null });
-    same("   والصفرُ يُردّ لا يُقرأ مجّاناً",
-      parsePendingAmount({ charged: true, amount: 0 }).ok, false);
-    same("   والموجبُ يمرّ",
-      parsePendingAmount({ charged: true, amount: 25000 }), { ok: true, amount: 25000 });
-
-    //  ══ **الصلاحية: مَن يسجّل هو مَن يقيّد** ═══════════════════════════
+    //  ══ **الصلاحية: مَن يسجّل بيعَ الجزء هو مَن يقيّده** (المرحلة الرابعة) ══
     console.log("\n── ٠.ب الصلاحية: لا معتمِدَ طبّيّ للمال ──");
-    check(canOperateNoExam(S.recv as any) && canOperateNoExam(S.manager as any)
-      && canOperateNoExam(S.admin as any),
-    "٤. **الاستقبالُ ومديرُ الفرع والمسؤول يسجّلون العملية ومبلغَها**");
-    check(!canOperateNoExam(S.acc as any) && !canOperateNoExam(S.expert as any),
-      "   ولا محاسبَ ولا خبير");
+    check(canCompleteComponentSale(S.recv as any) && canCompleteComponentSale(S.manager as any)
+      && canCompleteComponentSale(S.acc as any) && canCompleteComponentSale(S.admin as any),
+    "٤. **الاستقبالُ والمحاسبُ ومديرُ الفرع والمسؤول يسجّلون بيعَ الجزء ومبلغَه**");
+    check(!canCompleteComponentSale(S.expert as any),
+      "   ولا خبير");
     //  **والطبيبُ بدوره وحده لا يملك مالاً** — ولو حمل `canWriteMedicalExam`.
-    check(!canOperateNoExam(S.doc as any),
+    check(!canCompleteComponentSale(S.doc as any),
       "٥. **والطبيبُ بدوره وحده لا يقيّد مالاً** — `canWriteMedicalExam` ليست ماليّة");
-    //  **وإكمالُ الموروث بالبوّابة نفسِها حرفاً** — لا ثالثة تنحرف.
-    check(PENDING_MODULE.includes("canFinalizeLegacyCharge = canOperateNoExam"),
-      "٦. **وإكمالُ الموروث بالبوّابة نفسِها** — لا بوّابةَ ثالثة");
+    //  **وإكمالُ الموروث بابُه الخاصّ** — الاستقبالُ ومديرُ الفرع والمسؤول.
     for (const s of [S.recv, S.manager, S.admin]) {
       check(canFinalizeLegacyCharge(s as any), `   ويُنهيه ${s.displayName}`);
     }
     check(!canFinalizeLegacyCharge(S.doc as any) && !canFinalizeLegacyCharge(S.acc as any),
-      "   ولا طبيبَ ولا محاسب");
+      "   ولا طبيبَ ولا محاسب — إكمالُ الموروث تحديداً بلا محاسب (خلافاً لبيع الجزء الجديد)");
     //  **ولا أثرَ لـ`mayReviewShape` في المستودع** — السلطةُ الطبيةُ للمال أُزيلت.
     check(!PENDING_MODULE.includes("mayReviewShape"),
       "٧. **ولا `mayReviewShape` باقيةٌ في العقد** — لا شيفرةً ميتة تُغري بالعودة");
     check(!CHARGE_ROUTES.includes("doctorSpecialties"),
       "   ولا اختصاصٌ طبّيٌّ يُقرأ في نقاط المال");
+    check(!/canOperateNoExam/.test(CHARGE_ROUTES),
+      "٨. **(المرحلة الرابعة) ولا `canOperateNoExam` تحرس بيعَ الجزء بعد اليوم**"
+      + " — `canCompleteComponentSale` وحدها");
 
     // ══════════════════════════════════════════════════════════════════
-    //  (أ) بيعُ جزءٍ بمبلغ — المالُ يقع لحظتَه
+    //  (أ) بيعُ جزءٍ — العملُ والمالُ معاً، بالعقد الجديد
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── أ. بيعُ جزءٍ بمبلغ: العملُ والمالُ معاً ──");
+    console.log("\n── أ. بيعُ جزءٍ من طرفٍ صناعي: العملُ والمالُ معاً (العقدُ الجديد) ──");
     const pA = await mkPatient("بيع جزء بمبلغ");
     const caseA = await mkCase(pA);
-    const epA = (await startNoExam(pA, "prosthetic", "socket")).body?.id;
     same("أ٠. **والمالُ صفرٌ قبل العملية**", await moneyOnly(pA), ZERO_MONEY_ONLY);
 
     const saleA = await sale({
-      patientId: pA, serviceType: "prosthetic", deviceEpisodeId: epA,
-      expertUserId: EXPERT, charged: true, amount: 300_000,
+      patientId: pA, component: "socket", expertUserId: EXPERT,
+      originalPrice: 300_000, discountAmount: 0,
     });
     check(saleA.status === 201 && saleA.body?.workOrderId > 0,
-      "أ١. **العمليةُ تُسجَّل ويُفتَح أمرُ التصنيع**", JSON.stringify(saleA.body));
-    same("أ٢. **ورسالتُها تقول إن المبلغ سُجِّل**", saleA.body?.message, SAVED_CHARGED_MESSAGE);
-    same("أ٣. **ولا صفَّ معلَّقٌ في الردّ**", saleA.body?.charge, null);
+      "أ١. **العمليةُ تُسجَّل ويُفتَح أمرُ التصنيع في حفظٍ واحد**", JSON.stringify(saleA.body));
+    same("أ٢. **ورسالتُها الموحَّدة**", saleA.body?.message, COMPONENT_SALE_SUCCESS_MESSAGE);
+    const epA: number = saleA.body?.deviceEpisodeId;
+    same("أ٢.ب **والجزءُ في الردّ يطابق المطلوب**", saleA.body?.component, "socket");
 
     //  ══ **ولا صفَّ معلَّقٌ في القاعدة إطلاقاً** — هذا هو بيتُ القصيد ══
     same("أ٤. **ZERO pending_service_charges** — لا صفَّ وُلد",
@@ -466,10 +482,13 @@ async function main() {
     same("أ٧. **والقيدُ منسوبٌ إلى الحالة والحلقة**",
       [ceA?.c, ceA?.de, ceA?.a], [caseA, epA, 300_000]);
     //  **والحلقةُ تحمل ما قُيِّد** — `agreed_cost` = «كم دخل المحاسبة».
-    const [epRowA] = await q(`SELECT status, agreed_cost::int ac FROM
-      patient_device_episodes WHERE id=$1`, [epA]);
+    const [epRowA] = await q(`SELECT status, agreed_cost::int ac,
+        component_sale_original_price::int csop, component_sale_price_kind cspk
+      FROM patient_device_episodes WHERE id=$1`, [epA]);
     same("أ٨. **والحلقةُ في التصنيع بكلفتها المقيَّدة**",
       [epRowA?.status, epRowA?.ac], ["in_manufacturing", 300_000]);
+    same("أ٨.ب **والحقيقةُ التجارية المُهيكَلة (ترحيل ٠٧٠) تطابق**",
+      [epRowA?.csop, epRowA?.cspk], [300_000, "normal"]);
     //  **وأمرُ العمل واحدٌ بخبيره** — ولا ثانيَ.
     same("أ٩. **وأمرُ تصنيعٍ واحد**",
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`,
@@ -478,22 +497,11 @@ async function main() {
     same("   بخبيره وحلقته وغرضه", [ordA?.ex, ordA?.de, ordA?.purpose],
       [EXPERT, epA, "initial_build"]);
 
-    //  ══ **والسجلُّ الاسترجاعيُّ للطبيب** ══════════════════════════════
-    same("أ١٠. **وسجلٌّ استرجاعيٌّ واحد للطبيب**", mA.reviews, 1);
-    same("   وقد وُجِّه بنجاح", saleA.body?.reviewRouted, true);
-    const [revA] = await q(`SELECT service_type st, review_kind rk, requested_path rp,
-        status, reception_note note, work_order_id::int wo, device_episode_id::int de
-      FROM medical_review_requests WHERE patient_id=$1`, [pA]);
-    same("أ١١. **بتصنيفٍ صادقٍ لا مخترَع** — `other` سريعٌ معلَّق",
-      [revA?.st, revA?.rk, revA?.rp, revA?.status],
-      ["prosthetic", "other", "quick", "pending"]);
-    same("   ومربوطٌ بأمرِ العملية وحلقتها", [revA?.wo, revA?.de],
-      [saleA.body.workOrderId, epA]);
-    for (const frag of ["الأطراف الصناعية", "بيع بلا معاينة", "القالب", "الخبير",
-      "300,000", "مسجَّل على حساب المريض"]) {
-      check(String(revA?.note ?? "").includes(frag),
-        `أ١٢. وحقائقُه إنسانية — «${frag}»`, String(revA?.note));
-    }
+    //  ══ **وبلا سجلٍّ استرجاعيٍّ للطبيب** (المرحلة الرابعة تُلغي هذا) ══
+    same("أ١٠. **وصفرُ سجلّاتِ مراجعةٍ طبية** — لا مراجعة استرجاعية بعد اليوم",
+      mA.reviews, 0);
+    check(saleA.body?.reviewRouted === undefined,
+      "أ١١. **ولا حقلَ `reviewRouted` في الردّ إطلاقاً**");
 
     // ══════════════════════════════════════════════════════════════════
     //  (ب) صيانةُ أطرافٍ بمبلغ
@@ -503,7 +511,7 @@ async function main() {
     //  بدل `charged`/`amount`، ونيّةُ جهازٍ صريحة بدل `deviceOrigin`)، **وبلا
     //  سجلٍّ استرجاعيٍّ للطبيب إطلاقاً** — لا سلطةَ له على هذا المسار من
     //  أوّله. التغطيةُ الشاملةُ للعقد الجديد في
-    //  `server/simplified_maintenance.test.ts` (٩٩ تأكيداً)؛ وما بقي هنا
+    //  `server/simplified_maintenance.test.ts` (١١٤ تأكيداً)؛ وما بقي هنا
     //  يثبت الثابتَ المشترك مع بيعِ الجزء: **ZERO pending_service_charges**
     //  ومحاسبةُ الصيانة بكاتبها القانونيّ نفسِه.
     console.log("\n── ب. صيانةُ أطرافٍ بمبلغ (العقدُ الحاليّ) ──");
@@ -550,64 +558,64 @@ async function main() {
     same("ج٤. **وبلا سجلٍّ استرجاعيٍّ لأيّ طبيب**", mC.reviews, 0);
 
     // ══════════════════════════════════════════════════════════════════
-    //  (د) عمليةٌ بلا أجر — عملٌ بلا دينار، وسجلٌّ يقول ذلك
+    //  (د) بيعٌ مجّانيّ صراحةً — عملٌ بلا دينار، والواقعةُ محفوظة
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── د. بلا أجور: عملٌ بلا دينار ──");
-    const pD = await mkPatient("بلا أجور");
+    //  ⚠ **(المرحلة الرابعة)** — لا مربّعَ «بلا أجور» بعد اليوم. المجّانيّةُ
+    //  خصمٌ = الأصل صراحةً (`shared/commercial.ts: deriveOfferFromDiscount`)
+    //  — نفسُ قاعدة الصيانة (المرحلة الثالثة) حرفاً.
+    console.log("\n── د. مجّانيّ صراحةً: عملٌ بلا دينار ──");
+    const pD = await mkPatient("بيع مجاني");
     await mkCase(pD);
-    const epD = (await startNoExam(pD, "prosthetic", "foam_cover")).body?.id;
     const saleD = await sale({
-      patientId: pD, serviceType: "prosthetic", deviceEpisodeId: epD,
-      expertUserId: EXPERT, charged: false,
+      patientId: pD, component: "foam_cover", expertUserId: EXPERT,
+      originalPrice: 60_000, discountAmount: 60_000,
     });
     check(saleD.status === 201 && saleD.body?.workOrderId > 0,
       "د١. **العملُ يبدأ ويكتمل تسجيله**", JSON.stringify(saleD.body));
-    same("د٢. ورسالتُها «بلا أجور»", saleD.body?.message, SAVED_NO_CHARGE_MESSAGE);
-    same("د٣. **ولا قيدَ ولا كلفةَ ولا دينار**", await moneyOnly(pD),
-      { ...ZERO_MONEY_ONLY, reviews: 1 });
+    same("د٢. ورسالتُها الموحَّدة", saleD.body?.message, COMPONENT_SALE_SUCCESS_MESSAGE);
+    same("د٢.ب **والنوعُ `free` والنهائيّ صفر**",
+      [saleD.body?.priceKind, saleD.body?.finalPrice], ["free", 0]);
+    same("د٣. **ولا قيدَ ولا كلفةَ ولا دينار**", await moneyOnly(pD), ZERO_MONEY_ONLY);
     same("د٤. **ولا صفَّ معلَّقاً**",
       (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
         [pD]))[0].n, 0);
-    same("د٥. **و«بلا أجر» واقعةٌ محفوظةٌ على الأمر**",
+    same("د٥. **و«بلا أجر» واقعةٌ محفوظةٌ على الأمر** (`no_exam_no_charge`)",
       (await orderOf(saleD.body.workOrderId))?.nocharge, true);
     same("د٦. **والحلقةُ تدخل التصنيع بكلفةٍ صفر صادقة**",
       (await q(`SELECT status, agreed_cost::int ac FROM patient_device_episodes WHERE id=$1`,
-        [epD]))[0], { status: "in_manufacturing", ac: 0 });
-    //  **والسجلُّ الاسترجاعيُّ موجودٌ ويقول «بلا أجور»** — لا يختفي بغياب المال.
-    const [revD] = await q(`SELECT reception_note note FROM medical_review_requests
-      WHERE patient_id=$1`, [pD]);
-    check(String(revD?.note ?? "").includes("بلا أجور"),
-      "د٧. **والسجلُّ الاسترجاعيُّ قائمٌ ويقول «بلا أجور»**", String(revD?.note));
+        [saleD.body.deviceEpisodeId]))[0], { status: "in_manufacturing", ac: 0 });
 
     // ══════════════════════════════════════════════════════════════════
     //  (هـ) التكرار والتزامن — لا مالَ مرّتين ولا أمرَ ثانٍ
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── هـ. التكرار والتزامن ──");
-    //  (هـ١) **إعادةُ الإرسال على الحلقة نفسِها** — الهويّةُ تمنع الثاني.
+    //  (هـ١) **إعادةُ الإرسال على الحلقة نفسِها** — استئنافُ حلقةٍ باعها
+    //  البيعُ الأصليّ بالفعل (`epA` من القسم أ، صارت `in_manufacturing` لا
+    //  `awaiting_exam`) يُردّ ٤٠٩ الآن — نفسُ هويّة الحلقة، معنىً جديد.
     const retryA = await sale({
-      patientId: pA, serviceType: "prosthetic", deviceEpisodeId: epA,
-      expertUserId: EXPERT, charged: true, amount: 300_000,
+      patientId: pA, existingEpisodeId: epA, expertUserId: EXPERT,
+      originalPrice: 300_000, discountAmount: 0,
     });
-    check(retryA.status === 409, "هـ١. **إعادةُ الإرسال تُردّ ٤٠٩**", JSON.stringify(retryA.body));
+    check(retryA.status === 409, "هـ١. **إعادةُ الإرسال على الحلقة نفسِها تُردّ ٤٠٩**",
+      JSON.stringify(retryA.body));
     const mA2 = await moneyOf(pA);
-    same("هـ٢. **ولا دينارَ ثانٍ ولا أمرَ ثانٍ ولا سجلَّ ثانٍ**",
-      [mA2.total, mA2.ledger_rows, mA2.orders, mA2.reviews],
-      [300_000, 1, 1, 1]);
+    same("هـ٢. **ولا دينارَ ثانٍ ولا أمرَ ثانٍ**",
+      [mA2.total, mA2.ledger_rows, mA2.orders],
+      [300_000, 1, 1]);
 
     //  (هـ٣) **ضغطتان متزامنتان على بيعٍ جديد** — واحدةٌ تكتب والأخرى تُردّ.
     const pE = await mkPatient("تزامن البيع");
     await mkCase(pE);
-    const epE = (await startNoExam(pE, "prosthetic", "knee")).body?.id;
     const bodyE = {
-      patientId: pE, serviceType: "prosthetic", deviceEpisodeId: epE,
-      expertUserId: EXPERT, charged: true, amount: 120_000,
+      patientId: pE, component: "knee", expertUserId: EXPERT, originalPrice: 120_000,
+      discountAmount: 0,
     };
     const raceE = await Promise.all([sale(bodyE), sale(bodyE)]);
     same("هـ٣. **ضغطتان ⟶ نجاحٌ واحد**",
       raceE.filter((r) => r.status === 201).length, 1);
     const mE = await moneyOf(pE);
-    same("هـ٤. **وقيدُ كلفةٍ واحد وأمرٌ واحد وسجلٌّ واحد**",
-      [mE.total, mE.ledger_rows, mE.orders, mE.reviews], [120_000, 1, 1, 1]);
+    same("هـ٤. **وقيدُ كلفةٍ واحد وأمرٌ واحد**",
+      [mE.total, mE.ledger_rows, mE.orders], [120_000, 1, 1]);
 
     //  (هـ٥) **وضغطتان على الصيانة** — فهرسُ ٠٥١ يمنع أمراً مفتوحاً ثانياً.
     //  بالعقد الحاليّ (المرحلة الثالثة) — التغطيةُ الكاملة للتزامن في
@@ -627,30 +635,41 @@ async function main() {
       [mF.total, mF.ledger_rows, mF.orders], [30_000, 1, 1]);
 
     // ══════════════════════════════════════════════════════════════════
-    //  (و) اعترافُ الطبيب لا يحرّك ديناراً
+    //  (و) «تمت المراجعة» اعترافٌ لا إذن — خاصّيةُ نقطة المراجعة نفسِها
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── و. «تمت المراجعة» اعترافٌ لا إذن ──");
-    const beforeAck = await moneyOf(pA);
-    const ordBeforeAck = await orderOf(saleA.body.workOrderId);
-    const ack = await http("POST", `/api/medical-review/requests/${revA.id ?? 0}/decide`,
+    //  ⚠ **(المرحلة الرابعة)** — بيعُ الجزء لم يعد يُنشئ سجلَّ مراجعةٍ
+    //  ليُقرّ الطبيبُ بشأنه، فهذا القسمُ يزرع سجلّاً **بالشكل الذي كان
+    //  ينتجه المسارُ الاسترجاعيّ القديم** (محاكاةً لسجلٍّ تاريخيّ حيّ في
+    //  الإنتاج اليوم) ليثبت أن الإقرارَ عليه **لا يزال** لا يحرّك ديناراً —
+    //  خاصّيةٌ في `POST /api/medical-review/requests/:id/decide` نفسِها،
+    //  مستقلّةٌ تماماً عمّن أو ماذا أنشأ السجلّ.
+    console.log("\n── و. «تمت المراجعة» اعترافٌ لا إذن (على سجلٍّ تاريخيّ محاكًى) ──");
+    const pW = await mkPatient("سجلّ مراجعةٍ محاكًى");
+    const caseW = await mkCase(pW);
+    const { episodeId: epW, workOrderId: woW } = await mkOperationalOnly(pW, caseW, "knee");
+    const [revW] = await q<{ id: number }>(
+      `INSERT INTO medical_review_requests
+         (patient_id, service_type, case_id, branch_id, device_episode_id, work_order_id,
+          requested_path, review_kind, reception_note, created_by, status)
+       VALUES ($1,'prosthetic',$2,1,$3,$4,'quick','other','بيع بلا معاينة — القالب — محاكاةٌ تاريخية',
+               $5,'pending') RETURNING id`,
+      [pW, caseW, epW, woW, RECV]);
+    const beforeAck = await moneyOf(pW);
+    const ordBeforeAck = await orderOf(woW);
+    const ack = await http("POST", `/api/medical-review/requests/${revW.id}/decide`,
       S.doc, { decision: "approve" });
-    //  المعرّفُ يُقرأ من الصفّ — والنقطةُ القائمة بحرفها.
-    const [revARow] = await q(`SELECT id FROM medical_review_requests WHERE patient_id=$1`, [pA]);
-    const ack2 = ack.status === 200 ? ack
-      : await http("POST", `/api/medical-review/requests/${revARow.id}/decide`,
-        S.doc, { decision: "approve" });
-    check(ack2.status === 200, "و١. **الطبيبُ يؤشّر «تمت المراجعة»**",
-      JSON.stringify(ack2.body));
+    check(ack.status === 200, "و١. **الطبيبُ يؤشّر «تمت المراجعة»**",
+      JSON.stringify(ack.body));
     same("و٢. **ولا كلفةَ تغيّرت ولا قيدَ زِيد أو نُقص**",
       (({ total, case_cost, ledger, ledger_rows }) => [total, case_cost, ledger, ledger_rows])(
-        await moneyOf(pA)),
+        await moneyOf(pW)),
       [beforeAck.total, beforeAck.case_cost, beforeAck.ledger, beforeAck.ledger_rows]);
     same("و٣. **ولا أمرُ التصنيع تغيّر**",
-      await orderOf(saleA.body.workOrderId), ordBeforeAck);
+      await orderOf(woW), ordBeforeAck);
     same("و٤. **ولا معاينةَ أُنشئت**",
-      (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pA]))[0].n, 0);
+      (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pW]))[0].n, 0);
     same("و٥. **ولا مسارُ الحلقة تغيّر**",
-      (await q(`SELECT service_path FROM patient_device_episodes WHERE id=$1`, [epA]))[0]
+      (await q(`SELECT service_path FROM patient_device_episodes WHERE id=$1`, [epW]))[0]
         .service_path, "no_exam");
 
     // ══════════════════════════════════════════════════════════════════
@@ -661,12 +680,7 @@ async function main() {
     //  ومالُها لم يُقيَّد بعد. **ولا ترحيلَ يلمسه.**
     const pG = await mkPatient("صفٌّ موروث");
     const caseG = await mkCase(pG);
-    const epG = (await startNoExam(pG, "prosthetic", "adapter")).body?.id;
-    const saleG = await sale({
-      patientId: pG, serviceType: "prosthetic", deviceEpisodeId: epG,
-      expertUserId: EXPERT, charged: false,
-    });
-    const woG = saleG.body.workOrderId;
+    const { episodeId: epG, workOrderId: woG } = await mkOperationalOnly(pG, caseG, "adapter");
     const legacyCharge = (await q(`INSERT INTO pending_service_charges
         (patient_id, branch_id, case_id, device_episode_id, work_order_id, service_type,
          operation_kind, requested_item, sale_expert_user_id, amount, status,
@@ -702,7 +716,7 @@ async function main() {
       `/api/no-exam/charges/${legacyCharge}/approve`, S.doc, {});
     same("ز٤. **والطبيبُ يُردّ ٤٠٣ عند محاولة الإكمال**", docApprove.status, 403);
     same("   ولا دينارَ تحرّك", (await moneyOf(pG)).ledger_rows, 0);
-    //  والمحاسبُ كذلك.
+    //  والمحاسبُ كذلك — إكمالُ الموروث خارجَ صلاحيته (خلافاً لبيع الجزء الجديد).
     same("   والمحاسبُ يُردّ",
       (await http("POST", `/api/no-exam/charges/${legacyCharge}/approve`, S.acc, {})).status, 403);
     //  **واستقبالُ فرعٍ آخر يُردّ** — النطاقُ من صفّ العملية.
@@ -732,11 +746,8 @@ async function main() {
     //  (ز١٠) **والإعادةُ للتصحيح ما زالت تعمل** — بسببٍ إلزاميّ ولا دينار.
     const pH = await mkPatient("موروثٌ يُعاد");
     const caseH = await mkCase(pH);
-    const epH = (await startNoExam(pH, "prosthetic", "foot")).body?.id;
-    const woH = (await sale({
-      patientId: pH, serviceType: "prosthetic", deviceEpisodeId: epH,
-      expertUserId: EXPERT, charged: false,
-    })).body.workOrderId;
+    const { episodeId: epH, workOrderId: woH } = await mkOperationalOnly(pH, caseH, "foot");
+    void epH;
     const legacy2 = (await q(`INSERT INTO pending_service_charges
         (patient_id, branch_id, case_id, device_episode_id, work_order_id, service_type,
          operation_kind, requested_item, sale_expert_user_id, amount, status,
@@ -766,9 +777,9 @@ async function main() {
       evH.map((e: any) => e.event_type), ["returned", "corrected", "resubmitted", "approved"]);
 
     // ══════════════════════════════════════════════════════════════════
-    //  (ح) حارسُ ٢٥٠ باقٍ — الجهازُ الكاملُ لا يُباع بلا معاينة
+    //  (ح) حارسُ الجهاز الكامل — عند فتح الطلب وعند البيع معاً
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ح. حارسُ الجهاز الكامل (٢٥٠) ──");
+    console.log("\n── ح. حارسُ الجهاز الكامل ──");
     const pI = await mkPatient("طرف كامل");
     await mkCase(pI);
     const fullEp = await startNoExam(pI, "prosthetic", "full_device");
@@ -781,7 +792,8 @@ async function main() {
       (await startNoExam(pJ, "medical_support", "full_device")).status, 400);
     same("   ولا حلقةَ ولا مالَ لأيٍّ منهما",
       [(await moneyOf(pI)).ledger_rows, (await moneyOf(pJ)).ledger_rows], [0, 0]);
-    //  **وحلقةٌ موروثة بجهازٍ كامل تُردّ عند البيع** — ٤٠٩ بلا دينار.
+    //  **وحلقةٌ موروثة بجهازٍ كامل تُردّ عند البيع** — ٤٠٩ بلا دينار، عبر
+    //  استئنافٍ صريح بمعرّفها (المرحلة الرابعة).
     const caseI = (await q(
       `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`,
       [pI]))[0].id;
@@ -791,12 +803,13 @@ async function main() {
        VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',NULL,'no_exam',NOW(),NOW())
        RETURNING id`, [pI, caseI]))[0].id;
     const legacyFullSale = await sale({
-      patientId: pI, serviceType: "prosthetic", deviceEpisodeId: legacyFullEp,
-      expertUserId: EXPERT, charged: true, amount: 1_500_000,
+      patientId: pI, existingEpisodeId: legacyFullEp, expertUserId: EXPERT,
+      originalPrice: 1_500_000, discountAmount: 0,
     });
-    same("ح٣. **والموروثةُ تُردّ ٤٠٩ عند البيع**",
-      [legacyFullSale.status, legacyFullSale.body?.error],
-      [409, noExamSaleRefusal("prosthetic", "full_device")]);
+    check(legacyFullSale.status === 409,
+      "ح٣. **والموروثةُ تُردّ ٤٠٩ عند البيع**", JSON.stringify(legacyFullSale.body));
+    check(String(legacyFullSale.body?.error ?? "").includes("الجهازُ الكاملُ لا يُباع من هنا"),
+      "   برسالةٍ تدلّ على مسار المعاينة", String(legacyFullSale.body?.error));
     same("   ولا دينارَ ولا أمر",
       (({ ledger_rows, orders }) => [ledger_rows, orders])(await moneyOf(pI)), [0, 0]);
 
@@ -808,8 +821,8 @@ async function main() {
     await mkCase(pK, "physiotherapy");
     same("ط١. **ولا بيعَ بلا معاينة لعلاجٍ طبيعي**",
       (await sale({
-        patientId: pK, serviceType: "physiotherapy", deviceEpisodeId: 1,
-        expertUserId: EXPERT, charged: true, amount: 10_000,
+        patientId: pK, component: "knee", expertUserId: EXPERT,
+        originalPrice: 10_000, discountAmount: 0,
       })).status, 400);
     same("ط٢. **ولا صيانة** (بالعقد الحاليّ)",
       (await maint({
@@ -837,10 +850,9 @@ async function main() {
     console.log("\n── ي. حذفُ المريض ودمجُه ──");
     const pL = await mkPatient("يُحذف كاملاً");
     await mkCase(pL);
-    const epL = (await startNoExam(pL, "prosthetic", "silicone")).body?.id;
     await sale({
-      patientId: pL, serviceType: "prosthetic", deviceEpisodeId: epL,
-      expertUserId: EXPERT, charged: true, amount: 50_000,
+      patientId: pL, component: "silicone", expertUserId: EXPERT,
+      originalPrice: 50_000, discountAmount: 0,
     });
     const del = await http("DELETE", `/api/patients/${pL}`, S.admin,
       { reason: "اختبار الحذف الكامل" });
@@ -861,7 +873,8 @@ async function main() {
       (await q(`SELECT count(*)::int n FROM patients WHERE id=$1`, [pL]))[0].n, 0);
 
     // ══════════════════════════════════════════════════════════════════
-    //  (ك) عقدُ الشاشات والحارسُ المعماريّ
+    //  (ك) عقدُ الشاشات — الطابورُ الموروث فقط (النافذةُ ذاتُها في
+    //  server/component_sale.test.ts، القسم "س")
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ك. عقدُ الشاشات ──");
     const DIALOG = readFileSync(join(process.cwd(),
@@ -881,13 +894,14 @@ async function main() {
       check(!dialogCode.includes(banned),
         `ك١. **ولا «${banned}» في نافذة العملية**`);
     }
-    check(dialogCode.includes("المبلغ يُسجَّل مباشرةً"),
-      "ك٢. **بل تقول إن المبلغ يُسجَّل مباشرةً**");
-    check(dialogCode.includes("SAVED_CHARGED_MESSAGE")
-      && dialogCode.includes("SAVED_NO_CHARGE_MESSAGE"),
-    "ك٣. **ورسالتا الحفظ من المصدر المشترك** — لا نصَّ منسوخ");
-    check(!dialogCode.includes("SAVED_PENDING_MESSAGE"),
-      "   ولا أثرَ للرسالة القديمة");
+    check(dialogCode.includes("ويُقيَّد") && dialogCode.includes("المبلغُ النهائيّ"),
+      "ك٢. **بل تقول إن المبلغ النهائيّ يُقيَّد معاً** (بلا مراجعةٍ لاحقة)");
+    check(dialogCode.includes("COMPONENT_SALE_SUCCESS_MESSAGE"),
+      "ك٣. **ورسالةُ نجاح بيع الجزء من المصدر المشترك** — لا نصَّ منسوخ (المرحلة الرابعة)");
+    check(!dialogCode.includes("SAVED_PENDING_MESSAGE")
+      && !dialogCode.includes("SAVED_CHARGED_MESSAGE")
+      && !dialogCode.includes("SAVED_NO_CHARGE_MESSAGE"),
+    "   ولا أثرَ لرسائل «بلا معاينة» القديمة (charged/no-charge) في هذا الملفّ بعد اليوم");
 
     //  (ك٤) **وتحديثُ كلّ ما تغيّر** — بطاقةُ التصنيع والمحاسبةُ والملفّ.
     for (const key of ["/device-episodes", "/pending-charges",
@@ -910,247 +924,108 @@ async function main() {
       .test(strip(SIDEBAR)),
     "ك٩. **ومخرجُه `canAddPatients` لا `canWriteMedicalExam`**");
 
-
     // ══════════════════════════════════════════════════════════════════
-    //  (م) السجلُّ الاسترجاعيّ: محاولةٌ ثانيةٌ واحدة، ثمّ يُقال الفشل
+    //  (م) ثوابتُ `ensureReviewRouting` — تخدم مسارَ المعاينة اليوم
     // ══════════════════════════════════════════════════════════════════
-    //  **بوّابةُ فشلٍ مصطنعة** — تُفشل أوّلَ N إدراجٍ في `medical_review_requests`
-    //  ثمّ تفسح. فيُقاس **سلوكُ الإعادة** لا شكلُ الشيفرة.
-    console.log("\n── م. تعذُّرُ السجلّ الإشرافيّ ──");
-    //  **والعدّادُ تسلسلٌ لا صفّ**: `UPDATE` داخل المعاملة الفاشلة يتراجع
-    //  معها، فيبقى العدُّ كما هو وتفشل كلُّ محاولةٍ إلى الأبد. و`nextval`
-    //  **لا يتراجع** — وهي الأداةُ الوحيدة التي تعدّ محاولاتٍ فاشلة بصدق.
-    await q(`CREATE TABLE IF NOT EXISTS _test_review_fail (remaining int NOT NULL)`);
-    await q(`CREATE SEQUENCE IF NOT EXISTS _test_review_seq`);
-    await q(`CREATE OR REPLACE FUNCTION _test_review_gate() RETURNS trigger AS $fn$
-             DECLARE lim int;
-             BEGIN
-               SELECT remaining INTO lim FROM _test_review_fail LIMIT 1;
-               IF lim IS NOT NULL AND nextval('_test_review_seq') <= lim THEN
-                 RAISE EXCEPTION 'اختبار: فشلٌ مصطنع في توجيه المراجعة';
-               END IF;
-               RETURN NEW;
-             END $fn$ LANGUAGE plpgsql`);
-    await q(`DROP TRIGGER IF EXISTS _test_review_gate_trg ON medical_review_requests`);
-    await q(`CREATE TRIGGER _test_review_gate_trg BEFORE INSERT ON medical_review_requests
-             FOR EACH ROW EXECUTE FUNCTION _test_review_gate()`);
-    const setFailures = async (n: number) => {
-      await q(`DELETE FROM _test_review_fail`);
-      await q(`INSERT INTO _test_review_fail (remaining) VALUES ($1)`, [n]);
-      await q(`SELECT setval('_test_review_seq', 1, false)`);
-    };
-
-    try {
-      //  ── (م١) الأولى تفشل والثانيةُ تنجح ⟶ نجاحٌ عاديّ بلا تحذير ──
-      await setFailures(1);
-      const pM = await mkPatient("فشلٌ عابرٌ ثمّ نجاح");
-      await mkCase(pM);
-      const epM = (await startNoExam(pM, "prosthetic", "socket")).body?.id;
-      const saleM = await sale({
-        patientId: pM, serviceType: "prosthetic", deviceEpisodeId: epM,
-        expertUserId: EXPERT, charged: true, amount: 200_000,
-      });
-      check(saleM.status === 201, "م١. **العمليةُ تنجح**", JSON.stringify(saleM.body));
-      same("م٢. **والمحاولةُ الثانية نجحت ⟶ لا تحذير**", saleM.body?.reviewRouted, true);
-      same("م٣. ورسالتُها الرسالةَ العادية", saleM.body?.message, SAVED_CHARGED_MESSAGE);
-      const mM = await moneyOf(pM);
-      same("م٤. **والعمليةُ مرّةً والمالُ مرّةً والسجلُّ مرّةً**",
-        [mM.orders, mM.total, mM.ledger, mM.ledger_rows, mM.reviews],
-        [1, 200_000, 200_000, 1, 1]);
-      same("   ولا صفَّ معلَّقاً",
-        (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
-          [pM]))[0].n, 0);
-
-      //  ── (م٥) كلتاهما تفشلان ⟶ العمليةُ والمالُ يبقيان، والردُّ يحذّر ──
-      await setFailures(50);
-      const pN = await mkPatient("فشلٌ مستمرّ");
-      await mkCase(pN);
-      const epN = (await startNoExam(pN, "prosthetic", "knee")).body?.id;
-      const saleN = await sale({
-        patientId: pN, serviceType: "prosthetic", deviceEpisodeId: epN,
-        expertUserId: EXPERT, charged: true, amount: 150_000,
-      });
-      check(saleN.status === 201, "م٥. **العمليةُ تنجح رغم فشل السجلّ**",
-        JSON.stringify(saleN.body));
-      same("م٦. **والردُّ يحمل التحذير صراحةً**", saleN.body?.reviewRouted, false);
-      const mN = await moneyOf(pN);
-      same("م٧. **والعملُ والمالُ نهائيّان مرّةً واحدة**",
-        [mN.orders, mN.total, mN.case_cost, mN.ledger, mN.ledger_rows],
-        [1, 150_000, 150_000, 150_000, 1]);
-      same("م٨. **ولا سجلَّ مراجعةٍ وُلد**", mN.reviews, 0);
-      same("   ولا صفَّ معلَّقاً يُستحدَث تعويضاً",
-        (await q(`SELECT count(*)::int n FROM pending_service_charges WHERE patient_id=$1`,
-          [pN]))[0].n, 0);
-      //  ── (م٨.ب) **وعمليةٌ بلا أجور تفشل مراجعتُها** ⟶ تحذيرٌ صادقٌ لها ──
-      //  المهمُّ أن الردَّ يميّزها: لا مبلغَ هناك، فلا يُقال «حُفظ المبلغ».
-      const pNF = await mkPatient("بلا أجورٍ بفشل سجلّ");
-      await mkCase(pNF);
-      const epNF = (await startNoExam(pNF, "prosthetic", "adapter")).body?.id;
-      const saleNF = await sale({
-        patientId: pNF, serviceType: "prosthetic", deviceEpisodeId: epNF,
-        expertUserId: EXPERT, charged: false,
-      });
-      same("م٨.ب **بلا أجور: تنجح وتحذّر، والمبلغُ `null` في الردّ**",
-        [saleNF.status, saleNF.body?.reviewRouted, saleNF.body?.amount],
-        [201, false, null]);
-      same("م٨.ج **والعملُ نهائيٌّ بلا دينار ولا سجلّ**",
-        (({ orders, total, ledger_rows, reviews }) => [orders, total, ledger_rows, reviews])(
-          await moneyOf(pNF)), [1, 0, 0, 0]);
-
-      //  ⚠ **(المرحلة الثالثة)** — كان هنا إثباتُ أن الصيانةَ تحذّر وتبقى
-      //  نهائية حين يفشل سجلُّها الاسترجاعي، بنفس منطق بيع الجزء أعلاه.
-      //  **والصيانةُ لم تعد تنادي السجلَّ الاسترجاعيّ إطلاقاً** — فالسيناريو
-      //  نفسُه لم يعد ممكناً. والأدقّ الآن عكسُه تماماً: صيانةٌ تُسجَّل بنجاحٍ
-      //  تامّ **بينما بوّابةُ السجلّ لا تزال مخرَّبة** (`setFailures(50)` من
-      //  الفقرة السابقة) — إثباتٌ مباشر أن الصيانة مستقلّةٌ عن آلية المراجعة
-      //  الاسترجاعية كلِّها، لا أنها تحتملها بلطف.
-      same("م٩. **والصيانةُ لا تتأثّر إطلاقاً ببوّابة السجلّ المخرَّبة**",
-        await (async () => {
-          const pO = await mkPatient("صيانةٌ مع بوّابةٍ مخرَّبة");
-          await mkCase(pO);
-          const r = await maint({
-            patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
-            maintenanceComponent: "foot", legacyUnrecordedDevice: true,
-            originalPrice: 20_000, discountAmount: 0,
-          });
-          const m = await moneyOf(pO);
-          return [r.status, m.total, m.ledger_rows, m.orders, m.reviews];
-        })(), [201, 20_000, 1, 1, 0]);
-    } finally {
-      await q(`DROP TRIGGER IF EXISTS _test_review_gate_trg ON medical_review_requests`);
-      await q(`DROP FUNCTION IF EXISTS _test_review_gate()`);
-      await q(`DROP TABLE IF EXISTS _test_review_fail`);
-      await q(`DROP SEQUENCE IF EXISTS _test_review_seq`);
-    }
-
-    //  ── (م١٠) **والإعادةُ لا تُنتج صفّاً ثانياً** — إثباتٌ مباشر ──
-    //  هذا هو الثابتُ الذي تتّكئ عليه الإعادة: محاولةٌ أولى نجحت ثمّ ضاع
-    //  ردُّها ⟶ الثانيةُ تقرأ الأولى ولا تكتب فوقها. تُقاس على الدالّة نفسِها
-    //  التي تناديها النقطة.
+    //  ⚠ **(المرحلة الرابعة)** — كان هذا القسمُ يحاكي فشلاً عابراً في
+    //  توجيه المراجعة الاسترجاعية لبيع الجزء (محاولتان ثمّ تحذيرٌ صادق) عبر
+    //  بوّابةِ فشلٍ مصطنعة في القاعدة. **وبيعُ الجزء لم يعد ينادي
+    //  `ensureReviewRouting`/`routeServiceToDoctorReview` إطلاقاً** — فآليّةُ
+    //  «محاولتان ثمّ تحذير» بكاملها تقاعدت معه، ولا سيناريو حيّ يستدعيها من
+    //  هذا الباب بعد اليوم (يحرسه القسم "الحارسُ المعماريّ" أدناه، وتفصيلُ
+    //  التقاعد في `server/component_sale.test.ts`).
+    //
+    //  وما بقي حقيقياً: `ensureReviewRouting` **نفسُها** ما زالت الدالّةَ
+    //  القانونية التي يستعملها **مسارُ المعاينة** (توجيهُ المعاينة الكاملة
+    //  الإلزاميّ عند فتح جهازٍ جديد، القسم الأوّل من هذا الملفّ تاريخياً) —
+    //  فتفرّدُها على المرساة (لا يكتب صفّاً ثانياً لنداءٍ مكرَّر) يبقى خاصّيةً
+    //  حقيقيةً تستحقّ حراسة، بمُدخَلاتٍ مزروعةٍ بالـSQL بدل الشكل القديم ذي
+    //  النداءين.
+    console.log("\n── م. ثوابتُ ensureReviewRouting (تخدم مسار المعاينة) ──");
+    same("م١. **والصيانةُ لا تُنشئ سجلَّ مراجعةٍ إطلاقاً** — لا بوّابةَ فشلٍ تعنيها",
+      (await (async () => {
+        const pO = await mkPatient("صيانةٌ بلا سجلّ مراجعة");
+        await mkCase(pO);
+        const r = await maint({
+          patientId: pO, serviceType: "prosthetic", expertUserId: EXPERT,
+          maintenanceComponent: "foot", legacyUnrecordedDevice: true,
+          originalPrice: 20_000, discountAmount: 0,
+        });
+        const m = await moneyOf(pO);
+        return [r.status, m.total, m.ledger_rows, m.orders, m.reviews];
+      })()), [201, 20_000, 1, 1, 0]);
     {
       const { ensureReviewRouting } = await import("./medical_review/store");
       const pP = await mkPatient("تفرّدُ السجلّ");
-      await mkCase(pP);
-      const epP = (await startNoExam(pP, "prosthetic", "tube")).body?.id;
-      const woP = (await sale({
-        patientId: pP, serviceType: "prosthetic", deviceEpisodeId: epP,
-        expertUserId: EXPERT, charged: false,
-      })).body.workOrderId;
+      const caseP = await mkCase(pP);
+      const { episodeId: epP, workOrderId: woP } = await mkOperationalOnly(pP, caseP, "tube");
+      await q(`INSERT INTO medical_review_requests
+          (patient_id, service_type, case_id, branch_id, device_episode_id, work_order_id,
+           requested_path, review_kind, reception_note, created_by, status)
+         VALUES ($1,'prosthetic',$2,1,$3,$4,'quick','other','زرعٌ مباشر لاختبار التفرّد',
+                 $5,'pending')`,
+      [pP, caseP, epP, woP, RECV]);
       const before = (await q(
         `SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`, [pP]))[0].n;
-      same("م١٠. **العمليةُ ولّدت سجلّاً واحداً**", before, 1);
+      same("م٢. **صفٌّ واحدٌ مزروع**", before, 1);
       const again = await ensureReviewRouting({
         patientId: pP, serviceType: "prosthetic", reviewKind: "other",
         requestedPath: "quick", receptionNote: "نداءٌ مكرَّر",
         deviceEpisodeId: epP, workOrderId: woP, createdBy: RECV, branchIds: [1],
       });
-      same("م١١. **ونداءٌ ثانٍ بنفس المرساة لا يكتب شيئاً**", again.created, false);
-      same("م١٢. **ويبقى صفٌّ واحد** — لا ازدواج",
+      same("م٣. **ونداءٌ ثانٍ بنفس المرساة لا يكتب شيئاً**", again.created, false);
+      same("م٤. **ويبقى صفٌّ واحد** — لا ازدواج",
         (await q(`SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`,
           [pP]))[0].n, 1);
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  (ن) بطاقةُ الطبيب تقول ما جرى بلغة الأرض
+    //  (ن) بيعُ الجزء لا يصل طابورَ الطبيب إطلاقاً؛ وصياغةُ الصفحة التاريخية
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ن. صياغةُ بطاقة المشرف ──");
-    //  **والحقيقةُ من العمود المحروس لا من نصٍّ حرّ**: النقطةُ تُرجع
-    //  `requestedItem` على أمر العمل، والشاشةُ تشتقّ منه العنوان.
-    //  ملفٌّ جديد: بطاقةُ `pA` حُسمت في (و)، والطابورُ يعرض المعلَّق وحده.
+    console.log("\n── ن. بطاقةُ المشرف: غيابُ بيع الجزء والصيانة معاً ──");
+    //  **(المرحلة الرابعة)** — بيعُ جزءٍ جديد لا يصل طابورَ «مراجعة حركة
+    //  مرضى الأطراف والمساند» إطلاقاً بعد اليوم — كالصيانة تماماً (المرحلة
+    //  الثالثة). فالإثباتُ الصحيح غيابُهما معاً، لا حضورُهما.
     const pQ = await mkPatient("بطاقةُ بيع جزء");
     await mkCase(pQ);
-    const epQ = (await startNoExam(pQ, "prosthetic", "silicone")).body?.id;
     await sale({
-      patientId: pQ, serviceType: "prosthetic", deviceEpisodeId: epQ,
-      expertUserId: EXPERT, charged: true, amount: 90_000,
+      patientId: pQ, component: "silicone", expertUserId: EXPERT,
+      originalPrice: 90_000, discountAmount: 0,
     });
     const queue = await http("GET", "/api/medical-review/queue", S.doc);
     const cardQ = (queue.body?.rows ?? []).find((r: any) => r.patientId === pQ);
-    check(Boolean(cardQ), "ن١. **بطاقةُ بيع الجزء تصل الطبيب**",
-      `${queue.status} — ${JSON.stringify((queue.body?.rows ?? []).length)}`);
-    same("ن٢. **وتحمل ما طُلب على حلقتها** — لا نصَّ حرٍّ يُنتزَع منه",
-      cardQ?.episode?.requestedItem, "silicone");
-    same("   وتصنيفُها المخزَّن `other` كما هو — بلا قيمةٍ مخترَعة",
-      cardQ?.reviewKind, "other");
-    //  ⚠ **(المرحلة الثالثة)** — كانت هذه بطاقةَ صيانةٍ (`pB`) تصل طابورَ
-    //  الطبيب استرجاعياً. **والصيانةُ لم تعد تصله إطلاقاً**: لا سلطةَ له
-    //  عليها من أوّلها، فالإثباتُ الأصحّ الآن غيابُها لا حضورُها.
+    same("ن١. **بيعُ الجزء لا يصل طابورَ الطبيب إطلاقاً** — لا سجلَّ له",
+      Boolean(cardQ), false);
     const cardB = (queue.body?.rows ?? []).find((r: any) => r.patientId === pB);
-    same("ن٣. **وصيانةُ `pB` لا تصل طابورَ الطبيب إطلاقاً** — لا سجلَّ لها",
+    same("ن٢. **وصيانةُ `pB` كذلك لا تصل طابورَ الطبيب** — لا سجلَّ لها",
       Boolean(cardB), false);
 
-    //  **وعقدُ الشاشة**: تشتقّ العنوانَ من العمود بالعناوين المشتركة.
+    //  **وعقدُ الشاشة التاريخيّ لصفحة المراجعة لم يُمَسّ** — يخدم السجلّاتِ
+    //  الحيّةَ من مسار المعاينة والسجلّاتِ التاريخيةَ من بيع الجزء (ما قبل
+    //  المرحلة الرابعة) على حدٍّ سواء، بلا فرقٍ في العرض.
     const REVIEW_UI = readFileSync(join(process.cwd(),
       "client/src/pages/MedicalReview.tsx"), "utf8");
     const reviewUiCode = REVIEW_UI.split("\n")
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
     check(reviewUiCode.includes("بيع جزء من طرف صناعي — ${part}"),
-      "ن٤. **والعنوانُ «بيع جزء من طرف صناعي — [الجزء]»**");
+      "ن٣. **والعنوانُ التاريخيّ «بيع جزء من طرف صناعي — [الجزء]» باقٍ** (لسجلّاتٍ سابقة)");
     check(reviewUiCode.includes("componentLabel(r.episode?.requestedItem)"),
-      "ن٥. **بالعناوين المشتركة من العمود المحروس** — لا معجمٍ ثانٍ");
+      "ن٤. **بالعناوين المشتركة من العمود المحروس** — لا معجمٍ ثانٍ");
     check(reviewUiCode.includes('from "@shared/prosthetic_parts"'),
-      "ن٦. ومن المصدر القانونيّ للأجزاء");
-    //  **والصيانةُ لم تُمَسّ صياغتُها**.
+      "ن٥. ومن المصدر القانونيّ للأجزاء");
     check(reviewUiCode.includes('purpose === "maintenance") return `${kind} — أمر صيانة`'),
-      "ن٧. **وصياغةُ الصيانة كما كانت حرفاً**");
-    //  **والجهازُ الكاملُ يبقى على صيغته** — `componentLabel` تُرجع `null` له.
+      "ن٦. **وصياغةُ الصيانة كما كانت حرفاً**");
     check(reviewUiCode.includes("return `${kind} — أمر تصنيع`"),
-      "ن٨. **والبناءُ الكاملُ على صيغته القديمة**");
-    //  **ولا تحليلَ نصٍّ حرّ** بحثاً عن الجزء.
+      "ن٧. **والبناءُ الكاملُ على صيغته القديمة**");
     check(!/receptionNote[\s\S]{0,120}(includes|match|split|indexOf)/.test(reviewUiCode),
-      "ن٩. **ولا يُنتزَع الجزءُ من `receptionNote` الحرّ**");
-    //  **ولا قيمةَ جديدة في تعداد المراجعة** — التخزينُ `other` كما هو.
+      "ن٨. **ولا يُنتزَع الجزءُ من `receptionNote` الحرّ**");
     check(!/"component_sale"|'component_sale'/.test(
       readFileSync(join(process.cwd(), "shared/medical_review.ts"), "utf8")),
-    "ن١٠. **ولا قيمةٌ جديدة أُضيفت إلى `REVIEW_KINDS`**");
+    "ن٩. **ولا قيمةٌ جديدة أُضيفت إلى `REVIEW_KINDS`**");
 
-    //  ── وعقدُ الشاشة على التحذير ──
-    const dialogWarn = readFileSync(join(process.cwd(),
-      "client/src/components/NoExamOperationDialog.tsx"), "utf8");
-    check(dialogWarn.includes("reviewFailedCopy")
-      && dialogWarn.includes("d?.reviewRouted === false"),
-    "ن١١. **والشاشةُ تحذّر حين لا يُسجَّل السجلّ**");
-    check(/reviewRouted === false[\s\S]{0,320}variant: "destructive"/.test(dialogWarn),
-      "ن١٢. **وبتحذيرٍ ظاهرٍ لا إشعارٍ عاديّ**");
-    check(SAVED_REVIEW_FAILED_MESSAGE
-      === "تم حفظ العملية والمبلغ بنجاح، لكن تعذّر تسجيلها في المراجعة الإشرافية.",
-    "ن١٣. **وبالنصّ الذي طلبه المالك حرفاً**", SAVED_REVIEW_FAILED_MESSAGE);
-    check(SAVED_REVIEW_FAILED_HINT.includes("لا تُعِد تسجيل العملية"),
-      "ن١٤. **ولا يُطلَب من الموظّف تكرارُ العملية**", SAVED_REVIEW_FAILED_HINT);
-
-    //  ══ **و«بلا أجور» لها صياغتُها الصادقة** ══════════════════════════════
-    //  الصياغةُ الواحدة كانت تَعِد بمالٍ لم يقع على عمليةٍ أُعفيت منه صراحةً.
-    check(SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE
-      === "تم حفظ العملية بلا أجور بنجاح، لكن تعذّر تسجيلها في المراجعة الإشرافية.",
-    "ن١٤.أ **وتحذيرُ «بلا أجور» يقول «بلا أجور»**",
-    SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE);
-    check(!SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE.includes("المبلغ")
-      && !SAVED_NO_CHARGE_REVIEW_FAILED_HINT.includes("المبلغ محفوظ"),
-    "ن١٤.ب **ولا يَعِد بمالٍ لم يقع** — لا في العنوان ولا في الشرح",
-    `${SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE} | ${SAVED_NO_CHARGE_REVIEW_FAILED_HINT}`);
-    check(SAVED_NO_CHARGE_REVIEW_FAILED_HINT.includes("لا مبلغ عليها"),
-      "ن١٤.ج **بل يقول صراحةً إنها بلا مبلغ**", SAVED_NO_CHARGE_REVIEW_FAILED_HINT);
-    //  **وكلاهما يقول: لا تُعِد تسجيل العملية.**
-    for (const [label, hint] of [
-      ["بمبلغ", SAVED_REVIEW_FAILED_HINT],
-      ["بلا أجور", SAVED_NO_CHARGE_REVIEW_FAILED_HINT],
-    ] as const) {
-      check(hint.includes("لا تُعِد تسجيل العملية"),
-        `ن١٤.د **و«${label}» تقول «لا تُعِد تسجيل العملية»**`, hint);
-    }
-    //  **والاختيارُ دالّةٌ واحدة يقرؤها كلُّ سطح** — لا شرطٌ يتكرّر فينحرف.
-    same("ن١٤.هـ **و`reviewFailedCopy` تختار بالمبلغ**",
-      [reviewFailedCopy(150_000).title, reviewFailedCopy(null).title,
-        reviewFailedCopy(undefined).title],
-      [SAVED_REVIEW_FAILED_MESSAGE, SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE,
-        SAVED_NO_CHARGE_REVIEW_FAILED_MESSAGE]);
-    check(dialogWarn.includes("reviewFailedCopy(d?.amount ?? null)"),
-      "ن١٤.و **والشاشةُ تنادِيها بمبلغ الردّ** — لا نصَّ منسوخٌ فيها");
-    check(!dialogWarn.includes("SAVED_REVIEW_FAILED_MESSAGE"),
-      "   ولا تختار الصياغةَ بنفسها");
-    //  **ومحاولتان لا أكثر** في الخادم.
-    check(/for \(let attempt = 1; attempt <= 2; attempt\+\+\)/.test(CHARGE_ROUTES),
-      "ن١٥. **ومحاولتان لا أكثر** — لا حلقةَ إعادةٍ مفتوحة");
+    //  ── وعقدُ نافذة بيع الجزء: بلا صياغةِ تحذيرِ مراجعةٍ بعد اليوم ──
+    check(!dialogCode.includes("reviewFailedCopy") && !dialogCode.includes("reviewRouted"),
+      "ن١٠. **ولا صياغةَ تحذيرٍ لفشل مراجعةٍ في النافذة** — لا مراجعةَ تُحاوَل أصلاً");
 
     console.log("\n── الحارسُ المعماريّ ──");
     //  (ل) **ولا محاسبةَ ثانية في منسّق العمليات** — الكُتّابُ القانونيّون وحدهم.
@@ -1160,6 +1035,9 @@ async function main() {
       "ل٢. ولا لمسَ `total_cost` مباشرةً");
     check(PENDING_STORE.includes("applyDeviceSaleFinancialsTx"),
       "ل٣. **بل ينادي `applyDeviceSaleFinancialsTx`** للبيع");
+    check(PENDING_STORE.includes("startDeviceEpisodeTx"),
+      "ل٣.ب **(المرحلة الرابعة) وينادي `startDeviceEpisodeTx` القانونية لفتح الحلقة**"
+      + " — لا SQL حلقاتٍ منسوخة");
     //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — `createMaintenanceOperation`
     //  تحوّلت من عقدٍ خامٍ (`amount: number | null`) إلى شروطٍ تجاريةٍ
     //  مُهيكَلة (`originalPrice`/`priceKind`/`finalPrice`، مُشتقّةٌ بـ
@@ -1175,16 +1053,18 @@ async function main() {
       "ل٥. **ولا صفَّ معلَّقٌ يُكتب في المخزن إطلاقاً** — لا مسارَ يعيده");
     check(!PENDING_STORE.includes("insertCharge"),
       "   ولا دالّةُ كتابته باقيةٌ ميتة");
-    //  (ل٦) **والسجلُّ الاسترجاعيُّ بعد المعاملة لا داخلها** — إخبارٌ لا بوّابة.
-    check(CHARGE_ROUTES.includes("routeRetrospectiveReview")
-      && !PENDING_STORE.includes("routeServiceToDoctorReview"),
-    "ل٦. **والتوجيهُ في النقطة بعد المعاملة — لا داخل المخزن**");
-    check(/catch \(err\) \{[\s\S]{0,200}return \{ routed: false \}/.test(CHARGE_ROUTES),
-      "ل٧. **وفشلُه يُبتلَع مسجَّلاً** — لا يُبطل بيعاً وقع");
-    //  (ل٨) **ولا معاينةَ تُنشأ من هذا المسار**.
+    //  (ل٦) **(المرحلة الرابعة) ولا مراجعةَ استرجاعيةً لبيع الجزء بعد اليوم**
+    //  — لا تعريفَ للدالّة ولا نداءَ فعليّاً في أيٍّ من الملفّين.
+    check(!/(async )?function routeRetrospectiveReview/.test(CHARGE_ROUTES)
+      && !/await routeRetrospectiveReview\(/.test(CHARGE_ROUTES),
+      "ل٦. **ولا `routeRetrospectiveReview` — لا تعريفَ ولا نداء — في نقاط بيع الجزء**");
+    check(!PENDING_STORE.includes("routeServiceToDoctorReview")
+      && !CHARGE_ROUTES.includes("import { routeServiceToDoctorReview }"),
+    "   ولا استيرادَ لـ`routeServiceToDoctorReview` في أيّ من الملفّين لأجل بيع الجزء");
+    //  (ل٧) **ولا معاينةَ تُنشأ من هذا المسار**.
     check(!/INSERT INTO medical_exams|insertExam|createExam/.test(CHARGE_ROUTES)
       && !/INSERT INTO medical_exams/.test(PENDING_STORE),
-    "ل٨. **ولا معاينةَ تُنشأ من منسّق العمليات**");
+    "ل٧. **ولا معاينةَ تُنشأ من منسّق العمليات**");
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);

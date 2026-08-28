@@ -225,18 +225,20 @@ function main() {
     "بالقاعدة نفسِها لا بقاعدةٍ ثانية — والجلسةُ تمرّ لتصفية الصيانة (المرحلة الثالثة)");
 
   //  ══ **والصيانةُ تُخفى عمّن لا يملك `canCompleteMaintenance`** (المرحلة
-  //  الثالثة) — الطبيبُ مثلاً، أو جلسةٌ غائبة. والخيارانِ الآخران (المعاينة
-  //  والبيع) لا علاقةَ لهما بهذه الصلاحية فيبقيان كما هما.
+  //  الثالثة)، **وبيعُ الجزء يُخفى عمّن لا يملك `canCompleteComponentSale`**
+  //  (المرحلة الرابعة) — بوّابتان مستقلّتان بصلاحيّتين مستقلّتين، تتّفقان في
+  //  حجب الطبيب والجلسة الغائبة **صدفةً** لا لأنهما بوّابةٌ واحدة. خيارُ
+  //  المعاينة وحده بلا قيدٍ فيبقى كما هو دائماً.
   console.log("\n── الصيانة تُخفى عمّن لا يملكها ──");
   const doctorSession = { role: "doctor", isAdmin: false };
   const proForDoctor = receptionRoutingChoices("prosthetic", doctorSession);
-  same("١٧.ز **الطبيبُ لا يرى خيار الصيانة**",
-    proForDoctor.map((c) => c.id), ["exam_required", "device_sale"]);
+  same("١٧.ز **الطبيبُ لا يرى خيارَي الصيانة وبيع الجزء معاً** (المرحلة الرابعة)",
+    proForDoctor.map((c) => c.id), ["exam_required"]);
   const proNoSession = receptionRoutingChoices("prosthetic");
-  same("١٧.ح **وجلسةٌ غائبة كذلك تُخفيه احتياطاً**",
-    proNoSession.map((c) => c.id), ["exam_required", "device_sale"]);
+  same("١٧.ح **وجلسةٌ غائبة كذلك تُخفيهما احتياطاً**",
+    proNoSession.map((c) => c.id), ["exam_required"]);
   const proForAdmin = receptionRoutingChoices("prosthetic", { isAdmin: true });
-  same("١٧.ط **والمسؤولُ العامّ يراه بلا قيد**",
+  same("١٧.ط **والمسؤولُ العامّ يراهما بلا قيد**",
     proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance"]);
 
   // ══ (د) بلا «شراء طرف صناعي كامل» بين الخيارات ═════════════════════════

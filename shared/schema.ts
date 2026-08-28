@@ -355,6 +355,16 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    * حالتُها الصحيحة فعلاً، ولا شهادةَ تُمحى.
    */
   adminVoidReversalId: integer("admin_void_reversal_id"),
+  /**
+   * **الشروطُ التجاريةُ المُهيكَلة لبيع الجزء المبسّط** (ترحيل ٠٧٠،
+   * المرحلة الرابعة) — الأصلُ ونوعُ السعر. `agreed_cost` أعلاه يبقى
+   * **النهائيَّ** القانونيّ وحده؛ العمودان هنا يقولان مِمَّ تكوَّن ذلك
+   * الرقم، لا رقماً ثانياً. `NULL` لكلّ ما ليس بيعَ جزءٍ بلا معاينة —
+   * جهازٌ كامل، أو مسند، أو حلقةٌ على مسار المعاينة، أو صفٌّ قبل هذا
+   * الترحيل — صدقٌ لا نقص.
+   */
+  componentSaleOriginalPrice: integer("component_sale_original_price"),
+  componentSalePriceKind: text("component_sale_price_kind"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   // الحالات الخمس محروسةً في القاعدة لا في التطبيق: قيمةٌ مخترَعة من سكربت
@@ -377,6 +387,27 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
   //  قبل السؤال — مقبولةٌ صراحةً لأنها غيابُ جوابٍ لا جوابٌ ثالث.
   check("patient_device_episodes_service_path_check",
     sql`${t.servicePath} IS NULL OR ${t.servicePath} IN ('exam', 'no_exam')`),
+  //  ══ بيعُ الجزء المُهيكَل (ترحيل ٠٧٠) — الاثنان معاً أو لا شيء ══════════
+  check("pde_component_sale_shape_check",
+    sql`(${t.componentSaleOriginalPrice} IS NULL AND ${t.componentSalePriceKind} IS NULL)
+        OR (${t.componentSaleOriginalPrice} IS NOT NULL AND ${t.componentSalePriceKind} IS NOT NULL)`),
+  //  والأهليّة: جزءٌ حقيقيّ لا جهازاً كاملاً، ومسارُ العملية بعينه.
+  check("pde_component_sale_eligibility_check",
+    sql`${t.componentSaleOriginalPrice} IS NULL
+        OR (${t.requestedItem} <> 'full_device' AND ${t.servicePath} = 'no_exam')`),
+  //  والحدود: الأصلُ موجب، والنهائيُّ (agreed_cost) بين الصفر والأصل.
+  check("pde_component_sale_bounds_check",
+    sql`${t.componentSaleOriginalPrice} IS NULL
+        OR (${t.componentSaleOriginalPrice} > 0
+            AND ${t.agreedCost} >= 0 AND ${t.agreedCost} <= ${t.componentSaleOriginalPrice})`),
+  //  والنوعُ لا يكذب على العلاقة بين الأصلي والنهائي — نفسُ ثوابت
+  //  computeCommercialOffer بحرفها.
+  check("pde_component_sale_kind_check",
+    sql`${t.componentSalePriceKind} IS NULL
+        OR (${t.componentSalePriceKind} = 'normal' AND ${t.agreedCost} = ${t.componentSaleOriginalPrice})
+        OR (${t.componentSalePriceKind} = 'discount' AND ${t.agreedCost} > 0
+            AND ${t.agreedCost} < ${t.componentSaleOriginalPrice})
+        OR (${t.componentSalePriceKind} = 'free' AND ${t.agreedCost} = 0)`),
   uniqueIndex("uq_pde_case_seq").on(t.caseId, t.sequenceNumber),
   // **شراءٌ مفتوحٌ واحد لكل خيط** — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة.
   uniqueIndex("uq_pde_case_open")

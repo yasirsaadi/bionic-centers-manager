@@ -42,6 +42,14 @@ import type { ResumeStore } from "./device_flow_resume";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import { noExamSaleServiceTypes } from "@shared/prosthetic_parts";
 import { canCompleteMaintenance, type MaintenanceSessionLike } from "@shared/maintenance";
+import { canCompleteComponentSale, type ComponentSaleSessionLike } from "@shared/component_sale";
+
+/**
+ * جلسةٌ تصلح للبابين معاً — `canCompleteMaintenance` و`canCompleteComponentSale`
+ * تقرآن الشكلَ نفسَه (`role`/`isAdmin`) بدالّتين مستقلّتين عمداً (كلٌّ منهما
+ * قدرةٌ قائمةٌ بذاتها لبابها — لا اسمٌ بديل)، فلا حاجةَ لنوعين متطابقين.
+ */
+type RoutingSessionLike = MaintenanceSessionLike & ComponentSaleSessionLike;
 
 /** عنوانُ السؤال كما يراه الاستقبال — ثابتٌ واحد يُستعمَل في كلّ سطح. */
 export const RECEPTION_ROUTING_QUESTION = "ما سبب حضور المريض اليوم؟";
@@ -115,17 +123,28 @@ const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
  * وحدها اليوم. فالأطرافُ ثلاثة، والمساندُ اثنان: معاينةٌ وصيانة. والمسندُ
  * الكاملُ بابُه «يحتاج معاينة طبية» ككلّ جهازٍ كامل.
  *
+ * **والبيعُ لا يُعرَض إلّا لمن يملك `canCompleteComponentSale` أيضاً**
+ * (المرحلة الرابعة، `shared/component_sale.ts`) — استقبالٌ أو محاسبٌ أو
+ * مديرُ فرع، أو المسؤولُ العامّ بلا قيد. **والطبيبُ لا يرى هذا الخيارَ هنا
+ * إطلاقاً**: لا سلطةَ تجاريةً له على بيع الجزء من أوّلها، ولو ملك
+ * `canAddPatients` أو أيَّ علمٍ آخر — هذا هو **العطبُ الذي أغلقته هذه
+ * المرحلة تحديداً**: كان `sellsWithoutExam` وحدَه (شرطٌ غيرُ واعٍ بالصلاحية)
+ * يُظهر «شراء جزء من طرف صناعي» حتى لطبيبٍ عاديّ.
+ *
  * **والصيانةُ تُعرَض لمن يملك `canCompleteMaintenance` فقط** (المرحلة
- * الثالثة، `shared/maintenance.ts`) — استقبالٌ أو محاسبٌ أو مديرُ فرع، أو
- * المسؤولُ العامّ بلا قيد. **والطبيبُ لا يراها هنا إطلاقاً**: لا سلطةَ له
- * على الصيانة المبسّطة من أوّلها، والخادمُ يبقى الحارسَ الأخير على أيّ حال
- * (`session` غيابُها يُخفي الخيارَ احتياطاً لا افتراضَ صلاحية).
+ * الثالثة، `shared/maintenance.ts`) — **دالّةٌ مستقلّة عمداً عن بيع الجزء**
+ * رغم تطابق أدوارها الثلاثة اليوم، فيتطوّر كلُّ بابٍ بلا أن يخشى تعديلُ
+ * أحدهما كسرَ الآخر. **والطبيبُ لا يراها هنا إطلاقاً** أيضاً: لا سلطةَ له
+ * على الصيانة المبسّطة من أوّلها. **والخادمُ يبقى الحارسَ الأخير على أيّ
+ * حال** في البابين معاً (`session` غيابُها يُخفي الخيارين احتياطاً لا
+ * افتراضَ صلاحية).
  */
 export function receptionRoutingChoices(
   serviceType: ReceptionRoutingServiceType,
-  session?: MaintenanceSessionLike | null,
+  session?: RoutingSessionLike | null,
 ): ReceptionRoutingChoice[] {
   const sellsWithoutExam = noExamSaleServiceTypes.includes(serviceType);
+  const maySellComponent = canCompleteComponentSale(session);
   const mayMaintain = canCompleteMaintenance(session);
   return [
     {
@@ -133,7 +152,7 @@ export function receptionRoutingChoices(
       label: "يحتاج معاينة طبية",
       flow: { kind: "device_episode", serviceType },
     },
-    ...(sellsWithoutExam ? [{
+    ...(sellsWithoutExam && maySellComponent ? [{
       id: "device_sale" as const,
       label: SALE_LABEL[serviceType],
       flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "device_sale" as const },
@@ -155,7 +174,7 @@ export function receptionRoutingChoices(
 export function receptionRoutingGroups(p: {
   isAmputee?: boolean | null;
   isMedicalSupport?: boolean | null;
-}, session?: MaintenanceSessionLike | null): ReceptionRoutingGroup[] {
+}, session?: RoutingSessionLike | null): ReceptionRoutingGroup[] {
   return receptionRoutingDepartments(p).map((serviceType) => ({
     serviceType,
     label: DEPARTMENT_LABELS[serviceType],

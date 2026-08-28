@@ -37,6 +37,9 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { canCompleteMaintenance, MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 import { deriveOfferFromDiscount } from "@shared/commercial";
+//  **قسم ن** يثبت أن بيعَ الجزء (المرحلة الأولى) بقي حيّاً بعد تبسيطه في
+//  المرحلة الرابعة — بعقده الجديد، لا القديم.
+import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 //  **قسم س** ينادي المخزن مباشرةً — متجاوزاً نقطة REST وفحصَها المبكّر —
 //  ليثبت أن الحارسَ المعامَليّ نفسَه هو السلطة، لا الفحصُ المبكّر وحده.
 import * as pendingChargeStore from "./pending_charges/store";
@@ -732,31 +735,50 @@ async function main() {
       check(!/no-exam-op-no-charge/.test(maintBlock),
         "م٨. مربّعُ «بلا أجور» غيرُ موجودٍ في فرع الصيانة");
     }
-    check(/kind === "maintenance"[\s\S]{0,300}toast\(\{ title: MAINTENANCE_SUCCESS_MESSAGE/.test(DIALOG_SRC),
-      "م٩. نجاحُ الصيانة لا يقرأ `reviewRouted` — رسالةٌ واحدة دائماً");
+    check(/title:\s*kind === "maintenance" \? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE/
+      .test(DIALOG_SRC),
+      "م٩. نجاحُ الصيانة لا يقرأ `reviewRouted` — رسالةٌ واحدة دائماً (مشتركةٌ مع بيع الجزء الآن)");
 
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ن. بقاءُ المرحلتين ١ و٢ — انحدارٌ صفريّ ──");
     // ══════════════════════════════════════════════════════════════════
+    //  ⚠ **تحديثٌ (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨)**: بيعُ الجزء بلا معاينة —
+    //  «المرحلة الأولى» التي يحرسها هذا القسم — **غيّر عقدَه وصلاحيتَه
+    //  بقرارٍ صريح ومُوثَّق** (`server/component_sale.test.ts` يثبته بالتفصيل):
+    //  حفظٌ واحد (لا فتحُ حلقةٍ ثمّ بيعٌ)، `originalPrice`/`discountAmount`
+    //  بدل `charged`/`amount`، و`canCompleteComponentSale` بدل
+    //  `canOperateNoExam`. **وهذا ليس انحداراً بل تطوّراً مقصوداً** — فما
+    //  يبقى هذا القسمُ يحرسه هو **بقاءُ البابِ نفسِه حيّاً بسلوكه الجديد**،
+    //  لا تجمّد عقده القديم إلى الأبد.
     {
-      //  بيعُ جزءٍ بلا معاينة (المرحلة الأولى) لا يزال يعمل بعقده القديم.
+      //  بيعُ جزءٍ بلا معاينة (المرحلة الأولى) لا يزال يعمل — بعقده الجديد.
       const pid = await mkPatient("انحدار-بيع-جزء");
       await mkCase(pid, "prosthetic");
-      const ep = await http("POST", `/api/patients/${pid}/device-episodes`, S.recv,
-        { serviceType: "prosthetic", requestedItem: "socket", servicePath: "no_exam" });
-      check(ep.status === 201, "ن١. فتحُ طلبٍ بلا معاينة ما زال يعمل");
-      const sale = await http("POST", "/api/no-exam/device-sale", S.recv, {
-        patientId: pid, serviceType: "prosthetic", deviceEpisodeId: ep.body.id,
+      const saleRes = await http("POST", "/api/no-exam/device-sale", S.recv, {
+        patientId: pid, component: "socket", expertUserId: EXPERT,
+        originalPrice: 30_000, discountAmount: 0,
+      });
+      check(saleRes.status === 201 && saleRes.body?.reviewRouted === undefined
+        && saleRes.body?.message === COMPONENT_SALE_SUCCESS_MESSAGE,
+        "ن١–٢. بيعُ الجزء يعمل بعقده الجديد (originalPrice/discountAmount)"
+        + " — بلا reviewRouted، ورسالةُ النجاح الموحَّدة",
+        JSON.stringify(saleRes.body));
+      //  والعقدُ القديم صار يُرفَض صراحةً — لا يُقرأ بصمت.
+      const oldContract = await http("POST", "/api/no-exam/device-sale", S.recv, {
+        patientId: pid, serviceType: "prosthetic", deviceEpisodeId: 1,
         expertUserId: EXPERT, charged: true, amount: 30_000,
       });
-      check(sale.status === 201 && sale.body.reviewRouted !== undefined,
-        "ن٢. بيعُ الجزء يبقى بعقده القديم (charged/amount + reviewRouted)",
-        JSON.stringify(sale.body));
+      check(oldContract.status === 400,
+        "ن٢ب. والعقدُ القديم charged/amount مرفوضٌ صراحةً الآن — لا يُقرأ بصمت",
+        JSON.stringify(oldContract.body));
     }
-    check(/canOperateNoExam/.test(ROUTES_SRC), "ن٣. `canOperateNoExam` ما زالت تحرس بيعَ الجزء");
+    check(/canCompleteComponentSale/.test(ROUTES_SRC),
+      "ن٣. `canCompleteComponentSale` (لا `canOperateNoExam`) تحرس بيعَ الجزء الآن");
     check(/canFinalizeLegacyCharge/.test(ROUTES_SRC), "ن٤. وطابورُ الإكمال الموروث كما هو");
-    check(/routeRetrospectiveReview/.test(ROUTES_SRC),
-      "ن٥. والسجلُّ الاسترجاعيُّ باقٍ — لبيع الجزء وحده الآن");
+    check(!/(async )?function routeRetrospectiveReview/.test(ROUTES_SRC)
+      && !/await routeRetrospectiveReview\(/.test(ROUTES_SRC),
+      "ن٥. **ولم يعد هناك سجلٌّ استرجاعيّ لبيع الجزء** — الدالّةُ حُذفت كلّياً"
+      + " (قرارُ المالك 2026-08-28: لا دورَ للطبيب في بيع الجزء إطلاقاً)");
     {
       const maintHandler = ROUTES_SRC.match(
         /app\.post\("\/api\/no-exam\/maintenance"[\s\S]*?\n {2}\}\);/)?.[0] ?? "";

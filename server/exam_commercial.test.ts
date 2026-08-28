@@ -793,12 +793,27 @@ async function main() {
     }
     {
       //  **ومسارُ «بلا معاينة» يبقى عند حدّه** — لا متابعةَ ولا مال.
+      //
+      //  ══ زرعٌ مباشر بالـSQL (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨) ═══════════════
+      //  كانت هذه الحلقةُ تُفتَح عبر `POST /api/patients/:id/device-episodes`
+      //  بمسار `no_exam` — وهذا الشكلُ بعينه (جزءٌ حقيقيّ على مسار «بلا
+      //  معاينة») صار بابُه الحيّ الوحيد `POST /api/no-exam/device-sale`
+      //  (تفتح الحلقةَ وتبيعها معاً)؛ والنقطةُ العامّة تردّ ٤٠٩ له الآن
+      //  (`server/component_sale.test.ts` يثبت ذلك). وموضوعُ هذا الاختبار —
+      //  عزلُ عزل مسار «بلا معاينة» عن اعتماد سعر المعاينة — لا يحتاج ذاك
+      //  البابَ التجاريّ بعينه، فتُزرَع الحلقةُ كما كانت تخرج منه تماماً.
       const p = await mkPatient("بلا معاينة");
-      await mkCase(p);
-      same("٤٦. طلبٌ على مسار «بلا معاينة»",
-        (await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-          { serviceType: "prosthetic", requestedItem: "knee", servicePath: "no_exam" })).status,
-        201);
+      const c = await mkCase(p);
+      const [ep] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+           sequence_number, status, agreed_cost, requested_item, component,
+           service_path, created_by)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'knee','knee','no_exam',$3)
+         RETURNING id`,
+        [p, c, RECV]);
+      same("٤٦. طلبٌ على مسار «بلا معاينة» — والمسارُ محفوظٌ كما قيل",
+        (await q<{ sp: string }>(`SELECT service_path sp FROM patient_device_episodes WHERE id=$1`,
+          [ep.id]))[0].sp, "no_exam");
       const assign = await http("POST", `/api/patients/${p}/assign-manufacturing`, S.recv,
         { expertUserId: EXPERT, serviceType: "prosthetic", cost: 500_000 });
       same("   **والحدُّ المؤقّت لم يُمَسّ** — ٤٠٩ بلا أثرٍ ماليّ", assign.status, 409);
