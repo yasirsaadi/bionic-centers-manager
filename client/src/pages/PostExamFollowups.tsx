@@ -37,6 +37,7 @@ import {
   type DecisionQueueState,
 } from "@shared/decision_queue";
 import { PRICE_KIND_LABELS } from "@shared/commercial";
+import { resolvedSaleDiscount } from "./post_exam_followups_presentation";
 
 interface Branch { id: number; name: string; }
 
@@ -154,8 +155,11 @@ function WaitingCard({ row }: { row: WaitingRow }) {
 
 function ResolvedCard({ row }: { row: ResolvedRow }) {
   const bought = row.result === "bought";
-  const discount = row.priceKind === "discount" && row.originalPrice != null
-    ? Math.max(0, row.originalPrice - row.approvedPrice) : null;
+  //  **الخصمُ بدالّةٍ خالصةٍ واحدة، لكلّ الأنواع الثلاثة معاً** (تصحيحٌ
+  //  لاحقٌ ثانٍ — كانت مخصَّصةً بـ`priceKind === "discount"` وحدها، فبيعٌ
+  //  مجّانيٌّ (خصمُ ١٠٠٪) كان يُعرَض بخصمٍ صفر). التفصيلُ والاختبارُ في
+  //  `post_exam_followups_presentation.ts` — منطقٌ خالص، لا يتكرّر هنا.
+  const discount = resolvedSaleDiscount(row);
   return (
     <Card data-testid={`row-resolved-${row.followupId}`}>
       <CardContent className="p-4 space-y-3">

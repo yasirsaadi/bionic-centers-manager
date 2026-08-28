@@ -66,6 +66,7 @@ import {
 } from "@shared/followup_events";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
+import { canCompleteReceptionSale } from "@shared/commercial";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
@@ -418,6 +419,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  بلا حلقة — وإلّا تجمّد ملفٌّ في حالةٍ لا زرَّ لها.
   const examPath: boolean = active.examPath === true;
   const examActions: string[] = Array.isArray(active.actions) ? active.actions : [];
+  //  **الكتلةُ التجاريةُ ليست للطبيب العاديّ** (تصحيحٌ لاحق ثانٍ): `examActions`
+  //  فارغةٌ للطبيب أيضاً (يردّها الخادمُ `canCompleteReceptionSale` القانونية)،
+  //  فكان الشرطُ أعلاه (`!isTerminal`) يفتح الكتلةَ له على صفٍّ حيّ ليقرأ رسالةَ
+  //  حجبٍ لا تخصّه — هو أصلاً بلا دورٍ تجاريّ لا محجوباً ولا مطلَقاً. فالمالكيةُ
+  //  التجاريةُ التاريخية (رسالةُ الحجب) للاستقبال/المحاسب/المدير/المسؤول وحدهم؛
+  //  والطبيبُ لا يرى الكتلةَ إطلاقاً — لا زرَّها ولا رسالتَها. **نفسُ الدالّة
+  //  القانونية التي تحرس النقطة**، لا قائمةَ أدوارٍ ثانية.
+  const mayUseExamPathCommercialDecision = canCompleteReceptionSale(session as any);
   const actions = examPath ? [] : allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
@@ -519,8 +528,15 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             أو أُغلق — لا شأنَ لهذه الكتلة به، الملخّصُ أدناه يتكفّل) أو
             صفٌّ **حيٌّ محجوبٌ** بملكيةٍ تجاريةٍ موروثة (يحتاج المسؤولَ
             العام). فالتمييزُ من `isTerminal(active.status)` — لا من طول
-            المصفوفة، وإلّا اختفت الملاحظةُ ورسالةُ الحجب معاً عن صفٍّ حيّ. */}
-        {examPath && !isTerminal(active.status) && (
+            المصفوفة، وإلّا اختفت الملاحظةُ ورسالةُ الحجب معاً عن صفٍّ حيّ.
+            ══ **وشرطٌ ثالث: مَن ينظر أصلاً** (تصحيحٌ لاحقٌ ثانٍ) ══════════
+            صفٌّ حيٌّ محجوب فارغُ `examActions` للطبيب العاديّ أيضاً — بلا
+            هذا الشرط كان يدخل الكتلةَ فيقرأ رسالةَ حجبٍ لا تخصّه: هو أصلاً
+            بلا سلطةٍ تجارية، لا محجوباً عنها ولا مطلَقاً فيها. فالكتلةُ
+            التجاريةُ كلُّها (الأزرار وملاحظةُ الطبيب ورسالةُ الحجب) تبقى
+            حصراً لمن يملك `canCompleteReceptionSale` — نفسُ الدالّة
+            القانونية التي تحرس `/complete-sale`/`/not-bought` والطابورَ. */}
+        {examPath && !isTerminal(active.status) && mayUseExamPathCommercialDecision && (
           <ExamPathDecisionActions
             followupId={active.id}
             patientId={patientId}

@@ -22,7 +22,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { examPathActions, examPathBlockedMessage } from "@shared/commercial";
+import { examPathActions, examPathBlockedMessage, canCompleteReceptionSale } from "@shared/commercial";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -771,6 +771,44 @@ async function main() {
       const itemLine = (sidebar.match(/\{ label: DECISION_QUEUE_SIDEBAR_LABEL,[^}]*\}/) ?? [""])[0];
       check(itemLine.length > 0 && !itemLine.includes("roles:") && itemLine.includes("eligible:"),
         "٦١. **وعنصرُ القائمة نفسُه لا يحمل قائمةَ أدوارٍ ثانية — `eligible` وحده**", itemLine);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ن. الكتلةُ التجاريةُ ليست للطبيب العاديّ في بطاقة المريض (تصحيحٌ لاحقٌ ثانٍ) ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      //  `examActions` فارغةٌ للطبيب أصلاً (يردّها الخادمُ)، فكان الشرطُ
+      //  القديم `examPath && !isTerminal(status)` يفتح الكتلةَ له على صفٍّ
+      //  حيّ ليقرأ رسالةَ حجبٍ لا تخصّه — هو بلا سلطةٍ تجارية أصلاً، لا
+      //  محجوباً عنها ولا مطلَقاً فيها.
+      const card = readFileSync(
+        join(import.meta.dirname, "..", "client", "src", "components", "PostExamDecisionCard.tsx"),
+        "utf8");
+      check(/import\s*\{\s*canCompleteReceptionSale\s*\}\s*from\s*"@shared\/commercial"/.test(card),
+        "٦٢. **`PostExamDecisionCard.tsx` يستورد الدالّةَ القانونية نفسَها**");
+      check(/mayUseExamPathCommercialDecision\s*=\s*canCompleteReceptionSale\(/.test(card),
+        "٦٣. **والمتغيّرُ الذي يحرس الكتلةَ يُحسَب بمناداتها مباشرةً — لا شرطٍ يدويّ**");
+      const gateLine = (card.match(
+        /\{examPath && !isTerminal\(active\.status\)[^\n]*&&[^\n]*\(\s*$/m) ?? [""])[0];
+      check(gateLine.includes("mayUseExamPathCommercialDecision"),
+        "٦٤. **وشرطُ عرض `ExamPathDecisionActions` نفسُه يتضمّن هذا المتغيّر**", gateLine);
+      check(!/mayUseExamPathCommercialDecision[\s\S]{0,80}["']doctor["']/.test(card)
+        && !gateLine.includes("doctor"),
+        "٦٥. **ولا قائمةَ أدوارٍ يدويةً ثانية بجوار الشرط** — لا ذكرَ حرفيّاً لـ`\"doctor\"` فيه");
+
+      //  **والفعليُّ**: نفسُ الدالّة القانونية بنفس بطاقات الجلسة المستعملة
+      //  في هذا الملفّ — هي ما يقرّر ظهورَ الكتلة فعلياً بعد الإثباتين
+      //  أعلاه (الاستيراد والربط)، فلا حاجةَ لمُصيِّر React لإثبات الأثر.
+      check(canCompleteReceptionSale(S.doc) === false,
+        "٦٦. **الطبيبُ العاديّ: `mayUseExamPathCommercialDecision = false` ⟶ لا كتلةَ تجاريةً إطلاقاً**");
+      for (const [who, sess] of [["الاستقبال", S.recv], ["المحاسب", S.acct],
+        ["مديرُ الفرع", S.manager], ["المسؤول العام", S.admin]] as any[]) {
+        check(canCompleteReceptionSale(sess) === true,
+          `٦٧. **${who}: \`mayUseExamPathCommercialDecision = true\` ⟶ الكتلةُ تُعرَض** (صفٌّ عاديّ أو محجوبٌ تاريخياً معاً)`);
+      }
+      //  والحجبُ التاريخيُّ (القسم ل) يبقى كما هو بحرفه لهؤلاء الأربعة —
+      //  هذا الشرطُ الجديد لا يمسّ منطقَ `examPathActions`/`examPathBlockedMessage`
+      //  إطلاقاً، فقط يقرّر **مَن يدخل الكتلةَ من الأصل**.
     }
 
     console.log(

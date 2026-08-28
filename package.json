@@ -98,7 +98,8 @@
     "test:maintenance-simplify": "tsx server/simplified_maintenance.test.ts",
     "test:maintenance-device-target": "tsx client/src/components/maintenance_device_target.test.ts",
     "test:component-sale": "tsx server/component_sale.test.ts",
-    "test:decision-queue": "tsx server/decision_queue.test.ts"
+    "test:decision-queue": "tsx server/decision_queue.test.ts",
+    "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
