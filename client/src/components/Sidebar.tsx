@@ -9,6 +9,13 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { canTrashPatients, TRASH_TITLE } from "@shared/patient_trash";
 import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
+//  ══ **الأهليّةُ من الدالّة القانونية نفسِها — لا قائمةُ أدوارٍ ثانية**
+//  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+//  كانت الشارةُ والصفُّ يُعيدان كتابةَ شرط `canCompleteReceptionSale`
+//  يدوياً (`isAdmin || role في reception/accountant/branch_manager`) —
+//  متطابقٌ اليوم، لكنّه ينحرف صامتاً إن تغيّرت القاعدةُ القانونية في
+//  `shared/commercial.ts` ولم يتذكّر أحدٌ هذا الملفّ.
+import { canCompleteReceptionSale } from "@shared/commercial";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
@@ -119,15 +126,14 @@ export function Sidebar() {
   const trashCount = trashData?.count ?? 0;
 
   //  ══ **شارةُ «بانتظار الحسم»** (المرحلة الخامسة) ═══════════════════════
-  //  نفسُ الأهليّة التي تفتح البابين `/complete-sale`/`/not-bought`
-  //  (`canCompleteReceptionSale`، `shared/commercial.ts`) — لا الطبيب.
+  //  **نفسُ الدالّة القانونية بعينها** — لا نسخةٌ يدوية من قائمة الأدوار.
+  //  `canCompleteReceptionSale` هي مَن تفتح البابين `/complete-sale`/
+  //  `/not-bought` فعلياً (`shared/commercial.ts`)، فانحرافُها لاحقاً يسري
+  //  إلى الشريط الجانبيّ من تلقاء نفسه — لا الطبيب.
   //  والعدّادُ **كلَّ الفروع** بلا فلترةٍ محليّة، مهما ضيّق الموظّفُ الصفحةَ
   //  بفرعٍ واحد؛ الخادمُ يفرض ذلك (`/api/followups/decision-queue/count`
   //  لا تقبل فلتراً).
-  const decisionQueueEligible = !!branchSession && (
-    branchSession.isAdmin
-    || ["reception", "accountant", "branch_manager"].includes(branchSession.role ?? "")
-  );
+  const decisionQueueEligible = canCompleteReceptionSale(branchSession as any);
   const { data: decisionQueueData } = useQuery<{ count: number }>({
     queryKey: ["/api/followups/decision-queue", "count"],
     enabled: decisionQueueEligible,
@@ -177,10 +183,12 @@ export function Sidebar() {
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
-    //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً للاستقبال والمحاسب
-    //  ومديرِ الفرع والمسؤول (`canCompleteReceptionSale`) — الطبيبُ يكتب
-    //  معاينته ويخرج، ولا زرَّ بيعٍ له في هذه الصفحة أصلاً.
-    { label: DECISION_QUEUE_SIDEBAR_LABEL, icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager", "accountant"] as const, badge: decisionQueueCount },
+    //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل
+    //  `canCompleteReceptionSale` — الطبيبُ يكتب معاينته ويخرج، ولا زرَّ
+    //  بيعٍ له في هذه الصفحة أصلاً. **`eligible` لا `roles`**: القاعدةُ
+    //  التي تفتح البابين نفسِهما (`shared/commercial.ts`) — لا قائمةَ
+    //  أدوارٍ ثانية تنحرف عنها صامتة لو تغيّرت القاعدةُ لاحقاً.
+    { label: DECISION_QUEUE_SIDEBAR_LABEL, icon: ClipboardCheck, href: "/post-exam-followups", adminOnly: false, settingKey: null, permission: null, eligible: decisionQueueEligible, badge: decisionQueueCount },
     //  اعتمادُ الخصم لمديرِ الفرع والمخوَّل — والمسؤولُ يرى كلَّ شيء أصلاً.
     //  والطبيبُ العاديّ لا يراه: الخصمُ قرارٌ ماليٌّ لا سريريّ.
     { label: "اعتماد الخصومات", icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager"] as const },
@@ -252,7 +260,15 @@ export function Sidebar() {
       if (!matchesRole && !expertBypass && !discountBypass && !returnedBypass
         && !noExamReviewBypass) return false;
     }
-    
+
+    //  ══ **أهليّةٌ من دالّةٍ قانونية — لا قائمةَ أدوار** (تصحيحٌ لاحق) ═════
+    //  عكسُ `roles` أعلاه تماماً: هذا العنصرُ (الآن «بانتظار الحسم» وحدها)
+    //  لا يحمل قائمةَ أدوارٍ مكتوبةً هنا أصلاً — القرارُ بالكامل من محمولٍ
+    //  جاهزٍ (`eligible`) حسبته الدالّةُ القانونية نفسُها التي تحرس النقطة.
+    if (typeof (item as any).eligible === "boolean" && !(item as any).eligible) {
+      return false;
+    }
+
     // Check branch settings for non-admin users
     if (!branchSession?.isAdmin && item.settingKey && branchSettings) {
       const settingValue = branchSettings[item.settingKey];

@@ -8,11 +8,21 @@
 // `server/reception_sale.test.ts` — هذا الملفُّ يثبت **الطابورَ نفسَه**:
 // عضويّةَ التبويبين من الحالة الحيّة، النطاقَ، التصنيفَ، ملاحظةَ الطبيب،
 // هويّةَ الحاسم ولقطةَ دوره، وإعادةَ الفتح والحسم من فاعلٍ آخر.
+//
+// ══ تصحيحٌ لاحق (مراجعةٌ حيّة) — أربعُ ثغراتٍ دقيقة ════════════════════════
+// ك: إلغاءُ طلبِ سعرٍ موروثٍ حقيقيّ عند إتمامٍ مباشر (وتراجعُه عند فشل البيع).
+// ل: `complete_sale` يلزم السعرَ والخبيرَ والقرارَ معاً — لا القرارَ وحده —
+//    وبقاءُ الصفّ ظاهراً مع ملاحظة الطبيب حين يُحجَب بملكيةٍ موروثة.
+// م: عقدُ المصدر — إبطالُ الطابور بعد أيّ خطأ، وأهليّةُ الشريط الجانبيّ من
+//    الدالّة القانونية لا قائمة أدوارٍ ثانية.
 
 import express from "express";
 import { createServer } from "http";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { examPathActions, examPathBlockedMessage } from "@shared/commercial";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -153,6 +163,67 @@ async function countOf(session: any) {
 }
 function idsOf(body: any): number[] {
   return (body?.rows ?? []).map((r: any) => Number(r.followupId));
+}
+function rowOf(body: any, fid: number): any {
+  return (body?.rows ?? []).find((r: any) => Number(r.followupId) === fid);
+}
+
+//  ══ إلغاءُ طلبِ سعرٍ موروثٍ (تصحيحٌ لاحق، القسم ك) ═══════════════════════
+//  الطلبُ القديم `/api/followups/:id/price-request` صار باباً مغلقاً
+//  (يردّ ٤٠٠ للجميع)، فلا مسارَ حيّاً يُنشئ صفَّ `price_change_requests`
+//  اليوم. **لقطةُ قاعدةٍ ضابطة** — كما توجب الحالةُ الموروثة نفسُها —
+//  وليست محاكاةً لباب حيّ.
+async function mkPendingPriceRequest(fid: number, pid: number, branchId = 1,
+  opts: { currentPrice?: number; proposedPrice?: number } = {}) {
+  const currentPrice = opts.currentPrice ?? 500_000;
+  const proposedPrice = opts.proposedPrice ?? 650_000;
+  const r = await q<{ id: number }>(
+    `INSERT INTO price_change_requests
+       (followup_id, patient_id, branch_id, current_price, proposed_price, reason,
+        requested_by, requested_by_name, status)
+     VALUES ($1,$2,$3,$4,$5,'المريضُ طلب مراجعةَ السعر',$6,'ريام','pending')
+     RETURNING id`,
+    [fid, pid, branchId, currentPrice, proposedPrice, RECV]);
+  return r[0].id;
+}
+async function priceRequestRow(id: number) {
+  const [r] = await q(
+    `SELECT status, decided_at, decided_by, decided_by_name, decision_note,
+            current_price::int cp, proposed_price::int pp, reason
+       FROM price_change_requests WHERE id=$1`, [id]);
+  return r ?? null;
+}
+async function priceRequestCancelEvents(fid: number) {
+  return q(
+    `SELECT event_type, payload, from_status, to_status, note
+       FROM post_exam_followup_events
+      WHERE followup_id=$1 AND event_type='price_request_cancelled'
+      ORDER BY id ASC`, [fid]);
+}
+
+//  ══ ملكيّةٌ موروثة (تصحيحٌ لاحق، القسم ل) ═════════════════════════════════
+//  لا بابَ حيّاً يكتب `owner='doctor'` على صفٍّ من مسار المعاينة بعد اليوم
+//  (`retiredOnExamPath`) — فهذه أيضاً لقطةُ قاعدةٍ ضابطة لصفٍّ **كان** قد
+//  لُمس قبل هذا التبسيط، لا محاكاةً لباب حيّ.
+async function ownPrice(fid: number, byId: number, byName: string) {
+  await q(`UPDATE post_exam_followups
+              SET price_owner='doctor', price_owner_user_id=$1, price_owner_name=$2
+            WHERE id=$3`, [byId, byName, fid]);
+}
+async function ownExpert(fid: number, byId: number, byName: string) {
+  await q(`UPDATE post_exam_followups
+              SET expert_owner='doctor', expert_owner_user_id=$1, expert_owner_name=$2
+            WHERE id=$3`, [byId, byName, fid]);
+}
+/** قرارٌ **وقيمتُه معاً** — الحالةُ الحقيقية الوحيدة القابلة للحدوث فعلاً:
+ *  المالكيةُ لا تُكتب في النظام الحيّ بمعزلٍ عن قيمةٍ حقيقية (`setCommercialFields`
+ *  تكتبهما بنفس السطر دائماً)، فقرارٌ مملوكٌ بلا قيمةٍ حالةٌ لا تقع أبداً. */
+async function ownDecisionBought(fid: number, byId: number, byName: string) {
+  await q(`UPDATE post_exam_followups
+              SET purchase_decision='bought', purchase_decision_at=NOW(),
+                  purchase_decision_owner='doctor', purchase_decision_user_id=$1,
+                  purchase_decision_name=$2
+            WHERE id=$3`, [byId, byName, fid]);
 }
 
 async function cleanup() {
@@ -487,6 +558,219 @@ async function main() {
       const rAll = await waiting(S.admin);
       same("٣٦. **والعددُ الإجماليّ يطابق طولَ الصفوف الفعليّ** — بلا `LIMIT` صامت",
         rAll.body?.total, (rAll.body?.rows ?? []).length);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── (دالّتان خالصتان) `examPathActions`/`examPathBlockedMessage` ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const sessRecv = { userId: 1, role: "reception", isAdmin: false };
+      const noneOwned = { owner: null, ownerUserId: null, ownerName: null };
+      const docOwned = { owner: "doctor" as const, ownerUserId: 999, ownerName: "طبيب" };
+
+      same("أ. كلُّ الحقول حرّة ⟶ الفعلان معاً",
+        examPathActions({
+          session: sessRecv, status: "follow_up", mayAct: true,
+          decisionField: noneOwned, priceField: noneOwned, expertField: noneOwned,
+        }),
+        ["complete_sale", "not_bought"]);
+      same("ب. السعرُ محجوبٌ وحده ⟶ «لم يشترِ» فقط",
+        examPathActions({
+          session: sessRecv, status: "follow_up", mayAct: true,
+          decisionField: noneOwned, priceField: docOwned, expertField: noneOwned,
+        }),
+        ["not_bought"]);
+      same("ج. الخبيرُ محجوبٌ وحده ⟶ نفسُ الأثر",
+        examPathActions({
+          session: sessRecv, status: "follow_up", mayAct: true,
+          decisionField: noneOwned, priceField: noneOwned, expertField: docOwned,
+        }),
+        ["not_bought"]);
+      same("د. القرارُ محجوبٌ ⟶ لا فعلَ إطلاقاً",
+        examPathActions({
+          session: sessRecv, status: "follow_up", mayAct: true,
+          decisionField: docOwned, priceField: noneOwned, expertField: noneOwned,
+        }),
+        []);
+      same("هـ. حالةٌ منتهية ⟶ لا فعلَ بصرف النظر عن الملكية",
+        examPathActions({
+          session: sessRecv, status: "converted", mayAct: true,
+          decisionField: noneOwned, priceField: noneOwned, expertField: noneOwned,
+        }),
+        []);
+      same("و. **غيابُ `priceField`/`expertField` من منادٍ لم يُحدَّث ⟶ لا ينكسر** (تُقرأ غيرَ مملوكة)",
+        examPathActions({ session: sessRecv, status: "follow_up", mayAct: true, decisionField: noneOwned }),
+        ["complete_sale", "not_bought"]);
+
+      same("ز. الرسالةُ فارغةٌ حين الفعلان معاً", examPathBlockedMessage(["complete_sale", "not_bought"]), null);
+      const msgNB = examPathBlockedMessage(["not_bought"]);
+      check(typeof msgNB === "string" && !/doctor|staff|owner/i.test(msgNB ?? ""),
+        "ح. **ورسالةٌ عربيةٌ بلا كودٍ داخليّ** حين «لم يشترِ» وحدها متاحة", String(msgNB));
+      const msgNone = examPathBlockedMessage([]);
+      check(typeof msgNone === "string" && !/doctor|staff|owner/i.test(msgNone ?? ""),
+        "ط. وكذلك حين لا فعلَ إطلاقاً", String(msgNone));
+      check(msgNB !== msgNone, "ي. والرسالتان مختلفتان — تصفان حالتين مختلفتين لا نصّاً واحداً معاداً");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ك. إلغاءُ طلبِ سعرٍ موروثٍ عند إتمامٍ مباشر (تصحيحٌ لاحق) ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const { pid, fid } = await readySale("طلبُ-سعرٍ-معلَّق");
+      await q(`UPDATE post_exam_followups SET status='price_approval_pending' WHERE id=$1`, [fid]);
+      const reqId = await mkPendingPriceRequest(fid, pid, 1,
+        { currentPrice: 500_000, proposedPrice: 700_000 });
+
+      const before = await priceRequestRow(reqId);
+      same("٣٧. الإعدادُ: طلبُ السعر `pending` فعلاً، والمتابعةُ في الحالة الوسيطة",
+        [before?.status], ["pending"]);
+
+      const cs = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT });
+      same("٣٨. **والبيعُ المباشر ينجح على الحالة الوسيطة** — إصلاحُ `CONFIRMABLE`",
+        [cs.status, cs.body?.converted, typeof cs.body?.workOrderId], [200, true, "number"]);
+
+      const after = await priceRequestRow(reqId);
+      same("٣٩. **وطلبُ السعر صار `cancelled` — لا `rejected`**", after?.status, "cancelled");
+      check(!!after?.decided_at && after?.decided_by === RECV && after?.decided_by_name === "ريام",
+        "٤٠. **ومَن ألغاه ومتى مسجَّلان بالفاعل الحقيقيّ**", JSON.stringify(after));
+      same("٤١. **وسببُ الإلغاء يذكر الإتمامَ المباشر تحديداً**",
+        after?.decision_note, "أُلغي تلقائياً بإتمام البيع عبر المسار المبسّط");
+      same("٤٢. **والقيمتان التاريخيتان والسببُ محفوظةٌ بلا تغيير** — تاريخٌ لا يُمحى",
+        [after?.cp, after?.pp, after?.reason], [500_000, 700_000, "المريضُ طلب مراجعةَ السعر"]);
+
+      const events = await priceRequestCancelEvents(fid);
+      same("٤٣. **وحدثٌ واحدٌ بالضبط `price_request_cancelled`**", events.length, 1);
+      const payload: any = (events[0] as any)?.payload;
+      same("٤٤. وحمولتُه تحمل هويّةَ الطلب وسعرَيه", [payload?.requestId, payload?.currentPrice,
+        payload?.proposedPrice], [reqId, 500_000, 700_000]);
+
+      const approvals = await http("GET", "/api/followups/approvals", S.admin);
+      const stillThere = (approvals.body?.priceApprovals ?? [])
+        .some((a: any) => a.requestId === reqId);
+      check(!stillThere,
+        "٤٥. **ولم يعد يظهر في طابور الاعتماد الموروث** — لا تاريخَ مستحيلاً");
+    }
+    {
+      //  ══ **التراجعُ — لا نصفَ أثر** ═══════════════════════════════════
+      //  خبيرٌ من فرعٍ آخر يُفشل `/complete-sale` **داخل** `setCommercialFields`
+      //  قبل أن تُنادى `cancelPendingPriceRequestsTx` أصلاً — فيثبت أن
+      //  الإلغاءَ لا يقع أبداً ما لم يثبت البيعُ فعلاً في المعاملة نفسِها.
+      const { pid, fid } = await readySale("طلبُ-سعرٍ-يتراجع");
+      await q(`UPDATE post_exam_followups SET status='price_approval_pending' WHERE id=$1`, [fid]);
+      const reqId = await mkPendingPriceRequest(fid, pid, 1);
+
+      const failedSale = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT_B2 });
+      check(failedSale.status >= 400,
+        "٤٦. الإعدادُ: إتمامٌ بخبيرٍ من فرعٍ آخر يفشل كما هو متوقَّع",
+        JSON.stringify(failedSale.body));
+
+      const stillPending = await priceRequestRow(reqId);
+      same("٤٧. **وطلبُ السعر يبقى `pending`** — لا إلغاءَ قبل ثبوت البيع", stillPending?.status, "pending");
+      const noEvents = await priceRequestCancelEvents(fid);
+      same("٤٨. ولا حدثَ إلغاءٍ كُتب إطلاقاً", noEvents.length, 0);
+      const followupNow = await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [fid]);
+      same("٤٩. **والمتابعةُ نفسُها بقيت على حالتها الوسيطة — لم تتحوّل**",
+        (followupNow[0] as any)?.status, "price_approval_pending");
+    }
+    {
+      //  ══ **رجعة: «لم يشترِ» تبقى تُلغي طلبَها الحقيقيَّ كما كانت** ════
+      const { pid, fid } = await readySale("لم-يشترِ-وطلبُ-سعرٍ-معلَّق");
+      const reqId = await mkPendingPriceRequest(fid, pid, 1);
+      const nb = await http("POST", `/api/followups/${fid}/not-bought`, S.recv, { reason: "غيّر رأيه" });
+      same("٥٠. الإعدادُ: «لم يشترِ» نجح كالمعتاد", nb.status, 200);
+      const after = await priceRequestRow(reqId);
+      same("٥١. **و«لم يشترِ» يبقى يُلغي طلبَ سعره الحقيقيَّ بنصّه الأصليّ** — لم ينحرف بالدالّة المشتركة",
+        [after?.status, after?.decision_note],
+        ["cancelled", "أُلغي تلقائياً بإغلاق ملفّ المتابعة بلا شراء"]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ل. أفعالٌ تطابق ما يقبله الخادمُ فعلاً (تصحيحٌ لاحق) ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const { fid: fidA } = await readySale("محجوبٌ-سعر");
+      await ownPrice(fidA, DOC, "سعد");
+      const wRecvA = await waiting(S.recv);
+      same("٥٢. **أ. سعرٌ مملوكٌ للطبيب ⟶ الاستقبالُ يرى الصفَّ بلا `complete_sale`**",
+        rowOf(wRecvA.body, fidA)?.actions, ["not_bought"]);
+      const wAdminA = await waiting(S.admin);
+      same("   **والمسؤولُ العام يملك الفعلين معاً — يتجاوز الملكيةَ التاريخية**",
+        [...(rowOf(wAdminA.body, fidA)?.actions ?? [])].sort(),
+        ["complete_sale", "not_bought"].sort());
+      const csA = await http("POST", `/api/followups/${fidA}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+      same("   **والبابُ الحقيقيّ يردّ الاستقبالَ فعلاً — لا زرٌّ كاذب**", csA.status, 403);
+      const nbA = await http("POST", `/api/followups/${fidA}/not-bought`, S.recv, { reason: "جرّب مركزاً آخر" });
+      same("   **و«لم يشترِ» يعمل رغم قفل السعر — يطابق `actions` تماماً**", nbA.status, 200);
+    }
+    {
+      const { fid: fidB } = await readySale("محجوبٌ-خبير");
+      await ownExpert(fidB, DOC, "سعد");
+      const wRecvB = await waiting(S.recv);
+      same("٥٣. **ب. خبيرٌ مملوكٌ للطبيب ⟶ نفسُ نمط أ**",
+        rowOf(wRecvB.body, fidB)?.actions, ["not_bought"]);
+      const csB = await http("POST", `/api/followups/${fidB}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+      same("   والبابُ يردّه أيضاً — يطابق غيابَ `complete_sale`", csB.status, 403);
+    }
+    {
+      //  الحالةُ الواقعية الوحيدة: قرارٌ **بقيمته** (`bought`) موقَّعٌ من
+      //  الطبيب — لا ملكيةً بلا قيمة (تلك لا تقع في النظام الحيّ).
+      const { fid: fidC } = await readySale("محجوبٌ-قرار", { notes: "المريض تردّد أمام الطبيب" });
+      await ownDecisionBought(fidC, DOC, "سعد");
+      const wRecvC = await waiting(S.recv);
+      const rowC = rowOf(wRecvC.body, fidC);
+      check(!!rowC, "٥٤. **ج. قرارٌ (بقيمته) مملوكٌ للطبيب ⟶ الصفُّ يبقى ظاهراً في «بانتظار الحسم»**"
+        + " — لا يُخفَى بسبب الحجب");
+      same("   **ولا فعلَ نهائيّاً للاستقبال**", rowC?.actions, []);
+      same("   **وملاحظةُ الطبيب تصل رغم الحجب الكامل** — سياقٌ يبقى مقروءاً",
+        rowC?.examNotes, "المريض تردّد أمام الطبيب");
+      const wAdminC = await waiting(S.admin);
+      same("   **والمسؤولُ العام يملك الفعلين معاً**",
+        [...(rowOf(wAdminC.body, fidC)?.actions ?? [])].sort(),
+        ["complete_sale", "not_bought"].sort());
+      const csC = await http("POST", `/api/followups/${fidC}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+      same("   **والبابان معاً يردّان الاستقبالَ**", csC.status, 403);
+      const nbC = await http("POST", `/api/followups/${fidC}/not-bought`, S.recv, { reason: "أ" });
+      same("   ", nbC.status, 403);
+    }
+    {
+      const { fid: fidD } = await readySale("عاديٌّ-متكافئ");
+      for (const [who, sess] of [["الاستقبال", S.recv], ["المحاسب", S.acct],
+        ["مديرُ الفرع", S.manager], ["المسؤول", S.admin]] as any[]) {
+        const r = await waiting(sess);
+        const row = rowOf(r.body, fidD);
+        same(`٥٥. **د. ${who} يملك الفعلين معاً على صفٍّ عاديّ بلا ملكيةٍ تاريخية**`,
+          [...(row?.actions ?? [])].sort(), ["complete_sale", "not_bought"].sort());
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── م. عقدُ المصدر — إبطالٌ عند الخطأ، وأهليّةٌ قانونية (تصحيحٌ لاحق) ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const comp = readFileSync(
+        join(import.meta.dirname, "..", "client", "src", "components", "ExamPathDecisionActions.tsx"),
+        "utf8");
+      check(/onError:\s*\(err: any\) => \{[\s\S]{0,300}invalidateAll\(\)/.test(comp),
+        "٥٦. **وخطأُ الحفظ (٤٠٩ ضمنها) يُبطل الحالةَ المرجعية لا التوستَ وحده**");
+      check(comp.includes("examPathBlockedMessage") && comp.includes("text-exam-path-blocked"),
+        "٥٧. **ورسالةُ الحجب من الدالّة المشتركة نفسِها — لا نصٍّ محليّ ثانٍ**");
+      check(!/if \(actions\.length === 0\) return null/.test(comp),
+        "٥٨. **ولم يعد المكوّنُ يُخفي نفسَه (وملاحظةَ الطبيب معه) عند غياب الأفعال**");
+
+      const sidebar = readFileSync(
+        join(import.meta.dirname, "..", "client", "src", "components", "Sidebar.tsx"), "utf8");
+      check(/import\s*\{\s*canCompleteReceptionSale\s*\}\s*from\s*"@shared\/commercial"/.test(sidebar),
+        "٥٩. **والشريطُ الجانبيّ يستورد الدالّةَ القانونية نفسَها**");
+      check(/decisionQueueEligible\s*=\s*canCompleteReceptionSale\(/.test(sidebar),
+        "٦٠. **وأهليّةُ «بانتظار الحسم» تُحسَب بمناداتها مباشرةً — لا شرطٍ يدويّ**");
+      const itemLine = (sidebar.match(/\{ label: DECISION_QUEUE_SIDEBAR_LABEL,[^}]*\}/) ?? [""])[0];
+      check(itemLine.length > 0 && !itemLine.includes("roles:") && itemLine.includes("eligible:"),
+        "٦١. **وعنصرُ القائمة نفسُه لا يحمل قائمةَ أدوارٍ ثانية — `eligible` وحده**", itemLine);
     }
 
     console.log(

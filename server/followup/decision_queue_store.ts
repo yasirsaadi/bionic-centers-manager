@@ -96,8 +96,16 @@ export interface DecisionQueueWaitingRow {
   selectedExpertName: string | null;
   // ── لحساب `examPathActions` في طبقة النقاط — **نفسُ الدالّة الحارسة** ──
   //  لا حسابَ ثانياً هنا: هذا الملفّ قراءةٌ خالصة، والحراسةُ تبقى في
-  //  `shared/commercial.ts` وحدها. الحقولُ الخام تُمرَّر كما هي.
+  //  `shared/commercial.ts` وحدها. الحقولُ الخام تُمرَّر كما هي — والثلاثةُ
+  //  معاً (تصحيحٌ لاحق): `complete_sale` يلزم السعرَ والخبيرَ والقرارَ
+  //  معاً، لا القرارَ وحده.
   status: string;
+  priceOwner: FieldOwner | null;
+  priceOwnerUserId: number | null;
+  priceOwnerName: string | null;
+  expertOwner: FieldOwner | null;
+  expertOwnerUserId: number | null;
+  expertOwnerName: string | null;
   purchaseDecisionOwner: FieldOwner | null;
   purchaseDecisionUserId: number | null;
   purchaseDecisionName: string | null;
@@ -134,6 +142,14 @@ const toWaitingRow = (x: any): DecisionQueueWaitingRow => ({
     ? null : Number(x.selected_expert_user_id),
   selectedExpertName: x.expert_name ?? null,
   status: x.status,
+  priceOwner: parseFieldOwner(x.price_owner),
+  priceOwnerUserId: x.price_owner_user_id === null || x.price_owner_user_id === undefined
+    ? null : Number(x.price_owner_user_id),
+  priceOwnerName: x.price_owner_name ?? null,
+  expertOwner: parseFieldOwner(x.expert_owner),
+  expertOwnerUserId: x.expert_owner_user_id === null || x.expert_owner_user_id === undefined
+    ? null : Number(x.expert_owner_user_id),
+  expertOwnerName: x.expert_owner_name ?? null,
   purchaseDecisionOwner: parseFieldOwner(x.purchase_decision_owner),
   purchaseDecisionUserId: x.purchase_decision_user_id === null
     || x.purchase_decision_user_id === undefined
@@ -162,6 +178,8 @@ export async function listDecisionQueueWaiting(
            e.notes AS exam_notes,
            f.original_price, f.approved_price, f.price_kind,
            f.selected_expert_user_id, u.display_name AS expert_name,
+           f.price_owner, f.price_owner_user_id, f.price_owner_name,
+           f.expert_owner, f.expert_owner_user_id, f.expert_owner_name,
            f.purchase_decision_owner, f.purchase_decision_user_id, f.purchase_decision_name
     ${WAITING_FROM}
     WHERE ${where}

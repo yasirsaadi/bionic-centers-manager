@@ -28,7 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { deriveOfferFromDiscount } from "@shared/commercial";
+import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
 
 export interface ExamPathDecisionActionsPrefill {
   originalPrice?: number | null;
@@ -56,7 +56,10 @@ export interface ExamPathDecisionActionsProps {
 
 /**
  * **الكتلةُ الكاملة**: ملاحظةُ الطبيب (إن وُجدت) + زرّا «إتمام البيع»
- * و«لم يشترِ» + نافذتاهما. لا شيءَ يُعرَض إن كانت `actions` فارغة.
+ * و«لم يشترِ» (المتاحُ منهما فقط) + نافذتاهما + رسالةُ حجبٍ إن مُنع فعلٌ
+ * بملكيةٍ موروثة. **المنادي مسؤولٌ ألّا يستدعيها لصفٍّ منتهٍ** (محوَّلٍ أو
+ * مغلق) — لصفٍّ حيّ، هذا المكوّنُ يعرض دائماً شيئاً: ملاحظةً، أو زرّاً، أو
+ * جملةَ حجب، أو أكثر من واحدةٍ معاً.
  */
 export function ExamPathDecisionActions({
   followupId, patientId, branchId, actions, examNotes, statusLine, prefill, onResolved,
@@ -88,33 +91,50 @@ export function ExamPathDecisionActions({
     enabled: branchId !== null,
   });
 
+  //  ══ **إبطالٌ مشترك للنجاح وللفشل معاً** (تصحيحٌ لاحق) ══════════════════
+  //  النجاحُ يُحدِّث لأن شيئاً تغيّر؛ والفشلُ يُحدِّث لأن ما ظنّه المستخدم
+  //  صحيحاً (الصفُّ أمامه قابلٌ للحسم) قد لا يكون كذلك — زميلٌ آخر حسمه
+  //  للتوّ فيردّ الخادم ٤٠٩. فلا حالةٌ محليّةٌ باتت تُصدَّق في الحالتين.
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
+    qc.invalidateQueries({ queryKey: ["/api/followups"] });
+    qc.invalidateQueries({ queryKey: ["/api/followups/approvals"] });
+    qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
+    qc.invalidateQueries({ queryKey: ["/api/discounts"] });
+    qc.invalidateQueries({ queryKey: [`/api/discounts/patient/${patientId}`] });
+    //  ══ **طابورُ «بانتظار الحسم» وشارتُه** (المرحلة الخامسة) ═══════════
+    //  مفتاحٌ واحد يطابق الطرفين جزئياً: قوائمَ الحالتين (`[...,"waiting"]`/
+    //  `[...,"resolved"]`) **وشارةَ الشريط الجانبيّ** معاً — الصفحةُ
+    //  الجديدة والبطاقةُ القديمة تشتركان في هذا الإبطال حرفياً.
+    qc.invalidateQueries({ queryKey: ["/api/followups/decision-queue"] });
+  };
+
   const act = useMutation({
     mutationFn: async ({ path, body }: { path: string; body: any }) => {
       const res = await apiRequest("POST", path, body);
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
-      qc.invalidateQueries({ queryKey: ["/api/followups"] });
-      qc.invalidateQueries({ queryKey: ["/api/followups/approvals"] });
-      qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
-      qc.invalidateQueries({ queryKey: ["/api/discounts"] });
-      qc.invalidateQueries({ queryKey: [`/api/discounts/patient/${patientId}`] });
-      //  ══ **طابورُ «بانتظار الحسم» وشارتُه** (المرحلة الخامسة) ═══════════
-      //  مفتاحٌ واحد يطابق الطرفين جزئياً: قوائمَ الحالتين (`[...,"waiting"]`/
-      //  `[...,"resolved"]`) **وشارةَ الشريط الجانبيّ** معاً — الصفحةُ
-      //  الجديدة والبطاقةُ القديمة تشتركان في هذا الإبطال حرفياً.
-      qc.invalidateQueries({ queryKey: ["/api/followups/decision-queue"] });
+      invalidateAll();
       toast({ title: "تمّ الحفظ" });
       reset();
       onResolved?.();
     },
+    //  ══ **تعارضٌ (٤٠٩) أو أيّ خطأٍ آخر ⟶ الحالةُ المرجعيّة تُحدَّث دائماً**
+    //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+    //  موظّفٌ فتح صفّاً حسمه زميلٌ آخر أوّلاً: الخادمُ يردّ ٤٠٩ صحيحاً، لكن
+    //  ترك الطابور بلا تحديثٍ كان يُبقي الصفَّ الآن الباطل ظاهراً حتى
+    //  التحديث التالي التلقائيّ أو تنقّلٍ يدويّ. فبدل تحليل رمز الحالة (هشٌّ
+    //  حين يمرّ عبر `apiRequest`)، كلُّ خطأٍ يُبطل نفسَ ما يُبطله النجاحُ —
+    //  **رسالةُ الخادم الحقيقية تُعرَض، والحالةُ تُقرأ من جديد دائماً**. لا
+    //  نجاحَ يُعرَض، ولا بياناتٍ محليّةً باتت تُصدَّق.
     onError: (err: any) => {
       toast({
         title: "تعذّر الحفظ",
         description: err?.message ?? "حاول مرة أخرى",
         variant: "destructive",
       });
+      invalidateAll();
     },
   });
   const busy = act.isPending;
@@ -125,8 +145,17 @@ export function ExamPathDecisionActions({
     discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
   });
 
-  if (actions.length === 0) return null;
+  //  ══ **رسالةُ الحجب — من `actions` وحدها، بلا كودِ مالكيةٍ يصل الشاشة**
+  //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+  const blockedMessage = examPathBlockedMessage(actions);
+  const hasNote = Boolean(examNotes && examNotes.trim());
 
+  //  ══ **لا `return null` على غياب الأفعال بعد اليوم** (تصحيحٌ لاحق) ═════
+  //  كانت `actions.length === 0` تُخفي الكتلةَ كلَّها — ومعها ملاحظةَ
+  //  الطبيب. صحيحٌ لصفٍّ **منتهٍ** (المنادي هنا يتكفّل بعدم استدعاء هذا
+  //  المكوّن أصلاً لصفٍّ كهذا)، لكنّه كان يُخفي أيضاً صفّاً **حيّاً** حُجب
+  //  فعلُه الوحيد بملكيةٍ موروثة — فيختفي من الطابور عملياً رغم بقائه فيه.
+  //  والآن: الملاحظةُ تُعرَض دائماً إن وُجدت، والحجبُ يُقال بجملةٍ بدل الصمت.
   return (
     <>
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-2"
@@ -145,8 +174,9 @@ export function ExamPathDecisionActions({
             (`post_exam_followups.medical_exam_id`) — لا «آخرُ معاينةٍ
             للمريض». **لا يُقرأ برمجياً ولا يُشتقّ منه سعرٌ أو خصمٌ أو
             خبير** — البيعُ الفعليُّ من الحقول الصريحة أدناه وحدها.
-            فارغةٌ ⟶ لا تُعرَض. */}
-        {examNotes && examNotes.trim() && (
+            فارغةٌ ⟶ لا تُعرَض. **وتبقى ظاهرةً ولو حُجبت الأفعالُ كلُّها**
+            — سياقٌ للقارئ بصرف النظر عمّن يملك الحسم الآن. */}
+        {hasNote && (
           <div className="rounded-md border border-emerald-300 bg-white/70 p-2.5 text-sm"
             data-testid="block-exam-note">
             <p className="text-xs font-semibold text-emerald-900">
@@ -160,32 +190,45 @@ export function ExamPathDecisionActions({
             </p>
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
-          {actions.includes("complete_sale") && (
-            <Button size="sm" disabled={busy}
-              onClick={() => {
-                //  تعبئةٌ مسبقة من أيّ بياناتٍ محفوظةٍ سابقاً — نادرٌ لكن لا تُطمَس.
-                setCOriginal(prefill?.originalPrice != null
-                  ? String(prefill.originalPrice)
-                  : (prefill?.approvedPrice && prefill.approvedPrice > 0
-                    ? String(prefill.approvedPrice) : ""));
-                setCDiscount(prefill?.priceKind && prefill?.originalPrice
-                  ? String(Math.max(0, prefill.originalPrice - (prefill.approvedPrice ?? 0))) : "");
-                setCExpert(prefill?.selectedExpertUserId ? String(prefill.selectedExpertUserId) : "");
-                setDialog("complete_sale");
-              }}
-              data-testid="button-open-complete-sale">
-              <HandCoins className="h-4 w-4" /> إتمام البيع
-            </Button>
-          )}
-          {actions.includes("not_bought") && (
-            <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => { setCReason(""); setDialog("not_bought"); }}
-              data-testid="button-decide-not-bought">
-              <XCircle className="h-4 w-4" /> لم يشترِ
-            </Button>
-          )}
-        </div>
+        {actions.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {actions.includes("complete_sale") && (
+              <Button size="sm" disabled={busy}
+                onClick={() => {
+                  //  تعبئةٌ مسبقة من أيّ بياناتٍ محفوظةٍ سابقاً — نادرٌ لكن لا تُطمَس.
+                  setCOriginal(prefill?.originalPrice != null
+                    ? String(prefill.originalPrice)
+                    : (prefill?.approvedPrice && prefill.approvedPrice > 0
+                      ? String(prefill.approvedPrice) : ""));
+                  setCDiscount(prefill?.priceKind && prefill?.originalPrice
+                    ? String(Math.max(0, prefill.originalPrice - (prefill.approvedPrice ?? 0))) : "");
+                  setCExpert(prefill?.selectedExpertUserId ? String(prefill.selectedExpertUserId) : "");
+                  setDialog("complete_sale");
+                }}
+                data-testid="button-open-complete-sale">
+                <HandCoins className="h-4 w-4" /> إتمام البيع
+              </Button>
+            )}
+            {actions.includes("not_bought") && (
+              <Button size="sm" variant="outline" disabled={busy}
+                onClick={() => { setCReason(""); setDialog("not_bought"); }}
+                data-testid="button-decide-not-bought">
+                <XCircle className="h-4 w-4" /> لم يشترِ
+              </Button>
+            )}
+          </div>
+        )}
+        {/*  ══ **حاجزُ ملكيةٍ موروثة — جملةٌ إنسانية بلا كودٍ داخليّ**
+            (تصحيحٌ لاحق) ═══════════════════════════════════════════════
+            `null` حين لا حجب (الفعلان معاً)، وإلّا جملةٌ من
+            `examPathBlockedMessage` وحدها — لا `owner`/`doctor`/`staff`
+            ولا اسمَ حالةٍ يصل هذه الشاشة. */}
+        {blockedMessage && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900"
+            data-testid="text-exam-path-blocked">
+            {blockedMessage}
+          </p>
+        )}
       </div>
 
       {/*  ══ **نافذةُ «إتمام البيع» — بابٌ واحد** (المرحلة الثانية) ═══════

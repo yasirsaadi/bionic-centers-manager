@@ -228,6 +228,18 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       //  `canCompleteReceptionSale` — لا `canConfirmPurchase` الموروثة
       //  (تشمل الطبيبَ لصفوفٍ قديمة لا علاقة لها بهذا المسار).
       const mayAct = canCompleteReceptionSale(owner);
+      //  ثلاثةُ حقولٍ مملوكة — تُبنى مرّةً وتُستعمَل في الأفعال والأقفال
+      //  والتسميات معاً، فلا ثلاثُ نسخٍ من الشكل نفسه تنحرف يوماً.
+      const priceField = {
+        owner: f.priceOwner, ownerUserId: f.priceOwnerUserId, ownerName: f.priceOwnerName,
+      };
+      const expertField = {
+        owner: f.expertOwner, ownerUserId: f.expertOwnerUserId, ownerName: f.expertOwnerName,
+      };
+      const decisionField = {
+        owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
+        ownerName: f.purchaseDecisionName,
+      };
       return {
         ...f,
         examPath,
@@ -238,50 +250,28 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
             status: f.status, decision: f.purchaseDecision, missing: st.missing,
           })
           : null,
+        //  ══ **`complete_sale` يلزم الحقولَ الثلاثة لا القرارَ وحده**
+        //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════
+        //  `setCommercialFields` تكتب السعرَ والخبيرَ والقرارَ معاً — فزرٌّ
+        //  يظهر من فحص القرار وحده كان يُردّه الخادمُ ٤٠٣ إن كان السعرُ أو
+        //  الخبيرُ مملوكاً للطبيب على صفٍّ موروث. `not_bought` لا يلزم إلا
+        //  القرار، فقد تُعرَض وحدها.
         actions: examPath
           ? examPathActions({
             session: owner, status: f.status,
-            decisionField: {
-              owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
-              ownerName: f.purchaseDecisionName,
-            },
-            mayAct,
+            decisionField, priceField, expertField, mayAct,
           })
           : null,
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
-          price: !canOverwriteCommercialField({
-            field: {
-              owner: f.priceOwner, ownerUserId: f.priceOwnerUserId,
-              ownerName: f.priceOwnerName,
-            }, session: owner,
-          }),
-          expert: !canOverwriteCommercialField({
-            field: {
-              owner: f.expertOwner, ownerUserId: f.expertOwnerUserId,
-              ownerName: f.expertOwnerName,
-            }, session: owner,
-          }),
-          decision: !canOverwriteCommercialField({
-            field: {
-              owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
-              ownerName: f.purchaseDecisionName,
-            }, session: owner,
-          }),
+          price: !canOverwriteCommercialField({ field: priceField, session: owner }),
+          expert: !canOverwriteCommercialField({ field: expertField, session: owner }),
+          decision: !canOverwriteCommercialField({ field: decisionField, session: owner }),
         },
         ownerLabels: {
-          price: ownerLabel({
-            owner: f.priceOwner, ownerUserId: f.priceOwnerUserId,
-            ownerName: f.priceOwnerName,
-          }),
-          expert: ownerLabel({
-            owner: f.expertOwner, ownerUserId: f.expertOwnerUserId,
-            ownerName: f.expertOwnerName,
-          }),
-          decision: ownerLabel({
-            owner: f.purchaseDecisionOwner, ownerUserId: f.purchaseDecisionUserId,
-            ownerName: f.purchaseDecisionName,
-          }),
+          price: ownerLabel(priceField),
+          expert: ownerLabel(expertField),
+          decision: ownerLabel(decisionField),
         },
         events: await store.getEvents(f.id),
         priceRequests: await store.getPriceRequests(f.id),
@@ -359,6 +349,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  نفسُ `examPathActions` التي تحرس `/complete-sale`/`/not-bought` —
         //  فلا يظهر زرٌّ سيردّه الخادمُ (مثلاً حقلُ قرارٍ مملوكٌ لغير الفاعل
         //  على صفٍّ موروثٍ نادر). لا حراسةَ ثانية تُخترَع هنا.
+        //  ══ **الحقولُ الثلاثة معاً** (تصحيحٌ لاحق) ═════════════════════════
+        //  `complete_sale` يكتب السعرَ والخبيرَ والقرارَ معاً — فيلزم فحصُ
+        //  مالكية الثلاثة، لا القرارِ وحده، وإلّا ظهر زرٌّ سيردّه الخادمُ ٤٠٣.
         const rows = out.rows.map((r) => ({
           ...r,
           actions: examPathActions({
@@ -366,6 +359,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
             decisionField: {
               owner: r.purchaseDecisionOwner, ownerUserId: r.purchaseDecisionUserId,
               ownerName: r.purchaseDecisionName,
+            },
+            priceField: {
+              owner: r.priceOwner, ownerUserId: r.priceOwnerUserId, ownerName: r.priceOwnerName,
+            },
+            expertField: {
+              owner: r.expertOwner, ownerUserId: r.expertOwnerUserId, ownerName: r.expertOwnerName,
             },
           }),
         }));

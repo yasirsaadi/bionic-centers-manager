@@ -67,7 +67,7 @@ import {
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import {
-  allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort,
+  allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort, isTerminal,
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
@@ -512,8 +512,15 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             لا زرَّين منفصلَين («تفاصيل البيع» ثمّ «اشترى») لخطوتين حول
             واقعةٍ واحدة: **زرٌّ واحد**. حفظُه **هو** قرارُ الشراء وبدءُ
             التصنيع معاً — والخادمُ هو مَن يرسل هذه القائمة فلا يظهر زرٌّ
-            يُردّ ولا يُخفى زرٌّ يُقبَل. */}
-        {examPath && examActions.length > 0 && (
+            يُردّ ولا يُخفى زرٌّ يُقبَل.
+            ══ **الشرطُ من حالة الصفّ لا من طول `actions`** (تصحيحٌ لاحق)
+            ═══════════════════════════════════════════════════════════════
+            `examActions` فارغةٌ في حالتين مختلفتين: صفٌّ **منتهٍ** (تحوّل
+            أو أُغلق — لا شأنَ لهذه الكتلة به، الملخّصُ أدناه يتكفّل) أو
+            صفٌّ **حيٌّ محجوبٌ** بملكيةٍ تجاريةٍ موروثة (يحتاج المسؤولَ
+            العام). فالتمييزُ من `isTerminal(active.status)` — لا من طول
+            المصفوفة، وإلّا اختفت الملاحظةُ ورسالةُ الحجب معاً عن صفٍّ حيّ. */}
+        {examPath && !isTerminal(active.status) && (
           <ExamPathDecisionActions
             followupId={active.id}
             patientId={patientId}
