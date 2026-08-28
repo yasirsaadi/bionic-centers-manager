@@ -15,6 +15,14 @@
 //     مجموعُ المريض · قيدُ الدفتر · الحدث — ومعها النسخةُ والتدقيق.
 // (د) **ولا دفعةَ تُعاد كتابتُها ولا أمرَ تصنيعٍ يُمَسّ.**
 // (هـ) **وسقوطُ أيّ كتابةٍ يُرجِع الجميع** — ولا نصفَ تصحيح.
+//
+// ⚠ **(٢٠٢٦-٠٨-٢٨) — ومَن يملك الزرَّ ضاق**: كان صاحبُ المعاينة نفسُه أحدَ
+// طرفَي هذا التصحيح. صار طرفاه الآن **المدير المسؤول فقط** (مسؤولٌ عامّ أو
+// مديرُ فرع) — الطبيبُ العاديّ لا يملك حقلاً تجارياً إطلاقاً بعد اليوم
+// (القسم 4.h، تنقيحٌ ثانٍ). فالسيناريوهاتُ أدناه التي كانت تصحّح عبر الطبيب
+// تصحّح الآن عبر المدير بدلاً منه؛ **الآليّةُ لم تتغيّر بحرف** — فقط مَن
+// يضغط الزرّ. وقسمُ (ي) يثبت أن صاحب المعاينة نفسَه صار كطبيبٍ آخر تماماً
+// إزاء هذا الحقل بعينه: طلبُه يُقبل سريرياً ويُتجاهَل تجارياً.
 
 import express from "express";
 import { createServer } from "http";
@@ -302,14 +310,16 @@ async function main() {
         [before.total, before.caseCost], [1_700_000, 1_700_000]);
 
       //  **ولا سببَ ⟶ ٤٠٠**: مالٌ يتحرّك بعد البيع لا يقع بلا رواية.
-      const noReason = await editExam(d.examId, S.doc, { deviceCost: 1_750_000 });
+      //  **والمصحِّحُ مديرُ الفرع لا الطبيبُ نفسُه** — الطبيبُ العاديّ فقد
+      //  هذا الحقلَ كاملاً (أعلاه)؛ قسمُ (ي) يثبت ذلك مباشرةً عبر النقطة.
+      const noReason = await editExam(d.examId, S.mgr, { deviceCost: 1_750_000 });
       same("٣. **بلا سببٍ مكتوب يُردّ ٤٠٠**", noReason.status, 400);
       same("   **ولا شيءَ تحرّك** — لا نسخةَ ولا دينار",
         [(await q(`SELECT version FROM medical_exams WHERE id=$1`, [d.examId]))[0].version,
           JSON.stringify(await money(d.patientId))],
         [1, JSON.stringify(before)]);
 
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 1_750_000, priceCorrectionReason: "خطأ في إدخال السعر أثناء المعاينة",
       });
       same("٤. **التصحيحُ بعد البيع يُقبل الآن** — لا ٤٠٩", r.status, 200);
@@ -351,7 +361,7 @@ async function main() {
       same("١٣. **وحدثٌ واحدٌ يحمل كلَّ ما يحتاجه المراجع بعد سنة**",
         [ev?.payload?.previousPrice, ev?.payload?.finalPrice, ev?.payload?.delta,
           ev?.payload?.afterSale, ev?.payload?.correctionReason, ev?.payload?.setByName],
-        [1_700_000, 1_750_000, 50_000, true, "خطأ في إدخال السعر أثناء المعاينة", "د. المعاين"]);
+        [1_700_000, 1_750_000, 50_000, true, "خطأ في إدخال السعر أثناء المعاينة", "مدير الفرع"]);
       same("١٤. **وسطرُ تدقيقٍ للمعاينة مكتوب**",
         (await q(`SELECT count(*)::int AS n FROM audit_log
                    WHERE entity_type='medical_exam' AND entity_id=$1 AND action='update'`,
@@ -374,7 +384,7 @@ async function main() {
     console.log("\n── ب) تصحيحٌ نازل بعد البيع ──");
     {
       const d = await soldDevice("تصحيحٌ نازل", 2_000_000);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 1_800_000, priceCorrectionReason: "السعر المتّفق أقلّ",
       });
       same("١٧. **النزولُ يُقبل كالصعود**", r.status, 200);
@@ -398,7 +408,7 @@ async function main() {
       const d = await soldDevice("جهازٌ مسلَّم", 3_000_000);
       await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW() WHERE id=$1`,
         [d.episodeId]);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 3_100_000, priceCorrectionReason: "فرقُ مقاس",
       });
       same("٢١. **المسلَّمُ يُصحَّح سعرُه**", r.status, 200);
@@ -431,7 +441,7 @@ async function main() {
       const examId = await examIdOf(patientId);
       const before = await money(patientId);
 
-      const r = await editExam(examId, S.doc, {
+      const r = await editExam(examId, S.mgr, {
         deviceCost: 1_750_000, priceCorrectionReason: "تصحيحُ رقمي",
       });
       same("٢٥. **التصحيحُ يُقبل على المعاينة**", r.status, 200);
@@ -465,7 +475,7 @@ async function main() {
       await q(`UPDATE post_exam_followups SET price_source='approved_change',
                  approved_price=2000000 WHERE id=$1`, [d.followupId]);
       const before = await money(d.patientId);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 2_600_000, priceCorrectionReason: "تصحيح",
       });
       same("٣١. **يُقبل على المعاينة**", r.status, 200);
@@ -489,7 +499,7 @@ async function main() {
       const d = await soldDevice("خصمٌ معلَّق", 4_000_000);
       await mkPending(d.patientId, `episode:${d.episodeId}`, 4_000_000);
       const before = await money(d.patientId);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 4_400_000, priceCorrectionReason: "تصحيح",
       });
       same("٣٣. **المعلَّقُ يمنع التصحيح ٤٠٩**", r.status, 409);
@@ -509,7 +519,7 @@ async function main() {
       const d = await soldDevice("معلَّقٌ لجهازٍ آخر", 1_000_000);
       //  مرجعٌ لحلقةٍ لا تخصّ هذا الجهاز — مريضٌ عائدٌ له أكثر من طلب.
       await mkPending(d.patientId, `episode:${d.episodeId + 100000}`, 900_000);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 1_100_000, priceCorrectionReason: "تصحيح",
       });
       same("٣٥. **التصحيحُ يمضي** — خصمُ جهازٍ آخر لا يجمّد هذا", r.status, 200);
@@ -544,7 +554,7 @@ async function main() {
         [5_000_000, 900_000]);
       const totalBefore = (await money(d.patientId)).total;
 
-      const r = await editExam(exam2, S.doc, {
+      const r = await editExam(exam2, S.mgr, {
         deviceCost: 970_000, priceCorrectionReason: "تصحيحُ الثاني",
       });
       same("٣٨. **تصحيحُ الثاني يُقبل**", r.status, 200);
@@ -579,7 +589,7 @@ async function main() {
           [d.followupId]);
         await holder.query(
           `UPDATE post_exam_followups SET price_source='manager_set' WHERE id=$1`, [d.followupId]);
-        patch = editExam(d.examId, S.doc, {
+        patch = editExam(d.examId, S.mgr, {
           deviceCost: 6_500_000, priceCorrectionReason: "تصحيح",
         });
         await sleep(400);
@@ -607,7 +617,7 @@ async function main() {
       const d = await soldDevice("رقمان مختلفان", 2_200_000);
       await q(`UPDATE patient_device_episodes SET agreed_cost=2100000 WHERE id=$1`, [d.episodeId]);
       const before = await money(d.patientId);
-      const r = await editExam(d.examId, S.doc, {
+      const r = await editExam(d.examId, S.mgr, {
         deviceCost: 2_300_000, priceCorrectionReason: "تصحيح",
       });
       same("٤٦. **اختلافُ سعر المتابعة عن سعر الحلقة يُردّ ٤٠٩**", r.status, 409);
@@ -643,6 +653,24 @@ async function main() {
         (await editExam(d2.examId, S.admin, {
           deviceCost: 850_000, priceCorrectionReason: "تصحيح",
         })).status, 200);
+
+      //  ══ **وصاحبُ المعاينة نفسُه — لم يعد يملك هذا الحقل** ═══════════════
+      //  فارقٌ عن الأربعة أعلاه (٤٩-٥٢): أولئك لا يملكون تعديل المعاينة
+      //  أصلاً (٤٠٣). صاحبُها (`d`) يملك التعديلَ ولطالما ملكه — لكنّه فقد
+      //  الحقلَ التجاريّ بعينه (القسمُ 4.h، تنقيحٌ ثانٍ، ٢٠٢٦-٠٨-٢٨). فطلبُه
+      //  **ينجح سريرياً** لا يُردّ، والسعرُ يبقى على ما ثبّته تصحيحُ المدير
+      //  أعلاه (١,٣٠٠,٠٠٠ — الشقّ الأصليّ على `d`، لا `d2`).
+      const ownAttempt = await editExam(d.examId, S.doc,
+        { deviceCost: 1_400_000, priceCorrectionReason: "محاولةُ الطبيب نفسِه" });
+      same("٥٧. **وصاحبُ المعاينة: الطلبُ ينجح (٢٠٠) لا ٤٠٣** — هو مخوَّلٌ بالتعديل لا بالتسعير",
+        ownAttempt.status, 200);
+      same("٥٨. **لكنّ السعرَ لا يتحرّك بحرف**",
+        [(await followupOf(d.patientId))?.approvedPrice, (await episodeRow(d.episodeId))?.cost,
+          (await money(d.patientId)).total],
+        [1_300_000, 1_300_000, 1_300_000]);
+      check(ownAttempt.body?.priceNote == null,
+        "٥٩. **ولا `priceNote` يعود** — لا شيءَ ماليّ وقع ليُقال عنه",
+        String(ownAttempt.body?.priceNote));
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -660,27 +688,27 @@ async function main() {
                  EXECUTE FUNCTION epc_block_entry()`);
       let r: any;
       try {
-        r = await editExam(d.examId, S.doc, {
+        r = await editExam(d.examId, S.mgr, {
           deviceCost: 7_500_000, priceCorrectionReason: "تصحيح",
         });
       } finally {
         await q(`DROP TRIGGER IF EXISTS epc_block_entry ON cost_entries`);
         await q(`DROP FUNCTION IF EXISTS epc_block_entry()`);
       }
-      check(r.status >= 400, "٥٧. **سقوطُ قيدِ الدفتر يُفشل الطلبَ كلَّه**", String(r.status));
-      same("٥٨. **ولا نسخةَ معاينةٍ حُفظت** — الذرّةُ رجعت كاملة",
+      check(r.status >= 400, "٦٠. **سقوطُ قيدِ الدفتر يُفشل الطلبَ كلَّه**", String(r.status));
+      same("٦١. **ولا نسخةَ معاينةٍ حُفظت** — الذرّةُ رجعت كاملة",
         [(await q(`SELECT version, device_cost::int AS c FROM medical_exams WHERE id=$1`,
           [d.examId]))[0].version,
         (await q(`SELECT count(*)::int AS n FROM medical_exam_revisions WHERE exam_id=$1`,
           [d.examId]))[0].n],
         [1, 0]);
-      same("٥٩. **ولا سعرَ متابعةٍ ولا سعرَ حلقةٍ ولا مجموعَ مريضٍ تحرّك**",
+      same("٦٢. **ولا سعرَ متابعةٍ ولا سعرَ حلقةٍ ولا مجموعَ مريضٍ تحرّك**",
         [(await followupOf(d.patientId))?.approvedPrice,
           (await episodeRow(d.episodeId))?.cost,
           JSON.stringify(await money(d.patientId))],
         [7_000_000, 7_000_000, JSON.stringify(before)]);
       check(!eventTypes(await followupOf(d.patientId)).includes("exam_price_corrected"),
-        "٦٠. **ولا حدثَ تصحيحٍ كُتب**", "");
+        "٦٣. **ولا حدثَ تصحيحٍ كُتب**", "");
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -695,10 +723,13 @@ async function main() {
     //  **والآليةُ الخادميةُ التي تختبرها الأقسامُ أ–ك أعلاه لم تُمَسّ** —
     //  هي «المسارُ القانونيُّ الآمن» الذي تحتفظ به CLAUDE.md صراحةً لمرحلة
     //  الاستعلامات القادمة (`PATCH /api/medical/exams/:id` ما زال يقبل
-    //  `deviceCost`/`priceCorrectionReason` صراحةً حين يُرسَلان، ومنطقُ
+    //  `deviceCost`/`priceCorrectionReason` من **المدير المسؤول**، ومنطقُ
     //  `classifyExamPriceChange`/`applyExamPriceCorrectionAfterSale` كما هو
     //  بالضبط) — وهذا القسمُ وحده، الذي كان يفحص واجهةً حذفتها هذه المرحلة،
     //  صار يفحص **غيابها**.
+    //  ⚠ **(٢٠٢٦-٠٨-٢٨)**: النقطةُ نفسُها لم تعد تقبل هذين الحقلين من
+    //  الطبيب العاديّ — قسمُ (ي) أعلاه يثبت ذلك حيّاً عبر النقطة الحقيقية
+    //  (٥٧-٥٩)، لا عبر قراءة شيفرةٍ ثابتة كهذا القسم.
     console.log("\n── ل) عقد الشاشة ──");
     {
       const src = readFileSync("client/src/components/medical/NewExamDialog.tsx", "utf8");
@@ -708,27 +739,27 @@ async function main() {
         "priceCorrectionReason", "afterSaleCorrection", "activeFollowup", "followupRows",
       ]) {
         check(!code.includes(gone),
-          `٦١. **ولا أثرَ لـ\`${gone}\`** — لا قفلَ سعرٍ ولا تصحيحَ بعد بيعٍ في النافذة`, gone);
+          `٦٤. **ولا أثرَ لـ\`${gone}\`** — لا قفلَ سعرٍ ولا تصحيحَ بعد بيعٍ في النافذة`, gone);
       }
       for (const gone of [
         "تم البيع وبدأت إجراءات التصنيع", "السعر التجاري الحالي ناتج عن قرار مستقل",
         "تصحيح سعر بعد البيع", "سبب التصحيح",
       ]) {
         check(!code.includes(gone),
-          `٦٢. **ولا عبارةَ «${gone}»** — نافذةُ التصحيح بابُها الآن نقطةُ \`PATCH\` وحدها`,
+          `٦٥. **ولا عبارةَ «${gone}»** — نافذةُ التصحيح بابُها الآن نقطةُ \`PATCH\` وحدها`,
           gone);
       }
       //  **والبابُ الخادميُّ الذي كانت تنادِيه هذه النافذةُ لم يُغلَق ولم
       //  يُعَد بناؤه** — يبقى يقبل `deviceCost`/`priceCorrectionReason`
-      //  صراحةً حين يصلانه من أيّ عميلٍ آخر، تماماً كما أثبتته الأقسامُ
-      //  أ–ك أعلاه عبر النقطة الحقيقية مباشرةً.
+      //  من المدير المسؤول تماماً كما أثبتته الأقسامُ أ–ك أعلاه عبر النقطة
+      //  الحقيقية مباشرةً — ويتجاهلهما بصمتٍ من الطبيب العاديّ (قسم ي).
       const routes = readFileSync("server/medical/routes.ts", "utf8");
       check(routes.includes("classifyExamPriceChange") && routes.includes("priceCorrectionReason"),
-        "٦٣. **والمنطقُ الخادميُّ باقٍ بلا إعادة بناء** — جاهزٌ لمرحلةٍ قادمة");
+        "٦٦. **والمنطقُ الخادميُّ باقٍ بلا إعادة بناء** — جاهزٌ لمرحلةٍ قادمة");
       //  **وهذا لم يتغيّر**: التوقيعُ نفسُه ما زال يُحدِّث بطاقةَ المريض
       //  وقائمةَ حلقاته بعد النجاح — لا علاقةَ له بحقل السعر المحذوف.
       check(/device-episodes/.test(code) && /\/api\/followups\/patient\//.test(code),
-        "٦٤. **وبعد النجاح تُحدَّث المتابعةُ والحلقة** — بلا تحديثٍ يدويّ", "");
+        "٦٧. **وبعد النجاح تُحدَّث المتابعةُ والحلقة** — بلا تحديثٍ يدويّ", "");
     }
   } finally {
     server.close();

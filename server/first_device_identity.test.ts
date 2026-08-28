@@ -293,7 +293,11 @@ async function main() {
       await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
       await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      //  **والمصحِّحُ مديرُ الفرع** — الطبيبُ العاديّ فقد هذا الحقلَ كاملاً
+      //  (القسم 4.h، تنقيحٌ ثانٍ)؛ الآليّةُ المختبَرة هنا (تصحيحُ ٢٣٩) بلا
+      //  تغيير، وقسمُ الصلاحية المخصَّص لهذا الفارق في
+      //  `exam_price_correction.test.ts`.
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 1_750_000, priceCorrectionReason: "خطأ في إدخال السعر أثناء المعاينة",
       });
@@ -463,8 +467,10 @@ async function main() {
           total: s.total, caseCost: s.caseCost }));
 
       //  ══ ثمّ يمضي تصحيحُ ٢٣٩ على الملفّ المُصلَح ═════════════════════
+      //  **بمديرِ الفرع** — نفسُ الفارق أعلاه: الطبيبُ العاديّ فقد هذا
+      //  الحقلَ (القسم 4.h، تنقيحٌ ثانٍ)، والآليّةُ المختبَرة هنا لا تتغيّر.
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 1_750_000, priceCorrectionReason: "خطأ في إدخال السعر أثناء المعاينة",
       });
@@ -642,7 +648,11 @@ async function main() {
         [s.total, s.caseCost, s.wos[0]?.device_episode_id],
         [before.total, before.caseCost, null]);
       const examId = await examIdOf(p);
-      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.doc, {
+      //  **بمديرِ الفرع كذلك** — طلبٌ من الطبيب العاديّ نفسِه كان سيُتجاهَل
+      //  بصمت (٢٠٠ بلا أثر) لا يُردّ ٤٠٩، لأن حقلَه التجاريّ صار مُتجاوَزاً
+      //  قبل بلوغ تصنيف «الملتبس» أصلاً — فلا يبقى هذا الفحصُ فحصاً لِما
+      //  يصفه عنوانُ القسم (الملتبسُ يُردّ) لو تُرك بحساب الطبيب.
+      const r = await http("PATCH", `/api/medical/exams/${examId}`, S.mgr, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
         deviceCost: 550_000, priceCorrectionReason: "تصحيح",
       });

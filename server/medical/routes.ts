@@ -14,6 +14,24 @@
 //           same specialty: they file an addendum rather than rewrite a
 //           colleague's signature. Editing never destroys — the outgoing
 //           version is archived first (see store.reviseExam).
+//   EDIT (commercial sub-fields) — narrower than the above, and this is
+//           deliberate (CLAUDE.md §4.h). A plain doctor editing their OWN
+//           exam keeps FULL clinical authority (diagnosis, findings, chief
+//           complaint, plan, notes, prescription/specifications — every
+//           medical field) but ZERO commercial authority: legacy
+//           `deviceCost`/`proposedExpertUserId`/`priceCorrectionReason`
+//           submitted by that author are silently ignored — the stored
+//           commercial value is preserved untouched, no price-sync logic
+//           runs, nothing about the follow-up or `patients.total_cost` or
+//           manufacturing moves — and the clinical part of the SAME request
+//           still succeeds normally (never a 400 just because a stale client
+//           also sent these). This restriction targets a PLAIN doctor-author
+//           only — anyone who is also `isResponsibleManager` (admin or
+//           branch_manager) is unaffected by it, exactly as before: the
+//           global admin (`session.isAdmin`) keeps the existing, unrestricted
+//           historical-correction authority over these fields, and
+//           branch_manager keeps exactly the authority it already had here —
+//           this task neither widens nor narrows either one.
 //   DELETE — does not exist. There is deliberately no such endpoint.
 //
 // The grant is re-read from the database on every write rather than trusted
@@ -491,6 +509,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // rewrite a colleague's signature; they file an addendum instead.
       const isAuthor = exam.doctorId !== null && exam.doctorId === session.userId;
       const isResponsibleManager = session.isAdmin || session.role === "branch_manager";
+      //  ══ **الطبيبُ العاديّ — سلطةٌ سريريةٌ كاملة، وتجاريةٌ صفر** ═══════════
+      //  نفسُ شرط فحص الاختصاص أدناه، مرفوعٌ هنا لاستعماله في حجب الحقول
+      //  التجارية أيضاً: صاحبُ التوقيع الذي لا يحمل صفةً إدارية (لا مسؤولٌ
+      //  عام ولا مديرُ فرع) وقتَ هذا الطلب. **ولا يُقاس بالدور المخزَّن على
+      //  حساب المعاينة يوم التوقيع، بل بجلسة الطلب الحالية** — فمَن صار
+      //  مسؤولاً أو مديرَ فرعٍ بعد أن وقّع كطبيبٍ عاديّ يحمل سلطتَه الحالية
+      //  لا القديمة، ومَن سُحبت عنه الصفةُ الإدارية يفقدها فوراً. هذا هو
+      //  الفارقُ الوحيد بين «مَن يجوز له التعديل» (فوق) و«مَن يملك الحقولَ
+      //  التجارية داخل التعديل» (أدناه، عند `deviceCost`/`proposedExpertUserId`).
+      const isNormalDoctorAuthor = isAuthor && !isResponsibleManager;
       if (!isAuthor && !isResponsibleManager) {
         return res
           .status(403)
@@ -550,14 +578,30 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  يعني «الطبيبُ محا الرقم» بل «هذه الشاشةُ لا تعرف هذا الحقل». وبلا هذا
       //  الحرس كان كلُّ تعديلٍ نصّيّ بسيط (تصحيحُ فقرةٍ في التشخيص مثلاً) يمسح
       //  كلفةَ جهازٍ ومقترَحَ خبيرٍ حقيقيَّين كتبهما طبيبٌ قبل هذا التبسيط —
-      //  بياناتٌ تاريخيةٌ حيّة، لا مسوَّدةٌ تُعاد كتابتُها كلَّ مرّة. فالحقلُ
-      //  الغائبُ يبقى على قيمته الحالية بلا تغيير، والحاضرُ (من أيّ عميلٍ آخر
-      //  ما زال يرسله) يُقرَأ ويُطبَّق كما كان تماماً — والمنطقُ أدناه
-      //  (`classifyExamPriceChange` وما بعدها) لم يُمَسّ بحرف.
-      let deviceCost = req.body?.deviceCost === undefined
+      //  بياناتٌ تاريخيةٌ حيّة، لا مسوَّدةٌ تُعاد كتابتُها كلَّ مرّة.
+      //
+      //  ══ **وطبيبٌ عاديّ لا يملك هذين الحقلين — ولو أرسلهما صراحةً** ═══════
+      //  «الغائبُ يبقى» يحرس عميلاً نسي الحقل. لكنّ طبيباً عادياً — لا
+      //  مسؤولاً ولا مديرَ فرع — قد يرسلهما **عمداً**: نموذجٌ محفوظٌ من قبل
+      //  هذا التبسيط، أو نداءٌ مباشر للنقطة. فالحارسُ هنا **بالهويّة لا
+      //  بالحضور**: `isNormalDoctorAuthor` ⟶ القيمةُ المخزَّنة تبقى كما هي
+      //  حتماً، حتى لو وصل الحقلُ صراحةً وبقيمةٍ صالحة. **ولا يُردّ الطلبُ
+      //  لهذا السبب** — الشقُّ السريريُّ من نفس الطلب ينجح كالمعتاد؛ يُتجاهَل
+      //  الحقلُ التجاريّ فحسب، فلا `priceChanged` يصير صحيحاً أدناه، ولا شيءَ
+      //  من منطق التزامن/الاعتماد/التصنيع الذي يتفرّع منه يُستدعى.
+      //
+      //  **والاستثناءُ `isResponsibleManager` كما كان — لا جديدَ فيه.** هذا
+      //  الحارسُ يضيف قيداً على الطبيب العاديّ وحدَه؛ لا يمسّ مَن هو أصلاً
+      //  خارج `isNormalDoctorAuthor`. فالمسؤولُ العام (`session.isAdmin`)
+      //  يحتفظ بسلطته القانونية الوحيدة للتصحيح الإداريّ التاريخيّ كاملةً —
+      //  الآليّةُ المعتمَدة التي توثّقها CLAUDE.md. ومديرُ الفرع يبقى كما كان
+      //  تماماً أيضاً — لم تُوسَّع صلاحيتُه ولم تُقيَّد في هذه المهمّة، لأنه
+      //  لم يكن يوماً مقصوداً بهذا القيد: القيدُ للطبيب الذي لا صفةَ إدارية
+      //  معه، لا لكلّ مَن ليس مسؤولاً بعينه.
+      let deviceCost = (req.body?.deviceCost === undefined || isNormalDoctorAuthor)
         ? exam.deviceCost
         : parseDeviceCost(req.body?.deviceCost, caseType);
-      const proposedExpertUserId = req.body?.proposedExpertUserId === undefined
+      const proposedExpertUserId = (req.body?.proposedExpertUserId === undefined || isNormalDoctorAuthor)
         ? exam.proposedExpertUserId
         : await parseProposedExpert(req.body?.proposedExpertUserId, caseType, exam.branchId);
 
