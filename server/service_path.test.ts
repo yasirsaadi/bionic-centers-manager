@@ -355,18 +355,30 @@ async function main() {
     }
     {
       const p = await mkPatient("جديد + بلا معاينة");
-      await mkCase(p, "prosthetic");
-      const r = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-        { serviceType: "prosthetic", requestedItem: "knee", servicePath: "no_exam" });
-      same("١٦. **(ز) جديد + مسارٌ بلا معاينة**", r.status, 201);
-      same("   والمسارُ محفوظٌ كما قيل", (await epRow(r.body?.id))?.service_path, "no_exam");
+      const c = await mkCase(p, "prosthetic");
+      //  ══ **زرعٌ مباشر بالـSQL** (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨) ═══════════
+      //  البابُ الحيّ الوحيد لإنشاء حلقةِ جزءٍ جديدة بمسار «بلا معاينة» صار
+      //  `POST /api/no-exam/device-sale` — يفتحها ويبيعها معاً في نداءٍ واحد.
+      //  والنقطةُ العامّة `POST /device-episodes` تردّ ٤٠٩ لهذا الشكل بعينه
+      //  (`server/component_sale.test.ts` يثبت ذلك). فهذا القسمُ — الذي
+      //  يختبر **قراءةَ** `service_path` وأثرَه على الطوابير لا ذاك البابَ
+      //  التجاريّ بعينه — يزرع الحلقةَ مباشرةً كما كانت تخرج من الباب القديم.
+      const [row] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+           sequence_number, status, agreed_cost, requested_item, component,
+           service_path, created_by)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'knee','knee','no_exam',$3)
+         RETURNING id`,
+        [p, c, RECEPTION]);
+      same("١٦. **(ز) جديد + مسارٌ بلا معاينة — والمسارُ محفوظٌ كما قيل**",
+        (await epRow(row.id))?.service_path, "no_exam");
       same("   **ولا يظهر في الطابور** — لا الإلزاميّ ولا الهادئ",
         await pendingOf(S.recv, p), { pending: null, optional: null });
       check(!(await worklistHas(p, "prosthetic")),
         "   **ولا في قائمة عمل الطبيب** — لا تُغرَق بما لا قرارَ له فيه");
       same("   **ولا طلبَ مراجعةٍ يُخلَق**",
         (await q(`SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`, [p]))[0].n, 0);
-      noExamEpisode = Number(r.body?.id); noExamPatient = p;
+      noExamEpisode = Number(row.id); noExamPatient = p;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -411,10 +423,17 @@ async function main() {
     }
     {
       const p = await mkPatient("قديمٌ يطلب بلا معاينة", { classification: "past" });
-      await mkCase(p, "prosthetic");
-      const r = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-        { serviceType: "prosthetic", requestedItem: "foot", servicePath: "no_exam" });
-      same("٢١. **(ط) «قديم» + بلا معاينة ⟶ خارج الطابور**", r.status, 201);
+      const c = await mkCase(p, "prosthetic");
+      //  زرعٌ مباشر بالـSQL — نفسُ سبب القسم "ج" أعلاه (المرحلة الرابعة).
+      const [row] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+           sequence_number, status, agreed_cost, requested_item, component,
+           service_path, created_by)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'foot','foot','no_exam',$3)
+         RETURNING id`,
+        [p, c, RECEPTION]);
+      same("٢١. **(ط) «قديم» + بلا معاينة ⟶ خارج الطابور**",
+        (await epRow(row.id))?.service_path, "no_exam");
       same("   لا إلزاميّ ولا هادئ", await pendingOf(S.recv, p), { pending: null, optional: null });
       check(!(await worklistHas(p, "prosthetic")), "   ولا في قائمة عمل الطبيب");
     }
@@ -537,23 +556,29 @@ async function main() {
     console.log("\n── ي. ما لم يتغيّر ──");
     {
       const p = await mkPatient("ثوابتُ الحلقة");
-      await mkCase(p, "prosthetic");
+      const c = await mkCase(p, "prosthetic");
       same("٣٣. **(ن) وموظّفُ فرعٍ آخر يُردّ ٤٠٣ كما كان**",
         (await http("POST", `/api/patients/${p}/device-episodes`, S.otherBranch,
           { serviceType: "prosthetic", servicePath: "exam" })).status, 403);
-      //  **(س) الصلاحيةُ لا تتوسّع بالمسار**: «لا» توجيهٌ لا قرارٌ سريريّ.
-      const first = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-        { serviceType: "prosthetic", requestedItem: "socket", servicePath: "no_exam" });
-      same("٣٤. **(س) والاستقبالُ يختار المسار — ولا يكتسب صلاحيةً طبية**",
-        first.status, 201);
-      same("   ولا معاينةَ يقدر أن يكتبها",
+      //  ══ **(س) الصلاحيةُ لا تتوسّع بالمسار**: «لا» توجيهٌ لا قرارٌ سريريّ. ══
+      //  حلقةُ «بلا معاينة» تُزرَع بالـSQL مباشرةً (المرحلة الرابعة، كما في
+      //  القسم "ج" أعلاه) — بابُها الحيّ الوحيد صار `/api/no-exam/device-sale`،
+      //  وهذا القسمُ يختبر ثوابتَ الحلقة (تفرّدٌ وتسلسل) لا ذاك البابَ بعينه.
+      const [first] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+           sequence_number, status, agreed_cost, requested_item, component,
+           service_path, created_by)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'socket','socket','no_exam',$3)
+         RETURNING id`,
+        [p, c, RECEPTION]);
+      same("٣٤. **(س) والاستقبالُ (صاحبُ طلبٍ بلا معاينة) لا يكتسب صلاحيةً طبية**",
         (await http("POST", `/api/medical/patients/${p}/exams`, S.recv,
           { caseType: "prosthetic", diagnosis: "x" })).status, 403);
       same("٣٥. **(ع) وحلقةٌ مفتوحةٌ واحدة لا اثنتان**",
         (await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
           { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" })).status, 409);
       //  **(ف) والتسلسلُ يتقدّم بعد الإلغاء — لا يُعاد استعمالُ رقم.**
-      await http("POST", `/api/patients/${p}/device-episodes/${first.body?.id}/cancel`,
+      await http("POST", `/api/patients/${p}/device-episodes/${first.id}/cancel`,
         S.manager, { reason: "اعتذر المريض" });
       const second = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
         { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" });

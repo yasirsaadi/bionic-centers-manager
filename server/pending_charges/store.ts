@@ -1,27 +1,34 @@
 /**
  * **عملياتُ «بلا معاينة»** — طبقةُ البيانات الوحيدة.
  *
- * ══ القاعدةُ الحاكمة (قرارُ المالك — تُلغي ما قبلها) ═══════════════════════
- * **العمليةُ والمالُ يمضيان من الاستعلامات، والطبيبُ يراجع الحركةَ إشرافياً
- * فقط.**
+ * ══ القاعدةُ الحاكمة اليوم (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨ — تُلغي ما قبلها) ══
+ * **العمليةُ والمالُ يمضيان من الاستعلامات، ولا معتمِدَ طبّيٌّ للمال — لا
+ * حيّاً ولا استرجاعياً.** بيعُ جزءٍ من طرفٍ صناعي والصيانةُ المبسّطة كلاهما
+ * حفظٌ واحد بلا أثرٍ يصل الطبيب إطلاقاً.
  *
- * والقاعدةُ القديمة — «العمليةُ تمضي والمالُ ينتظر» — لم تعد سارية: كانت
- * تُبقي مالاً مشروعاً وقع فعلاً **خارج الدفتر والتقارير** حتى يفرغ طبيبٌ
- * لشاشةٍ ماليّةٍ ليست من عمله.
+ * والقاعدةُ الأقدم — «العمليةُ تمضي والمالُ ينتظر اعتماد طبيب» — لم تعد
+ * سارية منذ قرار المالك 2026-08-26: كانت تُبقي مالاً مشروعاً وقع فعلاً
+ * **خارج الدفتر والتقارير** حتى يفرغ طبيبٌ لشاشةٍ ماليّةٍ ليست من عمله.
+ * والقاعدةُ التي تلتها — «يمضي والطبيبُ يراجع الحركةَ استرجاعياً» — تقاعدت
+ * بدورها لبيع الجزء في هذه المرحلة (المرحلة الرابعة): لا سجلَّ مراجعةٍ
+ * يُنشأ له بعد اليوم.
  *
  * ══ ولا حسابَ ثانٍ يُكتب هنا (وهذا لم يتغيّر) ═════════════════════════════
  * الكاتبُ **القانونيُّ القائم** لكلّ نوع، يُنادى في **معاملة العملية نفسِها**:
  *   صيانة   ⟶ `postMaintenanceFee` من داخل `createMaintenanceOrderWithVisit`
  *              — الكتابةُ نفسُها التي تناديها الصيانةُ كاملةُ الأجر.
  *   بيعُ جزء ⟶ `applyDeviceSaleFinancialsTx` على أمر العمل الذي فتحته
- *              `startDeviceSaleOperationallyTx` قبلها بسطر.
+ *              `startDeviceSaleOperationallyTx` قبلها بسطر، بعد أن تفتح
+ *              `startDeviceEpisodeTx` الحلقةَ نفسَها في المعاملة عينها
+ *              (المرحلة الرابعة — لا نداءين منفصلين بعد اليوم).
  * فلا حسابُ دفترٍ يُكرَّر، ولا ينحرف أحدُ النسختين يوماً.
  *
  * ══ ونصفا البيع كما هما ═════════════════════════════════════════════════
  *   `startDeviceSaleOperationallyTx` — الأمرُ والحلقةُ والسجلّ، **بلا دينار**.
  *   `applyDeviceSaleFinancialsTx`    — المجموعُ والكلفةُ والقيد، **بلا عمل**.
  * ومسارُ المعاينة يركّبهما في `assignManufacturing` كما كان بحرفه، وهذا
- * المسارُ يركّبهما بالترتيب عينه.
+ * المسارُ يركّبهما بالترتيب عينه — وقبلهما `startDeviceEpisodeTx` حين تكون
+ * الحلقةُ جديدة.
  *
  * ══ والصفرُ لا يُخترَع ═══════════════════════════════════════════════════
  * «بلا أجور» تعني **لا قيدَ ولا كلفةَ ولا دينار** — لا سعراً صفرياً ملفَّقاً.
@@ -29,8 +36,8 @@
  * بغياب صفّ. ولا التباسَ بين «مجّانيّ» و«لم يُدخَل».
  *
  * ══ والصفوفُ المعلَّقة تاريخٌ لا مسار ═══════════════════════════════════
- * `createDeviceSaleOperation` و`createMaintenanceOperation` **لا تكتبان في
- * `pending_service_charges` إطلاقاً**. والدوالُّ الباقية أدناه
+ * `createComponentSaleOperation` و`createMaintenanceOperation` **لا تكتبان
+ * في `pending_service_charges` إطلاقاً**. والدوالُّ الباقية أدناه
  * (`approveCharge` · `returnCharge` · `resubmitCharge` · القراءات) تخدم
  * **الصفوفَ الموروثة المفتوحة وحدها** حتى يُنهيها إنسان — ومَن يُنهيها
  * الاستقبالُ ومديرُ الفرع والمسؤول، لا طبيب.
@@ -45,6 +52,7 @@ import {
   type PendingChargeKind, type PendingChargeStatus,
 } from "@shared/pending_charge";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
+import { isProstheticComponent, type ProstheticComponent } from "@shared/prosthetic_parts";
 
 export class ChargeError extends Error {
   status: number;
@@ -194,68 +202,219 @@ interface CreateBase {
 }
 
 /**
- * **بيعُ جزءٍ على مسار «بلا معاينة» — العملُ والمالُ معاً في معاملةٍ واحدة.**
+ * **بيعُ جزءٍ من طرفٍ صناعي، مبسّطاً — حفظٌ واحد يفتح الحلقةَ وأمرَ العمل
+ * ويقيّد المبلغ النهائيّ معاً.** (المرحلة الرابعة، ٢٠٢٦-٠٨-٢٨ — تُلغي عقدَ
+ * «افتح الحلقة أوّلاً ثمّ بِعها» ذا النداءين على `POST /device-episodes` ثمّ
+ * `POST /device-sale`.)
  *
- * ══ القاعدةُ الجديدة (قرارُ المالك) ═════════════════════════════════════
- * **المبلغُ الذي يُدخله الاستقبالُ نهائيٌّ لحظتَه.** فلا صفَّ معلَّقاً يُنشأ،
- * ولا طابورَ اعتماد، ولا مالَ يقع خارج الدفتر بانتظار مَن يفرغ له.
+ * ══ الثغرةُ التي تُغلقها — نصفُ حالةٍ بين نداءين ═══════════════════════════
+ * الشكلُ القديم: نداءٌ أوّل يفتح الحلقةَ (قد ينجح)، ثمّ نداءٌ ثانٍ منفصل
+ * يبيعها (قد يفشل — شبكةٌ، تحقّقٌ، إغلاقُ تبويب) — فتبقى حلقةٌ مفتوحةٌ يتيمة
+ * بلا أمرٍ ولا مال، والموظّفُ لا يعرف أنجح الحفظ أم لا. **فصار الاثنان
+ * حدثاً واحداً** في معاملةٍ واحدة: تُفتَح الحلقةُ هنا نفسِها (لا من نقطةٍ
+ * عامّة منفصلة — تلك تقاعدت لهذا الشكل بعينه في
+ * `server/device_episodes/routes.ts`) ثمّ تُباع فوراً، أو لا يُكتب شيءٌ
+ * إطلاقاً.
+ *
+ * ══ إمّا حلقةٌ جديدة أو استئنافُ حلقةٍ موروثة — لا ثالث ═══════════════════
+ * **جديدة** (`existingEpisodeId` غائب): `startDeviceEpisodeTx`
+ * (`server/device_episodes/store.ts`) تفتحها هنا — نفسُ التنفيذ القانونيّ
+ * الذي يفتح حلقاتِ مسار المعاينة، بكلّ ثوابته (حالةُ خيطٍ حقيقية مقفولة،
+ * حلقةٌ مفتوحةٌ واحدة، لا أمرَ بناءٍ قديمٍ نشط، تسلسلٌ صحيح تحت القفل).
+ *
+ * **موروثة** (`existingEpisodeId` حاضر): حلقةٌ فتحها الشكلُ القديم ذو
+ * النداءين ولم يكتمل بيعُها. `lockCaseAndReadExactEpisode` تقفلها بهويّتها
+ * الدقيقة، ويُتحقَّق أنها لهذا المريض، ومن مسار «بلا معاينة» بعينه، وبجزءٍ
+ * حقيقيّ (لا جهازاً كاملاً)، وفي حالةٍ تقبل البيع (`awaiting_exam` بالضبط —
+ * أُنشئت ولم تُبَع بعد). **والجزءُ يُشتقّ من الحلقة المقفولة لا من جسم
+ * الطلب** — فعميلٌ يرسل جزءاً مغايراً مع `existingEpisodeId` لا يبدّل ما
+ * طُلب فعلاً؛ الحلقةُ تقول الحقيقة.
  *
  * ══ ونصفا البيع القائمان بلا نسخةٍ ثانية ════════════════════════════════
  * `startDeviceSaleOperationallyTx` تفتح الأمرَ وتنقل الحلقة (بلا دينار)، ثمّ
  * `applyDeviceSaleFinancialsTx` تقيّد الكلفةَ على المريض والحالة والحلقة
  * ودفترِ القيود — **وهما الكاتبان اللذان يناديهما مسارُ المعاينة نفسُه**
- * (`assignManufacturing` تركّبهما بالترتيب عينه). فلا محاسبةَ ثانية تنحرف.
+ * (`assignManufacturing` تركّبهما بالترتيب عينه) وطابورُ الإكمال الموروث
+ * أدناه. فلا محاسبةَ ثانية تنحرف.
  *
- * ══ ومرّةً واحدة بالضبط ═════════════════════════════════════════════════
+ * ══ والحقيقةُ التجارية مُهيكَلة (ترحيل ٠٧٠) ═════════════════════════════
+ * `setEpisodeComponentSaleTermsTx` تكتب السعرَ الأصليَّ ونوعَه على الحلقة —
+ * في المعاملة نفسِها، لا سطراً ثانياً ولا تحديثاً لاحقاً بعد `COMMIT`.
+ * `agreed_cost` (النهائيُّ الفعليّ) يكتبه `applyDeviceSaleFinancialsTx` كما
+ * كان — لا عمودَ ثانياً له.
+ *
+ * ══ والخبيرُ يُعاد التحقّق منه تحت القفل — **بفرع العملية الحقيقيّ لا لقطة
+ * الطلب** (تصحيحٌ لاحق) ═════════════════════════════════════════════════
+ * فحصُ النقطة المبكّر (`validateExpertForBranch`، بلا `Tx`) ردٌّ سريعٌ لا
+ * سلطةٌ نهائية. الكتابةُ الفعليةُ هنا تراجعه بـ`validateExpertForBranchTx`
+ * القانونية **تحت قفل المعاملة** — نفسُ حارس الصيانة المبسّطة (المرحلة
+ * الثالثة): خبيرٌ صار غيرَ فعّالٍ بين الفحص المبكّر وهذه اللحظة يُرفَض هنا
+ * ولو اجتاز الفحصَ المبكّر.
+ *
+ * **وكانت تُراجَع بـ`params.branchId` نفسِه** — فرعٌ قرأه الخادمُ من صفّ
+ * المريض **قبل** فتح هذه المعاملة. تلك لقطةٌ لا سلطة: مريضٌ يُنقَل بين تلك
+ * القراءة وهذا القفل، أو نداءٌ داخليٌّ يمرّر فرعاً لا يطابق العمليةَ فعلاً،
+ * يجعل الحارسَ المفترَض أن يكون نهائياً يصدّق سلطةً بائتة أو ملفَّقة —
+ * فيُسنَد خبيرُ فرعٍ لعمليةِ فرعٍ آخر ويظنّ الحارسُ أنه فعل صوابه.
+ *
+ * **فصار الفرعُ الفعليُّ يُشتقّ من الحلقة نفسِها تحت القفل**، لا من
+ * `params.branchId`: `branchId` التي يُعيدها `startDeviceEpisodeTx` للحلقة
+ * الجديدة (تُشتَقّ هناك من فرع الخيط المقفول أو فرع المريض — عمودٌ
+ * `NOT NULL` في القاعدة، فلا حلقةً تخرج منها بفرعٍ فارغ)، أو `locked.branchId`
+ * التي يُعيدها `lockCaseAndReadExactEpisode` للحلقة الموروثة (فرعُ صفّها
+ * هي، مقفولاً الآن). وهذا **الفرعُ نفسُه** الذي تكتبه `startDeviceSaleOperationallyTx`
+ * على أمر العمل لاحقاً (عبر فرع المريض المقفول هناك، وحارسُها الداخليّ
+ * القائم — «ولا أمرَ في فرعٍ مرتبطٍ بحلقةٍ من فرعٍ آخر» — يوافق بينهما)،
+ * فلا فرعين للعملية الواحدة.
+ *
+ * ══ والفرعُ الفعليُّ يُقارَن بما أذن له الطالبُ — وإلّا ٤٠٩ بصفر كتابة ═════
+ * `params.branchId` يبقى مفيداً بمعنىً آخر: هو الفرعُ الذي تحقّق منه
+ * الطالبُ (`canReachBranch` في النقطة) **قبل** فتح هذه المعاملة — إذنٌ لا
+ * سلطة. فإن اختلف الفرعُ الفعليّ المقفول أعلاه عنه ⟶ ذلك الإذنُ بائتٌ أو لا
+ * يخصّ هذه العمليةَ، ويُردّ ٤٠٩ **قبل** أيّ كتابةٍ تشغيلية أو مالية — لا
+ * نصفَ عمليةٍ في فرعٍ لم يُؤذَن له. هذا يُغلق سباقاً حقيقياً: نقلُ مريضٍ (أو
+ * خيطه) بين قراءة الفرع في النقطة وفتح هذه المعاملة، أو نداءً داخلياً
+ * يمرّر فرعاً لا يطابق العملية. و`params.branchId === null` (لا فرعَ أذن
+ * له الطالبُ به أصلاً) لا يُقارَن — لا شيءَ يُخالَف.
+ *
+ * ══ والفرعُ الفارغُ على حلقةٍ قابلةٍ للاستئناف خللٌ لا حالة ثالثة ═════════
+ * كلُّ حلقةٍ تجتاز حراسةَ «قابلةٌ للاستئناف» أعلاه (مسارُها `no_exam`،
+ * جزءٌ حقيقيّ، حالتُها `awaiting_exam` بالضبط) وُلدت حتماً من
+ * `startDeviceEpisodeTx`/`startDeviceEpisode` — الكاتبُ الوحيد لهذا الشكل
+ * من الصفوف منذ ترحيلَي ٠٦٥/٠٦٧ — وهو يكتب فرعها دائماً من عمود
+ * `patients.branch_id` غيرِ القابل لـ`NULL`، ولا تحديثٌ لاحقٌ يمسحه. فلا
+ * سبيلَ صحيحاً لحلقةٍ كهذه أن تحمل فرعاً فارغاً — والفارغُ حين يقع (تلفٌ
+ * لا يُفترَض) **يُرفَض صراحةً بـ٤٠٩ لا يُخمَّن بدلاً منه**، لا يُشتقّ من
+ * المريض أو الحالة بديلاً؛ فتخمينُ فرعٍ لعمليةٍ لا يُعرَف فرعُها الحقيقيّ
+ * إسنادٌ ماليٌّ لفرعٍ لم يُثبَت.
+ *
+ * ══ ومرّةً واحدة بالضبط ═══════════════════════════════════════════════════
  * المالُ يقع **في معاملة فتح الأمر نفسِها**. فحارسُ الأمر النشط وقفلُ الخيط
- * و`uq_pde_case_open` — التي تمنع أمراً ثانياً — تمنع قيداً ثانياً معه:
+ * و`uq_pde_case_open` — التي تمنع أمراً/حلقةً ثانية — تمنع قيداً ثانياً معه:
  * ضغطتان متزامنتان ⟶ الثانيةُ ترتدّ قبل أن تكتب ديناراً، ولا نصفَ كتابة.
  *
- * والهويّةُ الدقيقة هي الحلقةُ بما طُلب بالضبط، ويُتحقَّق **تحت القفل
- * القانونيّ** (الخيطُ ثمّ الحلقة) أنها لهذا المريض وأن مسارَها `no_exam`.
+ * ══ ولا `pending_service_charges` إطلاقاً ═══════════════════════════════
+ * كما كانت `createDeviceSaleOperation` القديمة تماماً — لا صفَّ معلَّق، ولا
+ * طابورَ اعتماد، ولا طبيبَ يراجع.
  */
-export async function createDeviceSaleOperation(p: CreateBase & {
-  deviceEpisodeId: number;
-  saleExpertUserId: number;
+export async function createComponentSaleOperation(params: {
+  patientId: number;
+  branchId: number | null;
+  expertUserId: number;
+  /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveComponentSaleOffer` — لا حسابَ هنا. */
+  originalPrice: number;
+  priceKind: "normal" | "discount" | "free";
+  /** = `originalPrice - discountAmount`؛ هو ما يُقيَّد فعلاً (`agreed_cost`). */
+  finalPrice: number;
+  note: string | null;
+  actor: Actor;
+  /** **إلزاميٌّ** حين لا يوجد `existingEpisodeId` — بيعُ جزءٍ بلا جزءٍ سؤالٌ بلا جواب. */
+  component: ProstheticComponent | null;
+  /** استئنافُ حلقةٍ موروثة فتحها الشكلُ القديم ذو النداءين ولم يكتمل بيعُها. */
+  existingEpisodeId: number | null;
 }): Promise<{
-  workOrderId: number; deviceEpisodeId: number; amount: number | null;
-  requestedItem: string | null;
+  workOrderId: number; deviceEpisodeId: number; component: string | null;
+  finalPrice: number;
 }> {
   const store = await import("../storage");
+  const episodes = await import("../device_episodes/store");
+  const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
-    //  ══ **ترتيبُ قفلٍ واحد لا اثنان** ═══════════════════════════════════
-    //  كان هنا قفلٌ تمهيديٌّ على **الحلقة** قبل الخيط — عكسَ الترتيب
-    //  القانونيّ (`lockCaseAndReadOpenEpisode`: الخيطُ ثمّ الحلقة). وترتيبان
-    //  متعاكسان في نظامٍ واحد يصنعان جمودَ قفلٍ لا يظهر إلّا تحت الضغط.
-    //
-    //  فحُذف. والحُرّاسُ كلُّها داخل `startDeviceSaleOperationallyTx`:
-    //  انتماءُ الحلقة (بقفل الخيط) · مسارُها (`expectServicePath`) ·
-    //  حالتُها · الجهازُ الكامل · وفرعُها. **وما طُلب يُقرأ من هناك** —
-    //  من الصفّ المقفول لا من قراءةٍ سابقةٍ له.
+    let episodeId: number;
+    let component: string | null;
+    //  ══ **الفرعُ الفعليّ — من الحلقة المقفولة، لا من `params.branchId`** ══
+    //  انظر الشرحَ الكامل في تعليق الدالّة أعلاه. يُشتقّ هنا فور معرفة
+    //  الحلقة (جديدةً أو مستأنَفة)، ويُحسَم قبل أيّ كتابةٍ تاليةٍ إطلاقاً.
+    let actualOperationBranchId: number | null;
+
+    if (params.existingEpisodeId !== null) {
+      //  ══ **استئنافُ حلقةٍ موروثة — بهويّتها الدقيقة تحت القفل القانونيّ** ══
+      const locked = await episodes.lockCaseAndReadExactEpisode(tx, {
+        patientId: params.patientId, serviceType: "prosthetic",
+        episodeId: params.existingEpisodeId,
+      });
+      const ep = locked.episode;
+      if (!ep) {
+        throw new ChargeError("الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة", 409);
+      }
+      if (ep.servicePath !== "no_exam") {
+        throw new ChargeError("هذا الطلب على مسار المعاينة — لا يُكمَل من هنا", 409);
+      }
+      //  **الجهازُ الكاملُ لا يُباع من هنا** — حلقةٌ موروثة ادّعت خلاف ذلك
+      //  لا تُصحَّح بصمت، بل تُردّ: بابُها المعاينةُ أو التصحيحُ الإداريّ.
+      if (!isProstheticComponent(ep.requestedItem)) {
+        throw new ChargeError(
+          "الجهازُ الكاملُ لا يُباع من هنا — يحتاج معاينة الطبيب", 409,
+        );
+      }
+      if (ep.status !== "awaiting_exam") {
+        throw new ChargeError("تغيّرت حالة هذا الطلب — حدّث الصفحة", 409);
+      }
+      episodeId = ep.id;
+      //  **والجزءُ من الحلقة المقفولة لا من الطلب** — مصدرُ حقيقةِ ما طُلب.
+      component = ep.requestedItem;
+      //  **وفرعُها كذلك من صفّها المقفول** — لا من جسم الطلب.
+      actualOperationBranchId = locked.branchId;
+    } else {
+      //  ══ **حلقةٌ جديدة — تُفتَح وتُباع في المعاملة نفسِها** ═══════════════
+      if (params.component === null) {
+        throw new ChargeError("حدّد الجزء المراد بيعه — اختر من القائمة", 400);
+      }
+      const episode = await episodes.startDeviceEpisodeTx(tx, {
+        patientId: params.patientId, serviceType: "prosthetic",
+        createdBy: params.actor.userId,
+        requestedItem: params.component, servicePath: "no_exam",
+      });
+      episodeId = episode.id;
+      component = episode.requestedItem;
+      //  **وفرعُها ما كتبته `startDeviceEpisodeTx` فعلاً** — مُشتقٌّ هناك
+      //  تحت القفل من فرع الخيط أو فرع المريض، لا مُدخَلاً من هذا الطلب.
+      actualOperationBranchId = episode.branchId;
+    }
+
+    //  ══ **فرعٌ فارغ على حلقةٍ قابلةٍ للاستئناف خللٌ لا حالة ثالثة** — يُرفَض
+    //  صراحةً لا يُخمَّن بدلاً منه (الشرحُ الكامل أعلاه). ══════════════════
+    if (actualOperationBranchId === null) {
+      throw new ChargeError(
+        "تعذّر تحديد فرع هذه العملية من صفّها — راجع الإدارة قبل المتابعة", 409,
+      );
+    }
+
+    //  ══ **والفرعُ الفعليّ يُقارَن بما أذن له الطالبُ — وإلّا ٤٠٩ بصفر كتابة**
+    //  (الشرحُ الكامل أعلاه). `null` = لم يُؤذَن بفرعٍ بعينه، فلا شيءَ يُخالَف. ══
+    if (params.branchId !== null && params.branchId !== actualOperationBranchId) {
+      throw new ChargeError(
+        "تغيّر فرع هذه العملية بعد التحقّق منه — أعد تحميل الصفحة وحاول مجدداً", 409,
+      );
+    }
+
+    //  ══ **الخبيرُ يُعاد التحقّق منه تحت القفل — بفرع العملية الفعليّ** —
+    //  لا لقطةَ فحصِ النقطة ولا `params.branchId`. ══════════════════════════
+    const expertCheck = await mfg.validateExpertForBranchTx(
+      tx, params.expertUserId, actualOperationBranchId,
+    );
+    if (!expertCheck.ok) {
+      throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
+    }
+
+    //  ══ **البيعُ نصفان قانونيّان، بلا نسخةٍ ثانية** ═══════════════════════
     const op = await store.startDeviceSaleOperationallyTx(tx, {
-      patientId: p.patientId,
-      serviceType: p.serviceType,
-      fields: {},
-      expertUserId: p.saleExpertUserId,
-      assignedBy: p.actor.userId,
-      deviceEpisodeId: p.deviceEpisodeId,
-      expectServicePath: "no_exam",
+      patientId: params.patientId, serviceType: "prosthetic", fields: {},
+      expertUserId: params.expertUserId, assignedBy: params.actor.userId,
+      deviceEpisodeId: episodeId, expectServicePath: "no_exam",
       //  **الواقعةُ الصريحة** — لا يُستدَلّ عليها بغياب صفّ لاحقاً.
-      noExamNoCharge: p.amount === null,
+      noExamNoCharge: params.priceKind === "free",
+    });
+    await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: params.finalPrice });
+
+    //  ══ **والحقيقةُ التجارية المُهيكَلة** (ترحيل ٠٧٠) — في المعاملة نفسِها. ══
+    await episodes.setEpisodeComponentSaleTermsTx(tx, {
+      episodeId, originalPrice: params.originalPrice, kind: params.priceKind,
     });
 
-    //  **والمالُ هنا، لا في طابور** — بالكاتب القانونيّ نفسِه وفي المعاملة
-    //  نفسِها. و«بلا أجور» تبقى واقعةً صريحة: لا قيدَ ولا صفَّ ولا دينار.
-    if (p.amount !== null) {
-      await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: p.amount });
-    }
     return {
-      workOrderId: op.workOrderId,
-      deviceEpisodeId: p.deviceEpisodeId,
-      amount: p.amount,
-      //  **وما طُلب يُقرأ من الصفّ المقفول** لا من جسم الطلب — فالسجلُّ
-      //  الاسترجاعيُّ يسمّي ما بِيع فعلاً لا ما ادّعاه العميل.
-      requestedItem: op.requestedItem ?? null,
+      workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
+      component, finalPrice: params.finalPrice,
     };
   });
 }

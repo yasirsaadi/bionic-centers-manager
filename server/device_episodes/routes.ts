@@ -181,6 +181,26 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         ? noExamSaleRefusal(serviceType, parsedItem.value) : null;
       if (saleRefusal) return res.status(400).json({ error: saleRefusal });
 
+      // ── **بيعُ جزءٍ جديد بلا معاينة صار من بابٍ واحد** (المرحلة الرابعة) ─
+      //  كانت هذه النقطة تفتح الحلقة أوّلاً، ثمّ نداءٌ ثانٍ منفصل يبيعها —
+      //  فينجح الأوّل ويفشل الثاني وتبقى حلقةٌ يتيمة بلا أمرٍ ولا مال.
+      //  والمرحلةُ الرابعة توحّد الاثنين: حفظٌ واحد يفتح الحلقة ويبيعها
+      //  ويقيّد كلفتها معاً، فلا نصفَ كتابةٍ ممكنة.
+      //
+      //  **والتقاعدُ لا يمسّ إلّا الشكلَ الذي كان ينجح فعلاً هنا**: جزءٌ
+      //  حقيقيّ (لا جهازاً كاملاً) على مسار «بلا معاينة». `saleRefusal`
+      //  أعلاه سبق فردّ الجهازَ الكاملَ والمسندَ الطبيّ بردّهما الأصليّ ٤٠٠
+      //  بلا أيّ تغيير — فلا يصل هذا السطرَ إلّا الشكلُ الوحيد الذي كان
+      //  يفتح حلقةً بنجاح، والمسارُ `exam` (الجهازُ الكاملُ عبر المعاينة)
+      //  يبقى حيّاً كما كان تماماً.
+      if (servicePath === "no_exam") {
+        return res.status(409).json({
+          error: "بيعُ جزءٍ جديد بلا معاينة صار من بابٍ واحد — سجّله من"
+            + " «ما سبب حضور المريض اليوم؟» ⟵ «بيع جزء من طرف صناعي»"
+            + " (POST /api/no-exam/device-sale)",
+        });
+      }
+
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (trashGuard(res, patient)) return;
