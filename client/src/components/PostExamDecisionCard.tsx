@@ -113,6 +113,11 @@ interface Followup {
   // ══ ملاحظاتُ الطبيب من هذه المعاينة بعينها (تصحيحٌ 2026-08-28) ══════════
   //  سياقٌ للبائع لا حقيقةٌ مالية — تُعرَض كما كُتبت، وللقراءة فقط.
   examNotes?: string | null;
+  //  فرعُ **هذه المتابعة بعينها** — موجودٌ في القاعدة والاستجابة من قبل
+  //  (`toRow`)، لم يكن مكتوباً في هذا العقد فقط. يُستعمَل لقائمة الخبراء
+  //  (تصحيحٌ 2026-08-28) — لا فرعَ الجلسة، فمسؤولٌ متعدّدَ الفروع يجب أن
+  //  يرى خبراءَ العملية التي يبيعها لا افتراضَ جلسته.
+  branchId: number | null;
   events: any[];
   priceRequests: any[];
 }
@@ -182,15 +187,39 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     },
   });
 
+  //  ══ **المتابعةُ الفعّالة تُحسَب هنا** — قبل قائمة الخبراء التي تحتاج
+  //  فرعَها (تصحيحٌ 2026-08-28) ═══════════════════════════════════════════
+  //  حسابٌ عاديّ لا خطّاف React، فنقلُه فوق باقي الاستعلامات آمنٌ ولا يخالف
+  //  قاعدة الخطّافات. والتكرارُ اللاحق حُذف — هذا هو المصدر الوحيد الآن.
+  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
+  const active = (followups ?? []).find((f) => !terminal.has(f.status))
+    ?? (followups ?? [])[0] ?? null;
+
+  //  ══ **قائمةُ الخبراء بفرع العملية المُباعة — لا فرع الجلسة** (تصحيحٌ
+  //  2026-08-28) ═══════════════════════════════════════════════════════════
+  //  كانت تُقرأ بلا `branchId` — ونقطةُ الخبراء تشترطه صراحةً للمسؤول العام
+  //  (لا فرعَ ثابتاً له)، فيُردّ ٤٠٠ ويتحوّل عند العميل إلى قائمةٍ فارغة:
+  //  مسؤولٌ يملك صلاحية البيع فعلياً لكن لا يستطيع اختيار خبير من الشاشة.
+  //
+  //  والإصلاحُ فرعُ **المتابعة الفعّالة بعينها** — لا فرع جلسة الفاعل: حتى
+  //  الاستقبال ومديرُ الفرع يستفيدان، فمديرَ فرعٍ متعدّد الفروع يرى خبراء
+  //  العملية التي يبيعها لا افتراضَ جلسته. والخادمُ يبقى الحارسَ الحقيقيَّ
+  //  دائماً (`validateExpertForBranch` عند `/complete-sale`) — هذا الطلبُ
+  //  لجلب القائمة فقط، وليس مصدرَ ثقةٍ لسلطة البيع.
+  const activeBranchId = active?.branchId ?? null;
   const { data: experts } = useQuery<any[]>({
-    queryKey: ["/api/manufacturing/experts"],
+    //  **مفتاحٌ يحمل الفرع** — فتنقّل المسؤول بين مريضَي فرعين لا يُبقي
+    //  ذاكرةَ التخزين المؤقّت خبراءَ الفرع الأوّل معروضةً على الثاني.
+    queryKey: ["/api/manufacturing/experts", activeBranchId],
     queryFn: async () => {
-      const res = await fetch("/api/manufacturing/experts", { credentials: "include" });
+      const res = await fetch(`/api/manufacturing/experts?branchId=${activeBranchId}`,
+        { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-    //  تُقرأ دائماً: الاستعلامات تغيّر الخبير من البطاقة نفسها.
-    enabled: true,
+    //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة وفرعُها — خبراءُ فرعٍ خاطئ
+    //  (أو طلبٌ بلا فرع يُردّه الخادم ٤٠٠) أسوأ من قائمةٍ فارغة مؤقّتة.
+    enabled: activeBranchId !== null,
   });
 
   //  **الخصمُ المعلَّق معلومةُ حالةٍ لا زينة**: بيعٌ رُفع له طلبُ خصمٍ لم
@@ -225,10 +254,6 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       return res.json();
     },
   });
-
-  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
-  const active = (followups ?? []).find((f) => !terminal.has(f.status))
-    ?? (followups ?? [])[0] ?? null;
 
   //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
   //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً

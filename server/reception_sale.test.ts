@@ -805,6 +805,57 @@ async function main() {
         !/purchaseState === "converted" && !active\.purchaseInterestAt/.test(card)
         && /purchaseState === "converted" && \(/.test(card),
         "٢٥ب. **وشرطُ عرض ملخّص البيع في الواجهة لم يعد يُخفيه خلف رايةِ اهتمامٍ قديمة**");
+      //  ══ **قائمةُ الخبراء بفرع العملية — لا استعلامٌ عامّ بلا فرع** ══════
+      //  (تصحيحٌ 2026-08-28 الثاني) — كان الطلبُ `fetch("/api/manufacturing/experts", ...)`
+      //  بلا `branchId` إطلاقاً، ونقطةُ الخبراء تشترطه صراحةً للمسؤول العام
+      //  فتردّه ٤٠٠ ويتحوّل عند العميل إلى قائمةٍ فارغة — مسؤولٌ يملك صلاحية
+      //  البيع فعلياً ولا يستطيع اختيار خبير من الشاشة.
+      check(
+        !/fetch\(\s*"\/api\/manufacturing\/experts"\s*,\s*\{\s*credentials/.test(card),
+        "٦. **ولا استعلامَ خبراء بلا فرع بعد اليوم** — الطلبُ القديم بلا `branchId` غاب");
+      check(
+        /queryKey:\s*\["\/api\/manufacturing\/experts",\s*activeBranchId\]/.test(card),
+        "٧. **ومفتاحُ الاستعلام يحمل هويّةَ الفرع الفعّال** — لا مفتاحٌ عامّ واحد لكلّ الفروع");
+      check(
+        /\/api\/manufacturing\/experts\?branchId=\$\{activeBranchId\}/.test(card),
+        "٨. **والطلبُ الفعليّ يحمل `?branchId=<فرع المتابعة الفعّالة>`**");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ع. قائمةُ الخبراء بفرع العملية المُباعة — لا فرع الجلسة (١-٥)
+    // ══════════════════════════════════════════════════════════════════
+    //  البقُّ الذي صحَّحه هذا القسم: كانت بطاقةُ البيع تجلب القائمةَ بلا
+    //  `branchId`، ونقطةُ الخبراء تشترطه صراحةً للمسؤول العام (لا فرعَ ثابتاً
+    //  له) فتردّه ٤٠٠ — فالمسؤولُ يملك صلاحية `/complete-sale` فعلياً ولا
+    //  يستطيع فتح قائمة الخبراء ليختار منها. الإصلاحُ: تُطلَب القائمةُ بفرع
+    //  **المتابعة الفعّالة نفسِها** لكلّ الفاعلين الأربعة — لا فرع جلستهم.
+    console.log("\n── ع. قائمةُ الخبراء بفرع العملية ──");
+    {
+      const namesOf = (rows: any[]) => (rows ?? []).map((e: any) => Number(e.id)).sort().join(",");
+      for (const [who, sess] of [["الاستقبال", S.recv], ["المحاسب", S.acct],
+        ["مديرُ الفرع", S.manager]] as any[]) {
+        const r = await http("GET", "/api/manufacturing/experts?branchId=1", sess);
+        same(`١-٣. **${who}: يقرأ قائمةَ خبراء الفرع بـ\`branchId\` صريح**`,
+          [r.status, namesOf(r.body)], [200, String(EXPERT)]);
+      }
+      //  والمسؤولُ العام كذلك — **حين يُرسَل الفرعُ صراحةً**، لا افتراضاً.
+      const rAdminB1 = await http("GET", "/api/manufacturing/experts?branchId=1", S.admin);
+      same("٤. **والمسؤولُ العام يقرأ خبراء الفرع ١ حين يُرسَل `branchId=1`**",
+        [rAdminB1.status, namesOf(rAdminB1.body)], [200, String(EXPERT)]);
+      //  وبلا `branchId` يبقى الخادمُ يرفض كما كان — **لم يُضعَف الشرطُ**.
+      const rAdminNoBranch = await http("GET", "/api/manufacturing/experts", S.admin);
+      same("   **وبلا فرعٍ في الطلب ⟶ ٤٠٠ كما كان — لم يُضعَف شرطُ الخادم**",
+        rAdminNoBranch.status, 400);
+      //  ٥. والمسؤولُ نفسُه يتنقّل بين فرعين فيقرأ قائمتين مختلفتين بلا
+      //  التباس — هذا هو الإثباتُ الحيّ لعزل الفرع خلف تصحيح مفتاح الاستعلام.
+      const rAdminB2 = await http("GET", "/api/manufacturing/experts?branchId=2", S.admin);
+      same("٥. **والمسؤولُ نفسُه يقرأ خبراء الفرع ٢ بطلبٍ لاحق — بلا تسرّب من الفرع ١**",
+        [rAdminB2.status, namesOf(rAdminB2.body)], [200, String(EXPERT_B2)]);
+      check(namesOf(rAdminB1.body) !== namesOf(rAdminB2.body),
+        "   **والقائمتان مختلفتان فعلاً — لا نسخةٌ واحدة مكرَّرة**");
+      //  ٩. وخبيرٌ من فرعٍ آخر يبقى مرفوضاً عند البيع الفعليّ — الحارسُ
+      //  الحقيقيّ يبقى في `/complete-sale` لا في طلب القائمة (مُختبَرٌ أصلاً
+      //  في القسم د: «١٢. وخبيرٌ فعّالٌ في فرعٍ آخر ⟶ ٤٠٠» — لا يتكرّر هنا).
     }
 
     console.log(
