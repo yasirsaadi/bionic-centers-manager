@@ -228,6 +228,67 @@ export function computeCommercialOffer(params: {
   return { ok: true, kind, originalPrice: original, finalPrice: final };
 }
 
+// ── المرحلةُ الثانية: بيعٌ واحد، ومقدارُ خصمٍ لا نوعُ سعر ─────────────────
+//
+// ══ لماذا خصمٌ لا نوعُ سعر (Phase 2) ═══════════════════════════════════════
+// كانت الاستعلامات تختار «نوعَ السعر» (عاديّ/بخصم/مجّانيّ) ثم — إن اختارت
+// «بخصم» — تكتب السعرَ النهائيّ يدوياً: حسابٌ ذهنيٌّ لا يظهر على الشاشة،
+// وفرصةُ خطأٍ عند كلّ عملية. **والاستقبالُ يعرف اتفاقاً واحداً فحسب**: كم
+// اتّفقا، وكم الخصمُ عن السعر المعلَن. فصار المُدخَلان `originalPrice` و
+// `discountAmount`، والنوعُ والسعرُ النهائيُّ **يُشتقّان في الخادم** —
+// ولا يُعاد بناءُ حسابهما: هذه الدالّةُ تشتقّ النوعَ من الخصم ثم تُسلِّم
+// الأمرَ لـ`computeCommercialOffer` نفسِها، فالثوابتُ الآمنةُ فوق واحدةٌ لا
+// تتكرّر.
+
+export interface DiscountOffer extends CommercialOffer {
+  /** = originalPrice − finalPrice، وغيابُه كغياب البقيّة يعني لم يُحسَب. */
+  discountAmount: number | null;
+}
+
+const nilDiscountOffer: DiscountOffer = { ...nilOffer, discountAmount: null };
+
+/**
+ * **يشتقّ التفاصيلَ التجارية الثلاثة من مُدخَلين فقط** — لا مُدخَلٍ ثالث.
+ *
+ * القاعدة (بالضبط كما طُلبت):
+ * - `discountAmount === 0` ⟶ `normal`.
+ * - `0 < discountAmount < originalPrice` ⟶ `discount`.
+ * - `discountAmount === originalPrice` (وأصلٌ موجب) ⟶ `free`، والسعرُ
+ *   الأصليُّ **يبقى محفوظاً كما هو** — صفرٌ هنا يعني «مجّانيّ» لا «غيرُ مُسعَّر»،
+ *   لأن الشرط الوحيد له في هذا الملفّ هو `discountAmount === originalPrice`
+ *   بعينه لا أيُّ صفرٍ آخر.
+ *
+ * وكلُّ حالةٍ تمرّ أخيراً عبر `computeCommercialOffer` — فلا قاعدةَ أمانٍ
+ * ثانية تُكتب هنا، ولا يتفرّع سلوكُها عن الدالّة الأصلية بحرف.
+ */
+export function deriveOfferFromDiscount(params: {
+  originalPrice: unknown; discountAmount: unknown;
+}): DiscountOffer {
+  const original = Number(params.originalPrice);
+  if (!Number.isInteger(original)) {
+    return { ...nilDiscountOffer, error: "السعر الأصلي يجب أن يكون بالدينار الصحيح" };
+  }
+  if (original <= 0) {
+    return { ...nilDiscountOffer, error: "السعر الأصلي يجب أن يكون أكبر من صفر" };
+  }
+  const discount = Number(params.discountAmount);
+  if (!Number.isInteger(discount)) {
+    return { ...nilDiscountOffer, error: "مقدار الخصم يجب أن يكون بالدينار الصحيح" };
+  }
+  if (discount < 0) {
+    return { ...nilDiscountOffer, error: "مقدار الخصم لا يمكن أن يكون سالباً" };
+  }
+  if (discount > original) {
+    return { ...nilDiscountOffer, error: "مقدار الخصم لا يمكن أن يتجاوز السعر الأصلي" };
+  }
+  const kind: PriceKind = discount === 0 ? "normal" : discount === original ? "free" : "discount";
+  const offer = computeCommercialOffer({
+    kind, originalPrice: original, finalPrice: original - discount,
+  });
+  if (!offer.ok) return { ...offer, discountAmount: null };
+  return { ...offer, discountAmount: discount };
+}
+
 // ── جهوزيّةُ البيع: ما ينقص، مسمّىً بالعربية ─────────────────────────────
 
 export interface SaleState {
@@ -288,27 +349,29 @@ export function examPathStatusLine(params: {
   return null; // لا قرارَ بعد: النصُّ القائم «بانتظار قرار المريض» صحيح
 }
 
-// ── أفعالُ مسار المعاينة — ثلاثةٌ لا أكثر ────────────────────────────────
+// ── أفعالُ مسار المعاينة — اثنان لا أكثر (المرحلة الثانية) ───────────────
 
 /**
- * **الأفعالُ الحيّة على عمليةِ مسار معاينةٍ جديدة.**
+ * **الأفعالُ الحيّة على عمليةِ مسار معاينةٍ جديدة — بابٌ واحد للبيع.**
+ *
+ * ⚠ **(المرحلةُ الثانية)**: كانت ثلاثةً — `commercial` (تفاصيلُ البيع) ثم
+ * `bought` (زرٌّ ثانٍ منفصل) — خطوتين لواقعةٍ واحدة. **صارا فعلاً واحداً**:
+ * `complete_sale` يحمل الخبيرَ والسعرَ الأصليّ ومقدارَ الخصم معاً، وحفظُه
+ * **هو** قرارُ الشراء — لا زرَّ ثانياً بعده. و`not_bought` كما كان: الفعلُ
+ * الوحيدُ المنفصل، بسببٍ حرٍّ إلزاميّ.
  *
  * لا `signal_purchase_interest` (رايةٌ تسبق قراراً صار يُسجَّل مباشرة) ·
  * لا `defer` (تأجيلٌ بأحدَ عشر سبباً حول واقعةٍ واحدة) · لا اعتمادَ سعرٍ
- * ولا اعتمادَ شراءٍ ولا «قبل السعر». وما بقي:
- *
- *   `commercial` — تفاصيلُ البيع (سعرٌ وخبير)
- *   `bought` · `not_bought` — القرار
+ * ولا اعتمادَ شراءٍ ولا «قبل السعر» ولا نوعَ سعرٍ يُختار — الخصمُ وحده.
  *
  * **والصفوفُ القديمة لا تُمَسّ**: تبقى على أفعالها القديمة حتى تنفد، فلا
  * يُحبَس ملفٌّ في حالةٍ لا زرَّ لها.
  */
-export const EXAM_PATH_ACTIONS = ["commercial", "bought", "not_bought"] as const;
+export const EXAM_PATH_ACTIONS = ["complete_sale", "not_bought"] as const;
 export type ExamPathAction = (typeof EXAM_PATH_ACTIONS)[number];
 
 export const EXAM_PATH_ACTION_LABELS: Record<ExamPathAction, string> = {
-  commercial: "تفاصيل البيع",
-  bought: "اشترى",
+  complete_sale: "إتمام البيع",
   not_bought: "لم يشترِ",
 };
 
@@ -316,24 +379,37 @@ export const EXAM_PATH_ACTION_LABELS: Record<ExamPathAction, string> = {
 export function examPathActions(params: {
   session: CommercialSessionLike | null | undefined;
   status: string;
-  /** مالكُ القرار — يمنع قلبَ ما قرّره الطبيب. */
+  /** مالكُ القرار — يمنع قلبَ ما قرّره الطبيب على صفٍّ موروث. */
   decisionField?: OwnedField | null;
-  decision?: unknown;
   mayAct: boolean;
 }): ExamPathAction[] {
   if (!params.mayAct) return [];
   //  المنتهيةُ لا فعلَ عليها هنا: تصحيحُها بابُه نظامُ التصحيح الإداريّ.
   if (params.status === "converted" || params.status.startsWith("closed_")) return [];
-  const out: ExamPathAction[] = ["commercial"];
-  const d = parsePurchaseDecision(params.decision);
+  //  **بابٌ واحد فحسب**: حفظُ البيع هو نفسُه قرارُ «اشترى»، فلا حاجةَ لقراءة
+  //  قرارٍ سابق لإخفاء زرٍّ ثانٍ — كلاهما يظهران معاً أو لا يظهر شيء.
   const mayDecide = canOverwriteCommercialField({
     field: params.decisionField ?? null, session: params.session,
   });
-  if (mayDecide) {
-    //  والقرارُ القائم لا يُعاد اختيارُه: «اشترى» مسجَّلٌ يُكمَل لا يُسأل
-    //  ثانيةً، فيبقى الزرُّ الآخر وحده لمن يملك تغييره.
-    if (d !== "bought") out.push("bought");
-    if (d !== "not_bought") out.push("not_bought");
-  }
-  return out;
+  return mayDecide ? ["complete_sale", "not_bought"] : [];
+}
+
+// ── مَن يُتمّ البيع المبسّط — استقبالٌ أو إدارةٌ، لا طبيبَ ولا محاسب ──────
+
+/**
+ * **صلاحيةُ إتمام البيع المبسّط** (`complete-sale`/`not-bought`، المرحلة
+ * الثانية) — الاستقبالُ ومديرُ الفرع، والمسؤولُ العام بلا قيد.
+ *
+ * **وليس الطبيب**: القسمُ 4.h أنهى كتابةَ الطبيب التجارية من المعاينة، وهذا
+ * البابُ الجديد لا يعيدها من طريقٍ آخر. **وليس المحاسب**: قراءتُه ودورُه في
+ * القبض من نقاطٍ أخرى بلا تغيير — هذا بابُ قرارِ البيع لا القبض.
+ *
+ * **ومسؤولٌ عامٌّ يحمل دورَ طبيب يمرّ بسلطة `isAdmin` لا بدور الطبيب** — نفسُ
+ * قاعدة كلّ بوّابةٍ في هذا الملفّ: السلطةُ العليا تُفحَص أوّلاً وبلا شرط.
+ */
+export function canCompleteReceptionSale(
+  s: CommercialSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return s?.role === "reception" || s?.role === "branch_manager";
 }

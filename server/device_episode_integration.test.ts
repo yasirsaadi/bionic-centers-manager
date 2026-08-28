@@ -269,11 +269,14 @@ async function main() {
       (await http("POST", `/api/patients/${P}/assign-manufacturing`, S.reception,
         { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 409);
     await http("POST", `/api/followups/${fu.id}/expert`, S.reception, { expertUserId: EXPERT });
+    //  `accept-price` متقاعدٌ على هذا المسار (٤٠٩ لا أثرَ له) — بقيّةٌ من
+    //  قبل تبسيط الاستعلامات، ونتيجتُه لا تُقرأ هنا أصلاً.
     await http("POST", `/api/followups/${fu.id}/accept-price`, S.reception, {});
-    //  والطبيبُ المخوَّل **يستطيع** أن يؤكّد إن حضر — ولا يُطلَب منه ذلك:
-    //  الاستقبالُ ومديرُ الفرع يُتمّان المسارَ وحدهما (مُثبَتٌ في
-    //  `test:followup`).
-    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.doctor, {});
+    //  **والاستقبالُ ومديرُ الفرع والمسؤولُ يُتمّون المسارَ وحدهم الآن**
+    //  (المرحلةُ الثانية — `test:reception-sale`): الطبيبُ العاديّ صار
+    //  يُردّ ٤٠٣ عن هذا الباب على مسار المعاينة، فلا سلطةَ تجاريةً له
+    //  إطلاقاً (القسم 4.h/4.f في CLAUDE.md).
+    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.reception, {});
     same("   وتأكيدُ الشراء بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],

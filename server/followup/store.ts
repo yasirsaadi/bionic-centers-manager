@@ -25,8 +25,8 @@ import {
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 import {
-  computeCommercialOffer, canOverwriteCommercialField, ownershipRefusal,
-  parseFieldOwner, parsePriceKind, parsePurchaseDecision, saleState,
+  computeCommercialOffer, deriveOfferFromDiscount, canOverwriteCommercialField,
+  ownershipRefusal, parseFieldOwner, parsePriceKind, parsePurchaseDecision, saleState,
   missingLabel, NOT_BOUGHT_LEGACY_REASON, COMMERCIAL_FIELD_LABELS,
   type CommercialField, type CommercialSessionLike, type FieldOwner,
   type PriceKind, type PurchaseDecision,
@@ -2190,6 +2190,126 @@ export async function followupServicePath(followupId: number): Promise<string | 
 /** هل هذه المتابعةُ على مسار المعاينة الجديد؟ */
 export async function isExamPathFollowup(followupId: number): Promise<boolean> {
   return (await followupServicePath(followupId)) === "exam";
+}
+
+// ── إتمامُ البيع المبسّط — بابٌ واحد (المرحلة الثانية) ────────────────────
+//
+// ══ لماذا دالّتان صغيرتان لا منطقٌ جديد ═══════════════════════════════════
+// «حفظ» يساوي «اشترى» الآن، فلا خطوةَ ثانية. لكنّ الكتابةَ الفعلية —
+// المالكيةَ، والقفلَ، والذرّيةَ مع `assignManufacturing` — **هي نفسُها**
+// `setCommercialFields`/`closeWithoutPurchase` بحرفهما. فهاتان الدالّتان
+// تشتقّان العرضَ التجاريّ من الخصم ثم تسلّمان الأمرَ للبابين القائمين، ولا
+// تكتبان صفاً واحداً بنفسهما.
+
+/**
+ * **إتمامُ بيعٍ مبسّط**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم = بيعٌ كامل.
+ *
+ * لا `priceKind` ولا `finalPrice` ولا `purchaseDecision` تُقبَل من العميل —
+ * الثلاثةُ تُشتَقّ هنا (`deriveOfferFromDiscount`) ثم تُمرَّر لِ
+ * `setCommercialFields` بوصفها بيانات السيرفر لا الطلب. وهي **تلمس الحقولَ
+ * الثلاثة معاً دائماً** فتكتمل الجهوزيّةُ بهذا الحفظ نفسِه ذرّياً — لا حفظٌ
+ * ينتظر حقلاً ثانياً.
+ *
+ * **وليست بوصف الطبيب أبداً** (`asDoctor: false`): هذا بابُ الاستقبال
+ * والإدارة وحده، فما يُكتب هنا مالكُه `staff` دائماً حين لا مالكَ سابقاً —
+ * وحارسُ المالكية القائم في `setCommercialFields` يرفض الكتابةَ فوق حقلٍ
+ * يملكه الطبيبُ من صفٍّ سابقٍ لهذا التبسيط دون أن يُطلَب منه شيء إضافيّ هنا.
+ */
+export async function completeReceptionSale(params: {
+  followupId: number;
+  originalPrice: unknown;
+  discountAmount: unknown;
+  expertUserId: unknown;
+  note?: string | null;
+  actor: Actor;
+  session: CommercialSessionLike;
+  validateExpert: (
+    expertUserId: number, branchId: number | null,
+  ) => Promise<{ ok: boolean; reason?: string }>;
+  expertLabel?: (expertUserId: number) => Promise<string | null>;
+  tx?: any;
+}): Promise<CommercialResult> {
+  const offer = deriveOfferFromDiscount({
+    originalPrice: params.originalPrice, discountAmount: params.discountAmount,
+  });
+  if (!offer.ok) throw new FollowupError(offer.error ?? "سعر غير صالح", 400);
+
+  const expertId = Number(params.expertUserId);
+  if (!Number.isInteger(expertId) || expertId <= 0) {
+    throw new FollowupError("الخبير مطلوب لإتمام البيع", 400);
+  }
+
+  const result = await setCommercialFields({
+    followupId: params.followupId,
+    patch: {
+      price: { kind: offer.kind, originalPrice: offer.originalPrice, finalPrice: offer.finalPrice },
+      expertUserId: expertId,
+      decision: "bought",
+      note: params.note ?? null,
+    },
+    actor: params.actor,
+    session: params.session,
+    asDoctor: false,
+    validateExpert: params.validateExpert,
+    expertLabel: params.expertLabel,
+    tx: params.tx,
+  });
+
+  //  السعرُ والخبيرُ والقرارُ الثلاثة تُلمَس معاً دائماً في هذا الباب، فناقصةً
+  //  بعد هذا الحفظ تناقضٌ منطقيّ لا حالةً شرعية — تُقال صراحةً بدل أن يعود
+  //  البيعُ «معلَّقاً» بصمت.
+  if (!result.converted) {
+    throw new FollowupError(
+      "تعذّر إتمام البيع" + (result.missing.length
+        ? ` — بيانات ناقصة: ${missingLabel(result.missing)}`
+        : ""),
+      409,
+    );
+  }
+  return result;
+}
+
+/**
+ * **«لم يشترِ» — فعلٌ منفصل، بسببٍ حرٍّ إلزاميّ.**
+ *
+ * يُغلق الملفَّ بلا تصنيعٍ ولا كلفةٍ ولا دينار عبر `closeWithoutPurchase`
+ * نفسِها (الرمزُ الموروثُ المحايد `other` في `closed_reason`، والواقعةُ
+ * الإنسانية الحقيقية في `not_bought_reason_text`).
+ *
+ * **ومالكيةُ القرار تُحفَظ إن وُجدت** — نفسُ قاعدة «تُكتب مرّةً واحدة»: صفٌّ
+ * قرارُه محفوظٌ سلفاً (نادراً: صفٌّ عبَره طريقٌ قديم قبل هذا التبسيط) يبقي
+ * مالكَه القائم، ولا يصير كلُّ استخدامٍ لهذا الباب يسلّم الملكيةَ للاستقبال
+ * بصمت. وحارسُ `closeWithoutPurchase` الداخليّ (`assertMayOverwrite`) يرفض
+ * قلبَ قرارٍ مملوكٍ لغير صاحبه أو للمسؤول العام.
+ */
+export async function completeReceptionNotBought(params: {
+  followupId: number;
+  reason: unknown;
+  note?: string | null;
+  actor: Actor;
+  session: CommercialSessionLike;
+  tx?: any;
+}): Promise<FollowupRow> {
+  const reasonText = String(params.reason ?? "").trim();
+  if (!reasonText) throw new FollowupError("سبب عدم الشراء مطلوب", 400);
+
+  const body = async (tx: any) => {
+    const peek = await tx.execute(sql`
+      SELECT purchase_decision_owner FROM post_exam_followups WHERE id = ${params.followupId}
+    `);
+    const existingOwner = parseFieldOwner((peek.rows ?? [])[0]?.purchase_decision_owner);
+    return closeWithoutPurchase({
+      followupId: params.followupId,
+      reason: NOT_BOUGHT_LEGACY_REASON,
+      note: params.note ?? null,
+      notBoughtReasonText: reasonText,
+      decisionOwner: existingOwner ?? "staff",
+      session: params.session,
+      actor: params.actor,
+      tx,
+    });
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ── الطوابير ─────────────────────────────────────────────────────────────
