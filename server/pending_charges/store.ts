@@ -879,6 +879,24 @@ export async function returnedCounts(params: {
   return { branch: Number(row?.branch ?? 0), mine: Number(row?.mine ?? 0) };
 }
 
+/**
+ * **شارةُ الطابور الموروث** (المرحلة الخامسة) — نفسُ نمط `returnedCounts`
+ * بالضبط، لعدد صفوف `pending_review` بدل `returned`.
+ *
+ * `COUNT(*)` حيّةٌ من القاعدة لا `listLegacyOpen(...).length` — تلك مقصورةٌ
+ * بـ`LIMIT 200`، فلو تجاوز الطابورُ الحدَّ صار العددُ المعروض أقلَّ من
+ * الحقيقة. والشارةُ يجب أن تبقى دقيقةً مهما اتّسع الطابور.
+ */
+export async function legacyOpenCount(scope: number[] | null): Promise<number> {
+  const r = await db.execute(sql`
+    SELECT COUNT(*)::int AS n
+      FROM pending_service_charges c
+     WHERE c.status = 'pending_review' AND ${scopeClause(scope)}
+       AND ${belongsToActivePatientSql("c")}
+  `);
+  return Number((r.rows ?? [])[0]?.n ?? 0);
+}
+
 /** مبالغُ مريضٍ واحد — لبطاقته. الحيّةُ أوّلاً. */
 export async function listForPatient(patientId: number): Promise<ChargeRow[]> {
   const r = await db.execute(sql`

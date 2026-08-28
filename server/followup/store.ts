@@ -155,6 +155,14 @@ const SELECT_COLS = sql`id, patient_id, case_id, device_episode_id, medical_exam
 export interface Actor {
   userId: number | null;
   userName: string | null;
+  /**
+   * **لقطةُ دورٍ اختياريّة** (المرحلة الخامسة) — تُقرأ من الجلسة الموقَّعة
+   * لحظةَ الفعل نفسِه، لا من `system_users.role` لاحقاً (ذاك يتغيّر: محاسبٌ
+   * يصير مديرَ فرع). تُكتب فقط في حمولة حدثِ الحسم النهائيّ
+   * (`converted`/`closed_without_purchase`) — لا عمودَ جديداً ولا حالةً
+   * تجاريةً جديدة، القسم 4.l.
+   */
+  role?: string | null;
 }
 
 /** يُلحق حدثاً. **يُنادى داخل معاملة المُستدعي دائماً** فلا ينفصل عن انتقاله. */
@@ -1242,7 +1250,10 @@ export async function closeWithoutPurchase(params: {
       eventType: "closed_without_purchase", fromStatus: cur.status,
       toStatus: "closed_without_purchase", reason: params.reason,
       note: reasonText ?? params.note ?? null,
-      payload: reasonText ? { notBoughtReasonText: reasonText } : {},
+      payload: {
+        ...(reasonText ? { notBoughtReasonText: reasonText } : {}),
+        actorRole: params.actor.role ?? null,
+      },
       actor: params.actor,
     });
     return toRow(row);
@@ -1720,6 +1731,10 @@ const CONFIRMABLE: FollowupStatus[] = [
   "price_approved_waiting_patient",
   //  توافقٌ رجعي: صفوفٌ احتُجزت قبل هذا التبسيط تُستأنف من مكانها.
   "purchase_approval_pending",
+  //  توافقٌ رجعي (المرحلة الخامسة): صفوفٌ أقدم توقّفت عند اعتماد السعر —
+  //  كانت `COMMERCIAL_EDITABLE` تقبلها فتدخل هذه الدالّة، لكنّ هذه القائمة
+  //  كانت تنساها فتُردّ ٤٠٩ لطابور «بانتظار الحسم» رغم أنها حيّةٌ فعلاً.
+  "price_approval_pending",
 ];
 
 /**
@@ -1867,7 +1882,10 @@ export async function confirmPurchase(params: {
       followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
       eventType: "converted", fromStatus: cur.status,
       toStatus: "converted",
-      payload: { workOrderId, approvedPrice: cur.approvedPrice },
+      payload: {
+        workOrderId, approvedPrice: cur.approvedPrice,
+        actorRole: params.actor.role ?? null,
+      },
       actor: params.actor,
     });
     return { followup: toRow(row), workOrderId };

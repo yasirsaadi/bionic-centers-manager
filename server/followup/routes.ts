@@ -51,6 +51,7 @@ import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
+import * as decisionQueue from "./decision_queue_store";
 import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
@@ -64,6 +65,7 @@ import {
 import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
 import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
+import { actorRoleSnapshotOf, isDecisionQueueState } from "@shared/decision_queue";
 
 type Req = any;
 
@@ -97,7 +99,10 @@ function canReachBranch(req: Req, branchId: number | null): boolean {
 
 const actorOf = (req: Req) => {
   const s = getSession(req);
-  return { userId: s.userId, userName: s.userName };
+  //  **لقطةُ الدور** (المرحلة الخامسة) — تُقرأ من الجلسة الموقَّعة لحظةَ
+  //  الفعل نفسِه. `actorRoleSnapshotOf` تفحص `isAdmin` أوّلاً وبلا شرط —
+  //  مسؤولٌ يحمل دوراً آخر يُختَم `global_admin` بسلطته لا بدوره.
+  return { userId: s.userId, userName: s.userName, role: actorRoleSnapshotOf(s) };
 };
 
 /**
@@ -293,6 +298,103 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       filter: typeof req.query.filter === "string" ? req.query.filter : "all",
     });
     res.json(rows);
+  });
+
+  // ══ طابورُ «بانتظار الحسم / تم الحسم» — قراءةٌ فقط (المرحلة الخامسة) ═════
+  //
+  // ══ لا حقيقةَ تجاريةً جديدة هنا ═══════════════════════════════════════
+  // هذان البابان **لا يكتبان شيئاً** — نموذجُ قراءةٍ فوق `post_exam_followups`
+  // و`post_exam_followup_events` القائمتين. الكتابةُ تبقى حصراً عبر
+  // `/complete-sale` و`/not-bought` أعلاه، فلا حالةَ تجاريةً ثانية ولا
+  // `isResolved` يُخترَع.
+  //
+  // **والبوّابةُ `canCompleteReceptionSale` نفسُها** — مَن يقدر أن يحسم هو
+  // مَن يرى الطابور: لا الطبيب، ولا قائمةَ أدوارٍ جديدة.
+
+  /**
+   * **الطابور** — `state=waiting` (الافتراضي) أو `state=resolved`.
+   *
+   * `branchId` فلترةٌ صريحة **ضمن نطاق الجلسة فقط** — طلبٌ لفرعٍ خارج
+   * النطاق يُردّ ٤٠٣ لا يُوسَّع صامتاً. و`serviceType` فلترةٌ ثلاثيةٌ
+   * (طرف/مسند/الكل — غيابُها يعني الكل).
+   */
+  app.get("/api/followups/decision-queue", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCompleteReceptionSale(s)) return res.status(403).json({ error: "غير مصرح" });
+
+    const stateParam = typeof req.query.state === "string" ? req.query.state : "waiting";
+    if (!isDecisionQueueState(stateParam)) {
+      return res.status(400).json({ error: "قيمة state غير صالحة" });
+    }
+
+    let branchId: number | null = null;
+    if (typeof req.query.branchId === "string" && req.query.branchId.trim() !== "") {
+      const parsed = Number(req.query.branchId);
+      if (!Number.isFinite(parsed)) return res.status(400).json({ error: "فرعٌ غير صالح" });
+      if (!canReachBranch(req, parsed)) {
+        return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+      }
+      branchId = parsed;
+    }
+
+    const serviceTypeParam = typeof req.query.serviceType === "string"
+      ? req.query.serviceType : null;
+    const serviceType = serviceTypeParam === "prosthetic" || serviceTypeParam === "medical_support"
+      ? serviceTypeParam : null;
+
+    const limitParam = Number(req.query.limit);
+    const offsetParam = Number(req.query.offset);
+    const filter = {
+      scope: branchScope(req), branchId, serviceType,
+      limit: Number.isFinite(limitParam) && limitParam > 0 ? Math.floor(limitParam) : undefined,
+      offset: Number.isFinite(offsetParam) && offsetParam >= 0 ? Math.floor(offsetParam) : undefined,
+    };
+
+    try {
+      if (stateParam === "waiting") {
+        const out = await decisionQueue.listDecisionQueueWaiting(filter);
+        const owner = ownerSessionOf(req);
+        const mayAct = canCompleteReceptionSale(owner);
+        //  ══ **الأفعالُ من الدالّة الحارسة نفسِها** ═══════════════════════
+        //  نفسُ `examPathActions` التي تحرس `/complete-sale`/`/not-bought` —
+        //  فلا يظهر زرٌّ سيردّه الخادمُ (مثلاً حقلُ قرارٍ مملوكٌ لغير الفاعل
+        //  على صفٍّ موروثٍ نادر). لا حراسةَ ثانية تُخترَع هنا.
+        const rows = out.rows.map((r) => ({
+          ...r,
+          actions: examPathActions({
+            session: owner, status: r.status, mayAct,
+            decisionField: {
+              owner: r.purchaseDecisionOwner, ownerUserId: r.purchaseDecisionUserId,
+              ownerName: r.purchaseDecisionName,
+            },
+          }),
+        }));
+        res.json({ rows, total: out.total });
+      } else {
+        const out = await decisionQueue.listDecisionQueueResolved(filter);
+        res.json(out);
+      }
+    } catch (err) {
+      console.error("[decision-queue] تعذّر تحميل الطابور:", err);
+      res.status(500).json({ error: "تعذّر تحميل الطابور" });
+    }
+  });
+
+  /**
+   * **شارةُ الشريط الجانبيّ** — عددُ «بانتظار الحسم» ضمن نطاق الجلسة **كاملاً**
+   * بلا فلترةٍ محليّة: مسؤولٌ يفلتر الصفحةَ بفرعٍ واحد يبقى عدّادُه كلَّ
+   * الفروع — الشارةُ تعني «كم ينتظر أحداً» لا «كم يطابق فلتري الحاليّ».
+   */
+  app.get("/api/followups/decision-queue/count", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCompleteReceptionSale(s)) return res.json({ count: 0 });
+    try {
+      const count = await decisionQueue.countDecisionQueueWaiting(branchScope(req));
+      res.json({ count });
+    } catch (err) {
+      console.error("[decision-queue] تعذّر قراءة العدّاد:", err);
+      res.status(500).json({ error: "تعذّر قراءة العدّاد" });
+    }
   });
 
   // ── «بانتظار موافقتي» — **بقايا المسار القديم وحدها** ────────────────

@@ -455,6 +455,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
+  /**
+   * **شارةُ الطابور الموروث** (المرحلة الخامسة) — فيُعرَف أن هناك ما ينتظر
+   * بلا فتح الصفحة، تماماً كشارة «مُعادة للتصحيح». `count` وحده — لا حاجةَ
+   * لتفريق «لي» هنا: لا مالكَ شخصياً لصفٍّ موروث كهذا.
+   */
+  app.get("/api/no-exam/review/count", isAuthenticated, async (req: Req, res) => {
+    try {
+      if (!canFinalizeLegacyCharge(chargeSession(req))) return res.json({ count: 0 });
+      res.json({ count: await store.legacyOpenCount(branchScope(req)) });
+    } catch (err) {
+      fail(res, err, "تعذّر قراءة عدّاد المبالغ السابقة");
+    }
+  });
+
   /** **الإكمال** — ويُقيَّد المبلغُ مرّةً واحدة بالضبط بالكاتب القانونيّ. */
   app.post("/api/no-exam/charges/:id/approve", isAuthenticated, async (req: Req, res) => {
     try {
