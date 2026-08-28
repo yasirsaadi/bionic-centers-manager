@@ -332,6 +332,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
   (FollowupRow & {
     examDoctorName: string | null;
     examSignedAt: string | null;
+    examNotes: string | null;
     selectedExpertName: string | null;
     requestedItem: string | null;
     episodeServicePath: string | null;
@@ -350,6 +351,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            f.purchase_decision_user_id, f.purchase_decision_name, f.not_bought_reason_text,
            f.created_at, f.updated_at,
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
+           e.notes AS exam_notes,
            u.display_name AS selected_expert_name,
            de.requested_item, de.service_path AS episode_service_path,
            cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
@@ -374,6 +376,14 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     ...toRow(x),
     examDoctorName: x.exam_doctor_name ?? null,
     examSignedAt: x.exam_signed_at ?? null,
+    //  ══ **ملاحظاتُ الطبيب — سياقٌ للبائع، لا حقيقةٌ مالية** (تصحيحٌ
+    //  2026-08-28) ═══════════════════════════════════════════════════════
+    //  `e` هي معاينةُ **هذه المتابعة بعينها** (`f.medical_exam_id` — العلاقةُ
+    //  القانونية الوحيدة)، لا «آخرُ معاينةٍ للمريض»: مريضٌ بجهازين له
+    //  معاينتان، ولكلٍّ متابعتُه ونصُّها. **ولا تُقرأ لتُشتقّ منها قيمةٌ
+    //  ماليةٌ أبداً** — نصٌّ يُعرَض كما كُتب، والبيعُ الفعليُّ من حقول
+    //  `/complete-sale` الصريحة وحدها.
+    examNotes: x.exam_notes ?? null,
     //  **القرارُ يبقى مقروءاً بعد الإغلاق**: مَن سجّله ومتى وبأي ملاحظة.
     //  والملاحظةُ لا تختفي — هي في الحدث وفي `last_note` معاً.
     closedByName: x.closed_by_name ?? null,
@@ -2202,6 +2212,27 @@ export async function isExamPathFollowup(followupId: number): Promise<boolean> {
 // تكتبان صفاً واحداً بنفسهما.
 
 /**
+ * **بابا مسار المعاينة وحده — لا بابٌ عامٌّ لكلّ متابعة** (تصحيحٌ
+ * 2026-08-28). عقدُ البيع المبسّط (خبيرٌ + سعرٌ أصليّ + خصمٌ = بيعٌ ذرّيّ)
+ * صيغَ لمسار المعاينة (`service_path = 'exam'`) بعينه؛ صفٌّ موروثٌ —
+ * متابعةٌ بلا حلقة، أو حلقةٌ من قبل ترحيل ٠٦٥ بلا `service_path` — له
+ * قواعدُه القديمة الخاصّة (تفاصيلُ البيع القديمة، أو تأكيدُ الشراء المباشر)
+ * ولا يجوز أن يُقرأ عبر هذا الباب الجديد ولو صادف نجاحاً شكلياً.
+ *
+ * فالتحقّقُ هنا **أوّلُ ما يقع، قبل أيّ اشتقاقِ سعرٍ أو قفلِ صفّ** — صفرُ
+ * كتابةٍ على صفٍّ ليس له هذا الباب.
+ */
+async function assertExamPathFollowup(followupId: number): Promise<void> {
+  if (!(await isExamPathFollowup(followupId))) {
+    throw new FollowupError(
+      "هذه العمليةُ ليست على مسار المعاينة المبسّط — تُستكمَل من نقاطها"
+      + " القديمة المناسبة لهذا الصفّ.",
+      409,
+    );
+  }
+}
+
+/**
  * **إتمامُ بيعٍ مبسّط**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم = بيعٌ كامل.
  *
  * لا `priceKind` ولا `finalPrice` ولا `purchaseDecision` تُقبَل من العميل —
@@ -2229,6 +2260,8 @@ export async function completeReceptionSale(params: {
   expertLabel?: (expertUserId: number) => Promise<string | null>;
   tx?: any;
 }): Promise<CommercialResult> {
+  await assertExamPathFollowup(params.followupId);
+
   const offer = deriveOfferFromDiscount({
     originalPrice: params.originalPrice, discountAmount: params.discountAmount,
   });
@@ -2290,6 +2323,8 @@ export async function completeReceptionNotBought(params: {
   session: CommercialSessionLike;
   tx?: any;
 }): Promise<FollowupRow> {
+  await assertExamPathFollowup(params.followupId);
+
   const reasonText = String(params.reason ?? "").trim();
   if (!reasonText) throw new FollowupError("سبب عدم الشراء مطلوب", 400);
 

@@ -22,8 +22,11 @@
 // ولا سعرَ نهائيّاً يُكتب** — النهائيُّ معاينةٌ حيّة فقط
 // (`deriveOfferFromDiscount`، الدالّةُ التي يعتمدها الخادم بنفسها)، ولا
 // يُرسَل في الطلب أبداً. و«لم يشترِ» بقي الفعلَ الوحيد المنفصل، بسببٍ حرٍّ
-// إلزاميّ. **وهذا البابُ للاستقبال ومديرِ الفرع والمسؤول العام حصراً —
-// الطبيبُ لا يراه** (القسم 4.h/4.f في CLAUDE.md).
+// إلزاميّ. **وهذا البابُ للاستقبال والمحاسب ومديرِ الفرع والمسؤول العام —
+// الطبيبُ لا يراه أبداً** (تصحيحٌ 2026-08-28 أضاف المحاسبَ؛ القسم 4.h/4.f/4.i
+// في CLAUDE.md). **وكلُّ الأزرار القديمة على هذا المسار تقاعدت للجميع بلا
+// استثناء** — لا فرقَ هنا بين مَن يملك `complete_sale`/`not_bought` ومَن لا
+// يملكهما: كلاهما يرى البابين الجديدين وحدهما إن كانا مصرَّحَين، أو لا شيء.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -107,6 +110,9 @@ interface Followup {
   priceKind?: "normal" | "discount" | "free" | null;
   purchaseDecision?: "bought" | "not_bought" | null;
   notBoughtReasonText?: string | null;
+  // ══ ملاحظاتُ الطبيب من هذه المعاينة بعينها (تصحيحٌ 2026-08-28) ══════════
+  //  سياقٌ للبائع لا حقيقةٌ مالية — تُعرَض كما كُتبت، وللقراءة فقط.
+  examNotes?: string | null;
   events: any[];
   priceRequests: any[];
 }
@@ -507,6 +513,29 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 </span>
               )}
             </div>
+            {/*  ══ **ملاحظاتُ الطبيب من المعاينة — سياقٌ للقراءة فقط** ══════
+                (تصحيحٌ 2026-08-28) — نصُّ `medical_exams.notes` **لهذه
+                المعاينة بعينها** (`post_exam_followups.medical_exam_id`)، لا
+                «آخرُ معاينةٍ للمريض»: مريضٌ بجهازين له معاينتان ولكلٍّ
+                متابعتُه ونصُّها. الطبيبُ يكتب فيه أحياناً سعراً تقريبياً
+                ناقشه أو تفضيلاً ذكره المريض — **وهذا سياقٌ لا حقيقةٌ مالية**:
+                لا يُقرأ برمجياً ولا يُشتقّ منه سعرٌ أو خصمٌ أو خبير، والبيعُ
+                الفعليُّ من الحقول الصريحة أدناه وحدها. فارغةٌ ⟶ لا تُعرَض. */}
+            {active.examNotes && active.examNotes.trim() && (
+              <div className="rounded-md border border-emerald-300 bg-white/70 p-2.5 text-sm"
+                data-testid="block-exam-note">
+                <p className="text-xs font-semibold text-emerald-900">
+                  ملاحظاتُ الطبيب من المعاينة
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-foreground"
+                  data-testid="text-exam-note">
+                  {active.examNotes}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground" data-testid="text-exam-note-hint">
+                  للاطلاع فقط — السعر المعتمد هو المسجل في إتمام البيع.
+                </p>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               {examActions.includes("complete_sale") && (
                 <Button size="sm" disabled={busy}
@@ -557,9 +586,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {` (${fmt(active.purchaseInterestAt)})`}
           </p>
         )}
-        {/*  **والتحوّلُ يُقال ولو لم تُرفع رايةٌ قطّ**: بيعٌ تمّ مباشرةً بلا
-            إشارةٍ مسبقة كان يمرّ بلا سطرٍ يقول إنه تمّ. */}
-        {purchaseState === "converted" && !active.purchaseInterestAt && (
+        {/*  **ملخّصُ البيعِ يُعرَض دائماً بعد التحوّل — لا يُخفيه رايةٌ قديمة**
+            (تصحيحٌ 2026-08-28). كان يُقرأ بشرط «ولم تُرفع رايةُ يرغب
+            بالشراء» فيختفي كلُّ سطرٍ يذكر السعرَ والخصمَ والخبير عن أيّ ملفٍّ
+            رُفعت له تلك الرايةُ يوماً — بيعٌ حقيقيّ يبقى غيرَ مقروء. فصار
+            يُعرَض لكلّ متابعةٍ تحوّلت، **بجانب** بطاقة الرايةِ التاريخية
+            أعلاه لا بدلاً عنها. */}
+        {purchaseState === "converted" && (
           <div className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900 space-y-2"
             data-testid="text-purchase-done">
             <div>

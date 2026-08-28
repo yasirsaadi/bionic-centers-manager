@@ -26,34 +26,49 @@
 //
 // **وذاك البقاءُ الانتقاليّ انتهى الآن.** القسمُ أعلاه وصف حالاً مؤقّتة —
 // ومرحلةُ «تبسيط مبيعات الاستعلامات» التي أشار إليها هي **هذه المرحلةُ
-// بعينها** (٤.و في CLAUDE.md، فرعُ `simplify-reception-sale-flow`). فصار
+// بعينها** (٤.i في CLAUDE.md، فرعُ `simplify-reception-sale-flow`).
+//
+// ══ **⚠ تصحيحٌ 2026-08-28 — تقاعدٌ شامل، لا حظرُ طبيبٍ فحسب** ═══════════════
+// النسخةُ الأولى من هذه المرحلة قصرت التقاعدَ على الطبيب: أبقت
 // `POST /api/followups/:id/commercial` (ومعه `/expert` و`/confirm-purchase`
-// و`/approve-purchase`) **يردّ الطبيبَ العاديّ بـ٤٠٣ على أيّ متابعةٍ على
-// مسار المعاينة** — بصرف النظر عمّا يملكه من حقولٍ مملوكةٍ له سابقاً، وبصرف
-// النظر عن كونه صاحبَ هذه المعاينة بعينها أم لا. `asDoctor` لم تُحذَف من
-// الدالّة (الصفوفُ الموروثةُ من قبل هذه المرحلة قد تحمل حقولاً مملوكةً
-// للطبيب فعلاً، ومالكيتُها تبقى محفوظةً كما كانت)، **لكنّ الطريق إليها صار
-// مقفولاً على الاستقبال ومديرِ الفرع والمسؤول العام وحدهم** — فحصٌ جديد في
-// `server/followup/routes.ts` يستعمل `canCompleteReceptionSale` نفسَها التي
-// تحرس البابَ الجديد `POST /api/followups/:id/complete-sale`. **والبابُ
-// الجديد** هو محورُ الاختبار المخصَّص `server/reception_sale.test.ts` —
-// وهذا الملفّ يبقى ليثبت أن الآليّة القديمة (`setCommercialFields`
-// وذرّيّتُها وتزامنُها ومالكيّتُها) لم تُمَسّ **كمصدر**، عبر بابها القديم،
-// من فاعلٍ ما زال مخوَّلاً (الاستقبال ومديرُ الفرع والمسؤول)، ولإثبات أن
-// صفّاً موروثاً بحقلٍ مملوكٍ للطبيب من قبل هذه المرحلة يبقى محميّاً ومقروءاً
-// كما هو — لا يُمحى ولا يُعاد كتابتُه بصمت.
+// و`/approve-purchase`) **مفتوحةً للاستقبال ومديرِ الفرع والمسؤول** على مسار
+// المعاينة، وحجبت الطبيبَ وحده. **وهذا خطأٌ صُحِّح صراحةً**: البابُ الجديد
+// `/complete-sale`/`/not-bought` هو البابُ الوحيدُ الحيّ لمسار المعاينة —
+// **للجميع بلا استثناءٍ للدور**، بما فيهم الاستقبالُ ومديرُ الفرع والمسؤولُ
+// العام. فكلُّ بابٍ تجاريٍّ قديم (`/expert`, `/commercial`,
+// `/commercial-price`, `/confirm-purchase`, `/approve-purchase`, `/close`)
+// **متقاعدٌ على مسار المعاينة عقدَ مسارٍ لا قيدَ صلاحية** — الردُّ ٤٠٩ لا
+// ٤٠٣، عبر الحارس المشترك `retiredOnExamPath`. **والمحاسبُ صار مخوَّلاً
+// بالبابِ الجديد** أيضاً (كالاستقبال تماماً) — مُختبَرٌ في
+// `server/reception_sale.test.ts`، لا في هذا الملفّ.
+//
+// **وهذا غيّر مهمّةَ هذا الملفّ**: آليّةُ `setCommercialFields`
+// (المالكيةُ، الحفظُ الجزئيّ ثمّ الإكمال، التزامنُ على آخرِ حقلٍ ناقص،
+// المجّانيّةُ الصريحة …) **لم تتغيّر بحرف** — لكنّ الصفَّ الجديد
+// (`service_path = 'exam'`) لم يعد يصلها إلّا عبر `/complete-sale`
+// بعقدها المبسّط الذرّيّ (خبيرٌ + سعرٌ أصليّ + خصمٌ معاً دائماً، لا سلسلةَ
+// تعديلاتٍ جزئية). فهذا الملفُّ صار يثبت آليّةَ `setCommercialFields`
+// نفسَها عبر **صفوفٍ موروثة** (`legacyFollowup` — حلقةٌ بلا `service_path`،
+// ما قبل ترحيل ٠٦٥) حيث بابُها القديم لا يزال حيّاً بحرفه — لا لأنه يظنّ
+// الصفَّ الجديد يسلك المسارَ نفسَه، بل لأن هذه هي الطريقةُ الوحيدة الباقية
+// لاختبار الآليّة عبر بابها الأصليّ.
 //
 // وما يُثبته هنا:
 //   • **ولا مسؤوليةَ تجارية على التوقيع مهما وصل في جسمه** — قسمٌ (ي‌ب).
-//   • **والطبيبُ يُردّ عن كلّ بابٍ تجاريّ على مسار المعاينة** (قسمٌ أ) —
-//     ومالكيةُ حقلٍ موروثٍ من قبل هذه المرحلة تبقى محفوظةً ومحروسة.
-//   • مالكيةُ الحقول للموظّفين في الاتجاهين (ب–ح) — عبر البابِ الباقي.
+//   • **والتقاعدُ شاملٌ للجميع على مسار المعاينة** (قسمٌ أ) — لا الطبيبُ
+//     وحده؛ الاستقبالُ ومديرُ الفرع والمسؤولُ يُردّون هنا أيضاً بـ٤٠٩.
+//   • مالكيةُ الحقول للموظّفين في الاتجاهين، والحفظُ الجزئيّ، والتزامن،
+//     والمجّانيّةُ الصريحة (ب–ح) — **عبر صفوفٍ موروثة**، بابُها القديم الحيّ.
 //   • «اشترى» كاملاً ⟶ أمرُ تصنيعٍ **واحد** وقيدُ كلفةٍ **واحد**، بلا اعتماد.
 //   • «اشترى» ناقصاً ⟶ القرارُ **يُحفَظ**، ولا مالَ ولا تصنيع، ثمّ يُكمله
 //     الموظّف فيُتمّ الخادمُ البيعَ **ذرّياً** — وضغطتان تُنتجان تحويلاً واحداً.
 //   • «لم يشترِ» بلا سببٍ ⟶ ٤٠٠ · وبسببٍ ⟶ إغلاقٌ بلا دينار.
 //   • الخصمُ والمجّانيّة **نافذةٌ فوراً بلا `service_discount_requests`**.
 //   • و**«لم يُسعَّر» ≠ «مجّانيّ»** — الصفرُ لم يبقَ يقول الاثنين.
+//
+// **والبابُ الجديد** (`/complete-sale`, `/not-bought`) والتقاعدُ الشاملُ
+// وتكافؤُ المحاسب والاستقبال وملاحظاتُ الطبيب في بطاقة البيع — كلُّها محورُ
+// الاختبار المخصَّص `server/reception_sale.test.ts`، لا هذا الملفّ.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -221,6 +236,34 @@ async function moneyOf(patientId: number) {
   return { total: Number(p?.t ?? 0), ...n };
 }
 
+/**
+ * صفٌّ **موروث** — حلقةٌ من قبل ترحيل ٠٦٥ بلا `service_path` (`NULL`).
+ *
+ * **⚠ تصحيحٌ 2026-08-28 — لماذا هذا الملفُّ صار يعتمد عليها فعلياً**: البابُ
+ * القديم `/commercial` (ومعه `/expert`، `/confirm-purchase`،
+ * `/approve-purchase`) بقي حيّاً بحرفه، **لكن على الصفوف الموروثة وحدها**.
+ * صفٌّ جديد (`service_path = 'exam'`) لا يصل آليّةَ `setCommercialFields`
+ * إلّا عبر `/complete-sale`/`/not-bought` (المُختبَرَين حصراً في
+ * `server/reception_sale.test.ts`، بعقدهما المبسّط: خبيرٌ + سعرٌ أصليّ +
+ * خصمٌ، حفظٌ واحدٌ ذرّيّ لا سلسلةَ تعديلاتٍ جزئية). فهذا الملفُّ يستعمل صفوفاً
+ * موروثة **عمداً** ليبقى يثبت آليّةَ `setCommercialFields` نفسَها (المالكية،
+ * الحفظُ الجزئيّ ثم الإكمال، التزامنُ على آخرِ حقلٍ ناقص، المجّانيّةُ
+ * الصريحة …) عبر بابها الأصليّ — لا لأنه يظنّ الصفَّ الجديد يسلك المسارَ
+ * نفسَه.
+ */
+async function legacyFollowup(
+  label: string, caseType = "prosthetic", opts: { support?: boolean } = {},
+): Promise<{ pid: number; cid: number; fid: number }> {
+  const pid = await mkPatient(label, opts);
+  const cid = await mkCase(pid, caseType);
+  await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+             sequence_number, status, agreed_cost, requested_item, created_by)
+           VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',$3)`, [pid, cid, MANAGER]);
+  await signExam(pid, caseType);
+  const fid = await followupOf(pid);
+  return { pid, cid, fid };
+}
+
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
@@ -357,12 +400,17 @@ async function main() {
       }), `${PENDING_SALE_DATA_LABEL} — الخبير`);
 
     // ══════════════════════════════════════════════════════════════════
-    //  أ. **الطبيبُ يُردّ عن كلّ بابٍ تجاريّ على مسار المعاينة** (المرحلة
-    //     الثانية) — ومالكيةُ حقلٍ **موروثةٍ من قبلها** تبقى محفوظةً ومحروسة
+    //  أ. **تقاعدٌ شاملٌ على مسار المعاينة — للجميع بلا استثناءٍ للدور**
+    //     (تصحيحٌ 2026-08-28؛ ومالكيةُ حقلٍ **موروثة** تُختبَر على صفٍّ
+    //     موروثٍ حقيقيّ حيث بابُها الحيّ لا يزال قائماً)
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── أ. الطبيبُ خارج البابِ التجاريّ ──");
+    //  المصفوفةُ الكاملة (٦ أبوابٍ × ٥ فاعلين) في `server/reception_sale.test.ts`
+    //  قسم «ي». هنا: تأكيدٌ مركَّزٌ أن **لا فرقَ بين طبيبٍ وموظّف** على مسار
+    //  المعاينة — بالضبط الفرقُ الذي صحَّحه هذا التاريخ (كان التصميمُ الأوّل
+    //  يردّ الطبيبَ ٤٠٣ ويقبل الباقين ٢٠٠؛ صار الجميعُ ٤٠٩ سواء).
+    console.log("\n── أ. تقاعدٌ شاملٌ على مسار المعاينة ──");
     {
-      const p = await mkPatient("الطبيبُ يُردّ");
+      const p = await mkPatient("تقاعدٌ شامل");
       await mkCase(p);
       same("١١. طلبُ الجهاز على مسار المعاينة", (await startEpisode(p)).status, 201);
       //  التوقيعُ سريريٌّ محضٌ — بلا سعرٍ ولا خبيرٍ في جسمه.
@@ -370,25 +418,34 @@ async function main() {
       check(ex.status === 200 || ex.status === 201, "١٢. المعاينةُ وُقّعت", String(ex.status));
       const fid = await followupOf(p);
 
-      //  ══ **لا سلطةَ تجاريةً للطبيب على هذا المسار — بابٌ بابٌ** ═══════
-      const r1 = await commercial(fid,
-        { price: { kind: "normal", originalPrice: 1_500_000 }, expertUserId: EXPERT }, S.doc);
-      same("١٣. **الطبيبُ يُردّ عن `/commercial` على مسار المعاينة**", r1.status, 403);
-      same("١٤. **وعن `/expert` كذلك**",
-        (await http("POST", `/api/followups/${fid}/expert`, S.doc,
-          { expertUserId: EXPERT })).status, 403);
-      same("١٥. **وعن `/confirm-purchase`/`/approve-purchase`**",
-        [(await http("POST", `/api/followups/${fid}/confirm-purchase`, S.doc, {})).status,
-          (await http("POST", `/api/followups/${fid}/approve-purchase`, S.doc, {})).status],
-        [403, 403]);
-      same("   **ولا شيءَ كُتب بكلّ هذه المحاولات**",
+      //  ══ **لا فرقَ بين طبيبٍ وموظّف — عقدُ مسارٍ لا قيدُ دور** ═══════
+      for (const [who, sess] of [["الطبيب", S.doc], ["الاستقبال", S.recv],
+        ["مديرُ الفرع", S.manager], ["المسؤول", S.admin]] as any[]) {
+        const r1 = await commercial(fid,
+          { price: { kind: "normal", originalPrice: 1_500_000 }, expertUserId: EXPERT }, sess);
+        same(`١٣. **${who}: يُردّ عن \`/commercial\` على مسار المعاينة بـ٤٠٩**`, r1.status, 409);
+        same(`١٤. **${who}: وعن \`/expert\` بـ٤٠٩ كذلك**`,
+          (await http("POST", `/api/followups/${fid}/expert`, sess,
+            { expertUserId: EXPERT })).status, 409);
+        same(`١٥. **${who}: وعن \`/confirm-purchase\`/\`/approve-purchase\` بـ٤٠٩**`,
+          [(await http("POST", `/api/followups/${fid}/confirm-purchase`, sess, {})).status,
+            (await http("POST", `/api/followups/${fid}/approve-purchase`, sess, {})).status],
+          [409, 409]);
+      }
+      same("   **ولا شيءَ كُتب بكلّ هذه المحاولات — بمَن فيهم المسؤولُ العام**",
         [(await fRow(fid)).pk, (await fRow(fid)).ex, (await fRow(fid)).status],
         [null, null, "awaiting_patient_decision"]);
+    }
 
-      //  ══ **ومحاكاةُ صفٍّ من قبل هذا التبسيط**: مالكيةٌ للطبيب كُتبت حين ══
-      //  كان البابُ مفتوحاً له — تماماً كما تحاكي `sealedOverrideWrite` صفّاً
-      //  قديماً على `medical_exams`. صفٌّ بهذا الشكل قائمٌ فعلاً على
-      //  الإنتاج من قبل هذه المرحلة، والقاعدةُ **لا تمحوه ولا تعيد كتابته**.
+    {
+      //  ══ **والمالكيةُ الموروثة — على صفٍّ موروثٍ حقيقيّ** ═══════════════
+      //  صفٌّ بهذا الشكل (مالكيةٌ للطبيب على `/commercial`) قائمٌ فعلاً على
+      //  الإنتاج من قبل هذه المرحلة — لكنّ بابَه الحيّ الوحيد اليوم صفٌّ
+      //  **موروث** (`service_path IS NULL`)، لا صفٌّ على مسار المعاينة (ذاك
+      //  يُردّ ٤٠٩ فوق، بصرف النظر عن أيّ مالكية). فالحراسةُ تُختبَر هنا عبر
+      //  بابها الحيّ الحقيقيّ — `legacyFollowup` توقّع المعاينةَ بـ`S.doc`
+      //  فعلياً، فهو صاحبُها الحقيقيّ لا محاكاةً مجرَّدة.
+      const { pid: p, fid } = await legacyFollowup("مالكيةٌ موروثة");
       await q(`UPDATE post_exam_followups SET
                  original_price = 1500000, approved_price = 1500000, price_kind = 'normal',
                  price_source = 'exam',
@@ -406,11 +463,13 @@ async function main() {
       same("   ومن البابِ القديم أيضاً (`commercial-price`) — لا نافذةَ خلفية",
         (await http("POST", `/api/followups/${fid}/commercial-price`, S.manager,
           { finalPrice: 900_000, reason: "مساومة" })).status, 403);
-      same("١٧. **وصاحبُها الطبيبُ نفسُه يُردّ الآن أيضاً** — لا سلطةَ تجاريةً"
-        + " له على هذا المسار مهما ملك من حقولٍ موروثة",
+      same("١٧. **وصاحبُها الطبيبُ نفسُه يكتب فوق سعره على الصفّ الموروث**",
         (await commercial(fid, { price: { kind: "normal", originalPrice: 1_600_000 } }, S.doc)).status,
+        200);
+      same("١٨. **وطبيبٌ آخر لا يكتب فوق سعر زميله — ملكيةٌ لصاحبها لا للمهنة**",
+        (await commercial(fid, { price: { kind: "normal", originalPrice: 1_650_000 } }, S.doc2)).status,
         403);
-      same("١٨. **والمسؤولُ العام وحده يصحّح**",
+      same("١٩. **والمسؤولُ العام وحده يصحّح أيضاً**",
         (await commercial(fid, { price: { kind: "normal", originalPrice: 1_700_000 } }, S.admin)).status,
         200);
       same("   **والمالكيةُ ما زالت للطبيب** — التصحيحُ الإداريّ لا يُسلّمها للاستقبال",
@@ -418,7 +477,7 @@ async function main() {
       same("   فالاستقبالُ ما زال يُردّ بعد تصحيح المسؤول",
         (await commercial(fid, { price: { kind: "normal", originalPrice: 1 } }, S.recv)).status, 403);
       //  والخبيرُ كذلك — ومن بابه القديم أيضاً.
-      same("١٩. **والخبيرُ الذي أسنَده الطبيبُ لا يُبدَّل**",
+      same("٢٠. **والخبيرُ الذي أسنَده الطبيبُ لا يُبدَّل من الاستقبال**",
         (await commercial(fid, { expertUserId: EXPERT2 }, S.recv)).status, 403);
       same("   ولا من نقطة `expert` القديمة",
         (await http("POST", `/api/followups/${fid}/expert`, S.recv,
@@ -428,7 +487,7 @@ async function main() {
           { expertUserId: EXPERT2 })).status, 403);
       //  والمسؤولُ العام يُتمّ ما تبقّى — والملكيةُ باقيةٌ للطبيب فوق ذلك،
       //  ثمّ يقرّر «اشترى» فيكتمل البيعُ ذرّياً في المعاملة نفسِها.
-      same("٢٠. **والمسؤولُ يُتمّ ما تبقّى فيتحوّل الصفُّ**", await (async () => {
+      same("٢١. **والمسؤولُ يُتمّ ما تبقّى فيتحوّل الصفُّ**", await (async () => {
         await commercial(fid, { expertUserId: EXPERT }, S.admin);
         const done = await commercial(fid, { decision: "bought" }, S.admin);
         return done.body?.converted;
@@ -458,13 +517,10 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  ب. **(ب)(د)(و)(ح)** ما تركه الطبيبُ فارغاً يُكمله الموظّف
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ب. الفارغُ يُكمله مَن حضر ──");
+    console.log("\n── ب. الفارغُ يُكمله مَن حضر (صفٌّ موروث — بابُه القديم حيّ) ──");
     {
-      const p = await mkPatient("فراغٌ يُكمَل");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");  //  بلا سعرٍ ولا خبيرٍ ولا قرار
-      const fid = await followupOf(p);
+      //  بلا سعرٍ ولا خبيرٍ ولا قرار — `legacyFollowup` توقّع سريرياً محضاً.
+      const { pid: p, fid } = await legacyFollowup("فراغٌ يُكمَل");
       same("٢١. الصفُّ يبدأ بلا سعرٍ ولا مالك",
         [(await fRow(fid)).pk, (await fRow(fid)).po, (await fRow(fid)).ex], [null, null, null]);
       same("٢٢. **(ب) والاستقبالُ يُدخل السعرَ فينجح**",
@@ -494,14 +550,10 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  ج. **(ط)** «اشترى» كاملاً ⟶ أمرٌ واحد وقيدٌ واحد، بلا اعتماد
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ج. اشترى + بياناتٌ كاملة ──");
+    console.log("\n── ج. اشترى + بياناتٌ كاملة (صفٌّ موروث) ──");
     let convertedFollowup = 0;
     {
-      const p = await mkPatient("اشترى كاملاً");
-      const c = await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      const { pid: p, cid: c, fid } = await legacyFollowup("اشترى كاملاً");
       const set = await commercial(fid, {
         price: { kind: "normal", originalPrice: 2_000_000 },
         expertUserId: EXPERT, decision: "bought",
@@ -532,14 +584,10 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  د. **(ي)(ك)** «اشترى» ناقصاً ⟶ يُحفَظ، ثمّ يُكمَل فيُتمّ
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── د. اشترى + بياناتٌ ناقصة ──");
+    console.log("\n── د. اشترى + بياناتٌ ناقصة (صفٌّ موروث) ──");
     {
-      //  (ي) ناقصُ الخبير — عبر البابِ القديم (لا يزال متاحاً للموظّفين).
-      const p = await mkPatient("اشترى بلا خبير");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      //  (ي) ناقصُ الخبير — عبر البابِ القديم (حيٌّ على الصفوف الموروثة).
+      const { pid: p, fid } = await legacyFollowup("اشترى بلا خبير");
       const set = await commercial(fid,
         { price: { kind: "normal", originalPrice: 1_100_000 }, decision: "bought" }, S.recv);
       same("٣٠. **(ي) القرارُ حُفظ ولم يُتمّ البيع**",
@@ -547,14 +595,16 @@ async function main() {
         [false, ["expert"], "bought", "awaiting_patient_decision"]);
       same("   **ولا مالَ ولا تصنيع**",
         await moneyOf(p), { total: 0, orders: 0, cost_entries: 0, payments: 0, discounts: 0 });
-      //  والشاشةُ تقول ما ينقص.
+      //  والصفُّ **موروث** (`examPath=false`) فلا يكتسب عرضَ مسار المعاينة —
+      //  لا `statusLine` ولا `actions` («إتمام البيع»/«لم يشترِ» عرضٌ
+      //  لمسار المعاينة وحده). و`missing` تُحسَب دائماً بلا شرط examPath —
+      //  وهذا الفرقُ نفسُه بين حالةٍ حيّةٍ على مسار المعاينة (تُختبَر في
+      //  «٣٣أ» أدناه) وصفٍّ موروثٍ عاديّ.
       const card = await http("GET", `/api/followups/patient/${p}`, S.recv);
-      same("٣١. والبطاقةُ تقول «اشترى — بانتظار استكمال بيانات البيع — الخبير»",
-        [card.body?.[0]?.statusLine, card.body?.[0]?.missing], [
-          `${PENDING_SALE_DATA_LABEL} — الخبير`, ["expert"]]);
-      //  **والفعلان متاحان** — مالكيةٌ للموظّفين لا تُقفَل على أحدٍ بعينه.
-      same("   «إتمام البيع» و«لم يشترِ» متاحان",
-        card.body?.[0]?.actions, ["complete_sale", "not_bought"]);
+      same("٣١. **والصفُّ الموروث لا يكتسب عرضَ مسار المعاينة**",
+        [card.body?.[0]?.examPath, card.body?.[0]?.statusLine, card.body?.[0]?.actions,
+          card.body?.[0]?.missing],
+        [false, null, null, ["expert"]]);
       //  والاستقبالُ يُكمل آخرَ ناقصٍ ⟶ **الخادمُ يُتمّ البيع**.
       const done = await commercial(fid, { expertUserId: EXPERT }, S.recv);
       same("٣٢. **(ي) وإكمالُ الخبير أتمّ البيع ذرّياً — بلا سؤالٍ ثانٍ**",
@@ -566,11 +616,7 @@ async function main() {
     }
     {
       //  (ك) ناقصُ السعر — عبر البابِ القديم كذلك.
-      const p = await mkPatient("اشترى بلا سعر");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      const { pid: p, fid } = await legacyFollowup("اشترى بلا سعر");
       await commercial(fid, { expertUserId: EXPERT, decision: "bought" }, S.recv);
       same("٣٣. **(ك) ناقصُ السعر — القرارُ محفوظٌ والمالُ صفر**",
         [(await fRow(fid)).pd, (await fRow(fid)).pk, (await moneyOf(p)).orders], ["bought", null, 0]);
@@ -579,17 +625,41 @@ async function main() {
       same("   وإكمالُ السعر أتمّ البيع", [done.body?.converted, (await moneyOf(p)).total],
         [true, 700_000]);
     }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  هـ. **(ل)** ضغطتان على آخرِ ناقص ⟶ تحويلٌ واحد
-    // ══════════════════════════════════════════════════════════════════
-    console.log("\n── هـ. التزامن على آخرِ حقلٍ ناقص ──");
     {
-      const p = await mkPatient("ضغطتان متزامنتان");
+      //  **حالةٌ جزئيةٌ تاريخية على مسار المعاينة نفسه** — صفٌّ قد يحمل
+      //  «اشترى» بلا خبير من فترة ما قبل هذا التصحيح (كان `/commercial` حيّاً
+      //  هناك أيضاً حينذاك). البابُ الحيّ اليوم (`/complete-sale`) لا يُنتج
+      //  هذه الحالةَ أبداً — يلمس الحقولَ الثلاثة معاً دائماً — **لكنّ نموذج
+      //  القراءة يجب أن يبقى صادقاً لها، والإكمالُ عبر البابِ الجديد ممكناً.**
+      const p = await mkPatient("حالةٌ جزئيةٌ تاريخية على مسار المعاينة");
       await mkCase(p);
       await startEpisode(p);
       await signExam(p, "prosthetic");
       const fid = await followupOf(p);
+      await q(`UPDATE post_exam_followups SET
+                 original_price = 1100000, approved_price = 1100000, price_kind = 'normal',
+                 price_source = 'reception_set',
+                 price_owner = 'staff', price_owner_user_id = $2, price_owner_name = 'ريام',
+                 purchase_decision = 'bought', purchase_decision_at = NOW(),
+                 purchase_decision_owner = 'staff', purchase_decision_user_id = $2,
+                 purchase_decision_name = 'ريام'
+               WHERE id = $1`, [fid, RECV]);
+      const card = await http("GET", `/api/followups/patient/${p}`, S.recv);
+      same("٣٣أ. **والبطاقةُ تقرأ حالةً جزئيةً تاريخيةً على مسار المعاينة بصدق**",
+        [card.body?.[0]?.statusLine, card.body?.[0]?.missing, card.body?.[0]?.actions], [
+          `${PENDING_SALE_DATA_LABEL} — الخبير`, ["expert"], ["complete_sale", "not_bought"]]);
+      //  والبابُ الجديدُ وحده يُكملها — لا البابُ القديمُ المتقاعد.
+      const done2 = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 1_100_000, discountAmount: 0, expertUserId: EXPERT });
+      same("    **والبابُ الجديد يُكملها ذرّياً**", [done2.status, done2.body?.converted], [200, true]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  هـ. **(ل)** ضغطتان على آخرِ ناقص ⟶ تحويلٌ واحد (صفٌّ موروث)
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── هـ. التزامن على آخرِ حقلٍ ناقص ──");
+    {
+      const { pid: p, fid } = await legacyFollowup("ضغطتان متزامنتان");
       await commercial(fid,
         { price: { kind: "normal", originalPrice: 1_300_000 }, decision: "bought" }, S.recv);
       const [a, b] = await Promise.all([
@@ -609,13 +679,9 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  و. **(م)(ن)(ع)** «لم يشترِ»
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── و. لم يشترِ ──");
+    console.log("\n── و. لم يشترِ (صفٌّ موروث) ──");
     {
-      const p = await mkPatient("لم يشترِ");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      const { pid: p, fid } = await legacyFollowup("لم يشترِ");
       await commercial(fid, { price: { kind: "normal", originalPrice: 800_000 } }, S.recv);
       same("٣٥. **(م) بلا سببٍ ⟶ ٤٠٠**",
         (await commercial(fid, { decision: "not_bought" }, S.recv)).status, 400);
@@ -636,15 +702,10 @@ async function main() {
         [(await fRow(fid)).pd, (await fRow(fid)).pdo], ["not_bought", "staff"]);
     }
     {
-      //  (ع) قرارٌ موروثٌ للطبيب «لم يشترِ» لا يقلبه موظّف — **محاكاةُ صفٍّ
-      //  من قبل هذا التبسيط**: لا طريقَ حيّاً يكتب مالكيةً للطبيب اليوم
-      //  (القسمُ أ أعلاه)، لكنّ صفوفاً بهذا الشكل قائمةٌ فعلاً على الإنتاج،
-      //  وحارسَ المالكية عندها يبقى فعّالاً بحرفه.
-      const p = await mkPatient("قرارٌ موروثٌ: لم يشترِ");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      //  (ع) قرارٌ موروثٌ للطبيب «لم يشترِ» لا يقلبه موظّف — على **صفٍّ
+      //  موروثٍ حقيقيّ** حيث بابُ `/commercial` القديم لا يزال حيّاً، وحارسُ
+      //  المالكية عنده يبقى فعّالاً بحرفه.
+      const { pid: p, fid } = await legacyFollowup("قرارٌ موروثٌ: لم يشترِ");
       await q(`UPDATE post_exam_followups SET
                  original_price = 950000, approved_price = 950000, price_kind = 'normal',
                  price_owner = 'doctor', price_owner_user_id = $2, price_owner_name = 'سعد',
@@ -671,13 +732,9 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     //  ز. **(ر)** المجّانيُّ الصريح
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ز. مجّانيٌّ صريح ──");
+    console.log("\n── ز. مجّانيٌّ صريح (صفٌّ موروث) ──");
     {
-      const p = await mkPatient("تبرّعٌ صريح");
-      const c = await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      const { pid: p, cid: c, fid } = await legacyFollowup("تبرّعٌ صريح");
       const set = await commercial(fid, {
         price: { kind: "free", originalPrice: 1_800_000 },
         expertUserId: EXPERT, decision: "bought",
@@ -694,11 +751,7 @@ async function main() {
     }
     {
       //  **والصفرُ لم يبقَ باباً خلفياً**: تبرّعٌ صريحٌ لا يكتب فوقه أحدٌ رقماً.
-      const p = await mkPatient("تبرّعٌ لا يُكتب فوقه");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      const { pid: p, fid } = await legacyFollowup("تبرّعٌ لا يُكتب فوقه");
       await commercial(fid, { price: { kind: "free", originalPrice: 600_000 } }, S.recv);
       const sneak = await http("POST", `/api/followups/${fid}/confirm-purchase`, S.recv,
         { initialPrice: 600_000, expertUserId: EXPERT });
@@ -713,17 +766,19 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ح. العزل ──");
     {
+      //  والمسندُ على مسار المعاينة يمرّ **بالبابِ الجديد** — لا فرقَ عن
+      //  الأطراف. (`/commercial` نفسُها مُختبَرةٌ على المساند عبر الصفوف
+      //  الموروثة ضمنياً؛ الجديدُ هو `/complete-sale`، ومُختبَرٌ حصراً
+      //  للأطراف في `server/reception_sale.test.ts`، فهنا إثباتُ عزل الخدمة.)
       const p = await mkPatient("مسندٌ طبيّ", { support: true });
       await mkCase(p, "medical_support");
       same("٤٤. المسندُ يمرّ بالمسار نفسه",
         (await startEpisode(p, "medical_support")).status, 201);
       await signExam(p, "medical_support");
       const fid = await followupOf(p);
-      const set = await commercial(fid, {
-        price: { kind: "normal", originalPrice: 400_000 },
-        expertUserId: EXPERT, decision: "bought",
-      }, S.recv);
-      same("   ويُتمّ بيعَه كالأطراف", set.body?.converted, true);
+      const set = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 400_000, discountAmount: 0, expertUserId: EXPERT });
+      same("   ويُتمّ بيعَه كالأطراف — عبر البابِ الجديد", set.body?.converted, true);
     }
     {
       //  **العلاجُ الطبيعي لا متابعةَ بيعٍ له إطلاقاً** — لا حلقةَ جهازٍ له.
@@ -818,10 +873,10 @@ async function main() {
       await startEpisode(p);
       await signExam(p, "prosthetic");
       const fid = await followupOf(p);
-      await commercial(fid, {
-        price: { kind: "discount", originalPrice: 900_000, finalPrice: 700_000 },
-        expertUserId: EXPERT, decision: "bought",
-      }, S.recv);
+      //  إتمامُ البيع عبر البابِ الجديد — المسارُ الوحيدُ الحيّ على هذا
+      //  الصفّ اليوم؛ والغرضُ هنا سلامةُ الكاسكيد لا آليّةَ البيع.
+      await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 900_000, discountAmount: 200_000, expertUserId: EXPERT });
       //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
       //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
       //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
@@ -952,14 +1007,11 @@ async function main() {
         [after.dc, after.pe], [1234000, EXPERT]);
     }
     {
-      //  ⑤ **ونفسُ الحراسة تبقى فعّالة على نقطة التفاصيل** — حيث
-      //  المسؤوليةُ التجاريةُ الحقيقية تقع الآن. الخصمُ غيرُ الصالح
-      //  والمجّانيّةُ بلا أصلٍ ما زالا يُردّان **هناك**.
-      const p = await mkPatient("نقصٌ يُردّ من البطاقة");
-      await mkCase(p);
-      await startEpisode(p);
-      await signExam(p, "prosthetic");
-      const fid = await followupOf(p);
+      //  ⑤ **ونفسُ الحراسة تبقى فعّالة على `/commercial` — على صفٍّ موروثٍ
+      //  حيث بابُها حيّ.** الخصمُ غيرُ الصالح والمجّانيّةُ بلا أصلٍ ما زالا
+      //  يُردّان **هناك**؛ وتحقّقُ `/complete-sale` من العرض التجاريّ
+      //  (`deriveOfferFromDiscount`) مُختبَرٌ في `server/reception_sale.test.ts`.
+      const { pid: p, fid } = await legacyFollowup("نقصٌ يُردّ من البطاقة");
       const bad = await commercial(fid,
         { price: { kind: "free", originalPrice: null }, expertUserId: EXPERT }, S.recv);
       same("٦٧. **(٧) والبطاقةُ كذلك: نقصٌ ⟶ ٤٠٠ ولا نصفَ يُقبل**", bad.status, 400);
@@ -967,26 +1019,28 @@ async function main() {
         [(await fRow(fid)).ex, (await fRow(fid)).pk], [null, null]);
     }
     {
-      //  ⑥⑦ **لا فرقَ بين صاحب المعاينة وطبيبٍ آخر بعد اليوم** — الاثنان
-      //  يُردّان لنفس السبب: لا سلطةَ تجاريةً للطبيب إطلاقاً على هذا
-      //  المسار، **بحكم الدور وحده لا بحكم هويّة المعاينة** كما كان.
-      const p = await mkPatient("لا فرقَ بين الأطباء");
+      //  ⑥⑦ **(تصحيحٌ 2026-08-28) لا فرقَ بين صاحب المعاينة وطبيبٍ آخر —
+      //  ولا فرقَ بين طبيبٍ وموظّف أيضاً** على مسار المعاينة: الثلاثةُ
+      //  يُردّون بنفس ٤٠٩ عن `/commercial` — **تقاعدُ مسارٍ لا حراسةَ
+      //  مالكيةٍ ولا قيدَ دور**. والاستقبالُ يُتمّ البيعَ من بابه الوحيد.
+      const p = await mkPatient("لا فرقَ بين الأطباء ولا الموظّفين");
       await mkCase(p);
       await startEpisode(p);
       await signExam(p, "prosthetic");  //  DOC هو مَن وقّع
       const fid = await followupOf(p);
-      same("٦٨. **صاحبُ المعاينة والطبيبُ الآخر يُردّان معاً بنفس السبب**",
+      same("٦٨. **صاحبُ المعاينة وطبيبٌ آخر ومديرُ الفرع يُردّون معاً — ٤٠٩ للجميع**",
         [(await commercial(fid,
           { price: { kind: "normal", originalPrice: 1_000_000 } }, S.doc)).status,
           (await commercial(fid,
-            { price: { kind: "normal", originalPrice: 1_000_000 } }, S.doc2)).status],
-        [403, 403]);
-      same("   ومديرُ الفرع يمرّ بلا أن يعرقله وجودُ طبيبٍ للمريض",
-        (await commercial(fid,
-          { price: { kind: "normal", originalPrice: 1_000_000 }, expertUserId: EXPERT },
-          S.manager)).status, 200);
-      same("٦٩. **والاستقبالُ يُتمّ ما تبقّى**",
-        (await commercial(fid, { decision: "bought" }, S.recv)).body?.converted, true);
+            { price: { kind: "normal", originalPrice: 1_000_000 } }, S.doc2)).status,
+          (await commercial(fid,
+            { price: { kind: "normal", originalPrice: 1_000_000 }, expertUserId: EXPERT },
+            S.manager)).status],
+        [409, 409, 409]);
+      same("٦٩. **والاستقبالُ يُتمّ البيعَ من بابه الوحيد `/complete-sale`**",
+        (await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+          { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT })).body?.converted,
+        true);
     }
 
     // ══════════════════════════════════════════════════════════════════

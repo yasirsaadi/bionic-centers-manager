@@ -268,15 +268,15 @@ async function main() {
     same("   وبابُ «تخصيص» المباشر مغلق ما دامت حيّة",
       (await http("POST", `/api/patients/${P}/assign-manufacturing`, S.reception,
         { expertUserId: EXPERT, serviceType: "prosthetic", cost: 0 })).status, 409);
-    await http("POST", `/api/followups/${fu.id}/expert`, S.reception, { expertUserId: EXPERT });
-    //  `accept-price` متقاعدٌ على هذا المسار (٤٠٩ لا أثرَ له) — بقيّةٌ من
-    //  قبل تبسيط الاستعلامات، ونتيجتُه لا تُقرأ هنا أصلاً.
-    await http("POST", `/api/followups/${fu.id}/accept-price`, S.reception, {});
-    //  **والاستقبالُ ومديرُ الفرع والمسؤولُ يُتمّون المسارَ وحدهم الآن**
-    //  (المرحلةُ الثانية — `test:reception-sale`): الطبيبُ العاديّ صار
-    //  يُردّ ٤٠٣ عن هذا الباب على مسار المعاينة، فلا سلطةَ تجاريةً له
-    //  إطلاقاً (القسم 4.h/4.f في CLAUDE.md).
-    const assign = await http("POST", `/api/followups/${fu.id}/approve-purchase`, S.reception, {});
+    //  ⚠ **(تصحيحٌ 2026-08-28)** — `/expert`و`/accept-price`و`/approve-purchase`
+    //  القديمة متقاعدةٌ الآن على مسار المعاينة **للجميع بلا استثناءٍ للدور**
+    //  (عقدُ مسارٍ لا قيدُ صلاحية — لا الاستقبال ولا مديرُ الفرع ولا
+    //  المسؤول، تماماً كالطبيب). **والبابُ الوحيد الحيّ**
+    //  `/complete-sale` (المرحلةُ الثانية وتصحيحُها — تفصيلُه الكامل في
+    //  `test:reception-sale`): حفظٌ واحد يختار الخبيرَ ويعتمد السعرَ
+    //  الأصليّ (بلا خصم هنا) ويبدأ التصنيعَ معاً ذرّياً.
+    const assign = await http("POST", `/api/followups/${fu.id}/complete-sale`, S.reception,
+      { originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT });
     same("   وتأكيدُ الشراء بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],
