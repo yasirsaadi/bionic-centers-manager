@@ -278,7 +278,6 @@ async function main() {
     const before = await storage.getPatient(pCase);
     const added = await storage.addPatientCaseType({
       patientId: pCase, caseType: "amputee", fields: {},
-      serviceCost: 0, paidNow: 0,
       expertUserId: null, expectedDeliveryDate: null,
       skipWorkOrder: true, performedBy: MANAGER,
     });

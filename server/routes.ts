@@ -2905,6 +2905,19 @@ export async function registerRoutes(
         }
       }
 
+      // ══ صدقُ القرار (تصحيحٌ معماريّ) ═══════════════════════════════════
+      // «إضافة نوع حالة» تفعيلٌ فقط — بلا سلطةٍ مالية أبداً. كلفةٌ أو دفعةٌ
+      // موجبة هنا كانتا تفتحان كاتبَ مالٍ مختفياً (كلفةُ المريض + قيدُ كلفة
+      // + دفعة) بلا أن يمرّ أحدٌ بمسار الخدمة أو بتسجيل الدفعة. فتُردّان
+      // ٤٠٠ **قبل** أيّ لمسٍ لملفّ المريض أو حالته أو زيارته.
+      const reqServiceCost = Number(req.body?.serviceCost) || 0;
+      const reqPaidNow = Number(req.body?.paidNow) || 0;
+      if (reqServiceCost > 0 || reqPaidNow > 0) {
+        return res.status(400).json({
+          message: "إضافةُ نوع الحالة لا تسجّل كلفة أو دفعة — استخدم مسار الخدمة أو تسجيل الدفعة المالية للتسعير والقبض.",
+        });
+      }
+
       const caseType = req.body?.caseType;
       if (!["amputee", "medical_support", "physiotherapy"].includes(caseType)) {
         return res.status(400).json({ message: "نوع الحالة غير صالح" });
@@ -2963,16 +2976,16 @@ export async function registerRoutes(
         Object.assign(fields, measures);
       }
 
-      const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
-      const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
-
       // Expert assignment is now a SEPARATE step ("تحديد خبير" in the patients
       // registry), so adding a case type never asks for an expert or a delivery
-      // date and never creates the work order here. The case (and its cost) is
-      // recorded; the expert is assigned afterward, and commits to the delivery
-      // date only when reaching the mold stage.
+      // date and never creates the work order here. The case is recorded with
+      // NO cost — pricing and payment happen through the dedicated service or
+      // payment path, never here (the guard above already rejects any attempt
+      // to smuggle money through this endpoint). The expert is assigned
+      // afterward, and commits to the delivery date only when reaching the
+      // mold stage.
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
-        patientId, caseType, fields, serviceCost, paidNow,
+        patientId, caseType, fields,
         expertUserId: null, expectedDeliveryDate: null,
         skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,

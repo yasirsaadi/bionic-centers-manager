@@ -1824,20 +1824,24 @@ export class DatabaseStorage implements IStorage {
   // Adds a case type (amputee / medical_support / physiotherapy) to an
   // EXISTING patient — the one-person-one-record principle: the same human
   // never gets a second patient row just because a new service type started.
-  // Atomic: flags + optional cost + optional payment + (for manufacturing
-  // types) the work order and its first history row all commit together.
+  //
+  // **صدقُ القرار (تصحيحٌ معماريّ)** — هذه الدالّةُ **بلا سلطةٍ مالية** الآن،
+  // ولا يمكن لأيّ منادٍ — حاضرٍ أو مستقبليّ — أن يحوّلها إلى كاتبِ مال:
+  // لا `serviceCost` ولا `paidNow` في عقدها، فلا تلمس `patients.total_cost`،
+  // ولا تُنشئ `cost_entries`، ولا `payments`. الحالةُ الجديدة تُفتح بكلفةِ
+  // صفرٍ دائماً؛ التسعيرُ والقبضُ من مسار الخدمة أو الدفعة المخصَّص لا من
+  // هنا. Atomic: flags + case activation + (for manufacturing types) the
+  // work order and its first history row all commit together.
   async addPatientCaseType(params: {
     patientId: number;
     caseType: "amputee" | "medical_support" | "physiotherapy";
     fields: Partial<InsertPatient>;
-    serviceCost: number;
-    paidNow: number;
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
     skipWorkOrder?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number | null }> {
-    const { patientId, caseType, fields, serviceCost, paidNow } = params;
+    const { patientId, caseType, fields } = params;
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
@@ -1847,14 +1851,12 @@ export class DatabaseStorage implements IStorage {
       if (caseType === "amputee") flagPatch.isAmputee = true;
       else if (caseType === "medical_support") flagPatch.isMedicalSupport = true;
       else flagPatch.isPhysiotherapy = true;
-      if (serviceCost > 0) flagPatch.totalCost = (existing.totalCost || 0) + serviceCost;
+      //  لا لمسَ لـ`totalCost` هنا بعد اليوم — القرارُ فقط، بلا كلفة.
 
       const [patient] = await tx.update(patients)
         .set(flagPatch)
         .where(eq(patients.id, patientId))
         .returning();
-      //  القيدُ يُكتب **بعد** إنشاء الحالة أدناه ليحمل معرّفها (ترحيل ٠٥٦):
-      //  قسمُ هذه الكلفة هو النوعُ الذي أُضيف بعينه، لا شيء أعمّ منه.
 
       const caseLabel = caseType === "amputee" ? "أطراف صناعية"
         : caseType === "medical_support" ? "مساند طبية" : "علاج طبيعي";
@@ -1882,15 +1884,13 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
       let caseId: number;
       if (existingCase) {
+        //  حالةٌ قائمة أصلاً — قرارٌ يفعّلها، بلا لمسِ كلفتها القائمة.
         caseId = existingCase.id;
-        if (serviceCost > 0) {
-          // A human priced this addition — mark manual so the floor keeps out.
-          await tx.update(patientCases).set({ cost: (existingCase.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-        }
       } else {
+        //  حالةٌ جديدة تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
         const [newCase] = await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: serviceCost, details: cleanDetails,
-          costSource: serviceCost > 0 ? "manual" : "auto",
+          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: 0, details: cleanDetails,
+          costSource: "auto",
         }).onConflictDoNothing().returning();
         // Unique-index race: another path created the case between our select
         // and insert — fall back to the existing row.
@@ -1900,19 +1900,11 @@ export class DatabaseStorage implements IStorage {
           const [raced] = await tx.select().from(patientCases)
             .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
           caseId = raced.id;
-          if (serviceCost > 0) {
-            await tx.update(patientCases).set({ cost: (raced.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-          }
         }
       }
 
-      //  قيدُ الكلفة — هنا لأن `caseId` صار معروفاً (ترحيل ٠٥٦).
-      if (serviceCost > 0) {
-        await tx.insert(costEntries).values({
-          patientId, branchId: existing.branchId, amount: serviceCost,
-          source: "add_case_type", caseId,
-        });
-      }
+      //  لا قيدَ كلفةٍ هنا بعد اليوم — راجع صدقَ القرار في توثيق الدالّة
+      //  أعلاه. التسعيرُ من مسار الخدمة المخصَّص وحده.
 
       // Timeline marker so the patient's history shows when the new case
       // type started — attributed to the new case.
@@ -1921,18 +1913,10 @@ export class DatabaseStorage implements IStorage {
         branchId: existing.branchId,
         caseId,
         details: "إضافة نوع حالة",
-        notes: `إضافة نوع حالة: ${caseLabel}${serviceCost > 0 ? ` (تكلفة: ${serviceCost.toLocaleString()} د.ع)` : ""}`,
+        notes: `إضافة نوع حالة: ${caseLabel}`,
       });
 
-      if (paidNow > 0) {
-        await tx.insert(payments).values({
-          patientId,
-          branchId: existing.branchId,
-          caseId,
-          amount: paidNow,
-          notes: `دفعة عند إضافة نوع حالة: ${caseLabel}`,
-        });
-      }
+      //  ولا دفعةَ هنا كذلك — القبضُ من مسار الدفعة المخصَّص وحده.
 
       // Manufacturing types get a work order assigned to ONE expert, with
       // the first history row — same shape as new-patient registration.

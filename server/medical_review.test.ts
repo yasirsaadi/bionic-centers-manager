@@ -603,6 +603,73 @@ async function main() {
       Number((await q(`SELECT COUNT(*)::int c FROM medical_review_requests WHERE patient_id=$1`,
         [autoCase]))[0].c), 1);
 
+    // ══ ١٩ب. صدقُ القرار — «إضافة نوع حالة» بلا سلطةٍ مالية أبداً ═══════
+    // (تصحيحٌ معماريّ) — `storage.addPatientCaseType` لم يعد يقبل
+    // `serviceCost`/`paidNow` في عقدها إطلاقاً، ولا تلمس كلفةَ المريض ولا
+    // تُنشئ قيدَ كلفةٍ ولا دفعة. والنقطةُ ترفض أيّ محاولةِ إرسالِ كلفةٍ أو
+    // دفعةٍ موجبة بـ ٤٠٠ **قبل** أيّ لمسٍ لملفّ المريض أو حالته أو زيارته.
+    console.log("\n── ١٩ب. صدقُ القرار: إضافة نوع حالة بلا سلطةٍ مالية ──");
+    const dCosts = async (patientId: number) =>
+      (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [patientId]))[0].n;
+    const dPayments = async (patientId: number) =>
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [patientId]))[0].n;
+    const dTotalCost = async (patientId: number) =>
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [patientId]))[0].total_cost);
+
+    // أ-هـ. حقولٌ ماليةٌ محذوفة تماماً ⟶ إضافةٌ عاديّة بلا أثرٍ ماليّ.
+    const dp1 = await mk("صدق القرار — بلا حقول مالية", {});
+    const addOmitted = await http("POST", `/api/patients/${dp1}/add-case-type`, S.recv1, {
+      caseType: "medical_support",
+    });
+    same("أ. إضافةٌ بلا حقولٍ ماليةٍ إطلاقاً ⟶ تنجح", addOmitted.status, 200);
+    same("ب. وكلفةُ المريض لم تتحرّك", await dTotalCost(dp1), 0);
+    const dp1CaseCost = Number((await q(
+      `SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`,
+      [dp1]))[0].cost);
+    same("ج. وحالتُها الجديدةُ تبدأ بكلفةِ صفر", dp1CaseCost, 0);
+    same("د. ولا قيدَ كلفةٍ أُنشئ", await dCosts(dp1), 0);
+    same("هـ. ولا دفعةَ أُنشئت", await dPayments(dp1), 0);
+
+    // وحقولٌ ماليةٌ صريحةٌ بصفر ⟶ نفسُ السلوك — الصفرُ ليس التباساً.
+    const dp2 = await mk("صدق القرار — صفرٌ صريح", {});
+    const addZero = await http("POST", `/api/patients/${dp2}/add-case-type`, S.recv1, {
+      caseType: "medical_support", serviceCost: 0, paidNow: 0,
+    });
+    same("   وبحقولٍ ماليةٍ صفرٍ صريحة ⟶ تنجح أيضاً بلا أثر", addZero.status, 200);
+    same("   وكلفةُ المريض لم تتحرّك", await dTotalCost(dp2), 0);
+    same("   ولا قيدَ كلفةٍ ولا دفعة", [await dCosts(dp2), await dPayments(dp2)], [0, 0]);
+
+    // و. كلفةٌ موجبة ⟶ تُرفَض ٤٠٠، وصفرُ كتابةٍ نظيف.
+    const dp3 = await mk("صدق القرار — كلفةٌ موجبة مرفوضة", {});
+    const rejCost = await http("POST", `/api/patients/${dp3}/add-case-type`, S.recv1, {
+      caseType: "medical_support", serviceCost: 100_000,
+    });
+    same("و. كلفةٌ موجبة ⟶ تُرفَض ٤٠٠", rejCost.status, 400);
+    check(/لا تسجّل كلفة أو دفعة/.test(rejCost.body?.message ?? ""),
+      "   برسالةٍ تدلّ على مسار الخدمة أو تسجيل الدفعة", rejCost.body?.message);
+    same("   **ولا حالةَ فُتحت**",
+      (await q(`SELECT 1 FROM patient_cases WHERE patient_id=$1`, [dp3])).length, 0);
+    same("   **ولا العلمُ رُفع**",
+      (await q(`SELECT is_medical_support FROM patients WHERE id=$1`, [dp3]))[0].is_medical_support,
+      false);
+    same("   ولا زيارةَ (سجلّ الجدول الزمني) كُتبت",
+      (await q(`SELECT 1 FROM visits WHERE patient_id=$1`, [dp3])).length, 0);
+    same("   ولا كلفةَ المريض تحرّكت", await dTotalCost(dp3), 0);
+    same("   ولا قيدَ كلفةٍ ولا دفعة", [await dCosts(dp3), await dPayments(dp3)], [0, 0]);
+
+    // ز. دفعةٌ موجبة ⟶ تُرفَض ٤٠٠ كذلك، ولو كانت الكلفةُ صفراً.
+    const dp4 = await mk("صدق القرار — دفعةٌ موجبة مرفوضة", {});
+    const rejPaid = await http("POST", `/api/patients/${dp4}/add-case-type`, S.recv1, {
+      caseType: "medical_support", serviceCost: 0, paidNow: 50_000,
+    });
+    same("ز. دفعةٌ موجبة ⟶ تُرفَض ٤٠٠ ولو كانت الكلفةُ صفراً", rejPaid.status, 400);
+    same("   **ولا حالةَ فُتحت**",
+      (await q(`SELECT 1 FROM patient_cases WHERE patient_id=$1`, [dp4])).length, 0);
+    same("   ولا زيارةَ (سجلّ الجدول الزمني) كُتبت",
+      (await q(`SELECT 1 FROM visits WHERE patient_id=$1`, [dp4])).length, 0);
+    same("   ولا كلفةَ المريض تحرّكت", await dTotalCost(dp4), 0);
+    same("   ولا قيدَ كلفةٍ ولا دفعة", [await dCosts(dp4), await dPayments(dp4)], [0, 0]);
+
     // ══ ٢٠. التوجيه التلقائي — «جهاز جديد» (حلقة) ══════════════════════
     console.log("\n── ٢٠. توجيهٌ تلقائي: جهاز جديد ──");
     //  مريضٌ **قديم** عمداً: هو مَن كان يسقط من كل القوائم.
