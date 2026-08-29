@@ -150,6 +150,7 @@ async function fRow(id: number) {
   const [r] = await q(`SELECT approved_price::int p, original_price::int op, price_kind pk,
       selected_expert_user_id ex, purchase_decision pd, purchase_decision_owner pdo,
       not_bought_reason_text nbr, status, closed_reason cr, converted_work_order_id wo,
+      case_id, device_episode_id, service_type,
       created_at ca
     FROM post_exam_followups WHERE id=$1`, [id]);
   return r ?? null;
@@ -162,6 +163,16 @@ async function moneyOf(patientId: number) {
       (SELECT count(*)::int FROM service_discount_requests WHERE patient_id=$1) AS discounts`,
     [patientId]);
   return { total: Number(p?.t ?? 0), ...n };
+}
+/** صفوفُ `payments` كاملةً — للقبض الاختياري عند إتمام البيع (القسم ف). */
+async function paymentsOf(patientId: number) {
+  return q<{
+    id: number; amount: number; case_id: number | null;
+    device_episode_id: number | null; payment_treatment_type: string | null;
+    notes: string | null;
+  }>(
+    `SELECT id, amount::int, case_id, device_episode_id, payment_treatment_type, notes
+       FROM payments WHERE patient_id=$1 ORDER BY id`, [patientId]);
 }
 
 /** مريضٌ + حالة + طلبُ جهازٍ على مسار المعاينة + معاينةٌ موقّعة = متابعةٌ جاهزة. */
@@ -852,6 +863,44 @@ async function main() {
       check(
         /\/api\/manufacturing\/experts\?branchId=\$\{branchId\}/.test(shared),
         "٨. **والطلبُ الفعليّ في المكوّن المشترك يحمل `?branchId=<فرع العملية>`**");
+
+      // ══ **I. القبضُ الاختياري — حارسُ مصدرٍ على الواجهة** ═════════════
+      //  البيعُ والقبضُ واقعتان مختلفتان في الشاشة أيضاً — لا حقل «مبلغٌ
+      //  مدفوع» يُملأ من أيّ مكانٍ غير الموظّف نفسِه.
+      check(
+        shared.includes("input-complete-sale-paid-now"),
+        "I. **حقلُ «المبلغ المدفوع الآن» الاختياريّ موجودٌ في نافذة إتمام البيع**");
+      check(
+        /المبلغ المدفوع الآن/.test(shared),
+        "   **بتسميةٍ عربية واضحة**");
+      check(
+        shared.includes('const [cPaidNow, setCPaidNow] = useState("");'),
+        "   **ويبدأ فارغاً دائماً** — القيمةُ الابتدائية سلسلةٌ فارغة، لا صفرٌ ولا سعرٌ محسوب");
+      check(
+        /paidNow:\s*cPaidNow/.test(shared),
+        "   **والطلبُ يرسل `paidNow` من هذا الحقل بعينه**");
+      check(
+        /اتركه فارغاً إذا لم يُستلم مبلغ الآن/.test(shared),
+        "   **ونصُّ مساعدةٍ عربيّ صريحٌ يشرح ترْكَه فارغاً وتسجيلَ الدفعة لاحقاً**");
+      check(
+        shared.includes("text-complete-sale-remaining")
+        && /الباقي بعد هذا القبض/.test(shared),
+        "   **ويعرض الباقي بعد هذا القبض حين يوجد سعرٌ نهائيّ صالح**");
+      //  ══ **ولا تعبئةَ تلقائية من أيّ قيمةٍ أخرى — هذا هو الجوهر** ══════
+      //  `setCPaidNow(` يجب ألّا تُستدعى إلّا مرّتين حرفياً في الملفّ كلِّه:
+      //  تصفيرُها في `reset`، وحقلُها هو (`onValueChange`). أيّ استدعاءٍ
+      //  ثالثٍ — من `cOriginal`/`cDiscount`/`csOffer`/`prefill` أو أيّ مصدرٍ
+      //  آخر — يعني تعبئةً تلقائية، وهي محظورةٌ صراحةً.
+      const paidNowSetCalls = (shared.match(/setCPaidNow\(/g) ?? []).length;
+      check(
+        paidNowSetCalls === 2,
+        "   **ولا تعبئةَ تلقائية من السعر الأصليّ أو النهائيّ أو الخصم أو أيّ تعبئةٍ مسبقة** —"
+        + " `setCPaidNow` تُستدعى مرّتين فقط في كامل الملفّ (تصفيرٌ + حقلُها هو)",
+        `العددُ الفعليّ: ${paidNowSetCalls}`);
+      check(
+        !/setCPaidNow\(\s*(cOriginal|cDiscount|csOffer|prefill)/.test(shared),
+        "   **وبالتحديد: لا نداءَ `setCPaidNow` يقرأ من `cOriginal`/`cDiscount`/`csOffer`/`prefill`**"
+        + " — بما فيها زرُّ فتح النافذة المُعبِّئ من `prefill`، الذي لا يمسّ هذا الحقل");
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -889,6 +938,135 @@ async function main() {
       //  ٩. وخبيرٌ من فرعٍ آخر يبقى مرفوضاً عند البيع الفعليّ — الحارسُ
       //  الحقيقيّ يبقى في `/complete-sale` لا في طلب القائمة (مُختبَرٌ أصلاً
       //  في القسم د: «١٢. وخبيرٌ فعّالٌ في فرعٍ آخر ⟶ ٤٠٠» — لا يتكرّر هنا).
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ف. القبضُ الاختياريّ (`paidNow`) عند إتمام البيع — البيعُ ≠ القبض
+    // ══════════════════════════════════════════════════════════════════
+    //  قرارُ المالك: حقلٌ اختياريّ محضٌ في نافذة «إتمام البيع» — الموظّفُ
+    //  يكتب المبلغَ الذي استلمه فعلاً الآن، أو يتركه فارغاً ويسجّل الدفعةَ
+    //  لاحقاً من فعلها المعتاد. البيعُ يمضي في الحالتين بلا فرق.
+    console.log("\n── ف. القبضُ الاختياري عند إتمام البيع ──");
+    {
+      const { pid, fid } = await readySale("قبضٌ محذوف");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+      same("A. `paidNow` محذوفةٌ تماماً ⟶ البيعُ ينجح كالمعتاد",
+        [r.status, r.body?.converted], [200, true]);
+      same("   والكلفةُ تُقيَّد بالكامل كما كانت دائماً", (await moneyOf(pid)).total, 1_000_000);
+      same("   **ولا دفعةَ واحدة أُنشئت**", (await paymentsOf(pid)).length, 0);
+      same("   والاستجابةُ تقول ذلك صراحةً (`payment: null`)", r.body?.payment, null);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ صفرٌ صريح");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 0 });
+      same("B. `paidNow: 0` صريحةٌ ⟶ نفسُ سلوك الحذف بالضبط",
+        [r.status, r.body?.converted], [200, true]);
+      same("   ولا دفعةَ هنا كذلك", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ جزئيّ");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 300_000 });
+      same("C. قبضٌ جزئيّ (٣٠٠,٠٠٠ من ١,٠٠٠,٠٠٠) ⟶ البيعُ ينجح",
+        [r.status, r.body?.converted], [200, true]);
+      const money = await moneyOf(pid);
+      same("   **وكلفةُ البيع كاملةً ١,٠٠٠,٠٠٠** — القبضُ لا يغيّر الكلفة", money.total, 1_000_000);
+      const pays = await paymentsOf(pid);
+      same("   **ودفعةٌ واحدةٌ بالضبط بمبلغ ٣٠٠,٠٠٠**",
+        pays.map((p) => Number(p.amount)), [300_000]);
+      const row = await fRow(fid);
+      same("   **والدفعةُ منسوبةٌ لنفس حالة/جهاز المتابعة المباعة**",
+        [pays[0].case_id, pays[0].device_episode_id], [row.case_id, row.device_episode_id]);
+      same("   **بوسم الجهاز الصحيح** («أطراف صناعية»)",
+        pays[0].payment_treatment_type, "أطراف صناعية");
+      same("   وملاحظةٌ واضحة", pays[0].notes, "دفعة عند إتمام البيع");
+      same("   **والمتبقّي ٧٠٠,٠٠٠**", money.total - Number(pays[0].amount), 700_000);
+      same("   والاستجابةُ تحمل الدفعةَ المُنشأة بعينها",
+        [r.body?.payment?.id, r.body?.payment?.amount], [pays[0].id, 300_000]);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ كامل");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 500_000 });
+      same("D. قبضٌ يساوي السعرَ النهائيّ بالضبط ⟶ البيعُ ينجح",
+        [r.status, r.body?.converted], [200, true]);
+      const pays = await paymentsOf(pid);
+      same("   **ودفعةٌ واحدةٌ بكامل المبلغ — مرّةً واحدة لا مرّتين**",
+        pays.map((p) => Number(p.amount)), [500_000]);
+      same("   **والمتبقّي صفر**", (await moneyOf(pid)).total - Number(pays[0].amount), 0);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ يتجاوز السعر");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 600_001 });
+      same("E. مبلغٌ مدفوعٌ يتجاوز السعرَ النهائيّ ⟶ ٤٠٠", r.status, 400);
+      same("   **ولا تحويلَ ولا أمرَ تصنيعٍ ولا قيدَ كلفة**", await moneyOf(pid), ZERO_MONEY);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+      same("   والصفُّ كما بدأ", (await fRow(fid)).status, "awaiting_patient_decision");
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ سالب");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: -1 });
+      same("F. مبلغٌ سالبٌ ⟶ ٤٠٠", r.status, 400);
+      same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ نصّيٌّ مشوَّه");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: "abc" });
+      same("   ومبلغٌ غيرُ رقميّ (\"abc\") ⟶ ٤٠٠ كذلك", r.status, 400);
+      same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("قبضٌ كسريّ");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 100.5 });
+      same("   ومبلغٌ كسريّ (١٠٠٫٥) ⟶ ٤٠٠ — الدينارُ لا يتجزّأ", r.status, 400);
+      same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("مجّانيّ — بلا قبض");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT });
+      same("G. بيعٌ مجّانيّ بلا قبضٍ ⟶ ينجح، مجّانيّاً صراحةً",
+        [r.status, r.body?.converted, (await fRow(fid)).pk], [200, true, "free"]);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("مجّانيّ — صفرٌ صريح");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 0 });
+      same("   وصفرٌ صريحٌ للقبض على المجّانيّ ⟶ ينجح كذلك", [r.status, r.body?.converted],
+        [200, true]);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("مجّانيّ — قبضٌ موجب مرفوض");
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 1 });
+      same("   وقبضٌ موجبٌ على المجّانيّ ⟶ ٤٠٠ — حتى دينارٌ واحد", r.status, 400);
+      same("   **وصفرُ كتابةٍ كامل — لا تحويل ولا دفعة**", await moneyOf(pid), ZERO_MONEY);
+      same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      const { pid, fid } = await readySale("ضغطةٌ ثانيةٌ بعد قبض");
+      const body = {
+        originalPrice: 400_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 150_000,
+      };
+      const first = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv, body);
+      same("H. أوّل حفظٍ بقبضٍ جزئيّ ⟶ ينجح", [first.status, first.body?.converted], [200, true]);
+      const second = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv, body);
+      same("   **وإعادةُ الطلب نفسِه بعد النجاح ⟶ تُرفَض** (الصفُّ محوَّلٌ أصلاً — حارسُ"
+        + " `setCommercialFields` القائم)", second.status, 409);
+      const pays = await paymentsOf(pid);
+      same("   **ودفعةٌ واحدةٌ بالضبط رغم الإعادة — لا قبضَ مزدوج**", pays.length, 1);
+      same("   بنفس المبلغ الأصليّ", Number(pays[0].amount), 150_000);
     }
 
     console.log(

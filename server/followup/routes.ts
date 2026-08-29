@@ -48,6 +48,7 @@
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { createJournalForPayment } from "../accounting/auto_journal";
 import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
@@ -710,6 +711,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         originalPrice: req.body?.originalPrice,
         discountAmount: req.body?.discountAmount,
         expertUserId: req.body?.expertUserId,
+        //  اختياريّ محضٌ — راجع `parsePaidNow` في المخزن. لا يُشتقّ من
+        //  السعر ولا الخصم، وغيابُه لا يعني شيئاً غير «لم يُقبَض الآن».
+        paidNow: req.body?.paidNow,
         note: str(req.body?.note),
         actor: actorOf(req),
         session: ownerSessionOf(req),
@@ -747,11 +751,30 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           + ` ${out.followup.approvedPrice.toLocaleString()} د.ع`
           + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
       });
+      // ══ القبضُ الاختياري — **بعد** نجاح المعاملة، خارجها تماماً ═══════
+      //  نفسُ نمط كلّ نقطةِ دفعةٍ أخرى في هذا الريبو: القيدُ اليوميّ
+      //  والتدقيقُ يقعان بعد الالتزام، لا داخل معاملة المخزن — فشلُ أيٍّ
+      //  منهما لا يمسّ الدفعةَ المحفوظة فعلاً (`createJournalForPayment`
+      //  «آمنٌ للفشل» بتصميمه). ولا محاسبةَ ثانية تُخترَع هنا.
+      if (out.payment) {
+        await createJournalForPayment(out.payment, s.userId);
+        await logAudit({
+          entityType: "payment",
+          entityId: out.payment.id,
+          action: "create",
+          userId: s.userId, userName: s.userName,
+          branchId: out.payment.branchId,
+          newValues: out.payment,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+        });
+      }
       res.json({
         ...out.followup,
         converted: out.converted,
         workOrderId: out.workOrderId,
         decisionLabel: PURCHASE_DECISION_LABELS.bought,
+        payment: out.payment,
       });
     } catch (e) { if (!fail(res, e)) throw e; }
   });
