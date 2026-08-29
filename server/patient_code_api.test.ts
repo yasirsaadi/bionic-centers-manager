@@ -258,6 +258,74 @@ async function main() {
       "س. **بلا جلسة: الرمز لا يُرجع شيئاً**", String(anon.status));
     same("   ولا نقطةَ بحثٍ عامّة بالرمز",
       (await fetch(`${BASE}/api/patient-code/${afterCode}`)).status, 404);
+
+    // ══ صدقُ التسجيل — لا كلفةَ عند تسجيل مريضٍ جديد أبداً ═══════════════
+    // (تصحيحٌ معماريّ) — `storage.createPatient()` تفرض totalCost=0 دائماً
+    // ولا تكتب `cost_entries` بمصدر `registration` بعد اليوم، والنقطةُ
+    // ترفض أيّ `totalCost` غيرَ صفريّ بـ ٤٠٠ **قبل** أيّ كتابة.
+    console.log("\n── صدقُ التسجيل: لا كلفةَ عند التسجيل ──");
+    const regCosts = async (patientId: number) =>
+      (await q(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [patientId]))[0].n;
+    const regPayments = async (patientId: number) =>
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [patientId]))[0].n;
+
+    // A. كلفةٌ محذوفة (الافتراضُ في createVia) ⟶ تسجيلٌ ناجح بكلفةِ صفر.
+    const regOmitted = await createVia(S.recv1, { name: "تسجيلٌ بلا كلفة" });
+    same("A. تسجيلٌ بلا حقل كلفةٍ إطلاقاً ⟶ ينجح", regOmitted.status, 201);
+    same("   وكلفتُه صفر", Number(regOmitted.body?.totalCost ?? -1), 0);
+    const pRegOmitted = regOmitted.body.id;
+
+    // B. كلفةٌ صفرٌ صريحة — ما يرسله CreatePatient.tsx فعلياً ⟶ نفسُ النجاح.
+    const regZero = await createVia(S.recv1, { name: "تسجيلٌ بصفرٍ صريح", totalCost: 0 });
+    same("B. تسجيلٌ بـ`totalCost: 0` صريحة ⟶ ينجح كذلك", regZero.status, 201);
+    same("   وكلفتُه صفر", Number(regZero.body?.totalCost ?? -1), 0);
+    const pRegZero = regZero.body.id;
+
+    // C/D. ولا قيدَ كلفةٍ (تسجيل) ولا دفعةَ لأيٍّ من الاثنين.
+    same("C. ولا قيدَ كلفةٍ للأوّل", await regCosts(pRegOmitted), 0);
+    same("   ولا للثاني", await regCosts(pRegZero), 0);
+    same("D. ولا دفعةَ للأوّل", await regPayments(pRegOmitted), 0);
+    same("   ولا للثاني", await regPayments(pRegZero), 0);
+
+    // E/F. كلفةٌ موجبة ⟶ تُرفَض ٤٠٠، وصفرُ كتابةٍ نظيف تماماً.
+    const patientsBefore = (await q(
+      `SELECT count(*)::int n FROM patients WHERE referral_source=$1`, [MARK]))[0].n;
+    const casesBefore = (await q(
+      `SELECT count(*)::int n FROM patient_cases c
+         JOIN patients p ON p.id = c.patient_id WHERE p.referral_source=$1`, [MARK]))[0].n;
+    const regPositive = await createVia(S.recv1, { name: "كلفةٌ موجبة مرفوضة", totalCost: 500_000 });
+    same("E. كلفةٌ موجبة ⟶ تُرفَض ٤٠٠", regPositive.status, 400);
+    check(/لا يسجّل كلفة/.test(regPositive.body?.message ?? ""),
+      "   برسالةٍ تدلّ على مسار الخدمة المخصص", regPositive.body?.message);
+    same("F. ولا مريضَ أُنشئ",
+      (await q(`SELECT count(*)::int n FROM patients WHERE referral_source=$1`, [MARK]))[0].n,
+      patientsBefore);
+    same("   ولا حالةَ أُنشئت",
+      (await q(`SELECT count(*)::int n FROM patient_cases c
+                  JOIN patients p ON p.id = c.patient_id WHERE p.referral_source=$1`, [MARK]))[0].n,
+      casesBefore);
+    same("   ولا رمزَ حُجز باسمه",
+      (await q(`SELECT count(*)::int n FROM patients WHERE name=$1`,
+        [`${MARK} كلفةٌ موجبة مرفوضة`]))[0].n, 0);
+
+    // وسالبةٌ تُرفَض كذلك — «غيرُ صفري» لا «موجبٌ» وحده.
+    same("   وكلفةٌ سالبة تُرفَض كذلك",
+      (await createVia(S.recv1, { name: "كلفةٌ سالبة", totalCost: -1 })).status, 400);
+
+    // G. وحرسُ المخزن مباشرةً — لا حارسُ النقطة وحده يحمي الصدق. نداءٌ
+    // مباشرٌ لـ storage.createPatient بكلفةٍ موجبة يتجاوز حارسَ النقطة
+    // عمداً، فيثبت أن الدالّة نفسها ترفض الكلفةَ مهما وصلتها — دفاعٌ
+    // معماريٌّ مستقلّ لا يتّكئ على النقطة وحدها.
+    const directPatient = await storage.createPatient({
+      name: `${MARK} نداءٌ مباشر`, phone: "07701112222", age: "35",
+      height: "170", weight: "70", medicalCondition: "x",
+      referralSource: MARK, branchId: 1, patientClassification: "new",
+      totalCost: 750_000,
+    } as any);
+    same("G. حتى بنداءٍ مباشرٍ للمخزن بكلفةٍ موجبة — الصفُّ يُكتب بصفر",
+      directPatient.totalCost, 0);
+    same("   ولا قيدَ كلفةٍ نشأ", await regCosts(directPatient.id), 0);
+    same("   ولا دفعة", await regPayments(directPatient.id), 0);
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[ADMIN, RECV1, RECV2]]);

@@ -1395,6 +1395,13 @@ export class DatabaseStorage implements IStorage {
     // حتى لو تجاوزت عقدَ zod. نفس نمط الأعمدة المشتقّة من الهاتف تحته.
     delete valuesToInsert.patientCode;
 
+    // ══ صدقُ التسجيل (تصحيحٌ معماريّ) — التسجيلُ بلا كلفةٍ دائماً ═══════
+    // نفسُ نمط `patientCode` أعلاه بالضبط: قيمةٌ يرسلها المنادي — حاضراً
+    // أو مستقبلياً، عبر النقطة أو مباشرةً — لا تصل القاعدة أبداً. المريضُ
+    // الجديد يُفتح **دائماً** بكلفةِ صفر؛ التسعيرُ من مسار الخدمة المخصَّص
+    // لاحقاً لا من هنا.
+    valuesToInsert.totalCost = 0;
+
     // نقطة الخنق الوحيدة لتطبيع رقم الاتصال عند الإنشاء. الأعمدة الثلاثة
     // المشتقّة تُكتب من الدالّة دائماً — فقيمة يرسلها العميل لأيٍّ منها
     // تُستبدَل هنا ولا تصل القاعدة. `phone` يُحفظ كما كُتب بعد قصّ الأطراف.
@@ -1459,24 +1466,12 @@ export class DatabaseStorage implements IStorage {
     });
 
     // Create the case row(s) for this new patient from its flags (Phase 3).
+    // `totalCost` is forced to 0 above, so every new case's derived cost
+    // (in `syncPatientCases`) starts at zero too — no separate change needed
+    // there. And no registration cost_entries writer here anymore: pricing a
+    // freshly-registered patient is not a thing this function does — it
+    // happens later through the dedicated service path.
     await this.syncPatientCases(patient.id);
-    if ((patient.totalCost || 0) > 0) {
-      // Dated at the patient's own createdAt so a backdated registration lands
-      // its cost on the day the owner chose, not the day the form was typed.
-      //
-      //  والقسمُ يُحسَم **بعد** إنشاء الحالات (ترحيل ٠٥٦)، وبشرطٍ واحد:
-      //  حالةٌ واحدة لا غير. فمريضٌ سُجِّل بثلاث خدمات دفعةً واحدة كلفتُه
-      //  مبلغٌ واحد لا يُعرَف كيف يتوزّع — وتقسيمُه بالتساوي أو نسبُه
-      //  لأولها اختراعُ رقمٍ لم يقله أحد. فيبقى غير مبوَّبٍ صراحةً.
-      const ownCases = await db.select({ id: patientCases.id }).from(patientCases)
-        .where(eq(patientCases.patientId, patient.id));
-      await db.insert(costEntries).values({
-        patientId: patient.id, branchId: patient.branchId,
-        amount: patient.totalCost || 0, source: "registration",
-        notes: "كلفة التسجيل", createdAt: patient.createdAt ?? undefined,
-        caseId: ownCases.length === 1 ? ownCases[0].id : null,
-      });
-    }
     return patient;
   }
 

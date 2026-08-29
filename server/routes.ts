@@ -1915,6 +1915,23 @@ export async function registerRoutes(
 
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
+      // ══ صدقُ التسجيل (تصحيحٌ معماريّ) ═══════════════════════════════════
+      // تسجيلُ مريضٍ جديد **لا يعني كلفةً أبداً** — `CreatePatient.tsx`
+      // القائمة ترسل `totalCost: 0` دائماً وتصف العملية «قرارٌ فقط، بلا مال
+      // هنا»، والتسعيرُ الحقيقي يقع لاحقاً من مسار الخدمة المخصَّص. كلفةٌ
+      // غيرُ صفرية هنا كانت تفتح كاتبَ مالٍ مختفياً (كلفةُ المريض + قيدُ
+      // كلفة بمصدر `registration`) بلا أن يمرّ أحدٌ بمسار الخدمة. فتُردّ
+      // ٤٠٠ **قبل** أيّ لمسٍ للمريض أو حالته أو واتساب أو تدقيق. والصفرُ
+      // الصريح — أو الحقلُ المحذوف — مقبولٌ دائماً، توافقاً مع العميل
+      // الحاليّ ومع الملفّات القديمة بلا هذا الحقل إطلاقاً.
+      const rawTotalCost = req.body?.totalCost;
+      const totalCostProvided = rawTotalCost !== undefined && rawTotalCost !== null && rawTotalCost !== "";
+      if (totalCostProvided && Number(rawTotalCost) !== 0) {
+        return res.status(400).json({
+          message: "تسجيل المريض لا يسجّل كلفة — حدّد السعر لاحقاً من مسار الخدمة المخصص.",
+        });
+      }
+
       const branchSession = (req.session as any).branchSession;
 
       // Determine branchId. Non-admins are ALWAYS pinned to their own branch —
