@@ -3049,7 +3049,20 @@ export async function registerRoutes(
     // التحقّق من أن الجهاز يخصّ هذا المريض وهذه الخدمة.
     const { deviceEpisodeId: requestedVisitEpisode, ...visitBody } = req.body ?? {};
     const input = api.visits.create.input.parse(visitBody);
-    
+
+    // ══ صدقُ الإيصال (تصحيحٌ تشغيليّ) ═══════════════════════════════════
+    // زيارةٌ عامّة جديدة **لا تعني قبضاً أبداً**. كلفةٌ موجبة هنا كانت
+    // كاتبَ مالٍ مختفياً: تزيد كلفةَ المريض وتُنشئ دفعةً وقيداً يومياً بلا
+    // أن يمرّ أحدٌ بمسار الخدمة أو بتسجيل الدفعة المالية. فتُردّ **قبل** أيّ
+    // شيء آخر — قبل `storage.createVisit`، وقبل توجيه المراجعة الطبية،
+    // وقبل أيّ لمسٍ لكلفة المريض أو دفعةٍ أو قيد — لا نصفَ أثر ولا زيارةً
+    // تُخلَّف وراء الرفض.
+    if (input.cost && input.cost > 0) {
+      return res.status(400).json({
+        message: "تسجيل الزيارة لا يسجّل كلفة أو دفعة — استخدم مسار الخدمة أو تسجيل الدفعة المالية.",
+      });
+    }
+
     const branchSession = (req.session as any).branchSession;
     let visitShift = branchSession?.shift;
     if (visitShift !== "morning" && visitShift !== "evening") {
@@ -3153,31 +3166,11 @@ export async function registerRoutes(
       notes: visitRouting.request ? `طلب مراجعة #${visitRouting.request.id}` : undefined,
     });
 
-    if (input.cost && input.cost > 0) {
-      const patient = await storage.getPatient(input.patientId);
-      if (patient) {
-        const newTotalCost = (patient.totalCost || 0) + input.cost;
-        //  قسمُ كلفةِ الزيارة هو حالةُ الزيارة بعينها (ترحيل ٠٥٦) — وقد
-        //  حسمتها `createVisit` أعلاه، فلا تُستنتج من أعلام المريض.
-        await storage.updatePatient(
-          patient.id, { totalCost: newTotalCost }, "visit", visit.caseId ?? null,
-        );
-
-        const visitPayment = await storage.createPayment({
-          patientId: input.patientId,
-          branchId: input.branchId,
-          amount: input.cost,
-          notes: "دفعة زيارة",
-          paymentTreatmentType: input.treatmentType || null,
-          sessionCount: input.sessionCount || null,
-          // Link back to the visit (038): editing the visit's cost or deleting
-          // the visit can then correct THIS payment instead of guessing.
-          visitId: visit.id,
-        } as any);
-        await createJournalForPayment(visitPayment, sessionUserId ?? null);
-      }
-    }
-    
+    // لا كاتبَ ماليٍّ تلقائياً هنا بعد اليوم — الحارسُ أعلاه يرفض أيّ كلفةٍ
+    // موجبة قبل أن تصل هذه النقطة، فكلفةُ الزيارة هنا صفرٌ أو فارغة دائماً.
+    // زيارةٌ مدفوعةٌ تاريخية (قبل هذا التصحيح) تبقى مقروءةً بدفعتها المرتبطة
+    // كما هي — `findVisitPayment` وتصحيحُ PATCH/DELETE التاريخيّ أدناه لم
+    // يُمَسّا، وهما ما زالا يخدمانها.
     res.status(201).json(visit);
   });
 

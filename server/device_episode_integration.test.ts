@@ -402,6 +402,66 @@ async function main() {
       { treatmentType: "مساند طبية" });
     same("ولا يتغيّر نوعها إلى خدمة أخرى", visRetag.status, 409);
 
+    // ══════════ صدقُ الإيصال — زيارةٌ عامّة لا تعني قبضاً أبداً ══════════
+    // (تصحيحٌ تشغيليّ) — `POST /api/visits` كان يحمل كاتباً مالياً مختفياً:
+    // كلفةٌ موجبة تزيد كلفةَ المريض وتُنشئ دفعةً وقيداً يومياً بلا أن يمرّ
+    // أحدٌ بمسار الخدمة أو بتسجيل الدفعة. أُزيل، وصارت الكلفةُ الموجبة تُرفَض
+    // ٤٠٠ **قبل** إنشاء الزيارة وقبل توجيه المراجعة الطبية وقبل أيّ لمسٍ
+    // للمال — لا نصفَ أثر.
+    console.log("\n── صدقُ الإيصال: زيارةٌ عامّة لا تعني قبضاً ──");
+    const totalCostOf = async (id: number) =>
+      Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [id]))[0].total_cost);
+
+    //  حالةُ جهازٍ فعلية عمداً — كي يكون سيناريو (د) أدناه حقيقياً لا وهمياً:
+    //  لو لم تكن الحالةُ «أطرافاً» أصلاً لَما وجّه أيُّ مسارٍ الزيارةَ إلى
+    //  الطبيب أصلاً، وصار غيابُ طلب المراجعة إثباتاً كاذباً.
+    const R = await mkPatient("صدق الإيصال", 200_000);
+    const RC = await mkCase(R, 200_000, "prosthetic");
+    const baseline = await totalCostOf(R);
+
+    // أ. كلفةٌ محذوفة (غير مُرسَلة) ⟶ زيارةٌ عاديّة، بلا أثرٍ ماليّ.
+    const visOmitted = await http("POST", "/api/visits", S.reception, {
+      patientId: R, branchId: 1, caseId: RC, notes: "زيارة بلا كلفة",
+    });
+    same("أ. زيارةٌ بكلفةٍ محذوفة ⟶ تُسجَّل", visOmitted.status, 201);
+    same("   وكلفةُ المريض لم تتحرّك", await totalCostOf(R), baseline);
+    same("   ولا دفعةَ نشأت لها",
+      (await q(`SELECT count(*)::int n FROM payments WHERE visit_id=$1`, [visOmitted.body.id]))[0].n, 0);
+
+    // أ٢. كلفةٌ صفرٌ صريحة ⟶ نفسُ السلوك بالضبط — الصفرُ ليس التباساً.
+    const visZero = await http("POST", "/api/visits", S.reception, {
+      patientId: R, branchId: 1, caseId: RC, cost: 0, notes: "زيارة بكلفة صفر صريحة",
+    });
+    same("   وبكلفةٍ صفرٍ صريحة ⟶ تُسجَّل أيضاً بلا أثر", visZero.status, 201);
+    same("   وكلفةُ المريض ما زالت كما هي", await totalCostOf(R), baseline);
+    same("   ولا دفعةَ نشأت لها",
+      (await q(`SELECT count(*)::int n FROM payments WHERE visit_id=$1`, [visZero.body.id]))[0].n, 0);
+
+    //  ب-د. كلفةٌ موجبة — على مريضٍ مستقلّ، لصفرِ كتابةٍ نظيفٍ قبل الرفض
+    //  وبعده لا يختلط بزياراتٍ ناجحة سابقة.
+    const RJ = await mkPatient("رفضُ الكلفة الموجبة", 300_000);
+    const RCJ = await mkCase(RJ, 300_000, "prosthetic");
+    const baselineJ = await totalCostOf(RJ);
+    const visitsBefore = (await q(`SELECT count(*)::int n FROM visits WHERE patient_id=$1`, [RJ]))[0].n;
+    const paymentsBefore = (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [RJ]))[0].n;
+    const reviewBefore = (await q(`SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`, [RJ]))[0].n;
+
+    const visReject = await http("POST", "/api/visits", S.reception, {
+      patientId: RJ, branchId: 1, caseId: RCJ, cost: 50_000, notes: "محاولة تسجيل كلفة على الزيارة",
+    });
+    same("ب. كلفةٌ موجبة ⟶ تُرفَض ٤٠٠", visReject.status, 400);
+    check(/لا يسجّل كلفة أو دفعة/.test(visReject.body?.message ?? ""),
+      "   برسالةٍ تدلّ على مسار الخدمة أو تسجيل الدفعة", visReject.body?.message);
+
+    same("ج. ولا زيارةَ كُتبت",
+      (await q(`SELECT count(*)::int n FROM visits WHERE patient_id=$1`, [RJ]))[0].n, visitsBefore);
+    same("   ولا دفعةَ كُتبت",
+      (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [RJ]))[0].n, paymentsBefore);
+    same("   ولا كلفةَ المريض تحرّكت", await totalCostOf(RJ), baselineJ);
+
+    same("د. ولا طلبَ مراجعةٍ طبّية أُنشئ رغم أنّ الحالة أطرافٌ فعلاً — الرفضُ سبق التوجيه",
+      (await q(`SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`, [RJ]))[0].n, reviewBefore);
+
     // ══════════ تزامن الصيانة ════════════════════════════════════════
     console.log("\n── تزامن الصيانة ──");
     const pm = await mkPatient("صيانة متزامنة");
