@@ -2499,118 +2499,126 @@ export async function registerRoutes(
       const submissionToken = typeof req.body?.submissionToken === "string"
         ? req.body.submissionToken.trim().slice(0, 100)
         : "";
-      if (submissionToken) {
-        const claimed = await db.execute(sql`
-          INSERT INTO submission_tokens (token, scope)
-          VALUES (${submissionToken}, ${"new_service"})
-          ON CONFLICT (token) DO NOTHING
-          RETURNING token
-        `);
-        if ((claimed.rowCount ?? 0) === 0) {
-          // Already applied. Report success — the service the user asked for
-          // does exist — but write nothing and say so plainly.
-          return res.json({
-            success: true,
-            duplicate: true,
-            message: "هذه الخدمة مسجَّلة سابقاً — لم تُضف مرّتين",
-          });
+
+      // ══ **التذكرةُ وكلُّ ما يليها معاملةٌ واحدة** (تصحيحٌ تشغيليّ) ══════
+      //  كانت التذكرةُ تُسكّ بنداءٍ مستقلّ يلتزم فوراً — **قبل** أن يُعرَف
+      //  أنجحت الكتابةُ التي تليه أم فشلت. فخصمٌ رُفض (سببٌ ناقص، سعرٌ بائت
+      //  لمتابعةٍ تحوّلت أثناء الحفظ) كان يُبقي التذكرةَ محجوزةً إلى الأبد
+      //  بلا أن تحمل خدمةً وقعت فعلاً — وإعادةُ الإرسال بعد تصحيح الخطأ
+      //  بنفس التذكرة تُقرأ «مسجَّلة سابقاً» **كذباً**، والخدمةُ لم تُكتب
+      //  قطّ. فصار السكُّ والتحقّقُ كلُّه والكتابةُ (فوراً كخصمٍ أو كسعرٍ
+      //  كامل) **معاملةً واحدة**: فشلٌ في أيّ خطوةٍ يرجع الجميع معاً — لا
+      //  صفَّ توكنٍ يتيماً، ولا نصفَ كتابة، ولا نجاحاً كاذباً على إعادة
+      //  إرسالٍ صحيحة.
+      const result = await db.transaction(async (tx) => {
+        if (submissionToken) {
+          const claimed = await tx.execute(sql`
+            INSERT INTO submission_tokens (token, scope)
+            VALUES (${submissionToken}, ${"new_service"})
+            ON CONFLICT (token) DO NOTHING
+            RETURNING token
+          `);
+          if ((claimed.rowCount ?? 0) === 0) {
+            // Already applied. Report success — the service the user asked for
+            // does exist — but write nothing and say so plainly.
+            return { kind: "duplicate" as const };
+          }
         }
-      }
 
-      const patient = await storage.getPatient(patientId);
-      if (!patient) {
-        return res.status(404).json({ message: "Patient not found" });
-      }
+        const patient = await storage.getPatient(patientId, tx);
+        if (!patient) {
+          throw new NewServiceError("Patient not found", 404);
+        }
 
-      // Branch isolation — and every row this writes is pinned to the
-      // patient's own branch, never a branch id from the request body.
-      const allowedNs = accessibleBranchesFor(req);
-      if (allowedNs !== null && !allowedNs.includes(patient.branchId)) {
-        return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
-      }
+        // Branch isolation — and every row this writes is pinned to the
+        // patient's own branch, never a branch id from the request body.
+        const allowedNs = accessibleBranchesFor(req);
+        if (allowedNs !== null && !allowedNs.includes(patient.branchId)) {
+          throw new NewServiceError("غير مصرح لك بهذا الفرع", 403);
+        }
 
-      if (NEW_SERVICE_REDIRECTS[serviceType]) {
-        return res.status(400).json({ message: NEW_SERVICE_REDIRECTS[serviceType] });
-      }
-      const serviceLabel = NEW_SERVICE_LABELS[serviceType];
-      if (!serviceLabel) return res.status(400).json({ message: "نوع الخدمة غير صالح" });
+        if (NEW_SERVICE_REDIRECTS[serviceType]) {
+          throw new NewServiceError(NEW_SERVICE_REDIRECTS[serviceType], 400);
+        }
+        const serviceLabel = NEW_SERVICE_LABELS[serviceType];
+        if (!serviceLabel) throw new NewServiceError("نوع الخدمة غير صالح", 400);
 
-      // «جلسات علاج إضافية» تفترض خطّة قائمة تُزاد عليها. ومريضٌ بلا حالة
-      // علاج طبيعي ليس له ما يُزاد: الجلسات تُقيَّد على حالةٍ لا وجود لها،
-      // وعدّاد الجلسات يقرأ شراءً لخيطٍ لم يُفتح. الموزِّع يعطّل الخيار في
-      // الواجهة — وهذا الحارس هو الذي يجعله ثابتاً في العمل لا في الشاشة:
-      // نداءٌ مباشر أو نافذةٌ قديمة لا يستطيعان تجاوزه.
-      // (والاستشارة و«خدمة أخرى» لا تشترطان شيئاً — لم تُمَسّا.)
-      if (serviceType === "additional_therapy" && !patient.isPhysiotherapy) {
-        return res.status(400).json({ message: "يجب تفعيل حالة العلاج الطبيعي للمريض أولاً" });
-      }
+        // «جلسات علاج إضافية» تفترض خطّة قائمة تُزاد عليها. ومريضٌ بلا حالة
+        // علاج طبيعي ليس له ما يُزاد: الجلسات تُقيَّد على حالةٍ لا وجود لها،
+        // وعدّاد الجلسات يقرأ شراءً لخيطٍ لم يُفتح. الموزِّع يعطّل الخيار في
+        // الواجهة — وهذا الحارس هو الذي يجعله ثابتاً في العمل لا في الشاشة:
+        // نداءٌ مباشر أو نافذةٌ قديمة لا يستطيعان تجاوزه.
+        // (والاستشارة و«خدمة أخرى» لا تشترطان شيئاً — لم تُمَسّا.)
+        if (serviceType === "additional_therapy" && !patient.isPhysiotherapy) {
+          throw new NewServiceError("يجب تفعيل حالة العلاج الطبيعي للمريض أولاً", 400);
+        }
 
-      const entries = normalizeEntries(treatmentEntries);
+        const entries = normalizeEntries(treatmentEntries);
 
-      // ══ ── **الاتفاقُ الذي أبرمه الاستقبال** ── ═══════════════════════
-      //  الموظّفُ هو مَن يكلّم المريض ويعرف على كم اتّفقا: ٢٥,٠٠٠ أو
-      //  ١٢,٥٠٠ أو مجّاناً. وقبل هذا لم يكن له حقلٌ يقوله فيه — تُنفَّذ
-      //  الخدمةُ بسعرها الكامل ثم **يخمّن المديرُ الاتفاقَ لاحقاً**.
-      //
-      //  **والسعرُ الكامل يمضي فوراً** كما كان: خمسون مريضاً في اليوم لا
-      //  يمرّون بطابور، والطابورُ للاستثناء وحده.
-      //
-      //  **والسعرُ الأصليّ يُحسب في الخادم** من جدول الأسعار المشترك لا
-      //  يُقبل من العميل: وإلّا لأمكن إعلانُ أصلٍ ملفَّق يجعل الخصمَ يبدو
-      //  صغيراً. والصفرُ وحده لا يعني «مجّاناً» — المجّانيّ يُختار صراحةً.
-      const dsc = req.body?.discount;
-      const wantsFree = dsc?.isFree === true;
-      const isPhysioService = serviceType === "additional_therapy";
+        // ══ ── **الاتفاقُ الذي أبرمه الاستقبال** ── ═══════════════════════
+        //  الموظّفُ هو مَن يكلّم المريض ويعرف على كم اتّفقا: ٢٥,٠٠٠ أو
+        //  ١٢,٥٠٠ أو مجّاناً. وقبل هذا لم يكن له حقلٌ يقوله فيه — تُنفَّذ
+        //  الخدمةُ بسعرها الكامل ثم **يخمّن المديرُ الاتفاقَ لاحقاً**.
+        //
+        //  **والسعرُ الكامل يمضي فوراً** كما كان: خمسون مريضاً في اليوم لا
+        //  يمرّون بطابور، والطابورُ للاستثناء وحده.
+        //
+        //  **والسعرُ الأصليّ يُحسب في الخادم** من جدول الأسعار المشترك لا
+        //  يُقبل من العميل: وإلّا لأمكن إعلانُ أصلٍ ملفَّق يجعل الخصمَ يبدو
+        //  صغيراً. والصفرُ وحده لا يعني «مجّاناً» — المجّانيّ يُختار صراحةً.
+        const dsc = req.body?.discount;
+        const wantsFree = dsc?.isFree === true;
+        const isPhysioService = serviceType === "additional_therapy";
 
-      // ══ **البنودُ تُعاد بناؤها في الخادم** — ولا كلفةَ سطرٍ تُصدَّق ═══
-      //  العميلُ يرسل `cost` لكلّ بند. وهو **عرضٌ لا حقيقة**: نافذةٌ قديمة
-      //  أو طلبٌ مُلفَّق يرسل ١٠٠,٠٠٠ لجلسةٍ سعرُها ٢٥,٠٠٠، فتنحرف كلفةُ
-      //  الحالة عن كلفة المريض ويظهر «باقٍ عليه» وهميّ. فالقيمةُ الوحيدة
-      //  المصدَّقة هي **نوعُ العلاج وعددُ الجلسات**، والسعرُ من الجدول.
-      const canonEntries = isPhysioService
-        ? (entries ?? [])
-          .filter((e) => e.treatmentType && PHYSIO_TREATMENT_TYPES.includes(e.treatmentType))
-          .map((e) => ({
-            treatmentType: e.treatmentType,
-            sessionCount: e.sessionCount,
-            cost: physioEntryCost({
-              treatmentType: e.treatmentType as string, sessionCount: e.sessionCount,
-            }),
-          }))
-        : (entries ?? []).filter((e) => e.treatmentType);
-      const validEntries = canonEntries;
-      const stdPrice = isPhysioService
-        ? canonEntries.reduce((s, e) => s + e.cost, 0)
-        : serviceCost;
-      const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
-        && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== stdPrice;
+        // ══ **البنودُ تُعاد بناؤها في الخادم** — ولا كلفةَ سطرٍ تُصدَّق ═══
+        //  العميلُ يرسل `cost` لكلّ بند. وهو **عرضٌ لا حقيقة**: نافذةٌ قديمة
+        //  أو طلبٌ مُلفَّق يرسل ١٠٠,٠٠٠ لجلسةٍ سعرُها ٢٥,٠٠٠، فتنحرف كلفةُ
+        //  الحالة عن كلفة المريض ويظهر «باقٍ عليه» وهميّ. فالقيمةُ الوحيدة
+        //  المصدَّقة هي **نوعُ العلاج وعددُ الجلسات**، والسعرُ من الجدول.
+        const canonEntries = isPhysioService
+          ? (entries ?? [])
+            .filter((e) => e.treatmentType && PHYSIO_TREATMENT_TYPES.includes(e.treatmentType))
+            .map((e) => ({
+              treatmentType: e.treatmentType,
+              sessionCount: e.sessionCount,
+              cost: physioEntryCost({
+                treatmentType: e.treatmentType as string, sessionCount: e.sessionCount,
+              }),
+            }))
+          : (entries ?? []).filter((e) => e.treatmentType);
+        const validEntries = canonEntries;
+        const stdPrice = isPhysioService
+          ? canonEntries.reduce((s, e) => s + e.cost, 0)
+          : serviceCost;
+        const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
+          && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== stdPrice;
 
-      // ══ **ولا سعرَ أقلَّ من القياسيّ يمرّ بلا اعتماد** ═══════════════
-      //  حقلُ «تكلفة الخدمة» كان يقبل التحرير للجلسات الإضافية، فيكتب
-      //  الموظّفُ ١٢,٥٠٠ بدل ٢٥,٠٠٠ ويترك حقولَ الخصم فارغة — **فتُنفَّذ
-      //  الخدمةُ مخفَّضةً بلا طلبٍ ولا معتمِد**، ويسقط الطابورُ كلُّه.
-      //
-      //  فالقياسيُّ هو الحاكم هنا: كلُّ تخفيضٍ يمرّ من باب الخصم أو لا يمرّ.
-      //  **والرفضُ الصريح لا التصحيحُ الصامت**: نافذةٌ قديمة عرضت ١٢,٥٠٠
-      //  ثم نُفِّذت ٢٥,٠٠٠ تجعل الموظّفَ يقول للمريض غيرَ ما وقع.
-      if (isPhysioService && !wantsFree && !wantsCut && serviceCost !== stdPrice) {
-        return res.status(400).json({
-          message: `سعر الجلسات ${stdPrice.toLocaleString("en-US")} د.ع.`
+        // ══ **ولا سعرَ أقلَّ من القياسيّ يمرّ بلا اعتماد** ═══════════════
+        //  حقلُ «تكلفة الخدمة» كان يقبل التحرير للجلسات الإضافية، فيكتب
+        //  الموظّفُ ١٢,٥٠٠ بدل ٢٥,٠٠٠ ويترك حقولَ الخصم فارغة — **فتُنفَّذ
+        //  الخدمةُ مخفَّضةً بلا طلبٍ ولا معتمِد**، ويسقط الطابورُ كلُّه.
+        //
+        //  فالقياسيُّ هو الحاكم هنا: كلُّ تخفيضٍ يمرّ من باب الخصم أو لا يمرّ.
+        //  **والرفضُ الصريح لا التصحيحُ الصامت**: نافذةٌ قديمة عرضت ١٢,٥٠٠
+        //  ثم نُفِّذت ٢٥,٠٠٠ تجعل الموظّفَ يقول للمريض غيرَ ما وقع.
+        if (isPhysioService && !wantsFree && !wantsCut && serviceCost !== stdPrice) {
+          throw new NewServiceError(
+            `سعر الجلسات ${stdPrice.toLocaleString("en-US")} د.ع.`
             + ` وأيّ مبلغ أقلّ يمرّ من «خصم أو خدمة مجّانية» فيُعتمَد —`
             + ` لا يُكتب في حقل الكلفة. حدّث الصفحة وأعد المحاولة.`,
-        });
-      }
-      if (isPhysioService && (wantsFree || wantsCut)) {
-        if (!(stdPrice > 0)) {
-          return res.status(400).json({
-            message: "السعر الأصلي يجب أن يكون موجباً — اختر نوع العلاج وعدد الجلسات أولاً",
-          });
+            400);
         }
-        try {
+        if (isPhysioService && (wantsFree || wantsCut)) {
+          if (!(stdPrice > 0)) {
+            throw new NewServiceError(
+              "السعر الأصلي يجب أن يكون موجباً — اختر نوع العلاج وعدد الجلسات أولاً", 400);
+          }
           //  **التطبيقُ فوريّ دائماً** (قرارُ المالك ٢٠٢٦-٠٨-٢٨) — لا طابورَ
           //  اعتمادٍ للخصم بعد اليوم: مَن وصل هنا اجتاز `canAccess` أعلاه
           //  بالفعل، وهي نفسُ بوّابة السعر الكامل تماماً — فلا فحصَ ثانياً.
-          const out = await discountStore.applyDiscountImmediately({
+          //  **وبمعاملة `tx` نفسِها التي سكّت التذكرة** (`...Tx` لا الغلاف
+          //  الذي يفتح معاملته الخاصّة) — فرفضُ الخصم يرجع التذكرةَ معه.
+          const out = await discountStore.applyDiscountImmediatelyTx(tx, {
             patientId, department: "physiotherapy", branchId: patient.branchId,
             //  **مرجعٌ من رمز الإرسالة**: ضغطةٌ واحدة = طلبٌ واحد.
             contextRef: newServiceDiscountRef(submissionToken, serviceType),
@@ -2643,46 +2651,72 @@ export async function registerRoutes(
               note: (row) => discountAuditNote(row, "تطبيقٌ فوريّ"),
             },
           });
-          return res.status(201).json({
-            success: true,
+          return {
+            kind: "discount" as const,
             discountRequestId: out.request.id,
             newTotalCost: out.applied?.newTotalCost ?? patient.totalCost ?? 0,
             openedPhysiotherapyCase: out.applied?.openedPhysiotherapyCase ?? false,
-          });
-        } catch (e: any) {
-          if (e?.name === "DiscountError") return res.status(e.status).json({ message: e.message });
-          throw e;
+          };
         }
-      }
 
-      //  ══ **الكتابةُ الواحدة** — لا نسخةَ ثانية من محاسبة الخدمة ═════════
-      //  نفسُ الدالّة التي يناديها اعتمادُ الخصم. فمَن يصلح إحداهما يصلحهما،
-      //  ولا تنحرف واحدةٌ عن الأخرى بعد أوّل تعديل.
-      const done = await executeNewService({
-        patientId,
-        serviceType,
-        //  **القياسيُّ للجلسات، والمُدخَلُ لما عداها**: الاستشارةُ و«خدمة
-        //  أخرى» بلا جدولِ أسعارٍ يحكمها، فيبقى مبلغُها قرارَ الموظّف كما كان.
-        serviceCost: isPhysioService ? stdPrice : serviceCost,
-        entries: isPhysioService ? canonEntries : entries,
-        notes: notes ?? null,
-        paymentTreatmentType: paymentTreatmentType ?? null,
-        sessionCount: sessionCount ?? null,
-        initialPayment: req.body?.initialPayment ?? null,
-        actor: {
-          userId: branchSession?.userId ?? null,
-          userName: branchSession?.displayName ?? null,
-        },
-        audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
+        //  ══ **الكتابةُ الواحدة** — لا نسخةَ ثانية من محاسبة الخدمة ═════════
+        //  نفسُ الدالّة التي يناديها اعتمادُ الخصم. فمَن يصلح إحداهما يصلحهما،
+        //  ولا تنحرف واحدةٌ عن الأخرى بعد أوّل تعديل. **وبمعاملة `tx` نفسِها**
+        //  — لنفس سبب فرع الخصم أعلاه: رفضٌ يرجع التذكرةَ معه.
+        const done = await executeNewService({
+          patientId,
+          serviceType,
+          //  **القياسيُّ للجلسات، والمُدخَلُ لما عداها**: الاستشارةُ و«خدمة
+          //  أخرى» بلا جدولِ أسعارٍ يحكمها، فيبقى مبلغُها قرارَ الموظّف كما كان.
+          serviceCost: isPhysioService ? stdPrice : serviceCost,
+          entries: isPhysioService ? canonEntries : entries,
+          notes: notes ?? null,
+          paymentTreatmentType: paymentTreatmentType ?? null,
+          sessionCount: sessionCount ?? null,
+          initialPayment: req.body?.initialPayment ?? null,
+          actor: {
+            userId: branchSession?.userId ?? null,
+            userName: branchSession?.displayName ?? null,
+          },
+          audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
+          tx,
+        });
+        return {
+          kind: "full" as const,
+          newTotalCost: done.newTotalCost,
+          openedPhysiotherapyCase: done.openedPhysiotherapyCase,
+        };
       });
 
+      if (result.kind === "duplicate") {
+        return res.json({
+          success: true,
+          duplicate: true,
+          message: "هذه الخدمة مسجَّلة سابقاً — لم تُضف مرّتين",
+        });
+      }
+      if (result.kind === "discount") {
+        return res.status(201).json({
+          success: true,
+          discountRequestId: result.discountRequestId,
+          newTotalCost: result.newTotalCost,
+          openedPhysiotherapyCase: result.openedPhysiotherapyCase,
+        });
+      }
       res.json({
         success: true,
-        newTotalCost: done.newTotalCost,
-        openedPhysiotherapyCase: done.openedPhysiotherapyCase,
+        newTotalCost: result.newTotalCost,
+        openedPhysiotherapyCase: result.openedPhysiotherapyCase,
       });
     } catch (err: any) {
       if (err instanceof NewServiceError) {
+        return res.status(err.status).json({ message: err.message });
+      }
+      //  **الخصمُ قد يفشل من داخل المعاملة نفسِها** — سببٌ ناقص، سعرٌ بائت،
+      //  متابعةٌ تحوّلت. يُلتقَط هنا بنفس الاسم الذي كانت النقطةُ تلتقطه به
+      //  محلّياً قبل هذا التصحيح (نمطُ `/price-physio` أدناه) — فلا يسقط
+      //  خطأُ خصمٍ صحيح في ٥٠٠ عامّ.
+      if (err?.name === "DiscountError") {
         return res.status(err.status).json({ message: err.message });
       }
       console.error("Error adding new service:", err);

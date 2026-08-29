@@ -1337,6 +1337,27 @@ async function main() {
         check(/applyDiscountImmediately/.test(src), `   وينادي التطبيقَ الفوريّ فعلاً`);
       }
 
+      //  ══ **و`/new-service` تحديداً تنادي النواةَ `...Tx` لا الغلاف**
+      //  (تصحيحٌ تشغيليّ — تذكرةُ الإرسال) ═══════════════════════════════
+      //  البابُ الوحيدُ الذي يسكّ تذكرةَ منعِ تكرار **قبل** معرفة نوع
+      //  الكتابة — فإن نادى الغلافَ (الذي يفتح معاملتَه الخاصّة) بدل النواة
+      //  المُمرَّرةِ معاملتَه هو، عاد فشلُ الخصم يُبقي التذكرةَ محجوزةً بلا
+      //  خدمة، وهي الثغرةُ التي عُولجت. فحصٌ نصّيٌّ مباشر لا يتّكئ على
+      //  الاختبار الحيّ في `new_service_guard.test.ts` وحده.
+      {
+        const nsStart = ROUTES.indexOf('app.post("/api/patients/:id/new-service"');
+        const nsEnd = ROUTES.indexOf('app.post("/api/patients/:id/price-physio"', nsStart);
+        check(nsStart > 0 && nsEnd > nsStart, "   (نقطةُ new-service مقتُطعة فعلاً للفحص)",
+          `${nsStart} .. ${nsEnd}`);
+        const nsBody = ROUTES.slice(nsStart, nsEnd);
+        check(/applyDiscountImmediatelyTx\(tx,/.test(nsBody),
+          "٨٨ب. **`/new-service` تنادي `applyDiscountImmediatelyTx(tx, …)` بمعاملتها هي**");
+        check(!/applyDiscountImmediately\(\{/.test(nsBody),
+          "   ولا تنادي الغلافَ الذي يفتح معاملةً مستقلّة عن سكّ التذكرة");
+        check(/tx\.execute\(sql`\s*\n\s*INSERT INTO submission_tokens/.test(nsBody),
+          "   **وسكُّ التذكرة نفسُه بمعاملة `tx` الواحدة** — لا `db.execute` مستقلّ يلتزم قبل الكتابة");
+      }
+
       //  ══ **ولا كاتبَ ثانياً يُدرج في الجدول** — `discounts/store.ts`
       //  وحده يملك `INSERT INTO service_discount_requests` ═══════════════
       for (const [name, src] of [
@@ -1347,22 +1368,33 @@ async function main() {
           `٨٧. **${name} لا يُدرج في الجدول مباشرةً** — البابُ الوحيد discounts/store.ts`);
       }
 
-      //  ══ **والإدراجُ والحسمُ في المعاملة نفسها — بنيوياً لا وصفاً** ════
-      //  ترتيبُ النصّ يطابق ترتيبَ التنفيذ: الإدراجُ **قبل** نداء الحسم،
-      //  وكلاهما داخل الدالّة الممرَّرة لـ`db.transaction` نفسِها.
-      const fnStart = STORE.indexOf("export async function applyDiscountImmediately");
-      const fnEnd = STORE.indexOf("export async function getById", fnStart);
-      check(fnStart > 0 && fnEnd > fnStart, "   (الدالّةُ مقتُطعة فعلاً للفحص)",
-        `${fnStart} .. ${fnEnd}`);
-      const fnBody = STORE.slice(fnStart, fnEnd);
-      const insertAt = fnBody.indexOf("INSERT INTO service_discount_requests");
-      const decideAt = fnBody.indexOf("decideDiscountTx(tx,");
-      const txAt = fnBody.indexOf("db.transaction(body)");
-      check(insertAt > 0 && decideAt > insertAt && txAt > decideAt,
-        "٨٨. **الإدراجُ يسبق الحسمَ نصّياً، وكلاهما قبل فتح `db.transaction` الواحدة**",
-        `insert=${insertAt} decide=${decideAt} tx=${txAt}`);
-      check(/const body = async \(tx: any\)/.test(fnBody),
-        "   **ومعاملةٌ واحدة تحمل الاثنين** — لا معاملتان منفصلتان");
+      //  ══ **والإدراجُ والحسمُ في معاملةِ المُستدعي — بنيوياً لا وصفاً** ═══
+      //  (تصحيحٌ تشغيليّ — تذكرةُ الإرسال): `applyDiscountImmediately`
+      //  انقسمت إلى نواةٍ تأخذ `tx` (`applyDiscountImmediatelyTx`) وغلافٍ
+      //  رقيق يفتح معاملتَه (نفسُ تناظر `decideDiscountTx`/`decideDiscount`
+      //  في هذا الملفّ بالضبط) — كي تشارك `/new-service` معاملتَها مع سكّ
+      //  التذكرة. فترتيبُ النصّ يُفحَص في مكانين: **النواة** لا تفتح
+      //  معاملةً بنفسها (الإدراجُ قبل الحسم، وبلا `db.transaction(` داخلها
+      //  إطلاقاً)، **والغلافُ** يفتح واحدة ويسلّمها للنواة.
+      const txFnStart = STORE.indexOf("export async function applyDiscountImmediatelyTx");
+      const wrapFnStart = STORE.indexOf("export async function applyDiscountImmediately(");
+      const fnEnd = STORE.indexOf("export async function getById", wrapFnStart);
+      check(txFnStart > 0 && wrapFnStart > txFnStart && fnEnd > wrapFnStart,
+        "   (الدالّتان مقتُطعتان فعلاً للفحص)",
+        `tx=${txFnStart} wrap=${wrapFnStart} end=${fnEnd}`);
+      const txFnBody = STORE.slice(txFnStart, wrapFnStart);
+      const wrapFnBody = STORE.slice(wrapFnStart, fnEnd);
+      const insertAt = txFnBody.indexOf("INSERT INTO service_discount_requests");
+      const decideAt = txFnBody.indexOf("decideDiscountTx(tx,");
+      check(insertAt > 0 && decideAt > insertAt,
+        "٨٨. **الإدراجُ يسبق الحسمَ نصّياً داخل النواة `...Tx`**",
+        `insert=${insertAt} decide=${decideAt}`);
+      check(!/db\.transaction\(/.test(txFnBody),
+        "   **ولا معاملةَ تفتحها النواةُ بنفسها** — تأخذ معاملةَ مُستدعيها"
+        + " (نداءُ `/new-service` المباشر لها يشارك سكَّ التذكرة معها)");
+      check(/db\.transaction\(\(tx\)\s*=>\s*applyDiscountImmediatelyTx\(tx,\s*params\)\)/.test(wrapFnBody),
+        "   **والغلافُ الرقيق يفتح معاملةً ويسلّمها للنواة** — لمَن لا"
+        + " يحتاج مشاركتَها (`/price-physio`، confirm-purchase، assign-manufacturing)");
     }
 
     // ══ ١٧. ولا إيرادَ من خدمةٍ لم تكتمل — حقيقةُ الدفع لا السعرُ

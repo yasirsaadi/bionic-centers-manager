@@ -89,6 +89,9 @@ async function cleanup() {
   await pool.query(`DELETE FROM journal_entries WHERE source_type = 'payment'
      AND source_id IN (SELECT id FROM payments WHERE patient_id IN (${ids}))`);
   await pool.query(`DELETE FROM payments WHERE patient_id IN (${ids})`);
+  //  قسمُ «الفشلُ بعد سكّ التذكرة لا يُقفلها» يُنجح خصماً حقيقياً فعلاً —
+  //  فيترك صفَّ خصمٍ حياً يشير إلى المريض، يُمسح قبل صفّه هو.
+  await pool.query(`DELETE FROM service_discount_requests WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
@@ -231,6 +234,88 @@ async function main() {
     await req(`/api/patients/${pEmpty}/new-service`, S.manager, bodyEmpty);
     same("**وبتذكرةٍ فارغة تُكتَب مرّتين** — ولذلك سكّها إلزامي",
       (await storage.getPatient(pEmpty))?.totalCost, 20000);
+
+    // ══ ٩-١٢. **الفشلُ بعد سكّ التذكرة لا يُقفلها** (تصحيحٌ تشغيليّ) ═══════
+    //  ══ العطبُ الذي يغلقه ═════════════════════════════════════════════
+    //  كان سكُّ التذكرة يقع **قبل** فتح المعاملة، وخارجَها تماماً: نداءٌ
+    //  مستقلّ يلتزم فوراً. فإن فشلت العمليةُ التي تليه — خصمٌ بلا سببٍ صالح
+    //  مثلاً — بقيت التذكرةُ محجوزةً إلى الأبد بلا أن تحمل خدمةً وقعت. وإعادةُ
+    //  الإرسال بنفس التذكرة بعد تصحيح الخطأ كانت تُقرأ «مسجَّلة سابقاً»
+    //  **كذباً** — الخدمةُ لم تقع قطّ.
+    //
+    //  فصار سكُّ التذكرة وتنفيذُ الكتابة (الخصمُ أو السعرُ الكامل) **معاملةً
+    //  واحدة**: فشلٌ في أيّ خطوةٍ يرجع الاثنين معاً — لا صفَّ توكنٍ يتيماً،
+    //  ولا نصفَ كتابة.
+    console.log("\n── الفشلُ بعد سكّ التذكرة لا يُقفلها ──");
+    const pFail = await mkPatient("مريض فشلٍ بعد التذكرة", true);
+    const tFail = token();
+    const discountedBody = (reason?: string) => ({
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 80000,
+      //  **سببٌ غائبٌ = فشلٌ حتميّ وحاسم** — `applyDiscountImmediately` يرفض
+      //  بعد سكّ التذكرة وبعد فتح المعاملة، قبل أيّ إدراجٍ في
+      //  `service_discount_requests`. مرشَّحٌ حتميّ لا عشوائيّ التوقيت.
+      discount: reason ? { finalPrice: 80000, reason } : { finalPrice: 80000 },
+      submissionToken: tFail,
+    });
+
+    // — A. الطلبُ الأوّل: يفشل عمداً بعد سكّ التذكرة —
+    const failed = await req(`/api/patients/${pFail}/new-service`, S.manager, discountedBody());
+    same("٩. أ. الطلبُ الفاشل يُردّ ٤٠٠", failed.status, 400);
+    check(String(failed.json?.message ?? "").includes("سبب الخصم"),
+      "برسالةٍ تسمّي السببَ الناقص", JSON.stringify(failed.json));
+    same("**ولا كلفةَ تحرّكت**", (await storage.getPatient(pFail))?.totalCost ?? 0, 0);
+    same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pFail))).length, 0);
+    const visitsAfterFail = await pool.query(`SELECT id FROM visits WHERE patient_id = $1`, [pFail]);
+    same("ولا زيارة", visitsAfterFail.rowCount ?? 0, 0);
+    const sdrAfterFail = await pool.query(
+      `SELECT id FROM service_discount_requests WHERE patient_id = $1`, [pFail]);
+    same("**ولا صفَّ خصمٍ يتيمٌ بقي** — الإدراجُ رجع مع فشل التنفيذ",
+      sdrAfterFail.rowCount ?? 0, 0);
+    const tokenAfterFail = await pool.query(
+      `SELECT token FROM submission_tokens WHERE token = $1`, [tFail]);
+    same("**والأهمّ: التذكرةُ لم تُقفَل — رجعت مع كلّ شيء** (كانت هذه هي الثغرة)",
+      tokenAfterFail.rowCount ?? 0, 0);
+
+    // — B. الطلبُ الثاني بنفس التذكرة، مصحَّحاً: يجب أن ينجح فعلاً —
+    const corrected = await req(`/api/patients/${pFail}/new-service`, S.manager,
+      discountedBody("negotiation"));
+    same("١٠. ب. **وبنفس التذكرة، مصحَّحاً، ينجح فعلاً**", corrected.status, 201);
+    same("success:true لا وسمَ تكرارٍ كاذب", corrected.json?.success, true);
+    check(!corrected.json?.duplicate,
+      "**وبلا `duplicate:true` — هذه أوّلُ كتابةٍ حقيقية لا تكرار**",
+      JSON.stringify(corrected.json));
+    check(typeof corrected.json?.discountRequestId === "number" && corrected.json.discountRequestId > 0,
+      "ومعه رقمُ طلب خصمٍ حقيقيّ", JSON.stringify(corrected.json));
+    same("والكلفةُ قُيِّدت بالسعر المعتمَد", (await storage.getPatient(pFail))?.totalCost, 80000);
+    const sdrAfterOk = await pool.query(
+      `SELECT status FROM service_discount_requests WHERE patient_id = $1`, [pFail]);
+    same("**وصفُّ خصمٍ واحدٌ معتمَد**", sdrAfterOk.rows.map((r: any) => r.status), ["approved"]);
+
+    // — C. الطلبُ الثالث بنفس التذكرة بعد النجاح: تكرارٌ حقيقيّ الآن —
+    const dupAfterOk = await req(`/api/patients/${pFail}/new-service`, S.manager,
+      discountedBody("negotiation"));
+    same("١١. ج. **وبعد النجاح، نفسُ التذكرة تُردّ تكراراً حقيقياً بلا كتابة**",
+      dupAfterOk.status, 200);
+    same("duplicate:true", dupAfterOk.json?.duplicate, true);
+    same("**والكلفةُ لم تتغيّر ثانيةً**", (await storage.getPatient(pFail))?.totalCost, 80000);
+    const sdrAfterDup = await pool.query(
+      `SELECT id FROM service_discount_requests WHERE patient_id = $1`, [pFail]);
+    same("**وصفُّ الخصم لا يزال واحداً — لا ثانياً**", sdrAfterDup.rowCount ?? 0, 1);
+    same("ودفعةٌ واحدة لا اثنتان",
+      (await db.select().from(payments).where(eq(payments.patientId, pFail))).length, 1);
+
+    // — والسعرُ الكامل بلا خصم: التكرارُ الناجح يبقى كما كان (١٢) —
+    console.log("\n── والسعرُ الكامل: التكرارُ الناجح لم يتأثّر ──");
+    const pFullDup = await mkPatient("مريض تكرارٍ بالسعر الكامل", false);
+    const tFull = token();
+    const fullBody = { serviceType: "consultation", serviceCost: 15000, initialPayment: 15000, submissionToken: tFull };
+    const f1 = await req(`/api/patients/${pFullDup}/new-service`, S.manager, fullBody);
+    same("١٢. الأولى تمرّ بالسعر الكامل", f1.status, 200);
+    const f2 = await req(`/api/patients/${pFullDup}/new-service`, S.manager, fullBody);
+    same("والثانية بنفس التذكرة تُردّ تكراراً بلا كتابة ثانية", f2.json?.duplicate, true);
+    same("والكلفةُ مرّةً واحدة", (await storage.getPatient(pFullDup))?.totalCost, 15000);
   } finally {
     httpServer.close();
   }

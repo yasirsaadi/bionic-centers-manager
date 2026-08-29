@@ -636,7 +636,7 @@ async function applyApproved(
  * لا كلفةَ، لا أمرَ تصنيع، لا دفعةَ، **ولا صفَّ خصمٍ ولو ناقصاً** — فلا
  * يبقى أحدٌ ينتظر شيئاً لم يقع.
  */
-export async function applyDiscountImmediately(params: {
+export interface ApplyDiscountImmediatelyParams {
   patientId: number; department: Department; caseId?: number | null;
   branchId: number | null; contextRef?: string | null;
   originalPrice: number; finalPrice?: number | null; isFree?: boolean;
@@ -644,7 +644,29 @@ export async function applyDiscountImmediately(params: {
   payload: any; actor: Actor;
   /** يُكتب داخل معاملة التطبيق نفسِها — لا بعدها. */
   audit: DecisionAudit;
-}): Promise<{ request: DiscountRow; calc: ServiceDiscount; applied: any }> {
+}
+
+/**
+ * **جوهرُ التطبيق الفوريّ** — تأخذ معاملةَ المُستدعي فتنضمّ إليها بدل أن
+ * تفتح معاملتَها الخاصّة. **نفسُ تناظر `decideDiscountTx`/`decideDiscount`
+ * أعلاه بالضبط**، ولنفس السبب: مستدعٍ يحتاج التطبيقَ ذرّياً مع كتابةٍ أخرى
+ * لا تخصّ الخصمَ (مثالٌ حيّ أدناه) يأخذ هذه، ومَن يكتفي بمعاملةٍ خاصّة
+ * ينادي الغلافَ الرقيق تحتها.
+ *
+ * ══ ولماذا صارت مُصدَّرة (تصحيحٌ تشغيليّ — تذكرةُ الإرسال) ═══════════════
+ * `POST /api/patients/:id/new-service` تسكّ تذكرةَ منع التكرار **قبل** أن
+ * تعرف أهذه خدمةٌ مخفَّضة أم كاملةُ السعر. فإن تركت تذكرتَها تُلتَزم في
+ * نداءٍ منفصل ثم فتحت معاملةَ الخصم في هذه الدالّة بنداءٍ ثانٍ، صار فشلُ
+ * التطبيق (سببٌ ناقص، سعرٌ بائت، أيّ تحقّق) يُبقي التذكرةَ محجوزةً بلا
+ * خدمةٍ وقعت — وإعادةُ الإرسال بعد تصحيح الخطأ تُقرأ «مسجَّلة سابقاً»
+ * **كذباً**. فصارت النقطةُ تفتح معاملتَها هي، تسكّ التذكرةَ فيها، ثم تنادي
+ * هذه الدالّةَ (لا الغلاف) لتشارك المعاملةَ نفسَها: فشلٌ في أيّ خطوةٍ —
+ * سكِّ التذكرة، أو التحقّق، أو الكتابة — يرجع الكلَّ معاً، ولا صفَّ توكنٍ
+ * يتيماً بعد فشل.
+ */
+export async function applyDiscountImmediatelyTx(
+  tx: any, params: ApplyDiscountImmediatelyParams,
+): Promise<{ request: DiscountRow; calc: ServiceDiscount; applied: any }> {
   if (!isDepartment(params.department)) {
     throw new DiscountError("القسم غير صالح", 400);
   }
@@ -670,28 +692,28 @@ export async function applyDiscountImmediately(params: {
   //  النقطةُ التي يأخذها التصحيحُ أيضاً — يمنع الخصمَ من أن يُحسَب على رقمٍ
   //  لم يعد قائماً. والصيانةُ بلا متابعة، فتمضي بلا قفلٍ زائد.
   const followupId = Number(payload?.followupId);
-  const body = async (tx: any) => {
-    if (Number.isFinite(followupId) && followupId > 0) {
-      const f = await tx.execute(sql`
-        SELECT approved_price, converted_work_order_id
-          FROM post_exam_followups WHERE id = ${followupId} FOR UPDATE
-      `);
-      const row = (f.rows ?? [])[0] as any;
-      if (!row) throw new DiscountError("المتابعة غير موجودة", 404);
-      if (row.converted_work_order_id !== null) {
-        throw new DiscountError("تم اعتماد البيع بالفعل — حدّث الصفحة", 409);
-      }
-      //  **ولا تطبيقَ على أساسٍ بائت**: السعرُ الأصلي المحسوب عليه الخصم
-      //  يجب أن يكون هو المكتوب على الصفّ الآن، بعد القفل لا قبله.
-      const live = Number(row.approved_price ?? 0);
-      if (live !== calc.originalPrice) {
-        throw new DiscountError(
-          `تغيّر السعر الأصلي إلى ${live.toLocaleString("en-US")} د.ع أثناء الحفظ`
-          + " — حدّث الصفحة وأعد حساب الخصم", 409,
-        );
-      }
+  if (Number.isFinite(followupId) && followupId > 0) {
+    const f = await tx.execute(sql`
+      SELECT approved_price, converted_work_order_id
+        FROM post_exam_followups WHERE id = ${followupId} FOR UPDATE
+    `);
+    const row = (f.rows ?? [])[0] as any;
+    if (!row) throw new DiscountError("المتابعة غير موجودة", 404);
+    if (row.converted_work_order_id !== null) {
+      throw new DiscountError("تم اعتماد البيع بالفعل — حدّث الصفحة", 409);
     }
+    //  **ولا تطبيقَ على أساسٍ بائت**: السعرُ الأصلي المحسوب عليه الخصم
+    //  يجب أن يكون هو المكتوب على الصفّ الآن، بعد القفل لا قبله.
+    const live = Number(row.approved_price ?? 0);
+    if (live !== calc.originalPrice) {
+      throw new DiscountError(
+        `تغيّر السعر الأصلي إلى ${live.toLocaleString("en-US")} د.ع أثناء الحفظ`
+        + " — حدّث الصفحة وأعد حساب الخصم", 409,
+      );
+    }
+  }
 
+  try {
     //  **الإدراجُ `pending`، لكن بلا أن يُرى كذلك أبداً**: لا يُلتَزم إلّا
     //  بعد أن يُحسَم إلى `approved` أسطراً لاحقاً في المعاملة نفسِها — أيّ
     //  جلسةٍ أخرى لا ترى هذه المعاملةَ قبل التزامها بحكم عزل Postgres.
@@ -717,11 +739,6 @@ export async function applyDiscountImmediately(params: {
       note: "تطبيقٌ فوريّ — الموظّفُ مخوَّلٌ بهذه العملية أصلاً",
       actor: params.actor, audit: params.audit,
     });
-    return out;
-  };
-
-  try {
-    const out = await db.transaction(body);
     return { request: out.request, calc, applied: out.applied };
   } catch (e: any) {
     if (e?.code === "23505") {
@@ -730,6 +747,20 @@ export async function applyDiscountImmediately(params: {
     }
     throw e;
   }
+}
+
+/**
+ * **إرسالةٌ واحدة من الموظّف = خصمٌ مطبَّقٌ فوراً** — الغلافُ الرقيق.
+ *
+ * يفتح معاملتَه الخاصّة لمَن لا يحتاج مشاركتَها مع كتابةٍ أخرى (`/price-physio`،
+ * `confirmPurchaseHandler`، `/assign-manufacturing` — الثلاثةُ الباقية بلا
+ * تعديل). ومَن يحتاج الذرّيةَ مع تذكرة إرسالٍ أو كتابةٍ أخرى ينادي
+ * `applyDiscountImmediatelyTx` مباشرةً بمعاملته هو (`/new-service`).
+ */
+export async function applyDiscountImmediately(
+  params: ApplyDiscountImmediatelyParams,
+): Promise<{ request: DiscountRow; calc: ServiceDiscount; applied: any }> {
+  return db.transaction((tx) => applyDiscountImmediatelyTx(tx, params));
 }
 
 // ── القراءة ──────────────────────────────────────────────────────────────
