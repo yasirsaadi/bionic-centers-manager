@@ -1644,14 +1644,30 @@ async function main() {
     }
 
     //  ③ **طلبُ خصمٍ معلَّقٌ يمنع** — محسوبٌ على الرقم القديم، فيُحسَم أولاً.
+    //
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
+    //  كانت هذه الحالةُ تُنتج صفَّها المعلَّق عبر `/confirm-purchase` بخصم.
+    //  اليوم كلُّ خصمٍ يُطبَّق فوراً ولا يترك صفّاً معلَّقاً خارج معاملته
+    //  (`applyDiscountImmediately`، `npm run test:discount`) — فهذا البابُ
+    //  الحيّ لم يعد يستطيع بناء الحالة. **والحارسُ نفسُه يبقى صحيحاً** لبقيّةٍ
+    //  تاريخية حقيقية (صفٌّ من قبل هذا التغيير)، فتُبنى هنا بإدراجٍ مباشر —
+    //  تماماً كما تبقى فعلياً بعد اليوم.
     {
       const p = await mkPatient("تصحيح وطلبٌ معلَّق");
       await mkCase(p);
       await signExam(p, S.doc, { deviceCost: 3_000_000 });
       const f = await followupOf(p);
-      const sub = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv,
-        { expertUserId: EXPERT, discount: { finalPrice: 2_500_000, reason: "humanitarian" } });
-      same("٦٦. (طلبُ خصمٍ معلَّق أُنشئ)", sub.body?.pendingApproval, true);
+      await q(`INSERT INTO service_discount_requests
+          (patient_id, branch_id, department, context_ref, original_price,
+           proposed_final_price, discount_amount, discount_percentage, is_free,
+           reason, status, payload, requested_by, requested_by_name)
+         VALUES ($1, 1, 'prosthetic', $2, 3000000, 2500000, 500000, 16.67, false,
+           'humanitarian', 'pending', '{}'::jsonb, $3, 'استعلامات')`,
+        [p, `followup:${f.id}`, RECV]);
+      same("٦٦. (طلبُ خصمٍ سابقٌ محاكًى بإدراجٍ مباشر — بقيّةٌ تاريخية)",
+        (await q<{ status: string }>(
+          `SELECT status FROM service_discount_requests WHERE patient_id=$1`, [p]))[0]?.status,
+        "pending");
       const examId = await examIdOf(p);
       const blocked = await editExam(examId, S.mgr, { deviceCost: 3_200_000 });
       same("٦٧. **وتصحيحُ السعر يُردّ ٤٠٩ ما دام معلَّقاً**", blocked.status, 409);

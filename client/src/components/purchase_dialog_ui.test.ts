@@ -167,20 +167,20 @@ check("٣٠. **ولا خبيرٌ على ملفٍّ له خبير**",
     [b.discount?.finalPrice, b.discount?.isFree], [0, true]);
 }
 
-// ── ٦. نصُّ الزرّ يقول ما سيحدث ─────────────────────────────────────────
+// ── ٦. نصُّ الزرّ واحدٌ دائماً (تصحيحٌ تشغيليّ — تقاعدُ الاعتماد المؤجَّل) ──
 console.log("\n── نصّ الزرّ ──");
 same("٣٣. بلا خصم: «تأكيد وبدء التصنيع»",
   purchaseSubmitLabel({ followup: CASE_A, firstPrice: 0, discount: EMPTY_DISCOUNT }),
   "تأكيد وبدء التصنيع");
-same("٣٤. **ومع خصمٍ: «إرسال للاعتماد»** — فلا يظنّ الموظّف أن التصنيع بدأ",
+same("٣٤. **ومع خصمٍ: النصُّ نفسُه** — الخصمُ يُطبَّق فوراً كالسعر الكامل تماماً",
   purchaseSubmitLabel({
     followup: CASE_A, firstPrice: 0,
     discount: draft({ finalPrice: 600_000, reason: "negotiation" }),
-  }), "إرسال للاعتماد");
+  }), "تأكيد وبدء التصنيع");
 same("٣٥. ومع التبرّع كذلك",
   purchaseSubmitLabel({
     followup: CASE_A, firstPrice: 0, discount: draft({ isFree: true }),
-  }), "إرسال للاعتماد");
+  }), "تأكيد وبدء التصنيع");
 
 // ── ٧. **والبطاقةُ تستعمل هذه القاعدة فعلاً** ────────────────────────────
 //  القاعدةُ الصحيحة لا تنفع إن بقيت الشاشةُ على منطقها المكرَّر. والعقدُ على
@@ -212,12 +212,15 @@ check("٤٢. **وبعزلٍ ثنائيّ الاتجاه** — فلا تتسرّ�
   /unicodeBidi:\s*"isolate"/.test(transSrc));
 check("٤٣. **ولا تُقلَب الصفحةُ العربية** — لا `dir=\"ltr\"` على جذرٍ أو بطاقة",
   ![cardSrc].some((s) => /<(Card|div className="[^"]*")\s+dir="ltr"/.test(s)));
-//  **وكلُّ سطحٍ يعرض انتقالَ سعرٍ يمرّ بها** — أربعةٌ لا خامسَ لها اليوم.
+//  **وكلُّ سطحٍ يعرض انتقالَ سعرٍ **مباشرةً** يمرّ بها** — ثلاثةٌ لا أربعة.
+//  (تصحيحٌ: كانت القائمةُ تضمّ «لوحةَ المتابعة» أيضاً، فتفحص وجودَ
+//  `<PriceTransition>` في نصّها الخام — وهذا عقدٌ بائت. المرحلةُ الخامسة
+//  (٤.ل) نقلت الحسمَ الحيَّ إلى مكوّنٍ مشترك، فلم يعد نصُّ الصفحة نفسه
+//  يحمل الوسمَ ولو بقي السلوكُ الحقيقيُّ سليماً تماماً خلفه.)
 const SURFACES = [
   ["بطاقةُ قرار المريض", "./PostExamDecisionCard.tsx"],
   ["شريطُ الخصم المعلَّق", "./PendingDiscountBanner.tsx"],
   ["صفحةُ اعتماد الخصم", "../pages/DiscountApprovals.tsx"],
-  ["لوحةُ المتابعة", "../pages/PostExamFollowups.tsx"],
 ] as const;
 for (const [label, rel] of SURFACES) {
   const src = readFileSync(join(import.meta.dirname, rel), "utf8");
@@ -227,6 +230,28 @@ for (const [label, rel] of SURFACES) {
   const bare = (src.match(/\{[^{}\n]*[Pp]rice[^{}\n]*\}\s*(⟶|→|←|-->)/g) ?? []);
   check(`     ولا سهمَ عارياً بين رقمين فيها`, bare.length === 0, bare.join("\n"));
 }
+
+//  ══ لوحةُ المتابعة — عمارةٌ مختلفة، محميّةٌ بعقدٍ مختلف (٢٠٢٦-٠٨-٢٩) ══════
+//  «بانتظار الحسم» لا تملك تصميمَ سعرٍ خاصّاً بها إطلاقاً: تُحيل بالكامل
+//  إلى `ExamPathDecisionActions` — نفسُ مكوّن بطاقة المريض، وهو مَن يعرض
+//  معاينة السعر الحيّة بـ`<PriceTransition>` من داخله هو (مُختبَرٌ ضمن
+//  «بطاقةُ قرار المريض» أعلاه، فلا تكرارَ للفحص هنا).
+//  «تم الحسم» تصميمٌ منفصلٌ عمداً — بطاقةُ نتيجةٍ لا معاينةَ قرار: ثلاثةُ
+//  حقولٍ مسمّاة («السعر الأصلي»/«الخصم»/«السعر النهائي») من
+//  `resolvedSaleDiscount` الخالصة، لا سهمَ انتقالٍ بينها فلا خطرَ انقلابٍ
+//  يستوجب عزلَ `<PriceTransition>` أصلاً.
+const followupsSrc = readFileSync(
+  join(import.meta.dirname, "../pages/PostExamFollowups.tsx"), "utf8");
+check("٤٤ب. **لوحةُ المتابعة تُحيل الحسمَ الحيَّ لمكوّن بطاقة المريض المشترك**",
+  followupsSrc.includes("ExamPathDecisionActions"));
+check("     **وعرضُ نتيجة الحسم يمرّ بدالّة السعر الخالصة المُختبَرة وحدها**",
+  followupsSrc.includes("resolvedSaleDiscount(row)"));
+//  **ولا سهمَ عارياً هنا أيضاً** — الحمايةُ نفسُها تبقى بصرف النظر عن
+//  التصميم: لو أُعيد يوماً سهمٌ خامٌ بين رقمين في هذا الملفّ بعينه، تُمسكه
+//  هذه العبارةُ فوراً — لا يكفي أن المكوّن المشترك آمنٌ في مكانه.
+const followupsBare = (followupsSrc.match(/\{[^{}\n]*[Pp]rice[^{}\n]*\}\s*(⟶|→|←|-->)/g) ?? []);
+check("     ولا سهمَ عارياً بين رقمين فيها",
+  followupsBare.length === 0, followupsBare.join("\n"));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

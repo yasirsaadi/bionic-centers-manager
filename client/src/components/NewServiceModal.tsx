@@ -134,19 +134,14 @@ export function NewServiceModal({
         submissionToken,
       });
     },
-    onSuccess: (res: any) => {
+    onSuccess: () => {
       invalidatePatientData(queryClient, patientId);
-      //  **والمعلَّقُ يُقال صراحةً**: «تمت» على خدمةٍ لم تقع بعد تجعل
-      //  الموظّف يخبر المريض أنه اشترى، ثم لا يجد شيئاً في ملفّه.
-      toast(res?.pendingApproval
-        ? {
-          title: "أُرسل الطلب للاعتماد",
-          description: "الخصم بانتظار اعتماد المسؤول أو مدير الفرع — لم تُسجَّل الخدمة بعد.",
-        }
-        : {
-          title: t.modals.serviceAddedSuccess,
-          description: t.modals.serviceAddedDesc,
-        });
+      //  **والخصمُ يُطبَّق فوراً كالسعر الكامل تماماً** — لا رسالةَ انتظارٍ
+      //  ثانية: الخدمةُ وقعت فعلاً بحلول هذا الردّ.
+      toast({
+        title: t.modals.serviceAddedSuccess,
+        description: t.modals.serviceAddedDesc,
+      });
       setOpen(false);
       form.reset();
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);

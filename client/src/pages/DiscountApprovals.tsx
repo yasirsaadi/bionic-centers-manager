@@ -1,13 +1,19 @@
-// «اعتماد الخصومات» — **طابورٌ واحدٌ للأقسام الثلاثة**.
+// «خصومات سابقة» — بقيّةٌ من طابورٍ متقاعد، لا عملٌ حيّ.
 //
-// ══ لماذا صفحةٌ لا بطاقةٌ في كل شاشة ════════════════════════════════════
-// مديرُ الفرع لا يتصفّح ملفّات المرضى بحثاً عمّا ينتظره. فالعملُ يذهب إليه:
-// طابورٌ واحد يفتحه صباحاً فيرى كلَّ ما أُوقف بانتظاره — طرفاً كان أو مسنداً
-// أو علاجاً طبيعياً. وهو نمطُ «قائمة العمل» نفسُه الذي بُنيت به `/my-exams`
-// للطبيب و`/manufacturing` للخبير.
+// ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — الطابورُ الحيّ تقاعد ═══════════════════
+// كانت هذه الصفحةُ «اعتماد الخصومات»: طابورَ عملٍ حيّاً يفتحه مديرُ الفرع
+// صباحاً. اليوم **لا شيء يصله**: كلُّ خصمٍ يُدخله موظّفٌ مخوَّلٌ يُطبَّق
+// فوراً عند الحفظ من نافذة الخدمة نفسِها (`applyDiscountImmediately`) —
+// لا إرسالَ ولا انتظارَ ولا اعتمادَ لاحق. القاعدةُ: مَن يملك تنفيذ العملية
+// بسعرها الكامل يملك تنفيذَها بخصمٍ صحيح أيضاً، فالخصمُ لم يعد باباً ثانياً.
+//
+// **وما بقي هنا** هو حصراً طلباتٌ أُنشئت **قبل** هذا التغيير ولم تُحسَم —
+// بقيّةٌ تاريخية، لا طابورَ يتجدّد. الصفحةُ تبقى لإكمالها فقط، عبر
+// `/api/discounts/:id/decide` القانونية نفسِها بلا تعديل. راجع القسم ٤.ل
+// في CLAUDE.md لبقيّة مراحل تبسيط بيع الاستعلامات التي بنت عليها هذه.
 //
 // ══ والمعلَّقُ افتراضاً ═════════════════════════════════════════════════
-// الشاشةُ عملٌ ينتظر لا أرشيفٌ يُتصفَّح. والمحسومُ يُقرأ بتبديل الفلتر.
+// الشاشةُ إكمالُ ما تبقّى لا أرشيفٌ يُتصفَّح. والمحسومُ يُقرأ بتبديل الفلتر.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,7 +33,8 @@ import {
 } from "lucide-react";
 import {
   canApproveServiceDiscount, discountReasonLabel, computeServiceDiscount,
-  DISCOUNT_STATUS_LABELS, FREE_DONATION_LABEL, type DiscountStatus,
+  DISCOUNT_HISTORY_TITLE, DISCOUNT_STATUS_LABELS, FREE_DONATION_LABEL,
+  type DiscountStatus,
 } from "@shared/discount";
 import { DEPARTMENT_LABELS, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 import { PriceTransition } from "@/components/PriceTransition";
@@ -67,9 +74,12 @@ function serviceLine(r: Row): string | null {
   return head ? `${head}: ${parts.join(" · ")}` : parts.join(" · ");
 }
 
+//  **قيمُ `key` = حالاتُ القاعدة نفسُها (`DISCOUNT_STATUSES`) بلا تغيير**
+//  — لا يُعاد تسميتها هنا؛ التغيير في `label` وحده (نصٌّ للعرض لا قيمةٌ
+//  تُرسَل أو تُخزَّن).
 const FILTERS: Array<{ key: DiscountStatus; label: string }> = [
-  { key: "pending", label: "بانتظار الاعتماد" },
-  { key: "approved", label: "معتمد" },
+  { key: "pending", label: "بانتظار الإكمال" },
+  { key: "approved", label: "مكتمل" },
   { key: "rejected", label: "مرفوض" },
   { key: "cancelled", label: "ملغى" },
 ];
@@ -117,10 +127,10 @@ export default function DiscountApprovals() {
       qc.invalidateQueries({ queryKey: ["/api/patients"] });
       qc.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
       toast({
-        title: v.body?.decision === "reject" ? "رُفض الطلب" : "اعتُمد الطلب",
+        title: v.body?.decision === "reject" ? "أُلغي الطلب" : "اكتمل الطلب",
         description: v.body?.decision === "reject"
           ? "لم يتغيّر شيء مالياً — يكمل الاستعلامات بالسعر الأصلي أو يغلق الملفّ."
-          : "نُفِّذت الخدمة بالسعر المعتمد.",
+          : "نُفِّذت الخدمة بالسعر النهائي.",
       });
       setEditing(null);
     },
@@ -136,7 +146,7 @@ export default function DiscountApprovals() {
         <Card><CardContent className="py-10 text-center space-y-2">
           <ShieldAlert className="w-8 h-8 mx-auto text-muted-foreground" />
           <p className="text-sm text-muted-foreground" data-testid="text-discount-forbidden">
-            اعتماد الخصومات للمسؤول العام ومدير الفرع والمخوَّل صراحةً.
+            {DISCOUNT_HISTORY_TITLE} — للمسؤول العام ومدير الفرع والمخوَّل صراحةً.
           </p>
         </CardContent></Card>
       </div>
@@ -152,11 +162,12 @@ export default function DiscountApprovals() {
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <BadgePercent className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold text-primary">اعتماد الخصومات</h1>
+        <h1 className="text-xl font-bold text-primary">{DISCOUNT_HISTORY_TITLE}</h1>
       </div>
       <p className="text-sm text-muted-foreground">
-        كلّ خدمةٍ أُوقفت بانتظار قرارك — أطرافاً ومساندَ وعلاجاً طبيعياً.
-        <b> ولا شيء يُنفَّذ ولا دينارَ يُقيَّد قبل الاعتماد.</b>
+        الخصمُ يُطبَّق فوراً عند الحفظ من نافذة الخدمة نفسِها — <b>لا اعتمادَ
+        بعد اليوم.</b> هذه الصفحةُ لإكمال ما تبقّى من طلباتٍ سابقةٍ على هذا
+        التغيير فقط، أطرافاً كانت أو مسانِدَ أو علاجاً طبيعياً.
       </p>
 
       <div className="flex flex-wrap gap-2">
@@ -175,7 +186,7 @@ export default function DiscountApprovals() {
       ) : rows.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-sm text-muted-foreground"
           data-testid="text-discount-empty">
-          {status === "pending" ? "لا يوجد خصم بانتظار الاعتماد." : "لا توجد طلبات بهذه الحالة."}
+          {status === "pending" ? "لا توجد طلباتٌ سابقةٌ بانتظار الإكمال." : "لا توجد طلبات بهذه الحالة."}
         </CardContent></Card>
       ) : (
         <div className="space-y-3">
@@ -242,21 +253,21 @@ export default function DiscountApprovals() {
                   </p>
                 )}
 
-                {/*  **الاعتمادُ والرفضُ أوّلاً، والتعديلُ ثانوي**: الاتفاقُ
-                    أبرمه الاستقبالُ مع المريض، فالمعتمِدُ يقرّه في الغالب
-                    بضغطةٍ واحدة. و«تعديل واعتماد» للاستثناء لا للعادة —
-                    ولا يُطلَب من المدير أن يُدخل السعرَ المتّفق عليه ابتداءً. */}
+                {/*  **الإكمالُ والإلغاءُ أوّلاً، والتعديلُ ثانويّ**: هذا
+                    صفٌّ من قبل التطبيق الفوريّ — الاتفاقُ أُبرم مع المريض
+                    يومَها، فمَن يحسمه اليوم يُقرّه في الغالب بضغطةٍ واحدة.
+                    و«تعديل وإكمال» للاستثناء لا للعادة. */}
                 {r.status === "pending" && (
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     <Button size="sm" disabled={decide.isPending} className="gap-1"
                       data-testid={`approve-${r.id}`}
                       onClick={() => decide.mutate({ id: r.id, body: { decision: "approve" } })}>
-                      <Check className="w-4 h-4" /> اعتماد
+                      <Check className="w-4 h-4" /> إكمال وتطبيق السعر
                     </Button>
                     <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
                       data-testid={`reject-${r.id}`}
                       onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
-                      <X className="w-4 h-4" /> رفض
+                      <X className="w-4 h-4" /> إلغاء الطلب
                     </Button>
                     <Button size="sm" variant="ghost" disabled={decide.isPending}
                       className="gap-1 text-muted-foreground"
@@ -265,7 +276,7 @@ export default function DiscountApprovals() {
                         setEditing(r); setEditPrice(r.proposedFinalPrice);
                         setEditFree(r.isFree); setEditNote("");
                       }}>
-                      <Pencil className="w-4 h-4" /> تعديل واعتماد
+                      <Pencil className="w-4 h-4" /> تعديل وإكمال
                     </Button>
                   </div>
                 )}
@@ -278,7 +289,7 @@ export default function DiscountApprovals() {
       {/* ── تعديل واعتماد ── */}
       <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>تعديل السعر واعتماده</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>تعديل السعر وإكماله</DialogTitle></DialogHeader>
           {editing && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
@@ -331,7 +342,7 @@ export default function DiscountApprovals() {
                   isFree: editFree, note: editNote.trim() || undefined,
                 },
               })}>
-              {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "اعتماد بالسعر المعدَّل"}
+              {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "إكمال بالسعر المعدَّل"}
             </Button>
           </DialogFooter>
         </DialogContent>

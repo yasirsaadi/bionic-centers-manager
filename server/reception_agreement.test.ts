@@ -2,17 +2,27 @@
 // قاعدة محلّية: `npm run test:reception-agreement`.
 //
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
+//
+// ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل (القسمان أ-ن) ═════
+// طابورُ اعتماد الخصومات تقاعد: مَن يملك تنفيذ الخدمة بسعرها الكامل يملك
+// تنفيذَها بخصمٍ صحيح أيضاً — بلا طبقة إذنٍ ثانية. فالأقسامُ التالية
+// أُعيد بناؤها لتُثبت **التطبيقَ الفوريّ**، مع الحفاظ على تغطية البابِ
+// التاريخيّ `/api/discounts/:id/decide` عبر بقايا مبنيّةٍ بإدراجٍ مباشر
+// (`mkHistoricalPending`) — تماماً كما تبقى فعلياً بعد اليوم.
+//
 // (أ) **السعرُ الكامل يمضي فوراً** — بلا طلبِ اعتماد. خمسون مريضاً في اليوم
 //     لا يمرّون بطابور، والطابورُ للاستثناء وحده.
-// (ب) **والمخفَّضُ لا أثرَ له قبل الاعتماد** — لا كلفة، ولا دفعة، ولا جلسة
-//     مشتراة، ولا قيدَ دفتر، ولا سطرَ يومية. الصفُّ المعلَّق هو الأثرُ الوحيد.
-// (ج) **والاعتمادُ ينفّذ الخدمةَ مرّةً واحدة بالسعر المعتمد** — بنداءِ
-//     الدالّة القانونية نفسها التي يناديها المسارُ الكامل، لا بنسخةٍ منها.
-// (د) **واعتمادٌ ثانٍ لا يُنشئ خدمةً ثانية.**
-// (هـ) **والرفضُ لا يُنشئ خدمةً ولا يشحن السعرَ الكامل.**
-// (و) **والمجّانيُّ خدمةٌ حقيقية بقيمةٍ صفر** — جلسةٌ تُعدّ، وبلا دينار.
-// (ز–ل) **والمراجعةُ الإشرافية قدرةٌ منفصلة عن التوقيع**، بحدود الفرع،
-//     وبإرجاعٍ يُخرج الطلبَ من الطابور ويسمح ببديلٍ مصحَّح.
+// (ب) **والمخفَّضُ يُطبَّق فوراً بأثرٍ ماليّ كامل** — كلفة، ودفعة، وجلسة
+//     مشتراة، وقيدُ دفتر، بحفظٍ واحد يحمل الخصمَ والتنفيذَ معاً.
+// (ج) **والبابُ التاريخيُّ يبقى قانونياً بحرفه** لصفوفٍ حقيقية من قبل هذا
+//     التغيير — بنداءِ الدالّة القانونية نفسها التي يناديها المسارُ الكامل.
+// (د) **واعتمادٌ ثانٍ على البقيّة التاريخية لا يُنشئ خدمةً ثانية.**
+// (هـ) **والرفضُ على البقيّة التاريخية لا يُنشئ خدمةً ولا يشحن السعرَ الكامل.**
+// (و) **والمجّانيُّ خدمةٌ حقيقية بقيمةٍ صفر** — تُطبَّق فوراً، جلسةٌ تُعدّ،
+//     وبلا دينار.
+// (ز–ل) **والمراجعةُ الإشرافية قدرةٌ منفصلة عن التوقيع** (خارج نطاق هذا
+//     التصحيح — لا علاقةَ لها بطابور الخصم)، بحدود الفرع، وبإرجاعٍ يُخرج
+//     الطلبَ من الطابور ويسمح ببديلٍ مصحَّح.
 
 import express from "express";
 import { createServer } from "http";
@@ -162,6 +172,45 @@ const pendingFor = async (patientId: number) =>
 const decideDiscount = (session: any, id: number, body: any) =>
   http("POST", `/api/discounts/${id}/decide`, session, body);
 
+/**
+ * **صفٌّ تاريخيّ محاكًى** — بقيّةٌ من قبل التطبيق الفوريّ.
+ *
+ * ══ لماذا إدراجٌ مباشر لا نداءُ النقطة (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═════
+ * `applyDiscountImmediately` تُدرج الصفَّ **وتحسمه فوراً في المعاملة
+ * نفسها** (`npm run test:discount`)، فلا بابَ حيّاً يترك صفّاً `pending`
+ * خارج معاملته بعد اليوم. والبابُ التاريخيّ `/api/discounts/:id/decide`
+ * يبقى قانونياً بحرفه لبقيّةٍ حقيقية — صفوفٍ من قبل هذا التغيير — وهذه
+ * الدالّة تبني تلك البقيّةَ بإدراجٍ مباشر، تماماً كما تبقى فعلياً.
+ */
+async function mkHistoricalPending(patientId: number, opts: {
+  originalPrice: number; finalPrice: number; isFree?: boolean; reason?: string;
+  entries?: { treatmentType: string; sessionCount: number }[];
+}): Promise<number> {
+  const isFree = opts.isFree === true;
+  const finalPrice = isFree ? 0 : opts.finalPrice;
+  const discountAmount = opts.originalPrice - finalPrice;
+  const discountPercentage = Math.round((discountAmount / opts.originalPrice) * 10000) / 100;
+  const entries = opts.entries ?? [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 1 }];
+  const payload = {
+    kind: "new_service", serviceType: "additional_therapy",
+    entries, serviceNotes: null,
+    paymentTreatmentType: entries.map((e) => e.treatmentType).join("، "),
+    sessionCount: entries.reduce((s, e) => s + e.sessionCount, 0),
+    initialPayment: null,
+  };
+  const r = await q<{ id: number }>(
+    `INSERT INTO service_discount_requests
+       (patient_id, branch_id, department, context_ref, original_price,
+        proposed_final_price, discount_amount, discount_percentage, is_free,
+        reason, status, payload, requested_by, requested_by_name)
+     VALUES ($1, 1, 'physiotherapy', NULL, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, 'استعلامات')
+     RETURNING id`,
+    [patientId, opts.originalPrice, finalPrice, discountAmount, discountPercentage, isFree,
+      isFree ? "donation_dr_yasir" : (opts.reason ?? "humanitarian"),
+      JSON.stringify(payload), RECV]);
+  return r[0].id;
+}
+
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'ذي قار') ON CONFLICT DO NOTHING`);
   for (const [id, role, b, spec] of [
@@ -211,17 +260,24 @@ async function main() {
     same("   وكلفةُ الحالة تساوي كلفةَ المريض", mA.caseCost, 25000);
     check(mA.visits === 1, "   وزيارةٌ واحدة", String(mA.visits));
 
-    // ══ ب. المخفَّضُ ينتظر بلا أثرٍ ماليّ ═════════════════════════════
-    console.log("\n── ب. الخصم قبل الاعتماد ──");
+    // ══ ب. المخفَّضُ يُطبَّق فوراً بأثرٍ ماليّ كامل ═══════════════════
+    //
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
+    //  كان الخصمُ هنا يفتح طلباً معلَّقاً بلا أثرٍ ماليّ، ينتظر مديرَ الفرع.
+    //  اليوم لا طابورَ يخصّ الخصمَ وحده: مَن يملك تنفيذ الخدمة بسعرها
+    //  الكامل (والاستقبالُ منهم) يملك تنفيذَها بخصمٍ صحيح — فيُطبَّق فوراً
+    //  بحفظٍ واحد (`applyDiscountImmediately`، `npm run test:discount`).
+    console.log("\n── ب. الخصم يُطبَّق فوراً ──");
     const pB = await mk("ب — خصم", { physio: true });
     const before = await money(pB);
     const rB = await newService(S.recv, pB, sessionBody("tok-agreement-b", {
       discount: { finalPrice: 12500, isFree: false, reason: "humanitarian", note: "اتفقنا على النصف" },
     }));
-    same("ب. الطلبُ أُنشئ معلَّقاً", rB.status, 201);
-    same("   والاستجابةُ تقول «بانتظار الاعتماد»", rB.body?.pendingApproval, true);
+    same("ب. الخدمةُ تُنفَّذ فوراً بالسعر المخفَّض",
+      [rB.status, rB.body?.success, Number(rB.body?.newTotalCost)], [201, true, 12500]);
     const reqsB = await pendingFor(pB);
-    same("   صفٌّ واحد معلَّق", [reqsB.length, reqsB[0]?.status], [1, "pending"]);
+    same("   صفٌّ واحدٌ معتمَدٌ فوراً — لا `pending` أبداً خارج معاملته",
+      [reqsB.length, reqsB[0]?.status], [1, "approved"]);
     same("   بالسعرين الصحيحين",
       [Number(reqsB[0].original_price), Number(reqsB[0].proposed_final_price)], [25000, 12500]);
     same("   وبنسبةِ خصمٍ ٥٠٪", Number(reqsB[0].discount_percentage), 50);
@@ -230,10 +286,20 @@ async function main() {
     check(reqsB[0].payload?.finalPrice === undefined
       && reqsB[0].payload?.serviceCost === undefined,
     "   **ولا سعرَ داخل الحمولة** — الصفُّ هو المصدر", JSON.stringify(reqsB[0].payload));
+    //  ══ **والأثرُ الماليُّ كاملٌ فوراً** — لا فرقَ عن السعر الكامل إلّا
+    //  أن المبلغَ أقلّ (قارِن بالقسم أ أعلاه، الفرقُ رقمٌ لا مسار) ══
     const afterB = await money(pB);
-    same("   **ولا أثرَ ماليّاً إطلاقاً قبل الاعتماد**", afterB, before);
+    same("   والكلفةُ ١٢,٥٠٠ فوراً", afterB.totalCost, 12500);
+    same("   ودفعةٌ واحدة بها", [afterB.payments, afterB.paid], [1, 12500]);
+    same("   وجلسةٌ واحدة مشتراة", afterB.sessions, 1);
+    check(afterB.costEntries === before.costEntries + 1, "   وقيدُ كلفةٍ واحدٌ جديد",
+      `${before.costEntries} ⟶ ${afterB.costEntries}`);
+    same("   وكلفةُ الحالة تساوي كلفةَ المريض", afterB.caseCost, 12500);
+    check(afterB.visits === 1, "   وزيارةٌ واحدة", String(afterB.visits));
 
-    //  ورمزُ الإرسالة يمنع طلباً ثانياً من الضغطة نفسها.
+    //  ورمزُ الإرسالة يمنع طلباً ثانياً من الضغطة نفسها — **حارسٌ منفصل
+    //  تماماً** (`submission_tokens`) لا علاقةَ له بحالة صفّ الخصم، فلم
+    //  يتأثّر بتقاعد الاعتماد المؤجَّل إطلاقاً.
     const dupB = await newService(S.recv, pB, sessionBody("tok-agreement-b", {
       discount: { finalPrice: 12500, isFree: false, reason: "humanitarian" },
     }));
@@ -255,62 +321,84 @@ async function main() {
     same("   والخصمُ يُحسب على الأصل الحقيقيّ (٨٤٪)",
       Number(reqB2?.discount_percentage), 84);
 
-    // ══ ج. الاعتمادُ ينفّذ الخدمةَ بالسعر المعتمد ════════════════════
-    console.log("\n── ج. الاعتماد ──");
-    const okC = await decideDiscount(S.mgr, Number(reqsB[0].id), { decision: "approve" });
-    same("ج. الاعتمادُ يمرّ", okC.status, 200);
-    const mC = await money(pB);
-    same("   والكلفةُ صارت ١٢,٥٠٠ لا ٢٥,٠٠٠", mC.totalCost, 12500);
+    // ══ ج. والبابُ التاريخيُّ يبقى قانونياً بحرفه لبقيّةٍ حقيقية ═══════
+    //
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
+    //  صفُّ (ب) أُقفل معتمَداً في معاملة تطبيقه — فمحاولةُ حسمه من البابِ
+    //  التاريخيّ تُردّ **٤٠٩ بلا مسّ المال**؛ وبقيّةٌ تاريخية حقيقية (من
+    //  قبل هذا التغيير، تُبنى هنا بإدراجٍ مباشر) تُحسَم عبر البابِ نفسِه
+    //  **بحرفه** فتُنفَّذ الخدمةُ بالسعر المعتمد — تماماً كما كانت.
+    console.log("\n── ج. البابُ التاريخيّ ──");
+    const reOpen = await decideDiscount(S.mgr, Number(reqsB[0].id), { decision: "approve" });
+    same("ج. **ومحاولةُ حسم صفٍّ اكتمل فوراً تُردّ ٤٠٩**", reOpen.status, 409);
+    same("   ولا أثرَ ماليّاً ثانياً", await money(pB), afterB);
+
+    const pC = await mk("ج — بقيّةٌ تاريخية", { physio: true });
+    const beforeC = await money(pC);
+    const reqC = await mkHistoricalPending(pC, { originalPrice: 25000, finalPrice: 12500 });
+    const okC = await decideDiscount(S.mgr, reqC, { decision: "approve" });
+    same("   **والبابُ التاريخيُّ يحسم بقيّةً حقيقية بنجاح**", okC.status, 200);
+    const mC = await money(pC);
+    same("   والكلفةُ صارت ١٢,٥٠٠", mC.totalCost, 12500);
     same("   ودفعةٌ واحدة بها", [mC.payments, mC.paid], [1, 12500]);
     same("   **وجلسةٌ واحدة بالضبط**", mC.sessions, 1);
     same("   وكلفةُ الحالة تساوي كلفةَ المريض", mC.caseCost, 12500);
     check(mC.visits === 1, "   وزيارةٌ واحدة", String(mC.visits));
     //  **الثابتُ الملزم**: مجموعُ قيود الدفتر = كلفةُ المريض.
     const ledgerC = Number((await q(
-      `SELECT COALESCE(SUM(amount),0)::int c FROM cost_entries WHERE patient_id=$1`, [pB]))[0].c);
+      `SELECT COALESCE(SUM(amount),0)::int c FROM cost_entries WHERE patient_id=$1`, [pC]))[0].c);
     same("   **ومجموعُ قيود الدفتر = الكلفة**", ledgerC, 12500);
+    check(mC.paid > beforeC.paid, "   والأثرُ حقيقيٌّ لا وهميّ", JSON.stringify([beforeC, mC]));
 
-    // ══ د. اعتمادٌ ثانٍ لا يُكرّر ═════════════════════════════════════
+    // ══ د. اعتمادٌ ثانٍ على البقيّة التاريخية لا يُكرّر ════════════════
     console.log("\n── د. الاعتماد المكرَّر ──");
-    const twice = await decideDiscount(S.mgr, Number(reqsB[0].id), { decision: "approve" });
+    const twice = await decideDiscount(S.mgr, reqC, { decision: "approve" });
     same("د. الثاني يُردّ ٤٠٩", twice.status, 409);
-    same("   **ولا خدمةَ ولا دفعةَ ولا جلسةَ ثانية**", await money(pB), mC);
+    same("   **ولا خدمةَ ولا دفعةَ ولا جلسةَ ثانية**", await money(pC), mC);
 
-    // ══ هـ. الرفضُ لا يُنشئ شيئاً ═════════════════════════════════════
+    // ══ هـ. والرفضُ على البقيّة التاريخية لا يُنشئ شيئاً ════════════════
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ ═══════════════════════════════════════
+    //  لا صفَّ `pending` يُنتجه `/new-service` بعد اليوم لِيُرفَض — فتُبنى
+    //  البقيّةُ بإدراجٍ مباشر، والرفضُ نفسُه بحرفه القديم.
     console.log("\n── هـ. الرفض ──");
     const pE = await mk("هـ — رفض", { physio: true });
     const beforeE = await money(pE);
-    await newService(S.recv, pE, sessionBody("tok-agreement-e", {
-      discount: { finalPrice: 5000, isFree: false, reason: "humanitarian" },
-    }));
-    const reqE = (await pendingFor(pE))[0];
+    const reqE = await mkHistoricalPending(pE, { originalPrice: 25000, finalPrice: 5000 });
     same("هـ. الرفضُ يمرّ",
-      (await decideDiscount(S.mgr, Number(reqE.id), { decision: "reject" })).status, 200);
+      (await decideDiscount(S.mgr, reqE, { decision: "reject" })).status, 200);
     same("   **ولا خدمةَ وقعت ولا سعرٌ كاملٌ شُحن**", await money(pE), beforeE);
     same("   والصفُّ مرفوض",
       String((await pendingFor(pE))[0].status), "rejected");
 
-    // ══ و. المجّانيُّ الصريح ══════════════════════════════════════════
+    // ══ و. المجّانيُّ الصريح — يُطبَّق فوراً ════════════════════════════
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ ═══════════════════════════════════════
     console.log("\n── و. مجّاني صريح ──");
     const pF = await mk("و — مجّاني", { physio: true });
     const rF = await newService(S.recv, pF, sessionBody("tok-agreement-f", {
       discount: { finalPrice: 0, isFree: true, reason: "" },
     }));
-    same("و. الطلبُ معلَّق", [rF.status, rF.body?.pendingApproval], [201, true]);
+    same("و. الخدمةُ تُنفَّذ فوراً مجّاناً",
+      [rF.status, rF.body?.success, Number(rF.body?.newTotalCost)], [201, true, 0]);
     const reqF = (await pendingFor(pF))[0];
-    same("   بسعرٍ أصليٍّ موجبٍ ونهائيٍّ صفر",
-      [Number(reqF.original_price), Number(reqF.proposed_final_price), reqF.is_free],
-      [25000, 0, true]);
-    same("   **ولا أثرَ ماليّاً قبل الاعتماد**", (await money(pF)).totalCost, 0);
-    same("   والاعتمادُ يمرّ",
-      (await decideDiscount(S.mgr, Number(reqF.id), { decision: "approve" })).status, 200);
+    same("   بسعرٍ أصليٍّ موجبٍ ونهائيٍّ صفر، ومعتمَدٌ فوراً",
+      [Number(reqF.original_price), Number(reqF.proposed_final_price), reqF.is_free, reqF.status],
+      [25000, 0, true, "approved"]);
     const mF = await money(pF);
-    same("   **الجلسةُ حقيقيةٌ وقيمتُها صفر**", [mF.sessions, mF.paid, mF.totalCost], [1, 0, 0]);
+    same("   **الجلسةُ حقيقيةٌ وقيمتُها صفر فوراً**", [mF.sessions, mF.paid, mF.totalCost], [1, 0, 0]);
     check(mF.visits === 1, "   وزيارةٌ واحدة", String(mF.visits));
     const freeRow = await q(
       `SELECT is_free_sessions f, session_count s FROM payments WHERE patient_id=$1`, [pF]);
     same("   والدفعةُ موسومةٌ «جلسات مجّانية»",
       [freeRow.length, freeRow[0]?.f, Number(freeRow[0]?.s)], [1, true, 1]);
+
+    //  ══ **والبابُ التاريخيُّ يحسم مجّانيّةً موروثةً بحرفه** ═══════════════
+    const pF3 = await mk("و.ج — مجّاني تاريخيّ", { physio: true });
+    const reqF3 = await mkHistoricalPending(pF3, { originalPrice: 25000, finalPrice: 0, isFree: true });
+    same("   والاعتمادُ التاريخيُّ يمرّ",
+      (await decideDiscount(S.mgr, reqF3, { decision: "approve" })).status, 200);
+    const mF3 = await money(pF3);
+    same("   **الجلسةُ حقيقيةٌ وقيمتُها صفر عبر البابِ التاريخيّ أيضاً**",
+      [mF3.sessions, mF3.paid, mF3.totalCost], [1, 0, 0]);
 
     // ══ الصفرُ وحده ليس تبرّعاً ═══════════════════════════════════════
     const pF2 = await mk("و.ب — صفر بلا إعلان", { physio: true });
@@ -321,7 +409,7 @@ async function main() {
     same("   ولا طلبَ ولا مال", (await pendingFor(pF2)).length, 0);
 
     // ══ م. السعرُ القياسيُّ لا يُلتفّ عليه من حقل الكلفة ═══════════════
-    console.log("\n── م. لا التفافَ على الاعتماد ──");
+    console.log("\n── م. لا التفافَ على الخصم ──");
     const pM = await mk("م — التفاف", { physio: true });
     const beforeM = await money(pM);
     const sneak = await newService(S.recv, pM, sessionBody("tok-agreement-m", {
@@ -332,6 +420,16 @@ async function main() {
     same("م. **مبلغٌ أقلُّ من القياسيّ بلا خصمٍ يُردّ ٤٠٠**", sneak.status, 400);
     check(String(sneak.body?.message ?? "").includes("خصم أو خدمة مجّانية"),
       "   برسالةٍ تدلّ على الباب الصحيح", String(sneak.body?.message));
+    //  ══ حارسُ ارتداد — لا صياغةَ اعتمادٍ في رسالةٍ حيّة (تصحيحٌ لاحق) ═══
+    //  كانت الرسالةُ تقول «فيُعتمَد» — بقيّةٌ من قبل تقاعد اعتماد الخصم
+    //  الحيّ (٢٦٠). فحصٌ صريح يمنع عودتها: لا «اعتماد» في أيّ صياغته، ولا
+    //  «معتمِد»، والرسالةُ تقول التطبيقَ الفوريّ صراحةً بدل ذلك.
+    check(!/اعتماد|يُعتمَد|معتمِد/.test(String(sneak.body?.message ?? "")),
+      "   **ولا صياغةَ اعتمادٍ فيها بأيّ شكل** — لا اعتمادَ بعد اليوم",
+      String(sneak.body?.message));
+    check(/يُطبَّق مباشرةً/.test(String(sneak.body?.message ?? "")),
+      "   **وتقول صراحةً إن الخصمَ يُطبَّق مباشرةً عند الحفظ**",
+      String(sneak.body?.message));
     same("   **ولا خدمةَ ولا مال ولا جلسة**", await money(pM), beforeM);
     same("   ولا طلبَ خصمٍ أُنشئ", (await pendingFor(pM)).length, 0);
 
@@ -376,15 +474,18 @@ async function main() {
       await typesOf(pN1), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
     same("   والكلفةُ ٧٥,٠٠٠", (await money(pN1)).totalCost, 75000);
 
-    //  ن.ب — بخصمٍ إلى ٤٠,٠٠٠: **النوعان يبقيان**، والمجموعُ يطابق المعتمَد.
+    //  ن.ب — بخصمٍ إلى ٤٠,٠٠٠: **يُطبَّق فوراً**، والنوعان يبقيان، والمجموعُ
+    //  يطابق المعتمَد.
+    //  ══ تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨ — تقاعدُ الاعتماد المؤجَّل ═══════════════
     const pN2 = await mk("ن.ب — نوعان بخصم", { physio: true });
-    await newService(S.recv, pN2, twoTypes("tok-agreement-n2", {
+    const rN2 = await newService(S.recv, pN2, twoTypes("tok-agreement-n2", {
       discount: { finalPrice: 40000, isFree: false, reason: "humanitarian" },
     }));
+    same("ن.ب الخدمةُ تُنفَّذ فوراً بأصلٍ ٧٥,٠٠٠",
+      [rN2.status, Number(rN2.body?.newTotalCost)], [201, 40000]);
     const reqN2 = (await pendingFor(pN2))[0];
-    same("ن.ب الطلبُ معلَّقٌ بأصلٍ ٧٥,٠٠٠", Number(reqN2?.original_price), 75000);
-    same("   والاعتمادُ يمرّ",
-      (await decideDiscount(S.mgr, Number(reqN2.id), { decision: "approve" })).status, 200);
+    same("   والطلبُ معتمَدٌ فوراً بأصلٍ ٧٥,٠٠٠", [Number(reqN2?.original_price), reqN2?.status],
+      [75000, "approved"]);
     same("   **والنوعان باقيان بجلستيهما رغم الخصم**",
       await typesOf(pN2), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
     const mN2 = await money(pN2);
@@ -402,17 +503,18 @@ async function main() {
     same("   والتوزيعُ تناسبيٌّ مجموعُه المعتمَد", [linesN2, linesN2[0] + linesN2[1]],
       [[26667, 13333], 40000]);
 
-    //  ن.ج — إعادةُ الاعتماد لا تُكرّر شيئاً.
-    same("ن.ج الاعتمادُ الثاني يُردّ ٤٠٩",
+    //  ن.ج — ومحاولةُ حسمٍ من البابِ التاريخيّ على صفٍّ اكتمل فوراً تُردّ
+    //  ٤٠٩ ولا تُضاعف شيئاً.
+    same("ن.ج محاولةُ الحسم على صفٍّ مكتمل تُردّ ٤٠٩",
       (await decideDiscount(S.mgr, Number(reqN2.id), { decision: "approve" })).status, 409);
     same("   **ولا جلساتٍ مكرّرة**", await money(pN2), mN2);
 
-    //  ن.هـ — **بندٌ نصيبُه من المال صفر تبقى جلستُه**.
+    //  ن.هـ — **بندٌ نصيبُه من المال صفر تبقى جلستُه** — يُطبَّق فوراً.
     //  خطُّ دفاعٍ ثانٍ خلف التوزيع التناسبيّ: بندٌ سعرُه الأصليّ صفر
     //  (استشارة) يحمل جلسات ⟶ نصيبُه صفرٌ مهما كان المعتمَد. وقبل الإصلاح
     //  كان شرطُ `cost > 0` يُسقط صفَّه، فتضيع جلساتُه من العدّاد نهائياً.
     const pN4 = await mk("ن.هـ — بندٌ بلا سعر", { physio: true });
-    await newService(S.recv, pN4, {
+    const rN4 = await newService(S.recv, pN4, {
       serviceType: "additional_therapy",
       serviceCost: 50000,
       initialPayment: 50000,
@@ -425,23 +527,19 @@ async function main() {
       sessionCount: 3,
       discount: { finalPrice: 30000, isFree: false, reason: "humanitarian" },
     });
-    const reqN4 = (await pendingFor(pN4))[0];
-    same("ن.هـ الاعتمادُ يمرّ",
-      (await decideDiscount(S.mgr, Number(reqN4.id), { decision: "approve" })).status, 200);
+    same("ن.هـ الخدمةُ تُنفَّذ فوراً", rN4.status, 201);
     same("   **والبندُ الذي نصيبُه صفر بقيت جلساتُه**",
       await typesOf(pN4), ["استشارة طبية:2", "روبوت:1"]);
     const mN4 = await money(pN4);
     same("   ومجموعُ الدفعات = المعتمَد", mN4.paid, 30000);
     same("   ومجموعُ الجلسات ثلاث", mN4.sessions, 3);
 
-    //  ن.د — تبرّعٌ صريح على نوعين: الجلستان تبقيان بقيمةٍ صفر.
+    //  ن.د — تبرّعٌ صريح على نوعين: يُطبَّق فوراً، والجلستان تبقيان بقيمةٍ صفر.
     const pN3 = await mk("ن.د — نوعان مجّاناً", { physio: true });
-    await newService(S.recv, pN3, twoTypes("tok-agreement-n3", {
+    const rN3 = await newService(S.recv, pN3, twoTypes("tok-agreement-n3", {
       discount: { finalPrice: 0, isFree: true, reason: "" },
     }));
-    const reqN3 = (await pendingFor(pN3))[0];
-    same("ن.د الاعتمادُ يمرّ",
-      (await decideDiscount(S.mgr, Number(reqN3.id), { decision: "approve" })).status, 200);
+    same("ن.د الخدمةُ تُنفَّذ فوراً مجّاناً", rN3.status, 201);
     same("   **والنوعان باقيان بجلستيهما**",
       await typesOf(pN3), ["أجهزة علاج طبيعي:1", "روبوت:1"]);
     const mN3 = await money(pN3);

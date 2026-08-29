@@ -31,7 +31,7 @@ import * as discountStore from "../discounts/store";
 import {
   episodeDiscountRef, serviceDiscountRef,
 } from "@shared/discount";
-import { mayApproveHere as mayApproveDiscountHere, discountAuditNote } from "../discounts/routes";
+import { discountAuditNote } from "../discounts/routes";
 
 type Req = any;
 
@@ -532,7 +532,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== effectiveCost;
     if (wantsFree || wantsCut) {
       try {
-        const out = await discountStore.submitDiscount({
+        //  **التطبيقُ فوريّ دائماً** — فحصُ الصلاحية أعلاه (قبل هذا الشرط)
+        //  هو نفسُ فحص التخصيص كامل السعر تماماً، فلا فحصَ ثانياً هنا.
+        const out = await discountStore.applyDiscountImmediately({
           patientId, department: serviceType, branchId: patient.branchId,
           contextRef: liveEpisode
             ? episodeDiscountRef(liveEpisode.id) : serviceDiscountRef(serviceType),
@@ -543,22 +545,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           //  الخبيرُ والمواصفاتُ يُحفظان ليُستأنف التخصيصُ بلا إعادة إدخال.
           payload: { expertUserId, fields, serviceType },
           actor: discountActor(req),
-          actorMayApprove: mayApproveDiscountHere(req, patient.branchId),
-          //  **الاعتمادُ المباشر يكتب سطرَه داخل معاملته** — فلا أمرُ تصنيعٍ
-          //  يُولَد بإذنٍ لا أثرَ له، ولا رسالةُ فشلٍ بعد نجاح.
+          //  **سطرُ التدقيق داخل المعاملة** — فلا أمرُ تصنيعٍ يُولَد بإذنٍ
+          //  لا أثرَ له.
           audit: {
             ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-            note: (row: any) => discountAuditNote(row, "طلب واعتماد"),
+            note: (row: any) => discountAuditNote(row, "تطبيقٌ فوريّ"),
           },
         });
-        //  والمعلَّقُ وحده يُدقَّق من هنا: لا مالَ تحرّك.
-        if (out.status === "pending") {
-          await audit(req, "service_discount", out.request.id, "create", patient.branchId,
-            discountAuditNote(out.request, "طلب"));
-        }
-        return res.status(out.status === "approved" ? 201 : 202).json({
-          ok: true, pendingApproval: out.status === "pending",
-          discountRequestId: out.request.id, discountStatus: out.request.status,
+        return res.status(201).json({
+          ok: true,
+          discountRequestId: out.request.id,
           workOrderId: out.applied?.workOrderId ?? null,
         });
       } catch (e: any) {

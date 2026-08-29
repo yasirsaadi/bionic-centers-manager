@@ -390,7 +390,11 @@ export type PurchasePresentation = "converted" | "discount_pending" | "awaiting"
 
 export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   converted: "تم الشراء — بدأ التصنيع",
-  discount_pending: "المريض وافق على الشراء — بانتظار اعتماد الخصم",
+  //  ══ **تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨** — لم يعد «اعتماد» ════════════════════
+  //  طابورُ اعتماد الخصومات تقاعد: خصمٌ جديد يُطبَّق فوراً عند الحفظ ولا
+  //  يرفع هذه الرايةَ خارج تلك المعاملة أبداً. فـ`hasPendingDiscount: true`
+  //  هنا **لا يمكن أن يكون إلّا بقيّةً من قبل التغيير** — والنصُّ يقوله.
+  discount_pending: "المريض وافق على الشراء — خصمٌ سابقٌ بانتظار الإكمال",
   awaiting: "المريض وافق على الشراء — بانتظار إتمام إجراءات البيع",
   admin_void: "عملية ملغاة إدارياً",
   exam_cancelled: "المعاينة ملغاة",

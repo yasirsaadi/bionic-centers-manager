@@ -84,14 +84,7 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
     onSuccess: (data) => {
       invalidatePatientData(queryClient, patient!.id);
       queryClient.invalidateQueries({ queryKey: ["/api/discounts"] });
-      if (data.pendingApproval) {
-        toast({
-          title: "أُرسل طلب الخصم للاعتماد",
-          description: "لم تُسجَّل الكلفة بعد — تُنفَّذ الخدمة فور اعتماد المسؤول أو مدير الفرع.",
-        });
-      } else {
-        toast({ title: "تم تسعير العلاج", description: `الكلفة المضافة: ${(data.totalCost || 0).toLocaleString()} د.ع` });
-      }
+      toast({ title: "تم تسعير العلاج", description: `الكلفة المضافة: ${(data.totalCost || 0).toLocaleString()} د.ع` });
       reset();
       onOpenChange(false);
     },
@@ -175,9 +168,7 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
           <Button onClick={() => save.mutate()}
             disabled={validRows.length === 0 || save.isPending || discountBlocked(discount, total)}
             data-testid="physio-save">
-            {save.isPending ? "جارٍ الحفظ…"
-              : hasDiscount(discount, total) ? "إرسال للاعتماد"
-                : "حفظ الكلفة والجلسات"}
+            {save.isPending ? "جارٍ الحفظ…" : "حفظ الكلفة والجلسات"}
           </Button>
         </DialogFooter>
       </DialogContent>

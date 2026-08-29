@@ -99,7 +99,7 @@ export function ServiceDiscountFields({
                   {" "}(<b>{calc.discountPercentage}%</b>) — السعر النهائي{" "}
                   <b className="font-mono">{calc.finalPrice.toLocaleString("en-US")}</b> د.ع.</>
               )}
-              {" "}لا ينفَّذ حتى يعتمده المسؤول أو مدير الفرع.
+              {" "}يُطبَّق السعر المتفق عليه مباشرةً عند الحفظ.
             </div>
           ) : (
             <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
@@ -132,7 +132,7 @@ export function ServiceDiscountFields({
             <label className="text-sm font-medium">ملاحظة (اختياري)</label>
             <Input value={value.note} disabled={disabled}
               onChange={(e) => set({ note: e.target.value })}
-              placeholder="تفصيل يفيد المعتمِد"
+              placeholder="تفصيلٌ إضافيّ (اختياري)"
               data-testid={`${testIdPrefix}-note`} />
           </div>
         </>

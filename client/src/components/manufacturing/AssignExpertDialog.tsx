@@ -186,14 +186,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
       invalidatePatientData(queryClient, patient!.id);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/discounts"] });
-      if (data?.pendingApproval) {
-        toast({
-          title: "أُرسل طلب الخصم للاعتماد",
-          description: "لم يبدأ التصنيع ولم تُسجَّل كلفة — يبدأ فور اعتماد المسؤول أو مدير الفرع.",
-        });
-      } else {
-        toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
-      }
+      toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
       resetState();
       onOpenChange(false);
     },
@@ -357,8 +350,7 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
           <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending || discountBlocked(discount, originalPrice)} data-testid="button-confirm-assign-expert">
-            {assign.isPending ? "جارٍ الحفظ…"
-              : hasDiscount(discount, originalPrice) ? "إرسال للاعتماد" : "حفظ وإسناد"}
+            {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>
       </DialogContent>
