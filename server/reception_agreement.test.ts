@@ -409,7 +409,7 @@ async function main() {
     same("   ولا طلبَ ولا مال", (await pendingFor(pF2)).length, 0);
 
     // ══ م. السعرُ القياسيُّ لا يُلتفّ عليه من حقل الكلفة ═══════════════
-    console.log("\n── م. لا التفافَ على الاعتماد ──");
+    console.log("\n── م. لا التفافَ على الخصم ──");
     const pM = await mk("م — التفاف", { physio: true });
     const beforeM = await money(pM);
     const sneak = await newService(S.recv, pM, sessionBody("tok-agreement-m", {
@@ -420,6 +420,16 @@ async function main() {
     same("م. **مبلغٌ أقلُّ من القياسيّ بلا خصمٍ يُردّ ٤٠٠**", sneak.status, 400);
     check(String(sneak.body?.message ?? "").includes("خصم أو خدمة مجّانية"),
       "   برسالةٍ تدلّ على الباب الصحيح", String(sneak.body?.message));
+    //  ══ حارسُ ارتداد — لا صياغةَ اعتمادٍ في رسالةٍ حيّة (تصحيحٌ لاحق) ═══
+    //  كانت الرسالةُ تقول «فيُعتمَد» — بقيّةٌ من قبل تقاعد اعتماد الخصم
+    //  الحيّ (٢٦٠). فحصٌ صريح يمنع عودتها: لا «اعتماد» في أيّ صياغته، ولا
+    //  «معتمِد»، والرسالةُ تقول التطبيقَ الفوريّ صراحةً بدل ذلك.
+    check(!/اعتماد|يُعتمَد|معتمِد/.test(String(sneak.body?.message ?? "")),
+      "   **ولا صياغةَ اعتمادٍ فيها بأيّ شكل** — لا اعتمادَ بعد اليوم",
+      String(sneak.body?.message));
+    check(/يُطبَّق مباشرةً/.test(String(sneak.body?.message ?? "")),
+      "   **وتقول صراحةً إن الخصمَ يُطبَّق مباشرةً عند الحفظ**",
+      String(sneak.body?.message));
     same("   **ولا خدمةَ ولا مال ولا جلسة**", await money(pM), beforeM);
     same("   ولا طلبَ خصمٍ أُنشئ", (await pendingFor(pM)).length, 0);
 
