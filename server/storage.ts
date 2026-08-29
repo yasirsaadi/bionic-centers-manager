@@ -151,8 +151,6 @@ export interface IStorage {
     patientId: number;
     caseType: "amputee" | "medical_support" | "physiotherapy";
     fields: Partial<InsertPatient>;
-    serviceCost: number;
-    paidNow: number;
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
