@@ -436,10 +436,29 @@ function main() {
     "paymentTreatmentType: isPhysioService ?",
     "sessionCount: isPhysioService ?",
     "{isPhysioService && (",
-    "const paidNow = isPhysioService",
   ]) {
     check(newServiceCode.includes(gated), `و«${gated.slice(0, 42)}…» مشروطٌ بالخدمة`);
   }
+
+  // ══ ٩. **والمقبوضُ الفعليّ وحده لم يعد يُقرَّر من نوع الخدمة** — إصلاحٌ
+  //  لاحق (الجهوزيةُ المالية) ══════════════════════════════════════════════
+  //  كان `paidNow` مقفولاً على `isPhysioService ? serviceCost : …` — أي أن
+  //  الجلساتِ الإضافية كانت تُسجَّل مدفوعةً كاملةً حتماً بلا حقلٍ يظهر لها
+  //  أصلاً. **ثمّ بقي أثرٌ ثانٍ من العطب نفسه**: تعبئةٌ تلقائية بكامل السعر
+  //  لغير الجلسات (`form.setValue("paidNow", serviceCost…)`) — فاستشارةٌ أو
+  //  «خدمة أخرى» كانتا تُسجَّلان مدفوعتين كاملةً بلا أن يكتب الموظّفُ رقماً.
+  //  حارسٌ يمنع عودة أيٍّ من الشكلين لأيّ نوعِ خدمة.
+  console.log("\n── ٩. المقبوضُ الفعليّ حقلٌ حقيقيّ — بلا استثناءٍ ولا تعبئة ──");
+  check(!/paidNow\s*=\s*isPhysioService\s*\?\s*serviceCost/.test(newServiceCode),
+    "٩. **لا `paidNow = isPhysioService ? serviceCost` بعد اليوم**"
+    + " — كان هذا يُخرج الجلسات من صدق الإيصال كلياً");
+  check(!/setValue\(\s*"paidNow"\s*,\s*serviceCost/.test(newServiceCode),
+    "**ولا تعبئةٌ تلقائية بكامل السعر لأيّ نوع خدمة** — لا استدعاء"
+    + ' `setValue("paidNow", serviceCost…)` متبقٍّ',
+    (newServiceCode.match(/.*setValue\(\s*"paidNow".*/g) ?? []).join(" | "));
+  check(!/paidNowOverride/.test(newServiceCode),
+    "**ولا حالةَ تجاوزٍ ميتة بقيت** — `paidNowOverride` أُزيلت كاملةً مع"
+    + " التعبئة التلقائية التي كانت تحرسها");
 
   // ══ ١٠-١٢. النوع الموجَّه مقفل ═══════════════════════════════════════
   console.log("\n── النوع الموجَّه لا يُبدَّل ──");

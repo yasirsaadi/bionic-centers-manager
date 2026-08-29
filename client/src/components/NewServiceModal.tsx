@@ -103,7 +103,6 @@ export function NewServiceModal({
   const [submissionToken, setSubmissionToken] = useState<string>("");
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
-  const [paidNowOverride, setPaidNowOverride] = useState(false);
   //  ══ **الاتفاقُ الذي أبرمه الاستقبال** ═════════════════════════════════
   //  الموظّفُ هو مَن يكلّم المريض ويعرف على كم اتّفقا. وقبل هذا لم يكن له
   //  حقلٌ يقوله فيه، فتُنفَّذ الخدمةُ بسعرها الكامل ثم **يخمّن المديرُ
@@ -146,7 +145,6 @@ export function NewServiceModal({
       form.reset();
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
-      setPaidNowOverride(false);
       setDiscount(EMPTY_DISCOUNT);
     },
     onError: () => {
@@ -238,17 +236,15 @@ export function NewServiceModal({
   const paidNowValue = Number(form.watch("paidNow")) || 0;
   const remainingAfter = Math.max(0, serviceCostValue - paidNowValue);
 
-  // Non-physio services: default "amount paid now" to the full service cost
-  // (the common case) until the accountant/receptionist edits it down for a
-  // partial payment. Physio does NOT get this auto-fill (financial-readiness
-  // fix): defaulting a per-session service to "paid in full" is exactly the
-  // false-receipt bug this field exists to close, so it starts empty and the
-  // employee enters what was actually received.
-  useEffect(() => {
-    if (isPhysioService) return;
-    if (paidNowOverride) return;
-    form.setValue("paidNow", serviceCostValue ? String(serviceCostValue) : "");
-  }, [serviceCostValue, isPhysioService, paidNowOverride, form]);
+  // ══ **لا تعبئةَ تلقائية لـ«المبلغ المدفوع الآن» — لأيّ نوع خدمة**
+  //  (تصحيحٌ لاحق — الجهوزيةُ المالية) ═══════════════════════════════════
+  //  كان هذا الأثرُ يملأ الحقلَ بكامل السعر تلقائياً لغير الجلسات الإضافية
+  //  («الحالة الشائعة») — أي أن استشارةً أو «خدمة أخرى» كانتا تُسجَّلان
+  //  مدفوعتين كاملةً **بلا أن يكتب الموظّفُ رقماً واحداً**، وهذا هو العطبُ
+  //  نفسُه (إيرادٌ لم يُقبَض فعلياً) الذي أُغلق للجلسات الإضافية للتوّ —
+  //  بقيّةٌ منه لم تُغلَق. **فلا تعبئةَ تلقائية بعد اليوم لأيّ نوع**: الحقلُ
+  //  يبدأ فارغاً دائماً (`defaultValues.paidNow = ""` وحدها تكفي)، ولا أثرَ
+  //  يكتب فوقه — فلا إيصالَ موجباً بلا رقمٍ كتبه الموظّفُ بيده صراحةً.
 
   function onSubmit(values: FormValues) {
     //  **والجلساتُ تُرسَل بالقياسيّ دائماً** — لا بقيمةِ حقلٍ قد تكون بائتة.
@@ -543,10 +539,7 @@ export function NewServiceModal({
                       className="bg-white"
                       placeholder="0"
                       data-testid="input-service-paid-now"
-                      onValueChange={(n) => {
-                        field.onChange(String(n));
-                        setPaidNowOverride(true);
-                      }}
+                      onValueChange={(n) => field.onChange(String(n))}
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground mt-1">
