@@ -240,7 +240,10 @@ export function NewServiceModal({
 
   // Non-physio services: default "amount paid now" to the full service cost
   // (the common case) until the accountant/receptionist edits it down for a
-  // partial payment. Physio keeps its per-session payment model untouched.
+  // partial payment. Physio does NOT get this auto-fill (financial-readiness
+  // fix): defaulting a per-session service to "paid in full" is exactly the
+  // false-receipt bug this field exists to close, so it starts empty and the
+  // employee enters what was actually received.
   useEffect(() => {
     if (isPhysioService) return;
     if (paidNowOverride) return;
@@ -294,11 +297,13 @@ export function NewServiceModal({
       return;
     }
     
-    // Physio keeps its per-session full payment; prosthetic/medical-support
-    // records only the amount actually paid now (partial allowed).
-    const paidNow = isPhysioService
-      ? serviceCost
-      : Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
+    // ══ **الكلفةُ والمقبوضُ حقيقتان منفصلتان — لكلّ أنواع الخدمة** ═══════
+    //  كانت الجلساتُ الإضافية تُسجَّل مدفوعةً كاملةً تلقائياً
+    //  (`paidNow = serviceCost`) بصرف النظر عمّا قَبَضه الموظّفُ فعلاً —
+    //  فخصمٌ أو موافقةٌ على السعر كانا يُقرآن قبضاً كاملاً. صار المبلغُ
+    //  المدفوع الآن حقلاً حقيقياً لكلّ الأنواع، يُقصَر على الكلفة، جزئيّاً
+    //  كان أو كاملاً أو صفراً — والباقي يبقى ديناً كما هو للأنواع الأخرى.
+    const paidNow = Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
 
     //  **والخصمُ لا يُرسَل إلّا حين يوجد**: المساواةُ ليست خصماً، فالمسارُ
     //  الطبيعي يمضي بلا طلبٍ ولا طابور — وهو المسارُ الأغلب.
@@ -521,43 +526,42 @@ export function NewServiceModal({
               )}
             />
 
-            {/* Amount paid now — prosthetic / medical-support only. Any unpaid
-                remainder becomes a balance the accountant collects later. */}
-            {!isPhysioService && (
-              <FormField
-                control={form.control}
-                name="paidNow"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>المبلغ المدفوع الآن</FormLabel>
-                    <FormControl>
-                      <MoneyInput
-                        value={field.value ?? ""}
-                        className="bg-white"
-                        placeholder="0"
-                        data-testid="input-service-paid-now"
-                        onValueChange={(n) => {
-                          field.onChange(String(n));
-                          setPaidNowOverride(true);
-                        }}
-                      />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      اتركه بكامل السعر إن دفع المريض كاملاً، أو أنقصه لدفعٍ جزئي — والباقي يبقى ديناً يحصّله المحاسب لاحقاً.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {/* Amount paid now — **كلُّ** أنواع الخدمة، بما فيها الجلسات
+                الإضافية (تصحيحٌ للجهوزية المالية): الكلفةُ والمقبوضُ
+                حقيقتان منفصلتان، وخصمٌ أو موافقةٌ على السعر لا يعنيان
+                قبضاً كاملاً. أيّ باقٍ غير مدفوعٍ يبقى ديناً يحصّله
+                المحاسب لاحقاً. */}
+            <FormField
+              control={form.control}
+              name="paidNow"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>المبلغ المدفوع الآن</FormLabel>
+                  <FormControl>
+                    <MoneyInput
+                      value={field.value ?? ""}
+                      className="bg-white"
+                      placeholder="0"
+                      data-testid="input-service-paid-now"
+                      onValueChange={(n) => {
+                        field.onChange(String(n));
+                        setPaidNowOverride(true);
+                      }}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً أو صفراً — والباقي يبقى ديناً يحصّله المحاسب لاحقاً.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <div className="bg-slate-50 p-3 rounded-lg text-sm">
-              {!isPhysioService && (
-                <div className="flex justify-between gap-2 text-amber-700 font-semibold mb-1">
-                  <span>المتبقّي على المريض من هذه الخدمة</span>
-                  <span className="font-mono">{remainingAfter.toLocaleString()} {t.patientDetails.currency}</span>
-                </div>
-              )}
+              <div className="flex justify-between gap-2 text-amber-700 font-semibold mb-1">
+                <span>المتبقّي على المريض من هذه الخدمة</span>
+                <span className="font-mono">{remainingAfter.toLocaleString()} {t.patientDetails.currency}</span>
+              </div>
               <div className="flex justify-between gap-2 text-muted-foreground">
                 <span>{t.modals.currentTotalCost}</span>
                 <span className="font-mono">{currentTotalCost.toLocaleString()} {t.patientDetails.currency}</span>
