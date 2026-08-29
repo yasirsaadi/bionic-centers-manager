@@ -1667,6 +1667,14 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`
         DELETE FROM price_change_requests WHERE patient_id = ${id}
       `);
+      // ══ طلباتُ التصحيح الماليّ (ترحيل ٠٧١) ════════════════════════════
+      // مفتاحٌ أجنبيٌّ حقيقيّ إلى `patients` ⟶ **موضعُه هنا إلزاماً**، وإلّا
+      // فشل حذفُ كلّ مريضٍ صُحِّحت له دفعةٌ يوماً. وهو جدولُ طلبٍ وتدقيق لا
+      // دفترُ مال: المالُ نفسُه في `payments` و`cost_entries` ويُحذف بمسارِه.
+      // (القاعدة الملزمة في CLAUDE.md، ومُختبَرٌ بحذفٍ حقيقي محلياً.)
+      await tx.execute(sql`
+        DELETE FROM financial_correction_requests WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followups WHERE patient_id = ${id}
       `);
@@ -2798,7 +2806,11 @@ export class DatabaseStorage implements IStorage {
   // (a retag away from أطراف no longer leaves the money counted on the طرف),
   // then sync's exact-tag/fallback rules re-home it; resolveCaseId is the
   // final safety net.
-  private async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
+  // كانت خاصّة، وصارت عامّةً كي ينادِيها مسارُ تصحيح الدفعات المحمية أيضاً
+  // (server/payments/correction_store.ts) — بعد نجاح المعاملة الصارمة،
+  // بنفس ما كانت تفعله updatePayment دائماً عند تغيّر وسم العلاج، لا
+  // نسخةً ثانية من منطق إعادة الإسناد.
+  async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
     try {
       await db.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
       await this.syncPatientCases(patientId);
