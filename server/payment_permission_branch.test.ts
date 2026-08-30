@@ -938,6 +938,50 @@ async function main() {
       await rejectCorrectionHttp(fcr.id, S.admin);
     }
 
+    // ══ خ. صفحةُ طلبات تصحيح الدفعات — عرضٌ فقط، بلا مسّ للخادم ═══════════
+    // متابعةٌ رابعة (2026-08-30): عقدُ شاشةٍ نصّيّ بحت — لا خادم، لا نداءَ
+    // POST، لا شريطَ جانبيّ لهذه المرحلة.
+    console.log("\n── خ. صفحةُ طلبات تصحيح الدفعات (عقدٌ نصّيّ) ──");
+    {
+      const pageSrc = readFileSync(
+        join(__dirname, "..", "client/src/pages/PaymentCorrections.tsx"), "utf8");
+      const appSrc = readFileSync(join(__dirname, "..", "client/src/App.tsx"), "utf8");
+      const sidebarSrc = readFileSync(
+        join(__dirname, "..", "client/src/components/Sidebar.tsx"), "utf8");
+
+      // ١. الملفُّ موجودٌ ويُقرأ فعلاً — readFileSync أعلاه كانت سترمي لو غاب.
+      check(pageSrc.length > 0, "خ١. PaymentCorrections.tsx موجودٌ ويُقرأ");
+
+      // ٢. تجلب نقطة القائمة المعلَّقة الحقيقية بعينها.
+      check(/\/api\/admin\/payment-corrections\?status=pending/.test(pageSrc),
+        "خ٢. **تجلب `GET /api/admin/payment-corrections?status=pending` بعينها**");
+
+      // ٣. تعرض الحقول المُثراة السبعة المطلوبة صراحةً.
+      check(/patientName/.test(pageSrc), "خ٣. تعرض patientName");
+      check(/patientCode/.test(pageSrc), "خ٤. تعرض patientCode");
+      check(/branchName/.test(pageSrc), "خ٥. تعرض branchName");
+      check(/\breason\b/.test(pageSrc), "خ٦. تعرض reason");
+      check(/beforeSnapshot/.test(pageSrc), "خ٧. تعرض beforeSnapshot");
+      check(/requestedPatch/.test(pageSrc), "خ٨. تعرض requestedPatch");
+      check(/currentPaymentExists/.test(pageSrc), "خ٩. تعرض currentPaymentExists");
+
+      // ٤. بلا أيّ نداء POST — لا اعتماد ولا رفض، ولا حتى useMutation.
+      check(
+        !/method:\s*["'`]POST["'`]/.test(pageSrc)
+        && !/apiRequest\(\s*["'`]POST["'`]/.test(pageSrc)
+        && !/useMutation/.test(pageSrc),
+        "خ١٠. **بلا أيّ نداء POST وبلا useMutation — لا اعتماد ولا رفض ولا زرَّ قرارٍ في هذه المرحلة**",
+      );
+
+      // ٥. App.tsx يسجّل المسار ومكوّنه.
+      check(/PaymentCorrections/.test(appSrc) && /\/payment-corrections/.test(appSrc),
+        "خ١١. **App.tsx يسجّل `/payment-corrections` ومكوّن `PaymentCorrections`**");
+
+      // ٦. لا عنصرَ شريطٍ جانبيّ لهذه الصفحة في هذه المرحلة — محظورٌ صراحةً.
+      check(!/payment-corrections/.test(sidebarSrc),
+        "خ١٢. **ولا عنصرَ شريطٍ جانبيّ لهذه الصفحة بعد — لم يُمَسّ Sidebar.tsx**");
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل فحوص صلاحية الدفعات ونطاق الفرع نجحت"
       : `❌ ${failures} فشل`}\n`);
   } finally {
