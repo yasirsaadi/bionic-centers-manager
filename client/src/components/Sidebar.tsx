@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -267,6 +267,8 @@ export function Sidebar() {
     //  و`hideWhenZero` تُخفي الصفَّ كلَّه حين لا يوجد طلبٌ معلَّق — نفسُ نمط
     //  «خصومات سابقة» و«الطابور الموروث» أعلاه بالضبط.
     { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount, hideWhenZero: true },
+    //  سردٌ إشرافيٌّ للقراءة فقط — بلا شارةٍ (ليست طابورَ انتظار).
+    { label: "المراجعة اليومية", icon: Eye, href: "/daily-review", adminOnly: true, settingKey: null, permission: null },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     //  **والمحذوفاتُ لمن يحذف ويستعيد** — مسؤولٌ أو مديرُ فرعٍ أو طبيب.

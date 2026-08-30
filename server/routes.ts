@@ -79,6 +79,7 @@ import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
 import { registerPaymentCorrectionRoutes } from "./payments/correction_routes";
+import { registerDailyReviewRoutes } from "./daily_review/routes";
 import {
   requestPaymentCorrection, applyPaymentCorrectionDirect, diffPaymentPatch,
   assertDeviceAttributionCompatible, CorrectionError,
@@ -7236,6 +7237,9 @@ export async function registerRoutes(
   registerPendingChargeRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerPaymentCorrectionRoutes(app, isAuthenticated);
+  //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —
+  //  بلا كتابةٍ ولا اعتماد. راجع server/daily_review/store.ts.
+  registerDailyReviewRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
   registerPatientTrashRoutes(app, isAuthenticated);
 
