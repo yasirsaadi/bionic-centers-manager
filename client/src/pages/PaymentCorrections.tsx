@@ -36,6 +36,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { invalidatePatientData } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import {
   Banknote, Loader2, ShieldAlert, AlertTriangle, AlertCircle, Trash2, Pencil, Check, X,
@@ -286,7 +287,9 @@ export default function PaymentCorrections() {
   // ══ الاعتماد/الرفض — عميلٌ رقيقٌ فوق البابين القائمين ═══════════════════
   // نداءٌ واحدٌ يخدم الاثنين معاً (`kind` يختار المسار)، فلا منطقَ مكرَّراً.
   const decide = useMutation({
-    mutationFn: async (v: { id: number; kind: "approve" | "reject"; decisionNote: string }) => {
+    mutationFn: async (
+      v: { id: number; kind: "approve" | "reject"; decisionNote: string; patientId: number },
+    ) => {
       const res = await fetch(`/api/admin/payment-corrections/${v.id}/${v.kind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -304,6 +307,13 @@ export default function PaymentCorrections() {
     onSuccess: (_data, v) => {
       qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending"] });
       qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending-count"] });
+      //  ══ **الاعتمادُ يُطبِّق التصحيحَ فعلاً على الدفعة — الرفضُ لا يمسّها**
+      //  (تحكّمُ الذاكرة، 2026-08-30) ═══════════════════════════════════════
+      //  الرفضُ لا يُدَّعى أنه غيّر مالاً: لا إبطالَ لصفحة المريض أو السجلّ
+      //  إلّا حين وقع تغييرٌ حقيقيّ — وهو الاعتمادُ وحده.
+      if (v.kind === "approve") {
+        invalidatePatientData(qc, v.patientId);
+      }
       toast({
         title: v.kind === "approve" ? "تمّ اعتماد الطلب" : "تمّ رفض الطلب",
         description: v.kind === "approve"
@@ -425,7 +435,10 @@ export default function PaymentCorrections() {
             <AlertDialogAction
               onClick={() => {
                 if (!confirm) return;
-                decide.mutate({ id: confirm.row.id, kind: confirm.kind, decisionNote: note });
+                decide.mutate({
+                  id: confirm.row.id, kind: confirm.kind, decisionNote: note,
+                  patientId: confirm.row.patientId,
+                });
               }}
               className={confirm?.kind === "approve" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}
               disabled={decide.isPending}

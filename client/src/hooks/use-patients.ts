@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
+import { invalidatePatientData } from "@/lib/queryClient";
 import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
 function getBranchSession() {
@@ -85,8 +86,14 @@ export function useCreatePatient() {
       }
       return api.patients.create.responses[201].parse(await res.json());
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+    //  ══ **السجلّ (`/api/patients/registry`) لم يكن يُبطَل** (تحكّمُ
+    //  الذاكرة، 2026-08-30) ═════════════════════════════════════════════
+    //  كان الإبطالُ يقتصر على `[api.patients.list.path]` — قائمةٌ قديمة
+    //  لا تقرؤها شاشةُ السجلّ الفعلية. `invalidatePatientData` تغطّي
+    //  المفتاحين معاً (والمريضَ الجديد لا صفحةَ له مفتوحةً بعد فلا حاجةَ
+    //  لمعرّفه).
+    onSuccess: (data) => {
+      invalidatePatientData(queryClient, data?.id ?? null);
       toast({
         title: "تمت العملية بنجاح",
         description: "تم إضافة ملف المريض الجديد",
@@ -122,12 +129,14 @@ export function useAddPayment() {
       }
       return api.payments.create.responses[201].parse(await res.json());
     },
+    //  ══ **السجلّ لم يكن يُبطَل هنا أيضاً** — نفسُ عطب `useCreatePatient`
+    //  أعلاه، على أهمّ نقطةٍ ماليّة في التطبيق. `/api/reports/daily`
+    //  و`/api/reports/overall` مفتاحان مختلفان لا تعرفهما الدالّةُ
+    //  المشتركة فيبقيان صريحين.
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      invalidatePatientData(queryClient, variables.patientId);
       queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/overall"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       toast({
         title: "تم تسجيل الدفعة",
         description: "تم تحديث الرصيد المالي للمريض",
@@ -223,9 +232,10 @@ export function useUpdatePatient() {
       }
       return res.json();
     },
+    //  السجلّ (تحكّمُ الذاكرة، 2026-08-30): تعديلُ بياناتٍ ظاهرة في صفوف
+    //  السجلّ (الاسمُ، الفرعُ، التصنيفُ) كان لا يُحدِّثه إلّا تحديثُ المتصفّح.
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.id] });
+      invalidatePatientData(queryClient, variables.id);
       toast({
         title: "تم التحديث",
         description: "تم تحديث بيانات المريض بنجاح",
@@ -258,9 +268,10 @@ export function useAddVisit() {
       if (!res.ok) throw new Error("فشل في تسجيل الزيارة");
       return api.visits.create.responses[201].parse(await res.json());
     },
+    //  السجلّ (تحكّمُ الذاكرة، 2026-08-30): تبويبُ التاريخ في سجلّ المرضى
+    //  يقرأ زياراتِ اليوم — زيارةٌ جديدة لم تكن تُظهر مريضَها فيه حتى تحديثٍ يدويّ.
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, variables.patientId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      invalidatePatientData(queryClient, variables.patientId);
       toast({
         title: "تم تسجيل الزيارة",
         description: "تمت إضافة الزيارة إلى سجل المريض",
@@ -286,8 +297,10 @@ export function useUpdateVisit() {
       if (!res.ok) throw new Error("فشل في تحديث الزيارة");
       return { patientId, visit: await res.json() };
     },
+    //  السجلّ (تحكّمُ الذاكرة، 2026-08-30): نفسُ اعتماد تبويب التاريخ على
+    //  الزيارات — تعديلُ تاريخ زيارةٍ يغيّر أيّ يومٍ يظهر المريضُ تحته.
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, result.patientId] });
+      invalidatePatientData(queryClient, result.patientId);
       toast({
         title: "تم التحديث",
         description: "تم تحديث تفاصيل الزيارة بنجاح",
@@ -324,8 +337,10 @@ export function useDeleteVisit() {
       if (!res.ok) throw new Error("فشل في حذف الزيارة");
       return { patientId };
     },
+    //  السجلّ (تحكّمُ الذاكرة، 2026-08-30): حذفُ زيارةٍ يخرج بها المريضُ من
+    //  تبويب تاريخها في السجلّ — بلا هذا الإبطال يبقى ظاهراً تحته صامتاً.
     onSuccess: ({ patientId }) => {
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
+      invalidatePatientData(queryClient, patientId);
       toast({
         title: "تم حذف الزيارة من السجل",
         description: "اختفت الزيارة من السجل التشغيلي فقط — الكلفة والدفعات المرتبطة بها لم تتغيّر",
@@ -367,6 +382,10 @@ export function useDeletePayment() {
       }
       return { patientId, pending: res.status === 202 };
     },
+    //  ══ **٢٠٢ لا يوهم بأنّ المال تغيّر** (تحكّمُ الذاكرة، 2026-08-30) ═════
+    //  الفرعُ المعلَّق يبقى بلا أيّ إبطال — كان صحيحاً من قبل ويبقى كما هو:
+    //  لا شيءَ تغيّر فعلياً حتى يعتمد المسؤولُ الطلب. أمّا الحذفُ الحقيقيّ
+    //  (المسؤولُ مباشرةً) فكان يفوته السجلّ — نفسُ عطب بقيّة هذا الملفّ.
     onSuccess: ({ patientId, pending }) => {
       if (pending) {
         toast({
@@ -375,11 +394,9 @@ export function useDeletePayment() {
         });
         return;
       }
-      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
-      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      invalidatePatientData(queryClient, patientId);
       queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/overall"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/accounting/summary"] });
       toast({
         title: "تم الحذف",
         description: "تم حذف الدفعة بنجاح",

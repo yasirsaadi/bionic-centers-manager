@@ -27,7 +27,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
 
 export interface ExamPathDecisionActionsPrefill {
@@ -116,12 +116,23 @@ export function ExamPathDecisionActions({
   };
 
   const act = useMutation({
-    mutationFn: async ({ path, body }: { path: string; body: any }) => {
+    mutationFn: async (
+      { path, body }: { path: string; body: any; kind: "complete_sale" | "not_bought" },
+    ) => {
       const res = await apiRequest("POST", path, body);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       invalidateAll();
+      //  ══ **إتمامُ البيع يحرّك مالَ المريض فعلاً — «لم يشترِ» لا يحرّك
+      //  ديناراً** (تحكّمُ الذاكرة، 2026-08-30) ═══════════════════════════
+      //  البيعُ يفتح أمرَ تصنيعٍ ويقيّد كلفةً وربما دفعةً الآن (`paidNow`)،
+      //  فيستحقّ الإبطالَ الشامل نفسَه الذي يستعمله كلُّ بابٍ ماليّ آخر.
+      //  و«لم يشترِ» يبقى على `invalidateAll` وحدها كما كان — إغلاقُ ملفٍّ
+      //  بلا تصنيعٍ ولا كلفةٍ ولا دينار، فلا يستحقّ إبطالاً يوهم بتغيّر مال.
+      if (variables.kind === "complete_sale") {
+        invalidatePatientData(qc, patientId);
+      }
       toast({ title: "تمّ الحفظ" });
       reset();
       onResolved?.();
@@ -144,7 +155,8 @@ export function ExamPathDecisionActions({
     },
   });
   const busy = act.isPending;
-  const submit = (path: string, body: any) => act.mutate({ path, body });
+  const submit = (path: string, body: any, kind: "complete_sale" | "not_bought") =>
+    act.mutate({ path, body, kind });
 
   const csOffer = deriveOfferFromDiscount({
     originalPrice: cOriginal === "" ? null : Number(cOriginal),
@@ -344,7 +356,7 @@ export function ExamPathDecisionActions({
                 expertUserId: Number(cExpert),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
-              })}>
+              }, "complete_sale")}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}
             </Button>
           </DialogFooter>
@@ -372,7 +384,7 @@ export function ExamPathDecisionActions({
             <Button variant="destructive" disabled={busy || !cReason.trim()}
               data-testid="button-save-not-bought"
               onClick={() => submit(`/api/followups/${followupId}/not-bought`,
-                { reason: cReason.trim(), note: note || undefined })}>
+                { reason: cReason.trim(), note: note || undefined }, "not_bought")}>
               تسجيل
             </Button>
           </DialogFooter>
