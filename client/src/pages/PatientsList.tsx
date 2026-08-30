@@ -160,14 +160,15 @@ export default function PatientsList() {
     const saved = sessionStorage.getItem("patients_pageSize");
     return saved ? Number(saved) : 10;
   });
-  const [currentPage, setCurrentPage] = useState<number>(() => {
-    const saved = sessionStorage.getItem("patients_currentPage");
-    return saved ? Number(saved) : 1;
-  });
-  const [viewMode, setViewMode] = useState<"date" | "all">(() => {
-    const saved = sessionStorage.getItem("patients_viewMode");
-    return (saved === "date" || saved === "all") ? saved : "date";
-  });
+  //  ══ **تُفتَح الصفحةُ دائماً على «جميع المرضى» والصفحة الأولى** ══════════
+  //  لا استعادةَ من `sessionStorage` لهذين عمداً: سجلّ المرضى يجب أن يُظهر
+  //  أحدثَ المرضى تسجيلاً فور فتح الصفحة — والخادمُ يرتّبها فعلاً
+  //  `createdAt DESC NULLS LAST` — فاستعادةُ صفحةٍ متأخّرة أو تبويب التاريخ
+  //  من جلسةٍ سابقة كانت تُخفيهم خلف صفحاتٍ أو يوم واحد. التبديلُ اليدويّ
+  //  للتبويب والترقيمُ يبقيان يعملان عادياً أثناء بقاء الصفحة مفتوحة —
+  //  فقط لا يُستعادان ولا يُحفَظان عبر فتحاتٍ جديدة (انظر تأثير الحفظ أدناه).
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [viewMode, setViewMode] = useState<"date" | "all">("all");
   
   // Get branch from URL query parameter for admin users
   const urlParams = new URLSearchParams(searchString);
@@ -185,13 +186,13 @@ export default function PatientsList() {
     return saved || getTodayDateString();
   });
 
+  //  `currentPage`/`viewMode` عمداً خارج هذا الحفظ — يُفتَحان دائماً بلا
+  //  استعادة (أعلاه)، فحفظُهما هنا كان سيُبطل ذلك عند أوّل تنقّل.
   useEffect(() => {
     sessionStorage.setItem("patients_pageSize", String(pageSize));
-    sessionStorage.setItem("patients_currentPage", String(currentPage));
-    sessionStorage.setItem("patients_viewMode", viewMode);
     sessionStorage.setItem("patients_selectedBranch", selectedBranch);
     sessionStorage.setItem("patients_selectedDate", selectedDate);
-  }, [pageSize, currentPage, viewMode, selectedBranch, selectedDate]);
+  }, [pageSize, selectedBranch, selectedDate]);
   
   // Sync branch from URL for admin users
   useEffect(() => {
