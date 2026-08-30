@@ -46,6 +46,7 @@ const DiscountApprovals = lazy(() => import("@/pages/DiscountApprovals"));
 const NoExamReview = lazy(() => import("@/pages/NoExamReview"));
 const ReturnedCharges = lazy(() => import("@/pages/ReturnedCharges"));
 const PaymentCorrections = lazy(() => import("@/pages/PaymentCorrections"));
+const DailyReview = lazy(() => import("@/pages/DailyReview"));
 const PatientTrash = lazy(() => import("@/pages/PatientTrash"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
@@ -142,6 +143,8 @@ function Router() {
             {/* اعتمادٌ ورفضٌ للمسؤول العام، مع عنصر شريطٍ جانبيّ وشارة
                 عددٍ (`Sidebar.tsx`) — أُكملت الواجهةُ في 2026-08-30. */}
             <Route path="/payment-corrections" component={PaymentCorrections} />
+            {/* سردٌ إشرافيٌّ للقراءة فقط — بلا أفعال. راجع server/daily_review/store.ts. */}
+            <Route path="/daily-review" component={DailyReview} />
             <Route path="/patient-trash" component={PatientTrash} />
             <Route path="/my-exams" component={MyExams} />
             <Route path="/medical-review" component={MedicalReview} />
