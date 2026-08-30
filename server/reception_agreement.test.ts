@@ -181,10 +181,20 @@ const decideDiscount = (session: any, id: number, body: any) =>
  * خارج معاملته بعد اليوم. والبابُ التاريخيّ `/api/discounts/:id/decide`
  * يبقى قانونياً بحرفه لبقيّةٍ حقيقية — صفوفٍ من قبل هذا التغيير — وهذه
  * الدالّة تبني تلك البقيّةَ بإدراجٍ مباشر، تماماً كما تبقى فعلياً.
+ *
+ * ══ ولماذا `initialPayment` يفترض القبضَ الكامل (تصحيحٌ لاحق —
+ *    الجهوزيةُ الماليةُ) ═══════════════════════════════════════════════
+ * البقيّةُ التاريخية تمثّل صفوفاً حقيقيةً **من قبل** أن يصير المبلغُ
+ * المدفوع حقلاً مستقلّاً — يومَها كانت الموافقةُ تعني قبضاً كاملاً بحكم
+ * الواقع، لا صفراً. وباتت `executeNewService` (الكاتبُ الذي يحسم هذا
+ * البابَ) ترفض قبضاً صفرياً لخدمةٍ غير مجّانية موجبة الكلفة — فمحاكاةٌ
+ * أمينةٌ لتلك الحقبة تفترض الكاملَ افتراضياً، ومَن يحتاج سيناريو دفعٍ
+ * مختلفاً يمرّره صراحةً عبر `opts.initialPayment`.
  */
 async function mkHistoricalPending(patientId: number, opts: {
   originalPrice: number; finalPrice: number; isFree?: boolean; reason?: string;
   entries?: { treatmentType: string; sessionCount: number }[];
+  initialPayment?: number | null;
 }): Promise<number> {
   const isFree = opts.isFree === true;
   const finalPrice = isFree ? 0 : opts.finalPrice;
@@ -196,7 +206,7 @@ async function mkHistoricalPending(patientId: number, opts: {
     entries, serviceNotes: null,
     paymentTreatmentType: entries.map((e) => e.treatmentType).join("، "),
     sessionCount: entries.reduce((s, e) => s + e.sessionCount, 0),
-    initialPayment: null,
+    initialPayment: opts.initialPayment !== undefined ? opts.initialPayment : finalPrice,
   };
   const r = await q<{ id: number }>(
     `INSERT INTO service_discount_requests

@@ -235,6 +235,10 @@ export function NewServiceModal({
   const newTotal = currentTotalCost + serviceCostValue;
   const paidNowValue = Number(form.watch("paidNow")) || 0;
   const remainingAfter = Math.max(0, serviceCostValue - paidNowValue);
+  //  **للعرض الحيّ فقط** (نجمةٌ وتلميحٌ يطابقان ما سيحدث عند الحفظ) —
+  //  `onSubmit` يعيد الحسابَ من `values` وقتَ الحفظ نفسِه، لا من هذين.
+  const wantsDiscountLive = isPhysioService && hasDiscount(discount, standardPrice);
+  const paymentRequiredLive = !wantsDiscountLive && serviceCostValue > 0;
 
   // ══ **لا تعبئةَ تلقائية لـ«المبلغ المدفوع الآن» — لأيّ نوع خدمة**
   //  (تصحيحٌ لاحق — الجهوزيةُ المالية) ═══════════════════════════════════
@@ -304,6 +308,27 @@ export function NewServiceModal({
     //  **والخصمُ لا يُرسَل إلّا حين يوجد**: المساواةُ ليست خصماً، فالمسارُ
     //  الطبيعي يمضي بلا طلبٍ ولا طابور — وهو المسارُ الأغلب.
     const wantsDiscount = isPhysioService && hasDiscount(discount, standardPrice);
+
+    // ══ **الجهوزيةُ الماليةُ — الفراغُ لم يعد يعني «صفراً» بصمت**
+    //  (تصحيحٌ تشغيليّ) ══════════════════════════════════════════════════
+    //  «المبلغ المدفوع الآن» يبدأ فارغاً دائماً (أعلاه) — وهذا صحيح. لكن
+    //  الفراغَ كان يُرسَل كصفرٍ بلا اعتراض: خدمةٌ حقيقيةٌ موجبةُ الكلفة
+    //  تُسجَّل والمقبوضُ صفرٌ **بلا أن يكتب الموظّفُ رقماً ولا أن يقرّر
+    //  ذلك قصداً** — فيظهر دينٌ كاملٌ لم يُقرَّر، لا مقبوضٌ جزئيّ فعلاً.
+    //
+    //  فصار الحقلُ إلزامياً بمبلغٍ موجب متى كانت هناك كلفةٌ حقيقية **ولم
+    //  تُطلَب مجّانيّةٌ صريحة**: `wantsDiscount` تشمل التبرّعَ الصريح (يمرّ
+    //  بابَ الخصم دائماً، والخادمُ يفرض الصفرَ عليه بصرف النظر عمّا أُرسل)،
+    //  و`serviceCost <= 0` هي حالة «استشارةٍ طبية» وحدها (لا كلفةَ فيها
+    //  أصلاً). **وليس مضاعفَ سعر الجلسة**: أيّ مبلغٍ موجبٍ يكفي، جزئياً
+    //  كان أو كاملاً — لا حسابَ هنا غير كونه موجباً.
+    if (!wantsDiscount && serviceCost > 0 && paidNow <= 0) {
+      toast({
+        title: "«أدخل المبلغ المدفوع الآن»",
+        variant: "destructive",
+      });
+      return;
+    }
 
     mutate({
       ...(wantsDiscount ? { discount: discountPayload(discount) } : {}),
@@ -532,7 +557,10 @@ export function NewServiceModal({
               name="paidNow"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>المبلغ المدفوع الآن</FormLabel>
+                  <FormLabel>
+                    المبلغ المدفوع الآن
+                    {paymentRequiredLive && <span className="text-red-500"> *</span>}
+                  </FormLabel>
                   <FormControl>
                     <MoneyInput
                       value={field.value ?? ""}
@@ -543,7 +571,9 @@ export function NewServiceModal({
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground mt-1">
-                    أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً أو صفراً — والباقي يبقى ديناً يحصّله المحاسب لاحقاً.
+                    {paymentRequiredLive
+                      ? "أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً. مبلغٌ صفريّ غير مقبول لخدمةٍ غير مجّانية — والباقي غير المدفوع يبقى ديناً يحصّله المحاسب لاحقاً."
+                      : "أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً أو صفراً — والباقي يبقى ديناً يحصّله المحاسب لاحقاً."}
                   </p>
                   <FormMessage />
                 </FormItem>

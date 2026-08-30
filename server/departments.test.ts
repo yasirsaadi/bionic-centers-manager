@@ -175,11 +175,14 @@ async function main() {
 
     // ══ ٢. «خدمة جديدة» — الاستشارةُ وغيرُها علاجٌ طبيعي مالياً ═════════
     console.log("\n── ٢. خدمةٌ جديدة ⟶ علاجٌ طبيعي ──");
+    //  **المبلغُ المدفوع الآن إلزاميٌّ الآن** (تصحيحٌ تشغيليّ — الجهوزيةُ
+    //  الماليةُ) لكلّ خدمةٍ غيرِ مجّانية موجبة الكلفة — فصار `initialPayment`
+    //  يرافق `serviceCost` هنا؛ هذا القسمُ يفحص تبويبَ القيود لا حارسَ الدفع.
     const cons = await http("POST", `/api/patients/${pPhy}/new-service`, S.recv,
-      { serviceType: "consultation", serviceCost: 40_000, paidAmount: 0 });
+      { serviceType: "consultation", serviceCost: 40_000, paidAmount: 0, initialPayment: 40_000 });
     check(cons.status === 200 || cons.status === 201, "٢. الاستشارة تُسجَّل", String(cons.status));
     const other = await http("POST", `/api/patients/${pPhy}/new-service`, S.recv,
-      { serviceType: "other", serviceCost: 60_000, paidAmount: 0 });
+      { serviceType: "other", serviceCost: 60_000, paidAmount: 0, initialPayment: 60_000 });
     check(other.status === 200 || other.status === 201, "   و«خدمة أخرى» كذلك", String(other.status));
     const newSvcRows = (await q(
       `SELECT c.case_type FROM cost_entries e
@@ -227,7 +230,7 @@ async function main() {
     const supCostBefore = Number((await q(
       `SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='medical_support'`, [pSup]))[0].cost);
     const otherOnSup = await http("POST", `/api/patients/${pSup}/new-service`, S.recv,
-      { serviceType: "other", serviceCost: 30_000, paidAmount: 0 });
+      { serviceType: "other", serviceCost: 30_000, paidAmount: 0, initialPayment: 30_000 });
     check(otherOnSup.status === 200 || otherOnSup.status === 201,
       "٢ج. «خدمة أخرى» لمريض مساندَ فقط تُسجَّل", String(otherOnSup.status));
     same("   **وقيدُها علاجٌ طبيعي لا مساند**",
@@ -243,7 +246,7 @@ async function main() {
     //  **ومريضٌ بلا أيّ حالة**: الخيطُ يُفتح أولاً، فلا قيدَ غيرَ مبوَّب.
     const pBare = await mk("بلا حالة");
     const consBare = await http("POST", `/api/patients/${pBare}/new-service`, S.recv,
-      { serviceType: "consultation", serviceCost: 15_000, paidAmount: 0 });
+      { serviceType: "consultation", serviceCost: 15_000, paidAmount: 0, initialPayment: 15_000 });
     check(consBare.status === 200 || consBare.status === 201,
       "٢د. استشارةٌ لمريضٍ بلا حالةٍ إطلاقاً تُسجَّل", String(consBare.status));
     same("   **وحالةُ العلاج الطبيعي أُنشئت قبل المال**", await deptOfEntries(pBare),
