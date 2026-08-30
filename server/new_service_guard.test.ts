@@ -455,6 +455,42 @@ async function main() {
     const payF = await db.select().from(payments).where(eq(payments.patientId, pF));
     same("**والدفعةُ صفرٌ ومَوسومةٌ مجّانيةً — ولو أُرسل مقبوضٌ زائف**",
       payF.map((p) => [p.amount, p.sessionCount, p.isFreeSessions]), [[0, 1, true]]);
+
+    // — ز. **خصمٌ مخفَّضٌ غيرُ مجّانيّ (١٠٠,٠٠٠ ⟵ ٨٠,٠٠٠) بمقبوضٍ صفرٍ أو
+    //      غائب ⟶ يُرفَض كالسعر الكامل بالضبط** (تصحيحٌ لاحق) ══════════════
+    //  ══ العطبُ الذي يغلقه ═════════════════════════════════════════════
+    //  خصمٌ حقيقيٌّ ليس مجّانياً: المريضُ لا يزال يدفع مبلغاً موجباً له.
+    //  والحارسُ هنا في `executeNewService` نفسِها لا يعرف شيئاً عن مصدر
+    //  السعر (مباشرٌ أم عبر مسار الخصم) — فيُطبَّق بحرفه على الحالتين معاً.
+    //  (قارِن مع «هـ» أعلاه: نفسُ الخصم، بمقبوضٍ **موجب** ١٠,٠٠٠ ⟶ ينجح.)
+    const pZ = await mkPatient("ز — خصمٌ بمقبوضٍ صفر", true);
+    const rZ = await req(`/api/patients/${pZ}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 100000,
+      discount: { finalPrice: 80000, reason: "negotiation" },
+      initialPayment: 0, submissionToken: token(),
+    });
+    same("ز. **خصمٌ غيرُ مجّانيّ بمقبوضٍ صفرٍ صريح ⟶ ٤٠٠**", rZ.status, 400);
+    check(String(rZ.json?.message ?? "").includes("أدخل المبلغ المدفوع الآن"),
+      "برسالةٍ صريحة", JSON.stringify(rZ.json));
+    same("**ولا كلفةَ تحرّكت**", (await storage.getPatient(pZ))?.totalCost ?? 0, 0);
+    same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pZ))).length, 0);
+    const sdrZ = await pool.query(
+      `SELECT id FROM service_discount_requests WHERE patient_id = $1`, [pZ]);
+    same("**ولا صفَّ خصمٍ يتيمٌ بقي** — الإدراجُ رجع مع فشل التنفيذ", sdrZ.rowCount ?? 0, 0);
+
+    //  ونفسُ الطلب **بلا** حقل `initialPayment` إطلاقاً — نفسُ الرفض.
+    const pZb = await mkPatient("ز.ب — خصمٌ بلا حقل دفعٍ إطلاقاً", true);
+    const rZb = await req(`/api/patients/${pZb}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 100000,
+      discount: { finalPrice: 80000, reason: "negotiation" },
+      submissionToken: token(),
+    });
+    same("ز.ب. **والحقلُ الغائبُ تماماً مرفوضٌ كذلك ٤٠٠**", rZb.status, 400);
+    same("ولا كلفةَ تحرّكت", (await storage.getPatient(pZb))?.totalCost ?? 0, 0);
   } finally {
     httpServer.close();
   }

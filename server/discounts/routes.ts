@@ -146,6 +146,17 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
     if (finalPrice !== null && !Number.isFinite(finalPrice)) {
       return res.status(400).json({ error: "السعر المعدَّل غير صالح" });
     }
+    //  ══ **«خدمة جديدة» موروثة بلا مبلغٍ محفوظ** — يكتبه المُنجِز الآن
+    //  (تصحيحٌ لاحق — لا اختراعَ مالٍ) ═══════════════════════════════════
+    //  غيابُه لا يُردّ هنا: المخزنُ يتجاهله لأيّ حمولةٍ أخرى، ويستعمله فقط
+    //  حين لا يحمل الصفُّ مبلغاً محفوظاً أصلاً — فحارسُ `executeNewService`
+    //  نفسُه يردّ الرسالةَ الصحيحة إن كان لازماً وغائباً.
+    const rawPayment = req.body?.initialPayment;
+    const initialPayment = rawPayment === undefined || rawPayment === null || rawPayment === ""
+      ? null : Number(rawPayment);
+    if (initialPayment !== null && !Number.isFinite(initialPayment)) {
+      return res.status(400).json({ error: "المبلغ المدفوع غير صالح" });
+    }
 
     try {
       //  **سطرُ التدقيق يُمرَّر ولا يُكتب هنا**: يكتبه المخزن داخل معاملة
@@ -156,6 +167,7 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
         finalPrice: decision === "approve" ? finalPrice : null,
         //  **ولا يصير الصفرُ تبرّعاً بالصمت**: علمٌ يرفعه المعتمِد صراحةً.
         isFree: req.body?.isFree === true,
+        initialPayment: decision === "approve" ? initialPayment : null,
         note: str(req.body?.note),
         actor: { userId: s.userId, userName: s.userName },
         audit: {
@@ -166,6 +178,13 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
       res.json(out);
     } catch (e) {
       if (fail(res, e)) return;
+      //  ══ **«خدمة جديدة»: مبلغٌ مدفوعٌ لازمٌ وغائب** — الحارسُ نفسُه الذي
+      //  يمنع خدمةً جديدة مباشرة من قبضٍ صفريّ صامت (`executeNewService`)،
+      //  مطبَّقاً هنا حرفياً على البقيّة التاريخية. ٤٠٠ برسالةٍ صريحة، بلا
+      //  أثرٍ — الطلبُ يبقى `pending` كما كان.
+      if ((e as any)?.name === "NewServiceError") {
+        return res.status((e as any).status ?? 400).json({ error: (e as any).message });
+      }
       if ((e as any)?.name === "FollowupError" || (e as any)?.name === "DeviceEpisodeError") {
         return res.status((e as any).status ?? 409).json({ error: (e as any).message });
       }

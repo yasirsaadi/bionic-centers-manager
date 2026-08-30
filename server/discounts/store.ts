@@ -311,6 +311,14 @@ export interface DecideDiscountParams {
   finalPrice?: number | null;
   /** ولا يصير صفراً تبرّعاً إلّا بعلمٍ صريح من المعتمِد نفسه. */
   isFree?: boolean;
+  /**
+   * **«خدمة جديدة» موروثة بلا مبلغٍ محفوظ فقط**: ما قبضه المريضُ فعلاً —
+   * يكتبه المُنجِز الآن وقتَ الحسم، لا وقتَ الطلب الأصليّ. يُستعمَل حصراً
+   * حين لا يحمل الصفُّ `payload.initialPayment` موجباً محفوظاً أصلاً؛
+   * وحين يحمله يبقى المحفوظُ هو المصدر — **لا اختراعَ مالٍ ولا استبدالَ
+   * رقمٍ حقيقيّ**. يُتجاهَل تماماً لأيّ حمولةٍ أخرى (أجهزة، صيانة).
+   */
+  initialPayment?: number | null;
   note?: string | null; actor: Actor;
   /**
    * **سطرُ التدقيق يُكتب داخل المعاملة** — لا بعدها.
@@ -384,7 +392,7 @@ async function decideDiscountTx(
     // ══ التنفيذُ **قبل** الختم وفي معاملته ═════════════════════════════
     //  لو سقط هنا رجعت المعاملةُ كلُّها: الصفُّ `pending` كما كان، ولا
     //  سعرٌ كُتب على المتابعة، ولا أمرُ تصنيعٍ وُلد، ولا دينارٌ قُيِّد.
-    const applied = await applyApproved(req, calc.finalPrice, params.actor, tx);
+    const applied = await applyApproved(req, calc.finalPrice, params.actor, tx, params.initialPayment);
 
     //  والختمُ في النداء نفسه الذي يقول «معتمَد» — لا بعده.
     const upd = await tx.execute(sql`
@@ -470,6 +478,14 @@ async function writeDecisionAudit(
  */
 async function applyApproved(
   req: DiscountRow, finalPrice: number, actor: Actor, tx: any,
+  /**
+   * **المبلغُ المقبوضُ فعلاً الآن — يُكتبه المُنجِز وقتَ الحسم**، لا وقتَ
+   * الطلب. يُستعمَل **فقط** حين لا يحمل الصفُّ نفسُه مبلغاً موجباً محفوظاً
+   * أصلاً (`payload.initialPayment`) — فلا يُستبدَل مبلغٌ حقيقيّ محفوظ
+   * برقمٍ آخر. راجع الشرحَ الكامل عند نقطة استعماله تحت (تصحيحٌ لاحق —
+   * لا اختراعَ مالٍ للبقيّة التاريخية).
+   */
+  initialPaymentOverride?: number | null,
 ): Promise<any> {
   const payload = (req.payload ?? {}) as DiscountPayload;
 
@@ -501,6 +517,22 @@ async function applyApproved(
         cost: shares[i] ?? 0,
       }))
       : null;
+
+    // ══ **المقبوضُ المحفوظ يسود، ولا يُخترَع بديلٌ عنه** (تصحيحٌ لاحق) ══
+    //  صفٌّ حقيقيّ من قبل «صدق الإيصال» قد لا يحمل `initialPayment` محفوظاً
+    //  إطلاقاً — لم تُسجَّل هذه الواقعةُ يومَها، **ولا يجوز أن يُفترَض قبضٌ
+    //  كاملٌ لم يثبته أحد** (نفسُ درس ٠٣٨/٠٣٥: لقطةٌ غائبة تعني «لا نعلم»
+    //  لا رقماً افتراضياً). فحين يحمل الصفُّ مبلغاً موجباً محفوظاً فعلاً —
+    //  يُستعمَل هو وحده، بصرف النظر عن أيّ شيءٍ وصل الآن. وحين لا يحمل —
+    //  `initialPaymentOverride` (ما كتبه المُنجِز الآن وقتَ الحسم) هو
+    //  المصدرُ الوحيد؛ وغيابُه أو صفريّتُه ليسا استثناءً هنا — حارسُ
+    //  `executeNewService` نفسُه (غيرُ المجّانيّ بكلفةٍ موجبة يلزمه مبلغٌ
+    //  موجب) يرفضه بصدقٍ فيبقى الصفُّ `pending` كما كان.
+    const storedPayment = Number(payload.initialPayment);
+    const effectiveInitialPayment = Number.isFinite(storedPayment) && storedPayment > 0
+      ? storedPayment
+      : initialPaymentOverride ?? null;
+
     const out = await executeNewService({
       patientId: req.patientId,
       serviceType: String(payload.serviceType ?? ""),
@@ -514,12 +546,12 @@ async function applyApproved(
       //  كان هذا `finalPrice` — أي «خصمٌ يعني بالضرورة قبضاً كاملاً» —
       //  فيَظهر واردٌ لم يُقبَض فعلاً. الحقيقةُ حقلان مختلفان: كم اتُّفق
       //  عليه (`finalPrice`، يبقى كلفةَ الخدمة أعلاه) وكم قُبض فعلاً
-      //  (`payload.initialPayment` كما دخله الموظّفُ، أو لا شيء إن غاب).
+      //  (المحفوظُ إن وُجد، وإلّا ما كتبه المُنجِز وقتَ الحسم — أعلاه).
       //  **والبنودُ (`entries` أعلاه، حين توجد) تحترم هذا الحقل الآن أيضاً**
       //  (تصحيحٌ تشغيليّ ثانٍ — صدقُ الإيصال): `executeNewService` توزّعه
       //  تناسبياً عليها بأوزان حصصها من الكلفة — لا حصّةُ كلّ بندٍ من
       //  الكلفة نفسِها، وهي تبقى كما هي فوق (`shares[i]` أعلاه) بلا مساس.
-      initialPayment: payload.initialPayment ?? null,
+      initialPayment: effectiveInitialPayment,
       isFree: req.isFree,
       actor,
       tx,
