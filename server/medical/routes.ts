@@ -906,9 +906,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           const hit = reqByKey.get(`${r.patientId}:${r.caseType}`);
           const withAlias = aliasByPatient.has(r.patientId)
             ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : { ...r };
+          //  **سببُ الزيارة** — يُعرَض دائماً حين يوجد طلبٌ حاكم، بصرف النظر
+          //  عن مالك الإرجاع (`returnableRequestId` وحده مقصورٌ على مَن لم
+          //  يُنشئ الطلبَ بنفسه). فالطبيبُ يعرف «عاد للشراء» ولو كان هو
+          //  نفسُه مَن أحال المريض سابقاً.
+          const withKind = hit ? { ...withAlias, reviewKind: hit.reviewKind } : withAlias;
           return hit && hit.createdBy !== userId
-            ? { ...withAlias, returnableRequestId: hit.requestId }
-            : withAlias;
+            ? { ...withKind, returnableRequestId: hit.requestId }
+            : withKind;
         }),
         specialties,
         canReturnRequests: mayReturn,

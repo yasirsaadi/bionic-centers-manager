@@ -101,7 +101,8 @@
     "test:decision-queue": "tsx server/decision_queue.test.ts",
     "test:decision-queue-rules": "tsx shared/decision_queue.test.ts",
     "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts",
-    "test:daily-review": "tsx server/daily_review.test.ts"
+    "test:daily-review": "tsx server/daily_review.test.ts",
+    "test:return-to-purchase": "tsx server/return_to_purchase.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -55,7 +55,16 @@ export type ServiceFlow =
   | {
       kind: "no_exam_operation"; serviceType: "prosthetic" | "medical_support";
       initialKind?: PendingChargeKind;
-    };
+    }
+  /**
+   * `POST /api/followups/return-to-purchase` — **عاد للشراء** (ترحيل ٠٧٢).
+   *
+   * مريضٌ عايَنه طبيبٌ لجهازٍ ما، سجّل الاستقبالُ «لم يشترِ»، ثمّ عاد يريد
+   * **الجهازَ نفسَه**. لا يُفتَح إلّا من «عاد للشراء» في مُوجِّه سبب
+   * الحضور — والخيارُ نفسُه لا يظهر بلا حلقةٍ مؤهَّلة (`ReturnToPurchaseDialog`
+   * يفحص الأهليّةَ من الخادم، لا من هنا).
+   */
+  | { kind: "return_to_purchase"; serviceType: "prosthetic" | "medical_support" };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
@@ -63,6 +72,7 @@ export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
   new_service: "/api/patients/:id/new-service",
   device_episode: "/api/patients/:patientId/device-episodes",
   no_exam_operation: "/api/no-exam/device-sale",
+  return_to_purchase: "/api/followups/return-to-purchase",
 };
 
 /**

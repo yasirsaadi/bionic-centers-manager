@@ -118,6 +118,35 @@ export async function createReviewRequest(params: {
   /** نطاقُ المنادي — `null` للمسؤول. */
   branchIds: number[] | null;
 }): Promise<ReviewRow> {
+  return await db.transaction((tx) => createReviewRequestTx(tx, params));
+}
+
+/**
+ * **نواةُ `createReviewRequest`، مُهيَّأةٌ للانضمام إلى معاملة المنادي.**
+ *
+ * ══ لماذا انقسمت ═══════════════════════════════════════════════════════
+ * `createReviewRequest` تفتح معاملتها الخاصّة دائماً — مناسبةٌ لكلّ منادٍ
+ * لا يحتاج غيرها. لكنّ تدفّق «عاد للشراء» (ترحيل ٠٧٢) يحتاج أن يُعيد حلقةَ
+ * الجهاز إلى `awaiting_exam` **وينشئ طلبَ المراجعة معاً** — عمليةٌ واحدة أو
+ * لا شيء. فاستُخلصت النواةُ لتقبل معاملة المستدعي حرفاً بحرف، بلا تكرار
+ * قواعد التحقّق (المريضُ والفرعُ والمرساة) في مكانٍ ثانٍ.
+ *
+ * نفسُ نمط `startDeviceEpisode`/`startDeviceEpisodeTx` في
+ * `device_episodes/store.ts` حرفياً.
+ */
+export async function createReviewRequestTx(tx: any, params: {
+  patientId: number;
+  serviceType: string;
+  requestedPath: string;
+  reviewKind: string;
+  receptionNote?: unknown;
+  deviceEpisodeId?: number | null;
+  workOrderId?: number | null;
+  visitId?: number | null;
+  createdBy: number | null;
+  /** نطاقُ المنادي — `null` للمسؤول. */
+  branchIds: number[] | null;
+}): Promise<ReviewRow> {
   const {
     patientId, serviceType, requestedPath, reviewKind, createdBy, branchIds,
   } = params;
@@ -132,73 +161,71 @@ export async function createReviewRequest(params: {
     throw new ReviewError("طلبُ جهازٍ جديد يستوجب معاينةً طبية كاملة", 400);
   }
 
-  return await db.transaction(async (tx) => {
-    const pat = await tx.execute<{ id: number; branch_id: number | null; deleted_at: string | null }>(sql`
-      SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
+  const pat = await tx.execute<{ id: number; branch_id: number | null; deleted_at: string | null }>(sql`
+    SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
+  `);
+  const patient = (pat.rows ?? [])[0];
+  if (!patient) throw new ReviewError("المريض غير موجود", 404);
+  //  **ولا طلبَ مراجعةٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
+  if (patient.deleted_at) throw new ReviewError(PATIENT_IN_TRASH_ERROR, 409);
+  if (branchIds !== null && !branchIds.includes(Number(patient.branch_id))) {
+    throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
+  }
+
+  //  الخيط إن وُجد. **ليس شرط وجود**: المريض القديم قد لا يحمل خيطاً
+  //  مصنَّفاً بعد، وحجبُ المراجعة عنه هو العطبُ الذي جئنا نصلحه.
+  const cs = await tx.execute<{ id: number }>(sql`
+    SELECT id FROM patient_cases
+     WHERE patient_id = ${patientId} AND case_type = ${serviceType}
+     LIMIT 1
+  `);
+  const caseId = (cs.rows ?? [])[0]?.id ?? null;
+
+  const episodeId = numOrNull(params.deviceEpisodeId);
+  const orderId = numOrNull(params.workOrderId);
+  const visitId = numOrNull(params.visitId);
+
+  if (episodeId !== null) {
+    const r = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM patient_device_episodes
+       WHERE id = ${episodeId} AND patient_id = ${patientId}
     `);
-    const patient = (pat.rows ?? [])[0];
-    if (!patient) throw new ReviewError("المريض غير موجود", 404);
-    //  **ولا طلبَ مراجعةٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
-    if (patient.deleted_at) throw new ReviewError(PATIENT_IN_TRASH_ERROR, 409);
-    if (branchIds !== null && !branchIds.includes(Number(patient.branch_id))) {
-      throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
-    }
-
-    //  الخيط إن وُجد. **ليس شرط وجود**: المريض القديم قد لا يحمل خيطاً
-    //  مصنَّفاً بعد، وحجبُ المراجعة عنه هو العطبُ الذي جئنا نصلحه.
-    const cs = await tx.execute<{ id: number }>(sql`
-      SELECT id FROM patient_cases
-       WHERE patient_id = ${patientId} AND case_type = ${serviceType}
-       LIMIT 1
+    if ((r.rows ?? []).length === 0) throw new ReviewError("الجهاز غير موجود على ملف المريض", 400);
+  }
+  if (orderId !== null) {
+    const r = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM prosthetic_work_orders
+       WHERE id = ${orderId} AND patient_id = ${patientId}
     `);
-    const caseId = (cs.rows ?? [])[0]?.id ?? null;
+    if ((r.rows ?? []).length === 0) throw new ReviewError("أمر التصنيع غير موجود على ملف المريض", 400);
+  }
+  if (visitId !== null) {
+    const r = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM visits
+       WHERE id = ${visitId} AND patient_id = ${patientId} AND deleted_at IS NULL
+    `);
+    if ((r.rows ?? []).length === 0) throw new ReviewError("الزيارة غير موجودة على ملف المريض", 400);
+  }
 
-    const episodeId = numOrNull(params.deviceEpisodeId);
-    const orderId = numOrNull(params.workOrderId);
-    const visitId = numOrNull(params.visitId);
-
-    if (episodeId !== null) {
-      const r = await tx.execute<{ id: number }>(sql`
-        SELECT id FROM patient_device_episodes
-         WHERE id = ${episodeId} AND patient_id = ${patientId}
-      `);
-      if ((r.rows ?? []).length === 0) throw new ReviewError("الجهاز غير موجود على ملف المريض", 400);
+  try {
+    const ins = await tx.execute<Record<string, any>>(sql`
+      INSERT INTO medical_review_requests
+        (patient_id, service_type, case_id, branch_id,
+         device_episode_id, work_order_id, visit_id,
+         requested_path, review_kind, reception_note, created_by)
+      VALUES (${patientId}, ${serviceType}, ${caseId}, ${patient.branch_id ?? null},
+              ${episodeId}, ${orderId}, ${visitId},
+              ${requestedPath}, ${reviewKind}, ${clean(params.receptionNote)}, ${createdBy})
+      RETURNING *
+    `);
+    return toRow((ins.rows ?? [])[0]);
+  } catch (err: any) {
+    //  فهرسُ التفرّد الجزئي — طلبٌ معلَّقٌ واحد لكلّ حدث.
+    if (String(err?.code) === "23505") {
+      throw new ReviewError("لهذا الحدث طلبُ مراجعةٍ معلَّقٌ بالفعل", 409);
     }
-    if (orderId !== null) {
-      const r = await tx.execute<{ id: number }>(sql`
-        SELECT id FROM prosthetic_work_orders
-         WHERE id = ${orderId} AND patient_id = ${patientId}
-      `);
-      if ((r.rows ?? []).length === 0) throw new ReviewError("أمر التصنيع غير موجود على ملف المريض", 400);
-    }
-    if (visitId !== null) {
-      const r = await tx.execute<{ id: number }>(sql`
-        SELECT id FROM visits
-         WHERE id = ${visitId} AND patient_id = ${patientId} AND deleted_at IS NULL
-      `);
-      if ((r.rows ?? []).length === 0) throw new ReviewError("الزيارة غير موجودة على ملف المريض", 400);
-    }
-
-    try {
-      const ins = await tx.execute<Record<string, any>>(sql`
-        INSERT INTO medical_review_requests
-          (patient_id, service_type, case_id, branch_id,
-           device_episode_id, work_order_id, visit_id,
-           requested_path, review_kind, reception_note, created_by)
-        VALUES (${patientId}, ${serviceType}, ${caseId}, ${patient.branch_id ?? null},
-                ${episodeId}, ${orderId}, ${visitId},
-                ${requestedPath}, ${reviewKind}, ${clean(params.receptionNote)}, ${createdBy})
-        RETURNING *
-      `);
-      return toRow((ins.rows ?? [])[0]);
-    } catch (err: any) {
-      //  فهرسُ التفرّد الجزئي — طلبٌ معلَّقٌ واحد لكلّ حدث.
-      if (String(err?.code) === "23505") {
-        throw new ReviewError("لهذا الحدث طلبُ مراجعةٍ معلَّقٌ بالفعل", 409);
-      }
-      throw err;
-    }
-  });
+    throw err;
+  }
 }
 
 /**
@@ -434,11 +461,15 @@ export async function returnFullRequestToReception(params: {
 export async function pendingFullRequestsFor(params: {
   patientIds: number[];
   branchIds: number[] | null;
-}): Promise<{ patientId: number; serviceType: string; requestId: number; createdBy: number | null }[]> {
+}): Promise<{
+  patientId: number; serviceType: string; requestId: number; createdBy: number | null;
+  /** **سببُ الزيارة** — تعرضه «معايناتي» صراحةً حين يكون `return_to_purchase`. */
+  reviewKind: ReviewKind;
+}[]> {
   if (params.patientIds.length === 0) return [];
   const rows = await db.execute<Record<string, any>>(sql`
     SELECT DISTINCT ON (r.patient_id, r.service_type)
-           r.id, r.patient_id, r.service_type, r.created_by
+           r.id, r.patient_id, r.service_type, r.created_by, r.review_kind
       FROM medical_review_requests r
      WHERE r.patient_id IN (${sql.join(params.patientIds.map((p) => sql`${p}`), sql`, `)})
        AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
@@ -457,6 +488,7 @@ export async function pendingFullRequestsFor(params: {
     serviceType: String(r.service_type),
     requestId: Number(r.id),
     createdBy: numOrNull(r.created_by),
+    reviewKind: String(r.review_kind) as ReviewKind,
   }));
 }
 

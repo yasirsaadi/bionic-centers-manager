@@ -61,7 +61,7 @@ export const REVIEW_PATH_HINTS: Record<ReviewPath, string> = {
 
 /** سببُ الزيارة — بيانٌ للطبيب لا مسارٌ في الشيفرة. */
 export const REVIEW_KINDS = [
-  "new_device", "maintenance", "adjustment", "follow_up", "other",
+  "new_device", "maintenance", "adjustment", "follow_up", "other", "return_to_purchase",
 ] as const;
 export type ReviewKind = (typeof REVIEW_KINDS)[number];
 
@@ -71,10 +71,28 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   adjustment: "تعديل",
   follow_up: "متابعة",
   other: "أخرى",
+  //  **عاد للشراء** (return-to-purchase) — طلبَ جهازاً، عايَنه طبيب، سجّل
+  //  الاستقبالُ «لم يشترِ»، ثمّ عاد يريد **الجهازَ نفسَه**. ليست حالةً
+  //  جديدة ولا معاينةً مُختَرعة — طلبُ معاينةٍ كاملة ثانية على الحلقة
+  //  نفسِها. لا تعني قبضَ مالٍ — الطبيبُ يقرأ «عاد للشراء» أي «يريد
+  //  المتابعة»، لا «دفع».
+  return_to_purchase: "عاد للشراء",
 };
 
 export const isReviewKind = (v: unknown): v is ReviewKind =>
   typeof v === "string" && (REVIEW_KINDS as readonly string[]).includes(v);
+
+/**
+ * **الأسبابُ التي يختارها الاستقبال يدوياً** من نافذة «إرسال لمراجعة
+ * الطبيب» العامّة — كلُّ `REVIEW_KINDS` **عدا** `return_to_purchase`.
+ *
+ * «عاد للشراء» **مملوكةٌ لتدفّقها الخاصّ**: تُنشأ آلياً من مسار العودة
+ * للشراء وحده (مرساتُها حلقةُ جهازٍ حقيقية بمتابعةٍ `closed_without_purchase`
+ * سابقة) — لا خياراً حرّاً في قائمةٍ عامّة لمرضى لا علاقة لهم بهذا التدفّق.
+ * فالنافذةُ اليدوية تستورد هذه القائمةَ الأضيق، لا `REVIEW_KINDS` كاملةً.
+ */
+export const MANUALLY_SELECTABLE_REVIEW_KINDS: readonly ReviewKind[] =
+  REVIEW_KINDS.filter((k) => k !== "return_to_purchase");
 
 export const isReviewPath = (v: unknown): v is ReviewPath =>
   typeof v === "string" && (REVIEW_PATHS as readonly string[]).includes(v);
@@ -125,13 +143,19 @@ export const isDecided = (s: string): boolean => s !== "pending";
 // ── أيُّ طلبٍ يذهب إلى أيّ طابور ─────────────────────────────────────────
 
 /**
- * **الجهازُ الجديد لا يكون سريعاً أبداً.**
+ * **الجهازُ الجديد لا يكون سريعاً أبداً — وكذلك العودةُ للشراء.**
  *
  * جهازٌ جديد يعني قراراً سريرياً كاملاً: قياسٌ ومواصفةٌ وتقديرُ حال. فحتى
  * لو صنّفه الموظّف «سريعاً» يُردّ — في الشيفرة **وفي قيد `CHECK` بالقاعدة
  * معاً**، فلا نقطةٌ منسيّة ولا سكربتٌ مباشر يفتح الباب.
+ *
+ * و«عاد للشراء» بنفس الحكم بالضبط (ترحيل ٠٧٢): مريضٌ يريد جهازاً حقيقياً
+ * الآن — قرارٌ سريريّ من أوّله، لا موافقةٌ سريعة على واقعةٍ وقعت. **ولا
+ * موافقةَ سريعة على «عاد للشراء» — هذا الطلبُ ينشأ `full` دائماً ولا خيارَ
+ * آخر له** (القسم في الشيفرة المستدعية).
  */
-export const requiresFullPath = (kind: string): boolean => kind === "new_device";
+export const requiresFullPath = (kind: string): boolean =>
+  kind === "new_device" || kind === "return_to_purchase";
 
 /** التركيبة المرفوضة: جهازٌ جديد بمسارٍ سريع. */
 export const isPathAllowedForKind = (kind: string, path: string): boolean =>
