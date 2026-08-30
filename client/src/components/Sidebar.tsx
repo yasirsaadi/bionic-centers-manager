@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2 } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -185,6 +185,24 @@ export function Sidebar() {
   });
   const discountHistoryCount = discountHistoryData?.count ?? 0;
 
+  //  ══ **شارةُ «طلبات تصحيح الدفعات»** (إكمالُ واجهة تحكّم تصحيح الدفعات،
+  //  2026-08-30) ═══════════════════════════════════════════════════════════
+  //  المسؤولُ العامّ وحده يقرّر — نفسُ حارس `isGlobalAdmin` في
+  //  `server/payments/correction_routes.ts` الذي يحرس نقطةَ العدّ نفسَها،
+  //  فلا داعي لدالّةٍ قانونية مستوردة هنا: `adminOnly: true` وحدها تكفي
+  //  (نفسُ نمط «الفروع» و«إعدادات النظام» أدناه).
+  const { data: paymentCorrectionsData } = useQuery<{ count: number }>({
+    queryKey: ["/api/admin/payment-corrections", "pending-count"],
+    enabled: !!branchSession?.isAdmin,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/admin/payment-corrections/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const paymentCorrectionsCount = paymentCorrectionsData?.count ?? 0;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -241,6 +259,14 @@ export function Sidebar() {
     //  تُخفي الصفَّ كلَّه لا الشارةَ وحدها (كانت الشارةُ تختفي والصفُّ يبقى).
     { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: legacyReviewCount, hideWhenZero: true },
     { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount, hideWhenZero: true },
+    //  ══ **«طلبات تصحيح الدفعات»** (إكمالُ واجهة تحكّم تصحيح الدفعات،
+    //  2026-08-30) ══════════════════════════════════════════════════════
+    //  `adminOnly: true` وحدها تحجب مديرَ الفرع وكلَّ دورٍ آخر — لا قائمةَ
+    //  أدوارٍ ولا صلاحيةَ دقيقة: هذه سلطةٌ للمسؤول العام حصراً في الخادم
+    //  نفسِه (`server/payments/correction_routes.ts: isGlobalAdmin`).
+    //  و`hideWhenZero` تُخفي الصفَّ كلَّه حين لا يوجد طلبٌ معلَّق — نفسُ نمط
+    //  «خصومات سابقة» و«الطابور الموروث» أعلاه بالضبط.
+    { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount, hideWhenZero: true },
     { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
     { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
     //  **والمحذوفاتُ لمن يحذف ويستعيد** — مسؤولٌ أو مديرُ فرعٍ أو طبيب.

@@ -78,6 +78,11 @@ import { generateSurveyReply } from "./ai/survey_reply";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
+import { registerPaymentCorrectionRoutes } from "./payments/correction_routes";
+import {
+  requestPaymentCorrection, applyPaymentCorrectionDirect, diffPaymentPatch,
+  assertDeviceAttributionCompatible, CorrectionError,
+} from "./payments/correction_store";
 
 /** نصٌّ غيرُ فارغ أو `null` — والفراغُ لا يُحفَظ كسلسلةٍ فارغة. */
 const strOrNull = (v: unknown): string | null =>
@@ -207,23 +212,6 @@ export async function registerRoutes(
     }
     next();
   }, (await import('express')).static('uploads'));
-
-  // The payment a paid VISIT created. Preferred: the explicit visit_id link
-  // (migration 038). Fallback for rows older than the link: a match is
-  // accepted only when EXACTLY ONE payment fits (same patient, same amount,
-  // the visit-payment note) — anything ambiguous returns null so the caller
-  // reports instead of guessing at someone's money.
-  const findVisitPayment = async (visitId: number, patientId: number, amount: number) => {
-    const [byLink] = await db.select().from(payments).where(eq(payments.visitId, visitId));
-    if (byLink) return byLink;
-    if (!(amount > 0)) return null;
-    const candidates = await db.select().from(payments).where(and(
-      eq(payments.patientId, patientId),
-      eq(payments.amount, amount),
-      eq(payments.notes, "دفعة زيارة"),
-    ));
-    return candidates.length === 1 ? candidates[0] : null;
-  };
 
   // Helper to get user branch
   const getUserContext = (req: any) => {
@@ -1915,6 +1903,23 @@ export async function registerRoutes(
 
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
     try {
+      // ══ صدقُ التسجيل (تصحيحٌ معماريّ) ═══════════════════════════════════
+      // تسجيلُ مريضٍ جديد **لا يعني كلفةً أبداً** — `CreatePatient.tsx`
+      // القائمة ترسل `totalCost: 0` دائماً وتصف العملية «قرارٌ فقط، بلا مال
+      // هنا»، والتسعيرُ الحقيقي يقع لاحقاً من مسار الخدمة المخصَّص. كلفةٌ
+      // غيرُ صفرية هنا كانت تفتح كاتبَ مالٍ مختفياً (كلفةُ المريض + قيدُ
+      // كلفة بمصدر `registration`) بلا أن يمرّ أحدٌ بمسار الخدمة. فتُردّ
+      // ٤٠٠ **قبل** أيّ لمسٍ للمريض أو حالته أو واتساب أو تدقيق. والصفرُ
+      // الصريح — أو الحقلُ المحذوف — مقبولٌ دائماً، توافقاً مع العميل
+      // الحاليّ ومع الملفّات القديمة بلا هذا الحقل إطلاقاً.
+      const rawTotalCost = req.body?.totalCost;
+      const totalCostProvided = rawTotalCost !== undefined && rawTotalCost !== null && rawTotalCost !== "";
+      if (totalCostProvided && Number(rawTotalCost) !== 0) {
+        return res.status(400).json({
+          message: "تسجيل المريض لا يسجّل كلفة — حدّد السعر لاحقاً من مسار الخدمة المخصص.",
+        });
+      }
+
       const branchSession = (req.session as any).branchSession;
 
       // Determine branchId. Non-admins are ALWAYS pinned to their own branch —
@@ -2641,8 +2646,9 @@ export async function registerRoutes(
               sessionCount: sessionCount ?? null,
               //  **حقيقةُ الدفع لا السعرُ المتَّفق عليه**: نفسُ الحقل الذي
               //  يرسله المسارُ كاملُ السعر أدناه — لا افتراضَ أن الخصمَ يعني
-              //  قبضاً كاملاً. (لا أثرَ له فعلياً هنا: هذه إرسالةٌ فيزيويّة
-              //  ببنودٍ دائماً، والبنودُ تُحصَّل بحصّتها المخصَّصة كما كانت.)
+              //  قبضاً كاملاً. **ويُحتَرَم في مسار البنود أيضاً** (تصحيحٌ
+              //  تشغيليّ — صدقُ الإيصال): يُوزَّع تناسبياً على البنود بدل
+              //  أن تُقيَّد حصّةُ كلّ بندٍ من الكلفة دفعةً كاملة.
               initialPayment: req.body?.initialPayment ?? null,
             },
             actor: {
@@ -2904,6 +2910,19 @@ export async function registerRoutes(
         }
       }
 
+      // ══ صدقُ القرار (تصحيحٌ معماريّ) ═══════════════════════════════════
+      // «إضافة نوع حالة» تفعيلٌ فقط — بلا سلطةٍ مالية أبداً. كلفةٌ أو دفعةٌ
+      // موجبة هنا كانتا تفتحان كاتبَ مالٍ مختفياً (كلفةُ المريض + قيدُ كلفة
+      // + دفعة) بلا أن يمرّ أحدٌ بمسار الخدمة أو بتسجيل الدفعة. فتُردّان
+      // ٤٠٠ **قبل** أيّ لمسٍ لملفّ المريض أو حالته أو زيارته.
+      const reqServiceCost = Number(req.body?.serviceCost) || 0;
+      const reqPaidNow = Number(req.body?.paidNow) || 0;
+      if (reqServiceCost > 0 || reqPaidNow > 0) {
+        return res.status(400).json({
+          message: "إضافةُ نوع الحالة لا تسجّل كلفة أو دفعة — استخدم مسار الخدمة أو تسجيل الدفعة المالية للتسعير والقبض.",
+        });
+      }
+
       const caseType = req.body?.caseType;
       if (!["amputee", "medical_support", "physiotherapy"].includes(caseType)) {
         return res.status(400).json({ message: "نوع الحالة غير صالح" });
@@ -2962,16 +2981,16 @@ export async function registerRoutes(
         Object.assign(fields, measures);
       }
 
-      const serviceCost = Math.max(0, Number(req.body?.serviceCost) || 0);
-      const paidNow = Math.max(0, Math.min(Number(req.body?.paidNow) || 0, serviceCost));
-
       // Expert assignment is now a SEPARATE step ("تحديد خبير" in the patients
       // registry), so adding a case type never asks for an expert or a delivery
-      // date and never creates the work order here. The case (and its cost) is
-      // recorded; the expert is assigned afterward, and commits to the delivery
-      // date only when reaching the mold stage.
+      // date and never creates the work order here. The case is recorded with
+      // NO cost — pricing and payment happen through the dedicated service or
+      // payment path, never here (the guard above already rejects any attempt
+      // to smuggle money through this endpoint). The expert is assigned
+      // afterward, and commits to the delivery date only when reaching the
+      // mold stage.
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
-        patientId, caseType, fields, serviceCost, paidNow,
+        patientId, caseType, fields,
         expertUserId: null, expectedDeliveryDate: null,
         skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,
@@ -3048,7 +3067,20 @@ export async function registerRoutes(
     // التحقّق من أن الجهاز يخصّ هذا المريض وهذه الخدمة.
     const { deviceEpisodeId: requestedVisitEpisode, ...visitBody } = req.body ?? {};
     const input = api.visits.create.input.parse(visitBody);
-    
+
+    // ══ صدقُ الإيصال (تصحيحٌ تشغيليّ) ═══════════════════════════════════
+    // زيارةٌ عامّة جديدة **لا تعني قبضاً أبداً**. كلفةٌ موجبة هنا كانت
+    // كاتبَ مالٍ مختفياً: تزيد كلفةَ المريض وتُنشئ دفعةً وقيداً يومياً بلا
+    // أن يمرّ أحدٌ بمسار الخدمة أو بتسجيل الدفعة المالية. فتُردّ **قبل** أيّ
+    // شيء آخر — قبل `storage.createVisit`، وقبل توجيه المراجعة الطبية،
+    // وقبل أيّ لمسٍ لكلفة المريض أو دفعةٍ أو قيد — لا نصفَ أثر ولا زيارةً
+    // تُخلَّف وراء الرفض.
+    if (input.cost && input.cost > 0) {
+      return res.status(400).json({
+        message: "تسجيل الزيارة لا يسجّل كلفة أو دفعة — استخدم مسار الخدمة أو تسجيل الدفعة المالية.",
+      });
+    }
+
     const branchSession = (req.session as any).branchSession;
     let visitShift = branchSession?.shift;
     if (visitShift !== "morning" && visitShift !== "evening") {
@@ -3152,31 +3184,13 @@ export async function registerRoutes(
       notes: visitRouting.request ? `طلب مراجعة #${visitRouting.request.id}` : undefined,
     });
 
-    if (input.cost && input.cost > 0) {
-      const patient = await storage.getPatient(input.patientId);
-      if (patient) {
-        const newTotalCost = (patient.totalCost || 0) + input.cost;
-        //  قسمُ كلفةِ الزيارة هو حالةُ الزيارة بعينها (ترحيل ٠٥٦) — وقد
-        //  حسمتها `createVisit` أعلاه، فلا تُستنتج من أعلام المريض.
-        await storage.updatePatient(
-          patient.id, { totalCost: newTotalCost }, "visit", visit.caseId ?? null,
-        );
-
-        const visitPayment = await storage.createPayment({
-          patientId: input.patientId,
-          branchId: input.branchId,
-          amount: input.cost,
-          notes: "دفعة زيارة",
-          paymentTreatmentType: input.treatmentType || null,
-          sessionCount: input.sessionCount || null,
-          // Link back to the visit (038): editing the visit's cost or deleting
-          // the visit can then correct THIS payment instead of guessing.
-          visitId: visit.id,
-        } as any);
-        await createJournalForPayment(visitPayment, sessionUserId ?? null);
-      }
-    }
-    
+    // لا كاتبَ ماليٍّ تلقائياً هنا — الحارسُ أعلاه يرفض أيّ كلفةٍ موجبة قبل
+    // أن تصل هذه النقطة، فكلفةُ الزيارة هنا صفرٌ أو فارغة دائماً. وزيارةٌ
+    // مدفوعةٌ تاريخية (قبل هذا التصحيح) تبقى مقروءةً بدفعتها المرتبطة كما
+    // هي — **لا لأن PATCH/DELETE يخدمانها كما كانا**، بل لأن تحكّم تصحيح
+    // الدفعات (2026-08-29، القسم أ) فصل الزيارةَ عن المال كلّياً: لا PATCH
+    // ولا DELETE على الزيارة يُلمسان الكلفةَ أو الدفعةَ بعد اليوم، لأيّ
+    // زيارة — تاريخيةً كانت أو حديثة.
     res.status(201).json(visit);
   });
 
@@ -3236,6 +3250,18 @@ export async function registerRoutes(
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
 
+    // ══ الكلفةُ غير قابلةٍ للتغيير من محرّر الزيارة (تحكّمُ تصحيح الدفعات،
+    // القسم أ، 2026-08-29) ═══════════════════════════════════════════════
+    // الزيارةُ سجلٌّ تشغيليّ، والمالُ محميٌّ بعد حفظه — فمحاولةُ تغيير
+    // الكلفة تُرَدّ **قبل أيّ كتابة**. إعادةُ إرسال القيمة نفسِها (كما تفعل
+    // نافذةُ التعديل دائماً — الحقلُ فيها معطَّلٌ للقراءة فقط) ليست محاولةَ
+    // تغييرٍ، فتمرّ بصمت.
+    if (cost !== undefined && Number(cost) !== (existing.cost || 0)) {
+      return res.status(400).json({
+        message: "لا يمكن تغيير كلفة الزيارة من هنا — الكلفة محفوظةٌ عند التسجيل ولا تُعدَّل بعده",
+      });
+    }
+
     // ══ زيارةٌ مرتبطةٌ بجهاز لا يُنقَل وسمُها إلى خدمةٍ أخرى ═══════════════
     // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فإعادة وسم الزيارة إلى
     // خدمةٍ أخرى تترك الرابط معلّقاً على جهازٍ من نوعٍ مختلف. يُردّ قبل أي
@@ -3250,7 +3276,9 @@ export async function registerRoutes(
       }
     }
 
-    const updateData: any = { details, notes, treatmentType, sessionCount, cost };
+    // لا `cost` هنا إطلاقاً — الحارسُ أعلاه ضمن أنّ ما وصل (إن وصل) يطابق
+    // المخزَّن، فتجاهُله كلّياً يعادل تمريره بلا تغيير.
+    const updateData: any = { details, notes, treatmentType, sessionCount };
 
     if (customDate !== undefined) {
       const baghdadOffset = 3 * 60 * 60 * 1000;
@@ -3265,41 +3293,11 @@ export async function registerRoutes(
 
     const updated = await storage.updateVisit(id, updateData);
 
-    // Changing a paid visit's COST corrects the money with it (owner's
-    // decision, audit 2026-07-29): the patient total, the dated cost ledger,
-    // and the payment this visit created — previously only the visit row
-    // changed and the three records drifted apart. The linked payment is
-    // found by visit_id (038); for visits older than the link, an exact
-    // single-candidate match is accepted and anything ambiguous is left
-    // untouched and REPORTED, never guessed.
-    let moneyNote: string | null = null;
-    const oldCost = existing.cost || 0;
-    const newCost = typeof cost === "number" ? cost : oldCost;
-    if (newCost !== oldCost) {
-      const patient = await storage.getPatient(existing.patientId);
-      if (patient) {
-        await storage.updatePatient(patient.id, {
-          totalCost: Math.max(0, (patient.totalCost || 0) + (newCost - oldCost)),
-        }, "visit");
-      }
-      const linked = await findVisitPayment(id, existing.patientId, oldCost);
-      if (linked) {
-        await reverseJournalForSource("payment", linked.id, branchSession?.userId ?? null, "تعديل كلفة الزيارة");
-        const updatedPayment = await storage.updatePayment(linked.id, { amount: newCost });
-        if (updatedPayment && newCost > 0) await createJournalForPayment(updatedPayment, branchSession?.userId ?? null);
-        await logAudit({
-          entityType: "payment", entityId: linked.id, action: "update",
-          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-          branchId: existing.branchId,
-          oldValues: { amount: oldCost }, newValues: { amount: newCost },
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: `تصحيح دفعة الزيارة تبعاً لتعديل كلفتها`,
-        });
-      } else {
-        moneyNote = "عُدّلت كلفة الزيارة وكلفة المريض، لكن لم أجد دفعة الزيارة الأصلية بشكل قاطع — راجع دفعات المريض وصحّح المبلغ يدوياً.";
-      }
-    }
-
+    // ══ ولا كاتبَ مالياً بعد اليوم ═══════════════════════════════════════
+    // لا `patients.totalCost` يتحرّك، ولا دفعةٌ تُحدَّث أو تُحذف، ولا قيدٌ
+    // يُعكَس أو يُعاد بناؤه من هنا — «تحكّمُ تصحيح الدفعات» (القسم أ) فصل
+    // الزيارةَ عن المال كلّياً. تصحيحُ مبلغٍ حقيقيّ يمرّ الآن من
+    // `PATCH /api/payments/:id` وحدها، بمسارها المحمي الموثَّق.
     await logAudit({
       entityType: "visit",
       entityId: id,
@@ -3313,7 +3311,7 @@ export async function registerRoutes(
       userAgent: req.get("user-agent") ?? null,
     });
 
-    res.json({ ...updated, moneyNote });
+    res.json(updated);
   });
 
   // Delete visit — admin, branch_manager, or any user the admin
@@ -3339,37 +3337,14 @@ export async function registerRoutes(
 
     await storage.deleteVisit(id);
 
-    // Deleting a PAID visit takes its money with it (owner's decision, audit
-    // 2026-07-29: «حذف كل شيء كي يبقى النظام صحيح»): the cost it added and
-    // the payment it created both reverse, so no phantom debt or orphan
-    // payment survives the deletion. If the visit's payment cannot be
-    // identified with certainty, NOTHING money-side is touched and the staff
-    // is told — reversing half of it would fabricate a debt.
-    let moneyNote: string | null = null;
-    const visitCost = existing.cost || 0;
-    if (visitCost > 0) {
-      const linked = await findVisitPayment(id, existing.patientId, visitCost);
-      if (linked) {
-        const patient = await storage.getPatient(existing.patientId);
-        if (patient) {
-          await storage.updatePatient(patient.id, {
-            totalCost: Math.max(0, (patient.totalCost || 0) - visitCost),
-          }, "visit");
-        }
-        await reverseJournalForSource("payment", linked.id, branchSession?.userId ?? null, "حذف الزيارة المدفوعة");
-        await logAudit({
-          entityType: "payment", entityId: linked.id, action: "delete",
-          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-          branchId: existing.branchId, oldValues: linked,
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: `حذف دفعة الزيارة تبعاً لحذف الزيارة ${id}`,
-        });
-        await storage.deletePayment(linked.id);
-      } else {
-        moneyNote = "حُذفت الزيارة، لكن لم أجد دفعتها الأصلية بشكل قاطع فبقيت كلفتها ودفعتها — راجع دفعات المريض واحذف/صحّح يدوياً.";
-      }
-    }
-
+    // ══ حذفٌ عمليّ صرف — لا أثرَ مالياً إطلاقاً (تحكّمُ تصحيح الدفعات،
+    // القسم أ، 2026-08-29 — يُلغي ويستبدل «حذف كل شيء» 2026-07-29) ═══════
+    // الزيارةُ تختفي من السجلّ التشغيليّ فقط: لا `patients.totalCost`
+    // يتحرّك، ولا `cost_entries` يُمسّ، ولا دفعةٌ تُبحَث أو تُحدَّث أو
+    // تُحذف، ولا قيدٌ يُعكَس — لزيارةٍ حديثةٍ بكلفة صفر أو لزيارةٍ تاريخية
+    // بكلفةٍ موجبة ودفعةٍ مرتبطة سواء. الحذفُ العمليّ لا يحمل سلطةً على
+    // الحقيقة المالية المحفوظة بعد اليوم؛ تصحيحُ دفعةٍ حقيقية له بابُه
+    // الوحيد الآن: `PATCH`/`DELETE /api/payments/:id` المحميّان.
     await logAudit({
       entityType: "visit",
       entityId: id,
@@ -3380,9 +3355,10 @@ export async function registerRoutes(
       oldValues: existing,
       ipAddress: req.ip ?? null,
       userAgent: req.get("user-agent") ?? null,
+      notes: "حذفٌ عمليّ للزيارة — السجلّاتُ الماليةُ (الكلفة والدفعات المرتبطة) محفوظةٌ بلا أيّ تغيير",
     });
 
-    res.json({ ok: true, moneyNote });
+    res.json({ ok: true });
   });
 
   // Payments
@@ -3578,7 +3554,12 @@ export async function registerRoutes(
     }
   });
 
-  // Delete payment
+  // ══ حذف دفعة — دائماً محميّ (تحكّمُ تصحيح الدفعات، القسم ب، 2026-08-29)
+  // ═══════════════════════════════════════════════════════════════════════
+  // المسؤولُ العامّ وحده يحذف مباشرةً؛ وكلُّ مَن سواه يملك `canDeletePayments`
+  // — مديرُ الفرع بمن فيه — يقدّم طلباً معلَّقاً يعتمده المسؤولُ من
+  // `server/payments/correction_routes.ts`. لا توسيعَ لصلاحية: القدرةُ على
+  // الكتابة الفعلية بقيت للمسؤول وحده كما كانت.
   app.delete("/api/payments/:id", isAuthenticated, async (req, res) => {
     const permissions = getPermissions(req);
     if (!permissions.canDeletePayments) {
@@ -3589,78 +3570,106 @@ export async function registerRoutes(
     const sessionInfo = (req.session as any).branchSession;
     const userId = sessionInfo?.userId ?? null;
     const userName = sessionInfo?.displayName ?? null;
+    const isAdmin = Boolean(sessionInfo?.isAdmin);
 
-    // عكس القيد المحاسبي قبل حذف الدفعة
-    await reverseJournalForSource("payment", id, userId, "حذف الدفعة");
-    await logAudit({
-      entityType: "payment",
-      entityId: id,
-      action: "delete",
-      userId, userName,
-      ipAddress: req.ip ?? null,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    await storage.deletePayment(id);
-    res.status(204).send();
+    // نطاقُ الفرع — كان غائباً هنا رغم وجوده في PATCH؛ صار زميلاً له
+    // صراحةً: حذفٌ عبر فرعٍ آخر يُردّ ٤٠٣ قبل أن يُقرأ سببٌ أو يُكتب طلب.
+    const allowedBranches = accessibleBranchesFor(req);
+    if (allowedBranches !== null) {
+      const [existingPayment] = await db.select().from(payments).where(eq(payments.id, id));
+      if (!existingPayment) return res.status(404).json({ message: "الدفعة غير موجودة" });
+      if (!allowedBranches.includes(existingPayment.branchId)) {
+        return res.status(403).json({ message: "لا يمكنك حذف دفعة من فرع آخر" });
+      }
+    }
+
+    const reason = strOrNull(req.body?.reason);
+    if (!reason) {
+      return res.status(400).json({ message: "سبب التصحيح مطلوب لحذف دفعة" });
+    }
+
+    try {
+      const actor = { userId, userName, role: sessionInfo?.role ?? null };
+      if (isAdmin) {
+        const result = await applyPaymentCorrectionDirect({
+          paymentId: id, action: "delete", rawPatch: {}, reason, actor,
+        });
+        return res.json({ ok: true, applied: true, payment: result.payment });
+      }
+      const result = await requestPaymentCorrection({
+        paymentId: id, action: "delete", rawPatch: {}, reason, actor,
+        accessibleBranches: allowedBranches,
+      });
+      return res.status(202).json({ status: "pending", request: result.request });
+    } catch (err: any) {
+      if (err instanceof CorrectionError) return res.status(err.status).json({ message: err.message });
+      throw err;
+    }
   });
 
-  // Update payment session info — admin or branch_manager (within branch)
+  // ══ بيانات جلسات الدفعة — عمليّةٌ صرفة: عددُ الجلسات وحده (متابعةُ تحكّم
+  // تصحيح الدفعات، 2026-08-29) ═══════════════════════════════════════════
+  // كانت هذه النقطة تكتب `paymentTreatmentType` **دائماً** — حتى حين لا
+  // يصل في الطلب أصلاً (`undefined ?? null` ⟶ NULL يمحو النوعَ المحفوظ
+  // صامتاً). صارت الآن: الغيابُ لا يمسّ العمود إطلاقاً؛ وتغييرٌ يتطابق مع
+  // المخزَّن بعد التطبيع (نفسُ فاحص `diffPaymentPatch` القانونيّ من مسار
+  // التصحيح — لا خوارزميةَ تطابقٍ ثانية) يُتجاهَل بصمتٍ لا بكتابة؛ وتغييرٌ
+  // فعليّ يُرَدّ **قبل أيّ كتابة** بـ٤٠٠ يدلّ على المسار الصحيح — هذه
+  // النقطةُ لم تعد تعيد وسم دفعةٍ أبداً، فحارسُ إسناد الجهاز القديم
+  // (الذي كان يمنع تعارضاً بعد وقوعه) لم يعد له موضع: التعارضُ لا يصل
+  // إلى الكتابة أصلاً.
   app.patch("/api/payments/:id/session-info", isAuthenticated, async (req, res) => {
     if (!isAdminOrManager(req)) {
       return res.status(403).json({ message: "فقط المدير يمكنه تعديل بيانات الجلسات" });
     }
     const id = Number(req.params.id);
+    const [existing] = await db.select().from(payments).where(eq(payments.id, id));
+    if (!existing) return res.status(404).json({ message: "الدفعة غير موجودة" });
     const allowed = accessibleBranchesFor(req);
-    if (allowed !== null) {
-      const [existing] = await db.select().from(payments).where(eq(payments.id, id));
-      if (!existing) return res.status(404).json({ message: "الدفعة غير موجودة" });
-      if (!allowed.includes(existing.branchId)) {
-        return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
-      }
+    if (allowed !== null && !allowed.includes(existing.branchId)) {
+      return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
     }
+
     const { sessionCount, paymentTreatmentType } = req.body;
-    const [beforeInfo] = await db.select().from(payments).where(eq(payments.id, id));
-    const beforeLink = beforeInfo;
-    // ══ دفعةٌ مرتبطةٌ بجهاز لا يتغيّر وسمُها إلى خدمةٍ أخرى ══════════════
-    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فتحويل وسم الدفعة إلى
-    // خدمةٍ أخرى — أو إلى ما ليس جهازاً — يترك الرابط يشير إلى جهازٍ من
-    // نوعٍ مختلف: ليس حقلاً بائتاً بل مالاً منسوباً لجهازٍ لا يخصّه. ولا
-    // يُمسَح الرابط ولا يُنقَل تلقائياً — إعادة الإسناد قرارٌ إداري صريح.
-    if (beforeLink?.deviceEpisodeId != null && paymentTreatmentType !== undefined) {
-      const nextService = deviceServiceOfPaymentType(paymentTreatmentType);
-      const currentService = deviceServiceOfPaymentType(beforeLink.paymentTreatmentType);
-      if (nextService !== currentService) {
-        return res.status(409).json({
-          message: "هذه الدفعة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
-        });
-      }
+    const diff = diffPaymentPatch(existing, { paymentTreatmentType });
+    if (diff.changed.paymentTreatmentType !== undefined) {
+      return res.status(400).json({
+        message: "تغييرُ نوع العلاج المدفوع لم يعد يُقبل من هذه النقطة — استعمل تعديل الدفعة (PATCH /api/payments/:id)، وقد يتطلّب سبباً وتصحيحاً معتمَداً",
+      });
     }
-    const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
-    // Retagging moves the money between SECTIONS in the accounting split, so
-    // it is audited like any other money-shape change.
+
+    const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null);
     const s = (req.session as any).branchSession;
     await logAudit({
       entityType: "payment", entityId: id, action: "update",
       userId: s?.userId ?? null, userName: s?.displayName ?? null,
-      branchId: updated?.branchId ?? beforeInfo?.branchId ?? null,
-      oldValues: beforeInfo ? { sessionCount: beforeInfo.sessionCount, paymentTreatmentType: beforeInfo.paymentTreatmentType } : undefined,
-      newValues: { sessionCount: sessionCount ?? null, paymentTreatmentType: paymentTreatmentType ?? null },
+      branchId: updated?.branchId ?? existing.branchId ?? null,
+      oldValues: { sessionCount: existing.sessionCount },
+      newValues: { sessionCount: sessionCount ?? null },
       ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-      notes: "تعديل بيانات جلسات/وسم الدفعة",
+      notes: "تعديل عدد جلسات الدفعة — عمليٌّ صرف، لا يمسّ نوع العلاج",
     });
     res.json(updated);
   });
 
+  // ══ تعديل دفعة — مباشرٌ للحقول المباشرة، محميٌّ لغيرها (تحكّمُ تصحيح
+  // الدفعات، القسم ب، 2026-08-29) ══════════════════════════════════════════
+  // الملاحظاتُ وعددُ الجلسات فوريّان دائماً. المبلغُ والتاريخُ الماليّ ونوعُ
+  // العلاج المدفوع وعلمُ «جلسات مجانية» محميّة: تغييرٌ فعليّ في أيٍّ منها
+  // يفتح تصحيحاً — يطبّقه المسؤولُ العامّ فوراً، ويقدّمه غيرُه (مديرُ الفرع
+  // بمن فيه) طلباً معلَّقاً. **ولا حقلَ يُطبَّق جزئياً بينما إخوته المحمية
+  // تنتظر**: تغيّرٌ محميٌّ يسحب معه أيّ تغيّرٍ مباشرٍ رافقه إلى نفس التصحيح.
   app.patch("/api/payments/:id", isAuthenticated, async (req, res) => {
     const permissions = getPermissions(req);
-    
+
     if (!permissions.canEditPayments) {
       return res.status(403).json({ message: "ليس لديك صلاحية لتعديل المدفوعات" });
     }
-    
+
     const branchSession = (req.session as any).branchSession;
-    const isAdmin = branchSession?.isAdmin;
-    const isBranchManager = branchSession?.role === "branch_manager";
+    const isAdmin = Boolean(branchSession?.isAdmin);
+    const userId = branchSession?.userId ?? null;
+    const userName = branchSession?.displayName ?? null;
 
     const id = Number(req.params.id);
     // Branch isolation — same guard as /session-info: a branch-A user must not
@@ -3673,61 +3682,62 @@ export async function registerRoutes(
         return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
       }
     }
-    const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions } = req.body;
-    const [beforeLink] = await db.select().from(payments).where(eq(payments.id, id));
-    if (!beforeLink) return res.status(404).json({ message: "الدفعة غير موجودة" });
-    // ══ دفعةٌ مرتبطةٌ بجهاز لا يتغيّر وسمُها إلى خدمةٍ أخرى ══════════════
-    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فتحويل وسم الدفعة إلى
-    // خدمةٍ أخرى — أو إلى ما ليس جهازاً — يترك الرابط يشير إلى جهازٍ من
-    // نوعٍ مختلف: ليس حقلاً بائتاً بل مالاً منسوباً لجهازٍ لا يخصّه. ولا
-    // يُمسَح الرابط ولا يُنقَل تلقائياً — إعادة الإسناد قرارٌ إداري صريح.
-    if (beforeLink?.deviceEpisodeId != null && paymentTreatmentType !== undefined) {
-      const nextService = deviceServiceOfPaymentType(paymentTreatmentType);
-      const currentService = deviceServiceOfPaymentType(beforeLink.paymentTreatmentType);
-      if (nextService !== currentService) {
-        return res.status(409).json({
-          message: "هذه الدفعة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
+    const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions, reason } = req.body;
+    const [beforeEdit] = await db.select().from(payments).where(eq(payments.id, id));
+    if (!beforeEdit) return res.status(404).json({ message: "الدفعة غير موجودة" });
+
+    try {
+      const diff = diffPaymentPatch(beforeEdit, {
+        amount, customDate, paymentTreatmentType, isFreeSessions, notes, sessionCount,
+      });
+      // نفسُ حارس إسناد الجهاز القائم — يُفحَص دائماً، محمياً كان التغييرُ
+      // أم لا (بلا أثرٍ إن لم يُلمَس `paymentTreatmentType` فعلاً).
+      assertDeviceAttributionCompatible(beforeEdit, diff.changed);
+
+      if (!diff.touchesProtected) {
+        // ══ مباشرٌ وفوريّ — بلا سببٍ، بلا طلب، وبلا لمسِ القيد إطلاقاً ═════
+        const updateData: any = {};
+        if (diff.changed.notes !== undefined) updateData.notes = diff.changed.notes;
+        if (diff.changed.sessionCount !== undefined) updateData.sessionCount = diff.changed.sessionCount;
+        if (Object.keys(updateData).length === 0) {
+          return res.json(beforeEdit);
+        }
+        const updated = await storage.updatePayment(id, updateData);
+        await logAudit({
+          entityType: "payment", entityId: id, action: "update",
+          userId, userName,
+          branchId: updated?.branchId ?? beforeEdit.branchId ?? null,
+          oldValues: beforeEdit, newValues: updated ?? undefined,
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: "تعديلٌ مباشر — ملاحظات/عدد جلسات فقط، بلا مسّ للمال",
+        });
+        return res.json(updated);
+      }
+
+      const correctionReason = strOrNull(reason);
+      if (!correctionReason) {
+        return res.status(400).json({
+          message: "سبب التصحيح مطلوب لتعديل المبلغ أو التاريخ المالي أو نوع العلاج أو علم الجلسات المجانية",
         });
       }
-    }
-    const updateData: any = {};
-    if (amount !== undefined) updateData.amount = amount;
-    if (notes !== undefined) updateData.notes = notes || null;
-    if (sessionCount !== undefined) updateData.sessionCount = sessionCount || null;
-    if (paymentTreatmentType !== undefined) updateData.paymentTreatmentType = paymentTreatmentType || null;
-    // Only admin or branch_manager can set isFreeSessions
-    if (isFreeSessions !== undefined) {
-      updateData.isFreeSessions = (isAdmin || isBranchManager) ? !!isFreeSessions : false;
-    }
-    if (customDate !== undefined) {
-      const baghdadOffset = 3 * 60 * 60 * 1000;
-      const nowBaghdad = new Date(Date.now() + baghdadOffset);
-      const currentHours = nowBaghdad.getUTCHours();
-      const currentMinutes = nowBaghdad.getUTCMinutes();
-      const currentSeconds = nowBaghdad.getUTCSeconds();
-      const [year, month, day] = customDate.split('-').map(Number);
-      const backdatedBaghdad = new Date(Date.UTC(year, month - 1, day, currentHours, currentMinutes, currentSeconds));
-      updateData.date = new Date(backdatedBaghdad.getTime() - baghdadOffset);
-    }
-    // Audit + double-entry resync (accounting audit, 2026-07-29): CREATE and
-    // DELETE were both audited and journaled, but EDIT was neither — a money
-    // amount could change with no trace, and the journal kept the old figure.
-    const [beforeEdit] = await db.select().from(payments).where(eq(payments.id, id));
-    const updated = await storage.updatePayment(id, updateData);
-    if (beforeEdit && updated && updateData.amount !== undefined && updated.amount !== beforeEdit.amount) {
-      await reverseJournalForSource("payment", id, branchSession?.userId ?? null, "تعديل مبلغ الدفعة");
-      if (updated.amount > 0 && !updated.isFreeSessions) {
-        await createJournalForPayment(updated, branchSession?.userId ?? null);
+      const actor = { userId, userName, role: branchSession?.role ?? null };
+      const rawPatch = { amount, customDate, paymentTreatmentType, isFreeSessions, notes, sessionCount };
+
+      if (isAdmin) {
+        const result = await applyPaymentCorrectionDirect({
+          paymentId: id, action: "update", rawPatch, reason: correctionReason, actor,
+        });
+        return res.json(result.payment);
       }
+      const result = await requestPaymentCorrection({
+        paymentId: id, action: "update", rawPatch, reason: correctionReason, actor,
+        accessibleBranches: allowedBranches,
+      });
+      return res.status(202).json({ status: "pending", request: result.request });
+    } catch (err: any) {
+      if (err instanceof CorrectionError) return res.status(err.status).json({ message: err.message });
+      throw err;
     }
-    await logAudit({
-      entityType: "payment", entityId: id, action: "update",
-      userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-      branchId: updated?.branchId ?? beforeEdit?.branchId ?? null,
-      oldValues: beforeEdit ?? undefined, newValues: updated ?? undefined,
-      ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-    });
-    res.json(updated);
   });
 
   // Documents
@@ -7225,6 +7235,7 @@ export async function registerRoutes(
   //  تمضي والمالُ ينتظر اعتمادَ طبيبٍ مخوَّل.
   registerPendingChargeRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
+  registerPaymentCorrectionRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
   registerPatientTrashRoutes(app, isAuthenticated);
 

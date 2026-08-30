@@ -1,7 +1,7 @@
 import { db } from "../db";
-import { chartOfAccounts } from "@shared/schema";
+import { chartOfAccounts, journalEntries, journalLines } from "@shared/schema";
 import type { Payment, Expense, Invoice, InvoiceItem, Purchase } from "@shared/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, asc } from "drizzle-orm";
 import { createJournalEntry, logAudit } from "./ledger";
 import type { JournalLineInput } from "./ledger";
 
@@ -663,6 +663,214 @@ export async function reverseJournalForSource(
   } catch (err) {
     console.error(`[auto-journal] failed to reverse journal for ${sourceType} ${sourceId}:`, err);
   }
+}
+
+// ══ صارمةٌ تحت معاملة المستدعي — لتصحيح الدفعات المحمية وحده ═══════════
+//
+// كلُّ ما فوق هذا الخطّ «أطلقٌ وانسَ»: يبتلع خطأه ويفتح معاملتَه الخاصّة —
+// وهذا هو المقصود لكل مسارٍ تاريخي (الدفعُ العاديّ، الفواتير، المصاريف).
+//
+// لكنّ تصحيح دفعةٍ محمية (server/payments/correction_store.ts) عقدُه
+// مختلف: «فشلُ قيدٍ حقيقيّ يجب أن يُسقط تغييرَ الدفعة ويُبقي الطلبَ
+// معلَّقاً» — وهذا مستحيلٌ إن فتح القيدُ معاملتَه المستقلّة. فهذه نسخةٌ
+// ضيّقة، صارمة (لا try/catch يبتلع)، تكتب عبر `tx` القادمة من المستدعي —
+// لا عميل pool مستقلّ — فتصير كتابةُ القيد جزءاً من نفس معاملة الدفعة.
+// ولا تُستعمَل من أيّ مسارٍ آخر، ولا تمسّ الدوالَّ التاريخية أعلاه بحرف.
+
+async function generateEntryNumberTx(tx: any, entryDate: string): Promise<string> {
+  const [year, month] = entryDate.split("-");
+  const result = await tx.execute(sql`
+    SELECT COUNT(*)::int AS cnt FROM journal_entries
+    WHERE entry_number LIKE ${`JE-${year}${month}-%`}
+  `);
+  const cnt = (result.rows?.[0] as any)?.cnt ?? 0;
+  return `JE-${year}${month}-${String(cnt + 1).padStart(4, "0")}`;
+}
+
+type TxJournalLineInput = {
+  accountId: number;
+  debit?: number;
+  credit?: number;
+  description?: string | null;
+  branchId?: number | null;
+  patientId?: number | null;
+};
+
+async function createJournalEntryTx(tx: any, input: {
+  entryDate: string;
+  branchId: number | null;
+  description: string;
+  reference?: string | null;
+  sourceType: string;
+  sourceId: number;
+  createdBy?: number | null;
+  lines: TxJournalLineInput[];
+}): Promise<{ id: number }> {
+  if (input.lines.length < 2) {
+    throw new Error("القيد يجب أن يحتوي على سطرين على الأقل");
+  }
+  const totalDebit = input.lines.reduce((s, l) => s + (l.debit || 0), 0);
+  const totalCredit = input.lines.reduce((s, l) => s + (l.credit || 0), 0);
+  if (totalDebit !== totalCredit) {
+    throw new Error(`القيد غير متوازن: مدين ${totalDebit} ≠ دائن ${totalCredit}`);
+  }
+  if (totalDebit <= 0) {
+    throw new Error("القيد يجب أن يحتوي على مبالغ موجبة");
+  }
+
+  const periodRows = await tx.execute(sql`
+    SELECT id, status FROM accounting_periods
+    WHERE start_date <= ${input.entryDate}::date AND end_date >= ${input.entryDate}::date
+    LIMIT 1
+  `);
+  const period = periodRows.rows?.[0] as any;
+  if (period && period.status === "closed") {
+    throw new Error("لا يمكن إضافة قيود في فترة محاسبية مغلقة");
+  }
+
+  const entryNumber = await generateEntryNumberTx(tx, input.entryDate);
+  const [entry] = await tx.insert(journalEntries).values({
+    entryNumber,
+    entryDate: input.entryDate,
+    branchId: input.branchId ?? null,
+    periodId: period?.id ?? null,
+    description: input.description,
+    reference: input.reference ?? null,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    totalAmount: totalDebit,
+    status: "posted",
+    createdBy: input.createdBy ?? null,
+    postedAt: new Date(),
+  }).returning();
+  if (!entry) throw new Error("[auto-journal-tx] فشل إنشاء رأس القيد");
+
+  for (let i = 0; i < input.lines.length; i++) {
+    const line = input.lines[i];
+    await tx.insert(journalLines).values({
+      entryId: entry.id,
+      accountId: line.accountId,
+      branchId: line.branchId ?? input.branchId ?? null,
+      debit: line.debit || 0,
+      credit: line.credit || 0,
+      description: line.description || null,
+      lineOrder: i + 1,
+      patientId: line.patientId ?? null,
+    });
+  }
+  return entry;
+}
+
+async function reverseJournalEntryTx(
+  tx: any, originalId: number, reversalDate: string, reversedBy: number | null, reason: string,
+): Promise<{ id: number }> {
+  const [entry] = await tx.select().from(journalEntries).where(eq(journalEntries.id, originalId));
+  if (!entry) throw new Error("القيد غير موجود");
+  if (entry.status === "reversed") throw new Error("القيد معكوس مسبقاً");
+  const lines = await tx.select().from(journalLines).where(eq(journalLines.entryId, originalId))
+    .orderBy(asc(journalLines.lineOrder));
+
+  const reversal = await createJournalEntryTx(tx, {
+    entryDate: reversalDate,
+    branchId: entry.branchId,
+    description: `عكس قيد ${entry.entryNumber}: ${reason}`,
+    reference: entry.entryNumber,
+    sourceType: "reversal",
+    sourceId: originalId,
+    createdBy: reversedBy,
+    lines: lines.map((l: any) => ({
+      accountId: l.accountId,
+      debit: l.credit || 0,
+      credit: l.debit || 0,
+      description: `عكس: ${l.description || ""}`,
+      branchId: l.branchId,
+      patientId: l.patientId,
+    })),
+  });
+
+  await tx.update(journalEntries).set({ status: "reversed", reversedBy: reversal.id })
+    .where(eq(journalEntries.id, originalId));
+  await tx.update(journalEntries).set({ reversalOf: originalId })
+    .where(eq(journalEntries.id, reversal.id));
+  return reversal;
+}
+
+/**
+ * يعكس قيدَ دفعةٍ **تحت معاملة المستدعي** إن وُجد قيدٌ قائم — صارمة.
+ * غيابُ قيدٍ أصلاً **لا-عمليةٌ مسموحة** (لا شيء لعكسه)، لا فشلاً.
+ */
+export async function reverseJournalForPaymentTx(
+  tx: any, paymentId: number, reversedBy: number | null, reason: string,
+): Promise<void> {
+  const [row] = await tx.select({ id: journalEntries.id }).from(journalEntries).where(and(
+    eq(journalEntries.sourceType, "payment"),
+    eq(journalEntries.sourceId, paymentId),
+    eq(journalEntries.status, "posted"),
+  )).limit(1);
+  if (!row) return;
+  await reverseJournalEntryTx(tx, row.id, new Date().toISOString().split("T")[0], reversedBy, reason);
+}
+
+/**
+ * ينشئ قيدَ دفعةٍ **تحت معاملة المستدعي** — نظيرُ `createJournalForPayment`
+ * أعلاه الصارم. تشترط `amount > 0` كالأصل، وتُلقي بدل أن تبتلع.
+ */
+export async function createJournalForPaymentTx(
+  tx: any, payment: Payment, createdBy?: number | null,
+): Promise<void> {
+  const amount = payment.amount ?? 0;
+  if (amount <= 0) return;
+
+  const cashAccountId = await getCashAccountForBranch(payment.branchId);
+  if (!cashAccountId) {
+    throw new Error(`[auto-journal-tx] no cash account for branch ${payment.branchId}`);
+  }
+
+  let effectiveType: string | null = payment.paymentTreatmentType ?? null;
+  if (!effectiveType && payment.patientId) {
+    const patientRes = await tx.execute(sql`
+      SELECT is_amputee, is_physiotherapy, is_medical_support
+      FROM patients WHERE id = ${payment.patientId} AND deleted_at IS NULL
+    `);
+    const row = patientRes.rows?.[0] as any;
+    if (row) {
+      if (row.is_amputee) effectiveType = "طرف صناعي";
+      else if (row.is_physiotherapy) effectiveType = "علاج طبيعي";
+      else if (row.is_medical_support) effectiveType = "مساند طبية";
+    }
+  }
+
+  const revenueCode = revenueTypeToAccountCode(effectiveType);
+  const revenueAccountId = await getAccountIdByCode(revenueCode);
+  if (!revenueAccountId) {
+    throw new Error(`[auto-journal-tx] revenue account ${revenueCode} not found`);
+  }
+
+  await createJournalEntryTx(tx, {
+    entryDate: dateToISO(payment.date),
+    branchId: payment.branchId,
+    description: `دفعة مريض - ${payment.paymentTreatmentType || "غير محدد"}`,
+    reference: payment.notes || `payment#${payment.id}`,
+    sourceType: "payment",
+    sourceId: payment.id,
+    createdBy: createdBy ?? null,
+    lines: [
+      {
+        accountId: cashAccountId,
+        debit: amount,
+        description: "استلام دفعة نقدية من مريض",
+        branchId: payment.branchId,
+        patientId: payment.patientId,
+      },
+      {
+        accountId: revenueAccountId,
+        credit: amount,
+        description: `إيراد ${payment.paymentTreatmentType || ""}`,
+        branchId: payment.branchId,
+        patientId: payment.patientId,
+      },
+    ],
+  });
 }
 
 export { logAudit };

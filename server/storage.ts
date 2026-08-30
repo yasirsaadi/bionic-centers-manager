@@ -151,8 +151,6 @@ export interface IStorage {
     patientId: number;
     caseType: "amputee" | "medical_support" | "physiotherapy";
     fields: Partial<InsertPatient>;
-    serviceCost: number;
-    paidNow: number;
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
@@ -178,7 +176,7 @@ export interface IStorage {
   getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
-  updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any>;
+  updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any>;
   updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null }): Promise<any>;
 
   // Documents
@@ -1060,14 +1058,24 @@ export class DatabaseStorage implements IStorage {
   // aggregate/financial reports (which count by flag + total_cost) are untouched.
   // Idempotent: only missing cases are created; existing case costs are moved
   // only for the cases created in THIS call.
-  async syncPatientCases(patientId: number): Promise<void> {
+  /**
+   * `tx` اختياريّ (متابعةُ تحكّم تصحيح الدفعات، القسم ب، 2026-08-29):
+   * حين يُمرَّر تنضمّ هذه الدالّةُ إلى معاملة المستدعي بدل فتح معاملتها
+   * الخاصّة — يحتاجه `reattachPaymentCase` الصارم كي يصير إعادةُ إسناد
+   * حالةِ الدفعة جزءاً من نفس معاملة تصحيح الدفعة (عكسُ القيد وتطبيقُها
+   * وقيدُها الجديد وحالةُ الطلب)، فتسقط كلُّها معاً أو تنجح معاً. **وكلُّ
+   * الجسم أدناه لم يتغيّر حرفاً واحداً** — كان مكتوباً أصلاً بمعامل `tx`
+   * داخل `db.transaction` نفسِه، فتغليفُه بدالّةٍ مسمّاة هو التعديلُ
+   * الوحيد. المستدعون القدامى (بلا `tx`) يحصلون على السلوك نفسِه تماماً.
+   */
+  async syncPatientCases(patientId: number, tx?: any): Promise<void> {
     // ONE transaction + a per-patient advisory lock. Concurrent syncs for the
     // same patient (backfill loop + a payment retag + a merge) previously
     // interleaved ~10 autocommitted statements — the check-then-insert on case
     // rows could duplicate, and cost moves could half-apply. The xact-scoped
     // advisory lock serializes syncs per patient; the unique index from
     // migration 020 (+ onConflictDoNothing) is the database-level backstop.
-    await db.transaction(async (tx) => {
+    const body = async (tx: any) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
     const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
     if (!p) return;
@@ -1075,8 +1083,8 @@ export class DatabaseStorage implements IStorage {
       Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
     // ---- signals -----------------------------------------------------------
-    const wos = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
-    const pays = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
+    const wos: { st: string }[] = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
+    const pays: { tag: string | null }[] = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
     const hasWO = (st: string) => wos.some((w) => w.st === st);
     const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
     // Tags can be COMPOUND ("روبوت، أطراف صناعية") when one receipt mixes
@@ -1118,7 +1126,7 @@ export class DatabaseStorage implements IStorage {
       else if ((mk.notes || "").includes("مساند")) supportMarkerCost += c;
     }
 
-    const preExisting = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const preExisting: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const has = (t: string) => preExisting.some((c) => c.caseType === t);
     const firstEver = preExisting.length === 0;
     const otherCosts = (wantProsthetic ? prostheticMarkerCost : 0) + (wantSupport ? supportMarkerCost : 0);
@@ -1166,7 +1174,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     // ---- re-attribute tagged payments/markers to their real case -----------
-    const cases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const cases: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const idOf = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
     const prosId = idOf("prosthetic"), supId = idOf("medical_support");
     // Payments: containment match so compound tags ("روبوت، أطراف صناعية")
@@ -1206,7 +1214,7 @@ export class DatabaseStorage implements IStorage {
     // touched here → the aggregate/financial reports stay byte-identical.
     // HUMAN PRICING WINS: a case whose cost_source is 'manual' (per-case ✏️ /
     // تخصيص / add-case-type) is never raised NOR drained by the floor.
-    const finalCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const finalCases: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     if (finalCases.length > 0) {
       const paidRows = await tx.select({ caseId: payments.caseId, amount: payments.amount })
         .from(payments).where(eq(payments.patientId, patientId));
@@ -1238,7 +1246,8 @@ export class DatabaseStorage implements IStorage {
         await tx.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
       }
     }
-    });
+    };
+    return tx ? await body(tx) : await db.transaction(body);
   }
 
   // Post-exam physiotherapy pricing («الكلفة والجلسات» from the registry —
@@ -1397,6 +1406,13 @@ export class DatabaseStorage implements IStorage {
     // حتى لو تجاوزت عقدَ zod. نفس نمط الأعمدة المشتقّة من الهاتف تحته.
     delete valuesToInsert.patientCode;
 
+    // ══ صدقُ التسجيل (تصحيحٌ معماريّ) — التسجيلُ بلا كلفةٍ دائماً ═══════
+    // نفسُ نمط `patientCode` أعلاه بالضبط: قيمةٌ يرسلها المنادي — حاضراً
+    // أو مستقبلياً، عبر النقطة أو مباشرةً — لا تصل القاعدة أبداً. المريضُ
+    // الجديد يُفتح **دائماً** بكلفةِ صفر؛ التسعيرُ من مسار الخدمة المخصَّص
+    // لاحقاً لا من هنا.
+    valuesToInsert.totalCost = 0;
+
     // نقطة الخنق الوحيدة لتطبيع رقم الاتصال عند الإنشاء. الأعمدة الثلاثة
     // المشتقّة تُكتب من الدالّة دائماً — فقيمة يرسلها العميل لأيٍّ منها
     // تُستبدَل هنا ولا تصل القاعدة. `phone` يُحفظ كما كُتب بعد قصّ الأطراف.
@@ -1461,24 +1477,12 @@ export class DatabaseStorage implements IStorage {
     });
 
     // Create the case row(s) for this new patient from its flags (Phase 3).
+    // `totalCost` is forced to 0 above, so every new case's derived cost
+    // (in `syncPatientCases`) starts at zero too — no separate change needed
+    // there. And no registration cost_entries writer here anymore: pricing a
+    // freshly-registered patient is not a thing this function does — it
+    // happens later through the dedicated service path.
     await this.syncPatientCases(patient.id);
-    if ((patient.totalCost || 0) > 0) {
-      // Dated at the patient's own createdAt so a backdated registration lands
-      // its cost on the day the owner chose, not the day the form was typed.
-      //
-      //  والقسمُ يُحسَم **بعد** إنشاء الحالات (ترحيل ٠٥٦)، وبشرطٍ واحد:
-      //  حالةٌ واحدة لا غير. فمريضٌ سُجِّل بثلاث خدمات دفعةً واحدة كلفتُه
-      //  مبلغٌ واحد لا يُعرَف كيف يتوزّع — وتقسيمُه بالتساوي أو نسبُه
-      //  لأولها اختراعُ رقمٍ لم يقله أحد. فيبقى غير مبوَّبٍ صراحةً.
-      const ownCases = await db.select({ id: patientCases.id }).from(patientCases)
-        .where(eq(patientCases.patientId, patient.id));
-      await db.insert(costEntries).values({
-        patientId: patient.id, branchId: patient.branchId,
-        amount: patient.totalCost || 0, source: "registration",
-        notes: "كلفة التسجيل", createdAt: patient.createdAt ?? undefined,
-        caseId: ownCases.length === 1 ? ownCases[0].id : null,
-      });
-    }
     return patient;
   }
 
@@ -1674,6 +1678,14 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`
         DELETE FROM price_change_requests WHERE patient_id = ${id}
       `);
+      // ══ طلباتُ التصحيح الماليّ (ترحيل ٠٧١) ════════════════════════════
+      // مفتاحٌ أجنبيٌّ حقيقيّ إلى `patients` ⟶ **موضعُه هنا إلزاماً**، وإلّا
+      // فشل حذفُ كلّ مريضٍ صُحِّحت له دفعةٌ يوماً. وهو جدولُ طلبٍ وتدقيق لا
+      // دفترُ مال: المالُ نفسُه في `payments` و`cost_entries` ويُحذف بمسارِه.
+      // (القاعدة الملزمة في CLAUDE.md، ومُختبَرٌ بحذفٍ حقيقي محلياً.)
+      await tx.execute(sql`
+        DELETE FROM financial_correction_requests WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followups WHERE patient_id = ${id}
       `);
@@ -1824,20 +1836,24 @@ export class DatabaseStorage implements IStorage {
   // Adds a case type (amputee / medical_support / physiotherapy) to an
   // EXISTING patient — the one-person-one-record principle: the same human
   // never gets a second patient row just because a new service type started.
-  // Atomic: flags + optional cost + optional payment + (for manufacturing
-  // types) the work order and its first history row all commit together.
+  //
+  // **صدقُ القرار (تصحيحٌ معماريّ)** — هذه الدالّةُ **بلا سلطةٍ مالية** الآن،
+  // ولا يمكن لأيّ منادٍ — حاضرٍ أو مستقبليّ — أن يحوّلها إلى كاتبِ مال:
+  // لا `serviceCost` ولا `paidNow` في عقدها، فلا تلمس `patients.total_cost`،
+  // ولا تُنشئ `cost_entries`، ولا `payments`. الحالةُ الجديدة تُفتح بكلفةِ
+  // صفرٍ دائماً؛ التسعيرُ والقبضُ من مسار الخدمة أو الدفعة المخصَّص لا من
+  // هنا. Atomic: flags + case activation + (for manufacturing types) the
+  // work order and its first history row all commit together.
   async addPatientCaseType(params: {
     patientId: number;
     caseType: "amputee" | "medical_support" | "physiotherapy";
     fields: Partial<InsertPatient>;
-    serviceCost: number;
-    paidNow: number;
     expertUserId?: number | null;
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
     skipWorkOrder?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number | null }> {
-    const { patientId, caseType, fields, serviceCost, paidNow } = params;
+    const { patientId, caseType, fields } = params;
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
@@ -1847,14 +1863,12 @@ export class DatabaseStorage implements IStorage {
       if (caseType === "amputee") flagPatch.isAmputee = true;
       else if (caseType === "medical_support") flagPatch.isMedicalSupport = true;
       else flagPatch.isPhysiotherapy = true;
-      if (serviceCost > 0) flagPatch.totalCost = (existing.totalCost || 0) + serviceCost;
+      //  لا لمسَ لـ`totalCost` هنا بعد اليوم — القرارُ فقط، بلا كلفة.
 
       const [patient] = await tx.update(patients)
         .set(flagPatch)
         .where(eq(patients.id, patientId))
         .returning();
-      //  القيدُ يُكتب **بعد** إنشاء الحالة أدناه ليحمل معرّفها (ترحيل ٠٥٦):
-      //  قسمُ هذه الكلفة هو النوعُ الذي أُضيف بعينه، لا شيء أعمّ منه.
 
       const caseLabel = caseType === "amputee" ? "أطراف صناعية"
         : caseType === "medical_support" ? "مساند طبية" : "علاج طبيعي";
@@ -1882,15 +1896,13 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
       let caseId: number;
       if (existingCase) {
+        //  حالةٌ قائمة أصلاً — قرارٌ يفعّلها، بلا لمسِ كلفتها القائمة.
         caseId = existingCase.id;
-        if (serviceCost > 0) {
-          // A human priced this addition — mark manual so the floor keeps out.
-          await tx.update(patientCases).set({ cost: (existingCase.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-        }
       } else {
+        //  حالةٌ جديدة تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
         const [newCase] = await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: serviceCost, details: cleanDetails,
-          costSource: serviceCost > 0 ? "manual" : "auto",
+          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: 0, details: cleanDetails,
+          costSource: "auto",
         }).onConflictDoNothing().returning();
         // Unique-index race: another path created the case between our select
         // and insert — fall back to the existing row.
@@ -1900,19 +1912,11 @@ export class DatabaseStorage implements IStorage {
           const [raced] = await tx.select().from(patientCases)
             .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
           caseId = raced.id;
-          if (serviceCost > 0) {
-            await tx.update(patientCases).set({ cost: (raced.cost || 0) + serviceCost, costSource: "manual", updatedAt: new Date() }).where(eq(patientCases.id, caseId));
-          }
         }
       }
 
-      //  قيدُ الكلفة — هنا لأن `caseId` صار معروفاً (ترحيل ٠٥٦).
-      if (serviceCost > 0) {
-        await tx.insert(costEntries).values({
-          patientId, branchId: existing.branchId, amount: serviceCost,
-          source: "add_case_type", caseId,
-        });
-      }
+      //  لا قيدَ كلفةٍ هنا بعد اليوم — راجع صدقَ القرار في توثيق الدالّة
+      //  أعلاه. التسعيرُ من مسار الخدمة المخصَّص وحده.
 
       // Timeline marker so the patient's history shows when the new case
       // type started — attributed to the new case.
@@ -1921,18 +1925,10 @@ export class DatabaseStorage implements IStorage {
         branchId: existing.branchId,
         caseId,
         details: "إضافة نوع حالة",
-        notes: `إضافة نوع حالة: ${caseLabel}${serviceCost > 0 ? ` (تكلفة: ${serviceCost.toLocaleString()} د.ع)` : ""}`,
+        notes: `إضافة نوع حالة: ${caseLabel}`,
       });
 
-      if (paidNow > 0) {
-        await tx.insert(payments).values({
-          patientId,
-          branchId: existing.branchId,
-          caseId,
-          amount: paidNow,
-          notes: `دفعة عند إضافة نوع حالة: ${caseLabel}`,
-        });
-      }
+      //  ولا دفعةَ هنا كذلك — القبضُ من مسار الدفعة المخصَّص وحده.
 
       // Manufacturing types get a work order assigned to ONE expert, with
       // the first history row — same shape as new-patient registration.
@@ -2785,15 +2781,17 @@ export class DatabaseStorage implements IStorage {
     await db.delete(payments).where(eq(payments.id, id));
   }
 
-  async updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any> {
-    const [before] = await db.select().from(payments).where(eq(payments.id, id));
+  // ══ عددُ الجلسات وحده — لا كاتبَ ثانٍ لنوع العلاج (متابعةُ تحكّم تصحيح
+  // الدفعات، القسم أ، 2026-08-29) ═══════════════════════════════════════
+  // كانت تكتب `paymentTreatmentType` أيضاً — حتى حين لا يصل، فيُمحى صامتاً
+  // (راجع server/routes.ts: PATCH /api/payments/:id/session-info). صار
+  // العمودُ خارج توقيع هذه الدالّة كلّياً: لا معاملَ يُغري باستدعاءٍ
+  // خاطئ، ولا كاتبَ إعادةِ وسمٍ ثانياً غير `updatePayment`/تصحيح الدفعات.
+  async updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any> {
     const [updated] = await db.update(payments)
-      .set({ sessionCount, paymentTreatmentType })
+      .set({ sessionCount })
       .where(eq(payments.id, id))
       .returning();
-    if (updated && tagChanged(before?.paymentTreatmentType, paymentTreatmentType)) {
-      await this.reattachPaymentCase(updated.id, updated.patientId, paymentTreatmentType);
-    }
     return updated;
   }
 
@@ -2821,15 +2819,38 @@ export class DatabaseStorage implements IStorage {
   // (a retag away from أطراف no longer leaves the money counted on the طرف),
   // then sync's exact-tag/fallback rules re-home it; resolveCaseId is the
   // final safety net.
-  private async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
-    try {
-      await db.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
-      await this.syncPatientCases(patientId);
-      const [row] = await db.select({ caseId: payments.caseId }).from(payments).where(eq(payments.id, paymentId));
+  /**
+   * كانت خاصّة، وصارت عامّةً كي ينادِيها مسارُ تصحيح الدفعات المحمية أيضاً
+   * (server/payments/correction_store.ts).
+   *
+   * ══ وضعان — والفرقُ مقصود (متابعةُ تحكّم تصحيح الدفعات، القسم ب،
+   * 2026-08-29) ═══════════════════════════════════════════════════════
+   * **بلا `tx`** (المسارُ التاريخيّ — `updatePayment` وغيرُه): أطلِق وانسَ
+   * كما كان دائماً؛ خطأٌ هنا لا يُفشل التعديلَ الأساسيّ الذي نجح بالفعل.
+   * والخطواتُ الثلاث صارت **معاملةً واحدةً خاصّةً بها** (لم تكن كذلك من
+   * قبل: فشلُ الخطوة الثانية كان يترك `case_id = NULL` معلَّقاً بلا
+   * إعادة إسناد) — تحسينٌ صرف، لا تغييرَ في عقد «لا يُفشل المستدعي».
+   *
+   * **ومع `tx`** (تصحيحُ دفعةٍ محميّة): تنضمّ إلى معاملة المستدعي —
+   * **بلا try**؛ فشلٌ حقيقيّ يجب أن يصعد فيُسقط تلك المعاملةَ كاملةً
+   * (القيدَ والدفعةَ وحالةَ الطلب معاً)، لا خطوةً بعديةً قد تضيع بصمت.
+   */
+  async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null, tx?: any): Promise<void> {
+    const body = async (t: any) => {
+      await t.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
+      await this.syncPatientCases(patientId, t);
+      const [row] = await t.select({ caseId: payments.caseId }).from(payments).where(eq(payments.id, paymentId));
       if (!row?.caseId) {
-        const caseId = await this.resolveCaseId(patientId, { tag });
-        if (caseId) await db.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
+        const caseId = await this.resolveCaseId(patientId, { tag }, t);
+        if (caseId) await t.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
       }
+    };
+    if (tx) {
+      await body(tx);
+      return;
+    }
+    try {
+      await db.transaction(body);
     } catch (e) {
       console.error(`[reattachPaymentCase] payment ${paymentId} failed:`, e);
     }

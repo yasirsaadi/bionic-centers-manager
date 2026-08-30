@@ -165,13 +165,19 @@ export default function PatientDetails() {
   const [editingPaymentSession, setEditingPaymentSession] = useState<{id: number, sessionCount: number | null, paymentTreatmentType: string | null} | null>(null);
   const [editSessionCount, setEditSessionCount] = useState<string>("");
   const [editTreatmentType, setEditTreatmentType] = useState<string>("");
-  const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null} | null>(null);
+  const [editingPayment, setEditingPayment] = useState<{id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null, isFreeSessions?: boolean | null} | null>(null);
   const [editPaymentDate, setEditPaymentDate] = useState<string>("");
   const [editPaymentAmount, setEditPaymentAmount] = useState<string>("");
   const [editPaymentNotes, setEditPaymentNotes] = useState<string>("");
   const [editPaymentSessionCount, setEditPaymentSessionCount] = useState<string>("");
   const [editPaymentTreatmentType, setEditPaymentTreatmentType] = useState<string>("");
   const [editPaymentFreeSessions, setEditPaymentFreeSessions] = useState(false);
+  // سببُ تصحيحٍ ماليّ — يُطلَب فقط حين يمسّ الحفظُ حقلاً محمياً فعلاً
+  // (تحكّمُ تصحيح الدفعات، القسم ب، 2026-08-29).
+  const [editPaymentReason, setEditPaymentReason] = useState<string>("");
+  // تأكيدُ حذف دفعة — بسببٍ إلزاميّ دائماً، محميٌّ كان الحذفُ أم مباشراً.
+  const [deletingPayment, setDeletingPayment] = useState<{ id: number } | null>(null);
+  const [deletePaymentReason, setDeletePaymentReason] = useState<string>("");
 
   // Independent cases (Phase 2, relocated): chips in the header + a full panel
   // per case. Each case is its own view (details / cost / visits / payments).
@@ -526,22 +532,43 @@ export default function PatientDetails() {
     setEditingPaymentSession(payment);
   };
 
+  // تعديلٌ مباشرٌ للملاحظات/عدد الجلسات، ومحميٌّ لغيرهما (تحكّمُ تصحيح
+  // الدفعات، القسم ب، 2026-08-29): تغييرٌ محميّ يعود ٢٠٢ («طلبٌ معلَّق») لا
+  // يُطبَّق فوراً — **ولا تحديثَ تفاؤليّاً** لبيانات الدفعة في تلك الحالة.
   const updatePaymentFull = useMutation({
-    mutationFn: async (data: {paymentId: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, customDate?: string}) => {
+    mutationFn: async (data: {paymentId: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, customDate?: string, isFreeSessions?: boolean, reason?: string}) => {
       const res = await fetch(`/api/payments/${data.paymentId}`, {
         method: "PATCH",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ amount: data.amount, notes: data.notes, sessionCount: data.sessionCount, paymentTreatmentType: data.paymentTreatmentType, customDate: data.customDate }),
+        body: JSON.stringify({
+          amount: data.amount, notes: data.notes, sessionCount: data.sessionCount,
+          paymentTreatmentType: data.paymentTreatmentType, customDate: data.customDate,
+          isFreeSessions: data.isFreeSessions, reason: data.reason,
+        }),
         credentials: "include",
       });
-      if (!res.ok) throw new Error(t.patientDetails.failedToUpdateSession);
-      return res.json();
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.message || t.patientDetails.failedToUpdateSession);
+      }
+      return { pending: res.status === 202 };
     },
-    onSuccess: () => {
+    onSuccess: ({ pending }) => {
+      setEditingPayment(null);
+      if (pending) {
+        toast({
+          title: "أُرسل طلبُ التصحيح",
+          description: "أُرسل تصحيحُ الدفعة إلى المسؤول العام للاعتماد — لم تتغيّر الدفعة بعد",
+        });
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", Number(id)] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
-      setEditingPayment(null);
-    }
+      toast({ title: "تم الحفظ", description: "تم تصحيح الدفعة مباشرةً" });
+    },
+    onError: (error: any) => {
+      toast({ title: "خطأ", description: error.message, variant: "destructive" });
+    },
   });
 
   const openEditPayment = (payment: { id: number, amount: number, notes: string | null, sessionCount: number | null, paymentTreatmentType: string | null, date: string | null, isFreeSessions?: boolean | null }) => {
@@ -550,6 +577,7 @@ export default function PatientDetails() {
     setEditPaymentSessionCount(payment.sessionCount ? String(payment.sessionCount) : "");
     setEditPaymentTreatmentType(payment.paymentTreatmentType?.split(",")[0]?.trim() || "");
     setEditPaymentFreeSessions(!!payment.isFreeSessions);
+    setEditPaymentReason("");
     if (payment.date) {
       const d = new Date(payment.date);
       const baghdadOffset = 3 * 60 * 60 * 1000;
@@ -560,6 +588,31 @@ export default function PatientDetails() {
     }
     setEditingPayment(payment);
   };
+
+  // هل يمسّ الحفظُ حقلاً محمياً فعلاً؟ (تحكّمُ تصحيح الدفعات، القسم ب) —
+  // مقارنةٌ مطبَّعة بلقطة `editingPayment` الأصلية، نفسُ تصنيف الخادم
+  // حرفياً (المبلغ · التاريخ الماليّ · نوع العلاج المدفوع · الجلسات
+  // المجانية). الملاحظاتُ وعددُ الجلسات لا يدخلان هذه المقارنة أبداً.
+  const paymentEditTouchesProtected = (() => {
+    if (!editingPayment) return false;
+    const nextAmount = editPaymentAmount === "" ? NaN : Math.round(Number(editPaymentAmount));
+    if (Number.isFinite(nextAmount) && nextAmount !== (editingPayment.amount ?? 0)) return true;
+    if (Boolean(editPaymentFreeSessions) !== Boolean(editingPayment.isFreeSessions)) return true;
+    const nextTag = editPaymentTreatmentType || null;
+    const curTag = editingPayment.paymentTreatmentType?.split(",")[0]?.trim() || null;
+    if (nextTag !== curTag) return true;
+    if (editPaymentDate) {
+      const origYmd = editingPayment.date
+        ? (() => {
+            const d = new Date(editingPayment.date as any);
+            const baghdadOffset = 3 * 60 * 60 * 1000;
+            return new Date(d.getTime() + baghdadOffset).toISOString().split("T")[0];
+          })()
+        : "";
+      if (editPaymentDate !== origYmd) return true;
+    }
+    return false;
+  })();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1350,7 +1403,8 @@ export default function PatientDetails() {
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>حذف الزيارة؟</AlertDialogTitle>
                                       <AlertDialogDescription>
-                                        سيتم حذف هذه الزيارة نهائياً ولا يمكن استرجاعها. هل أنت متأكد؟
+                                        ستختفي هذه الزيارة من السجلّ التشغيلي (سجلّ الزيارات) فقط. كلفتُها وأيّ
+                                        دفعةٍ مرتبطة بها تبقيان كما هما دون أيّ تغيير — لا تُحذفان ولا تُعدَّلان.
                                       </AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <AlertDialogFooter className="gap-2">
@@ -1458,11 +1512,11 @@ export default function PatientDetails() {
                                 </Button>
                                 )}
                                 {permissions.canDeletePayments && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => deletePayment({ paymentId: payment.id, patientId: patient.id })}
+                                  onClick={() => { setDeletePaymentReason(""); setDeletingPayment({ id: payment.id }); }}
                                   disabled={isDeletingPayment}
                                   data-testid={`button-delete-payment-${payment.id}`}
                                 >
@@ -2092,20 +2146,42 @@ export default function PatientDetails() {
             )}
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.patientDetails.notes}</label>
-              <Input 
-                className="text-right" 
+              <Input
+                className="text-right"
                 placeholder={t.patientDetails.enterNotes}
                 value={editPaymentNotes}
                 onChange={(e) => setEditPaymentNotes(e.target.value)}
                 data-testid="input-edit-payment-notes"
               />
             </div>
+            {/* سببُ التصحيح — يظهر ويُلزَم فقط حين يمسّ الحفظُ حقلاً محمياً
+                فعلاً (تحكّمُ تصحيح الدفعات، القسم ب). تعديلٌ للملاحظات أو
+                عدد الجلسات وحدهما يبقى فورياً بلا هذا الحقل إطلاقاً. */}
+            {paymentEditTouchesProtected && (
+              <div className="space-y-2 rounded-lg border border-dashed border-amber-400/60 bg-amber-50 p-3">
+                <label className="text-sm font-medium flex items-center gap-1">
+                  سبب التصحيح <span className="text-red-500">*</span>
+                </label>
+                <Textarea
+                  className="text-right bg-white"
+                  placeholder="اكتب سبب تصحيح المبلغ/التاريخ/نوع العلاج/الجلسات المجانية"
+                  value={editPaymentReason}
+                  onChange={(e) => setEditPaymentReason(e.target.value)}
+                  data-testid="input-edit-payment-reason"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {isAdmin
+                    ? "تعديلٌ لبياناتٍ محمية — سيُطبَّق مباشرةً بصفتك المسؤول العام."
+                    : "تعديلٌ لبياناتٍ محمية — سيُرسَل طلبُ تصحيحٍ إلى المسؤول العام للاعتماد، ولن تتغيّر الدفعة قبل ذلك."}
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2 mt-4">
             <Button variant="outline" onClick={() => setEditingPayment(null)}>
               {t.common.cancel}
             </Button>
-            <Button 
+            <Button
               onClick={() => {
                 if (editingPayment) {
                   updatePaymentFull.mutate({
@@ -2115,11 +2191,19 @@ export default function PatientDetails() {
                     sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
                     paymentTreatmentType: editPaymentTreatmentType || null,
                     customDate: editPaymentDate || undefined,
-                    isFreeSessions: editPaymentFreeSessions || undefined,
+                    // بوليانٌ صريحٌ دائماً — `|| undefined` كان يُسقط
+                    // `false` (حقيقةٌ لا غياب) فيبتلع الخادمُ الانتقال
+                    // من مجّانيّ إلى غير مجّانيّ صامتاً (متابعةُ تحكّم
+                    // تصحيح الدفعات، القسم ج، 2026-08-29).
+                    isFreeSessions: editPaymentFreeSessions,
+                    reason: paymentEditTouchesProtected ? editPaymentReason : undefined,
                   } as any);
                 }
               }}
-              disabled={updatePaymentFull.isPending || !editPaymentAmount}
+              disabled={
+                updatePaymentFull.isPending || !editPaymentAmount
+                || (paymentEditTouchesProtected && !editPaymentReason.trim())
+              }
               data-testid="button-save-payment-edit"
             >
               {updatePaymentFull.isPending ? t.patientDetails.saving : t.patientDetails.saveChanges}
@@ -2127,6 +2211,49 @@ export default function PatientDetails() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* تأكيدُ حذف دفعة — سببٌ إلزاميّ دائماً؛ حذفٌ مباشر للمسؤول العام،
+          وطلبٌ معلَّق (٢٠٢) لغيره (تحكّمُ تصحيح الدفعات، القسم ب). */}
+      <AlertDialog open={!!deletingPayment} onOpenChange={(open) => { if (!open) setDeletingPayment(null); }}>
+        <AlertDialogContent dir={dir}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{isAdmin ? "حذف الدفعة؟" : "إرسال طلب حذف الدفعة؟"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isAdmin
+                ? "سيُحذَف صفّ الدفعة فوراً ويُعكَس قيدُها المحاسبي. هذا حذفٌ مباشر بصفتك المسؤول العام."
+                : "لن تُحذَف الدفعة الآن — سيُرسَل طلبٌ إلى المسؤول العام، ويبقى صفّ الدفعة كما هو حتى يُعتمد الطلب."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium flex items-center gap-1">
+              سبب الحذف <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              className="text-right"
+              placeholder="اكتب سبب حذف هذه الدفعة"
+              value={deletePaymentReason}
+              onChange={(e) => setDeletePaymentReason(e.target.value)}
+              data-testid="input-delete-payment-reason"
+            />
+          </div>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deletingPayment) {
+                  deletePayment({ paymentId: deletingPayment.id, patientId: patient.id, reason: deletePaymentReason });
+                  setDeletingPayment(null);
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={isDeletingPayment || !deletePaymentReason.trim()}
+              data-testid="confirm-delete-payment"
+            >
+              {isAdmin ? "نعم، احذف" : "إرسال الطلب"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Session-count correction — counts only, never money. */}
       <PhysioPlanDialog

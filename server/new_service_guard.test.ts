@@ -316,6 +316,108 @@ async function main() {
     const f2 = await req(`/api/patients/${pFullDup}/new-service`, S.manager, fullBody);
     same("والثانية بنفس التذكرة تُردّ تكراراً بلا كتابة ثانية", f2.json?.duplicate, true);
     same("والكلفةُ مرّةً واحدة", (await storage.getPatient(pFullDup))?.totalCost, 15000);
+
+    // ══ حقيقةُ الدفع في الجلسات الإضافية (الجهوزيةُ المالية) ═══════════
+    //  ══ العطبُ الذي يغلقه ═════════════════════════════════════════════
+    //  كانت النافذةُ تُخفي حقلَ «المبلغ المدفوع الآن» عن الجلسات الإضافية
+    //  وترسل `paidNow = serviceCost` دائماً، ثمّ كانت `executeNewService`
+    //  تكتب حصّةَ كلّ بندٍ من **الكلفة** بوصفها **دفعتَه** — أي أن خصماً أو
+    //  موافقةً على السعر كانا يُقرآن قبضاً كاملاً بصرف النظر عمّا وصل فعلاً.
+    //  فصار المبلغُ المدفوع حقلاً حقيقياً، والكلفةُ والمقبوضُ حقيقتين
+    //  منفصلتين تماماً: الكلفةُ (وتوزيعُها على البنود) كما كانت بحرفها،
+    //  والمقبوضُ الفعليّ وحده يُوزَّع تناسبياً على صفوف الدفعات.
+    console.log("\n── حقيقةُ الدفع في الجلسات الإضافية ──");
+
+    // — A. كلفةٌ ٥٠,٠٠٠ ومقبوضٌ صفر ⟶ لا إيرادَ موجباً، والكلفةُ والجلسةُ كما هما —
+    const pA = await mkPatient("أ — مقبوضٌ صفر", true);
+    const rA = await req(`/api/patients/${pA}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
+      serviceCost: 50000, initialPayment: 0, submissionToken: token(),
+    });
+    same("أ. تُقبَل ٢٠٠ حتى بمقبوضٍ صفر", rA.status, 200);
+    same("والكلفةُ قُيِّدت كاملةً رغم ذلك", (await storage.getPatient(pA))?.totalCost, 50000);
+    const payA = await db.select().from(payments).where(eq(payments.patientId, pA));
+    same("**والجلسةُ محفوظة**", payA.map((p) => p.sessionCount), [1]);
+    same("**ولا إيرادَ موجباً — الصفّ نفسُه بمبلغ صفر**", payA.map((p) => p.amount), [0]);
+    const sumA = payA.reduce((s, p) => s + (p.amount || 0), 0);
+    same("**ومجموعُ المقبوض صفرٌ بالضبط**", sumA, 0);
+
+    // — B. نفسُ الكلفة، مقبوضٌ ٢٠,٠٠٠ ⟶ الدفعةُ ٢٠,٠٠٠ بالضبط لا ٥٠,٠٠٠ —
+    const pB = await mkPatient("ب — مقبوضٌ جزئيّ", true);
+    const rB = await req(`/api/patients/${pB}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
+      serviceCost: 50000, initialPayment: 20000, submissionToken: token(),
+    });
+    same("ب. تُقبَل", rB.status, 200);
+    same("والكلفةُ الكاملة ٥٠,٠٠٠ — لا علاقةَ لها بالمقبوض", (await storage.getPatient(pB))?.totalCost, 50000);
+    const payB = await db.select().from(payments).where(eq(payments.patientId, pB));
+    same("**والدفعةُ ٢٠,٠٠٠ بالضبط — لا كلفةَ البند كاملةً**",
+      payB.map((p) => [p.amount, p.sessionCount]), [[20000, 1]]);
+
+    // — C. نفسُ الكلفة، مقبوضٌ كاملٌ ٥٠,٠٠٠ ⟶ السلوكُ القديم يبقى صحيحاً —
+    const pC = await mkPatient("ج — مقبوضٌ كامل", true);
+    const rC = await req(`/api/patients/${pC}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
+      serviceCost: 50000, initialPayment: 50000, submissionToken: token(),
+    });
+    same("ج. تُقبَل", rC.status, 200);
+    const payC = await db.select().from(payments).where(eq(payments.patientId, pC));
+    same("**والدفعةُ الكاملة كما كانت** — لا ارتدادَ في الحالة الشائعة",
+      payC.map((p) => [p.amount, p.sessionCount]), [[50000, 1]]);
+
+    // — D. بندان، مقبوضٌ جزئيّ ⟶ الجلساتُ كلُّها محفوظة، ومجموعُ الدفعات
+    //      يساوي المقبوضَ بالضبط، موزَّعاً تناسبياً لا على البند الأوّل وحده —
+    const pD = await mkPatient("د — بندان بمقبوضٍ جزئيّ", true);
+    const rD = await req(`/api/patients/${pD}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [
+        { treatmentType: "روبوت", sessionCount: 2, cost: 100000 },
+        { treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: 25000 },
+      ],
+      serviceCost: 125000, initialPayment: 50000, submissionToken: token(),
+    });
+    same("د. تُقبَل", rD.status, 200);
+    same("والكلفةُ الكاملة ١٢٥,٠٠٠", (await storage.getPatient(pD))?.totalCost, 125000);
+    const payD = await db.select().from(payments).where(eq(payments.patientId, pD));
+    const sessionsD = payD.map((p) => p.sessionCount).sort((a, b) => (a ?? 0) - (b ?? 0));
+    same("**وكلا البندين محفوظُ الجلسات** — ١ و٢ معاً لا أحدُهما فقط", sessionsD, [1, 2]);
+    const sumD = payD.reduce((s, p) => s + (p.amount || 0), 0);
+    same("**ومجموعُ الدفعات ٥٠,٠٠٠ بالضبط — لا ١٢٥,٠٠٠**", sumD, 50000);
+    check(payD.every((p) => (p.amount || 0) >= 0), "ولا مبلغَ سالباً في أيّ صفّ");
+
+    // — E. خصمٌ على الجلسات الإضافية: الكلفةُ النهائية تبقى مستقلّةً عن
+    //      المقبوض الفعليّ — ٤٠,٠٠٠ كلفةً و١٠,٠٠٠ مقبوضاً، لا ١٠٠,٠٠٠ ولا ٤٠,٠٠٠ —
+    const pE = await mkPatient("هـ — خصمٌ ومقبوضٌ جزئيّ", true);
+    const rE = await req(`/api/patients/${pE}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 100000,
+      discount: { finalPrice: 40000, reason: "negotiation" },
+      initialPayment: 10000, submissionToken: token(),
+    });
+    same("هـ. تُقبَل ٢٠١ (مسارُ الخصم الفوريّ)", rE.status, 201);
+    same("**والكلفةُ النهائيةُ المعتمَدة ٤٠,٠٠٠**", (await storage.getPatient(pE))?.totalCost, 40000);
+    const payE = await db.select().from(payments).where(eq(payments.patientId, pE));
+    same("**والمقبوضُ الفعليّ ١٠,٠٠٠ فقط — لا ٤٠,٠٠٠ ولا ١٠٠,٠٠٠**",
+      payE.map((p) => [p.amount, p.sessionCount]), [[10000, 2]]);
+
+    // — F. مجّانيٌّ يبقى صفراً فعلاً — ولو أُرسل مقبوضٌ (خاطئ) غيرَ صفر —
+    const pF = await mkPatient("و — مجّانيّ", true);
+    const rF = await req(`/api/patients/${pF}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
+      serviceCost: 50000,
+      discount: { isFree: true },
+      initialPayment: 999999, submissionToken: token(),
+    });
+    same("و. تُقبَل ٢٠١", rF.status, 201);
+    same("**والكلفةُ صفرٌ — تبرّعٌ حقيقيّ**", (await storage.getPatient(pF))?.totalCost, 0);
+    const payF = await db.select().from(payments).where(eq(payments.patientId, pF));
+    same("**والدفعةُ صفرٌ ومَوسومةٌ مجّانيةً — ولو أُرسل مقبوضٌ زائف**",
+      payF.map((p) => [p.amount, p.sessionCount, p.isFreeSessions]), [[0, 1, true]]);
   } finally {
     httpServer.close();
   }

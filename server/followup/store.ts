@@ -31,6 +31,8 @@ import {
   type CommercialField, type CommercialSessionLike, type FieldOwner,
   type PriceKind, type PurchaseDecision,
 } from "@shared/commercial";
+import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
+import type { Payment } from "@shared/schema";
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
 export class FollowupError extends Error {
@@ -2289,6 +2291,35 @@ async function assertExamPathFollowup(followupId: number): Promise<void> {
 }
 
 /**
+ * **المبلغُ المدفوعُ الآن** — اختياريٌّ محضٌ، ويُفحَص **بعد** اشتقاق السعر
+ * النهائي (`offer.finalPrice`) لأن سقفه هو ذلك الرقم بعينه.
+ *
+ * البيعُ والقبضُ واقعتان مختلفتان تماماً: البيعُ يُثبَّت دائماً بصرف النظر
+ * عن هذا الحقل، والقبضُ **لا يُستنتَج من شيء** — لا من السعر الأصلي، ولا
+ * من النهائي، ولا من الخصم. فراغٌ أو صفرٌ يعني «لم يُقبَض الآن» بدقّة، لا
+ * تخميناً؛ والموظّفُ حرٌّ أن يسجّل الدفعةَ لاحقاً من نافذتها المعتادة.
+ */
+function parsePaidNow(raw: unknown, finalPrice: number): number {
+  if (raw === undefined || raw === null || raw === "") return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n)) {
+    throw new FollowupError("المبلغ المدفوع الآن يجب أن يكون بالدينار الصحيح", 400);
+  }
+  if (n < 0) {
+    throw new FollowupError("المبلغ المدفوع الآن لا يمكن أن يكون سالباً", 400);
+  }
+  if (n > finalPrice) {
+    throw new FollowupError(
+      finalPrice === 0
+        ? "لا يمكن تسجيل مبلغٍ مدفوع لبيعٍ مجّانيّ"
+        : "المبلغ المدفوع الآن لا يمكن أن يتجاوز السعر النهائي للبيع",
+      400,
+    );
+  }
+  return n;
+}
+
+/**
  * **إتمامُ بيعٍ مبسّط**: خبيرٌ + سعرٌ أصليّ + مقدارُ خصم = بيعٌ كامل.
  *
  * لا `priceKind` ولا `finalPrice` ولا `purchaseDecision` تُقبَل من العميل —
@@ -2301,12 +2332,20 @@ async function assertExamPathFollowup(followupId: number): Promise<void> {
  * والإدارة وحده، فما يُكتب هنا مالكُه `staff` دائماً حين لا مالكَ سابقاً —
  * وحارسُ المالكية القائم في `setCommercialFields` يرفض الكتابةَ فوق حقلٍ
  * يملكه الطبيبُ من صفٍّ سابقٍ لهذا التبسيط دون أن يُطلَب منه شيء إضافيّ هنا.
+ *
+ * **والقبضُ الاختياريّ (`paidNow`) يذرّ مع البيع نفسِه** — لا نقطةَ نداءٍ
+ * ثانية ولا كاتبَ دفعةٍ جديد: البيعُ يُتمّ أوّلاً في هذه المعاملة، ثم — إن
+ * كان `paidNow` موجباً — تُكتب دفعةٌ واحدة بـ`storage.createPayment`
+ * القانونية **داخل المعاملة نفسِها**، بهويّةٍ من الصفّ الذي أثبته البيعُ
+ * للتوّ لا من الطلب. فالبيعُ والقبضُ ينجحان معاً أو يسقطان معاً.
  */
 export async function completeReceptionSale(params: {
   followupId: number;
   originalPrice: unknown;
   discountAmount: unknown;
   expertUserId: unknown;
+  /** اختياريّ محضٌ — راجع `parsePaidNow`. */
+  paidNow?: unknown;
   note?: string | null;
   actor: Actor;
   session: CommercialSessionLike;
@@ -2315,13 +2354,18 @@ export async function completeReceptionSale(params: {
   ) => Promise<{ ok: boolean; reason?: string }>;
   expertLabel?: (expertUserId: number) => Promise<string | null>;
   tx?: any;
-}): Promise<CommercialResult> {
+}): Promise<CommercialResult & { payment: Payment | null }> {
   await assertExamPathFollowup(params.followupId);
 
   const offer = deriveOfferFromDiscount({
     originalPrice: params.originalPrice, discountAmount: params.discountAmount,
   });
   if (!offer.ok) throw new FollowupError(offer.error ?? "سعر غير صالح", 400);
+
+  //  **بعد** اشتقاق العرض التجاريّ — سقفُه `offer.finalPrice` بعينه. رفضٌ
+  //  هنا يسقط الطلبَ **قبل** أن تُفتح أيّ معاملة — صفرُ كتابةٍ على قيمةٍ
+  //  غير صالحة.
+  const paidNow = parsePaidNow(params.paidNow, offer.finalPrice ?? 0);
 
   const expertId = Number(params.expertUserId);
   if (!Number.isInteger(expertId) || expertId <= 0) {
@@ -2336,7 +2380,7 @@ export async function completeReceptionSale(params: {
   //  «حُسم» و«ينتظر اعتماداً» معاً. **والإلغاءُ لا يقع إلا بعد أن يثبت البيعُ
   //  فعلاً** (`result.converted === true`) وفي المعاملة نفسِها: فشلُ البيع
   //  (أو أيّ خطوةٍ بعده) يُسقط الإلغاءَ معه — لا نصفَ أثر.
-  const body = async (tx: any): Promise<CommercialResult> => {
+  const body = async (tx: any): Promise<CommercialResult & { payment: Payment | null }> => {
     //  لقطةٌ وصفيّة للحالة قبل الكتابة — **للسجلّ فقط**، لا حارسَ تزامنٍ:
     //  الحارسُ الحقيقيّ هو قفل `setCommercialFields` أدناه (`FOR UPDATE`).
     const peek = await tx.execute(sql`
@@ -2363,7 +2407,9 @@ export async function completeReceptionSale(params: {
     //  السعرُ والخبيرُ والقرارُ الثلاثة تُلمَس معاً دائماً في هذا الباب،
     //  فناقصةً بعد هذا الحفظ تناقضٌ منطقيّ لا حالةً شرعية — تُقال صراحةً
     //  بدل أن يعود البيعُ «معلَّقاً» بصمت. **وهذا الرميُ يُسقط المعاملةَ
-    //  كلَّها** فلا يُلغى طلبُ سعرٍ لبيعٍ لم يقع.
+    //  كلَّها** فلا يُلغى طلبُ سعرٍ لبيعٍ لم يقع. **والضغطةُ المزدوجة**
+    //  (إعادةُ إرسالٍ بعد بيعٍ نجح فعلاً) تصطدم بحارس `setCommercialFields`
+    //  نفسِه أعلاه (`status === 'converted'` ⟶ ٤٠٩) — فلا قبضٌ ثانٍ يُكتب.
     if (!result.converted) {
       throw new FollowupError(
         "تعذّر إتمام البيع" + (result.missing.length
@@ -2382,7 +2428,43 @@ export async function completeReceptionSale(params: {
       actor: params.actor,
     });
 
-    return result;
+    // ══ القبضُ الاختياريّ — **بعد** أن يثبت البيعُ فعلاً، وفي المعاملة
+    // نفسِها ═══════════════════════════════════════════════════════════
+    //  `paidNow === 0` ⟶ لا دفعةَ إطلاقاً — لا صفراً ملفَّقاً ولا دفعةً
+    //  فارغة. والهويّةُ كلُّها من `result.followup` — الصفّ الذي أثبته
+    //  البيعُ للتوّ تحت القفل، لا من جسم الطلب.
+    let payment: Payment | null = null;
+    if (paidNow > 0) {
+      const sold = result.followup;
+      //  ══ **هويّةُ الجهاز المباع بعينه — لا رصيدَ غيرَ مخصَّص هنا**
+      //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════
+      //  هذه ليست نافذةَ الدفعة العامّة ولا تسويةَ رصيدٍ تاريخيّ — هذا قبضٌ
+      //  يُدخله الموظّفُ **في لحظة إتمام بيع جهازٍ بعينه**. فدفعتُه يجب أن
+      //  تُنسَب إلى **تلك الحلقة بعينها**، لا «رصيدٌ غيرُ مخصَّص» يبتلع
+      //  هويّتها — فخلافاً لنافذة الدفعة العامّة (التي تبقي سلوكَها القديم
+      //  للرصيد غير المخصَّص كما هو، بلا مساس)، `deviceEpisodeId === null`
+      //  هنا التباسٌ لا واقعةٌ صحيحة، ويُردّ كبقيّة الهويّة الناقصة. وسقوطُ
+      //  أيٍّ من الثلاثة يُسقط المعاملةَ كلَّها — **البيعُ معها** — فلا
+      //  تُكتب دفعةٌ لا يُعرَف صاحبُها.
+      if (sold.caseId === null || sold.branchId === null || sold.deviceEpisodeId === null) {
+        throw new FollowupError(
+          "تعذّر إتمام البيع مع تسجيل الدفعة لأن هوية الجهاز غير مكتملة —"
+          + " لم تُحفظ العملية. حدّث الملف وحاول مرة أخرى.",
+          409,
+        );
+      }
+      payment = await storage.createPayment({
+        patientId: sold.patientId,
+        branchId: sold.branchId,
+        caseId: sold.caseId,
+        deviceEpisodeId: sold.deviceEpisodeId,
+        amount: paidNow,
+        paymentTreatmentType: DEVICE_PAYMENT_TAGS[sold.serviceType],
+        notes: "دفعة عند إتمام البيع",
+      } as any, tx);
+    }
+
+    return { ...result, payment };
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);
 }

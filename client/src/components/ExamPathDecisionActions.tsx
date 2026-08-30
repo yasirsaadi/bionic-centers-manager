@@ -70,12 +70,18 @@ export function ExamPathDecisionActions({
   const [cOriginal, setCOriginal] = useState("");
   const [cDiscount, setCDiscount] = useState("");
   const [cExpert, setCExpert] = useState("");
+  //  ══ **المبلغُ المدفوعُ الآن — اختياريٌّ محضٌ** (قرار المالك) ═══════════
+  //  البيعُ/الكلفةُ ≠ القبض. فارغٌ **دائماً** افتراضاً، ولا شيء يملؤه غير
+  //  الموظّف نفسِه من هذا الحقل بعينه — لا السعرُ الأصليّ ولا النهائيّ ولا
+  //  الخصمُ يكتبون فيه أبداً. تركُه فارغاً لا يمنع البيعَ، والدفعةُ تُسجَّل
+  //  لاحقاً من فعلها المعتاد إن لم تُدخَل هنا.
+  const [cPaidNow, setCPaidNow] = useState("");
   const [cReason, setCReason] = useState("");
   const [note, setNote] = useState("");
 
   const reset = () => {
     setDialog(null); setCOriginal(""); setCDiscount(""); setCExpert("");
-    setCReason(""); setNote("");
+    setCPaidNow(""); setCReason(""); setNote("");
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -144,6 +150,11 @@ export function ExamPathDecisionActions({
     originalPrice: cOriginal === "" ? null : Number(cOriginal),
     discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
   });
+  //  **قراءةٌ فقط من حقل القبض نفسِه** — ليست جزءاً من اشتقاق العرض
+  //  التجاريّ، فالحارسُ الحقيقيّ في الخادم لا هنا (راجع `parsePaidNow`).
+  const paidNowValue = cPaidNow === "" ? 0 : Number(cPaidNow);
+  const paidNowExceeds = csOffer.ok && csOffer.finalPrice !== null
+    && paidNowValue > csOffer.finalPrice;
 
   //  ══ **رسالةُ الحجب — من `actions` وحدها، بلا كودِ مالكيةٍ يصل الشاشة**
   //  (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
@@ -288,6 +299,36 @@ export function ExamPathDecisionActions({
                 {csOffer.error}
               </p>
             )}
+            {/*  ══ **المبلغُ المدفوعُ الآن — حقلٌ اختياريّ محض** ══════════════
+                فارغٌ افتراضاً **دائماً**، ولا تعبئةَ تلقائية من أيّ قيمةٍ
+                أخرى في هذه النافذة — لا السعر الأصلي ولا النهائي ولا
+                الخصم. البيعُ يمضي بصرف النظر عمّا فيه؛ وترْكُه فارغاً لا
+                يمنع شيئاً — الدفعةُ تُسجَّل لاحقاً من «تسجيل دفعة». */}
+            <div className="space-y-1">
+              <Label htmlFor="cs-paid-now" className="text-xs">
+                المبلغ المدفوع الآن (اختياري)
+              </Label>
+              <MoneyInput id="cs-paid-now" allowEmpty value={cPaidNow}
+                onValueChange={(v) => setCPaidNow(v === null ? "" : String(v))}
+                className="bg-white" data-testid="input-complete-sale-paid-now" />
+              <p className="text-xs text-muted-foreground">
+                اتركه فارغاً إذا لم يُستلم مبلغ الآن — ويمكن تسجيل الدفعة لاحقاً من «تسجيل دفعة».
+              </p>
+              {/*  الباقي — يُعرَض فقط حين يوجد سعرٌ نهائيّ صالح، وقيمتُه
+                  مشتقّةٌ محلياً للعرض وحده؛ الحارسُ الحقيقيّ في الخادم. */}
+              {csOffer.ok && csOffer.finalPrice !== null && (
+                paidNowExceeds ? (
+                  <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+                    data-testid="text-complete-sale-paid-now-error">
+                    لا يمكن أن يتجاوز المبلغ المدفوع الآن السعر النهائي
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground" data-testid="text-complete-sale-remaining">
+                    الباقي بعد هذا القبض: <b>{(csOffer.finalPrice - paidNowValue).toLocaleString()} د.ع</b>
+                  </p>
+                )
+              )}
+            </div>
             <div className="space-y-1">
               <Label htmlFor="cs-note" className="text-xs">ملاحظة (اختياري)</Label>
               <Input id="cs-note" value={note} onChange={(e) => setNote(e.target.value)}
@@ -295,12 +336,13 @@ export function ExamPathDecisionActions({
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !cExpert || !csOffer.ok}
+            <Button disabled={busy || !cExpert || !csOffer.ok || paidNowExceeds}
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
                 originalPrice: Number(cOriginal),
                 discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
                 expertUserId: Number(cExpert),
+                paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
               })}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}

@@ -288,11 +288,9 @@ export function useUpdateVisit() {
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, result.patientId] });
-      const moneyNote = (result.visit as any)?.moneyNote as string | null;
       toast({
         title: "تم التحديث",
-        description: moneyNote ?? "تم تحديث تفاصيل الزيارة بنجاح",
-        ...(moneyNote ? { variant: "destructive" as const } : {}),
+        description: "تم تحديث تفاصيل الزيارة بنجاح",
       });
     },
     onError: (error) => {
@@ -305,7 +303,10 @@ export function useUpdateVisit() {
   });
 }
 
-// DELETE /api/visits/:id (admin only)
+// DELETE /api/visits/:id — حذفٌ عمليّ صرف (تحكّمُ تصحيح الدفعات، القسم أ،
+// 2026-08-29): يُخرج الزيارة من السجلّ التشغيلي فقط. الكلفةُ والدفعاتُ
+// المرتبطة بها — إن وُجدتا — لا تتغيّران أبداً؛ تصحيحُ مبلغٍ حقيقي له
+// بابُه المحميّ الآن: نافذةُ تعديل/حذف الدفعة.
 export function useDeleteVisit() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -321,18 +322,13 @@ export function useDeleteVisit() {
         throw new Error("فقط المسؤول يمكنه حذف الزيارات");
       }
       if (!res.ok) throw new Error("فشل في حذف الزيارة");
-      const body = await res.json().catch(() => ({} as any));
-      return { patientId, moneyNote: body?.moneyNote ?? null };
+      return { patientId };
     },
-    onSuccess: ({ patientId, moneyNote }) => {
+    onSuccess: ({ patientId }) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
-      // A paid visit takes its cost and payment with it; when the server
-      // could not identify the payment with certainty it says so instead of
-      // guessing — surface that so the staff completes the correction.
       toast({
-        title: "تم الحذف",
-        description: moneyNote ?? "تم حذف الزيارة، وسُحبت كلفتها ودفعتها إن وُجدتا",
-        ...(moneyNote ? { variant: "destructive" as const } : {}),
+        title: "تم حذف الزيارة من السجل",
+        description: "اختفت الزيارة من السجل التشغيلي فقط — الكلفة والدفعات المرتبطة بها لم تتغيّر",
       });
     },
     onError: (error) => {
@@ -345,25 +341,40 @@ export function useDeleteVisit() {
   });
 }
 
-// DELETE /api/payments/:id (admin only)
+// DELETE /api/payments/:id — دائماً محميّ (تحكّمُ تصحيح الدفعات، القسم ب،
+// 2026-08-29): حذفٌ حقيقيّ للمسؤول العامّ فقط؛ وكلُّ مَن سواه يملك صلاحية
+// الحذف — مديرُ الفرع بمن فيه — يقدّم طلباً معلَّقاً (202) يعتمده المسؤولُ
+// وحده. سببٌ غيرُ فارغ إلزاميّ في الحالتين.
 export function useDeletePayment() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ paymentId, patientId }: { paymentId: number; patientId: number }) => {
+    mutationFn: async ({ paymentId, patientId, reason }: { paymentId: number; patientId: number; reason: string }) => {
       const res = await fetch(`/api/payments/${paymentId}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
         credentials: "include",
       });
 
       if (res.status === 403) {
-        throw new Error("فقط المسؤول يمكنه حذف المدفوعات");
+        throw new Error("ليس لديك صلاحية لحذف المدفوعات");
       }
-      if (!res.ok) throw new Error("فشل في حذف الدفعة");
-      return patientId;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.message || "فشل في حذف الدفعة");
+      }
+      return { patientId, pending: res.status === 202 };
     },
-    onSuccess: (patientId) => {
+    onSuccess: ({ patientId, pending }) => {
+      if (pending) {
+        toast({
+          title: "أُرسل طلبُ حذف الدفعة",
+          description: "أُرسل الطلبُ إلى المسؤول العام للاعتماد — الدفعةُ لم تُحذف بعد",
+        });
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: [api.patients.get.path, patientId] });
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/daily"] });

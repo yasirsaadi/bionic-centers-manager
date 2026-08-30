@@ -729,6 +729,62 @@ export const payments = pgTable("payments", {
   }).onUpdate("cascade"),
 ]);
 
+// ══ طلباتُ التصحيح الماليّ (ترحيل ٠٧١) — «احمِ المال، لا الجلسات
+// التشغيلية» (2026-08-29) ═══════════════════════════════════════════════
+//
+// حقولُ الدفعة **محمية** (المبلغ، التاريخُ الماليّ، نوعُ العلاج المدفوع،
+// علمُ «جلسات مجانية»، والحذف) تحتاج تصحيحاً موثَّقاً هنا؛ الملاحظات
+// وعددُ الجلسات **مباشرتان** ولا تفتحان طلباً أبداً. المسؤولُ العامّ يطبّق
+// التصحيح فوراً؛ غيرُه يقدّم طلباً معلَّقاً يعتمده المسؤولُ وحده.
+//
+// شكلٌ مطابقٌ لِـ`priceChangeRequests` (٠٥٣) عمداً — طابورُ طلبٍ/قرارٍ
+// مألوفٌ في هذا المشروع — و`targetType`/`targetId` بدل مفتاحٍ مباشر لأن
+// هذا الطابور **مصمَّمٌ ليتّسع لاحقاً** لأهدافَ غير الدفعة (اليوم: `payment`
+// فقط) بلا ترحيلٍ ثانٍ يبدّل الشكل.
+export const financialCorrectionRequests = pgTable("financial_correction_requests", {
+  id: serial("id").primaryKey(),
+  targetType: text("target_type").notNull(), // "payment" فقط اليوم
+  /**
+   * لقطةُ رقمٍ بلا مفتاح أجنبي — درسُ `payments.visitId`/`invoiceId` (٠٣٨)
+   * و`proposed_expert_user_id` (٠٣٥) نفسُه: الاعتمادُ قد **يحذف** الدفعة
+   * (تصحيحُ حذف)، فسجلُّ الطلب يجب أن يبقى مقروءاً بعدها.
+   */
+  targetId: integer("target_id").notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  action: text("action").notNull(), // update | delete
+  /** لقطةٌ كاملة لصفّ الدفعة لحظةَ الطلب — تكشف التقادم عند الاعتماد. */
+  beforeSnapshot: jsonb("before_snapshot").notNull(),
+  /** الحقولُ التي **تغيّرت فعلاً** فقط — لا الصفّ كاملاً. فارغةٌ للحذف. */
+  requestedPatch: jsonb("requested_patch"),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedRole: text("requested_role"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  appliedAt: timestamp("applied_at", { withTimezone: true }),
+}, (t) => [
+  check("financial_correction_requests_target_type_check",
+    sql`${t.targetType} IN ('payment')`),
+  check("financial_correction_requests_action_check",
+    sql`${t.action} IN ('update', 'delete')`),
+  check("financial_correction_requests_status_check",
+    sql`${t.status} IN ('pending', 'approved', 'rejected')`),
+  // **طلبٌ معلَّقٌ واحد لكل هدف** — نفسُ حارس `uq_pcr_one_pending` في ٠٥٣.
+  uniqueIndex("uq_fcr_one_pending_per_target").on(t.targetType, t.targetId).where(sql`status = 'pending'`),
+  index("ix_fcr_pending").on(t.status),
+  index("ix_fcr_patient").on(t.patientId),
+  index("ix_fcr_branch").on(t.branchId, t.status),
+  index("ix_fcr_requester").on(t.requestedBy),
+]);
+
+export type FinancialCorrectionRequest = typeof financialCorrectionRequests.$inferSelect;
+
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),

@@ -20,7 +20,7 @@
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
-import { mergePhysioPlan } from "@shared/pricing";
+import { mergePhysioPlan, allocateApprovedCost } from "@shared/pricing";
 import { NEW_SERVICE_DEPARTMENT, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 
 export { NEW_SERVICE_LABELS };
@@ -84,7 +84,14 @@ export async function executeNewService(params: {
   notes?: string | null;
   paymentTreatmentType?: string | null;
   sessionCount?: number | null;
-  /** ما دفعه المريضُ الآن — يُقصَر على الكلفة. يُتجاهَل في مسار البنود. */
+  /**
+   * ما دفعه المريضُ الآن فعلاً — يُقصَر على الكلفة.
+   *
+   * **وفي مسار البنود (تصحيحٌ تشغيليّ — صدقُ الإيصال) لم يعد يُتجاهَل**:
+   * كان المسار القديم يكتب حصّةَ كلفة كلّ بندٍ بوصفها دفعتَه — أي «خصمٌ
+   * يعني قبضاً كاملاً» — فيظهر واردٌ لم يُقبَض فعلاً. الآن يُوزَّع **هذا
+   * الحقلُ وحده**، تناسبياً على البنود، ومجموعُه هو المكتوب لا كلفتُها.
+   */
   initialPayment?: number | null;
   /** تبرّعٌ معتمَد: الجلسةُ تُسجَّل بقيمةٍ صفر بدل أن تختفي. */
   isFree?: boolean;
@@ -175,7 +182,25 @@ export async function executeNewService(params: {
     // Create payment records and visit records - either from treatmentEntries
     // or single entry.
     if (entries) {
-      for (const entry of entries) {
+      //  ══ **حقيقةُ الدفع منفصلةٌ عن حصّة الكلفة** (تصحيحٌ تشغيليّ —
+      //  صدقُ الإيصال) ═══════════════════════════════════════════════════
+      //  `entry.cost` هو حصّةُ البند من **الكلفة المتَّفَق عليها** (القياسية
+      //  عبر النقطة، أو المخفَّضة عبر الاعتماد الفوريّ) — وهذا صحيحٌ ويبقى
+      //  كما هو تماماً؛ به وحده تُقيَّد كلفةُ الحالة أعلاه.
+      //
+      //  أمّا **ما قُبض فعلاً** فحقيقةٌ مستقلّة: خصمٌ أو موافقةٌ على السعر
+      //  لا يعنيان قبضاً كاملاً، والمريضُ قد يدفع جزءاً الآن ويُكمل لاحقاً.
+      //  فالمقبوضُ الفعليّ (`params.initialPayment`، مقصوراً على الكلفة)
+      //  **وحده** يُوزَّع على البنود — بنفس التوزيع التناسبيّ
+      //  (`allocateApprovedCost`) وبنفس أوزان حصص الكلفة، لا بحصص الكلفة
+      //  نفسها — ومجموعُ صفوف الدفعة يساوي المقبوضَ بالضبط لا الكلفة.
+      const receivedTotal = Math.max(0, Math.min(Number(params.initialPayment) || 0, serviceCost));
+      const paymentShares = isFree
+        ? entries.map(() => 0)
+        : allocateApprovedCost(entries.map((e) => e.cost), receivedTotal);
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
         //  `caseId` صريحة في الزيارة والدفعة معاً: بدونها يعيد كلٌّ منهما
         //  الحلَّ من وسمه فينتهيان إلى حالتين مختلفتين لخدمةٍ واحدة.
         await storage.createVisit({
@@ -194,14 +219,16 @@ export async function executeNewService(params: {
         //  يُسقط صفَّ كلِّ بندٍ نصيبُه صفر — والخصمُ الموزَّع على بندين قد
         //  يُنزل أحدَهما إلى صفر، فتضيع جلستُه من العدّاد نهائياً.
         //
-        //  فالشرطُ صار: مالٌ، أو تبرّعٌ صريح، **أو جلسةٌ اشتُريت**. والمبلغُ
-        //  يبقى ما هو — لا دينارَ يُخترَع لأجل صفٍّ يُحفَظ.
+        //  فالشرطُ صار: كلفةٌ موجبة (لا قبضٌ)، أو تبرّعٌ صريح، **أو جلسةٌ
+        //  اشتُريت**. **والمبلغُ المكتوب حصّةُ هذا البند من المقبوض الفعليّ
+        //  لا من كلفته** — فقد يُسجَّل صفراً على بندٍ كلفتُه موجبة، ولو لم
+        //  يُقبَض شيءٌ الآن.
         if (entry.cost > 0 || isFree || entry.sessionCount > 0) {
           await storage.createPayment({
             patientId: params.patientId,
             branchId: patient.branchId,
             caseId: nsCaseId!,
-            amount: isFree ? 0 : entry.cost,
+            amount: isFree ? 0 : (paymentShares[i] ?? 0),
             isFreeSessions: isFree,
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: entry.treatmentType,
