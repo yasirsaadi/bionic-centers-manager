@@ -15,6 +15,7 @@ import { StartManufacturingDialog } from "@/components/manufacturing/StartManufa
 import { SendToDoctorReviewDialog } from "@/components/medical/SendToDoctorReviewDialog";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
+import { invalidatePatientData } from "@/lib/queryClient";
 import { resolvePurchasedSessions } from "@shared/pricing";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
@@ -553,6 +554,12 @@ export default function PatientDetails() {
       }
       return { pending: res.status === 202 };
     },
+    //  ══ **٢٠٢ لا يوهم بأنّ المال تغيّر — والتطبيقُ الفوريّ يستحقّ الإبطالَ
+    //  الكامل** (تحكّمُ الذاكرة، 2026-08-30) ═══════════════════════════════
+    //  طلبُ التصحيح المعلَّق (٢٠٢) يبقى بلا أيّ إبطال — لم يتغيّر شيءٌ فعلاً
+    //  حتى يعتمده المسؤول (كما كان). والتطبيقُ المباشر (المسؤولُ العام نفسُه)
+    //  كان يُبطل مفتاحين فقط؛ `invalidatePatientData` تضيف السجلَّ وشارةَ
+    //  المعاينات والمحاسبةَ — نفسُ الدالّة التي يستعملها كلُّ بابٍ ماليّ آخر.
     onSuccess: ({ pending }) => {
       setEditingPayment(null);
       if (pending) {
@@ -562,8 +569,7 @@ export default function PatientDetails() {
         });
         return;
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", Number(id)] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      invalidatePatientData(queryClient, Number(id));
       toast({ title: "تم الحفظ", description: "تم تصحيح الدفعة مباشرةً" });
     },
     onError: (error: any) => {

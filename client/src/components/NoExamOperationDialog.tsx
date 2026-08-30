@@ -52,7 +52,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { Loader2, Wallet } from "lucide-react";
 import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_parts";
 import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
@@ -173,6 +173,13 @@ export function NoExamOperationDialog({
     qc.invalidateQueries({ queryKey: ["/api/medical/pending"] });
     qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
     qc.invalidateQueries({ queryKey: ["/api/patients"] });
+    //  ══ **الصفحةُ الحقيقية والسجلّ والمال — بالمفتاح الذي تقرؤه فعلاً**
+    //  (تحكّمُ الذاكرة، 2026-08-30) ═══════════════════════════════════════
+    //  السطرُ أعلاه (`/api/patients/${patientId}`) مفتاحٌ لا تقرؤه أيّ
+    //  شاشة — صفحةُ المريض تقرأ `["/api/patients/:id", patientId]`. وكلا
+    //  البابين هنا يقيّدان مالاً فعلياً (صيانةٌ بأجرٍ أو بيعُ جزء)، فيستحقّان
+    //  الإبطالَ الشامل نفسَه الذي يستعمله كلُّ بابٍ ماليّ آخر — لا نسخةً ثالثة.
+    invalidatePatientData(qc, patientId);
   };
 
   //  **السعرُ يُشتقّ حيّاً هنا للمعاينة فقط** — نفسُ الاشتقاق الذي يعيده
