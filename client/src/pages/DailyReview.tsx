@@ -23,8 +23,9 @@ import {
 import {
   DAILY_REVIEW_FAMILY_LABELS, DAILY_REVIEW_SERVICE_LABELS,
   MONEY_NOT_RECORDED_LABEL, REASON_NOT_SPECIFIED_LABEL, UNKNOWN_LEGACY_REGISTRAR_LABEL,
-  FREE_LABEL,
+  FREE_LABEL, expertLabelFor, isPerformedByRedundant,
   type DailyReviewRow, type DailyReviewFamily, type DailyReviewServiceFilter,
+  type DailyReviewServiceType,
 } from "@shared/daily_review";
 
 interface Branch { id: number; name: string; }
@@ -44,6 +45,8 @@ function fmtTime(iso: string): string {
 }
 const money = (n: number | null) => n === null ? MONEY_NOT_RECORDED_LABEL
   : `${n.toLocaleString("en-US")} د.ع`;
+const otherServiceType = (t: DailyReviewServiceType): DailyReviewServiceType =>
+  t === "prosthetic" ? "medical_support" : "prosthetic";
 
 const FAMILY_ICON: Record<DailyReviewFamily, typeof UserPlus> = {
   registration: UserPlus,
@@ -122,6 +125,13 @@ function EventCard({ row }: { row: DailyReviewRow }) {
             </span>
             <FamilyBadge family={row.family} />
             <Badge variant="secondary">{DAILY_REVIEW_SERVICE_LABELS[row.serviceType]}</Badge>
+            {/* مريضٌ يحمل القسمين معاً — بادجٌ ثانٍ يقول الحقيقة الكاملة،
+                لا اقتصاراً على القسم المُفضَّل للعرض وحده. */}
+            {row.bothServices && (
+              <Badge variant="secondary">
+                {DAILY_REVIEW_SERVICE_LABELS[otherServiceType(row.serviceType)]}
+              </Badge>
+            )}
           </div>
           {row.branchName && <Badge variant="outline">{row.branchName}</Badge>}
         </div>
@@ -151,9 +161,11 @@ function EventCard({ row }: { row: DailyReviewRow }) {
                 : (row.registeredByName ?? "—")}
             </span>
           )}
-          {row.performedByName && <span>نفّذه: {row.performedByName}</span>}
+          {/* «نفّذه» يُخفى حين يكرّر اسماً ظاهراً أصلاً على الصفّ (سجّله/الطبيب) —
+              نفسُ الشخص لا يُقال مرّتين. */}
+          {row.performedByName && !isPerformedByRedundant(row) && <span>نفّذه: {row.performedByName}</span>}
           {rel.doctor && row.doctorName && <span>الطبيب: {row.doctorName}</span>}
-          {rel.expert && row.expertName && <span>الخبير: {row.expertName}</span>}
+          {rel.expert && row.expertName && <span>{expertLabelFor(row.family)}: {row.expertName}</span>}
         </div>
 
         {rel.decision && row.purchaseDecision && (

@@ -162,6 +162,13 @@ export interface DailyReviewRow {
   branchId: number | null;
   branchName: string | null;
   serviceType: DailyReviewServiceType;
+  /**
+   * **مريضٌ يحمل القسمين معاً** — لأسرة `registration` وحدها (مريضٌ سُجّل
+   * أطرافاً ومساند في ملفٍّ واحد؛ لا يُعرَض حدثان). `serviceType` يبقى
+   * قيمةً مفردة (تُطابق الفلترةَ حين تُطلَب صراحةً)، وهذا العلمُ وحدَه
+   * يقول الحقيقةَ الكاملة للعرض غير المفلتَر — بلا كذبٍ ببادجٍ واحد.
+   */
+  bothServices: boolean;
   /** «سبب الحضور» — بالأولوية الموصوفة في CLAUDE.md، أو `null` إن غاب كليّاً. */
   whyTheyCame: string | null;
   whatHappened: string;
@@ -189,4 +196,36 @@ export interface DailyReviewFilters {
   date: string;
   branchId: number | null;
   serviceType: DailyReviewServiceFilter;
+}
+
+// ── تسميةُ الخبير — حاليٌّ لا لحظيّ، إلّا لحظةَ القرار التجاريّ نفسِها ──────
+//
+// `prosthetic_work_orders.expert_user_id` **الخبيرُ الحاليّ المسنَد للأمر**
+// — قد يتغيّر بعد حركة «تحويل الخبير»، والقاعدةُ لا تحفظ مَن كان قبلها.
+// فكلُّ أسرةٍ تقرأ هذا العمود (فتحُ الصيانة، فتحُ بيع الجزء، حركةُ تصنيعٍ
+// لاحقة) تعرضه بعنوانٍ يقول ذلك صراحةً. **والاستثناءُ الوحيد**:
+// `post_exam_decision` تقرأ `selected_expert_user_id` من صفّ المتابعة
+// نفسِه — لقطةٌ حقيقيةٌ للحظة الحسم، لا حالةً حاليةً — فتبقى بعنوانها
+// المعتاد.
+export const CURRENT_EXPERT_FAMILIES: DailyReviewFamily[] = [
+  "maintenance_opened", "component_sale_opened", "manufacturing_movement",
+];
+
+export function expertLabelFor(family: DailyReviewFamily): string {
+  return (CURRENT_EXPERT_FAMILIES as string[]).includes(family) ? "الخبير الحالي" : "الخبير";
+}
+
+// ── إخفاءُ تكرار «نفّذه» — لا نصَّين لشخصٍ واحد على نفس الصفّ ─────────────
+//
+// التسجيلُ: مَن سجّل هو نفسُه مَن نفّذ حدثَ التسجيل — «سجّله» تكفي.
+// المعاينة: الطبيبُ هو مَن أدّى التوقيع — «الطبيب» تكفي. وبقيّةُ الأسر لا
+// تتقاطع حقولُها هكذا (الخبيرُ ومَن فتح الأمر شخصان مختلفان عادةً)، فلا
+// إخفاءَ فيها.
+export function isPerformedByRedundant(
+  row: Pick<DailyReviewRow, "family" | "performedByName" | "registeredByName" | "doctorName">,
+): boolean {
+  if (!row.performedByName) return false;
+  if (row.family === "registration") return row.performedByName === row.registeredByName;
+  if (row.family === "exam") return row.performedByName === row.doctorName;
+  return false;
 }

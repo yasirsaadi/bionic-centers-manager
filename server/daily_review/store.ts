@@ -28,17 +28,33 @@ import {
   type DailyReviewFilters,
   type DailyReviewServiceType,
 } from "@shared/daily_review";
+// حقلٌ واحدٌ فارغٌ افتراضياً لكلّ الأسر عدا التسجيل — يُختصَر هنا بدل تكراره
+// في كلّ بناء صفٍّ.
+const NOT_DUAL = { bothServices: false as const };
 import { listDecisionQueueResolved } from "../followup/decision_queue_store";
 
 const BAGHDAD_TZ = "Asia/Baghdad";
 
-/**
- * شرطُ SQL خام: هل يقع هذا التاريخ (بتوقيت بغداد) في اليوم المطلوب؟
- * `AT TIME ZONE` يقبل نصّاً كمعاملٍ مُقيَّد كما يقبل حرفياً — فلا حاجةَ
- * لـ`sql.raw` هنا، والمنطقةُ الزمنية تُمرَّر كأي قيمةٍ أخرى.
- */
-function baghdadDayEq(col: ReturnType<typeof sql>, date: string) {
+// ══ حدودُ يوم بغداد — عمودان مختلفا الطبيعة، بدالّتين لا بواحدة ═══════════
+//
+// `medical_exams.signed_at` و`prosthetic_work_history.created_at` (وأمثالُهما:
+// `post_exam_followup_events.created_at`, `post_exam_followups.converted_at/
+// closed_at`) **timestamptz حقيقية** — القاعدة تحفظ اللحظةَ المطلقة، والتحويلُ
+// المباشر لبغداد صحيحٌ دائماً.
+//
+// `audit_log.created_at`, `patients.created_at`, `payments.date` **بلا منطقة
+// زمنية** (`timestamp without time zone`) — القيمةُ الخام تمثّل قراءةَ UTC
+// (هذا ما تكتبه طبقةُ التطبيق فعلياً في هذه الأعمدة تحديداً)، فتحويلٌ مباشرٌ
+// واحد لبغداد يقلب الإشارة: يُعامِل Postgres القيمةَ الخام على أنها بغداد
+// محليّاً بالخطأ (مُثبَتٌ حيّاً: قيمةٌ خامٌ تمثّل ٠٠:٣٠ بغداد فعلياً كانت
+// تُقرأ يوماً سابقاً بتحويلٍ واحد). فيلزم إلصاقُ UTC صراحةً أوّلاً، ثم
+// التحويلُ لبغداد. **ولا دالّةَ عامّةً واحدة تُستعمَل للنوعين** — الخلطُ
+// هو الثغرةُ نفسُها.
+function baghdadDayEqTz(col: ReturnType<typeof sql>, date: string) {
   return sql`(${col} AT TIME ZONE ${BAGHDAD_TZ})::date = ${date}::date`;
+}
+function baghdadDayEqNaive(col: ReturnType<typeof sql>, date: string) {
+  return sql`((${col} AT TIME ZONE 'UTC') AT TIME ZONE ${BAGHDAD_TZ})::date = ${date}::date`;
 }
 
 function branchClause(col: ReturnType<typeof sql>, branchId: number | null) {
@@ -101,14 +117,20 @@ async function fetchRegistrationRows(f: DailyReviewFilters): Promise<DailyReview
          : f.serviceType === "prosthetic"
            ? sql`p.is_amputee = true`
            : sql`p.is_medical_support = true`}
-       AND ${baghdadDayEq(sql`COALESCE(reg.created_at, p.created_at)`, f.date)}
+       AND ${baghdadDayEqNaive(sql`COALESCE(reg.created_at, p.created_at)`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => {
     const isAmputee = Boolean(row.is_amputee);
     const isSupport = Boolean(row.is_medical_support);
-    const serviceType: DailyReviewServiceType = isAmputee ? "prosthetic" : "medical_support";
     const both = isAmputee && isSupport;
+    // ══ الحقيقةُ المعروضة تُطابق الفلترةَ حين تُطلَب صراحةً ══════════════
+    // مريضٌ يحمل القسمين لا يُفضَّل له «أطراف» دائماً بصمت: صفٌّ ظهر لأن
+    // الطلب فلتر «مساند» يجب أن يقول «مساند»، لا العكس. وغير المفلتَر
+    // (`all`) وحده يحتاج تفضيلاً لعمودٍ مفردٍ للعرض — و`bothServices`
+    // يحمل الحقيقةَ الكاملة حينها فلا يُخفى القسمُ الآخر.
+    const serviceType: DailyReviewServiceType =
+      f.serviceType !== "all" ? f.serviceType : (isAmputee ? "prosthetic" : "medical_support");
     const eventAt = (row.reg_at ?? row.patient_created_at) as string;
     const registeredByName = row.reg_name ?? null;
     return {
@@ -121,6 +143,7 @@ async function fetchRegistrationRows(f: DailyReviewFilters): Promise<DailyReview
       branchId: row.branch_id === null ? null : Number(row.branch_id),
       branchName: row.branch_name ?? null,
       serviceType,
+      bothServices: both,
       whyTheyCame: null,
       whatHappened: both
         ? "تسجيل مريض جديد — أطراف صناعية ومساند طبية"
@@ -159,7 +182,7 @@ async function fetchExamRows(f: DailyReviewFilters): Promise<DailyReviewRow[]> {
      WHERE e.case_type IN ('prosthetic', 'medical_support')
        AND ${branchClause(sql`e.branch_id`, f.branchId)}
        AND ${serviceClause(sql`e.case_type`, f.serviceType)}
-       AND ${baghdadDayEq(sql`e.signed_at`, f.date)}
+       AND ${baghdadDayEqTz(sql`e.signed_at`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => {
@@ -174,6 +197,7 @@ async function fetchExamRows(f: DailyReviewFilters): Promise<DailyReviewRow[]> {
       branchId: row.branch_id === null ? null : Number(row.branch_id),
       branchName: row.branch_name ?? null,
       serviceType: row.case_type as DailyReviewServiceType,
+      ...NOT_DUAL,
       whyTheyCame: row.chief_complaint ?? null,
       whatHappened: cancelled ? "معاينة طبية موقّعة (ملغاة لاحقاً)" : "معاينة طبية موقّعة",
       registeredByName: null, // تُملأ دفعةً واحدة لاحقاً
@@ -221,7 +245,12 @@ async function fetchPostExamDecisionRows(f: DailyReviewFilters): Promise<DailyRe
       branchId: d.branchId,
       branchName: d.branchName,
       serviceType: d.serviceType,
-      whyTheyCame: null, // يُشتقّ من معاينتها — لا حقلَ مستقلّاً هنا؛ راجع أسرة «٢».
+      ...NOT_DUAL,
+      // `requestedItem` = `patient_device_episodes.requested_item` — امتدادُ
+      // نموذج قراءةٍ فقط في `decision_queue_store.ts` (`de` مُنضمّةٌ أصلاً)،
+      // بلا مسّ لمنطق الحسم. أدقُّ من العودة إلى المعاينة: هذا ما طلبه
+      // المريضُ فعلاً، لا عنوانُ الزيارة السريريّ.
+      whyTheyCame: d.requestedItem ?? null,
       whatHappened: d.result === "bought" ? "إتمام بيع جهاز — بعد معاينة" : "لم يشترِ — بعد معاينة",
       registeredByName: null,
       registeredByUnknownLegacy: false,
@@ -264,7 +293,7 @@ async function fetchMaintenanceOpenedRows(f: DailyReviewFilters): Promise<DailyR
      WHERE wo.purpose = 'maintenance'
        AND ${branchClause(sql`wo.branch_id`, f.branchId)}
        AND ${serviceClause(sql`wo.service_type`, f.serviceType)}
-       AND ${baghdadDayEq(sql`wh.created_at`, f.date)}
+       AND ${baghdadDayEqTz(sql`wh.created_at`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => ({
@@ -277,6 +306,7 @@ async function fetchMaintenanceOpenedRows(f: DailyReviewFilters): Promise<DailyR
     branchId: row.branch_id === null ? null : Number(row.branch_id),
     branchName: row.branch_name ?? null,
     serviceType: row.service_type as DailyReviewServiceType,
+    ...NOT_DUAL,
     whyTheyCame: row.maintenance_component ?? null,
     whatHappened: "فتح صيانة",
     registeredByName: null,
@@ -311,10 +341,17 @@ async function fetchComponentSaleOpenedRows(f: DailyReviewFilters): Promise<Dail
         ON wh.work_order_id = wo.id AND wh.action_type = 'created'
       LEFT JOIN system_users au ON au.id = wo.assigned_by
      WHERE de.service_path = 'no_exam'
-       AND de.component_sale_price_kind IS NOT NULL
+       -- ══ لا شرطَ «حقولٍ مُهيكَلة موجودة» — تصحيحٌ لاحق ═══════════════════
+       -- service_path = 'no_exam' وحدها تُعرِّف بيعَ الجزء بلا معاينة (لا
+       -- معنى آخر له، منذ ٠٦٥) — الانضمامُ لأمرٍ initial_build قائمٍ فعلاً
+       -- يكفي إثباتاً أن البيع وقع. صفٌّ سابقٌ على ترحيل ٠٧٠ يحمل
+       -- component_sale_price_kind فارغاً وهو بيعٌ حقيقيّ لا يزال، فلا
+       -- يُستبعَد — moneyFromParts أدناه يعرض ما هو معروفٌ فعلاً
+       -- (agreed_cost الحقيقيّ عادةً) و«غير مسجل» لما لم يُلتقَط قبل ٠٧٠،
+       -- لا صفراً وليس اختفاءً.
        AND ${branchClause(sql`de.branch_id`, f.branchId)}
        AND ${serviceClause(sql`wo.service_type`, f.serviceType)}
-       AND ${baghdadDayEq(sql`wh.created_at`, f.date)}
+       AND ${baghdadDayEqTz(sql`wh.created_at`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => ({
@@ -327,6 +364,7 @@ async function fetchComponentSaleOpenedRows(f: DailyReviewFilters): Promise<Dail
     branchId: row.branch_id === null ? null : Number(row.branch_id),
     branchName: row.branch_name ?? null,
     serviceType: row.service_type as DailyReviewServiceType,
+    ...NOT_DUAL,
     whyTheyCame: row.requested_item ?? null,
     whatHappened: "بيع جزء بلا معاينة",
     registeredByName: null,
@@ -366,7 +404,7 @@ async function fetchManufacturingMovementRows(f: DailyReviewFilters): Promise<Da
      WHERE wh.action_type <> ${WORK_HISTORY_OPENING_ACTION_TYPE}
        AND ${branchClause(sql`wo.branch_id`, f.branchId)}
        AND ${serviceClause(sql`wo.service_type`, f.serviceType)}
-       AND ${baghdadDayEq(sql`wh.created_at`, f.date)}
+       AND ${baghdadDayEqTz(sql`wh.created_at`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => {
@@ -382,6 +420,7 @@ async function fetchManufacturingMovementRows(f: DailyReviewFilters): Promise<Da
       branchId: row.branch_id === null ? null : Number(row.branch_id),
       branchName: row.branch_name ?? null,
       serviceType: row.service_type as DailyReviewServiceType,
+      ...NOT_DUAL,
       whyTheyCame: null,
       whatHappened: isMaintenance ? `${label} (صيانة)` : label,
       registeredByName: null,
@@ -427,7 +466,7 @@ async function fetchDevicePaymentRows(f: DailyReviewFilters): Promise<DailyRevie
      WHERE pay.amount > 0
        AND ${branchClause(sql`pay.branch_id`, f.branchId)}
        AND ${serviceClause(sql`pc.case_type`, f.serviceType)}
-       AND ${baghdadDayEq(sql`COALESCE(al.created_at, pay.date)`, f.date)}
+       AND ${baghdadDayEqNaive(sql`COALESCE(al.created_at, pay.date)`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => {
@@ -443,6 +482,7 @@ async function fetchDevicePaymentRows(f: DailyReviewFilters): Promise<DailyRevie
       branchId: row.branch_id === null ? null : Number(row.branch_id),
       branchName: row.branch_name ?? null,
       serviceType: row.case_type as DailyReviewServiceType,
+      ...NOT_DUAL,
       whyTheyCame: null,
       whatHappened: "دفعة على جهاز",
       registeredByName: null,

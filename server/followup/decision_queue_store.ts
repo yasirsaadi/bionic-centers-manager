@@ -230,6 +230,13 @@ export interface DecisionQueueResolvedRow {
   selectedExpertName: string | null;
   // ── تفاصيلُ «لم يشترِ» ────────────────────────────────────────────────
   notBoughtReasonText: string | null;
+  /**
+   * **المطلوب** (`patient_device_episodes.requested_item`) — لقطةٌ للعرض
+   * لا سلطة (نفسُ مبدأ ٤.b في بطاقة مراجعة الطبيب). امتدادُ نموذجِ قراءةٍ
+   * فقط — `de` مُنضمّةٌ إلى هذا الاستعلام أصلاً (`RESOLVED_FROM`)، فلا
+   * `JOIN` جديد ولا مسّ لمنطق الحسم.
+   */
+  requestedItem: string | null;
 }
 
 const RESOLVED_FROM = sql`
@@ -278,6 +285,7 @@ const toResolvedRow = (x: any): DecisionQueueResolvedRow => ({
     ? null : Number(x.selected_expert_user_id),
   selectedExpertName: x.expert_name ?? null,
   notBoughtReasonText: x.not_bought_reason_text ?? null,
+  requestedItem: x.requested_item ?? null,
 });
 
 /**
@@ -301,7 +309,7 @@ export async function listDecisionQueueResolved(
            p.patient_code, p.name AS patient_name, b.name AS branch_name,
            f.original_price, f.approved_price, f.price_kind,
            f.selected_expert_user_id, u.display_name AS expert_name,
-           f.not_bought_reason_text,
+           f.not_bought_reason_text, de.requested_item,
            ev.actor_name AS resolved_by_name, ev.payload AS resolved_payload,
            COALESCE(ev.created_at, f.converted_at, f.closed_at) AS resolved_at
     ${RESOLVED_FROM}

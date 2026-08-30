@@ -11,6 +11,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { expertLabelFor, isPerformedByRedundant } from "@shared/daily_review";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -242,6 +243,9 @@ async function main() {
   const baghdadMidnightUtcMs = new Date(`${TODAY}T00:00:00Z`).getTime() - 3 * 3600 * 1000;
   const todayAt = (baghdadHour: number) => new Date(baghdadMidnightUtcMs + baghdadHour * 3600 * 1000);
   const YESTERDAY_UTC = new Date(Date.now() - 26 * 3600 * 1000); // يقيناً أمسِ بغداد أيضاً
+  // يوم بغداد السابق كنصٍّ — لفلترة اختبارات الحدود.
+  const BAGHDAD_YESTERDAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Baghdad" })
+    .format(new Date(baghdadMidnightUtcMs - 3600 * 1000));
 
   try {
     check(skipped === 1, "جدول النقاط الحقيقي مُركَّب", String(skipped));
@@ -580,6 +584,177 @@ async function main() {
       check(mo?.money?.legacyUnrecorded === true, "٧٢. `legacyUnrecorded=true` صراحةً");
       check(mo?.money?.originalPrice === null && mo?.money?.finalPrice === null,
         "٧٣. **`null` لا `0`** — غيابُ تسجيلٍ لا مجّانيّةً ولا صفراً", JSON.stringify(mo?.money));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ل. حدودُ يوم بغداد — ٠٠:٣٠ بغداد يقع في اليوم الجديد ──");
+    // ══════════════════════════════════════════════════════════════════
+    // audit_log.created_at / patients.created_at / payments.date **بلا
+    // منطقة زمنية** — القيمةُ الخام تمثّل قراءةَ UTC، فتحويلٌ مباشرٌ واحد
+    // لبغداد كان يقلب الإشارة قرب منتصف الليل (راجع تعليق baghdadDayEqNaive
+    // في server/daily_review/store.ts). ٠٠:٣٠ بغداد = ٢١:٣٠ UTC **أمس** —
+    // الحالةُ الحدّيةُ الحقيقية.
+    {
+      // ١) التسجيل — الزمنُ الموثوق audit_log.created_at.
+      const pBoundaryReg = await mkPatientRaw("حدّ-تسجيل", { isAmputee: true });
+      await mkRegistrationAudit(pBoundaryReg, 1, "ريام", RECV);
+      await stampAuditAt("patient", pBoundaryReg, todayAt(0.5));
+      await stampPatientCreatedAt(pBoundaryReg, todayAt(0.5)); // نفسُ اللحظة — لا فرقَ بين الحقلين هنا
+
+      const rTodayReg = await dailyReview(S.admin, { date: TODAY });
+      check(!!familyRow(rTodayReg.body, pBoundaryReg, "registration"),
+        "٧٤. تسجيلٌ في ٠٠:٣٠ بغداد ⟶ يظهر في يوم اليوم");
+      const rYestReg = await dailyReview(S.admin, { date: BAGHDAD_YESTERDAY });
+      check(!familyRow(rYestReg.body, pBoundaryReg, "registration"),
+        "٧٥. ولا يظهر في يوم الأمس — لا انقلابَ إشارةٍ قرب منتصف الليل");
+
+      // ٢) دفعةُ جهاز — الحالةُ المباشرة (سطرُ تدقيقٍ حقيقيّ على الدفعة).
+      const pBoundaryPayDirect = await mkPatientRaw("حدّ-دفعة-مباشرة", { isAmputee: true });
+      await mkCase(pBoundaryPayDirect, 1, "prosthetic");
+      await q(`UPDATE patients SET total_cost=1000000 WHERE id=$1`, [pBoundaryPayDirect]);
+      const payDirect = await http("POST", "/api/payments", S.recv, {
+        patientId: pBoundaryPayDirect, branchId: 1, amount: 50000,
+        paymentTreatmentType: "أطراف صناعية", notes: "دفعةٌ حدّية مباشرة",
+      });
+      check(payDirect.status === 201, "٧٦. الدفعةُ الحدّيةُ المباشرة تُسجَّل", JSON.stringify(payDirect.body));
+      await stampPaymentAuditAt(Number(payDirect.body?.id ?? 0), todayAt(0.5));
+
+      const rTodayPayD = await dailyReview(S.admin, { date: TODAY });
+      check(!!familyRow(rTodayPayD.body, pBoundaryPayDirect, "device_payment"),
+        "٧٧. دفعةٌ بتدقيقٍ مباشر في ٠٠:٣٠ بغداد ⟶ تظهر في يوم اليوم");
+      const rYestPayD = await dailyReview(S.admin, { date: BAGHDAD_YESTERDAY });
+      check(!familyRow(rYestPayD.body, pBoundaryPayDirect, "device_payment"),
+        "٧٨. ولا تظهر في يوم الأمس");
+
+      // ٣) دفعةُ جهاز — حالةُ الاستدلال (بلا سطر تدقيق، من payments.date وحده).
+      const pBoundaryPayFallback = await mkPatientRaw("حدّ-دفعة-استدلال", { isAmputee: true });
+      const fbCase = await mkCase(pBoundaryPayFallback, 1, "prosthetic");
+      const [fbPay] = await q<{ id: number }>(
+        `INSERT INTO payments (patient_id, branch_id, amount, case_id, notes, date)
+         VALUES ($1,1,40000,$2,'دفعةٌ حدّيةٌ بالاستدلال',$3) RETURNING id`,
+        [pBoundaryPayFallback, fbCase, todayAt(0.5)]);
+      void fbPay;
+
+      const rTodayPayF = await dailyReview(S.admin, { date: TODAY });
+      const fbRow = familyRow(rTodayPayF.body, pBoundaryPayFallback, "device_payment");
+      check(!!fbRow, "٧٩. دفعةٌ بالاستدلال (بلا تدقيق) في ٠٠:٣٠ بغداد ⟶ تظهر في يوم اليوم");
+      check(fbRow?.paymentActorDirect === false, "٨٠. وتبقى غيرَ مباشرةٍ بصدق — بلا سطر تدقيق");
+      const rYestPayF = await dailyReview(S.admin, { date: BAGHDAD_YESTERDAY });
+      check(!familyRow(rYestPayF.body, pBoundaryPayFallback, "device_payment"),
+        "٨١. ولا تظهر في يوم الأمس");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── م. مريضٌ يحمل القسمين معاً — لا تفضيلَ صامت، ولا كذبَ بادجٍ واحد ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const pDual = await mkPatientRaw("قسمان-معاً", { isAmputee: true, isMedicalSupport: true });
+      await mkRegistrationAudit(pDual, 1, "ريام", RECV);
+      await stampAuditAt("patient", pDual, todayAt(10));
+      await stampPatientCreatedAt(pDual, todayAt(10));
+
+      const all = await dailyReview(S.admin, { date: TODAY, serviceType: "all" });
+      const rowAll = familyRow(all.body, pDual, "registration");
+      check(!!rowAll, "٨٢. غيرُ مفلتَرٍ ⟶ يظهر");
+      check(rowAll?.bothServices === true, "٨٣. وعلَمُ «القسمان معاً» صريحٌ — لا كذبَ ببادجٍ واحد");
+
+      const pros = await dailyReview(S.admin, { date: TODAY, serviceType: "prosthetic" });
+      const rowPros = familyRow(pros.body, pDual, "registration");
+      check(!!rowPros, "٨٤. فلترةُ «أطراف» ⟶ يظهر (يملك القسمَ فعلاً)");
+      check(rowPros?.serviceType === "prosthetic",
+        "٨٥. **والحقلُ المعروض يُطابق الفلترةَ حرفياً** — لا تفضيلاً صامتاً", String(rowPros?.serviceType));
+      check(rowPros?.bothServices === true, "٨٦. والعلَمُ يبقى صادقاً حتى تحت فلترةٍ ضيّقة");
+
+      const support = await dailyReview(S.admin, { date: TODAY, serviceType: "medical_support" });
+      const rowSupport = familyRow(support.body, pDual, "registration");
+      check(!!rowSupport, "٨٧. فلترةُ «مساند» ⟶ يظهر أيضاً (يملك القسمَ الآخر فعلاً)");
+      check(rowSupport?.serviceType === "medical_support",
+        "٨٨. **ويُطابق فلترةَ «مساند» حرفياً** — لا يُفرَض «أطراف» بصمت", String(rowSupport?.serviceType));
+      check(rowSupport?.bothServices === true, "٨٩. والعلَمُ صادقٌ هنا أيضاً");
+
+      // ولا ازدواج: حدثُ تسجيلٍ واحدٌ فقط لكلّ فلترة — لا صفّان.
+      check(rowsFor(all.body, pDual).filter((x) => x.family === "registration").length === 1,
+        "٩٠. **ولا ازدواج**: صفُّ تسجيلٍ واحدٌ بالضبط، لا اثنان لكلّ قسم");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ن. بيعُ جزءٍ قديمٌ بلا تفصيلٍ تجاريّ مُهيكَل — يظهر، لا يختفي ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const pLegacyPart = await mkPatientRaw("بيع-جزء-قديم", { isAmputee: true });
+      const cLegacyPart = await mkCase(pLegacyPart, 1, "prosthetic");
+      const [deLegacy] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+            requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'in_manufacturing',275000,'socket','socket','no_exam',$3)
+         RETURNING id`, [pLegacyPart, cLegacyPart, RECV]);
+      const [woLegacy] = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders
+           (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage,
+            device_episode_id)
+         VALUES ($1,1,$2,'prosthetic','initial_build','active','order_received',$3)
+         RETURNING id`, [pLegacyPart, EXPERT, deLegacy.id]);
+      await q(`INSERT INTO prosthetic_work_history
+                 (work_order_id, action_type, from_stage, to_stage, notes, performed_by, created_at)
+               VALUES ($1,'created',NULL,'order_received','بيع جزء (سجلٌّ قديم)',$2,$3)`,
+        [woLegacy.id, RECV, todayAt(11)]);
+
+      const r = await dailyReview(S.admin, { date: TODAY });
+      const cs = familyRow(r.body, pLegacyPart, "component_sale_opened");
+      check(!!cs, "٩١. **الصفُّ القديمُ يظهر** رغم غياب component_sale_price_kind — لا يختفي");
+      check(cs?.money?.originalPrice === null,
+        "٩٢. الأصليّ غيرُ مسجَّلٍ بصدق — لم يُلتقَط قبل ترحيل ٠٧٠", JSON.stringify(cs?.money));
+      check(cs?.money?.finalPrice === 275000,
+        "٩٣. **والنهائيُّ المعروفُ فعلاً (agreed_cost) يظهر كما هو — لا يختفي معه**",
+        JSON.stringify(cs?.money));
+      check(cs?.money?.discount === null, "٩٤. الخصمُ غيرُ مشتقٍّ بلا الأصليّ — `null` لا `0`");
+
+      const dup = rowsFor(r.body, pLegacyPart).find((x) => x.family === "manufacturing_movement");
+      check(!dup, "٩٥. ولا ازدواجَ مع أسرة الحركات لسطر «created» نفسِه");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── س. سببُ الحضور لحسمِ ما بعد المعاينة — من المطلوب على الحلقة ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const sReason = await readySale("سبب-الحسم");
+      const c = await http("POST", `/api/followups/${sReason.fid}/complete-sale`, S.recv, {
+        originalPrice: 200000, discountAmount: 0, expertUserId: EXPERT,
+      });
+      check(c.status === 200, "٩٦. إتمامُ البيع للتحقّق من سبب الحضور ينجح", JSON.stringify(c.body));
+
+      const r = await dailyReview(S.admin, { date: TODAY });
+      const d = familyRow(r.body, sReason.pid, "post_exam_decision");
+      check(d?.whyTheyCame === "full_device",
+        "٩٧. **سببُ الحضور = المطلوب على الحلقة (requested_item)** — امتدادُ نموذجِ قراءةٍ فقط، لا حسمَ جديد",
+        String(d?.whyTheyCame));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ع. منطقٌ خالص — تسميةُ الخبير الحاليّ، وإخفاءُ تكرار «نفّذه» ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      same("٩٨. فتحُ الصيانة ⟶ «الخبير الحالي»", expertLabelFor("maintenance_opened"), "الخبير الحالي");
+      same("٩٩. بيعُ جزءٍ بلا معاينة ⟶ «الخبير الحالي»",
+        expertLabelFor("component_sale_opened"), "الخبير الحالي");
+      same("١٠٠. حركةُ تصنيعٍ لاحقة ⟶ «الخبير الحالي»",
+        expertLabelFor("manufacturing_movement"), "الخبير الحالي");
+      same("١٠١. **حسمُ ما بعد المعاينة يبقى بصياغته المعتادة** — خبيرُ لحظة القرار حقيقةٌ لا حالة",
+        expertLabelFor("post_exam_decision"), "الخبير");
+
+      check(isPerformedByRedundant({
+        family: "registration", performedByName: "ريام", registeredByName: "ريام", doctorName: null,
+      }) === true, "١٠٢. التسجيل: «نفّذه» يُخفى حين يطابق «سجّله» حرفياً");
+      check(isPerformedByRedundant({
+        family: "exam", performedByName: "د. سعد", registeredByName: null, doctorName: "د. سعد",
+      }) === true, "١٠٣. المعاينة: «نفّذه» يُخفى حين يطابق «الطبيب» حرفياً");
+      check(isPerformedByRedundant({
+        family: "maintenance_opened", performedByName: "ريام", registeredByName: null, doctorName: null,
+      }) === false, "١٠٤. **ولا إخفاءَ خارج هاتين الأسرتين** — الصيانةُ لا تكرّر حقلاً");
+      check(isPerformedByRedundant({
+        family: "registration", performedByName: null, registeredByName: "ريام", doctorName: null,
+      }) === false, "١٠٥. وغيابُ «نفّذه» أصلاً ليس تكراراً — `false` لا استثناء");
     }
 
     console.log(
