@@ -42,7 +42,7 @@
 // تحتفظ بسلوكها التاريخيّ (أطلِق وانسَ) لكلّ مُستدعٍ آخر لا يمرّر `tx`.
 
 import { db } from "../db";
-import { payments, financialCorrectionRequests } from "@shared/schema";
+import { payments, financialCorrectionRequests, patients, branches } from "@shared/schema";
 import type { Payment } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { logAudit } from "../accounting/ledger";
@@ -505,11 +505,92 @@ export async function rejectCorrection(params: {
 
 // ══ قراءةٌ فقط — قائمةُ الاعتماد وشارةُ العدّ ═══════════════════════════
 
+/**
+ * إثراءُ نموذج القراءة — بلا كتابةٍ ولا منطقَ اعتمادٍ جديد (متابعةٌ إلى
+ * تحكّم تصحيح الدفعات، 2026-08-30). بطاقةُ الاعتماد المرتقَبة تحتاج اسمَ
+ * المريض ورمزَه واسمَ الفرع وحالةَ الدفعة **الحالية** دون أن تستنتجها هي
+ * بنفسها من طلباتٍ متفرّقة (N+1 على العميل) — فصار الانضمامُ هنا، في
+ * استعلامٍ واحد، مصدرُ الحقيقة الوحيد لهذا العرض.
+ *
+ * **هويّةٌ من القاعدة لا من العميل**: `patientId`/`branchId` تُقرآن من
+ * صفّ الطلب نفسِه (كُتبتا وقت تقديمه من الدفعة المخزَّنة، لا من جسم
+ * الطلب — انظر `requestPaymentCorrection`/`applyPaymentCorrectionDirect`
+ * أعلاه)، لا من أيّ حقلٍ يصل الآن.
+ *
+ * **والدفعةُ الحالية غير `beforeSnapshot`**: اللقطةُ تبقى كما سُجِّلت
+ * لحظةَ الطلب (تاريخٌ لا يتغيّر)، بينما `current*` تقرأ صفّ `payments`
+ * **الآن** عبر `target_id` — وحصراً حين `target_type = 'payment'`
+ * (الطابورُ مصمَّمٌ ليتّسع لاحقاً لأهدافَ غيرها). دفعةٌ حُذفت (تصحيحُ حذفٍ
+ * سابقٌ اعتُمد مثلاً) تُرجع `currentPaymentExists: false` وكلَّ حقول
+ * الدفعة الحالية `null` — لا خطأ، ولا تخمين.
+ *
+ * **وLEFT JOIN على المريض والفرع أيضاً**: كلاهما مفتاحٌ أجنبيّ حقيقيّ
+ * (فحذفُ مريضٍ نهائياً يحذف طلباته أوّلاً، القسم ٨ من CLAUDE.md)، فالحالة
+ * العادية INNER تماماً — لكنّ LEFT أرخصُ حمايةً: طلبٌ لا يجد صاحبَه يظهر
+ * باسمٍ فارغ لا يختفي من طابور المسؤول صامتاً.
+ */
+const CURRENT_PAYMENT_EXISTS = sql<boolean>`(${payments.id} IS NOT NULL)`;
+
+function correctionListSelection() {
+  return {
+    // ── حقولُ الطلب كما هي — بلا تغيير ─────────────────────────────────
+    id: financialCorrectionRequests.id,
+    targetType: financialCorrectionRequests.targetType,
+    targetId: financialCorrectionRequests.targetId,
+    patientId: financialCorrectionRequests.patientId,
+    branchId: financialCorrectionRequests.branchId,
+    action: financialCorrectionRequests.action,
+    beforeSnapshot: financialCorrectionRequests.beforeSnapshot,
+    requestedPatch: financialCorrectionRequests.requestedPatch,
+    reason: financialCorrectionRequests.reason,
+    status: financialCorrectionRequests.status,
+    requestedBy: financialCorrectionRequests.requestedBy,
+    requestedByName: financialCorrectionRequests.requestedByName,
+    requestedRole: financialCorrectionRequests.requestedRole,
+    requestedAt: financialCorrectionRequests.requestedAt,
+    decidedBy: financialCorrectionRequests.decidedBy,
+    decidedByName: financialCorrectionRequests.decidedByName,
+    decidedAt: financialCorrectionRequests.decidedAt,
+    decisionNote: financialCorrectionRequests.decisionNote,
+    appliedAt: financialCorrectionRequests.appliedAt,
+    // ── إثراءُ العرض — من القاعدة حصراً ─────────────────────────────────
+    patientName: patients.name,
+    patientCode: patients.patientCode,
+    branchName: branches.name,
+    currentPaymentExists: CURRENT_PAYMENT_EXISTS,
+    currentAmount: payments.amount,
+    currentDate: payments.date,
+    currentPaymentTreatmentType: payments.paymentTreatmentType,
+    currentIsFreeSessions: payments.isFreeSessions,
+    currentSessionCount: payments.sessionCount,
+    currentNotes: payments.notes,
+  };
+}
+
 export async function listCorrectionRequests(status?: "pending" | "approved" | "rejected") {
-  const q = status
-    ? db.select().from(financialCorrectionRequests).where(eq(financialCorrectionRequests.status, status))
-    : db.select().from(financialCorrectionRequests);
-  return q.orderBy(desc(financialCorrectionRequests.requestedAt));
+  if (status) {
+    return db
+      .select(correctionListSelection())
+      .from(financialCorrectionRequests)
+      .leftJoin(patients, eq(patients.id, financialCorrectionRequests.patientId))
+      .leftJoin(branches, eq(branches.id, financialCorrectionRequests.branchId))
+      .leftJoin(payments, and(
+        eq(payments.id, financialCorrectionRequests.targetId),
+        eq(financialCorrectionRequests.targetType, "payment"),
+      ))
+      .where(eq(financialCorrectionRequests.status, status))
+      .orderBy(desc(financialCorrectionRequests.requestedAt));
+  }
+  return db
+    .select(correctionListSelection())
+    .from(financialCorrectionRequests)
+    .leftJoin(patients, eq(patients.id, financialCorrectionRequests.patientId))
+    .leftJoin(branches, eq(branches.id, financialCorrectionRequests.branchId))
+    .leftJoin(payments, and(
+      eq(payments.id, financialCorrectionRequests.targetId),
+      eq(financialCorrectionRequests.targetType, "payment"),
+    ))
+    .orderBy(desc(financialCorrectionRequests.requestedAt));
 }
 
 export async function countPendingCorrections(): Promise<number> {

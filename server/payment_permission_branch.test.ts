@@ -894,6 +894,50 @@ async function main() {
         "ت٤. **وصار يُرسَل بوليانَ الحالة صراحةً — true أو false على حدٍّ سواء**");
     }
 
+    // ══ ث. إثراءُ نموذج قراءة قائمة التصحيح — GET /api/admin/payment-corrections
+    // ═══════════════════════════════════════════════════════════════════════
+    // متابعةٌ ثالثة إلى تحكّم تصحيح الدفعات (2026-08-30): قراءةٌ فقط، بلا
+    // أثرٍ على الإنشاء أو الاعتماد أو الرفض أو القيد أو الصلاحيات.
+    console.log("\n── ث. إثراءُ نموذج قراءة قائمة التصحيح ──");
+    {
+      const pid = await mkPatient("مريضُ إثراء القائمة", 1);
+      const [patientRow] = await q<{ patient_code: string; name: string }>(
+        `SELECT patient_code, name FROM patients WHERE id=$1`, [pid]);
+      const [branchRow] = await q<{ name: string }>(`SELECT name FROM branches WHERE id=1`);
+
+      const paymentId = await mkPaymentRaw({ patientId: pid, branchId: 1, amount: 30000 });
+      const rReq = await patchPayment(paymentId, S.recvOk, {
+        amount: 45000, reason: "تصحيحُ مبلغٍ لاختبار إثراء القائمة",
+      });
+      same("ث١. طلبُ التصحيح ⟶ ٢٠٢", rReq.status, 202);
+      const fcr = await pendingFcrFor(paymentId);
+      check(!!fcr, "ث٢. وطلبٌ معلَّقٌ نشأ");
+
+      const rList = await http("GET", "/api/admin/payment-corrections?status=pending", S.admin);
+      same("ث٣. القائمةُ للمسؤول العام ⟶ ٢٠٠", rList.status, 200);
+      const row = Array.isArray(rList.body) ? rList.body.find((r: any) => r.id === fcr.id) : null;
+      check(!!row, "ث٤. والصفُّ المعلَّق موجودٌ في القائمة المفلترة بالحالة");
+
+      same("ث٥. **اسمُ المريض من القاعدة (patients عبر patient_id)**", row.patientName, patientRow.name);
+      same("ث٦. **ورمزُ المريض من القاعدة**", row.patientCode, patientRow.patient_code);
+      same("ث٧. **واسمُ الفرع من القاعدة (branches عبر branch_id)**", row.branchName, branchRow.name);
+      same("ث٨. **currentPaymentExists = true**", row.currentPaymentExists, true);
+      same("ث٩. **currentAmount لا يزال المبلغَ المخزَّن — الطلبُ لم يُطبَّق بعد**",
+        row.currentAmount, 30000);
+      check(!!row.beforeSnapshot && row.beforeSnapshot.amount === 30000,
+        "ث١٠. **beforeSnapshot لا يزال يحمل القيمةَ الأصلية كما سُجِّلت**",
+        JSON.stringify(row.beforeSnapshot));
+      check(!!row.requestedPatch && row.requestedPatch.amount === 45000,
+        "ث١١. **requestedPatch لا يزال يحمل القيمةَ المطلوبة كما سُجِّلت**",
+        JSON.stringify(row.requestedPatch));
+
+      const rNonAdmin = await http("GET", "/api/admin/payment-corrections?status=pending", S.mgr);
+      same("ث١٢. **غيرُ المسؤول العام ما يزال يُردّ ٤٠٣ من نقطة القائمة**", rNonAdmin.status, 403);
+
+      // تنظيف — لا يبقى الطلبُ معلَّقاً بعد الاختبار.
+      await rejectCorrectionHttp(fcr.id, S.admin);
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل فحوص صلاحية الدفعات ونطاق الفرع نجحت"
       : `❌ ${failures} فشل`}\n`);
   } finally {
