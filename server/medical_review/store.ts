@@ -118,6 +118,21 @@ export async function createReviewRequest(params: {
   /** نطاقُ المنادي — `null` للمسؤول. */
   branchIds: number[] | null;
 }): Promise<ReviewRow> {
+  //  ══ **«عاد للشراء» مملوكةٌ لتدفّقها الخاصّ وحده** (ترحيل ٠٧٢) ═════════
+  //  صار `return_to_purchase` قيمةً صحيحة في `isReviewKind`، فهذا البابُ
+  //  العامّ كان يقبلها كأيّ سببٍ آخر — أيّ منادٍ يعرف الاسمَ (أو يخمّنه)
+  //  يستطيع فتحَ طلبٍ بلا حلقةٍ حقيقية `closed_without_purchase` خلفه.
+  //  والمسارُ الشرعيّ الوحيد `executeReturnToPurchase`
+  //  (`server/followup/return_to_purchase_store.ts`) ينادي
+  //  `createReviewRequestTx` **مباشرةً** داخل معاملته الخاصّة — بعد أن أعاد
+  //  التحقّق الكامل من الحلقة والمتابعة تحت القفل. فهذا الغلافُ العامّ
+  //  يرفضها هنا صراحةً، قبل أن تبلغ النواةَ، مهما كانت صلاحيةُ المنادي —
+  //  والنواةُ نفسُها تبقى بلا قيدٍ إضافي لتخدم ذلك المسارَ الوحيد.
+  if (params.reviewKind === "return_to_purchase") {
+    throw new ReviewError(
+      "«عاد للشراء» يُنشأ آلياً من مساره الخاصّ وحده — لا من هذا الباب العامّ", 400,
+    );
+  }
   return await db.transaction((tx) => createReviewRequestTx(tx, params));
 }
 

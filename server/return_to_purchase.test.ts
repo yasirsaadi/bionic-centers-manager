@@ -21,6 +21,11 @@
 //     الموروثة (بلا حلقة) تبقى على حالها.
 // (١٠) إتمامُ البيع القائم يعمل بعد ذلك كالمعتاد.
 // (١١) العلاجُ الطبيعي بمعزل تامّ، وحدودُ الفرع مفروضة.
+// (١٢) **البابُ العامّ `POST /api/medical-review/requests` يرفض
+//      `reviewKind: "return_to_purchase"`** — مملوكةٌ لمسارها المخصَّص
+//      وحده (`executeReturnToPurchase` ينادي `createReviewRequestTx`
+//      مباشرةً)، وحارسٌ دقيقٌ لا شامل: بقيّةُ الأسباب عبر الباب نفسِه
+//      تعمل كالمعتاد، والمسارُ المخصَّص وحده يبقى قادراً على إنشائها.
 
 import express from "express";
 import { createServer } from "http";
@@ -515,6 +520,53 @@ async function main() {
       });
       check(execOk.status === 201, "٦٣. **واستقبالُ الفرع الصحيح ينجح بلا عائق**",
         JSON.stringify(execOk.body));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ل. البابُ العامّ يرفض «عاد للشراء» — مملوكةٌ لمسارها وحده ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const pGeneric = await mkPatient("الباب-العام-مرفوض", { isAmputee: true });
+      const dev = await declinedDevice(pGeneric, "prosthetic");
+
+      const before = await q<{ n: string }>(
+        `SELECT count(*)::int n FROM medical_review_requests
+          WHERE device_episode_id=$1 AND review_kind='return_to_purchase'`, [dev.episodeId]);
+      same("٦٤. لا طلبَ «عاد للشراء» على هذه الحلقة قبل المحاولة", Number(before[0].n), 0);
+
+      //  نفسُ الحلقة المؤهَّلة فعلاً — فلو نجح هذا الطلبَ لأنشأ صفّاً صحيحاً
+      //  شكلاً، والحارسُ وحده يمنعه.
+      const attempt = await http("POST", "/api/medical-review/requests", S.recv, {
+        patientId: pGeneric, serviceType: "prosthetic", requestedPath: "full",
+        reviewKind: "return_to_purchase", deviceEpisodeId: dev.episodeId,
+      });
+      same("٦٥. **البابُ العامّ يردّ ٤٠٠ على `reviewKind: return_to_purchase`**", attempt.status, 400);
+
+      const after = await q<{ n: string }>(
+        `SELECT count(*)::int n FROM medical_review_requests
+          WHERE device_episode_id=$1 AND review_kind='return_to_purchase'`, [dev.episodeId]);
+      same("٦٦. **وصفرُ صفوفٍ كُتبت** — لا نصفَ إنشاء", Number(after[0].n), 0);
+
+      //  والحارسُ دقيقٌ لا شامل: سببٌ عاديّ آخر عبر الباب نفسِه ينجح كالمعتاد.
+      const ordinary = await http("POST", "/api/medical-review/requests", S.recv, {
+        patientId: pGeneric, serviceType: "prosthetic", requestedPath: "quick", reviewKind: "other",
+      });
+      check(ordinary.status === 201,
+        "٦٧. **وسببٌ عاديّ آخر عبر الباب نفسِه ينجح بلا مساس** — الحارسُ خاصٌّ بـ«عاد للشراء» وحده",
+        JSON.stringify(ordinary.body));
+
+      //  والمسارُ المخصَّص وحده يبقى قادراً على إنشائها — على الحلقة نفسِها،
+      //  بعد أن رفضها البابُ العامّ للتوّ. فالحارسُ يمنع بابَه لا الميزةَ نفسَها.
+      const dedicated = await http("POST", "/api/followups/return-to-purchase", S.recv, {
+        patientId: pGeneric, deviceEpisodeId: dev.episodeId,
+      });
+      check(dedicated.status === 201,
+        "٦٨. **والمسارُ المخصَّص وحده ينجئها على الحلقة نفسِها** — لم يُغلَق البابُ الصحيح",
+        JSON.stringify(dedicated.body));
+      const finalCount = await q<{ n: string }>(
+        `SELECT count(*)::int n FROM medical_review_requests
+          WHERE device_episode_id=$1 AND review_kind='return_to_purchase'`, [dev.episodeId]);
+      same("٦٩. **وطلبٌ واحدٌ بالضبط أخيراً — من المسار الصحيح**", Number(finalCount[0].n), 1);
     }
 
     console.log(
