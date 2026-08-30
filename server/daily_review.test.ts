@@ -757,6 +757,40 @@ async function main() {
       }) === false, "١٠٥. وغيابُ «نفّذه» أصلاً ليس تكراراً — `false` لا استثناء");
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ف. جهازٌ كاملٌ (لا جزء) على مسار «بلا معاينة» — لا يُعرَض بيعَ جزء (تصحيحٌ لاحقٌ ثالث) ──");
+    // ══════════════════════════════════════════════════════════════════
+    // شذوذٌ تاريخيّ فقط — الكتابةُ الحيّة اليوم ترفض بيعَ جهازٍ كاملٍ بلا
+    // معاينة (NO_EXAM_FULL_PROSTHESIS_REFUSAL، القسم 4.e)، فصفٌّ كهذا لا
+    // يُنشَأ إلا مباشرةً في القاعدة. ومع ذلك انضمامُه لأمرِ initial_build
+    // حقيقيّ (نفسُ الشكل الذي تعتمده أسرةُ بيع الجزء) كان سيجعله يظهر
+    // «بيعَ جزء» لولا حارسُ component IS NOT NULL — إسقاطُ شرط الحقل
+    // المُهيكَل في التصحيح السابق لا يعني إسقاطَ هذا الحارس.
+    {
+      const pFullAnomaly = await mkPatientRaw("جهاز-كامل-شذوذ", { isAmputee: true });
+      const cFullAnomaly = await mkCase(pFullAnomaly, 1, "prosthetic");
+      const [deFullAnomaly] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+            requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'in_manufacturing',900000,'full_device',NULL,'no_exam',$3)
+         RETURNING id`, [pFullAnomaly, cFullAnomaly, RECV]);
+      const [woFullAnomaly] = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders
+           (patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage,
+            device_episode_id)
+         VALUES ($1,1,$2,'prosthetic','initial_build','active','order_received',$3)
+         RETURNING id`, [pFullAnomaly, EXPERT, deFullAnomaly.id]);
+      await q(`INSERT INTO prosthetic_work_history
+                 (work_order_id, action_type, from_stage, to_stage, notes, performed_by, created_at)
+               VALUES ($1,'created',NULL,'order_received','جهازٌ كاملٌ (شذوذٌ تاريخيّ سابقٌ على الحارس)',$2,$3)`,
+        [woFullAnomaly.id, RECV, todayAt(12)]);
+
+      const r = await dailyReview(S.admin, { date: TODAY });
+      check(!familyRow(r.body, pFullAnomaly, "component_sale_opened"),
+        "١٠٦. **جهازٌ كاملٌ (component=NULL) لا يُعرَض بيعَ جزء** — الحارسُ المستعاد يستبعده رغم انضمامه لأمرٍ حقيقيّ");
+    }
+
     console.log(
       "\nملاحظة: آليّةُ إتمام البيع نفسِها (المالكية، اشتقاقُ السعر، التزامن…) "
       + "مُختبَرةٌ بتفصيلٍ في server/reception_sale.test.ts؛ الصيانةُ وبيعُ الجزء في "

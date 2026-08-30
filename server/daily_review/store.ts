@@ -341,14 +341,23 @@ async function fetchComponentSaleOpenedRows(f: DailyReviewFilters): Promise<Dail
         ON wh.work_order_id = wo.id AND wh.action_type = 'created'
       LEFT JOIN system_users au ON au.id = wo.assigned_by
      WHERE de.service_path = 'no_exam'
-       -- ══ لا شرطَ «حقولٍ مُهيكَلة موجودة» — تصحيحٌ لاحق ═══════════════════
-       -- service_path = 'no_exam' وحدها تُعرِّف بيعَ الجزء بلا معاينة (لا
-       -- معنى آخر له، منذ ٠٦٥) — الانضمامُ لأمرٍ initial_build قائمٍ فعلاً
-       -- يكفي إثباتاً أن البيع وقع. صفٌّ سابقٌ على ترحيل ٠٧٠ يحمل
-       -- component_sale_price_kind فارغاً وهو بيعٌ حقيقيّ لا يزال، فلا
-       -- يُستبعَد — moneyFromParts أدناه يعرض ما هو معروفٌ فعلاً
-       -- (agreed_cost الحقيقيّ عادةً) و«غير مسجل» لما لم يُلتقَط قبل ٠٧٠،
-       -- لا صفراً وليس اختفاءً.
+       -- ══ الحقلُ المُهيكَل غيرُ مشروط، لكنّ حقيقةَ «بيعُ جزء» مشروطةٌ صراحةً
+       -- — تصحيحٌ لاحقٌ ثانٍ ═══════════════════════════════════════════
+       -- إسقاطُ شرط component_sale_price_kind لا يعني إسقاطَ الدليل على
+       -- أن هذا بيعُ جزءٍ فعلاً: صفٌّ سابقٌ على ترحيل ٠٧٠ يحمل الحقلَ
+       -- المُهيكَل فارغاً وهو بيعُ جزءٍ حقيقيّ لا يزال — moneyFromParts
+       -- أدناه يعرض ما هو معروفٌ فعلاً (agreed_cost الحقيقيّ عادةً) و«غير
+       -- مسجل» لما لم يُلتقَط قبل ٠٧٠، لا صفراً وليس اختفاءً.
+       --
+       -- فالحارسُ الحقيقيّ يعود هنا مباشرةً بدل الاعتماد على الحقل
+       -- المُهيكَل بالصدفة: component IS NOT NULL يستبعد طلبَ الجهاز
+       -- الكامل (النقيضُ الوحيد بحكم قيد
+       -- patient_device_episodes_component_check — الجهازُ الكامل وحده
+       -- يترك العمودَ فارغاً)، وservice_type = prosthetic يستبعد أيّ
+       -- شذوذٍ تاريخيّ على مسند طبّي — بيعُ الجزء منطقٌ مقصورٌ على
+       -- الأطراف وحدها منذ ٠٦٥/٠٦٧، والمساندُ بلا قائمة أجزاءٍ أصلاً.
+       AND de.component IS NOT NULL
+       AND wo.service_type = 'prosthetic'
        AND ${branchClause(sql`de.branch_id`, f.branchId)}
        AND ${serviceClause(sql`wo.service_type`, f.serviceType)}
        AND ${baghdadDayEqTz(sql`wh.created_at`, f.date)}
