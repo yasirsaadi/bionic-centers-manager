@@ -104,6 +104,29 @@ export async function executeNewService(params: {
   const serviceCost = Math.max(0, Math.round(Number(params.serviceCost) || 0));
   const isFree = params.isFree === true;
 
+  // ══ **الجهوزيةُ الماليةُ — بابٌ واحدٌ أخيرٌ قبل الكتابة** (تصحيحٌ
+  //  تشغيليّ) ═══════════════════════════════════════════════════════════
+  //  كان مبلغٌ غائبٌ أو صفريّ في `initialPayment` يُقرأ «لم يُقبَض شيءٌ
+  //  الآن» بصمت — وهذا صحيحٌ كحقيقةِ دفع، لكنّ النافذةَ لم تكن تسأل
+  //  الموظّفَ عن قصده: خدمةٌ حقيقيةٌ موجبةُ الكلفة كانت تُسجَّل ودَينُها
+  //  كاملٌ **بلا أن يكتب أحدٌ رقماً ولا يقرّر ذلك عمداً** — لا فرقَ بين
+  //  موظّفٍ نسي الحقلَ وآخرَ قرَّر تأجيلَ القبض. فصار البابُ الأخيرَ هنا —
+  //  **الكاتبُ القانونيُّ الوحيد**، فيُغلَق على كلّ الأبواب معاً (`/new-service`
+  //  المباشرة، ومسارُ الخصم/التبرّع الفوريّ عبر `applyDiscountImmediatelyTx`،
+  //  والبابُ التاريخيُّ لبقايا `service_discount_requests` القديمة) —
+  //  لا حارسٌ في نقطةٍ واحدة يلتفّ عليه نداءٌ من أخرى.
+  //
+  //  **ويُستثنى فقط**: `isFree` (تبرّعٌ صريح — الخادمُ يفرض الصفرَ عليه
+  //  بصرف النظر عمّا وصل، فلا معنى لإلزامه مبلغاً) و`serviceCost === 0`
+  //  (استشارةٌ طبية لا كلفةَ فيها أصلاً — لا شيءَ يُقبَض). **وليس مضاعفَ
+  //  سعر الجلسة**: أيّ مبلغٍ موجبٍ يكفي، جزئياً كان أو كاملاً.
+  if (!isFree && serviceCost > 0) {
+    const receivedNow = Math.max(0, Math.min(Number(params.initialPayment) || 0, serviceCost));
+    if (receivedNow <= 0) {
+      throw new NewServiceError("«أدخل المبلغ المدفوع الآن»", 400);
+    }
+  }
+
   const body = async (tx: any): Promise<NewServiceResult> => {
     const patient = await storage.getPatient(params.patientId, tx);
     if (!patient) throw new NewServiceError("المريض غير موجود", 404);

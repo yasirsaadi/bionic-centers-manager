@@ -1439,23 +1439,33 @@ async function main() {
       same("   **فالباقي على المريض حقيقيّ لا وهميّ**: ٣٠,٠٠٠", cost - paid, 30_000);
     }
     {
-      //  وغيابُ الحقل يعني «لم يُحصَّل شيءٌ الآن» — لا تخمين قبضٍ كامل.
+      //  ══ (تصحيحٌ تشغيليّ لاحق — الجهوزيةُ الماليةُ) ═══════════════════
+      //  كان غيابُ الحقل يعني «لم يُحصَّل شيءٌ الآن» **فيمرّ الحفظُ مع
+      //  ذلك** بكلفةٍ موجبة ومقبوضٍ صفر — وهذا بعينه الثغرُ الذي أغلقه
+      //  التصحيحُ اللاحق: خدمةٌ حقيقيةٌ غيرُ مجّانية بكلفةٍ موجبة لا يجوز
+      //  أن تُقيَّد بمقبوضٍ صفرٍ بلا أن يقرّر أحدٌ ذلك عمداً. فصار الحارسُ
+      //  في `executeNewService` نفسِها يرفض قبل أن يُكتب شيء — وهذا
+      //  المسارُ (بلا بنودٍ، عبر التطبيق الفوريّ مباشرةً) يبقى حصانةً
+      //  معماريةً لأيّ بابٍ لاحقٍ يفتحه، كما كان قبل هذا التصحيح.
       const p = await mkPatient("استشارة بخصم بلا قبض", { device: false, physio: true });
       await mkCase(p, 1, "physiotherapy");
-      await discountStore.applyDiscountImmediately({
-        patientId: p, department: "physiotherapy", branchId: 1,
-        contextRef: "test:friday-none",
-        originalPrice: 80_000, finalPrice: 60_000, reason: "negotiation",
-        payload: { kind: "new_service", serviceType: "other", entries: undefined },
-        actor: { userId: RECV, userName: "استعلامات" },
-        audit: { note: () => "اختبار: بلا قبض" },
-      });
-      const m = await money(p);
-      same("٩١. **والكلفةُ ٦٠,٠٠٠ والمقبوضُ صفر — لا قبضَ ملفَّق**",
-        [m.totalCost,
-          Number((await q(`SELECT COALESCE(SUM(amount),0)::int s FROM payments
-                            WHERE patient_id=$1`, [p]))[0].s)],
-        [60_000, 0]);
+      let err = "";
+      try {
+        await discountStore.applyDiscountImmediately({
+          patientId: p, department: "physiotherapy", branchId: 1,
+          contextRef: "test:friday-none",
+          originalPrice: 80_000, finalPrice: 60_000, reason: "negotiation",
+          payload: { kind: "new_service", serviceType: "other", entries: undefined },
+          actor: { userId: RECV, userName: "استعلامات" },
+          audit: { note: () => "اختبار: بلا قبض" },
+        });
+      } catch (e: any) { err = String(e?.message ?? e); }
+      check(err.includes("أدخل المبلغ المدفوع الآن"),
+        "٩١. **وغيابُ الحقل يُرفَض الآن — لا قبضَ صفريّاً صامتاً**", err);
+      const totalCost = Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0].total_cost);
+      const paid = Number((await q(`SELECT COALESCE(SUM(amount),0)::int s FROM payments
+                                     WHERE patient_id=$1`, [p]))[0].s);
+      same("   **وصفرُ كتابةٍ كامل** — لا كلفةَ ولا مقبوض", [totalCost, paid], [0, 0]);
     }
     {
       //  ومبلغٌ يفوق السعرَ المتَّفَق عليه لا يُصدَّق — لا قبضَ فوق الاتفاق

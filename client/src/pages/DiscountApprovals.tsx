@@ -53,6 +53,8 @@ interface Row {
     kind?: string | null;
     serviceType?: string | null;
     entries?: { treatmentType: string; sessionCount: number }[] | null;
+    /** ما دفعه المريضُ فعلاً وقتَ الطلب، إن كان محفوظاً. راجع `needsPaymentEntry`. */
+    initialPayment?: number | null;
   } | null;
 }
 
@@ -72,6 +74,21 @@ function serviceLine(r: Row): string | null {
     .map((e) => `${e.treatmentType} — ${e.sessionCount} جلسة`);
   if (parts.length === 0) return head;
   return head ? `${head}: ${parts.join(" · ")}` : parts.join(" · ");
+}
+
+/**
+ * **هل تحتاج هذه البقيّةُ التاريخية مبلغاً يُكتَب الآن؟** (تصحيحٌ لاحق —
+ * لا اختراعَ مالٍ) ═══════════════════════════════════════════════════════
+ * صفُّ «خدمة جديدة» غيرُ مجّانيّ لا يحمل مبلغاً محفوظاً موجباً أصلاً: لم
+ * تُسجَّل هذه الواقعةُ يومَ الطلب، ولا يجوز افتراضُ قبضٍ كاملٍ لم يُثبِته
+ * أحد. فالمُنجِز يكتب المبلغَ الفعليّ الآن — نفسُ حارس «خدمة جديدة»
+ * المباشرة، على هذا الباب أيضاً. والمجّانيُّ الصريح والمحفوظُ الموجب لا
+ * يحتاجان شيئاً.
+ */
+function needsPaymentEntry(r: Row): boolean {
+  if (r.payload?.kind !== "new_service") return false;
+  if (r.isFree) return false;
+  return !(Number(r.payload?.initialPayment) > 0);
 }
 
 //  **قيمُ `key` = حالاتُ القاعدة نفسُها (`DISCOUNT_STATUSES`) بلا تغيير**
@@ -103,6 +120,10 @@ export default function DiscountApprovals() {
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editFree, setEditFree] = useState(false);
   const [editNote, setEditNote] = useState("");
+  //  **المبلغُ المدفوعُ فعلاً** — لصفوفٍ تاريخية بلا مبلغٍ محفوظ فقط
+  //  (`needsPaymentEntry`)، بمفتاح رقم الطلب فلا يتسرّب إدخالُ صفٍّ إلى آخر.
+  const [paymentInputs, setPaymentInputs] = useState<Record<number, string>>({});
+  const paymentFor = (id: number) => Number(paymentInputs[id]) || 0;
 
   const mayApprove = canApproveServiceDiscount(session as any);
 
@@ -133,6 +154,12 @@ export default function DiscountApprovals() {
           : "نُفِّذت الخدمة بالسعر النهائي.",
       });
       setEditing(null);
+      setPaymentInputs((p) => {
+        if (!(v.id in p)) return p;
+        const next = { ...p };
+        delete next[v.id];
+        return next;
+      });
     },
     onError: (err: any) => toast({
       title: "تعذّر الحفظ", description: err?.message ?? "حاول مرة أخرى",
@@ -157,6 +184,13 @@ export default function DiscountApprovals() {
     originalPrice: editing.originalPrice,
     finalPrice: editFree ? 0 : editPrice, isFree: editFree,
   }) : null;
+  //  **على `editFree` الحيّ لا `editing.isFree` الأصليّ**: لو بدّل المديرُ
+  //  الخيارَ هنا إلى «مجّاني»، يُعفى من إدخال المبلغ فوراً — يطابق ما
+  //  سيُرسَل فعلاً (`isFree: editFree` أدناه)، لا حالةَ الصفّ الأصلية.
+  const editNeedsPayment = editing
+    ? editing.payload?.kind === "new_service" && !editFree
+      && !(Number(editing.payload?.initialPayment) > 0)
+    : false;
 
   return (
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
@@ -258,26 +292,59 @@ export default function DiscountApprovals() {
                     يومَها، فمَن يحسمه اليوم يُقرّه في الغالب بضغطةٍ واحدة.
                     و«تعديل وإكمال» للاستثناء لا للعادة. */}
                 {r.status === "pending" && (
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <Button size="sm" disabled={decide.isPending} className="gap-1"
-                      data-testid={`approve-${r.id}`}
-                      onClick={() => decide.mutate({ id: r.id, body: { decision: "approve" } })}>
-                      <Check className="w-4 h-4" /> إكمال وتطبيق السعر
-                    </Button>
-                    <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
-                      data-testid={`reject-${r.id}`}
-                      onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
-                      <X className="w-4 h-4" /> إلغاء الطلب
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={decide.isPending}
-                      className="gap-1 text-muted-foreground"
-                      data-testid={`modify-${r.id}`}
-                      onClick={() => {
-                        setEditing(r); setEditPrice(r.proposedFinalPrice);
-                        setEditFree(r.isFree); setEditNote("");
-                      }}>
-                      <Pencil className="w-4 h-4" /> تعديل وإكمال
-                    </Button>
+                  <div className="space-y-2 pt-1">
+                    {/*  ══ **مبلغٌ مدفوعٌ لازم لصفوفٍ لا تحمله محفوظاً**
+                        (تصحيحٌ لاحق) ═══════════════════════════════════
+                        هذا الطلبُ من قبل تسجيل المبلغ المقبوض حقلاً
+                        مستقلّاً — لا يُخترَع من السعر المتَّفق عليه. */}
+                    {needsPaymentEntry(r) && (
+                      <div className="space-y-1 max-w-[240px]">
+                        <label className="text-xs font-medium text-amber-800">
+                          المبلغ المُستلَم فعلاً <span className="text-red-500">*</span>
+                        </label>
+                        <MoneyInput value={paymentInputs[r.id] ?? ""} placeholder="0"
+                          onValueChange={(n) =>
+                            setPaymentInputs((p) => ({ ...p, [r.id]: String(n) }))}
+                          data-testid={`payment-input-${r.id}`} />
+                        <p className="text-xs text-muted-foreground">
+                          لا مبلغَ محفوظاً لهذا الطلب — اكتب ما استلمه المركزُ فعلاً
+                          حينها ليكتمل.
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" disabled={decide.isPending} className="gap-1"
+                        data-testid={`approve-${r.id}`}
+                        onClick={() => {
+                          if (needsPaymentEntry(r) && paymentFor(r.id) <= 0) {
+                            toast({ title: "«أدخل المبلغ المدفوع الآن»", variant: "destructive" });
+                            return;
+                          }
+                          decide.mutate({
+                            id: r.id,
+                            body: {
+                              decision: "approve",
+                              ...(needsPaymentEntry(r) ? { initialPayment: paymentFor(r.id) } : {}),
+                            },
+                          });
+                        }}>
+                        <Check className="w-4 h-4" /> إكمال وتطبيق السعر
+                      </Button>
+                      <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
+                        data-testid={`reject-${r.id}`}
+                        onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
+                        <X className="w-4 h-4" /> إلغاء الطلب
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={decide.isPending}
+                        className="gap-1 text-muted-foreground"
+                        data-testid={`modify-${r.id}`}
+                        onClick={() => {
+                          setEditing(r); setEditPrice(r.proposedFinalPrice);
+                          setEditFree(r.isFree); setEditNote("");
+                        }}>
+                        <Pencil className="w-4 h-4" /> تعديل وإكمال
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -325,6 +392,24 @@ export default function DiscountApprovals() {
                 </p>
               )}
 
+              {/*  ══ **مبلغٌ مدفوعٌ لازم لصفوفٍ لا تحمله محفوظاً** (تصحيحٌ
+                  لاحق) ═══════════════════════════════════════════════
+                  يختفي فوراً لو بدّل المديرُ الخيارَ فوق إلى «مجّاني». */}
+              {editNeedsPayment && (
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">
+                    المبلغ المُستلَم فعلاً <span className="text-red-500">*</span>
+                  </label>
+                  <MoneyInput value={paymentInputs[editing.id] ?? ""} placeholder="0"
+                    onValueChange={(n) =>
+                      setPaymentInputs((p) => ({ ...p, [editing.id]: String(n) }))}
+                    data-testid="edit-payment" />
+                  <p className="text-xs text-muted-foreground">
+                    لا مبلغَ محفوظاً لهذا الطلب — اكتب ما استلمه المركزُ فعلاً حينها.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-1">
                 <label className="text-sm font-medium">ملاحظة القرار (اختياري)</label>
                 <Input value={editNote} onChange={(e) => setEditNote(e.target.value)}
@@ -333,15 +418,24 @@ export default function DiscountApprovals() {
             </div>
           )}
           <DialogFooter>
-            <Button disabled={decide.isPending || !editCalc?.ok}
+            <Button disabled={decide.isPending || !editCalc?.ok
+              || (editNeedsPayment && paymentFor(editing?.id ?? -1) <= 0)}
               data-testid="edit-submit"
-              onClick={() => editing && decide.mutate({
-                id: editing.id,
-                body: {
-                  decision: "approve", finalPrice: editFree ? 0 : editPrice,
-                  isFree: editFree, note: editNote.trim() || undefined,
-                },
-              })}>
+              onClick={() => {
+                if (!editing) return;
+                if (editNeedsPayment && paymentFor(editing.id) <= 0) {
+                  toast({ title: "«أدخل المبلغ المدفوع الآن»", variant: "destructive" });
+                  return;
+                }
+                decide.mutate({
+                  id: editing.id,
+                  body: {
+                    decision: "approve", finalPrice: editFree ? 0 : editPrice,
+                    isFree: editFree, note: editNote.trim() || undefined,
+                    ...(editNeedsPayment ? { initialPayment: paymentFor(editing.id) } : {}),
+                  },
+                });
+              }}>
               {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "إكمال بالسعر المعدَّل"}
             </Button>
           </DialogFooter>

@@ -7,11 +7,12 @@ import {
   FREE_DONATION_LABEL, type DiscountReason,
 } from "@shared/discount";
 import {
-  EMPTY_DISCOUNT, discountBlocked, discountPayload, hasDiscount, type DiscountDraft,
+  EMPTY_DISCOUNT, discountBlocked, discountPayload, hasDiscount, paymentEntryRequired,
+  type DiscountDraft,
 } from "@/components/service_discount_ui";
 
 //  تُصدَّر من هنا كذلك فلا تتغيّر مساراتُ الاستيراد في الشاشات الثلاث.
-export { EMPTY_DISCOUNT, discountBlocked, discountPayload, hasDiscount };
+export { EMPTY_DISCOUNT, discountBlocked, discountPayload, hasDiscount, paymentEntryRequired };
 export type { DiscountDraft };
 
 // حقولُ الخصم والتبرّع — **مكوِّنٌ واحدٌ للشاشات الثلاث**.

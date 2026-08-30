@@ -13,6 +13,12 @@
 //     لا يعتمد على تعطيل زرٍّ في الواجهة.
 // (٢) **تذكرة الإرسال تمنع التكرار فعلاً** — وهو ما كان يسقط بصمت لو
 //     وصلت فارغةً من النافذة المُدارة.
+// (٣) **المبلغُ المدفوع الآن إلزاميٌّ وموجبٌ لكلّ خدمةٍ غير مجّانية بكلفةٍ
+//     موجبة** (تصحيحٌ تشغيليّ — الجهوزيةُ الماليةُ): فراغٌ أو صفرٌ يُردّ
+//     ٤٠٠ برسالةٍ صريحة بلا كتابةٍ إطلاقاً — سواءٌ للجلسات الإضافية أو
+//     غيرها. **والاستثناءُ الوحيد**: تبرّعٌ صريحٌ (`isFree`) أو خدمةٌ
+//     لا كلفةَ فيها أصلاً (استشارةٌ طبية). ودفعٌ جزئيٌّ موجبٌ يبقى مقبولاً
+//     كما كان — لا اشتراطَ أن يكون مضاعفَ سعر الجلسة.
 
 import express from "express";
 import { createServer } from "http";
@@ -257,6 +263,9 @@ async function main() {
       //  بعد سكّ التذكرة وبعد فتح المعاملة، قبل أيّ إدراجٍ في
       //  `service_discount_requests`. مرشَّحٌ حتميّ لا عشوائيّ التوقيت.
       discount: reason ? { finalPrice: 80000, reason } : { finalPrice: 80000 },
+      //  **مقبوضٌ كاملٌ صريح** — هذا القسمُ يفحص سلوكَ التذكرة لا حارسَ
+      //  الدفع (المفحوصَ أدناه بتفصيلٍ)، فلا يمرّ به بلا داعٍ.
+      initialPayment: 80000,
       submissionToken: tFail,
     });
 
@@ -328,20 +337,48 @@ async function main() {
     //  والمقبوضُ الفعليّ وحده يُوزَّع تناسبياً على صفوف الدفعات.
     console.log("\n── حقيقةُ الدفع في الجلسات الإضافية ──");
 
-    // — A. كلفةٌ ٥٠,٠٠٠ ومقبوضٌ صفر ⟶ لا إيرادَ موجباً، والكلفةُ والجلسةُ كما هما —
-    const pA = await mkPatient("أ — مقبوضٌ صفر", true);
+    // — A. **(تصحيحٌ تشغيليّ لاحق — الجهوزيةُ الماليةُ)** كلفةٌ ٥٠,٠٠٠
+    //      ومقبوضٌ صفرٌ صريح ⟶ تُرفَض ٤٠٠ بصفر كتابةٍ كامل —
+    //      ══════════════════════════════════════════════════════════════
+    //      كان هذا يمرّ بنجاح (٢٠٠) ويقيّد الكلفةَ كاملةً ديناً «بلا إيرادٍ
+    //      موجب» — بلا أن يقرّر أحدٌ ذلك عمداً ولا أن يكتب رقماً. صار
+    //      الفراغُ/الصفرُ لخدمةٍ حقيقية غير مجّانية يُوقَف عند الباب،
+    //      والحارسُ في `executeNewService` نفسِها — لا في نقطةٍ واحدة
+    //      يلتفّ عليها بابٌ آخر.
+    const pA = await mkPatient("أ — مقبوضٌ صفرٌ مرفوض", true);
     const rA = await req(`/api/patients/${pA}/new-service`, S.manager, {
       serviceType: "additional_therapy",
       treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
       serviceCost: 50000, initialPayment: 0, submissionToken: token(),
     });
-    same("أ. تُقبَل ٢٠٠ حتى بمقبوضٍ صفر", rA.status, 200);
-    same("والكلفةُ قُيِّدت كاملةً رغم ذلك", (await storage.getPatient(pA))?.totalCost, 50000);
-    const payA = await db.select().from(payments).where(eq(payments.patientId, pA));
-    same("**والجلسةُ محفوظة**", payA.map((p) => p.sessionCount), [1]);
-    same("**ولا إيرادَ موجباً — الصفّ نفسُه بمبلغ صفر**", payA.map((p) => p.amount), [0]);
-    const sumA = payA.reduce((s, p) => s + (p.amount || 0), 0);
-    same("**ومجموعُ المقبوض صفرٌ بالضبط**", sumA, 0);
+    same("أ. **صفرٌ صريحٌ ⟶ ٤٠٠**", rA.status, 400);
+    check(String(rA.json?.message ?? "").includes("أدخل المبلغ المدفوع الآن"),
+      "برسالةٍ صريحة تسمّي المطلوب", JSON.stringify(rA.json));
+    same("**ولا كلفةَ تحرّكت**", (await storage.getPatient(pA))?.totalCost ?? 0, 0);
+    same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pA))).length, 0);
+    const visitsA = await pool.query(`SELECT id FROM visits WHERE patient_id = $1`, [pA]);
+    same("ولا زيارة — صفرُ كتابةٍ كامل قبل فتح المعاملة أصلاً", visitsA.rowCount ?? 0, 0);
+
+    // — A.ب نفسُ الحالة بالحقل **غائباً تماماً** (لا صفراً مكتوباً) — نفسُ
+    //      الرفض، فلا فرقَ بين موظّفٍ نسي الحقلَ وآخرَ كتب صفراً —
+    const pAb = await mkPatient("أ.ب — بلا حقل دفعٍ إطلاقاً", true);
+    const rAb = await req(`/api/patients/${pAb}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
+      serviceCost: 50000, submissionToken: token(),
+      // بلا initialPayment إطلاقاً — لا `undefined` صريحاً حتى.
+    });
+    same("أ.ب. **والغيابُ التامّ للحقل مرفوضٌ كذلك ٤٠٠**", rAb.status, 400);
+    same("ولا كلفةَ تحرّكت", (await storage.getPatient(pAb))?.totalCost ?? 0, 0);
+
+    // — A.ج ونفسُ الرفض لخدمةٍ ليست جلساتٍ (استشارة) بكلفةٍ موجبة — الحارسُ
+    //      عامٌّ لكلّ أنواع «خدمة جديدة» لا الجلسات الإضافية وحدها —
+    const pAc = await mkPatient("أ.ج — استشارةٌ بلا دفع", false);
+    const rAc = await req(`/api/patients/${pAc}/new-service`, S.manager, {
+      serviceType: "consultation", serviceCost: 20000, submissionToken: token(),
+    });
+    same("أ.ج. **واستشارةٌ بكلفةٍ موجبة بلا دفعٍ تُرفَض كذلك ٤٠٠**", rAc.status, 400);
+    same("ولا كلفةَ تحرّكت", (await storage.getPatient(pAc))?.totalCost ?? 0, 0);
 
     // — B. نفسُ الكلفة، مقبوضٌ ٢٠,٠٠٠ ⟶ الدفعةُ ٢٠,٠٠٠ بالضبط لا ٥٠,٠٠٠ —
     const pB = await mkPatient("ب — مقبوضٌ جزئيّ", true);
@@ -418,6 +455,42 @@ async function main() {
     const payF = await db.select().from(payments).where(eq(payments.patientId, pF));
     same("**والدفعةُ صفرٌ ومَوسومةٌ مجّانيةً — ولو أُرسل مقبوضٌ زائف**",
       payF.map((p) => [p.amount, p.sessionCount, p.isFreeSessions]), [[0, 1, true]]);
+
+    // — ز. **خصمٌ مخفَّضٌ غيرُ مجّانيّ (١٠٠,٠٠٠ ⟵ ٨٠,٠٠٠) بمقبوضٍ صفرٍ أو
+    //      غائب ⟶ يُرفَض كالسعر الكامل بالضبط** (تصحيحٌ لاحق) ══════════════
+    //  ══ العطبُ الذي يغلقه ═════════════════════════════════════════════
+    //  خصمٌ حقيقيٌّ ليس مجّانياً: المريضُ لا يزال يدفع مبلغاً موجباً له.
+    //  والحارسُ هنا في `executeNewService` نفسِها لا يعرف شيئاً عن مصدر
+    //  السعر (مباشرٌ أم عبر مسار الخصم) — فيُطبَّق بحرفه على الحالتين معاً.
+    //  (قارِن مع «هـ» أعلاه: نفسُ الخصم، بمقبوضٍ **موجب** ١٠,٠٠٠ ⟶ ينجح.)
+    const pZ = await mkPatient("ز — خصمٌ بمقبوضٍ صفر", true);
+    const rZ = await req(`/api/patients/${pZ}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 100000,
+      discount: { finalPrice: 80000, reason: "negotiation" },
+      initialPayment: 0, submissionToken: token(),
+    });
+    same("ز. **خصمٌ غيرُ مجّانيّ بمقبوضٍ صفرٍ صريح ⟶ ٤٠٠**", rZ.status, 400);
+    check(String(rZ.json?.message ?? "").includes("أدخل المبلغ المدفوع الآن"),
+      "برسالةٍ صريحة", JSON.stringify(rZ.json));
+    same("**ولا كلفةَ تحرّكت**", (await storage.getPatient(pZ))?.totalCost ?? 0, 0);
+    same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pZ))).length, 0);
+    const sdrZ = await pool.query(
+      `SELECT id FROM service_discount_requests WHERE patient_id = $1`, [pZ]);
+    same("**ولا صفَّ خصمٍ يتيمٌ بقي** — الإدراجُ رجع مع فشل التنفيذ", sdrZ.rowCount ?? 0, 0);
+
+    //  ونفسُ الطلب **بلا** حقل `initialPayment` إطلاقاً — نفسُ الرفض.
+    const pZb = await mkPatient("ز.ب — خصمٌ بلا حقل دفعٍ إطلاقاً", true);
+    const rZb = await req(`/api/patients/${pZb}/new-service`, S.manager, {
+      serviceType: "additional_therapy",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      serviceCost: 100000,
+      discount: { finalPrice: 80000, reason: "negotiation" },
+      submissionToken: token(),
+    });
+    same("ز.ب. **والحقلُ الغائبُ تماماً مرفوضٌ كذلك ٤٠٠**", rZb.status, 400);
+    same("ولا كلفةَ تحرّكت", (await storage.getPatient(pZb))?.totalCost ?? 0, 0);
   } finally {
     httpServer.close();
   }

@@ -7,7 +7,7 @@
 // واحدة تُحوّلها إلى طلبٍ ينتظر.
 
 import {
-  EMPTY_DISCOUNT, hasDiscount, discountBlocked, discountPayload,
+  EMPTY_DISCOUNT, hasDiscount, discountBlocked, discountPayload, paymentEntryRequired,
   type DiscountDraft,
 } from "./service_discount_ui";
 
@@ -66,6 +66,22 @@ check("١٢. وسعرٌ أصليٌّ صفر: لا خصمَ يُبنى عليه",
   const p = discountPayload(draft({ finalPrice: 400_000, reason: "humanitarian", note: " مساومة " }));
   check("١٥. والملاحظةُ الحقيقية تُقلَّم وتُرسَل", p.note === "مساومة", JSON.stringify(p));
 }
+
+// ── ٥. المبلغُ المدفوعُ الآن — مجّانيٌّ صريحٌ وحده يُعفي ────────────────────
+//  ══ (تصحيحٌ لاحق) ═══════════════════════════════════════════════════════
+//  كان الشرطُ في الشاشة `!hasDiscount(...)`، و`hasDiscount` تُرجع `true`
+//  لكلّ خصمٍ ولو لم يكن مجّانياً — فخصمٌ مخفَّضٌ حقيقيّ كان يُعفى بالخطأ.
+console.log("\n── ٥. المبلغُ المدفوعُ الآن ──");
+check("١٦. بلا خصمٍ وكلفةٍ موجبة ⟶ إلزاميّ",
+  paymentEntryRequired(EMPTY_DISCOUNT, 100_000));
+check("١٧. **وخصمٌ مخفَّضٌ غيرُ مجّانيّ (١٠٠,٠٠٠ ⟵ ٨٠,٠٠٠) يبقى إلزامياً** — هذا هو الإصلاح",
+  paymentEntryRequired(draft({ finalPrice: 80_000, reason: "negotiation" }), 100_000));
+check("١٨. **ومجّانيٌّ صريحٌ وحده يُعفي**، ولو كانت الكلفةُ موجبة",
+  !paymentEntryRequired(draft({ isFree: true }), 100_000));
+check("١٩. وكلفةٌ صفرٌ (استشارةٌ طبية) بلا خصمٍ ⟶ غيرُ إلزاميّ — لا شيءَ يُقبَض",
+  !paymentEntryRequired(EMPTY_DISCOUNT, 0));
+check("٢٠. وكلفةٌ صفرٌ مع تبرّعٍ صريح أيضاً غيرُ إلزاميّ",
+  !paymentEntryRequired(draft({ isFree: true }), 0));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

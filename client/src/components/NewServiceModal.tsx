@@ -39,7 +39,7 @@ import { nextSubmissionToken, mintSubmissionToken } from "./patient_service_laun
 import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, discountBlocked, discountPayload,
-  hasDiscount, type DiscountDraft,
+  hasDiscount, paymentEntryRequired, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
 
 interface NewServiceModalProps {
@@ -235,6 +235,12 @@ export function NewServiceModal({
   const newTotal = currentTotalCost + serviceCostValue;
   const paidNowValue = Number(form.watch("paidNow")) || 0;
   const remainingAfter = Math.max(0, serviceCostValue - paidNowValue);
+  //  **للعرض الحيّ فقط** (نجمةٌ وتلميحٌ يطابقان ما سيحدث عند الحفظ) —
+  //  `onSubmit` يعيد الحسابَ من `values` وقتَ الحفظ نفسِه، لا من هذا.
+  //  **ومجّانيٌّ صريحٌ وحده يُعفي — لا أيّ خصم**: خصمٌ مخفَّضٌ (١٠٠,٠٠٠ ⟵
+  //  ٨٠,٠٠٠) ليس مجّانياً، فيبقى المبلغُ إلزامياً له كالسعر الكامل.
+  //  (تصحيحٌ لاحق — كان الشرطُ هنا يعفي كلَّ خصمٍ، لا التبرّعَ الصريح وحده.)
+  const paymentRequiredLive = paymentEntryRequired(discount, serviceCostValue);
 
   // ══ **لا تعبئةَ تلقائية لـ«المبلغ المدفوع الآن» — لأيّ نوع خدمة**
   //  (تصحيحٌ لاحق — الجهوزيةُ المالية) ═══════════════════════════════════
@@ -302,8 +308,33 @@ export function NewServiceModal({
     const paidNow = Math.max(0, Math.min(Number(values.paidNow) || 0, serviceCost));
 
     //  **والخصمُ لا يُرسَل إلّا حين يوجد**: المساواةُ ليست خصماً، فالمسارُ
-    //  الطبيعي يمضي بلا طلبٍ ولا طابور — وهو المسارُ الأغلب.
+    //  الطبيعي يمضي بلا طلبٍ ولا طابور — وهو المسارُ الأغلب. (تُستعمَل في
+    //  حمولة الإرسال أدناه فقط — **لا** في حارس الدفع: خصمٌ مخفَّضٌ غيرُ
+    //  مجّانيّ يبقى مشمولاً هنا فتُرسَل تفاصيلُه، لكنّه لا يُعفى من إلزام
+    //  الدفع، راجع `paymentEntryRequired` تحت.)
     const wantsDiscount = isPhysioService && hasDiscount(discount, standardPrice);
+
+    // ══ **الجهوزيةُ الماليةُ — الفراغُ لم يعد يعني «صفراً» بصمت**
+    //  (تصحيحٌ تشغيليّ، وتصحيحٌ لاحقٌ ثانٍ) ═════════════════════════════════
+    //  «المبلغ المدفوع الآن» يبدأ فارغاً دائماً (أعلاه) — وهذا صحيح. لكن
+    //  الفراغَ كان يُرسَل كصفرٍ بلا اعتراض: خدمةٌ حقيقيةٌ موجبةُ الكلفة
+    //  تُسجَّل والمقبوضُ صفرٌ **بلا أن يكتب الموظّفُ رقماً ولا أن يقرّر
+    //  ذلك قصداً** — فيظهر دينٌ كاملٌ لم يُقرَّر، لا مقبوضٌ جزئيّ فعلاً.
+    //
+    //  **والاستثناءُ مجّانيٌّ صريحٌ وحده — لا `wantsDiscount`** (تصحيحٌ
+    //  لاحق: كان الشرطُ `!wantsDiscount`، و`hasDiscount` تُرجع `true` لكلّ
+    //  خصمٍ ولو لم يكن مجّانياً — فخصمٌ حقيقيّ (١٠٠,٠٠٠ ⟵ ٨٠,٠٠٠) كان يُعفى
+    //  بالخطأ رغم أن المريض يدفع مبلغاً موجباً حقيقياً له). `paymentEntryRequired`
+    //  (`service_discount_ui.ts`، مُختبَرةٌ بلا شاشة) تفحص `discount.isFree`
+    //  وحدها. **وليس مضاعفَ سعر الجلسة**: أيّ مبلغٍ موجبٍ يكفي، جزئياً كان
+    //  أو كاملاً.
+    if (paymentEntryRequired(discount, serviceCost) && paidNow <= 0) {
+      toast({
+        title: "«أدخل المبلغ المدفوع الآن»",
+        variant: "destructive",
+      });
+      return;
+    }
 
     mutate({
       ...(wantsDiscount ? { discount: discountPayload(discount) } : {}),
@@ -532,7 +563,10 @@ export function NewServiceModal({
               name="paidNow"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>المبلغ المدفوع الآن</FormLabel>
+                  <FormLabel>
+                    المبلغ المدفوع الآن
+                    {paymentRequiredLive && <span className="text-red-500"> *</span>}
+                  </FormLabel>
                   <FormControl>
                     <MoneyInput
                       value={field.value ?? ""}
@@ -543,7 +577,9 @@ export function NewServiceModal({
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground mt-1">
-                    أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً أو صفراً — والباقي يبقى ديناً يحصّله المحاسب لاحقاً.
+                    {paymentRequiredLive
+                      ? "أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً. مبلغٌ صفريّ غير مقبول لخدمةٍ غير مجّانية — والباقي غير المدفوع يبقى ديناً يحصّله المحاسب لاحقاً."
+                      : "أدخل ما دفعه المريضُ فعلاً الآن — جزئياً أو كاملاً أو صفراً — والباقي يبقى ديناً يحصّله المحاسب لاحقاً."}
                   </p>
                   <FormMessage />
                 </FormItem>

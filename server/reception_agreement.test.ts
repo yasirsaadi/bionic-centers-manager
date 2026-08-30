@@ -181,10 +181,19 @@ const decideDiscount = (session: any, id: number, body: any) =>
  * خارج معاملته بعد اليوم. والبابُ التاريخيّ `/api/discounts/:id/decide`
  * يبقى قانونياً بحرفه لبقيّةٍ حقيقية — صفوفٍ من قبل هذا التغيير — وهذه
  * الدالّة تبني تلك البقيّةَ بإدراجٍ مباشر، تماماً كما تبقى فعلياً.
+ *
+ * ══ و`initialPayment` يبقى `null` افتراضياً — **لا اختراعَ مالٍ** (تصحيحٌ
+ *    لاحقٌ ثانٍ، يُلغي ويستبدل محاولةً أولى افترضت قبضاً كاملاً) ═════════
+ * البقيّةُ التاريخية الحقيقية **لا تحمل مبلغاً محفوظاً** — لم تُسجَّل هذه
+ * الواقعةُ يومَها، ولا يجوز أن يُفترَض قبضٌ كاملٌ لم يُثبِته أحد (نفسُ درس
+ * ٠٣٨/٠٣٥). فالمحاكاةُ الأمينة تُبقيه غائباً كما هو دائماً؛ ومَن يحتاج
+ * صفّاً يحمل مبلغاً محفوظاً فعلاً (لإثبات أن المحفوظ يسود ولا يُستبدَل)
+ * يمرّره صراحةً عبر `opts.initialPayment`.
  */
 async function mkHistoricalPending(patientId: number, opts: {
   originalPrice: number; finalPrice: number; isFree?: boolean; reason?: string;
   entries?: { treatmentType: string; sessionCount: number }[];
+  initialPayment?: number | null;
 }): Promise<number> {
   const isFree = opts.isFree === true;
   const finalPrice = isFree ? 0 : opts.finalPrice;
@@ -196,7 +205,7 @@ async function mkHistoricalPending(patientId: number, opts: {
     entries, serviceNotes: null,
     paymentTreatmentType: entries.map((e) => e.treatmentType).join("، "),
     sessionCount: entries.reduce((s, e) => s + e.sessionCount, 0),
-    initialPayment: null,
+    initialPayment: opts.initialPayment ?? null,
   };
   const r = await q<{ id: number }>(
     `INSERT INTO service_discount_requests
@@ -333,14 +342,32 @@ async function main() {
     same("ج. **ومحاولةُ حسم صفٍّ اكتمل فوراً تُردّ ٤٠٩**", reOpen.status, 409);
     same("   ولا أثرَ ماليّاً ثانياً", await money(pB), afterB);
 
+    // ══ ج.أ بقيّةٌ تاريخية **بلا مبلغٍ محفوظ** — لا اختراعَ مالٍ (تصحيحٌ
+    //      لاحقٌ ثانٍ، يُلغي محاولةً أولى افترضت قبضاً كاملاً بالخطأ) ═══
+    //  الصفُّ لا يحمل `initialPayment` — لم تُسجَّل هذه الواقعةُ يومَها.
+    //  فحسمُه **بلا** أن يكتب المُنجِز المبلغَ الفعليّ الآن يُرفَض — نفسُ
+    //  حارس «خدمة جديدة» المباشرة بعينه، مطبَّقاً على هذا الباب. ولمّا
+    //  يكتب المبلغَ الحقيقيّ ينجح الحسمُ، والمقيَّدُ هو ما كتبه بالضبط —
+    //  لا السعرَ المتَّفقَ عليه المخمَّن.
     const pC = await mk("ج — بقيّةٌ تاريخية", { physio: true });
     const beforeC = await money(pC);
     const reqC = await mkHistoricalPending(pC, { originalPrice: 25000, finalPrice: 12500 });
-    const okC = await decideDiscount(S.mgr, reqC, { decision: "approve" });
-    same("   **والبابُ التاريخيُّ يحسم بقيّةً حقيقية بنجاح**", okC.status, 200);
+
+    const blockedC = await decideDiscount(S.mgr, reqC, { decision: "approve" });
+    same("ج.أ. **وحسمٌ بلا مبلغٍ مدفوعٍ يُردّ ٤٠٠**", blockedC.status, 400);
+    check(String(blockedC.body?.error ?? "").includes("أدخل المبلغ المدفوع الآن"),
+      "برسالةٍ صريحة", JSON.stringify(blockedC.body));
+    same("   **وصفرُ أثرٍ كامل** — لا كلفةَ ولا دفعة", await money(pC), beforeC);
+    const stillPendingC = await q(
+      `SELECT status FROM service_discount_requests WHERE id=$1`, [reqC]);
+    same("   **والصفُّ باقٍ `pending`** — لم يُقفَل بلا مالٍ حقيقيّ", stillPendingC[0]?.status, "pending");
+
+    const okC = await decideDiscount(S.mgr, reqC, { decision: "approve", initialPayment: 12500 });
+    same("   **وبعد إدخال المبلغ الفعليّ يحسم البابُ التاريخيُّ بنجاح**", okC.status, 200);
     const mC = await money(pC);
     same("   والكلفةُ صارت ١٢,٥٠٠", mC.totalCost, 12500);
-    same("   ودفعةٌ واحدة بها", [mC.payments, mC.paid], [1, 12500]);
+    same("   ودفعةٌ واحدة بالمبلغ المُدخَل بالضبط — لا السعرِ المتَّفقِ عليه المخمَّن",
+      [mC.payments, mC.paid], [1, 12500]);
     same("   **وجلسةٌ واحدة بالضبط**", mC.sessions, 1);
     same("   وكلفةُ الحالة تساوي كلفةَ المريض", mC.caseCost, 12500);
     check(mC.visits === 1, "   وزيارةٌ واحدة", String(mC.visits));
@@ -349,6 +376,56 @@ async function main() {
       `SELECT COALESCE(SUM(amount),0)::int c FROM cost_entries WHERE patient_id=$1`, [pC]))[0].c);
     same("   **ومجموعُ قيود الدفتر = الكلفة**", ledgerC, 12500);
     check(mC.paid > beforeC.paid, "   والأثرُ حقيقيٌّ لا وهميّ", JSON.stringify([beforeC, mC]));
+
+    // ══ ج.ب وصفٌّ يحمل مبلغاً محفوظاً فعلاً — المحفوظُ يسود ولا يُستبدَل ══
+    //  صفٌّ نادرٌ يحمل `initialPayment` حقيقياً من قبل هذا التصحيح. حسمُه
+    //  **بلا** أيّ مبلغٍ في طلب الحسم ينجح بالمحفوظ نفسه — لا يُطلَب من
+    //  المُنجِز إعادةَ إدخال رقمٍ موجودٍ أصلاً، ولا رقمٌ آخرَ يُرسَل معه
+    //  فيُستبدَل به المحفوظُ الحقيقيّ.
+    const pCb = await mk("ج.ب — بمبلغٍ محفوظ فعلاً", { physio: true });
+    const reqCb = await mkHistoricalPending(pCb,
+      { originalPrice: 25000, finalPrice: 12500, initialPayment: 9000 });
+    const okCb = await decideDiscount(S.mgr, reqCb, { decision: "approve" });
+    same("ج.ب. **يحسم بالمحفوظ بلا إدخالٍ جديد**", okCb.status, 200);
+    const mCb = await money(pCb);
+    same("   **والمقبوضُ هو المحفوظُ ٩,٠٠٠ بالضبط** — لا ١٢,٥٠٠ الاتّفاق",
+      [mCb.payments, mCb.paid], [1, 9000]);
+
+    // ══ ج.ج بقيّةٌ تاريخية غيرُ مجّانية — «تعديل واعتماد» يقرّرها مجّانيةً
+    //      صراحةً: التنفيذُ يتّبع القرارَ الجديد لا المخزَّنَ القديم
+    //      (تصحيحٌ لاحقٌ ثالث — قيمةٌ بائتة) ═══════════════════════════
+    //  صفٌّ أُدرج **غيرَ مجّانيّ** (`is_free = false`). والمشرفُ في «تعديل
+    //  واعتماد» يقرّر الآن أنها مجّانيةٌ صراحةً — نفسُ ما ترسله الشاشةُ
+    //  فعلياً (`finalPrice: 0, isFree: true` معاً، لا `isFree` وحده: بدون
+    //  `finalPrice` صريح لا يُعاد حسابُ الخصم أصلاً — راجع `changing` في
+    //  `decideDiscountTx`). **العطبُ**: كان التنفيذُ الفعليّ يستعمل
+    //  `req.isFree` القديم (`false`) رغم أن الصفَّ يُختَم `is_free = true`
+    //  بصدق — فتُسجَّل الدفعةُ «غير مجّانية بمبلغٍ صفر» بدل «مجّانيةٍ
+    //  صريحة»، وهذا بالضبط ما يحاول حارسُ الدفع الإلزاميّ منعَه.
+    const pCc = await mk("ج.ج — تعديلٌ إلى مجّاني", { physio: true });
+    const reqCc = await mkHistoricalPending(pCc,
+      { originalPrice: 25000, finalPrice: 12500, isFree: false });
+    const storedCc = await q(`SELECT is_free FROM service_discount_requests WHERE id=$1`, [reqCc]);
+    same("ج.ج. الصفُّ المخزَّنُ غيرُ مجّانيّ أصلاً", storedCc[0]?.is_free, false);
+
+    const okCc = await decideDiscount(S.mgr, reqCc,
+      { decision: "approve", finalPrice: 0, isFree: true });
+    same("   **و«تعديل واعتماد» إلى مجّانيّ صراحةً ينجح**", okCc.status, 200);
+    const mCc = await money(pCc);
+    same("   **بلا أثرٍ ماليّ — لا كلفةَ ولا مقبوض**",
+      [mCc.totalCost, mCc.paid, mCc.caseCost], [0, 0, 0]);
+    same("   **وجلسةٌ واحدة مسجَّلة رغم المجّانيّة**", mCc.sessions, 1);
+    const rowCc = await q(
+      `SELECT is_free_sessions f, amount a, session_count s
+         FROM payments WHERE patient_id=$1`, [pCc]);
+    same("   **والدفعةُ موسومةٌ مجّانيةً صراحةً — لا «غير مجّانية بصفر»**"
+      + " (هذا هو العطبُ الذي يصلحه هذا التصحيح)",
+    [rowCc.length, rowCc[0]?.f, Number(rowCc[0]?.a), Number(rowCc[0]?.s)], [1, true, 0, 1]);
+    const decidedCc = await q(
+      `SELECT is_free f, approved_final_price p FROM service_discount_requests WHERE id=$1`,
+      [reqCc]);
+    same("   والصفُّ نفسُه مختومٌ مجّانياً بالسعر الصحيح",
+      [decidedCc[0]?.f, Number(decidedCc[0]?.p)], [true, 0]);
 
     // ══ د. اعتمادٌ ثانٍ على البقيّة التاريخية لا يُكرّر ════════════════
     console.log("\n── د. الاعتماد المكرَّر ──");
