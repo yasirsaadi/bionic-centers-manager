@@ -139,8 +139,8 @@ function Router() {
             <Route path="/discount-approvals" component={DiscountApprovals} />
             <Route path="/no-exam-review" component={NoExamReview} />
             <Route path="/returned-charges" component={ReturnedCharges} />
-            {/* عرضٌ فقط — بلا اعتماد/رفض بعد. لا عنصرَ شريطٍ جانبيّ ولا
-                شارةَ عددٍ لهذه المرحلة (المهمّةُ تحظرهما صراحةً). */}
+            {/* اعتمادٌ ورفضٌ للمسؤول العام، مع عنصر شريطٍ جانبيّ وشارة
+                عددٍ (`Sidebar.tsx`) — أُكملت الواجهةُ في 2026-08-30. */}
             <Route path="/payment-corrections" component={PaymentCorrections} />
             <Route path="/patient-trash" component={PatientTrash} />
             <Route path="/my-exams" component={MyExams} />

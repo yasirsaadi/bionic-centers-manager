@@ -1,24 +1,44 @@
-// طلباتُ تصحيح الدفعات — عرضٌ فقط (المرحلةُ الأولى، 2026-08-30).
-//
-// ══ قراءةٌ فقط عمداً ═══════════════════════════════════════════════════
-// هذه الصفحةُ لا تعتمد ولا ترفض شيئاً — لا زرَّ قرارٍ فيها ولا نداءَ POST
-// واحد. بطاقةُ الاعتماد الحقيقية مرحلةٌ لاحقة تُبنى فوق نموذج القراءة
-// المُثرى الذي أنتجته `listCorrectionRequests` (المتابعةُ السابقة): اسمُ
-// المريض ورمزُه واسمُ الفرع وحالةُ الدفعة **الآن** — كلُّها من القاعدة،
-// بلا استعلامٍ إضافيٍّ واحد لكلّ صفّ (لا N+1 على العميل).
+// طلباتُ تصحيح الدفعات — قائمةٌ واعتماد (2026-08-30).
 //
 // ══ المسؤولُ العامّ وحده ═════════════════════════════════════════════════
 // نفسُ حارس `isGlobalAdmin` في `server/payments/correction_routes.ts` —
 // الصفحةُ تفحص `session.isAdmin` محلياً قبل الجلب أصلاً (نمطُ
 // `DiscountApprovals`/`ReturnedCharges` القائم)، والخادمُ هو الحارسُ
 // الحقيقيّ الذي لا يتغيّر بتغيّر هذه الشاشة.
+//
+// ══ القرارُ — البابان القائمان وحدهما ═══════════════════════════════════
+// «اعتماد» و«رفض» ينادِيان `POST /api/admin/payment-corrections/:id/
+// approve|reject` القائمتين حرفياً (`server/payments/correction_routes.ts`)
+// — لا منطقَ قرارٍ جديد هنا، ولا نسخةَ ثانية من `applyCorrectionWriteTx`.
+// هذه الصفحةُ عميلٌ رقيقٌ فوق نقطتين موجودتين منذ الجولة السابقة.
+//
+// ══ بلا إزالةٍ تفاؤلية ═══════════════════════════════════════════════════
+// الصفُّ لا يُحذَف محلياً عند الحفظ أبداً — نجاحٌ أو فشلٌ كلاهما يُبطلان
+// استعلامَي القائمة والعدّاد فيُعاد الجلبُ من القاعدة، فتُعرَض الحقيقةُ لا
+// تخمينٌ متفائل. تعارضٌ (٤٠٩ — تغيّرت بياناتُ الدفعة أو حالةُ الطلب منذ
+// الفتح) يترك الصفَّ ظاهراً برسالة الخادم نفسِها، لا صمتاً ولا اختفاءً.
+//
+// ══ لماذا لا `apiRequest` ═══════════════════════════════════════════════
+// `throwIfResNotOk` في `client/src/lib/queryClient.ts` تبني رسالةَ الخطأ من
+// `res.text()` لا `res.json()`، فتصل رسالةُ الخادم كنصٍّ خامٍّ مسبوقٍ برمز
+// الحالة (`'409: {"message":...}'`) لا جملةً عربية مقروءة. فهذا الملفّ
+// ينادي `fetch` مباشرةً ويقرأ `body.message` صراحةً — نفسُ نمط
+// `useDeletePayment`/`updatePaymentFull` في هذا الملفّ من الجولة السابقة.
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
 import {
-  Banknote, Loader2, ShieldAlert, AlertTriangle, AlertCircle, Trash2, Pencil,
+  Banknote, Loader2, ShieldAlert, AlertTriangle, AlertCircle, Trash2, Pencil, Check, X,
 } from "lucide-react";
 
 interface CorrectionRow {
@@ -115,7 +135,10 @@ function CurrentPaymentSummary({ r }: { r: CorrectionRow }) {
       <div className="flex items-center gap-2 text-red-800 bg-red-50 border border-red-300 rounded-md px-3 py-2 text-sm"
         data-testid={`correction-${r.id}-missing-payment`}>
         <AlertTriangle className="w-4 h-4 shrink-0" />
-        <span><b>الدفعةُ المستهدَفة لم تعد موجودة</b> — لا يمكن معرفة حالتها الحالية.</span>
+        <span>
+          <b>الدفعةُ المستهدَفة لم تعد موجودة</b> — لا يمكن معرفة حالتها الحالية، ولا يمكن
+          اعتمادُ هذا الطلب. يبقى بإمكانك رفضُه.
+        </span>
       </div>
     );
   }
@@ -139,7 +162,15 @@ function CurrentPaymentSummary({ r }: { r: CorrectionRow }) {
   );
 }
 
-function CorrectionCard({ r }: { r: CorrectionRow }) {
+function CorrectionCard({
+  r, approveDisabled, rejectDisabled, onApprove, onReject,
+}: {
+  r: CorrectionRow;
+  approveDisabled: boolean;
+  rejectDisabled: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
   const patchKeys = r.requestedPatch
     ? FIELD_ORDER.filter((k) => Object.prototype.hasOwnProperty.call(r.requestedPatch as object, k))
     : [];
@@ -199,14 +230,44 @@ function CorrectionCard({ r }: { r: CorrectionRow }) {
         )}
 
         <CurrentPaymentSummary r={r} />
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+            disabled={approveDisabled}
+            onClick={onApprove}
+            data-testid={`correction-${r.id}-approve`}
+          >
+            <Check className="w-4 h-4" /> اعتماد
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1 text-red-700 border-red-300 hover:bg-red-50"
+            disabled={rejectDisabled}
+            onClick={onReject}
+            data-testid={`correction-${r.id}-reject`}
+          >
+            <X className="w-4 h-4" /> رفض
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
 }
 
+/** أيّ قرارٍ يُطلَب تأكيدُه الآن — الصفُّ ونوعُ القرار معاً. */
+type PendingDecision = { row: CorrectionRow; kind: "approve" | "reject" };
+
 export default function PaymentCorrections() {
   const session = useBranchSession();
   const isAdmin = Boolean((session as any)?.isAdmin);
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const [confirm, setConfirm] = useState<PendingDecision | null>(null);
+  const [note, setNote] = useState("");
 
   const { data, isLoading, isError, error } = useQuery<CorrectionRow[]>({
     queryKey: ["/api/admin/payment-corrections", "pending"],
@@ -221,6 +282,51 @@ export default function PaymentCorrections() {
     },
   });
   const rows = data ?? [];
+
+  // ══ الاعتماد/الرفض — عميلٌ رقيقٌ فوق البابين القائمين ═══════════════════
+  // نداءٌ واحدٌ يخدم الاثنين معاً (`kind` يختار المسار)، فلا منطقَ مكرَّراً.
+  const decide = useMutation({
+    mutationFn: async (v: { id: number; kind: "approve" | "reject"; decisionNote: string }) => {
+      const res = await fetch(`/api/admin/payment-corrections/${v.id}/${v.kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ decisionNote: v.decisionNote.trim() || null }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as any));
+        throw new Error(body?.message || (v.kind === "approve" ? "تعذّر اعتماد الطلب" : "تعذّر رفض الطلب"));
+      }
+      return res.json();
+    },
+    // بلا إزالةٍ تفاؤلية للصفّ: النجاحُ يُبطل القائمةَ والعدّادَ معاً فيُعاد
+    // الجلبُ من القاعدة — لا حذفَ محلياً يفترض ما سيرجعه الخادم.
+    onSuccess: (_data, v) => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending-count"] });
+      toast({
+        title: v.kind === "approve" ? "تمّ اعتماد الطلب" : "تمّ رفض الطلب",
+        description: v.kind === "approve"
+          ? "طُبِّق التصحيحُ على الدفعة، وقُيِّد أثرُها المحاسبيّ."
+          : "لم يتغيّر شيءٌ في الدفعة — أُغلق الطلبُ دون تنفيذه.",
+      });
+    },
+    // تعارضٌ (٤٠٩ — تغيّرت بياناتُ الدفعة أو حالةُ الطلب منذ الفتح) أو أيُّ
+    // فشلٍ آخر: الصفُّ يبقى ظاهراً (بلا حذفٍ تفاؤليّ أصلاً)، والقائمةُ
+    // تُحدَّث من القاعدة فوراً كي لا يبقى معروضاً بحالةٍ تجاوزها الواقع.
+    onError: (err: any, v) => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending"] });
+      toast({
+        title: v.kind === "approve" ? "تعذّر اعتماد الطلب" : "تعذّر رفض الطلب",
+        description: err?.message || "حاول مرة أخرى",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setConfirm(null);
+      setNote("");
+    },
+  });
 
   if (!isAdmin) {
     return (
@@ -249,7 +355,8 @@ export default function PaymentCorrections() {
       <p className="text-sm text-muted-foreground">
         تعديلٌ أو حذفٌ لحقلٍ محميٍّ في دفعة (المبلغ · التاريخ الماليّ · نوع
         العلاج · الجلسات المجانية) قدّمه موظّفٌ غيرُ المسؤول العام، وينتظر
-        قراره. <b>هذه صفحةُ عرضٍ فقط — الاعتمادُ والرفضُ في مرحلةٍ لاحقة.</b>
+        قرارك. الاعتمادُ يُطبِّق التغييرَ فوراً على الدفعة ويُقيِّد أثرَه
+        المحاسبيّ؛ والرفضُ يُغلق الطلبَ بلا أثرٍ مالي.
       </p>
 
       {isLoading ? (
@@ -270,9 +377,67 @@ export default function PaymentCorrections() {
         </CardContent></Card>
       ) : (
         <div className="space-y-3">
-          {rows.map((r) => <CorrectionCard key={r.id} r={r} />)}
+          {rows.map((r) => (
+            <CorrectionCard
+              key={r.id}
+              r={r}
+              approveDisabled={!r.currentPaymentExists || (decide.isPending && decide.variables?.id === r.id)}
+              rejectDisabled={decide.isPending && decide.variables?.id === r.id}
+              onApprove={() => { setNote(""); setConfirm({ row: r, kind: "approve" }); }}
+              onReject={() => { setNote(""); setConfirm({ row: r, kind: "reject" }); }}
+            />
+          ))}
         </div>
       )}
+
+      {/* ══ حوارُ التأكيد — مشتركٌ للاعتماد والرفض معاً ═══════════════════
+          مغلَقٌ افتراضاً (`open={!!confirm}`)، فتحُه من زرّ الصفّ لا من
+          `AlertDialogTrigger` — الحوارُ واحدٌ لكلّ الصفوف لا نسخةً بكلّ
+          بطاقة. */}
+      <AlertDialog open={!!confirm} onOpenChange={(open) => { if (!open) { setConfirm(null); setNote(""); } }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle data-testid="text-decision-dialog-title">
+              {confirm?.kind === "approve"
+                ? (confirm.row.action === "delete" ? "اعتماد حذف الدفعة؟" : "اعتماد تعديل الدفعة؟")
+                : "رفض طلب التصحيح؟"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm?.kind === "approve"
+                ? (confirm.row.action === "delete"
+                  ? "سيُحذَف صفّ الدفعة نهائياً ويُعكَس قيدُها المحاسبي فوراً — هذا الإجراء لا رجعة فيه."
+                  : "سيُطبَّق التغييرُ المطلوب على الدفعة فوراً، ويُعاد بناء قيدها المحاسبي إن لزم.")
+                : "لن يتغيّر شيءٌ في الدفعة — يُغلَق الطلبُ دون تنفيذه، ويبقى بإمكان مقدّمه إرسالَ طلبٍ آخر."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium">ملاحظة (اختياري)</label>
+            <Textarea
+              className="text-right"
+              placeholder="اكتب ملاحظةً عن القرار إن أردت"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              data-testid="input-decision-note"
+            />
+          </div>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!confirm) return;
+                decide.mutate({ id: confirm.row.id, kind: confirm.kind, decisionNote: note });
+              }}
+              className={confirm?.kind === "approve" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}
+              disabled={decide.isPending}
+              data-testid="confirm-decision"
+            >
+              {decide.isPending
+                ? "جارٍ الحفظ..."
+                : (confirm?.kind === "approve" ? "نعم، اعتمد" : "نعم، ارفض")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

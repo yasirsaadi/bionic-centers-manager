@@ -938,9 +938,13 @@ async function main() {
       await rejectCorrectionHttp(fcr.id, S.admin);
     }
 
-    // ══ خ. صفحةُ طلبات تصحيح الدفعات — عرضٌ فقط، بلا مسّ للخادم ═══════════
-    // متابعةٌ رابعة (2026-08-30): عقدُ شاشةٍ نصّيّ بحت — لا خادم، لا نداءَ
-    // POST، لا شريطَ جانبيّ لهذه المرحلة.
+    // ══ خ. صفحةُ طلبات تصحيح الدفعات — عقدُ نموذج القراءة ═══════════════════
+    // متابعةٌ رابعة (2026-08-30): عقدُ شاشةٍ نصّيّ لنموذج القراءة.
+    // **تصحيحٌ لاحقٌ في اليوم نفسه (قسم ذ)**: كانت خ١٠/خ١٢ تثبتان عمداً غيابَ
+    // POST وuseMutation وعنصر الشريط الجانبيّ — تلك كانت حدودَ تلك الجولة
+    // بالضبط، لا خطأً. المتابعةُ الخامسة (قسم ذ) أضافت الاعتمادَ والرفضَ
+    // والشارةَ كما طُلب، فصار إبقاءُ الفحصين القديمين كذباً يفشل حتماً —
+    // عُدِّلا هنا ليطابقا الواقعَ الجديد، والفحصُ التفصيليّ الكامل في قسم ذ.
     console.log("\n── خ. صفحةُ طلبات تصحيح الدفعات (عقدٌ نصّيّ) ──");
     {
       const pageSrc = readFileSync(
@@ -965,21 +969,213 @@ async function main() {
       check(/requestedPatch/.test(pageSrc), "خ٨. تعرض requestedPatch");
       check(/currentPaymentExists/.test(pageSrc), "خ٩. تعرض currentPaymentExists");
 
-      // ٤. بلا أيّ نداء POST — لا اعتماد ولا رفض، ولا حتى useMutation.
-      check(
-        !/method:\s*["'`]POST["'`]/.test(pageSrc)
-        && !/apiRequest\(\s*["'`]POST["'`]/.test(pageSrc)
-        && !/useMutation/.test(pageSrc),
-        "خ١٠. **بلا أيّ نداء POST وبلا useMutation — لا اعتماد ولا رفض ولا زرَّ قرارٍ في هذه المرحلة**",
-      );
+      // ٤. الاعتمادُ والرفضُ صارا حقيقيّين (قسم ذ) — الفحصُ القديم كان يثبت
+      // غيابَهما؛ استُبدل بإثبات حضورهما بالشكل الصحيح (تفصيلٌ كاملٌ في ذ).
+      check(/useMutation/.test(pageSrc),
+        "خ١٠. **صار فيها useMutation للقرار — لم تعد صفحةَ عرضٍ فقط (تفصيلٌ في قسم ذ)**");
 
       // ٥. App.tsx يسجّل المسار ومكوّنه.
       check(/PaymentCorrections/.test(appSrc) && /\/payment-corrections/.test(appSrc),
         "خ١١. **App.tsx يسجّل `/payment-corrections` ومكوّن `PaymentCorrections`**");
 
-      // ٦. لا عنصرَ شريطٍ جانبيّ لهذه الصفحة في هذه المرحلة — محظورٌ صراحةً.
-      check(!/payment-corrections/.test(sidebarSrc),
-        "خ١٢. **ولا عنصرَ شريطٍ جانبيّ لهذه الصفحة بعد — لم يُمَسّ Sidebar.tsx**");
+      // ٦. عنصرُ الشريط الجانبيّ صار موجوداً (قسم ذ) — الفحصُ القديم كان
+      // يثبت غيابَه؛ استُبدل بإثبات حضوره (تفصيلٌ كاملٌ في قسم ذ).
+      check(/payment-corrections/.test(sidebarSrc),
+        "خ١٢. **وSidebar.tsx صار يذكر `/payment-corrections` — عنصرٌ أُضيف (تفصيلٌ في قسم ذ)**");
+    }
+
+    // ══ ذ. إكمالُ واجهة طابور تصحيح الدفعات — اعتمادٌ ورفضٌ فعليّان ═══════
+    // متابعةٌ خامسة (2026-08-30 — «COMPLETE PAYMENT CORRECTION QUEUE UI»):
+    // الصفحةُ لم تعد عرضاً فقط، والشريطُ الجانبيّ يحمل عنصراً وشارةً. لا
+    // منطقَ قرارٍ جديد على الخادم — البابان القائمان `…/approve` و`…/reject`
+    // (`server/payments/correction_routes.ts`) وحدهما، بلا تعديلٍ عليهما.
+    console.log("\n── ذ. اعتمادٌ ورفضٌ فعليّان — إكمالُ واجهة الطابور ──");
+    {
+      // ١) اعتمادٌ حقيقيّ عبر نقطة `POST …/approve` القائمة — يُطبِّق التصحيح.
+      const pid1 = await mkPatient("مريضُ اعتمادٍ حقيقي", 1);
+      const paymentId1 = await mkPaymentRaw({ patientId: pid1, branchId: 1, amount: 40000 });
+      const rReq1 = await patchPayment(paymentId1, S.recvOk, { amount: 55000, reason: "اختبار الاعتماد الحيّ" });
+      same("ذ١. طلبُ تصحيحٍ ⟶ ٢٠٢", rReq1.status, 202);
+      const fcr1 = await pendingFcrFor(paymentId1);
+      check(!!fcr1, "ذ٢. وطلبٌ معلَّقٌ نشأ");
+
+      const rApprove1 = await approveCorrectionHttp(fcr1.id, S.admin);
+      same("ذ٣. **نقطةُ الاعتماد الحقيقية `POST …/approve` تُستعمَل وتنجح (٢٠٠)**", rApprove1.status, 200);
+      const afterApprove1 = await getPayment(paymentId1);
+      same("ذ٤. **والمبلغُ طُبِّق فعلاً على الدفعة**", afterApprove1.amount, 55000);
+      const statusAfterApprove1 = (await q<{ status: string }>(
+        `SELECT status FROM financial_correction_requests WHERE id=$1`, [fcr1.id]))[0].status;
+      same("ذ٥. **وحالةُ الطلب صارت approved**", statusAfterApprove1, "approved");
+
+      // ٢) رفضٌ حقيقيّ عبر نقطة `POST …/reject` القائمة — لا يغيّر الدفعة.
+      const pid2 = await mkPatient("مريضُ رفضٍ حقيقي", 1);
+      const paymentId2 = await mkPaymentRaw({ patientId: pid2, branchId: 1, amount: 60000 });
+      const rReq2 = await patchPayment(paymentId2, S.recvOk, { amount: 70000, reason: "اختبار الرفض الحيّ" });
+      const fcr2 = await pendingFcrFor(paymentId2);
+      check(!!fcr2, "ذ٦. وطلبٌ معلَّقٌ آخر نشأ");
+      const beforeReject2 = await getPayment(paymentId2);
+
+      const rReject2 = await rejectCorrectionHttp(fcr2.id, S.admin);
+      same("ذ٧. **نقطةُ الرفض الحقيقية `POST …/reject` تُستعمَل وتنجح (٢٠٠)**", rReject2.status, 200);
+      const afterReject2 = await getPayment(paymentId2);
+      same("ذ٨. **والدفعةُ لم تتغيّر إطلاقاً**", afterReject2.amount, beforeReject2.amount);
+      const statusAfterReject2 = (await q<{ status: string }>(
+        `SELECT status FROM financial_correction_requests WHERE id=$1`, [fcr2.id]))[0].status;
+      same("ذ٩. **وحالةُ الطلب صارت rejected**", statusAfterReject2, "rejected");
+
+      // ٣) القائمةُ المعلَّقة تعكس الحسمين فعلاً — نفسُ ما يعتمد عليه
+      // الإبطالُ (`invalidateQueries`) في الواجهة بعد قرارٍ ناجح.
+      const rListAfter = await http("GET", "/api/admin/payment-corrections?status=pending", S.admin);
+      const stillPendingIds = (rListAfter.body ?? []).map((r: any) => r.id);
+      check(!stillPendingIds.includes(fcr1.id) && !stillPendingIds.includes(fcr2.id),
+        "ذ١٠. **وكلا الطلبين خرجا من قائمة المعلَّق — القائمةُ تعكس الحسمَ فعلاً من القاعدة**");
+
+      // ٤) دفعةٌ تختفي من تحت طلبٍ معلَّق: لا يمكن اعتمادُها، ويمكن رفضُها.
+      const pid3 = await mkPatient("مريضُ دفعةٍ تختفي", 1);
+      const paymentId3 = await mkPaymentRaw({ patientId: pid3, branchId: 1, amount: 25000 });
+      const rReq3 = await patchPayment(paymentId3, S.recvOk, { amount: 33000, reason: "طلبٌ ستختفي دفعتُه" });
+      const fcr3 = await pendingFcrFor(paymentId3);
+      check(!!fcr3, "ذ١١. وطلبُ تصحيحٍ ثالثٌ نشأ");
+
+      // نحذف صفَّ الدفعة مباشرةً من تحت الطلب — نفسُ سيناريو
+      // `currentPaymentExists: false` الذي تُثريه `listCorrectionRequests` (قسم ث).
+      await q(`DELETE FROM journal_lines WHERE entry_id IN (
+                 SELECT id FROM journal_entries WHERE source_type='payment' AND source_id=$1)`, [paymentId3]);
+      await q(`DELETE FROM journal_entries WHERE source_type='payment' AND source_id=$1`, [paymentId3]);
+      await q(`DELETE FROM payments WHERE id=$1`, [paymentId3]);
+
+      const rListMissing = await http("GET", "/api/admin/payment-corrections?status=pending", S.admin);
+      const rowMissing = (rListMissing.body ?? []).find((r: any) => r.id === fcr3.id);
+      check(!!rowMissing && rowMissing.currentPaymentExists === false,
+        "ذ١٢. **القائمةُ تُظهر currentPaymentExists=false للدفعة المحذوفة — أساسُ تعطيل زرّ الاعتماد**");
+
+      const rApprove3 = await approveCorrectionHttp(fcr3.id, S.admin);
+      same("ذ١٣. **الدفعةُ المفقودة لا يمكن اعتمادُها ⟶ ٤٠٩**", rApprove3.status, 409);
+      check(typeof rApprove3.body?.message === "string" && rApprove3.body.message.length > 0,
+        "ذ١٤. **ورسالةُ خطأٍ عربيةٌ حقيقيةٌ من الخادم — لا نصٌّ فارغ**", JSON.stringify(rApprove3.body));
+      const statusAfterFailedApprove3 = (await q<{ status: string }>(
+        `SELECT status FROM financial_correction_requests WHERE id=$1`, [fcr3.id]))[0].status;
+      same("ذ١٥. **وحالةُ الطلب تبقى pending — لا كتابةَ عند الفشل**", statusAfterFailedApprove3, "pending");
+
+      const rReject3 = await rejectCorrectionHttp(fcr3.id, S.admin);
+      same("ذ١٦. **لكنّ رفضَها ينجح رغم غياب الدفعة (٢٠٠)**", rReject3.status, 200);
+      const statusAfterReject3 = (await q<{ status: string }>(
+        `SELECT status FROM financial_correction_requests WHERE id=$1`, [fcr3.id]))[0].status;
+      same("ذ١٧. **وحالتُها صارت rejected**", statusAfterReject3, "rejected");
+
+      // ٥) تعارضٌ حقيقيّ (٤٠٩) على طلبٍ حُسم بالفعل — يثبت أنّ الخادم يرسل
+      // رسالةً عربيةً حقيقية تصلح لعرضها في الواجهة عند تعارضٍ حيّ.
+      const rApproveAgain = await approveCorrectionHttp(fcr2.id, S.admin);
+      same("ذ١٨. **اعتمادُ طلبٍ رُفض بالفعل ⟶ ٤٠٩ (تعارضٌ حقيقيّ)**", rApproveAgain.status, 409);
+      check(typeof rApproveAgain.body?.message === "string" && rApproveAgain.body.message.length > 0,
+        "ذ١٩. **برسالةٍ عربيةٍ حقيقية — نفسُ ما ستعرضه الواجهةُ حرفياً في التوست**",
+        JSON.stringify(rApproveAgain.body));
+
+      // ══ عقدُ مصدر الصفحة — الأزرارُ والحوارُ والإبطالُ ═══════════════════
+      const pageSrc = readFileSync(
+        join(__dirname, "..", "client/src/pages/PaymentCorrections.tsx"), "utf8");
+      const sidebarSrc = readFileSync(
+        join(__dirname, "..", "client/src/components/Sidebar.tsx"), "utf8");
+      const appSrc = readFileSync(join(__dirname, "..", "client/src/App.tsx"), "utf8");
+
+      // ٦. تبني نداءَ القرار من نقطتين حقيقيّتين بمعرّف ونوعٍ (لا نصّاً ثابتاً
+      // لمسارٍ واحد) — والحيّ أعلاه (ذ٣/ذ٧) يثبت أنّ كلا النقطتين تعملان.
+      check(
+        /\/api\/admin\/payment-corrections\/\$\{[^}]+\}\/\$\{[^}]+\}/.test(pageSrc)
+        && /kind:\s*["']approve["']/.test(pageSrc),
+        "ذ٢٠. **مصدرُ الصفحة يبني نداءَ الاعتماد على نقطة `…/:id/approve` الحقيقية**",
+      );
+      check(/kind:\s*["']reject["']/.test(pageSrc),
+        "ذ٢١. **ونداءَ الرفض على نقطة `…/:id/reject` الحقيقية بنفس الآلية**");
+
+      // ٧. حوارُ تأكيدٍ عربيّ قبل التنفيذ — يفرّق تعديلاً عن حذفٍ في الاعتماد.
+      check(/<AlertDialog\b/.test(pageSrc) && /AlertDialogAction/.test(pageSrc)
+        && /confirm-decision/.test(pageSrc),
+        "ذ٢٢. **حوارُ تأكيدٍ (AlertDialog) موجودٌ فعلاً قبل أيّ قرار**");
+      check(/اعتماد تعديل الدفعة/.test(pageSrc) && /اعتماد حذف الدفعة/.test(pageSrc),
+        "ذ٢٣. **ووصفُ الاعتماد يفرّق تعديلاً عن حذفٍ صراحةً (نصّان عربيّان مختلفان)**");
+      check(/رفض طلب التصحيح/.test(pageSrc),
+        "ذ٢٤. **ووصفُ الرفض موجودٌ أيضاً**");
+      check(/decisionNote/.test(pageSrc) && /ملاحظة \(اختياري\)/.test(pageSrc),
+        "ذ٢٥. **وحقلُ `decisionNote` اختياريّ في الحوار (بلا نجمة إلزام)**");
+
+      // ٨. بلا إزالةٍ تفاؤلية — لا `setQueryData`، ولا مصفوفةَ صفوفٍ محليّة
+      // مستقلّة عن نتيجة `useQuery` تُحذَف منها العناصر يدوياً.
+      check(
+        !/setQueryData/.test(pageSrc)
+        && !/rows\.filter\(/.test(pageSrc)
+        && !/useState<CorrectionRow\[\]/.test(pageSrc),
+        "ذ٢٦. **بلا إزالةٍ تفاؤلية — لا `setQueryData` ولا حذفَ صفٍّ محليّاً من المصفوفة**",
+      );
+
+      // ٩. نجاحٌ يُبطل مفتاحَي القائمة المعلَّقة والعدّاد معاً.
+      check(
+        /onSuccess/.test(pageSrc) && /invalidateQueries/.test(pageSrc)
+        && /"pending"/.test(pageSrc) && /"pending-count"/.test(pageSrc),
+        "ذ٢٧. **onSuccess يُبطل مفتاحَي القائمة المعلَّقة والعدّاد معاً**",
+      );
+
+      // ١٠. تعارضٌ (٤٠٩) أو أيُّ فشلٍ آخر: تُقرأ رسالةُ الخادم، والقائمةُ تُبطَل
+      // كذلك — فلا يبقى الصفُّ معروضاً بحالةٍ تجاوزها الواقع.
+      check(/onError:\s*\([^)]*\)\s*=>\s*\{[\s\S]{0,300}invalidateQueries/.test(pageSrc),
+        "ذ٢٨. **onError نفسُه يُبطل القائمةَ أيضاً — تعارضٌ ٤٠٩ يُحدِّث العرضَ لا يتركه بائتاً**");
+      check(/err\?\.message/.test(pageSrc),
+        "ذ٢٩. **ويقرأ `err.message` — رسالةَ الخادم الحقيقية (المُثبَتة حيّاً في ذ١٤/ذ١٩) — لا نصّاً عاماً وحده**");
+
+      // ١١. الدفعةُ المفقودة تعطّل زرّ الاعتماد وحده — الرفضُ يبقى متاحاً.
+      const approveDisabledMatch = pageSrc.match(/approveDisabled=\{([^}]+)\}/);
+      const rejectDisabledMatch = pageSrc.match(/rejectDisabled=\{([^}]+)\}/);
+      check(!!approveDisabledMatch && /currentPaymentExists/.test(approveDisabledMatch[1]),
+        "ذ٣٠. **`approveDisabled` مشروطٌ بـ`currentPaymentExists` — الاعتمادُ معطَّلٌ للدفعة المفقودة**",
+        approveDisabledMatch?.[1] ?? "غير موجود");
+      check(!!rejectDisabledMatch && !/currentPaymentExists/.test(rejectDisabledMatch[1]),
+        "ذ٣١. **و`rejectDisabled` غيرُ مشروطٍ بها — الرفضُ يبقى متاحاً دائماً (مطابقٌ لذ١٦ الحيّ)**",
+        rejectDisabledMatch?.[1] ?? "غير موجود");
+
+      // ١٢. منعُ التقديم المزدوج أثناء التنفيذ — الأزرارُ وحوارُ التأكيد كلُّها
+      // تتعطّل بنفس حالة التحميل.
+      const pendingMentions = (pageSrc.match(/decide\.isPending/g) || []).length;
+      check(pendingMentions >= 3,
+        "ذ٣٢. **أزرارُ الصفّ وزرُّ حوار التأكيد تُعطَّل أثناء تنفيذ قرارٍ (`decide.isPending` مستعملةٌ في مواضعَ متعدّدة)**",
+        String(pendingMentions));
+
+      // ١٣. الشريطُ الجانبيّ يستعمل نقطةَ العدّ الحقيقية.
+      check(/\/api\/admin\/payment-corrections\/pending-count/.test(sidebarSrc),
+        "ذ٣٣. **Sidebar.tsx يجلب `GET /api/admin/payment-corrections/pending-count` بعينها**");
+
+      // ١٤. عنصرُ الشريط الجانبيّ — للمسؤول العام حصراً، يختفي عند الصفر،
+      // ورابطُه لم يتغيّر.
+      const sidebarItemLine = sidebarSrc.split("\n")
+        .find((l) => l.includes('"طلبات تصحيح الدفعات"'));
+      check(!!sidebarItemLine, "ذ٣٤. **عنصرُ «طلبات تصحيح الدفعات» موجودٌ في baseMenuItems**",
+        String(sidebarItemLine));
+      check(!!sidebarItemLine && /adminOnly:\s*true/.test(sidebarItemLine),
+        "ذ٣٥. **وهو `adminOnly: true` — للمسؤول العام حصراً، لا مديرَ فرعٍ ولا دوراً آخر**",
+        String(sidebarItemLine));
+      check(!!sidebarItemLine && /href:\s*["']\/payment-corrections["']/.test(sidebarItemLine),
+        "ذ٣٦. **ورابطُه `/payment-corrections` — المسارُ لم يتغيّر**", String(sidebarItemLine));
+      check(!!sidebarItemLine && /hideWhenZero:\s*true/.test(sidebarItemLine),
+        "ذ٣٧. **و`hideWhenZero: true` — يختفي الصفُّ كلُّه حين العدّادُ صفر**", String(sidebarItemLine));
+      check(!!sidebarItemLine && /badge:\s*paymentCorrectionsCount/.test(sidebarItemLine),
+        "ذ٣٨. **وشارتُه من عدّاد المعلَّق الحيّ (`paymentCorrectionsCount`) — نفسُ نمط الشارات الأخرى**",
+        String(sidebarItemLine));
+
+      // ١٥. الشارةُ تُجلَب للمسؤول العام فقط، وبنفس نمط التحديث الدوريّ
+      // (٥ دقائق) المستعمَل لبقيّة شارات الطوابير.
+      const badgeBlock = sidebarSrc.slice(
+        sidebarSrc.indexOf("paymentCorrectionsData"),
+        sidebarSrc.indexOf("paymentCorrectionsCount") + 40);
+      check(/enabled:\s*!!branchSession\?\.isAdmin/.test(badgeBlock),
+        "ذ٣٩. **جلبُ العدّاد مشروطٌ بـ`branchSession?.isAdmin` وحده**", badgeBlock);
+      check(/refetchInterval:\s*5 \* 60_000/.test(badgeBlock),
+        "ذ٤٠. **وبنفس فاصل التحديث الدوريّ (٥ دقائق) المستعمَل لبقيّة شارات الطوابير**", badgeBlock);
+
+      // ١٦. المسارُ لم يتغيّر في App.tsx (تثبيتٌ إضافيّ إلى جانب خ١١).
+      check(/path="\/payment-corrections"/.test(appSrc) && /component=\{PaymentCorrections\}/.test(appSrc),
+        "ذ٤١. **والمسارُ في App.tsx ما زال `/payment-corrections` بمكوّنه نفسِه**");
+
+      // تنظيف — لا يبقى شيءٌ معلَّقاً بعد الاختبار (كلُّ الطلبات الثلاثة
+      // حُسمت أعلاه بالفعل: fcr1 اعتُمد، fcr2 وfcr3 رُفضا).
     }
 
     console.log(`\n${failures === 0 ? "✅ كل فحوص صلاحية الدفعات ونطاق الفرع نجحت"
