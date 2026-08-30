@@ -32,10 +32,14 @@
 // كلُّ حقلٍ في `beforeSnapshot` (الهويّة والحقول القابلة للتغيير معاً) يُقارَن
 // بالحاضر تحت القفل — أيّ انحرافٍ منذ تقديم الطلب ⟶ ٤٠٩ بلا كتابة.
 //
-// ══ ما لا يفعله هذا الملفّ ═══════════════════════════════════════════════
-// لا يُعيد إسناد حالة الدفعة (`reattachPaymentCase`) بمنطقٍ جديد — ينادي
-// دالّةَ `storage` القائمة نفسَها التي تنادِيها `updatePayment` دائماً عند
-// تغيّر الوسم، بعد نجاح المعاملة الصارمة (أطلِق وانسَ، كما كانت دوماً).
+// ══ إعادةُ إسناد الحالة — صارمةٌ داخل المعاملة نفسِها (متابعة 2026-08-29)
+// ═══════════════════════════════════════════════════════════════════════
+// تغييرٌ فعليّ في نوع العلاج المدفوع يعيد إسناد `payments.case_id` **داخل
+// نفس معاملة التصحيح** — لا خطوةً بعديةً أطلِق-وانسَ بعد الالتزام. تُنادى
+// دالّةُ `storage.reattachPaymentCase` القانونية نفسُها (لا منطقَ إسنادٍ
+// موازٍ)، لكن **بتمرير `tx`** فتصير فشلاً صارماً يُسقط المعاملةَ كاملةً —
+// القيدَ والدفعةَ وحالةَ الطلب معاً — لا خطأً يُبتلع بصمت. `storage`
+// تحتفظ بسلوكها التاريخيّ (أطلِق وانسَ) لكلّ مُستدعٍ آخر لا يمرّر `tx`.
 
 import { db } from "../db";
 import { payments, financialCorrectionRequests } from "@shared/schema";
@@ -230,8 +234,10 @@ function isStale(current: Payment, snapshot: Record<string, unknown>): boolean {
 /**
  * الكتابةُ الوحيدة على صفّ الدفعة — تحت معاملة المستدعي دائماً.
  * ترتيبٌ ملزَم: (١) عكسُ القيد القائم إن لَمس التصحيحُ حقلاً مالياً · (٢)
- * تطبيقُ الدفعة النهائية · (٣) القيدُ الجديد إن كان المبلغُ موجباً والدفعةُ
- * ليست جلسةً مجانية. فشلٌ حقيقيّ في أيّ خطوةٍ يُسقط المعاملةَ كاملةً.
+ * تطبيقُ الدفعة النهائية · (٣) إعادةُ إسناد الحالة **صارمةً** إن تغيّر
+ * نوعُ العلاج فعلاً — تحت نفس `tx`، بلا try يبتلع فشلها · (٤) القيدُ
+ * الجديد إن كان المبلغُ موجباً والدفعةُ ليست جلسةً مجانية. فشلٌ حقيقيّ في
+ * أيّ خطوةٍ يُسقط المعاملةَ كاملةً — لا نصفَ كتابة.
  */
 async function applyCorrectionWriteTx(tx: any, params: {
   before: Payment;
@@ -267,21 +273,20 @@ async function applyCorrectionWriteTx(tx: any, params: {
     ? await tx.update(payments).set(setFields).where(eq(payments.id, before.id)).returning()
     : [before];
 
+  // ── إعادةُ إسنادِ الحالة — داخل المعاملة، صارمة ──────────────────────
+  // تغييرٌ فعليّ في نوع العلاج المدفوع (لا كلّ لمسٍ للحقل — `changed`
+  // موجودةٌ فقط حين اختلفت القيمةُ فعلاً عن المخزَّن، بحكم `diffPaymentPatch`)
+  // يستدعي الدالّةَ القانونية نفسَها بتمرير `tx`: لا try هنا، ففشلٌ حقيقيّ
+  // يصعد فيُسقط المعاملةَ (القيدَ والدفعةَ وحالةَ الطلب معاً).
+  if (changed.paymentTreatmentType !== undefined) {
+    await storage.reattachPaymentCase(before.id, before.patientId, changed.paymentTreatmentType, tx);
+  }
+
   if (touchesJournal && updated.amount > 0 && !updated.isFreeSessions) {
     await createJournalForPaymentTx(tx, updated, params.reversedBy);
   }
 
   return { payment: updated, journalRebuilt: touchesJournal };
-}
-
-/** بعد نجاح المعاملة — أطلِق وانسَ، مطابقٌ لِـ`updatePayment` دائماً. */
-async function reattachIfTagChanged(paymentId: number, patientId: number, changed: NormalizedPatch): Promise<void> {
-  if (changed.paymentTreatmentType === undefined) return;
-  try {
-    await storage.reattachPaymentCase(paymentId, patientId, changed.paymentTreatmentType ?? null);
-  } catch (err) {
-    console.error(`[payment-correction] reattach failed for payment ${paymentId}:`, err);
-  }
 }
 
 // ══ الطلبُ المعلَّق — لغير المسؤول العام ═══════════════════════════════
@@ -388,11 +393,9 @@ export async function applyPaymentCorrectionDirect(params: {
       tx,
     });
 
-    return { payment: result.payment, before, changed };
+    return { payment: result.payment, before };
   };
-  const out = params.tx ? await body(params.tx) : await db.transaction(body);
-  await reattachIfTagChanged(out.before.id, out.before.patientId, out.changed);
-  return { payment: out.payment, before: out.before };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 // ══ الاعتماد والرفض — نقاط المسؤول العام في correction_routes.ts ═══════
@@ -463,11 +466,9 @@ export async function approveCorrection(params: {
       tx,
     });
 
-    return { request: updatedRequest, payment: result.payment, patientId: current.patientId, changed };
+    return { request: updatedRequest, payment: result.payment };
   };
-  const out = params.tx ? await body(params.tx) : await db.transaction(body);
-  await reattachIfTagChanged(out.request.targetId, out.patientId, out.changed);
-  return { request: out.request, payment: out.payment };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
 }
 
 export async function rejectCorrection(params: {

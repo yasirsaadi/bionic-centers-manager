@@ -3607,49 +3607,47 @@ export async function registerRoutes(
     }
   });
 
-  // Update payment session info — admin or branch_manager (within branch)
+  // ══ بيانات جلسات الدفعة — عمليّةٌ صرفة: عددُ الجلسات وحده (متابعةُ تحكّم
+  // تصحيح الدفعات، 2026-08-29) ═══════════════════════════════════════════
+  // كانت هذه النقطة تكتب `paymentTreatmentType` **دائماً** — حتى حين لا
+  // يصل في الطلب أصلاً (`undefined ?? null` ⟶ NULL يمحو النوعَ المحفوظ
+  // صامتاً). صارت الآن: الغيابُ لا يمسّ العمود إطلاقاً؛ وتغييرٌ يتطابق مع
+  // المخزَّن بعد التطبيع (نفسُ فاحص `diffPaymentPatch` القانونيّ من مسار
+  // التصحيح — لا خوارزميةَ تطابقٍ ثانية) يُتجاهَل بصمتٍ لا بكتابة؛ وتغييرٌ
+  // فعليّ يُرَدّ **قبل أيّ كتابة** بـ٤٠٠ يدلّ على المسار الصحيح — هذه
+  // النقطةُ لم تعد تعيد وسم دفعةٍ أبداً، فحارسُ إسناد الجهاز القديم
+  // (الذي كان يمنع تعارضاً بعد وقوعه) لم يعد له موضع: التعارضُ لا يصل
+  // إلى الكتابة أصلاً.
   app.patch("/api/payments/:id/session-info", isAuthenticated, async (req, res) => {
     if (!isAdminOrManager(req)) {
       return res.status(403).json({ message: "فقط المدير يمكنه تعديل بيانات الجلسات" });
     }
     const id = Number(req.params.id);
+    const [existing] = await db.select().from(payments).where(eq(payments.id, id));
+    if (!existing) return res.status(404).json({ message: "الدفعة غير موجودة" });
     const allowed = accessibleBranchesFor(req);
-    if (allowed !== null) {
-      const [existing] = await db.select().from(payments).where(eq(payments.id, id));
-      if (!existing) return res.status(404).json({ message: "الدفعة غير موجودة" });
-      if (!allowed.includes(existing.branchId)) {
-        return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
-      }
+    if (allowed !== null && !allowed.includes(existing.branchId)) {
+      return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
     }
+
     const { sessionCount, paymentTreatmentType } = req.body;
-    const [beforeInfo] = await db.select().from(payments).where(eq(payments.id, id));
-    const beforeLink = beforeInfo;
-    // ══ دفعةٌ مرتبطةٌ بجهاز لا يتغيّر وسمُها إلى خدمةٍ أخرى ══════════════
-    // الرابط يسمّي جهازاً على خيطٍ من نوعٍ بعينه. فتحويل وسم الدفعة إلى
-    // خدمةٍ أخرى — أو إلى ما ليس جهازاً — يترك الرابط يشير إلى جهازٍ من
-    // نوعٍ مختلف: ليس حقلاً بائتاً بل مالاً منسوباً لجهازٍ لا يخصّه. ولا
-    // يُمسَح الرابط ولا يُنقَل تلقائياً — إعادة الإسناد قرارٌ إداري صريح.
-    if (beforeLink?.deviceEpisodeId != null && paymentTreatmentType !== undefined) {
-      const nextService = deviceServiceOfPaymentType(paymentTreatmentType);
-      const currentService = deviceServiceOfPaymentType(beforeLink.paymentTreatmentType);
-      if (nextService !== currentService) {
-        return res.status(409).json({
-          message: "هذه الدفعة مرتبطة بجهاز محدَّد — لا يمكن تغيير نوعها إلى خدمة أخرى",
-        });
-      }
+    const diff = diffPaymentPatch(existing, { paymentTreatmentType });
+    if (diff.changed.paymentTreatmentType !== undefined) {
+      return res.status(400).json({
+        message: "تغييرُ نوع العلاج المدفوع لم يعد يُقبل من هذه النقطة — استعمل تعديل الدفعة (PATCH /api/payments/:id)، وقد يتطلّب سبباً وتصحيحاً معتمَداً",
+      });
     }
-    const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null, paymentTreatmentType ?? null);
-    // Retagging moves the money between SECTIONS in the accounting split, so
-    // it is audited like any other money-shape change.
+
+    const updated = await storage.updatePaymentSessionInfo(id, sessionCount ?? null);
     const s = (req.session as any).branchSession;
     await logAudit({
       entityType: "payment", entityId: id, action: "update",
       userId: s?.userId ?? null, userName: s?.displayName ?? null,
-      branchId: updated?.branchId ?? beforeInfo?.branchId ?? null,
-      oldValues: beforeInfo ? { sessionCount: beforeInfo.sessionCount, paymentTreatmentType: beforeInfo.paymentTreatmentType } : undefined,
-      newValues: { sessionCount: sessionCount ?? null, paymentTreatmentType: paymentTreatmentType ?? null },
+      branchId: updated?.branchId ?? existing.branchId ?? null,
+      oldValues: { sessionCount: existing.sessionCount },
+      newValues: { sessionCount: sessionCount ?? null },
       ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-      notes: "تعديل بيانات جلسات/وسم الدفعة",
+      notes: "تعديل عدد جلسات الدفعة — عمليٌّ صرف، لا يمسّ نوع العلاج",
     });
     res.json(updated);
   });

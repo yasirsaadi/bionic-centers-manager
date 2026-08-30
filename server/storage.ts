@@ -176,7 +176,7 @@ export interface IStorage {
   getPaymentsByBranch(branchId: number, date?: Date): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
-  updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any>;
+  updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any>;
   updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null }): Promise<any>;
 
   // Documents
@@ -1058,14 +1058,24 @@ export class DatabaseStorage implements IStorage {
   // aggregate/financial reports (which count by flag + total_cost) are untouched.
   // Idempotent: only missing cases are created; existing case costs are moved
   // only for the cases created in THIS call.
-  async syncPatientCases(patientId: number): Promise<void> {
+  /**
+   * `tx` اختياريّ (متابعةُ تحكّم تصحيح الدفعات، القسم ب، 2026-08-29):
+   * حين يُمرَّر تنضمّ هذه الدالّةُ إلى معاملة المستدعي بدل فتح معاملتها
+   * الخاصّة — يحتاجه `reattachPaymentCase` الصارم كي يصير إعادةُ إسناد
+   * حالةِ الدفعة جزءاً من نفس معاملة تصحيح الدفعة (عكسُ القيد وتطبيقُها
+   * وقيدُها الجديد وحالةُ الطلب)، فتسقط كلُّها معاً أو تنجح معاً. **وكلُّ
+   * الجسم أدناه لم يتغيّر حرفاً واحداً** — كان مكتوباً أصلاً بمعامل `tx`
+   * داخل `db.transaction` نفسِه، فتغليفُه بدالّةٍ مسمّاة هو التعديلُ
+   * الوحيد. المستدعون القدامى (بلا `tx`) يحصلون على السلوك نفسِه تماماً.
+   */
+  async syncPatientCases(patientId: number, tx?: any): Promise<void> {
     // ONE transaction + a per-patient advisory lock. Concurrent syncs for the
     // same patient (backfill loop + a payment retag + a merge) previously
     // interleaved ~10 autocommitted statements — the check-then-insert on case
     // rows could duplicate, and cost moves could half-apply. The xact-scoped
     // advisory lock serializes syncs per patient; the unique index from
     // migration 020 (+ onConflictDoNothing) is the database-level backstop.
-    await db.transaction(async (tx) => {
+    const body = async (tx: any) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
     const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
     if (!p) return;
@@ -1236,7 +1246,8 @@ export class DatabaseStorage implements IStorage {
         await tx.update(patientCases).set({ cost: holderCost, updatedAt: new Date() }).where(eq(patientCases.id, holder.id));
       }
     }
-    });
+    };
+    return tx ? await body(tx) : await db.transaction(body);
   }
 
   // Post-exam physiotherapy pricing («الكلفة والجلسات» from the registry —
@@ -2770,15 +2781,17 @@ export class DatabaseStorage implements IStorage {
     await db.delete(payments).where(eq(payments.id, id));
   }
 
-  async updatePaymentSessionInfo(id: number, sessionCount: number | null, paymentTreatmentType: string | null): Promise<any> {
-    const [before] = await db.select().from(payments).where(eq(payments.id, id));
+  // ══ عددُ الجلسات وحده — لا كاتبَ ثانٍ لنوع العلاج (متابعةُ تحكّم تصحيح
+  // الدفعات، القسم أ، 2026-08-29) ═══════════════════════════════════════
+  // كانت تكتب `paymentTreatmentType` أيضاً — حتى حين لا يصل، فيُمحى صامتاً
+  // (راجع server/routes.ts: PATCH /api/payments/:id/session-info). صار
+  // العمودُ خارج توقيع هذه الدالّة كلّياً: لا معاملَ يُغري باستدعاءٍ
+  // خاطئ، ولا كاتبَ إعادةِ وسمٍ ثانياً غير `updatePayment`/تصحيح الدفعات.
+  async updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any> {
     const [updated] = await db.update(payments)
-      .set({ sessionCount, paymentTreatmentType })
+      .set({ sessionCount })
       .where(eq(payments.id, id))
       .returning();
-    if (updated && tagChanged(before?.paymentTreatmentType, paymentTreatmentType)) {
-      await this.reattachPaymentCase(updated.id, updated.patientId, paymentTreatmentType);
-    }
     return updated;
   }
 
@@ -2806,19 +2819,38 @@ export class DatabaseStorage implements IStorage {
   // (a retag away from أطراف no longer leaves the money counted on the طرف),
   // then sync's exact-tag/fallback rules re-home it; resolveCaseId is the
   // final safety net.
-  // كانت خاصّة، وصارت عامّةً كي ينادِيها مسارُ تصحيح الدفعات المحمية أيضاً
-  // (server/payments/correction_store.ts) — بعد نجاح المعاملة الصارمة،
-  // بنفس ما كانت تفعله updatePayment دائماً عند تغيّر وسم العلاج، لا
-  // نسخةً ثانية من منطق إعادة الإسناد.
-  async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null): Promise<void> {
-    try {
-      await db.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
-      await this.syncPatientCases(patientId);
-      const [row] = await db.select({ caseId: payments.caseId }).from(payments).where(eq(payments.id, paymentId));
+  /**
+   * كانت خاصّة، وصارت عامّةً كي ينادِيها مسارُ تصحيح الدفعات المحمية أيضاً
+   * (server/payments/correction_store.ts).
+   *
+   * ══ وضعان — والفرقُ مقصود (متابعةُ تحكّم تصحيح الدفعات، القسم ب،
+   * 2026-08-29) ═══════════════════════════════════════════════════════
+   * **بلا `tx`** (المسارُ التاريخيّ — `updatePayment` وغيرُه): أطلِق وانسَ
+   * كما كان دائماً؛ خطأٌ هنا لا يُفشل التعديلَ الأساسيّ الذي نجح بالفعل.
+   * والخطواتُ الثلاث صارت **معاملةً واحدةً خاصّةً بها** (لم تكن كذلك من
+   * قبل: فشلُ الخطوة الثانية كان يترك `case_id = NULL` معلَّقاً بلا
+   * إعادة إسناد) — تحسينٌ صرف، لا تغييرَ في عقد «لا يُفشل المستدعي».
+   *
+   * **ومع `tx`** (تصحيحُ دفعةٍ محميّة): تنضمّ إلى معاملة المستدعي —
+   * **بلا try**؛ فشلٌ حقيقيّ يجب أن يصعد فيُسقط تلك المعاملةَ كاملةً
+   * (القيدَ والدفعةَ وحالةَ الطلب معاً)، لا خطوةً بعديةً قد تضيع بصمت.
+   */
+  async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null, tx?: any): Promise<void> {
+    const body = async (t: any) => {
+      await t.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
+      await this.syncPatientCases(patientId, t);
+      const [row] = await t.select({ caseId: payments.caseId }).from(payments).where(eq(payments.id, paymentId));
       if (!row?.caseId) {
-        const caseId = await this.resolveCaseId(patientId, { tag });
-        if (caseId) await db.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
+        const caseId = await this.resolveCaseId(patientId, { tag }, t);
+        if (caseId) await t.update(payments).set({ caseId }).where(eq(payments.id, paymentId));
       }
+    };
+    if (tx) {
+      await body(tx);
+      return;
+    }
+    try {
+      await db.transaction(body);
     } catch (e) {
       console.error(`[reattachPaymentCase] payment ${paymentId} failed:`, e);
     }

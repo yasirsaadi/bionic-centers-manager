@@ -2191,7 +2191,11 @@ export default function PatientDetails() {
                     sessionCount: patient.isPhysiotherapy ? (editPaymentSessionCount ? Number(editPaymentSessionCount) : null) : null,
                     paymentTreatmentType: editPaymentTreatmentType || null,
                     customDate: editPaymentDate || undefined,
-                    isFreeSessions: editPaymentFreeSessions || undefined,
+                    // بوليانٌ صريحٌ دائماً — `|| undefined` كان يُسقط
+                    // `false` (حقيقةٌ لا غياب) فيبتلع الخادمُ الانتقال
+                    // من مجّانيّ إلى غير مجّانيّ صامتاً (متابعةُ تحكّم
+                    // تصحيح الدفعات، القسم ج، 2026-08-29).
+                    isFreeSessions: editPaymentFreeSessions,
                     reason: paymentEditTouchesProtected ? editPaymentReason : undefined,
                   } as any);
                 }

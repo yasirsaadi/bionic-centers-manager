@@ -150,6 +150,8 @@ const paymentCount = async (patientId: number) => (await q<{ n: number }>(
 
 const patchPayment = (id: number, session: any, body: any) =>
   http("PATCH", `/api/payments/${id}`, session, body);
+const patchSessionInfo = (id: number, session: any, body: any) =>
+  http("PATCH", `/api/payments/${id}/session-info`, session, body);
 const deletePaymentHttp = (id: number, session: any, reason: string) =>
   http("DELETE", `/api/payments/${id}`, session, { reason });
 const approveCorrectionHttp = (id: number, session: any) =>
@@ -773,6 +775,123 @@ async function main() {
         "ص٨. **وتوستُ نجاح حذف الزيارة القديم (يدّعي سحب المال) اختفى**");
       check(/الكلفة والدفعات المرتبطة بها لم تتغيّر/.test(usePatientsSrc),
         "ص٩. **والتوستُ الجديد يقول صراحةً إنّ المال لم يتغيّر**");
+    }
+
+    // ══ ق. session-info — عمليّةٌ صرفة، عددُ الجلسات وحده ═══════════════════
+    // متابعةُ تحكّم تصحيح الدفعات، القسم أ: إغلاقُ ثغرة إعادة الوسم القديمة.
+    console.log("\n── ق. session-info لا يعيد وسم دفعةٍ بعد اليوم ──");
+    {
+      const pid = await mkPatient("مريضُ session-info", 1);
+      const paymentId = await mkPaymentRaw({
+        patientId: pid, branchId: 1, amount: 17000, paymentTreatmentType: "علاج طبيعي", sessionCount: 3,
+      });
+      const journalBefore = await journalFor(paymentId);
+      same("ق٠. تمهيد: قيدٌ أصليّ واحد قائم", journalBefore.length, 1);
+
+      // ١. تعديلُ عددِ الجلسات وحده — لا يمسّ paymentTreatmentType إطلاقاً،
+      // حتى وهو غائبٌ تماماً عن الطلب.
+      const r1 = await patchSessionInfo(paymentId, S.mgr, { sessionCount: 5 });
+      same("ق١. sessionCount وحده ⟶ ٢٠٠", r1.status, 200);
+      const after1 = await getPayment(paymentId);
+      same("ق٢. **ونوعُ العلاج المدفوع بقي كما كان بالضبط**", after1.payment_treatment_type, "علاج طبيعي");
+      same("ق٣. وعددُ الجلسات صار الجديد", after1.session_count, 5);
+
+      // ٢. ولا صفَّ تصحيحٍ، ولا إعادةَ بناء قيد.
+      same("ق٤. **ولا صفَّ تصحيحٍ نشأ**", await fcrCountFor(paymentId), 0);
+      const journalAfter1 = await journalFor(paymentId);
+      same("ق٥. **ولا إعادةَ بناء قيد** — نفسُ عدد القيود", journalAfter1.length, 1);
+      same("ق٦. ونفسُ رقم القيد بعينه", journalAfter1[0].id, journalBefore[0].id);
+
+      // ٣. قيمةٌ تتطابق مع المخزَّن بعد التطبيع (مسافاتٌ زائدة) — تُتجاهَل
+      // بصمتٍ، لا تُرفَض ولا تُكتب.
+      const r2 = await patchSessionInfo(paymentId, S.mgr, { sessionCount: 6, paymentTreatmentType: "  علاج طبيعي  " });
+      same("ق٧. قيمةٌ مطابقةٌ بعد التطبيع تمرّ (٢٠٠ لا ٤٠٠)", r2.status, 200);
+      const after2 = await getPayment(paymentId);
+      same("ق٨. **والنوعُ يبقى بحرفه المخزَّن — لا النسخة ذات المسافات**", after2.payment_treatment_type, "علاج طبيعي");
+      same("ق٩. وعددُ الجلسات تحدّث", after2.session_count, 6);
+
+      // ٤. تغييرٌ فعليّ ⟶ يُرَدّ قبل أيّ كتابة.
+      const r3 = await patchSessionInfo(paymentId, S.mgr, { sessionCount: 9, paymentTreatmentType: "أبر صينية" });
+      same("ق١٠. **تغييرٌ فعليّ في نوع العلاج المدفوع ⟶ ٤٠٠**", r3.status, 400);
+      const after3 = await getPayment(paymentId);
+      same("ق١١. **ولا كتابةَ إطلاقاً — حتى عددُ الجلسات لم يتغيّر**", after3.session_count, 6);
+      same("ق١٢. والنوعُ بقي كما كان", after3.payment_treatment_type, "علاج طبيعي");
+      same("ق١٣. **ولا صفَّ تصحيحٍ من هذه المحاولة أيضاً**", await fcrCountFor(paymentId), 0);
+    }
+
+    // ══ ر. تصحيحٌ مباشرٌ من المسؤول لنوعٍ محميّ — caseId صحيحٌ ذرّياً ═══════
+    console.log("\n── ر. تصحيحٌ مباشرٌ من المسؤول لنوعٍ محميّ — caseId صحيحٌ ذرّياً ──");
+    {
+      const pid = await mkPatient("مريضُ إعادة الإسناد المباشرة", 1);
+      const [physioCase] = await q<{ id: number }>(
+        `INSERT INTO patient_cases (patient_id, case_type) VALUES ($1,'physiotherapy') RETURNING id`, [pid]);
+      const [prostheticCase] = await q<{ id: number }>(
+        `INSERT INTO patient_cases (patient_id, case_type) VALUES ($1,'prosthetic') RETURNING id`, [pid]);
+      const paymentId = await mkPaymentRaw({
+        patientId: pid, branchId: 1, amount: 24000, paymentTreatmentType: "علاج طبيعي", caseId: physioCase.id,
+      });
+      const before = await getPayment(paymentId);
+      same("ر٠. تمهيد: الدفعةُ على حالة العلاج الطبيعي", before.case_id, physioCase.id);
+
+      const rAdmin = await patchPayment(paymentId, S.admin, {
+        paymentTreatmentType: "أطراف صناعية", reason: "تصحيحُ وسمٍ إداريّ مباشر",
+      });
+      same("ر١. تصحيحٌ مباشرٌ للنوع ⟶ ٢٠٠", rAdmin.status, 200);
+      // **بلا انتظار ولا إعادة محاولة** — إن لم يكن caseId صحيحاً فوراً هنا
+      // فإعادةُ الإسناد لم تعد صارمةً/ذرّيةً كما تطلب المهمّة.
+      const after = await getPayment(paymentId);
+      same("ر٢. **والنوعُ صار النهائي**", after.payment_treatment_type, "أطراف صناعية");
+      same("ر٣. **و`caseId` صار حالةَ الأطراف الصناعية فوراً — لا الفيزيو ولا NULL**",
+        after.case_id, prostheticCase.id);
+    }
+
+    // ══ ش. اعتمادُ تصحيحٍ لنوعٍ محميّ — caseId صحيحٌ ذرّياً كذلك ═══════════
+    console.log("\n── ش. اعتمادُ تصحيحٍ لنوعٍ محميّ — caseId صحيحٌ ذرّياً كذلك ──");
+    {
+      const pid = await mkPatient("مريضُ إعادة الإسناد بالاعتماد", 1);
+      const [physioCase] = await q<{ id: number }>(
+        `INSERT INTO patient_cases (patient_id, case_type) VALUES ($1,'physiotherapy') RETURNING id`, [pid]);
+      const [supportCase] = await q<{ id: number }>(
+        `INSERT INTO patient_cases (patient_id, case_type) VALUES ($1,'medical_support') RETURNING id`, [pid]);
+      const paymentId = await mkPaymentRaw({
+        patientId: pid, branchId: 1, amount: 19000, paymentTreatmentType: "علاج طبيعي", caseId: physioCase.id,
+      });
+
+      const rReq = await patchPayment(paymentId, S.recvOk, {
+        paymentTreatmentType: "مساند طبية", reason: "طلبُ تصحيح وسمٍ",
+      });
+      same("ش١. طلبُ تصحيح النوع ⟶ ٢٠٢", rReq.status, 202);
+      const fcr = await pendingFcrFor(paymentId);
+      check(!!fcr, "ش٢. وطلبٌ معلَّقٌ نشأ");
+      const beforeApprove = await getPayment(paymentId);
+      same("ش٣. **وقبل الاعتماد لا شيء تغيّر — لا النوع ولا caseId**",
+        JSON.stringify([beforeApprove.payment_treatment_type, beforeApprove.case_id]),
+        JSON.stringify(["علاج طبيعي", physioCase.id]));
+
+      const rApprove = await approveCorrectionHttp(fcr.id, S.admin);
+      same("ش٤. الاعتمادُ ⟶ ٢٠٠", rApprove.status, 200);
+      const after = await getPayment(paymentId);
+      same("ش٥. **والنوعُ صار النهائي**", after.payment_treatment_type, "مساند طبية");
+      same("ش٦. **و`caseId` صار حالةَ المساند الطبية فوراً بعد الاعتماد ذاتِه**",
+        after.case_id, supportCase.id);
+    }
+
+    // ══ ت. عقدُ الملفّ — لا إعادةَ إسنادٍ بعديّةٍ، وisFreeSessions صريحٌ دائماً ═
+    console.log("\n── ت. عقدُ الملفّ (قراءةٌ نصّية) ──");
+    {
+      const correctionStoreSrc = readFileSync(
+        join(__dirname, "payments", "correction_store.ts"), "utf8");
+      check(!/reattachIfTagChanged/.test(correctionStoreSrc),
+        "ت١. **زال المسارُ البعديّ `reattachIfTagChanged` من الملفّ كليةً**");
+      check(/reattachPaymentCase\(before\.id, before\.patientId, changed\.paymentTreatmentType, tx\)/.test(correctionStoreSrc),
+        "ت٢. **وإعادةُ الإسناد تُنادى داخل `applyCorrectionWriteTx` بتمرير `tx` صراحةً**");
+
+      const patientDetailsSrc = readFileSync(
+        join(__dirname, "..", "client/src/pages/PatientDetails.tsx"), "utf8");
+      check(!/editPaymentFreeSessions \|\| undefined/.test(patientDetailsSrc),
+        "ت٣. **زال النمطُ القديم `editPaymentFreeSessions || undefined` الذي كان يُسقط false**");
+      check(/isFreeSessions: editPaymentFreeSessions,/.test(patientDetailsSrc),
+        "ت٤. **وصار يُرسَل بوليانَ الحالة صراحةً — true أو false على حدٍّ سواء**");
     }
 
     console.log(`\n${failures === 0 ? "✅ كل فحوص صلاحية الدفعات ونطاق الفرع نجحت"
