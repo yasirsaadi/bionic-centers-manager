@@ -10,6 +10,8 @@ import { AddCaseTypeModal } from "./AddCaseTypeModal";
 import { NewServiceModal } from "./NewServiceModal";
 import { NewDeviceEpisodeModal } from "./NewDeviceEpisodeModal";
 import { NoExamOperationDialog } from "./NoExamOperationDialog";
+import { ReturnToPurchaseDialog } from "./ReturnToPurchaseDialog";
+import { ReturnToPurchaseRoutingChoice } from "./ReturnToPurchaseRoutingChoice";
 import {
   launcherOptions, resumableNoExamSale, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type PatientEpisodeSummary,
@@ -225,6 +227,15 @@ export function PatientServiceLauncher({
                       {section.label}
                     </h4>
                   )}
+                  {/*  **عاد للشراء** — أوّلاً حين تظهر، وهي عادةً الجوابُ
+                      الحقيقيّ لمريضٍ عاد لجهازٍ رفضه سابقاً. ملفٌّ مستقلٌّ
+                      يحمل استعلامَه الخاصّ (راجع تعليق الملفّ) فيبقى هذا
+                      المكوّنُ وموزِّعُ المنطق خالصَين بلا شبكة. */}
+                  <ReturnToPurchaseRoutingChoice
+                    patientId={patient.id}
+                    serviceType={section.serviceType}
+                    onChoose={() => chooseFlow({ kind: "return_to_purchase", serviceType: section.serviceType })}
+                  />
                   {section.choices.map((choice) => (
                     <button
                       key={choice.id}
@@ -355,6 +366,16 @@ export function PatientServiceLauncher({
           initialKind={flow.initialKind}
           existingEpisodeId={saleResume?.episodeId ?? null}
           existingRequestedItem={saleResume?.requestedItem ?? null}
+          open
+          onOpenChange={closeFlow}
+        />
+      )}
+
+      {/*  **عاد للشراء** (ترحيل ٠٧٢) — الحلقةُ نفسُها تعود لمعاينةٍ ثانية. */}
+      {flow?.kind === "return_to_purchase" && (
+        <ReturnToPurchaseDialog
+          patientId={patient.id}
+          serviceType={flow.serviceType}
           open
           onOpenChange={closeFlow}
         />

@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ClipboardCheck, Zap, Stethoscope } from "lucide-react";
 import { specialtyLabel } from "@shared/medical";
 import {
-  REVIEW_KINDS, REVIEW_KIND_LABELS, REVIEW_PATH_HINTS, REVIEW_PATH_LABELS,
+  MANUALLY_SELECTABLE_REVIEW_KINDS, REVIEW_KIND_LABELS, REVIEW_PATH_HINTS, REVIEW_PATH_LABELS,
   REVIEW_STATUS_LABELS, requiresFullPath, type ReviewKind, type ReviewPath,
 } from "@shared/medical_review";
 import { formatDateTimeIraq } from "@/lib/utils";
@@ -149,7 +149,9 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
             <Select value={kind} onValueChange={(v) => setKind(v as ReviewKind)}>
               <SelectTrigger data-testid="select-review-kind"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {REVIEW_KINDS.map((k) => (
+                {/*  «عاد للشراء» مملوكةٌ لتدفّقها الخاصّ — لا تُعرَض هنا،
+                    راجع MANUALLY_SELECTABLE_REVIEW_KINDS. */}
+                {MANUALLY_SELECTABLE_REVIEW_KINDS.map((k) => (
                   <SelectItem key={k} value={k}>{REVIEW_KIND_LABELS[k]}</SelectItem>
                 ))}
               </SelectContent>

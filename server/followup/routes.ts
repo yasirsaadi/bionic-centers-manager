@@ -67,6 +67,9 @@ import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
 import { discountAuditNote } from "../discounts/routes";
 import { actorRoleSnapshotOf, isDecisionQueueState } from "@shared/decision_queue";
+import * as returnToPurchase from "./return_to_purchase_store";
+import { canCreateReview } from "@shared/medical_review";
+import { specialtyLabel } from "@shared/medical";
 
 type Req = any;
 
@@ -513,6 +516,26 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!canActCommercially(s)) return res.status(403).json({ error: COMMERCIAL_ONLY });
     const f = await loadInScope(req, res);
     if (!f) return;
+    // ══ **الطريقُ العامّ لا يتجاوز «عاد للشراء» على مسار المعاينة**
+    // (ترحيل ٠٧٢) ══════════════════════════════════════════════════════
+    //  `reopen` العامّة بُنيت لمريضٍ لم يشترِ **بلا حاجةٍ سريرية جديدة** —
+    //  الوقتُ مرّ والقرارُ باقٍ. لكنّ متابعةً على مسار المعاينة مرساتُها
+    //  حلقةُ جهازٍ حقيقية (`isExamPathFollowup`) تعني **طلبَ جهازٍ فعليّاً
+    //  عايَنه طبيب** — وإعادةُ فتحها مباشرةً إلى حالةٍ تجارية تتجاوز شرطَ
+    //  المعاينة الثانية الذي بُني لهذا التدفّق بعينه. فتُردّ ٤٠٩ **عقدَ
+    //  مسارٍ لا قيدَ صلاحية** (نفسُ مبدأ `retiredOnExamPath`، برسالةٍ
+    //  مختلفة: هذا البابُ لم يكن يوماً من الأبواب المتقاعدة، ولا معنى
+    //  لرسالتها هنا) — وتدلّ على البابِ الصحيح: «عاد للشراء».
+    //
+    //  **والصفوفُ الموروثة لا تُمَسّ**: متابعةٌ بلا حلقة أو حلقةٌ بمسارٍ
+    //  غير `exam` تبقى على `reopen` كما كانت بحرفها — `isExamPathFollowup`
+    //  تردّ `false` لها فلا يصلها هذا الحارس أصلاً.
+    if (await store.isExamPathFollowup(f.id)) {
+      return res.status(409).json({
+        error: "هذه متابعةُ جهازٍ على مسار المعاينة — لا تُعاد فتحها مباشرةً. "
+          + "استعمل «ما سبب حضور المريض اليوم؟» ⟵ «عاد للشراء» لإرساله لمعاينةٍ طبية جديدة.",
+      });
+    }
     const to = req.body?.toStatus === "follow_up" ? "follow_up" : "awaiting_patient_decision";
     try {
       const updated = await store.reopen({
@@ -529,6 +552,69 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       });
       res.json(updated);
     } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ══ «عاد للشراء» (ترحيل ٠٧٢) ═══════════════════════════════════════════
+  //  مريضٌ طلب جهازاً، عايَنه طبيب، سجّل الاستقبالُ «لم يشترِ»، ثمّ عاد
+  //  يريد **الجهازَ نفسَه**. القدرةُ نفسُها التي تُنشئ طلباتِ المراجعة
+  //  أصلاً (`canCreateReview`) — لا قدرةٌ رابعة: هذا الفعلُ توجيهٌ إلى
+  //  الطبيب بعينه، لا قرارٌ تجاريّ.
+
+  // ── قراءة: الحلقاتُ المؤهَّلة لهذا المريض ─────────────────────────────
+  app.get(
+    "/api/followups/patient/:patientId/return-to-purchase-eligible",
+    isAuthenticated,
+    async (req: Req, res) => {
+      const s = getSession(req);
+      if (!canCreateReview(s)) return res.json({ rows: [] });
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
+      try {
+        const rows = await returnToPurchase.listEligibleReturnToPurchase({
+          patientId, branchIds: branchScope(req),
+        });
+        res.json({ rows });
+      } catch (err: any) {
+        console.error("[followup] return-to-purchase eligibility failed:", err);
+        res.status(500).json({ error: "تعذّر تحميل الأجهزة المؤهَّلة" });
+      }
+    },
+  );
+
+  // ── التنفيذ — إعادةُ الحلقة وطلبُ المعاينة الكاملة معاً ────────────────
+  app.post("/api/followups/return-to-purchase", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCreateReview(s)) {
+      return res.status(403).json({ error: "غير مصرح لك بإرسال طلب مراجعة" });
+    }
+    const patientId = Number(req.body?.patientId);
+    const deviceEpisodeId = Number(req.body?.deviceEpisodeId);
+    if (!Number.isFinite(patientId) || !Number.isFinite(deviceEpisodeId)) {
+      return res.status(400).json({ error: "بيانات الطلب غير صالحة" });
+    }
+    try {
+      const out = await returnToPurchase.executeReturnToPurchase({
+        patientId, deviceEpisodeId,
+        receptionNote: req.body?.receptionNote,
+        createdBy: s.userId, branchIds: branchScope(req),
+      });
+      await logAudit({
+        entityType: "medical_review_request", entityId: out.reviewRequest.id, action: "create",
+        userId: s.userId, userName: s.userName, branchId: out.reviewRequest.branchId,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        newValues: out.reviewRequest as any,
+        notes: `عاد للشراء — مريض #${patientId} (${specialtyLabel(out.serviceType)})`
+          + ` — الجهاز #${out.episodeId} أُعيد إلى بانتظار المعاينة`,
+      });
+      res.status(201).json({
+        ok: true, reviewRequestId: out.reviewRequest.id, episodeId: out.episodeId,
+        serviceType: out.serviceType,
+      });
+    } catch (err: any) {
+      if (err instanceof FollowupError) return res.status(err.status).json({ error: err.message });
+      console.error("[followup] return-to-purchase failed:", err);
+      res.status(500).json({ error: "تعذّر إرسال المريض لمعاينةٍ جديدة" });
+    }
   });
 
   // ── اختيار الخبير — **عملُ الاستعلامات، وقبل التصنيع** ───────────────

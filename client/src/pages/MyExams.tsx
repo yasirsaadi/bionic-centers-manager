@@ -11,7 +11,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag, Undo2 } from "lucide-react";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag, Undo2, RotateCcw } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
@@ -34,6 +34,13 @@ interface WorklistRow {
    * لمن أنشأ الطلبَ بنفسه. وغيابُه يعني: لا زرّ.
    */
   returnableRequestId?: number | null;
+  /**
+   * **سببُ الزيارة** حين وضعه طلبُ مراجعةٍ في القائمة (ترحيل ٠٧٢) — يظهر
+   * دائماً لمن له طلبٌ حاكم، بصرف النظر عن مالك الإرجاع. القيمةُ الوحيدة
+   * التي تُعرَض بادجاً صريحاً هي `return_to_purchase`: الطبيبُ يحتاج أن
+   * يعرف أن المريضَ **يريد المتابعة**، لا أن مالاً قُبض بالفعل.
+   */
+  reviewKind?: string | null;
 }
 
 function accent(caseType: string) {
@@ -370,8 +377,18 @@ export default function MyExams() {
                           <Card key={`${r.patientId}-${r.caseType}`} className={`border ${a.ring}`}>
                             <CardContent className="p-3 flex items-center justify-between gap-3 flex-wrap">
                               <div className="min-w-0">
-                                <div className="font-semibold text-sm truncate" dir="auto">
+                                <div className="font-semibold text-sm truncate flex items-center gap-1.5" dir="auto">
                                   {r.patientName}
+                                  {/*  **عاد للشراء** — يريد المتابعة، لا أن مالاً قُبض. */}
+                                  {r.reviewKind === "return_to_purchase" && (
+                                    <span
+                                      className="inline-flex items-center gap-1 rounded-full border border-amber-300
+                                        bg-amber-50 text-amber-800 text-[10px] font-medium px-2 py-0.5 shrink-0"
+                                      data-testid={`badge-return-to-purchase-${r.patientId}-${r.caseType}`}
+                                    >
+                                      <RotateCcw className="w-3 h-3" /> عاد للشراء
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                                   {r.phone && <span dir="ltr">{r.phone}</span>}
