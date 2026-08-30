@@ -1083,8 +1083,8 @@ export class DatabaseStorage implements IStorage {
       Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
     // ---- signals -----------------------------------------------------------
-    const wos = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
-    const pays = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
+    const wos: { st: string }[] = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
+    const pays: { tag: string | null }[] = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
     const hasWO = (st: string) => wos.some((w) => w.st === st);
     const PHYSIO_TAGS = new Set(["استشارة طبية", "روبوت", "تمارين تأهيلية", "أجهزة علاج طبيعي", "أبر صينية"]);
     // Tags can be COMPOUND ("روبوت، أطراف صناعية") when one receipt mixes
@@ -1126,7 +1126,7 @@ export class DatabaseStorage implements IStorage {
       else if ((mk.notes || "").includes("مساند")) supportMarkerCost += c;
     }
 
-    const preExisting = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const preExisting: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const has = (t: string) => preExisting.some((c) => c.caseType === t);
     const firstEver = preExisting.length === 0;
     const otherCosts = (wantProsthetic ? prostheticMarkerCost : 0) + (wantSupport ? supportMarkerCost : 0);
@@ -1174,7 +1174,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     // ---- re-attribute tagged payments/markers to their real case -----------
-    const cases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const cases: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     const idOf = (t: string) => cases.find((c) => c.caseType === t)?.id ?? null;
     const prosId = idOf("prosthetic"), supId = idOf("medical_support");
     // Payments: containment match so compound tags ("روبوت، أطراف صناعية")
@@ -1214,7 +1214,7 @@ export class DatabaseStorage implements IStorage {
     // touched here → the aggregate/financial reports stay byte-identical.
     // HUMAN PRICING WINS: a case whose cost_source is 'manual' (per-case ✏️ /
     // تخصيص / add-case-type) is never raised NOR drained by the floor.
-    const finalCases = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
+    const finalCases: PatientCase[] = await tx.select().from(patientCases).where(eq(patientCases.patientId, patientId));
     if (finalCases.length > 0) {
       const paidRows = await tx.select({ caseId: payments.caseId, amount: payments.amount })
         .from(payments).where(eq(payments.patientId, patientId));

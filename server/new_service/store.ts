@@ -199,7 +199,8 @@ export async function executeNewService(params: {
         ? entries.map(() => 0)
         : allocateApprovedCost(entries.map((e) => e.cost), receivedTotal);
 
-      for (const [i, entry] of entries.entries()) {
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
         //  `caseId` صريحة في الزيارة والدفعة معاً: بدونها يعيد كلٌّ منهما
         //  الحلَّ من وسمه فينتهيان إلى حالتين مختلفتين لخدمةٍ واحدة.
         await storage.createVisit({
