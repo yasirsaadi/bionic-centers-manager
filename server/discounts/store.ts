@@ -392,7 +392,11 @@ async function decideDiscountTx(
     // ══ التنفيذُ **قبل** الختم وفي معاملته ═════════════════════════════
     //  لو سقط هنا رجعت المعاملةُ كلُّها: الصفُّ `pending` كما كان، ولا
     //  سعرٌ كُتب على المتابعة، ولا أمرُ تصنيعٍ وُلد، ولا دينارٌ قُيِّد.
-    const applied = await applyApproved(req, calc.finalPrice, params.actor, tx, params.initialPayment);
+    //  **و`calc.isFree` — لا `req.isFree` البائت** (تصحيحٌ لاحق): «تعديل
+    //  واعتماد» قد يبدّل المجّانيّة، والتنفيذُ يجب أن يتّبع القرارَ الجديد
+    //  لا القديم — راجع توثيق `applyApproved` للتفصيل.
+    const applied = await applyApproved(
+      req, calc.finalPrice, calc.isFree, params.actor, tx, params.initialPayment);
 
     //  والختمُ في النداء نفسه الذي يقول «معتمَد» — لا بعده.
     const upd = await tx.execute(sql`
@@ -477,7 +481,28 @@ async function writeDecisionAudit(
  * يُصنَّع وجلساتٌ تُشترى — وقيمتُها المالية صفر. لا دفعةَ ملفَّقة تُنشأ.
  */
 async function applyApproved(
-  req: DiscountRow, finalPrice: number, actor: Actor, tx: any,
+  req: DiscountRow, finalPrice: number,
+  /**
+   * **حالةُ المجّانيّةِ الفعّالة وقتَ هذا القرار** — `calc.isFree` من
+   * المستدعي، **لا** `req.isFree` (تصحيحٌ لاحق — قيمةٌ بائتة).
+   *
+   * ══ العطبُ الذي يغلقه ═════════════════════════════════════════════
+   * «تعديل واعتماد» على بقيّةٍ تاريخية قد **يبدّل** المجّانيّة: صفٌّ دخل
+   * غيرَ مجّانيّ (`req.isFree = false`) والمعتمِدُ يقرّر الآن أنه مجّانيٌّ
+   * صراحةً (`calc.isFree = true`، من `finalPrice: 0, isFree: true` معاً —
+   * نفسُ ما ترسله شاشةُ «تعديل واعتماد» فعلياً). تحديثُ الصفّ في
+   * `decideDiscountTx` يكتب `calc.isFree` بصدق — لكنّ **التنفيذ الفعليّ**
+   * كان لا يزال يُمرَّر `req.isFree` القديم، فتُسجَّل الخدمةُ/الدفعةُ
+   * بكلفةٍ صفر (من `calc.finalPrice`) **بلا** علم المجّانيّة الذي يُفسِّر
+   * ذلك الصفر — أي «قبضٌ صفريٌّ غيرُ مجّانيّ» بدل «تبرّعٍ صريح»، وهذا
+   * بالضبط ما يحاول حارسُ الدفع الإلزاميّ منعَه.
+   *
+   * **ونطاقُ هذا التصحيح — تنفيذَ «خدمة جديدة» والعلاج الطبيعي وحدهما**
+   * (المكانان اللذان يستعملان هذه القيمة تحت). جهازٌ عبر متابعة يبقى على
+   * `req.isFree` كما كان — خارج نطاق هذا التصحيح.
+   */
+  effectiveIsFree: boolean,
+  actor: Actor, tx: any,
   /**
    * **المبلغُ المقبوضُ فعلاً الآن — يُكتبه المُنجِز وقتَ الحسم**، لا وقتَ
    * الطلب. يُستعمَل **فقط** حين لا يحمل الصفُّ نفسُه مبلغاً موجباً محفوظاً
@@ -552,7 +577,8 @@ async function applyApproved(
       //  تناسبياً عليها بأوزان حصصها من الكلفة — لا حصّةُ كلّ بندٍ من
       //  الكلفة نفسِها، وهي تبقى كما هي فوق (`shares[i]` أعلاه) بلا مساس.
       initialPayment: effectiveInitialPayment,
-      isFree: req.isFree,
+      //  **الحالةُ الفعّالةُ وقتَ القرار** — راجع توثيق المعامل أعلاه.
+      isFree: effectiveIsFree,
       actor,
       tx,
     });
@@ -563,9 +589,10 @@ async function applyApproved(
     const entries = (payload.entries ?? []).map((e) => ({
       treatmentType: e.treatmentType,
       sessionCount: e.sessionCount,
-      //  **علمُ المجّانيّ يُمرَّر كما هو** إلى `physioEntryCost` القائمة —
-      //  فلا مفهومَ ثانٍ لـ«جلسةٍ مجّانية» يُخترَع بجانب الأول.
-      isFree: req.isFree,
+      //  **الحالةُ الفعّالةُ وقتَ القرار** (تصحيحٌ لاحق — قيمةٌ بائتة) لا
+      //  `req.isFree` القديم — إلى `physioEntryCost` القائمة، فلا مفهومَ
+      //  ثانٍ لـ«جلسةٍ مجّانية» يُخترَع بجانب الأوّل.
+      isFree: effectiveIsFree,
     }));
     const totalSessions = entries.reduce((s, e) => s + e.sessionCount, 0);
     const typesJoined = Array.from(new Set(entries.map((e) => e.treatmentType))).join("، ");

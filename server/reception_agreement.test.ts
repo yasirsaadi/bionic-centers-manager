@@ -391,6 +391,42 @@ async function main() {
     same("   **والمقبوضُ هو المحفوظُ ٩,٠٠٠ بالضبط** — لا ١٢,٥٠٠ الاتّفاق",
       [mCb.payments, mCb.paid], [1, 9000]);
 
+    // ══ ج.ج بقيّةٌ تاريخية غيرُ مجّانية — «تعديل واعتماد» يقرّرها مجّانيةً
+    //      صراحةً: التنفيذُ يتّبع القرارَ الجديد لا المخزَّنَ القديم
+    //      (تصحيحٌ لاحقٌ ثالث — قيمةٌ بائتة) ═══════════════════════════
+    //  صفٌّ أُدرج **غيرَ مجّانيّ** (`is_free = false`). والمشرفُ في «تعديل
+    //  واعتماد» يقرّر الآن أنها مجّانيةٌ صراحةً — نفسُ ما ترسله الشاشةُ
+    //  فعلياً (`finalPrice: 0, isFree: true` معاً، لا `isFree` وحده: بدون
+    //  `finalPrice` صريح لا يُعاد حسابُ الخصم أصلاً — راجع `changing` في
+    //  `decideDiscountTx`). **العطبُ**: كان التنفيذُ الفعليّ يستعمل
+    //  `req.isFree` القديم (`false`) رغم أن الصفَّ يُختَم `is_free = true`
+    //  بصدق — فتُسجَّل الدفعةُ «غير مجّانية بمبلغٍ صفر» بدل «مجّانيةٍ
+    //  صريحة»، وهذا بالضبط ما يحاول حارسُ الدفع الإلزاميّ منعَه.
+    const pCc = await mk("ج.ج — تعديلٌ إلى مجّاني", { physio: true });
+    const reqCc = await mkHistoricalPending(pCc,
+      { originalPrice: 25000, finalPrice: 12500, isFree: false });
+    const storedCc = await q(`SELECT is_free FROM service_discount_requests WHERE id=$1`, [reqCc]);
+    same("ج.ج. الصفُّ المخزَّنُ غيرُ مجّانيّ أصلاً", storedCc[0]?.is_free, false);
+
+    const okCc = await decideDiscount(S.mgr, reqCc,
+      { decision: "approve", finalPrice: 0, isFree: true });
+    same("   **و«تعديل واعتماد» إلى مجّانيّ صراحةً ينجح**", okCc.status, 200);
+    const mCc = await money(pCc);
+    same("   **بلا أثرٍ ماليّ — لا كلفةَ ولا مقبوض**",
+      [mCc.totalCost, mCc.paid, mCc.caseCost], [0, 0, 0]);
+    same("   **وجلسةٌ واحدة مسجَّلة رغم المجّانيّة**", mCc.sessions, 1);
+    const rowCc = await q(
+      `SELECT is_free_sessions f, amount a, session_count s
+         FROM payments WHERE patient_id=$1`, [pCc]);
+    same("   **والدفعةُ موسومةٌ مجّانيةً صراحةً — لا «غير مجّانية بصفر»**"
+      + " (هذا هو العطبُ الذي يصلحه هذا التصحيح)",
+    [rowCc.length, rowCc[0]?.f, Number(rowCc[0]?.a), Number(rowCc[0]?.s)], [1, true, 0, 1]);
+    const decidedCc = await q(
+      `SELECT is_free f, approved_final_price p FROM service_discount_requests WHERE id=$1`,
+      [reqCc]);
+    same("   والصفُّ نفسُه مختومٌ مجّانياً بالسعر الصحيح",
+      [decidedCc[0]?.f, Number(decidedCc[0]?.p)], [true, 0]);
+
     // ══ د. اعتمادٌ ثانٍ على البقيّة التاريخية لا يُكرّر ════════════════
     console.log("\n── د. الاعتماد المكرَّر ──");
     const twice = await decideDiscount(S.mgr, reqC, { decision: "approve" });
