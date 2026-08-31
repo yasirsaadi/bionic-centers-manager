@@ -724,6 +724,17 @@ export async function loadDeviceSaleOperationTx(tx: any, params: {
 export async function applyDeviceSaleFinancialsTx(tx: any, params: {
   operation: DeviceSaleOperation;
   cost: number;
+  /**
+   * **نصُّ القيد — اختياريٌّ، والنصُّ القديم افتراضُه لكلّ نداءٍ آخر.**
+   *
+   * كلُّ عمليات بيع الجهاز تصف نفسَها بنفس السطر العامّ («تخصيص طرف
+   * صناعي»)، وهذا صحيحٌ حين تكون العمليةُ هي البيعَ نفسَه. لكنّ إلحاقَ
+   * جزءٍ بجهازٍ **قائمٍ** قيد التصنيع ليس ذلك البيعَ — فيحتاج مَن يقرأ
+   * الدفترَ لاحقاً سطراً يقول ماذا وقع فعلاً، لا نصّاً عاماً يُخمَّن.
+   * **بلا حسابٍ ثانٍ ولا كاتبٍ ثانٍ**: الدالّةُ نفسُها، الحقولُ نفسُها،
+   * فرقٌ في نصّ عرضٍ واحد فقط.
+   */
+  notes?: string;
 }): Promise<{ patient: Patient; appliedDelta: number }> {
   const op = params.operation;
   const { patientId, serviceType, cost } = { ...op, cost: params.cost };
@@ -784,7 +795,8 @@ export async function applyDeviceSaleFinancialsTx(tx: any, params: {
       // كما هو عمداً: تقاريرُ الأقسام تبوّب عليه، وتغييره يحرّك أرقاماً
       // لا علاقة لها بهذه المرحلة.
       deviceEpisodeId: op.episodeId,
-      notes: serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي",
+      notes: params.notes
+        ?? (serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي"),
     });
   }
 

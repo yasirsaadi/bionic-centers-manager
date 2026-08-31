@@ -53,7 +53,7 @@ import {
 } from "@shared/pending_charge";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import {
-  isProstheticComponent, type ProstheticComponent, FULL_DEVICE, requestedItemLabel,
+  isProstheticComponent, type ProstheticComponent, requestedItemLabel,
 } from "@shared/prosthetic_parts";
 
 export class ChargeError extends Error {
@@ -234,18 +234,28 @@ interface CreateBase {
  * الطلب** — فعميلٌ يرسل جزءاً مغايراً مع `existingEpisodeId` لا يبدّل ما
  * طُلب فعلاً؛ الحلقةُ تقول الحقيقة.
  *
- * **إلحاقٌ بجهازٍ قيد التصنيع** (`existingEpisodeId` غائب، وثمّة حلقةٌ
- * مفتوحةٌ `in_manufacturing` لجهازٍ **كامل** على هذا الخيط بعينه): طرفٌ
- * صناعيٌّ كاملٌ بِيع بالأمس ودخل التصنيع، واليوم يُشترى له جزءٌ إضافيّ
- * (أدابتر مثلاً) لنفس الجهاز. فتحُ حلقةٍ جديدة هنا كان سيرتدّ ٤٠٩
- * `active_device_operation` **حتماً** — والحارسُ («شراءٌ مفتوحٌ واحد لكل
- * خيط») صحيحٌ ويبقى بلا إضعاف؛ لكنّ حلقةً مفتوحةً قيد التصنيع لجهازٍ كاملٍ
- * على هذا الخيط **هي الجهازُ الوحيدُ** الذي يمكن أن يعنيه طلبُ جزءٍ جديد
- * الآن — بحكم القاعدة الملزمة نفسِها التي تمنع حلقةً ثانية. فيُلحَق الجزءُ
- * بالحلقة والأمر **القائمَين بعينهما**: لا حلقةٌ ثانية، ولا أمرٌ ثانٍ، ولا
- * انتقالُ مرحلة — والسعرُ **يُضاف** إلى كلفة الجهاز القائمة لا يستبدلها.
- * التفصيلُ الكامل في `attachComponentToDeviceInManufacturing` أدناه
- * و`storage.ts: loadInManufacturingDeviceOperationTx`.
+ * **إلحاقٌ بجهازٍ قيد التصنيع** (`attachToDeviceEpisodeId` حاضر — إلزاماً
+ * **بقرار الموظّف الصريح لا استنتاجٍ خادميّ**): طرفٌ صناعيٌّ كاملٌ بِيع
+ * بالأمس ودخل التصنيع، واليوم يُشترى له جزءٌ إضافيّ (أدابتر مثلاً) لنفس
+ * الجهاز. **كان الخادمُ يكتشف هذا الوضعَ تلقائياً** (حلقةٌ مفتوحة `in_
+ * manufacturing` لجهازٍ كامل على الخيط) **ويُلحق الجزءَ بصمت** — فصار
+ * صريحاً: الشاشةُ تسأل حرفياً «هل هذا الجزء إضافة إلى الطرف الجاري
+ * تصنيعه؟» (`shared/component_sale.ts: ATTACH_TO_IN_MANUFACTURING_
+ * QUESTION`)، و«نعم» وحدها ترسل معرّف الحلقة صراحةً؛ «لا» أو صمتٌ (لم
+ * يُطرَح السؤالُ أصلاً لغياب جهازٍ قيد التصنيع) يعني **حلقةً جديدة** —
+ * الوضعَ الثالث أعلاه، بحارسه المستقلّ الأصليّ كاملاً.
+ *
+ * **ولا ثقةَ بالمعرّف المُرسَل وحده**: `attachComponentToDeviceInManufacturing`
+ * تعيد التحقّق الكامل تحت قفلها الخاصّ (`storage.ts:
+ * loadInManufacturingDeviceOperationTx`) — حلقةٌ باتت غيرَ `in_manufacturing`،
+ * أو لمريضٍ آخر، أو ليست جهازاً كاملاً، تُرفَض ٤٠٩ بصفر كتابة، **مهما ادّعى
+ * الطلبُ**؛ معرّفٌ بائتٌ (سباقٌ، تبويبٌ قديم) لا يمرّ لمجرّد صحّة شكله الرقميّ.
+ *
+ * فيُلحَق الجزءُ بالحلقة والأمر **القائمَين بعينهما**: لا حلقةٌ ثانية، ولا
+ * أمرٌ ثانٍ، ولا انتقالُ مرحلة — والسعرُ **يُضاف** إلى كلفة الجهاز القائمة لا
+ * يستبدلها. **والخبيرُ يُشتقّ من أمر العمل القائم لا من الطلب** — لا يُسأل
+ * الموظّفُ عن خبيرٍ ليُتجاهَل اختيارُه (الشرحُ الكامل في
+ * `attachComponentToDeviceInManufacturing` أدناه).
  *
  * ══ ونصفا البيع القائمان بلا نسخةٍ ثانية ════════════════════════════════
  * `startDeviceSaleOperationallyTx` تفتح الأمرَ وتنقل الحلقة (بلا دينار)، ثمّ
@@ -262,6 +272,10 @@ interface CreateBase {
  *
  * ══ والخبيرُ يُعاد التحقّق منه تحت القفل — **بفرع العملية الحقيقيّ لا لقطة
  * الطلب** (تصحيحٌ لاحق) ═════════════════════════════════════════════════
+ * **للوضعين الأوّل والثاني وحدهما** — حلقةٌ جديدة أو استئنافُ حلقةٍ موروثة:
+ * الخبيرُ هنا سيُسنَد فعلاً، فيُتحقَّق منه. **أمّا الإلحاقُ (الوضعُ الثالث)
+ * فلا يُسنِد خبيراً جديداً إطلاقاً** — يشتقّه من أمر العمل القائم، فلا شيءَ
+ * ليُتحقَّق منه هنا (الشرحُ الكامل في `attachComponentToDeviceInManufacturing`).
  * فحصُ النقطة المبكّر (`validateExpertForBranch`، بلا `Tx`) ردٌّ سريعٌ لا
  * سلطةٌ نهائية. الكتابةُ الفعليةُ هنا تراجعه بـ`validateExpertForBranchTx`
  * القانونية **تحت قفل المعاملة** — نفسُ حارس الصيانة المبسّطة (المرحلة
@@ -329,9 +343,24 @@ export async function createComponentSaleOperation(params: {
   component: ProstheticComponent | null;
   /** استئنافُ حلقةٍ موروثة فتحها الشكلُ القديم ذو النداءين ولم يكتمل بيعُها. */
   existingEpisodeId: number | null;
+  /**
+   * **إلحاقٌ صريحٌ بجهازٍ كاملٍ قيد التصنيع** — يصل فقط حين أجاب الموظّفُ
+   * «نعم» عن سؤال «هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟». لا
+   * تخمينَ خادميّاً بديلاً: غيابُه (`null`) يعني «لا» أو أن السؤالَ لم
+   * يُطرَح أصلاً — وكلاهما يُعامَلان سيّان: حلقةٌ جديدة، بحارس التشغيل
+   * المستقلّ الأصليّ كما كان دائماً.
+   */
+  attachToDeviceEpisodeId: number | null;
 }): Promise<{
   workOrderId: number; deviceEpisodeId: number; component: string | null;
   finalPrice: number;
+  /**
+   * **الخبيرُ الفعليّ الذي وقعت باسمه العملية** — لا `params.expertUserId`
+   * دائماً: للإلحاق هو خبيرُ أمر العمل القائم المُشتقّ خادميّاً، لا ما
+   * أرسله الطلب (والذي لا يُقرأ في تلك الحالة إطلاقاً). يعتمد عليه سجلُّ
+   * التدقيق ليقول الحقيقة لا ما طُلب.
+   */
+  expertUserId: number;
 }> {
   const store = await import("../storage");
   const episodes = await import("../device_episodes/store");
@@ -372,43 +401,45 @@ export async function createComponentSaleOperation(params: {
       component = ep.requestedItem;
       //  **وفرعُها كذلك من صفّها المقفول** — لا من جسم الطلب.
       actualOperationBranchId = locked.branchId;
-    } else {
-      //  ══ **حلقةٌ جديدة** — أو إلحاقٌ بجهازٍ كاملٍ قيد التصنيع بالفعل ═════
+    } else if (typeof params.attachToDeviceEpisodeId === "number") {
+      //  ══ **إلحاقٌ صريحٌ بجهازٍ قيد التصنيع — بقرار الموظّف، لا تخمين
+      //  الخادم** ═══════════════════════════════════════════════════════
+      //  `typeof === "number"` لا `!== null`: مستدعٍ داخليّ قد يُغفل هذا
+      //  الحقلَ تماماً (يصير `undefined` وقت التشغيل بصرف النظر عمّا يفرضه
+      //  النوعُ السكونيّ) فيمرّ من الحارس الفضفاض — والتفافُه هنا نحو
+      //  «إلحاقٌ بمعرّفٍ غيرِ معروف» كان يكسر الاستعلامَ المُعامَليّ داخل
+      //  `lockCaseAndReadExactEpisode` (قيمةٌ `undefined` تُسقِطها دالّةُ
+      //  `sql` من نصّ الاستعلام بلا رمز ربطٍ بديل). فحصٌ صريحٌ بالنوع
+      //  يرفض `null` و`undefined` ومصفوفةً أو نصّاً بالتساوي — لا ثغرةَ
+      //  للسهو.
+      //  طرفٌ صناعيٌّ كاملٌ بِيع بالأمس ودخل التصنيع، واليوم يُشترى له جزءٌ
+      //  إضافيّ (أدابتر مثلاً). كان الخادمُ يكتشف هذا الوضعَ **تلقائياً**
+      //  ويُلحق الجزءَ بصمت — وهذا صار صريحاً بقرار المالك: الشاشةُ تسأل
+      //  الموظّفَ حرفياً «هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟»،
+      //  وجوابُه «نعم» هو ما يرسل هذا الحقلَ — **لا استنتاجٌ خادميٌّ بديل**.
+      //
+      //  **والخادمُ لا يثق بالمعرّف المُرسَل وحده**: `attachComponentTo
+      //  DeviceInManufacturing` تعيد التحقّق الكامل تحت قفلها الخاصّ عبر
+      //  `store.loadInManufacturingDeviceOperationTx` — حلقةٌ باتت غيرَ
+      //  `in_manufacturing`، أو ليست لهذا المريض، أو ليست جهازاً كاملاً،
+      //  تُرفَض ٤٠٩ بصفر كتابة، مهما ادّعى الطلبُ. معرّفٌ بائتٌ أو ملفَّق
+      //  لا يمرّ لمجرّد أنه رقمٌ صحيح الشكل.
       if (params.component === null) {
         throw new ChargeError("حدّد الجزء المراد بيعه — اختر من القائمة", 400);
       }
-
-      //  ══ **هل ثمّة جهازٌ كاملٌ قيد التصنيع بالفعل على هذا الخيط؟** ═══════
-      //  طرفٌ صناعيٌّ كاملٌ بِيع بالأمس ودخل التصنيع، واليوم يُشترى له جزءٌ
-      //  إضافيّ (أدابتر مثلاً) لنفس الجهاز بعينه. `startDeviceEpisodeTx`
-      //  أدناه كانت سترفضه ٤٠٩ `active_device_operation` **حتماً** — حارسُها
-      //  («شراءٌ مفتوحٌ واحد لكل خيط») صحيحٌ تماماً ولا يجوز إضعافه، لكن لا
-      //  مسارَ كان يفهم أن الطلبَ الجديد **لنفس الجهاز المفتوح بعينه** لا
-      //  لجهازٍ مستقلّ ثانٍ.
-      //
-      //  **ولا التباسَ في الهُويّة أبداً**: `uq_pde_case_open` يمنع أكثرَ من
-      //  حلقةٍ مفتوحة واحدة على هذا الخيط بعينه — فحلقةٌ مفتوحةٌ قيد التصنيع
-      //  لجهازٍ **كامل** هي الجهازُ الوحيد الذي يمكن أن يعنيه طلبُ جزءٍ جديد
-      //  الآن؛ لا حاجةَ لسؤال الموظّف «لأيّ جهاز؟» — الجوابُ واحدٌ بحكم
-      //  القاعدة الملزمة نفسِها.
-      //
-      //  **وللجهاز الكامل قيدَ التصنيع وحده** — لا لحلقةٍ مفتوحةٍ هي بنفسها
-      //  جزءٌ آخر لم يُسلَّم بعد (لا معنى لإلحاق جزءٍ بجزء)، ولا لحالتَي
-      //  «بانتظار معاينة»/«مُعايَنة»: تلك تبقى تُردّان تماماً كما كانتا —
-      //  عبر `startDeviceEpisodeTx` أدناه بلا تغيير — لأن جهازاً لم يدخل
-      //  التصنيعَ بعد ليس «نفس الجهاز» بالمعنى الذي يبرّر الإلحاق، وطلبُ
-      //  جزءٍ عليه أثناء انتظاره المعاينةَ أو بعدها مباشرةً التباسٌ حقيقيّ
-      //  لا يُحسَم إلا بإكمال ذلك الطلب أو تصحيحه أوّلاً.
-      const { episode: openEpisode } = await episodes.lockCaseAndReadOpenEpisode(tx, {
-        patientId: params.patientId, serviceType: "prosthetic",
+      return await attachComponentToDeviceInManufacturing(tx, {
+        episodeId: params.attachToDeviceEpisodeId, params,
       });
-      if (openEpisode && openEpisode.status === "in_manufacturing"
-        && openEpisode.requestedItem === FULL_DEVICE) {
-        return await attachComponentToDeviceInManufacturing(tx, mfg, {
-          episodeId: openEpisode.id, params,
-        });
+    } else {
+      //  ══ **حلقةٌ جديدة — الحارسُ المستقلّ الأصليّ بلا تغيير** ═══════════
+      //  غيابُ `attachToDeviceEpisodeId` (لم يُسأل الموظّفُ، أو أجاب «لا»)
+      //  يعني هذه هي: عمليةٌ جديدة تماماً. `startDeviceEpisodeTx` ترفضها
+      //  ٤٠٩ `active_device_operation` إن كان الخيطُ مشغولاً بأيّ حلقةٍ
+      //  مفتوحة — **بلا استثناء ولا تخمين لنيّة الموظّف** — وهذا الحارسُ
+      //  الأصليّ نفسُه بحرفه، لم يُضعَف ولم يُلتَف عليه.
+      if (params.component === null) {
+        throw new ChargeError("حدّد الجزء المراد بيعه — اختر من القائمة", 400);
       }
-
       const episode = await episodes.startDeviceEpisodeTx(tx, {
         patientId: params.patientId, serviceType: "prosthetic",
         createdBy: params.actor.userId,
@@ -463,7 +494,7 @@ export async function createComponentSaleOperation(params: {
 
     return {
       workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
-      component, finalPrice: params.finalPrice,
+      component, finalPrice: params.finalPrice, expertUserId: params.expertUserId,
     };
   });
 }
@@ -478,13 +509,27 @@ export async function createComponentSaleOperation(params: {
  * تحت قفلها الخاصّ (الحلقة والأمر والفرع)، بنفس عادة `loadDeviceSaleOperationTx`
  * المجاورة — الشرحُ الكامل هناك.
  *
- * ══ ونصفٌ قانونيّ واحد لا نسخةٌ ثانية ══════════════════════════════════════
+ * ══ ونصفٌ قانونيّ واحد لا نسخةٌ ثانية، وبلا محاسبةٍ موازية ═══════════════════
  * `applyDeviceSaleFinancialsTx` هي **الكاتبُ الماليّ نفسُه** الذي تناديه كلُّ
- * عملية بيع جهاز — بلا تعديلٍ فيها بحرف. السعرُ الممرَّر إليها هو **المجموعُ
- * الجديد** (كلفةُ الجهاز الحالية + سعرُ الجزء)، فتحسب هي الفرقَ وتقيّده كما
- * تفعل لأيّ بيعٍ آخر. **ولا `startDeviceSaleOperationallyTx` هنا**: لا حلقةَ
- * جديدة ولا أمرَ جديد ولا انتقالَ حالة — الجهازُ قيد التصنيع أصلاً وأمرُه
- * قائم.
+ * عملية بيع جهاز — بلا تعديلٍ في حسابها بحرف، فقط نصُّ عرضٍ اختياريّ جديد
+ * (`notes`) يصف القيدَ بدقّة («إضافة الأدابتر إلى الطرف قيد التصنيع» بدل
+ * النصّ العامّ «تخصيص طرف صناعي») — النصُّ القديم يبقى **الافتراضَ لكلّ
+ * نداءٍ آخر بلا استثناء**. السعرُ الممرَّر هو **المجموعُ الجديد** (كلفةُ
+ * الجهاز الحالية + سعرُ الجزء)، فتحسب الدالّةُ الفرقَ وتقيّده كما تفعل لأيّ
+ * بيعٍ آخر. **ولا `startDeviceSaleOperationallyTx` هنا**: لا حلقةَ جديدة
+ * ولا أمرَ جديد ولا انتقالَ حالة — الجهازُ قيد التصنيع أصلاً وأمرُه قائم.
+ *
+ * ══ والخبيرُ لا يُسأل الموظّفُ عنه ليُتجاهَل — يُشتقّ من أمر العمل القائم
+ *    ═══════════════════════════════════════════════════════════════════════
+ * الإلحاقُ ليس إسنادَ عملٍ جديد — الجهازُ مُسنَدٌ فعلاً لخبيرٍ يعمل عليه.
+ * فمطالبةُ الموظّف باختيار خبيرٍ ثمّ **تجاهلُ اختياره** كانت الخطأ: تسأل
+ * ثمّ لا تسمع. فصار `op.expertUserId` — المُشتقُّ من `expert_user_id` على
+ * أمر العمل نفسِه بواسطة `loadInManufacturingDeviceOperationTx` — هو
+ * المصدرَ الوحيد، **ولا `validateExpertForBranchTx` هنا إطلاقاً**: خبيرٌ
+ * مُسنَدٌ فعلاً لأمرٍ نشط سلطتُه التشغيلية قائمة بذاتها (نفسُ مبدأ «الخبيرُ
+ * الحاليّ على الأمر هو السلطة» في `loadDeviceSaleOperationTx` المجاورة) —
+ * لا حاجةَ لإعادة اعتماده لمجرّد أن جزءاً أُضيف. و`params.expertUserId` —
+ * إن وصل من عميلٍ قديم — **لا يُقرأ إطلاقاً** هنا.
  *
  * ══ والسجلُّ التشغيليّ يقول ماذا أُلحِق وبكم ═══════════════════════════════
  * صفٌّ في `prosthetic_work_history` على أمر العمل **القائم بعينه**، بنمط
@@ -498,44 +543,39 @@ export async function createComponentSaleOperation(params: {
  */
 async function attachComponentToDeviceInManufacturing(
   tx: any,
-  mfg: typeof import("../manufacturing/store"),
   args: {
     episodeId: number;
     params: Parameters<typeof createComponentSaleOperation>[0];
   },
 ): Promise<{
   workOrderId: number; deviceEpisodeId: number; component: string | null;
-  finalPrice: number;
+  finalPrice: number; expertUserId: number;
 }> {
   const { episodeId, params } = args;
   const store = await import("../storage");
 
+  //  ══ **إعادةُ التحقّق الكاملة تحت القفل** — لا ثقةَ بالمعرّف المُرسَل
+  //  وحده. حلقةٌ باتت غيرَ `in_manufacturing`، أو ليست لهذا المريض، أو
+  //  ليست جهازاً كاملاً ⟶ ٤٠٩ بصفر كتابة (الشرحُ الكامل في
+  //  `storage.ts: loadInManufacturingDeviceOperationTx`). ═══════════════════
   const op = await store.loadInManufacturingDeviceOperationTx(tx, {
     patientId: params.patientId, serviceType: "prosthetic",
     episodeId, branchId: params.branchId,
   });
-  //  فرعٌ فارغ مستحيلٌ عملياً هنا — `loadInManufacturingDeviceOperationTx`
-  //  ترفض ٤٠٩ قبل أن تُعيده. والحارسُ هنا لإرضاء التحقّق النوعيّ لا لأنه
-  //  متوقَّعُ الوقوع.
-  const branchId = op.branchId;
-  if (branchId === null) {
-    throw new ChargeError("تعذّر تحديد فرع هذه العملية — راجع الإدارة قبل المتابعة", 409);
-  }
-
-  //  ══ **الخبيرُ يُعاد التحقّق منه تحت القفل — بفرع العملية الفعليّ** ══════
-  //  نفسُ الحارس المستعمَل للحلقة الجديدة والموروثة أعلاه، بلا فرق.
-  const expertCheck = await mfg.validateExpertForBranchTx(tx, params.expertUserId, branchId);
-  if (!expertCheck.ok) {
-    throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
-  }
 
   //  ══ **السعرُ دلتا لا كتابةٌ مطلقة** — المجموعُ الجديد لا سعرُ الجزء وحده
   //  (الشرحُ الكامل في تعليق `loadInManufacturingDeviceOperationTx`). ═══════
+  const label = requestedItemLabel(params.component, "prosthetic");
   const newAgreedCost = op.priorEpisodeAgreedCost + params.finalPrice;
-  await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: newAgreedCost });
+  await store.applyDeviceSaleFinancialsTx(tx, {
+    operation: op, cost: newAgreedCost,
+    //  ══ **نصُّ قيدٍ يصف الواقعة الحقيقية — بلا حسابٍ ثانٍ** ═══════════════
+    //  «تخصيص طرف صناعي» العامّ صحيحٌ حين تكون العمليةُ هي البيعَ نفسَه؛
+    //  هذه إضافةٌ على جهازٍ **قائم**، فتستحقّ سطراً يقول ذلك بوضوح.
+    notes: `إضافة ${label} إلى الطرف قيد التصنيع`,
+  });
 
   //  ══ **والسجلُّ التشغيليّ** — لا انتقالَ مرحلة، فقط ماذا أُلحِق وبكم. ═════
-  const label = requestedItemLabel(params.component, "prosthetic");
   const priceNote = params.priceKind === "free"
     ? `مجّانيّ (أصلُه ${params.originalPrice.toLocaleString("en-US")} د.ع)`
     : params.priceKind === "discount"
@@ -554,6 +594,9 @@ async function attachComponentToDeviceInManufacturing(
   return {
     workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
     component: params.component, finalPrice: params.finalPrice,
+    //  **خبيرُ أمر العمل الفعليّ** — لا `params.expertUserId` — كي يقول
+    //  سجلُّ التدقيق مَن نُسِبت إليه العمليةُ فعلاً.
+    expertUserId: op.expertUserId,
   };
 }
 

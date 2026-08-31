@@ -187,7 +187,6 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       }
 
       const patientId = Number(req.body?.patientId);
-      const expertUserId = Number(req.body?.expertUserId);
       if (!Number.isFinite(patientId)) {
         return res.status(400).json({ error: "بيانات ناقصة" });
       }
@@ -197,14 +196,23 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
       }
 
-      //  ══ **إمّا حلقةٌ جديدة أو استئنافُ حلقةٍ موروثة — لا ثالث** ═══════
-      //  والنافذةُ الجديدة لا تُرسل `existingEpisodeId` أبداً — هذا مخرجُ
-      //  الحلقات اليتيمة التي فتحها الشكلُ القديم ذو النداءين ولم يكتمل
-      //  بيعُها. والجزءُ حين الاستئناف **يُشتقّ من الحلقة المقفولة لاحقاً
-      //  داخل المعاملة** لا من هذا الطلب — فما يُرسَل هنا مجرّد نيّة، لا حكم.
+      //  ══ **ثلاثةُ أوضاع — حلقةٌ جديدة، استئنافُ حلقةٍ موروثة، أو إلحاقٌ
+      //  صريحٌ بجهازٍ قيد التصنيع** ═══════════════════════════════════════
+      //  والنافذةُ لا تُرسل أكثرَ من واحدٍ منها أبداً. `existingEpisodeId`
+      //  مخرجُ الحلقات اليتيمة التي فتحها الشكلُ القديم ذو النداءين ولم
+      //  يكتمل بيعُها — والجزءُ حينها **يُشتقّ من الحلقة المقفولة لاحقاً
+      //  داخل المعاملة** لا من هذا الطلب. و`attachToDeviceEpisodeId` يصل
+      //  فقط حين أجاب الموظّفُ «نعم» عن سؤال الإلحاق الصريح على الشاشة —
+      //  والخادمُ **لا يثق به وحده**: يُعاد التحقّق الكامل تحت القفل داخل
+      //  المعاملة (`storage.ts: loadInManufacturingDeviceOperationTx`)،
+      //  فمعرّفٌ بائتٌ أو لجهازٍ لم يعد `in_manufacturing` يُرفَض ٤٠٩.
       const rawExisting = req.body?.existingEpisodeId;
       const hasExisting = rawExisting !== null && rawExisting !== undefined && rawExisting !== "";
+      const rawAttach = req.body?.attachToDeviceEpisodeId;
+      const hasAttach = !hasExisting
+        && rawAttach !== null && rawAttach !== undefined && rawAttach !== "";
       let existingEpisodeId: number | null = null;
+      let attachToDeviceEpisodeId: number | null = null;
       let component: ReturnType<typeof parseComponentSaleComponent>["value"] = null;
       if (hasExisting) {
         const id = Number(rawExisting);
@@ -212,19 +220,38 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           return res.status(400).json({ error: "معرّف جهاز غير صالح" });
         }
         existingEpisodeId = id;
+      } else if (hasAttach) {
+        const id = Number(rawAttach);
+        if (!Number.isInteger(id) || id <= 0) {
+          return res.status(400).json({ error: "معرّف الجهاز قيد التصنيع غير صالح" });
+        }
+        attachToDeviceEpisodeId = id;
+        const comp = parseComponentSaleComponent(req.body?.component);
+        if (!comp.ok) return res.status(400).json({ error: comp.error });
+        component = comp.value;
       } else {
         const comp = parseComponentSaleComponent(req.body?.component);
         if (!comp.ok) return res.status(400).json({ error: comp.error });
         component = comp.value;
       }
 
-      //  **والخبيرُ يختاره مَن ينفّذ العمل** — فحصٌ مبكّرٌ سريع للردّ
-      //  الفوري؛ الكتابةُ الفعليةُ تراجعه تحت قفل المعاملة لا تثق بهذا وحده.
-      if (!Number.isInteger(expertUserId) || expertUserId <= 0) {
-        return res.status(400).json({ error: "اختر الخبير المسؤول عن التنفيذ" });
+      //  ══ **الخبيرُ — إلّا عند الإلحاق** ═══════════════════════════════════
+      //  الإلحاقُ لا يُسنِد خبيراً جديداً؛ يشتقّه من أمر العمل القائم
+      //  (`storage.ts: loadInManufacturingDeviceOperationTx`). فسؤالُ
+      //  الموظّف عن خبيرٍ هنا ثمّ تجاهلُ اختياره كان الخطأ — فلا يُسأل
+      //  أصلاً، ولا يُتحقَّق من قيمةٍ لن تُستعمَل.
+      let expertUserId = Number(req.body?.expertUserId);
+      if (hasAttach) {
+        expertUserId = NaN;   // لا يُقرأ في مسار الإلحاق إطلاقاً — انظر أدناه.
+      } else {
+        //  **فحصٌ مبكّرٌ سريع للردّ الفوري**؛ الكتابةُ الفعليةُ تراجعه تحت
+        //  قفل المعاملة لا تثق بهذا وحده.
+        if (!Number.isInteger(expertUserId) || expertUserId <= 0) {
+          return res.status(400).json({ error: "اختر الخبير المسؤول عن التنفيذ" });
+        }
+        const v = await mfg.validateExpertForBranch(expertUserId, patient.branch_id as number);
+        if (!v.ok) return res.status(400).json({ error: v.reason });
       }
-      const v = await mfg.validateExpertForBranch(expertUserId, patient.branch_id as number);
-      if (!v.ok) return res.status(400).json({ error: v.reason });
 
       //  ══ **السعرُ — يُشتقّ في الخادم من مُدخَلين فقط** ═══════════════════
       //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً — وإن أرسلهما
@@ -241,7 +268,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         patientId, branchId: patient.branch_id ?? null, expertUserId,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
         finalPrice: offer.finalPrice!,
-        note, actor: actorOf(req), component, existingEpisodeId,
+        note, actor: actorOf(req), component, existingEpisodeId, attachToDeviceEpisodeId,
       });
 
       await logAudit({
@@ -251,12 +278,14 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         //  **حقيقةٌ مُهيكَلة كاملة** — لا نصَّ تدقيقٍ وحده: الجزءُ والخبيرُ
         //  والأصليُّ والخصمُ والنهائيُّ والنوعُ، وهويّةُ الحلقة والأمر، ومَن
-        //  ومتى.
+        //  ومتى. **والخبيرُ من الاستجابة** (`out.expertUserId`) لا من
+        //  الطلب — فالإلحاقُ يُنسَب لخبير أمر العمل الفعليّ لا لقيمةٍ
+        //  لم تُقرَأ أصلاً.
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType: "prosthetic",
           operationKind: "device_sale",
           component: out.component, deviceEpisodeId: out.deviceEpisodeId,
-          existingEpisodeId, expertUserId,
+          existingEpisodeId, attachToDeviceEpisodeId, expertUserId: out.expertUserId,
           originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
           finalPrice: offer.finalPrice, priceKind: offer.kind,
           note,
@@ -278,6 +307,9 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       return res.status(201).json({
         ok: true, workOrderId: out.workOrderId, deviceEpisodeId: out.deviceEpisodeId,
         component: out.component,
+        //  **خبيرُ العملية الفعليّ** — للإلحاق هو خبيرُ أمر العمل القائم،
+        //  لا مُدخَلاً من هذا الطلب.
+        expertUserId: out.expertUserId,
         originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
         finalPrice: offer.finalPrice, priceKind: offer.kind,
         message: COMPONENT_SALE_SUCCESS_MESSAGE,
