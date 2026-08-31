@@ -35,6 +35,7 @@
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { createJournalForPayment } from "../accounting/auto_journal";
 import * as store from "./store";
 import { ChargeError } from "./store";
 import * as mfg from "../manufacturing/store";
@@ -321,6 +322,28 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
                   + ` تبقّى ${(offer.finalPrice! - out.paidNow).toLocaleString("en-US")} د.ع)`),
       });
 
+      //  ══ القبضُ — القيدُ اليوميّ والتدقيقُ **بعد** الالتزام، خارج معاملة
+      //  المخزن تماماً (تصحيحٌ لاحق، المرحلة السادسة) ═══════════════════════
+      //  نفسُ نمط كلّ نقطةِ دفعةٍ أخرى في هذا الريبو (`server/followup/
+      //  routes.ts` مع إتمام البيع على مسار المعاينة): الدفعةُ نفسُها كُتبت
+      //  **داخل** معاملة البيع (`createPaidNowPaymentTx`، أعلى قِسمَي
+      //  الذرّية) فهي محفوظةٌ بالفعل؛ القيدُ والتدقيقُ لاحقان — فشلُ أيٍّ
+      //  منهما لا يمسّ الدفعةَ المحفوظة فعلاً (`createJournalForPayment`
+      //  «آمنٌ للفشل» بتصميمه). ولا محاسبةَ ثانية تُخترَع هنا.
+      if (out.payment) {
+        await createJournalForPayment(out.payment, getSession(req).userId);
+        await logAudit({
+          entityType: "payment",
+          entityId: out.payment.id,
+          action: "create",
+          userId: getSession(req).userId, userName: getSession(req).userName ?? null,
+          branchId: out.payment.branchId,
+          newValues: out.payment,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+        });
+      }
+
       //  **بلا مراجعةٍ استرجاعية** — لا `routeRetrospectiveReview` هنا:
       //  قرارُ المالك (المرحلة الرابعة) لا يُبقي دوراً للطبيب في بيع الجزء
       //  إطلاقاً، لا حيّاً ولا استرجاعياً.
@@ -493,6 +516,22 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
                 : ` — دُفع جزئياً الآن (${out.paidNow.toLocaleString("en-US")} د.ع،`
                   + ` تبقّى ${(offer.finalPrice! - out.paidNow).toLocaleString("en-US")} د.ع)`),
       });
+
+      //  ══ القبضُ — القيدُ اليوميّ والتدقيقُ بعد الالتزام (نفسُ نمط بيع
+      //  الجزء أعلاه بحرفه، المرحلة السادسة) ═══════════════════════════════
+      if (out.payment) {
+        await createJournalForPayment(out.payment, getSession(req).userId);
+        await logAudit({
+          entityType: "payment",
+          entityId: out.payment.id,
+          action: "create",
+          userId: getSession(req).userId, userName: getSession(req).userName ?? null,
+          branchId: out.payment.branchId,
+          newValues: out.payment,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+        });
+      }
 
       //  **بلا مراجعةٍ لاحقة** — لا `routeRetrospectiveReview` هنا: الطبيبُ
       //  بلا سلطةٍ على هذا المسار من أوّله، فلا حاجةَ لإخباره.

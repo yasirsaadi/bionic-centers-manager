@@ -580,7 +580,7 @@ export function NoExamOperationDialog({
             {offer.ok && offer.kind === "free" ? (
               <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground"
                 data-testid="no-exam-op-paid-now-free">
-                مجّانيّ — لا مبلغَ يُدفَع
+                مجاني بالكامل — قيمة المجاني: {offer.originalPrice!.toLocaleString("en-US")} د.ع
               </p>
             ) : (
               <>

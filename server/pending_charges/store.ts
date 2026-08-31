@@ -56,6 +56,7 @@ import {
   isProstheticComponent, type ProstheticComponent, requestedItemLabel,
 } from "@shared/prosthetic_parts";
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
+import type { Payment } from "@shared/schema";
 
 export class ChargeError extends Error {
   status: number;
@@ -232,7 +233,13 @@ async function createPaidNowPaymentTx(tx: any, p: {
   deviceEpisodeId: number | null; visitId: number | null;
   serviceType: "prosthetic" | "medical_support";
   paidNow: number; notes: string;
-}): Promise<number | null> {
+}): Promise<Payment | null> {
+  //  ══ الصفُّ كاملاً لا المعرّفُ وحده (تصحيحٌ لاحق) ═══════════════════════
+  //  القيدُ اليوميّ (`createJournalForPayment`) والتدقيقُ (`payment`/`create`)
+  //  يحتاجان الصفَّ كاملاً — `branchId`، `amount`، `paymentTreatmentType` —
+  //  ويكتبهما المناديَ **بعد الالتزام** (`routes.ts`، نفسُ نمط `server/
+  //  followup/routes.ts` مع دفعة إتمام البيع على مسار المعاينة)، فإرجاعُ
+  //  المعرّف وحده كان يفرض استعلاماً ثانياً لا داعي له.
   if (typeof p.paidNow !== "number" || !Number.isFinite(p.paidNow) || p.paidNow <= 0) return null;
   const payment = await storage.createPayment({
     patientId: p.patientId, branchId: p.branchId, caseId: p.caseId,
@@ -240,7 +247,7 @@ async function createPaidNowPaymentTx(tx: any, p: {
     amount: p.paidNow, paymentTreatmentType: DEVICE_PAYMENT_TAGS[p.serviceType],
     notes: p.notes,
   } as any, tx);
-  return payment.id;
+  return payment;
 }
 
 // ── الإنشاء ──────────────────────────────────────────────────────────────
@@ -425,6 +432,13 @@ export async function createComponentSaleOperation(params: {
   paidNow: number;
   /** `null` حين `paidNow === 0` — لا دفعةَ إطلاقاً، لا صفراً ملفَّقاً. */
   paymentId: number | null;
+  /**
+   * **الصفُّ كاملاً** — للنقطة لتكتب القيدَ اليوميّ والتدقيقَ **بعد الالتزام**
+   * (`createJournalForPayment` + `logAudit`، نفسُ نمط دفعة إتمام البيع على
+   * مسار المعاينة في `server/followup/routes.ts`). `null` كـ`paymentId`
+   * بالضبط ولنفس السبب.
+   */
+  payment: Payment | null;
 }> {
   const store = await import("../storage");
   const episodes = await import("../device_episodes/store");
@@ -558,7 +572,7 @@ export async function createComponentSaleOperation(params: {
 
     //  ══ **القبضُ الفوريّ — بعد أن يثبت البيعُ فعلاً، في المعاملة نفسِها**
     //  (المرحلة الخامسة) ══════════════════════════════════════════════════
-    const paymentId = await createPaidNowPaymentTx(tx, {
+    const payment = await createPaidNowPaymentTx(tx, {
       patientId: params.patientId, branchId: actualOperationBranchId,
       caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
       serviceType: "prosthetic", paidNow: params.paidNow,
@@ -568,7 +582,7 @@ export async function createComponentSaleOperation(params: {
     return {
       workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
       component, finalPrice: params.finalPrice, expertUserId: params.expertUserId,
-      paidNow: params.paidNow, paymentId,
+      paidNow: params.paidNow, paymentId: payment?.id ?? null, payment,
     };
   });
 }
@@ -625,6 +639,8 @@ async function attachComponentToDeviceInManufacturing(
   workOrderId: number; deviceEpisodeId: number; component: string | null;
   finalPrice: number; expertUserId: number;
   paidNow: number; paymentId: number | null;
+  /** الصفُّ كاملاً — نفسُ سبب `createComponentSaleOperation` أعلاه بحرفه. */
+  payment: Payment | null;
 }> {
   const { episodeId, params } = args;
   const store = await import("../storage");
@@ -668,7 +684,7 @@ async function attachComponentToDeviceInManufacturing(
 
   //  ══ **القبضُ الفوريّ للإلحاق أيضاً — نفسُ الكاتب المشترك** (المرحلة
   //  الخامسة) ══════════════════════════════════════════════════════════
-  const paymentId = await createPaidNowPaymentTx(tx, {
+  const payment = await createPaidNowPaymentTx(tx, {
     patientId: op.patientId, branchId: op.branchId ?? 0,
     caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
     serviceType: "prosthetic", paidNow: params.paidNow,
@@ -681,7 +697,7 @@ async function attachComponentToDeviceInManufacturing(
     //  **خبيرُ أمر العمل الفعليّ** — لا `params.expertUserId` — كي يقول
     //  سجلُّ التدقيق مَن نُسِبت إليه العمليةُ فعلاً.
     expertUserId: op.expertUserId,
-    paidNow: params.paidNow, paymentId,
+    paidNow: params.paidNow, paymentId: payment?.id ?? null, payment,
   };
 }
 
@@ -759,6 +775,8 @@ export async function createMaintenanceOperation(p: {
 }): Promise<{
   workOrderId: number; deviceEpisodeId: number | null; finalPrice: number;
   paidNow: number; paymentId: number | null;
+  /** الصفُّ كاملاً — نفسُ سبب `createComponentSaleOperation` بحرفه. */
+  payment: Payment | null;
 }> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
@@ -818,7 +836,7 @@ export async function createMaintenanceOperation(p: {
     //  دائماً (مسجَّلاً كان الجهازُ أم غير مسجَّل)، فالزيارةُ هي الواقعةُ
     //  التي لا تغيب أبداً — نفسُ نمط `payments.visit_id` القائم منذ ٠٣٨.
     //  والحلقةُ (حين توجد) تُضاف أيضاً لدقّةٍ إضافية لا تتعارض معها.
-    const paymentId = await createPaidNowPaymentTx(tx, {
+    const payment = await createPaidNowPaymentTx(tx, {
       patientId: p.patientId, branchId: p.branchId ?? 0, caseId,
       deviceEpisodeId: order.deviceEpisodeId ?? null, visitId: order.visitId,
       serviceType: p.serviceType, paidNow: p.paidNow,
@@ -829,7 +847,7 @@ export async function createMaintenanceOperation(p: {
       workOrderId: order.id,
       deviceEpisodeId: order.deviceEpisodeId ?? null,
       finalPrice: p.finalPrice,
-      paidNow: p.paidNow, paymentId,
+      paidNow: p.paidNow, paymentId: payment?.id ?? null, payment,
     };
   });
 }

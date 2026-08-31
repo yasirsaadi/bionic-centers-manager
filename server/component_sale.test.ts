@@ -1433,6 +1433,33 @@ async function main() {
       const ep = await episodeOf(r.body.deviceEpisodeId);
       same("    وكلفةُ الحلقة = السعرُ النهائيّ كاملاً (الدفعُ الجزئيّ لا يُنقص الكلفة)",
         ep.ac, 400_000);
+
+      //  ══ إسنادُ التدقيق — الصفُّ الحقيقيّ لا نصٌّ عامّ ═══════════════════
+      const paymentAudit = await q<{
+        action: string; user_id: number; user_name: string; branch_id: number;
+        new_values: string;
+      }>(
+        `SELECT action, user_id::int, user_name, branch_id::int, new_values
+           FROM audit_log WHERE entity_type='payment' AND entity_id=$1`, [pays[0].id]);
+      same("    وصفُّ تدقيقٍ واحدٌ بالضبط لهذه الدفعة (entity_type='payment')",
+        paymentAudit.length, 1);
+      same("    بفاعلٍ حقيقيّ — الجلسةُ التي أنشأت البيع (ريام)، لا `null`",
+        [paymentAudit[0]?.action, paymentAudit[0]?.user_id, paymentAudit[0]?.user_name],
+        ["create", RECV, "ريام"]);
+      const auditedAmount = JSON.parse(paymentAudit[0]?.new_values ?? "{}")?.amount;
+      same("    والقيمةُ المدقَّقةُ = الدفعةُ نفسُها", Number(auditedAmount), 150_000);
+
+      //  ══ القيدُ اليوميّ — مدينٌ صندوقٌ = دائنٌ إيرادٌ = المبلغُ المدفوع ══════
+      const je = await q<{ id: number }>(
+        `SELECT id FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [pays[0].id]);
+      same("    وقيدٌ يوميٌّ واحدٌ بالضبط مصدرُه هذه الدفعة", je.length, 1);
+      const lines = await q<{ debit: number; credit: number }>(
+        `SELECT debit::int, credit::int FROM journal_lines WHERE entry_id=$1`, [je[0]?.id ?? -1]);
+      const totalDebit = lines.reduce((s, l) => s + (l.debit || 0), 0);
+      const totalCredit = lines.reduce((s, l) => s + (l.credit || 0), 0);
+      same("    ومدينُه = دائنُه = ١٥٠,٠٠٠ (Dr صندوق / Cr إيراد، متوازنٌ ومطابقٌ للمبلغ)",
+        [totalDebit, totalCredit], [150_000, 150_000]);
     }
     {
       //  ══ ق٣. دفعٌ كاملٌ — المتبقّي صفر ══════════════════════════════════
@@ -1446,6 +1473,23 @@ async function main() {
       same("    والمتبقّي صفرٌ بالضبط", r.body?.remainingUnpaid, 0);
       const pays = await paymentsOf(pid);
       same("    ودفعةٌ واحدةٌ بكامل السعر", [pays.length, pays[0]?.amount], [1, 200_000]);
+
+      //  ══ تدقيقٌ وقيدٌ يوميّ — دفعٌ كاملٌ أيضاً، لا الجزئيّ وحده ══════════════
+      const paymentAudit = await q<{ action: string; user_id: number }>(
+        `SELECT action, user_id::int FROM audit_log
+           WHERE entity_type='payment' AND entity_id=$1`, [pays[0].id]);
+      same("    وصفُّ تدقيقٍ واحدٌ ('create') بفاعلٍ حقيقيّ",
+        [paymentAudit.length, paymentAudit[0]?.action, paymentAudit[0]?.user_id],
+        [1, "create", RECV]);
+      const je = await q<{ id: number }>(
+        `SELECT id FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [pays[0].id]);
+      const lines = await q<{ debit: number; credit: number }>(
+        `SELECT debit::int, credit::int FROM journal_lines WHERE entry_id=$1`, [je[0]?.id ?? -1]);
+      same("    والقيدُ متوازنٌ بكامل السعر (٢٠٠,٠٠٠)",
+        [je.length, lines.reduce((s, l) => s + (l.debit || 0), 0),
+          lines.reduce((s, l) => s + (l.credit || 0), 0)],
+        [1, 200_000, 200_000]);
     }
     {
       //  ══ ق٤. مجّانيٌّ حقيقيّ — بلا دفعة، والأصليّ والخصمُ الكاملُ محفوظان
