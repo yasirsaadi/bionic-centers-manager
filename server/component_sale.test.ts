@@ -1050,6 +1050,188 @@ async function main() {
     }
     check(!/canOperateNoExam/.test(EPISODE_ROUTES_SRC.match(/POST.*device-episodes[\s\S]{0,4000}/)?.[0] ?? ""),
       "ع٩. (تنويهٌ معماريّ) نقطة device-episodes لا تستعمل canOperateNoExam أصلاً — بلا صلة بهذا التعديل");
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ص. إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع بالفعل ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      //  ══ **إعادةُ إنتاج الثغرة بالضبط**: طرفٌ كاملٌ بِيع بالأمس ودخل
+      //  التصنيع (١,٧٥٠,٠٠٠ مقيَّدة فعلاً)، واليوم يُشترى له أدابتر. كانت
+      //  هذه العمليةُ تُرفَض ٤٠٩ `active_device_operation` — واليوم تُلحَق
+      //  بالجهاز نفسِه بلا حلقةٍ ثانية ولا أمرٍ ثانٍ. ══════════════════════
+      const pid = await mkPatient("ص-جهاز-قيد-التصنيع");
+      const caseId = await mkCase(pid, "prosthetic");
+      const DEVICE_COST = 1_750_000;
+      const [ep] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'in_manufacturing',$3,'full_device',NULL,'exam',$4) RETURNING id`,
+        [pid, caseId, DEVICE_COST, RECV]);
+      const [wo] = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders (patient_id, branch_id, service_type, expert_user_id,
+           status, current_stage, purpose, device_episode_id, assigned_by)
+         VALUES ($1,1,'prosthetic',$2,'active','mold','initial_build',$3,$4) RETURNING id`,
+        [pid, EXPERT, ep.id, RECV]);
+      await q(
+        `INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id, notes)
+         VALUES ($1,1,$2,'assign_manufacturing',$3,$4,'تخصيص طرف صناعي')`,
+        [pid, DEVICE_COST, caseId, ep.id]);
+      await q(`UPDATE patients SET total_cost=$2 WHERE id=$1`, [pid, DEVICE_COST]);
+      await q(`UPDATE patient_cases SET cost=$2 WHERE id=$1`, [caseId, DEVICE_COST]);
+
+      const ADAPTER_PRICE = 50_000;
+      const r = await sale({
+        patientId: pid, component: "adapter", expertUserId: EXPERT,
+        originalPrice: ADAPTER_PRICE, discountAmount: 0,
+      });
+      check(r.status === 201, "ص١. البيعُ ينجح بدل الارتداد ٤٠٩ `active_device_operation`",
+        JSON.stringify(r.body));
+      same("ص٢. **ولا حلقةَ جديدة ولا أمرَ جديد** — نفسُ المعرّفَين بالضبط",
+        [r.body.deviceEpisodeId, r.body.workOrderId], [ep.id, wo.id]);
+      same("ص٣. والاستجابةُ تحمل الجزءَ وسعرَه النهائيّ", [r.body.component, r.body.finalPrice],
+        ["adapter", ADAPTER_PRICE]);
+
+      const epAfter = await episodeOf(ep.id);
+      same("ص٤. **الحلقةُ نفسُها**: ما زالت `in_manufacturing`، وما طُلب لم يتغيّر (جهازٌ كامل)",
+        [epAfter.status, epAfter.ri, epAfter.cmp], ["in_manufacturing", "full_device", null]);
+      same("ص٥. **والسعرُ أُضيف لا استُبدِل**: كلفةُ الحلقة = كلفةُ الجهاز + الجزء",
+        epAfter.ac, DEVICE_COST + ADAPTER_PRICE);
+      check(epAfter.csop === null && epAfter.cspk === null,
+        "ص٦. **وبلا حقيقةٍ مُهيكَلة على حلقة الجهاز** — تلك لحلقاتٍ اشتُريت هي نفسُها"
+        + " عبر بيع الجزء، لا لجهازٍ يُلحَق به جزء", JSON.stringify(epAfter));
+
+      const orderAfter = await orderOf(wo.id);
+      same("ص٧. **أمرُ العمل نفسُه**: نفسُ الفرع والخبير والغرض، **ومرحلتُه لم تتحرّك**",
+        [orderAfter.b, orderAfter.ex, orderAfter.purpose, orderAfter.status],
+        [1, EXPERT, "initial_build", "active"]);
+      const stage = await q<{ current_stage: string }>(
+        `SELECT current_stage FROM prosthetic_work_orders WHERE id=$1`, [wo.id]);
+      same("    والمرحلةُ الحالية بالضبط كما كانت", stage[0].current_stage, "mold");
+
+      const m = await moneyOf(pid);
+      same("ص٨. **المجموعُ الصحيح — لا مَحوَ لسعر الجهاز**: مريضٌ ومجموعُ الحالة كلاهما"
+        + " كلفةُ الجهاز + الجزء", [m.total, m.case_cost],
+        [DEVICE_COST + ADAPTER_PRICE, DEVICE_COST + ADAPTER_PRICE]);
+      same("ص٩. **وقيدان بالضبط في الدفتر** (الأصليُّ + دلتا الإلحاق)، مجموعُهما يطابق",
+        [m.ledger_rows, m.ledger], [2, DEVICE_COST + ADAPTER_PRICE]);
+      same("ص١٠. **وحلقةٌ واحدة وأمرٌ واحد بالضبط لهذا المريض** — لا نصفَ كتابة ولا ازدواج",
+        [m.episodes, m.orders], [1, 1]);
+      same("ص١١. وصفرُ صفوفٍ في الطوابير الموروثة — كما في بيع الجزء العاديّ",
+        [m.pending, m.discounts, m.reviews], [0, 0, 0]);
+
+      const hist = await q<{ from_stage: string; to_stage: string; notes: string }>(
+        `SELECT from_stage, to_stage, notes FROM prosthetic_work_history
+          WHERE work_order_id=$1 AND action_type='component_added'`, [wo.id]);
+      same("ص١٢. **وسجلٌّ تشغيليٌّ واحد يقول ماذا أُلحِق** — لا انتقالَ مرحلة (من=إلى نفسُ المرحلة)",
+        [hist.length, hist[0]?.from_stage, hist[0]?.to_stage], [1, "mold", "mold"]);
+      check(/أدابتر|adapter/i.test(hist[0]?.notes ?? "") && hist[0]?.notes?.includes("50,000"),
+        "     والنصُّ يذكر الجزءَ وسعرَه", hist[0]?.notes ?? "");
+
+      //  ── والدفعاتُ السابقة لم تُمَسّ إطلاقاً (لا صفَّ دفعةٍ يُنشأ أصلاً
+      //  لبيع جهاز — نفسُ سلوك بيع الجزء العاديّ؛ الشرطُ هنا أن العدد صفرٌ
+      //  قبل العملية وصفرٌ بعدها بالضبط، لا أنه "لم يتغيّر" وهو غيرُ صفريّ). ──
+      const payAfter = await q<{ n: number }>(
+        `SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pid]);
+      same("ص١٣. وصفرُ صفوفِ دفعاتٍ — لم يُنشأ ولم يُمَسّ شيءٌ في `payments`", payAfter[0].n, 0);
+    }
+    {
+      //  ══ **مجّانيّةٌ حقيقية فوق جهازٍ مسعَّر** — الدلتا صفرٌ، والحلقةُ
+      //  والأمرُ يبقيان واحداً رغم ذلك. ═══════════════════════════════════
+      const pid = await mkPatient("ص-إلحاقٌ-مجّانيّ");
+      const caseId = await mkCase(pid, "prosthetic");
+      const [ep] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'in_manufacturing',900000,'full_device',NULL,'exam',$3) RETURNING id`,
+        [pid, caseId, RECV]);
+      const [wo] = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders (patient_id, branch_id, service_type, expert_user_id,
+           status, current_stage, purpose, device_episode_id, assigned_by)
+         VALUES ($1,1,'prosthetic',$2,'active','ready_for_fitting','initial_build',$3,$4) RETURNING id`,
+        [pid, EXPERT, ep.id, RECV]);
+      await q(`UPDATE patients SET total_cost=900000 WHERE id=$1`, [pid]);
+      await q(`UPDATE patient_cases SET cost=900000 WHERE id=$1`, [caseId]);
+
+      const r = await sale({
+        patientId: pid, component: "socket", expertUserId: EXPERT,
+        originalPrice: 40_000, discountAmount: 40_000,
+      });
+      check(r.status === 201 && r.body.finalPrice === 0,
+        "ص١٤. مجّانيٌّ حقيقيّ يُقبَل، والنهائيُّ صفرٌ", JSON.stringify(r.body));
+      const epAfter = await episodeOf(ep.id);
+      same("ص١٥. **والكلفةُ لم تتحرّك** — دلتا الإلحاق المجّانيّ صفرٌ",
+        epAfter.ac, 900000);
+      const orderAfter = await orderOf(wo.id);
+      const st = await q<{ current_stage: string }>(
+        `SELECT current_stage FROM prosthetic_work_orders WHERE id=$1`, [wo.id]);
+      same("ص١٦. **والمرحلةُ لم تتحرّك رغم المجّانية**",
+        [orderAfter.status, st[0].current_stage], ["active", "ready_for_fitting"]);
+      const m = await moneyOf(pid);
+      same("ص١٧. **حلقةٌ وأمرٌ واحدٌ كلٌّ منهما** حتى مع سعرٍ صفريّ", [m.episodes, m.orders], [1, 1]);
+    }
+
+    console.log("\n── ص. والحلقةُ التي لم تدخل التصنيعَ بعد — لا التفافَ عليها (الشرط التاسع) ──");
+    {
+      //  ══ **`awaiting_exam` — لا إلحاق، الحارسُ القديمُ كما هو بالضبط** ═══
+      const pid = await mkPatient("ص-awaiting-exam-لا-إلحاق");
+      const caseId = await mkCase(pid, "prosthetic");
+      await q(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device',NULL,'exam',$3)`,
+        [pid, caseId, RECV]);
+      const r = await sale({ patientId: pid, component: "adapter", expertUserId: EXPERT,
+        originalPrice: 50_000, discountAmount: 0 });
+      check(r.status === 409, "ص١٨. جهازٌ كاملٌ **لم يدخل التصنيع بعد** ⟶ لا إلحاق، ٤٠٩ كما كان",
+        String(r.status));
+      const m = await moneyOf(pid);
+      check(m.episodes === 1 && m.orders === 0,
+        "     وصفرُ كتابة — لا حلقةً ثانية ولا أمر", JSON.stringify(m));
+    }
+    {
+      //  ══ **`examined` — نفسُ الشيء، بلا التفافٍ عبر «مُعايَنة»** ══════════
+      const pid = await mkPatient("ص-examined-لا-إلحاق");
+      const caseId = await mkCase(pid, "prosthetic");
+      await q(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'examined',0,'full_device',NULL,'exam',$3)`,
+        [pid, caseId, RECV]);
+      const r = await sale({ patientId: pid, component: "adapter", expertUserId: EXPERT,
+        originalPrice: 50_000, discountAmount: 0 });
+      check(r.status === 409, "ص١٩. جهازٌ كاملٌ **مُعايَنٌ ولم يُصنَّع بعد** ⟶ لا إلحاق، ٤٠٩ كما كان",
+        String(r.status));
+    }
+
+    console.log("\n── ص. والاختراعُ الحقيقيّ لثانٍ مستقلّ يبقى مرفوضاً — الثابتُ لم يضعف ──");
+    {
+      //  ══ جهازٌ **كاملٌ ثانٍ مستقلّ** — لا جزء — يُطلَب بينما الأوّلُ قيد
+      //  التصنيع: البابُ الآخر تماماً (`device-episodes`، مسارُ المعاينة)
+      //  الذي لم تلمسه هذه المهمّة بحرف، وحارسُه (`startDeviceEpisodeTx`)
+      //  يرفض تماماً كما كان قبل هذا الإصلاح. ══════════════════════════════
+      const pid = await mkPatient("ص-جهازٌ-ثانٍ-مستقلّ-يُرفَض");
+      const caseId = await mkCase(pid, "prosthetic");
+      const [ep] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, component, service_path, created_by)
+         VALUES ($1,$2,1,1,'in_manufacturing',1200000,'full_device',NULL,'exam',$3) RETURNING id`,
+        [pid, caseId, RECV]);
+      await q(
+        `INSERT INTO prosthetic_work_orders (patient_id, branch_id, service_type, expert_user_id,
+           status, current_stage, purpose, device_episode_id, assigned_by)
+         VALUES ($1,1,'prosthetic',$2,'active','mold','initial_build',$3,$4)`,
+        [pid, EXPERT, ep.id, RECV]);
+
+      const r = await oldEpisodeDoor({
+        patientId: pid, serviceType: "prosthetic", requestedItem: "full_device", servicePath: "exam",
+      });
+      check(r.status === 409, "ص٢٠. طلبُ جهازٍ **كاملٍ مستقلٍّ ثانٍ** بينما الأوّلُ قيد التصنيع"
+        + " ⟶ ٤٠٩ كما كان تماماً — الثابتُ لم يضعف", JSON.stringify(r.body));
+      check((r.body?.error ?? "").includes("قيد الإجراء"),
+        "     ونفسُ رسالة الحارس الأصليّ", JSON.stringify(r.body));
+      const count = await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [pid]);
+      same("     وصفرُ حلقاتٍ إضافية — واحدةٌ فقط كما كانت", count[0].n, 1);
+    }
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
