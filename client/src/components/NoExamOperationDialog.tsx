@@ -59,7 +59,8 @@ import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pend
 import { deriveOfferFromDiscount } from "@shared/commercial";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 import {
-  COMPONENT_SALE_SUCCESS_MESSAGE, ATTACH_TO_IN_MANUFACTURING_QUESTION,
+  COMPONENT_SALE_SUCCESS_MESSAGE, COMPONENT_ATTACH_SUCCESS_MESSAGE,
+  ATTACH_TO_IN_MANUFACTURING_QUESTION,
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 import {
@@ -257,9 +258,12 @@ export function NoExamOperationDialog({
       //  **بلا مراجعةٍ لاحقة في أيّ من البابين** — لا `reviewRouted` تُقرأ:
       //  الطبيبُ بلا سلطةٍ على أيّ منهما من أوّلهما (المرحلتان الثالثة
       //  والرابعة)، فلا حاجةَ لإخباره حيّاً ولا استرجاعياً. ونجاحٌ واحد
-      //  يُقال بصياغةٍ واحدة.
+      //  يُقال بصياغةٍ واحدة — **إلّا الإلحاقَ**: «فتح أمر العمل» كذبٌ عليه،
+      //  فله رسالتُه الخاصّة.
       toast({
-        title: kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
+        title: attaching
+          ? COMPONENT_ATTACH_SUCCESS_MESSAGE
+          : kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
       });
     },
     onError: (err: any) => toast({
@@ -294,6 +298,16 @@ export function NoExamOperationDialog({
               data-testid="no-exam-op-rule">
               <b>حفظةٌ واحدة</b> — يُفتَح أمرُ العمل ويُقيَّد المبلغُ النهائيّ معاً،
               {" "}<b>بلا مراجعةٍ لاحقة</b>.
+            </p>
+          ) : attaching ? (
+            //  ══ **الإلحاقُ ليس بيعاً جديداً** — لا أمرَ يُفتَح ولا خبيرَ
+            //  يُسنَد، فالصياغةُ تقول الفعلَ الحقيقيّ لا صياغةَ البيع
+            //  الجديد المُعادةَ بلا تدقيق. ═══════════════════════════════
+            <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
+              data-testid="no-exam-op-rule">
+              <b>حفظةٌ واحدة</b> — يُضاف هذا الجزءُ إلى أمر التصنيع القائم بخبيره
+              {" "}الحاليّ نفسِه، ويُقيَّد سعرُه على حساب المريض معه، <b>بلا مراجعةٍ
+              {" "}لاحقة</b>.
             </p>
           ) : (
             <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
@@ -552,7 +566,9 @@ export function NoExamOperationDialog({
             onClick={() => save.mutate()}>
             {save.isPending
               ? <Loader2 className="h-4 w-4 animate-spin" />
-              : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
+              : attaching
+                ? "حفظ البيع وإضافته للطرف الجاري تصنيعه"
+                : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
           </Button>
         </DialogFooter>
       </DialogContent>
