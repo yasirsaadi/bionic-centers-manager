@@ -17,6 +17,7 @@ import {
   assignableServices, assignmentBadgeLabel, visibleDecided,
   type ActiveAssignment, type DeviceService,
 } from "./patient_registry_assignment";
+import { registryExportMoney } from "./patients_registry_export";
 import { PhysioPricingDialog } from "@/components/PhysioPricingDialog";
 import { Activity } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -373,8 +374,7 @@ export default function PatientsList() {
     }
 
     const excelData = dataToExport.map((patient, index) => {
-      const totalPaid = patient.totalPaid || 0;
-      const remaining = (patient.totalCost || 0) - totalPaid;
+      const money = registryExportMoney(patient);
       return {
         "#": index + 1,
         "كود المريض": patient.patientCode ?? "",
@@ -384,8 +384,9 @@ export default function PatientsList() {
         "الحالة": [patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند طبية" : null].filter(Boolean).join(" + ") || "-",
         "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
-        "التكلفة الكلية": patient.totalCost || 0,
-        "المبلغ المتبقي": remaining > 0 ? remaining : 0,
+        "التكلفة الكلية": money.totalCost,
+        "المبلغ المدفوع": money.totalPaid,
+        "المبلغ المتبقي": money.remaining,
         "تاريخ التسجيل": patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : "",
       };
     });
@@ -442,14 +443,14 @@ export default function PatientsList() {
               <th>التصنيف</th>
               <th>الفرع</th>
               <th>التكلفة</th>
+              <th>المدفوع</th>
               <th>المتبقي</th>
               <th>التاريخ</th>
             </tr>
           </thead>
           <tbody>
             ${dataToExport.map((patient, index) => {
-              const totalPaid = patient.totalPaid || 0;
-              const remaining = Math.max(0, (patient.totalCost || 0) - totalPaid);
+              const money = registryExportMoney(patient);
               return `
               <tr>
                 <td>${index + 1}</td>
@@ -460,8 +461,9 @@ export default function PatientsList() {
                 <td>${[patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند" : null].filter(Boolean).join(" + ") || "-"}</td>
                 <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
-                <td>${(patient.totalCost || 0).toLocaleString()}</td>
-                <td style="color: ${remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${remaining.toLocaleString()}</td>
+                <td>${money.totalCost.toLocaleString()}</td>
+                <td>${money.totalPaid.toLocaleString()}</td>
+                <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>
                 <td>${patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : ""}</td>
               </tr>`;
             }).join("")}

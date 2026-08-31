@@ -6,7 +6,7 @@ import { clearBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
-import { canTrashPatients, TRASH_TITLE } from "@shared/patient_trash";
+import { canTrashPatients, TRASH_TITLE, trashBadgeSeenKey } from "@shared/patient_trash";
 import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
 //  ══ **الأهليّةُ من الدالّة القانونية نفسِها — لا قائمةُ أدوارٍ ثانية**
@@ -32,6 +32,11 @@ interface BranchSession {
   branchId: number;
   branchName: string;
   isAdmin: boolean;
+  //  **موجودةٌ في الكائن المخزَّن أصلاً** (`BranchGate.tsx` يكتبها عند
+  //  الدخول) — غابت عن هذا النوع المحليّ فقط. أُضيفت لبناء مفتاح شارة
+  //  المحذوفات لكلّ مستخدم (تصحيحٌ لاحق، 2026-08-31)؛ لا قراءةَ فعلية
+  //  جديدة، `JSON.parse` كان يحملها ضمنياً دون أن يراها النوع.
+  userId?: number;
   role?: string;
   displayName?: string;
   accessibleBranches?: number[];
@@ -113,22 +118,58 @@ export function Sidebar() {
   });
   const returnedCount = returnedData?.branch ?? 0;
 
-  //  ══ **شارةُ المحذوفات** (ترحيل ٠٦٨) ═══════════════════════════════
-  //  ملفٌّ في السلّة مهلتُه ثلاثون يوماً ثمّ تسقط الاستعادة. فالعددُ ظاهرٌ
-  //  على القائمة كي لا تنقضي مهلةُ ملفٍّ لأن أحداً لم يفتح الصفحة.
-  //  **ونفسُ شرط الخادم شكلاً** (`canTrashPatients`) فلا تظهر لمن يُردّ.
+  //  ══ **شارةُ المحذوفات — إشعارٌ معلوماتيّ يُطفَأ بالمشاهدة** (تحكّمُ
+  //  شاراتِ الشريط الجانبي، 2026-08-31 — يُلغي «تبقى ظاهرةً دائماً» القديم)
+  //  ═════════════════════════════════════════════════════════════════════
+  //  كانت شارةً بعددٍ كامل لا يهبط أبداً حتى تُستعاد كلُّ ملفٍّ أو يُحذَف
+  //  نهائياً — عمداً يومَها («كي لا تنقضي مهلةُ ملفٍّ لأن أحداً لم يفتح
+  //  الصفحة»). لكنّها بذلك لا تفرّق «شاهدتُ هذه العشرةَ أمس» عن «دخل ملفٌّ
+  //  جديد اليوم» — فصارت `?since=` تُفلتر السلّةَ في الخادم (`listTrash`
+  //  القائمة، بلا عمودٍ جديد ولا ترحيل) بآخر زيارةٍ لصفحة `/patient-trash`،
+  //  المحفوظة في `localStorage`. الصفحةُ نفسُها (`PatientTrash.tsx`) تكتب
+  //  وقتَ الفتح وتُبطل هذا المفتاح فوراً — فالشارةُ تصفر لحظةَ المشاهدة لا
+  //  عند أقرب استقصاءٍ دوريّ.
+  //
+  //  **ولكلّ مستخدمٍ لا لكلّ متصفّح** (تصحيحٌ لاحق، 2026-08-31 — يُلغي
+  //  افتراض «متصفّحٌ آخر لنفس الحساب» القديم الذي لم يكن يغطّي المشكلةَ
+  //  الفعلية): مفتاحٌ واحد على نفس المتصفّح كان يعني أن موظّفةً تفتح السلّة
+  //  تُطفئ الشارةَ لزميلها الذي يدخل بعدها من **نفس الجهاز** ولم يرَ شيئاً.
+  //  `trashBadgeSeenKey(userId)` القانونية (`shared/patient_trash.ts`) تبني
+  //  مفتاحاً بمعرّف المستخدم — نفسُ الدالّة يستوردها الطرفان فلا ينحرف
+  //  بناءُ المفتاح هنا عمّا تكتبه `PatientTrash.tsx`.
   const trashEligible = canTrashPatients(branchSession as any);
   const { data: trashData } = useQuery<{ count: number }>({
-    queryKey: ["/api/patient-trash/count"],
+    queryKey: ["/api/patient-trash/count", branchSession?.userId ?? null],
     enabled: trashEligible,
     refetchInterval: 10 * 60_000,
     queryFn: async () => {
-      const res = await fetch("/api/patient-trash/count", { credentials: "include" });
+      const since = localStorage.getItem(trashBadgeSeenKey(branchSession?.userId));
+      const url = since
+        ? `/api/patient-trash/count?since=${encodeURIComponent(since)}`
+        : "/api/patient-trash/count";
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) return { count: 0 };
       return res.json();
     },
   });
   const trashCount = trashData?.count ?? 0;
+
+  //  ══ **شارةُ «معايناتي»** — طابورُ عملٍ لا إشعارٌ معلوماتيّ (تحكّمُ
+  //  شاراتِ الشريط الجانبي، 2026-08-31) ═══════════════════════════════════
+  //  بلا مشاهدةٍ تُطفئها: تبقى حتى يوقّع الطبيبُ معاينةَ كلّ صفّ، تماماً
+  //  كـ«بانتظار الحسم». والأهليّةُ **نفسُ ما يُظهر عنصرَ القائمة أصلاً**
+  //  (`permissions.canWriteMedicalExam`) — لا شرطَ دورٍ ثانٍ.
+  const { data: worklistCountData } = useQuery<{ count: number }>({
+    queryKey: ["/api/medical/worklist", "count"],
+    enabled: !!permissions.canWriteMedicalExam,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/medical/worklist/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const worklistCount = worklistCountData?.count ?? 0;
 
   //  ══ **شارةُ «بانتظار الحسم»** (المرحلة الخامسة) ═══════════════════════
   //  **نفسُ الدالّة القانونية بعينها** — لا نسخةٌ يدوية من قائمة الأدوار.
@@ -239,7 +280,9 @@ export function Sidebar() {
     //  الطابورُ الموروث — نفسُ نمط «بانتظار الحسم» و«مبالغ سابقة بانتظار
     //  الإكمال» معاً.
     { label: DISCOUNT_HISTORY_TITLE, icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, eligible: discountHistoryEligible, badge: discountHistoryCount, hideWhenZero: true },
-    { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
+    //  ══ **شارةُ العدد** (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31) ═══════
+    //  طابورُ عمل — لا تُخفيها المشاهدة، وحدها القائمةُ تفرغ.
+    { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const, badge: worklistCount },
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
     //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
     //  «معايناتي» و«مراجعة الطبيب»: سؤالٌ واحد له شاشتُه.

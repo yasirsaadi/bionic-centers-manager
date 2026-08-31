@@ -102,7 +102,14 @@
     "test:decision-queue-rules": "tsx shared/decision_queue.test.ts",
     "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts",
     "test:daily-review": "tsx server/daily_review.test.ts",
-    "test:return-to-purchase": "tsx server/return_to_purchase.test.ts"
+    "test:return-to-purchase": "tsx server/return_to_purchase.test.ts",
+    "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",
+    "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
+    "test:trash-badge": "tsx server/patient_trash_badge.test.ts",
+    "test:worklist-count": "tsx server/medical_worklist_count.test.ts",
+    "test:toast-tone": "tsx client/src/components/ui/toast_tone.test.ts",
+    "test:delivery-hold-tone": "tsx client/src/pages/notifications_hold_tone.test.ts",
+    "test:trash-badge-key": "tsx client/src/components/trash_badge_key.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -1,8 +1,10 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useBranchSession } from "@/components/BranchGate";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Bell, AlertTriangle, CalendarClock, CheckCircle2 } from "lucide-react";
 import { SERVICE_TYPE_LABELS, STAGE_LABELS } from "@shared/manufacturing";
 
@@ -11,14 +13,27 @@ interface AlertItem {
   patientId: number;
   patientName: string;
   serviceType: string;
+  expertUserId: number | null;
   expertName: string | null;
+  branchId: number | null;
   branchName: string | null;
   expectedDeliveryDate: string;
   currentStage: string;
   status: string;
   days: number;
   kind: "overdue" | "due_today" | "due_tomorrow" | "due_in_2_days" | "completed";
+  /**
+   * سببُ التوقّف الحاليّ — لا يمتلئ إلّا حين يكون الأمرُ متوقّفاً فعلاً
+   * (تصحيحُ تباين تنبيهات التسليم، 2026-08-31). فارغةٌ لأمرٍ يعمل بلا
+   * توقّفٍ ولو كان متأخّراً — فلا عذرَ يُخترَع له.
+   */
+  holdReasonCode: string | null;
+  holdReasonLabel: string | null;
+  holdNote: string | null;
 }
+
+const ALL_BRANCHES = "__all__";
+const ALL_EXPERTS = "__all__";
 
 const SECTIONS: { kind: AlertItem["kind"]; title: string; tone: string; icon: any }[] = [
   { kind: "overdue", title: "متأخرة عن موعد التسليم", tone: "border-red-300 bg-red-50", icon: AlertTriangle },
@@ -27,6 +42,17 @@ const SECTIONS: { kind: AlertItem["kind"]; title: string; tone: string; icon: an
   { kind: "due_in_2_days", title: "موعد تسليمها بعد يومين", tone: "border-yellow-300 bg-yellow-50", icon: CalendarClock },
   { kind: "completed", title: "اكتملت في موعدها", tone: "border-green-300 bg-green-50", icon: CheckCircle2 },
 ];
+
+//  ══ **متأخّرٌ بعذرٍ مسجَّل ≠ متأخّرٌ بلا عذر** (تصحيحُ تباين تنبيهات
+//  التسليم، 2026-08-31) ═══════════════════════════════════════════════════
+//  الأمرُ متأخّرٌ فعلاً في الحالتين فيبقى تحت القسم نفسِه («متأخرة عن موعد
+//  التسليم») — لكنّ اللونَ يختلف: أحمر لمن لا عذرَ له، وكهرمانيّ (لونُ
+//  «غداً» نفسُه — لا لونٌ ثالثٌ يُخترَع) لمن يحمل سبباً حقيقياً مسجَّلاً على
+//  أمره الآن (`holdReasonCode`/`holdNote` القادمان من الخادم — لا استنتاج).
+function toneFor(i: AlertItem, sectionTone: string): string {
+  if (i.kind === "overdue" && i.holdReasonLabel) return "border-amber-300 bg-amber-50";
+  return sectionTone;
+}
 
 function fmtDate(d: string): string {
   return new Date(d + "T00:00:00").toLocaleDateString("ar-IQ", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -49,7 +75,35 @@ export default function Notifications() {
     refetchInterval: 5 * 60_000,
   });
 
-  const items = data?.items ?? [];
+  const allItems = data?.items ?? [];
+
+  //  ══ **فلترةٌ بالفرع والخبير — على ما وصل فعلاً، لا نداءً ثانياً**
+  //  (تحكّمُ تباين تنبيهات التسليم، 2026-08-31) ═══════════════════════════
+  //  الخادمُ يُرجع أصلاً كلَّ ما يملك المستخدمُ صلاحيةَ رؤيته (خبيرٌ محضٌ
+  //  ⟶ أوامرُه هو فقط، مديرٌ ⟶ فروعُه، ... إلخ — `server/manufacturing/
+  //  routes.ts`). فالفلترةُ هنا تضييقٌ على شاشته وحدها فوق بياناتٍ مأذونةٍ
+  //  أصلاً — لا استعلامَ خادمٍ جديد، ولا احتمالَ تسريب: خيارا «كلّ
+  //  الفروع/الخبراء» مُشتقّان من العناصر المُرجَعة نفسِها لا من قائمةٍ
+  //  مستقلّة، فلا يظهر فرعٌ أو خبيرٌ لم يصل أصلاً ضمن نطاق المستخدم.
+  const [branchFilter, setBranchFilter] = useState(ALL_BRANCHES);
+  const [expertFilter, setExpertFilter] = useState(ALL_EXPERTS);
+
+  const branchOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const i of allItems) if (i.branchId != null) map.set(i.branchId, i.branchName ?? String(i.branchId));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "ar"));
+  }, [allItems]);
+
+  const expertOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const i of allItems) if (i.expertUserId != null) map.set(i.expertUserId, i.expertName ?? String(i.expertUserId));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "ar"));
+  }, [allItems]);
+
+  const items = allItems.filter((i) =>
+    (branchFilter === ALL_BRANCHES || String(i.branchId) === branchFilter)
+    && (expertFilter === ALL_EXPERTS || String(i.expertUserId) === expertFilter)
+  );
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
@@ -63,11 +117,44 @@ export default function Notifications() {
         </p>
       </div>
 
+      {(branchOptions.length > 0 || expertOptions.length > 0) && (
+        <div className="flex flex-wrap gap-3 mb-4">
+          {branchOptions.length > 0 && (
+            <Select value={branchFilter} onValueChange={setBranchFilter}>
+              <SelectTrigger className="w-[180px]" data-testid="select-notifications-branch">
+                <SelectValue placeholder="الفرع" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_BRANCHES}>كل الفروع</SelectItem>
+                {branchOptions.map(([id, name]) => (
+                  <SelectItem key={id} value={String(id)}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {expertOptions.length > 0 && (
+            <Select value={expertFilter} onValueChange={setExpertFilter}>
+              <SelectTrigger className="w-[180px]" data-testid="select-notifications-expert">
+                <SelectValue placeholder="الخبير" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_EXPERTS}>كل الخبراء</SelectItem>
+                {expertOptions.map(([id, name]) => (
+                  <SelectItem key={id} value={String(id)}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-center py-12 text-muted-foreground text-sm">جارٍ التحميل…</div>
       ) : items.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground text-sm">
-          لا توجد تنبيهات حالياً — لا مواعيد تسليم قريبة أو متأخرة. 👍
+          {allItems.length === 0
+            ? "لا توجد تنبيهات حالياً — لا مواعيد تسليم قريبة أو متأخرة. 👍"
+            : "لا نتائج تطابق هذا الفلتر."}
         </div>
       ) : (
         <div className="space-y-6">
@@ -83,8 +170,9 @@ export default function Notifications() {
                 </h2>
                 <div className="space-y-2">
                   {list.map((i) => {
+                    const onHold = kind === "overdue" && !!i.holdReasonLabel;
                     const card = (
-                      <Card className={`${tone} ${canOpenOrder ? "hover:shadow-sm transition-shadow cursor-pointer" : ""}`}>
+                      <Card className={`${toneFor(i, tone)} ${canOpenOrder ? "hover:shadow-sm transition-shadow cursor-pointer" : ""}`}>
                         <CardContent className="p-3">
                           <div className="flex items-start justify-between gap-3 flex-wrap">
                             <div className="min-w-0">
@@ -95,11 +183,20 @@ export default function Notifications() {
                                 {i.branchName && <span>الفرع: {i.branchName}</span>}
                                 <span>المرحلة: {STAGE_LABELS[i.currentStage] ?? i.currentStage}</span>
                               </div>
+                              {/* سببُ التوقّف — لا يظهر إلّا حين يحمله الأمرُ فعلاً (لا استنتاج) */}
+                              {onHold && (
+                                <div className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 mt-1.5 inline-block">
+                                  سببُ التأخير: {i.holdReasonLabel}
+                                  {i.holdNote && <span className="text-amber-700"> — {i.holdNote}</span>}
+                                </div>
+                              )}
                             </div>
                             <div className="text-left">
                               <div className="text-xs font-medium">{fmtDate(i.expectedDeliveryDate)}</div>
                               {kind === "overdue" && (
-                                <Badge className="mt-1 text-xs bg-red-100 text-red-800 border-red-200">
+                                <Badge
+                                  className={`mt-1 text-xs ${onHold ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-red-100 text-red-800 border-red-200"}`}
+                                >
                                   متأخر {Math.abs(i.days)} يوم
                                 </Badge>
                               )}

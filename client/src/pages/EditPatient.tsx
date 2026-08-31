@@ -354,7 +354,18 @@ export default function EditPatient() {
     const data: any = { ...values };
     if (priorTouched) data.hadPriorCenterHistory = priorHistory === true;
     mutate({ id: patientId, data }, {
-      onSuccess: () => {
+      //  ══ **ملاحظةُ الكلفة من الخادم — كانت تُقرأ ولا تُعرَض** (تصحيحٌ
+      //  لاحقٌ على PR #267، 2026-08-31) ═══════════════════════════════════
+      //  `costNote` تصل في استجابة الحفظ حين يُقفَل تعديلُ الكلفة (سعرٌ
+      //  معتمَدٌ من طبيب) أو حين يتعذّر تحديد الحالة الواحدة (مريضٌ بأكثر
+      //  من حالة) — والصفحةُ كانت تتجاهل جسمَ الاستجابة كلِّياً وتنتقل
+      //  بتوستِ النجاح العامّ وحده، فلا يعرف الموظّف أنّ جزءاً من طلبه
+      //  لم يُنفَّذ كما كتبه. توستٌ إضافيّ (لا بديلَ عن توست الهوك العامّ)
+      //  حين تحضر الملاحظة فقط.
+      onSuccess: (result: any) => {
+        if (result?.costNote) {
+          toast({ title: "ملاحظة حول الكلفة", description: result.costNote });
+        }
         setLocation(`/patients/${patientId}${branchParam}`);
       },
     });
