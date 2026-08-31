@@ -1827,8 +1827,14 @@ export async function registerRoutes(
 
   // Update a case's cost (admin / branch manager). Historical per-service costs
   // were never stored separately (only the aggregate total_cost), so this lets
-  // staff set each case's real cost. It does NOT change patient.total_cost — so
-  // the aggregate/financial reports are completely unaffected.
+  // staff set each case's real cost.
+  //
+  // ══ يُحرِّك total_cost بالدلتا ويقيّده (تحكّمُ اتّساق الكلفة، 2026-08-30)
+  // ═════════════════════════════════════════════════════════════════════
+  // كان هذا البابُ يكتب `patient_cases.cost` وحده — بلا لمسِ الإجماليّ ولا
+  // قيدِ دفترٍ، فينحرف عن باب «تعديل مريض» الذي يحرّك الاثنين معاً. الآن
+  // `storage.updateCaseCost` تحرّك الإجماليَّ بالدلتا (لا كتابةً فوقه) وتقيّد
+  // الفرقَ — البابان يكتبان الرقمَ نفسَه بالطريقة نفسِها.
   app.patch("/api/patients/:id/cases/:caseId", isAuthenticated, async (req, res) => {
     const patientId = Number(req.params.id);
     const caseId = Number(req.params.caseId);
@@ -1864,15 +1870,18 @@ export async function registerRoutes(
       });
     }
 
-    const updated = await storage.updateCaseCost(patientId, caseId, Math.round(cost));
-    if (!updated) return res.status(404).json({ message: "الحالة غير موجودة" });
+    const result = await storage.updateCaseCost(patientId, caseId, Math.round(cost));
+    if (!result) return res.status(404).json({ message: "الحالة غير موجودة" });
     await logAudit({
       entityType: "patient_case", entityId: caseId, action: "update",
       userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
       branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-      notes: `تعديل كلفة الحالة #${caseId} إلى ${Math.round(cost).toLocaleString()} د.ع`,
+      notes: `تعديل كلفة الحالة #${caseId} إلى ${Math.round(cost).toLocaleString()} د.ع`
+        + ` — والإجماليّ إلى ${result.totalCost.toLocaleString()} د.ع`,
     });
-    res.json(updated);
+    //  **شكلُ الحالة كما كان** (توافقاً مع أيّ عميلٍ قائم يقرأ حقولها
+    //  مباشرةً) **وإجماليٌّ إضافيّ** — لا كسرَ عقدٍ، وشفافيةٌ زائدة.
+    res.json({ ...result.case, totalCost: result.totalCost });
   });
 
   // Delete a case type from a patient — STRICTLY the general admin (owner's

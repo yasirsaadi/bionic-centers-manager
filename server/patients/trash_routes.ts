@@ -63,12 +63,20 @@ export function registerPatientTrashRoutes(app: Express, isAuthenticated: Reques
     } catch (err) { fail(res, err, "تعذّر قراءة المحذوفات"); }
   });
 
-  /** شارةُ العدد — ولمن لا يملك السلّة صفرٌ لا خطأ، فلا شارةَ تومض له. */
+  /**
+   * شارةُ العدد — ولمن لا يملك السلّة صفرٌ لا خطأ، فلا شارةَ تومض له.
+   *
+   * **`?since=` اختياريّ** (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31):
+   * غيابُه = العددُ الكامل كما كان دائماً؛ وجودُه = «كم صفّاً دخل السلّةَ
+   * بعد هذا الوقت» — هذا ما يستعمله الشريطُ الجانبيّ ليُري «الجديدَ منذ آخر
+   * زيارة» لا كلَّ ما في السلّة، بلا عمودٍ جديد ولا ترحيل.
+   */
   app.get("/api/patient-trash/count", isAuthenticated, async (req: any, res) => {
     const actor = trashActor(req);
     if (!canTrashPatients(actor)) return res.json({ count: 0 });
     try {
-      res.json({ count: (await listTrash({ actor, limit: 500 })).length });
+      const since = typeof req.query.since === "string" ? req.query.since : null;
+      res.json({ count: (await listTrash({ actor, limit: 500, since })).length });
     } catch (err) { fail(res, err, "تعذّر قراءة المحذوفات"); }
   });
 

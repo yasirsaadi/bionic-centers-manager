@@ -13,7 +13,7 @@
 // لا شيءَ يُمحى في اليوم الثلاثين تلقائياً: تسقط **الاستعادةُ** وحدها.
 // والمحوُ فعلٌ يقرّره المسؤولُ العام صراحةً بسببٍ مكتوب وتأكيدٍ ثانٍ.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import {
   TRASH_TITLE, RESTORE_LABEL, PURGE_LABEL, PURGE_REASON_LABEL,
-  RESTORE_EXPIRED_MESSAGE, canTrashPatients, canPurgePatients,
+  RESTORE_EXPIRED_MESSAGE, canTrashPatients, canPurgePatients, TRASH_BADGE_LAST_SEEN_KEY,
 } from "@shared/patient_trash";
 
 const money = (n: number) => Number(n || 0).toLocaleString("en-US");
@@ -107,6 +107,24 @@ export default function PatientTrash() {
     },
   });
   const rows = data?.rows ?? [];
+
+  //  ══ **«شُوهدت» — يُختَم عند فتح العرض الكامل وحده** (تحكّمُ شاراتِ
+  //  الشريط الجانبي، 2026-08-31) ═══════════════════════════════════════════
+  //  الشرطُ `!search.trim()`: نتائجُ بحثٍ مصفّاة ليست «كلَّ ما في السلّة» —
+  //  ختمُها كان سيُطفئ شارةَ صفوفٍ لم يرَها أحد لمجرّد أن بحثاً ضيّقاً نجح.
+  //  والوقتُ المحفوظ هو **أحدثُ `deletedAt` رآه المستخدمُ فعلاً**، لا وقتَ
+  //  المتصفّح — فسلّةٌ فارغة تُختَم بوقت المتصفّح (لا شيءَ يُفوَّت بفارق
+  //  ثوانٍ)، وسلّةٌ بصفوفٍ تُختَم بأحدثها بالضبط. **وإبطالٌ فوريّ** لمفتاح
+  //  شارة الشريط الجانبي — لا ننتظر استقصاءها الدوريّ (١٠ دقائق).
+  useEffect(() => {
+    if (!data || search.trim()) return;
+    const latest = rows.length > 0
+      ? rows.reduce((max, r) => (r.deletedAt > max ? r.deletedAt : max), rows[0].deletedAt)
+      : new Date().toISOString();
+    localStorage.setItem(TRASH_BADGE_LAST_SEEN_KEY, latest);
+    qc.invalidateQueries({ queryKey: ["/api/patient-trash/count"] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, search]);
 
   //  **نفسُ تنظيف الذاكرة في الاتجاهين**: الاستعادةُ تُعيد الملفَّ إلى
   //  القوائم كما أخرجه الحذفُ منها، والحذفُ النهائيُّ يُخرجه من السلّة.

@@ -24,6 +24,16 @@ export const RESTORE_WINDOW_DAYS = 30;
 // ── العناوين ─────────────────────────────────────────────────────────────
 
 export const TRASH_TITLE = "المحذوفات";
+
+/**
+ * مفتاحُ `localStorage` لآخر زيارةٍ لصفحة السلّة — لشارة «رأيتُها» في
+ * الشريط الجانبي (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31).
+ *
+ * **مصدرٌ واحدٌ يستورده الطرفان**: Sidebar.tsx يقرأه ليطلب العدّادَ منذ
+ * هذا الوقت، وPatientTrash.tsx يكتبه عند كلّ فتح — تكرارُ السلسلة الحرفية
+ * في الملفّين كان سيَعبَث أحدُهما بالآخر بمجرّد خطأِ كتابة.
+ */
+export const TRASH_BADGE_LAST_SEEN_KEY = "patient-trash-badge-last-seen-at";
 export const DELETE_REASON_LABEL = "سبب الحذف";
 export const RESTORE_LABEL = "استعادة";
 export const PURGE_LABEL = "حذف نهائي";

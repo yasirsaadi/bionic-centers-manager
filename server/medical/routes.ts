@@ -924,6 +924,26 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     }
   });
 
+  // ── شارةُ «معايناتي» — العددُ وحده (تحكّمُ شاراتِ الشريط الجانبي،
+  // 2026-08-31) ═══════════════════════════════════════════════════════════
+  // نفسُ حارس `/api/medical/worklist` بحرفه — `doctorSpecialties` ثمّ
+  // `branchScope` — لا نسخةَ ثانية من قاعدة «مَن طبيب». **وهذا طابورُ عملٍ
+  // لا إشعاراً معلوماتياً**: لا يُطفَأ بفتح الصفحة، يبقى حتى يُحسَم كلُّ صفّ
+  // فيه (يوقّع الطبيبُ معاينته)، تماماً كـ«بانتظار الحسم». ومَن ليس طبيباً
+  // يقرأ صفراً بلا ٤٠٣ — نفسُ نمط كلّ شارات الشريط الجانبيّ.
+  app.get("/api/medical/worklist/count", isAuthenticated, async (req: Req, res) => {
+    try {
+      const { userId } = getSession(req);
+      const specialties = await store.doctorSpecialties(userId);
+      if (specialties.length === 0) return res.json({ count: 0 });
+      const rows = await store.getWorklist(specialties, branchScope(req));
+      res.json({ count: rows.length });
+    } catch (err: any) {
+      console.error("[medical] GET worklist/count failed:", err);
+      res.json({ count: 0 });
+    }
+  });
+
   // ── مرضى الطبيب الذين اشتروا مؤخّراً — **قراءةٌ محضة** ───────────────────
   //
   // لا بنيةَ تنبيهاتٍ داخلية في هذا النظام (تلغرام للمالك، وصندوقُ رسائلِ

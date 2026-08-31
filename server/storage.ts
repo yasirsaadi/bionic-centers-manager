@@ -1031,15 +1031,66 @@ export class DatabaseStorage implements IStorage {
       .where(eq(patientCases.id, caseId));
   }
 
-  // Set a case's cost. Scoped by patientId so a case can never be edited under
-  // the wrong patient. Never touches patient.total_cost (reports unaffected).
-  // Marks the cost 'manual' so the automatic cost floor never overrides it.
-  async updateCaseCost(patientId: number, caseId: number, cost: number): Promise<PatientCase | undefined> {
-    const [updated] = await db.update(patientCases)
-      .set({ cost, costSource: "manual", updatedAt: new Date() })
-      .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)))
-      .returning();
-    return updated;
+  /**
+   * تصحيحُ كلفةِ حالةٍ **مع الدفتر** — لا نصفَ كتابة (تحكّمُ اتّساق الكلفة،
+   * 2026-08-30).
+   *
+   * ══ العطبُ الذي يغلقه ═════════════════════════════════════════════════
+   * كانت تكتب `patient_cases.cost` وحده — بلا لمسِ `patients.total_cost`
+   * وبلا قيدٍ في `cost_entries` (خلافاً لبابِ «تعديل مريض» الذي يكتب كليهما
+   * عند نقطة الخنق في `updatePatient`). فالبابان يتحكّمان في رقمين
+   * منفصلين لا رقمٍ واحد: السجلُّ والمحاسبةُ يقرآن `total_cost`، وعدّادُ
+   * جلسات العلاج الطبيعي يفضّل `patient_cases.cost` عند وجوده — فتصحيحٌ من
+   * هذا الباب يُصلح الثاني ويترك الأوّل منحرفاً، والعكسُ بالعكس تماماً.
+   *
+   * **بالجمع لا بالكتابة فوق** — نفسُ قاعدة «تصحيحُ سعر جهازٍ بعد البيع»
+   * (القسم 4 في CLAUDE.md): الفرقُ بين القديم والجديد يُضاف على الإجماليّ
+   * لا يستبدله، فتصحيحاتٌ أخرى وقعت على `total_cost` بعد إنشاء الحالة
+   * (تخصيصٌ، خدمةٌ جديدة، زيارةٌ بكلفة) لا تُمحى بضغطةٍ هنا.
+   *
+   * معاملةٌ واحدة: قفلُ صفَّي الحالة والمريض معاً (`FOR UPDATE`) · تحديثُ
+   * كلفة الحالة · تحديثُ `total_cost` بالدلتا (إن لم تكن صفراً) · قيدُ
+   * دفترٍ واحدٌ موقَّعٌ بمصدرٍ مميَّز `case_cost_edit` — أو لا شيء. **ولا
+   * مساسَ بالدفعات إطلاقاً.**
+   */
+  async updateCaseCost(
+    patientId: number, caseId: number, cost: number,
+  ): Promise<{ case: PatientCase; totalCost: number } | undefined> {
+    return await db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        SELECT pc.cost AS case_cost, p.branch_id, p.total_cost
+          FROM patient_cases pc
+          JOIN patients p ON p.id = pc.patient_id
+         WHERE pc.id = ${caseId} AND pc.patient_id = ${patientId}
+         FOR UPDATE
+      `);
+      const row = (locked.rows ?? [])[0] as any;
+      if (!row) return undefined;
+
+      const oldCaseCost = Number(row.case_cost) || 0;
+      const oldTotalCost = Number(row.total_cost) || 0;
+      const branchId = Number(row.branch_id);
+      const delta = cost - oldCaseCost;
+
+      const [updatedCase] = await tx.update(patientCases)
+        .set({ cost, costSource: "manual", updatedAt: new Date() })
+        .where(and(eq(patientCases.id, caseId), eq(patientCases.patientId, patientId)))
+        .returning();
+
+      let totalCost = oldTotalCost;
+      if (delta !== 0) {
+        const [updatedPatient] = await tx.update(patients)
+          .set({ totalCost: oldTotalCost + delta })
+          .where(eq(patients.id, patientId))
+          .returning({ totalCost: patients.totalCost });
+        totalCost = updatedPatient?.totalCost ?? (oldTotalCost + delta);
+        await tx.insert(costEntries).values({
+          patientId, branchId, amount: delta, source: "case_cost_edit", caseId,
+        });
+      }
+
+      return { case: updatedCase!, totalCost };
+    });
   }
 
   // Ensure a patient_cases row exists for each active case flag, copying the

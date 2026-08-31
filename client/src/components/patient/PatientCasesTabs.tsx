@@ -11,6 +11,7 @@ import { formatDateIraq } from "@/lib/utils";
 import { useBranchSession } from "@/components/BranchGate";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
+import { invalidatePatientData } from "@/lib/queryClient";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -121,8 +122,14 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر الحفظ"); }
       return res.json();
     },
+    //  ══ **إبطالٌ كاملٌ لا مفتاحاً واحداً** (تحكّمُ اتّساق الكلفة،
+    //  2026-08-30) ═══════════════════════════════════════════════════════
+    //  كان الإبطالُ يقتصر على `"cases"` بينما هذا الحفظُ صار يحرّك
+    //  `total_cost` أيضاً — فتبقى الشاشةُ (والسجلّ والمحاسبة) على الرقم
+    //  القديم حتى تحديثٍ يدويّ. `invalidatePatientData` نفسُها التي تنادِيها
+    //  «تعديل مريض» وكلُّ مسارٍ ماليّ آخر — لا حسابَ إبطالٍ ثانٍ يُنسى هنا.
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId, "cases"] });
+      invalidatePatientData(queryClient, patientId);
       setEditing(false);
       toast({ title: "تم تحديث كلفة الحالة" });
     },

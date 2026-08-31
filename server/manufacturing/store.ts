@@ -640,6 +640,14 @@ export interface OrderCard {
   reworkCount: number;
   daysInStage: number;
   isOverdue: boolean;
+  /**
+   * سببُ التوقّف الحاليّ — داخليٌّ بحت (لا يصل المريض)، فارغٌ خارج حالات
+   * التوقّف الأربع. أُضيف إلى العرض المشترك (تحكّمُ تباين تنبيهات التسليم،
+   * 2026-08-31) كي تفرّق «التنبيهات» بين متأخّرٍ حقّاً ومتأخّرٍ بسببٍ مسجَّل
+   * — لا استعلامَ ثانياً موازياً لـ`getOrderDetail`.
+   */
+  holdReasonCode: string | null;
+  holdNote: string | null;
 }
 
 function daysSince(d: Date | string | null | undefined): number {
@@ -682,6 +690,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
       expertUserId: WO.expertUserId, assignedAt: WO.createdAt, startedAt: WO.startedAt,
       expectedDeliveryDate: WO.expectedDeliveryDate, completedAt: WO.completedAt,
       finalResult: WO.finalResult,
+      holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
       patientName: patients.name, prostheticType: patients.prostheticType, supportType: patients.supportType,
       branchName: branches.name, expertName: systemUsers.displayName,
     })
@@ -760,6 +769,8 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       reworkCount: reworkByOrder.get(r.id) ?? 0,
       daysInStage: daysSince(stageEntered),
       isOverdue,
+      holdReasonCode: r.holdReasonCode ?? null,
+      holdNote: r.holdNote ?? null,
     };
   });
 }

@@ -23,7 +23,7 @@ import {
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
-  MAINTENANCE_DONE_STAGES,
+  MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
 import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
@@ -999,9 +999,21 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       const days = daysUntil(o.expectedDeliveryDate);
       const base = {
         orderId: o.id, patientId: o.patientId, patientName: o.patientName,
-        serviceType: o.serviceType, expertName: o.expertName, branchName: o.branchName,
+        serviceType: o.serviceType,
+        //  **معرّفانِ رقميّان لا اسمَين وحدهما** (تحكّمُ تباين تنبيهات
+        //  التسليم، 2026-08-31) — الفلترةُ بالفرع والخبير في الشاشة تحتاج
+        //  مفتاحاً مستقرّاً؛ اسمان قد يتطابقان (فرعان باسمٍ محليّ، خبيران
+        //  بنفس الاسم الأوّل) فيختلط الفلتر.
+        expertUserId: o.expertUserId, expertName: o.expertName,
+        branchId: o.branchId, branchName: o.branchName,
         expectedDeliveryDate: o.expectedDeliveryDate, currentStage: o.currentStage,
         status: o.status, days,
+        //  **سببُ التوقّف — لتمييز «متأخّرٌ حقّاً» عن «متأخّرٌ بعذرٍ مسجَّل»**
+        //  (نفسُ التصحيح). فارغٌ خارج حالات التوقّف الأربع، ولا يُستنتَج من
+        //  أيّ شيءٍ آخر — القيمةُ المخزَّنة نفسُها أو لا شيء.
+        holdReasonCode: o.holdReasonCode ?? null,
+        holdReasonLabel: o.holdReasonCode ? (REASON_CODE_LABELS[o.holdReasonCode] ?? o.holdReasonCode) : null,
+        holdNote: o.holdNote ?? null,
       };
       if (o.status === "completed") {
         // "Show it as completed on the scheduled date" — green info inside

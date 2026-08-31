@@ -27,7 +27,16 @@ const toastVariants = cva(
   {
     variants: {
       variant: {
-        default: "border bg-background text-foreground",
+        //  ══ **بطاقةٌ زرقاء هادئة بدل الاختفاء على الخلفية البيضاء**
+        //  (تصحيحُ تباين، 2026-08-30) ═══════════════════════════════════
+        //  كان `bg-background` نفسَه المستعمَل خلف الصفحة كلِّها — فتوستُ
+        //  النجاح العاديّ يضيع بلا حدٍّ بصريّ واضح. ثلاثُ متغيّراتٍ خاصّةٌ
+        //  بهذا الاستعمال وحده في index.css (`--toast-default-*`)، فلا
+        //  تُسجَّل لوناً مشتركاً في tailwind.config.ts يُستعمَل في غير
+        //  مكانه. **ولا لمسَ لأيّ موضع استدعاء**: كلُّ نداء `toast({...})`
+        //  بلا `variant` صريح يرث هذا التصميم تلقائياً.
+        default:
+          "border-[hsl(var(--toast-default-border))] bg-[hsl(var(--toast-default-background))] text-[hsl(var(--toast-default-foreground))]",
         destructive:
           "destructive group border-destructive bg-destructive text-destructive-foreground",
       },

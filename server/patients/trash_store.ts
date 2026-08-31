@@ -466,6 +466,14 @@ export interface TrashRow {
  */
 export async function listTrash(params: {
   actor: TrashActor; search?: string | null; limit?: number;
+  /**
+   * **صفوفٌ أُضيفت بعد هذا الوقت فقط** — لشارةِ «رأيتُها» لا لقائمةٍ
+   * تشغيلية (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31). البابُ الوحيدُ الذي
+   * يمرّرها اليوم هو عدّادُ الشارة؛ صفحةُ السلّة نفسها لا تُرسله فتبقى
+   * ترى كلَّ شيء كما كانت. **بلا عمودِ «مُشاهَد» جديد**: نفسُ `deleted_at`
+   * الموجود، يُقارَن لا يُخزَّن له تعقّبٌ ثانٍ.
+   */
+  since?: string | null;
 }): Promise<TrashRow[]> {
   const { actor } = params;
   if (!canTrashPatients(actor)) throw new TrashError("غير مصرح", 403);
@@ -481,6 +489,12 @@ export async function listTrash(params: {
     OR p.patient_code ILIKE ${"%" + q + "%"}
     OR COALESCE(p.phone, '') ILIKE ${"%" + q + "%"}
   )`;
+  //  **صارمٌ**: تاريخٌ لا يُفكَّك يُهمَل بصمت (لا فلترة) بدل أن يُسقط
+  //  الاستعلامَ كلَّه — شارةٌ خاطئة أهونُ من صفحةٍ معطوبة.
+  const sinceDate = params.since ? new Date(params.since) : null;
+  const sinceClause = sinceDate && !Number.isNaN(sinceDate.getTime())
+    ? sql`p.deleted_at > ${sinceDate}`
+    : sql`TRUE`;
   const limit = Math.min(500, Math.max(1, params.limit ?? 200));
 
   const r = await db.execute(sql`
@@ -492,7 +506,7 @@ export async function listTrash(params: {
            GREATEST(0, CEIL(EXTRACT(EPOCH FROM (p.restore_until - NOW())) / 86400))::int AS days_left
       FROM patients p
       LEFT JOIN branches b ON b.id = p.branch_id
-     WHERE p.deleted_at IS NOT NULL AND ${scopeClause} AND ${searchClause}
+     WHERE p.deleted_at IS NOT NULL AND ${scopeClause} AND ${searchClause} AND ${sinceClause}
      ORDER BY p.deleted_at DESC
      LIMIT ${limit}
   `);
