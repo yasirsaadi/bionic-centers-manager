@@ -2336,13 +2336,26 @@ export async function registerRoutes(
         }
       }
 
-      const patient = await storage.updatePatient(id, patch);
+      // ══ إكمالُ اتساق الكلفة — الاتجاهُ الثاني (تصحيحٌ لاحقٌ على PR #267،
+      // 2026-08-31) ═══════════════════════════════════════════════════════
+      // القلمُ بجانب الحالة يحرّك الإجماليَّ منذ هذا الفرع (`updateCaseCost`).
+      // وهنا العكس: لمريضٍ بحالةٍ واحدةٍ لا غير، الإجماليُّ **هو** كلفةُ تلك
+      // الحالة — فتُكتَب معه ذرّياً. ولمريضٍ بأكثر من حالة، لا شيءَ يُخمَّن:
+      // `syncSoleCaseCost` تُبقي كلَّ حالةٍ كما هي وتُرجع `caseCostSync:
+      // "ambiguous"` وحدها، تُترجَم هنا إلى ملاحظةٍ صريحة (نفسُ قناة
+      // `costNote` القائمة أصلاً لقفل الطبيب) — لا صمتَ ولا كتابةً عشوائية.
+      const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true);
+      const caseCostAmbiguousNote = (patient as any)?.caseCostSync === "ambiguous"
+        ? "تحديث الإجماليّ لم يغيّر كلفة أيّ حالةٍ بعينها — لهذا المريض أكثر من حالة نشطة. عدّل كلفة الحالة المطلوبة من تبويبها في ملف المريض."
+        : null;
       res.json(costLockedByFollowup
         ? {
           ...patient,
           costNote: "لم تُعدَّل الكلفة: سعر الجهاز معتمد من الطبيب — التعديل يمرّ بطلب تعديل سعر يعتمده طبيب أو المسؤول العام",
         }
-        : patient);
+        : caseCostAmbiguousNote
+          ? { ...patient, costNote: caseCostAmbiguousNote }
+          : patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       // ══ **وفشلُ التعديل يُقال أيضاً** — نفسُ علّة الإنشاء ═══════════════

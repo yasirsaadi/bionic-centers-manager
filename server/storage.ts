@@ -1547,7 +1547,46 @@ export class DatabaseStorage implements IStorage {
    */
   //  `tx` اختيارية — والقيدُ يُكتب داخلها كالتحديث تماماً، فلا تُنقَل الكلفةُ
   //  في معاملةٍ ويُقيَّد تاريخُها خارجها.
-  async updatePatient(id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit", costCaseId: number | null = null, tx?: any): Promise<Patient | undefined> {
+  /**
+   * `syncSoleCaseCost`: **يكتمل تناسقُ الكلفة في الاتجاه الآخر** (تصحيحٌ
+   * لاحقٌ على PR #267، 2026-08-31).
+   *
+   * ══ العطبُ المتبقّي ═══════════════════════════════════════════════════
+   * إصلاحُ القلم (`updateCaseCost` أعلاه) كتب `total_cost` من كلفة الحالة.
+   * لكنّ الاتجاه المعاكس — «تعديل مريض» يكتب `totalCost` مباشرةً كقيمةٍ
+   * مطلقة (خطوة ٣ أدناه) ثمّ يحسب الفرقَ لاحقاً لقيد الدفتر وحده — **لا
+   * يلمس `patient_cases` إطلاقاً**. فبطاقةُ الحالة تبقى على رقمها القديم
+   * حتى يعدّلها الموظّف من تبويبها هي بنفسه.
+   *
+   * ══ لماذا مفتاحٌ اختياريّ لا سلوكٌ دائم ════════════════════════════════
+   * هذه الدالّةُ نقطةُ خنقٍ يناديها عدّةُ مسارات (`new_service/store.ts`
+   * أبرزُها) **بهويّة حالةٍ محسومةٍ سلفاً** (`costCaseId` صريح) وبمنطق
+   * توزيعٍ خاصٍّ بها (`addToCaseCostById` تراكميّاً لكلّ بند). لو زامَنَ هذا
+   * التزامنُ الجديد كلَّ نداء لَتعارض مع تلك المسارات. فالمزامنةُ **معزولةٌ
+   * خلف علمٍ صريح**، والبابُ الوحيد الذي يرفعه اليوم `PUT /api/patients/:id`
+   * («تعديل مريض») — البابُ الذي وُصف العطبُ من جهته فقط.
+   *
+   * ══ القاعدة — بالكتابة فوق هنا، لا بالجمع ═════════════════════════════
+   * خلافاً لبقيّة كتّاب `patient_cases.cost` (تراكميّون عمداً — مصدرُ كلفةٍ
+   * جديد يُضاف لا يمحو ما سبقه)، هذا الحقلَ نفسَه في «تعديل مريض» **قيمةٌ
+   * مطلقة يكتبها الموظّف** لا دلتا (نفسُ ما يفعله الكودُ القائم بـ`totalCost`
+   * أصلاً). فلمريضٍ بحالةٍ واحدةٍ لا غير، الإجماليُّ **هو** كلفةُ تلك الحالة
+   * حرفياً — لا مكان آخر يذهب إليه المال. الكتابةُ فوق هنا تضمن اتّفاقهما
+   * **حتماً** بعد الحفظ، حتى لو انحرفا سابقاً (عطبٌ تاريخي)؛ دلتا كانت
+   * ستُبقي الانحرافَ القديم قائماً بنفس مقداره.
+   *
+   * ══ التعدّد — لا تخمين ولا كتابةٌ فوق الكلّ ═════════════════════════════
+   * أكثرَ من حالةٍ نشطة ⟹ **لا تُمَسّ أيّ حالة**؛ لا مؤشّرَ يقول أيَّ حالةٍ
+   * قصدها الموظّف، وكتابةُ الفرق على واحدةٍ عشوائية أو على كلّها معاً كلاهما
+   * كذبٌ. تُعاد الحالةُ `"ambiguous"` ليترجمها المنادي إلى رسالةٍ صريحة تقول
+   * للموظّف: عدّل كلَّ حالةٍ من تبويبها.
+   *
+   * صفرُ حالاتٍ نشطة ⟹ لا شيءَ يُسوَّى — ليست غموضاً، بل غياب موضوع.
+   */
+  async updatePatient(
+    id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit",
+    costCaseId: number | null = null, tx?: any, syncSoleCaseCost: boolean = false,
+  ): Promise<(Patient & { caseCostSync?: "synced" | "ambiguous" | null }) | undefined> {
     // ══ تعديلٌ يمسّ وجهةَ واتساب ⟶ **وحدةٌ دائمة واحدة** ═══════════════
     //
     //  الحالةُ التي يجب ألّا تقع أبداً:
@@ -1561,9 +1600,12 @@ export class DatabaseStorage implements IStorage {
     //  فحين لا يمرّر المنادي معاملةً ويمسّ التعديلُ الرقمَ أو الراية، تُفتح
     //  معاملةٌ تشمل الاثنين. ومَن مرّر معاملتَه فالوحدةُ وحدتُه أصلاً.
     if (!tx && ((updates as any).phone !== undefined
-      || (updates as any).whatsappNotificationsEnabled !== undefined)) {
+      || (updates as any).whatsappNotificationsEnabled !== undefined
+      //  **ونفسُ السببِ للمزامنة**: كتابةُ `total_cost` وكتابةُ
+      //  `patient_cases.cost` يجب أن تنجحا معاً أو تتراجعا معاً.
+      || (syncSoleCaseCost && (updates as any).totalCost !== undefined))) {
       return await db.transaction((t) =>
-        this.updatePatient(id, updates, costSource, costCaseId, t));
+        this.updatePatient(id, updates, costSource, costCaseId, t, syncSoleCaseCost));
     }
     const h = tx ?? db;
     // The generic patch is one of the ways total_cost moves (management edit,
@@ -1629,6 +1671,7 @@ export class DatabaseStorage implements IStorage {
       .set(patch as any)
       .where(eq(patients.id, id))
       .returning();
+    let caseCostSync: "synced" | "ambiguous" | null = null;
     if (updated && wantsCost && before) {
       const delta = (updated.totalCost || 0) - (before.totalCost || 0);
       if (delta !== 0) {
@@ -1636,6 +1679,29 @@ export class DatabaseStorage implements IStorage {
           patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
         });
+
+        // ══ إكمالُ الاتساق — بطاقةُ الحالة تتبع الإجماليّ (تصحيحٌ لاحقٌ
+        // على PR #267، 2026-08-31) ═══════════════════════════════════════
+        // مقفولةٌ خلف `syncSoleCaseCost` — انظر الشرحَ فوق توقيع الدالّة.
+        // **الكتابةُ فوق لا الجمع**: `totalCost` هنا قيمةٌ مطلقة كتبها
+        // الموظّف، فلمريضٍ بحالةٍ واحدة الإجماليُّ **هو** كلفةُ تلك الحالة
+        // — لا مكانَ آخر يذهب إليه المال. والتعدّدُ **لا يُخمَّن**: صفٌّ
+        // واحد فقط تُكتب كلفتُه، وأكثرَ من صفٍّ لا تُمَسّ أيُّ حالة.
+        if (syncSoleCaseCost) {
+          const activeCases = await h.select({ id: patientCases.id })
+            .from(patientCases)
+            .where(and(eq(patientCases.patientId, id), eq(patientCases.status, "active")));
+          if (activeCases.length === 1) {
+            await h.update(patientCases)
+              .set({ cost: updated.totalCost, costSource: "manual", updatedAt: new Date() })
+              .where(eq(patientCases.id, activeCases[0].id));
+            caseCostSync = "synced";
+          } else if (activeCases.length > 1) {
+            caseCostSync = "ambiguous";
+          }
+          //  صفرُ حالاتٍ: لا شيءَ يُسوَّى، ولا غموضَ — `caseCostSync` يبقى
+          //  `null` (غيابُ موضوعٍ لا غيابَ قرار).
+        }
       }
     }
 
@@ -1664,7 +1730,10 @@ export class DatabaseStorage implements IStorage {
         await revokeWhatsappContacts(h as any, id, contactId);
       }
     }
-    return updated;
+    //  **حقلٌ إضافيٌّ لا يظهر إلّا حين يُطلَب صراحةً** — بقيّةُ المنادين
+    //  (`new_service/store.ts` وغيرها) يستلمون الصفَّ كما كانوا يستلمونه
+    //  دائماً، بلا حرفٍ زائد.
+    return syncSoleCaseCost && updated ? { ...updated, caseCostSync } : updated;
   }
 
   /**

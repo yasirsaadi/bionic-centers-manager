@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import {
   TRASH_TITLE, RESTORE_LABEL, PURGE_LABEL, PURGE_REASON_LABEL,
-  RESTORE_EXPIRED_MESSAGE, canTrashPatients, canPurgePatients, TRASH_BADGE_LAST_SEEN_KEY,
+  RESTORE_EXPIRED_MESSAGE, canTrashPatients, canPurgePatients, trashBadgeSeenKey,
 } from "@shared/patient_trash";
 
 const money = (n: number) => Number(n || 0).toLocaleString("en-US");
@@ -112,16 +112,22 @@ export default function PatientTrash() {
   //  الشريط الجانبي، 2026-08-31) ═══════════════════════════════════════════
   //  الشرطُ `!search.trim()`: نتائجُ بحثٍ مصفّاة ليست «كلَّ ما في السلّة» —
   //  ختمُها كان سيُطفئ شارةَ صفوفٍ لم يرَها أحد لمجرّد أن بحثاً ضيّقاً نجح.
-  //  والوقتُ المحفوظ هو **أحدثُ `deletedAt` رآه المستخدمُ فعلاً**، لا وقتَ
-  //  المتصفّح — فسلّةٌ فارغة تُختَم بوقت المتصفّح (لا شيءَ يُفوَّت بفارق
-  //  ثوانٍ)، وسلّةٌ بصفوفٍ تُختَم بأحدثها بالضبط. **وإبطالٌ فوريّ** لمفتاح
-  //  شارة الشريط الجانبي — لا ننتظر استقصاءها الدوريّ (١٠ دقائق).
+  //  والوقتُ المحفوظ هو **أحدثُ `deletedAt` رآه المستخدمُ فعلاً** — من
+  //  الخادم لا من المتصفّح (تصحيحٌ لاحق، 2026-08-31: كانت سلّةٌ فارغة تُختَم
+  //  بساعة العميل، وساعةٌ متقدّمة كانت تكتب طابعاً مستقبلياً فيُسقِط
+  //  `deleted_at > since` حذفاً حقيقياً وقع قبل تلك اللحظة المزيَّفة). فسلّةٌ
+  //  فارغة **لا تكتب شيئاً الآن** — يبقى المفتاحُ كما هو (غائباً، أو بآخر
+  //  زيارةٍ حقيقية) حتى يصل صفٌّ فعليّ يُقاس بختمه الحقيقيّ من الخادم.
+  //  **وإبطالٌ فوريّ** لمفتاح شارة الشريط الجانبي — لا ننتظر استقصاءها
+  //  الدوريّ (١٠ دقائق).
+  //
+  //  **ولكلّ مستخدمٍ لا لكلّ متصفّح**: `trashBadgeSeenKey(session?.userId)`
+  //  القانونية (`shared/patient_trash.ts`) — نفسُها التي يبني بها الشريطُ
+  //  الجانبيّ طلبَ العدّاد، فلا ينحرف الطرفان.
   useEffect(() => {
-    if (!data || search.trim()) return;
-    const latest = rows.length > 0
-      ? rows.reduce((max, r) => (r.deletedAt > max ? r.deletedAt : max), rows[0].deletedAt)
-      : new Date().toISOString();
-    localStorage.setItem(TRASH_BADGE_LAST_SEEN_KEY, latest);
+    if (!data || search.trim() || rows.length === 0) return;
+    const latest = rows.reduce((max, r) => (r.deletedAt > max ? r.deletedAt : max), rows[0].deletedAt);
+    localStorage.setItem(trashBadgeSeenKey(session?.userId), latest);
     qc.invalidateQueries({ queryKey: ["/api/patient-trash/count"] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, search]);

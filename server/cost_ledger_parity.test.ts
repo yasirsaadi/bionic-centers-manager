@@ -1,21 +1,31 @@
 // اتساقُ كلفة المريض بين مدخلَي التعديل — حيّاً على Postgres وعلى النقاط
 // الحقيقية. قاعدة محلّية: `npm run test:cost-ledger-parity`.
 //
-// ══ العطبُ الذي يحرسه هذا الملفّ ═══════════════════════════════════════
-// كانا مدخلَين لتغيير الكلفة: «تعديل مريض» (`PUT /api/patients/:id`
-// ⟶ `storage.updatePatient`) وقلمُ التعديل بجانب الكلفة في ملفّ المريض
-// (`PATCH /api/patients/:id/cases/:caseId` ⟶ `storage.updateCaseCost`).
-// الأوّلُ كان يكتب `patients.total_cost` بدلتا موقَّعة في `cost_entries`
-// (المصدر `manual_edit`) بشكلٍ سليم. **والثاني كان استبدالاً صِرفاً**
-// لعمود `patient_cases.cost` وحده — لا يلمس `patients.total_cost`، ولا
-// يكتب قيداً، فينحرف الاثنان: مريضٌ تُعدَّل كلفةُ حالته من القلم يبقى
-// إجماليُّه القديم، وحسابُ جلسات العلاج الطبيعي (يقرأ `patient_cases.cost`
-// حين توجد حالة) يرى رقماً لا يطابق `total_cost` الذي تراه بقيةُ الشاشة.
+// ══ العطبُ الأصليّ (كان يحرسه هذا الملفّ) ═══════════════════════════════
+// قلمُ التعديل بجانب الكلفة في ملفّ المريض (`PATCH /api/patients/:id/cases/
+// :caseId` ⟶ `storage.updateCaseCost`) كان استبدالاً صِرفاً لعمود
+// `patient_cases.cost` وحده — لا يلمس `patients.total_cost` ولا يكتب قيداً.
+// **عولج**: صار ذرّياً ومضيفاً (دلتا)، يقفل صفَّ الحالة، يحسب الفرقَ، يزيد
+// `total_cost` بنفس الفرق، ويكتب قيد `cost_entries` (المصدر `case_cost_edit`).
 //
-// **والإصلاح** جعل `updateCaseCost` ذرّياً ومضيفاً (دلتا) لا كاتباً فوق:
-// يقفل صفَّ الحالة، يحسب الفرقَ عن القيمة الحالية، يزيد `total_cost` بنفس
-// الفرق، ويكتب قيد `cost_entries` (المصدر `case_cost_edit`) — **نفسُ نمط
-// «تصحيحُ سعر جهازٍ بعد البيع» في CLAUDE.md**: بالجمع لا بالكتابة فوق.
+// ══ العطبُ الثاني — الاتجاهُ المعاكس (تصحيحٌ لاحقٌ، 2026-08-31) ═══════════
+// «تعديل مريض» (`PUT /api/patients/:id` ⟶ `storage.updatePatient`) يكتب
+// `patients.total_cost` بدلتا موقَّعة في `cost_entries` بشكلٍ سليم — **لكنّه
+// لا يلمس `patient_cases.cost` إطلاقاً**. فبطاقةُ الحالة في ملفّ المريض
+// تبقى على رقمها القديم بعد تعديل الإجماليّ من «تعديل مريض»، بينما الإجماليُّ
+// نفسُه (الذي يراه رأسُ الصفحة) صار مختلفاً — نفسُ الانحراف بالاتجاه الآخر.
+//
+// **والإصلاح**: `storage.updatePatient` يقبل علماً اختيارياً
+// `syncSoleCaseCost` — يرفعه `PUT /api/patients/:id` وحده. حين يتغيّر
+// `totalCost` ويملك المريضُ **حالةً نشطةً واحدة لا غير**، تُكتَب كلفةُ تلك
+// الحالة **مساويةً للإجماليّ الجديد حرفياً** (كتابةٌ فوق لا جمعاً — عكسَ
+// بقيّة كتّاب `patient_cases.cost` عمداً: هذا الحقل في هذا المسار قيمةٌ
+// مطلقة كتبها الموظّف، فلمريضٍ بحالةٍ واحدة الإجماليُّ **هو** كلفةُ تلك
+// الحالة، ولا فرقَ يُضاف). ولمريضٍ بأكثر من حالةٍ نشطة — **لا تُمَسّ أيُّ
+// حالة**؛ يعود `caseCostSync: "ambiguous"` من `storage.ts` فيُترجَم في
+// `routes.ts` إلى `costNote` يقرؤه العميل (`EditPatient.tsx`) توستاً
+// إعلامياً. ولمريضٍ بلا حالاتٍ نشطة — لا شيءَ يُسوَّى ولا ملاحظة (غيابُ
+// موضوعٍ لا غموض).
 //
 // ══ ما يثبته هذا الملفّ ═══════════════════════════════════════════════
 // A. الصلاحياتُ لم تتغيّر (استقبال مرفوض، مديرُ فرعٍ آخر مرفوض، مديرُ
@@ -23,11 +33,16 @@
 // B. المدخلاتُ غير الصالحة ما زالت تُرفض (سالبة/غير رقمية).
 // C-E. القيدُ يزيد وينقص ويتجاهل التعديل بلا تغيير (دلتا صفر لا يكتب صفّاً).
 // F. حالةٌ غير موجودة تُردّ ٤٠٤.
-// G-H. **المدخلان معاً**: تعديلٌ من «تعديل مريض» ثم تعديلٌ من القلم يقرأ
-//    الرصيدَ الحاليّ الحقيقيّ (لا لقطةً بائتة) — هذا هو الاختبارُ الحاسم
-//    الذي كان سيفشل مع الكتابة فوق القديمة.
-// I. الثابتُ نفسُه الذي يحرسه كاشفُ الشذوذ: SUM(cost_entries.amount) =
-//    patients.total_cost في كل خطوة.
+// G. **حالةٌ واحدة**: «تعديل مريض» يزامن كلفة الحالة الوحيدة تلقائياً —
+//    المدخلان **يتّفقان دائماً** بعد كلّ خطوة من أيّهما، جيئةً وذهاباً.
+// H. **حالتان نشطتان**: «تعديل مريض» يحرّك الإجماليَّ **ولا يمسّ أيَّ
+//    حالة** — لا تخمينَ ولا كتابةً فوق الاثنتين معاً. والقلمُ بعدها يقرأ
+//    الرصيدَ الحيَّ الحقيقيَّ لا لقطةً بائتة — هذا الاختبارُ الحاسم الذي
+//    كان سيفشل مع الكتابة فوق القديمة، منقولٌ هنا لأنه سيناريو الغموض
+//    الحقيقيّ الوحيد الذي يبقى فيه المدخلان بلا تزامنٍ تلقائي.
+// I. **بلا حالاتٍ إطلاقاً**: لا شيءَ يُسوَّى ولا ملاحظة.
+// J. الثابتُ نفسُه الذي يحرسه كاشفُ الشذوذ: SUM(cost_entries.amount) =
+//    patients.total_cost في كل خطوة، لكلّ سيناريوهات هذا الملفّ.
 
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
@@ -94,10 +109,10 @@ async function mkPatient(branchId = 1) {
     [`${MARK} مريض`, MARK, branchId]);
   return r[0].id;
 }
-async function mkCase(patientId: number, branchId = 1) {
+async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") {
   const r = await q<{ id: number }>(
     `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
-     VALUES ($1,$2,'prosthetic',0,'manual','active') RETURNING id`, [patientId, branchId]);
+     VALUES ($1,$2,$3,0,'manual','active') RETURNING id`, [patientId, branchId, caseType]);
   return r[0].id;
 }
 async function ledgerSum(patientId: number): Promise<number> {
@@ -209,37 +224,98 @@ async function main() {
     same("١٦. حالةٌ غير موجودة ⟶ ٤٠٤", r.status, 404);
 
     // ══════════════════════════════════════════════════════════════════
-    //  G-H. **المدخلان معاً** — الاختبارُ الحاسم لجذر العطب
+    //  G. حالةٌ واحدة — «تعديل مريض» يزامن كلفتَها تلقائياً
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ز-ح. المدخلان معاً (تعديل مريض + القلم) ──");
-    //  حالةُ pB الآن: total_cost=300,000 (من القلم وحده).
-    //  «تعديل مريض» يرفع الإجماليَّ لسببٍ لا يخصّ هذه الحالة (تصحيحٌ إداريّ
-    //  عامّ) — محاكاةُ المدخل الأوّل حيّاً عبر نقطته الحقيقية.
-    r = await http("PUT", `/api/patients/${pB}`, S.admin, { totalCost: 450_000 });
-    same("١٧. «تعديل مريض» ينجح ويكتب الإجماليَّ الجديد", [r.status, r.body?.totalCost], [200, 450_000]);
-    same("١٨. **ومصدرُه `manual_edit` بلا ربط حالة**",
-      (await q(`SELECT amount, source, case_id FROM cost_entries WHERE patient_id=$1 ORDER BY id`, [pB]))[2],
-      { amount: 150_000, source: "manual_edit", case_id: null });
-    same("١٩. ودفترُه ما زال يطابق `total_cost`", await ledgerSum(pB), 450_000);
+    console.log("\n── ز. حالةٌ واحدة: المدخلان يتّفقان دائماً ──");
+    //  pA يحمل حالةً واحدة (cA)، من قسم «أ» أعلاه: total_cost=0, cA.cost=0.
+    r = await http("PUT", `/api/patients/${pA}`, S.admin, { totalCost: 700_000 });
+    same("١٧. «تعديل مريض» ينجح", [r.status, r.body?.totalCost], [200, 700_000]);
+    same("١٨. **والاستجابةُ تُقرّ بالمزامنة صراحةً**", r.body?.caseCostSync, "synced");
+    check(!r.body?.costNote, "١٩. وبلا ملاحظةٍ — لا غموضَ هنا", JSON.stringify(r.body?.costNote));
+    same("٢٠. **وقيدُ الدفتر يبقى بلا ربط حالة** (لم أغيّر إسناد القيد، فقط زامنتُ البطاقة)",
+      (await q(`SELECT case_id FROM cost_entries WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pA]))[0]?.case_id,
+      null);
+    cr = await caseRow(cA);
+    same("٢١. **وكلفةُ الحالة الوحيدة صارت مساويةً للإجماليّ الجديد حرفياً**",
+      [cr.cost, cr.cost_source], [700_000, "manual"]);
 
-    //  والآن القلمُ يعدّل نفسَ الحالة مجدداً — **يجب أن يقرأ ٤٥٠,٠٠٠ الحاليّ
-    //  لا ٣٠٠,٠٠٠ القديم**. لو بقي العطبُ الأصليّ (كتابةٌ فوق `total_cost`
-    //  بمعزلٍ عن آخر قراءة)، لكانت النتيجةُ ٦٠٠,٠٠٠ (٣٠٠,٠٠٠ + ٣٠٠,٠٠٠ دلتا)
-    //  لا ٧٥٠,٠٠٠ (٤٥٠,٠٠٠ + ٣٠٠,٠٠٠ دلتا) — وهذا بالضبط ما يفحصه هذا السطر.
-    r = await http("PATCH", `/api/patients/${pB}/cases/${cB}`, S.admin, { cost: 600_000 });
-    same("٢٠. **والقلمُ يقرأ الرصيدَ الحيّ لا لقطةً بائتة**", r.body?.totalCost, 750_000,
-      `لو عاد العطبُ القديم لظهرت هنا ٦٠٠٬٠٠٠ بدل ٧٥٠٬٠٠٠`);
-    same("٢١. `patients.total_cost` في القاعدة يطابق الاستجابة", await patientTotalCost(pB), 750_000);
-    cr = await caseRow(cB);
-    same("٢٢. وصفُّ الحالة يحمل قيمتَه الجديدة", cr.cost, 600_000);
+    //  والآن القلمُ يعدّل نفسَ الحالة — يجب أن يقرأ ٧٠٠,٠٠٠ الحيّ (المُزامَن
+    //  للتوّ) لا رقماً بائتاً، وأن يُبقي الاثنين متساويين بعد الحفظ أيضاً.
+    r = await http("PATCH", `/api/patients/${pA}/cases/${cA}`, S.admin, { cost: 800_000 });
+    same("٢٢. القلمُ يرفع الإجماليَّ بنفس الفرق (١٠٠,٠٠٠) من الرصيد الحيّ", r.body?.totalCost, 800_000);
+    same("٢٣. **والاثنان لا يزالان متساويين بعد تعديل القلم أيضاً**",
+      [await patientTotalCost(pA), (await caseRow(cA)).cost], [800_000, 800_000]);
+
+    //  وتعديلٌ ثانٍ من «تعديل مريض» — التزامن ليس أثراً لمرّةٍ واحدة.
+    r = await http("PUT", `/api/patients/${pA}`, S.admin, { totalCost: 1_000_000 });
+    same("٢٤. ومزامنةٌ ثانية تنجح كذلك (لا تقتصر على أوّل نداء)",
+      [r.status, r.body?.caseCostSync, (await caseRow(cA)).cost], [200, "synced", 1_000_000]);
+    same("٢٥. والإجماليّان متساويان دائماً لمريضٍ بحالةٍ واحدة", await patientTotalCost(pA), 1_000_000);
 
     // ══════════════════════════════════════════════════════════════════
-    //  I. الثابتُ الذي يحرسه كاشفُ الشذوذ (`cost_ledger_mismatch`)
+    //  H. حالتان نشطتان — لا تخمين، ولا كتابةٌ فوق الاثنتين
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ط. الثابتُ المحاسبيّ ──");
-    same("٢٣. **مجموعُ قيود الدفتر = `total_cost`** — الثابتُ الملزم بعد كلّ خطوة",
-      await ledgerSum(pB), await patientTotalCost(pB));
-    same("٢٤. وأربعةُ قيودٍ بالضبط (لا صفَّ زائد ولا ناقص)", await ledgerCount(pB), 4);
+    console.log("\n── ح. حالتان نشطتان: لا يُمَسّ أيّهما ──");
+    const pC = await mkPatient(1);
+    const c1 = await mkCase(pC, 1, "prosthetic");
+    const c2 = await mkCase(pC, 1, "medical_support");
+
+    r = await http("PATCH", `/api/patients/${pC}/cases/${c1}`, S.admin, { cost: 500_000 });
+    same("٢٦. تمهيد: القلمُ يسعّر الحالة الأولى", r.body?.totalCost, 500_000);
+    r = await http("PATCH", `/api/patients/${pC}/cases/${c1}`, S.admin, { cost: 300_000 });
+    same("٢٧. وينقصها إلى ٣٠٠,٠٠٠", r.body?.totalCost, 300_000);
+
+    //  الآن «تعديل مريض» يحرّك الإجماليَّ لسببٍ لا يخصّ حالةً بعينها —
+    //  ومع وجود حالتين نشطتين، **لا حالةَ تُمَسّ إطلاقاً**.
+    r = await http("PUT", `/api/patients/${pC}`, S.admin, { totalCost: 450_000 });
+    same("٢٨. «تعديل مريض» ينجح ويحرّك الإجماليَّ", [r.status, r.body?.totalCost], [200, 450_000]);
+    same("٢٩. **والاستجابةُ تُقرّ بالغموض صراحةً**", r.body?.caseCostSync, "ambiguous");
+    check(typeof r.body?.costNote === "string" && r.body.costNote.length > 0,
+      "٣٠. **وملاحظةٌ صريحة تصل العميل** — لا صمتَ عن التعارض", JSON.stringify(r.body?.costNote));
+    const c1After = await caseRow(c1), c2After = await caseRow(c2);
+    same("٣١. **الحالةُ الأولى لم تُمَسّ** (لا كتابةَ فوق عشوائية)", c1After.cost, 300_000);
+    same("٣٢. **ولا الثانية أيضاً** (لا كتابةَ فوق الاثنتين معاً)", c2After.cost, 0);
+    same("٣٣. ومصدرُ قيد الدفتر يبقى `manual_edit` بلا ربط حالة",
+      (await q(`SELECT case_id FROM cost_entries WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pC]))[0]?.case_id,
+      null);
+
+    //  والقلمُ بعدها **يقرأ الرصيدَ الحيَّ الحقيقيَّ لا لقطةً بائتة** — هذا
+    //  هو الاختبارُ الحاسم لجذر العطب الأصليّ، وهنا وحده (حالتان نشطتان)
+    //  يبقى المدخلان بلا مزامنةٍ تلقائية فيصلح سيناريو إثباتٍ حقيقياً:
+    //  لو كانت القراءةُ لقطةً بائتة (٣٠٠,٠٠٠) لا الرصيدَ الحيّ (٤٥٠,٠٠٠)،
+    //  لكانت النتيجةُ ٦٠٠,٠٠٠ (٣٠٠,٠٠٠+٣٠٠,٠٠٠) لا ٧٥٠,٠٠٠ (٤٥٠,٠٠٠+٣٠٠,٠٠٠).
+    r = await http("PATCH", `/api/patients/${pC}/cases/${c1}`, S.admin, { cost: 600_000 });
+    same("٣٤. **والقلمُ يقرأ الرصيدَ الحيّ لا لقطةً بائتة**", r.body?.totalCost, 750_000,
+      `لو قرأ لقطةً بائتة لظهرت هنا ٦٠٠٬٠٠٠ بدل ٧٥٠٬٠٠٠`);
+    same("٣٥. `patients.total_cost` في القاعدة يطابق الاستجابة", await patientTotalCost(pC), 750_000);
+    same("٣٦. وصفُّ الحالة الأولى يحمل قيمتَه الجديدة، والثانية بلا تغيير",
+      [(await caseRow(c1)).cost, (await caseRow(c2)).cost], [600_000, 0]);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  I. بلا حالاتٍ إطلاقاً — لا شيءَ يُسوَّى ولا ملاحظة
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ي. بلا حالاتٍ إطلاقاً ──");
+    const pD = await mkPatient(1); // بلا أيّ صفٍّ في patient_cases
+    r = await http("PUT", `/api/patients/${pD}`, S.admin, { totalCost: 200_000 });
+    same("٣٧. «تعديل مريض» ينجح رغم غياب أيّ حالة", [r.status, r.body?.totalCost], [200, 200_000]);
+    check(!r.body?.caseCostSync, "٣٨. **`caseCostSync` غائبةٌ — غيابُ موضوعٍ لا قرار**",
+      JSON.stringify(r.body?.caseCostSync));
+    check(!r.body?.costNote, "٣٩. وبلا ملاحظة", JSON.stringify(r.body?.costNote));
+    same("٤٠. والدفترُ ما زال يطابق `total_cost` رغم غياب الحالات", await ledgerSum(pD), 200_000);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  J. الثابتُ الذي يحرسه كاشفُ الشذوذ (`cost_ledger_mismatch`) — لكلّ
+    //     مريضٍ في هذا الملفّ
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ك. الثابتُ المحاسبيّ لكلّ سيناريو ──");
+    for (const [label, pid, expectedEntries] of [
+      ["pA (حالةٌ واحدة)", pA, 3], ["pB (القلمُ وحده)", pB, 2],
+      ["pC (حالتان)", pC, 4], ["pD (بلا حالات)", pD, 1],
+    ] as [string, number, number][]) {
+      same(`٤١. مجموعُ قيود الدفتر = total_cost — ${label}`,
+        await ledgerSum(pid), await patientTotalCost(pid));
+      same(`    وعددُ القيود متوقَّعٌ بالضبط — ${label}`, await ledgerCount(pid), expectedEntries);
+    }
   } finally {
     httpServer.close();
     await cleanup();

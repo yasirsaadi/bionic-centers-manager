@@ -6,7 +6,7 @@ import { clearBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
-import { canTrashPatients, TRASH_TITLE, TRASH_BADGE_LAST_SEEN_KEY } from "@shared/patient_trash";
+import { canTrashPatients, TRASH_TITLE, trashBadgeSeenKey } from "@shared/patient_trash";
 import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
 //  ══ **الأهليّةُ من الدالّة القانونية نفسِها — لا قائمةُ أدوارٍ ثانية**
@@ -32,6 +32,11 @@ interface BranchSession {
   branchId: number;
   branchName: string;
   isAdmin: boolean;
+  //  **موجودةٌ في الكائن المخزَّن أصلاً** (`BranchGate.tsx` يكتبها عند
+  //  الدخول) — غابت عن هذا النوع المحليّ فقط. أُضيفت لبناء مفتاح شارة
+  //  المحذوفات لكلّ مستخدم (تصحيحٌ لاحق، 2026-08-31)؛ لا قراءةَ فعلية
+  //  جديدة، `JSON.parse` كان يحملها ضمنياً دون أن يراها النوع.
+  userId?: number;
   role?: string;
   displayName?: string;
   accessibleBranches?: number[];
@@ -121,19 +126,24 @@ export function Sidebar() {
   //  الصفحة»). لكنّها بذلك لا تفرّق «شاهدتُ هذه العشرةَ أمس» عن «دخل ملفٌّ
   //  جديد اليوم» — فصارت `?since=` تُفلتر السلّةَ في الخادم (`listTrash`
   //  القائمة، بلا عمودٍ جديد ولا ترحيل) بآخر زيارةٍ لصفحة `/patient-trash`،
-  //  المحفوظة في `localStorage` (لا حسابَ مستخدمٍ يخزّن تفضيلاتٍ اليوم —
-  //  نفسُ نمط `WeeklyReviewBanner`/`PWAInstallPrompt` الوحيد القائم، فمتصفّحٌ
-  //  آخر لنفس الحساب يرى الشارةَ كاملةً مرّةً واحدة، وهذا مقبولٌ لشارةٍ
-  //  معلوماتية لا لطابور عمل). الصفحةُ نفسُها (`PatientTrash.tsx`) تكتب
+  //  المحفوظة في `localStorage`. الصفحةُ نفسُها (`PatientTrash.tsx`) تكتب
   //  وقتَ الفتح وتُبطل هذا المفتاح فوراً — فالشارةُ تصفر لحظةَ المشاهدة لا
   //  عند أقرب استقصاءٍ دوريّ.
+  //
+  //  **ولكلّ مستخدمٍ لا لكلّ متصفّح** (تصحيحٌ لاحق، 2026-08-31 — يُلغي
+  //  افتراض «متصفّحٌ آخر لنفس الحساب» القديم الذي لم يكن يغطّي المشكلةَ
+  //  الفعلية): مفتاحٌ واحد على نفس المتصفّح كان يعني أن موظّفةً تفتح السلّة
+  //  تُطفئ الشارةَ لزميلها الذي يدخل بعدها من **نفس الجهاز** ولم يرَ شيئاً.
+  //  `trashBadgeSeenKey(userId)` القانونية (`shared/patient_trash.ts`) تبني
+  //  مفتاحاً بمعرّف المستخدم — نفسُ الدالّة يستوردها الطرفان فلا ينحرف
+  //  بناءُ المفتاح هنا عمّا تكتبه `PatientTrash.tsx`.
   const trashEligible = canTrashPatients(branchSession as any);
   const { data: trashData } = useQuery<{ count: number }>({
-    queryKey: ["/api/patient-trash/count"],
+    queryKey: ["/api/patient-trash/count", branchSession?.userId ?? null],
     enabled: trashEligible,
     refetchInterval: 10 * 60_000,
     queryFn: async () => {
-      const since = localStorage.getItem(TRASH_BADGE_LAST_SEEN_KEY);
+      const since = localStorage.getItem(trashBadgeSeenKey(branchSession?.userId));
       const url = since
         ? `/api/patient-trash/count?since=${encodeURIComponent(since)}`
         : "/api/patient-trash/count";
