@@ -46,11 +46,11 @@ import {
 } from "@shared/prosthetic_parts";
 import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
-  MAINTENANCE_SUCCESS_MESSAGE,
+  parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
-  COMPONENT_SALE_SUCCESS_MESSAGE,
+  parseComponentSalePaidNow, COMPONENT_SALE_SUCCESS_MESSAGE,
 } from "@shared/component_sale";
 
 type Req = any;
@@ -262,12 +262,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
 
+      //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
+      //  ═══════════════════════════════════════════════════════════════════
+      //  `offer.finalPrice` هو الحدُّ الأعلى — نفسُ الرقم الذي سيُقيَّد فعلاً.
+      const paidNowResult = parseComponentSalePaidNow({
+        raw: req.body?.paidNow, finalPrice: offer.finalPrice!,
+      });
+      if (!paidNowResult.ok) return res.status(400).json({ error: paidNowResult.error });
+
       const note = typeof req.body?.note === "string" ? req.body.note.trim() || null : null;
 
       const out = await store.createComponentSaleOperation({
         patientId, branchId: patient.branch_id ?? null, expertUserId,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
-        finalPrice: offer.finalPrice!,
+        finalPrice: offer.finalPrice!, paidNow: paidNowResult.amount,
         note, actor: actorOf(req), component, existingEpisodeId, attachToDeviceEpisodeId,
       });
 
@@ -288,9 +296,13 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           existingEpisodeId, attachToDeviceEpisodeId, expertUserId: out.expertUserId,
           originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
           finalPrice: offer.finalPrice, priceKind: offer.kind,
+          //  **حقيقةُ القبض — لا تُستنتَج من السعر**: كم دُفع الآن، وكم
+          //  تبقّى ديناً على هذه العمليةِ بعينها (لا على المريض كلِّه).
+          paidNow: out.paidNow, paymentId: out.paymentId,
+          remainingUnpaid: offer.finalPrice! - out.paidNow,
           note,
         },
-        notes: offer.kind === "free"
+        notes: (offer.kind === "free"
           ? `بيع جزء (${componentLabel(out.component) ?? out.component}) — مجّاني`
             + ` (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
           : `بيع جزء (${componentLabel(out.component) ?? out.component}) —`
@@ -298,7 +310,15 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
             + (offer.kind === "discount"
               ? ` (بعد خصم ${offer.discountAmount!.toLocaleString("en-US")}`
                 + ` من ${offer.originalPrice!.toLocaleString("en-US")})`
-              : ""),
+              : ""))
+          //  **وسطرُ القبض** — دَينٌ أو دفعٌ جزئيّ أو كامل، بصياغةٍ يقرؤها
+          //  الموظّف بلا فتح صفّ الدفعة.
+          + (offer.kind === "free" ? ""
+            : out.paidNow <= 0 ? " — دَينٌ كامل، لم يُدفَع شيء الآن"
+              : out.paidNow >= offer.finalPrice!
+                ? ` — دُفع بالكامل الآن (${out.paidNow.toLocaleString("en-US")} د.ع)`
+                : ` — دُفع جزئياً الآن (${out.paidNow.toLocaleString("en-US")} د.ع،`
+                  + ` تبقّى ${(offer.finalPrice! - out.paidNow).toLocaleString("en-US")} د.ع)`),
       });
 
       //  **بلا مراجعةٍ استرجاعية** — لا `routeRetrospectiveReview` هنا:
@@ -312,6 +332,8 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         expertUserId: out.expertUserId,
         originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
         finalPrice: offer.finalPrice, priceKind: offer.kind,
+        paidNow: out.paidNow, paymentId: out.paymentId,
+        remainingUnpaid: offer.finalPrice! - out.paidNow,
         message: COMPONENT_SALE_SUCCESS_MESSAGE,
       });
     } catch (err) {
@@ -413,6 +435,13 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
 
+      //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
+      //  (نفسُ قاعدة بيع الجزء بحرفها) ═══════════════════════════════════════
+      const paidNowResult = parseMaintenancePaidNow({
+        raw: req.body?.paidNow, finalPrice: offer.finalPrice!,
+      });
+      if (!paidNowResult.ok) return res.status(400).json({ error: paidNowResult.error });
+
       const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
       const out = await store.createMaintenanceOperation({
@@ -421,6 +450,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         deviceEpisodeId: target.deviceEpisodeId,
         legacyUnrecordedDevice: target.legacyUnrecordedDevice,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
+        paidNow: paidNowResult.amount,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
       });
@@ -442,15 +472,26 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           expertUserId,
           originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
           finalPrice: offer.finalPrice, priceKind: offer.kind,
+          //  **حقيقةُ القبض — لا تُستنتَج من السعر**: كم دُفع الآن، وكم
+          //  تبقّى ديناً على هذه العمليةِ بعينها (لا على المريض كلِّه).
+          paidNow: out.paidNow, paymentId: out.paymentId,
+          remainingUnpaid: offer.finalPrice! - out.paidNow,
           note: note || null,
         },
-        notes: offer.kind === "free"
+        notes: (offer.kind === "free"
           ? `صيانة — مجّاني (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
           : `صيانة — ${offer.finalPrice!.toLocaleString("en-US")} د.ع`
             + (offer.kind === "discount"
               ? ` (بعد خصم ${offer.discountAmount!.toLocaleString("en-US")}`
                 + ` من ${offer.originalPrice!.toLocaleString("en-US")})`
-              : ""),
+              : ""))
+          //  **وسطرُ القبض** — دَينٌ أو دفعٌ جزئيّ أو كامل.
+          + (offer.kind === "free" ? ""
+            : out.paidNow <= 0 ? " — دَينٌ كامل، لم يُدفَع شيء الآن"
+              : out.paidNow >= offer.finalPrice!
+                ? ` — دُفع بالكامل الآن (${out.paidNow.toLocaleString("en-US")} د.ع)`
+                : ` — دُفع جزئياً الآن (${out.paidNow.toLocaleString("en-US")} د.ع،`
+                  + ` تبقّى ${(offer.finalPrice! - out.paidNow).toLocaleString("en-US")} د.ع)`),
       });
 
       //  **بلا مراجعةٍ لاحقة** — لا `routeRetrospectiveReview` هنا: الطبيبُ
@@ -459,6 +500,8 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         ok: true, workOrderId: out.workOrderId, deviceEpisodeId: out.deviceEpisodeId,
         originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
         finalPrice: offer.finalPrice, priceKind: offer.kind,
+        paidNow: out.paidNow, paymentId: out.paymentId,
+        remainingUnpaid: offer.finalPrice! - out.paidNow,
         message: MAINTENANCE_SUCCESS_MESSAGE,
       });
     } catch (err) {

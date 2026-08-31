@@ -55,6 +55,7 @@ import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import {
   isProstheticComponent, type ProstheticComponent, requestedItemLabel,
 } from "@shared/prosthetic_parts";
+import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
 
 export class ChargeError extends Error {
   status: number;
@@ -188,6 +189,58 @@ async function lockCharge(
         : CONFLICT, 409);
   }
   return cur;
+}
+
+/**
+ * **دفعةُ القبض الفوريّ — كاتبٌ واحد** يشترك فيه بيعُ الجزء بمساره الثلاثة
+ * (حلقةٌ جديدة · حلقةٌ موروثة · إلحاقٌ بجهازٍ قيد التصنيع) والصيانةُ معاً —
+ * فلا نسخةَ ثانية من كتابة الدفعة تنحرف بين البابين.
+ *
+ * ══ الثغرةُ التي يُغلقها ═══════════════════════════════════════════════════
+ * بيعُ الجزء والصيانةُ المبسّطة يقيّدان الكلفةَ فوراً — لكن لا شيء كان يسأل
+ * هل قبض الموظّفُ ثمنَها الآن أم بقيت ديناً. فمريضٌ اشترى سليكوناً ولم يدفع
+ * كان يظهر في التقرير كأنّ ماله وصل لحظةَ تسجيل العملية — لا لأن أحداً قال
+ * ذلك، بل لأن لا أحد سأل.
+ *
+ * ══ ونفسُ قاعدة مسار المعاينة، بابٌ مختلف ═══════════════════════════════
+ * `server/followup/store.ts: completeReceptionSale` تكتب دفعةً مماثلة عند
+ * إتمام بيع جهازٍ بعد معاينة. هذه الدالّةُ **لا تستبدلها ولا تُعاد كتابةُ
+ * منطقها** — نسخةٌ مستقلّة لباب «بلا معاينة» بنفس القاعدة: `paidNow === 0`
+ * ⟶ لا دفعةَ إطلاقاً (لا صفراً ملفَّقاً ولا دفعةً فارغة)، والهويّةُ صريحةٌ من
+ * المستدعي دائماً لا رصيدَ غيرَ مخصَّص.
+ *
+ * `deviceEpisodeId`/`visitId` — أحدُهما فقط ذو معنى بحسب البابِ المستدعي
+ * (بيعُ الجزء يملك حلقةً، الصيانةُ تملك زيارةً)، والآخرُ `null` — فلا يلتبس
+ * أحدُهما بالآخر، ونفسُ نمط `payments.visit_id`/`payments.device_episode_id`
+ * القائمَين في الجدول (ترحيلا ٠٣٨/٠٤٩).
+ *
+ * **والكاتبُ القانونيّ نفسُه**: `storage.createPayment` — بلا حسابٍ ثانٍ ولا
+ * تكرارِ منطق `insertPaymentRow`.
+ *
+ * ══ `typeof === "number"` لا `<= 0` — نفسُ درس `attachToDeviceEpisodeId`
+ *    بحرفه ═══════════════════════════════════════════════════════════════
+ * مستدعٍ داخليّ قد يُغفل `paidNow` تماماً (تصير `undefined` وقت التشغيل
+ * بصرف النظر عمّا يفرضه النوعُ السكونيّ — عدّةُ اختباراتٍ قديمة تنادي
+ * `createComponentSaleOperation` مباشرةً بعقدٍ يسبق هذا الحقل). و`undefined
+ * <= 0` تُقيَّم `false` في JavaScript، فيمرّ الحارسُ الفضفاضُ ويصل
+ * `amount: undefined` إلى القيد — يرفضه العمودُ `NOT NULL` بخطأ قاعدةٍ خامٍ
+ * لا برسالةِ تحقّقٍ مفهومة. الفحصُ الصريح بالنوع يرفض `undefined` و`null`
+ * و`NaN` بالتساوي — لا ثغرةَ للسهو.
+ */
+async function createPaidNowPaymentTx(tx: any, p: {
+  patientId: number; branchId: number; caseId: number;
+  deviceEpisodeId: number | null; visitId: number | null;
+  serviceType: "prosthetic" | "medical_support";
+  paidNow: number; notes: string;
+}): Promise<number | null> {
+  if (typeof p.paidNow !== "number" || !Number.isFinite(p.paidNow) || p.paidNow <= 0) return null;
+  const payment = await storage.createPayment({
+    patientId: p.patientId, branchId: p.branchId, caseId: p.caseId,
+    deviceEpisodeId: p.deviceEpisodeId, visitId: p.visitId,
+    amount: p.paidNow, paymentTreatmentType: DEVICE_PAYMENT_TAGS[p.serviceType],
+    notes: p.notes,
+  } as any, tx);
+  return payment.id;
 }
 
 // ── الإنشاء ──────────────────────────────────────────────────────────────
@@ -351,6 +404,13 @@ export async function createComponentSaleOperation(params: {
    * المستقلّ الأصليّ كما كان دائماً.
    */
   attachToDeviceEpisodeId: number | null;
+  /**
+   * **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، مُشتقٌّ ومُتحقَّقٌ سلفاً
+   * بـ`parseComponentSalePaidNow`** (لا حسابَ هنا). صفرٌ = دَينٌ صريح (سعرٌ
+   * موجب وصفرٌ مدفوع)، لا يعني «لم يُدفَع بعد» — والمجّانيّ يصل صفراً دائماً
+   * بحكم القاعدة (`finalPrice === 0`).
+   */
+  paidNow: number;
 }): Promise<{
   workOrderId: number; deviceEpisodeId: number; component: string | null;
   finalPrice: number;
@@ -361,6 +421,10 @@ export async function createComponentSaleOperation(params: {
    * التدقيق ليقول الحقيقة لا ما طُلب.
    */
   expertUserId: number;
+  /** = `params.paidNow` — يُعاد ليقوله الردُّ وسجلُّ التدقيق بلا حسابٍ ثانٍ. */
+  paidNow: number;
+  /** `null` حين `paidNow === 0` — لا دفعةَ إطلاقاً، لا صفراً ملفَّقاً. */
+  paymentId: number | null;
 }> {
   const store = await import("../storage");
   const episodes = await import("../device_episodes/store");
@@ -492,9 +556,19 @@ export async function createComponentSaleOperation(params: {
       episodeId, originalPrice: params.originalPrice, kind: params.priceKind,
     });
 
+    //  ══ **القبضُ الفوريّ — بعد أن يثبت البيعُ فعلاً، في المعاملة نفسِها**
+    //  (المرحلة الخامسة) ══════════════════════════════════════════════════
+    const paymentId = await createPaidNowPaymentTx(tx, {
+      patientId: params.patientId, branchId: actualOperationBranchId,
+      caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
+      serviceType: "prosthetic", paidNow: params.paidNow,
+      notes: "دفعة عند بيع الجزء",
+    });
+
     return {
       workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
       component, finalPrice: params.finalPrice, expertUserId: params.expertUserId,
+      paidNow: params.paidNow, paymentId,
     };
   });
 }
@@ -550,6 +624,7 @@ async function attachComponentToDeviceInManufacturing(
 ): Promise<{
   workOrderId: number; deviceEpisodeId: number; component: string | null;
   finalPrice: number; expertUserId: number;
+  paidNow: number; paymentId: number | null;
 }> {
   const { episodeId, params } = args;
   const store = await import("../storage");
@@ -591,12 +666,22 @@ async function attachComponentToDeviceInManufacturing(
             ${params.actor.userId})
   `);
 
+  //  ══ **القبضُ الفوريّ للإلحاق أيضاً — نفسُ الكاتب المشترك** (المرحلة
+  //  الخامسة) ══════════════════════════════════════════════════════════
+  const paymentId = await createPaidNowPaymentTx(tx, {
+    patientId: op.patientId, branchId: op.branchId ?? 0,
+    caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
+    serviceType: "prosthetic", paidNow: params.paidNow,
+    notes: "دفعة عند إلحاق جزءٍ بجهازٍ قيد التصنيع",
+  });
+
   return {
     workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
     component: params.component, finalPrice: params.finalPrice,
     //  **خبيرُ أمر العمل الفعليّ** — لا `params.expertUserId` — كي يقول
     //  سجلُّ التدقيق مَن نُسِبت إليه العمليةُ فعلاً.
     expertUserId: op.expertUserId,
+    paidNow: params.paidNow, paymentId,
   };
 }
 
@@ -665,7 +750,16 @@ export async function createMaintenanceOperation(p: {
   finalPrice: number;
   visitNotes: string;
   actor: Actor;
-}): Promise<{ workOrderId: number; deviceEpisodeId: number | null; finalPrice: number }> {
+  /**
+   * **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، مُشتقٌّ ومُتحقَّقٌ سلفاً
+   * بـ`parseMaintenancePaidNow`** (لا حسابَ هنا). نفسُ قاعدة بيع الجزء
+   * بحرفها: صفرٌ = دَينٌ صريح، والمجّانيّ يصل صفراً دائماً.
+   */
+  paidNow: number;
+}): Promise<{
+  workOrderId: number; deviceEpisodeId: number | null; finalPrice: number;
+  paidNow: number; paymentId: number | null;
+}> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
     //  ══ **الحارسُ الأوّل — حالةٌ حقيقية بعينها، لا فرعٌ مخمَّن** ══════════
@@ -677,13 +771,15 @@ export async function createMaintenanceOperation(p: {
        WHERE patient_id = ${p.patientId} AND case_type = ${p.serviceType} AND status = 'active'
        FOR UPDATE
     `);
-    if (!(caseCheck.rows ?? [])[0]) {
+    const caseRow = (caseCheck.rows ?? [])[0];
+    if (!caseRow) {
       throw new ChargeError(
         `لا توجد حالة ${DEPARTMENT_LABELS[p.serviceType]} نشطة مسجَّلة لهذا المريض`
         + " — راجع الملفّ إدارياً قبل تسجيل الصيانة",
         400,
       );
     }
+    const caseId = Number(caseRow.id);
 
     //  ══ **الحارسُ الثاني — الخبيرُ يُعاد التحقّق منه تحت القفل** ═════════
     const expertCheck = await mfg.validateExpertForBranchTx(tx, p.expertUserId, p.branchId ?? 0);
@@ -715,10 +811,25 @@ export async function createMaintenanceOperation(p: {
       commercialTerms: { originalPrice: p.originalPrice, kind: p.priceKind },
       tx,
     });
+
+    //  ══ **القبضُ الفوريّ — بعد أن يفتح الأمرُ فعلاً، في المعاملة نفسِها**
+    //  (المرحلة الخامسة) ═══════════════════════════════════════════════════
+    //  **`visitId` لا `deviceEpisodeId` هويّةً أساسية**: الصيانةُ تُنشئ زيارةً
+    //  دائماً (مسجَّلاً كان الجهازُ أم غير مسجَّل)، فالزيارةُ هي الواقعةُ
+    //  التي لا تغيب أبداً — نفسُ نمط `payments.visit_id` القائم منذ ٠٣٨.
+    //  والحلقةُ (حين توجد) تُضاف أيضاً لدقّةٍ إضافية لا تتعارض معها.
+    const paymentId = await createPaidNowPaymentTx(tx, {
+      patientId: p.patientId, branchId: p.branchId ?? 0, caseId,
+      deviceEpisodeId: order.deviceEpisodeId ?? null, visitId: order.visitId,
+      serviceType: p.serviceType, paidNow: p.paidNow,
+      notes: "دفعة عند تسجيل الصيانة",
+    });
+
     return {
       workOrderId: order.id,
       deviceEpisodeId: order.deviceEpisodeId ?? null,
       finalPrice: p.finalPrice,
+      paidNow: p.paidNow, paymentId,
     };
   });
 }

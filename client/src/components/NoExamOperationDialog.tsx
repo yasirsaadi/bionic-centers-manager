@@ -56,7 +56,7 @@ import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { Loader2, Wallet } from "lucide-react";
 import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_parts";
 import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
-import { deriveOfferFromDiscount } from "@shared/commercial";
+import { deriveOfferFromDiscount, parsePaidNowAmount } from "@shared/commercial";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 import {
   COMPONENT_SALE_SUCCESS_MESSAGE, COMPONENT_ATTACH_SUCCESS_MESSAGE,
@@ -143,6 +143,13 @@ export function NoExamOperationDialog({
   const [originalPrice, setOriginalPrice] = useState(0);
   const [discountAmount, setDiscountAmount] = useState(0);
 
+  //  ══ **«المبلغ المدفوع الآن» — يبدأ فارغاً دائماً، لا صفراً** ══════════
+  //  (المرحلة الخامسة) الفراغُ يعني «لم يُسأل الموظّفُ بعد» — يُرفَض. والصفرُ
+  //  الصريح يعني «سُئل وأجاب: لا شيء الآن» — دَينٌ حقيقيّ يُقبَل. **ولا
+  //  يُستنتَج أحدُهما من الآخر أبداً**، فالحالةُ تبدأ `null` (`MoneyInput`
+  //  بـ`allowEmpty` تعرضه فراغاً حقيقياً لا صفراً معروضاً).
+  const [paidNow, setPaidNow] = useState<number | null>(null);
+
   //  ══ **الصيانةُ المبسّطة — حقلها الخاصّ** (المرحلة الثالثة) ═══════════
   //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
   const [deviceSelection, setDeviceSelection] = useState<string>("");
@@ -210,6 +217,13 @@ export function NoExamOperationDialog({
   //  المرحلة الرابعة — الحسابُ والحدودُ الآمنة واحدةٌ بحرفها.
   const offer = deriveOfferFromDiscount({ originalPrice, discountAmount });
 
+  //  ══ **جهوزيّةُ «المبلغ المدفوع الآن»** — نفسُ الحدّ الذي سيُطبَّق خادميّاً
+  //  حرفاً بحرف؛ لا يُحسَب هنا بمعزلٍ عنه. `!offer.ok` تعني «لا سعرَ بعد»
+  //  فلا معنى لسؤال القبض قبله — يُقرأ حينها كغيرِ جاهز، لا كخطأ يُعرَض. ═══
+  const paidNowCheck = offer.ok
+    ? parsePaidNowAmount({ raw: paidNow, finalPrice: offer.finalPrice! })
+    : { ok: false, amount: 0, error: undefined as string | undefined };
+
   const save = useMutation({
     mutationFn: async () => {
       if (kind === "maintenance") {
@@ -223,6 +237,8 @@ export function NoExamOperationDialog({
           deviceEpisodeId: target.deviceEpisodeId,
           legacyUnrecordedDevice: target.legacyUnrecordedDevice,
           originalPrice, discountAmount,
+          //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
+          paidNow: paidNowCheck.amount,
           note: note.trim() || null,
         });
         return res.json();
@@ -248,6 +264,9 @@ export function NoExamOperationDialog({
             ? { component: requestedItem, attachToDeviceEpisodeId: inManufacturingFullDeviceEpisodeId }
             : { component: requestedItem, expertUserId: Number(expertId) }),
         originalPrice, discountAmount,
+        //  **المُتحقَّقُ لا الخام** — يشمل الإلحاقَ أيضاً؛ نفسُ الحدّ الأعلى
+        //  الذي سيُطبَّق خادميّاً حرفاً بحرف.
+        paidNow: paidNowCheck.amount,
         note: note.trim() || null,
       });
       return res.json();
@@ -279,9 +298,10 @@ export function NoExamOperationDialog({
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
   //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
-  //  افتراضَ صامتاً لـ«نعم» ولا لـ«لا»).
+  //  افتراضَ صامتاً لـ«نعم» ولا لـ«لا»). **والمبلغُ المدفوعُ الآن لازمٌ
+  //  كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !attachUnanswered && Boolean(offer.ok);
+    && !maintenanceDeviceUnready && !attachUnanswered && Boolean(offer.ok) && paidNowCheck.ok;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -550,6 +570,35 @@ export function NoExamOperationDialog({
               <span className="text-muted-foreground">
                 {offer.error ?? "أدخل السعر الأصلي ومقدار الخصم"}
               </span>
+            )}
+          </div>
+
+          {/* ── المبلغ المدفوع الآن — إلزاميّ على سعرٍ موجب، معطَّلٌ على
+              المجّانيّ. مشتركٌ بين البابين كنظيره السعر أعلاه. ── */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">المبلغ المدفوع الآن (د.ع)</Label>
+            {offer.ok && offer.kind === "free" ? (
+              <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground"
+                data-testid="no-exam-op-paid-now-free">
+                مجّانيّ — لا مبلغَ يُدفَع
+              </p>
+            ) : (
+              <>
+                <MoneyInput value={paidNow} onValueChange={setPaidNow} allowEmpty
+                  disabled={!offer.ok} data-testid="no-exam-op-paid-now" />
+                <p className="text-xs text-muted-foreground">
+                  اكتب صفراً إن لم يُدفَع شيء الآن — المبلغ لا يُخمَّن من السعر أبداً.
+                </p>
+                {/*  **والخطأُ الأحمر لتصحيحٍ لا لفراغٍ لم يُلمَس بعد** —
+                    `paidNow !== null` يعني كَتَب الموظّفُ شيئاً؛ الفراغُ
+                    الأوّليّ يبقى على التلميح الرماديّ وحده، كصندوق السعر
+                    النهائيّ أعلاه بالضبط. */}
+                {offer.ok && paidNow !== null && !paidNowCheck.ok && paidNowCheck.error && (
+                  <p className="text-xs text-destructive" data-testid="no-exam-op-paid-now-error">
+                    {paidNowCheck.error}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
