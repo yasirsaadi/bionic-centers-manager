@@ -261,7 +261,8 @@ async function main() {
     const mv = await http("POST", "/api/no-exam/maintenance", S.recv, {
       maintenanceComponent: "knee",
       patientId: pPro, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 75_000, discountAmount: 0, legacyUnrecordedDevice: true, note: "صيانة",
+      originalPrice: 75_000, discountAmount: 0, paidNow: 0,
+      legacyUnrecordedDevice: true, note: "صيانة",
     });
     same("٣. فتحُ الصيانة ينجح", mv.status, 201);
     same("   **وأجورُها مبوَّبةٌ أطرافاً**",

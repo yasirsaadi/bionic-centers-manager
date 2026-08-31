@@ -199,10 +199,13 @@ const startNoExam = (patientId: number, serviceType = "prosthetic", item = "sock
  * `amount` — `component`/`originalPrice`/`discountAmount` وحدها، أو
  * `existingEpisodeId` لاستئناف حلقةٍ موروثة.
  */
+//  **`paidNow: 0` افتراضٌ آمن هنا** — المرحلة الخامسة («المبلغ المدفوع
+//  الآن») صيّرته إلزامياً على سعرٍ موجب؛ صفرٌ صريحٌ = «دَينٌ كامل» وهذا ما
+//  تفترضه هذه الاختباراتُ ضمناً أصلاً (بلا دفعاتٍ إطلاقاً)، فلا يغيّر شيئاً.
 const sale = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/device-sale", session, body);
+  http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, body);
+  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
 
 /**
  * **زرعٌ مباشر بالـSQL لعمليةٍ «تشغيليةٍ فقط»** — حلقةٌ في التصنيع وأمرُ

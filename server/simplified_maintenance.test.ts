@@ -152,8 +152,11 @@ async function mkEpisode(patientId: number, caseId: number, seq: number, status:
   return r[0].id;
 }
 
+//  **`paidNow: 0` افتراضٌ آمن هنا** — المرحلة الخامسة («المبلغ المدفوع
+//  الآن») صيّرته إلزامياً على سعرٍ موجب؛ صفرٌ صريحٌ = «دَينٌ كامل» وهذا ما
+//  تفترضه هذه الاختباراتُ ضمناً أصلاً (بلا دفعاتٍ إطلاقاً)، فلا يغيّر شيئاً.
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, body);
+  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
 const oldMaintDoor = (body: any, session: any = S.recv) =>
   http("POST", "/api/manufacturing/maintenance-visit", session, body);
 
@@ -735,9 +738,12 @@ async function main() {
       check(!/no-exam-op-no-charge/.test(maintBlock),
         "م٨. مربّعُ «بلا أجور» غيرُ موجودٍ في فرع الصيانة");
     }
-    check(/title:\s*kind === "maintenance" \? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE/
+    // ⚠ الرجعة (PR #269, main قبل هذا الفرع): صار للعنوان طرفٌ ثالثٌ
+    // `attaching ? COMPONENT_ATTACH_SUCCESS_MESSAGE :` قبل ثنائيّ الصيانة/بيع
+    // الجزء القديم — التحقّقُ الدقيق تحديثاً لا تخفيفاً.
+    check(/title:\s*attaching\s*\?\s*COMPONENT_ATTACH_SUCCESS_MESSAGE\s*:\s*kind === "maintenance" \? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE/
       .test(DIALOG_SRC),
-      "م٩. نجاحُ الصيانة لا يقرأ `reviewRouted` — رسالةٌ واحدة دائماً (مشتركةٌ مع بيع الجزء الآن)");
+      "م٩. نجاحُ الصيانة لا يقرأ `reviewRouted` — رسالةٌ واحدة دائماً (مشتركةٌ مع بيع الجزء الآن وإلحاقه)");
 
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ن. بقاءُ المرحلتين ١ و٢ — انحدارٌ صفريّ ──");
@@ -756,7 +762,7 @@ async function main() {
       await mkCase(pid, "prosthetic");
       const saleRes = await http("POST", "/api/no-exam/device-sale", S.recv, {
         patientId: pid, component: "socket", expertUserId: EXPERT,
-        originalPrice: 30_000, discountAmount: 0,
+        originalPrice: 30_000, discountAmount: 0, paidNow: 0,
       });
       check(saleRes.status === 201 && saleRes.body?.reviewRouted === undefined
         && saleRes.body?.message === COMPONENT_SALE_SUCCESS_MESSAGE,
@@ -893,6 +899,192 @@ async function main() {
         msg);
       same("    وصفرُ كتابة — لا أمرَ ولا زيارةَ ولا كلفةَ ولا قيدَ ولا لمسَ إجمالي",
         await moneyOf(pid), before);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ق. «المبلغ المدفوع الآن» — دَينٌ صريح، دفعٌ جزئيّ، دفعٌ"
+      + " كامل، ومجّانيّ بلا دفعة (المرحلة الخامسة) ──");
+    // ══════════════════════════════════════════════════════════════════
+    const paymentsOf = async (patientId: number) => {
+      const rows = await q<{
+        id: number; amount: number; case_id: number | null;
+        visit_id: number | null; device_episode_id: number | null;
+        payment_treatment_type: string | null;
+      }>(
+        `SELECT id, amount::int, case_id::int, visit_id::int, device_episode_id::int,
+                payment_treatment_type
+           FROM payments WHERE patient_id=$1 ORDER BY id`, [patientId]);
+      return rows;
+    };
+    {
+      //  ══ ق١. سعرٌ موجب + مدفوعٌ صفرٌ = دَينٌ كاملٌ صريح — لا دفعة ══════════
+      const pid = await mkPatient("ق-دَينٌ-كامل");
+      await mkCase(pid, "prosthetic");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "socket",
+        legacyUnrecordedDevice: true, originalPrice: 60_000, discountAmount: 0, paidNow: 0,
+      });
+      check(r.status === 201, "ق١. سعرٌ موجب ومدفوعٌ صفرٌ صريح ⟶ ينجح (دَينٌ لا رفض)",
+        JSON.stringify(r.body));
+      same("    والاستجابةُ تقول الحقيقة: paidNow=0، paymentId=null، والمتبقّي = السعرُ كاملاً",
+        [r.body?.paidNow, r.body?.paymentId, r.body?.remainingUnpaid], [0, null, 60_000]);
+      same("    وصفرُ صفوفِ دفعاتٍ فعلاً", (await paymentsOf(pid)).length, 0);
+      const m = await moneyOf(pid);
+      same("    والأمرُ والزيارةُ فُتحا مع ذلك، والكلفةُ مقيَّدةٌ دَيناً",
+        [m.orders, m.visits, m.total], [1, 1, 60_000]);
+    }
+    {
+      //  ══ ق٢. دفعٌ جزئيّ — دفعةٌ واحدة، مربوطةٌ بالزيارة بعينها ═══════════
+      const pid = await mkPatient("ق-دفعٌ-جزئيّ");
+      const c = await mkCase(pid, "prosthetic");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "knee",
+        legacyUnrecordedDevice: true, originalPrice: 100_000, discountAmount: 20_000,
+        paidNow: 30_000,
+      });
+      check(r.status === 201, "ق٢. دفعٌ جزئيّ ⟶ ينجح", JSON.stringify(r.body));
+      same("    والاستجابةُ: paidNow=30,000، والمتبقّي=50,000 (80,000 نهائيّ − 30,000 مدفوع)",
+        [r.body?.paidNow, r.body?.remainingUnpaid], [30_000, 50_000]);
+      const pays = await paymentsOf(pid);
+      const [visitRow] = await q<{ id: number }>(`SELECT id FROM visits WHERE patient_id=$1`, [pid]);
+      same("    ودفعةٌ واحدةٌ بالضبط، مربوطةٌ بالزيارة والحالة بعينهما — لا رصيدَ غيرَ مخصَّص",
+        [pays.length, pays[0]?.amount, pays[0]?.visit_id, pays[0]?.case_id],
+        [1, 30_000, visitRow.id, c]);
+      same("    ووسمُها «أطراف صناعية»", pays[0]?.payment_treatment_type, "أطراف صناعية");
+      const m = await moneyOf(pid);
+      same("    وكلفةُ الأمر = السعرُ النهائيّ كاملاً (الدفعُ الجزئيّ لا يُنقص الكلفة)",
+        m.total, 80_000);
+
+      //  ══ إسنادُ التدقيق — الصفُّ الحقيقيّ لا نصٌّ عامّ ═══════════════════
+      const paymentAudit = await q<{
+        action: string; user_id: number; user_name: string; new_values: string;
+      }>(
+        `SELECT action, user_id::int, user_name, new_values
+           FROM audit_log WHERE entity_type='payment' AND entity_id=$1`, [pays[0].id]);
+      same("    وصفُّ تدقيقٍ واحدٌ بالضبط لهذه الدفعة (entity_type='payment')",
+        paymentAudit.length, 1);
+      same("    بفاعلٍ حقيقيّ — الجلسةُ التي أنشأت الصيانة (ريام)، لا `null`",
+        [paymentAudit[0]?.action, paymentAudit[0]?.user_id, paymentAudit[0]?.user_name],
+        ["create", RECV, "ريام"]);
+      const auditedAmount = JSON.parse(paymentAudit[0]?.new_values ?? "{}")?.amount;
+      same("    والقيمةُ المدقَّقةُ = الدفعةُ نفسُها", Number(auditedAmount), 30_000);
+
+      //  ══ القيدُ اليوميّ — مدينٌ صندوقٌ = دائنٌ إيرادٌ = المبلغُ المدفوع ══════
+      const je = await q<{ id: number }>(
+        `SELECT id FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [pays[0].id]);
+      same("    وقيدٌ يوميٌّ واحدٌ بالضبط مصدرُه هذه الدفعة", je.length, 1);
+      const lines = await q<{ debit: number; credit: number }>(
+        `SELECT debit::int, credit::int FROM journal_lines WHERE entry_id=$1`, [je[0]?.id ?? -1]);
+      same("    ومدينُه = دائنُه = ٣٠,٠٠٠ (Dr صندوق / Cr إيراد)",
+        [lines.reduce((s, l) => s + (l.debit || 0), 0),
+          lines.reduce((s, l) => s + (l.credit || 0), 0)],
+        [30_000, 30_000]);
+    }
+    {
+      //  ══ ق٣. دفعٌ كاملٌ — المتبقّي صفر، ولمسندٍ طبّيّ لا طرف ══════════════
+      const pid = await mkPatient("ق-دفعٌ-كامل-مسند", { support: true });
+      await mkCase(pid, "medical_support");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, serviceType: "medical_support",
+        legacyUnrecordedDevice: true, originalPrice: 40_000, discountAmount: 0, paidNow: 40_000,
+      });
+      check(r.status === 201, "ق٣. دفعٌ كاملٌ على مسندٍ طبّيّ ⟶ ينجح", JSON.stringify(r.body));
+      same("    والمتبقّي صفرٌ بالضبط", r.body?.remainingUnpaid, 0);
+      const pays = await paymentsOf(pid);
+      same("    ودفعةٌ واحدةٌ بكامل السعر، ووسمُها «مساند طبية»",
+        [pays.length, pays[0]?.amount, pays[0]?.payment_treatment_type],
+        [1, 40_000, "مساند طبية"]);
+
+      //  ══ تدقيقٌ وقيدٌ يوميّ — دفعٌ كاملٌ أيضاً، لا الجزئيّ وحده ══════════════
+      const paymentAudit = await q<{ action: string; user_id: number }>(
+        `SELECT action, user_id::int FROM audit_log
+           WHERE entity_type='payment' AND entity_id=$1`, [pays[0].id]);
+      same("    وصفُّ تدقيقٍ واحدٌ ('create') بفاعلٍ حقيقيّ",
+        [paymentAudit.length, paymentAudit[0]?.action, paymentAudit[0]?.user_id],
+        [1, "create", RECV]);
+      const je = await q<{ id: number }>(
+        `SELECT id FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [pays[0].id]);
+      const lines = await q<{ debit: number; credit: number }>(
+        `SELECT debit::int, credit::int FROM journal_lines WHERE entry_id=$1`, [je[0]?.id ?? -1]);
+      same("    والقيدُ متوازنٌ بكامل السعر (٤٠,٠٠٠)",
+        [je.length, lines.reduce((s, l) => s + (l.debit || 0), 0),
+          lines.reduce((s, l) => s + (l.credit || 0), 0)],
+        [1, 40_000, 40_000]);
+    }
+    {
+      //  ══ ق٤. مجّانيٌّ حقيقيّ — بلا دفعة، والأصليّ والخصمُ الكاملُ محفوظان
+      //  على الأمر حتى لو حاول العميلُ إرسالَ مبلغٍ (يُتجاهَل تماماً) ═══════
+      const pid = await mkPatient("ق-مجّانيّ");
+      await mkCase(pid, "prosthetic");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "adapter",
+        legacyUnrecordedDevice: true, originalPrice: 35_000, discountAmount: 35_000,
+        //  **مُلفَّقٌ عمداً** — يجب أن يُتجاهَل تماماً لا أن يُنشئ دفعة.
+        paidNow: 20_000,
+      });
+      check(r.status === 201 && r.body?.priceKind === "free" && r.body?.finalPrice === 0,
+        "ق٤. مجّانيٌّ حقيقيّ ⟶ ينجح، والنهائيُّ صفرٌ", JSON.stringify(r.body));
+      same("    **والقيمةُ المُلفَّقة تُتجاهَل تماماً**: paidNow=0 دائماً على المجّانيّ، ولا paymentId",
+        [r.body?.paidNow, r.body?.paymentId], [0, null]);
+      same("    وصفرُ صفوفِ دفعاتٍ فعلاً", (await paymentsOf(pid)).length, 0);
+      const order = await orderOf(r.body.workOrderId);
+      same("    **والأصليُّ والخصمُ الكاملُ محفوظان** — الحقيقةُ المُهيكَلة على الأمر:"
+        + " original=35,000، final=0، kind=free",
+        [order.mop, order.mfp, order.mpk], [35_000, 0, "free"]);
+      const m = await moneyOf(pid);
+      same("    والأمرُ والزيارةُ قائمان مع ذلك — عملٌ حقيقيّ بقيمة صفر", [m.orders, m.visits], [1, 1]);
+    }
+    {
+      //  ══ ق٥. المبلغُ المدفوعُ الآن أكبرُ من السعر النهائيّ ⟶ ٤٠٠، صفرُ
+      //  كتابة تماماً — لا أمرَ ولا زيارةَ ولا دفعةَ ولا قيدَ ═══════════════
+      const pid = await mkPatient("ق-مبلغٌ-يفوق-النهائيّ");
+      await mkCase(pid, "prosthetic");
+      const r = await maint({
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "foot",
+        legacyUnrecordedDevice: true, originalPrice: 50_000, discountAmount: 0, paidNow: 50_001,
+      });
+      check(r.status === 400, "ق٥. مبلغٌ يفوق السعرَ النهائيّ ⟶ ٤٠٠", JSON.stringify(r.body));
+      same("    وصفرُ كتابةٍ تماماً — لا أمرَ ولا زيارةَ ولا كلفةَ ولا دفعة",
+        await moneyOf(pid), ZERO);
+      same("    (وبالتحديد: صفرُ صفوفِ دفعاتٍ)", (await paymentsOf(pid)).length, 0);
+    }
+    {
+      //  ══ ق٦. الفراغُ على سعرٍ موجب ⟶ ٤٠٠ — لا يُخمَّن صفراً صامتاً ═══════
+      const pid = await mkPatient("ق-فراغٌ-على-سعرٍ-موجب");
+      await mkCase(pid, "prosthetic");
+      //  **بلا `paidNow` إطلاقاً** — نداءٌ مباشرٌ (لا عبر `maint()` التي
+      //  تفرض الافتراضَ الآمن للاختبارات القديمة وحدها).
+      const r = await http("POST", "/api/no-exam/maintenance", S.recv, {
+        patientId: pid, expertUserId: EXPERT, maintenanceComponent: "tube",
+        legacyUnrecordedDevice: true, originalPrice: 45_000, discountAmount: 0,
+      });
+      check(r.status === 400, "ق٦. فراغُ المبلغ المدفوع على سعرٍ موجب ⟶ ٤٠٠"
+        + " — لا يُخمَّن صفراً صامتاً", JSON.stringify(r.body));
+      check((r.body?.error ?? "").includes("إلزاميّ"),
+        "    (والرسالةُ تقول: إلزاميّ)", JSON.stringify(r.body));
+      same("    وصفرُ كتابةٍ تماماً", await moneyOf(pid), ZERO);
+    }
+    {
+      //  ══ ق٧. التزامن — طلبا صيانةٍ متزامنان على الجهاز نفسِه (المسلَّم) ⟶
+      //  واحدٌ ينجح بدفعةٍ واحدة، والآخر يرتدّ بصفر كتابة ═════════════════
+      const pid = await mkPatient("ق-تزامنٌ-بلا-ازدواج");
+      const c = await mkCase(pid, "prosthetic");
+      const ep = await mkEpisode(pid, c, 1, "delivered");
+      const [r1, r2] = await Promise.all([
+        maint({ patientId: pid, expertUserId: EXPERT, maintenanceComponent: "socket",
+          deviceEpisodeId: ep, originalPrice: 70_000, discountAmount: 0, paidNow: 70_000 }),
+        maint({ patientId: pid, expertUserId: EXPERT, maintenanceComponent: "knee",
+          deviceEpisodeId: ep, originalPrice: 70_000, discountAmount: 0, paidNow: 70_000 }),
+      ]);
+      const statuses = [r1.status, r2.status].sort();
+      same("ق٧. واحدٌ ينجح (٢٠١) بالضبط والآخر يرتدّ (٤٠٩)", statuses, [201, 409]);
+      const pays = await paymentsOf(pid);
+      same("    ودفعةٌ واحدةٌ بالضبط — لا نصفَ كتابة ولا ازدواج", pays.length, 1);
+      const m = await moneyOf(pid);
+      same("    وأمرٌ واحدٌ وزيارةٌ واحدةٌ وقيدٌ واحد بالضبط",
+        [m.orders, m.visits, m.ledger_rows], [1, 1, 1]);
     }
   } finally {
     await cleanup();

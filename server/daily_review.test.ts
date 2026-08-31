@@ -446,7 +446,7 @@ async function main() {
       const m = await http("POST", "/api/no-exam/maintenance", S.recv, {
         patientId: pid, serviceType: "prosthetic", legacyUnrecordedDevice: true,
         expertUserId: EXPERT, maintenanceComponent: "socket",
-        originalPrice: 150_000, discountAmount: 50_000,
+        originalPrice: 150_000, discountAmount: 50_000, paidNow: 0,
       });
       check(m.status === 201, "٤٦. فتحُ الصيانة ينجح", JSON.stringify(m.body));
       const workOrderId = Number(m.body?.workOrderId ?? 0);
@@ -476,7 +476,7 @@ async function main() {
       await mkCase(componentSalePid, 1, "prosthetic");
       const s = await http("POST", "/api/no-exam/device-sale", S.recv, {
         patientId: componentSalePid, expertUserId: EXPERT, component: "socket",
-        originalPrice: 400_000, discountAmount: 0,
+        originalPrice: 400_000, discountAmount: 0, paidNow: 0,
       });
       check(s.status === 201, "٥٣. بيعُ الجزء ينجح", JSON.stringify(s.body));
       componentSaleWorkOrderId = Number(s.body?.workOrderId ?? 0);

@@ -455,7 +455,17 @@ export async function createMaintenanceOrderWithVisit(params: {
    * معاملته كما كان — نفسُ نمط `assignManufacturing` منذ ٠٥٣.
    */
   tx?: any;
-}): Promise<ProstheticWorkOrder> {
+}): Promise<ProstheticWorkOrder & {
+  /**
+   * **معرّفُ الزيارة المُنشأة معه** (المرحلة الخامسة — «المبلغ المدفوع
+   * الآن») — لا يكتبه هذا الملفّ لأيّ غرضٍ آخر؛ المستدعي (`createMaintenance
+   * Operation`) يستعمله وحده ليربط دفعةَ القبض الفوريّة **بهذه الزيارة
+   * بعينها**، نفسَ نمط `payments.visit_id` القائم منذ ترحيل ٠٣٨. حقلٌ
+   * إضافيٌّ صرفٌ على الشكل القديم — لا مستدعٍ سابقاً (`server/discounts/
+   * store.ts`) يتأثّر بحرف.
+   */
+  visitId: number;
+}> {
   const body = async (tx: any) => {
     // **الهوية تُحسم هنا، لا في النقطة.** ما تقرؤه النقطة للعرض قد يشيخ:
     // جهازٌ يُسلَّم بين قراءتها وكتابتنا يصير محلّاً للصيانة، فقرارُ «لا
@@ -528,7 +538,7 @@ export async function createMaintenanceOrderWithVisit(params: {
     const caseId = caseRows.find((c) => c.caseType === params.serviceType)?.id
       ?? caseRows.find((c) => c.caseType === "physiotherapy")?.id
       ?? caseRows[0]?.id ?? null;
-    await tx.insert(visits).values({
+    const [visit] = await tx.insert(visits).values({
       patientId: params.patientId,
       branchId: params.branchId,
       visitDate: params.visitDate,
@@ -548,7 +558,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       caseId,
       deviceEpisodeId: targetEpisodeId,
       createdBy: params.assignedBy,
-    });
+    }).returning({ id: visits.id });
 
     if (params.cost > 0) {
       await postMaintenanceFee(tx, {
@@ -557,7 +567,7 @@ export async function createMaintenanceOrderWithVisit(params: {
         deviceEpisodeId: targetEpisodeId,
       });
     }
-    return workOrder;
+    return { ...workOrder, visitId: visit.id };
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);
 }

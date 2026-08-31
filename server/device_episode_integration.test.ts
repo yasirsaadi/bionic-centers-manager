@@ -308,7 +308,7 @@ async function main() {
     const maint = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: P, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 75_000, discountAmount: 0, note: "صيانة الطرف القديم", deviceEpisodeId: dev1,
+      originalPrice: 75_000, discountAmount: 0, paidNow: 0, note: "صيانة الطرف القديم", deviceEpisodeId: dev1,
     });
     same("٦. الصيانة فُتحت رغم أن الجديد قيد التصنيع", maint.status, 201);
 
@@ -472,7 +472,7 @@ async function main() {
       http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-        originalPrice: 25_000, discountAmount: 0, note: "صيانة متزامنة", deviceEpisodeId: d1,
+        originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة متزامنة", deviceEpisodeId: d1,
       })));
     same("أربع محاولات على الجهاز نفسه ⟶ نجاح واحد", races.filter((r) => r.status === 201).length, 1);
     check(!races.some((r) => JSON.stringify(r.body ?? "").includes("duplicate key")),
@@ -483,7 +483,7 @@ async function main() {
     const second = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 25_000, discountAmount: 0, note: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
+      originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
     });
     same("وجهازٌ مسلَّمٌ آخر ⟶ صيانته الخاصّة تُفتح معه", second.status, 201);
     same("   فصار أمرا صيانة متوازيان",
@@ -491,13 +491,13 @@ async function main() {
 
     const noChoice = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, note: "بلا اختيار",
+      patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "بلا اختيار",
     });
     same("وصيانةٌ بلا اختيارٍ ومعه أجهزة مسجَّلة ⟶ مرفوضة", noChoice.status, 400);
     same("وجهازٌ غير مسلَّم لا يُصان",
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0,
+        patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0,
         note: "صيانة ملغى", deviceEpisodeId: cancelledEp,
       })).status, 400);
 
@@ -530,7 +530,7 @@ async function main() {
     const explicitMfg = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 50_000, discountAmount: 0, note: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
+      originalPrice: 50_000, discountAmount: 0, paidNow: 0, note: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
     });
     same("٢. وجهازٌ قيد التصنيع كهدف صيانة ⟶ يُردّ ٤٠٠", explicitMfg.status, 400);
     const afterM = await q(`SELECT
@@ -543,7 +543,7 @@ async function main() {
     same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
-        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0,
+        patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0,
         note: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
       })).status, 400);
 
@@ -597,12 +597,12 @@ async function main() {
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
         patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-        originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث",
+        originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث",
       })).status, 400);
     const legacyExplicit = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث",
+      originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث",
       legacyUnrecordedDevice: true,
     });
     same("   وبإقرارٍ صريح ⟶ ٢٠١", legacyExplicit.status, 201);
@@ -611,14 +611,14 @@ async function main() {
     const maintAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 25_000, discountAmount: 0, note: "صيانة بعد التسليم",
+      originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة بعد التسليم",
     });
     same("   وبعده: بلا نيّةٍ صريحة ⟶ ٤٠٠ كذلك — السببُ نفسُه لا اختلاف أهليةٍ",
       maintAfterDeliver.status, 400);
     const legacyAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 25_000, discountAmount: 0, note: "صيانة إرث ثانية",
+      originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث ثانية",
       legacyUnrecordedDevice: true,
     });
     same("   **والإقرارُ الصريح لا يزال موثوقاً** رغم وجود جهازٍ مسلَّم الآن",
@@ -685,7 +685,7 @@ async function main() {
     const afterTrue = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
       patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
-      originalPrice: 25_000, discountAmount: 0, note: "بعد التسليم",
+      originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "بعد التسليم",
     });
     same("   وبعد استقراره: صيانةٌ بلا هدف تُردّ ٤٠٠", afterTrue.status, 400);
 

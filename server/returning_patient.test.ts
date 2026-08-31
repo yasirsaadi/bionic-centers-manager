@@ -367,6 +367,7 @@ async function main() {
       const ep = await mkDeliveredEpisode(p, c);
       const r = await http("POST", "/api/no-exam/maintenance", S.reception,
         { patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
+          paidNow: 0,
           note: "صيانة الطرف القديم", maintenanceComponent: "knee", deviceEpisodeId: ep });
       same("٢١. **الصيانةُ بلا خصمٍ تُنفَّذ فوراً**", r.status, 201);
       const orders = await ordersOf(p);
@@ -898,7 +899,7 @@ async function main() {
         { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       const mv = await http("POST", "/api/no-exam/maintenance", S.reception,
         { patientId: p, expertUserId: EXPERT, originalPrice: 30000, discountAmount: 0,
-          maintenanceComponent: "adapter", deviceEpisodeId: ep });
+          paidNow: 0, maintenanceComponent: "adapter", deviceEpisodeId: ep });
       check(mv.status === 201, "(الصيانةُ فُتحت قبل اختبار الحذف)", JSON.stringify(mv.body));
       const before = await moneyOf(p);
       check(before.orders === 1 && before.cost_entries === 1,

@@ -16,7 +16,10 @@
  * ولا لـ`shared/pending_charge.ts` (طابورٌ موروثٌ يُنهيه إنسان).
  */
 
-import { deriveOfferFromDiscount, type DiscountOffer } from "./commercial";
+import {
+  deriveOfferFromDiscount, type DiscountOffer,
+  parsePaidNowAmount, type PaidNowResult,
+} from "./commercial";
 
 export const MAINTENANCE_SUCCESS_MESSAGE = "تم تسجيل الصيانة وفتح أمر العمل";
 
@@ -109,3 +112,10 @@ export function parseMaintenanceDeviceTarget(params: {
  */
 export const deriveMaintenanceOffer = deriveOfferFromDiscount;
 export type MaintenanceOffer = DiscountOffer;
+
+/**
+ * **«المبلغ المدفوع الآن» — إعادةُ تصديرٍ لا نسخة**، بنفس نمط
+ * `deriveMaintenanceOffer` أعلاه. الشرحُ الكامل في `shared/commercial.ts`.
+ */
+export const parseMaintenancePaidNow = parsePaidNowAmount;
+export type MaintenancePaidNowResult = PaidNowResult;

@@ -84,8 +84,10 @@ async function maint(body: {
   serviceType?: string; maintenanceComponent?: string; note?: string;
 }, session: any = S.manager) {
   const { cost, ...rest } = body;
+  //  **`paidNow: 0` افتراضٌ آمن** — المرحلة الخامسة صيّرته إلزامياً على سعرٍ
+  //  موجب؛ صفرٌ صريحٌ = «دَينٌ كامل»، وهذا الملفّ لا يختبر دفعاتٍ إطلاقاً.
   return req("POST", "/api/no-exam/maintenance", session, {
-    ...rest, legacyUnrecordedDevice: true, originalPrice: cost, discountAmount: 0,
+    ...rest, legacyUnrecordedDevice: true, originalPrice: cost, discountAmount: 0, paidNow: 0,
   });
 }
 

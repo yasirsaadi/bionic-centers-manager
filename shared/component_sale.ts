@@ -27,7 +27,10 @@
  * حرفاً بحرف).
  */
 
-import { deriveOfferFromDiscount, type DiscountOffer } from "./commercial";
+import {
+  deriveOfferFromDiscount, type DiscountOffer,
+  parsePaidNowAmount, type PaidNowResult,
+} from "./commercial";
 import { isProstheticComponent, type ProstheticComponent } from "./prosthetic_parts";
 
 /** رسالةُ النجاح — سطرٌ واحد يقرؤه الموظّف، لا صياغةَ اعتمادٍ ولا مراجعة. */
@@ -94,6 +97,13 @@ export function canCompleteComponentSale(
  */
 export const deriveComponentSaleOffer = deriveOfferFromDiscount;
 export type ComponentSaleOffer = DiscountOffer;
+
+/**
+ * **«المبلغ المدفوع الآن» — إعادةُ تصديرٍ لا نسخة**، بنفس نمط
+ * `deriveComponentSaleOffer` أعلاه. الشرحُ الكامل في `shared/commercial.ts`.
+ */
+export const parseComponentSalePaidNow = parsePaidNowAmount;
+export type ComponentSalePaidNowResult = PaidNowResult;
 
 // ── الجزء — واحدٌ من الثمانية، إلزاميّ دائماً ──────────────────────────────
 
