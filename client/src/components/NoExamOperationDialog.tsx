@@ -58,7 +58,10 @@ import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_part
 import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
 import { deriveOfferFromDiscount } from "@shared/commercial";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
-import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
+import {
+  COMPONENT_SALE_SUCCESS_MESSAGE, COMPONENT_ATTACH_SUCCESS_MESSAGE,
+  ATTACH_TO_IN_MANUFACTURING_QUESTION,
+} from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 import {
   devicePhaseOf, maintenanceDeviceBlocksSave, resolveMaintenanceDeviceTarget,
@@ -80,6 +83,14 @@ interface Props {
   /** الطلبُ المسجَّل على تلك الحلقة — يُعرَض ولا يُسأل عنه ثانيةً. */
   existingRequestedItem?: string | null;
   /**
+   * **مُرشَّحٌ لسؤال الإلحاق** — طرفٌ كاملٌ قيد التصنيع بالفعل على خيط
+   * المريض. وجودُه **لا يُلحق شيئاً ضمناً**: يُعرَض عليه سؤالٌ صريح
+   * («هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟»)، وجوابُ الموظّف وحده
+   * يقرّر. غيابُه (`null`) يعني عدمَ عرض السؤال أصلاً — لا جهازَ قيد
+   * التصنيع، فلا التباسَ ممكناً.
+   */
+  inManufacturingFullDeviceEpisodeId?: number | null;
+  /**
    * **«نوع العملية» محسومٌ قبل فتح النافذة** — من مُوجِّه «ما سبب حضور
    * المريض اليوم؟» بعد التسجيل مثلاً. فلا يُعاد سؤالٌ أجاب عنه اختيارُ
    * الزرّ بعينه — نفسُ منطق `existingEpisodeId` أدناه بالضبط، لسببٍ مختلف.
@@ -89,7 +100,8 @@ interface Props {
 
 export function NoExamOperationDialog({
   open, onOpenChange, patientId, branchId, serviceType,
-  existingEpisodeId = null, existingRequestedItem = null, initialKind,
+  existingEpisodeId = null, existingRequestedItem = null,
+  inManufacturingFullDeviceEpisodeId = null, initialKind,
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -113,6 +125,17 @@ export function NoExamOperationDialog({
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
   const [note, setNote] = useState("");
+
+  //  ══ **سؤالُ الإلحاق — جوابٌ صريحٌ، لا افتراضاً صامتاً** ═══════════════
+  //  `null` = لم يُجَب بعد. لا تفترض «لا» ولا «نعم»: طلبٌ بلا جوابٍ يبقى
+  //  غيرَ جاهزٍ للحفظ (انظر `ready` أدناه) ما دام السؤالُ مطروحاً أصلاً.
+  const [attachChoice, setAttachChoice] = useState<"yes" | "no" | null>(null);
+  //  يُعرَض فقط عند بيع جزءٍ جديد (لا استئنافَ حلقةٍ موروثة — لتلك مسارُها
+  //  الخاصّ ولا معنى لسؤال الإلحاق عليها) وحين يوجد مُرشَّحٌ فعلاً.
+  const showAttachPrompt = kind === "device_sale" && !existingEpisodeId
+    && Boolean(inManufacturingFullDeviceEpisodeId);
+  const attaching = showAttachPrompt && attachChoice === "yes";
+  const attachUnanswered = showAttachPrompt && attachChoice === null;
 
   //  ══ **السعرُ — أصليّ وخصمٌ، مشتركان بين بيع الجزء والصيانة** ══════════
   //  (المرحلة الرابعة) نفسُ الاشتقاق حرفياً في البابين — فلا حسابَ مكرَّر
@@ -211,12 +234,19 @@ export function NoExamOperationDialog({
       //  معاً في معاملة الخادم نفسِها. **ولا سعرَ نهائيّاً ولا نوعَ سعرٍ
       //  يُرسَلان أبداً** — الخادمُ يشتقّهما من `originalPrice`/`discountAmount`
       //  وحدهما ويعتمدهما وحده.
+      //
+      //  ══ **والإلحاقُ صريحٌ بمعرّف الحلقة، لا بعلمٍ منطقيّ** ══════════════
+      //  «نعم» على سؤال الإلحاق يرسل `attachToDeviceEpisodeId` بعينه —
+      //  والخادمُ يعيد التحقّق الكامل منه تحت القفل، فلا ثقةَ بما وصل هنا
+      //  وحده. **ولا `expertUserId` عندها**: الإلحاقُ يشتقّ خبيرَه من أمر
+      //  العمل القائم، فلا يُسأل الموظّفُ عن خبيرٍ ليُتجاهَل اختيارُه.
       const res = await apiRequest("POST", "/api/no-exam/device-sale", {
         patientId,
         ...(existingEpisodeId
-          ? { existingEpisodeId }
-          : { component: requestedItem }),
-        expertUserId: Number(expertId),
+          ? { existingEpisodeId, expertUserId: Number(expertId) }
+          : attaching
+            ? { component: requestedItem, attachToDeviceEpisodeId: inManufacturingFullDeviceEpisodeId }
+            : { component: requestedItem, expertUserId: Number(expertId) }),
         originalPrice, discountAmount,
         note: note.trim() || null,
       });
@@ -228,9 +258,12 @@ export function NoExamOperationDialog({
       //  **بلا مراجعةٍ لاحقة في أيّ من البابين** — لا `reviewRouted` تُقرأ:
       //  الطبيبُ بلا سلطةٍ على أيّ منهما من أوّلهما (المرحلتان الثالثة
       //  والرابعة)، فلا حاجةَ لإخباره حيّاً ولا استرجاعياً. ونجاحٌ واحد
-      //  يُقال بصياغةٍ واحدة.
+      //  يُقال بصياغةٍ واحدة — **إلّا الإلحاقَ**: «فتح أمر العمل» كذبٌ عليه،
+      //  فله رسالتُه الخاصّة.
       toast({
-        title: kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
+        title: attaching
+          ? COMPONENT_ATTACH_SUCCESS_MESSAGE
+          : kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
       });
     },
     onError: (err: any) => toast({
@@ -244,8 +277,11 @@ export function NoExamOperationDialog({
   const maintenanceDeviceUnready = kind === "maintenance"
     && maintenanceDeviceBlocksSave({ phase: devicePhase, selection: deviceSelection });
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
-  const ready = Boolean(expertId) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && Boolean(offer.ok);
+  //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
+  //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
+  //  افتراضَ صامتاً لـ«نعم» ولا لـ«لا»).
+  const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
+    && !maintenanceDeviceUnready && !attachUnanswered && Boolean(offer.ok);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -262,6 +298,16 @@ export function NoExamOperationDialog({
               data-testid="no-exam-op-rule">
               <b>حفظةٌ واحدة</b> — يُفتَح أمرُ العمل ويُقيَّد المبلغُ النهائيّ معاً،
               {" "}<b>بلا مراجعةٍ لاحقة</b>.
+            </p>
+          ) : attaching ? (
+            //  ══ **الإلحاقُ ليس بيعاً جديداً** — لا أمرَ يُفتَح ولا خبيرَ
+            //  يُسنَد، فالصياغةُ تقول الفعلَ الحقيقيّ لا صياغةَ البيع
+            //  الجديد المُعادةَ بلا تدقيق. ═══════════════════════════════
+            <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
+              data-testid="no-exam-op-rule">
+              <b>حفظةٌ واحدة</b> — يُضاف هذا الجزءُ إلى أمر التصنيع القائم بخبيره
+              {" "}الحاليّ نفسِه، ويُقيَّد سعرُه على حساب المريض معه، <b>بلا مراجعةٍ
+              {" "}لاحقة</b>.
             </p>
           ) : (
             <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
@@ -341,6 +387,33 @@ export function NoExamOperationDialog({
             )
           )}
 
+          {/* ── سؤالُ الإلحاق — صريحٌ، بلا تخمينٍ خادميّ ── */}
+          {showAttachPrompt && (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{ATTACH_TO_IN_MANUFACTURING_QUESTION}</Label>
+              <div className="flex gap-2">
+                <Button type="button" size="sm"
+                  variant={attachChoice === "yes" ? "default" : "outline"}
+                  onClick={() => setAttachChoice("yes")}
+                  data-testid="no-exam-op-attach-yes">
+                  نعم
+                </Button>
+                <Button type="button" size="sm"
+                  variant={attachChoice === "no" ? "default" : "outline"}
+                  onClick={() => setAttachChoice("no")}
+                  data-testid="no-exam-op-attach-no">
+                  لا
+                </Button>
+              </div>
+              {attaching && (
+                <p className="text-xs text-muted-foreground" data-testid="no-exam-op-attach-note">
+                  سيُلحَق هذا الجزءُ بأمر التصنيع القائم — بخبيره الحاليّ نفسِه، بلا حلقةٍ
+                  أو أمرٍ جديدَين.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* ── الصيانة المبسّطة: جهازٌ ⟵ جزءٌ إن لزم (المرحلة الثالثة) ── */}
           {kind === "maintenance" && (
             <>
@@ -407,37 +480,41 @@ export function NoExamOperationDialog({
             </>
           )}
 
-          {/* ── مَن ينفّذ ── */}
+          {/* ── مَن ينفّذ — إلّا عند الإلحاق، فالخبيرُ خبيرُ الأمر القائم ── */}
           {/*  **أربعُ حالاتٍ تُقال بأسمائها.** والقائمةُ الفارغة كانت تقولها
-              كلَّها بصوتٍ واحد: حقلٌ لا يفتح ولا يشرح. */}
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">الخبير المسؤول</Label>
-            {expertsLoading ? (
-              <p className="text-sm text-muted-foreground flex items-center gap-2"
-                data-testid="no-exam-op-expert-loading">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> جارٍ تحميل الخبراء…
-              </p>
-            ) : expertsFailed ? (
-              <p className="text-sm text-destructive" data-testid="no-exam-op-expert-error">
-                تعذّر تحميل قائمة الخبراء — تحقّق من الاتصال وأعد فتح النافذة.
-              </p>
-            ) : expertsEmpty ? (
-              <p className="text-sm text-destructive" data-testid="no-exam-op-expert-empty">
-                لا يوجد خبير متاح لهذا الفرع
-              </p>
-            ) : (
-              <Select value={expertId} onValueChange={setExpertId}>
-                <SelectTrigger data-testid="no-exam-op-expert">
-                  <SelectValue placeholder="اختر الخبير" />
-                </SelectTrigger>
-                <SelectContent>
-                  {experts.map((e) => (
-                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
+              كلَّها بصوتٍ واحد: حقلٌ لا يفتح ولا يشرح.
+              **ولا يُعرَض هذا الحقلُ إطلاقاً عند الإلحاق** — سؤالُ الموظّف عن
+              خبيرٍ ثمّ تجاهلُ اختياره كان الخطأ؛ فلا يُسأل أصلاً. */}
+          {!attaching && (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">الخبير المسؤول</Label>
+              {expertsLoading ? (
+                <p className="text-sm text-muted-foreground flex items-center gap-2"
+                  data-testid="no-exam-op-expert-loading">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> جارٍ تحميل الخبراء…
+                </p>
+              ) : expertsFailed ? (
+                <p className="text-sm text-destructive" data-testid="no-exam-op-expert-error">
+                  تعذّر تحميل قائمة الخبراء — تحقّق من الاتصال وأعد فتح النافذة.
+                </p>
+              ) : expertsEmpty ? (
+                <p className="text-sm text-destructive" data-testid="no-exam-op-expert-empty">
+                  لا يوجد خبير متاح لهذا الفرع
+                </p>
+              ) : (
+                <Select value={expertId} onValueChange={setExpertId}>
+                  <SelectTrigger data-testid="no-exam-op-expert">
+                    <SelectValue placeholder="اختر الخبير" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {experts.map((e) => (
+                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
 
           {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين ── */}
           <div className="space-y-1.5">
@@ -489,7 +566,9 @@ export function NoExamOperationDialog({
             onClick={() => save.mutate()}>
             {save.isPending
               ? <Loader2 className="h-4 w-4 animate-spin" />
-              : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
+              : attaching
+                ? "حفظ البيع وإضافته للطرف الجاري تصنيعه"
+                : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
           </Button>
         </DialogFooter>
       </DialogContent>

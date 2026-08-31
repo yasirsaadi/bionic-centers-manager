@@ -27,7 +27,7 @@
 import type { Department } from "@shared/service_taxonomy";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import type { PendingChargeKind } from "@shared/pending_charge";
-import { noExamSaleAllowed } from "@shared/prosthetic_parts";
+import { noExamSaleAllowed, FULL_DEVICE } from "@shared/prosthetic_parts";
 
 /** المسارات التي يفتحها الموزِّع — **قائمة مغلقة**. */
 export type ServiceFlow =
@@ -223,6 +223,39 @@ export function resumableNoExamSale(
   //  الإداريّ كما تقول رسالةُ الردّ. والقاعدةُ من `shared` لا نسخةٌ منها.
   if (!noExamSaleAllowed(serviceType, item)) return null;
   return { episodeId: id, requestedItem: item };
+}
+
+// ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع — مُرشَّحٌ يُعرَض، لا قرارٌ يُتَّخذ هنا ══
+
+/**
+ * **هل لهذا المريض طرفٌ كاملٌ قيد التصنيع بالفعل؟** — دالّةٌ خالصة تقول
+ * إن كان ينبغي عرضُ سؤال الإلحاق أصلاً، لا أن تقرّر الإلحاقَ نفسَه.
+ *
+ * ── والقرارُ يبقى للموظّف ────────────────────────────────────────────────
+ * وجودُ حلقةٍ `in_manufacturing` لجهازٍ كاملٍ **لا يعني** أن كلَّ جزءٍ
+ * يُباع اليوم مقصودٌ لذلك الجهاز — فيُسأل الموظّفُ صراحةً
+ * («هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟»،
+ * `shared/component_sale.ts: ATTACH_TO_IN_MANUFACTURING_QUESTION`)، وجوابُه
+ * هو ما يقرّر. هذه الدالّةُ توفّر **معرّفَ المُرشَّح** إن وُجد، فحسب —
+ * والخادمُ يعيد التحقّق الكامل منه تحت القفل قبل أن يكتب ديناراً.
+ *
+ * ── ولجهازٍ كاملٍ وحده ────────────────────────────────────────────────────
+ * حلقةٌ `in_manufacturing` بجزءٍ (لا جهازٍ كامل) لا تُرشَّح — لا معنى
+ * لإلحاق جزءٍ بجزءٍ آخر لم يُسلَّم بعد.
+ */
+export function inManufacturingFullDeviceEpisode(
+  episodes: PatientEpisodeSummary[] | null | undefined,
+  serviceType: "prosthetic" | "medical_support",
+): { episodeId: number } | null {
+  const list = Array.isArray(episodes) ? episodes : [];
+  const found = list.find((e) =>
+    e.serviceType === serviceType
+    && e.status === "in_manufacturing"
+    && e.requestedItem === FULL_DEVICE);
+  if (!found) return null;
+  const id = Number(found.id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return { episodeId: id };
 }
 
 // ══ تذكرة الإرسال: **واحدة لكل فتح** ═════════════════════════════════════

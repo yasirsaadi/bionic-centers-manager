@@ -57,7 +57,7 @@ import {
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
-import { noExamSaleRefusal } from "@shared/prosthetic_parts";
+import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
   type PerformanceTargets, type RoleTarget, type ScoreBreakdown,
@@ -724,6 +724,17 @@ export async function loadDeviceSaleOperationTx(tx: any, params: {
 export async function applyDeviceSaleFinancialsTx(tx: any, params: {
   operation: DeviceSaleOperation;
   cost: number;
+  /**
+   * **نصُّ القيد — اختياريٌّ، والنصُّ القديم افتراضُه لكلّ نداءٍ آخر.**
+   *
+   * كلُّ عمليات بيع الجهاز تصف نفسَها بنفس السطر العامّ («تخصيص طرف
+   * صناعي»)، وهذا صحيحٌ حين تكون العمليةُ هي البيعَ نفسَه. لكنّ إلحاقَ
+   * جزءٍ بجهازٍ **قائمٍ** قيد التصنيع ليس ذلك البيعَ — فيحتاج مَن يقرأ
+   * الدفترَ لاحقاً سطراً يقول ماذا وقع فعلاً، لا نصّاً عاماً يُخمَّن.
+   * **بلا حسابٍ ثانٍ ولا كاتبٍ ثانٍ**: الدالّةُ نفسُها، الحقولُ نفسُها،
+   * فرقٌ في نصّ عرضٍ واحد فقط.
+   */
+  notes?: string;
 }): Promise<{ patient: Patient; appliedDelta: number }> {
   const op = params.operation;
   const { patientId, serviceType, cost } = { ...op, cost: params.cost };
@@ -784,7 +795,8 @@ export async function applyDeviceSaleFinancialsTx(tx: any, params: {
       // كما هو عمداً: تقاريرُ الأقسام تبوّب عليه، وتغييره يحرّك أرقاماً
       // لا علاقة لها بهذه المرحلة.
       deviceEpisodeId: op.episodeId,
-      notes: serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي",
+      notes: params.notes
+        ?? (serviceType === "prosthetic" ? "تخصيص طرف صناعي" : "تخصيص مسند طبي"),
     });
   }
 
@@ -805,6 +817,129 @@ export async function applyDeviceSaleFinancialsTx(tx: any, params: {
   }
 
   return { patient, appliedDelta };
+}
+
+/**
+ * ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع بالفعل — لا حلقةٌ ثانية، ولا أمرٌ
+ *    ثانٍ، والسعرُ **يُضاف** لا يُستبدَل ═══════════════════════════════════
+ *
+ * ══ الثغرةُ التي تُغلقها ═══════════════════════════════════════════════════
+ * طرفٌ صناعيٌّ كاملٌ بيع بالأمس ودخل التصنيع (`patient_device_episodes.status
+ * = 'in_manufacturing'`). واليوم يُشترى له جزءٌ إضافيّ (أدابتر مثلاً) لنفس
+ * الجهاز بعينه. `createComponentSaleOperation` (`server/pending_charges/
+ * store.ts`) كانت تحاول دائماً فتحَ **حلقةٍ جديدة** عبر `startDeviceEpisodeTx`
+ * — والحارسُ الصحيح فيها (`uq_pde_case_open`: شراءٌ مفتوحٌ واحد لكل خيط)
+ * يرفضها ٤٠٩ `active_device_operation` **حتماً**، لأن حلقة الجهاز الكامل ما
+ * زالت مفتوحة. الحارسُ ذاتُه سليمٌ تماماً ولا يجوز إضعافه — المشكلة أن لا
+ * مسارَ كان يفهم أن الطلبَ الجديد **لنفس الجهاز المفتوح بعينه** لا لجهازٍ
+ * مستقلّ ثانٍ.
+ *
+ * ══ ولا التباسَ في الهُويّة أبداً ═══════════════════════════════════════════
+ * `uq_pde_case_open` نفسُه هو ضمانُ عدم اللبس: **حلقةٌ مفتوحةٌ واحدة بالضبط**
+ * ممكنةٌ لكل خيط. فحلقةٌ مفتوحةٌ قيد التصنيع لجهازٍ **كامل** هي الجهازُ
+ * الوحيدُ الذي يمكن أن يعنيه طلبُ جزءٍ جديد الآن على هذا الخيط — لا حاجةَ
+ * لسؤال «لأيّ جهاز؟». والمستدعي (`createComponentSaleOperation`) هو مَن
+ * يحسم هذا الشرط (حلقةٌ مفتوحة، `in_manufacturing`، جهازٌ كامل) **قبل**
+ * النداء إلى هذه الدالّة؛ وهي تُعيد التحقّق من كلّ شيءٍ تحت قفلها الخاصّ —
+ * لا تثق بقرار المستدعي، بنفس عادة `loadDeviceSaleOperationTx` المجاورة.
+ *
+ * ══ ولا مسارَ يُشترَط (خلافاً لـ`loadDeviceSaleOperationTx`) ════════════════
+ * تلك مبنيّةٌ لإكمال طابور «بلا معاينة» الموروث وتشترط `servicePath =
+ * 'no_exam'` تحديداً. أمّا جهازٌ كاملٌ اشتُري «بالأمس» فيمرّ غالباً بمسار
+ * المعاينة (`exam`) — والطرفُ الكاملُ لا يُباع بلا معاينةٍ أصلاً
+ * (`noExamSaleRefusal`). فهذه الدالّة **لا تشترط مساراً بعينه**: ما يهمّها
+ * هو أن الحلقة مفتوحةٌ، قيد التصنيع، ولجهازٍ كامل — بصرف النظر عن كيف
+ * وصلت إلى هناك.
+ *
+ * ══ والسعرُ دلتا لا كتابةٌ مطلقة — نفسُ `applyDeviceSaleFinancialsTx` حرفاً
+ *    بلا تعديلٍ فيها ═══════════════════════════════════════════════════════
+ * تلك الدالّة تكتب `episode.agreed_cost = cost` (القيمةَ **المطلقةَ**
+ * الممرَّرة)، وتحسب فرقَ المجموع/الحالة/الدفتر من `priorEpisodeAgreedCost`.
+ * فتمريرُ سعر الجزء **وحده** ككلفةٍ كان سيُفسَّر «إعادةَ تسعير الجهاز إلى
+ * سعر الجزء» — يمحو سعر الجهاز الأصليّ من `total_cost`/`patient_cases.cost`
+ * بدل أن يُضاف إليه! **فالمستدعي هو مَن يجب أن يمرّر `agreedCost + سعر
+ * الجزء`** كوسيطة `cost`، لا هذه الدالّة — وهذا بالضبط سببُ إرجاعها
+ * `priorEpisodeAgreedCost` الحقيقيّ (كلفة الجهاز الحالية تحت القفل) بدل
+ * صفرٍ مفترَض، كي يستطيع المستدعي حساب المجموع الصحيح.
+ *
+ * ══ ولا تنقل الحلقة ولا تفتح أمراً ثانياً ═══════════════════════════════════
+ * **بلا `startEpisodeManufacturingTx`** (الحلقةُ `in_manufacturing` أصلاً) و
+ * **بلا إدراجِ صفٍّ في `prosthetic_work_orders`** — تقرأ الأمرَ **النشط
+ * القائم بالفعل** وتقفله فحسب. فمرحلةُ التصنيع الحالية لا تتحرّك بحرف.
+ */
+export async function loadInManufacturingDeviceOperationTx(tx: any, params: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  episodeId: number;
+  /** الفرعُ الذي أذن له الطالبُ به — إذنٌ لا سلطة، مثل بقيّة هذه العائلة. */
+  branchId: number | null;
+}): Promise<DeviceSaleOperation & { currentStage: string }> {
+  const [existing] = await tx.select().from(patients).where(eq(patients.id, params.patientId));
+  if (!existing) throw new DeviceEpisodeError("المريض غير موجود", 404);
+  if (existing.deletedAt) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
+
+  //  ══ **إعادةُ التحقّق الكاملة تحت القفل** — لا ثقةَ بقرار المستدعي ══════
+  const { episode } = await lockCaseAndReadExactEpisode(tx, {
+    patientId: params.patientId, serviceType: params.serviceType, episodeId: params.episodeId,
+  });
+  if (!episode || episode.status !== "in_manufacturing" || episode.requestedItem !== FULL_DEVICE) {
+    throw new DeviceEpisodeError("تغيّرت حالة الجهاز — أعد فتح الصفحة", 409);
+  }
+  if (episode.adminVoidReversalId != null) {
+    throw new DeviceEpisodeError("هذا الجهاز مُبطَلٌ إدارياً — لا يُلحَق به جزءٌ جديد", 409);
+  }
+
+  const wor = await tx.execute(sql`
+    SELECT id, branch_id, patient_id, service_type, current_stage, expert_user_id,
+           admin_void_reversal_id
+      FROM prosthetic_work_orders
+     WHERE device_episode_id = ${episode.id}
+       AND status NOT IN ('completed', 'cancelled')
+     FOR UPDATE
+     LIMIT 1
+  `);
+  const wo = (wor.rows ?? [])[0];
+  if (!wo) {
+    throw new DeviceEpisodeError(
+      "لم يُعثَر على أمر تصنيعٍ نشطٍ لهذا الجهاز — راجع الملفّ إدارياً", 409);
+  }
+  if (wo.admin_void_reversal_id !== null) {
+    throw new DeviceEpisodeError("أمرُ تصنيع هذا الجهاز مُبطَلٌ إدارياً — لا يُلحَق به جزءٌ جديد", 409);
+  }
+  if (Number(wo.patient_id) !== params.patientId || String(wo.service_type) !== params.serviceType) {
+    throw new DeviceEpisodeError("بيانات العملية لا تطابق أمر التصنيع المسجَّل", 409);
+  }
+
+  const actualBranchId = wo.branch_id === null || wo.branch_id === undefined
+    ? null : Number(wo.branch_id);
+  if (actualBranchId === null) {
+    throw new DeviceEpisodeError(
+      "تعذّر تحديد فرع هذه العملية من أمر التصنيع — راجع الإدارة قبل المتابعة", 409);
+  }
+  //  ══ **والفرعُ الفعليُّ يُقارَن بما أذن له الطالبُ** — نفسُ نمط بقيّة
+  //  هذه العائلة؛ `null` يعني «لم يُؤذَن بفرعٍ بعينه» فلا شيءَ يُخالَف. ═══
+  if (params.branchId !== null && params.branchId !== actualBranchId) {
+    throw new DeviceEpisodeError(
+      "تغيّر فرع هذه العملية بعد التحقّق منه — أعد تحميل الصفحة وحاول مجدداً", 409);
+  }
+
+  const [caseRow] = await tx.select().from(patientCases).where(eq(patientCases.id, episode.caseId));
+
+  return {
+    patientId: params.patientId, serviceType: params.serviceType, branchId: actualBranchId,
+    workOrderId: Number(wo.id),
+    //  **الخبيرُ الحاليُّ على الأمر** — لا يتغيّر بإلحاق جزء؛ إلحاقُ جزءٍ
+    //  ليس إعادةَ إسناد.
+    expertUserId: Number(wo.expert_user_id),
+    episodeId: episode.id, requestedItem: episode.requestedItem, caseId: episode.caseId,
+    priorCaseCost: caseRow?.cost ?? 0, priorCaseSource: caseRow?.costSource ?? null,
+    priorTotalCost: existing.totalCost ?? 0,
+    //  **كلفةُ الجهاز الحالية تحت القفل** — لا صفراً مفترَضاً؛ هذا ما يمنع
+    //  المستدعي من محو سعر الجهاز عرضاً (الشرحُ الكامل أعلاه).
+    priorEpisodeAgreedCost: episode.agreedCost,
+    patient: existing,
+    currentStage: String(wo.current_stage),
+  };
 }
 
 export class DatabaseStorage implements IStorage {
