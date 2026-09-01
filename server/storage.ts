@@ -410,30 +410,6 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   //  **ولا عملَ على ملفٍّ في السلّة** (ترحيل ٠٦٨) — بابُه الاستعادة.
   if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
 
-  // ══ بناءٌ أوليٌّ يزاحم بناءً أولياً آخر **لنفس الحلقة بعينها** — لا لنفس
-  // (المريض، الخدمة) وحدها (ترحيل ٠٧٣، قرارُ المالك: أيّ عددٍ من عمليات
-  // الأجهزة المستقلّة لمريضٍ واحد في آنٍ واحد). طلبٌ **محدَّدُ الهوية**
-  // (`wantEpisode`) لا يزاحمه إلّا أمرٌ آخر على الحلقة نفسها؛ وطلبٌ **بلا
-  // هوية** (المسارُ القديم الذي لا يحمل `deviceEpisodeId`) يبقى محروساً
-  // بالقاعدة القديمة — (مريض، خدمة) بلا حلقة — فلا يتزاحم مع بناءٍ
-  // محدَّد الهوية من جهة، ولا يفلت من الحراسة من جهةٍ أخرى. نفسُ نمط
-  // `uq_pwo_one_open_build_per_episode`/`uq_pwo_one_open_legacy_build`
-  // في القاعدة (الترحيل نفسه) — هذا فحصٌ داخل المعاملة يسبقهما برسالة
-  // عملٍ واضحة، والفهرسان الضمانُ النهائيّ. ══════════════════════════════
-  const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
-    .where(and(
-      sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
-      sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
-      wantEpisode !== null
-        ? eq(prostheticWorkOrders.deviceEpisodeId, wantEpisode)
-        : and(
-          eq(prostheticWorkOrders.patientId, patientId),
-          eq(prostheticWorkOrders.serviceType, serviceType),
-          isNull(prostheticWorkOrders.deviceEpisodeId),
-        ),
-    )).limit(1);
-  if (openWo.length > 0) throw new ActiveAssignmentError();
-
   // ══ الوضع يُحسم **داخل** المعاملة، خلف قفل الخيط ═══════════════════
   // قراءة النقطة ترشيحٌ لا قرار: بينها وبين هنا قد تُفتح حلقة. ولو
   // مضينا على قراءةٍ بائتة تقول «لا حلقة» لأنشأنا أمر بناءٍ يتيماً
@@ -495,6 +471,35 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
       "تغيّرت حالة طلب الجهاز — حدّث الصفحة وأكمل الطلب الجديد", 409,
     );
   }
+
+  // ══ بناءٌ أوليٌّ يزاحم بناءً أولياً آخر **لنفس الحلقة بعينها** — لا لنفس
+  // (المريض، الخدمة) وحدها (ترحيل ٠٧٣، قرارُ المالك: أيّ عددٍ من عمليات
+  // الأجهزة المستقلّة لمريضٍ واحد في آنٍ واحد). طلبٌ **محدَّدُ الهوية**
+  // (`episode` غيرُ فارغة هنا، أي هويّتُه تحقّقت للتوّ فوق) لا يزاحمه إلّا
+  // أمرٌ آخر على الحلقة نفسها؛ وطلبٌ **بلا هوية** يبقى محروساً بالقاعدة
+  // القديمة — (مريض، خدمة) بلا حلقة.
+  //
+  // ══ **وبعد تحقّق الهويّة لا قبله** (تصحيحٌ) ═══════════════════════════
+  // كان هذا الفحصُ يقع **قبل** حلّ الحلقة، على `wantEpisode` الخام — معرّفٌ
+  // لم يُتحقَّق بعد من أنه يخصّ هذا المريضَ وهذه الخدمة. فحلقةٌ تخصّ مريضاً
+  // آخر يصادف أن لها أمرَ بناءٍ نشطاً كانت تُبلَّغ «أمرٌ منافسٌ قائم»
+  // (`ActiveAssignmentError`، بلا `.status`) بدل «هذا الجهاز ليس لك»
+  // (`DeviceEpisodeError`، ٤٠٩) — تسرّبُ معلومةٍ عن مريضٍ آخر، ورسالةٌ
+  // خاطئةٌ معاً. الآن `episode.id` **مُتحقَّقٌ من هويّته** (ينتمي لهذا
+  // المريض ولهذه الخدمة) قبل أن يُقاس أيُّ تنافسٍ عليه.
+  const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
+    .where(and(
+      sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
+      sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+      episode !== null
+        ? eq(prostheticWorkOrders.deviceEpisodeId, episode.id)
+        : and(
+          eq(prostheticWorkOrders.patientId, patientId),
+          eq(prostheticWorkOrders.serviceType, serviceType),
+          isNull(prostheticWorkOrders.deviceEpisodeId),
+        ),
+    )).limit(1);
+  if (openWo.length > 0) throw new ActiveAssignmentError();
 
   // ══ **ولا أمرَ في فرعٍ مرتبطٍ بحلقةٍ من فرعٍ آخر** ═════════════════════
   //  مريضٌ نُقل بعد أن فُتح طلبُه: الأمرُ يُنشأ بفرعه **الحاليّ** بينما
@@ -2316,7 +2321,19 @@ export class DatabaseStorage implements IStorage {
     cost: number;
     expertUserId: number;
     assignedBy: number | null;
-    /** الحلقة الحيّة، يحلّها الخادم — لا يُقبل معرّف من العميل. */
+    /**
+     * الحلقةُ الحيّة. **هذه الدالّةُ نفسُها لا تحلّها ولا تخمّنها** — تثق
+     * بما مرّره المُستدعي وتعيد التحقّق الكامل منه تحت القفل
+     * (`startDeviceSaleOperationallyTx`) فترفض ٤٠٩ متى تغيّرت حالتُها أو
+     * لم تعد تخصّ هذا المريض/الخدمة.
+     *
+     * ومَن يُنشئ هذه القيمة مسؤوليّتُه (ترحيل ٠٧٣): `resolveIntendedOpenEpisode`
+     * عند نقطة الاتصال — معرّفٌ صريح من العميل يُتحقَّق منه، أو حلٌّ تلقائيّ
+     * حين توجد حلقةٌ واحدة مفتوحة فقط. **لا `getOpenDeviceEpisode`
+     * (`LIMIT 1` بلا ترتيب) بعد اليوم لمسارٍ يختار جهازاً**: مذ رُفع
+     * `uq_pde_case_open` صار الخيطُ قد يحمل حلقتين مفتوحتين معاً، فاختيارُ
+     * إحداهما ضمناً تخمينٌ على جهازٍ لم يُسأل عنه أحد.
+     */
     deviceEpisodeId?: number | null;
     /**
      * معاملةُ المُستدعي، إن كان البيع جزءاً من عمليةٍ أكبر.

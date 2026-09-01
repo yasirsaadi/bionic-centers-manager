@@ -18,7 +18,7 @@ import {
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
 } from "../medical/store";
 import {
-  getOpenDeviceEpisode, listDeliveredEpisodes, DeviceEpisodeError,
+  getOpenDeviceEpisode, resolveIntendedOpenEpisode, listDeliveredEpisodes, DeviceEpisodeError,
 } from "../device_episodes/store";
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
@@ -391,9 +391,32 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // حلقةٌ مفتوحة ⟶ جهازٌ حيّ له هويّته: كل ما يُقرأ يُقرأ منها هي.
     // لا حلقة ⟶ المسار القديم بحرفه، فأغلب المرضى عليه.
     //
-    // والحلقة يحلّها الخادم من (المريض، نوع الخدمة) — ولا يُقبل معرّف من
-    // العميل إطلاقاً، وإلّا صار بالإمكان توجيه بيعٍ إلى حلقة غير التي
-    // فحصها الطبيب.
+    // ══ والحلقةُ **لم تعد** تُحسم بـ«المفتوحة» وحدها (ترحيل ٠٧٣) ════════
+    // كان الخادمُ يحلّها من (المريض، نوع الخدمة) بلا قبول معرّفٍ من العميل
+    // إطلاقاً — صحيحٌ ما دام `uq_pde_case_open` يضمن حلقةً مفتوحةً واحدة
+    // على الأكثر. رُفع ذلك الفهرس (قرارُ المالك: عملياتٌ متوازية مستقلّة)،
+    // فقد يحمل الخيطُ حلقتين مفتوحتين معاً — واختيارُ إحداهما ضمناً
+    // (`LIMIT 1` بلا ترتيب) صار تخميناً على أيُّ جهازٍ يُخصَّص.
+    //
+    // `resolveIntendedOpenEpisode` تحسم الالتباس: معرّفٌ صريح
+    // (`req.body.deviceEpisodeId`) يُتحقَّق منه وحده؛ حلقةٌ واحدة مفتوحة
+    // ⟶ تُستعمل كما كانت دائماً (توافقٌ تامّ مع كلّ ملفٍّ اليوم)؛ حلقتان
+    // فأكثر بلا معرّفٍ صريح ⟶ ٤٠٩ يطلب التحديد — **لا يُختار أيٌّ منهما
+    // أبداً**. **وبلا ثغرة**: أيّ حلقةٍ تُختار — صريحةً أو وحيدة — تمرّ
+    // بنفس حراسة ما بعدها بحرفها (حالتُها `examined`، ومعاينةٌ موقّعة
+    // **لها هي بعينها**، وسعرُها ومواصفاتُها من معاينتها هي) — فلا طريق
+    // لتوجيه بيعٍ إلى حلقةٍ لم يفحصها الطبيب.
+    let liveEpisode: Awaited<ReturnType<typeof resolveIntendedOpenEpisode>>;
+    try {
+      liveEpisode = await resolveIntendedOpenEpisode({
+        patientId, serviceType, requestedEpisodeId: req.body?.deviceEpisodeId,
+      });
+    } catch (err: any) {
+      if (err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      throw err;
+    }
     // ══ لا التفافَ على اعتماد الشراء (ترحيل ٠٥٣) ═══════════════════════
     // متابعةٌ حيّة تعني أن هذا الجهاز تحت طبقة الاعتماد: بيعُه يمرّ بموافقة
     // المريض ثم باعتماد طبيبٍ أو المسؤول. وبدء بناءٍ من هنا كان يُنتج
@@ -401,7 +424,6 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     //
     // **ولا استثناءَ لأحد، ولا للمسؤول**: صلاحيةُ الاعتماد لا تعني تخطّي
     // المسار، فمَن يملك الاعتماد يعتمد من بابه ويترك أثره.
-    const liveEpisode = await getOpenDeviceEpisode(patientId, serviceType);
     const governed = await followupStore.purchaseGovernedByFollowup({
       patientId, serviceType, deviceEpisodeId: liveEpisode?.id ?? null,
     });
@@ -543,7 +565,11 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           isFree: wantsFree,
           reason: String(dsc?.reason ?? ""), note: strOrU(dsc?.note) ?? null,
           //  الخبيرُ والمواصفاتُ يُحفظان ليُستأنف التخصيصُ بلا إعادة إدخال.
-          payload: { expertUserId, fields, serviceType },
+          //  **والحلقةُ المحسومة أعلاه بعينها** (ترحيل ٠٧٣) — لا يُعاد
+          //  حلُّها داخل `applyDiscountImmediately` بـ`getOpenDeviceEpisode`
+          //  ثانيةً، وإلّا أمكن أن يختلف ما اختاره هذا المعالجُ عمّا
+          //  يُخصَّص فعلاً حين تتعدّد الحلقاتُ المفتوحة.
+          payload: { expertUserId, fields, serviceType, deviceEpisodeId: liveEpisode?.id ?? null },
           actor: discountActor(req),
           //  **سطرُ التدقيق داخل المعاملة** — فلا أمرُ تصنيعٍ يُولَد بإذنٍ
           //  لا أثرَ له.

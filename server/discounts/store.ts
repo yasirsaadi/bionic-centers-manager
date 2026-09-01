@@ -138,7 +138,14 @@ export interface DiscountPayload {
    * هو ما يميّزهما عند الاعتماد.
    */
   kind?: "maintenance" | "new_service";
-  /** الجهازُ المُصان — أو `null` مع `legacyUnrecordedDevice` للقديم. */
+  /**
+   * **صيانة**: الجهازُ المُصان — أو `null` مع `legacyUnrecordedDevice` للقديم.
+   *
+   * **وجهازٌ يُخصَّص** (لا `kind`، لا `followupId` — الفرعُ الأخير في
+   * `applyApproved`): الحلقةُ الحيّةُ **المحسومة عند نقطة الاتصال** —
+   * `resolveIntendedOpenEpisode` (ترحيل ٠٧٣)، لا يُعاد حلُّها هنا. مصدرُها
+   * الوحيد اليوم `POST /api/patients/:id/assign-manufacturing`.
+   */
   deviceEpisodeId?: number | null;
   legacyUnrecordedDevice?: boolean;
   /** الجزءُ المُصان — إلزاميٌّ للأطراف. */
@@ -253,6 +260,14 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
       if (DEVICE_SPEC_KEYS.has(k) && typeof v === "string" && v) fields[k] = v;
     }
     out.fields = fields;
+    //  ══ الحلقةُ المحسومة عند نقطة الاتصال (ترحيل ٠٧٣) ═══════════════════
+    //  `assign-manufacturing` تحلّها بـ`resolveIntendedOpenEpisode` قبل
+    //  إرسالها هنا — فلا يُعاد حلُّها بـ`getOpenDeviceEpisode` (`LIMIT 1`
+    //  صامتة) في `applyApproved`، وإلّا أمكن أن يختلف ما اختاره المعالجُ
+    //  عمّا يُنفَّذ فعلاً حين تتعدّد الحلقاتُ المفتوحة. `null`/الغيابُ يعني
+    //  «لا حلقة حيّة» بصدق — لا تخميناً بديلاً.
+    const ep = Number(raw?.deviceEpisodeId);
+    out.deviceEpisodeId = Number.isFinite(ep) && ep > 0 ? ep : null;
   }
   return out;
 }
@@ -650,13 +665,18 @@ async function applyApproved(
     return { kind: "device", workOrderId: out.workOrderId, followup: out.followup };
   }
 
-  //  **والحلقةُ تُحلّ الآن لا يوم الطلب**: بين الطلب والاعتماد قد تُفتح
-  //  حلقةُ جهازٍ جديد أو تُغلق. ولو مرّرنا معرّفاً محفوظاً لأمكن أن يُخصَّص
-  //  جهازٌ لحلقةٍ لم تعد قائمة — و`assignManufacturing` يردّ ٤٠٩ متى
-  //  اختلف ما مُرّر عمّا هو مفتوحٌ فعلاً.
+  //  ══ **الحلقةُ المحسومة عند نقطة الاتصال — لا تُعاد هنا** (ترحيل ٠٧٣) ══
+  //  كانت هذه النقطة تحلّ «الحلقةَ المفتوحة» بنفسها (`getOpenDeviceEpisode`،
+  //  `LIMIT 1` بلا ترتيب) — إجابةٌ حتميّة ما دام `uq_pde_case_open` يضمن
+  //  حلقةً مفتوحةً واحدة على الأكثر. رُفع ذلك الفهرس (قرارُ المالك: عملياتٌ
+  //  متوازية مستقلّة)، فقد يحمل الخيطُ حلقتين مفتوحتين معاً — وإعادةُ الحلّ
+  //  هنا مستقلّةً عن حلّ `assign-manufacturing` كانت قد تختار **غيرَ** ما
+  //  اختاره ذلك المعالجُ لو تعدّدت الحلقات. فصار `payload.deviceEpisodeId`
+  //  — الحلقةُ التي حسمها `resolveIntendedOpenEpisode` عند نقطة الاتصال —
+  //  هو المصدرَ الوحيد: لا إعادةَ حلٍّ ثانية. **والذرّيةُ محفوظة كما كانت**:
+  //  `assignManufacturing` يردّ ٤٠٩ متى تغيّرت حالةُ هذه الحلقة بعينها تحت
+  //  القفل قبل أن يصل التنفيذُ إلى هنا.
   const serviceType = req.department as "prosthetic" | "medical_support";
-  const { getOpenDeviceEpisode } = await import("../device_episodes/store");
-  const live = await getOpenDeviceEpisode(req.patientId, serviceType);
   const out = await storage.assignManufacturing({
     patientId: req.patientId,
     serviceType,
@@ -664,7 +684,7 @@ async function applyApproved(
     cost: finalPrice,
     expertUserId: payload.expertUserId as number,
     assignedBy: actor.userId,
-    deviceEpisodeId: live?.id ?? null,
+    deviceEpisodeId: payload.deviceEpisodeId ?? null,
     tx,
   });
   return { kind: "device", workOrderId: out.workOrderId };

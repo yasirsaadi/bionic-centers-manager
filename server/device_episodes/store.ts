@@ -140,6 +140,82 @@ export async function getOpenDeviceEpisode(
 }
 
 /**
+ * **الحلقةُ المقصودة** لمسارٍ يختار جهازاً بلا هويّةٍ مخزَّنة (تخصيص عبر
+ * مسار المعاينة، أو تطبيقُ خصمٍ فوريٍّ عليه) — لا `LIMIT 1` صامتة.
+ *
+ * ══ لماذا لزمت بعد ترحيل ٠٧٣ ═══════════════════════════════════════════
+ * `getOpenDeviceEpisode` تُرجع صفّاً واحداً (`LIMIT 1` بلا `ORDER BY`) —
+ * وكانت هذه القراءةُ حتميّةَ الإجابة ما دام `uq_pde_case_open` يضمن حلقةً
+ * مفتوحةً واحدة على الأكثر لكلّ خيط. رُفع ذلك الفهرس (قرارُ المالك: أيّ
+ * عددٍ من عمليات الأجهزة المستقلّة في آنٍ واحد)، فصار ممكناً أن يحمل
+ * الخيطُ حلقتين مفتوحتين معاً — واختيارُ إحداهما ضمناً صار تخميناً لا
+ * حسماً. **ومسارٌ حديثٌ يعرف هويّةَ عمليته لا يجوز أن يخمّن أبداً.**
+ *
+ * ══ والقاعدة هنا ═══════════════════════════════════════════════════════
+ * معرّفٌ صريح (`requestedEpisodeId`) ⟶ يُتحقَّق منه وحده: ينتمي لهذا
+ * المريض ولهذه الخدمة، وحيٌّ فعلاً (لا مسلَّم ولا ملغى). غيابُ المعرّف:
+ * صفرُ حلقاتٍ حيّة ⟶ `null` (المسار القديم كما هو، بلا تغيير). حلقةٌ
+ * واحدة ⟶ هي، بلا سؤال — توافقٌ تامّ مع كلّ ملفّ اليوم، إذ لا ملفَّ قبل
+ * هذا الترحيل يحمل أكثر من حلقة مفتوحة أصلاً. **حلقتان فأكثر ⟶ خطأٌ
+ * صريح** — لا يُختار أيٌّ منهما، والمستدعي يُطالَب بمعرّفٍ صريح.
+ *
+ * ══ قراءةٌ خارج معاملة — لرسالةٍ مبكّرة أنيقة فقط ═══════════════════════
+ * الضمانةُ الحقيقية تبقى القفلَ والتحقّقَ داخل معاملة الكتابة
+ * (`lockCaseAndReadExactEpisode` عبر `startDeviceSaleOperationallyTx`)،
+ * تماماً كنمط `hasOpenOrder` (فحصٌ مبكّر) مقابل `hasOpenOrderTx` (الحارسُ
+ * الحقيقيّ) القائم في `manufacturing/store.ts`.
+ */
+export async function resolveIntendedOpenEpisode(params: {
+  patientId: number;
+  serviceType: DeviceServiceType;
+  /** معرّفٌ صريح وصل من العميل، إن وُجد — أيّ قيمة، تُتحقَّق هنا. */
+  requestedEpisodeId?: unknown;
+}): Promise<DeviceEpisodeView | null> {
+  const hasExplicit = params.requestedEpisodeId != null && params.requestedEpisodeId !== "";
+  if (hasExplicit) {
+    const wantId = Number(params.requestedEpisodeId);
+    if (!Number.isInteger(wantId) || wantId <= 0) {
+      throw new DeviceEpisodeError("معرّف جهاز غير صالح", 400);
+    }
+    const r = await db.execute<Record<string, any>>(sql`
+      SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+             e.agreed_cost, e.requested_item, e.component, e.service_path,
+             e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+        FROM patient_device_episodes e
+        JOIN patient_cases pc ON pc.id = e.case_id
+       WHERE e.id = ${wantId} AND e.patient_id = ${params.patientId}
+         AND pc.case_type = ${params.serviceType}
+         AND e.status NOT IN ('delivered', 'cancelled')
+    `);
+    const row = (r.rows ?? [])[0];
+    if (!row) {
+      throw new DeviceEpisodeError(
+        "الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة، أو لم يعد قيد الإجراء", 409,
+      );
+    }
+    return toView(row);
+  }
+
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.patient_id = ${params.patientId}
+       AND pc.case_type = ${params.serviceType}
+       AND e.status NOT IN ('delivered', 'cancelled')
+     ORDER BY e.sequence_number ASC
+  `);
+  const rows = r.rows ?? [];
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return toView(rows[0]);
+  throw new DeviceEpisodeError(
+    "لدى المريض أكثر من جهاز قيد الإجراء لهذه الخدمة — حدّد الجهاز المقصود صراحةً", 409,
+  );
+}
+
+/**
  * الأجهزة **المسلَّمة** لهذه الخدمة — وهي وحدها محلٌّ للصيانة.
  *
  * فما لم يُسلَّم بعد (بانتظار معاينة، أو مُعايَن، أو قيد التصنيع) ليس جهازاً
