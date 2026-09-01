@@ -122,24 +122,33 @@ async function main() {
   check(!!dupSeq && /uq_pde_case_seq|duplicate key/.test(dupSeq),
     "٢. وتسلسلٌ مكرَّر في الخيط نفسه مرفوض", String(dupSeq));
 
-  // ══ ٣. شراءٌ مفتوحٌ واحد لكل خيط ══════════════════════════════════════
-  const dupOpen = await refused(() => mkEpisode(p1, c1, 2, "examined"));
-  check(!!dupOpen && /uq_pde_case_open|duplicate key/.test(dupOpen),
-    "٣. **وحلقة مفتوحة ثانية لنفس الخيط مرفوضة**", String(dupOpen));
+  // ══ ٣. عمليةٌ مستقلّةٌ ثانية على الخيط نفسه — صارت مقبولة (ترحيل ٠٧٣) ══
+  // `uq_pde_case_open` رُفع بحكم قرار المالك: أيّ عددٍ من عمليات الأجهزة
+  // المستقلّة في آنٍ واحد صحيحٌ لمريضٍ واحد — لا شراءٌ واحدٌ يُنازَع عليه.
+  const e1b = await mkEpisode(p1, c1, 2, "examined");
+  check(e1b > 0 && e1b !== e1,
+    "٣. **وحلقةٌ مفتوحةٌ ثانية لنفس الخيط صارت مقبولة** — أيّ عددٍ من"
+    + " العمليات المتوازية المستقلّة صحيحٌ لمريضٍ واحد", String(e1b));
+  const rowsAfter3 = await db.select().from(PDE).where(eq(PDE.caseId, c1));
+  const openAfter3 = rowsAfter3.filter((r) => !["delivered", "cancelled"].includes(r.status)).length;
+  same("   وكلتاهما مفتوحتان معاً فعلاً — لا إلغاءَ ضمنيّاً للأولى", openAfter3, 2);
 
-  // ══ ٤. وبعد التسليم يُفتح غيرها ═══════════════════════════════════════
+  // ══ ٤. وثالثةٌ ورابعةٌ مفتوحتان أيضاً — لا سقفَ للعدد ═══════════════════
+  const e1c = await mkEpisode(p1, c1, 3, "in_manufacturing");
+  const e1d = await mkEpisode(p1, c1, 4, "awaiting_exam");
+  check(e1c > 0 && e1d > 0 && new Set([e1, e1b, e1c, e1d]).size === 4,
+    "٤. **وثالثةٌ ورابعةٌ مفتوحتان معاً بلا رفض** — أربعُ عمليات مستقلّة"
+    + " متزامنة على خيطٍ واحد", JSON.stringify({ e1, e1b, e1c, e1d }));
+  // وتسليمُ إحداها أو إلغاؤها لا يمنع فتحَ أخرى — لم تكن تتنافس أصلاً.
   await db.update(PDE).set({ status: "delivered", deliveredAt: new Date() }).where(eq(PDE.id, e1));
-  const e2 = await mkEpisode(p1, c1, 2);
-  check(e2 > 0, "٤. وبعد التسليم تُفتَح حلقة ثانية");
-  same("بتسلسلها الثاني",
-    (await db.select().from(PDE).where(eq(PDE.id, e2)))[0].sequenceNumber, 2);
-  // وثالثةٌ مفتوحة ما زالت مرفوضة — القيد يقيس المفتوح لا العدد.
-  const third = await refused(() => mkEpisode(p1, c1, 3));
-  check(!!third, "وثالثةٌ مفتوحة ما زالت مرفوضة", String(third));
-  // والملغاة لا تحجز المكان كذلك.
-  await db.update(PDE).set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "عدل المريض" }).where(eq(PDE.id, e2));
-  const e3 = await mkEpisode(p1, c1, 3);
-  check(e3 > 0, "والملغاة لا تحجز المكان");
+  await db.update(PDE).set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "عدل المريض" }).where(eq(PDE.id, e1b));
+  const e1e = await mkEpisode(p1, c1, 5);
+  check(e1e > 0, "وحلقةٌ خامسة تُفتَح بلا مشكلة رغم بقاء e1c/e1d مفتوحتين", String(e1e));
+  // والتسلسلُ وحده يبقى محروساً — نفسُ فحص القسم ٢ بحرفه، مكرَّرٌ هنا على
+  // خيطٍ يحمل حلقاتٍ مفتوحةً متعدّدة فعلاً كي لا ينكسر الحارسُ الباقي معها.
+  const dupSeqAgain = await refused(() => mkEpisode(p1, c1, 5, "examined"));
+  check(!!dupSeqAgain && /uq_pde_case_seq|duplicate key/.test(dupSeqAgain),
+    "   والتسلسلُ يبقى فريداً رغم كثرة الحلقات المفتوحة", String(dupSeqAgain));
 
   // ══ ٥. الحالة من قائمة مغلقة ══════════════════════════════════════════
   console.log("\n── القيود ──");
@@ -326,8 +335,9 @@ async function main() {
   check(eA > 0, "١٨. حلقةٌ بمريضها وخيطها الصحيحين تنجح");
 
   // ١٩. حلقةٌ للمريض «أ» على خيط المريض «ب» ⇒ مرفوضة.
-  // بحالةٍ منتهية عمداً: خيط «ب» يحمل حلقةً مفتوحة، ولولا ذلك لسبق
-  // «uq_pde_case_open» المفتاحَ المركّب فقاس الاختبارُ قيداً آخر.
+  // بحالةٍ منتهية (`delivered`) — بلا داعٍ خاصّ بعد رفع «uq_pde_case_open»
+  // (ترحيل ٠٧٣): أيّ حالةٍ كانت ستقيس المفتاحَ المركّب نفسَه الآن، فبقيت
+  // القيمةُ كما هي توثيقاً لا ضرورة.
   const crossCase = await refused(() => pool.query(
     `INSERT INTO patient_device_episodes (patient_id, case_id, sequence_number, status)
      VALUES ($1,$2,9,'delivered')`, [pA, cB]));
@@ -361,7 +371,7 @@ async function main() {
     `INSERT INTO payments (patient_id, branch_id, amount) VALUES ($1,1,1000)`, [pA]));
   check(nullStill === null, "**والصفّ بلا حلقة يمرّ كما كان** — لا مساس بالقائم", String(nullStill));
 
-  // ══ ٢٤-٢٦. الدمج مع حلقتين مفتوحتين من النوع نفسه ═════════════════════
+  // ══ ٢٤-٢٥. الدمج مع حلقتين مفتوحتين من النوع نفسه — صار مسموحاً (ترحيل ٠٧٣) ══
   console.log("\n── الدمج: حلقتان مفتوحتان من النوع نفسه ──");
   const dSrc = await mkPatient("مصدر بحلقة مفتوحة");
   const dDst = await mkPatient("هدف بحلقة مفتوحة");
@@ -377,34 +387,36 @@ async function main() {
     `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, assigned_by, device_episode_id)
      VALUES ($1,1,$2,'prosthetic','active','mold',$2,$3) RETURNING id`, [dSrc, EXPERT, dEpSrc]);
 
+  // كان هذا الدمجُ يُرفَض لمجرّد أن كلا الملفّين يحمل حلقةً مفتوحة من
+  // النوع نفسه — حمايةً لفهرس `uq_pde_case_open` الذي رُفع الآن (قرارُ
+  // المالك: أيّ عددٍ من العمليات المتوازية المستقلّة صحيح). فيجب أن ينجح
+  // الدمجُ، وتُحفَظ **هويّتا الحلقتين معاً** على الهدف — لا دمجَ بينهما.
   let dualErr: any = null;
   try { await storage.mergePatients(dSrc, dDst); } catch (e) { dualErr = e; }
-  check(dualErr !== null, "٢٤. **الدمج مرفوض حين يحمل الملفّان جهازين قيد التنفيذ من النوع نفسه**");
-  check(String(dualErr?.message ?? "").includes("جهازين قيد التنفيذ"),
-    "برسالة عملٍ واضحة لا رسالة قاعدة بيانات", String(dualErr?.message));
+  check(dualErr === null,
+    "٢٤. **الدمجُ صار مسموحاً حين يحمل الملفّان جهازين قيد التنفيذ من النوع نفسه**",
+    String(dualErr?.message ?? dualErr));
 
-  // ٢٥. **ولا شيء تغيّر إطلاقاً** — المعاملة فشلت كاملةً قبل أي تعديل.
-  same("٢٥. الملفّان باقيان",
-    (await pool.query(`SELECT COUNT(*)::int AS n FROM patients WHERE id = ANY($1::int[])`, [[dSrc, dDst]])).rows[0].n, 2);
-  const epsAfter = await db.select().from(PDE).where(eq(PDE.patientId, dSrc));
-  same("وحلقة المصدر على مريضها وخيطها بتسلسلها",
-    epsAfter.map((e) => [e.id, e.patientId, e.caseId, e.sequenceNumber, e.status]),
-    [[dEpSrc, dSrc, dcSrc, 1, "in_manufacturing"]]);
-  same("وحلقة الهدف كما هي",
-    (await db.select().from(PDE).where(eq(PDE.patientId, dDst)))
-      .map((e) => [e.id, e.caseId, e.sequenceNumber, e.status]),
-    [[dEpDst, dcDst, 1, "examined"]]);
-  same("والكلف لم تتغيّر",
-    [(await storage.getPatient(dSrc))?.totalCost, (await storage.getPatient(dDst))?.totalCost],
-    [1000000, 2000000]);
-  same("وكلفة حالة المصدر كما هي",
-    (await db.select().from(patientCases).where(eq(patientCases.id, dcSrc)))[0].cost, 1000000);
-  same("والدفعة على مريضها وحلقتها",
-    (await db.select().from(payments).where(eq(payments.patientId, dSrc)))
-      .map((p) => [p.amount, p.caseId, p.deviceEpisodeId]), [[400000, dcSrc, dEpSrc]]);
-  same("وأمر التصنيع كما هو",
+  // ٢٥. **وكلتا الحلقتين محفوظتان بهويّتيهما على الهدف** — الأصليّةُ بحالتها
+  // وتسلسلها، والمنقولةُ بمعرّفها هي (`id` لا يتغيّر) وتسلسلٍ جديد يتفادى
+  // التصادم — نفسُ آليّة إعادة الترقيم المُثبَتة في القسم ٢٧ أدناه بحرفها.
+  same("٢٥. المصدرُ حُذف والهدفُ باقٍ وحده",
+    (await pool.query(`SELECT COUNT(*)::int AS n FROM patients WHERE id = ANY($1::int[])`, [[dSrc, dDst]])).rows[0].n, 1);
+  const dEpsAfter = (await db.select().from(PDE).where(eq(PDE.patientId, dDst)))
+    .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+  same("والحلقتان معاً على خيط الهدف — الأصليّةُ بتسلسلها، والمنقولةُ بتسلسلٍ جديد",
+    dEpsAfter.map((e) => [e.id, e.caseId, e.sequenceNumber, e.status]),
+    [[dEpDst, dcDst, 1, "examined"], [dEpSrc, dcDst, 2, "in_manufacturing"]]);
+  same("والكلفةُ الإجمالية على الهدف = مجموع الملفّين",
+    (await storage.getPatient(dDst))?.totalCost, 3000000);
+  same("وكلفةُ الخيط المدموج = مجموع الحالتين",
+    (await db.select().from(patientCases).where(eq(patientCases.id, dcDst)))[0].cost, 1000000);
+  same("والدفعةُ تبعت حلقتها ومريضها وخيطها الجدد",
+    (await db.select().from(payments).where(eq(payments.deviceEpisodeId, dEpSrc)))
+      .map((p) => [p.patientId, p.caseId, p.amount]), [[dDst, dcDst, 400000]]);
+  same("وأمرُ التصنيع يشير إلى المريض الجديد وحلقته نفسها بلا لمسة على مرحلته",
     (await db.select().from(WO).where(eq(WO.id, dWo[0].id)))
-      .map((o) => [o.patientId, o.deviceEpisodeId, o.currentStage]), [[dSrc, dEpSrc, "mold"]]);
+      .map((o) => [o.patientId, o.deviceEpisodeId, o.currentStage]), [[dDst, dEpSrc, "mold"]]);
 
   // ٢٦. ونوعان مختلفان ⇒ الدمج مسموح.
   const xSrc = await mkPatient("مصدر بمسند مفتوح");

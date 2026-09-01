@@ -87,6 +87,8 @@ export interface PatientEpisodeSummary {
   status: string;
   servicePath?: string | null;
   requestedItem?: string | null;
+  /** رقمُ الجهاز التسلسليّ على خيط المريض — لتمييز مُرشَّحٍ عن آخر بالعرض. */
+  sequenceNumber?: number | null;
 }
 
 export interface PatientServiceFlags {
@@ -225,37 +227,53 @@ export function resumableNoExamSale(
   return { episodeId: id, requestedItem: item };
 }
 
-// ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع — مُرشَّحٌ يُعرَض، لا قرارٌ يُتَّخذ هنا ══
+// ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع — مُرشَّحون يُعرَضون، لا قرارٌ يُتَّخذ هنا ══
 
 /**
- * **هل لهذا المريض طرفٌ كاملٌ قيد التصنيع بالفعل؟** — دالّةٌ خالصة تقول
- * إن كان ينبغي عرضُ سؤال الإلحاق أصلاً، لا أن تقرّر الإلحاقَ نفسَه.
+ * **أيّ أطرافٍ كاملة قيد التصنيع بالفعل لهذا المريض؟** — دالّةٌ خالصة تقول
+ * **كلَّ** المُرشَّحين لسؤال الإلحاق، لا أن تقرّر الإلحاقَ نفسَه ولا أن
+ * تختار واحداً عنهم.
  *
- * ── والقرارُ يبقى للموظّف ────────────────────────────────────────────────
- * وجودُ حلقةٍ `in_manufacturing` لجهازٍ كاملٍ **لا يعني** أن كلَّ جزءٍ
+ * ── والقرارُ يبقى للموظّف دائماً ─────────────────────────────────────────
+ * وجودُ حلقةِ `in_manufacturing` لجهازٍ كاملٍ **لا يعني** أن كلَّ جزءٍ
  * يُباع اليوم مقصودٌ لذلك الجهاز — فيُسأل الموظّفُ صراحةً
  * («هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟»،
  * `shared/component_sale.ts: ATTACH_TO_IN_MANUFACTURING_QUESTION`)، وجوابُه
- * هو ما يقرّر. هذه الدالّةُ توفّر **معرّفَ المُرشَّح** إن وُجد، فحسب —
- * والخادمُ يعيد التحقّق الكامل منه تحت القفل قبل أن يكتب ديناراً.
+ * هو ما يقرّر. هذه الدالّةُ توفّر **قائمةَ المُرشَّحين** فحسب — والخادمُ
+ * يعيد التحقّق الكامل من الهويّة المُختارة تحت القفل قبل أن يكتب ديناراً.
+ *
+ * ── ولا اختيارَ ضمنيّاً بعد اليوم (ترحيل ٠٧٣) ════════════════════════════
+ * كانت هذه الدالّةُ تُرجع **مُرشَّحاً واحداً** (`.find()`، أوّلَ مطابقة)
+ * لأن `uq_pde_case_open` كان يضمن ألّا يوجد أكثر من حلقةٍ مفتوحة على
+ * الخيط أصلاً. وذلك الفهرسُ **رُفع**: مريضٌ قد يملك اليوم **أكثر من**
+ * طرفٍ كاملٍ قيد التصنيع معاً (عملياتٌ مستقلّة عمداً). فاختيارُ الأوّل
+ * صامتاً كان سيُلحِق الجزءَ بجهازٍ **لم يقصده أحد** — والمستدعي (الشاشة)
+ * هو مَن يعرض القائمةَ ويُلزم اختياراً صريحاً حين تزيد عن واحد.
  *
  * ── ولجهازٍ كاملٍ وحده ────────────────────────────────────────────────────
- * حلقةٌ `in_manufacturing` بجزءٍ (لا جهازٍ كامل) لا تُرشَّح — لا معنى
+ * حلقةُ `in_manufacturing` بجزءٍ (لا جهازٍ كامل) لا تُرشَّح — لا معنى
  * لإلحاق جزءٍ بجزءٍ آخر لم يُسلَّم بعد.
  */
-export function inManufacturingFullDeviceEpisode(
+export function inManufacturingFullDeviceEpisodes(
   episodes: PatientEpisodeSummary[] | null | undefined,
   serviceType: "prosthetic" | "medical_support",
-): { episodeId: number } | null {
+): { episodeId: number; sequenceNumber: number | null }[] {
   const list = Array.isArray(episodes) ? episodes : [];
-  const found = list.find((e) =>
-    e.serviceType === serviceType
-    && e.status === "in_manufacturing"
-    && e.requestedItem === FULL_DEVICE);
-  if (!found) return null;
-  const id = Number(found.id);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  return { episodeId: id };
+  return list
+    .filter((e) =>
+      e.serviceType === serviceType
+      && e.status === "in_manufacturing"
+      && e.requestedItem === FULL_DEVICE)
+    .map((e) => {
+      const id = Number(e.id);
+      if (!Number.isFinite(id) || id <= 0) return null;
+      const seq = Number(e.sequenceNumber);
+      return { episodeId: id, sequenceNumber: Number.isFinite(seq) ? seq : null };
+    })
+    .filter((c): c is { episodeId: number; sequenceNumber: number | null } => c !== null)
+    // ترتيبٌ ثابتٌ يُقرَأ — الأقدم رقماً أوّلاً، بصرف النظر عن ترتيب وصول
+    // الخادم. المجهولُ الرقم (نادرٌ، بيانات تاريخية) يُذيَّل لا يُخمَّن.
+    .sort((a, b) => (a.sequenceNumber ?? Infinity) - (b.sequenceNumber ?? Infinity));
 }
 
 // ══ تذكرة الإرسال: **واحدة لكل فتح** ═════════════════════════════════════

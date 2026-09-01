@@ -13,7 +13,7 @@ import { NoExamOperationDialog } from "./NoExamOperationDialog";
 import { ReturnToPurchaseDialog } from "./ReturnToPurchaseDialog";
 import { ReturnToPurchaseRoutingChoice } from "./ReturnToPurchaseRoutingChoice";
 import {
-  launcherOptions, resumableNoExamSale, inManufacturingFullDeviceEpisode, GROUP_LABELS,
+  launcherOptions, resumableNoExamSale, inManufacturingFullDeviceEpisodes, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type PatientEpisodeSummary,
   type ServiceFlow,
 } from "./patient_service_launcher_logic";
@@ -201,15 +201,18 @@ export function PatientServiceLauncher({
     ? resumableNoExamSale(episodeData?.episodes, flow.serviceType)
     : null;
 
-  //  ══ **جهازٌ كاملٌ قيد التصنيع — مُرشَّحٌ لسؤال الإلحاق الصريح** ═══════════
-  //  يُحسَب لكلّ مسار «بلا معاينة» للأطراف (لا للمساند — لا أجزاءَ لها)،
+  //  ══ **أطرافٌ كاملة قيد التصنيع — مُرشَّحون لسؤال الإلحاق الصريح** ═══════
+  //  تُحسَب لكلّ مسار «بلا معاينة» للأطراف (لا للمساند — لا أجزاءَ لها)،
   //  بصرف النظر عن نوع العملية المحسوم سلفاً: الموظّفُ قد يختار «بيع جزء»
   //  بنفسه من محدِّد النافذة الداخليّ حتى حين لم يُفتَح الحوارُ على ذلك
-  //  الاختيار تحديداً. **والقرارُ يبقى للموظّف** — هذه القيمةُ تُعرَض
-  //  فيُسأل، لا تُتَّخذ بها العمليةُ ضمناً (`NoExamOperationDialog`).
-  const attachCandidate = flow?.kind === "no_exam_operation" && flow.serviceType === "prosthetic"
-    ? inManufacturingFullDeviceEpisode(episodeData?.episodes, flow.serviceType)
-    : null;
+  //  الاختيار تحديداً. **والقرارُ يبقى للموظّف** — هذه القائمةُ تُعرَض
+  //  فيُسأل، ولا يُختار عنه واحدٌ ضمناً حين تزيد عن مُرشَّح (ترحيل ٠٧٣:
+  //  عملياتٌ متوازية مستقلّة صارت ممكنة، فقد يملك المريض أكثر من طرفٍ
+  //  كاملٍ قيد التصنيع معاً) — `NoExamOperationDialog` تُلزم اختياراً
+  //  صريحاً حينها.
+  const attachCandidates = flow?.kind === "no_exam_operation" && flow.serviceType === "prosthetic"
+    ? inManufacturingFullDeviceEpisodes(episodeData?.episodes, flow.serviceType)
+    : [];
 
   return (
     <>
@@ -376,7 +379,7 @@ export function PatientServiceLauncher({
           initialKind={flow.initialKind}
           existingEpisodeId={saleResume?.episodeId ?? null}
           existingRequestedItem={saleResume?.requestedItem ?? null}
-          inManufacturingFullDeviceEpisodeId={attachCandidate?.episodeId ?? null}
+          attachCandidates={attachCandidates}
           open
           onOpenChange={closeFlow}
         />

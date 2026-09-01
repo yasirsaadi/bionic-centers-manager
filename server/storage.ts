@@ -410,16 +410,27 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   //  **ولا عملَ على ملفٍّ في السلّة** (ترحيل ٠٦٨) — بابُه الاستعادة.
   if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
 
-  // One active order per (patient, service) — enforced INSIDE the
-  // transaction (plus the partial unique index from migration 021), so two
-  // simultaneous clicks can't create duplicate orders.
-  // بناءٌ أوليٌّ واحد مفتوح — وصيانةُ جهازٍ قديم لا تزاحمه.
+  // ══ بناءٌ أوليٌّ يزاحم بناءً أولياً آخر **لنفس الحلقة بعينها** — لا لنفس
+  // (المريض، الخدمة) وحدها (ترحيل ٠٧٣، قرارُ المالك: أيّ عددٍ من عمليات
+  // الأجهزة المستقلّة لمريضٍ واحد في آنٍ واحد). طلبٌ **محدَّدُ الهوية**
+  // (`wantEpisode`) لا يزاحمه إلّا أمرٌ آخر على الحلقة نفسها؛ وطلبٌ **بلا
+  // هوية** (المسارُ القديم الذي لا يحمل `deviceEpisodeId`) يبقى محروساً
+  // بالقاعدة القديمة — (مريض، خدمة) بلا حلقة — فلا يتزاحم مع بناءٍ
+  // محدَّد الهوية من جهة، ولا يفلت من الحراسة من جهةٍ أخرى. نفسُ نمط
+  // `uq_pwo_one_open_build_per_episode`/`uq_pwo_one_open_legacy_build`
+  // في القاعدة (الترحيل نفسه) — هذا فحصٌ داخل المعاملة يسبقهما برسالة
+  // عملٍ واضحة، والفهرسان الضمانُ النهائيّ. ══════════════════════════════
   const openWo = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
     .where(and(
-      eq(prostheticWorkOrders.patientId, patientId),
-      eq(prostheticWorkOrders.serviceType, serviceType),
       sql`COALESCE(${prostheticWorkOrders.purpose}, 'initial_build') = 'initial_build'`,
       sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+      wantEpisode !== null
+        ? eq(prostheticWorkOrders.deviceEpisodeId, wantEpisode)
+        : and(
+          eq(prostheticWorkOrders.patientId, patientId),
+          eq(prostheticWorkOrders.serviceType, serviceType),
+          isNull(prostheticWorkOrders.deviceEpisodeId),
+        ),
     )).limit(1);
   if (openWo.length > 0) throw new ActiveAssignmentError();
 
@@ -429,9 +440,21 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   // بينما حلقةٌ مفتوحة تنتظره — نصفُ حالةٍ لا يُصلحها شيء بعد وقوعها.
   // فالقفل على صفّ الخيط — نقطة القفل نفسها التي يستعملها
   // `startDeviceEpisode` — هو ما يجعل الطريقين متسلسلين حقاً.
-  const { episode } = await lockCaseAndReadOpenEpisode(tx, { patientId, serviceType });
+  //
+  // ══ **والحلقةُ بمعرّفها لا بـ«المفتوحة»** (ترحيل ٠٧٣) ═══════════════════
+  // طلبٌ يحمل `deviceEpisodeId` صريحاً يعني حلقةً **بعينها** — لا أيَّ
+  // حلقةٍ مفتوحة صادف الخيطُ حملها. فحلقاتٌ مفتوحةٌ متعدّدة صارت ممكنة،
+  // و«الحلقةُ المفتوحة» عبر `LIMIT 1` بلا `ORDER BY` تختار عشوائياً حين
+  // تتعدّد — فطلبٌ لحلقةٍ محدَّدة كان سيُرَدّ خطأً لمجرّد أن حلقةً أخرى
+  // فازت بالاختيار العشوائيّ، رغم أن المطلوبة موجودةٌ وصحيحة. نفسُ نمط
+  // `loadDeviceSaleOperationTx` المجاورة بحرفه.
+  const locked = wantEpisode !== null
+    ? await lockCaseAndReadExactEpisode(tx, { patientId, serviceType, episodeId: wantEpisode })
+    : { ...await lockCaseAndReadOpenEpisode(tx, { patientId, serviceType }),
+        branchId: null as number | null };
+  const { episode } = locked;
   if (wantEpisode !== null) {
-    if (!episode || episode.id !== wantEpisode) {
+    if (!episode) {
       throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
     }
     //  **ومسارُ الطلب يُقرأ من صفّه** — فبابُ «بلا معاينة» لا يبيع طلباً
@@ -824,7 +847,16 @@ export async function applyDeviceSaleFinancialsTx(tx: any, params: {
  * ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع بالفعل — لا حلقةٌ ثانية، ولا أمرٌ
  *    ثانٍ، والسعرُ **يُضاف** لا يُستبدَل ═══════════════════════════════════
  *
- * ══ الثغرةُ التي تُغلقها ═══════════════════════════════════════════════════
+ * **⚠ (ترحيل ٠٧٣)** — الفقرةُ التالية تصف **لماذا وُلدت** هذه الدالّة، لا
+ * وضعَ الحارس اليوم: `uq_pde_case_open` المذكور أدناه **رُفع** (قرارُ
+ * المالك: أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد في آنٍ واحد)،
+ * و`startDeviceEpisodeTx` لم تعد ترفض حلقةً جديدة لمجرّد وجود حلقةٍ مفتوحة
+ * أخرى. **لكنّ هذه الدالّةَ نفسَها لم تتغيّر بحرف**: الإلحاقُ يبقى خياراً
+ * تجارياً صريحاً («هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟») لا مخرجاً
+ * قسرياً من حارسٍ زال — الموظّفُ الذي يجيب «نعم» يقصد فعلاً ضمّ هذا الجزء
+ * إلى ذلك الجهاز بعينه، بصرف النظر عن وجود عملياتٍ أخرى مفتوحة أو غيابها.
+ *
+ * ══ الثغرةُ التي أغلقتها لحظةَ كتابتها ═══════════════════════════════════════
  * طرفٌ صناعيٌّ كاملٌ بيع بالأمس ودخل التصنيع (`patient_device_episodes.status
  * = 'in_manufacturing'`). واليوم يُشترى له جزءٌ إضافيّ (أدابتر مثلاً) لنفس
  * الجهاز بعينه. `createComponentSaleOperation` (`server/pending_charges/
@@ -2425,33 +2457,17 @@ export class DatabaseStorage implements IStorage {
         throw new Error("أحد الملفين في المحذوفات — استعده أولاً ثم أعد الدمج");
       }
 
-      // ══ حلقتان مفتوحتان من النوع نفسه — يُفحَص **قبل أي تعديل** ═════════
-      // `uq_pde_case_open` يسمح بشراءٍ مفتوحٍ واحد لكل خيط. فملفّان لكلٍّ
-      // منهما طرفٌ قيد التنفيذ يصطدمان لحظة نقل الحلقة — لكن الاصطدام يقع
-      // في **منتصف** الدمج، بعد أن حُرّكت الكلف وأُعيد توجيه الدفعات
-      // والزيارات. المعاملة تتراجع، نعم، لكن ما يصل الموظّف رسالةُ قاعدة
-      // بيانات لا تقول له ماذا يفعل.
-      //
-      // والقرار عملٌ لا تقنية: **لا تُلغى حلقة تلقائياً، ولا تُختار الأحدث،
-      // ولا تُدمج الحلقتان، ولا تُغيَّر حالة.** جهازان قيد التنفيذ لشخصٍ
-      // واحد واقعةٌ يحسمها بشرٌ لا خوارزمية — فيُردّ الدمج ويُقال السبب.
-      const openBoth = await tx.execute<{ case_type: string }>(sql`
-        SELECT tc.case_type
-          FROM patient_device_episodes se
-          JOIN patient_cases sc ON sc.id = se.case_id
-          JOIN patient_cases tc ON tc.patient_id = ${targetId} AND tc.case_type = sc.case_type
-          JOIN patient_device_episodes te ON te.case_id = tc.id
-         WHERE se.patient_id = ${sourceId}
-           AND se.status NOT IN ('delivered', 'cancelled')
-           AND te.status NOT IN ('delivered', 'cancelled')
-         LIMIT 1
-      `);
-      if ((openBoth.rows ?? []).length > 0) {
-        throw new Error(
-          "لا يمكن دمج الملفين لوجود جهازين قيد التنفيذ من النوع نفسه. "
-          + "أنهِ أو ألغِ إحدى الدورتين أولاً.",
-        );
-      }
+      // ══ حلقتان مفتوحتان من النوع نفسه — لم تعد مانعةً للدمج (ترحيل ٠٧٣)
+      // ═══════════════════════════════════════════════════════════════════
+      // كانت هذه النقطة تردّ الدمج لمجرّد أن كلا الملفّين يحمل حلقةً مفتوحة
+      // من النوع نفسه — حمايةً لفهرس `uq_pde_case_open` (شراءٌ مفتوحٌ واحد
+      // لكل خيط) من الاصطدام لحظة نقل الحلقة. وذلك الفهرسُ **رُفع**: قرارُ
+      // المالك أنّ أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد صحيحٌ
+      // الآن، فحلقتان مفتوحتان معاً على خيط الهدف بعد الدمج واقعةٌ سليمة لا
+      // تصادماً يُمنَع. **وهويّةُ كلّ حلقةٍ تبقى محفوظةً بمعرّفها** كما كانت
+      // دائماً (الحلقةُ تُنقَل بـ`id` ثابت، وتسلسلُها وحده يُعاد ترقيمه أدناه
+      // كي لا يتصادم مع تسلسل الهدف) — لا دمجَ بين الحلقتين ولا إلغاءَ لأيٍّ
+      // منهما.
 
       // Combine the two patients' per-case allocations. The per-case table
       // (patient_cases) references the source patient, and the source's
@@ -2911,6 +2927,17 @@ export class DatabaseStorage implements IStorage {
     await db.update(payments)
       .set({ branchId: newBranchId })
       .where(eq(payments.patientId, patientId));
+
+    // ══ وحالاتُ المريض تنتقل معه (ترحيل ٠٧٣) ═══════════════════════════
+    // `patient_cases.branch_id` كان يبقى على الفرع القديم بعد النقل، فكلّ
+    // حلقةِ جهازٍ أو أمرِ عملٍ **جديد** يُفتَح بعد النقل يشتقّ فرعَه من صفّ
+    // الحالة (`startDeviceEpisodeTx`) — فيُنسَب لفرعٍ لم يعد المريضُ فيه.
+    // **ولا يُعاد كتابةُ تاريخٍ قديم**: أوامرُ التصنيع وحلقاتُ الأجهزة وقيودُ
+    // الكلف والدفعاتُ السابقة تبقى بفروعها كما وقعت — هذا تصحيحٌ للفرع الذي
+    // تبدأ منه العملياتُ **الجديدة** فقط.
+    await db.update(patientCases)
+      .set({ branchId: newBranchId })
+      .where(eq(patientCases.patientId, patientId));
 
     // Documents don't have branchId, they're linked to patient only
 
