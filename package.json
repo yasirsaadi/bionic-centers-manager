@@ -109,7 +109,8 @@
     "test:worklist-count": "tsx server/medical_worklist_count.test.ts",
     "test:toast-tone": "tsx client/src/components/ui/toast_tone.test.ts",
     "test:delivery-hold-tone": "tsx client/src/pages/notifications_hold_tone.test.ts",
-    "test:trash-badge-key": "tsx client/src/components/trash_badge_key.test.ts"
+    "test:trash-badge-key": "tsx client/src/components/trash_badge_key.test.ts",
+    "test:payment-description": "tsx server/payment_history_description.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
