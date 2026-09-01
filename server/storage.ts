@@ -33,6 +33,7 @@ import {
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
+  financialCorrectionRequests,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } from "drizzle-orm";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨). الشرحُ في الملفّ نفسِه.
@@ -2778,6 +2779,30 @@ export class DatabaseStorage implements IStorage {
       //  تُعيد توجيه بقيّة أبناء الحالة، فلا يشير إلى حالةٍ حُذفت.
       await repoint("pendingServiceCharges", pendingServiceCharges, pendingServiceCharges.patientId);
       await repoint("pendingServiceChargeEvents", pendingServiceChargeEvents, pendingServiceChargeEvents.patientId);
+
+      // ── طلباتُ تصحيح الدفعات (ترحيل ٠٧١) ─────────────────────────────────
+      // اللقطةُ (`before_snapshot`) تحمل `patient_id` **لحظةَ الطلب**، والدمجُ
+      // يغيّر تلك الهويّة فعلياً. فطلبٌ معلَّقٌ يبقى فعّالاً بعد الدمج إمّا
+      // يُعتمَد على سياقٍ لم يعد صحيحاً، أو (والأخطر) يحبس الدفعةَ إلى الأبد:
+      // `uq_fcr_one_pending_per_target` تمنع طلباً ثانياً على `targetId` نفسِه
+      // ما دام هذا معلَّقاً، وهو لن يُعتمَد أبداً (فحصُ التقادم في
+      // `approveCorrection` سيرفضه فور تغيّر `patient_id` عن اللقطة). فيُغلَق
+      // **دائماً وبلا شرطِ تصادم** — لا معتمِدَ بشرياً هنا: `decided_by`/
+      // `decided_by_name` تبقيان فارغتين، والنصُّ يقول «تلقائياً» صراحةً.
+      // **ولا مالَ يتحرّك ولا `applied_at` يُكتب** — الطلبُ لم يُطبَّق قط.
+      await tx.execute(sql`
+        UPDATE financial_correction_requests
+           SET status = 'rejected', decided_at = NOW(),
+               decision_note = 'أُغلق طلب التصحيح تلقائياً بسبب دمج ملف المريض'
+         WHERE patient_id = ${sourceId} AND status = 'pending'
+      `);
+      // **والتاريخُ كلُّه يتبع صاحبَه** — بما فيه ما اعتُمد أو رُفض بشرياً من
+      // قبل. `target_id` (لقطةُ رقم الدفعة، بلا مفتاح أجنبي — درسُ
+      // `payments.visitId` نفسُه) لا يتغيّر: الدفعةُ نفسُها تحتفظ بمعرّفها
+      // عبر `repoint("payments", ...)` أعلاه، فيبقى الربطُ صحيحاً بلا لمسة.
+      await repoint("financialCorrectionRequests", financialCorrectionRequests,
+        financialCorrectionRequests.patientId);
+
       // أمّا جهات الاتصال فلها تصادم مشروع: الحساب نفسه مرتبطٌ ونشِط على
       // الملفّين. إعادة التوجيه وحدها كانت ستنتهك `uq_patient_contacts_active`
       // وتُسقط الدمج. المعالجة في وحدة التواصل حيث تُعرَف قيود الجدول:
