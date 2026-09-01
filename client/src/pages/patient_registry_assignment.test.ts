@@ -48,8 +48,17 @@ same("   وبلا قرار الطبيب ⟶ غير قابل",
 const assignedProsthetic = {
   id: 2, isAmputee: true, activeDeviceAssignments: [assign("prosthetic")],
 };
-same("ب. وبعد إنشاء أمر البناء ⟶ لم يعد قابلاً",
-  assignableServices({ patient: assignedProsthetic, decided: ["prosthetic"], legacyExempt: false }), []);
+//  والحلقةُ الوحيدة أُسنِدت فخرجت من `decided` **حيّاً في الخادم** (حالتُها
+//  صارت `in_manufacturing`) — هذا هو الشكلُ الواقعيّ الذي يصل هذه الدالّة.
+same("ب. وبعد إسناد الحلقة الوحيدة (فخرجت من decided) ⟶ لم يعد قابلاً",
+  assignableServices({ patient: assignedProsthetic, decided: [], legacyExempt: false }), []);
+//  ══ ب٢. حلقتان — إسنادُ إحداهما لا يُخفي الخدمةَ عن الأخرى (ترحيل ٠٧٣) ══
+//  هنا **بالضبط** يقع الفرقُ عن العالم القديم: `decided` تبقى صحيحةً
+//  (حلقةٌ أخرى ما زالت `examined`) رغم أن `activeDeviceAssignments` تحمل
+//  إسناداً فعلياً — والخدمةُ يجب أن تبقى ظاهرة.
+same("ب٢. **وحلقةٌ أخرى ما زالت مؤهَّلة (decided ما زالت تذكرها) ⟶ تبقى ظاهرة رغم الإسناد**",
+  assignableServices({ patient: assignedProsthetic, decided: ["prosthetic"], legacyExempt: false }),
+  ["prosthetic"]);
 same("   والشارة تحمل اسم الخبير",
   assignmentBadgeLabel(assign("prosthetic")), "تم إسناد الطرف — أحمد");
 same("   وبلا اسمٍ تبقى مفهومة",
@@ -76,22 +85,37 @@ const dual = {
   id: 5, isAmputee: true, isMedicalSupport: true,
   activeDeviceAssignments: [assign("prosthetic")],
 };
-same("د. الطرف مُسنَد والمسند قرّره الطبيب ⟶ **المسند وحده يبقى قابلاً**",
-  assignableServices({ patient: dual, decided: ["prosthetic", "medical_support"], legacyExempt: false }),
+//  حلقةُ الطرف الوحيدة أُسنِدت فخرجت من `decided` **حيّاً في الخادم** —
+//  هذا هو الشكلُ الواقعيّ حين لا يملك الطرفُ إلّا حلقةً واحدة.
+same("د. الطرف مُسنَد (فخرج من decided) والمسند قرّره الطبيب ⟶ **المسند وحده يبقى قابلاً**",
+  assignableServices({ patient: dual, decided: ["medical_support"], legacyExempt: false }),
   ["medical_support"]);
 same("   والطرف يظهر مُسنَداً", assignedServices(dual), ["prosthetic"]);
 same("   وإسناده مقروء", assignmentFor(dual, "prosthetic")?.expertName, "أحمد");
 same("   ولا إسناد للمسند", assignmentFor(dual, "medical_support"), null);
 same("   والنافذة لا تعرض الطرف ثانيةً",
-  assignableServices({ patient: dual, decided: ["prosthetic", "medical_support"], legacyExempt: false })
+  assignableServices({ patient: dual, decided: ["medical_support"], legacyExempt: false })
     .includes("prosthetic"), false);
+
+// ══ د٢. حلقتا طرفٍ — إسنادُ إحداهما لا يخفي الخدمةَ عن الأخرى (٠٧٣) ════
+//  **هذا سيناريو التقرير بعينه**: طرفٌ له حلقتان مؤهَّلتان، إحداهما أُسنِدت
+//  والأخرى ما زالت `examined`. فالخادمُ يُبقي «prosthetic» في `decided`
+//  (حيّةٌ بالحلقة الثانية)، ويجب أن يبقى الطرفُ ظاهراً للتخصيص رغم إسنادٍ
+//  قائم عليه — لا أن يختفي لأن **إحدى** حلقتيه أُسنِدت.
+same("د٢. **وحلقةُ طرفٍ ثانية ما زالت مؤهَّلة رغم إسناد الأولى ⟶ الطرفُ يبقى ظاهراً**",
+  assignableServices({ patient: dual, decided: ["prosthetic", "medical_support"], legacyExempt: false }),
+  ["prosthetic", "medical_support"]);
 
 const dualBoth = {
   id: 6, isAmputee: true, isMedicalSupport: true,
   activeDeviceAssignments: [assign("prosthetic"), assign("medical_support")],
 };
-same("   وحين يُسنَد الاثنان لا يبقى شيء",
-  assignableServices({ patient: dualBoth, decided: ["prosthetic", "medical_support"], legacyExempt: false }), []);
+//  والحلقتان الوحيدتان لكلا الخدمتين أُسنِدتا فخرجتا معاً من `decided`.
+same("   وحين تُسنَد الحلقةُ الوحيدة لكلّ خدمة لا يبقى شيء",
+  assignableServices({ patient: dualBoth, decided: [], legacyExempt: false }), []);
+same("   **إلّا إن بقيت حلقةٌ أخرى مؤهَّلة لإحداهما — فتلك وحدها تظهر**",
+  assignableServices({ patient: dualBoth, decided: ["medical_support"], legacyExempt: false }),
+  ["medical_support"]);
 
 const dualNone = { id: 7, isAmputee: true, isMedicalSupport: true, activeDeviceAssignments: [] };
 same("   وحين لا يُسنَد أيّهما يبقى الاثنان",
@@ -104,13 +128,22 @@ same("هـ. وما لا يملكه المريض لا يُعرَض ولو قرّ�
   ["prosthetic"]);
 same("   والملكية تُقرأ من الأعلام", ownedDeviceServices(dual), ["prosthetic", "medical_support"]);
 
-// ══ و. «تم تحديد» لا يبقى بعد التخصيص ════════════════════════════════
-console.log("\n── الحالة الأحدث تسود ──");
-same("و. الطرف المُسنَد يسقط من «تم تحديد»",
-  visibleDecided(dual, ["prosthetic", "medical_support"]), ["medical_support"]);
+// ══ و. «تم تحديد» — الآن مرآةٌ صادقة لـ`decided` وحدها (ترحيل ٠٧٣) ════
+console.log("\n── decided حيّةٌ بالحلقة، بلا تصفيةٍ هنا ──");
+//  الحلقةُ الوحيدة للمسند المُسنَد خرجت من `decided` **في الخادم** فعلاً
+//  (`status='examined'` فقط) — فما يصل هنا مصفّىً أصلاً، ولا حاجةَ لتصفيةٍ
+//  ثانية تخفي شارةَ حلقةٍ أخرى ما زالت تنتظر لو تعدّدت.
+same("و. المُمرَّر يبقى كما هو — لا تصفية بـ`taken` بعد اليوم",
+  visibleDecided(dual, ["medical_support"]), ["medical_support"]);
 same("   وغير المُسنَد يبقى", visibleDecided(dualNone, ["prosthetic", "medical_support"]),
   ["prosthetic", "medical_support"]);
 same("   والعلاج الطبيعي لا يتأثّر", visibleDecided(dual, ["physiotherapy"]), ["physiotherapy"]);
+//  ══ و٢. حلقةٌ أخرى ما زالت مؤهَّلة ⟶ الشارة تبقى رغم إسنادٍ قائم ═══════
+//  لو أرسل الخادمُ «prosthetic» ضمن `decided` رغم أن `dual` يحمل إسناداً
+//  فعلياً له — فذاك يعني حلقةً أخرى ما زالت `examined` تنتظر، والشارةُ
+//  يجب أن تُخبر بها لا أن تختفي.
+same("و٢. **وخدمةٌ مُسنَدة لكن decided ما زالت تذكرها ⟶ تبقى ظاهرة**",
+  visibleDecided(dual, ["prosthetic", "medical_support"]), ["prosthetic", "medical_support"]);
 
 // ══ ز. نافذة «تخصيص وإسناد خبير»: متى تسأل ═══════════════════════════
 console.log("\n── النافذة ──");

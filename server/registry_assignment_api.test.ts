@@ -89,6 +89,21 @@ async function mkExam(patientId: number, caseId: number, caseType = "prosthetic"
      VALUES ($1,$2,$3,1,$4,'د. فلان','تشخيص','{}'::jsonb,1,NOW())`,
     [patientId, caseId, caseType, DOCTOR]);
 }
+/**
+ * معاينةٌ موقّعة **لحلقةٍ بعينها** — الرابطُ الذي يكتبه التوقيعُ الحقيقيّ
+ * (`medical_exams.device_episode_id`، بلا مفتاحٍ أجنبيّ عمداً كما في
+ * `medical/store.ts`). المريضُ ذو الحلقتين هنا يحتاج معاينةً مستقلّة لكلٍّ
+ * منهما — نفسَ ما يقع فعلياً حين يعاين الطبيبُ جهازين منفصلين.
+ */
+async function mkExamForEpisode(
+  patientId: number, caseId: number, episodeId: number, caseType = "prosthetic",
+) {
+  await q(
+    `INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name,
+       diagnosis, prescription, version, signed_at, device_episode_id)
+     VALUES ($1,$2,$3,1,$4,'د. فلان','تشخيص','{}'::jsonb,1,NOW(),$5)`,
+    [patientId, caseId, caseType, DOCTOR, episodeId]);
+}
 async function mkEpisode(patientId: number, caseId: number, seq: number, status: string) {
   const r = await q<{ id: number }>(
     `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
@@ -290,6 +305,96 @@ async function main() {
       assignmentsOf(await registryRow(pLeft)),
       [{ serviceType: "prosthetic", expertName: EXPERT_NAME, status: "active" }]);
     await q(`UPDATE system_users SET is_active = true WHERE id = $1`, [EXPERT]);
+
+    // ══ ط. حلقتان مؤهَّلتان لخدمةٍ واحدة — عمليتان مستقلّتان (ترحيل ٠٧٣) ══
+    //  **هذا سيناريو التقرير بعينه**: المريض يملك حلقتَي طرفٍ صناعيّ، كلتاهما
+    //  `examined` بمعاينتها الموقّعة الخاصّة. إسنادُ إحداهما صراحةً بمعرّفها
+    //  يجب ألّا يمسّ الأخرى، وألّا يُخفيها عن «تم تحديد» ولا عن السجلّ — ثم
+    //  إسنادُ الثانية يُنتج أمرَ عملٍ **مستقلّاً ثانياً**، كلٌّ على حلقته.
+    console.log("\n── حلقتان مؤهَّلتان معاً (ترحيل ٠٧٣) ──");
+    const pTwo = await mkPatient("حلقتان مؤهَّلتان");
+    const cTwo = await mkCase(pTwo);
+    const e1 = await mkEpisode(pTwo, cTwo, 1, "examined");
+    const e2 = await mkEpisode(pTwo, cTwo, 2, "examined");
+    await mkExamForEpisode(pTwo, cTwo, e1);
+    await mkExamForEpisode(pTwo, cTwo, e2);
+
+    same("ط. قبل أيّ إسناد ⟶ لا إسنادَ في السجلّ بعد",
+      assignmentsOf(await registryRow(pTwo)), []);
+    const pendingBefore = await http("GET", "/api/medical/pending", S.admin);
+    check((pendingBefore.body?.decided?.[pTwo] ?? []).includes("prosthetic"),
+      "   و«تم تحديد» تشمل الخدمة — حلقتان examined معاً",
+      JSON.stringify(pendingBefore.body?.decided?.[pTwo]));
+
+    //  إسنادُ الحلقة الأولى صراحةً بمعرّفها.
+    const assignFirst = await http("POST", `/api/patients/${pTwo}/assign-manufacturing`, S.admin,
+      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 500_000, deviceEpisodeId: e1 });
+    same("ط٢. إسنادُ الحلقة الأولى صراحةً بمعرّفها ⟶ ينجح", assignFirst.status, 201);
+
+    //  **والحلقةُ الثانية تبقى مؤهَّلة**: إسنادٌ واحدٌ فقط في السجلّ، على
+    //  الحلقة الأولى بعينها، و«تم تحديد» ما زالت تذكر الخدمة.
+    const rowAfterFirst = await registryRow(pTwo);
+    same("ط٣. **والسجلّ يُظهر إسناداً واحداً على الحلقة الأولى بعينها**",
+      (rowAfterFirst?.activeDeviceAssignments ?? []).map((a: any) => ({
+        serviceType: a.serviceType, deviceEpisodeId: a.deviceEpisodeId, expertName: a.expertName,
+      })),
+      [{ serviceType: "prosthetic", deviceEpisodeId: e1, expertName: EXPERT_NAME }]);
+    const pendingAfterFirst = await http("GET", "/api/medical/pending", S.admin);
+    check((pendingAfterFirst.body?.decided?.[pTwo] ?? []).includes("prosthetic"),
+      "   **و«تم تحديد» تبقى تذكر الخدمة — الحلقةُ الثانية ما زالت examined**",
+      JSON.stringify(pendingAfterFirst.body?.decided?.[pTwo]));
+    same("   وحالتا الحلقتين: الأولى انتقلت والثانية بلا مساس",
+      await q(`SELECT id, status FROM patient_device_episodes WHERE id = ANY($1::int[]) ORDER BY id`,
+        [[e1, e2]]),
+      [{ id: e1, status: "in_manufacturing" }, { id: e2, status: "examined" }]);
+
+    //  ولا معرّفٍ صريح الآن وقد بقيت حلقةٌ واحدةٌ فقط `examined` (الثانية)
+    //  ⟶ تُحسم تلقائياً بلا سؤال (مسارُ التوافق مع مريضٍ ذي حلقةٍ واحدة).
+    const rowAfterFirstNoticeStillOne = await q<{ id: number }>(
+      `SELECT id FROM patient_device_episodes WHERE case_id=$1 AND status='examined'`, [cTwo]);
+    same("   وحلقةٌ واحدة examined متبقّية الآن", rowAfterFirstNoticeStillOne.map((r) => r.id), [e2]);
+
+    //  إسنادُ الحلقة الثانية صراحةً بمعرّفها — **عمليةٌ ثانية مستقلّة**.
+    const assignSecond = await http("POST", `/api/patients/${pTwo}/assign-manufacturing`, S.admin,
+      { expertUserId: EXPERT2, serviceType: "prosthetic", cost: 700_000, deviceEpisodeId: e2 });
+    same("ط٤. **وإسنادُ الحلقة الثانية بعدها ⟶ ينجح أيضاً**", assignSecond.status, 201);
+
+    //  **وأمران مستقلّان بالضبط الآن — كلٌّ على حلقته بعينها**، والأوّل بلا
+    //  مساسٍ إطلاقاً (خبيرُه وكلفتُه كما استقرّا في ط٢).
+    const rowAfterBoth = await registryRow(pTwo);
+    same("ط٥. **وأمران مستقلّان بالضبط الآن — كلٌّ على حلقته بعينها**",
+      (rowAfterBoth?.activeDeviceAssignments ?? []).map((a: any) => ({
+        serviceType: a.serviceType, deviceEpisodeId: a.deviceEpisodeId, expertName: a.expertName,
+      })).sort((a: any, b: any) => (a.deviceEpisodeId ?? 0) - (b.deviceEpisodeId ?? 0)),
+      [{ serviceType: "prosthetic", deviceEpisodeId: e1, expertName: EXPERT_NAME },
+        { serviceType: "prosthetic", deviceEpisodeId: e2, expertName: EXPERT2_NAME }]);
+    same("   وكلتا الحلقتين قيد التصنيع الآن، كلٌّ بكلفتها المستقلّة",
+      await q(`SELECT id, status, agreed_cost FROM patient_device_episodes
+                 WHERE id = ANY($1::int[]) ORDER BY id`, [[e1, e2]]),
+      [{ id: e1, status: "in_manufacturing", agreed_cost: 500_000 },
+        { id: e2, status: "in_manufacturing", agreed_cost: 700_000 }]);
+    const ordersOfTwo = await q<{ device_episode_id: number; status: string }>(
+      `SELECT device_episode_id, status FROM prosthetic_work_orders
+        WHERE patient_id=$1 AND purpose='initial_build' ORDER BY device_episode_id`, [pTwo]);
+    same("   **وصفّا أمرٍ مستقلّان في القاعدة، كلٌّ بحلقته بعينها**",
+      ordersOfTwo, [{ device_episode_id: e1, status: "active" }, { device_episode_id: e2, status: "active" }]);
+
+    //  **وبعد إسناد كلتيهما ⟶ الخدمةُ تختفي من «تم تحديد» كما كانت قبل
+    //  تعدّد الحلقات** — لم يبقَ فيها ما يستحقّ الزرّ.
+    const pendingAfterBoth = await http("GET", "/api/medical/pending", S.admin);
+    check(!(pendingAfterBoth.body?.decided?.[pTwo] ?? []).includes("prosthetic"),
+      "   وبعد إسناد الحلقتين معاً ⟶ الخدمة تختفي من «تم تحديد»",
+      JSON.stringify(pendingAfterBoth.body?.decided?.[pTwo]));
+
+    //  والالتباسُ لا يُحسَم بصمت: بلا معرّفٍ صريح الآن وكلتا الحلقتين حيّتان
+    //  (`in_manufacturing`)، فمحاولةُ إسنادٍ ثالثة بلا تحديد تُرفَض ٤٠٩.
+    const thirdNoId = await http("POST", `/api/patients/${pTwo}/assign-manufacturing`, S.admin,
+      { expertUserId: EXPERT, serviceType: "prosthetic", cost: 100 });
+    same("ط٦. وبلا معرّفٍ صريح بعد إسناد الاثنتين ⟶ ٤٠٩ لا كتابةٌ ثالثة",
+      thirdNoId.status, 409);
+    same("   وما زال أمران فقط", (await q(
+      `SELECT count(*)::int n FROM prosthetic_work_orders
+        WHERE patient_id=$1 AND purpose='initial_build'`, [pTwo]))[0].n, 2);
 
     // ══ ح. استعلامٌ واحد للصفحة، لا واحدٌ لكلّ صفّ ═════════════════════
     console.log("\n── كلفة الاستعلام ──");
