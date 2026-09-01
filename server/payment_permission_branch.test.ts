@@ -27,6 +27,10 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+//  **قسم ض** ينادي منطق الدمج مباشرةً — نفسُ اتفاقية `medical/merge_exams.test.ts`
+//  — لا عبر `POST /api/admin/patients/merge`، فيبقى الفحصُ عند منطق
+//  `mergePatients` وحده بلا حاجةٍ لجلسة مسؤول.
+import { storage } from "./storage";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -235,6 +239,11 @@ async function fcrCountFor(paymentId: number, status?: string) {
     : await q<{ n: number }>(`SELECT count(*)::int n FROM financial_correction_requests WHERE target_type='payment' AND target_id=$1`, [paymentId]);
   return r[0].n;
 }
+/** الصفُّ الكامل لطلب تصحيحٍ بمعرّفه — لقسم ض (الدمج). */
+async function getFcr(id: number) {
+  const r = await q<any>(`SELECT * FROM financial_correction_requests WHERE id=$1`, [id]);
+  return r[0] ?? null;
+}
 /**
  * كلُّ قيود الدفعة — الأصليّ **وأيُّ عاكسٍ ولده**. العاكسُ يحمل
  * `source_type='reversal'` و`source_id = <رقم القيد الأصليّ>` — لا رقم
@@ -288,7 +297,15 @@ async function cleanup() {
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
+  //  **قسم ض (الدمج)** يترك رمزَ المصدر اسماً بديلاً على الهدف
+  //  (`aliasCodesOnMerge` داخل `mergePatients`) — فلا بدّ من إفراغه قبل
+  //  حذف صفوف `patients`، وإلّا كسر مفتاحه الأجنبي. نفسُ نمط
+  //  `component_sale.test.ts`: خطوةٌ مباشرة بالمعرّفات الحيّة، ثمّ كنسُ ما
+  //  تبقّى يتيماً (لا داعي له هنا فعلياً، لكنّه شبكةُ أمانٍ رخيصة).
+  await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
+  await q(`DELETE FROM patient_code_aliases a
+            WHERE NOT EXISTS (SELECT 1 FROM patients p WHERE p.id = a.patient_id)`);
 }
 
 async function main() {
@@ -1176,6 +1193,88 @@ async function main() {
 
       // تنظيف — لا يبقى شيءٌ معلَّقاً بعد الاختبار (كلُّ الطلبات الثلاثة
       // حُسمت أعلاه بالفعل: fcr1 اعتُمد، fcr2 وfcr3 رُفضا).
+    }
+
+    // ══ ض. دمجُ الملفّين — الفجوةُ المفقودة في financial_correction_requests
+    // ═══════════════════════════════════════════════════════════════════════
+    // كان `mergePatients` لا يعرف هذا الجدول إطلاقاً (`test:merge-fk-coverage`
+    // كان فاشلاً له) — فطلبُ تصحيحٍ معلَّق على دفعة مريضٍ صار مصدراً للدمج
+    // يبقى معلَّقاً على لقطةٍ تحمل هويّةً لم تعد صحيحة، ويحبس الدفعةَ عن أيّ
+    // طلبٍ جديد إلى الأبد (`uq_fcr_one_pending_per_target`). هذا القسمُ يثبت
+    // الإصلاحَ حيّاً على `storage.mergePatients` مباشرةً.
+    console.log("\n── ض. دمجُ الملفّين — طلبُ تصحيحٍ معلَّق يُغلَق تلقائياً، والتاريخ يتبع صاحبَه ──");
+    {
+      const src = await mkPatient("مريضٌ مصدرُ دمجٍ-تصحيح", 1);
+      const tgt = await mkPatient("مريضٌ هدفُ دمجٍ-تصحيح", 1);
+      const paymentId = await mkPaymentRaw({ patientId: src, branchId: 1, amount: 50000 });
+
+      // ١) طلبٌ أوّل يُقرَّر بشرياً (رفضاً) **قبل** الدمج — تاريخٌ مُقرَّرٌ سلفاً.
+      const rFirst = await patchPayment(paymentId, S.recvOk, { amount: 51000, reason: "أوّل — قبل الدمج" });
+      same("ض١. طلبٌ أوّل ⟶ ٢٠٢", rFirst.status, 202);
+      const fcrFirstPending = await pendingFcrFor(paymentId);
+      check(!!fcrFirstPending, "ض٢. وطلبٌ معلَّقٌ نشأ");
+      await rejectCorrectionHttp(fcrFirstPending.id, S.admin);
+      const fcrFirstBeforeMerge = await getFcr(fcrFirstPending.id);
+      same("ض٣. تمهيد: الطلبُ الأوّل مرفوضٌ بشرياً قبل الدمج", fcrFirstBeforeMerge.status, "rejected");
+      check(fcrFirstBeforeMerge.decided_by === ADMIN,
+        "    وحاملٌ فاعلاً بشرياً حقيقياً", JSON.stringify(fcrFirstBeforeMerge.decided_by));
+
+      // ٢) طلبٌ ثانٍ يبقى معلَّقاً وقت الدمج.
+      const rSecond = await patchPayment(paymentId, S.recvOk, { amount: 52000, reason: "ثانٍ — سيُغلَق بالدمج" });
+      same("ض٤. طلبٌ ثانٍ ⟶ ٢٠٢", rSecond.status, 202);
+      const fcrSecondPending = await pendingFcrFor(paymentId);
+      check(!!fcrSecondPending, "ض٥. وطلبٌ معلَّقٌ ثانٍ نشأ");
+      const fcrSecondBeforeMerge = await getFcr(fcrSecondPending.id);
+
+      // ٣) الدمجُ — نفسُ اتفاقية `medical/merge_exams.test.ts`: منطقُ
+      // `mergePatients` مباشرةً، لا نقطة REST.
+      const merged = await storage.mergePatients(src, tgt);
+      same("ض٦. الدمجُ ينجح", merged.patient.id, tgt);
+
+      // ٤) **الطلبُ الثاني (كان معلَّقاً) صار مرفوضاً تلقائياً، بلا تطبيق**.
+      const fcrSecondAfter = await getFcr(fcrSecondPending.id);
+      same("ض٧. **الحالةُ صارت rejected**", fcrSecondAfter.status, "rejected");
+      same("ض٨. **و`patient_id` صار المريضَ الهدف**", fcrSecondAfter.patient_id, tgt);
+      check(fcrSecondAfter.decided_at !== null, "ض٩. و`decided_at` كُتب");
+      same("ض١٠. **والنصُّ يقول «تلقائياً» صراحةً**",
+        fcrSecondAfter.decision_note, "أُغلق طلب التصحيح تلقائياً بسبب دمج ملف المريض");
+      check(fcrSecondAfter.decided_by === null && fcrSecondAfter.decided_by_name === null,
+        "ض١١. **`decided_by`/`decided_by_name` فارغتان — إغلاقٌ آليّ لا قرارَ بشريّ**",
+        JSON.stringify([fcrSecondAfter.decided_by, fcrSecondAfter.decided_by_name]));
+      check(fcrSecondAfter.applied_at === null,
+        "ض١٢. **و`applied_at` تبقى فارغة — الطلبُ لم يُطبَّق قط**");
+      same("ض١٣. **واللقطةُ (`before_snapshot`) لم تتغيّر حرفاً**",
+        JSON.stringify(fcrSecondAfter.before_snapshot), JSON.stringify(fcrSecondBeforeMerge.before_snapshot));
+      same("ض١٤. **والحقيبةُ المطلوبة (`requested_patch`) لم تتغيّر حرفاً**",
+        JSON.stringify(fcrSecondAfter.requested_patch), JSON.stringify(fcrSecondBeforeMerge.requested_patch));
+      same("ض١٥. **و`target_id` لم يتغيّر** — الدفعةُ تحتفظ بمعرّفها",
+        fcrSecondAfter.target_id, fcrSecondBeforeMerge.target_id);
+      const paymentAfterMerge = await getPayment(paymentId);
+      same("ض١٦. **والدفعةُ نفسُها لم تتغيّر — التصحيحُ المعلَّق لم يُطبَّق**",
+        paymentAfterMerge.amount, 50000);
+      same("ض١٧. **والدفعةُ انتقلت إلى المريض الهدف** (تصديقٌ إضافيّ)",
+        paymentAfterMerge.patient_id, tgt);
+
+      // ٥) **الطلبُ الأوّل (مُقرَّرٌ سلفاً) — تاريخٌ محفوظ، لا يُعاد فتحه**.
+      const fcrFirstAfter = await getFcr(fcrFirstPending.id);
+      same("ض١٨. **و`patient_id` صار الهدف أيضاً — التاريخُ يتبع صاحبَه**",
+        fcrFirstAfter.patient_id, tgt);
+      same("ض١٩. **والحالةُ بقيت rejected كما قرّرها المسؤولُ بشرياً — لم تُعَد كتابتُها**",
+        fcrFirstAfter.status, "rejected");
+      same("ض٢٠. **و`decided_by` بقي فاعلاً بشرياً حقيقياً — لم يُمحَ**",
+        fcrFirstAfter.decided_by, ADMIN);
+      same("ض٢١. **وباقي الصفّ (عدا patient_id) لم يتغيّر حرفاً**",
+        JSON.stringify({ ...fcrFirstAfter, patient_id: null }),
+        JSON.stringify({ ...fcrFirstBeforeMerge, patient_id: null }));
+
+      // ٦) **وطلبُ تصحيحٍ جديد على الدفعة نفسها يُقبَل الآن بعد الدمج** —
+      // الفهرسُ `uq_fcr_one_pending_per_target` لم يعد يرى شيئاً معلَّقاً.
+      const rFresh = await patchPayment(paymentId, S.recvOk, { amount: 53000, reason: "بعد الدمج" });
+      same("ض٢٢. **طلبُ تصحيحٍ جديد على الدفعة نفسها ⟶ ٢٠٢ — لم يعد محبوساً**", rFresh.status, 202);
+      const fcrFresh = await pendingFcrFor(paymentId);
+      check(!!fcrFresh, "ض٢٣. وطلبٌ معلَّقٌ جديد نشأ فعلاً");
+      same("ض٢٤. **وهو على المريض الهدف**", fcrFresh?.patient_id, tgt);
+      await rejectCorrectionHttp(fcrFresh.id, S.admin); // تنظيف — لا يبقى شيءٌ معلَّقاً.
     }
 
     console.log(`\n${failures === 0 ? "✅ كل فحوص صلاحية الدفعات ونطاق الفرع نجحت"
