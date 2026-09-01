@@ -50,7 +50,9 @@ import {
 import { aliasCodesByPatient } from "./patient_code/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
+  getEpisodeDisplayFieldsByIds,
 } from "./device_episodes/store";
+import { deriveDevicePaymentDisplay } from "@shared/payment_description";
 import { deviceServiceOfPaymentType, hasMixedDeviceEntries } from "@shared/device_attribution";
 import { NEW_SERVICE_DEPARTMENT, isPatientClassification } from "@shared/service_taxonomy";
 import { DeviceEpisodeError } from "./device_episodes/store";
@@ -1771,7 +1773,40 @@ export async function registerRoutes(
       storage.getDocumentsByPatientId(id),
       storage.getVisitsByPatientId(id)
     ]);
-    res.json({ ...patient, payments, documents, visits });
+
+    //  ══ وصفٌ أغنى لدفعات الأجهزة — بلا مسّ `payment.notes` المخزَّن
+    //  (المرحلة السابعة) ══════════════════════════════════════════════════
+    //  عرضٌ مُشتقٌّ فقط: `displayDescription` حقلٌ إضافيّ، والنصُّ الخام يبقى
+    //  كما هو للتعديل والتدقيق. راجع `shared/payment_description.ts`.
+    const linkedEpisodeIds = Array.from(new Set(
+      payments.map((p) => p.deviceEpisodeId).filter((v): v is number => v !== null),
+    ));
+    const episodeFields = await getEpisodeDisplayFieldsByIds(linkedEpisodeIds);
+    //  ══ **العدُّ يقتصر على دفعات البيع — لا كلّ ما يشير إلى الحلقة** ══════
+    //  دفعةُ صيانةٍ (`visitId` غيرُ فارغ) قد تشير إلى الحلقة نفسِها التي
+    //  بِيعت جزءاً — الحالةُ التي يمنعها حارسُ `visitId` في `deriveDevice
+    //  PaymentDisplay` نفسِه (لا اشتقاقَ «بيع» عليها إطلاقاً). فلو دخلت في
+    //  هذا العدّ لخفّضت دفعةَ الشراء الوحيدة زوراً إلى «أكثرَ من دفعة»،
+    //  فتفقد «مدفوع بالكامل/من-المتبقي» رغم أنها الدفعةُ الوحيدة فعلاً على
+    //  ذلك السعر — والصيانةُ لا تُغيّر `agreed_cost` بحرف.
+    const paymentCountByEpisode = new Map<number, number>();
+    for (const p of payments) {
+      if (p.deviceEpisodeId !== null && p.visitId === null) {
+        paymentCountByEpisode.set(
+          p.deviceEpisodeId, (paymentCountByEpisode.get(p.deviceEpisodeId) ?? 0) + 1,
+        );
+      }
+    }
+    const paymentsWithDisplay = payments.map((p) => ({
+      ...p,
+      displayDescription: p.deviceEpisodeId !== null
+        ? deriveDevicePaymentDisplay(p, episodeFields.get(p.deviceEpisodeId) ?? null, {
+            linkedPaymentsCount: paymentCountByEpisode.get(p.deviceEpisodeId) ?? 0,
+          })
+        : null,
+    }));
+
+    res.json({ ...patient, payments: paymentsWithDisplay, documents, visits });
   });
 
   // Independent cases for a patient (Phase 1 of the per-case architecture).

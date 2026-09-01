@@ -56,6 +56,7 @@ import {
   isProstheticComponent, type ProstheticComponent, requestedItemLabel,
 } from "@shared/prosthetic_parts";
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
+import { formatDevicePaymentNote } from "@shared/payment_description";
 import type { Payment } from "@shared/schema";
 
 export class ChargeError extends Error {
@@ -576,7 +577,12 @@ export async function createComponentSaleOperation(params: {
       patientId: params.patientId, branchId: actualOperationBranchId,
       caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
       serviceType: "prosthetic", paidNow: params.paidNow,
-      notes: "دفعة عند بيع الجزء",
+      //  ══ نصٌّ غنيّ لحظةَ الكتابة — لا اشتقاقَ لاحقاً يحتاجه (المرحلة
+      //  السابعة) ══════════════════════════════════════════════════════════
+      notes: formatDevicePaymentNote({
+        kind: "sale", itemLabel: requestedItemLabel(component, "prosthetic"),
+        operationFinalPrice: params.finalPrice, paidNow: params.paidNow,
+      }),
     });
 
     return {
@@ -688,7 +694,12 @@ async function attachComponentToDeviceInManufacturing(
     patientId: op.patientId, branchId: op.branchId ?? 0,
     caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
     serviceType: "prosthetic", paidNow: params.paidNow,
-    notes: "دفعة عند إلحاق جزءٍ بجهازٍ قيد التصنيع",
+    //  ══ نصٌّ غنيّ لحظةَ الكتابة — بسعر الإلحاق **بعينه** لا كلفة الجهاز
+    //  التراكمية (المرحلة السابعة) ═══════════════════════════════════════
+    notes: formatDevicePaymentNote({
+      kind: "sale", itemLabel: requestedItemLabel(params.component, "prosthetic"),
+      operationFinalPrice: params.finalPrice, paidNow: params.paidNow,
+    }),
   });
 
   return {
@@ -840,7 +851,15 @@ export async function createMaintenanceOperation(p: {
       patientId: p.patientId, branchId: p.branchId ?? 0, caseId,
       deviceEpisodeId: order.deviceEpisodeId ?? null, visitId: order.visitId,
       serviceType: p.serviceType, paidNow: p.paidNow,
-      notes: "دفعة عند تسجيل الصيانة",
+      //  ══ نصٌّ غنيّ لحظةَ الكتابة — لا اشتقاقَ لصفوف الصيانة القديمة
+      //  (لا رابطَ آمناً من دفعةٍ إلى أمر صيانتها بعينه حين تتعدّد أوامرُ
+      //  الصيانة على حلقةٍ واحدة؛ الشرحُ الكامل في `shared/
+      //  payment_description.ts`)، فالإصلاحُ من المصدر وحده. ═══════════════
+      notes: formatDevicePaymentNote({
+        kind: "maintenance",
+        itemLabel: requestedItemLabel(p.maintenanceComponent, p.serviceType),
+        operationFinalPrice: p.finalPrice, paidNow: p.paidNow,
+      }),
     });
 
     return {

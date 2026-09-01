@@ -332,6 +332,52 @@ export async function getDeviceEpisodesForPatient(
 }
 
 /**
+ * **لقطةٌ ضيّقة لأوصاف الدفعات** (المرحلة السابعة) — العمودان اللذان
+ * يحتاجهما `shared/payment_description.ts: deriveDevicePaymentDisplay`
+ * وحدهما، لمجموعة حلقاتٍ بعينها (تلك التي أشارت إليها دفعاتُ المريض عبر
+ * `device_episode_id`) — لا كامل صفوف `DeviceEpisodeView` غير المعنيّة هنا،
+ * ولا تعديلَ على تلك الدالّة أو مستهلكيها الآخرين.
+ *
+ * `componentSaleOriginalPrice` وحدها كافيةٌ للأهليّة (الشرحُ الكامل في
+ * `shared/payment_description.ts`)، لكنها تُعاد هنا أيضاً — القراءةُ نفسُها
+ * تحسم الأهليّةَ والعرضَ معاً بلا استعلامٍ ثانٍ.
+ */
+export async function getEpisodeDisplayFieldsByIds(
+  episodeIds: number[],
+): Promise<Map<number, {
+  requestedItem: string | null; agreedCost: number;
+  componentSaleOriginalPrice: number | null;
+}>> {
+  const map = new Map<number, {
+    requestedItem: string | null; agreedCost: number;
+    componentSaleOriginalPrice: number | null;
+  }>();
+  if (episodeIds.length === 0) return map;
+  //  ══ **مصفوفةٌ نصّيةً واحدة، لا سجلَّ ربطٍ** — نفسُ درس `patient_code/
+  //  store.ts` (`WHERE patient_id = ANY(${idArray}::int[])`): قالبُ drizzle
+  //  يفكّ مصفوفةً مُمرَّرةً مباشرةً إلى `(a, b, c)` — سجلٌّ لا `int[]` —
+  //  فيُبنى حرفيّاً `{1,2,3}` ويُربَط متغيّراً واحداً ويُصبّ. و`Number` تمنع
+  //  الحقنَ حتى لو تسرّب النصّ يوماً خارج الربط. ══════════════════════════
+  const idArray = `{${Array.from(new Set(episodeIds.map((n) => Number(n))))
+    .filter((n) => Number.isFinite(n)).join(",")}}`;
+  const r = await db.execute<{
+    id: number; requested_item: string | null; agreed_cost: number;
+    component_sale_original_price: number | null;
+  }>(sql`
+    SELECT id, requested_item, agreed_cost, component_sale_original_price
+      FROM patient_device_episodes WHERE id = ANY(${idArray}::int[])
+  `);
+  for (const row of r.rows ?? []) {
+    map.set(row.id, {
+      requestedItem: row.requested_item, agreedCost: Number(row.agreed_cost),
+      componentSaleOriginalPrice: row.component_sale_original_price === null
+        ? null : Number(row.component_sale_original_price),
+    });
+  }
+  return map;
+}
+
+/**
  * بدء جهاز جديد على خيط قائم — **التنفيذُ القانونيّ، تحت قفل مُستدعيه**.
  *
  * ══ الحماية من السباق ═════════════════════════════════════════════════
