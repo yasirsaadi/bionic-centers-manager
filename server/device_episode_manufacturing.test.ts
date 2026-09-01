@@ -455,7 +455,17 @@ async function main() {
     same("   والصيانة تمرّ بلا مساس", mntOk.purpose, "maintenance");
     same("   والحلقة ما زالت مُعايَنة", (await epRow(eY))?.status, "examined");
 
-    //  السباق الحقيقي: إنشاء أمرٍ قديم مقابل بدء حلقة — لا حالة نصفية.
+    //  ══ السباق الحقيقي: بناءٌ قديم بلا حلقة مقابل حلقةٍ جديدة (ترحيل ٠٧٣) ══
+    //  لم يعودا يتزاحمان حتماً: قرارُ المالك ٠٧٣ يمنع خصيصاً رفضَ حلقةٍ
+    //  جديدة **محدَّدة الهوية** لمجرّد وجود بناءٍ قديم قائم بلا هوية —
+    //  `startDeviceEpisodeTx` لم تعد تفحص ذلك (المتطلَّب ٤). فللسباق
+    //  نتيجتان مشروعتان الآن بحسب مَن يسبق:
+    //    • البناءُ أوّلاً ثمّ الحلقة ⟶ **كلاهما ينجح** — تعايشٌ صحيح، لا
+    //      نصفَ حالة. هذه النتيجةُ الجديدة تحديداً.
+    //    • الحلقةُ أوّلاً ثمّ البناء ⟶ البناءُ يُردّ (حارسُ
+    //      `createWorkOrderForExisting` الخاصّ **لم يتغيّر**: لا بناءَ
+    //      جديداً بلا هويّةٍ فوق حلقةٍ قائمة — تصميمٌ متعمَّد بقي كما هو).
+    //  والثابتُ الباقي: لا ازدواج على أيّ الجانبين، ونجاحٌ واحدٌ على الأقلّ.
     const pX2 = await mkPatient("ء. سباق حقيقي", 0);
     const cX2 = await mkCase(pX2, 0);
     const raced = await Promise.allSettled([
@@ -467,12 +477,13 @@ async function main() {
     ]);
     const ordersX = await ordersOf(pX2);
     const epsX = await q(`SELECT id, status FROM patient_device_episodes WHERE case_id=$1`, [cX2]);
-    const unlinkedBuild = ordersX.filter((o: any) => o.purpose === "initial_build" && o.device_episode_id === null);
+    const unlinkedBuilds = ordersX.filter((o: any) => o.purpose === "initial_build" && o.device_episode_id === null);
     const openEps = epsX.filter((e: any) => !["delivered", "cancelled"].includes(e.status));
-    check(!(unlinkedBuild.length > 0 && openEps.length > 0),
-      "ء. لا تجتمع حلقةٌ مفتوحة مع أمر بناءٍ يتيم أبداً",
+    check(raced.some((r) => r.status === "fulfilled"), "ء. وأحد الطريقين نجح فعلاً على الأقلّ");
+    check(unlinkedBuilds.length <= 1 && openEps.length <= 1,
+      "   وبلا ازدواج على أيّ جانب — بناءٌ يتيمٌ واحدٌ على الأكثر وحلقةٌ واحدة على الأكثر"
+      + " (تعايشُهما معاً بات نتيجةً مشروعة، ترحيل ٠٧٣)",
       `orders=${JSON.stringify(ordersX)} eps=${JSON.stringify(epsX)}`);
-    check(raced.some((r) => r.status === "fulfilled"), "   وأحد الطريقين نجح فعلاً");
 
     // ══ ي. التسليم ═════════════════════════════════════════════════════
     console.log("\n── نهاية الدورة ──");
@@ -559,6 +570,81 @@ async function main() {
     const delL = await refused(() => storage.deleteCaseType(pL, "prosthetic"));
     check(!!delL && /سجل أجهزة/.test(delL.msg), "ن. وحذف خيطٍ بحلقة مسلَّمة مرفوض كذلك", delL?.msg);
     same("   والحلقة باقية", (await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE case_id=$1`, [cL]))[0].n, 1);
+
+    // ══ ه. حلقتان مفتوحتان معاً — لا اختيارَ ضمنيّاً (ترحيل ٠٧٣) ═══════
+    //  عملياتٌ متوازية مستقلّة صارت مشروعة، فمريضٌ واحد قد يحمل حلقتين
+    //  `examined` معاً في آنٍ واحد. `getOpenDeviceEpisode` (`LIMIT 1` بلا
+    //  ترتيب) لم تعد كافيةً هنا: `POST /api/patients/:id/assign-manufacturing`
+    //  صار يحلّها بـ`resolveIntendedOpenEpisode` — معرّفٌ صريح يُحسم به وحده،
+    //  وحلقتان بلا معرّفٍ صريح تُرفَضان معاً بدل اختيار إحداهما عشوائياً.
+    console.log("\n── حلقتان مفتوحتان معاً ──");
+    const pH2 = await mkPatient("ه. حلقتان مفتوحتان", 0);
+    const cH2 = await mkCase(pH2, 0);
+    const eH1 = await mkEpisode(pH2, cH2, 1, "examined", 0);
+    const eH2 = await mkEpisode(pH2, cH2, 2, "examined", 0);
+    await mkExam(pH2, cH2, 700_000, eH1);
+    await mkExam(pH2, cH2, 1_100_000, eH2);
+    const beforeH1 = await epRow(eH1);
+    const beforeH2 = await epRow(eH2);
+
+    //  بلا `deviceEpisodeId` إطلاقاً ⟶ التباسٌ حقيقي، لا حسمَ صامت.
+    const ambiguous = await http("POST", `/api/patients/${pH2}/assign-manufacturing`, S.manager,
+      { expertUserId: EXPERT, cost: 700_000, serviceType: "prosthetic" });
+    same("ه١. **بلا معرّفٍ صريح وحلقتان مفتوحتان ⟶ ٤٠٩** — لا اختيارَ عشوائيّ", ambiguous.status, 409);
+    check(/حدّد الجهاز المقصود صراحةً/.test(ambiguous.body?.error ?? ""),
+      "     برسالةٍ تطلب التحديد صراحةً", ambiguous.body?.error);
+    same("     وصفرُ كتابة — لا أمرَ أُنشئ", (await ordersOf(pH2)).length, 0);
+    same("     وكلتا الحلقتين بلا مساس", [await epRow(eH1), await epRow(eH2)], [beforeH1, beforeH2]);
+    same("     ولا كلفةَ تحرّكت", (await money(pH2)).total, 0);
+
+    //  ومعرّفٌ صريحٌ للحلقة الثانية ⟶ **هي وحدها** تُخصَّص، والأولى بلا مساس.
+    const explicit = await http("POST", `/api/patients/${pH2}/assign-manufacturing`, S.manager,
+      { expertUserId: EXPERT, cost: 1_100_000, serviceType: "prosthetic", deviceEpisodeId: eH2 });
+    check(explicit.status === 201, "ه٢. **ومعرّفٌ صريحٌ للحلقة الثانية ⟶ ينجح**", JSON.stringify(explicit.body));
+    const ordersH = await ordersOf(pH2);
+    same("     **وأمرٌ واحدٌ بالضبط، على الحلقة الثانية بعينها**",
+      ordersH.map((o: any) => Number(o.device_episode_id)), [eH2]);
+    const eH2After = await epRow(eH2);
+    same("ه٣. **والحلقةُ الثانية وحدها انتقلت** إلى `in_manufacturing` بسعرها",
+      [eH2After?.status, eH2After?.agreed_cost], ["in_manufacturing", 1_100_000]);
+    const eH1After = await epRow(eH1);
+    same("     **والحلقةُ الأولى بلا مساسٍ تماماً** — لم تُخصَّص ولم تتحرّك",
+      eH1After, beforeH1);
+    same("     **والكلفةُ الإجمالية = سعرُ الحلقة الثانية وحدها**",
+      (await money(pH2)).total, 1_100_000);
+    const caseCostH = (await q(`SELECT cost FROM patient_cases WHERE id=$1`, [cH2]))[0].cost;
+    same("     وكلفةُ الخيط كذلك", caseCostH, 1_100_000);
+
+    //  وضغطةٌ ثانية بمعرّف الحلقة **الأولى** بعد أن صار للخيط أمرٌ نشطٌ على
+    //  الثانية ⟶ **تنجح أيضاً** (ترحيل ٠٧٣: عملياتٌ متوازية مستقلّة صحيحة) —
+    //  المزاحمةُ الآن على الحلقة بعينها لا على (مريض، خدمة)، فحلقتان
+    //  مختلفتان تحملان أمرَي عملٍ نشطَين معاً بلا تعارض.
+    const secondAttempt = await http("POST", `/api/patients/${pH2}/assign-manufacturing`, S.manager,
+      { expertUserId: EXPERT, cost: 700_000, serviceType: "prosthetic", deviceEpisodeId: eH1 });
+    check(secondAttempt.status === 201,
+      "ه٤. **وتخصيصُ الأولى بعد الثانية ينجح أيضاً** — عمليتان مستقلّتان متوازيتان",
+      JSON.stringify(secondAttempt.body));
+    const eH1After2 = await epRow(eH1);
+    same("     **والحلقةُ الأولى انتقلت الآن هي أيضاً** إلى `in_manufacturing` بسعرها",
+      [eH1After2?.status, eH1After2?.agreed_cost], ["in_manufacturing", 700_000]);
+    const ordersH2 = await ordersOf(pH2);
+    same("     **وأمران بالضبط الآن — كلٌّ على حلقته بعينها**",
+      ordersH2.map((o: any) => Number(o.device_episode_id)).sort((a: number, b: number) => a - b),
+      [eH1, eH2].sort((a, b) => a - b));
+    same("     **والكلفةُ الإجمالية = مجموع الحلقتين**", (await money(pH2)).total, 1_800_000);
+
+    //  والآن كلتا الحلقتين `in_manufacturing` (لا تزالان «حيّتين» بمعنى
+    //  الاستعلام: غيرَ مسلَّمتين ولا ملغاتين) — فبلا معرّفٍ صريح يبقى
+    //  الالتباسُ قائماً، وبنفس الرسالة بالضبط. الحسمُ يقيس «حيّة» لا
+    //  «تنتظر تخصيصاً».
+    const thirdAttempt = await http("POST", `/api/patients/${pH2}/assign-manufacturing`, S.manager,
+      { expertUserId: EXPERT, cost: 500_000, serviceType: "prosthetic" });
+    check(thirdAttempt.status === 409,
+      "ه٥. وبلا معرّفٍ صريح يبقى الالتباسُ قائماً ولو صارت الحلقتان قيد التصنيع",
+      JSON.stringify(thirdAttempt.body));
+    check(/حدّد الجهاز المقصود صراحةً/.test(thirdAttempt.body?.error ?? ""),
+      "     بنفس رسالة الالتباس", thirdAttempt.body?.error);
+    same("     وما زال أمران فقط — لا كتابةَ ثالثة", (await ordersOf(pH2)).length, 2);
 
     // ══ التاريخ ════════════════════════════════════════════════════════
     console.log("\n── التاريخ ──");

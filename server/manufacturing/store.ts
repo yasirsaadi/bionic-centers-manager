@@ -65,7 +65,18 @@ export async function hasOpenOrder(params: {
   return (rows.rows ?? []).length > 0;
 }
 
-/** شرط المزاحمة — مشترَك بين الفحص المسبق والحارس داخل المعاملة. */
+/**
+ * شرط المزاحمة — مشترَك بين الفحص المسبق والحارس داخل المعاملة.
+ *
+ * ══ الفرعان متناظران الآن (ترحيل ٠٧٣) ═══════════════════════════════════
+ * **بناءٌ أوليٌّ بحلقةٍ محدَّدة الهوية ⟶ الحلقةُ نفسُها فقط تُزاحمه** — تماماً
+ * كالصيانة. مريضٌ يملك بناءً أوّلياً مفتوحاً لحلقةٍ (جهازٍ) ثمّ يفتح عمليةً
+ * **مستقلّة** لحلقةٍ أخرى (قرارُ المالك: أيّ عددٍ من العمليات المتوازية)
+ * لم يعد يُرفَض — المزاحمةُ الحقيقية الوحيدة أمرا عملٍ لنفس الحلقة بعينها.
+ * **وغيابُ الهويّة يبقى على القاعدة القديمة بحرفها**: صفوفٌ تاريخية أو
+ * مسارٌ لا يحمل حلقة (`createWorkOrderForExisting` حين لا حلقةَ حيّة) —
+ * لا هويّةَ جهازٍ تُميّز بينها، فتبقى المزاحمةُ بـ(مريض، خدمة) فقط.
+ */
 function buildCompetitionFilter(params: {
   patientId: number;
   serviceType: string;
@@ -73,9 +84,13 @@ function buildCompetitionFilter(params: {
   deviceEpisodeId?: number | null;
 }) {
   if (params.purpose === "initial_build") {
+    if (params.deviceEpisodeId != null) {
+      return sql`purpose = 'initial_build' AND device_episode_id = ${params.deviceEpisodeId}`;
+    }
     return sql`patient_id = ${params.patientId}
       AND service_type = ${params.serviceType}
-      AND COALESCE(purpose, 'initial_build') = 'initial_build'`;
+      AND COALESCE(purpose, 'initial_build') = 'initial_build'
+      AND device_episode_id IS NULL`;
   }
   if (params.deviceEpisodeId != null) {
     return sql`purpose = 'maintenance' AND device_episode_id = ${params.deviceEpisodeId}`;

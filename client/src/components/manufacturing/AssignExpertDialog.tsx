@@ -12,6 +12,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Stethoscope } from "lucide-react";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolveDialogService } from "@/pages/patient_registry_assignment";
+import { useDeviceEpisodes, describeEpisode } from "@/components/DeviceEpisodeSelect";
 import {
   ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
   discountBlocked, type DiscountDraft,
@@ -70,6 +71,32 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   const isSupport = serviceType === "medical_support";
   const specFields = isSupport ? SUPPORT_SPECS : PROSTHETIC_SPECS;
 
+  // ══ أيّ حلقةٍ يخصّ هذا التخصيص؟ (ترحيل ٠٧٣) ═══════════════════════════
+  // المريض قد يملك أكثر من حلقةٍ `examined` للخدمة نفسها الآن — كلٌّ منها
+  // عمليةٌ مستقلّة، وتخصيصُ إحداهما يجب أن يصيبها هي وحدها. فتُقرأ الحلقاتُ
+  // المؤهَّلة (نفسُ شرط الخادم: `status='examined'` — الحلقةُ التي أُسنِدت
+  // تخرج منه بنفسها فور انتقالها إلى `in_manufacturing`)، وتُختار تلقائياً
+  // إن كانت واحدة، أو تُسأل صراحةً إن تعدّدت — ولا اختيارَ صامتٍ أبداً.
+  const [episodeId, setEpisodeId] = useState<number | null>(null);
+  const episodesQ = useDeviceEpisodes(patient?.id, serviceType, ["examined"]);
+  //  نفسُ عبارة `isSuccess && !isFetching` من إصلاح مُنتقي جهاز الصيانة —
+  //  إعادةُ جلبٍ خلفية لا تُقرأ استقراراً، فلا يُسمح باختيارٍ تلقائيّ أو
+  //  حفظٍ على بياناتٍ قد تكون شاخت تلك اللحظة.
+  const episodesSettled = episodesQ.isSuccess && !episodesQ.isFetching;
+  const eligibleEpisodes = episodesQ.options;
+  const needsEpisodeChoice = episodesSettled && eligibleEpisodes.length > 1;
+  //  السؤالُ معلَّق: حلقتان فأكثر ولم يُختَر بعد — لا نعرض قرار الطبيب ولا
+  //  الكلفة ولا الخبير المقترَح لحلقةٍ لم تُحدَّد بعد؛ ذاك عينُ الالتباس.
+  const episodeChoicePending = needsEpisodeChoice && episodeId == null;
+
+  useEffect(() => {
+    if (!open || !episodesSettled) return;
+    if (eligibleEpisodes.length === 1) {
+      setEpisodeId((prev) => prev ?? eligibleEpisodes[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, serviceType, episodesSettled, eligibleEpisodes.map((e) => e.id).join(",")]);
+
   const { data: experts = [], isLoading } = useQuery<Expert[]>({
     queryKey: ["/api/manufacturing/experts", patient?.branchId],
     enabled: open && !!patient,
@@ -93,8 +120,21 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
       return res.json();
     },
   });
-  // Exams come back newest-first, so the first match is the current decision.
-  const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === serviceType);
+  // ══ أيّ معاينةٍ هي «القرار»؟ (ترحيل ٠٧٣) ═══════════════════════════════
+  // حلقةٌ مُحدَّدة (تلقائياً أو باختيار الموظّف) ⟶ معاينتُها **هي وحدها**
+  // عبر `deviceEpisodeId` — لا أحدثُ معاينةٍ بحسب نوع الخدمة فحسب، فتلك
+  // بالضبط الطريقةُ التي تلتبس حين يتعدّد الفحصُ لنفس الخدمة. وحين يتعدّد
+  // المؤهَّلُ ولم يُختَر بعد لا معاينةَ تُعرَض أصلاً — التخمينُ هنا هو عينُ
+  // الالتباس الذي جاء هذا الإصلاح ليسدّه. ولا حلقةَ مؤهَّلة إطلاقاً (مسارٌ
+  // قديمٌ بلا حلقات) ⟶ السلوكُ السابق حرفاً: أحدثُ معاينةٍ لهذه الخدمة
+  // (الفحصُ الحيّ في `useDeviceEpisodes` مفتاحُه `patient?.id`، فلا فرقَ
+  // بين «لم تُحمَّل الحلقات بعد» و«لا حلقات» هنا — كلاهما يُعامَل بالمخرج
+  // الآمن نفسِه: القديم حين لا خيارَ معلَّق، والفراغ حين يكون معلَّقاً).
+  const rxExam = episodeId != null
+    ? (examData?.exams ?? []).find((e: any) => e.deviceEpisodeId === episodeId)
+    : needsEpisodeChoice
+      ? undefined
+      : (examData?.exams ?? []).find((e: any) => e.caseType === serviceType);
   const prescribedBy: string | null = rxExam?.doctorName ?? null;
   // The doctor's PROPOSED price. It lives only on the exam until this dialog's
   // save — the one write that books a device sale (case cost + total_cost) —
@@ -110,9 +150,14 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // enters the cost directly, exactly as the pre-exam workflow worked.
   const examsLoaded = examData !== undefined;
   const legacyExempt = Boolean((examData as any)?.legacyExempt);
-  const examMissing = examsLoaded && !rxExam && !legacyExempt;
+  //  والسؤالُ المعلَّق ليس «لا معاينة» — فالمعاينةُ موجودة، والمُبهَمُ أيُّ
+  //  حلقةٍ تخصّها. فلا تُعرَض هذه اللافتةُ بينما ينتظر اختيارَ الموظّف.
+  const examMissing = examsLoaded && !episodeChoicePending && !rxExam && !legacyExempt;
   // A legacy patient WITH a voluntary exam still follows the doctor's word.
-  const legacyOpen = legacyExempt && examsLoaded && !rxExam;
+  //  والمريضُ القديم قد يملك حلقاتٍ حديثةً متعدّدة أيضاً (عائدٌ طلب جهازاً
+  //  ثانياً) — فسؤالُ الحلقة يسبق قراءة الإعفاء هنا كذلك، وإلّا فُتحت
+  //  حقولٌ يدويةٌ لخدمةٍ لها في الحقيقة معاينةٌ موقّعة بانتظار أن تُختار.
+  const legacyOpen = !episodeChoicePending && legacyExempt && examsLoaded && !rxExam;
   // What the doctor actually determined, as label/value lines — including the
   // amputation builder's composed site, which lives in the prescription but
   // NOT in the seven spec inputs, so it was invisible here before.
@@ -139,14 +184,14 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
     }
     // Only seed fields reception hasn't already typed into.
     if (Object.keys(seeded).length > 0) setSpecs((prev) => ({ ...seeded, ...prev }));
-  }, [open, rxExam?.id, serviceType]);
+  }, [open, rxExam?.id, serviceType, episodeId]);
 
   // Seed the price the same way: the doctor's proposal fills the empty field,
   // and anything reception already typed wins.
   useEffect(() => {
     if (!open || proposedCost == null) return;
     setCost((prev) => (prev > 0 ? prev : proposedCost));
-  }, [open, rxExam?.id, serviceType, proposedCost]);
+  }, [open, rxExam?.id, serviceType, proposedCost, episodeId]);
 
   // …and the expert the doctor suggested. Reception stays free to change it;
   // this only spares them re-picking what the doctor already decided.
@@ -156,11 +201,11 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   useEffect(() => {
     if (!open || proposedExpertId == null) return;
     setExpertUserId((prev) => prev ?? proposedExpertId);
-  }, [open, rxExam?.id, serviceType, proposedExpertId]);
+  }, [open, rxExam?.id, serviceType, proposedExpertId, episodeId]);
 
   function resetState() {
     setExpertUserId(null); setCost(0); setSpecs({}); setServiceChoice(null);
-    setDiscount(EMPTY_DISCOUNT);
+    setDiscount(EMPTY_DISCOUNT); setEpisodeId(null);
   }
 
   //  **السعرُ الأصلي هو ما سيحسبه الخادم**: سعرُ الطبيب لمن لا يكتب سريرياً،
@@ -174,6 +219,12 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({
           expertUserId, cost, serviceType, ...specs,
+          //  ══ الحلقةُ المحسومة هنا — لا يحسمها الخادمُ ضمناً (ترحيل ٠٧٣) ══
+          //  المريضُ قد يملك أكثر من حلقةٍ مؤهَّلة؛ فمعرّفُ الحلقة المختارة
+          //  (تلقائياً أو صراحةً) يُرسَل دائماً حين يُعرَف، فيُصيب التخصيصُ
+          //  هذه الحلقةَ بعينها لا أيّاً كانت. وغيابُه (مسارٌ قديمٌ بلا
+          //  حلقات) يترك الخادمَ يسلك مساره السابق حرفاً كما كان.
+          ...(episodeId != null ? { deviceEpisodeId: episodeId } : {}),
           //  بلا خصمٍ لا يُرسَل الحقل — فالتخصيصُ المعتاد يمرّ كما كان تماماً.
           ...(hasDiscount(discount, originalPrice)
             ? { discount: discountPayload(discount) } : {}),
@@ -186,6 +237,10 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
       invalidatePatientData(queryClient, patient!.id);
       queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/discounts"] });
+      //  حلقةُ هذا المريض تحرّكت (`examined` ⟶ `in_manufacturing`) — فتُعاد
+      //  قراءتُها كي لا تظهر حلقةٌ أُسنِدت للتوّ كأنها ما زالت مؤهَّلة عند
+      //  فتح النافذة ثانيةً لإسناد زميلتها.
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${patient!.id}/device-episodes`] });
       toast({ title: "تم التخصيص وإسناد الخبير", description: "سُجّلت المواصفات والكلفة وأمر التصنيع. يحدّد الخبير تاريخ التسليم عند أخذ القالب." });
       resetState();
       onOpenChange(false);
@@ -208,13 +263,39 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             <div className="space-y-1">
               <label className="text-sm font-semibold">نوع الخدمة <span className="text-red-500">*</span></label>
               <div className="flex gap-2">
-                <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); setCost(0); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
-                <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); setCost(0); }} data-testid="choose-support">مساند طبية</Button>
+                <Button type="button" size="sm" variant={serviceChoice === "prosthetic" ? "default" : "outline"} onClick={() => { setServiceChoice("prosthetic"); setSpecs({}); setCost(0); setEpisodeId(null); }} data-testid="choose-prosthetic">أطراف صناعية</Button>
+                <Button type="button" size="sm" variant={serviceChoice === "medical_support" ? "default" : "outline"} onClick={() => { setServiceChoice("medical_support"); setSpecs({}); setCost(0); setEpisodeId(null); }} data-testid="choose-support">مساند طبية</Button>
               </div>
             </div>
           )}
 
-          {examMissing && (
+          {/* ══ أيّ جهازٍ يقصده هذا التخصيص؟ (ترحيل ٠٧٣) ═══════════════════
+              تظهر فقط حين تتعدّد الحلقاتُ المؤهَّلة — حلقةٌ واحدة تُختار
+              تلقائياً بلا سؤال، وصفرٌ يعني مساراً قديماً بلا حلقات إطلاقاً. */}
+          {needsEpisodeChoice && (
+            <div className="space-y-1">
+              <label className="text-sm font-semibold">الجهاز المقصود <span className="text-red-500">*</span></label>
+              <Select value={episodeId ? String(episodeId) : ""} onValueChange={(v) => setEpisodeId(Number(v))}>
+                <SelectTrigger data-testid="select-assign-episode"><SelectValue placeholder="اختر الجهاز…" /></SelectTrigger>
+                <SelectContent>
+                  {eligibleEpisodes.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>{describeEpisode(e)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                للمريض أكثر من {isSupport ? "مسند" : "طرف"} بانتظار التخصيص — حدّد المقصود بهذه العملية.
+              </p>
+            </div>
+          )}
+
+          {episodeChoicePending && (
+            <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 text-sm text-slate-600" data-testid="notice-episode-pending">
+              اختر الجهاز أعلاه لعرض قرار الطبيب والكلفة المقترحة والخبير.
+            </div>
+          )}
+
+          {!episodeChoicePending && examMissing && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="notice-exam-required">
               <b>لا يمكن التخصيص قبل معاينة الطبيب.</b>{" "}
               {isSupport ? "المريض بانتظار معاينة مساند طبية" : "المريض بانتظار معاينة أطراف صناعية"} —
@@ -223,6 +304,12 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             </div>
           )}
 
+          {/* ══ ما بقي من النافذة يبقى مطويّاً بينما اختيارُ الجهاز معلَّق ══
+              كلفةٌ أو خبيرٌ قد يُكتَبان قبل تحديد الجهاز يصعب تمييزُهما بعد
+              ذلك عن مقترح الطبيب لحلقةٍ أخرى — فلا شيء هنا يُدخَل قبل أن
+              يُحسَم أيُّ جهازٍ يخصّه، مهما كانت صلاحية الكاتب. */}
+          {!episodeChoicePending && (
+          <>
           {prescribedBy && (
             <div className="rounded-lg border border-teal-300 bg-teal-50/60 p-2.5 text-xs text-teal-900 flex gap-2">
               <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />
@@ -346,10 +433,12 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
             <ServiceDiscountFields originalPrice={originalPrice} value={discount}
               onChange={setDiscount} testIdPrefix="assign-discount" />
           )}
+          </>
+          )}
         </div>
         <DialogFooter className="gap-2 mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending || discountBlocked(discount, originalPrice)} data-testid="button-confirm-assign-expert">
+          <Button onClick={() => assign.mutate()} disabled={!expertUserId || !cost || (dualFlag && !serviceChoice) || episodeChoicePending || examMissing || !examsLoaded || (!canEditClinicalDetails && proposedCost == null && !legacyOpen) || assign.isPending || discountBlocked(discount, originalPrice)} data-testid="button-confirm-assign-expert">
             {assign.isPending ? "جارٍ الحفظ…" : "حفظ وإسناد"}
           </Button>
         </DialogFooter>

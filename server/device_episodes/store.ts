@@ -140,6 +140,82 @@ export async function getOpenDeviceEpisode(
 }
 
 /**
+ * **الحلقةُ المقصودة** لمسارٍ يختار جهازاً بلا هويّةٍ مخزَّنة (تخصيص عبر
+ * مسار المعاينة، أو تطبيقُ خصمٍ فوريٍّ عليه) — لا `LIMIT 1` صامتة.
+ *
+ * ══ لماذا لزمت بعد ترحيل ٠٧٣ ═══════════════════════════════════════════
+ * `getOpenDeviceEpisode` تُرجع صفّاً واحداً (`LIMIT 1` بلا `ORDER BY`) —
+ * وكانت هذه القراءةُ حتميّةَ الإجابة ما دام `uq_pde_case_open` يضمن حلقةً
+ * مفتوحةً واحدة على الأكثر لكلّ خيط. رُفع ذلك الفهرس (قرارُ المالك: أيّ
+ * عددٍ من عمليات الأجهزة المستقلّة في آنٍ واحد)، فصار ممكناً أن يحمل
+ * الخيطُ حلقتين مفتوحتين معاً — واختيارُ إحداهما ضمناً صار تخميناً لا
+ * حسماً. **ومسارٌ حديثٌ يعرف هويّةَ عمليته لا يجوز أن يخمّن أبداً.**
+ *
+ * ══ والقاعدة هنا ═══════════════════════════════════════════════════════
+ * معرّفٌ صريح (`requestedEpisodeId`) ⟶ يُتحقَّق منه وحده: ينتمي لهذا
+ * المريض ولهذه الخدمة، وحيٌّ فعلاً (لا مسلَّم ولا ملغى). غيابُ المعرّف:
+ * صفرُ حلقاتٍ حيّة ⟶ `null` (المسار القديم كما هو، بلا تغيير). حلقةٌ
+ * واحدة ⟶ هي، بلا سؤال — توافقٌ تامّ مع كلّ ملفّ اليوم، إذ لا ملفَّ قبل
+ * هذا الترحيل يحمل أكثر من حلقة مفتوحة أصلاً. **حلقتان فأكثر ⟶ خطأٌ
+ * صريح** — لا يُختار أيٌّ منهما، والمستدعي يُطالَب بمعرّفٍ صريح.
+ *
+ * ══ قراءةٌ خارج معاملة — لرسالةٍ مبكّرة أنيقة فقط ═══════════════════════
+ * الضمانةُ الحقيقية تبقى القفلَ والتحقّقَ داخل معاملة الكتابة
+ * (`lockCaseAndReadExactEpisode` عبر `startDeviceSaleOperationallyTx`)،
+ * تماماً كنمط `hasOpenOrder` (فحصٌ مبكّر) مقابل `hasOpenOrderTx` (الحارسُ
+ * الحقيقيّ) القائم في `manufacturing/store.ts`.
+ */
+export async function resolveIntendedOpenEpisode(params: {
+  patientId: number;
+  serviceType: DeviceServiceType;
+  /** معرّفٌ صريح وصل من العميل، إن وُجد — أيّ قيمة، تُتحقَّق هنا. */
+  requestedEpisodeId?: unknown;
+}): Promise<DeviceEpisodeView | null> {
+  const hasExplicit = params.requestedEpisodeId != null && params.requestedEpisodeId !== "";
+  if (hasExplicit) {
+    const wantId = Number(params.requestedEpisodeId);
+    if (!Number.isInteger(wantId) || wantId <= 0) {
+      throw new DeviceEpisodeError("معرّف جهاز غير صالح", 400);
+    }
+    const r = await db.execute<Record<string, any>>(sql`
+      SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+             e.agreed_cost, e.requested_item, e.component, e.service_path,
+             e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+        FROM patient_device_episodes e
+        JOIN patient_cases pc ON pc.id = e.case_id
+       WHERE e.id = ${wantId} AND e.patient_id = ${params.patientId}
+         AND pc.case_type = ${params.serviceType}
+         AND e.status NOT IN ('delivered', 'cancelled')
+    `);
+    const row = (r.rows ?? [])[0];
+    if (!row) {
+      throw new DeviceEpisodeError(
+        "الجهاز المحدَّد لا يخصّ هذا المريض أو هذه الخدمة، أو لم يعد قيد الإجراء", 409,
+      );
+    }
+    return toView(row);
+  }
+
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
+           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.patient_id = ${params.patientId}
+       AND pc.case_type = ${params.serviceType}
+       AND e.status NOT IN ('delivered', 'cancelled')
+     ORDER BY e.sequence_number ASC
+  `);
+  const rows = r.rows ?? [];
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return toView(rows[0]);
+  throw new DeviceEpisodeError(
+    "لدى المريض أكثر من جهاز قيد الإجراء لهذه الخدمة — حدّد الجهاز المقصود صراحةً", 409,
+  );
+}
+
+/**
  * الأجهزة **المسلَّمة** لهذه الخدمة — وهي وحدها محلٌّ للصيانة.
  *
  * فما لم يُسلَّم بعد (بانتظار معاينة، أو مُعايَن، أو قيد التصنيع) ليس جهازاً
@@ -382,15 +458,16 @@ export async function getEpisodeDisplayFieldsByIds(
  *
  * ══ الحماية من السباق ═════════════════════════════════════════════════
  * طلبان متزامنان لنفس المريض والنوع كانا سيقرآن `MAX(sequence)+1` نفسه
- * فينشئان حلقتين برقمٍ واحد. الحلّ قفلٌ حقيقي على **صفّ الخيط**
- * (`SELECT ... FOR UPDATE` على `patient_cases`): كل شيء بعده — فحص
- * المفتوحة، وحساب التسلسل، والإدراج — يجري متسلسلاً لا متوازياً.
+ * فينشئان حلقتين بتسلسلٍ واحد. الحلّ قفلٌ حقيقي على **صفّ الخيط**
+ * (`SELECT ... FOR UPDATE` على `patient_cases`): كل شيء بعده — حسابُ
+ * التسلسل والإدراج — يجري متسلسلاً لا متوازياً.
  *
- * والخيط هو نقطة القفل الصحيحة لأنه ثابت الوجود: القفل على «الحلقة
- * المفتوحة» يفشل حين لا توجد واحدة، وهي بالضبط حالة السباق.
+ * والخيط هو نقطة القفل الصحيحة لأنه ثابت الوجود، وهو حدّ التزاحم الحقيقيّ
+ * الباقي بعد ترحيل ٠٧٣: تسلسلان لا يتصادمان على الخيط نفسه.
  *
- * وخلف القفل يقف فهرسان في القاعدة نفسها — `uq_pde_case_open` و
- * `uq_pde_case_seq` — فحتى لو أُلغي القفل يوماً تبقى الثوابت محروسة.
+ * وخلف القفل يقف فهرسٌ في القاعدة نفسها — `uq_pde_case_seq` وحده الآن
+ * (ترحيل ٠٧٣ رفع `uq_pde_case_open` — أيّ عددٍ من الحلقات المفتوحة معاً
+ * على الخيط صحيحٌ الآن) — فحتى لو أُلغي القفل يوماً يبقى التسلسلُ محروساً.
  *
  * ══ `tx` بالإجبار لا اختياراً (المرحلة الرابعة — بيعُ الجزء المبسّط) ═════
  * بيعُ جزءٍ بلا معاينة صار حدثاً واحداً: فتحُ الحلقة، وبدءُ أمر التصنيع،
@@ -459,50 +536,16 @@ export async function startDeviceEpisodeTx(
     );
   }
 
-  const open = await tx.execute(sql`
-    SELECT id, status FROM patient_device_episodes
-     WHERE case_id = ${caseRow.id} AND status NOT IN ('delivered', 'cancelled')
-     LIMIT 1
-  `);
-  if ((open.rows ?? []).length > 0) {
-    //  ══ **رسالةٌ تقول ماذا يفعل، لا ماذا منعه** (ترحيل ٠٦٤) ═══════════
-    //  «لدى المريض جهاز قيد الإجراء» جملةٌ صحيحة لا تفيد: الموظّفُ لا
-    //  يعرف أيَّ جهاز، ولا كيف يفتحه، ولا أن للمدير باباً يصحّحه إن كان
-    //  خطأً. فالسياقُ المنظَّم يُرسَل معها لتبني الشاشةُ عليه أزرارَها.
-    const e = new DeviceEpisodeError(
-      "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد", 409,
-    );
-    (e as any).code = "active_device_operation";
-    (e as any).activeEpisodeId = Number((open.rows ?? [])[0].id);
-    const wo = await tx.execute(sql`
-      SELECT id FROM prosthetic_work_orders
-       WHERE device_episode_id = ${Number((open.rows ?? [])[0].id)}
-         AND status NOT IN ('completed', 'cancelled')
-       LIMIT 1
-    `);
-    (e as any).activeWorkOrderId = (wo.rows ?? [])[0]?.id ?? null;
-    throw e;
-  }
-
-  //  **والطرف الآخر من السباق نفسه.** أمرُ بناءٍ قديمٍ نشط — بلا حلقة —
-  //  يعني جهازاً يُصنَع الآن بالمسار القديم. ففتحُ حلقةٍ فوقه يُنتج
-  //  الحالة النصفية عينها التي يمنعها الحارس المقابل: جهازان قيد
-  //  الإجراء، أحدهما بهوية وأحدهما بلا. والقفل على الخيط أعلاه يجعل
-  //  الحسم للأسبق: مَن ظفر بالقفل أوّلاً مضى، والآخر يُردّ صراحةً.
-  const legacyBuild = await tx.execute(sql`
-    SELECT id FROM prosthetic_work_orders
-     WHERE patient_id = ${patientId}
-       AND service_type = ${serviceType}
-       AND purpose = 'initial_build'
-       AND status NOT IN ('completed', 'cancelled')
-       AND device_episode_id IS NULL
-     LIMIT 1
-  `);
-  if ((legacyBuild.rows ?? []).length > 0) {
-    throw new DeviceEpisodeError(
-      "لدى المريض أمر تصنيع نشط لهذه الخدمة — أكمِله أو ألغِه قبل بدء جهاز جديد", 409,
-    );
-  }
+  //  ══ **لم يعد فتحُ حلقةٍ جديدة يُرفَض لمجرّد وجود حلقةٍ أخرى مفتوحة**
+  //  (ترحيل ٠٧٣ — قرارُ المالك: أيّ عددٍ من عمليات الأجهزة المستقلّة
+  //  لمريضٍ واحد في آنٍ واحد). كانت هذه النقطة تردّ `active_device_
+  //  operation` (٤٠٩) بمجرّد وجود أيّ حلقةٍ مفتوحة على الخيط — نفسِ
+  //  الشرط الذي كان يحرسه `uq_pde_case_open` المرفوعُ في هذا الترحيل.
+  //  والحمايةُ الحقيقية الباقية أضيق: لا يجوز لأمرَي عملٍ أن يتنافسا
+  //  على **حلقة الجهاز نفسها** — وذاك يحرسه `uq_pwo_one_open_build_
+  //  per_episode` ومثيلاتُها عند إنشاء أمر العمل لاحقاً، لا هنا عند
+  //  فتح الحلقة. فتحُ حلقةٍ لا يفتح أمراً بنفسه (`prosthetic_work_
+  //  orders` جدولٌ منفصل)، فلا تعارضَ ممكناً عند هذه النقطة أصلاً. ══
 
   const mx = await tx.execute(sql`
     SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next

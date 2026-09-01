@@ -967,9 +967,13 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ن. التزامن ──");
+    console.log("\n── ن. التزامن — بيعان جديدان متزامنان صارا عمليتين مستقلّتين (ترحيل ٠٧٣) ──");
     // ══════════════════════════════════════════════════════════════════
     {
+      //  كانا يتنافسان على «الشراء المفتوح الوحيد» (`uq_pde_case_open`)
+      //  فترتدّ إحداهما. **والفهرسُ رُفع**: عمليتان مستقلّتان متزامنتان
+      //  على الخيط نفسه صحيحتان معاً — بلا تعارضٍ ممكن أصلاً، فكلتاهما
+      //  تنجح بحلقتها وأمرها الخاصّين.
       const pid = await mkPatient("ن-بيعان-جديدان-متزامنان");
       await mkCase(pid, "prosthetic");
       const [r1, r2] = await Promise.all([
@@ -978,11 +982,13 @@ async function main() {
       ]);
       const statuses = [r1.status, r2.status];
       const successCount = statuses.filter((s) => s === 201).length;
-      same("ن١. واحدةٌ تنجح (٢٠١) بالضبط والأخرى ترتدّ", successCount, 1);
-      check(statuses.some((s) => s !== 201), "    والأخرى لا تنجح (٤٠٩ أو ما يعادله)", JSON.stringify(statuses));
+      same("ن١. **وكلتاهما تنجحان معاً (٢٠١) — لا تنافسَ على شراءٍ مفتوحٍ وحيد**", successCount, 2);
+      check(r1.body.deviceEpisodeId !== r2.body.deviceEpisodeId
+        && r1.body.workOrderId !== r2.body.workOrderId,
+        "    وحلقتان وأمران متمايزان — لا ازدواج ولا دمج", JSON.stringify([r1.body, r2.body]));
       const m = await moneyOf(pid);
-      check(m.episodes === 1 && m.orders === 1 && m.ledger_rows === 1,
-        "ن٢. حلقةٌ واحدة وأمرٌ واحدٌ وقيدٌ واحد بالضبط — لا نصفَ كتابة", JSON.stringify(m));
+      check(m.episodes === 2 && m.orders === 2 && m.ledger_rows === 2,
+        "ن٢. **حلقتان وأمران وقيدان بالضبط** — عمليتان مستقلّتان كاملتان، لا نصفَ كتابة", JSON.stringify(m));
     }
     {
       const pid = await mkPatient("ن-إكمالان-متزامنان");
@@ -1206,34 +1212,51 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ص. «لا» أو صمتٌ ⟶ بلا إلحاقٍ صامت، الحارسُ الأصليُّ يعمل ──");
+    console.log("\n── ص. «لا» أو صمتٌ ⟶ عمليةٌ مستقلّة جديدة، لا إلحاقٌ صامت (ترحيل ٠٧٣) ──");
     // ══════════════════════════════════════════════════════════════════
     {
       //  ══ **نفسُ جهاز القسم الأوّل، لكن بلا `attachToDeviceEpisodeId`** —
-      //  يعني «لم يُطرَح السؤالُ» أو «أجاب الموظّفُ لا». والنتيجةُ يجب أن
-      //  تكون الحارسَ الأصليَّ نفسَه بحرفه: ٤٠٩، بلا تخمينٍ خادميّ بديل. ═══
-      const pid = await mkPatient("ص-لا-بلا-إلحاق");
+      //  يعني «لم يُطرَح السؤالُ» أو «أجاب الموظّفُ لا». **والقاعدةُ الجديدة**
+      //  (قرارُ المالك: أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد):
+      //  هذه عمليةٌ **مستقلّة تماماً**، فتُفتَح لها حلقةٌ وأمرُ عملٍ جديدان —
+      //  بلا رفضٍ لمجرّد وجود حلقةٍ أخرى مفتوحة على الخيط نفسه، وبلا
+      //  إلحاقٍ صامتٍ بالقديمة. الحمايةُ الباقية ضيّقةٌ: أمرا عملٍ مفتوحان
+      //  لنفس الحلقة بعينها — وهذه حلقةٌ أخرى تماماً. ═══════════════════════
+      const pid = await mkPatient("ص-لا-عملية-مستقلة");
       const caseId = await mkCase(pid, "prosthetic");
       const [ep] = await q<{ id: number }>(
         `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
            status, agreed_cost, requested_item, component, service_path, created_by)
          VALUES ($1,$2,1,1,'in_manufacturing',1750000,'full_device',NULL,'exam',$3) RETURNING id`,
         [pid, caseId, RECV]);
-      await q(
+      const [wo] = await q<{ id: number }>(
         `INSERT INTO prosthetic_work_orders (patient_id, branch_id, service_type, expert_user_id,
            status, current_stage, purpose, device_episode_id, assigned_by)
-         VALUES ($1,1,'prosthetic',$2,'active','mold','initial_build',$3,$4)`,
+         VALUES ($1,1,'prosthetic',$2,'active','mold','initial_build',$3,$4) RETURNING id`,
         [pid, EXPERT, ep.id, RECV]);
 
       const r = await sale({ patientId: pid, component: "adapter", expertUserId: EXPERT,
         originalPrice: 50_000, discountAmount: 0 });
-      check(r.status === 409, "ص٢١. **بلا `attachToDeviceEpisodeId` ⟶ ٤٠٩ كما كان قبل الإصلاح** —"
-        + " لا تخمينَ خادميّاً لجهازٍ لم يُسأل عنه الموظّفُ", String(r.status));
+      check(r.status === 201, "ص٢١. **بلا `attachToDeviceEpisodeId` ⟶ ٢٠١، عمليةٌ مستقلّة جديدة** —"
+        + " لا رفضَ لمجرّد وجود حلقةٍ أخرى مفتوحة، ولا إلحاقَ صامتاً بها", JSON.stringify(r.body));
+      check(r.body.deviceEpisodeId !== ep.id,
+        "     وحلقةٌ **جديدة** بمعرّفٍ مختلف — لا الحلقةُ القديمة نفسُها", String(r.body.deviceEpisodeId));
+      const newEp = await episodeOf(r.body.deviceEpisodeId);
+      same("     والحلقةُ الجديدة: نفسُ الخيط · in_manufacturing · adapter · no_exam",
+        [newEp.c, newEp.status, newEp.ri, newEp.cmp, newEp.sp],
+        [caseId, "in_manufacturing", "adapter", "adapter", "no_exam"]);
+      const newOrder = await orderOf(r.body.workOrderId);
+      check(newOrder.id !== wo.id,
+        "     وأمرُ عملٍ **جديد** — لا الأمرُ القديم نفسُه", String(newOrder.id));
+      same("     يشير إلى الحلقة الجديدة بعينها وبالخبير الصحيح",
+        [newOrder.de, newOrder.ex, newOrder.purpose], [newEp.id, EXPERT, "initial_build"]);
       const m = await moneyOf(pid);
-      same("ص٢٢. **وصفرُ كتابة** — حلقةٌ وأمرٌ واحدان فقط (الأصليّان، لم يتغيّرا)",
-        [m.episodes, m.orders], [1, 1]);
-      const epAfter = await episodeOf(ep.id);
-      same("     وكلفةُ الحلقة الأصلية لم تتحرّك", epAfter.ac, 1750000);
+      same("     حلقتان وأمران بالضبط — الأصليّان زائد الجديدان، فلا إلحاقَ يُدمج العدّ",
+        [m.episodes, m.orders], [2, 2]);
+      const epOrig = await episodeOf(ep.id);
+      const orderOrig = await orderOf(wo.id);
+      same("     والعمليةُ الأولى بقيت كما هي بالضبط بلا مساس",
+        [epOrig.status, epOrig.ac, orderOrig.status], ["in_manufacturing", 1750000, "active"]);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1346,13 +1369,18 @@ async function main() {
         ledgerRow[0]?.notes, "تخصيص طرف صناعي");
     }
 
-    console.log("\n── ص. والاختراعُ الحقيقيّ لثانٍ مستقلّ يبقى مرفوضاً — الثابتُ لم يضعف ──");
+    console.log("\n── ص. جهازٌ كاملٌ مستقلٌّ ثانٍ عبر بابِ المعاينة — صار مقبولاً أيضاً (ترحيل ٠٧٣) ──");
     {
       //  ══ جهازٌ **كاملٌ ثانٍ مستقلّ** — لا جزء — يُطلَب بينما الأوّلُ قيد
-      //  التصنيع: البابُ الآخر تماماً (`device-episodes`، مسارُ المعاينة)
-      //  الذي لم تلمسه هذه المهمّة بحرف، وحارسُه (`startDeviceEpisodeTx`)
-      //  يرفض تماماً كما كان قبل هذا الإصلاح. ══════════════════════════════
-      const pid = await mkPatient("ص-جهازٌ-ثانٍ-مستقلّ-يُرفَض");
+      //  التصنيع، عبر البابِ الآخر تماماً (`device-episodes`، مسارُ
+      //  المعاينة). **وهذا البابُ لم يُمَسّ بسطرٍ واحد في هذه المهمّة** —
+      //  لكنّ حارسَه القديم كان `startDeviceEpisodeTx` نفسَه، وهي دالّةٌ
+      //  **مشتركة** بين هذا الباب وبابِ البيع بلا معاينة معاً. فحين رُفع
+      //  عنها الحظرُ (قرارُ المالك: أيّ عددٍ من العمليات المتوازية
+      //  لمريضٍ واحد — بلا تخصيصٍ لبابٍ دون آخر)، صار هذا البابُ أيضاً
+      //  يقبل جهازاً كاملاً ثانياً مستقلاً — أثرٌ صحيحٌ ومقصود من عمومية
+      //  القاعدة، لا ثغرةً تسرّبت إليه. ══════════════════════════════════
+      const pid = await mkPatient("ص-جهازٌ-ثانٍ-مستقلّ-يُقبَل");
       const caseId = await mkCase(pid, "prosthetic");
       const [ep] = await q<{ id: number }>(
         `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
@@ -1368,12 +1396,15 @@ async function main() {
       const r = await oldEpisodeDoor({
         patientId: pid, serviceType: "prosthetic", requestedItem: "full_device", servicePath: "exam",
       });
-      check(r.status === 409, "ص٢٠. طلبُ جهازٍ **كاملٍ مستقلٍّ ثانٍ** بينما الأوّلُ قيد التصنيع"
-        + " ⟶ ٤٠٩ كما كان تماماً — الثابتُ لم يضعف", JSON.stringify(r.body));
-      check((r.body?.error ?? "").includes("قيد الإجراء"),
-        "     ونفسُ رسالة الحارس الأصليّ", JSON.stringify(r.body));
+      check(r.status === 201, "ص٢٠. طلبُ جهازٍ **كاملٍ مستقلٍّ ثانٍ** بينما الأوّلُ قيد التصنيع"
+        + " ⟶ ٢٠١ الآن — عمليتان مستقلّتان صحيحتان معاً", JSON.stringify(r.body));
+      check(r.body?.id !== ep.id && r.body?.sequenceNumber === 2,
+        "     **وحلقةٌ ثانية جديدة بتسلسل ٢** — لا الأولى نفسُها ولا استبدالٌ لها", JSON.stringify(r.body));
+      const epAfter = await episodeOf(ep.id);
+      same("     **والحلقةُ الأولى بلا مساس** — حالتُها وكلفتُها كما كانتا",
+        [epAfter.status, epAfter.ac], ["in_manufacturing", 1200000]);
       const count = await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [pid]);
-      same("     وصفرُ حلقاتٍ إضافية — واحدةٌ فقط كما كانت", count[0].n, 1);
+      same("     **وحلقتان بالضبط الآن** — الأولى زائد الثانية المستقلّة الجديدة", count[0].n, 2);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1547,10 +1578,10 @@ async function main() {
       same("    وصفرُ كتابةٍ تماماً", await moneyOf(pid), ZERO);
     }
     {
-      //  ══ ق٧. التزامن — ضغطتان متزامنتان لبيعٍ جديد على الخيط نفسِه ⟶
-      //  واحدةٌ تنجح بدفعةٍ واحدة، والأخرى ترتدّ بصفر كتابة (لا دفعةَ
-      //  مضاعَفة ولا قيدَ مضاعَفاً) ═══════════════════════════════════════
-      const pid = await mkPatient("ق-تزامنٌ-بلا-ازدواج");
+      //  ══ ق٧. التزامن — ضغطتان متزامنتان لبيعين مستقلَّين على الخيط نفسِه
+      //  ⟶ كلتاهما تنجح الآن بدفعتيهما (ترحيل ٠٧٣: لا تنافسَ على «شراءٍ
+      //  مفتوحٍ وحيد» — عمليتان مستقلّتان صحيحتان معاً) ═══════════════════
+      const pid = await mkPatient("ق-تزامنٌ-عمليتان-مستقلّتان");
       await mkCase(pid, "prosthetic");
       const [r1, r2] = await Promise.all([
         sale({ patientId: pid, component: "socket", expertUserId: EXPERT,
@@ -1559,12 +1590,12 @@ async function main() {
           originalPrice: 90_000, discountAmount: 0, paidNow: 90_000 }),
       ]);
       const statuses = [r1.status, r2.status].sort();
-      same("ق٧. واحدةٌ تنجح (٢٠١) بالضبط والأخرى ترتدّ (٤٠٩)", statuses, [201, 409]);
+      same("ق٧. **كلتاهما تنجحان (٢٠١)** — لا تنافسَ على شراءٍ مفتوحٍ وحيد", statuses, [201, 201]);
       const pays = await paymentsOf(pid);
-      same("    ودفعةٌ واحدةٌ بالضبط — لا نصفَ كتابة ولا ازدواج", pays.length, 1);
+      same("    ودفعتان بالضبط — واحدةٌ لكلّ عملية، بلا ازدواج على أيٍّ منهما", pays.length, 2);
       const m = await moneyOf(pid);
-      same("    وحلقةٌ واحدةٌ وأمرٌ واحدٌ وقيدٌ واحد بالضبط",
-        [m.episodes, m.orders, m.ledger_rows], [1, 1, 1]);
+      same("    وحلقتان وأمران وقيدان بالضبط — عمليتان كاملتان مستقلّتان",
+        [m.episodes, m.orders, m.ledger_rows], [2, 2, 2]);
     }
     {
       //  ══ ق٨. الإلحاقُ بجهازٍ قيد التصنيع يشترك في «المبلغ المدفوع الآن» ══

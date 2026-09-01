@@ -83,13 +83,15 @@ interface Props {
   /** الطلبُ المسجَّل على تلك الحلقة — يُعرَض ولا يُسأل عنه ثانيةً. */
   existingRequestedItem?: string | null;
   /**
-   * **مُرشَّحٌ لسؤال الإلحاق** — طرفٌ كاملٌ قيد التصنيع بالفعل على خيط
-   * المريض. وجودُه **لا يُلحق شيئاً ضمناً**: يُعرَض عليه سؤالٌ صريح
-   * («هل هذا الجزء إضافة إلى الطرف الجاري تصنيعه؟»)، وجوابُ الموظّف وحده
-   * يقرّر. غيابُه (`null`) يعني عدمَ عرض السؤال أصلاً — لا جهازَ قيد
-   * التصنيع، فلا التباسَ ممكناً.
+   * **مُرشَّحون لسؤال الإلحاق** — كلُّ طرفٍ كاملٍ قيد التصنيع بالفعل على خيط
+   * المريض (قد يزيد عن واحد، ترحيل ٠٧٣: عملياتٌ متوازية مستقلّة). وجودُهم
+   * **لا يُلحق شيئاً ضمناً**: يُعرَض على الموظّف سؤالٌ صريح («هل هذا الجزء
+   * إضافة إلى الطرف الجاري تصنيعه؟»)، وجوابُه وحده يقرّر. قائمةٌ فارغة تعني
+   * عدمَ عرض السؤال أصلاً — لا جهازَ قيد التصنيع، فلا التباسَ ممكناً.
+   * **وأكثرُ من مُرشَّح ⟶ اختيارٌ صريح إلزاميّ** — لا يُلحَق الجزءُ بأوّل
+   * جهازٍ صامتاً.
    */
-  inManufacturingFullDeviceEpisodeId?: number | null;
+  attachCandidates?: { episodeId: number; sequenceNumber: number | null }[];
   /**
    * **«نوع العملية» محسومٌ قبل فتح النافذة** — من مُوجِّه «ما سبب حضور
    * المريض اليوم؟» بعد التسجيل مثلاً. فلا يُعاد سؤالٌ أجاب عنه اختيارُ
@@ -101,7 +103,7 @@ interface Props {
 export function NoExamOperationDialog({
   open, onOpenChange, patientId, branchId, serviceType,
   existingEpisodeId = null, existingRequestedItem = null,
-  inManufacturingFullDeviceEpisodeId = null, initialKind,
+  attachCandidates = [], initialKind,
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -130,12 +132,22 @@ export function NoExamOperationDialog({
   //  `null` = لم يُجَب بعد. لا تفترض «لا» ولا «نعم»: طلبٌ بلا جوابٍ يبقى
   //  غيرَ جاهزٍ للحفظ (انظر `ready` أدناه) ما دام السؤالُ مطروحاً أصلاً.
   const [attachChoice, setAttachChoice] = useState<"yes" | "no" | null>(null);
+  //  ══ **هدفُ الإلحاق حين يتعدّد المُرشَّحون** (ترحيل ٠٧٣) ══════════════
+  //  مُرشَّحٌ واحد ⟶ لا اختيار، الحلقةُ الوحيدة هي الهدف. أكثرُ من واحد ⟶
+  //  اختيارٌ صريح إلزاميّ — **لا يُختار الأوّلُ صامتاً أبداً**.
+  const [attachTargetId, setAttachTargetId] = useState<string>("");
   //  يُعرَض فقط عند بيع جزءٍ جديد (لا استئنافَ حلقةٍ موروثة — لتلك مسارُها
-  //  الخاصّ ولا معنى لسؤال الإلحاق عليها) وحين يوجد مُرشَّحٌ فعلاً.
+  //  الخاصّ ولا معنى لسؤال الإلحاق عليها) وحين يوجد مُرشَّحٌ واحدٌ فأكثر.
   const showAttachPrompt = kind === "device_sale" && !existingEpisodeId
-    && Boolean(inManufacturingFullDeviceEpisodeId);
+    && attachCandidates.length > 0;
   const attaching = showAttachPrompt && attachChoice === "yes";
   const attachUnanswered = showAttachPrompt && attachChoice === null;
+  //  مُرشَّحٌ واحدٌ يُحسَم ضمناً (نفسُ الشاشة القديمة تماماً)؛ أكثرُ من واحد
+  //  يحتاج اختيار الموظّف من `attachTargetId`.
+  const resolvedAttachEpisodeId = !attaching ? null
+    : attachCandidates.length === 1 ? attachCandidates[0].episodeId
+    : attachTargetId ? Number(attachTargetId) : null;
+  const attachUnpicked = attaching && attachCandidates.length > 1 && resolvedAttachEpisodeId === null;
 
   //  ══ **السعرُ — أصليّ وخصمٌ، مشتركان بين بيع الجزء والصيانة** ══════════
   //  (المرحلة الرابعة) نفسُ الاشتقاق حرفياً في البابين — فلا حسابَ مكرَّر
@@ -261,7 +273,7 @@ export function NoExamOperationDialog({
         ...(existingEpisodeId
           ? { existingEpisodeId, expertUserId: Number(expertId) }
           : attaching
-            ? { component: requestedItem, attachToDeviceEpisodeId: inManufacturingFullDeviceEpisodeId }
+            ? { component: requestedItem, attachToDeviceEpisodeId: resolvedAttachEpisodeId }
             : { component: requestedItem, expertUserId: Number(expertId) }),
         originalPrice, discountAmount,
         //  **المُتحقَّقُ لا الخام** — يشمل الإلحاقَ أيضاً؛ نفسُ الحدّ الأعلى
@@ -298,10 +310,13 @@ export function NoExamOperationDialog({
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
   //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
-  //  افتراضَ صامتاً لـ«نعم» ولا لـ«لا»). **والمبلغُ المدفوعُ الآن لازمٌ
-  //  كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً كسعرٍ ناقص.
+  //  افتراضَ صامتاً لـ«نعم» ولا لـ«لا»)، **وهدفُه لازمٌ أيضاً حين يتعدّد
+  //  المُرشَّحون** (`attachUnpicked`) — لا يُختار أحدُهم صامتاً. **والمبلغُ
+  //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
+  //  كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !attachUnanswered && Boolean(offer.ok) && paidNowCheck.ok;
+    && !maintenanceDeviceUnready && !attachUnanswered && !attachUnpicked
+    && Boolean(offer.ok) && paidNowCheck.ok;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -425,6 +440,25 @@ export function NoExamOperationDialog({
                   لا
                 </Button>
               </div>
+              {/*  ── أكثرُ من طرفٍ كاملٍ قيد التصنيع معاً — اختيارٌ صريح ──
+                  ولا يُختار أحدُهم عنه (ترحيل ٠٧٣: عملياتٌ متوازية). */}
+              {attaching && attachCandidates.length > 1 && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">أيّ طرفٍ بعينه؟</Label>
+                  <Select value={attachTargetId} onValueChange={setAttachTargetId}>
+                    <SelectTrigger data-testid="no-exam-op-attach-target">
+                      <SelectValue placeholder="اختر الجهاز…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {attachCandidates.map((c) => (
+                        <SelectItem key={c.episodeId} value={String(c.episodeId)}>
+                          {`طرف صناعي #${c.sequenceNumber ?? "؟"} · قيد التصنيع`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {attaching && (
                 <p className="text-xs text-muted-foreground" data-testid="no-exam-op-attach-note">
                   سيُلحَق هذا الجزءُ بأمر التصنيع القائم — بخبيره الحاليّ نفسِه، بلا حلقةٍ

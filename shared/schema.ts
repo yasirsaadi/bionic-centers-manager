@@ -409,10 +409,12 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
             AND ${t.agreedCost} < ${t.componentSaleOriginalPrice})
         OR (${t.componentSalePriceKind} = 'free' AND ${t.agreedCost} = 0)`),
   uniqueIndex("uq_pde_case_seq").on(t.caseId, t.sequenceNumber),
-  // **شراءٌ مفتوحٌ واحد لكل خيط** — حقيقةٌ في القاعدة لا قاعدةٌ في الشيفرة.
-  uniqueIndex("uq_pde_case_open")
-    .on(t.caseId)
-    .where(sql`status NOT IN ('delivered', 'cancelled')`),
+  // **شراءٌ مفتوحٌ واحد لكل خيط لم يعد قاعدة** (ترحيل ٠٧٣ — قرارُ المالك:
+  // أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد في آنٍ واحد). فُهرس
+  // `uq_pde_case_open` رُفع، والحمايةُ الباقية أضيق: أمرا عملٍ مفتوحان لنفس
+  // حلقة الجهاز بعينها فقط (`uq_pwo_one_open_build_per_episode` في الترحيل
+  // نفسه، على `prosthetic_work_orders` — لا تُعلَن هنا لأن فهارس ذلك
+  // الجدول كلَّها ترحيلٌ بحت أصلاً، كما كانت قبل هذه الجملة).
   index("ix_pde_patient").on(t.patientId),
   //  فهرسٌ ضيّقٌ للسؤال التجاري (ترحيل ٠٦٠): «كم ركبةً بعنا هذا الشهر»
   //  يصير قراءةَ فهرسٍ لا مسحَ جدول. وجزئيٌّ لأن أغلب الحلقات أطرافٌ كاملة.

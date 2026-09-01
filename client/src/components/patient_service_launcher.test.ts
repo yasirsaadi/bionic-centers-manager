@@ -19,8 +19,8 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  launcherOptions, resumableNoExamSale, FLOW_ENDPOINTS, GROUP_LABELS,
-  nextSubmissionToken, mintSubmissionToken,
+  launcherOptions, resumableNoExamSale, inManufacturingFullDeviceEpisodes,
+  FLOW_ENDPOINTS, GROUP_LABELS, nextSubmissionToken, mintSubmissionToken,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
 import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
@@ -279,6 +279,58 @@ function main() {
   //  ولا يُستأنَف على مسار الصيانة — تلك لا تفتح حلقةً أصلاً.
   check(/flow\.initialKind === "device_sale"/.test(launcherCode),
     "١٠.د **والاستئنافُ لمسار البيع وحده** — الصيانةُ لا حلقةَ لها");
+
+  // ══ ط. مُرشَّحو الإلحاق — كلُّهم، لا أوّلُهم (ترحيل ٠٧٣) ═════════════════
+  console.log("\n── مُرشَّحو الإلحاق كلُّهم، لا أوّلُهم ──");
+  const oneCandidate = [{ id: 5, serviceType: "prosthetic", status: "in_manufacturing",
+    requestedItem: "full_device", sequenceNumber: 1 }];
+  same("ط.أ مُرشَّحٌ واحد ⟶ قائمةٌ من عنصرٍ واحد",
+    inManufacturingFullDeviceEpisodes(oneCandidate, "prosthetic"),
+    [{ episodeId: 5, sequenceNumber: 1 }]);
+
+  //  **العمليات المتوازية صارت مشروعة** — قد يملك المريض أكثرَ من طرفٍ
+  //  كاملٍ قيد التصنيع معاً، فلم يعد `.find()` (أوّلَ مطابقة) كافياً.
+  const twoCandidates = [
+    { id: 9, serviceType: "prosthetic", status: "in_manufacturing", requestedItem: "full_device", sequenceNumber: 3 },
+    { id: 5, serviceType: "prosthetic", status: "in_manufacturing", requestedItem: "full_device", sequenceNumber: 1 },
+    { id: 12, serviceType: "prosthetic", status: "examined", requestedItem: "full_device", sequenceNumber: 4 },
+    { id: 7, serviceType: "prosthetic", status: "in_manufacturing", requestedItem: "socket", sequenceNumber: 2 },
+    { id: 20, serviceType: "medical_support", status: "in_manufacturing", requestedItem: "full_device", sequenceNumber: 1 },
+  ];
+  same("ط.ب **وكلُّ المُرشَّحين يُعادون معاً — لا أوّلُهم وحده**"
+    + " (`in_manufacturing` + `full_device` + القسم الصحيح فقط)، مرتَّبين بالتسلسل",
+    inManufacturingFullDeviceEpisodes(twoCandidates, "prosthetic"),
+    [{ episodeId: 5, sequenceNumber: 1 }, { episodeId: 9, sequenceNumber: 3 }]);
+  same("ط.ج وللمساند مُرشَّحُها هو وحده",
+    inManufacturingFullDeviceEpisodes(twoCandidates, "medical_support"),
+    [{ episodeId: 20, sequenceNumber: 1 }]);
+  same("ط.د وبلا مُرشَّحين ⟶ قائمةٌ فارغة، لا `null`",
+    [inManufacturingFullDeviceEpisodes([], "prosthetic"),
+      inManufacturingFullDeviceEpisodes(null, "prosthetic"),
+      inManufacturingFullDeviceEpisodes(undefined, "prosthetic")], [[], [], []]);
+  //  ورقمُ تسلسلٍ مجهول (بياناتٌ تاريخية نادرة) يُذيَّل لا يُسقِط المُرشَّح.
+  same("ط.هـ وتسلسلٌ مجهولٌ يُذيَّل لا يُستبعَد",
+    inManufacturingFullDeviceEpisodes(
+      [{ id: 9, serviceType: "prosthetic", status: "in_manufacturing", requestedItem: "full_device" },
+        { id: 5, serviceType: "prosthetic", status: "in_manufacturing", requestedItem: "full_device", sequenceNumber: 1 }],
+      "prosthetic"),
+    [{ episodeId: 5, sequenceNumber: 1 }, { episodeId: 9, sequenceNumber: null }]);
+
+  //  **والموزِّعُ يمرّر القائمةَ كاملةً — لا معرّفاً واحداً مُختاراً هنا.**
+  check(/inManufacturingFullDeviceEpisodes\(episodeData\?\.episodes, flow\.serviceType\)/.test(launcherCode),
+    "ط.و **والموزِّعُ يحسب كلَّ المُرشَّحين** — لا `.find()` أوّلَ واحد");
+  check(/attachCandidates=\{attachCandidates\}/.test(launcherCode),
+    "ويمرّرهم جميعاً إلى نافذة «بلا معاينة» بلا اختيار مسبَق");
+  check(!/inManufacturingFullDeviceEpisodeId/.test(launcherCode),
+    "ولا أثرَ للاسم المفرَد القديم — لا نصفَ ترحيل");
+
+  //  **والنافذةُ تُلزم اختياراً صريحاً حين يتعدّد المُرشَّحون** — قراءةٌ من
+  //  مصدرها هي، فلا يُختار أحدُهم صامتاً (شرط «بلا اختيارٍ عشوائي» صراحةً).
+  const dialogCode = code(read("NoExamOperationDialog.tsx"));
+  check(/attachCandidates\.length > 1/.test(dialogCode) && /attachUnpicked/.test(dialogCode),
+    "ط.ز **والنافذةُ تحجب الحفظَ حتى يختار الموظّفُ الجهازَ بعينه** حين يتعدّد المُرشَّحون");
+  check(/data-testid="no-exam-op-attach-target"/.test(dialogCode),
+    "بمُنتقٍ صريح يُعرَض عند التعدّد وحده");
 
   // ══ ٨. نافذةُ الزيارة: مراجعةٌ ومتابعةٌ فقط ═══════════════════════════
   console.log("\n── لا صيانةَ في نافذة الزيارة ──");
