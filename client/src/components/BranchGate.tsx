@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -54,25 +54,85 @@ interface BranchGateProps {
   children: React.ReactNode;
 }
 
+// ══ مخزنٌ مشتركٌ عابرٌ للمكوّنات (إصلاحٌ 2026-09-02) ═══════════════════════
+// كانت `useBranchSession` تقرأ `localStorage` مرّةً واحدة داخل كل مكوّنٍ
+// يستدعيها — نسخةٌ محليّة معزولة عن أيّ نسخةٍ أخرى مُركَّبة في الصفحة نفسها.
+// فتحديثُ الصلاحيات من الخادم (`App.tsx: Router()`، أدناه) كان سيكتب
+// `localStorage` وحده عبر أيّ نسخةٍ منفصلة كهذه، ولا يصل أيَّ مكوّنٍ آخر — لا بدّ
+// من خروجٍ وعودة، أو إعادة تحميلٍ كاملة (كما يفعل `BranchSwitcher` اليوم
+// لسببه الخاصّ)، ليرى المستخدمُ التغيير. وهذا بالضبط ما يخالف «صلاحيةٌ
+// تتغيّر بلا خروجٍ وعودة».
+//
+// فصار كائناً وحيداً على مستوى الوحدة (module-level)، يُكتَب عليه من نقطةٍ
+// واحدة (`setBranchSession`)، وتشترك فيه كلُّ نسخةٍ من `useBranchSession()`
+// عبر `useSyncExternalStore` — تحديثٌ واحد يصل الجميع فوراً، بلا Context
+// جديد يُغلَّف حوله شجرةُ المكوّنات، وبلا WebSocket ولا بنية جلساتٍ كبيرة.
+let cachedSession: BranchSession | null = readStoredSession();
+const sessionListeners = new Set<() => void>();
+
+function readStoredSession(): BranchSession | null {
+  const stored = localStorage.getItem("branch_session");
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored);
+  } catch {
+    localStorage.removeItem("branch_session");
+    return null;
+  }
+}
+
+function notifySessionListeners() {
+  sessionListeners.forEach((listener) => listener());
+}
+
+function subscribeToSession(listener: () => void) {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+
+function getSessionSnapshot(): BranchSession | null {
+  return cachedSession;
+}
+
+/**
+ * قراءةٌ مباشرة للجلسة الحالية خارج React — لِمَن يحتاج **يدمج** فوقها
+ * (مثل أثر المزامنة في `App.tsx: Router()`) لا مَن يعرضها فقط (ذاك
+ * يستعمل `useBranchSession()` كي يُعاد عرضه عند كل تغيير).
+ */
+export function getBranchSession(): BranchSession | null {
+  return cachedSession;
+}
+
+/** يكتب الجلسةَ (دخولٌ جديد، أو تحديثٌ حيّ) ويُخطر كل مستهلكٍ فوراً. */
+export function setBranchSession(session: BranchSession | null) {
+  cachedSession = session;
+  if (session) localStorage.setItem("branch_session", JSON.stringify(session));
+  else localStorage.removeItem("branch_session");
+  notifySessionListeners();
+}
+
+// ══ مَن يُحدِّث الصلاحياتِ فعلياً؟ `useAuth()` — لا نداءُ شبكةٍ ثانٍ هنا
+// (إصلاحٌ 2026-09-02) ══════════════════════════════════════════════════
+// `client/src/hooks/use-auth.ts` يجلب `GET /api/auth/user` عبر
+// react-query أصلاً — وهي البنية القائمة التي تُعيد الجلبَ عند كل تحميلٍ
+// جديد للصفحة (لا كاش يعبر إعادة تحميل) وعند عودة تركيز النافذة
+// (`refetchOnWindowFocus: "always"` أُضيفت لهذا الاستعلام بعينه هناك).
+// بناءُ آليّةِ جلبٍ ثانية هنا (بـ`fetch` خام + مستمع `focus` خاصّ) كان
+// سيُضاعف نداءَ الشبكة لكل تحديث بلا داعٍ — نسخةٌ ثانية من نفس الوظيفة.
+//
+// فبدل ذلك: `App.tsx: Router()` يستهلك `useAuth()` (كان يستهلكها أصلاً
+// لبوّابة `isLoading`) ويُزامن نتيجتها إلى هذا المخزن عبر `setBranchSession`
+// في أثرٍ واحد — بما فيه مسحُ الجلسة المحليّة حين تعود `user: null` بعد
+// ٤٠١ (تحصينُ المِعترِضة الحيّة في `server/routes.ts`: صفُّ المستخدم حُذف
+// أو عُطِّل). فمصدرُ الجلب واحدٌ، ومصدرُ الكتابة على هذا المخزن واحد
+// (`setBranchSession`)، ولا نسخةَ ثانية من أيٍّ منهما.
+
 export function useBranchSession(): BranchSession | null {
-  const [session, setSession] = useState<BranchSession | null>(null);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("branch_session");
-    if (stored) {
-      try {
-        setSession(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem("branch_session");
-      }
-    }
-  }, []);
-
-  return session;
+  return useSyncExternalStore(subscribeToSession, getSessionSnapshot);
 }
 
 export function clearBranchSession() {
-  localStorage.removeItem("branch_session");
+  setBranchSession(null);
   localStorage.removeItem("admin_verified");
   window.location.reload();
 }
@@ -80,8 +140,18 @@ export function clearBranchSession() {
 export function BranchGate({ children }: BranchGateProps) {
   const { setLanguage } = useLanguage();
   const { t, language, dir } = useTranslation();
-  const [session, setSession] = useState<BranchSession | null>(null);
-  const [isChecking, setIsChecking] = useState(true);
+  //  ══ بوّابةُ الدخول تقرأ المخزنَ المشترك نفسَه (إصلاحٌ 2026-09-02) ═════
+  //  كانت تحمل نسخةً محليّةً منفصلة (`useState` + قراءةُ `localStorage`
+  //  الخاصّة بها)، فحتى لو تحدّث المخزنُ المشترك (تسجيلُ دخولٍ يكتبه
+  //  `setBranchSession`، أو جلسةٌ أُنهيت من الخادم عبر أثر المزامنة في
+  //  `App.tsx: Router()` عند حساب مُعطَّل) كانت هذه البوّابةُ لا تعلم —
+  //  تبقى تعرض المحتوى القديم أو شاشةَ الدخول القديمة حتى إعادة تحميلٍ يدوية.
+  //  فصارت تستهلك `useBranchSession()` مباشرةً: نفسُ مصدر الحقيقة الذي
+  //  يقرؤه كلُّ مكوّنٍ آخر، فتتوافق البوّابةُ ومحتواها دائماً. **ولا حاجةَ
+  //  لـ`isChecking` بعد اليوم**: `useSyncExternalStore` يُرجع القيمةَ
+  //  المُهيَّأة من `localStorage` من أوّل عرضٍ (تهيئتُها تقع عند تحميل
+  //  الوحدة، قبل أوّل عرض) — لا فجوةً غير متزامنة تحتاج طيفَ تحميل.
+  const session = useBranchSession();
   const [selectedBranch, setSelectedBranch] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -89,18 +159,6 @@ export function BranchGate({ children }: BranchGateProps) {
   const [selectedShift, setSelectedShift] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("branch_session");
-    if (stored) {
-      try {
-        setSession(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem("branch_session");
-      }
-    }
-    setIsChecking(false);
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,10 +194,9 @@ export function BranchGate({ children }: BranchGateProps) {
           language: effectiveLanguage,
           accessibleBranches: Array.isArray(data.accessibleBranches) ? data.accessibleBranches : undefined,
         };
-        localStorage.setItem("branch_session", JSON.stringify(branchSession));
+        setBranchSession(branchSession);
         setLanguage(effectiveLanguage as "ar" | "en");
-        setSession(branchSession);
-        
+
         if (data.isAdmin) {
           localStorage.setItem("admin_verified", "true");
         }
@@ -153,14 +210,6 @@ export function BranchGate({ children }: BranchGateProps) {
       setIsSubmitting(false);
     }
   };
-
-  if (isChecking) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
-      </div>
-    );
-  }
 
   if (session) {
     return <>{children}</>;

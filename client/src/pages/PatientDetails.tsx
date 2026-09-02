@@ -1110,6 +1110,15 @@ export default function PatientDetails() {
             );
           })()}
 
+          {/*  ══ `canViewPayments` — الملخّصُ الماليّ كاملاً محجوبٌ عمّن لا
+              يملك عرضَ الدفعات (إصلاحٌ 2026-09-02) ═══════════════════════
+              `patient.payments` غائبةٌ من الخادم لهذا المستخدم أصلاً
+              (`GET /api/patients/:id`)، فـ`totalPaid`/`remaining`/`progress`
+              أعلاه تُحسَب من مصفوفةٍ فارغة — «مدفوعٌ صفر، متبقٍّ كامل
+              الكلفة» رقمٌ ماليٌّ كاذب لا حالةَ صلاحية. تبقى «التكلفة الكلية»
+              وحدها — ليست دفعةً — لكن هذه البطاقةُ تمزجها بالمدفوع والمتبقي
+              في تصميمٍ واحد متماسك، فتُحجَب معاً بدل تفكيكها. */}
+          {permissions.canViewPayments && (
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2 text-emerald-600 mb-6">
               <Banknote className="w-5 h-5" />
@@ -1164,6 +1173,7 @@ export default function PatientDetails() {
               )}
             </div>
           </Card>
+          )}
 
           {/* قنوات تواصل المريض — الصلاحية يفرضها الخادم، والبطاقة تصمت
               بلا أزرار حين يردّ 403. */}
@@ -1180,9 +1190,11 @@ export default function PatientDetails() {
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.visitHistory}
               </TabsTrigger>
+              {permissions.canViewPayments && (
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.paymentHistory}
               </TabsTrigger>
+              )}
               <TabsTrigger value="documents" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.documents}
               </TabsTrigger>
@@ -1455,6 +1467,16 @@ export default function PatientDetails() {
             </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
+              {/*  `canViewPayments` — نفسُ حجب بطاقة «الملخّص الماليّ» أعلاه
+                  (إصلاحٌ 2026-09-02). ولا مجرّدَ إخفاء تبويبٍ من الشريط:
+                  التبويبُ نفسُه محروسٌ هنا أيضاً، فلا صفوفَ دفعاتٍ خامٍ
+                  تصل مَن لا يملك عرضَها ولو صار `tab` القيمة «payments»
+                  بطريقةٍ لا تمرّ بالنقر على تبويبٍ لم يعد ظاهراً. */}
+              {!permissions.canViewPayments ? (
+                <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-muted-foreground">
+                  ليس لديك صلاحية عرض الدفعات
+                </div>
+              ) : (
               <div className="overflow-x-auto rounded-md border border-slate-300">
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
@@ -1538,6 +1560,7 @@ export default function PatientDetails() {
                   </tbody>
                 </table>
               </div>
+              )}
             </TabsContent>
 
             <TabsContent value="documents" className="space-y-6">

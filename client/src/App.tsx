@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
-import { BranchGate } from "@/components/BranchGate";
+import { BranchGate, getBranchSession, setBranchSession } from "@/components/BranchGate";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { AiChatDrawer } from "@/components/AiChatDrawer";
 import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
@@ -110,6 +110,62 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Router() {
   const { user, isLoading } = useAuth();
+
+  //  ══ ربطُ `useAuth()` بمخزن `useBranchSession` المشترك — «بلا خروجٍ
+  //  وعودة» تصل الشاشاتِ فعلاً (إصلاحٌ 2026-09-02) ══════════════════════
+  //  `useAuth()` تجلب `GET /api/auth/user` عبر react-query (البنيةُ
+  //  القائمة التي كانت تُستهلَك هنا أصلاً لبوّابة `isLoading` وحدها) — وهي
+  //  تُعيد الجلبَ عند كل تحميلٍ جديد للصفحة (لا كاشَ يعبر إعادة تحميل)
+  //  وعند عودة تركيز النافذة (`refetchOnWindowFocus: "always"`، أُضيفت
+  //  لهذا الاستعلام بعينه في `hooks/use-auth.ts`). لكنّ نتيجتها لم تكن
+  //  تصل الصلاحياتِ الفعليةَ التي تقرؤها الشاشاتُ
+  //  (`useBranchSession`/`usePermissions`، `components/BranchGate.tsx`) —
+  //  فهذا الأثرُ هو الجسرُ الوحيد بينهما: كلَّ مرّةٍ يتغيّر فيها `user`،
+  //  تُكتب صلاحياتُه ودورُه وحالتُه الإداريّة على المخزن المشترك، فيراها
+  //  كلُّ مستهلكٍ فوراً بإعادة عرضٍ واحدة — بلا خروجٍ وعودة، وبلا نداءِ
+  //  شبكةٍ ثانٍ (`BranchGate.tsx` لا تجلب شيئاً بنفسها بعد اليوم).
+  //
+  //  **و`user === null` بعد جلسةٍ كانت قائمة تعني جلسةً ميتة**: صفُّ
+  //  المستخدم حُذف أو عُطِّل (تحصينُ المِعترِضة الحيّة في `server/routes.ts`)
+  //  — فتُمسَح الجلسةُ المحليّة فوراً، وتعرض `BranchGate` شاشةَ الدخول
+  //  مباشرةً بلا انتظار طلبٍ آخر يرتطم بالمِعترِضة. ونوعُ `user` هنا
+  //  (`@shared/models/auth`) لقطةٌ من مخطّط Replit Auth القديم لا يطابق
+  //  الشكلَ الفعليّ الذي تُرجعه هذه النقطةُ اليوم (`role`/`branchId`/
+  //  `isAdmin`/`permissions`…) — تناقضٌ سابقٌ لهذا الإصلاح في `use-auth.ts`
+  //  نفسِه، فيُقرأ هنا بمرونةٍ (`as any`) بدل توسيع ذلك النوع في مهمّةٍ
+  //  مركَّزة على الصلاحيات لا على تصحيح الأنواع.
+  useEffect(() => {
+    if (isLoading) return;
+    const raw = user as any;
+    //  **`null` صريحةٌ لا `undefined`**: `fetchUser` (`use-auth.ts`) تُعيد
+    //  `null` **فقط** حين يردّ `/api/auth/user` ٤٠١ حقيقياً — أيّ فشلٍ آخر
+    //  (شبكةٌ، ٥٠٠، مهلة) يرمي فيبقى `user` بقيمته السابقة أو `undefined`
+    //  دون أن يُصبح `null` أبداً. فالمسحُ هنا مشروطٌ بـ`=== null` تحديداً:
+    //  عطلٌ عابر في هذا النداء يجب ألّا يُخرج مستخدماً لديه جلسةٌ محليّة
+    //  صالحة فعلاً — ذاك تشاؤمٌ لا يوازيه خطر (الخادمُ يبقى الحارسَ الحقيقيّ
+    //  لأيّ طلبٍ فعليّ لاحق، عبر مِعترِضة `server/routes.ts`).
+    if (raw === null) {
+      setBranchSession(null);
+      return;
+    }
+    if (!raw) return; // `undefined` — لم يُحسَم بعد أو فشل النداءُ عرَضاً؛ لا تغيير.
+    //  **دمجٌ لا كتابةٌ فوق**: `/api/auth/user` لا تُرجع `branchName` ولا
+    //  `accessibleBranches` (ليستا من مسؤوليتها) — فتُستبقيان من الجلسة
+    //  المحفوظة (تسجيلُ الدخول أو تبديلُ الفرع)، وإلّا محا كلَّ تركيزٍ على
+    //  النافذة اسمَ الفرع المعروض في `Sidebar.tsx` وغيره.
+    const current = getBranchSession();
+    setBranchSession({
+      ...current,
+      branchId: raw.branchId,
+      isAdmin: Boolean(raw.isAdmin),
+      userId: raw.id ?? current?.userId,
+      role: raw.role ?? current?.role,
+      displayName: raw.displayName ?? current?.displayName,
+      permissions: raw.permissions ?? current?.permissions,
+      shift: raw.shift ?? current?.shift,
+      language: raw.language ?? current?.language,
+    } as any);
+  }, [user, isLoading]);
 
   if (isLoading) {
     return (

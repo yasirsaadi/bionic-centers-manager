@@ -244,7 +244,13 @@ export default function PatientsList() {
     medicalCondition: string; isAmputee: boolean | null; isPhysiotherapy: boolean | null;
     isMedicalSupport: boolean | null; amputationSite: string | null; supportType: string | null;
     diseaseType: string | null; patientClassification: string | null; totalCost: number | null;
-    createdAt: string | null; totalPaid: number;
+    createdAt: string | null;
+    /**
+     * غائبٌ (لا صفر) حين لا يملك المستخدمُ `canViewPayments` — الخادم
+     * يحذف الحقلَ لا يُصفّره (إصلاحٌ 2026-09-02). المستهلكون هنا يتحقّقون
+     * من `permissions.canViewPayments` قبل قراءته، لا من قيمته.
+     */
+    totalPaid?: number;
     /** أوامر البناء الأولي الفعّالة — واحدٌ لكل خدمة على الأكثر. */
     activeDeviceAssignments?: ActiveAssignment[];
   }
@@ -373,6 +379,12 @@ export default function PatientsList() {
       return;
     }
 
+    //  ══ `canViewPayments` — لا مبلغَ مدفوعٍ ولا متبقٍّ في التصدير لمن لا
+    //  يملك عرضَ الدفعات (إصلاحٌ 2026-09-02) ════════════════════════════
+    //  الخادمُ يحذف `totalPaid` من صفّ السجلّ أصلاً لهذا المستخدم — فحسابُ
+    //  `registryExportMoney` (`patients_registry_export.ts`) عليه كان
+    //  سيقرأ الغيابَ صفراً ويُخرج «متبقٍّ = التكلفة الكلية»، رقماً مالياً
+    //  كاذباً لا حقيقةَ صلاحية. فيُستبعَد العمودان كلياً بدل عرض صفرٍ زائف.
     const excelData = dataToExport.map((patient, index) => {
       const money = registryExportMoney(patient);
       return {
@@ -385,8 +397,10 @@ export default function PatientsList() {
         "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
         "التكلفة الكلية": money.totalCost,
-        "المبلغ المدفوع": money.totalPaid,
-        "المبلغ المتبقي": money.remaining,
+        ...(permissions.canViewPayments ? {
+          "المبلغ المدفوع": money.totalPaid,
+          "المبلغ المتبقي": money.remaining,
+        } : {}),
         "تاريخ التسجيل": patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : "",
       };
     });
@@ -443,14 +457,19 @@ export default function PatientsList() {
               <th>التصنيف</th>
               <th>الفرع</th>
               <th>التكلفة</th>
-              <th>المدفوع</th>
-              <th>المتبقي</th>
+              ${permissions.canViewPayments ? "<th>المدفوع</th><th>المتبقي</th>" : ""}
               <th>التاريخ</th>
             </tr>
           </thead>
           <tbody>
             ${dataToExport.map((patient, index) => {
               const money = registryExportMoney(patient);
+              //  ══ `canViewPayments` — نفسُ استبعاد عمودَي المدفوع/المتبقي
+              //  في تصدير Excel أعلاه، بلا صفرٍ زائف (إصلاحٌ 2026-09-02).
+              const paymentCells = permissions.canViewPayments
+                ? `<td>${money.totalPaid.toLocaleString()}</td>
+                <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>`
+                : "";
               return `
               <tr>
                 <td>${index + 1}</td>
@@ -462,8 +481,7 @@ export default function PatientsList() {
                 <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
                 <td>${money.totalCost.toLocaleString()}</td>
-                <td>${money.totalPaid.toLocaleString()}</td>
-                <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>
+                ${paymentCells}
                 <td>${patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : ""}</td>
               </tr>`;
             }).join("")}

@@ -272,9 +272,9 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   await setupAuth(app);
-  registerAuthRoutes(app);
 
-  // ══ تحديثُ الصلاحيات حيّاً — بلا خروجٍ وعودة (إصلاحٌ 2026-09-01) ═══════
+  // ══ تحديثُ الصلاحيات حيّاً — بلا خروجٍ وعودة (إصلاحٌ 2026-09-01، وحُصِّن
+  // 2026-09-02 — راجع القسم أدناه) ═══════════════════════════════════════
   // جلسةُ الدخول تحمل لقطةَ الصلاحيات لحظةَ الدخول فقط. فسحبُ صلاحيةٍ من
   // مستخدمٍ **الآن** من شاشة المستخدمين كان يبقى بلا أثر حتى يخرج ويعود —
   // والمطلوب أن يسري فوراً على كل طلبٍ لاحق لمستخدمٍ لم يخرج من جلسته.
@@ -285,28 +285,52 @@ export async function registerRoutes(
   // نقطةٍ تقرأ `branchSession.permissions` بعدها — حاضرةً أو مقبلة — بلا
   // حاجةٍ لتعديل كلّ نقطةٍ على حدة.
   //
+  // **مركَّبةٌ قبل `registerAuthRoutes` عمداً**: فتشمل `/api/auth/user`
+  // نفسَها — وهي نقطةُ التحديث التي تناديها الواجهةُ
+  // (`refreshBranchSessionFromServer` في `client/src/components/
+  // BranchGate.tsx`) عند إعادة تحميل الصفحة وعند عودة التركيز إليها، فلا
+  // تبقى استثناءً بائتاً يرجع الصلاحياتِ القديمة.
+  //
   // **ولا تُمَسّ الجلسةُ الإداريّة**: المسؤولُ العام محميٌّ بعَلَم `isAdmin`
   // نفسِه في كل نقاط الفحص — لا حاجةَ لإعادة قراءة، وحسابُ المسؤول القديم
   // (تسجيلٌ عبر كود المسؤول من `system_settings`) لا يحمل `userId` أصلاً
   // فيمرّ بلا لمس، تماماً كقاعدة «المسؤولُ العام يبقى بكامل صلاحياته».
   //
-  // **وفشلُ القاعدة لا يُسقط الطلب**: يُبتلَع، وتبقى صلاحياتُ الجلسة القديمة
-  // سارية لتلك الطلبة وحدها — أهونُ من رفض كل شيء لعطلٍ عابر (نفسُ فلسفة
-  // PR #71: خطأٌ في طلبٍ واحد لا يوقف الخدمة).
+  // ══ ثلاثُ نتائج لا نتيجتان (تحصينٌ 2026-09-02 — بنفس مبدأ القراءة الحيّة
+  // لـ`canWriteMedicalExam` في `medical/store.ts`: `!user || user.isActive
+  // === false` ⟶ يُقفَل لا يُترَك على حاله) ══════════════════════════════
+  // (١) **الصفُّ مفقود** (حُذف المستخدمُ من القاعدة) ⟶ ٤٠١ + إنهاءُ الجلسة
+  //     كاملةً. لا معنى لصلاحياتٍ قديمة لمستخدمٍ لم يعد موجوداً، ولا معنى
+  //     لإبقاء نصفِ جلسة تُعيد ٤٠١ صامتاً على كل طلبٍ لاحق.
+  // (٢) **`isActive === false`** (عُطِّل الحساب) ⟶ ٤٠١ + إنهاءُ الجلسة،
+  //     بالسبب نفسِه تماماً.
+  // (٣) **عطلٌ حقيقيٌّ في القاعدة** (شبكةٌ أو Postgres نفسُه) ⟶ ٥٠٣ —
+  //     و**بلا** إنهاء جلسة: هذا عطلٌ عابر لا حكمٌ على الحساب، والعميلُ
+  //     يعيد المحاولة بلا إعادة دخول. **وهذا الفرقُ الجوهريّ عن السلوك
+  //     القديم**: كانت القاعدةُ تُبتلَع وتُفوَّض الطلبُ بمنحةِ الجلسة
+  //     القديمة المخبَّأة — وهذا بالضبط «الفشلُ المفتوح» الذي يمنعه هذا
+  //     التحصين. تعذّرُ التحقّق الحيّ ليس إذناً.
   app.use(async (req, res, next) => {
     if (!req.path.startsWith("/api")) return next();
     const branchSession = (req.session as any)?.branchSession;
     if (!branchSession || branchSession.isAdmin || !branchSession.userId) return next();
+    let fresh: SystemUser | undefined;
     try {
-      const fresh = await storage.getSystemUser(branchSession.userId);
-      if (fresh) {
-        branchSession.permissions = buildStoredPermissions(fresh);
-      }
+      fresh = await storage.getSystemUser(branchSession.userId);
     } catch (err) {
-      console.error("[permissions] تعذّر تحديث الصلاحيات الحيّة — استُبقيت صلاحياتُ الجلسة القديمة لهذا الطلب:", err);
+      console.error("[permissions] تعذّر التحقّقُ من الصلاحيات حيّاً — عطلٌ في القاعدة، فالطلبُ يُردّ لا يُفوَّض بمنحةٍ قديمة:", err);
+      return res.status(503).json({ message: "تعذّر التحقّق من الصلاحيات — أعد المحاولة" });
     }
+    if (!fresh || fresh.isActive === false) {
+      return req.session.destroy(() => {
+        res.status(401).json({ message: "انتهت صلاحية الجلسة — الحساب لم يعد نشطاً، سجّل الدخول من جديد" });
+      });
+    }
+    branchSession.permissions = buildStoredPermissions(fresh);
     next();
   });
+
+  registerAuthRoutes(app);
 
   app.use('/uploads', (req, res, next) => {
     if (req.path.includes('..')) {
@@ -1518,6 +1542,13 @@ export async function registerRoutes(
   // Patients
   app.get(api.patients.list.path, isAuthenticated, async (req, res) => {
     const ctx = getUserContext(req);
+    const branchSession = (req.session as any)?.branchSession;
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const canView = ctx.isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
+    if (!canView) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+
     const branchId = ctx.role === 'admin' ? undefined : ctx.branchId;
     const patients = await storage.getPatients(branchId);
     const patientIds = patients.map(p => p.id);
@@ -1548,10 +1579,17 @@ export async function registerRoutes(
       else paymentsByPatient.set(p.patientId, [p]);
     }
 
+    //  ══ `canViewPayments` — دفعاتٌ لا تصل لمن لا يملك عرضَها (إصلاحٌ
+    //  2026-09-02) ══════════════════════════════════════════════════════
+    //  حذفُ الحقل لا تصفيره: عمودٌ غائبٌ عن الردّ لا صفرٌ يُوهم بحقيقةٍ
+    //  مالية — مَن يستهلك `.payments` في الواجهة يقرؤها `|| []` أو `?? []`
+    //  أصلاً، فلا شيء ينكسر، ولا رقمَ مالياً كاذباً يظهر.
+    const canViewPayments = ctx.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
+
     const patientsWithRelations = patients.map(patient => ({
       ...patient,
       visits: visitsByPatient.get(patient.id) || [],
-      payments: paymentsByPatient.get(patient.id) || [],
+      ...(canViewPayments ? { payments: paymentsByPatient.get(patient.id) || [] } : {}),
       caseTypes: caseTypesByPatient.get(patient.id) || [],
       //  يُحذف الحقل حين لا أسماء بديلة — والغالبية كذلك، فلا يثقل الردّ.
       ...(aliasByPatient.has(patient.id)
@@ -1569,6 +1607,14 @@ export async function registerRoutes(
   app.get("/api/patients/registry", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = Boolean(branchSession?.isAdmin);
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const canView = isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
+    if (!canView) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+    //  ══ `canViewPayments` — «المبلغ المدفوع» لا يصل لمن لا يملك عرضَه ══
+    //  يُحذف الحقلُ من كل صفّ لا يُصفَّر — راجع تعليق `totalPaid` أدناه.
+    const canViewPayments = isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
     const page = Math.max(1, parseInt(String(req.query.page)) || 1);
     const pageSize = Math.min(10000, Math.max(1, parseInt(String(req.query.pageSize)) || 25));
@@ -1725,7 +1771,12 @@ export async function registerRoutes(
       counts: { branch: Number(branchCount), date: Number((dateCountRow as any)[0]?.count ?? 0) },
       rows: rows.map((r) => ({
         ...r,
-        totalPaid: paidByPatient.get(r.id) ?? 0,
+        //  ══ حذفُ الحقل لا تصفيره (إصلاحٌ 2026-09-02) ═══════════════════
+        //  عمودٌ غائبٌ لمن لا يملك `canViewPayments` — لا `0` قد يُقرأ
+        //  «هذا المريض لم يدفع شيئاً» وهي كذبةٌ ماليةٌ لا تعبيرٌ عن غياب
+        //  الصلاحية. `patients_registry_export.ts` (العميل) يبقى كما هو —
+        //  حاسبةٌ نقيّة تُستدعى من الشاشة فقط حين `canViewPayments` صحيح.
+        ...(canViewPayments ? { totalPaid: paidByPatient.get(r.id) ?? 0 } : {}),
         activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
       })),
     });
@@ -1808,14 +1859,21 @@ export async function registerRoutes(
     const id = Number(req.params.id);
     const patient = await storage.getPatient(id);
     const ctx = getUserContext(req);
-    
+
     // Allow access if: admin, user has no branch assigned yet, or user's branch matches patient's branch
     const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
-    
+
     if (!patient || !canAccess) {
       return res.status(404).json({ message: "Patient not found or unauthorized" });
     }
-    
+
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const branchSessionForView = (req.session as any)?.branchSession;
+    const canViewThisPatient = ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPatients);
+    if (!canViewThisPatient) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+
     const [payments, documents, visits] = await Promise.all([
       storage.getPaymentsByPatientId(id),
       storage.getDocumentsByPatientId(id),
@@ -1854,7 +1912,21 @@ export async function registerRoutes(
         : null,
     }));
 
-    res.json({ ...patient, payments: paymentsWithDisplay, documents, visits });
+    //  ══ `canViewPayments` — دفعاتُ الملفّ لا تصل لمن لا يملك عرضَها
+    //  (إصلاحٌ 2026-09-02) ═══════════════════════════════════════════════
+    //  حذفُ الحقل لا تصفيره: عمودٌ غائبٌ لا صفرٌ يُقرأ «لم يدفع شيئاً» أو
+    //  «متبقّيه كامل الكلفة» — كذبةٌ ماليةٌ لا حالةَ صلاحية. الواجهةُ
+    //  (`PatientDetails.tsx`) تُخفي بطاقةَ «الملخّص الماليّ» وتبويبَ
+    //  «الدفعات» كاملَين حين يغيب هذا الحقل، بدل حساب متبقٍّ من صفرٍ مزيّف.
+    const canViewPaymentsForThisPatient =
+      ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPayments);
+
+    res.json({
+      ...patient,
+      ...(canViewPaymentsForThisPatient ? { payments: paymentsWithDisplay } : {}),
+      documents,
+      visits,
+    });
   });
 
   // Independent cases for a patient (Phase 1 of the per-case architecture).
@@ -2015,6 +2087,15 @@ export async function registerRoutes(
       }
 
       const branchSession = (req.session as any).branchSession;
+
+      //  ══ `canAddPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+      //  (إصلاحٌ 2026-09-02): لا شرطَ هنا غير المصادقة. صار العَلَمُ (يُقرأ
+      //  حيّاً على كل طلب) شرطاً لازماً، بلا استثناءٍ من الدور — نفسُ
+      //  العَلَم الذي يحرس `new-service`/`price-physio`/`add-case-type`.
+      const canCreatePatient = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
+      if (!canCreatePatient) {
+        return res.status(403).json({ message: "ليس لديك صلاحية إضافة مرضى" });
+      }
 
       // Determine branchId. Non-admins are ALWAYS pinned to their own branch —
       // they cannot create a patient (or a manufacturing work order) for
@@ -4051,6 +4132,15 @@ export async function registerRoutes(
     if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
       return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
     }
+    //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ 2026-09-02)
+    //  ═════════════════════════════════════════════════════════════════
+    //  عنصرُ «التقارير المالية» في الشريط الجانبيّ يُخفى بهذا العَلَم
+    //  (`Sidebar.tsx`)، لكنّ النقطةَ نفسَها كانت تكتفي بفحص الفرع — فطلبٌ
+    //  مباشرٌ من مستخدمٍ لا يملك العَلَم كان يمرّ. صار العَلَمُ شرطاً هنا
+    //  أيضاً، بلا تغييرٍ في حراسة الفرع القائمة.
+    if (!branchSession?.isAdmin && !Boolean(branchSession?.permissions?.canViewReports)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية عرض التقارير" });
+    }
     // Window the report: only the last N days of rows are loaded and shipped
     // (default 45; days=0 = full history). Whole-history totals still come
     // from SQL aggregates below, so the header numbers stay complete.
@@ -4493,6 +4583,14 @@ export async function registerRoutes(
       const branchSession = (req.session as any).branchSession;
       const isAdmin = ctx.role === 'admin' || branchSession?.isAdmin;
       const userBranchId = ctx.branchId ?? branchSession?.branchId;
+
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «التقرير اليومي للمرضى» في الشريط الجانبيّ يُخفى بهذا
+      //  العَلَم نفسِه (`Sidebar.tsx`)، والنقطةُ لم تكن تتحقّق منه إطلاقاً.
+      if (!isAdmin && !Boolean(branchSession?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض التقارير" });
+      }
 
       let effectiveBranchId: number | null = null;
       if (isAdmin) {
@@ -5220,6 +5318,15 @@ export async function registerRoutes(
   // Visits by Treatment Type
   app.get("/api/statistics/visits-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «الإحصائيات» في الشريط الجانبيّ يُخفى بهذا العَلَم نفسِه
+      //  (`Sidebar.tsx`)، والنقطةُ (حصريّةٌ لصفحة الإحصائيات — لا تشاركها
+      //  المحاسبة) لم تكن تتحقّق منه إطلاقاً.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      if (!branchSessionForStats?.isAdmin && !Boolean(branchSessionForStats?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض الإحصائيات" });
+      }
       const branchId = enforceBranchAccess(req);
       const allVisits = await storage.getAllVisits(branchId);
 
@@ -5252,6 +5359,24 @@ export async function registerRoutes(
   // Revenue by Treatment Type
   app.get("/api/statistics/revenue-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` **أو** `canManageAccounting` (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  هذه النقطةُ الوحيدةُ من ثلاثيّ الإحصاءات تُستهلَك من صفحتين
+      //  مختلفتين: «الإحصائيات» (`Statistics.tsx`، عَلَمُها `canViewReports`)
+      //  **و**«المحاسبة» (`AccountingRevenueByTreatment` في
+      //  `Accounting.tsx`، عَلَمُها الأصرم `canManageAccounting`). فحصٌ
+      //  بعَلَمٍ واحد كان سيحجب أحدَ الجمهورين المشروعين عن نقطةٍ يحتاجها
+      //  فعلاً — لا «إضعافَ» حراسةٍ محاسبية أصرم (لا وجودَ لها هنا أصلاً؛
+      //  كانت هذه النقطةُ بلا أيّ فحصِ عَلَمٍ قبل اليوم)، بل توسيعٌ يشمل
+      //  الجمهورين معاً بلا حرمان أيٍّ منهما.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      const canReadRevenueByTreatment =
+        branchSessionForStats?.isAdmin
+        || Boolean(branchSessionForStats?.permissions?.canViewReports)
+        || Boolean(branchSessionForStats?.permissions?.canManageAccounting);
+      if (!canReadRevenueByTreatment) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض هذه البيانات" });
+      }
       const branchId = enforceBranchAccess(req);
       const allPayments = await storage.getAllPayments(branchId);
 
@@ -5352,6 +5477,15 @@ export async function registerRoutes(
   // Monthly new patients report (per branch)
   app.get("/api/statistics/monthly-new-patients", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «الإحصائيات» في الشريط الجانبيّ يُخفى بهذا العَلَم نفسِه
+      //  (`Sidebar.tsx`)، والنقطةُ (حصريّةٌ لصفحة الإحصائيات) لم تكن تتحقّق
+      //  منه إطلاقاً.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      if (!branchSessionForStats?.isAdmin && !Boolean(branchSessionForStats?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض الإحصائيات" });
+      }
       const filterBranchId = enforceBranchAccess(req) ?? null;
 
       const result = filterBranchId
