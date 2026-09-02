@@ -11,7 +11,7 @@ import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
-import type { Patient, Payment } from "@shared/schema";
+import type { Patient, Payment, SystemUser } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -201,11 +201,172 @@ async function patientOwnsCase(
   return Boolean((r.rows ?? [])[0]?.owns);
 }
 
+/**
+ * الصلاحياتُ المخزَّنة سلطةٌ حيّة — لا تُشتقّ من الدور عند كل قراءة (إصلاحٌ
+ * 2026-09-01).
+ *
+ * ══ ما كان يقع ══════════════════════════════════════════════════════════
+ * كان دورُ «مدير الفرع» يمنح كلَّ هذه الأعلام تلقائياً (`grantAll`) بصرف
+ * النظر عمّا هو مخزَّنٌ فعلاً على صفّه — فسحبُ صلاحيةٍ من مدير فرعٍ بعينه من
+ * شاشة المستخدمين كان بلا أثر: يستمرّ يملكها من الدور وحده. نفسُ الشيء
+ * لـ«الاستقبال» مع `canManageSurveys`.
+ *
+ * فصار كلُّ عَلَمٍ من هذه المجموعة **الحقيقةَ المخزَّنة نفسَها** — لا الدورَ.
+ * والدالّةُ تُستدعى من نقطتين: عند تسجيل الدخول، وعند كل طلب API لاحق
+ * (أدناه، `refreshStoredPermissions`) — نقطةُ خنقٍ واحدة تكفي كلَّ نقطةٍ
+ * تقرأ `branchSession.permissions` بعدها، حاضرةً أو مقبلة، فلا تنحرف
+ * نسختان يوماً.
+ *
+ * ══ ما بقي خارج هذا التصحيح عمداً ══════════════════════════════════════
+ * `canManageSettings` · `canManageUsers` · `canManageTreatmentPlans` ·
+ * `canManageSurveys` — ليست ضمن «تعديل/حذف المرضى، الدفعات، الزيارات،
+ * التقارير، المحاسبة، المصروفات، إجراءات الجلسات» التي طلب المالك محاذاتها
+ * صراحةً؛ وأولاها («الإعدادات») تبقى محميّةً بـ`isAdmin` في كل نقطةٍ
+ * تُستهلَك فيها فعلياً (لا نقطةَ تقرأ هذا العَلَم للتفويض إطلاقاً — تحقّقتُ
+ * منها)، فلا أثرَ أمنيّاً لإبقائها كما هي. وقدراتُ الطبيب/الخبير/اعتماد
+ * الخصم (`canWriteMedicalExam`/`canWorkAsExpert`/`canApproveDiscount`)
+ * منطقُها القائم منذ ترحيلاتٍ سابقة (٠٢٨ وما بعدها) — قدرةٌ مهنية يحملها
+ * صاحبُ الدور ضمناً كما يحمل المسؤولُ سلطته، لا منحاً إدارياً عاماً؛ لم
+ * يُطلَب تغييرُها وتغييرُها هنا مخاطرةٌ لا داعي لها.
+ *
+ * الدورُ ما زال يقرّر **الافتراضات عند إنشاء المستخدم فقط** (قالب
+ * `AdminSettings.tsx`) — لا عند كل قراءةٍ لاحقة، تماماً كما طلب المالك.
+ */
+function buildStoredPermissions(systemUser: SystemUser) {
+  const grantAll = systemUser.role === "branch_manager";
+  const isReception = systemUser.role === "reception";
+  const isAdminRow = systemUser.role === "admin";
+  return {
+    // ══ محاذاةٌ بالمخزَّن وحده — لا منحَ من الدور بعد اليوم ══════════════
+    canViewPatients: Boolean(systemUser.canViewPatients),
+    canAddPatients: Boolean(systemUser.canAddPatients),
+    canEditPatients: Boolean(systemUser.canEditPatients),
+    canDeletePatients: Boolean(systemUser.canDeletePatients),
+    canViewPayments: Boolean(systemUser.canViewPayments),
+    canAddPayments: Boolean(systemUser.canAddPayments),
+    canEditPayments: Boolean(systemUser.canEditPayments),
+    canDeletePayments: Boolean(systemUser.canDeletePayments),
+    canViewReports: Boolean(systemUser.canViewReports),
+    canManageAccounting: Boolean(systemUser.canManageAccounting),
+    // الحسابُ الكامل يملكها ضمناً؛ وإلّا فالعَلَمُ الصريح وحده — لا الدور.
+    canAddExpenses: Boolean(systemUser.canManageAccounting) || Boolean(systemUser.canAddExpenses),
+    canEditVisits: Boolean(systemUser.canEditVisits),
+    // كانت مطلقةً من قبل هذا الإصلاح (PR #73) — بلا تغيير هنا.
+    canDeleteVisits: Boolean(systemUser.canDeleteVisits),
+    canEnterSessions: isAdminRow || Boolean(systemUser.canEnterSessions),
+    canManageSessionTargets: isAdminRow || Boolean(systemUser.canManageSessionTargets),
+    canViewSessionsReport: isAdminRow || Boolean(systemUser.canViewSessionsReport),
+    // ══ خارجَ هذا التصحيح — بمنطقها القائم بحرفه ══════════════════════════
+    canManageSettings: grantAll || Boolean(systemUser.canManageSettings),
+    canManageUsers: grantAll || Boolean(systemUser.canManageUsers),
+    canManageTreatmentPlans: grantAll || Boolean(systemUser.canManageTreatmentPlans),
+    canManageSurveys: grantAll || isReception || Boolean(systemUser.canManageSurveys),
+    canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
+    canWriteMedicalExam: systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
+    canApproveDiscount: Boolean(systemUser.canApproveDiscount),
+  };
+}
+
+/**
+ * لقطةٌ **لا ماليّة** من دفعات مريض — لمن لا يملك `canViewPayments` على
+ * `GET /api/patients/:id` (إصلاحٌ 2026-09-03).
+ *
+ * ══ لماذا لا يكفي حذفُ `payments` وحده ══════════════════════════════════
+ * حذفُ المصفوفة الخام (إصلاحٌ 2026-09-02) صحيحٌ للمال — لكنه كسر أيضاً
+ * عدّادَ جلسات العلاج الطبيعي القديم في `PatientDetails.tsx` (بادجُ الرأس
+ * و`resolvePurchasedSessions`): للمرضى القدامى بلا `physioPlan` مخزَّن،
+ * الدفعاتُ هي **الذاكرة الوحيدة** لعدد الجلسات المشتراة (راجع قسم «خطة
+ * الجلسات المشتراة» في CLAUDE.md). فحذفُ الحقل كاملاً كان يُظهر «صفر
+ * جلسات» لمريضٍ اشترى فعلاً — كذبةٌ سريريّة لا ماليّة، بقدر ما كانت
+ * الأصفارُ الماليةُ كذبةً قبل هذا الإصلاح.
+ *
+ * ══ والحلّ: اشتقاقٌ لا استعادة ═══════════════════════════════════════════
+ * `{treatmentType, sessionCount}` فقط — **لا** معرّفَ دفعةٍ، **لا** مبلغاً،
+ * **لا** تاريخاً، **لا** ملاحظة، **لا** فرعاً. مُجمَّعةٌ بنوع العلاج فتُختصر
+ * صفوفٌ كثيرة إلى سطرٍ واحد لكلّ نوع. وهذا الشكلُ بعينه ما تتوقّعه
+ * `resolvePurchasedSessions` (`shared/pricing.ts`) في معامل `paymentSessions`
+ * — فلا تعديلَ في تلك الدالّة المُختبَرة (`test:physio-sessions`)، ولا في
+ * طريقة استهلاكها؛ المصدرُ وحده يتبدّل من الصفوف الخام إلى هذه اللقطة.
+ */
+function summarizePaymentSessions(
+  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
+): { treatmentType: string | null; sessionCount: number }[] {
+  const byType = new Map<string, number>();
+  for (const p of payments) {
+    const n = Number(p.sessionCount) || 0;
+    if (n <= 0) continue;
+    const key = p.paymentTreatmentType ?? "";
+    byType.set(key, (byType.get(key) ?? 0) + n);
+  }
+  return Array.from(byType, ([key, sessionCount]) => ({
+    treatmentType: key || null,
+    sessionCount,
+  }));
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
   await setupAuth(app);
+
+  // ══ تحديثُ الصلاحيات حيّاً — بلا خروجٍ وعودة (إصلاحٌ 2026-09-01، وحُصِّن
+  // 2026-09-02 — راجع القسم أدناه) ═══════════════════════════════════════
+  // جلسةُ الدخول تحمل لقطةَ الصلاحيات لحظةَ الدخول فقط. فسحبُ صلاحيةٍ من
+  // مستخدمٍ **الآن** من شاشة المستخدمين كان يبقى بلا أثر حتى يخرج ويعود —
+  // والمطلوب أن يسري فوراً على كل طلبٍ لاحق لمستخدمٍ لم يخرج من جلسته.
+  //
+  // فتُعاد قراءةُ صفّ المستخدم من القاعدة **قبل** كل نقطةِ API وتُعاد بناءُ
+  // `branchSession.permissions` بها — بالدالّة القانونية نفسِها التي يبنيها
+  // بها تسجيلُ الدخول، فلا تنحرف نسختان. ونقطةُ خنقٍ واحدة هنا تكفي كلَّ
+  // نقطةٍ تقرأ `branchSession.permissions` بعدها — حاضرةً أو مقبلة — بلا
+  // حاجةٍ لتعديل كلّ نقطةٍ على حدة.
+  //
+  // **مركَّبةٌ قبل `registerAuthRoutes` عمداً**: فتشمل `/api/auth/user`
+  // نفسَها — وهي نقطةُ التحديث التي تناديها الواجهةُ
+  // (`refreshBranchSessionFromServer` في `client/src/components/
+  // BranchGate.tsx`) عند إعادة تحميل الصفحة وعند عودة التركيز إليها، فلا
+  // تبقى استثناءً بائتاً يرجع الصلاحياتِ القديمة.
+  //
+  // **ولا تُمَسّ الجلسةُ الإداريّة**: المسؤولُ العام محميٌّ بعَلَم `isAdmin`
+  // نفسِه في كل نقاط الفحص — لا حاجةَ لإعادة قراءة، وحسابُ المسؤول القديم
+  // (تسجيلٌ عبر كود المسؤول من `system_settings`) لا يحمل `userId` أصلاً
+  // فيمرّ بلا لمس، تماماً كقاعدة «المسؤولُ العام يبقى بكامل صلاحياته».
+  //
+  // ══ ثلاثُ نتائج لا نتيجتان (تحصينٌ 2026-09-02 — بنفس مبدأ القراءة الحيّة
+  // لـ`canWriteMedicalExam` في `medical/store.ts`: `!user || user.isActive
+  // === false` ⟶ يُقفَل لا يُترَك على حاله) ══════════════════════════════
+  // (١) **الصفُّ مفقود** (حُذف المستخدمُ من القاعدة) ⟶ ٤٠١ + إنهاءُ الجلسة
+  //     كاملةً. لا معنى لصلاحياتٍ قديمة لمستخدمٍ لم يعد موجوداً، ولا معنى
+  //     لإبقاء نصفِ جلسة تُعيد ٤٠١ صامتاً على كل طلبٍ لاحق.
+  // (٢) **`isActive === false`** (عُطِّل الحساب) ⟶ ٤٠١ + إنهاءُ الجلسة،
+  //     بالسبب نفسِه تماماً.
+  // (٣) **عطلٌ حقيقيٌّ في القاعدة** (شبكةٌ أو Postgres نفسُه) ⟶ ٥٠٣ —
+  //     و**بلا** إنهاء جلسة: هذا عطلٌ عابر لا حكمٌ على الحساب، والعميلُ
+  //     يعيد المحاولة بلا إعادة دخول. **وهذا الفرقُ الجوهريّ عن السلوك
+  //     القديم**: كانت القاعدةُ تُبتلَع وتُفوَّض الطلبُ بمنحةِ الجلسة
+  //     القديمة المخبَّأة — وهذا بالضبط «الفشلُ المفتوح» الذي يمنعه هذا
+  //     التحصين. تعذّرُ التحقّق الحيّ ليس إذناً.
+  app.use(async (req, res, next) => {
+    if (!req.path.startsWith("/api")) return next();
+    const branchSession = (req.session as any)?.branchSession;
+    if (!branchSession || branchSession.isAdmin || !branchSession.userId) return next();
+    let fresh: SystemUser | undefined;
+    try {
+      fresh = await storage.getSystemUser(branchSession.userId);
+    } catch (err) {
+      console.error("[permissions] تعذّر التحقّقُ من الصلاحيات حيّاً — عطلٌ في القاعدة، فالطلبُ يُردّ لا يُفوَّض بمنحةٍ قديمة:", err);
+      return res.status(503).json({ message: "تعذّر التحقّق من الصلاحيات — أعد المحاولة" });
+    }
+    if (!fresh || fresh.isActive === false) {
+      return req.session.destroy(() => {
+        res.status(401).json({ message: "انتهت صلاحية الجلسة — الحساب لم يعد نشطاً، سجّل الدخول من جديد" });
+      });
+    }
+    branchSession.permissions = buildStoredPermissions(fresh);
+    next();
+  });
+
   registerAuthRoutes(app);
 
   app.use('/uploads', (req, res, next) => {
@@ -217,12 +378,22 @@ export async function registerRoutes(
   }, (await import('express')).static('uploads'));
 
   // Helper to get user branch
+  //
+  // ══ `isAdmin` — الحقلُ الشبح الذي لم يكن موجوداً (إصلاحٌ 2026-09-03) ═════
+  // `ctx.isAdmin` كان يُقرأ في أربعة مواضع (`GET /api/patients` و`GET
+  // /api/patients/:id`) بافتراض أنها كائنُ `getUserContext` القياسيّ في
+  // `sessions_module/permissions.ts` (وذاك يحمل `isAdmin` فعلاً) — لكنّ
+  // هذه دالّةٌ محليّة منفصلة تُظلِّل الاسمَ نفسَه ولم تكن تحمله، فكانت
+  // `ctx.isAdmin` تُقيَّم `undefined` دائماً: مسؤولٌ عامٌّ صفُّه الشخصيّ
+  // بأعلامٍ مُطفَأة كان يُرفَض على البابين رغم `isAdmin` الحقيقية في جلسته.
+  // العلاجُ عند المصدر الواحد هنا — لا تعديل كلّ موضع استهلاكٍ على حدة.
   const getUserContext = (req: any) => {
     const branchSession = (req.session as any)?.branchSession;
     return {
       userId: branchSession?.userId,
       role: branchSession?.role || (branchSession?.isAdmin ? 'admin' : 'staff'),
-      branchId: branchSession?.branchId
+      branchId: branchSession?.branchId,
+      isAdmin: Boolean(branchSession?.isAdmin),
     };
   };
 
@@ -402,7 +573,6 @@ export async function registerRoutes(
         
         if (isValidPassword) {
           const isAdmin = systemUser.role === "admin";
-          const isBranchManager = systemUser.role === "branch_manager";
 
           // Multi-branch resolution. accessibleBranches is the full
           // list this user can act on. For legacy single-branch users
@@ -435,68 +605,14 @@ export async function registerRoutes(
 
           const userShift = (systemUser.role === "reception" || systemUser.role === "therapist") ? (shift || "auto") : "auto";
 
-          // Branch-manager role acts as a full admin within their assigned
-          // branch — every functional permission is auto-granted regardless
-          // of what's stored on the row, so the admin doesn't have to flip
-          // a dozen toggles every time a branch manager is created. We do
-          // NOT set isAdmin=true: cross-branch routes (every-branch
-          // reports, system settings, branch creation, etc.) stay locked
-          // to the system admin only.
-          // Reception staff are the ones running the post-visit patient
-          // satisfaction surveys, so they always get canManageSurveys
-          // regardless of the row value.
-          const grantAll = isBranchManager;
-          const isReception = systemUser.role === "reception";
-          const permissions = {
-            canViewPatients: grantAll || systemUser.canViewPatients,
-            canAddPatients: grantAll || systemUser.canAddPatients,
-            canEditPatients: grantAll || systemUser.canEditPatients,
-            canDeletePatients: grantAll || systemUser.canDeletePatients,
-            canViewPayments: grantAll || systemUser.canViewPayments,
-            canAddPayments: grantAll || systemUser.canAddPayments,
-            canEditPayments: grantAll || systemUser.canEditPayments,
-            canDeletePayments: grantAll || systemUser.canDeletePayments,
-            canViewReports: grantAll || systemUser.canViewReports,
-            canManageAccounting: grantAll || systemUser.canManageAccounting,
-            // Narrow "add expenses" grant. Full accounting managers implicitly
-            // have it; otherwise it's the explicit per-user flag.
-            canAddExpenses: grantAll || Boolean(systemUser.canManageAccounting) || Boolean(systemUser.canAddExpenses),
-            canManageSettings: grantAll || systemUser.canManageSettings,
-            canManageUsers: grantAll || systemUser.canManageUsers,
-            canManageTreatmentPlans: grantAll || systemUser.canManageTreatmentPlans,
-            canManageSurveys: grantAll || isReception || systemUser.canManageSurveys,
-            // Visit permissions. Edit follows the manager grant-all
-            // pattern, but delete is destructive and silent, so it
-            // never auto-grants — even a branch_manager must have the
-            // explicit canDeleteVisits flag set on their user row.
-            canEditVisits: grantAll || systemUser.canEditVisits,
-            canDeleteVisits: Boolean(systemUser.canDeleteVisits),
-            // Sessions module (migration 009): admin and branch_manager
-            // get all three; reception gets entry; anyone else uses the
-            // toggles set on their row.
-            canEnterSessions: isAdmin || grantAll || isReception || systemUser.canEnterSessions,
-            canManageSessionTargets: isAdmin || grantAll || systemUser.canManageSessionTargets,
-            canViewSessionsReport: isAdmin || grantAll || systemUser.canViewSessionsReport,
-            // Prosthetics-expert capability (independent of primary role). A
-            // pure expert (role === prosthetics_expert) implicitly works as an
-            // expert too; anyone else needs the explicit flag on their row.
-            canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
-            // Doctor capability. A user whose PRIMARY role is doctor carries it
-            // implicitly; anyone else needs the explicit flag on their row —
-            // the same shape as canWorkAsExpert above. Still never auto-granted
-            // to managers or admins: signing a clinical record is a
-            // professional act, not an administrative one. This copy only
-            // drives the UI; every write re-reads the grant from the database
-            // so a revocation applies immediately, not at next login.
-            canWriteMedicalExam:
-              systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
-            // اعتمادُ الخصم والتبرّع — **علمٌ صريحٌ لا استنتاجٌ من دور**.
-            // الخصمُ قرارٌ ماليّ لا سريريّ، فلا يُمنَح لكلّ من دورُه «طبيب»
-            // كما تُمنَح كتابةُ المعاينة أعلاه. والمسؤولُ ومديرُ الفرع
-            // يمرّان بسلطتهما في `canApproveServiceDiscount` نفسِها، لا
-            // بهذا العَلَم — فهو لتخويل مَن دورُه شيءٌ آخر.
-            canApproveDiscount: Boolean(systemUser.canApproveDiscount),
-          };
+          // ══ الصلاحياتُ المخزَّنة سلطةٌ حيّة — لا مِنحةَ دورٍ عامّة بعد
+          // اليوم (إصلاحٌ 2026-09-01) ══════════════════════════════════════
+          // كانت هذه الكتلة تبني الكائن هنا حرفياً بمنطق «مدير الفرع =
+          // كلُّ شيء صحيح» (`grantAll`). صارت تستدعي `buildStoredPermissions`
+          // — الدالّةُ القانونية الوحيدة، تُستدعى هنا **وعند كل طلب API
+          // لاحق** (انظر المِعترِضة أعلى `registerRoutes`) فلا تنحرف
+          // نسختان. التفصيلُ الكامل في تعليق الدالّة نفسِها.
+          const permissions = buildStoredPermissions(systemUser);
 
           // Store session with user permissions
           (req.session as any).branchSession = {
@@ -1473,6 +1589,13 @@ export async function registerRoutes(
   // Patients
   app.get(api.patients.list.path, isAuthenticated, async (req, res) => {
     const ctx = getUserContext(req);
+    const branchSession = (req.session as any)?.branchSession;
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const canView = ctx.isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
+    if (!canView) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+
     const branchId = ctx.role === 'admin' ? undefined : ctx.branchId;
     const patients = await storage.getPatients(branchId);
     const patientIds = patients.map(p => p.id);
@@ -1503,10 +1626,17 @@ export async function registerRoutes(
       else paymentsByPatient.set(p.patientId, [p]);
     }
 
+    //  ══ `canViewPayments` — دفعاتٌ لا تصل لمن لا يملك عرضَها (إصلاحٌ
+    //  2026-09-02) ══════════════════════════════════════════════════════
+    //  حذفُ الحقل لا تصفيره: عمودٌ غائبٌ عن الردّ لا صفرٌ يُوهم بحقيقةٍ
+    //  مالية — مَن يستهلك `.payments` في الواجهة يقرؤها `|| []` أو `?? []`
+    //  أصلاً، فلا شيء ينكسر، ولا رقمَ مالياً كاذباً يظهر.
+    const canViewPayments = ctx.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
+
     const patientsWithRelations = patients.map(patient => ({
       ...patient,
       visits: visitsByPatient.get(patient.id) || [],
-      payments: paymentsByPatient.get(patient.id) || [],
+      ...(canViewPayments ? { payments: paymentsByPatient.get(patient.id) || [] } : {}),
       caseTypes: caseTypesByPatient.get(patient.id) || [],
       //  يُحذف الحقل حين لا أسماء بديلة — والغالبية كذلك، فلا يثقل الردّ.
       ...(aliasByPatient.has(patient.id)
@@ -1524,6 +1654,14 @@ export async function registerRoutes(
   app.get("/api/patients/registry", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = Boolean(branchSession?.isAdmin);
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const canView = isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
+    if (!canView) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+    //  ══ `canViewPayments` — «المبلغ المدفوع» لا يصل لمن لا يملك عرضَه ══
+    //  يُحذف الحقلُ من كل صفّ لا يُصفَّر — راجع تعليق `totalPaid` أدناه.
+    const canViewPayments = isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
     const page = Math.max(1, parseInt(String(req.query.page)) || 1);
     const pageSize = Math.min(10000, Math.max(1, parseInt(String(req.query.pageSize)) || 25));
@@ -1680,7 +1818,12 @@ export async function registerRoutes(
       counts: { branch: Number(branchCount), date: Number((dateCountRow as any)[0]?.count ?? 0) },
       rows: rows.map((r) => ({
         ...r,
-        totalPaid: paidByPatient.get(r.id) ?? 0,
+        //  ══ حذفُ الحقل لا تصفيره (إصلاحٌ 2026-09-02) ═══════════════════
+        //  عمودٌ غائبٌ لمن لا يملك `canViewPayments` — لا `0` قد يُقرأ
+        //  «هذا المريض لم يدفع شيئاً» وهي كذبةٌ ماليةٌ لا تعبيرٌ عن غياب
+        //  الصلاحية. `patients_registry_export.ts` (العميل) يبقى كما هو —
+        //  حاسبةٌ نقيّة تُستدعى من الشاشة فقط حين `canViewPayments` صحيح.
+        ...(canViewPayments ? { totalPaid: paidByPatient.get(r.id) ?? 0 } : {}),
         activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
       })),
     });
@@ -1701,8 +1844,11 @@ export async function registerRoutes(
   // and act — name, phone, branch — and never the clinical or financial record.
   app.get("/api/patients/lookup-by-name", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
+    //  ══ `canAddPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01) ══
+    //  كانت «مدير الفرع» تفتح البابَ بصرف النظر عن العَلَم المخزَّن على
+    //  صفّه. صار العَلَمُ نفسُه — الذي يُقرأ حيّاً على كل طلب — الحَكَمَ
+    //  وحده، بلا استثناءٍ من الدور.
     const canAsk = branchSession?.isAdmin
-      || branchSession?.role === "branch_manager"
       || Boolean(branchSession?.permissions?.canAddPatients);
     if (!canAsk) return res.status(403).json({ message: "غير مصرح" });
 
@@ -1760,14 +1906,21 @@ export async function registerRoutes(
     const id = Number(req.params.id);
     const patient = await storage.getPatient(id);
     const ctx = getUserContext(req);
-    
+
     // Allow access if: admin, user has no branch assigned yet, or user's branch matches patient's branch
     const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
-    
+
     if (!patient || !canAccess) {
       return res.status(404).json({ message: "Patient not found or unauthorized" });
     }
-    
+
+    //  ══ `canViewPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+    //  (إصلاحٌ 2026-09-02): تثبيتُ الفرع فقط. صار العَلَمُ (يُقرأ حيّاً على
+    //  كل طلب) شرطاً لازماً هنا، بلا استثناءٍ من الدور.
+    const branchSessionForView = (req.session as any)?.branchSession;
+    const canViewThisPatient = ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPatients);
+    if (!canViewThisPatient) return res.status(403).json({ message: "ليس لديك صلاحية عرض المرضى" });
+
     const [payments, documents, visits] = await Promise.all([
       storage.getPaymentsByPatientId(id),
       storage.getDocumentsByPatientId(id),
@@ -1806,7 +1959,25 @@ export async function registerRoutes(
         : null,
     }));
 
-    res.json({ ...patient, payments: paymentsWithDisplay, documents, visits });
+    //  ══ `canViewPayments` — دفعاتُ الملفّ لا تصل لمن لا يملك عرضَها
+    //  (إصلاحٌ 2026-09-02) ═══════════════════════════════════════════════
+    //  حذفُ الحقل لا تصفيره: عمودٌ غائبٌ لا صفرٌ يُقرأ «لم يدفع شيئاً» أو
+    //  «متبقّيه كامل الكلفة» — كذبةٌ ماليةٌ لا حالةَ صلاحية. الواجهةُ
+    //  (`PatientDetails.tsx`) تُخفي بطاقةَ «الملخّص الماليّ» وتبويبَ
+    //  «الدفعات» كاملَين حين يغيب هذا الحقل، بدل حساب متبقٍّ من صفرٍ مزيّف.
+    const canViewPaymentsForThisPatient =
+      ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPayments);
+
+    res.json({
+      ...patient,
+      ...(canViewPaymentsForThisPatient
+        ? { payments: paymentsWithDisplay }
+        //  ══ ملخّصُ جلساتٍ غيرُ ماليّ — راجع تعليق `summarizePaymentSessions`
+        //  أعلاه ═════════════════════════════════════════════════════════
+        : { paymentSessionsSummary: summarizePaymentSessions(payments) }),
+      documents,
+      visits,
+    });
   });
 
   // Independent cases for a patient (Phase 1 of the per-case architecture).
@@ -1822,7 +1993,8 @@ export async function registerRoutes(
     if (branchSession?.role === "prosthetics_expert") {
       return res.status(403).json({ message: "غير مصرح" });
     }
-    const canView = branchSession?.isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canViewPatients;
+    //  `canViewPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
+    const canView = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
     if (!canView) return res.status(403).json({ message: "غير مصرح" });
     const allowedCases = accessibleBranchesFor(req);
     const canAccess = patient && (allowedCases === null || allowedCases.includes(patient.branchId));
@@ -1840,16 +2012,27 @@ export async function registerRoutes(
     // 403'ing the endpoint (which would blank their clinical view) or trusting
     // the UI to hide fields the payload still carries.
     const financiallyBlind = branchSession?.role === "doctor";
+    //  ══ `canViewPayments` — لا `paid`/`remaining` لمن لا يملكها (إصلاحٌ
+    //  2026-09-03) ═══════════════════════════════════════════════════════
+    //  قاعدةٌ مستقلّة عن حجب الطبيب أعلاه: الكلفةُ (`cost`) ليست دفعةً فتبقى
+    //  ظاهرة لمستخدمٍ عاديٍّ لا يملك `canViewPayments` — لكنّ المُشتقَّ من
+    //  الدفعات الفعلية (`paid`/`remaining`) يُحذَف من الردّ لا يُصفَّر.
+    //  وحارسُ الطبيب أصرم (يحجب الكلفةَ نفسَها) ويبقى حرفاً بحرف: حين
+    //  يتحقّق الشرطان معاً يسود `financiallyBlind`.
+    const canViewPayments = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
     // Attach per-case paid total + visit count (case-attributed rows).
     const enriched = cases.map((c) => {
-      const casePayments = payments.filter((p: any) => p.caseId === c.id);
       const caseVisits = visits.filter((v: any) => v.caseId === c.id);
-      const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
       if (financiallyBlind) {
         const { cost, costSource, ...clinical } = c as any;
         return { ...clinical, visitCount: caseVisits.length };
       }
+      if (!canViewPayments) {
+        return { ...c, visitCount: caseVisits.length };
+      }
+      const casePayments = payments.filter((p: any) => p.caseId === c.id);
+      const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
       return {
         ...c,
         paid,
@@ -1966,6 +2149,15 @@ export async function registerRoutes(
       }
 
       const branchSession = (req.session as any).branchSession;
+
+      //  ══ `canAddPatients` — لم تكن هذه النقطة تتحقّق من أيّ عَلَمٍ إطلاقاً
+      //  (إصلاحٌ 2026-09-02): لا شرطَ هنا غير المصادقة. صار العَلَمُ (يُقرأ
+      //  حيّاً على كل طلب) شرطاً لازماً، بلا استثناءٍ من الدور — نفسُ
+      //  العَلَم الذي يحرس `new-service`/`price-physio`/`add-case-type`.
+      const canCreatePatient = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
+      if (!canCreatePatient) {
+        return res.status(403).json({ message: "ليس لديك صلاحية إضافة مرضى" });
+      }
 
       // Determine branchId. Non-admins are ALWAYS pinned to their own branch —
       // they cannot create a patient (or a manufacturing work order) for
@@ -2189,21 +2381,32 @@ export async function registerRoutes(
     try {
       const id = Number(req.params.id);
       const ctx = getUserContext(req);
+      const branchSession = (req.session as any).branchSession;
       const existingPatient = await storage.getPatient(id);
-      
+
       if (!existingPatient) {
         return res.status(404).json({ message: "Patient not found" });
       }
-      
+
       const canAccess = ctx.role === 'admin' || !ctx.branchId || existingPatient.branchId === ctx.branchId;
       if (!canAccess) {
         return res.status(403).json({ message: "غير مصرح لك بتعديل هذا المريض" });
       }
 
+      // ══ `canEditPatients` — كانت غائبةً هنا كلّياً (إصلاحٌ 2026-09-01) ════
+      // هذه النقطةُ البابُ الوحيد لتعديل مريضٍ عموماً، وكانت تتحقّق من نطاق
+      // الفرع فقط: أيُّ مستخدمٍ في الفرع نفسه يعدّل أيَّ حقلٍ عامّ بصرف
+      // النظر عن العَلَم المخزَّن على صفّه — فسحبُ الصلاحية من شاشة
+      // المستخدمين كان بلا أثر فعليّ على هذه النقطة تحديداً. صار العَلَمُ
+      // (يُقرأ حيّاً على كل طلب) شرطاً لازماً هنا، بعد فحص الفرع مباشرة.
+      const canEditThisPatient = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canEditPatients);
+      if (!canEditThisPatient) {
+        return res.status(403).json({ message: "ليس لديك صلاحية تعديل بيانات المرضى" });
+      }
+
       // COST is management-only (owner's rule): even an accountant with
       // edit-patient rights must not change totalCost — only branch managers
       // and the admin may. Everyone else gets the field silently stripped.
-      const branchSession = (req.session as any).branchSession;
       const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
@@ -2545,7 +2748,8 @@ export async function registerRoutes(
       // patient's record, so it takes the patient-writing permission.
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      //  `canAddPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
+      const canAccess = isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
       if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
 
       const patientId = Number(req.params.id);
@@ -2808,7 +3012,8 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      //  `canAddPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
+      const canAccess = isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
       if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
 
       const patientId = Number(req.params.id);
@@ -2906,7 +3111,8 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      //  `canAddPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
+      const canAccess = isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
       if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
 
       const patientId = Number(req.params.id);
@@ -2951,7 +3157,8 @@ export async function registerRoutes(
     try {
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
-      const canAccess = isAdmin || branchSession?.role === "branch_manager" || branchSession?.permissions?.canAddPatients;
+      //  `canAddPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
+      const canAccess = isAdmin || Boolean(branchSession?.permissions?.canAddPatients);
       if (!canAccess) return res.status(403).json({ message: "غير مصرح" });
 
       const patientId = Number(req.params.id);
@@ -3259,8 +3466,9 @@ export async function registerRoutes(
   // treatment type). Admin / branch manager / canEditVisits, branch-scoped.
   app.patch("/api/visits/:id/case", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
-    const canEdit = branchSession?.isAdmin || branchSession?.role === "branch_manager"
-      || Boolean(branchSession?.permissions?.canEditVisits);
+    //  `canEditVisits` وحدها — مطابقةً لـ`PATCH /api/visits/:id` المجاورة
+    //  التي لم تحمل يوماً منحَ دورٍ إضافياً (إصلاحٌ 2026-09-01).
+    const canEdit = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canEditVisits);
     if (!canEdit) return res.status(403).json({ message: "ليس لديك صلاحية تعديل الزيارات" });
 
     const id = Number(req.params.id);
@@ -3445,8 +3653,12 @@ export async function registerRoutes(
     // الواجهة المخفيّ) ولو لم يحمل `canAddPayments` على صفّه. نفسُ بوّابة
     // `/api/patients/:id/new-service` حرفياً — لا صلاحية محاسبةٍ أوسع
     // (`canManageAccounting`) تُشترَط هنا، وهذه صلاحيةُ الإضافة وحدها.
+    //
+    // **ولا منحَ دورٍ إضافي بعد اليوم** (إصلاحٌ 2026-09-01): `isBranchManager`
+    // تبقى فوق لغرضها الآخر (`isFreeSessions`، سطرٌ محميٌّ ماليّاً مستقلّ)،
+    // لكنها لم تعد تفتح بابَ الإضافة نفسِه — `canAddPayments` وحدها تفتحه.
     const canAddPaymentPermission =
-      isAdmin || isBranchManager || branchSession?.permissions?.canAddPayments === true;
+      isAdmin || branchSession?.permissions?.canAddPayments === true;
     if (!canAddPaymentPermission) {
       return res.status(403).json({ message: "ليس لديك صلاحية لإضافة دفعات" });
     }
@@ -3982,6 +4194,15 @@ export async function registerRoutes(
     if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
       return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
     }
+    //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ 2026-09-02)
+    //  ═════════════════════════════════════════════════════════════════
+    //  عنصرُ «التقارير المالية» في الشريط الجانبيّ يُخفى بهذا العَلَم
+    //  (`Sidebar.tsx`)، لكنّ النقطةَ نفسَها كانت تكتفي بفحص الفرع — فطلبٌ
+    //  مباشرٌ من مستخدمٍ لا يملك العَلَم كان يمرّ. صار العَلَمُ شرطاً هنا
+    //  أيضاً، بلا تغييرٍ في حراسة الفرع القائمة.
+    if (!branchSession?.isAdmin && !Boolean(branchSession?.permissions?.canViewReports)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية عرض التقارير" });
+    }
     // Window the report: only the last N days of rows are loaded and shipped
     // (default 45; days=0 = full history). Whole-history totals still come
     // from SQL aggregates below, so the header numbers stay complete.
@@ -4424,6 +4645,14 @@ export async function registerRoutes(
       const branchSession = (req.session as any).branchSession;
       const isAdmin = ctx.role === 'admin' || branchSession?.isAdmin;
       const userBranchId = ctx.branchId ?? branchSession?.branchId;
+
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «التقرير اليومي للمرضى» في الشريط الجانبيّ يُخفى بهذا
+      //  العَلَم نفسِه (`Sidebar.tsx`)، والنقطةُ لم تكن تتحقّق منه إطلاقاً.
+      if (!isAdmin && !Boolean(branchSession?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض التقارير" });
+      }
 
       let effectiveBranchId: number | null = null;
       if (isAdmin) {
@@ -4913,8 +5142,10 @@ export async function registerRoutes(
       const branchSession = (req.session as any).branchSession;
       const isAdmin = branchSession?.isAdmin;
       // Anyone with accounting management permission can edit. That
-      // covers admin (always), branch_manager (auto-granted at login),
-      // and any custom user the admin explicitly toggled on.
+      // covers admin (always) and any user carrying canManageAccounting on
+      // their own row — branch_manager included; no role grants this
+      // implicitly since the 2026-09-01 fix, so branch managers need the
+      // flag set explicitly like everyone else.
       const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
@@ -5149,6 +5380,15 @@ export async function registerRoutes(
   // Visits by Treatment Type
   app.get("/api/statistics/visits-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «الإحصائيات» في الشريط الجانبيّ يُخفى بهذا العَلَم نفسِه
+      //  (`Sidebar.tsx`)، والنقطةُ (حصريّةٌ لصفحة الإحصائيات — لا تشاركها
+      //  المحاسبة) لم تكن تتحقّق منه إطلاقاً.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      if (!branchSessionForStats?.isAdmin && !Boolean(branchSessionForStats?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض الإحصائيات" });
+      }
       const branchId = enforceBranchAccess(req);
       const allVisits = await storage.getAllVisits(branchId);
 
@@ -5181,6 +5421,24 @@ export async function registerRoutes(
   // Revenue by Treatment Type
   app.get("/api/statistics/revenue-by-treatment", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` **أو** `canManageAccounting` (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  هذه النقطةُ الوحيدةُ من ثلاثيّ الإحصاءات تُستهلَك من صفحتين
+      //  مختلفتين: «الإحصائيات» (`Statistics.tsx`، عَلَمُها `canViewReports`)
+      //  **و**«المحاسبة» (`AccountingRevenueByTreatment` في
+      //  `Accounting.tsx`، عَلَمُها الأصرم `canManageAccounting`). فحصٌ
+      //  بعَلَمٍ واحد كان سيحجب أحدَ الجمهورين المشروعين عن نقطةٍ يحتاجها
+      //  فعلاً — لا «إضعافَ» حراسةٍ محاسبية أصرم (لا وجودَ لها هنا أصلاً؛
+      //  كانت هذه النقطةُ بلا أيّ فحصِ عَلَمٍ قبل اليوم)، بل توسيعٌ يشمل
+      //  الجمهورين معاً بلا حرمان أيٍّ منهما.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      const canReadRevenueByTreatment =
+        branchSessionForStats?.isAdmin
+        || Boolean(branchSessionForStats?.permissions?.canViewReports)
+        || Boolean(branchSessionForStats?.permissions?.canManageAccounting);
+      if (!canReadRevenueByTreatment) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض هذه البيانات" });
+      }
       const branchId = enforceBranchAccess(req);
       const allPayments = await storage.getAllPayments(branchId);
 
@@ -5281,6 +5539,15 @@ export async function registerRoutes(
   // Monthly new patients report (per branch)
   app.get("/api/statistics/monthly-new-patients", isAuthenticated, async (req: any, res) => {
     try {
+      //  ══ `canViewReports` — كانت محجوبةً في الواجهة فقط (إصلاحٌ
+      //  2026-09-02) ═══════════════════════════════════════════════════
+      //  عنصرُ «الإحصائيات» في الشريط الجانبيّ يُخفى بهذا العَلَم نفسِه
+      //  (`Sidebar.tsx`)، والنقطةُ (حصريّةٌ لصفحة الإحصائيات) لم تكن تتحقّق
+      //  منه إطلاقاً.
+      const branchSessionForStats = (req.session as any)?.branchSession;
+      if (!branchSessionForStats?.isAdmin && !Boolean(branchSessionForStats?.permissions?.canViewReports)) {
+        return res.status(403).json({ message: "ليس لديك صلاحية عرض الإحصائيات" });
+      }
       const filterBranchId = enforceBranchAccess(req) ?? null;
 
       const result = filterBranchId

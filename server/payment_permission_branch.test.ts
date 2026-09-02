@@ -311,20 +311,32 @@ async function cleanup() {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
-  for (const [id, role, name, branch] of [
-    [ADMIN, "admin", "المسؤول", 1],
-    [MGR, "branch_manager", "مدير بغداد", 1],
-    [RECV_OK, "reception", "ريام", 1],
-    [RECV_DENIED, "reception", "استقبالٌ محظور", 1],
-    [RECV_B2, "reception", "استقبالُ الفرع الثاني", 2],
-    [NOPERM, "surveyor", "مسّاحٌ بلا صلاحية", 1],
+  // ══ الأعلامُ المخزَّنة صارت الحُجّةَ الحيّة (إصلاحٌ 2026-09-01) ══════════
+  // المِعترِضةُ الجديدة في `routes.ts` تعيد بناء `branchSession.permissions`
+  // من صفّ `system_users` الفعليّ على كل طلب — فلم يعد كافياً أن يحمل كائنُ
+  // `S.xxx` أعلاه صلاحياتٍ في الهيدر وحده؛ يجب أن يطابقها العمودُ المخزَّن
+  // فعلياً، وإلّا استبدلته المِعترِضةُ بالحقيقة المخزَّنة (الافتراضاتُ في
+  // المخطّط: `can_add_payments` تُساوي `true` افتراضاً، فبقاؤها بلا تصريحٍ
+  // هنا كان سيقلب سيناريو «الرفض» في القسم أ إلى نجاحٍ خاطئ).
+  for (const [id, role, name, branch, canAdd, canEdit, canDelete] of [
+    [ADMIN, "admin", "المسؤول", 1, true, true, true],
+    [MGR, "branch_manager", "مدير بغداد", 1, true, true, true],
+    [RECV_OK, "reception", "ريام", 1, true, true, true],
+    //  **العَلَمُ مُطفَأٌ صراحةً في القاعدة** — لا مجرّد غياب في الهيدر.
+    [RECV_DENIED, "reception", "استقبالٌ محظور", 1, false, false, false],
+    [RECV_B2, "reception", "استقبالُ الفرع الثاني", 2, true, true, true],
+    //  **بلا أيّ عَلَمٍ ماليّ** — الدورُ نفسُه (مسّاح) لا يمنح شيئاً.
+    [NOPERM, "surveyor", "مسّاحٌ بلا صلاحية", 1, false, false, false],
   ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-             VALUES ($1,$2,'x',$4,$3,$5,'[1,2]'::jsonb,true)
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
+               can_view_patients, can_add_payments, can_edit_payments, can_delete_payments)
+             VALUES ($1,$2,'x',$4,$3,$5,'[1,2]'::jsonb,true,true,$6,$7,$8)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role,
                display_name=EXCLUDED.display_name, is_active=true,
-               branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
-      [id, `pay_guard_u${id}`, role, name, branch]);
+               branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids,
+               can_view_patients=true, can_add_payments=EXCLUDED.can_add_payments,
+               can_edit_payments=EXCLUDED.can_edit_payments, can_delete_payments=EXCLUDED.can_delete_payments`,
+      [id, `pay_guard_u${id}`, role, name, branch, canAdd, canEdit, canDelete]);
   }
   await cleanup();
 

@@ -23,8 +23,13 @@ export interface CaseRow {
   caseType: "physiotherapy" | "prosthetic" | "medical_support" | string;
   status: string;
   cost: number;
-  paid: number;
-  remaining: number;
+  /**
+   * غائبةٌ (لا صفر) حين لا يملك المستخدمُ `canViewPayments` — الخادم
+   * (`GET /api/patients/:id/cases`) يحذف الحقلَ لا يُصفّره (إصلاحٌ
+   * 2026-09-03). الكلفةُ نفسُها ليست دفعةً فتبقى ظاهرة دوماً.
+   */
+  paid?: number;
+  remaining?: number;
   visitCount: number;
   details: Record<string, any> | null;
 }
@@ -46,7 +51,7 @@ const DETAIL_LABELS: Record<string, string> = {
   treatmentType: "نوع العلاج", supportType: "نوع المسند",
 };
 
-const fmtIQD = (n: number) => `${(n || 0).toLocaleString("en-US")} د.ع`;
+const fmtIQD = (n: number | undefined) => `${(n || 0).toLocaleString("en-US")} د.ع`;
 
 // Clickable chips for the header — one per case, plus «الكل» (id -1) which
 // clears the case filter so every visit/payment shows regardless of case.
@@ -136,7 +141,13 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  const remaining = (caseRow.cost || 0) - (caseRow.paid || 0);
+  //  ══ `canViewPayments` — لا صفرَ زائفاً لمن لا يرى الدفعات (إصلاحٌ
+  //  2026-09-03) ═══════════════════════════════════════════════════════
+  //  `caseRow.paid` غائبةٌ (لا `0`) لهذا المستخدم — فحسابُ «متبقٍّ = الكلفة
+  //  − صفر» كان سيعرض «المتبقّي = الكلفة الكاملة» كحقيقةٍ مالية لم تُقَل.
+  //  `canViewCasePayments` تتحقّق من الحضور الفعليّ لا من صدق القيمة.
+  const canViewCasePayments = caseRow.paid !== undefined;
+  const remaining = canViewCasePayments ? (caseRow.cost || 0) - (caseRow.paid || 0) : undefined;
 
   // ADMIN-ONLY «حذف نوع الحالة» — also cleans ghost cases (flag wiped by the
   // old destructive edit while the case row survived showing a stale cost).
@@ -185,7 +196,7 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
       </h3>
 
       {/* Financial summary for THIS case */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${canViewCasePayments ? "grid-cols-3" : "grid-cols-1"}`}>
         <div className="rounded-xl p-3 text-center text-slate-700 bg-slate-50 relative">
           <div className="text-xs opacity-80 flex items-center justify-center gap-1">
             التكلفة
@@ -205,8 +216,14 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
             <div className="font-bold text-sm md:text-base">{fmtIQD(caseRow.cost)}</div>
           )}
         </div>
-        <StatBox label="المدفوع" value={fmtIQD(caseRow.paid)} tone="green" />
-        <StatBox label="المتبقّي" value={fmtIQD(remaining)} tone={remaining > 0 ? "red" : "green"} />
+        {/*  `canViewCasePayments` — بلا صندوقَي «المدفوع»/«المتبقّي» إطلاقاً
+            حين لا تصل القيمتان من الخادم؛ لا صفرَ زائفاً في مكانهما. */}
+        {canViewCasePayments && (
+          <>
+            <StatBox label="المدفوع" value={fmtIQD(caseRow.paid)} tone="green" />
+            <StatBox label="المتبقّي" value={fmtIQD(remaining)} tone={(remaining ?? 0) > 0 ? "red" : "green"} />
+          </>
+        )}
       </div>
 
       {detailKeys.length > 0 && (

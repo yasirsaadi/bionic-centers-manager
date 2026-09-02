@@ -6,14 +6,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
-import { BranchGate } from "@/components/BranchGate";
+import { BranchGate, getBranchSession, setBranchSession } from "@/components/BranchGate";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { AiChatDrawer } from "@/components/AiChatDrawer";
 import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 
 // Heavy pages — code-split so the main bundle stays small. Each
 // chunk only loads when the user navigates to that route, which
@@ -110,6 +110,122 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Router() {
   const { user, isLoading } = useAuth();
+
+  //  ══ ربطُ `useAuth()` بمخزن `useBranchSession` المشترك — «بلا خروجٍ
+  //  وعودة» تصل الشاشاتِ فعلاً (إصلاحٌ 2026-09-02) ══════════════════════
+  //  `useAuth()` تجلب `GET /api/auth/user` عبر react-query (البنيةُ
+  //  القائمة التي كانت تُستهلَك هنا أصلاً لبوّابة `isLoading` وحدها) — وهي
+  //  تُعيد الجلبَ عند كل تحميلٍ جديد للصفحة (لا كاشَ يعبر إعادة تحميل)
+  //  وعند عودة تركيز النافذة (`refetchOnWindowFocus: "always"`، أُضيفت
+  //  لهذا الاستعلام بعينه في `hooks/use-auth.ts`). لكنّ نتيجتها لم تكن
+  //  تصل الصلاحياتِ الفعليةَ التي تقرؤها الشاشاتُ
+  //  (`useBranchSession`/`usePermissions`، `components/BranchGate.tsx`) —
+  //  فهذا الأثرُ هو الجسرُ الوحيد بينهما: كلَّ مرّةٍ يتغيّر فيها `user`،
+  //  تُكتب صلاحياتُه ودورُه وحالتُه الإداريّة على المخزن المشترك، فيراها
+  //  كلُّ مستهلكٍ فوراً بإعادة عرضٍ واحدة — بلا خروجٍ وعودة، وبلا نداءِ
+  //  شبكةٍ ثانٍ (`BranchGate.tsx` لا تجلب شيئاً بنفسها بعد اليوم).
+  //
+  //  **و`user === null` بعد جلسةٍ كانت قائمة تعني جلسةً ميتة**: صفُّ
+  //  المستخدم حُذف أو عُطِّل (تحصينُ المِعترِضة الحيّة في `server/routes.ts`)
+  //  — فتُمسَح الجلسةُ المحليّة فوراً، وتعرض `BranchGate` شاشةَ الدخول
+  //  مباشرةً بلا انتظار طلبٍ آخر يرتطم بالمِعترِضة. ونوعُ `user` هنا
+  //  (`@shared/models/auth`) لقطةٌ من مخطّط Replit Auth القديم لا يطابق
+  //  الشكلَ الفعليّ الذي تُرجعه هذه النقطةُ اليوم (`role`/`branchId`/
+  //  `isAdmin`/`permissions`…) — تناقضٌ سابقٌ لهذا الإصلاح في `use-auth.ts`
+  //  نفسِه، فيُقرأ هنا بمرونةٍ (`as any`) بدل توسيع ذلك النوع في مهمّةٍ
+  //  مركَّزة على الصلاحيات لا على تصحيح الأنواع.
+  //  ══ وتحديثُ الاستعلاماتِ المخبَّأة عند تغيّر لقطة الصلاحيات (إصلاحٌ
+  //  2026-09-03) ══════════════════════════════════════════════════════════
+  //  سريانُ الصلاحية فوراً على `useBranchSession`/`usePermissions` (أعلاه)
+  //  لا يكفي وحده: صفحةٌ مفتوحةٌ بالفعل تحمل نتيجةَ `useQuery` **مخبَّأةً**
+  //  من طلبٍ سابق بالشكل القديم — فمنحُ `canViewPayments` حيّاً لا يُظهر
+  //  عمودَ المدفوعات في صفٍّ عُرض قبل المنح إلا بإعادة جلبٍ فعلية. فيُقارَن
+  //  اللقطُ السابقُ بالجديد في `prevPermSnapshotRef`، وتُبطَل عائلاتُ
+  //  الاستعلامات ذاتُ الصلة **فقط** — لا الذاكرةُ كلُّها، ولا آليّةَ شبكةٍ
+  //  أو جلسةٍ جديدة (نفسُ `queryClient` المستعمَل في كل مكان).
+  const prevPermSnapshotRef = useRef<{
+    isAdmin: boolean;
+    canViewPatients: boolean;
+    canViewPayments: boolean;
+    canViewReports: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const raw = user as any;
+    //  **`null` صريحةٌ لا `undefined`**: `fetchUser` (`use-auth.ts`) تُعيد
+    //  `null` **فقط** حين يردّ `/api/auth/user` ٤٠١ حقيقياً — أيّ فشلٍ آخر
+    //  (شبكةٌ، ٥٠٠، مهلة) يرمي فيبقى `user` بقيمته السابقة أو `undefined`
+    //  دون أن يُصبح `null` أبداً. فالمسحُ هنا مشروطٌ بـ`=== null` تحديداً:
+    //  عطلٌ عابر في هذا النداء يجب ألّا يُخرج مستخدماً لديه جلسةٌ محليّة
+    //  صالحة فعلاً — ذاك تشاؤمٌ لا يوازيه خطر (الخادمُ يبقى الحارسَ الحقيقيّ
+    //  لأيّ طلبٍ فعليّ لاحق، عبر مِعترِضة `server/routes.ts`).
+    if (raw === null) {
+      setBranchSession(null);
+      //  خروجٌ فعليّ أو جلسةٌ ماتت — لا لقطةَ سابقةً تُقارَن بها لقطةُ
+      //  حسابٍ آخر يدخل لاحقاً على هذا المتصفّح نفسِه.
+      prevPermSnapshotRef.current = null;
+      return;
+    }
+    if (!raw) return; // `undefined` — لم يُحسَم بعد أو فشل النداءُ عرَضاً؛ لا تغيير.
+    //  **دمجٌ لا كتابةٌ فوق**: `/api/auth/user` لا تُرجع `branchName` ولا
+    //  `accessibleBranches` (ليستا من مسؤوليتها) — فتُستبقيان من الجلسة
+    //  المحفوظة (تسجيلُ الدخول أو تبديلُ الفرع)، وإلّا محا كلَّ تركيزٍ على
+    //  النافذة اسمَ الفرع المعروض في `Sidebar.tsx` وغيره.
+    const current = getBranchSession();
+    setBranchSession({
+      ...current,
+      branchId: raw.branchId,
+      isAdmin: Boolean(raw.isAdmin),
+      userId: raw.id ?? current?.userId,
+      role: raw.role ?? current?.role,
+      displayName: raw.displayName ?? current?.displayName,
+      permissions: raw.permissions ?? current?.permissions,
+      shift: raw.shift ?? current?.shift,
+      language: raw.language ?? current?.language,
+    } as any);
+
+    //  ══ اللقطةُ الحاليّة — نفسُ صيغة `isAdmin || العَلَم` التي يفرضها
+    //  الخادمُ على كل نقطةٍ مسَّتها هذه الجولة ═══════════════════════════
+    const nextPermSnapshot = {
+      isAdmin: Boolean(raw.isAdmin),
+      canViewPatients: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPatients),
+      canViewPayments: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPayments),
+      canViewReports: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewReports),
+    };
+    const prevPermSnapshot = prevPermSnapshotRef.current;
+    //  لا مقارنةَ عند أوّل تحليلٍ ناجح (لا سابقةَ ذات معنى) — الإبطالُ
+    //  عند **تغيّرٍ فعليّ** فقط، لا عند كل تحديثٍ حتى لو بلا تغيير.
+    if (prevPermSnapshot) {
+      //  ١) مرضى/دفعات: يمسّ شكلَ ردّ `GET /api/patients` و`/registry`
+      //  و`/:id` (و`/:id/cases` تحت المفتاح نفسِه) — راجع الأقسام ز/ح أعلاه.
+      const patientOrPaymentViewChanged =
+        prevPermSnapshot.canViewPatients !== nextPermSnapshot.canViewPatients
+        || prevPermSnapshot.canViewPayments !== nextPermSnapshot.canViewPayments
+        || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin;
+      if (patientOrPaymentViewChanged) {
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/patients/registry"] });
+        //  مفتاحٌ منفصل فعلياً (`"/api/patients/:id"` حرفياً، لا بادئةً
+        //  نصّية لـ`"/api/patients"`) — يغطّي `GET /api/patients/:id` نفسَها
+        //  و`GET /api/patients/:id/cases` معاً (`PatientDetails.tsx` سطر ١٩٢).
+        queryClient.invalidateQueries({ queryKey: ["/api/patients/:id"] });
+      }
+      //  ٢) تقارير/إحصاءات: نفسُ الأبواب الأربعة المحروسة بـ`canViewReports`
+      //  زائداً البابَ الخامسَ المشترك مع المحاسبة (القسم ط أعلاه).
+      const reportsViewChanged =
+        prevPermSnapshot.canViewReports !== nextPermSnapshot.canViewReports
+        || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin;
+      if (reportsViewChanged) {
+        queryClient.invalidateQueries({ queryKey: ["/api/reports/detailed"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/reports/daily-patient-report"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/visits-by-treatment"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/monthly-new-patients"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/revenue-by-treatment"] });
+      }
+    }
+    prevPermSnapshotRef.current = nextPermSnapshot;
+  }, [user, isLoading]);
 
   if (isLoading) {
     return (

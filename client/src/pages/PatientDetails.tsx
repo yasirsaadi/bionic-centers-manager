@@ -660,6 +660,23 @@ export default function PatientDetails() {
   // background sync hasn't attributed it yet. «الكل» (ALL_CASES) shows all.
   const allVisits = patient.visits || [];
   const allPayments = patient.payments || [];
+  //  ══ ملخّصُ جلساتٍ للمرضى القدامى — يعمل بلا `canViewPayments` (إصلاحٌ
+  //  2026-09-03) ═══════════════════════════════════════════════════════════
+  //  `patient.payments` تغيب عن مَن لا يملك `canViewPayments` (إصلاحٌ
+  //  2026-09-02)، فيغيب معها عدّادُ جلسات العلاج الطبيعي القديم لمرضى بلا
+  //  `physioPlan` مخزَّن — الدفعاتُ ذاكرتُهم الوحيدة (قسم «خطة الجلسات
+  //  المشتراة» في CLAUDE.md). فيرسل الخادمُ بدلاً من الصفوف الخام
+  //  `paymentSessionsSummary` — لقطةً غيرَ ماليّة (نوعٌ وعددٌ فقط، بلا مبلغٍ
+  //  ولا تاريخ ولا معرّف). هذا مصدرُ بادج الرأس وبطاقة «ملخّص الجلسات»
+  //  أدناه فقط؛ الجدولُ الزمنيُّ التفصيليّ (تبويب الزيارات) يبقى يعتمد
+  //  `casePayments` كما كان — فارغاً لمن لا يملك الصلاحية، بلا رقمٍ مزيَّفٍ
+  //  هناك أيضاً، إذ يحتاج تواريخَ حقيقية لا تصل هذا المستخدم أصلاً.
+  const legacyPaymentSessions: { treatmentType: string | null; sessionCount: number | null }[] =
+    patient.payments
+      ? patient.payments.map((p) => ({
+          treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+        }))
+      : ((patient as any).paymentSessionsSummary ?? []);
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
   const caseVisits = showAll ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId || v.caseId == null);
   const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
@@ -918,7 +935,7 @@ export default function PatientDetails() {
             <PatientDepartmentBadges patient={patient} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto" />
           )}
           {(() => {
-            const totalSessions = patient.payments?.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
+            const totalSessions = legacyPaymentSessions.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
             if (totalSessions > 0) {
               return (
                 <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1 bg-blue-50 text-blue-700 border-blue-200">
@@ -1057,13 +1074,13 @@ export default function PatientDetails() {
             // flow). This card used to read payments only, so a priced patient
             // saw no session card at all.
             const physioCaseCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
+            //  `legacyPaymentSessions` — الدفعاتُ الخام حين تصل، وإلّا
+            //  ملخّصُ الجلسات غيرُ الماليّ من الخادم (إصلاحٌ 2026-09-03).
             const purchased = resolvePurchasedSessions({
               plan: (patient as any).physioPlan,
               treatmentTypeText: patient.treatmentType,
               caseCost: physioCaseCost,
-              paymentSessions: (patient.payments ?? []).map((p) => ({
-                treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
-              })),
+              paymentSessions: legacyPaymentSessions,
             });
             const sessionsByType = purchased.byType;
             const totalSessions = purchased.total;
@@ -1110,6 +1127,15 @@ export default function PatientDetails() {
             );
           })()}
 
+          {/*  ══ `canViewPayments` — الملخّصُ الماليّ كاملاً محجوبٌ عمّن لا
+              يملك عرضَ الدفعات (إصلاحٌ 2026-09-02) ═══════════════════════
+              `patient.payments` غائبةٌ من الخادم لهذا المستخدم أصلاً
+              (`GET /api/patients/:id`)، فـ`totalPaid`/`remaining`/`progress`
+              أعلاه تُحسَب من مصفوفةٍ فارغة — «مدفوعٌ صفر، متبقٍّ كامل
+              الكلفة» رقمٌ ماليٌّ كاذب لا حالةَ صلاحية. تبقى «التكلفة الكلية»
+              وحدها — ليست دفعةً — لكن هذه البطاقةُ تمزجها بالمدفوع والمتبقي
+              في تصميمٍ واحد متماسك، فتُحجَب معاً بدل تفكيكها. */}
+          {permissions.canViewPayments && (
           <Card className="p-6 rounded-2xl shadow-sm border-border/60 bg-slate-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2 text-emerald-600 mb-6">
               <Banknote className="w-5 h-5" />
@@ -1164,6 +1190,7 @@ export default function PatientDetails() {
               )}
             </div>
           </Card>
+          )}
 
           {/* قنوات تواصل المريض — الصلاحية يفرضها الخادم، والبطاقة تصمت
               بلا أزرار حين يردّ 403. */}
@@ -1180,9 +1207,11 @@ export default function PatientDetails() {
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.visitHistory}
               </TabsTrigger>
+              {permissions.canViewPayments && (
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.paymentHistory}
               </TabsTrigger>
+              )}
               <TabsTrigger value="documents" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.documents}
               </TabsTrigger>
@@ -1455,6 +1484,16 @@ export default function PatientDetails() {
             </TabsContent>
 
             <TabsContent value="payments" className="space-y-4">
+              {/*  `canViewPayments` — نفسُ حجب بطاقة «الملخّص الماليّ» أعلاه
+                  (إصلاحٌ 2026-09-02). ولا مجرّدَ إخفاء تبويبٍ من الشريط:
+                  التبويبُ نفسُه محروسٌ هنا أيضاً، فلا صفوفَ دفعاتٍ خامٍ
+                  تصل مَن لا يملك عرضَها ولو صار `tab` القيمة «payments»
+                  بطريقةٍ لا تمرّ بالنقر على تبويبٍ لم يعد ظاهراً. */}
+              {!permissions.canViewPayments ? (
+                <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-muted-foreground">
+                  ليس لديك صلاحية عرض الدفعات
+                </div>
+              ) : (
               <div className="overflow-x-auto rounded-md border border-slate-300">
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
@@ -1538,6 +1577,7 @@ export default function PatientDetails() {
                   </tbody>
                 </table>
               </div>
+              )}
             </TabsContent>
 
             <TabsContent value="documents" className="space-y-6">
