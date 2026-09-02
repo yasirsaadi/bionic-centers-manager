@@ -380,13 +380,26 @@ export default function PatientsList() {
     }
 
     //  ══ `canViewPayments` — لا مبلغَ مدفوعٍ ولا متبقٍّ في التصدير لمن لا
-    //  يملك عرضَ الدفعات (إصلاحٌ 2026-09-02) ════════════════════════════
-    //  الخادمُ يحذف `totalPaid` من صفّ السجلّ أصلاً لهذا المستخدم — فحسابُ
-    //  `registryExportMoney` (`patients_registry_export.ts`) عليه كان
-    //  سيقرأ الغيابَ صفراً ويُخرج «متبقٍّ = التكلفة الكلية»، رقماً مالياً
-    //  كاذباً لا حقيقةَ صلاحية. فيُستبعَد العمودان كلياً بدل عرض صفرٍ زائف.
+    //  يملك عرضَ الدفعات (إصلاحٌ 2026-09-02، مُصحَّحٌ 2026-09-03) ═══════════
+    //  الخادمُ يحذف `totalPaid` من صفّ السجلّ أصلاً لهذا المستخدم، فصار
+    //  نوعُه في `RegistryRow` اختيارياً (`number | undefined`) — وهذا لا
+    //  يطابق ما تتوقّعه الدالّةُ النقيّة `registryExportMoney`
+    //  (`totalPaid: number | null`، بلا `undefined` عمداً: **الغيابُ
+    //  المفروضُ بصلاحية** حالةٌ مختلفة عن «لم يُحسَب بعد»، ولا يجوز أن
+    //  يهرب صراحةَ نوعِها). فـ`totalCost` يُحسَب هنا مباشرةً (لا عبر
+    //  الدالّة — التكلفةُ ظاهرةٌ للجميع، وحسابُها لا يحتاج تطبيعاً)،
+    //  وتُنادى الدالّةُ **فقط** حين `canViewPayments` صحيحة — حيث
+    //  `totalPaid` مضمونٌ حاضراً فعلياً من الخادم — مع تطبيعٍ صريح لنوعه
+    //  (`?? null`) بدل توسيع عقد الدالّة نفسِها. **ولا تُنادى إطلاقاً**
+    //  حين تُحجَب الدفعات، فلا صفرَ زائف ولا التفافَ حول نوعها.
     const excelData = dataToExport.map((patient, index) => {
-      const money = registryExportMoney(patient);
+      const totalCost = patient.totalCost ?? 0;
+      const paymentFields = permissions.canViewPayments
+        ? (() => {
+            const money = registryExportMoney({ totalCost: patient.totalCost, totalPaid: patient.totalPaid ?? null });
+            return { "المبلغ المدفوع": money.totalPaid, "المبلغ المتبقي": money.remaining };
+          })()
+        : null;
       return {
         "#": index + 1,
         "كود المريض": patient.patientCode ?? "",
@@ -396,11 +409,8 @@ export default function PatientsList() {
         "الحالة": [patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند طبية" : null].filter(Boolean).join(" + ") || "-",
         "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
-        "التكلفة الكلية": money.totalCost,
-        ...(permissions.canViewPayments ? {
-          "المبلغ المدفوع": money.totalPaid,
-          "المبلغ المتبقي": money.remaining,
-        } : {}),
+        "التكلفة الكلية": totalCost,
+        ...(paymentFields ?? {}),
         "تاريخ التسجيل": patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : "",
       };
     });
@@ -463,12 +473,16 @@ export default function PatientsList() {
           </thead>
           <tbody>
             ${dataToExport.map((patient, index) => {
-              const money = registryExportMoney(patient);
-              //  ══ `canViewPayments` — نفسُ استبعاد عمودَي المدفوع/المتبقي
-              //  في تصدير Excel أعلاه، بلا صفرٍ زائف (إصلاحٌ 2026-09-02).
+              const totalCost = patient.totalCost ?? 0;
+              //  ══ `canViewPayments` — نفسُ تصحيح تصدير Excel أعلاه: الدالّةُ
+              //  تُنادى فقط حين الدفعاتُ ظاهرة فعلياً، مع تطبيعٍ صريح لنوع
+              //  `totalPaid` (إصلاحٌ 2026-09-02، مُصحَّحٌ 2026-09-03).
               const paymentCells = permissions.canViewPayments
-                ? `<td>${money.totalPaid.toLocaleString()}</td>
-                <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>`
+                ? (() => {
+                    const money = registryExportMoney({ totalCost: patient.totalCost, totalPaid: patient.totalPaid ?? null });
+                    return `<td>${money.totalPaid.toLocaleString()}</td>
+                <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>`;
+                  })()
                 : "";
               return `
               <tr>
@@ -480,7 +494,7 @@ export default function PatientsList() {
                 <td>${[patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند" : null].filter(Boolean).join(" + ") || "-"}</td>
                 <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
-                <td>${money.totalCost.toLocaleString()}</td>
+                <td>${totalCost.toLocaleString()}</td>
                 ${paymentCells}
                 <td>${patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : ""}</td>
               </tr>`;

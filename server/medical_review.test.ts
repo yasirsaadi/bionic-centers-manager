@@ -141,20 +141,46 @@ const examCount = async (patientId: number) =>
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'ذي قار') ON CONFLICT DO NOTHING`);
-  for (const [id, role, b, spec] of [
-    [ADMIN, "admin", 1, null], [RECV1, "reception", 1, null], [RECV2, "reception", 2, null],
-    [DOC1, "doctor", 1, JSON.stringify(["prosthetic", "medical_support"])],
-    [DOC2, "doctor", 2, JSON.stringify(["prosthetic", "medical_support"])],
-    [EXPERT, "prosthetics_expert", 1, null],
+  //  ══ الصفُّ المخزَّنُ هو المرجع — لا أعلامُ الجلسة الاصطناعية (إصلاحٌ
+  //  2026-09-03) ═══════════════════════════════════════════════════════════
+  //  المِعترِضةُ الحيّة (`server/routes.ts`) تُعيد بناء `branchSession.
+  //  permissions` من صفّ `system_users` الحقيقيّ على **كل** طلبٍ لجلسةٍ غير
+  //  إدارية — وهذا صحيح: كان صحيحاً حتى عند تسجيل الدخول قبل هذه المهمّة
+  //  (`systemUser.canAddPatients` إلخ)، والمِعترِضةُ الحيّة فقط تُعيد قراءته
+  //  حيّاً بدل لقطة الدخول. فجلساتُ `S.*` أعلاه (`permissions: {...}`)
+  //  تصف **نيّةَ** الاختبار فحسب؛ الحكمُ الفعليّ يأتي من هذا الصفّ. لذا كلّ
+  //  عمودٍ يقرؤه فحصُ صلاحيةٍ حقيقيّ في هذا الملفّ (`canCreateReview`
+  //  و`canDecideReview` في `shared/medical_review.ts`) يُزرَع هنا صراحةً
+  //  ليطابق ما تقصده الجلسةُ الاصطناعية المقابلة — لا يُترَك على افتراض
+  //  المخطّط (`can_add_patients` مثلاً افتراضُه `true` في `shared/schema.ts`،
+  //  وهذا كان يمنح الخبيرَ الصِرف صلاحيةً لم تُقصَد قطّ قبل هذا الإصلاح).
+  for (const [id, role, b, spec, perm] of [
+    [ADMIN, "admin", 1, null, { view: true, add: true, del: true, sessions: true }],
+    [RECV1, "reception", 1, null, { view: true, add: true, del: false, sessions: true }],
+    [RECV2, "reception", 2, null, { view: true, add: true, del: false, sessions: true }],
+    [DOC1, "doctor", 1, JSON.stringify(["prosthetic", "medical_support"]),
+      { view: true, add: true, del: false, sessions: true }],
+    [DOC2, "doctor", 2, JSON.stringify(["prosthetic", "medical_support"]),
+      { view: true, add: true, del: false, sessions: true }],
+    //  الخبيرُ الصِرف — `add: false` صراحةً: جلستُه الاصطناعية
+    //  (`S.expert.permissions = {canViewPatients: true}`) تقصد أن يُرفَض
+    //  إنشاءُ طلب المراجعة (٤٠٣، `canCreateReview` في القسم ١٠ أدناه)، وهذا
+    //  لا يصدق إلا إن كان العمودُ المخزَّن `false` هو الآخر — لا الافتراض.
+    [EXPERT, "prosthetics_expert", 1, null, { view: true, add: false, del: false, sessions: false }],
   ] as any[]) {
     await q(`INSERT INTO system_users
              (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
-              medical_specialties)
-             VALUES ($1,$2,'x','موظّف',$3,$4,$5::jsonb,true,$6::jsonb)
+              medical_specialties, can_view_patients, can_add_patients, can_delete_patients,
+              can_enter_sessions)
+             VALUES ($1,$2,'x','موظّف',$3,$4,$5::jsonb,true,$6::jsonb,$7,$8,$9,$10)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, branch_id=EXCLUDED.branch_id,
                branch_ids=EXCLUDED.branch_ids, medical_specialties=EXCLUDED.medical_specialties,
-               is_active=true`,
-      [id, `mr_u${id}`, role, b, JSON.stringify([b]), spec]);
+               is_active=true, can_view_patients=EXCLUDED.can_view_patients,
+               can_add_patients=EXCLUDED.can_add_patients,
+               can_delete_patients=EXCLUDED.can_delete_patients,
+               can_enter_sessions=EXCLUDED.can_enter_sessions`,
+      [id, `mr_u${id}`, role, b, JSON.stringify([b]), spec,
+        perm.view, perm.add, perm.del, perm.sessions]);
   }
   await cleanup();
 
@@ -162,7 +188,15 @@ async function main() {
   app.use(express.json());
   app.use((r: any, _res, next) => {
     const h = r.headers["x-test-session"];
-    r.session = h ? { branchSession: JSON.parse(Buffer.from(h, "base64").toString("utf8")) } : {};
+    //  ══ `destroy()` — تحصينُ المِعترِضة الحيّة يستدعيه لصفٍّ معطَّل (القسم
+    //  ١٠ أدناه، إصلاحٌ 2026-09-03) — نفسُ نمط `permission_authority.
+    //  test.ts` بحرفه. `express-session` الحقيقية تحمل `.destroy(callback)`؛
+    //  هذه الجلسةُ الوهمية لم تكن تحمله فكانت تُسقط استثناءً في وعدٍ غير
+    //  مُمسَك عند حسابٍ يُعطَّل حسابُه أثناء الاختبار.
+    const destroy = (cb: () => void) => cb();
+    r.session = h
+      ? { branchSession: JSON.parse(Buffer.from(h, "base64").toString("utf8")), destroy }
+      : { destroy };
     next();
   });
   const realUse = app.use.bind(app);
@@ -396,9 +430,15 @@ async function main() {
     same("   والاستقبالُ لا يُرجع للاستعلامات — الإرجاعُ إشرافيّ",
       (await decide(S.recv1, openReq.id, "return_to_reception", "سبب")).status, 403);
     //  وسحبُ الصلاحية يسري فوراً — تُقرأ من القاعدة لا من الجلسة.
+    //  ══ ٤٠١ لا ٤٠٣ (إصلاحٌ 2026-09-03) ═══════════════════════════════════
+    //  المِعترِضةُ الحيّة العالمية (`server/routes.ts`) تعترض **قبل** وصول
+    //  الطلب نقطةَ القرار: تقرأ صفَّ الطبيب حيّاً، تجده `is_active=false`،
+    //  وتُنهي الجلسةَ بردّ ٤٠١ — فحصُ `canDecideReview` في نقطة القرار لا
+    //  يُنفَّذ أصلاً فلا يملك فرصةً ليردّ ٤٠٣. وهذا أشملُ من الفحص القديم لا
+    //  أضعف منه: حسابٌ معطَّل يُرفَض على **كل** نقطة، لا نقطة القرار وحدها.
     await q(`UPDATE system_users SET is_active=false WHERE id=$1`, [DOC1]);
-    same("   وطبيبٌ عُطِّل حسابُه لا يقرّر ولو حملت جلستُه القديم",
-      (await decide(S.doc1, openReq.id, "approve")).status, 403);
+    same("   وطبيبٌ عُطِّل حسابُه يُرفَض بإنهاء الجلسة (٤٠١) — المِعترِضةُ الحيّة قبل نقطة القرار",
+      (await decide(S.doc1, openReq.id, "approve")).status, 401);
     await q(`UPDATE system_users SET is_active=true WHERE id=$1`, [DOC1]);
     //  **والاعترافُ الإشرافيُّ مفتوحٌ للمسؤول** — وهو الغرضُ من فصل القدرتين.
     same("   **والمسؤول العام يؤشّر «تمت المراجعة»**",
