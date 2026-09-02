@@ -13,7 +13,7 @@ import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import PatientsList from "@/pages/PatientsList";
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 
 // Heavy pages — code-split so the main bundle stays small. Each
 // chunk only loads when the user navigates to that route, which
@@ -134,6 +134,22 @@ function Router() {
   //  `isAdmin`/`permissions`…) — تناقضٌ سابقٌ لهذا الإصلاح في `use-auth.ts`
   //  نفسِه، فيُقرأ هنا بمرونةٍ (`as any`) بدل توسيع ذلك النوع في مهمّةٍ
   //  مركَّزة على الصلاحيات لا على تصحيح الأنواع.
+  //  ══ وتحديثُ الاستعلاماتِ المخبَّأة عند تغيّر لقطة الصلاحيات (إصلاحٌ
+  //  2026-09-03) ══════════════════════════════════════════════════════════
+  //  سريانُ الصلاحية فوراً على `useBranchSession`/`usePermissions` (أعلاه)
+  //  لا يكفي وحده: صفحةٌ مفتوحةٌ بالفعل تحمل نتيجةَ `useQuery` **مخبَّأةً**
+  //  من طلبٍ سابق بالشكل القديم — فمنحُ `canViewPayments` حيّاً لا يُظهر
+  //  عمودَ المدفوعات في صفٍّ عُرض قبل المنح إلا بإعادة جلبٍ فعلية. فيُقارَن
+  //  اللقطُ السابقُ بالجديد في `prevPermSnapshotRef`، وتُبطَل عائلاتُ
+  //  الاستعلامات ذاتُ الصلة **فقط** — لا الذاكرةُ كلُّها، ولا آليّةَ شبكةٍ
+  //  أو جلسةٍ جديدة (نفسُ `queryClient` المستعمَل في كل مكان).
+  const prevPermSnapshotRef = useRef<{
+    isAdmin: boolean;
+    canViewPatients: boolean;
+    canViewPayments: boolean;
+    canViewReports: boolean;
+  } | null>(null);
+
   useEffect(() => {
     if (isLoading) return;
     const raw = user as any;
@@ -146,6 +162,9 @@ function Router() {
     //  لأيّ طلبٍ فعليّ لاحق، عبر مِعترِضة `server/routes.ts`).
     if (raw === null) {
       setBranchSession(null);
+      //  خروجٌ فعليّ أو جلسةٌ ماتت — لا لقطةَ سابقةً تُقارَن بها لقطةُ
+      //  حسابٍ آخر يدخل لاحقاً على هذا المتصفّح نفسِه.
+      prevPermSnapshotRef.current = null;
       return;
     }
     if (!raw) return; // `undefined` — لم يُحسَم بعد أو فشل النداءُ عرَضاً؛ لا تغيير.
@@ -165,6 +184,47 @@ function Router() {
       shift: raw.shift ?? current?.shift,
       language: raw.language ?? current?.language,
     } as any);
+
+    //  ══ اللقطةُ الحاليّة — نفسُ صيغة `isAdmin || العَلَم` التي يفرضها
+    //  الخادمُ على كل نقطةٍ مسَّتها هذه الجولة ═══════════════════════════
+    const nextPermSnapshot = {
+      isAdmin: Boolean(raw.isAdmin),
+      canViewPatients: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPatients),
+      canViewPayments: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPayments),
+      canViewReports: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewReports),
+    };
+    const prevPermSnapshot = prevPermSnapshotRef.current;
+    //  لا مقارنةَ عند أوّل تحليلٍ ناجح (لا سابقةَ ذات معنى) — الإبطالُ
+    //  عند **تغيّرٍ فعليّ** فقط، لا عند كل تحديثٍ حتى لو بلا تغيير.
+    if (prevPermSnapshot) {
+      //  ١) مرضى/دفعات: يمسّ شكلَ ردّ `GET /api/patients` و`/registry`
+      //  و`/:id` (و`/:id/cases` تحت المفتاح نفسِه) — راجع الأقسام ز/ح أعلاه.
+      const patientOrPaymentViewChanged =
+        prevPermSnapshot.canViewPatients !== nextPermSnapshot.canViewPatients
+        || prevPermSnapshot.canViewPayments !== nextPermSnapshot.canViewPayments
+        || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin;
+      if (patientOrPaymentViewChanged) {
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/patients/registry"] });
+        //  مفتاحٌ منفصل فعلياً (`"/api/patients/:id"` حرفياً، لا بادئةً
+        //  نصّية لـ`"/api/patients"`) — يغطّي `GET /api/patients/:id` نفسَها
+        //  و`GET /api/patients/:id/cases` معاً (`PatientDetails.tsx` سطر ١٩٢).
+        queryClient.invalidateQueries({ queryKey: ["/api/patients/:id"] });
+      }
+      //  ٢) تقارير/إحصاءات: نفسُ الأبواب الأربعة المحروسة بـ`canViewReports`
+      //  زائداً البابَ الخامسَ المشترك مع المحاسبة (القسم ط أعلاه).
+      const reportsViewChanged =
+        prevPermSnapshot.canViewReports !== nextPermSnapshot.canViewReports
+        || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin;
+      if (reportsViewChanged) {
+        queryClient.invalidateQueries({ queryKey: ["/api/reports/detailed"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/reports/daily-patient-report"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/visits-by-treatment"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/monthly-new-patients"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/statistics/revenue-by-treatment"] });
+      }
+    }
+    prevPermSnapshotRef.current = nextPermSnapshot;
   }, [user, isLoading]);
 
   if (isLoading) {

@@ -267,6 +267,43 @@ function buildStoredPermissions(systemUser: SystemUser) {
   };
 }
 
+/**
+ * لقطةٌ **لا ماليّة** من دفعات مريض — لمن لا يملك `canViewPayments` على
+ * `GET /api/patients/:id` (إصلاحٌ 2026-09-03).
+ *
+ * ══ لماذا لا يكفي حذفُ `payments` وحده ══════════════════════════════════
+ * حذفُ المصفوفة الخام (إصلاحٌ 2026-09-02) صحيحٌ للمال — لكنه كسر أيضاً
+ * عدّادَ جلسات العلاج الطبيعي القديم في `PatientDetails.tsx` (بادجُ الرأس
+ * و`resolvePurchasedSessions`): للمرضى القدامى بلا `physioPlan` مخزَّن،
+ * الدفعاتُ هي **الذاكرة الوحيدة** لعدد الجلسات المشتراة (راجع قسم «خطة
+ * الجلسات المشتراة» في CLAUDE.md). فحذفُ الحقل كاملاً كان يُظهر «صفر
+ * جلسات» لمريضٍ اشترى فعلاً — كذبةٌ سريريّة لا ماليّة، بقدر ما كانت
+ * الأصفارُ الماليةُ كذبةً قبل هذا الإصلاح.
+ *
+ * ══ والحلّ: اشتقاقٌ لا استعادة ═══════════════════════════════════════════
+ * `{treatmentType, sessionCount}` فقط — **لا** معرّفَ دفعةٍ، **لا** مبلغاً،
+ * **لا** تاريخاً، **لا** ملاحظة، **لا** فرعاً. مُجمَّعةٌ بنوع العلاج فتُختصر
+ * صفوفٌ كثيرة إلى سطرٍ واحد لكلّ نوع. وهذا الشكلُ بعينه ما تتوقّعه
+ * `resolvePurchasedSessions` (`shared/pricing.ts`) في معامل `paymentSessions`
+ * — فلا تعديلَ في تلك الدالّة المُختبَرة (`test:physio-sessions`)، ولا في
+ * طريقة استهلاكها؛ المصدرُ وحده يتبدّل من الصفوف الخام إلى هذه اللقطة.
+ */
+function summarizePaymentSessions(
+  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
+): { treatmentType: string | null; sessionCount: number }[] {
+  const byType = new Map<string, number>();
+  for (const p of payments) {
+    const n = Number(p.sessionCount) || 0;
+    if (n <= 0) continue;
+    const key = p.paymentTreatmentType ?? "";
+    byType.set(key, (byType.get(key) ?? 0) + n);
+  }
+  return Array.from(byType, ([key, sessionCount]) => ({
+    treatmentType: key || null,
+    sessionCount,
+  }));
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -341,12 +378,22 @@ export async function registerRoutes(
   }, (await import('express')).static('uploads'));
 
   // Helper to get user branch
+  //
+  // ══ `isAdmin` — الحقلُ الشبح الذي لم يكن موجوداً (إصلاحٌ 2026-09-03) ═════
+  // `ctx.isAdmin` كان يُقرأ في أربعة مواضع (`GET /api/patients` و`GET
+  // /api/patients/:id`) بافتراض أنها كائنُ `getUserContext` القياسيّ في
+  // `sessions_module/permissions.ts` (وذاك يحمل `isAdmin` فعلاً) — لكنّ
+  // هذه دالّةٌ محليّة منفصلة تُظلِّل الاسمَ نفسَه ولم تكن تحمله، فكانت
+  // `ctx.isAdmin` تُقيَّم `undefined` دائماً: مسؤولٌ عامٌّ صفُّه الشخصيّ
+  // بأعلامٍ مُطفَأة كان يُرفَض على البابين رغم `isAdmin` الحقيقية في جلسته.
+  // العلاجُ عند المصدر الواحد هنا — لا تعديل كلّ موضع استهلاكٍ على حدة.
   const getUserContext = (req: any) => {
     const branchSession = (req.session as any)?.branchSession;
     return {
       userId: branchSession?.userId,
       role: branchSession?.role || (branchSession?.isAdmin ? 'admin' : 'staff'),
-      branchId: branchSession?.branchId
+      branchId: branchSession?.branchId,
+      isAdmin: Boolean(branchSession?.isAdmin),
     };
   };
 
@@ -1923,7 +1970,11 @@ export async function registerRoutes(
 
     res.json({
       ...patient,
-      ...(canViewPaymentsForThisPatient ? { payments: paymentsWithDisplay } : {}),
+      ...(canViewPaymentsForThisPatient
+        ? { payments: paymentsWithDisplay }
+        //  ══ ملخّصُ جلساتٍ غيرُ ماليّ — راجع تعليق `summarizePaymentSessions`
+        //  أعلاه ═════════════════════════════════════════════════════════
+        : { paymentSessionsSummary: summarizePaymentSessions(payments) }),
       documents,
       visits,
     });
@@ -1961,16 +2012,27 @@ export async function registerRoutes(
     // 403'ing the endpoint (which would blank their clinical view) or trusting
     // the UI to hide fields the payload still carries.
     const financiallyBlind = branchSession?.role === "doctor";
+    //  ══ `canViewPayments` — لا `paid`/`remaining` لمن لا يملكها (إصلاحٌ
+    //  2026-09-03) ═══════════════════════════════════════════════════════
+    //  قاعدةٌ مستقلّة عن حجب الطبيب أعلاه: الكلفةُ (`cost`) ليست دفعةً فتبقى
+    //  ظاهرة لمستخدمٍ عاديٍّ لا يملك `canViewPayments` — لكنّ المُشتقَّ من
+    //  الدفعات الفعلية (`paid`/`remaining`) يُحذَف من الردّ لا يُصفَّر.
+    //  وحارسُ الطبيب أصرم (يحجب الكلفةَ نفسَها) ويبقى حرفاً بحرف: حين
+    //  يتحقّق الشرطان معاً يسود `financiallyBlind`.
+    const canViewPayments = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
     // Attach per-case paid total + visit count (case-attributed rows).
     const enriched = cases.map((c) => {
-      const casePayments = payments.filter((p: any) => p.caseId === c.id);
       const caseVisits = visits.filter((v: any) => v.caseId === c.id);
-      const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
       if (financiallyBlind) {
         const { cost, costSource, ...clinical } = c as any;
         return { ...clinical, visitCount: caseVisits.length };
       }
+      if (!canViewPayments) {
+        return { ...c, visitCount: caseVisits.length };
+      }
+      const casePayments = payments.filter((p: any) => p.caseId === c.id);
+      const paid = casePayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
       return {
         ...c,
         paid,

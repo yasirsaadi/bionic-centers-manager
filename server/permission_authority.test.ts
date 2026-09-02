@@ -453,6 +453,102 @@ async function main() {
     const adminStillFine = await http("GET", `/api/patients/${pBranch1}/cases`, S.admin);
     same("ي٦. **والمسؤولُ العام غيرُ مُتأثِّرٍ بهذا التحصين إطلاقاً ⟶ ٢٠٠**",
       adminStillFine.status, 200);
+
+    // ══ ك. تحصينٌ رجعيّ — `ctx.isAdmin` كان حقلاً شبحاً (إصلاحٌ 2026-09-03) ═
+    // `getUserContext` المحليّة في `routes.ts` (تُظلِّل نظيرتها في
+    // `sessions_module/permissions.ts`) لم تكن تحمل `isAdmin` إطلاقاً، فكانت
+    // `ctx.isAdmin` تُقيَّم `undefined` دائماً — وهذا يُسقط المسؤولَ العام
+    // على بابَي `GET /api/patients` و`GET /api/patients/:id` تحديداً (البابان
+    // الوحيدان اللذان استعملا `ctx.isAdmin` بدل `branchSession?.isAdmin`
+    // المباشرة) كلّما كانت أعلامُه الشخصية مُطفَأة — تماماً كحال `S.admin` هنا.
+    console.log("\n── ك. تحصينٌ رجعيّ: المسؤولُ يمرّ رغم أعلامٍ شخصيةٍ مُطفَأة ──");
+    const adminList2 = await http("GET", "/api/patients", S.admin);
+    same("ك١. **`GET /api/patients` — المسؤولُ العام ⟶ ٢٠٠ رغم أعلامه المُطفَأة**",
+      adminList2.status, 200);
+    check(Array.isArray(adminList2.body), "ك٢. **والردُّ مصفوفةٌ حقيقية لا خطأً**",
+      JSON.stringify(adminList2.body)?.slice(0, 120));
+
+    const adminDetails2 = await http("GET", `/api/patients/${pBranch1}`, S.admin);
+    same("ك٣. **`GET /api/patients/:id` — كذلك ⟶ ٢٠٠**", adminDetails2.status, 200);
+    same("   (نفسُ هويّة المريض)", adminDetails2.body?.id, pBranch1);
+
+    // ══ ل. تسريبُ الحالة — `paid`/`remaining` في GET /:id/cases (إصلاحٌ
+    // 2026-09-03) ══════════════════════════════════════════════════════════
+    console.log("\n── ل. `canViewPayments` على GET /api/patients/:id/cases ──");
+    const pCaseLeak = await mkPatient("مريضٌ لتسريب الحالة", 1);
+    const caseLeakId = (await q<{ id: number }>(
+      `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost)
+       VALUES ($1,1,'prosthetic',500000) RETURNING id`, [pCaseLeak]))[0].id;
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id) VALUES ($1,1,300000,$2)`,
+      [pCaseLeak, caseLeakId]);
+
+    const casesBlind = await http("GET", `/api/patients/${pCaseLeak}/cases`, S.payBlind);
+    same("ل١. **`canViewPatients=true, canViewPayments=false` ⟶ الحالاتُ تُقرأ (٢٠٠)**",
+      casesBlind.status, 200);
+    const blindCase = Array.isArray(casesBlind.body)
+      ? casesBlind.body.find((c: any) => c.id === caseLeakId) : null;
+    check(!!blindCase, "ل٢. تمهيد: الحالةُ ظاهرةٌ في الردّ", JSON.stringify(casesBlind.body));
+    same("ل٣. **والكلفةُ تبقى ظاهرة — ليست دفعةً**", blindCase?.cost, 500_000);
+    check(blindCase?.paid === undefined,
+      "ل٤. **لكن `paid` غائبةٌ إطلاقاً من صفّ الحالة — لا صفرٌ زائف**",
+      JSON.stringify(blindCase?.paid));
+    check(blindCase?.remaining === undefined,
+      "ل٥. **و`remaining` غائبةٌ كذلك**", JSON.stringify(blindCase?.remaining));
+    check("visitCount" in (blindCase ?? {}),
+      "ل٦. **وبقيّةُ حقول الحالة (`visitCount` مثلاً) حاضرةٌ كما هي**");
+
+    const casesVisible = await http("GET", `/api/patients/${pCaseLeak}/cases`, S.receptionYes);
+    const visibleCase = Array.isArray(casesVisible.body)
+      ? casesVisible.body.find((c: any) => c.id === caseLeakId) : null;
+    same("ل٧. **ومَن يملك `canViewPayments` ⟶ `paid` الصحيح**", visibleCase?.paid, 300_000);
+    same("ل٨. **و`remaining` الصحيح (الكلفة − المدفوع)**", visibleCase?.remaining, 200_000);
+
+    // ══ م. ملخّصُ جلساتٍ غيرُ ماليّ للمرضى القدامى (إصلاحٌ 2026-09-03) ═════
+    // مريضُ علاجٍ طبيعي قديم بلا `physioPlan` مخزَّن — دفعاتُه ذاكرتُه
+    // الوحيدة لعدد الجلسات (راجع تعليق `summarizePaymentSessions`).
+    console.log("\n── م. ملخّصُ جلساتٍ غيرُ ماليّ يحلّ محلّ الدفعات الخام ──");
+    const pLegacyPhysio = await mkPatient("مريضُ علاجٍ طبيعي قديم", 1);
+    await q(`UPDATE patients SET is_physiotherapy = true WHERE id = $1`, [pLegacyPhysio]);
+    //  ثلاثُ دفعاتٍ — نوعان مختلفان، ونوعٌ واحدٌ بدفعتين ليثبت التجميعَ
+    //  الفعليّ لا مجرّد تمرير الصفّ الأخير.
+    await q(
+      `INSERT INTO payments (patient_id, branch_id, amount, payment_treatment_type, session_count, notes)
+       VALUES ($1,1,150000,'روبوت',6,'دفعةٌ أولى — ملاحظةٌ لا يجوز أن تصل'),
+              ($1,1,100000,'روبوت',4,'دفعةٌ ثانية'),
+              ($1,1,90000,'أبر صينية',3,'إبرٌ صينية')`,
+      [pLegacyPhysio]);
+
+    const legacyBlind = await http("GET", `/api/patients/${pLegacyPhysio}`, S.payBlind);
+    same("م١. **`canViewPayments=false` ⟶ الملفُّ يُقرأ (٢٠٠)**", legacyBlind.status, 200);
+    check(legacyBlind.body?.payments === undefined,
+      "م٢. **ولا صفوفَ دفعاتٍ خام إطلاقاً — لا معرّفَ ولا مبلغَ ولا تاريخَ ولا ملاحظة**",
+      JSON.stringify(legacyBlind.body?.payments));
+    const summary = legacyBlind.body?.paymentSessionsSummary;
+    check(Array.isArray(summary),
+      "م٣. **وملخّصُ جلساتٍ غيرُ ماليّ حاضرٌ بدلاً منها**", JSON.stringify(summary));
+
+    const robotEntry = Array.isArray(summary) ? summary.find((e: any) => e.treatmentType === "روبوت") : null;
+    same("م٤. **وعددُ جلسات «روبوت» مُجمَّعٌ بشكلٍ صحيح عبر الدفعتين (٦+٤=١٠)**",
+      robotEntry?.sessionCount, 10);
+    const needlesEntry = Array.isArray(summary) ? summary.find((e: any) => e.treatmentType === "أبر صينية") : null;
+    same("م٥. **وعددُ جلسات «أبر صينية» صحيحٌ في سطرٍ منفصل (٣)**",
+      needlesEntry?.sessionCount, 3);
+
+    const entryKeys = robotEntry ? Object.keys(robotEntry).sort() : [];
+    same("م٦. **وكلُّ سطرٍ يحمل حقلين فقط — لا معرّفَ دفعةٍ ولا مبلغاً ولا تاريخاً ولا ملاحظةً ولا فرعاً**",
+      entryKeys, ["sessionCount", "treatmentType"]);
+    check(JSON.stringify(summary).indexOf("150000") === -1 && JSON.stringify(summary).indexOf("100000") === -1
+      && JSON.stringify(summary).indexOf("90000") === -1,
+      "م٧. **ولا مبلغَ دفعةٍ واحد يظهر في نصّ الردّ كلِّه**");
+    check(JSON.stringify(summary).indexOf("ملاحظةٌ") === -1,
+      "م٨. **ولا نصَّ ملاحظةٍ واحد يظهر فيه**");
+
+    const legacyVisible = await http("GET", `/api/patients/${pLegacyPhysio}`, S.receptionYes);
+    same("م٩. **ومَن يملك `canViewPayments=true` ⟶ الصفوفُ الخام كاملةً (٣) كما كانت دوماً**",
+      legacyVisible.body?.payments?.length, 3);
+    check(legacyVisible.body?.paymentSessionsSummary === undefined,
+      "م١٠. **وبلا ملخّصٍ إضافيّ له — السلوكُ الكامل بلا تغيير**",
+      JSON.stringify(legacyVisible.body?.paymentSessionsSummary));
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
