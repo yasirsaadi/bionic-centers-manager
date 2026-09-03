@@ -727,11 +727,53 @@ async function main() {
     const epWl = await http("GET", "/api/medical/worklist", S.doc1);
     check((epWl.body?.rows ?? []).some((x: any) => x.patientId === autoEp),
       "   **والمريضُ القديم يدخل طابور المعاينة رغم قِدَمه**");
-    //  ومحاولةٌ ثانية على نفس الحلقة لا تُنشئ بطاقةً ثانية (الخادم يردّ 409
-    //  على الحلقة المفتوحة أصلاً، والحارس هنا للتوثيق).
-    same("   ولا حلقةَ ثانية مفتوحة",
-      (await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1,
-        { servicePath: "exam", serviceType: "prosthetic" })).status, 409);
+    //  ══ عمليةٌ ثانية مستقلّة على نفس المريض والخدمة — مقبولةٌ صراحةً
+    //  (ترحيل ٠٧٣ / migration 073 / PR #274: «Allow parallel independent
+    //  device operations»). كانت هذه النقطة تختبر ٤٠٩ لحلقةٍ ثانية على
+    //  نفس (مريض، خدمة) — وهو الشرطُ الذي رفعه ٠٧٣ صراحةً؛ راجع تعليق
+    //  `startDeviceEpisodeTx` في `server/device_episodes/store.ts` («لم يعد
+    //  فتحُ حلقةٍ جديدة يُرفَض لمجرّد وجود حلقةٍ أخرى مفتوحة»)، ومعه
+    //  `server/parallel_device_operations.test.ts` الذي يثبت القاعدةَ
+    //  التجارية الجديدة على مسار `/api/no-exam/device-sale`. هذا القسمُ
+    //  يثبتها على المسار الآخر: `POST /api/patients/:id/device-episodes`
+    //  (مسار المعاينة). والحمايةُ الباقية أضيق بكثير — أمرا عملٍ مفتوحان
+    //  على **نفس حلقة الجهاز بعينها** فقط (`uq_pwo_one_open_build_per_
+    //  episode`) — ولا تُختبَر هنا لأن فتح حلقةٍ لا يفتح أمرَ عملٍ بنفسه.
+    //
+    //  وفهرسُ تفرّد طلب المراجعة (`uq_mrr_pending_episode`) مفتاحُه
+    //  `device_episode_id` وحده لا (مريض، خدمة) — فحلقتان مستقلّتان تُنتجان
+    //  طلبَي مراجعةٍ مستقلَّين بلا تعارض، كلٌّ مربوطٌ بحلقته بعينها.
+    const epRes2 = await http("POST", `/api/patients/${autoEp}/device-episodes`, S.recv1,
+      { servicePath: "exam", serviceType: "prosthetic" });
+    same("   وعمليةٌ ثانية مستقلّة على نفس المريض والخدمة ⟶ ٢٠١ أيضاً — لا ٤٠٩",
+      epRes2.status, 201);
+    const firstEpisodeId = Number(epRes.body?.id);
+    const secondEpisodeId = Number(epRes2.body?.id);
+    check(secondEpisodeId !== firstEpisodeId,
+      "   **وهويّةُ الحلقة الثانية مختلفةٌ عن الأولى** — لا إعادةَ استعمالٍ ولا دمج",
+      JSON.stringify({ firstEpisodeId, secondEpisodeId }));
+    const episodesAfter = await q(
+      `SELECT id FROM patient_device_episodes WHERE patient_id=$1`, [autoEp]);
+    same("   **وحلقتان بالضبط الآن على هذا المريض**", episodesAfter.length, 2);
+    const reqsAfter = await q(
+      `SELECT * FROM medical_review_requests WHERE patient_id=$1`, [autoEp]);
+    same("   **وطلبا مراجعةٍ بالضبط الآن**", reqsAfter.length, 2);
+    //  والهويّةُ صريحةٌ لا مُخمَّنة: كلُّ طلبٍ يُقرأ بمعرّف حلقته بعينه — لا
+    //  بالترتيب ولا بالعدّ ولا بأيّ ترشيحٍ ضمنيّ.
+    const firstReqAfter = (await q(
+      `SELECT * FROM medical_review_requests WHERE patient_id=$1 AND device_episode_id=$2`,
+      [autoEp, firstEpisodeId]))[0];
+    const secondReqAfter = (await q(
+      `SELECT * FROM medical_review_requests WHERE patient_id=$1 AND device_episode_id=$2`,
+      [autoEp, secondEpisodeId]))[0];
+    check(!!firstReqAfter,
+      "   **وطلبُ المراجعة الأوّل بقي مربوطاً بحلقته الأولى بعينها — لم يُمَسّ**",
+      JSON.stringify(reqsAfter));
+    check(!!secondReqAfter,
+      "   **وطلبُ المراجعة الثاني مربوطٌ بالحلقة الثانية بعينها — هويّةٌ صريحة لا افتراض**",
+      JSON.stringify(reqsAfter));
+    same("   **وكلا الطلبين بمسارٍ كامل**",
+      [firstReqAfter?.requested_path, secondReqAfter?.requested_path], ["full", "full"]);
 
     // ══ ٢١. التوجيه التلقائي — الزيارةُ وحدها؛ الصيانةُ لم تعد منه ═══════
     //  ⚠ **(المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨)** — كانت هذه الفقرةُ تثبت أن
