@@ -31,23 +31,30 @@ export interface WhatsappSendResult {
 }
 
 /**
- * يرسل قالباً بمعامِلٍ واحد.
+ * يرسل قالباً بمعامِلات نصّيةٍ مرتَّبة — واحدٌ للترحيب، اثنان للتحديث.
  *
  * ══ قالبان لا اثنا عشر ═════════════════════════════════════════════════
  * ستُّ مراحل × نوعَي جهاز = اثنا عشر قالباً يُعتمَد كلٌّ منها في Meta على
  * حدة، وأيُّ تعديلٍ في صياغةٍ عربية يعيد دورةَ الاعتماد كلَّها. فقالبان
- * فقط — ترحيبٌ وتحديث — بمعامِلٍ واحد `{{1}}`:
+ * فقط — ترحيبٌ وتحديث:
  *
- *   • الترحيب: `{{1}}` = **رمزُ المريض القانونيّ** (وحده).
- *   • التحديث: `{{1}}` = **نصُّ `renderNotification` نفسه**.
+ *   • الترحيب: `{{1}}` = **رمزُ المريض القانونيّ** (وحده) — معامِلٌ واحد.
+ *   • التحديث: `{{1}}` = **رمزُ المريض القانونيّ**، `{{2}}` = **نصُّ
+ *     `renderNotification` نفسه** — معامِلان، فيربط القالبُ التحديثَ
+ *     بملفٍّ بعينه لا برسالةٍ عائمة بلا هويّة.
  *
  * فالكتالوجُ يبقى في الشيفرة لا في لوحة Meta، ولا تُكتب صياغةُ المراحل
  * مرّتين. والاسمُ واللغةُ من الإعداد: مركزٌ يغيّر قالبه لا يحتاج نشراً.
+ *
+ * ══ ولا معرفةَ هنا بعدد المعامِلات المتوقَّع لكلّ قالب ══════════════════
+ * هذه الدالّةُ آليّةٌ بحتة: تُرسل ما يُعطى لها بترتيبه بلا تفسير. **مَن
+ * يقرّر العدد والترتيب هو المنادي** (`dispatcher.ts`) الذي يعرف نوعَ
+ * الحدث وهويّة المريض معاً — لا هذا الملفّ الذي غرضُه Meta فقط.
  */
 export async function sendTemplate(
   toWaId: string,
   kind: TemplateKind,
-  bodyParam: string,
+  bodyParams: string[],
 ): Promise<WhatsappSendResult> {
   const config = patientWhatsappConfig();
   if (!config) return { ok: false, reason: "disabled" };
@@ -79,7 +86,10 @@ export async function sendTemplate(
           template: {
             name,
             language: { code: config.templateLanguage },
-            components: [{ type: "body", parameters: [{ type: "text", text: bodyParam }] }],
+            components: [{
+              type: "body",
+              parameters: bodyParams.map((text) => ({ type: "text", text })),
+            }],
           },
         }),
         signal: controller.signal,

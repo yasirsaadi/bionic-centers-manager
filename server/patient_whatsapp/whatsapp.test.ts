@@ -72,7 +72,9 @@ const MARK = "اختبار-واتساب";
 const ADMIN = 9891;
 
 // ── جاسوسٌ على Graph: لا نداءَ شبكة، ونرى ما كان سيُرسَل ─────────────────
-interface SentWa { to: string; template: string; param: string }
+//  `params` **بترتيبها** كما وصلت Graph — واحدٌ للترحيب، اثنان للتحديث
+//  (الرمزُ القانونيّ ثمّ نصُّ الحالة، إصلاحٌ 2026-09-03).
+interface SentWa { to: string; template: string; params: string[] }
 const waSent: SentWa[] = [];
 /** إخفاقٌ مُبرمَج للنداء التالي — لإثبات مسار الفشل بلا شبكة. */
 let waFailure: null | { status: number } | "network" = null;
@@ -89,7 +91,8 @@ globalThis.fetch = (async (url: any, init: any) => {
     waSent.push({
       to: String(body.to ?? ""),
       template: String(body.template?.name ?? ""),
-      param: String(body.template?.components?.[0]?.parameters?.[0]?.text ?? ""),
+      params: ((body.template?.components?.[0]?.parameters ?? []) as any[])
+        .map((p) => String(p?.text ?? "")),
     });
     return new Response(JSON.stringify({ messages: [{ id: "wamid.TEST" }] }), { status: 200 });
   }
@@ -323,7 +326,7 @@ async function main() {
     await settle();
     const dF2 = (await deliveriesForPatient(rF.body.id))[0];
     same("ز. **الصفُّ نفسُه أُرسل**", [dF2.id, dF2.status], [dF.id, "sent"]);
-    const sentF = waSent.find((m) => m.param === rF.body.patientCode);
+    const sentF = waSent.find((m) => m.params[0] === rF.body.patientCode);
     check(Boolean(sentF) && sentF!.template === WELCOME_TEMPLATE,
       "ز.١ **بقالب الترحيب المُعدّ**", JSON.stringify(sentF));
     same("ز.٢ ووجهتُه رقمُه المسجَّل", sentF!.to, "9647707776666");
@@ -343,14 +346,14 @@ async function main() {
 
     // ══ ط. ما لا يخرج في الترحيب ═══════════════════════════════════════
     console.log("\n── ط. ما لا يخرج ──");
-    same("ط. **معامِلُ القالب هو الرمزُ وحده**",
+    same("ط. **معامِلٌ واحدٌ بالضبط، وهو الرمزُ وحده** — لا شيءَ آخر",
       waSent.filter((m) => m.template === WELCOME_TEMPLATE)
-        .every((m) => /^[A-Z]{2}-\d+$/.test(m.param)), true);
+        .every((m) => m.params.length === 1 && /^[A-Z]{2}-\d+$/.test(m.params[0])), true);
     const forbidden: [string, string][] = [
       ["اسم المريض", MARK], ["التشخيص", "x"], ["الهاتف", "07701234567"],
       ["رقم الصفّ", String(pA.id)],
     ];
-    const allParams = waSent.map((m) => m.param).join("\n");
+    const allParams = waSent.flatMap((m) => m.params).join("\n");
     for (const [label, needle] of forbidden) {
       check(!allParams.includes(needle), `ط.١ ولا ${label} في أي معامِل`, needle);
     }
@@ -434,17 +437,21 @@ async function main() {
         payload: { stage: "ready_for_fitting", serviceType: "prosthetic" },
       })), 1);
 
-    // ══ م. حدثُ تصنيعٍ بقالب التحديث ═══════════════════════════════════
+    // ══ م. حدثُ تصنيعٍ بقالب التحديث — معامِلان: الرمزُ ثمّ نصُّ الحالة ══
     console.log("\n── م. تحديثُ التصنيع ──");
     waSent.length = 0;
     await dispatchOnce(50);
     await settle();
     const upd = waSent.find((m) => m.template === UPDATE_TEMPLATE);
     check(Boolean(upd), "م. **أُرسل بقالب التحديث**", JSON.stringify(waSent));
-    check(upd!.param.includes("جاهزاً للتجربة"),
-      "م.١ **ومعامِلُه نصُّ العارض نفسه**", upd!.param);
-    check(!upd!.param.includes(MARK) && !/\d{6,}/.test(upd!.param.replace(/\d{2}\/\d{2}\/\d{4}/g, "")),
-      "م.٢ ولا اسمَ ولا مبلغَ فيه", upd!.param);
+    same("م.١ **بمعامِلَين بالضبط** — لا واحدٍ كالترحيب", upd?.params.length, 2);
+    same("م.٢ **الأوّلُ رمزُ المريض القانونيّ صاحبِ الملفّ بعينه**",
+      upd?.params[0], pA.patientCode);
+    check(!!upd?.params[1]?.includes("جاهزاً للتجربة"),
+      "م.٣ **والثاني نصُّ العارض نفسه**", upd?.params[1]);
+    check(!upd?.params[1]?.includes(MARK)
+      && !/\d{6,}/.test((upd?.params[1] ?? "").replace(/\d{2}\/\d{2}\/\d{4}/g, "")),
+      "م.٤ ولا اسمَ ولا مبلغَ في نصّ الحالة", upd?.params[1]);
 
     // ══ ن. لا أثرَ تشغيليّ لتلغرام المرضى ═══════════════════════════════
     console.log("\n── ن. تلغرام المرضى ──");
@@ -691,7 +698,61 @@ async function main() {
     same("ر.٦ **والخادمُ يقبله على PUT** (أُثبت حيّاً في ك/ل)",
       (await http("PUT", `/api/patients/${rS2.body.id}`,
         { whatsappNotificationsEnabled: true })).status, 200);
+
+    // ══ س. رمزٌ فاسدٌ أو مفقود على صفّ تحديث — فشلٌ آمن بلا نداءٍ مشوَّه ══
+    //
+    // ══ لماذا هذا السيناريو تحديداً ═══════════════════════════════════
+    // `patients.patient_code` مقفلٌ بـNOT NULL وقيدِ صيغةٍ معاً (ترحيل
+    // ٠٥٢)، فملفٌّ حقيقيّ لا يحمل رمزاً فاسداً في التشغيل العاديّ أبداً.
+    // وإثباتُ الحارس يحتاج كسرَ هذا الضمان **عمداً ومؤقّتاً** — نفسُ
+    // أسلوب حواجز قسم «ص» أعلاه — لا لأن الحالة تقع طبيعياً، بل لأن
+    // الحارس في `dispatcher.ts` يجب أن يصمد لو وقعت رغم كلّ ذلك.
+    console.log("\n── س. رمزٌ فاسدٌ على المتابعة ──");
+    const rS4 = await http("POST", "/api/patients", newPatientBody("س", "07716667777"));
+    await settle();
+    same("س. المريضُ حُفظ", rS4.status, 201);
+    const pS = rS4.body;
+    const evS = await q<{ id: number }>(
+      `INSERT INTO patient_events (patient_id, branch_id, event_type, payload, actor_user_id)
+       VALUES ($1,1,$2,'{}'::jsonb,$3) RETURNING id`,
+      [pS.id, PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED, ADMIN]);
+    same("س.١ **وحدثُ تحديثٍ يُستحقّ له كالمعتاد**",
+      await db.transaction((tx) => enqueueForActiveContacts(tx as any, {
+        patientId: pS.id, patientEventId: evS[0].id,
+        notificationType: PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED,
+        payload: { stage: "mold", serviceType: "prosthetic" },
+      })), 1);
+
+    //  كسرُ ضمان الرمز عمداً — يُعاد فوراً بعد القياس، ومرّةً أخرى في
+    //  `finally` احتياطاً لو فشل قياسٌ في المنتصف.
+    await q(`ALTER TABLE patients DROP CONSTRAINT ck_patients_patient_code_format`);
+    await q(`UPDATE patients SET patient_code = 'INVALID-CODE' WHERE id = $1`, [pS.id]);
+
+    waSent.length = 0;
+    await dispatchOnce(50);
+    await settle();
+    same("س.٢ **ولا نداءَ Meta إطلاقاً — لا قالبَ مشوَّهاً يُرسَل**",
+      waSent.filter((m) => m.to === "9647716667777").length, 0);
+    const dS = (await deliveriesForPatient(pS.id))
+      .find((d) => d.notificationType === PATIENT_EVENT_TYPES.MANUFACTURING_STAGE_CHANGED);
+    same("س.٣ **والصفُّ يُخطَّى آمناً برمزٍ محدود، بلا محاولةٍ محروقة**",
+      [dS?.status, dS?.lastErrorCode, dS?.attemptCount], ["skipped", "render_failed", 0]);
+
+    //  واستعادةُ القيد والقيمة فوراً — لا في `finally` وحده، فبقيّةُ
+    //  الملفّ (إن وُجد المزيد) يجب أن تعمل على قاعدةٍ سليمة كما كانت.
+    await q(`UPDATE patients SET patient_code = $2 WHERE id = $1`, [pS.id, pS.patientCode]);
+    await q(`ALTER TABLE patients ADD CONSTRAINT ck_patients_patient_code_format
+             CHECK (patient_code ~ '^WB-[0-9]{5,}$')`);
   } finally {
+    //  حزامٌ ثانٍ: لو فشل قياسٌ في قسم «س» قبل إعادة القيد أعلاه، هذا
+    //  يضمن ألّا يبقى مفقوداً على القاعدة المشتركة لأيّ تشغيلٍ تالٍ.
+    await q(`DO $$ BEGIN
+               IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                               WHERE conname = 'ck_patients_patient_code_format') THEN
+                 ALTER TABLE patients ADD CONSTRAINT ck_patients_patient_code_format
+                   CHECK (patient_code ~ '^WB-[0-9]{5,}$');
+               END IF;
+             END $$;`);
     globalThis.fetch = realFetch;
     //  **حواجزُ العطل المتعمَّد تُرفع دائماً** — انهيارٌ في المنتصف كان
     //  يتركها على الجدول فتُسقط كلَّ تشغيلٍ تالٍ بلا سببٍ مفهوم.
