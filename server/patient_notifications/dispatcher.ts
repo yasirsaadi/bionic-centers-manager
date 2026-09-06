@@ -18,6 +18,8 @@
 import { renderNotification, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
 import { patientWhatsappEnabled, templateReady, type TemplateKind } from "../patient_whatsapp/config";
 import { sendTemplate } from "../patient_whatsapp/client";
+import { patientCodeOf } from "../patient_code/store";
+import { isCanonicalPatientCode } from "@shared/patient_code";
 import {
   claimDue, contactForDelivery, markFailed, markSent, markSkipped,
   PATIENT_CHANNEL, type DeliveryErrorCode, type TypeFilter,
@@ -121,7 +123,30 @@ export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
         continue;
       }
 
-      const res = await sendTemplate(contact.externalId, kind, param);
+      // ── معامِلاتُ القالب: واحدٌ للترحيب، اثنان للتحديث ─────────────────
+      // الترحيبُ لا يحتاج شيئاً إضافياً: `param` هو رمزُ المريض نفسُه أصلاً
+      // (`welcomeParam` في `render.ts`). والتحديثُ يحتاج **هويّةَ الملفّ**
+      // إلى جانب نصّ الحالة — فيُقرأ رمزُ المريض القانونيّ حيّاً من صفّه
+      // عبر `patientCodeOf` (المرجعُ الوحيد لهذه القراءة،
+      // `patient_code/store.ts`) بمعرّف الصفّ نفسِه (`row.patientId`)، لا
+      // من الحمولة المخزَّنة ولا من أيّ نسخةٍ ثانية.
+      let bodyParams: string[];
+      if (kind === "welcome") {
+        bodyParams = [param];
+      } else {
+        const code = await patientCodeOf(row.patientId);
+        // رمزٌ مفقودٌ أو فاسد — لا يُفترَض وقوعه (العمودُ مقفلٌ بـNOT NULL
+        // وقيدِ صيغةٍ معاً، ترحيل ٠٥٢) لكنّ الحارس لا يفترض. ونفسُ رمز «لا
+        // نصّ له» أعلاه: قالبٌ بمعامِل هويّةٍ ناقص أخطرُ من رسالةٍ لا تصل.
+        if (!isCanonicalPatientCode(code)) {
+          await markSkipped(row.id, "render_failed");
+          summary.skipped++;
+          continue;
+        }
+        bodyParams = [code, param];
+      }
+
+      const res = await sendTemplate(contact.externalId, kind, bodyParams);
       if (res.ok) {
         await markSent(row.id);
         summary.sent++;
