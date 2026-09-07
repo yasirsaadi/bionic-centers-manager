@@ -142,6 +142,7 @@ async function signExam(patientId: number, session: any, opts: {
   caseType?: string; deviceCost?: number;
 } = {}) {
   const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: opts.caseType ?? "prosthetic",
     diagnosis: "بتر تحت الركبة",
     prescription: {},
@@ -828,6 +829,7 @@ async function main() {
     const pExp = await mkPatient("الخبير");
     await mkCase(pExp);
     const expSigned = await http("POST", `/api/medical/patients/${pExp}/exams`, S.doc, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بتر", prescription: {},
     });
     //  ══ **اقتراحُ السعر والخبير صارا خطوةً منفصلة عن التوقيع** ═══════════

@@ -559,7 +559,7 @@ async function main() {
       [visTry.status, visTry.body?.message], [409, PATIENT_IN_TRASH_ERROR]);
     same("ز٤. وتوقيعُ معاينةٍ يُردّ",
       (await http("POST", `/api/medical/patients/${rich.id}/exams`, S.doc,
-        { caseType: "prosthetic", diagnosis: "x", plan: "y" })).status >= 400, true);
+        { caseType: "prosthetic", diagnosis: "x", plan: "y", idempotencyKey: crypto.randomUUID() })).status >= 400, true);
 
     // ══ ح. كشفُ التكرار — تنبيهٌ بلا كشف ══════════════════════════════════
     console.log("\n── ح. تكرارُ التسجيل ──");

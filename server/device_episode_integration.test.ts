@@ -243,6 +243,7 @@ async function main() {
 
     // ٢. الطبيب يوقّع معاينة الجهاز الجديد.
     const exam = await http("POST", `/api/medical/patients/${P}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
       prescription: { prostheticType: "تحت الركبة" },
     });

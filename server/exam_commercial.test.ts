@@ -180,6 +180,7 @@ const startEpisode = (patientId: number, serviceType = "prosthetic", item = "ful
  */
 const signExam = (patientId: number, caseType = "prosthetic", session: any = S.doc) =>
   http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType, diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
   });
 
@@ -931,6 +932,7 @@ async function main() {
       await mkCase(p);
       await startEpisode(p);
       const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc, {
+        idempotencyKey: crypto.randomUUID(),
         caseType: "prosthetic", diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
         deviceCost: 2_000_000,
         proposedExpertUserId: EXPERT,
@@ -968,6 +970,7 @@ async function main() {
       await mkCase(p);
       await startEpisode(p);
       const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc, {
+        idempotencyKey: crypto.randomUUID(),
         caseType: "prosthetic", diagnosis: "تشخيصٌ سريريّ",
         commercial: {
           price: { kind: "free", originalPrice: null },
@@ -989,6 +992,7 @@ async function main() {
       await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [p]);
       await mkCase(p, "physiotherapy");
       const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc2, {
+        idempotencyKey: crypto.randomUUID(),
         caseType: "physiotherapy", diagnosis: "تشخيصٌ سريريّ",
         commercial: { price: { kind: "normal", originalPrice: 250_000 }, decision: "bought" },
       });
@@ -1091,10 +1095,14 @@ async function main() {
       check(exam.includes("select-exam-specialty") && exam.includes("<PrescriptionFields")
         && exam.includes("EXAM_FIELDS.map"),
         "٧٠ب. **والذي بقي سريريٌّ محضٌ**: الاختصاص والوصفةُ والحقولُ السرديّة");
-      check(/body: JSON\.stringify\(\{\s*caseType: specialty,\s*\.\.\.form,\s*prescription: rx,\s*\}\)/
+      //  **(migration 074)** — أضيف مفتاحُ تطابقِ إنشاءٍ رابعاً (إلزاميٌّ
+      //  على الإنشاء وحده، غائبٌ على التعديل عبر `isEdit`)، وما زال بلا
+      //  حقلٍ تجاريّ: الشرطُ البنيويّ يثبت الترتيبَ الثلاثيّ السريريّ ثمّ
+      //  المفتاحَ وحده، لا سعراً ولا خبيراً ولا قرار شراء.
+      check(/body: JSON\.stringify\(\{\s*caseType: specialty,\s*\.\.\.form,\s*prescription: rx,[\s\S]{0,200}?idempotencyKey: newExamIdempotencyKeyRef\.current[\s\S]{0,40}?\}\)/
         .test(exam),
-        "٧٠ج. **وجسمُ الحفظ ثلاثةُ حقولٍ سريرية لا أكثر**",
-        (exam.match(/body: JSON\.stringify\(\{[\s\S]{0,150}/) ?? [""])[0]);
+        "٧٠ج. **وجسمُ الحفظ سريريٌّ محضٌ + مفتاحُ تطابقِ الإنشاء وحده** — لا حقلَ تجاريّاً",
+        (exam.match(/body: JSON\.stringify\(\{[\s\S]{0,300}/) ?? [""])[0]);
 
       //  ③ **وبطاقةُ المريض صارت بابَ إتمامٍ واحد** — لا زرَّين منفصلَين
       //  «تفاصيل البيع» و«اشترى»، ولا محدِّدَ نوعِ سعر، ولا حقلَ سعرٍ

@@ -122,6 +122,7 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
 /** يوقّع معاينةً **عبر نقطتها الحقيقية** — فالحلقةُ والمتابعةُ تُبنيان كما تُبنيان إنتاجاً. */
 async function signExam(patientId: number, session: any, caseType: "prosthetic" | "medical_support") {
   return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType, diagnosis: "بتر تحت الركبة", prescription: {},
   });
 }

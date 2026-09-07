@@ -135,6 +135,7 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
  */
 async function signExam(patientId: number, deviceCost: number, session: any = S.doc) {
   const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
   });
   if (res.status < 300 && res.body?.id) {
@@ -1315,6 +1316,7 @@ async function main() {
       await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, status, cost)
                VALUES ($1, 1, 'physiotherapy', 'active', 0)`, [phys]);
       const signed = await http("POST", `/api/medical/patients/${phys}/exams`, S.doc, {
+        idempotencyKey: crypto.randomUUID(),
         caseType: "physiotherapy", chiefComplaint: "ألم", clinicalFindings: "—",
         diagnosis: "—", plan: "—",
       });

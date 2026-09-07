@@ -137,6 +137,7 @@ const startEpisode = (patientId: number, serviceType: string) =>
  */
 async function signExam(patientId: number, caseType: string, extra: any = {}, session: any = S.doc) {
   const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType, diagnosis: "تشخيص", plan: "خطة", ...extra,
   });
   if (typeof extra?.deviceCost === "number" && res.status < 300 && res.body?.id) {

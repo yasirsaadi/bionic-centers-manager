@@ -573,7 +573,7 @@ async function main() {
         [p, c, RECEPTION]);
       same("٣٤. **(س) والاستقبالُ (صاحبُ طلبٍ بلا معاينة) لا يكتسب صلاحيةً طبية**",
         (await http("POST", `/api/medical/patients/${p}/exams`, S.recv,
-          { caseType: "prosthetic", diagnosis: "x" })).status, 403);
+          { caseType: "prosthetic", diagnosis: "x", idempotencyKey: crypto.randomUUID() })).status, 403);
       same("٣٥. **(ع) وحلقةٌ مفتوحةٌ واحدة لا اثنتان**",
         (await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
           { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" })).status, 409);

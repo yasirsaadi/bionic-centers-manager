@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
 import { Button } from "@/components/ui/button";
@@ -105,6 +105,14 @@ export function NewExamDialog({
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [prefilled, setPrefilled] = useState(false);
 
+  // ══ مفتاحُ تطابقِ الإنشاء (migration 074) ═══════════════════════════════
+  //  رمزٌ واحد ثابت لكلّ فتحةِ نموذجٍ جديدة — لا لكلّ ضغطةِ حفظ. `useRef` لا
+  //  `useState` عمداً: لا يستحقّ إعادةَ رسم، وقيمتُه يجب أن تبقى **هي هي**
+  //  عبر كل محاولةٍ/إعادةٍ لنفس الحفظ المنطقيّ حتى لو نجحت ثم أُعيد إرسالها
+  //  (تبويبان، إعادةُ إرسالٍ شبكيّة). يولَّد من جديد فقط حين يُفتَح النموذجُ
+  //  فعلاً لمعاينةٍ جديدة — انظر أثر الفتح تحت.
+  const newExamIdempotencyKeyRef = useRef<string>("");
+
   // The patient row: prefills what reception already recorded (physiotherapy
   // diagnosis, injuries, amputation site, support type) so the doctor completes
   // or corrects it instead of retyping — purely clinical, nothing commercial.
@@ -137,6 +145,10 @@ export function NewExamDialog({
     setForm({ ...EMPTY_FORM });
     setRx({});
     setPrefilled(false);
+    // معاينةٌ جديدة فعلاً تبدأ محاولةً منطقيةً جديدة — مفتاحٌ جديد. إعادةُ
+    // إرسالٍ لاحقة لهذه المحاولة نفسها (الشبكة، ضغطةٌ ثانية) تستعمل نفس
+    // المفتاح لأن هذا الأثر لا يُعاد تشغيله إلا حين يُفتَح النموذجُ من جديد.
+    newExamIdempotencyKeyRef.current = crypto.randomUUID();
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
         ? (preferSpecialty as MedicalSpecialty)
@@ -228,6 +240,8 @@ export function NewExamDialog({
             caseType: specialty,
             ...form,
             prescription: rx,
+            // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
+            ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
           }),
         },
       );

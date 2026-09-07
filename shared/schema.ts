@@ -1633,7 +1633,25 @@ export const medicalExams = pgTable("medical_exams", {
   editedByName: text("edited_by_name"),
   signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  /**
+   * **مفتاحُ تطابقِ الإنشاء** (migration 074) — يولّده العميلُ مرّةً واحدة
+   * عند فتح نموذج معاينةٍ جديدة، ويرسله مع كلّ محاولة/إعادة لنفس المحاولة
+   * المنطقية. القاعدةُ هي الحَكَمُ الأخير عبر الفهرس الجزئيّ أدناه — لا
+   * الخادمُ ولا الشاشة.
+   *
+   * `NULL` على كلّ صفٍّ وُقِّع قبل هذا الترحيل — صدقٌ لا نقص: لم يُرسَل
+   * لهذه الصفوف مفتاحٌ يوم وُقِّعت، فلا يُخترَع لها واحد.
+   */
+  idempotencyKey: text("idempotency_key"),
+}, (t) => [
+  //  ══ صفٌّ واحد لكلّ مفتاحِ إنشاء — لا صفَّين مهما تسابقا ═════════════════
+  //  جزئيٌّ يتجاهل NULL فلا يمسّ الصفوف التاريخية، ويجعل محاولةَ إدراجٍ
+  //  ثانية بنفس المفتاح تُردّ بخطأ تفرّدٍ حقيقيّ (23505) — لا مسحاً صامتاً،
+  //  ولا صفّاً ثانياً بمحتوًى مطابق.
+  uniqueIndex("uq_medical_exams_idempotency_key")
+    .on(t.idempotencyKey)
+    .where(sql`idempotency_key IS NOT NULL`),
+]);
 
 // Every SUPERSEDED version of an exam (migration 030). An edit never destroys:
 // the previous text is snapshotted here first, with who replaced it and when,

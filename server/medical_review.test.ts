@@ -598,6 +598,7 @@ async function main() {
     // ══ ١٨. توقيعُ المعاينة يُنهي المنتظِر ويحرّر الطريق ═══════════════
     console.log("\n── ١٨. التوقيع يُغلق الانتظار ──");
     const signed = await http("POST", `/api/medical/patients/${ndPat}/exams`, S.doc1, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", chiefComplaint: "بتر تحت الركبة", diagnosis: "جاهز لطرف",
     });
     check(signed.status === 200 || signed.status === 201,

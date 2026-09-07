@@ -112,6 +112,7 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
  */
 async function signExam(patientId: number, session: any, deviceCost = 1_700_000) {
   const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
   });
   if (res.status < 300 && res.body?.id) {

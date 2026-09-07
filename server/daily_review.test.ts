@@ -123,6 +123,7 @@ async function mkCase(patientId: number, branchId: number, caseType = "prostheti
 
 const signExam = (patientId: number, opts: { caseType?: string; chiefComplaint?: string } = {}) =>
   http("POST", `/api/medical/patients/${patientId}/exams`, S.doc, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: opts.caseType ?? "prosthetic",
     chiefComplaint: opts.chiefComplaint ?? "ألمٌ في موضع البتر",
     diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",

@@ -122,6 +122,7 @@ async function mkPatient(label: string, branchId = 1) {
  */
 async function signExam(patientId: number, session: any, deviceCost: number) {
   const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
   });
   if (res.status < 300 && res.body?.id) {
