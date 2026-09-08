@@ -496,9 +496,15 @@ async function main() {
         finCalls.length], [false, 0]);
 
     // ══ م. أسماء الأدوات مغلقة ═══════════════════════════════════════
+    //  ══ (AI Assistant v2) صارت سبعاً — أُضيفت patient_search،
+    //  operational_summary، financial_summary. السجلُّ **لا يزال مغلقاً**
+    //  — القائمة صريحةٌ هنا فقط لتبقى دليلاً حيّاً على كل اسمٍ مسموح، لا
+    //  لأن العدد ثابتٌ للأبد.
     console.log("\n── السجلّ مغلق ──");
-    same("م. الأدوات أربع لا غير", TOOL_NAMES.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_finance", "patient_lookup"]);
+    same("م. سبعُ أدواتٍ لا غير", TOOL_NAMES.sort(), [
+      "financial_summary", "my_worklist", "operational_summary", "patient_clinical_summary",
+      "patient_finance", "patient_lookup", "patient_search",
+    ]);
     for (const bogus of ["run_sql", "query", "exec", "patient_update", "delete_patient", "__proto__"]) {
       same(`   «${bogus}» ⟶ يُردّ`,
         (await executeTool(access(sess.admin), bogus, { patientCode: p1.patient_code })).ok, false);

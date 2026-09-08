@@ -155,5 +155,31 @@ console.log("\n── إغلاق النافذة ──");
     "   ولا تُحفَظ محادثةُ مريضٍ في المتصفّح إطلاقاً");
 }
 
+// ══ و. «اقترح تصحيحاً» (AI Assistant v2) — يُرسل، لا يُطبَّق ═══════════════
+//  فحصُ مصدرٍ ثابت — لا مشغّل DOM هنا أيضاً — يثبت: البابَ الصحيح
+//  (`/api/ai/knowledge/suggestions`)، الحقلين المطلوبين معاً (القسم و.٤ من
+//  المهمّة)، والعبارة الإلزامية بالحرف، وأن الإغلاق يمسح حالة النموذج أيضاً.
+console.log("\n── اقترح تصحيحاً ──");
+{
+  const drawer = readFileSync(join(process.cwd(), "client/src/components/AiChatDrawer.tsx"), "utf8");
+  check(drawer.includes('"POST", "/api/ai/knowledge/suggestions"'),
+    "و.١ **يرسل إلى الباب الصحيح** — لا نقطةً أخرى مخترَعة");
+  check(/suggestedText: params\.suggestedText/.test(drawer) && /reason: params\.reason/.test(drawer),
+    "و.٢ الحمولةُ تحمل السببَ والتصحيحَ المقترَح معاً");
+  check(/sourceQuestion: priorUserMsg\?\.content/.test(drawer) && /sourceAnswer: assistantMsg\?\.content/.test(drawer),
+    "و.٣ **وتُرفَق السؤال والجوابُ تلقائياً** — لا يُعاد كتابتُهما يدوياً");
+  check(drawer.includes("سيُرسل الاقتراح للمراجعة ولن يغيّر معرفة المساعد مباشرةً."),
+    "و.٤ **والعبارةُ الإلزامية موجودةٌ بالحرف** — يعرف الموظّف أنه اقتراحٌ لا تعديل");
+  check(!/window\.confirm|alert\(/.test(drawer), "و.٥ بلا نوافذَ متصفّحٍ بدائية — نموذجٌ داخل الدردشة نفسها");
+
+  const closeBody = drawer.slice(drawer.indexOf("const closeDrawer"), drawer.indexOf("const askMutation"));
+  check(/setCorrectingIndex\(null\)/.test(closeBody) && /setWhatIsWrong\(""\)/.test(closeBody) && /setSuggestedFix\(""\)/.test(closeBody),
+    "و.٦ **وإغلاقُ النافذة يمسح نموذج الاقتراح أيضاً** — لا يبقى نصفُ اقتراحٍ معلَّقاً بعد إغلاقٍ وفتحٍ لاحق");
+
+  //  ══ بطاقةُ التزويد — عنوانٌ فقط، بلا رقمٍ داخليّ للمستخدم ══
+  check(/اعتمدتُ على: \{m\.knowledge\.map\(\(k\) => k\.title\)/.test(drawer),
+    "و.٧ **بطاقةُ التزويد تعرض العناوين وحدها** — لا `k.id` في أيّ نصٍّ يصل الشاشة");
+}
+
 console.log(`\n${failures === 0 ? "✅ all ai-ui cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

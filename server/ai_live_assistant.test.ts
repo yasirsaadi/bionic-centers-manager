@@ -19,6 +19,7 @@ import type * as provider from "./ai/provider";
 import { aiChat, MAX_TOOL_ROUNDS } from "./ai/chat";
 import { safeAiComplete } from "./ai/provider";
 import { resolveAiAccess } from "./ai/access";
+import { createArticle, setArticleActive } from "./ai/knowledge/store";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -105,6 +106,13 @@ async function mkPatient(name: string, branchId: number, totalCost = 0) {
   return r[0];
 }
 async function cleanup() {
+  //  ══ مقالاتُ المعرفة أوّلاً — قبل حذف مستخدمي الاختبار ══
+  //  `ai_knowledge_articles.created_by`/`approved_by` مفتاحان أجنبيّان
+  //  حقيقيّان (لا لقطة أرقام كـ`proposed_expert_user_id`)، فتعطيلُ مقالةٍ
+  //  (`isActive=false`) لا يحذف صفّها — **وهذا صحيحٌ في الإنتاج** (لا شيء
+  //  يُمحى فعلاً)، لكنه يعني أن اختبارنا **نفسه** يجب أن يمسح ما أنشأه هو
+  //  بعينه قبل أن يحذف مستخدميه، وإلّا صدم قيد المفتاح الأجنبيّ.
+  await q(`DELETE FROM ai_knowledge_articles WHERE title LIKE '${MARK}%'`);
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   //  طلباتُ مراجعة الطبيب (٠٥٥) تشير إلى الأمر والحلقة والزيارة — تُمسح أوّلاً.
   await q(`DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`);
@@ -152,13 +160,19 @@ async function main() {
       "   ونصّ النظام يأمره باستعمالها عند ذكر رمز");
 
     // ══ ب. الأدوات المعروضة بالدور ══════════════════════════════════
+    //  ══ (AI Assistant v2) صار العددُ خمساً/ستّاً بعد إضافة patient_search
+    //  وoperational_summary (وfinancial_summary للمحاسب) — راجع القسم ط
+    //  أدناه لتفصيل كلّ أداةٍ على حدة بحسب الدور.
     console.log("\n── ما يُعرَض على النموذج ──");
-    same("ب. الموظّف العادي: ثلاث أدوات بلا المالية",
-      seen[0].tools.sort(), ["my_worklist", "patient_clinical_summary", "patient_lookup"]);
+    same("ب. الموظّف العادي: خمس أدوات بلا المالية",
+      seen[0].tools.sort(),
+      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب: أربع", seen[0].tools.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_finance", "patient_lookup"]);
+    same("   والمحاسب: سبع (يضاف financial_summary)", seen[0].tools.sort(), [
+      "financial_summary", "my_worklist", "operational_summary",
+      "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
+    ]);
 
     // ══ ج. الخلط بين التشغيلي والمالي ═══════════════════════════════
     console.log("\n── سؤالٌ مختلط ──");
@@ -297,6 +311,61 @@ async function main() {
     same("   **ووسائطُه الملفَّقة لم تُستعمل** — الفاعل هو الجلسة",
       lastResults()[0]?.role, "prosthetics_expert");
     same("   وبلا قراءةٍ مالية", finCalls, []);
+
+    // ══ ح. المعرفةُ الموثوقة تصل نصّ النظام فعلياً (AI Assistant v2) ═════
+    console.log("\n── المعرفةُ الموثوقة ──");
+    const kArticle = await createArticle({
+      title: `${MARK} — كيفية فتح صيانة تجريبية`,
+      body: `${MARK} — نصٌّ تجريبيّ يشرح فتح الصيانة خطوة بخطوة`,
+      scope: "general", branchId: null,
+      actor: { userId: ADMIN, name: "مسؤول" },
+    });
+    runScript([{ text: "هذا شرح فتح الصيانة." }]);
+    const knowAsk: any = await chat(access(S.recv), ask("كيف أفتح صيانة تجريبية؟"));
+    same("ح.١ الطلب نجح", knowAsk.ok, true);
+    check(seen[0].system.includes(kArticle.body),
+      "ح.٢ **متنُ المقالة المطابقة وصل نصّ النظام فعلياً** — لا مجرّد عنوان",
+      seen[0].system.slice(-400));
+    check(seen[0].system.includes("معرفةٌ موثوقة") && seen[0].system.includes("بيانات"),
+      "ح.٣ وسُبقت بتذكير «بيانات لا تعليمات» صريح");
+    //  ══ إدراجٌ لا مساواةٌ تامّة ══ — مقالاتُ المعرفة **المزروعة فعلياً**
+    //  (ترحيل ٠٧٥، «فتح صيانة لجهاز» تحديداً) تشارك كلماتٍ مفتاحية حقيقية
+    //  مع سؤال هذا الاختبار («صيانة»)، فتظهر معه بجدارة — وهذا سلوكٌ صحيح
+    //  لا خطأ: يثبت أن الاسترجاع الحيّ يقرأ **المعرفة الحقيقية المزروعة**
+    //  أيضاً لا مقالة الاختبار وحدها.
+    check(knowAsk.value.knowledge.some((k: any) => k.id === kArticle.id && k.title === kArticle.title),
+      "ح.٤ **وعادت مقالتنا في `ChatOutcome.knowledge` للعرض** — عنوانٌ ورقمٌ فقط",
+      JSON.stringify(knowAsk.value.knowledge));
+    check(knowAsk.value.knowledge.length <= 3, "ح.٤ب ومحدودةٌ بثلاثة كحدٍّ أقصى حتى مع تطابقاتٍ حقيقية أخرى");
+
+    //  وسؤالٌ لا صلة له بها إطلاقاً لا يستدرجها إلى نصّ النظام.
+    runScript([{ text: "لا علاقة." }]);
+    const unrelated: any = await chat(access(S.recv), ask("ما اسم أقرب مطعم؟"));
+    check(!seen[0].system.includes(kArticle.body),
+      "ح.٥ **وسؤالٌ لا يطابقها لا يستدرج متنَها إلى نصّ النظام**");
+    same("ح.٦ ولا شيء في حقل knowledge بالردّ", unrelated.value.knowledge, []);
+
+    await setArticleActive({ id: kArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
+
+    // ══ ط. الأدواتُ الجديدة تُعرَض بحسب الدور (D1/D2/D3) ═════════════════
+    console.log("\n── الأدواتُ الجديدة بحسب الدور ──");
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.recv), ask("مرحباً"));
+    check(seen[0].tools.includes("patient_search"), "ط.١ الاستقبال (canViewPatients) يرى patient_search");
+    check(seen[0].tools.includes("operational_summary"), "ط.٢ ويرى operational_summary");
+    check(!seen[0].tools.includes("financial_summary"), "ط.٣ ولا يرى financial_summary");
+
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.acc), ask("مرحباً"));
+    check(seen[0].tools.includes("financial_summary"), "ط.٤ والمحاسب يرى financial_summary");
+    check(seen[0].tools.includes("patient_search"), "ط.٥ ويرى patient_search أيضاً");
+
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.expert), ask("مرحباً"));
+    check(!seen[0].tools.includes("patient_search"),
+      "ط.٦ **الخبيرُ الصِّرف (بلا canViewPatients) لا يرى patient_search** — لا دليلَ مرضى بديلاً له");
+    check(seen[0].tools.includes("operational_summary"),
+      "ط.٧ لكنه يرى operational_summary (بلا أسماء مرضى، أرقامٌ مجمَّعة فقط)");
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[ADMIN, RECV, ACC, EXPERT]]);

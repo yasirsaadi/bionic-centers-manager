@@ -116,7 +116,11 @@
     "test:exam-idempotency": "tsx server/medical_exam_idempotency.test.ts",
     "test:exam-idempotency-key": "tsx client/src/components/medical/new_exam_idempotency_key.test.ts",
     "test:patient-duplicate-guard": "tsx server/patient_duplicate_guard.test.ts",
-    "test:create-patient-duplicate-guard": "tsx client/src/pages/create_patient_duplicate_guard.test.ts"
+    "test:create-patient-duplicate-guard": "tsx client/src/pages/create_patient_duplicate_guard.test.ts",
+    "test:ai-knowledge-retrieval": "tsx shared/ai_knowledge_retrieval.test.ts",
+    "test:ai-knowledge": "tsx server/ai_knowledge.test.ts",
+    "test:ai-tools-reports": "tsx server/ai_tools_reports.test.ts",
+    "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
