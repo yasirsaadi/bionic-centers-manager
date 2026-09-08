@@ -120,8 +120,12 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
             <Skeleton className="h-16 w-full rounded-lg" />
           </div>
         ) : candidates.length === 0 ? (
+          //  **الرسالةُ الوحيدة لصفرِ مؤهَّل الآن** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨):
+          //  زرُّ الفتح صار يظهر دائماً بلا فحص أهليّةٍ مسبق (`ReturnToPurchaseRoutingChoice`)،
+          //  فهذه الحالةُ عاديةٌ لا استثنائية — وبلا إنشاءِ شيءٍ بديل هنا:
+          //  لا مريضَ ولا حالةَ ولا حلقةَ ولا معاينة، فقط رسالةٌ صريحة.
           <p className="text-sm text-muted-foreground py-4 text-center">
-            لا يوجد جهازٌ مؤهَّلٌ الآن — رُبّما تغيّرت حالتُه للتوّ. أغلق النافذة وحدّث الصفحة.
+            لا توجد عملية سابقة مؤهلة للعودة للشراء لهذا المريض.
           </p>
         ) : candidates.length === 1 ? (
           <DeviceCard device={candidates[0]} />

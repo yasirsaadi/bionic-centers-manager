@@ -56,6 +56,8 @@ const DETAILS = read("..", "pages", "PatientDetails.tsx");
 const VISIT = read("VisitModal.tsx");
 const NEW_SERVICE = read("NewServiceModal.tsx");
 const ADD_CASE = read("AddCaseTypeModal.tsx");
+const RETURN_ROUTING_CHOICE = read("ReturnToPurchaseRoutingChoice.tsx");
+const RETURN_DIALOG = read("ReturnToPurchaseDialog.tsx");
 const MFG_ROUTES = read("..", "..", "..", "server", "manufacturing", "routes.ts");
 const SERVER_ROUTES = read("..", "..", "..", "server", "routes.ts");
 const PENDING_CHARGE_ROUTES = read("..", "..", "..", "server", "pending_charges", "routes.ts");
@@ -106,7 +108,7 @@ function main() {
   same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض",
     launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
   for (const flow of ["AddCaseTypeModal", "NewServiceModal", "NewDeviceEpisodeModal",
-    "NoExamOperationDialog"]) {
+    "NoExamOperationDialog", "ReturnToPurchaseDialog"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);
   }
 
@@ -186,19 +188,60 @@ function main() {
     hasAll.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
     ["physiotherapy", "physiotherapy", "physiotherapy"]);
 
-  // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
-  same("٢٠. ولا نقطة خامسة يعرفها الموزِّع",
+  //  **قائمة مغلقة**: خمسُ نقاطٍ قائمة لا سادس، ولا «خدمة عامّة». (تصحيحٌ
+  //  لاحق، ٢٠٢٦-٠٩-٠٨: كانت هذه الحارسةُ تنسى `return_to_purchase` —
+  //  نقطةٌ قائمة أصلاً منذ ترحيل ٠٧٢، لم يذكرها هذا الحارسُ قطّ فبقي عمياً
+  //  عنها لا شاهداً على غيابها.)
+  same("٢٠. ولا نقطة سادسة يعرفها الموزِّع",
     Object.keys(FLOW_ENDPOINTS).sort(),
-    ["case_type", "device_episode", "new_service", "no_exam_operation"]);
+    ["case_type", "device_episode", "new_service", "no_exam_operation", "return_to_purchase"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
     "/api/patients/:patientId/device-episodes",
     "/api/no-exam/device-sale",
+    "/api/followups/return-to-purchase",
   ]);
   //  **و«maintenance-visit» خرجت من خريطة الموزِّع** — ولم تُحذَف من الخادم.
   check(!Object.values(FLOW_ENDPOINTS).includes("/api/manufacturing/maintenance-visit"),
     "٢٠.أ **ولا صيانةَ في خريطة الموزِّع بعد اليوم**");
+
+  // ══ «عاد للشراء»: زرٌّ بسيطٌ دائماً — بلا استعلامٍ يقرّر وجودَه (تصحيحٌ
+  //  لاحق، ٢٠٢٦-٠٩-٠٨) ════════════════════════════════════════════════════
+  //  كان الزرُّ يستطلع نقطة الأهليّة نفسَها التي يستطلعها الحوارُ ليقرّر
+  //  ظهورَه، فيغيب كلّياً حين لا تُرجع صفاً — فيرى الموظّفُ قسماً بلا بابٍ
+  //  كان يعرفه، بلا تفسير. فصار زرّاً بسيطاً دائماً، والحوارُ (المفتوحُ من
+  //  نفس الزرّ، بنفس نقطة النهاية القائمة) هو مَن يحسم الأهليّةَ ويشرحها.
+  console.log("\n── «عاد للشراء»: زرٌّ بسيط، بلا استعلامٍ يقرّر وجودَه ──");
+  const routingChoiceCode = code(RETURN_ROUTING_CHOICE);
+  for (const gone of ["useQuery", "fetch(", "apiRequest(", "EligibleRow"]) {
+    check(!routingChoiceCode.includes(gone),
+      `٢٠.ب **ولا «${gone}» في مكوّن الزرّ بعد اليوم** — لا شبكةَ ولا نوعَ ردٍّ يفترض فحصَ أهليّة`);
+  }
+  check(!/if \([^)]*\)\s*return null/.test(routingChoiceCode),
+    "٢٠.ج **ولا شرطَ عودةٍ فارغة إطلاقاً في مصدر الزرّ** — يُعرَض دائماً بلا استثناء",
+    routingChoiceCode);
+  check(/export function ReturnToPurchaseRoutingChoice\(\{ serviceType, onChoose \}: Props\)/
+    .test(routingChoiceCode),
+  "٢٠.د **وعقدُه صار أضيق**: `serviceType` و`onChoose` فقط — بلا `patientId` لم يعد يُستعمَل");
+  check(!/patientId/.test(launcherCode.match(/<ReturnToPurchaseRoutingChoice[\s\S]*?\/>/)?.[0] ?? ""),
+    "٢٠.هـ **والموزِّعُ لم يعد يمرّر `patientId` لهذا الزرّ** — لا خاصّيةً ميتة");
+
+  //  **والحوارُ — لا الزرُّ — هو مَن يقول «لا يوجد» الآن**، بنصٍّ صريح واحد.
+  const returnDialogCode = code(RETURN_DIALOG);
+  check(returnDialogCode.includes("لا توجد عملية سابقة مؤهلة للعودة للشراء لهذا المريض."),
+    "٢٠.و **ورسالةُ صفرِ المؤهَّل بالنصّ المطلوب بالحرف**");
+  check(!returnDialogCode.includes("لا يوجد جهازٌ مؤهَّلٌ الآن"),
+    "٢٠.ز **والنصُّ القديمُ غاب تماماً** — لا يتيماً بجانب الجديد");
+  same("٢٠.ح **وموضعُ الرسالة لم يتغيّر** — فرعُ `candidates.length === 0` نفسُه بعينه",
+    (returnDialogCode.match(/candidates\.length === 0/g) ?? []).length, 1);
+  //  **ولا نداءَ شبكةٍ جديد أُضيف بجانب صفرِ المؤهَّل** — فرعُه نصٌّ للقراءة
+  //  فقط. النداءان القائمان نفساهما بعينهما (قراءةُ الأهليّة عبر
+  //  `useQuery`، وإرسالُ «عاد للشراء» عبر `useMutation`) — لا ثالث.
+  same("٢٠.ط **وعددُ نداءات `fetch` في الحوار لم يتغيّر — اثنان لا أكثر**",
+    (returnDialogCode.match(/fetch\(/g) ?? []).length, 2);
+  check(returnDialogCode.includes('fetch("/api/followups/return-to-purchase"'),
+    "٢٠.ي **ونداءُ الإرسال هو نفسُ المسار القائم بعينه**");
 
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.
   same("٤. أطراف ⇒ add-case-type/amputee", opt(fresh, "prosthetic_case")!.flow,

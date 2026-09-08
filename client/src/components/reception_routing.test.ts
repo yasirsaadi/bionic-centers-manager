@@ -241,6 +241,56 @@ function main() {
   same("١٧.ط **والمسؤولُ العامّ يراهما بلا قيد**",
     proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance"]);
 
+  //  ══ (ج٢) **والعلاجُ الطبيعي لا يغيّر حضورَ أيّ قسم** — تركيباتٌ صريحة
+  //  (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨، «عاد للشراء» زرٌّ بسيطٌ دائم) ══════════════
+  //  حضورُ قسمَي الأطراف والمساند يتبع علمَيهما هما وحدهما (كما أُثبت أعلاه
+  //  لكلٍّ وحدها بلا علاج) — العلاجُ الطبيعي لا يضيف قسماً على وجودهما ولا
+  //  يحذفه، وثلاثُ تركيباتٍ صريحةٌ معه هنا، ورابعةٌ تؤكّد الثابتَ مباشرةً.
+  same("١٧.ي **علاجٌ طبيعيّ + أطراف ⟶ قسمُ الأطراف وحده**",
+    receptionRoutingDepartments({ isAmputee: true, isPhysiotherapy: true } as any),
+    ["prosthetic"]);
+  same("١٧.ك **علاجٌ طبيعيّ + مسانِد ⟶ قسمُ المساند وحده**",
+    receptionRoutingDepartments({ isMedicalSupport: true, isPhysiotherapy: true } as any),
+    ["medical_support"]);
+  same("١٧.ل **علاجٌ طبيعيّ + أطراف + مسانِد ⟶ القسمان معاً**",
+    receptionRoutingDepartments({
+      isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true,
+    } as any), ["prosthetic", "medical_support"]);
+  same("١٧.م **وعلمُ العلاج الطبيعي لا يغيّر الأقسامَ في أيّ تركيبة**"
+    + " — نفسُ النتيجة بحضوره وغيابه بالضبط",
+    receptionRoutingDepartments({
+      isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true,
+    } as any),
+    receptionRoutingDepartments({ isAmputee: true, isMedicalSupport: true }));
+
+  //  ══ (ج٣) **و«عاد للشراء» زرٌّ بسيطٌ يظهر في كلّ قسمٍ حاضر دائماً** —
+  //  بموضعه القائم نفسِه، وبلا شرطٍ آخر عليه (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨) ═════
+  console.log("\n── «عاد للشراء»: حاضرٌ دائماً في كلّ قسمٍ حاضر، بموضعه القائم ──");
+  //  **ويفتح نفسَ المسار القائم `return_to_purchase` لنفس قسمه** — لا مسارٌ
+  //  جديد ولا نداءٌ مباشر، بل `chooseFlow` نفسُها التي تستعملها كلُّ الخيارات.
+  check(/<ReturnToPurchaseRoutingChoice\s*\n\s*serviceType=\{section\.serviceType\}\s*\n\s*onChoose=\{\(\) => chooseFlow\(\{ kind: "return_to_purchase", serviceType: section\.serviceType \}\)\}\s*\n\s*\/>/
+    .test(launcherCode),
+  "١٧.ن **والزرُّ يفتح نفسَ المسار القائم `return_to_purchase` لقسمه بعينه — عبر `chooseFlow` نفسِها**");
+  {
+    //  **الموضعُ لم يتغيّر**: داخل حلقة القسم نفسِها، قبل `section.choices.map`.
+    const sectionBlock = launcherCode.match(
+      /<div key=\{section\.serviceType\}[^>]*>([\s\S]*?)\{section\.choices\.map/)?.[1] ?? "";
+    check(sectionBlock.includes("<ReturnToPurchaseRoutingChoice"),
+      "١٧.س **وموضعُه لم يتغيّر — لم يُنقَل خارج القسم ولا بعد خياراته**");
+    //  **وبلا شرطٍ إضافيّ يلفّه**: الشرطُ الوحيد المشروع في القسم هو عنوانُ
+    //  المجموعة عند التعدّد (`routingSections.length > 1`) — وهو منفصلٌ
+    //  وسابقٌ للزرّ، لا يلفّه. فإزالتُه ثمّ فحصُ ما تبقّى يُثبت غيابَ أيّ شرطٍ
+    //  آخر — لا أهليّةً مستقلّة تقرّر ظهورَه بعد اليوم.
+    const withoutGroupHeading = sectionBlock.replace(
+      /\{routingSections\.length > 1 && \([\s\S]*?\)\}/, "");
+    check(withoutGroupHeading.includes("<ReturnToPurchaseRoutingChoice")
+      && !/&&\s*\(/.test(withoutGroupHeading) && !/\?\s*\(/.test(withoutGroupHeading),
+    "١٧.ع **وبلا أيّ شرطٍ آخر يلفّه** — يظهر بحضور القسم فقط",
+    withoutGroupHeading.trim());
+  }
+  same("١٧.ف **ومرّةٌ واحدة في مصدر الموزِّع** — لا استدعاءَ ثانياً منسوخاً",
+    (launcherCode.match(/<ReturnToPurchaseRoutingChoice/g) ?? []).length, 1);
+
   // ══ (د) بلا «شراء طرف صناعي كامل» بين الخيارات ═════════════════════════
   console.log("\n── بلا «شراء طرف صناعي كامل» ──");
   const allLabels = [...pro, ...sup].map((c) => c.label);
