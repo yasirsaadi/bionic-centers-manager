@@ -56,6 +56,8 @@ const DETAILS = read("..", "pages", "PatientDetails.tsx");
 const VISIT = read("VisitModal.tsx");
 const NEW_SERVICE = read("NewServiceModal.tsx");
 const ADD_CASE = read("AddCaseTypeModal.tsx");
+const RETURN_ROUTING_CHOICE = read("ReturnToPurchaseRoutingChoice.tsx");
+const RETURN_DIALOG = read("ReturnToPurchaseDialog.tsx");
 const MFG_ROUTES = read("..", "..", "..", "server", "manufacturing", "routes.ts");
 const SERVER_ROUTES = read("..", "..", "..", "server", "routes.ts");
 const PENDING_CHARGE_ROUTES = read("..", "..", "..", "server", "pending_charges", "routes.ts");
@@ -106,7 +108,7 @@ function main() {
   same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض",
     launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
   for (const flow of ["AddCaseTypeModal", "NewServiceModal", "NewDeviceEpisodeModal",
-    "NoExamOperationDialog"]) {
+    "NoExamOperationDialog", "ReturnToPurchaseDialog"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);
   }
 
@@ -186,19 +188,111 @@ function main() {
     hasAll.filter((o) => o.flow.kind === "new_service").map((o) => o.group),
     ["physiotherapy", "physiotherapy", "physiotherapy"]);
 
-  // **قائمة مغلقة**: أربع نقاط قائمة لا خامس، ولا «خدمة عامّة».
-  same("٢٠. ولا نقطة خامسة يعرفها الموزِّع",
+  //  **قائمة مغلقة**: خمسُ نقاطٍ قائمة لا سادس، ولا «خدمة عامّة». (تصحيحٌ
+  //  لاحق، ٢٠٢٦-٠٩-٠٨: كانت هذه الحارسةُ تنسى `return_to_purchase` —
+  //  نقطةٌ قائمة أصلاً منذ ترحيل ٠٧٢، لم يذكرها هذا الحارسُ قطّ فبقي عمياً
+  //  عنها لا شاهداً على غيابها.)
+  same("٢٠. ولا نقطة سادسة يعرفها الموزِّع",
     Object.keys(FLOW_ENDPOINTS).sort(),
-    ["case_type", "device_episode", "new_service", "no_exam_operation"]);
+    ["case_type", "device_episode", "new_service", "no_exam_operation", "return_to_purchase"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
     "/api/patients/:patientId/device-episodes",
     "/api/no-exam/device-sale",
+    "/api/followups/return-to-purchase",
   ]);
   //  **و«maintenance-visit» خرجت من خريطة الموزِّع** — ولم تُحذَف من الخادم.
   check(!Object.values(FLOW_ENDPOINTS).includes("/api/manufacturing/maintenance-visit"),
     "٢٠.أ **ولا صيانةَ في خريطة الموزِّع بعد اليوم**");
+
+  // ══ «عاد للشراء»: زرٌّ بسيطٌ دائماً — بلا استعلامٍ يقرّر وجودَه (تصحيحٌ
+  //  لاحق، ٢٠٢٦-٠٩-٠٨) ════════════════════════════════════════════════════
+  //  كان الزرُّ يستطلع نقطة الأهليّة نفسَها التي يستطلعها الحوارُ ليقرّر
+  //  ظهورَه، فيغيب كلّياً حين لا تُرجع صفاً — فيرى الموظّفُ قسماً بلا بابٍ
+  //  كان يعرفه، بلا تفسير. فصار زرّاً بسيطاً دائماً، والحوارُ (المفتوحُ من
+  //  نفس الزرّ، بنفس نقطة النهاية القائمة) هو مَن يحسم الأهليّةَ ويشرحها.
+  console.log("\n── «عاد للشراء»: زرٌّ بسيط، بلا استعلامٍ يقرّر وجودَه ──");
+  const routingChoiceCode = code(RETURN_ROUTING_CHOICE);
+  for (const gone of ["useQuery", "fetch(", "apiRequest(", "EligibleRow"]) {
+    check(!routingChoiceCode.includes(gone),
+      `٢٠.ب **ولا «${gone}» في مكوّن الزرّ بعد اليوم** — لا شبكةَ ولا نوعَ ردٍّ يفترض فحصَ أهليّة`);
+  }
+  check(!/if \([^)]*\)\s*return null/.test(routingChoiceCode),
+    "٢٠.ج **ولا شرطَ عودةٍ فارغة إطلاقاً في مصدر الزرّ** — يُعرَض دائماً بلا استثناء",
+    routingChoiceCode);
+  check(/export function ReturnToPurchaseRoutingChoice\(\{ serviceType, onChoose \}: Props\)/
+    .test(routingChoiceCode),
+  "٢٠.د **وعقدُه صار أضيق**: `serviceType` و`onChoose` فقط — بلا `patientId` لم يعد يُستعمَل");
+  check(!/patientId/.test(launcherCode.match(/<ReturnToPurchaseRoutingChoice[\s\S]*?\/>/)?.[0] ?? ""),
+    "٢٠.هـ **والموزِّعُ لم يعد يمرّر `patientId` لهذا الزرّ** — لا خاصّيةً ميتة");
+
+  //  **والحوارُ — لا الزرُّ — هو مَن يقول «لا يوجد» الآن**، بنصٍّ صريح واحد.
+  const returnDialogCode = code(RETURN_DIALOG);
+  check(returnDialogCode.includes("لا توجد عملية سابقة مؤهلة للعودة للشراء لهذا المريض."),
+    "٢٠.و **ورسالةُ صفرِ المؤهَّل بالنصّ المطلوب بالحرف**");
+  check(!returnDialogCode.includes("لا يوجد جهازٌ مؤهَّلٌ الآن"),
+    "٢٠.ز **والنصُّ القديمُ غاب تماماً** — لا يتيماً بجانب الجديد");
+  same("٢٠.ح **وموضعُ الرسالة لم يتغيّر** — فرعُ `candidates.length === 0` نفسُه بعينه",
+    (returnDialogCode.match(/candidates\.length === 0/g) ?? []).length, 1);
+  //  **ولا نداءَ شبكةٍ جديد أُضيف بجانب صفرِ المؤهَّل** — فرعُه نصٌّ للقراءة
+  //  فقط. النداءان القائمان نفساهما بعينهما (قراءةُ الأهليّة عبر
+  //  `useQuery`، وإرسالُ «عاد للشراء» عبر `useMutation`) — لا ثالث.
+  same("٢٠.ط **وعددُ نداءات `fetch` في الحوار لم يتغيّر — اثنان لا أكثر**",
+    (returnDialogCode.match(/fetch\(/g) ?? []).length, 2);
+  check(returnDialogCode.includes('fetch("/api/followups/return-to-purchase"'),
+    "٢٠.ي **ونداءُ الإرسال هو نفسُ المسار القائم بعينه**");
+
+  //  ══ وفشلُ طلب الأهليّة ليس صفرَ أهليّة (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═
+  //  كان ردٌّ غيرُ ناجح (٥٠٠، ٤٠٣، …) يُقرَأ `{ rows: [] }` بصمت، فيظهر نصُّ
+  //  صفرِ المؤهَّل المعتمَد كذباً — لم نعرف أنّه لا شيء، فشلنا في السؤال فقط.
+  console.log("\n── وفشلُ طلب الأهليّة ليس صفرَ أهليّة ──");
+  //  **الفحصُ مقصورٌ على دالّة استعلام الأهليّة بعينها** — لا على الملفّ
+  //  كلِّه: النافذةُ تحمل `if (!res.ok) throw` آخرَ أصلاً (في `submit`،
+  //  لإرسال «عاد للشراء» نفسِه، غيرُ مُمَسّ هذا التصحيح) فبحثٌ غيرُ مقيَّد
+  //  كان سيمرّ حتى لو بقي السطرُ القديم في مكانه بعينه.
+  const eligibilityQueryFnBody = returnDialogCode.match(
+    /queryFn: async \(\) => \{([\s\S]*?)\},\s*\n\s*enabled: open,/)?.[1] ?? "";
+  check(eligibilityQueryFnBody.length > 0,
+    "ودالّةُ استعلام الأهليّة وُجدت ليُبنى عليها الفحصُ التالي",
+    returnDialogCode.slice(0, 200));
+  check(!/if \(!res\.ok\) return \{ rows: \[\] \};/.test(eligibilityQueryFnBody),
+    "٢٠.ك **ولم يعد ردٌّ غيرُ ناجح يُقرأ `{ rows: [] }` بصمت في استعلام الأهليّة** — السطرُ القديمُ غاب كاملاً",
+    eligibilityQueryFnBody.trim());
+  check(/if \(!res\.ok\) throw new Error\(/.test(eligibilityQueryFnBody),
+    "٢٠.ل **بل يُرمى خطأً حقيقياً في استعلام الأهليّة بعينه** — فـ`useQuery` يلتقطه حالةَ تعذّرٍ لا نجاحاً فارغاً",
+    eligibilityQueryFnBody.trim());
+  //  وانقطاعُ الشبكة نفسُه (رفضُ `fetch` قبل وصول أيّ ردّ) يبقى خطأً كما
+  //  كان دائماً — لا `try/catch` حول دالّة الاستعلام يبتلعه.
+  check(!/\btry\b/.test(eligibilityQueryFnBody),
+    "٢٠.م **ولا `try/catch` حول نداء الأهليّة** — فانقطاعُ الشبكة يبلغ `useQuery` خطأً من نفسه، كما كان دائماً",
+    eligibilityQueryFnBody.trim());
+  check(/const \{ data, isLoading, isError \} = useQuery</.test(returnDialogCode),
+    "و`isError` مقروءةٌ من نفس الاستعلام — لا حالةٌ محلّية منفصلة تُخمَّن");
+
+  //  والحالتان — صفرٌ فعليّ، وتعذّرُ سؤال — نصّان مختلفان عمداً.
+  check(returnDialogCode.includes("تعذّر التحقق من العمليات السابقة. حاول مرة أخرى."),
+    "٢٠.ن **ورسالةُ التعذّر بالنصّ المطلوب بالحرف**");
+  {
+    //  **وبالترتيب الصحيح**: فرعُ التعذّر يسبق فرعَ «صفرِ المؤهَّل» في سلسلة
+    //  الشرط — فتعذّرٌ لا يُقرأ أبداً «لا يوجد» حتى لو تساويا في غياب البيانات.
+    const isErrorIdx = returnDialogCode.indexOf("isError ? (");
+    const zeroIdx = returnDialogCode.indexOf("candidates.length === 0 ? (");
+    check(isErrorIdx > -1 && zeroIdx > -1 && isErrorIdx < zeroIdx,
+      "٢٠.س **وفرعُ التعذّر يسبق فرعَ «صفرِ المؤهَّل» في سلسلة الشرط**",
+      `isError@${isErrorIdx}, zero@${zeroIdx}`);
+  }
+  //  **والزرُّ يبقى معطَّلاً من نفسه**: شرطُ التعطيل لم يتغيّر — `chosen`
+  //  مشتقٌّ من `candidates`، و`candidates` من `data?.rows ?? []`، فتعذّرُ
+  //  الطلب (بلا `data`) يُبقي `chosen` فارغاً بلا حاجةٍ لشرطٍ إضافيّ.
+  check(returnDialogCode.includes("disabled={!chosen || submit.isPending}"),
+    "٢٠.ع **وشرطُ تعطيل زرّ التأكيد لم يتغيّر** — يبقى معطَّلاً بلا مرشَّحٍ في حالة التعذّر تلقائياً");
+  check(/const candidates = useMemo\(\s*\(\) => \(data\?\.rows \?\? \[\]\)/.test(returnDialogCode),
+    "وما زال `candidates` يشتقّ من `data?.rows ?? []` — فتعذّرُ الطلب (بلا `data`) يعني لا مرشَّحين تلقائياً");
+  //  **ولا مساراً بديلاً أُنشئ**: لا مريضَ ولا حالةَ ولا حلقةَ ولا معاينة —
+  //  لا طفرةَ ثانية أُضيفت بجانب الإرسال القائم.
+  same("٢٠.ف **ولا `useMutation` ثانية أُضيفت** — الإرسالُ القائم وحده",
+    (returnDialogCode.match(/useMutation\(/g) ?? []).length, 1);
 
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.
   same("٤. أطراف ⇒ add-case-type/amputee", opt(fresh, "prosthetic_case")!.flow,

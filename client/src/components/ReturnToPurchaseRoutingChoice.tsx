@@ -1,37 +1,28 @@
-import { useQuery } from "@tanstack/react-query";
-
-interface EligibleRow {
-  serviceType: "prosthetic" | "medical_support";
-}
-
 interface Props {
-  patientId: number;
   serviceType: "prosthetic" | "medical_support";
   onChoose: () => void;
 }
 
 /**
- * **زرُّ «عاد للشراء»** — يظهر أوّلاً في قسمه، وفقط حين توجد حلقةٌ مؤهَّلة
- * فعلاً من الخادم (لا تخمينَ من أعلام المريض ولا نصٍّ حرّ). نفسُ نقطة
- * الأهليّة ونفسُ مفتاح الاستعلام اللذين تستعملهما `ReturnToPurchaseDialog` —
- * فلا نداءَ شبكةٍ ثانٍ حين يُفتَح الحوارُ بعد الضغط، الاستعلامُ مشتركٌ
- * بمفتاحه.
+ * **زرُّ «عاد للشراء»** — يظهر دائماً في قسمه (أطرافٍ أو مساند)، **بلا
+ * استعلام أهليّةٍ يقرّر وجودَه** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨).
+ *
+ * ══ العطبُ الذي يغلقه ═══════════════════════════════════════════════════
+ * كان الزرُّ يستطلع نقطة الأهليّة نفسَها التي تستطلعها `ReturnToPurchaseDialog`
+ * ليقرّر ظهورَه، فيغيب كلّياً حين لا تُرجع صفاً — فيرى الموظّفُ قسماً بلا
+ * بابٍ كان يعرفه، ولا يُقال له لماذا. فصار زرّاً بسيطاً دائماً، والأهليّةُ
+ * الفعلية (قراءةً وحسماً) تبقى من الخادم وحده — لكن **داخل الحوار** الذي
+ * يفتحه هذا الزرّ، لا هنا. حوارٌ يفتح ويقول صراحةً «لا يوجد ما يؤهَّل»
+ * أصدقُ من بابٍ يختفي بصمت.
  *
  * ══ ملفٌّ مستقلٌّ عمداً ═════════════════════════════════════════════════
  * `reception_routing.ts` **موزِّعٌ خالصٌ بلا شبكة** (مُختبَرٌ معمارياً —
  * `client/src/components/reception_routing.test.ts`)، و`PatientServiceLauncher`
  * نفسُه **بلا `fetch` ولا `apiRequest` ولا `useMutation`** بنفس الاختبار.
- * فهذا الزرُّ وحده يحتاج الشبكةَ ليقرّر ظهوره، وبقاؤه في ملفٍّ منفصل يبقي
- * الاثنين خالصَين كما كانا — لا استثناءً يُدَسّ داخل أيٍّ منهما.
+ * فبقاءُ هذا الزرّ في ملفٍّ منفصل يبقي الاثنين خالصَين كما كانا — ولو صار
+ * هذا الزرُّ نفسُه بلا شبكةٍ الآن أيضاً.
  */
-export function ReturnToPurchaseRoutingChoice({ patientId, serviceType, onChoose }: Props) {
-  const { data } = useQuery<{ rows: EligibleRow[] }>({
-    queryKey: [`/api/followups/patient/${patientId}/return-to-purchase-eligible`],
-  });
-
-  const eligible = (data?.rows ?? []).some((r) => r.serviceType === serviceType);
-  if (!eligible) return null;
-
+export function ReturnToPurchaseRoutingChoice({ serviceType, onChoose }: Props) {
   return (
     <button
       type="button"
