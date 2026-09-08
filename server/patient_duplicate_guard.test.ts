@@ -12,16 +12,20 @@
 //    فعّالٍ واحد نظام‑ياً، عالميّاً، بلا استثناء. صيغٌ كتابيةٌ مختلفة
 //    تُطبَّع لنفس الرقم تتعارض.
 // ٣) **الأمانُ من التزامن بلا قيدٍ في القاعدة** — قفلٌ استشاريّ يمنع نجاحَ
-//    محاولتين متزامنتين بنفس الاسم أو نفس الهاتف معاً.
+//    محاولتين متزامنتين بنفس الاسم أو نفس الهاتف معاً — **وقفلُ الاسم عامٌّ
+//    ثابت** (تصحيحٌ لاحق) فيحمي قاعدةَ **البادئة** نفسَها بين اسمين مختلفين
+//    متزامنين لا التطابقَ التامّ فقط.
 // ٤) **السلّةُ لا تُمَسّ** — مريضٌ محذوفٌ (سلّةٌ) لا يُحتسَب نشطاً، فاسمُه
 //    ورقمُه يعودان متاحين، والحذفُ نفسُه يبقى ناعماً كما كان.
 // ٥) **`lookup-by-name` بحرفها** — لم تُمَسّ، ولا تزال تعمل لغرضها الخاصّ.
 
-import { pool } from "./db";
+import { pool, db } from "./db";
+import { sql } from "drizzle-orm";
 import express from "express";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { normalizePhone } from "@shared/phone";
+import { assertNameAvailableForRegistration, PatientNameConflictError } from "./patients/duplicate_guard";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -426,6 +430,132 @@ async function main() {
       same("٢٧. **نفسُ شكل الردّ القديم — لم تُمَسّ**",
         Object.keys(r.body ?? {}).sort(),
         ["inTrash", "inTrashCount", "matches", "trashNotice"]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  م. تزامنٌ — الاسمُ بادئةً لا مطابقةً تامّة فقط (تصحيحٌ لاحق)
+    // ══════════════════════════════════════════════════════════════════
+    //  الثغرةُ التي يحرسها: قفلٌ بهاش الاسم يحمي فقط «نفسَ الاسم ضدَّ نفسه»
+    //  (كما في القسم و أعلاه) — لكنّه لا يحمي قاعدةَ **البادئة**: طلبان
+    //  متزامنان بنصَّين **مختلفين** («أحمد حسين» بادئةٌ لِـ«أحمد حسين فايق»)
+    //  كانا يأخذان مفتاحَي هاشٍ مختلفين فلا يتسلسلان، فيرى كلٌّ منهما «لا
+    //  تعارض» (لا صفَّ لأيٍّ منهما بعد) ويكتبان معاً — بصرف النظر عمّا كانت
+    //  ستقرّره القاعدةُ لو سُجِّلا تسلسلياً.
+    //
+    //  ══ حتميٌّ لا احتماليّ ═══════════════════════════════════════════════
+    //  سباقٌ حقيقيّ عبر HTTP (`Promise.all` على نداءَين) غيرُ موثوق كإثبات:
+    //  كلا الطلبين يُنجَز في أقلَّ من مللي ثانية على قاعدةٍ محلّية، فنادراً ما
+    //  يتداخلان فعلياً — جُرِّب مباشرةً ووُجد يمرّ حتى مع الثغرة القديمة غير
+    //  المُصحَّحة، لأنّ التداخلَ الحقيقيَّ لم يقع أصلاً لا لأنّ القفلَ نجح.
+    //  فالإثباتُ هنا **حتميّ**: يستدعي `assertNameAvailableForRegistration`
+    //  القانونية مباشرةً من معاملاتٍ محكومةِ التوقيت (لا مسباقة)، تُبقي إحداها
+    //  قابضةً على القفل عمداً بانتظار بوّابةٍ يحرّرها الاختبار — فيُثبَت
+    //  مباشرةً أنّ معاملةً باسمٍ **مختلفٍ تماماً** تبقى **محجوبةً فعلياً**
+    //  (لا تعبر القفلَ بصمت) طَوال ذلك، لا تخميناً من نتيجةٍ نهائية قد تصحّ
+    //  صدفةً.
+    console.log("\n── م. التزامن على بادئة الاسم — إثباتٌ حتميّ ──");
+
+    async function insertMinimal(tx: any, name: string): Promise<number> {
+      const r: any = await tx.execute(sql`
+        INSERT INTO patients (name, referral_source, age, height, weight,
+          medical_condition, branch_id, total_cost, patient_classification,
+          whatsapp_notifications_enabled)
+        VALUES (${name}, ${MARK}, '30', '170', '70', 'physiotherapy', 1, 0, 'new', false)
+        RETURNING id
+      `);
+      return Number(r.rows[0].id);
+    }
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    {
+      // م-١. الأقصر يقبض القفلَ أوّلاً ويُدرَج، ويبقى ممسكاً به عمداً. الأطولُ
+      // (اسمٌ مختلفٌ تماماً، ليس نفس النصّ) يُختبَر أثناء ذلك — يجب أن يبقى
+      // محجوباً حقّاً لا عابراً بصمت. ثمّ يُحرَّر القفلُ فيعبر الأطولُ ويُدرَج
+      // بلا عائق — يمدِّد الأقصرَ، وهذا تسجيلٌ جديدٌ مشروع (اتجاهٌ واحد).
+      const SHORT = "زهراء كامل";
+      const LONG = "زهراء كامل جبار"; // بادئتُه بالضبط SHORT — يمدِّدها لا يطابقها.
+
+      let releaseShort: () => void = () => {};
+      const shortGate = new Promise<void>((resolve) => { releaseShort = resolve; });
+      let shortPassedLock = false;
+      const shortDone = db.transaction(async (tx: any) => {
+        await assertNameAvailableForRegistration(tx, SHORT);
+        shortPassedLock = true;
+        const id = await insertMinimal(tx, SHORT);
+        await shortGate; // القفلُ يبقى ممسوكاً حتى يُحرَّر صراحةً
+        return id;
+      });
+
+      await sleep(80); // فرصةٌ سخيّة لتأكيد قبض القفل فعلاً قبل بدء الآخر
+      check(shortPassedLock, "٢٨. **معاملةُ الأقصر عبرت القفلَ وأدرجت (وتبقى قابضةً عليه بانتظار التحرير)**");
+
+      let longPassedLockWhileShortHeld = false;
+      const longPromise = db.transaction(async (tx: any) => {
+        await assertNameAvailableForRegistration(tx, LONG); // يجب أن يُحجَب هنا
+        longPassedLockWhileShortHeld = true;
+        return insertMinimal(tx, LONG);
+      });
+
+      await sleep(250); // نافذةٌ سخيّة يعبر خلالها أيُّ قفلٍ غيرِ فعّال بسهولة
+      check(longPassedLockWhileShortHeld === false,
+        "٢٩. **وبينما يحمل الأقصرُ القفلَ: معاملةُ الأطول (اسمٌ مختلفٌ تماماً) تبقى محجوبةً فعلياً بانتظاره — لا تعبر بصمت**",
+        `longPassedLockWhileShortHeld=${longPassedLockWhileShortHeld}`);
+
+      releaseShort();
+      const [shortId, longId] = await Promise.all([shortDone, longPromise]);
+
+      check(longPassedLockWhileShortHeld === true,
+        "٣٠. **وبعد تحرّر القفل: الأطولُ يعبر أخيراً ويُدرَج — يمدِّد الأقصرَ، وهذا تسجيلٌ جديدٌ مشروع**");
+      same("    وترتيبُ الإدراج الفعليّ يطابق ترتيبَ قبض القفل بالضبط", shortId < longId, true);
+    }
+
+    {
+      // م-٢. **الاتجاهُ المعاكس**: الأطولُ يقبض القفلَ أوّلاً ويُدرَج ويبقى
+      // ممسكاً به عمداً. الأقصرُ (بادئةٌ للأطول بالضبط) يُختبَر أثناء ذلك —
+      // يجب أن يبقى محجوباً حقّاً أيضاً. ثمّ يُحرَّر القفلُ فيعبر الأقصرُ أخيراً
+      // — ويجد الأطولَ **موجوداً فعلياً الآن** فيُرفَض بحارس التعارض نفسِه
+      // (لا يُدرَج له شيء) — لأنّ اسماً فعّالاً قائماً يبدأ بنصّه بالضبط.
+      const LONG2 = "وليد إبراهيم حسن";
+      const SHORT2 = "وليد إبراهيم"; // بادئةٌ لِـLONG2 بالضبط.
+
+      let releaseLong2: () => void = () => {};
+      const long2Gate = new Promise<void>((resolve) => { releaseLong2 = resolve; });
+      let long2PassedLock = false;
+      const long2Done = db.transaction(async (tx: any) => {
+        await assertNameAvailableForRegistration(tx, LONG2);
+        long2PassedLock = true;
+        const id = await insertMinimal(tx, LONG2);
+        await long2Gate;
+        return id;
+      });
+
+      await sleep(80);
+      check(long2PassedLock, "    معاملةُ الأطول (م-٢) عبرت القفلَ وأدرجت، وتبقى قابضةً عليه");
+
+      let short2PassedLockWhileLong2Held = false;
+      let short2Rejected = false;
+      const short2Promise = db.transaction(async (tx: any) => {
+        await assertNameAvailableForRegistration(tx, SHORT2); // يجب أن يُحجَب هنا
+        short2PassedLockWhileLong2Held = true;
+        return insertMinimal(tx, SHORT2);
+      }).catch((e: any) => {
+        if (e instanceof PatientNameConflictError) short2Rejected = true;
+        else throw e;
+      });
+
+      await sleep(250);
+      check(short2PassedLockWhileLong2Held === false,
+        "٣١. **وفي الاتجاه المعاكس: الأقصرُ (بادئةٌ للأطول) يبقى محجوباً فعلياً أيضاً بينما الأطولُ يحمل القفل**",
+        `short2PassedLockWhileLong2Held=${short2PassedLockWhileLong2Held}`);
+
+      releaseLong2();
+      await Promise.all([long2Done, short2Promise]);
+
+      check(short2Rejected,
+        "٣٢. **وبعد تحرّر القفل: الأقصرُ يعبر أخيراً — ويُرفَض فوراً لأنّ الأطولَ صار موجوداً فعلياً**");
+      const short2Row = (await q<{ id: number }>(
+        `SELECT id FROM patients WHERE referral_source=$1 AND name=$2`, [MARK, SHORT2]))[0];
+      check(!short2Row, "    ولم يُدرَج له صفٌّ إطلاقاً — التراجعُ كاملٌ لا نصفَ كتابة");
     }
 
   } finally {
