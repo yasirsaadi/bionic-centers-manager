@@ -40,6 +40,15 @@ export const activePatientSql = (alias: string): SQL =>
 export const activePatientDrizzle = () => isNull(patients.deletedAt);
 
 /**
+ * **العكسُ المتعمَّد**: صفٌّ في السلّة. مثلُ `activePatientSql` بالضبط
+ * (`alias` اسمُ جدول المرضى في الاستعلام) لكن بشرطٍ معكوس — ولا يُستعمَل
+ * إلّا حيث يحتاج القارئُ **السلّةَ نفسَها** صراحةً (حارسُ حجزِ الهويّة عند
+ * التسجيل مثلاً)، لا القرّاءُ التشغيليّون الذين يستوردون `activePatientSql`.
+ */
+export const trashedPatientSql = (alias: string): SQL =>
+  sql`${sql.raw(alias)}.deleted_at IS NOT NULL`;
+
+/**
  * **شرطٌ على جدولٍ تابع**: صفُّه يخصّ مريضاً فعّالاً.
  *
  * `alias` اسمُ الجدول التابع، و`column` عمودُ المريض فيه (`patient_id`

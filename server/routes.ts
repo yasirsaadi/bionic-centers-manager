@@ -40,6 +40,10 @@ import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import {
+  checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
+  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
+} from "./patients/duplicate_guard";
+import {
   executeNewService, normalizeEntries, NewServiceError,
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
@@ -1902,6 +1906,35 @@ export async function registerRoutes(
     });
   });
 
+  // ══ توفّرُ الاسم عند التسجيل — بادئةٌ لا تشابهٌ ولا مطابقةٌ جزئية ═══════
+  //  فحصٌ حيّ أثناء الكتابة يقود الحدَّ الأحمر/الأخضر في نموذج التسجيل.
+  //  **قراءةٌ فقط بلا قفل** — للإرشاد وحده؛ البابُ الفعليّ عند الحفظ نفسُه
+  //  `POST /api/patients` (`storage.createPatient` عبر
+  //  `assertNameAvailableForRegistration`، بقفلٍ استشاريّ حقيقي). فسباقٌ
+  //  بين هذا الفحص وضغطةِ الحفظ لا يُنتج تسجيلاً مزدوجاً — أسوأُ ما يقع أن
+  //  تخضرّ الحدودُ لحظةً ثم يردّ الحفظُ ٤٠٩ إن سبقه تسجيلٌ آخر بجزءِ ثانية.
+  //  **ولا يكشف شيئاً عن المطابقات**: لا اسمَ، لا فرعَ، لا رقمَ، لا عدداً —
+  //  `available` (وسببٌ محكوم `reason`/`message` عند الحجب فقط) وهذا كلُّ ما
+  //  تحتاجه الواجهة (بخلاف `lookup-by-name` فوقها، المتروكة بحرفها لغرضها
+  //  الخاصّ).
+  //
+  //  **والسببُ يشمل السلّة أيضاً** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨): مطابقةٌ فعّالة
+  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ مطابقةٌ في
+  //  السلّة ⟵ `trash_conflict` **برسالة السلّة الآمنة القائمة نفسِها**
+  //  (`IN_TRASH_ESCALATION`) — لا تفصيلَ إضافياً، ولا فرقَ في المعاملة
+  //  البصرية (حدٌّ أحمر ومنعُ حفظٍ في الحالتين). الحسمُ في `checkNameAvailability`
+  //  القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
+  app.get("/api/patients/name-availability", isAuthenticated, async (req, res) => {
+    const branchSession = (req.session as any).branchSession;
+    const canAsk = branchSession?.isAdmin
+      || Boolean(branchSession?.permissions?.canAddPatients);
+    if (!canAsk) return res.status(403).json({ message: "غير مصرح" });
+
+    const name = String(req.query.name ?? "");
+    const result = await checkNameAvailability(db, name);
+    res.json(result);
+  });
+
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
     const id = Number(req.params.id);
     const patient = await storage.getPatient(id);
@@ -2302,6 +2335,27 @@ export async function registerRoutes(
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      // ══ منعُ تكرار التسجيل — بالاسم بادئةً وبالهاتف مطابقةً تامّة ══════
+      //  رُمي **داخل** معاملة `storage.createPatient` قبل أيّ `INSERT` —
+      //  فلا مريضَ أُنشئ ولا جهةَ اتصال ولا ترحيبَ ولا تدقيق (كلُّها بعد
+      //  هذا السطر في التدفّق الطبيعي، فلم تُنفَّذ أصلاً). الشرحُ الكامل في
+      //  `patients/duplicate_guard.ts`.
+      if (err instanceof PatientNameConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_name_conflict" });
+      }
+      if (err instanceof PatientPhoneConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
+      }
+      // ══ والسلّةُ تحجز الهويّةَ أيضاً — نفسُ العدم-كتابةً بالضبط ══════════
+      //  هويّةٌ محذوفة (اسمٌ أو هاتف) تُرفَض ٤٠٩ برسالة السلّة الآمنة —
+      //  فلا يُفتَح ملفٌّ بديلٌ يصطدم بالأصل حين يُستعاد. الشرحُ في
+      //  `patients/duplicate_guard.ts`.
+      if (err instanceof PatientNameTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_name_trash_conflict" });
+      }
+      if (err instanceof PatientPhoneTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
+      }
       console.error("Error creating patient:", err);
       // ══ **فشلُ الكتابة يُقال، لا يُترك معلَّقاً** ═══════════════════════
       //  كان `throw err` داخل معالجٍ غير متزامن يصير رفضاً غير ملتقَط:
@@ -2596,6 +2650,19 @@ export async function registerRoutes(
           : patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      // ══ رقمٌ مكرَّر على مريضٍ فعّالٍ آخر — لا يُكتب شيء ═════════════════
+      //  الحارسُ يرمي **داخل** معاملة `storage.updatePatient` (حين تمسّ
+      //  التعديلُ الهاتف)، فتتراجع المعاملةُ كاملةً — لا صفَّ نصفَ مُحدَّث.
+      if (err instanceof PatientPhoneConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
+      }
+      // ══ أو رقمٌ محجوزٌ لمريضٍ **محذوف** — نفسُ حجز الهويّة، على التعديل
+      //  أيضاً (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═══════════════════════════
+      //  رسالةُ السلّة الآمنة نفسُها — لا كشفَ اسمٍ ولا رقمٍ ولا فرع. الشرحُ
+      //  الكامل في `patients/duplicate_guard.ts`.
+      if (err instanceof PatientPhoneTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
+      }
       // ══ **وفشلُ التعديل يُقال أيضاً** — نفسُ علّة الإنشاء ═══════════════
       //  `throw` في معالجٍ غير متزامن = رفضٌ غير ملتقَط: الخدمةُ حيّة
       //  **والطلبُ بلا ردّ**، فينتظر الموظّفُ ولا يعرف أحُفظ التعديلُ أم لا.

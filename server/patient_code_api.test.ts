@@ -66,10 +66,23 @@ async function http(method: string, path: string, session: any, body?: any) {
   try { json = await res.json(); } catch { /* empty */ }
   return { status: res.status, body: json };
 }
+//  ══ هاتفٌ فريدٌ لكلّ مريضِ اختبارٍ افتراضياً (بعد قاعدة تفرّد الهاتف) ═════
+//  كان كلُّ مريضٍ في هذا الملفّ يشارك الرقمَ الثابت `07701234567` نفسَه —
+//  بلا ضير قبل قاعدة «رقمٌ مطبَّعٌ واحد لمريضٍ فعّالٍ واحد نظام‑ياً» (owner
+//  rule، منعُ تكرار التسجيل). فصار كلُّ استدعاءٍ لـ`createVia` بلا `phone`
+//  صريح يأخذ رقماً فريداً؛ وما يحتاج رقماً بعينه (مثل «د. تعديل...» أدناه)
+//  يمرّره صراحةً كما كان — هذا الملفّ يختبر رمزَ المريض لا الهاتف، فتفرّدُ
+//  الأرقام تفصيلُ تجهيزٍ محايد لا موضوعَ اختبار.
+let nextTestPhoneSeq = 0;
+function nextTestPhone(): string {
+  nextTestPhoneSeq += 1;
+  return `077${String(100000000 + nextTestPhoneSeq).slice(1)}`;
+}
+
 /** إنشاءٌ عبر النقطة الحقيقية — لا إدراجٌ مباشر. */
 async function createVia(session: any, extra: any = {}) {
   return http("POST", "/api/patients", session, {
-    name: `${MARK} ${extra.name ?? "مريض"}`, phone: "07701234567", age: "40",
+    name: `${MARK} ${extra.name ?? "مريض"}`, phone: nextTestPhone(), age: "40",
     //  الطولُ والوزنُ إلزاميّان لكلّ ملفٍّ جديد (الطرفُ يُصنَع عليهما).
     height: "172", weight: "78",
     medicalCondition: "x", referralSource: MARK, branchId: session.branchId || 1,

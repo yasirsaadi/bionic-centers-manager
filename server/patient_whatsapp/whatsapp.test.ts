@@ -246,14 +246,22 @@ async function main() {
     same("أ.٩ **ولا تذكرةَ ربطٍ إطلاقاً**",
       Number((await q(`SELECT COUNT(*)::int c FROM patient_link_tokens WHERE patient_id=$1`, [pA.id]))[0].c), 0);
 
-    // ══ ب. الصيغةُ الدولية ⟶ الوجهةُ نفسها ══════════════════════════════
-    console.log("\n── ب. +964… ──");
-    const rB = await http("POST", "/api/patients", newPatientBody("ب", "+9647701234567"));
+    // ══ ب. صيغةٌ دولية لرقمٍ آخر — التطبيعُ يُثبَت مباشرةً في ب.٢ ═══════════
+    //  **بعد قاعدة تفرّد الهاتف** (منعُ تكرار التسجيل، owner rule): كانت هذه
+    //  الفقرة تُسجِّل مريضاً ثانياً **بنفس رقم أ** لإثبات تطابق الوجهة —
+    //  وهذا صار يتعارض عمداً مع القاعدة الجديدة: رقمٌ مطبَّعٌ واحد لمريضٍ
+    //  فعّالٍ واحد نظام‑ياً، بلا استثناء. فسُجِّل «ب» برقمٍ **مختلفٍ فعلاً**،
+    //  وانتقل إثباتُ تكافؤ الصيغ الأربع لرقم «أ» بالكامل إلى ب.٢ (فحصٌ مباشر
+    //  بـ`normalizePhone` بلا `POST` — لا يمسّه تفرّدُ الهاتف لأنه لا يكتب
+    //  مريضاً أصلاً، وهو أدقّ من مقارنة صفّي مريضين اثنين).
+    console.log("\n── ب. صيغةٌ دولية ──");
+    const rB = await http("POST", "/api/patients", newPatientBody("ب", "+9647701234569"));
     await settle();
     same("ب. المريضُ حُفظ", rB.status, 201);
     const cB = await activeOf(rB.body.id);
-    same("ب.١ **الوجهةُ مطابقةٌ للمحلّي حرفاً بحرف**", cB[0].external_id, cA[0].external_id);
-    //  ومن مطبِّع المستودع نفسه — لا خوارزميةَ ثانية.
+    same("ب.١ **ووجهتُه الدولية بأرقامٍ فقط أيضاً**", cB[0].external_id, "9647701234569");
+    //  ومن مطبِّع المستودع نفسه — لا خوارزميةَ ثانية. **هنا** يُثبَت تكافؤُ
+    //  أربع صيغٍ لرقم «أ» نفسِه (لا بمريضين، بل بفحصٍ مباشر).
     same("ب.٢ **والمصدرُ `normalizePhone` وحده**",
       ["07701234567", "+9647701234567", "٠٧٧٠١٢٣٤٥٦٧", "00964 770 123 4567"]
         .map((v) => whatsappDestination(normalizePhone(v, "IQ").e164)),
@@ -487,13 +495,22 @@ async function main() {
 
     // ══ ف. إعادةُ طلب التسجيل ══════════════════════════════════════════
     console.log("\n── ف. إعادةُ الطلب ──");
-    //  نفسُ الرقم لمريضٍ ثانٍ: جهةٌ ثانية مشروعة (أبٌ وابنه)، وترحيبٌ لكلٍّ.
+    //  **بعد قاعدة تفرّد الهاتف** (منعُ تكرار التسجيل، owner rule —
+    //  «No family/guardian/shared-number exception»): نفسُ الرقم لمريضٍ ثانٍ
+    //  (أبٌ وابنه هنا) **لم يعد مشروعاً** — كان قبل هذه القاعدة يُقبل بجهتين
+    //  مستقلّتين، والآن يُرفَض الثاني ٤٠٩ صراحةً، ولا جهةَ ولا ترحيبَ له.
+    //  والباقي (ف.٢-ف.٦) يبقى على المريض الأوّل وحده وعلى ملفٍّ قديمٍ مُدرَجٍ
+    //  مباشرةً بالـSQL — لا علاقةَ لهما بتفرّد الهاتف فبقيا كما كانا.
     const rP1 = await http("POST", "/api/patients", newPatientBody("ف١", "07714445555"));
     const rP2 = await http("POST", "/api/patients", newPatientBody("ف٢", "07714445555"));
     await settle();
-    same("ف. **رقمٌ واحد لملفَّين مشروع**", [rP1.status, rP2.status], [201, 201]);
-    same("ف.١ ولكلٍّ جهتُه وترحيبُه",
-      [(await activeOf(rP1.body.id)).length, (await activeOf(rP2.body.id)).length], [1, 1]);
+    same("ف. **الأوّلُ ينجح، والثاني بنفس الرقم يُرفَض ٤٠٩ — لا استثناءَ عائليّ**",
+      [rP1.status, rP2.status, rP2.body?.code], [201, 409, "patient_phone_conflict"]);
+    same("ف.١ **وللأوّل جهتُه وترحيبُه، وللثاني المرفوض لا شيء إطلاقاً**",
+      [(await activeOf(rP1.body.id)).length, (await deliveriesForPatient(rP1.body.id)).length,
+        Number((await q(`SELECT COUNT(*)::int n FROM patients
+                          WHERE referral_source='${MARK}' AND name=$1`, [`${MARK} ف٢`]))[0].n)],
+      [1, 1, 0]);
     //  **وإعادةُ الاستحقاق لنفس الجهة لا تُنتج ترحيباً ثانياً** — الفهرسُ يحسم.
     const dup = await storage.getPatient(rP1.body.id);
     await db.transaction((tx) => registerWhatsappWelcome(tx as any, {
