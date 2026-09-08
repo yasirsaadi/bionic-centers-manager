@@ -81,6 +81,7 @@ import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
 import { generateSurveyReply } from "./ai/survey_reply";
+import { registerAiKnowledgeRoutes } from "./ai/knowledge/routes";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
@@ -6753,6 +6754,7 @@ export async function registerRoutes(
     // لا للأرشفة، وأرشفةُ محتوى العيادة في سجلّ تدقيقٍ تسريبٌ بابٌ آخر.
     // (يُكتب بعد النداء ليحمل الأدوات؛ وهو «أطلق وانسَ» فلا يؤخّر الردّ.)
     const toolNames = result.ok ? (result.value.tools?.names ?? []) : [];
+    const knowledgeIds = result.ok ? (result.value.knowledge ?? []).map((k) => k.id) : [];
     logAudit({
       entityType: "ai_chat",
       entityId: access.userId ?? 0,
@@ -6767,6 +6769,8 @@ export async function registerRoutes(
         ...(toolNames.length
           ? { toolNames: toolNames.filter((n, i) => toolNames.indexOf(n) === i), toolCount: toolNames.length }
           : {}),
+        //  أرقامُ مقالاتٍ فقط — بلا عنوانٍ ولا نصّ، تماماً كأسماء الأدوات.
+        ...(knowledgeIds.length ? { knowledgeIds, knowledgeCount: knowledgeIds.length } : {}),
       },
       ipAddress: req.ip ?? null,
       userAgent: req.get?.("user-agent") ?? null,
@@ -7631,6 +7635,10 @@ export async function registerRoutes(
   //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —
   //  بلا كتابةٍ ولا اعتماد. راجع server/daily_review/store.ts.
   registerDailyReviewRoutes(app, isAuthenticated);
+  //  معرفةُ المساعد الذكي الموثوقة (AI Assistant v2، ترحيل ٠٧٥): تقديمُ
+  //  اقتراحٍ لأيّ موظّف، وإدارةُ المقالات/الاقتراحات للمسؤول العام وحده.
+  //  راجع server/ai/knowledge/store.ts.
+  registerAiKnowledgeRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
   registerPatientTrashRoutes(app, isAuthenticated);
 
