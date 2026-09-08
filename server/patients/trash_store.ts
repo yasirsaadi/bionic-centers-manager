@@ -23,6 +23,9 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
+//  قفلُ الهويّة المشترك — تسجيلٌ وتعديلُ هاتفٍ واستعادةٌ يتسلسلون خلفه
+//  معاً (تصحيحٌ لاحقٌ ثالث، ٢٠٢٦-٠٩-٠٨). الشرحُ الكامل في `duplicate_guard.ts`.
+import { acquirePatientIdentityLock } from "./duplicate_guard";
 import {
   RESTORE_WINDOW_DAYS, RESTORE_EXPIRED_MESSAGE, GLOBAL_ADMIN_REQUIRED_MESSAGE,
   PURGE_BEFORE_EXPIRY_MESSAGE,
@@ -273,6 +276,13 @@ export async function softDeletePatient(params: {
  *
  * **والمهلةُ تُقاس بساعة القاعدة**: `NOW() <= restore_until` داخل المعاملة.
  * فساعةُ المتصفّح لا تُستعاد بها ملفّ ولا يُمنَع بها.
+ *
+ * **وقفلُ الهويّة المشترك أوّلُ عملٍ في المعاملة** (تصحيحٌ لاحقٌ ثالث،
+ * ٢٠٢٦-٠٩-٠٨، `duplicate_guard.ts` القسم ٥) — **قبل حتى** `SELECT ... FOR
+ * UPDATE` أدناه: تسجيلٌ أو تعديلُ هاتفٍ متزامنٌ يحمل هذا القفلَ نفسَه لا
+ * يستطيع أن يقرأ هويّةَ هذا المريض «محذوفةً بعد» في فحصٍ ثمّ «فعّالةً الآن»
+ * في فحصٍ تالٍ بينما هذه الاستعادةُ نفسُها تلتزم في المنتصف — فأيُّهما بدأ
+ * أوّلاً يُتمّ معاملته القصيرة كاملةً قبل أن يبدأ الآخر.
  */
 export async function restorePatient(params: {
   patientId: number; actor: TrashActor;
@@ -282,6 +292,10 @@ export async function restorePatient(params: {
     throw new TrashError("استعادة الملفات صلاحية إدارية — للمسؤول العام أو مدير الفرع أو الطبيب", 403);
   }
   return await db.transaction(async (tx: any) => {
+    //  قفلُ الهويّة المشترك أوّلاً — قبل أيّ قراءةٍ أو قفلِ صفّ (راجع
+    //  التوثيق أعلاه وشرحَ `duplicate_guard.ts`، القسم ٥).
+    await acquirePatientIdentityLock(tx);
+
     const locked = await tx.execute(sql`
       SELECT id, name, patient_code, branch_id, deleted_at, restore_until,
              deleted_reason, deleted_by_name, deleted_needed_admin,

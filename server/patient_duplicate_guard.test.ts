@@ -14,7 +14,9 @@
 // ٣) **الأمانُ من التزامن بلا قيدٍ في القاعدة** — قفلٌ استشاريّ يمنع نجاحَ
 //    محاولتين متزامنتين بنفس الاسم أو نفس الهاتف معاً — **وقفلُ الاسم عامٌّ
 //    ثابت** (تصحيحٌ لاحق) فيحمي قاعدةَ **البادئة** نفسَها بين اسمين مختلفين
-//    متزامنين لا التطابقَ التامّ فقط.
+//    متزامنين لا التطابقَ التامّ فقط. **وهو قفلُ هويّةٍ مشترك** (تصحيحٌ
+//    لاحقٌ ثالث) تشارك فيه **الاستعادةُ** أيضاً الآن — فلا تلتزم بين فحص
+//    الفعّال وفحص المحذوف في التسجيل أو التعديل مهما تقاربا زمنياً.
 // ٤) **والسلّةُ تحجز الهويّةَ** (تصحيحٌ لاحق) — مريضٌ محذوفٌ (سلّةٌ) لا
 //    يُحتسَب **نشطاً** (فلا يظهر في القوائم ولا يُحسَب في المجاميع كما
 //    كان)، **لكنّ اسمَه ورقمَه يبقيان محجوزَين عند التسجيل تحديداً**: لا
@@ -36,6 +38,8 @@ import { registerRoutes } from "./routes";
 import { normalizePhone } from "@shared/phone";
 import {
   assertNameAvailableForRegistration, PatientNameConflictError, NAME_PREFIX_CONFLICT_MESSAGE,
+  acquirePatientIdentityLock, assertPhoneAvailable,
+  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import { IN_TRASH_ESCALATION } from "@shared/patient_trash";
 
@@ -635,6 +639,120 @@ async function main() {
       const short2Row = (await q<{ id: number }>(
         `SELECT id FROM patients WHERE referral_source=$1 AND name=$2`, [MARK, SHORT2]))[0];
       check(!short2Row, "    ولم يُدرَج له صفٌّ إطلاقاً — التراجعُ كاملٌ لا نصفَ كتابة");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ن. تزامنٌ — الاستعادةُ لا تلتزم بين فحصَي الفعّال والمحذوف (تصحيحٌ لاحقٌ ثالث)
+    // ══════════════════════════════════════════════════════════════════
+    //  الثغرةُ التي يحرسها هذا القسم: فحصَا الفعّال والمحذوف (في التسجيل
+    //  والتعديل معاً) عبارتا SQL منفصلتان تحت قفلٍ لم تكن الاستعادةُ تشارك
+    //  فيه — فاستعادةٌ متزامنة كانت تستطيع الالتزامَ **بين العبارتين
+    //  بالضبط**: تُقرأ الهويّةُ محذوفةً في فحص الفعّال (فلا تعارض)، ثمّ
+    //  تلتزم الاستعادةُ، ثمّ تُقرأ فعّالةً في فحص المحذوف (فلا تعارضَ أيضاً)
+    //  — فيعبر تسجيلٌ أو تعديلٌ بصمتٍ رغم أنّ الهويّةَ صارت فعّالةً للتوّ.
+    //  فصار قفلُ الهويّة مشتركاً بين الثلاثة (`duplicate_guard.ts`، القسم ٥):
+    //  مَن يقبضه أوّلاً يُتمّ معاملته القصيرة كاملةً قبل أن يبدأ الآخرُ فحصَه
+    //  الأوّل أصلاً — فتُثبَت الاستعادةُ الحقيقية (عبر الـHTTP الحيّ) محجوبةً
+    //  فعلياً طَوال ذلك، لا عابرةً بصمت.
+    console.log("\n── ن. التزامن بين الاستعادة والتسجيل/التعديل — قفلُ الهويّة المشترك ──");
+
+    {
+      // ن-١. تعديلُ هاتفٍ يطالب برقم مريضٍ محذوف، يتسابق مع استعادة صاحبه.
+      const rA = await mkActivePatient("راشد كامل عبود ن١", "07788000001");
+      const delRA = await http("DELETE", `/api/patients/${rA.id}`, S.admin, { reason: "اختبار" });
+      same("٣٣. **تمهيدٌ: راشد يُحذَف حذفاً ناعماً برقمه**", delRA.status, 200);
+      const rB = await mkActivePatient("راشد كامل عبود ن١-ب", "07788000002");
+
+      let releaseUpdateGate: () => void = () => {};
+      const updateGate = new Promise<void>((resolve) => { releaseUpdateGate = resolve; });
+      let updateAcquiredIdentityLock = false;
+      let updateRejectedAsTrashConflict = false;
+      const updateDone = db.transaction(async (tx: any) => {
+        await acquirePatientIdentityLock(tx);
+        updateAcquiredIdentityLock = true;
+        await updateGate; // القفلُ يبقى ممسوكاً حتى يُحرَّر صراحةً
+        // الفحصُ الحقيقيّ عبر الدالّة القانونية نفسِها — لا نسخةٌ يدوية من
+        // منطقها. (تُعيد `assertPhoneAvailable` قبضَ قفل الهويّة نفسِه هنا
+        // داخلياً — بلا ضرر، نفسُ الجلسة ونفسُ المعاملة.)
+        await assertPhoneAvailable(tx, rA.phoneE164 as string, rB.id, { checkTrash: true });
+      }).catch((e: any) => {
+        if (e instanceof PatientPhoneTrashConflictError) updateRejectedAsTrashConflict = true;
+        else throw e;
+      });
+
+      await sleep(80); // فرصةٌ سخيّة لتأكيد قبض القفل فعلاً قبل بدء الاستعادة
+      check(updateAcquiredIdentityLock,
+        "٣٤. **معاملةُ التعديل عبرت قفلَ الهويّة وتبقى قابضةً عليه بانتظار التحرير**");
+
+      let restoreDone = false;
+      let restoreHttpResult: { status: number; body: any } | null = null;
+      const restorePromise = http("POST", `/api/patient-trash/${rA.id}/restore`, S.admin)
+        .then((r) => { restoreDone = true; restoreHttpResult = r; return r; });
+
+      await sleep(250); // نافذةٌ سخيّة تعبر خلالها أيُّ استعادةٍ غيرِ محجوبة بسهولة
+      check(restoreDone === false,
+        "٣٥. **وبينما التعديلُ يحمل قفل الهويّة: الاستعادةُ المتزامنة (عبر الـHTTP الحيّ) تبقى محجوبةً فعلياً — لا تعبر بصمت**",
+        `restoreDone=${restoreDone}`);
+
+      releaseUpdateGate();
+      await Promise.all([updateDone, restorePromise]);
+
+      check(updateRejectedAsTrashConflict,
+        "٣٦. **وبعد تحرّر القفل: التعديلُ يُرفَض بتعارض السلّة كما هو متوقَّع — لم يتسلّل شيء بين فحصَي الفعّال والمحذوف**");
+      same("٣٧. **والاستعادةُ تعبر بعده وتنجح بلا عائق**", restoreHttpResult?.status, 200);
+
+      same("٣٨. **والحالةُ النهائية: صفٌّ نشطٌ واحدٌ بالضبط بهذا الرقم — لم يتكرّر أبداً**",
+        await countByPhoneE164(rA.phoneE164), 1);
+      const rBAfter = await patientRow(rB.id);
+      same("      وهاتفُ راشد-ب لم يتغيّر إطلاقاً — بلا نصفِ كتابة", rBAfter.pe, rB.phoneE164);
+    }
+
+    {
+      // ن-٢. تسجيلٌ باسمٍ محميّ (اسمُ مريضٍ محذوف) يتسابق مع استعادة صاحبه.
+      // الشكلُ نفسُه بالضبط، لكن على قفل الاسم — `assertNameAvailableForRegistration`
+      // تفحص الفعّالَ والمحذوفَ معاً تحت قفل الهويّة المشترك نفسِه.
+      const NM_A = "سرمد فالح شنون ن٢";
+      const nmA = await mkActivePatient(NM_A, "07788000003");
+      const delNmA = await http("DELETE", `/api/patients/${nmA.id}`, S.admin, { reason: "اختبار" });
+      same("٣٩. **تمهيدٌ: سرمد يُحذَف حذفاً ناعماً باسمه المحميّ**", delNmA.status, 200);
+
+      let releaseCreateGate: () => void = () => {};
+      const createGate = new Promise<void>((resolve) => { releaseCreateGate = resolve; });
+      let createAcquiredIdentityLock = false;
+      let createRejectedAsTrashConflict = false;
+      const createDone = db.transaction(async (tx: any) => {
+        await acquirePatientIdentityLock(tx);
+        createAcquiredIdentityLock = true;
+        await createGate;
+        await assertNameAvailableForRegistration(tx, NM_A);
+      }).catch((e: any) => {
+        if (e instanceof PatientNameTrashConflictError) createRejectedAsTrashConflict = true;
+        else throw e;
+      });
+
+      await sleep(80);
+      check(createAcquiredIdentityLock,
+        "٤٠. **معاملةُ التسجيل عبرت قفلَ الهويّة وتبقى قابضةً عليه بانتظار التحرير**");
+
+      let restoreDone2 = false;
+      let restoreHttpResult2: { status: number; body: any } | null = null;
+      const restorePromise2 = http("POST", `/api/patient-trash/${nmA.id}/restore`, S.admin)
+        .then((r) => { restoreDone2 = true; restoreHttpResult2 = r; return r; });
+
+      await sleep(250);
+      check(restoreDone2 === false,
+        "٤١. **وبينما التسجيلُ يحمل قفل الهويّة: الاستعادةُ المتزامنة تبقى محجوبةً أيضاً**",
+        `restoreDone2=${restoreDone2}`);
+
+      releaseCreateGate();
+      await Promise.all([createDone, restorePromise2]);
+
+      check(createRejectedAsTrashConflict,
+        "٤٢. **وبعد تحرّر القفل: التسجيلُ يُرفَض بتعارض السلّة — الاسمُ المحميّ لم يُتجاوَز بحسن نيّة**");
+      same("٤٣. **والاستعادةُ تعبر بعده وتنجح بلا عائق**", restoreHttpResult2?.status, 200);
+
+      same("٤٤. **وصفٌّ واحدٌ بالضبط بهذا الاسم — لا تكرارَ ولا فتحَ ملفٍّ ثانٍ**",
+        await countByExactName(NM_A), 1);
     }
 
   } finally {
