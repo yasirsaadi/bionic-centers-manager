@@ -50,14 +50,21 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
   const qc = useQueryClient();
   const [selected, setSelected] = useState<number | null>(null);
 
-  const { data, isLoading } = useQuery<{ rows: EligibleDevice[] }>({
+  //  **فشلُ الطلب ليس صفرَ أهليّة** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨): كان ردٌّ غيرُ
+  //  ناجح (٥٠٠، ٤٠٣، انقطاعُ شبكة) يُقرَأ `{ rows: [] }` بصمت، فيظهر النصُّ
+  //  المعتمَد لصفرِ المؤهَّل — كذباً: لم نعرف أنّ لا شيءَ مؤهَّلاً، فشلنا في
+  //  السؤال فقط. فصار ردٌّ غيرُ ناجح يُرمى **خطأً حقيقياً** (`throw`) بدل أن
+  //  يُقرأ نجاحاً فارغاً — وانقطاعُ الشبكة نفسُه يبقى خطأً كما كان دائماً
+  //  (لا `try/catch` يبتلعه هنا، فـ`useQuery` يلتقطه بنفسه). والفرقُ بين
+  //  «صفرٌ فعليّ» و«تعذّر السؤال» يُعرَض للموظّف بنصَّين مختلفين أدناه.
+  const { data, isLoading, isError } = useQuery<{ rows: EligibleDevice[] }>({
     queryKey: [`/api/followups/patient/${patientId}/return-to-purchase-eligible`],
     queryFn: async () => {
       const res = await fetch(
         `/api/followups/patient/${patientId}/return-to-purchase-eligible`,
         { credentials: "include" },
       );
-      if (!res.ok) return { rows: [] };
+      if (!res.ok) throw new Error("تعذّر التحقق من العمليات السابقة");
       return res.json();
     },
     enabled: open,
@@ -119,6 +126,14 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
           <div className="space-y-2">
             <Skeleton className="h-16 w-full rounded-lg" />
           </div>
+        ) : isError ? (
+          //  **تعذّرُ السؤال — لا صفرَ أهليّة** — نصٌّ مختلفٌ عمداً عن رسالة
+          //  «لا توجد عملية» أدناه، فلا يُقرأ فشلُ الشبكة على أنه حسمٌ فعليّ.
+          //  والزرُّ يبقى معطَّلاً من نفسه: `chosen` يبقى `null` بلا مرشَّحين.
+          <p className="text-sm text-destructive py-4 text-center"
+            data-testid="return-to-purchase-eligibility-error">
+            تعذّر التحقق من العمليات السابقة. حاول مرة أخرى.
+          </p>
         ) : candidates.length === 0 ? (
           //  **الرسالةُ الوحيدة لصفرِ مؤهَّل الآن** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨):
           //  زرُّ الفتح صار يظهر دائماً بلا فحص أهليّةٍ مسبق (`ReturnToPurchaseRoutingChoice`)،

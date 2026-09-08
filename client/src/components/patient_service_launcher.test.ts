@@ -243,6 +243,57 @@ function main() {
   check(returnDialogCode.includes('fetch("/api/followups/return-to-purchase"'),
     "٢٠.ي **ونداءُ الإرسال هو نفسُ المسار القائم بعينه**");
 
+  //  ══ وفشلُ طلب الأهليّة ليس صفرَ أهليّة (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═
+  //  كان ردٌّ غيرُ ناجح (٥٠٠، ٤٠٣، …) يُقرَأ `{ rows: [] }` بصمت، فيظهر نصُّ
+  //  صفرِ المؤهَّل المعتمَد كذباً — لم نعرف أنّه لا شيء، فشلنا في السؤال فقط.
+  console.log("\n── وفشلُ طلب الأهليّة ليس صفرَ أهليّة ──");
+  //  **الفحصُ مقصورٌ على دالّة استعلام الأهليّة بعينها** — لا على الملفّ
+  //  كلِّه: النافذةُ تحمل `if (!res.ok) throw` آخرَ أصلاً (في `submit`،
+  //  لإرسال «عاد للشراء» نفسِه، غيرُ مُمَسّ هذا التصحيح) فبحثٌ غيرُ مقيَّد
+  //  كان سيمرّ حتى لو بقي السطرُ القديم في مكانه بعينه.
+  const eligibilityQueryFnBody = returnDialogCode.match(
+    /queryFn: async \(\) => \{([\s\S]*?)\},\s*\n\s*enabled: open,/)?.[1] ?? "";
+  check(eligibilityQueryFnBody.length > 0,
+    "ودالّةُ استعلام الأهليّة وُجدت ليُبنى عليها الفحصُ التالي",
+    returnDialogCode.slice(0, 200));
+  check(!/if \(!res\.ok\) return \{ rows: \[\] \};/.test(eligibilityQueryFnBody),
+    "٢٠.ك **ولم يعد ردٌّ غيرُ ناجح يُقرأ `{ rows: [] }` بصمت في استعلام الأهليّة** — السطرُ القديمُ غاب كاملاً",
+    eligibilityQueryFnBody.trim());
+  check(/if \(!res\.ok\) throw new Error\(/.test(eligibilityQueryFnBody),
+    "٢٠.ل **بل يُرمى خطأً حقيقياً في استعلام الأهليّة بعينه** — فـ`useQuery` يلتقطه حالةَ تعذّرٍ لا نجاحاً فارغاً",
+    eligibilityQueryFnBody.trim());
+  //  وانقطاعُ الشبكة نفسُه (رفضُ `fetch` قبل وصول أيّ ردّ) يبقى خطأً كما
+  //  كان دائماً — لا `try/catch` حول دالّة الاستعلام يبتلعه.
+  check(!/\btry\b/.test(eligibilityQueryFnBody),
+    "٢٠.م **ولا `try/catch` حول نداء الأهليّة** — فانقطاعُ الشبكة يبلغ `useQuery` خطأً من نفسه، كما كان دائماً",
+    eligibilityQueryFnBody.trim());
+  check(/const \{ data, isLoading, isError \} = useQuery</.test(returnDialogCode),
+    "و`isError` مقروءةٌ من نفس الاستعلام — لا حالةٌ محلّية منفصلة تُخمَّن");
+
+  //  والحالتان — صفرٌ فعليّ، وتعذّرُ سؤال — نصّان مختلفان عمداً.
+  check(returnDialogCode.includes("تعذّر التحقق من العمليات السابقة. حاول مرة أخرى."),
+    "٢٠.ن **ورسالةُ التعذّر بالنصّ المطلوب بالحرف**");
+  {
+    //  **وبالترتيب الصحيح**: فرعُ التعذّر يسبق فرعَ «صفرِ المؤهَّل» في سلسلة
+    //  الشرط — فتعذّرٌ لا يُقرأ أبداً «لا يوجد» حتى لو تساويا في غياب البيانات.
+    const isErrorIdx = returnDialogCode.indexOf("isError ? (");
+    const zeroIdx = returnDialogCode.indexOf("candidates.length === 0 ? (");
+    check(isErrorIdx > -1 && zeroIdx > -1 && isErrorIdx < zeroIdx,
+      "٢٠.س **وفرعُ التعذّر يسبق فرعَ «صفرِ المؤهَّل» في سلسلة الشرط**",
+      `isError@${isErrorIdx}, zero@${zeroIdx}`);
+  }
+  //  **والزرُّ يبقى معطَّلاً من نفسه**: شرطُ التعطيل لم يتغيّر — `chosen`
+  //  مشتقٌّ من `candidates`، و`candidates` من `data?.rows ?? []`، فتعذّرُ
+  //  الطلب (بلا `data`) يُبقي `chosen` فارغاً بلا حاجةٍ لشرطٍ إضافيّ.
+  check(returnDialogCode.includes("disabled={!chosen || submit.isPending}"),
+    "٢٠.ع **وشرطُ تعطيل زرّ التأكيد لم يتغيّر** — يبقى معطَّلاً بلا مرشَّحٍ في حالة التعذّر تلقائياً");
+  check(/const candidates = useMemo\(\s*\(\) => \(data\?\.rows \?\? \[\]\)/.test(returnDialogCode),
+    "وما زال `candidates` يشتقّ من `data?.rows ?? []` — فتعذّرُ الطلب (بلا `data`) يعني لا مرشَّحين تلقائياً");
+  //  **ولا مساراً بديلاً أُنشئ**: لا مريضَ ولا حالةَ ولا حلقةَ ولا معاينة —
+  //  لا طفرةَ ثانية أُضيفت بجانب الإرسال القائم.
+  same("٢٠.ف **ولا `useMutation` ثانية أُضيفت** — الإرسالُ القائم وحده",
+    (returnDialogCode.match(/useMutation\(/g) ?? []).length, 1);
+
   // ٤-٦. مريضٌ بلا أي نوع: الثلاثة تذهب إلى `add-case-type` بأنواعها.
   same("٤. أطراف ⇒ add-case-type/amputee", opt(fresh, "prosthetic_case")!.flow,
     { kind: "case_type", caseType: "amputee" });
