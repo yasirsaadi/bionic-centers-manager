@@ -20,6 +20,15 @@
 // (د) مفتاحٌ **جديد فعلاً** ⟶ معاينةٌ جديدة فعلاً حين تسمح القواعد.
 // (هـ) مفتاحٌ غائبٌ أو فاسدُ الشكل ⟶ يُردّ صراحةً (٤٠٠)، لا سقوطاً صامتاً
 //     إلى سلوكٍ غير تطابقيّ.
+//
+// ══ تصحيحٌ لاحق — الهويّةُ لا المحتوى وحده (٢٠٢٦-٠٩) ═════════════════════
+// بصمةُ المحتوى وحدها كانت تكفي إعادةَ معاينة مريضٍ آخر بالكامل لو تطابق
+// تشخيصان صدفةً بنفس المفتاح. صار التطابقُ يشترط **هويّةً من مِلك الخادم**
+// معاً مع المحتوى: المريضُ، الطبيبُ، الفرعُ، الحالةُ، الاختصاص.
+// (و) نفسُ المفتاح ونفسُ المحتوى حرفياً **لمريضٍ مختلف** ⟶ ٤٠٩، صفرُ صفوفٍ
+//     جديدة، وبلا تسريب معرّف معاينة المريض الأصليّ في الردّ.
+// (ز) نفسُ المفتاح لنفس المريض بنفس المحتوى **بطبيبٍ آخر** ⟶ ٤٠٩ كذلك.
+// (ح) والإعادةُ العاديّة لنفس المريض ونفس الطبيب تبقى تعمل كما كانت.
 
 import express from "express";
 import { createServer } from "http";
@@ -45,7 +54,7 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6829;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-تطابق-المعاينة";
-const MANAGER = 9841, DOCTOR = 9842;
+const MANAGER = 9841, DOCTOR = 9842, DOCTOR2 = 9843;
 
 const S = {
   manager: {
@@ -56,6 +65,12 @@ const S = {
   doctor: {
     userId: DOCTOR, role: "doctor", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "doc-idem-test",
+    permissions: { canViewPatients: true },
+  },
+  // ══ لاختبار «نفسُ المفتاح، نفسُ المريض، طبيبٌ آخر» فقط (تصحيحٌ لاحق) ═══
+  doctor2: {
+    userId: DOCTOR2, role: "doctor", isAdmin: false, branchId: 1,
+    accessibleBranches: [1], displayName: "doc2-idem-test",
     permissions: { canViewPatients: true },
   },
 };
@@ -132,11 +147,11 @@ async function cleanup() {
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
-  for (const [id, role] of [[MANAGER, "branch_manager"], [DOCTOR, "doctor"]] as any[]) {
+  for (const [id, role] of [[MANAGER, "branch_manager"], [DOCTOR, "doctor"], [DOCTOR2, "doctor"]] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x','موظّف',$3,1,'[1]'::jsonb,true,$4::jsonb)
              ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, medical_specialties = EXCLUDED.medical_specialties`,
-      [id, `exidem${id}`, role, id === DOCTOR ? '["prosthetic","medical_support"]' : "null"]);
+      [id, `exidem${id}`, role, role === "doctor" ? '["prosthetic","medical_support"]' : "null"]);
   }
   await cleanup();
 
@@ -300,10 +315,87 @@ async function main() {
 
     same("هـ٤. **ولا صفَّ نتج عن أيٍّ من المحاولات الثلاث الفاسدة**",
       (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [p2]))[0].n, before);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  و. تصحيحٌ لاحق — نفسُ المفتاح ونفسُ المحتوى **لمريضٍ مختلف** ⟶ تعارض
+    // ══════════════════════════════════════════════════════════════════
+    //  العلّةُ التي يحرسها هذا القسم: بصمةُ المحتوى وحدها كانت تكفي لإعادة
+    //  معاينة مريضٍ آخر بالكامل لو تطابق تشخيصان صدفةً بنفس المفتاح — خللُ
+    //  عميلٍ (لا حالةً طبيعية)، لكنّ الخادم يجب ألّا يثق بالمحتوى وحده.
+    console.log("\n── و. نفسُ المفتاح ونفسُ المحتوى لمريضٍ مختلف ⟶ تعارض ──");
+    const pW1 = await mkPatient("هويّةٌ — مريضٌ أوّل");
+    await mkCase(pW1);
+    const keyW = randomKey("regression-identity-patient");
+    const payloadW = {
+      caseType: "prosthetic", diagnosis: "بتر تحت الركبة", chiefComplaint: null,
+      plan: null, notes: null, prescription: {}, idempotencyKey: keyW,
+    };
+    const firstW = await http("POST", `/api/medical/patients/${pW1}/exams`, S.doctor, payloadW);
+    check(firstW.status === 200 || firstW.status === 201,
+      "و١. المحاولةُ الأولى تنجح لصاحب المفتاح الحقيقيّ", JSON.stringify(firstW.body));
+    const firstWExamId = firstW.body?.id;
+
+    const pW2 = await mkPatient("هويّةٌ — مريضٌ ثانٍ");
+    await mkCase(pW2);
+    // نفسُ المفتاح، نفسُ كلّ حقلٍ سريريّ حرفياً — **مريضٌ مختلفٌ فقط**.
+    const crossPatient = await http("POST", `/api/medical/patients/${pW2}/exams`, S.doctor, payloadW);
+    same("و٢. **مريضٌ مختلفٌ بنفس المفتاح ونفس المحتوى ⟶ ٤٠٩** — لا نجاحاً صامتاً",
+      crossPatient.status, 409);
+    same("   ورمزُ الخطأ `idempotency_conflict`", crossPatient.body?.code, "idempotency_conflict");
+    check(!crossPatient.body?.id,
+      "و٣. **ولا يُعاد معرّفُ معاينةٍ في الردّ إطلاقاً** — لا معاينةَ المريض الأوّل ولا غيرها",
+      JSON.stringify(crossPatient.body));
+    same("و٤. **ولا صفَّ جديداً وُلد للمريض الثاني**",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pW2]))[0].n, 0);
+    same("   ومعاينةُ المريض الأوّل بقيت صفّاً واحداً وحدها — لم تُمَسّ",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pW1]))[0].n, 1);
+    // ولا سبيلَ لتسريب صفّ المريض الأوّل عبر أيّ محاولةٍ لاحقة بنفس المفتاح.
+    const retryAfterConflictW = await http("POST", `/api/medical/patients/${pW2}/exams`, S.doctor, payloadW);
+    same("و٥. **وإعادةُ نفس محاولة المريض الثاني تُردّ ٤٠٩ كذلك** — لا تتذبذب",
+      retryAfterConflictW.status, 409);
+    check(retryAfterConflictW.body?.id !== firstWExamId,
+      "   وما زالت لا تُعيد معرّف المريض الأوّل", JSON.stringify(retryAfterConflictW.body));
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ز. تصحيحٌ لاحق — نفسُ المفتاح لنفس المريض بطبيبٍ **مختلف** ⟶ تعارض
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ز. نفسُ المفتاح لنفس المريض بطبيبٍ مختلف ⟶ تعارض ──");
+    const pZ = await mkPatient("هويّةٌ — طبيبٌ مختلف");
+    await mkCase(pZ);
+    const keyZ = randomKey("regression-identity-doctor");
+    const payloadZ = {
+      caseType: "prosthetic", diagnosis: "بتر تحت الركبة", chiefComplaint: null,
+      plan: null, notes: null, prescription: {}, idempotencyKey: keyZ,
+    };
+    const firstZ = await http("POST", `/api/medical/patients/${pZ}/exams`, S.doctor, payloadZ);
+    check(firstZ.status === 200 || firstZ.status === 201,
+      "ز١. المحاولةُ الأولى تنجح بتوقيع الطبيب الأوّل", JSON.stringify(firstZ.body));
+
+    // نفسُ المريض، نفسُ المفتاح، نفسُ المحتوى — **جلسةُ طبيبٍ آخر فقط**.
+    const crossDoctor = await http("POST", `/api/medical/patients/${pZ}/exams`, S.doctor2, payloadZ);
+    same("ز٢. **نفسُ المريض والمفتاح والمحتوى بطبيبٍ آخر ⟶ ٤٠٩**", crossDoctor.status, 409);
+    same("   ورمزُ الخطأ `idempotency_conflict`", crossDoctor.body?.code, "idempotency_conflict");
+    same("ز٣. **ولا صفَّ ثانٍ لهذا المريض** — توقيعُ الطبيب الأوّل وحده قائم",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pZ]))[0].n, 1);
+    same("   والصفُّ القائم لا يزال منسوباً للطبيب الأوّل بعينه",
+      (await q<{ doctor_id: number }>(`SELECT doctor_id FROM medical_exams WHERE patient_id=$1`, [pZ]))[0].doctor_id,
+      DOCTOR);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ح. والإعادةُ العاديّة لنفس المريض ونفس الطبيب سليمةٌ كما كانت
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ح. الإعادةُ العاديّة لنفس المريض/الطبيب سليمة بعد التصحيح ──");
+    const normalRetryZ = await http("POST", `/api/medical/patients/${pZ}/exams`, S.doctor, payloadZ);
+    check(normalRetryZ.status === 200 || normalRetryZ.status === 201,
+      "ح١. تنجح — لا تتأثّر بحارس الهويّة الجديد", String(normalRetryZ.status));
+    same("ح٢. **وتُعيد نفسَ معرّف معاينة الطبيب الأصليّ**", normalRetryZ.body?.id, firstZ.body?.id);
+    same("ح٣. **و`created:false` صراحةً**", normalRetryZ.body?.created, false);
+    same("ح٤. **وما زال صفّاً واحداً في القاعدة**",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pZ]))[0].n, 1);
   } finally {
     await cleanup();
-    await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR]]);
-    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[MANAGER, DOCTOR]]);
+    await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR, DOCTOR2]]);
+    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[MANAGER, DOCTOR, DOCTOR2]]);
     httpServer.close();
   }
 

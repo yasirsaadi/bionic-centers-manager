@@ -433,7 +433,25 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  `applyDecision` — وإلا أعادت كتابةَ نفس القيم على ملفّ المريض بلا
       //  داعٍ في كلّ إعادة إرسال. `createExam` تحمل حزاماً ثانياً للسباق
       //  الحقيقيّ الذي يفلت من هذا الفحص (انظر تعليقها).
-      const replayContent = { caseType, ...body, prescription };
+      //
+      //  ══ والهويّةُ تُقرأ هنا أيضاً — لا المحتوى وحده (تصحيحٌ لاحق) ══════
+      //  قراءةٌ مسبَّقة خفيفة لحالة المريض/الاختصاص (`findCaseFor` بلا أثرٍ
+      //  جانبيّ) تُعطي `caseId`/`branchId` **قبل** أن يخلقهما `applyDecision`
+      //  — فتُقارَن هويّةُ أيّ صفٍّ سابقٍ بهذا المفتاح بما يملكه الخادم فعلاً
+      //  (المريضُ من الرابط، الطبيبُ من الجلسة، الفرعُ والحالةُ من القاعدة)
+      //  لا بمحتوًى قد يتطابق صدفةً بين مريضين. وحين يكون الطلبُ الأصليّ
+      //  قد أنشأ الحالةَ للتوّ (لم تكن موجودة قبله)، هذه القراءةُ **تجدها**:
+      //  الحالةُ صفٌّ قائمٌ الآن في القاعدة، لا لقطةٌ محلّية بائتة.
+      const earlyCaseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
+      const replayContent = {
+        patientId,
+        doctorId: session.userId,
+        branchId: earlyCaseRow?.branchId ?? patient.branchId,
+        caseId: earlyCaseRow?.id ?? null,
+        caseType,
+        ...body,
+        prescription,
+      };
       try {
         const replay = await store.findReplayableExam(idempotencyKey, replayContent);
         if (replay) {

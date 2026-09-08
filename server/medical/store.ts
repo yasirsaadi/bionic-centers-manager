@@ -138,25 +138,60 @@ type ExamContent = {
 };
 
 /**
+ * **هويّةُ الصفّ — مِلكُ الخادم وحده، لا حرفاً من جسم الطلب** (تصحيحٌ لاحق،
+ * ٢٠٢٦-٠٩). `patientId` من الرابط · `doctorId` من الجلسة · `branchId`
+ * و`caseId` مُشتقّان في النقطة (`findCaseFor`) لا يُقبلان من العميل أبداً.
+ */
+type ExamIdentity = {
+  patientId: number;
+  doctorId: number | null;
+  branchId: number | null;
+  caseId: number | null;
+  caseType: string;
+};
+
+/**
+ * **تطابقُ الهويّة، لا المحتوى وحده** — العلّة التي تحرسها هذه الدالّة:
+ * بصمةُ المحتوى وحدها كانت تعني أن مفتاحاً مُعاداً بمحتوًى مطابقٍ **صدفةً**
+ * (تشخيصٌ نمطيّ متكرّر — «بتر تحت الركبة» يتكرّر بين عشرات المرضى) يُقرأ
+ * «نفس الطلب»، فمريضان مختلفان بنفس المفتاح (خللُ عميلٍ لا حالةً طبيعية)
+ * كانا سيتبادلان معاينةَ أحدهما بالكامل. فالتطابقُ الآن **الاثنان معاً**.
+ */
+function examIdentityMatches(existing: MedicalExam, expected: ExamIdentity): boolean {
+  return existing.patientId === expected.patientId
+    && existing.doctorId === expected.doctorId
+    && existing.branchId === expected.branchId
+    && existing.caseId === expected.caseId
+    && existing.caseType === expected.caseType;
+}
+
+/**
  * فحصٌ سريع **قبل** أيّ منطقٍ سريريّ — يُنادى من النقطة قبل `applyDecision`
  * عمداً، لا من `createExam` وحدها: إعادةُ إرسالٍ عاديّة بعد نجاح المحاولة
  * الأولى (الحالةُ الشائعة، لا السباقُ النادر) يجب أن تتوقّف هنا، قبل أن
  * تُطبَّق الوصفةُ على ملفّ المريض مرّةً ثانية بلا داعٍ.
  *
  * `null` = لا صفَّ بهذا المفتاح بعد، فليمضِ الطلبُ في مساره الطبيعيّ. صفٌّ
- * موجود بمحتوًى مطابق ⟶ يُعاد كما هو. صفٌّ موجود بمحتوًى مختلف ⟶ تعارض.
+ * موجود **بنفس الهويّة ونفس المحتوى معاً** ⟶ يُعاد كما هو. صفٌّ موجود
+ * بهويّةٍ مختلفة (مريضٌ آخر، طبيبٌ آخر، فرعٌ آخر، حالةٌ أخرى) **أو** بمحتوًى
+ * مختلف ⟶ تعارض — ولو تطابق أحدُ الشرطين وحده.
  *
  * وهذا الفحصُ **لا يقفل شيئاً**: لا يمنع سباقاً حقيقياً بين محاولتين لم
  * ترَ أيٌّ منهما صفَّ الأخرى بعد — ذاك حصراً ما يحرسه فهرسُ القاعدة داخل
  * `createExam`. هذه الدالّةُ توفّر عملاً مكرَّراً في الحالة الشائعة فحسب.
+ *
+ * **ونفسُها بالضبط تُنادى من مساري الفحص السريع وخاسر السباق معاً** — لا
+ * نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الأخرى.
  */
 export async function findReplayableExam(
   idempotencyKey: string,
-  content: ExamContent,
+  expected: ExamIdentity & ExamContent,
 ): Promise<MedicalExam | null> {
   const existing = await examByIdempotencyKey(idempotencyKey);
   if (!existing) return null;
-  if (examContentFingerprint(existing) === examContentFingerprint(content)) return existing;
+  const sameIdentity = examIdentityMatches(existing, expected);
+  const sameContent = examContentFingerprint(existing) === examContentFingerprint(expected);
+  if (sameIdentity && sameContent) return existing;
   throw new ExamIdempotencyConflictError();
 }
 
@@ -220,7 +255,6 @@ export async function createExam(values: {
     throw new Error("createExam: idempotencyKey is required");
   }
   const isDevice = values.caseType === "prosthetic" || values.caseType === "medical_support";
-  const fingerprint = examContentFingerprint(values);
 
   // نفسُ فحص `findReplayableExam` بالضبط — يُعاد هنا لأن الناديَ من النقطة
   // (قبل `applyDecision`) لا يمنع سباقاً وصل إلى هنا أصلاً بعد أن فات ذلك
@@ -286,10 +320,13 @@ export async function createExam(values: {
     });
   } catch (err: any) {
     if (err?.code === "23505" && String(err?.constraint ?? "") === "uq_medical_exams_idempotency_key") {
-      const winner = await examByIdempotencyKey(key);
-      if (winner && examContentFingerprint(winner) === fingerprint) {
-        return { exam: winner, created: false };
-      }
+      // نفسُ فحص الهويّة والمحتوى بالضبط عبر `findReplayableExam` — لا
+      // نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الفحص السريع أعلاه.
+      const winner = await findReplayableExam(key, values);
+      if (winner) return { exam: winner, created: false };
+      // القاعدةُ ضمنت وجودَ صفٍّ بهذا المفتاح — هذا هو معنى ٢٣٥٠٥ هنا — و
+      // `findReplayableExam` كانت لتُرجعه أو تَرمي تعارضاً. هذا السطر شبكةُ
+      // أمانٍ لحالةٍ لا يُفترَض بلوغها، لا مسارٌ متوقَّع.
       throw new ExamIdempotencyConflictError();
     }
     throw err;
