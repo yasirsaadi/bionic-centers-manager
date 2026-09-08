@@ -23,6 +23,9 @@
 //    بهويّةٍ واحدة**، ما يخرق قاعدةَ الهاتف (فعّالٌ واحد لكلّ رقم) ويُبطل
 //    الحمايةَ الأصلية للسلّة (مراجعةُ الإدارة قبل فتح ملفٍّ ثانٍ). والحذفُ
 //    والاستعادةُ أنفسُهما يبقيان ناعمَين كما كانا بالحرف — لا تغييرَ فيهما.
+//    **والهاتفُ عند التعديل أيضاً** (تصحيحٌ لاحقٌ ثانٍ) — نفسُ الحجز يمنع
+//    مريضاً فعّالاً قائماً من الانتقال إلى رقم مريضٍ محذوف، لا فتحَ ملفٍّ
+//    جديدٍ فقط؛ والاسمُ عند التعديل يبقى خارج القاعدة تماماً كما كان.
 // ٥) **`lookup-by-name` بحرفها** — لم تُمَسّ، ولا تزال تعمل لغرضها الخاصّ.
 
 import { pool, db } from "./db";
@@ -386,6 +389,36 @@ async function main() {
         ownSameNumber.status, 200);
       const aAfter = await patientRow(a.id);
       same("     **ويبقى E.164 كما كان**", aAfter.pe, a.phoneE164);
+
+      // ══ وأيضاً حين يُبدَّل الهاتفُ إلى رقمِ مريضٍ **محذوف** — لا فعّالٍ
+      //  فقط (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═══════════════════════════════
+      //  الثغرةُ: تر-أ محذوفٌ برقمه X ⟵ تر-ب الفعّالُ يُبدِّل رقمَه إلى X بلا
+      //  عائق (الحارسُ القديم لا يرى المحذوف) ⟵ تر-أ يُستعاد خلال الثلاثين
+      //  يوماً ⟵ **فعّالان بنفس X**. فصار `updatePatient` يفحص السلّةَ أيضاً
+      //  حين يتغيّر الرقمُ فعلياً.
+      const trA = await mkActivePatient("منتظر جبار سلمان ترِكرٌ أ", "07766000001");
+      const trB = await mkActivePatient("منتظر جبار سلمان ترِكرٌ ب", "07766000002");
+
+      const delTrA = await http("DELETE", `/api/patients/${trA.id}`, S.admin, { reason: "اختبار" });
+      same("٢١.١ **تمهيدٌ: تر-أ يُحذَف حذفاً ناعماً برقمه X**", delTrA.status, 200);
+
+      const changeToTrashed = await http("PUT", `/api/patients/${trB.id}`, S.admin,
+        { phone: "07766000001" });
+      same("٢١.٢ **وتر-ب الفعّالُ يحاول الانتقالَ إلى رقم تر-أ المحذوف ⟶ ٤٠٩ برسالة السلّة الآمنة نفسِها**",
+        [changeToTrashed.status, changeToTrashed.body?.code, changeToTrashed.body?.message],
+        [409, "patient_phone_trash_conflict", IN_TRASH_ESCALATION]);
+
+      const trBAfter = await patientRow(trB.id);
+      same("٢١.٣ **وهاتفُ تر-ب لم يتغيّر — بلا نصفِ كتابة**", trBAfter.pe, trB.phoneE164);
+
+      const restoreTrA = await http("POST", `/api/patient-trash/${trA.id}/restore`, S.admin);
+      same("٢١.٤ **والاستعادةُ العاديةُ لتر-أ تبقى تنجح بلا عائق — لم تُمَسّ**", restoreTrA.status, 200);
+      const trAAfterRestore = await patientRow(trA.id);
+      check(Boolean(trAAfterRestore) && trAAfterRestore!.da === null,
+        "      وصفُّ تر-أ عاد نشطاً", JSON.stringify(trAAfterRestore));
+
+      same("٢١.٥ **وبعد الاستعادة: صفٌّ نشطٌ واحدٌ بالضبط بهذا الرقم — لم يتكرّر أبداً**",
+        await countByPhoneE164(trA.phoneE164), 1);
     }
 
     // ══════════════════════════════════════════════════════════════════

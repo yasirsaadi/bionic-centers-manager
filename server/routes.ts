@@ -2656,6 +2656,13 @@ export async function registerRoutes(
       if (err instanceof PatientPhoneConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
       }
+      // ══ أو رقمٌ محجوزٌ لمريضٍ **محذوف** — نفسُ حجز الهويّة، على التعديل
+      //  أيضاً (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═══════════════════════════
+      //  رسالةُ السلّة الآمنة نفسُها — لا كشفَ اسمٍ ولا رقمٍ ولا فرع. الشرحُ
+      //  الكامل في `patients/duplicate_guard.ts`.
+      if (err instanceof PatientPhoneTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
+      }
       // ══ **وفشلُ التعديل يُقال أيضاً** — نفسُ علّة الإنشاء ═══════════════
       //  `throw` في معالجٍ غير متزامن = رفضٌ غير ملتقَط: الخدمةُ حيّة
       //  **والطلبُ بلا ردّ**، فينتظر الموظّفُ ولا يعرف أحُفظ التعديلُ أم لا.
