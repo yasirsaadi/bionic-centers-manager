@@ -78,6 +78,11 @@ const injuryAreaOptions = [
 const REFERRAL_OTHER_PERSON = "من شخص آخر";
 const REFERRAL_SUB_OTHER = "أخرى";
 
+// ══ منعُ تكرار الاسم عند التسجيل — الرسالةُ المعتمَدة، نصٌّ ثابتٌ بالحرف ══
+// نفسُها في الحدّ الأحمر تحت الحقل وفي رسالة منع الحفظ — مصدرٌ واحد لا
+// نسخةٌ ثانية قد تنحرف عن الأولى.
+const DUPLICATE_NAME_PREFIX_MESSAGE = "يوجد اسم مسجل يبدأ بهذا الاسم، أكمل كتابة الاسم.";
+
 // Form schema with coercion for numbers and optional date
 const formSchema = insertPatientSchema.extend({
   age: z.string().min(1, "العمر مطلوب"),
@@ -334,31 +339,40 @@ export default function CreatePatient() {
     }
   }, [conditionType, form]);
 
-  // Cross-branch duplicate check while the name is typed (owner, 2026-08-06).
-  // Reception cannot see other branches, so a returning patient was invisible
-  // and a second file got opened for the same person. Debounced so it asks
-  // once the typing settles, and it never blocks saving — it informs.
+  // ══ توفّرُ الاسم عند التسجيل — بادئةٌ لا تشابهٌ ولا مطابقةٌ جزئية ═════════
+  // (owner-approved rule). فحصٌ حيّ أثناء الكتابة، مُهدَّأ (debounce)، يقود
+  // حدَّاً أحمر/أخضر تحت الحقل. اسمُ مريضٍ فعّالٍ **قائم** يبدأ بالنصّ
+  // المُدخَل (بعد التطبيع الكنسيّ) ⟵ أحمر ويمنع الحفظ. اسمٌ أطول يمدِّد
+  // اسماً موجوداً ⟵ أخضر ويُسمَح — الاتجاهُ واحدٌ لا اثنان، تماماً كقاعدة
+  // البادئة في `/api/patients/name-availability`. القرارُ الفعليّ الملزِم
+  // في الخادم (`POST /api/patients`) — هذا إرشادٌ حيّ لا مصدرَ حقيقة.
   const typedName = form.watch("name");
-  const [otherBranchMatches, setOtherBranchMatches] = useState<
-    { id: number; name: string; phone: string | null; branchId: number; branchName: string | null }[]
-  >([]);
+  const [nameCheck, setNameCheck] = useState<{
+    status: "empty" | "checking" | "available" | "conflict" | "error";
+  }>({ status: "empty" });
   useEffect(() => {
     const q = (typedName ?? "").trim();
-    if (q.length < 3) {
-      setOtherBranchMatches([]);
+    if (!q) {
+      setNameCheck({ status: "empty" });
       return;
     }
+    // ينتقل إلى «قيدَ التحقّق» فوراً — لا يبقى الحدُّ أخضرَ/أحمر النصِّ
+    // القديم ريثما تُنجَز المهلةُ للنصّ الجديد.
+    setNameCheck({ status: "checking" });
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/patients/lookup-by-name?name=${encodeURIComponent(q)}`, {
+        const res = await fetch(`/api/patients/name-availability?name=${encodeURIComponent(q)}`, {
           credentials: "include",
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setNameCheck({ status: "error" });
+          return;
+        }
         const data = await res.json();
-        if (!cancelled) setOtherBranchMatches(data?.matches ?? []);
+        if (!cancelled) setNameCheck({ status: data?.available ? "available" : "conflict" });
       } catch {
-        // A failed check must never stand between reception and registering.
+        if (!cancelled) setNameCheck({ status: "error" });
       }
     }, 500);
     return () => {
@@ -417,6 +431,19 @@ export default function CreatePatient() {
   }, [treatmentEntries, conditionType, form, manualCostOverride]);
 
   function onSubmit(values: FormValues) {
+    // ══ توفّرُ الاسم — حارسٌ في العميل أيضاً، لا تعطيلُ الزرّ وحده ═══════
+    //  مفتاحُ Enter في حقل نصّي يُرسل النموذج بصرف النظر عن حالة الزرّ —
+    //  فالحارسُ الحقيقيّ هنا، والزرُّ المعطَّل إرشادٌ بصريٌّ إضافي فقط.
+    if (nameCheck.status !== "empty" && nameCheck.status !== "available") {
+      toast({
+        title: "تحقّق من الاسم",
+        description: nameCheck.status === "conflict"
+          ? DUPLICATE_NAME_PREFIX_MESSAGE
+          : "يرجى الانتظار حتى انتهاء التحقّق من الاسم ثم أعد المحاولة",
+        variant: "destructive",
+      });
+      return;
+    }
     //  ══ **ولا سؤالَ «جديد أم قديم؟»** (ترحيل ٠٦٥) ═══════════════════════
     //  كان جوابُه الإداريُّ يقرّر أمراً سريرياً: «قديم» تعني إعفاءً من
     //  معاينة الطبيب عبر `isLegacyPatient`. وموظّفةُ الاستقبال تُسأل عن
@@ -532,34 +559,24 @@ export default function CreatePatient() {
                   <FormItem>
                     <FormLabel>{t.patientForm.fullName}</FormLabel>
                     <FormControl>
-                      <Input {...field} className="bg-white" placeholder={t.patientForm.fullNamePlaceholder} />
+                      <Input
+                        {...field}
+                        className={
+                          "bg-white"
+                          + (nameCheck.status === "conflict" ? " border-red-500 focus-visible:ring-red-500" : "")
+                          + (nameCheck.status === "available" ? " border-green-500 focus-visible:ring-green-500" : "")
+                        }
+                        placeholder={t.patientForm.fullNamePlaceholder}
+                        data-testid="input-name"
+                      />
                     </FormControl>
                     <FormMessage />
-                    {/* Already on file at another centre? Say so BEFORE a second
-                        file is opened — the transfer moves his whole history,
-                        a new file starts him from zero. */}
-                    {otherBranchMatches.length > 0 && (
-                      <div
-                        className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-                        data-testid="notice-patient-other-branch"
-                      >
-                        <p className="font-semibold mb-1">
-                          هذا الاسم مسجَّل في فرع آخر — لا تفتح ملفاً جديداً
-                        </p>
-                        <ul className="space-y-0.5 mb-2">
-                          {otherBranchMatches.map((m) => (
-                            <li key={m.id}>
-                              {m.name} — <b>{m.branchName || `فرع #${m.branchId}`}</b>
-                              {m.phone ? ` — ${m.phone}` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="text-xs">
-                          إن كان هو نفسه، اطلب من مدير الفرع نقله إلى فرعك من صفحة المريض
-                          («نقل المريض») — فينتقل بكل زياراته ودفعاته وتاريخه. أما فتح ملف
-                          جديد فيبدأ به من الصفر ويترك له ملفين.
-                        </p>
-                      </div>
+                    {/* بادئةٌ مطابقة لاسمِ مريضٍ فعّالٍ قائم — رسالةٌ واحدة
+                        بلا أيّ اسمٍ أو فرعٍ أو رقمٍ عن صاحب المطابقة. */}
+                    {nameCheck.status === "conflict" && (
+                      <p className="text-sm text-red-600 mt-1" data-testid="text-name-conflict">
+                        {DUPLICATE_NAME_PREFIX_MESSAGE}
+                      </p>
                     )}
                   </FormItem>
                 )}
@@ -1613,7 +1630,12 @@ export default function CreatePatient() {
           </Card>
 
           <div className="flex gap-4 pt-4">
-            <Button type="submit" size="lg" className="w-full md:w-auto min-w-[200px] text-lg h-12" disabled={isPending}>
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full md:w-auto min-w-[200px] text-lg h-12"
+              disabled={isPending || nameCheck.status === "checking" || nameCheck.status === "conflict" || nameCheck.status === "error"}
+            >
               {isPending ? <Loader2 className="ml-2 h-5 w-5 animate-spin" /> : null}
               {t.patientForm.saveAndCreate}
             </Button>

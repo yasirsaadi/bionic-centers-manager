@@ -42,6 +42,9 @@ import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
 import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
+//  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
+//  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
+import { assertNameAvailableForRegistration, assertPhoneAvailable } from "./patients/duplicate_guard";
 //  واتساب: جهةُ الاتصال وترحيبُ التسجيل — **قاعدةُ بياناتٍ فقط، ولا شبكة**.
 import {
   registerWhatsappWelcome, ensureWhatsappContact, revokeWhatsappContacts,
@@ -1688,6 +1691,16 @@ export class DatabaseStorage implements IStorage {
     //  ولا شيءَ يقع للمرضى القدامى: الرايةُ افتراضُها `FALSE` في القاعدة،
     //  ونموذجُ التسجيل الجديد وحده يرسل `true`.
     const patient = await db.transaction(async (tx) => {
+      // ══ منعُ تكرار التسجيل — الاسمُ بادئةً، والهاتفُ مطابقةً تامّة ══════
+      //  **داخل هذه المعاملة قبل أيّ `INSERT`**: القفلُ الاستشاريّ يُقفَل
+      //  ثمّ الفحصُ يقع، فمحاولتان متزامنتان لنفس الاسم أو الهاتف تتسلسلان
+      //  ولا تنجحان معاً. رفضٌ هنا = صفرُ كتابة (لا صفَّ مريض ولا جهةَ
+      //  اتصال ولا ترحيب). الشرحُ الكامل في `patients/duplicate_guard.ts`.
+      await assertNameAvailableForRegistration(tx, valuesToInsert.name);
+      if (valuesToInsert.phoneE164) {
+        await assertPhoneAvailable(tx, valuesToInsert.phoneE164, null);
+      }
+
       const [row] = await tx.insert(patients).values(valuesToInsert).returning();
       if (row.whatsappNotificationsEnabled) {
         await registerWhatsappWelcome(tx as any, {
@@ -1816,7 +1829,7 @@ export class DatabaseStorage implements IStorage {
       // The stored country is the normalization hint, so re-typing a Turkish
       // number on a Turkish file still resolves as Turkish.
       const [existing] = await h
-        .select({ phoneCountry: patients.phoneCountry })
+        .select({ phoneCountry: patients.phoneCountry, phoneE164: patients.phoneE164 })
         .from(patients)
         .where(eq(patients.id, id));
       const hint = (updates as any).phoneCountry || existing?.phoneCountry || DEFAULT_PHONE_COUNTRY;
@@ -1825,6 +1838,16 @@ export class DatabaseStorage implements IStorage {
       patch.phoneE164 = n.e164;
       patch.phoneCountry = n.country;
       patch.phoneStatus = n.status;
+
+      // ══ رقمٌ واحد لمريضٍ فعّالٍ واحد — على التعديل أيضاً ═══════════════
+      //  «رقمُ المريض نفسِه بلا تغيير يبقى صالحاً»: الفحصُ فقط حين يتغيّر
+      //  الرقمُ المطبَّع فعلياً عن المخزَّن على هذا الملفّ بعينه، فتصحيحُ
+      //  الصياغة وحده (بلا تغيّر E.164) لا يصطدم بنفسه. `h` هنا مضمونٌ أن
+      //  يكون داخل معاملةٍ فعلية (إعادةُ الدخول أعلى الدالّة) — الشرطُ الذي
+      //  يحتاجه `pg_advisory_xact_lock` في الحارس.
+      if (n.e164 && n.e164 !== existing?.phoneE164) {
+        await assertPhoneAvailable(h, n.e164, id);
+      }
     }
 
     // Stripping the derived columns can empty an otherwise-valid patch (a body
