@@ -349,6 +349,11 @@ export default function CreatePatient() {
   const typedName = form.watch("name");
   const [nameCheck, setNameCheck] = useState<{
     status: "empty" | "checking" | "available" | "conflict" | "error";
+    //  ═ الرسالةُ من الخادم — نشِطةٌ أم في السلّة، بلا فرقٍ بصريّ ═══════════
+    //  الخادمُ يقرّر أيُّ رسالةٍ آمنة تناسب سببَ الحجب (`active_conflict` ⟵
+    //  الرسالة المعتمَدة القديمة بلا تغيير، `trash_conflict` ⟵ رسالةُ السلّة
+    //  الآمنة القائمة) — العميلُ يعرضها كما وصلت، بلا نسخةٍ ثانية قد تنحرف.
+    message?: string;
   }>({ status: "empty" });
   useEffect(() => {
     const q = (typedName ?? "").trim();
@@ -370,7 +375,15 @@ export default function CreatePatient() {
           return;
         }
         const data = await res.json();
-        if (!cancelled) setNameCheck({ status: data?.available ? "available" : "conflict" });
+        if (cancelled) return;
+        if (data?.available) {
+          setNameCheck({ status: "available" });
+        } else {
+          setNameCheck({
+            status: "conflict",
+            message: typeof data?.message === "string" ? data.message : DUPLICATE_NAME_PREFIX_MESSAGE,
+          });
+        }
       } catch {
         if (!cancelled) setNameCheck({ status: "error" });
       }
@@ -438,7 +451,7 @@ export default function CreatePatient() {
       toast({
         title: "تحقّق من الاسم",
         description: nameCheck.status === "conflict"
-          ? DUPLICATE_NAME_PREFIX_MESSAGE
+          ? (nameCheck.message ?? DUPLICATE_NAME_PREFIX_MESSAGE)
           : "يرجى الانتظار حتى انتهاء التحقّق من الاسم ثم أعد المحاولة",
         variant: "destructive",
       });
@@ -571,11 +584,13 @@ export default function CreatePatient() {
                       />
                     </FormControl>
                     <FormMessage />
-                    {/* بادئةٌ مطابقة لاسمِ مريضٍ فعّالٍ قائم — رسالةٌ واحدة
-                        بلا أيّ اسمٍ أو فرعٍ أو رقمٍ عن صاحب المطابقة. */}
+                    {/* بادئةٌ مطابقة لمريضٍ فعّالٍ قائم أو **محذوفٍ في السلّة**
+                        — رسالةٌ واحدة من الخادم بلا أيّ اسمٍ أو فرعٍ أو رقمٍ
+                        أو ذكرِ سلّةٍ عن صاحب المطابقة، وبنفس المعاملة
+                        البصرية (حدٌّ أحمر، حفظٌ ممنوع) في الحالتين. */}
                     {nameCheck.status === "conflict" && (
                       <p className="text-sm text-red-600 mt-1" data-testid="text-name-conflict">
-                        {DUPLICATE_NAME_PREFIX_MESSAGE}
+                        {nameCheck.message ?? DUPLICATE_NAME_PREFIX_MESSAGE}
                       </p>
                     )}
                   </FormItem>

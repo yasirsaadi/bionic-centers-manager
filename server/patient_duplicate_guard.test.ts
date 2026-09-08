@@ -15,8 +15,14 @@
 //    محاولتين متزامنتين بنفس الاسم أو نفس الهاتف معاً — **وقفلُ الاسم عامٌّ
 //    ثابت** (تصحيحٌ لاحق) فيحمي قاعدةَ **البادئة** نفسَها بين اسمين مختلفين
 //    متزامنين لا التطابقَ التامّ فقط.
-// ٤) **السلّةُ لا تُمَسّ** — مريضٌ محذوفٌ (سلّةٌ) لا يُحتسَب نشطاً، فاسمُه
-//    ورقمُه يعودان متاحين، والحذفُ نفسُه يبقى ناعماً كما كان.
+// ٤) **والسلّةُ تحجز الهويّةَ** (تصحيحٌ لاحق) — مريضٌ محذوفٌ (سلّةٌ) لا
+//    يُحتسَب **نشطاً** (فلا يظهر في القوائم ولا يُحسَب في المجاميع كما
+//    كان)، **لكنّ اسمَه ورقمَه يبقيان محجوزَين عند التسجيل تحديداً**: لا
+//    يُفتَح لهما ملفٌّ بديل حتى يُستعاد الأصلُ أو يُبَتّ فيه إدارياً — وإلّا
+//    أمكن فتحُ مريضٍ ثانٍ بنفس الهويّة ثمّ استعادةُ الأصل فيصير **فعّالان
+//    بهويّةٍ واحدة**، ما يخرق قاعدةَ الهاتف (فعّالٌ واحد لكلّ رقم) ويُبطل
+//    الحمايةَ الأصلية للسلّة (مراجعةُ الإدارة قبل فتح ملفٍّ ثانٍ). والحذفُ
+//    والاستعادةُ أنفسُهما يبقيان ناعمَين كما كانا بالحرف — لا تغييرَ فيهما.
 // ٥) **`lookup-by-name` بحرفها** — لم تُمَسّ، ولا تزال تعمل لغرضها الخاصّ.
 
 import { pool, db } from "./db";
@@ -25,7 +31,10 @@ import express from "express";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { normalizePhone } from "@shared/phone";
-import { assertNameAvailableForRegistration, PatientNameConflictError } from "./patients/duplicate_guard";
+import {
+  assertNameAvailableForRegistration, PatientNameConflictError, NAME_PREFIX_CONFLICT_MESSAGE,
+} from "./patients/duplicate_guard";
+import { IN_TRASH_ESCALATION } from "@shared/patient_trash";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -223,15 +232,15 @@ async function main() {
       await mkActivePatient("أحمد حسين فايق", "07711000001");
 
       const short1 = await nameAvailability(S.recv, "أحمد");
-      same("١. **«أحمد» — بادئةٌ لاسمٍ قائم ⟶ محجوب**", short1.body, { available: false });
+      same("١. **«أحمد» — بادئةٌ لاسمٍ قائم ⟶ محجوب**", short1.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const short2 = await nameAvailability(S.recv, "أحمد حسين");
       same("٢. **«أحمد حسين» — بادئةٌ أطول لكنّها لا تزال بادئة ⟶ محجوب**",
-        short2.body, { available: false });
+        short2.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const exact = await nameAvailability(S.recv, "أحمد حسين فايق");
       same("٣. **مطابقةٌ تامّة ⟶ محجوب أيضاً (البادئةُ تشمل التطابق)**",
-        exact.body, { available: false });
+        exact.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const longer = await nameAvailability(S.recv, "أحمد حسين فايق صالح");
       same("٤. **اسمٌ أطول يمدِّد الاسمَ القائم ⟶ متاح (الاتجاهُ واحدٌ لا اثنان)**",
@@ -256,10 +265,10 @@ async function main() {
 
       const fromBranch1 = await nameAvailability(S.recv, "زينب");
       same("٧. **استقبالُ الفرع ١ يُحجَب عن اسمٍ في الفرع ٢ — النطاقُ عالميّ**",
-        fromBranch1.body, { available: false });
+        fromBranch1.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const fromBranch2 = await nameAvailability(S.recv2, "زينب");
-      same("٨. **وكذلك استقبالُ الفرع نفسِه (٢)**", fromBranch2.body, { available: false });
+      same("٨. **وكذلك استقبالُ الفرع نفسِه (٢)**", fromBranch2.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const post1 = await registerPatient(S.recv, { name: "زينب", phone: "07711000011", branchId: 1 });
       same("٩. **والحجبُ حقيقيٌّ على `POST` من فرعٍ مغاير للمطابَقة**",
@@ -274,20 +283,20 @@ async function main() {
       await mkActivePatient("إسراء", "07711000020"); // همزة تحت الألف
       const bareAlif = await nameAvailability(S.recv, "اسراء"); // ألفٌ عارية
       same("١٠. **«إسراء» المخزَّنة تُطابِق «اسراء» المكتوبة (توحيدُ الهمزات)**",
-        bareAlif.body, { available: false });
+        bareAlif.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       await mkActivePatient("فاطمة", "07711000021"); // تاء مربوطة
       const withHeh = await nameAvailability(S.recv, "فاطمه"); // هاء
-      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false });
+      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       await mkActivePatient("مُحَمَّد", "07711000022"); // بتشكيل كامل
       const bareLetters = await nameAvailability(S.recv, "محمد");
-      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false });
+      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       await mkActivePatient("نور  الهدى", "07711000023"); // مسافةٌ مضاعفة
       const singleSpace = await nameAvailability(S.recv, "نور الهدى");
       same("١٣. **المسافاتُ المكرَّرة تُطوى فلا تُخفي المطابقة**",
-        singleSpace.body, { available: false });
+        singleSpace.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -296,8 +305,8 @@ async function main() {
     console.log("\n── د. لا كشفَ لبيانات ──");
     {
       const blocked = await nameAvailability(S.recv, "أحمد");
-      same("١٤. **جسمُ الردّ المحجوب مفتاحٌ واحد فقط: `available`**",
-        Object.keys(blocked.body ?? {}).sort(), ["available"]);
+      same("١٤. **جسمُ الردّ المحجوب ثلاثةُ مفاتيح لا أكثر: `available`/`reason`/`message` — بلا اسمٍ ولا فرعٍ ولا رقمٍ ولا عددٍ عن المطابقة**",
+        Object.keys(blocked.body ?? {}).sort(), ["available", "message", "reason"]);
 
       const allowed = await nameAvailability(S.recv, "اسمٌ فريدٌ تماماً لا يطابق أحداً١٢٣");
       same("١٥. **وكذلك جسمُ الردّ المتاح**",
@@ -396,16 +405,21 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  ك. السلّةُ — محذوفٌ لا يُحتسَب نشطاً، والحذفُ يبقى ناعماً
+    //  ك. السلّةُ — محذوفٌ لا يُحتسَب نشطاً، لكنّ هويّتَه محجوزةٌ حتى تُستعاد
     // ══════════════════════════════════════════════════════════════════
+    //  الثغرةُ التي يحرسها هذا القسم (تصحيحٌ لاحق): مريضٌ يُحذَف ⟵ مريضٌ
+    //  **آخر** يُسجَّل بنفس اسمه أو رقمه بلا عائق (الحارسُ الفعّالُ لا يرى
+    //  المحذوف) ⟵ الأصليُّ يُستعاد ⟵ **فعّالان بهويّةٍ واحدة**. فصار
+    //  التسجيلُ يفحص السلّةَ أيضاً — لا الحذفَ ولا الاستعادةَ نفسَيهما، وهما
+    //  يبقيان ناعمَين تماماً كما كانا (٢٤-٢٥ أدناه بلا تغيير).
     console.log("\n── ك. السلّة ──");
     {
       const x = await mkActivePatient("زياد كامل مطشر", "07755000001");
 
       const whileActive = await registerPatient(S.recv,
         { name: "زياد كامل مطشر", phone: "07755000001" });
-      same("٢٣. **قبل الحذف: نفسُ الاسم ونفسُ الرقم محجوبان معاً**",
-        whileActive.status, 409);
+      same("٢٣. **قبل الحذف: نفسُ الاسم ونفسُ الرقم محجوبان معاً (تعارضٌ فعّال)**",
+        [whileActive.status, whileActive.body?.code], [409, "patient_name_conflict"]);
 
       const del = await http("DELETE", `/api/patients/${x.id}`, S.admin, { reason: "اختبار" });
       same("٢٤. **الحذفُ ناعمٌ كما كان — ٢٠٠ بلا هدم**", del.status, 200);
@@ -414,10 +428,42 @@ async function main() {
         "٢٥. **والصفُّ باقٍ في القاعدة بختمِ حذفٍ — لم يُهدَم**",
         JSON.stringify(xAfterDelete));
 
-      const afterDelete = await registerPatient(S.recv,
+      // ══ بعد الحذف: الهويّةُ تبقى محجوزةً — لا نشاطَ ولا إتاحة ══════════
+      const availAfterDelete = await nameAvailability(S.recv, "زياد كامل مطشر");
+      same("٢٦. **وبعد الحذف: الاسمُ لا يزال محجوباً — بسبب السلّة لا النشاط**",
+        availAfterDelete.body,
+        { available: false, reason: "trash_conflict", message: IN_TRASH_ESCALATION });
+      same("٢٦.١ **وجسمُ الردّ لا يكشف شيئاً حتى في حالة السلّة — لا اسمَ ولا رقمَ ولا فرعَ**",
+        Object.keys(availAfterDelete.body ?? {}).sort(), ["available", "message", "reason"]);
+
+      const sameAfterDelete = await registerPatient(S.recv,
         { name: "زياد كامل مطشر", phone: "07755000001" });
-      same("٢٦. **وبعد الحذف: نفسُ الاسم ونفسُ الرقم صارا متاحين — المحذوفُ ليس نشطاً**",
-        [afterDelete.status, typeof afterDelete.body?.id], [201, "number"]);
+      same("٢٦.٢ **ومحاولةُ تسجيلٍ فعليةٍ بنفس الاسم والرقم ⟶ ٤٠٩ أيضاً — لا فتحَ ملفٍّ ثانٍ بحسن نيّة**",
+        [sameAfterDelete.status, sameAfterDelete.body?.code, sameAfterDelete.body?.message],
+        [409, "patient_name_trash_conflict", IN_TRASH_ESCALATION]);
+      same("      **ولم يُفتَح ملفٌّ ثانٍ** — العدّادُ ما زال ١ (صفُّ x الأصليّ المحذوفُ وحده، بلا صفٍّ جديد)",
+        await countByExactName("زياد كامل مطشر"), 1);
+
+      // ══ والهاتفُ يحجز حتى بلا تطابق اسمٍ إطلاقاً ═══════════════════════
+      const differentNameSamePhone = await registerPatient(S.recv,
+        { name: "شخصٌ آخر تماماً لا صلة له بهذا الاختبار", phone: "07755000001" });
+      same("٢٦.٣ **واسمٌ مختلفٌ تماماً برقم المحذوف نفسِه ⟶ ٤٠٩ أيضاً — الهاتفُ وحده يكفي**",
+        [differentNameSamePhone.status, differentNameSamePhone.body?.code],
+        [409, "patient_phone_trash_conflict"]);
+      same("      ولم يُنشأ له صفٌّ",
+        await countByExactName("شخصٌ آخر تماماً لا صلة له بهذا الاختبار"), 0);
+
+      // ══ والاستعادةُ تبقى تعمل بلا عائق — هذا الحارسُ يحميها لا يمنعها ════
+      const restore = await http("POST", `/api/patient-trash/${x.id}/restore`, S.admin);
+      same("٢٦.٤ **والاستعادةُ تنجح بلا عائق — لم تُمَسّ**", restore.status, 200);
+      const xAfterRestore = await patientRow(x.id);
+      check(Boolean(xAfterRestore) && xAfterRestore!.da === null,
+        "      والصفُّ عاد نشطاً", JSON.stringify(xAfterRestore));
+
+      same("٢٦.٥ **وبعد الاستعادة: صفٌّ نشطٌ واحدٌ بالضبط بهذا الرقم — لم يتكرّر أبداً**",
+        await countByPhoneE164(x.phoneE164), 1);
+      same("      وصفٌّ نشطٌ واحدٌ بالضبط بهذا الاسم أيضاً",
+        await countByExactName("زياد كامل مطشر"), 1);
     }
 
     // ══════════════════════════════════════════════════════════════════

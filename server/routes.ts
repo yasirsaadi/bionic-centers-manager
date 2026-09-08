@@ -40,7 +40,8 @@ import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import {
-  hasActiveNamePrefixConflict, PatientNameConflictError, PatientPhoneConflictError,
+  checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
+  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import {
   executeNewService, normalizeEntries, NewServiceError,
@@ -1913,8 +1914,16 @@ export async function registerRoutes(
   //  بين هذا الفحص وضغطةِ الحفظ لا يُنتج تسجيلاً مزدوجاً — أسوأُ ما يقع أن
   //  تخضرّ الحدودُ لحظةً ثم يردّ الحفظُ ٤٠٩ إن سبقه تسجيلٌ آخر بجزءِ ثانية.
   //  **ولا يكشف شيئاً عن المطابقات**: لا اسمَ، لا فرعَ، لا رقمَ، لا عدداً —
-  //  `available` وحدها، وهذا كلُّ ما تحتاجه الواجهة (بخلاف
-  //  `lookup-by-name` فوقها، المتروكة بحرفها لغرضها الخاصّ).
+  //  `available` (وسببٌ محكوم `reason`/`message` عند الحجب فقط) وهذا كلُّ ما
+  //  تحتاجه الواجهة (بخلاف `lookup-by-name` فوقها، المتروكة بحرفها لغرضها
+  //  الخاصّ).
+  //
+  //  **والسببُ يشمل السلّة أيضاً** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨): مطابقةٌ فعّالة
+  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ مطابقةٌ في
+  //  السلّة ⟵ `trash_conflict` **برسالة السلّة الآمنة القائمة نفسِها**
+  //  (`IN_TRASH_ESCALATION`) — لا تفصيلَ إضافياً، ولا فرقَ في المعاملة
+  //  البصرية (حدٌّ أحمر ومنعُ حفظٍ في الحالتين). الحسمُ في `checkNameAvailability`
+  //  القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
   app.get("/api/patients/name-availability", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     const canAsk = branchSession?.isAdmin
@@ -1922,8 +1931,8 @@ export async function registerRoutes(
     if (!canAsk) return res.status(403).json({ message: "غير مصرح" });
 
     const name = String(req.query.name ?? "");
-    const blocked = await hasActiveNamePrefixConflict(db, name);
-    res.json({ available: !blocked });
+    const result = await checkNameAvailability(db, name);
+    res.json(result);
   });
 
   app.get(api.patients.get.path, isAuthenticated, async (req, res) => {
@@ -2336,6 +2345,16 @@ export async function registerRoutes(
       }
       if (err instanceof PatientPhoneConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
+      }
+      // ══ والسلّةُ تحجز الهويّةَ أيضاً — نفسُ العدم-كتابةً بالضبط ══════════
+      //  هويّةٌ محذوفة (اسمٌ أو هاتف) تُرفَض ٤٠٩ برسالة السلّة الآمنة —
+      //  فلا يُفتَح ملفٌّ بديلٌ يصطدم بالأصل حين يُستعاد. الشرحُ في
+      //  `patients/duplicate_guard.ts`.
+      if (err instanceof PatientNameTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_name_trash_conflict" });
+      }
+      if (err instanceof PatientPhoneTrashConflictError) {
+        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
       }
       console.error("Error creating patient:", err);
       // ══ **فشلُ الكتابة يُقال، لا يُترك معلَّقاً** ═══════════════════════

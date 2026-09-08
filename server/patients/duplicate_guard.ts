@@ -37,19 +37,40 @@
 //  **بساطةٌ مقصودة**: التسجيلُ عمليةٌ نادرةُ التزامن (استقبالٌ يسجّل مريضاً
 //  بين حينٍ وآخر لا آلافَ الطلبات بالثانية)، فقفلٌ عامٌّ واحد أبسطُ صوابٍ من
 //  نطاق بادئاتٍ معقَّد أو فهرسٍ فريد — وكلاهما خارج هذا التصحيح عمداً.
+//
+//  ══ ٣) والسلّةُ تحجز الهويّةَ — لا تُسقِطها ولا تفتح باباً خلفياً لها ═══════
+//  (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨) — الثغرةُ: مريضٌ يُحذَف (سلّةٌ، ٣٠ يوماً
+//  للاستعادة) ⟵ مريضٌ **جديدٌ** بنفس اسمه ورقمه يُسجَّل بلا عائق (الحارسُ
+//  الفعّالُ لا يرى المحذوف) ⟵ الأصليُّ يُستعاد ⟵ **فعّالان بهويّةٍ واحدة**
+//  — يخرق قاعدةَ الهاتف الجديدة (فعّالٌ واحد لكلّ رقم) ويُبطل الحمايةَ التي
+//  بُنيت لأجلها السلّةُ أصلاً (مراجعةُ الإدارة قبل فتح ملفٍّ ثانٍ لنفس
+//  الشخص، القسم ٤.ز في CLAUDE.md).
+//
+//  فصار **التسجيلُ وحده** (لا PUT، ولا أيّ قارئٍ تشغيليّ آخر) يفحص السلّةَ
+//  أيضاً: اسمٌ أو هاتفٌ يطابق صفّاً **محذوفاً** يُرفَض ٤٠٩ — **بنفس رسالة
+//  السلّة الآمنة القائمة** (`IN_TRASH_ESCALATION`، `@shared/patient_trash`)
+//  لا رسالةً جديدة تُخترَع: «يوجد ملف مطابق يحتاج مراجعة الإدارة قبل
+//  التسجيل» — بلا اسمٍ ولا رقمٍ ولا فرعٍ ولا ذكرِ سلّةٍ، تماماً كما تفعل
+//  `lookup-by-name` لمن لا يملك رؤية السلّة أصلاً. **والمحذوفُ يبقى محذوفاً
+//  فعلاً**: لا كتابةَ عليه، لا استعادةَ ضمنية — فقط تُحجَز هويّتُه حتى
+//  يستعيدها صاحبُها أو يُبَتّ فيها إدارياً.
 
 import { sql } from "drizzle-orm";
-import { activePatientSql } from "./active_patient";
+import { activePatientSql, trashedPatientSql } from "./active_patient";
+import { IN_TRASH_ESCALATION } from "@shared/patient_trash";
 
 /** مساحةُ أسماء القفل الاستشاريّ لتكرار الاسم — منفصلة عن `919` وعن الهاتف. */
 const PATIENT_NAME_LOCK_NAMESPACE = 83101;
 /** مساحةُ أسماء القفل الاستشاريّ لتكرار الهاتف. */
 const PATIENT_PHONE_LOCK_NAMESPACE = 83102;
 
+/** رسالةُ التعارض على اسمٍ **فعّال** — معتمَدةٌ بالحرف، لا تتغيّر بهذا التصحيح. */
+export const NAME_PREFIX_CONFLICT_MESSAGE = "يوجد اسم مسجل يبدأ بهذا الاسم، أكمل كتابة الاسم.";
+
 /** يُرمى حين يبدأ اسمُ مريضٍ فعّالٍ قائم بالنصّ المطبَّع نفسه عند التسجيل. */
 export class PatientNameConflictError extends Error {
   constructor() {
-    super("يوجد اسم مسجل يبدأ بهذا الاسم، أكمل كتابة الاسم.");
+    super(NAME_PREFIX_CONFLICT_MESSAGE);
     this.name = "PatientNameConflictError";
   }
 }
@@ -59,6 +80,27 @@ export class PatientPhoneConflictError extends Error {
   constructor() {
     super("رقم الهاتف مسجَّل لمريضٍ آخر");
     this.name = "PatientPhoneConflictError";
+  }
+}
+
+/**
+ * يُرمى حين يبدأ اسمُ مريضٍ **محذوف** (سلّة) بالنصّ المطبَّع نفسه عند
+ * التسجيل — **رسالةُ السلّة الآمنة القائمة نفسُها**، بلا اسمٍ ولا رقمٍ ولا
+ * فرعٍ ولا ذكرِ سلّةٍ أصلاً (`IN_TRASH_ESCALATION` — نفسُ ما تقوله
+ * `lookup-by-name` لمن لا يملك رؤية السلّة).
+ */
+export class PatientNameTrashConflictError extends Error {
+  constructor() {
+    super(IN_TRASH_ESCALATION);
+    this.name = "PatientNameTrashConflictError";
+  }
+}
+
+/** ونظيرُه للهاتف — نفسُ الرسالة الآمنة، **للتسجيل فقط** (راجع `assertPhoneAvailable`). */
+export class PatientPhoneTrashConflictError extends Error {
+  constructor() {
+    super(IN_TRASH_ESCALATION);
+    this.name = "PatientPhoneTrashConflictError";
   }
 }
 
@@ -98,12 +140,63 @@ export async function hasActiveNamePrefixConflict(
 }
 
 /**
+ * **نظيرُها على السلّة** — الشرطُ الوحيد المختلف هو `trashedPatientSql` بدل
+ * `activePatientSql`؛ منطقُ البادئة نفسُه بالحرف. **للتسجيل فقط** (راجع
+ * `assertNameAvailableForRegistration`) — لا قارئَ تشغيليّاً آخر يستعملها.
+ */
+export async function hasTrashedNamePrefixConflict(
+  runner: SqlRunner,
+  name: string,
+): Promise<boolean> {
+  const result = await runner.execute(sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM patients ap
+      WHERE ${trashedPatientSql("ap")}
+        AND ap.name_norm IS NOT NULL
+        AND patient_search_norm(${name}) <> ''
+        AND left(ap.name_norm, char_length(patient_search_norm(${name}))) = patient_search_norm(${name})
+    ) AS conflict
+  `);
+  return Boolean(firstRow(result)?.conflict);
+}
+
+/** جوابُ فحص توفّر الاسم — لِمن يحتاج السببَ أيضاً (نافذةُ التسجيل الحيّة). */
+export type NameAvailability =
+  | { available: true }
+  | { available: false; reason: "active_conflict" | "trash_conflict"; message: string };
+
+/**
+ * **الفحصُ الحيّ الكامل** لنافذة التسجيل — `GET /api/patients/name-availability`
+ * وحدها تناديها. فعّالٌ أوّلاً (الحالةُ الأشيع، والرسالةُ المعتمَدة القديمة
+ * بلا تغيير)، فمحذوفٌ ثانياً (رسالةُ السلّة الآمنة نفسُها). **قراءةٌ بلا
+ * قفل** كنظيرتيها — الحسمُ الفعليُّ في `assertNameAvailableForRegistration`
+ * وحدها عند الحفظ.
+ */
+export async function checkNameAvailability(
+  runner: SqlRunner,
+  name: string,
+): Promise<NameAvailability> {
+  if (await hasActiveNamePrefixConflict(runner, name)) {
+    return { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE };
+  }
+  if (await hasTrashedNamePrefixConflict(runner, name)) {
+    return { available: false, reason: "trash_conflict", message: IN_TRASH_ESCALATION };
+  }
+  return { available: true };
+}
+
+/**
  * **بابُ الإنفاذ الوحيد على التسجيل**: يقفل قفلاً استشارياً **عاماً وثابتاً
  * واحداً** (لا بهاش الاسم — راجع شرح الملفّ أعلاه) طَوالَ معاملة الإنشاء
  * القصيرة كلِّها ثمّ يفحص — فلا سباقَ بين قفلٍ وقراءة، ولا سباقَ بين تسجيلَين
  * متزامنين مهما اختلف اسماهما. يُستدعى **داخل** معاملة `storage.createPatient`
  * قبل أيّ `INSERT`، لا قبلها ولا بعدها. **لا يُستعمَل على `PUT` أبداً** —
  * القاعدةُ للتسجيل وحده.
+ *
+ * **وتفحص السلّةَ أيضاً بعد الفعّال** — نفسُ القفل نفسِه، فلا نافذةَ سباقٍ
+ * بين الفحصين: هويّةٌ في السلّة محجوزةٌ حتى تُستعاد أو يُبَتّ فيها إدارياً
+ * (راجع شرح الملفّ، القسم ٣).
  */
 export async function assertNameAvailableForRegistration(
   tx: SqlRunner,
@@ -116,6 +209,9 @@ export async function assertNameAvailableForRegistration(
   );
   if (await hasActiveNamePrefixConflict(tx, name)) {
     throw new PatientNameConflictError();
+  }
+  if (await hasTrashedNamePrefixConflict(tx, name)) {
+    throw new PatientNameTrashConflictError();
   }
 }
 
@@ -148,22 +244,49 @@ export async function hasActivePhoneConflict(
 }
 
 /**
+ * **نظيرُها على السلّة** — تطابقٌ تامّ لا بادئة، كأصلها. **للتسجيل فقط**
+ * (`checkTrash` في `assertPhoneAvailable` لا يُرفَع إلّا من `createPatient`)
+ * فلا `excludePatientId` هنا أصلاً — لا صفَّ قائماً يُستثنى عند الإنشاء.
+ */
+export async function hasTrashedPhoneConflict(
+  runner: SqlRunner,
+  phoneE164: string,
+): Promise<boolean> {
+  const result = await runner.execute(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM patients ap
+      WHERE ${trashedPatientSql("ap")} AND ap.phone_e164 = ${phoneE164}
+    ) AS conflict
+  `);
+  return Boolean(firstRow(result)?.conflict);
+}
+
+/**
  * **بابُ الإنفاذ الوحيد للهاتف** — على التسجيل والتعديل معاً. يقفل مفتاح
  * الرقم المطبَّع استشارياً ثمّ يفحص. المناديان (`storage.createPatient`
  * بـ`excludePatientId: null`، و`storage.updatePatient` باستثناء صفّ المريض
  * نفسِه) يستدعيانها **داخل** معاملةٍ فعلية قائمة أصلاً — `pg_advisory_xact_lock`
  * يتطلّب ذلك، ومَريدا الدالّتين كلاهما مضمونان أن يكونا داخل معاملة حين
  * يمسّان الهاتف (راجع تعليق إعادة الدخول في `updatePatient`).
+ *
+ * **و`checkTrash` للتسجيل وحده** — `createPatient` يرفعها صراحةً،
+ * `updatePatient` **لا يمرّرها أبداً** فتبقى `false` افتراضاً: تعديلُ هاتفٍ
+ * على مريضٍ فعّالٍ قائم سلوكُه كما كان بالحرف — لا فحصَ سلّةٍ جديداً عليه.
+ * حجزُ الهويّة شأنُ فتح ملفٍّ جديد، لا تصحيحِ ملفٍّ قائم.
  */
 export async function assertPhoneAvailable(
   tx: SqlRunner,
   phoneE164: string,
   excludePatientId: number | null,
+  opts: { checkTrash?: boolean } = {},
 ): Promise<void> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(${PATIENT_PHONE_LOCK_NAMESPACE}, hashtext(${phoneE164}))`,
   );
   if (await hasActivePhoneConflict(tx, phoneE164, excludePatientId)) {
     throw new PatientPhoneConflictError();
+  }
+  if (opts.checkTrash && await hasTrashedPhoneConflict(tx, phoneE164)) {
+    throw new PatientPhoneTrashConflictError();
   }
 }

@@ -31,9 +31,13 @@ check("٣. **والبطاقةُ الكهرمانيةُ (amber) غابت من ن�
 
 // ── ٢. حالةُ التحقّق الجديدة ──────────────────────────────────────────
 console.log("── حالةُ التحقّق ──");
-check("٤. **`nameCheck` بحالاتها الخمس بالضبط**",
-  /useState<\{\s*status: "empty" \| "checking" \| "available" \| "conflict" \| "error";\s*\}>\(\{ status: "empty" \}\)/
-    .test(src));
+const nameCheckState = /const \[nameCheck, setNameCheck\] = useState<\{([\s\S]*?)\}>\(\{ status: "empty" \}\);/
+  .exec(src);
+check("٤. **`nameCheck` بحالاتها الخمس بالضبط، ورسالةٌ اختيارية من الخادم (تصحيحٌ لاحق: السلّة)**",
+  !!nameCheckState
+    && /status: "empty" \| "checking" \| "available" \| "conflict" \| "error";/.test(nameCheckState[1])
+    && /message\?: string;/.test(nameCheckState[1]),
+  nameCheckState?.[1] ?? "لم يُعثَر على إعلان الحالة");
 
 // ── ٣. الرسالةُ المعتمَدة — نصٌّ ثابتٌ بالحرف (owner-approved) ───────────
 console.log("── الرسالةُ المعتمَدة ──");
