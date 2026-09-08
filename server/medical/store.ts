@@ -73,6 +73,128 @@ export async function getExam(id: number): Promise<MedicalExam | undefined> {
   return row;
 }
 
+/** يُرمى حين يُعاد استعمال مفتاح تطابقٍ لطلبٍ **مختلف فعلاً** عن الأصل. */
+export class ExamIdempotencyConflictError extends Error {
+  constructor() {
+    super("مفتاح الحفظ هذا استُعمل من قبل لمعاينةٍ بمحتوًى مختلف — أعد فتح نافذة المعاينة والمحاولة من جديد");
+    this.name = "ExamIdempotencyConflictError";
+  }
+}
+
+/**
+ * بصمةٌ ضيّقة وحتمية للمحتوى السريري لطلب الإنشاء — **للمقارنة فقط، لا
+ * تُخزَّن ولا تُرسَل ولا تُستعمَل لأيّ غرضٍ آخر**.
+ *
+ * تُميّز إعادةَ إرسال **نفس** الطلب (فيُعاد الصفُّ الموجود بلا كتابة) عن
+ * إعادةِ استعمال المفتاح لطلبٍ مختلف فعلاً (فيُردّ تعارضٌ بدل الصمت). ترتيبُ
+ * مفاتيح `prescription` يُثبَّت أبجدياً — تركيبُ الكائن نفسِه بترتيبٍ مختلف
+ * لا يجوز أن يُقرأ اختلافاً.
+ */
+function examContentFingerprint(v: {
+  caseType: string;
+  chiefComplaint: string | null;
+  clinicalFindings: string | null;
+  diagnosis: string | null;
+  plan: string | null;
+  notes: string | null;
+  prescription: Record<string, any> | null | undefined;
+}): string {
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+        out[k] = stable((value as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return value;
+  };
+  return JSON.stringify(stable({
+    caseType: v.caseType,
+    chiefComplaint: v.chiefComplaint,
+    clinicalFindings: v.clinicalFindings,
+    diagnosis: v.diagnosis,
+    plan: v.plan,
+    notes: v.notes,
+    prescription: v.prescription ?? {},
+  }));
+}
+
+/** الصفّ الحامل هذا المفتاح إن وُجد — بلا فلترة إلغاء: التطابقُ عن صفٍّ بعينه لا عن حالته السريرية. */
+async function examByIdempotencyKey(key: string): Promise<MedicalExam | undefined> {
+  const [row] = await db.select().from(EX).where(eq(EX.idempotencyKey, key)).limit(1);
+  return row;
+}
+
+type ExamContent = {
+  caseType: string;
+  chiefComplaint: string | null;
+  clinicalFindings: string | null;
+  diagnosis: string | null;
+  plan: string | null;
+  notes: string | null;
+  prescription: Record<string, any> | null | undefined;
+};
+
+/**
+ * **هويّةُ الصفّ — مِلكُ الخادم وحده، لا حرفاً من جسم الطلب** (تصحيحٌ لاحق،
+ * ٢٠٢٦-٠٩). `patientId` من الرابط · `doctorId` من الجلسة · `branchId`
+ * و`caseId` مُشتقّان في النقطة (`findCaseFor`) لا يُقبلان من العميل أبداً.
+ */
+type ExamIdentity = {
+  patientId: number;
+  doctorId: number | null;
+  branchId: number | null;
+  caseId: number | null;
+  caseType: string;
+};
+
+/**
+ * **تطابقُ الهويّة، لا المحتوى وحده** — العلّة التي تحرسها هذه الدالّة:
+ * بصمةُ المحتوى وحدها كانت تعني أن مفتاحاً مُعاداً بمحتوًى مطابقٍ **صدفةً**
+ * (تشخيصٌ نمطيّ متكرّر — «بتر تحت الركبة» يتكرّر بين عشرات المرضى) يُقرأ
+ * «نفس الطلب»، فمريضان مختلفان بنفس المفتاح (خللُ عميلٍ لا حالةً طبيعية)
+ * كانا سيتبادلان معاينةَ أحدهما بالكامل. فالتطابقُ الآن **الاثنان معاً**.
+ */
+function examIdentityMatches(existing: MedicalExam, expected: ExamIdentity): boolean {
+  return existing.patientId === expected.patientId
+    && existing.doctorId === expected.doctorId
+    && existing.branchId === expected.branchId
+    && existing.caseId === expected.caseId
+    && existing.caseType === expected.caseType;
+}
+
+/**
+ * فحصٌ سريع **قبل** أيّ منطقٍ سريريّ — يُنادى من النقطة قبل `applyDecision`
+ * عمداً، لا من `createExam` وحدها: إعادةُ إرسالٍ عاديّة بعد نجاح المحاولة
+ * الأولى (الحالةُ الشائعة، لا السباقُ النادر) يجب أن تتوقّف هنا، قبل أن
+ * تُطبَّق الوصفةُ على ملفّ المريض مرّةً ثانية بلا داعٍ.
+ *
+ * `null` = لا صفَّ بهذا المفتاح بعد، فليمضِ الطلبُ في مساره الطبيعيّ. صفٌّ
+ * موجود **بنفس الهويّة ونفس المحتوى معاً** ⟶ يُعاد كما هو. صفٌّ موجود
+ * بهويّةٍ مختلفة (مريضٌ آخر، طبيبٌ آخر، فرعٌ آخر، حالةٌ أخرى) **أو** بمحتوًى
+ * مختلف ⟶ تعارض — ولو تطابق أحدُ الشرطين وحده.
+ *
+ * وهذا الفحصُ **لا يقفل شيئاً**: لا يمنع سباقاً حقيقياً بين محاولتين لم
+ * ترَ أيٌّ منهما صفَّ الأخرى بعد — ذاك حصراً ما يحرسه فهرسُ القاعدة داخل
+ * `createExam`. هذه الدالّةُ توفّر عملاً مكرَّراً في الحالة الشائعة فحسب.
+ *
+ * **ونفسُها بالضبط تُنادى من مساري الفحص السريع وخاسر السباق معاً** — لا
+ * نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الأخرى.
+ */
+export async function findReplayableExam(
+  idempotencyKey: string,
+  expected: ExamIdentity & ExamContent,
+): Promise<MedicalExam | null> {
+  const existing = await examByIdempotencyKey(idempotencyKey);
+  if (!existing) return null;
+  const sameIdentity = examIdentityMatches(existing, expected);
+  const sameContent = examContentFingerprint(existing) === examContentFingerprint(expected);
+  if (sameIdentity && sameContent) return existing;
+  throw new ExamIdempotencyConflictError();
+}
+
 /**
  * Sign a new exam. The only write path that exists for this table.
  *
@@ -95,6 +217,21 @@ export async function getExam(id: number): Promise<MedicalExam | undefined> {
  * 028 seal trigger rejects the SET NULL that a FK would need), so the
  * patient/case match is verified HERE, in code. The absence of a database
  * constraint is exactly why this check may not be skipped.
+ *
+ * ══ التطابقُ من طرفٍ لطرف (migration 074) ═══════════════════════════════
+ * `values.idempotencyKey` **إلزاميّ**: النقطةُ تتحقّق من شكله وتردّ ٤٠٠ قبل
+ * أن تصل إلى هنا؛ هذه الدالّة تفترضه صالحاً وغير فارغ ولا تعيد فحصه.
+ *
+ * مسارٌ سريعٌ أوّلاً — قراءةٌ واحدة بلا معاملة، **قبل** أيّ مطالبةِ حلقةٍ أو
+ * أيّ كتابة: إعادةُ إرسالٍ عاديّة بعد أن التزمت المحاولةُ الأولى تُحسَم هنا
+ * فوراً بصفرِ أثرٍ جانبيّ إضافي. ولا يقفل هذا المسارُ شيئاً — محاولتان
+ * متزامنتان قد تجتازانه معاً؛ **القاعدةُ هي الحَكَمُ الأخير**: الفهرسُ
+ * الجزئيّ على `idempotency_key` (ترحيل ٠٧٤) يقبل واحدةً ويرفض الأخرى بخطأ
+ * تفرّدٍ حقيقي (23505). والخاسرةُ **لا تُكمَل على معاملتها المتراجعة** —
+ * `db.transaction` يتراجع (ROLLBACK) تلقائياً بمجرّد رمي الخطأ، فأيّ حلقةٍ
+ * ادّعتها الخاسرةُ للتوّ (السطر الذي يسبق الإدراج) تعود `awaiting_exam`
+ * معها بلا سطرٍ إضافيّ يعيدها — التراجعُ نفسُه هو الإرجاع. والقراءةُ
+ * التالية بعد الالتقاط **جديدةٌ كلياً**، لا استمراراً على `tx` الفاسدة.
  */
 export async function createExam(values: {
   patientId: number;
@@ -111,64 +248,89 @@ export async function createExam(values: {
   diagnosis: string | null;
   plan: string | null;
   notes: string | null;
-}): Promise<MedicalExam> {
+  idempotencyKey: string;
+}): Promise<{ exam: MedicalExam; created: boolean }> {
+  const key = values.idempotencyKey;
+  if (!key || !key.trim()) {
+    throw new Error("createExam: idempotencyKey is required");
+  }
   const isDevice = values.caseType === "prosthetic" || values.caseType === "medical_support";
 
-  return await db.transaction(async (tx) => {
-    let episodeId: number | null = null;
+  // نفسُ فحص `findReplayableExam` بالضبط — يُعاد هنا لأن الناديَ من النقطة
+  // (قبل `applyDecision`) لا يمنع سباقاً وصل إلى هنا أصلاً بعد أن فات ذلك
+  // الفحص. حزامٌ ثانٍ رخيص، لا تكراراً للمعنى.
+  const already = await findReplayableExam(key, values);
+  if (already) return { exam: already, created: false };
 
-    if (isDevice && values.caseId !== null) {
-      episodeId = await claimAwaitingEpisodeForExam(tx, {
-        patientId: values.patientId, caseId: values.caseId,
-      });
-    }
+  try {
+    return await db.transaction(async (tx) => {
+      let episodeId: number | null = null;
 
-    const [row] = await tx
-      .insert(EX)
-      .values({ ...values, deviceEpisodeId: episodeId })
-      .returning();
-
-    if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
-
-    // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ═══════════════════════════
-    // الطبيب قرّر، والمريض لم يقرّر بعد. فتُفتح متابعةٌ بحالة «بانتظار قرار
-    // المريض» **في معاملة التوقيع نفسها**: معاينةٌ موقّعة بلا متابعة تعني
-    // مريضاً يختفي من كل شاشة، وهو بالضبط الفراغ الذي بُنيت له الميزة.
-    //
-    // **ولا تبدأ تصنيعاً ولا تغيّر الحلقة ولا تلمس المعاينة**: الحلقة تبقى
-    // `examined` كما حرّكها السطر أعلاه، والبيع يمرّ من «تخصيص» وحده.
-    //
-    // idempotent بالبناء: التكرار يصطدم بفهرس التفرّد الجزئي فيُبتلع.
-    //
-    // وفشلُها لا يجوز أن يُسقط توقيع سجلٍّ سريري — الطبيب وقّع، والمتابعة
-    // طبقةٌ تجارية فوقه. **وداخل نقطة حفظ لا مجرّد `try`**: خطأٌ في معاملة
-    // Postgres يُفسدها كلّها، فالتقاطُه وحده كان سيجعل COMMIT يتحوّل إلى
-    // ROLLBACK — فتضيع المعاينة صامتةً وهو أسوأ ما نحرس منه. والنقطة تحصر
-    // الأثر في هذه الكتلة وتُبقي المعاملة صالحة.
-    if (isDevice) {
-      try {
-        await tx.transaction(async (inner: any) => {
-          await ensureFollowupForSignedExam(inner, {
-            patientId: values.patientId,
-            caseId: values.caseId,
-            deviceEpisodeId: episodeId,
-            medicalExamId: row.id,
-            branchId: values.branchId,
-            serviceType: values.caseType as "prosthetic" | "medical_support",
-            deviceCost: values.deviceCost,
-            //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
-            //  تغيّره. فلا يُسأل الطبيبُ عنه ثانيةً لحظة اعتماد الشراء.
-            proposedExpertUserId: values.proposedExpertUserId,
-            actor: { userId: values.doctorId, userName: values.doctorName },
-          });
+      if (isDevice && values.caseId !== null) {
+        episodeId = await claimAwaitingEpisodeForExam(tx, {
+          patientId: values.patientId, caseId: values.caseId,
         });
-      } catch (err) {
-        console.error("[medical] فتح متابعة ما بعد المعاينة فشل:", err);
       }
-    }
 
-    return row;
-  });
+      const [row] = await tx
+        .insert(EX)
+        .values({ ...values, deviceEpisodeId: episodeId })
+        .returning();
+
+      if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
+
+      // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ═══════════════════════════
+      // الطبيب قرّر، والمريض لم يقرّر بعد. فتُفتح متابعةٌ بحالة «بانتظار قرار
+      // المريض» **في معاملة التوقيع نفسها**: معاينةٌ موقّعة بلا متابعة تعني
+      // مريضاً يختفي من كل شاشة، وهو بالضبط الفراغ الذي بُنيت له الميزة.
+      //
+      // **ولا تبدأ تصنيعاً ولا تغيّر الحلقة ولا تلمس المعاينة**: الحلقة تبقى
+      // `examined` كما حرّكها السطر أعلاه، والبيع يمرّ من «تخصيص» وحده.
+      //
+      // idempotent بالبناء: التكرار يصطدم بفهرس التفرّد الجزئي فيُبتلع.
+      //
+      // وفشلُها لا يجوز أن يُسقط توقيع سجلٍّ سريري — الطبيب وقّع، والمتابعة
+      // طبقةٌ تجارية فوقه. **وداخل نقطة حفظ لا مجرّد `try`**: خطأٌ في معاملة
+      // Postgres يُفسدها كلّها، فالتقاطُه وحده كان سيجعل COMMIT يتحوّل إلى
+      // ROLLBACK — فتضيع المعاينة صامتةً وهو أسوأ ما نحرس منه. والنقطة تحصر
+      // الأثر في هذه الكتلة وتُبقي المعاملة صالحة.
+      if (isDevice) {
+        try {
+          await tx.transaction(async (inner: any) => {
+            await ensureFollowupForSignedExam(inner, {
+              patientId: values.patientId,
+              caseId: values.caseId,
+              deviceEpisodeId: episodeId,
+              medicalExamId: row.id,
+              branchId: values.branchId,
+              serviceType: values.caseType as "prosthetic" | "medical_support",
+              deviceCost: values.deviceCost,
+              //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
+              //  تغيّره. فلا يُسأل الطبيبُ عنه ثانيةً لحظة اعتماد الشراء.
+              proposedExpertUserId: values.proposedExpertUserId,
+              actor: { userId: values.doctorId, userName: values.doctorName },
+            });
+          });
+        } catch (err) {
+          console.error("[medical] فتح متابعة ما بعد المعاينة فشل:", err);
+        }
+      }
+
+      return { exam: row, created: true };
+    });
+  } catch (err: any) {
+    if (err?.code === "23505" && String(err?.constraint ?? "") === "uq_medical_exams_idempotency_key") {
+      // نفسُ فحص الهويّة والمحتوى بالضبط عبر `findReplayableExam` — لا
+      // نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الفحص السريع أعلاه.
+      const winner = await findReplayableExam(key, values);
+      if (winner) return { exam: winner, created: false };
+      // القاعدةُ ضمنت وجودَ صفٍّ بهذا المفتاح — هذا هو معنى ٢٣٥٠٥ هنا — و
+      // `findReplayableExam` كانت لتُرجعه أو تَرمي تعارضاً. هذا السطر شبكةُ
+      // أمانٍ لحالةٍ لا يُفترَض بلوغها، لا مسارٌ متوقَّع.
+      throw new ExamIdempotencyConflictError();
+    }
+    throw err;
+  }
 }
 
 // ── episode-aware readers (PR #217) ─────────────────────────────────────────

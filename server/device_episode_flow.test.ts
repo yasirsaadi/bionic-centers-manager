@@ -365,6 +365,7 @@ async function main() {
     same("ق. وقبل المعاينة `hasSignedExamForEpisode` = false",
       await medical.hasSignedExamForEpisode(eL.id), false);
     const signed = await http("POST", `/api/medical/patients/${pL}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
       prescription: { prostheticType: "تحت الركبة" },
     });
@@ -390,11 +391,12 @@ async function main() {
     // ══ م. حلقة من مريض/خيط آخر لا تُربَط ══════════════════════════════
     const pM = await mkPatient("م. حلقة غريبة");
     const cM = await mkCase(pM);
-    const exM = await medical.createExam({
+    const { exam: exM } = await medical.createExam({
       patientId: pM, caseId: cC, caseType: "prosthetic", branchId: 1,   // خيط المريض ج
       doctorId: DOCTOR, doctorName: "د. فلان", prescription: {}, deviceCost: null,
       proposedExpertUserId: null, chiefComplaint: null, clinicalFindings: null,
       diagnosis: "غير مطابق", plan: null, notes: null,
+      idempotencyKey: `test-m-${pM}`,
     });
     same("م. معاينةٌ على خيط مريضٍ آخر ⟶ بلا ربط", exM.deviceEpisodeId, null);
     same("   وحلقة ذلك الخيط بقيت منتظرة", (await episodeRow(eC.id))?.status, "awaiting_exam");
@@ -403,6 +405,7 @@ async function main() {
     const pN = await mkPatient("ن. معاينة متابعة");
     const cN = await mkCase(pN);
     const exN = await http("POST", `/api/medical/patients/${pN}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "متابعة عادية",
     });
     same("ن. معاينةٌ بلا حلقة مفتوحة ⟶ نجحت", exN.status, 200);
@@ -422,6 +425,7 @@ async function main() {
     const cV = await mkCase(pV);
     const eV = await episodes.startDeviceEpisode({ patientId: pV, serviceType: "prosthetic", createdBy: MANAGER });
     const signV = await http("POST", `/api/medical/patients/${pV}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "تشخيص أوّل", prescription: { prostheticType: "فوق الركبة" },
     });
     same("والمعاينة ارتبطت بحلقتها", signV.body?.deviceEpisodeId, eV.id);
@@ -468,6 +472,7 @@ async function main() {
     const cW = await mkCase(pW);
     await mkCase(pW, "medical_support");
     const exW = await http("POST", `/api/medical/patients/${pW}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بلا جهاز",
     });
     same("ج. ومعاينةٌ بلا حلقة تُنقَل بين الاختصاصات كما كانت",
@@ -504,6 +509,7 @@ async function main() {
     const cD3 = await mkCase(pD3);
     const eD3 = await episodes.startDeviceEpisode({ patientId: pD3, serviceType: "prosthetic", createdBy: MANAGER });
     await http("POST", `/api/medical/patients/${pD3}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "قرار الجهاز",
     });
     same("و. حلقة `examined` بمعاينتها ⟶ محدَّدة", await decided(pD3), true);
@@ -516,6 +522,7 @@ async function main() {
     const cD4 = await mkCase(pD4);
     const eD4 = await episodes.startDeviceEpisode({ patientId: pD4, serviceType: "prosthetic", createdBy: MANAGER });
     await http("POST", `/api/medical/patients/${pD4}/exams`, S.doctor, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "قرار الجهاز",
     });
     await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW() WHERE id=$1`, [eD4.id]);

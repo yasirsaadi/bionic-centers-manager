@@ -643,6 +643,7 @@ async function main() {
     console.log("\n── ح. الإشراف ≠ التوقيع ──");
     const pH = await mk("ح — توقيع", { prosthetic: true });
     const signTry = await http("POST", `/api/medical/patients/${pH}/exams`, S.mgr, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "محاولة", plan: "خطة",
     });
     check(signTry.status === 403,
@@ -721,6 +722,7 @@ async function main() {
     //  حينئذٍ يزوّر تسلسلاً وقع. لذا يُعاد الصفُّ إلى حاله يدوياً هنا:
     //  هذه هي الحالةُ التي وُضع لها الحارس بالضبط.
     const signed = await http("POST", `/api/medical/patients/${pJ}/exams`, S.doc, {
+      idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "تشخيص", plan: "خطة",
     });
     same("   وتوقيعُ المعاينة يمرّ", signed.status, 200);

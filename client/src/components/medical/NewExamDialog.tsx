@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
 import { Button } from "@/components/ui/button";
@@ -105,6 +105,32 @@ export function NewExamDialog({
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [prefilled, setPrefilled] = useState(false);
 
+  // ══ مفتاحُ تطابقِ الإنشاء (migration 074) ═══════════════════════════════
+  //  رمزٌ واحد ثابت لكلّ فتحةِ نموذجٍ جديدة — لا لكلّ ضغطةِ حفظ. `useRef` لا
+  //  `useState` عمداً: لا يستحقّ إعادةَ رسم، وقيمتُه يجب أن تبقى **هي هي**
+  //  عبر كل محاولةٍ/إعادةٍ لنفس الحفظ المنطقيّ حتى لو نجحت ثم أُعيد إرسالها
+  //  (تبويبان، إعادةُ إرسالٍ شبكيّة). يولَّد من جديد فقط حين يُفتَح النموذجُ
+  //  فعلاً لمعاينةٍ جديدة — الأثرُ التالي مباشرةً.
+  const newExamIdempotencyKeyRef = useRef<string>("");
+
+  // ══ دورةُ حياة المفتاح — بمعزلٍ عمداً عن أثر إعادة الضبط تحت (تصحيحٌ لاحق)
+  //  ══════════════════════════════════════════════════════════════════════
+  //  كان توليدُ المفتاح يعيش داخل أثر إعادة الضبط الأعرض، فاعتمادياتُه
+  //  الأعرض (`preferSpecialty`، `specialties.join(",")`) تُعيد توليد مفتاحٍ
+  //  **جديد** لمجرّد إعادة رسمٍ أو تغيّر ترشيحٍ بينما النافذةُ **لا تزال
+  //  مفتوحة** — فتفقد إعادةُ محاولةٍ لنفس الحفظ مفتاحَها الثابت. هذا الأثرُ
+  //  وحده مسؤولٌ عن دورة حياة المفتاح، باعتماديةٍ واحدة `[open, isEdit]`:
+  //  يتجدّد **فقط** حين يتحوّل `open` من `false` إلى `true` فعلياً لمعاينةٍ
+  //  جديدة (`!isEdit`) — لا حين تتغيّر أيُّ حالةٍ أخرى بينما يبقى مفتوحاً:
+  //  إعادةُ رسمٍ، تبديلُ الاختصاص، تغيّرُ `preferSpecialty`، تحديثُ استعلامٍ
+  //  (`patientRow`)، إعادةُ محاولة، أو تكرارُ الإرسال — كلُّها تُبقيه كما هو.
+  //  وإغلاقٌ ثمّ فتحٌ لاحقٌ لمعاينةٍ جديدة فعلاً (`open` يعود `false` ثمّ
+  //  `true`) يولّد مفتاحاً آخر. والتعديلُ (`isEdit`) لا يرسل المفتاح أصلاً
+  //  (الشرطُ عند بناء جسم الحفظ أدناه) — بصرف النظر عمّا يحمله المرجع.
+  useEffect(() => {
+    if (open && !isEdit) newExamIdempotencyKeyRef.current = crypto.randomUUID();
+  }, [open, isEdit]);
+
   // The patient row: prefills what reception already recorded (physiotherapy
   // diagnosis, injuries, amputation site, support type) so the doctor completes
   // or corrects it instead of retyping — purely clinical, nothing commercial.
@@ -137,6 +163,10 @@ export function NewExamDialog({
     setForm({ ...EMPTY_FORM });
     setRx({});
     setPrefilled(false);
+    // مفتاحُ التطابق **لا** يُولَّد هنا — هذا الأثرُ يُعاد تشغيلُه بتغيّر
+    // `preferSpecialty`/`specialties` بينما النافذةُ لا تزال مفتوحة، وذاك
+    // بالضبط ما لا يجوز أن يُنتج مفتاحاً جديداً. أثرُ دورة الحياة أعلاه
+    // (`[open, isEdit]` وحدهما) هو المسؤول الوحيد عن توليده.
     const wanted =
       preferSpecialty && specialties.includes(preferSpecialty as MedicalSpecialty)
         ? (preferSpecialty as MedicalSpecialty)
@@ -228,6 +258,8 @@ export function NewExamDialog({
             caseType: specialty,
             ...form,
             prescription: rx,
+            // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
+            ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
           }),
         },
       );

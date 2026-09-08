@@ -112,6 +112,16 @@ function clean(value: unknown): string | null {
 }
 
 /**
+ * شكلُ مفتاح تطابقِ الإنشاء المقبول (migration 074) — رمزٌ يولّده العميلُ
+ * (`crypto.randomUUID()` عادةً)، لا نصٌّ حرّ. طولٌ معقول وحروفٌ آمنة فقط.
+ * **لا تحقّقَ من صيغة UUID حرفياً عمداً** — الشرطُ الحقيقيّ تفرّدُه في
+ * القاعدة لا شكلُه هنا، فمولّدٌ بديل مستقبلاً لا ينكسر على هذا الفحص.
+ */
+function isValidIdempotencyKey(v: unknown): v is string {
+  return typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(v);
+}
+
+/**
  * ══ **مقصورتان على تعديل معاينةٍ موقّعة سلفاً — لا على توقيع معاينةٍ جديدة** ═
  *
  * الطبيبُ لم يعد يكتب سعراً ولا خبيراً عند التوقيع: `POST .../exams` أدناه
@@ -402,6 +412,58 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
+      // ══ مفتاحُ تطابقِ الإنشاء (migration 074) — إلزاميّ ═══════════════════
+      //  حادثةُ سبع معاينات لطلبٍ واحد (٢٠٢٦-٠٩) لم يكن لها حارسٌ من أيّ نوع:
+      //  لا مفتاحَ طلب، ولا قيدَ قاعدة، وزرُّ الحفظِ المعطَّل أثناء الإرسال
+      //  وحده — لا يصمد أمام إعادة إرسالٍ شبكيّة أو ضغطتين متزامنتين.
+      //  فصار المفتاحُ إلزامياً هنا: **غيابُه أو فسادُ شكله يُردّ صراحةً**،
+      //  لا يسقط صامتاً إلى سلوكٍ غير تطابقيّ — عميلٌ قديم لا يرسله يُطلَب
+      //  منه صراحةً إعادة تحميل النافذة، لا أن يُخاطَر بصفٍّ مكرَّر باسمه.
+      const idempotencyKey = req.body?.idempotencyKey;
+      if (!isValidIdempotencyKey(idempotencyKey)) {
+        return res.status(400).json({
+          error: "أعد فتح نافذة المعاينة وحاول مجدداً",
+          code: "idempotency_key_required",
+        });
+      }
+
+      // ══ فحصٌ سريع **قبل** أيّ منطقٍ سريريّ ═══════════════════════════════
+      //  إعادةُ إرسالٍ عاديّة بعد أن التزمت المحاولةُ الأولى فعلاً (الحالةُ
+      //  الشائعة، لا السباقُ النادر) يجب أن تتوقّف هنا — **قبل** استدعاء
+      //  `applyDecision` — وإلا أعادت كتابةَ نفس القيم على ملفّ المريض بلا
+      //  داعٍ في كلّ إعادة إرسال. `createExam` تحمل حزاماً ثانياً للسباق
+      //  الحقيقيّ الذي يفلت من هذا الفحص (انظر تعليقها).
+      //
+      //  ══ والهويّةُ تُقرأ هنا أيضاً — لا المحتوى وحده (تصحيحٌ لاحق) ══════
+      //  قراءةٌ مسبَّقة خفيفة لحالة المريض/الاختصاص (`findCaseFor` بلا أثرٍ
+      //  جانبيّ) تُعطي `caseId`/`branchId` **قبل** أن يخلقهما `applyDecision`
+      //  — فتُقارَن هويّةُ أيّ صفٍّ سابقٍ بهذا المفتاح بما يملكه الخادم فعلاً
+      //  (المريضُ من الرابط، الطبيبُ من الجلسة، الفرعُ والحالةُ من القاعدة)
+      //  لا بمحتوًى قد يتطابق صدفةً بين مريضين. وحين يكون الطلبُ الأصليّ
+      //  قد أنشأ الحالةَ للتوّ (لم تكن موجودة قبله)، هذه القراءةُ **تجدها**:
+      //  الحالةُ صفٌّ قائمٌ الآن في القاعدة، لا لقطةٌ محلّية بائتة.
+      const earlyCaseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
+      const replayContent = {
+        patientId,
+        doctorId: session.userId,
+        branchId: earlyCaseRow?.branchId ?? patient.branchId,
+        caseId: earlyCaseRow?.id ?? null,
+        caseType,
+        ...body,
+        prescription,
+      };
+      try {
+        const replay = await store.findReplayableExam(idempotencyKey, replayContent);
+        if (replay) {
+          return res.json({ ...replay, switchNote: null, created: false });
+        }
+      } catch (err) {
+        if (err instanceof store.ExamIdempotencyConflictError) {
+          return res.status(409).json({ error: err.message, code: "idempotency_conflict" });
+        }
+        throw err;
+      }
+
       const doctorName = session.userName?.trim() || "طبيب";
 
       // ══ **بلا مسؤوليةٍ تجارية على الإطلاق** ═══════════════════════════════
@@ -430,43 +492,60 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const caseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
-      const exam = await store.createExam({
-        patientId,
-        caseId: caseRow?.id ?? null,
-        caseType: caseType as MedicalSpecialty,
-        branchId: caseRow?.branchId ?? patient.branchId,
-        doctorId: session.userId,
-        doctorName,
-        prescription,
-        deviceCost: null,
-        proposedExpertUserId: null,
-        ...body,
-      });
-
-      await logAudit({
-        entityType: "medical_exam",
-        entityId: exam.id,
-        action: "create",
-        userId: session.userId,
-        userName: doctorName,
-        branchId: exam.branchId,
-        newValues: exam,
-        ipAddress: req.ip ?? null,
-        userAgent: req.get("user-agent") ?? null,
-        notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
-      });
-
-      //  إغلاقُ ما كان ينتظر هذه المعاينة (ترحيل ٠٥٥): المُرسَل كاملاً من
-      //  الاستقبال والمُحال من طبيبٍ سواء — كلاهما ينتهي بتوقيعٍ لا بقرار.
-      //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ انتظر ⟶ عاين.
-      //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
-      //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
+      let created: boolean;
+      let exam: Awaited<ReturnType<typeof store.createExam>>["exam"];
       try {
-        await closeRequestsAwaitingExam({
-          patientId, serviceType: caseType, examId: exam.id,
+        ({ exam, created } = await store.createExam({
+          patientId,
+          caseId: caseRow?.id ?? null,
+          caseType: caseType as MedicalSpecialty,
+          branchId: caseRow?.branchId ?? patient.branchId,
+          doctorId: session.userId,
+          doctorName,
+          prescription,
+          deviceCost: null,
+          proposedExpertUserId: null,
+          idempotencyKey,
+          ...body,
+        }));
+      } catch (err) {
+        if (err instanceof store.ExamIdempotencyConflictError) {
+          return res.status(409).json({ error: err.message, code: "idempotency_conflict" });
+        }
+        throw err;
+      }
+
+      // ══ ما دون هذا كلُّه **آثارٌ يُنشئها الإنشاءُ الحقيقيّ وحده** ═══════
+      //  محاولةٌ خسرت سباقاً حقيقياً على نفس المفتاح تعود هنا بـ
+      //  `created: false` — نفسُ صفّ الفائزة، بلا تدقيقٍ ثانٍ ولا إغلاقِ
+      //  طلبِ مراجعةٍ ثانٍ. فالتدقيقُ يبقى **واحداً بالضبط** لكلّ محاولةٍ
+      //  منطقية، مهما تكرّرت الطلباتُ HTTP التي حملتها.
+      if (created) {
+        await logAudit({
+          entityType: "medical_exam",
+          entityId: exam.id,
+          action: "create",
+          userId: session.userId,
+          userName: doctorName,
+          branchId: exam.branchId,
+          newValues: exam,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+          notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
         });
-      } catch (linkErr) {
-        console.error("[medical] closing review requests after exam failed:", linkErr);
+
+        //  إغلاقُ ما كان ينتظر هذه المعاينة (ترحيل ٠٥٥): المُرسَل كاملاً من
+        //  الاستقبال والمُحال من طبيبٍ سواء — كلاهما ينتهي بتوقيعٍ لا بقرار.
+        //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ انتظر ⟶ عاين.
+        //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
+        //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
+        try {
+          await closeRequestsAwaitingExam({
+            patientId, serviceType: caseType, examId: exam.id,
+          });
+        } catch (linkErr) {
+          console.error("[medical] closing review requests after exam failed:", linkErr);
+        }
       }
 
       // ══ **ولا بابَ تجارياً ثانياً يُفتَح هنا** ═══════════════════════════
@@ -479,8 +558,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       // `switchNote` is surfaced, not swallowed: when the superseded case could
       // not be retired (it already carries a work order or tagged payments) the
-      // doctor must know both cases are still open.
-      res.json({ ...exam, switchNote: applied.switchNote ?? null });
+      // doctor must know both cases are still open. Only meaningful when THIS
+      // call actually ran the decision — a raced-away loser never did.
+      res.json({ ...exam, switchNote: created ? (applied.switchNote ?? null) : null, created });
     } catch (err: any) {
       console.error("[medical] POST exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر حفظ المعاينة" });

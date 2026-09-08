@@ -116,6 +116,7 @@ const signExam = (
   opts: { session?: any; caseType?: string; notes?: string } = {},
 ) =>
   http("POST", `/api/medical/patients/${patientId}/exams`, opts.session ?? S.doc, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: opts.caseType ?? "prosthetic", diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
     notes: opts.notes,
   });

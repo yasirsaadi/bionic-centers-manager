@@ -124,6 +124,7 @@ async function mkCase(patientId: number, branchId = 1, caseType = "prosthetic") 
 /** توقيعٌ نظيف — بلا أيّ حقلٍ تجاريّ، كالشاشة الحقيقية بعد التبسيط (4.h). */
 async function signExam(patientId: number, session: any = S.doc, caseType = "prosthetic") {
   return http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType, diagnosis: "بتر تحت الركبة", prescription: {},
   });
 }

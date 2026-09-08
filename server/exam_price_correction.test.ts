@@ -161,6 +161,7 @@ async function signExam(patientId: number, session: any, opts: {
   caseType?: string; deviceCost?: number;
 } = {}) {
   const ex = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
+    idempotencyKey: crypto.randomUUID(),
     caseType: opts.caseType ?? "prosthetic",
     diagnosis: "بتر تحت الركبة",
     prescription: {},
