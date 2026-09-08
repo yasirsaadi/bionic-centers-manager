@@ -13,7 +13,8 @@
 //
 // ══ وما لا يوجد هنا عمداً ═══════════════════════════════════════════════
 // لا أداةَ «نفّذ SQL»، ولا «اقرأ جدولاً»، ولا «شغّل أمراً». فالنموذج لا يملك
-// إلا أربع نوافذ محدّدة الشكل، وكلُّ واحدةٍ تعرف مَن يحقّ له فتحها.
+// إلا نوافذَ محدّدة الشكل (سبعاً اليوم — راجع TOOL_NAMES)، وكلُّ واحدةٍ
+// تعرف مَن يحقّ له فتحها.
 //
 // ══ ونتيجة الأداة **بيانات لا تعليمات** ═════════════════════════════════
 // اسمُ مريضٍ أو ملاحظةٌ في ملفّه قد تحوي نصّاً يشبه الأمر. فالمخرَج يُعاد
@@ -33,6 +34,8 @@ import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
 import { activeExamDrizzle } from "../../medical/active_exam";
 import { activePatientDrizzle } from "../../patients/active_patient";
+import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
+import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -578,6 +581,107 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
   return { ok: true, data: out };
 }
 
+// ══ ٥. patient_search — مرشَّحون قليلون، لا دليلَ مرضى بديل ═══════════════
+//
+// **خلافاً للأدوات الأربع أعلاه**: هذه لا تُعرَض للجميع. النطاقُ هنا
+// «أعطني كلَّ مَن يشبه هذا الاسم» — قدرةُ دليلٍ حقيقية، فتُشترَط
+// `canViewPatients` بالحرف (نفسُ بوّابة `GET /api/patients/registry`) لا
+// وجودُ جلسةٍ فحسب. خبيرٌ صِرف (بلا هذه الصلاحية افتراضاً) لا يصير له
+// دليلُ مرضى بديل عبر المساعد لمجرّد أنه يستطيع مناداة أداة.
+async function patientSearch(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  if (!(access.isAdmin || access.permissions?.canViewPatients === true)) {
+    return denied("ليس لديك صلاحية البحث عن المرضى بالاسم — استعمل رمز المريض إن كان معك.");
+  }
+  const raw = strArg(input, "query");
+  if (!raw || raw.length < 2) return denied("اكتب حرفين على الأقلّ من الاسم أو الرمز أو رقم الهاتف.");
+
+  const scope = scopedBranchIds(access);
+  //  ══ الفرعُ يُفرَض **قبل** القراءة، داخل شرط SQL نفسِه — لا ترشيحٌ بعد
+  //  الجلب. فمريضٌ خارج النطاق لا يصل الاستعلام أصلاً، لا يظهر ثم يُحذَف.
+  if (scope !== null && scope.length === 0) {
+    return { ok: true, data: { query: raw, results: [] } };
+  }
+
+  const trigram = await hasTrigram(db);
+  const built = buildPatientSearch(raw, { trigram });
+  const branchCond = scope === null
+    ? sql`TRUE`
+    : sql`${patients.branchId} IN (${sql.join(scope.map((b) => sql`${b}`), sql`, `)})`;
+
+  const rows = await db.select({
+    code: patients.patientCode, name: patients.name, branchId: patients.branchId,
+  }).from(patients)
+    .where(and(activePatientDrizzle(), branchCond, built.where))
+    //  ══ نفسُ نمط `GET /api/patients/registry` بالحرف — `built.rank`
+    //  تعبيرٌ خام يحتاج `ASC` صريحاً، لا عموداً يفهم `asc()`/`desc()`.
+    .orderBy(sql`${built.rank} ASC`, searchTieBreaker(raw, { trigram }))
+    //  ══ سقفٌ ضيّق **بذاته** — أضيقُ من MAX_LIST_ITEMS المعتاد. هذه أداةُ
+    //  ترشيحٍ لا قائمةَ عمل: خمسةٌ يكفون لاختيار المقصود، وأكثرُ منها يبدأ
+    //  يشبه تصفّح سجلٍّ كامل بالاسم.
+    .limit(5);
+
+  const branchIds = Array.from(new Set(rows.map((r) => r.branchId)));
+  const branchRows = branchIds.length
+    ? await db.select({ id: branches.id, name: branches.name })
+      .from(branches).where(inArray(branches.id, branchIds))
+    : [];
+  const branchNameById = new Map(branchRows.map((b) => [b.id, b.name]));
+
+  return {
+    ok: true,
+    data: {
+      query: raw,
+      //  **لا رقمَ مريضٍ داخليّاً هنا** — الرمزُ العلنيّ وحده، كبقيّة الأدوات.
+      results: rows.map((r) => ({
+        patientCode: r.code, name: r.name, branch: branchNameById.get(r.branchId) ?? null,
+      })),
+      ...(rows.length === 5 ? { truncated: true } : {}),
+    },
+  };
+}
+
+// ══ ٦. operational_summary — أرقامٌ محسوبةٌ في الخادم، لا في النموذج ═════
+
+async function operationalSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  حدٌّ أقصى ٩٢ يوماً (نحو ثلاثة أشهر) — يمنع مسحاً ضخماً غير مقصود.
+  const range = resolveDateRange(input ?? {}, 92);
+  if (!range.ok) return denied(range.error);
+  //  فرعٌ من الطلب **لا يُعتمَد إلا للمسؤول** — نفسُ enforceBranchAccess.
+  const requestedBranchId = access.isAdmin && Number.isFinite(Number(input?.branchId))
+    ? Number(input.branchId) : null;
+
+  const result = await getOperationalSummary({
+    operationalBranches: scopedBranchIds(access),
+    isAdmin: access.isAdmin,
+    requestedBranchId,
+    start: range.start, end: range.end,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
+// ══ ٧. financial_summary — فوق `storage.getAccountingSummary` وحدها ══════
+
+async function financialSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً** — نفسُ نمط `patient_finance` بالحرف: لا تُعرَض أصلاً
+  //  لغير المخوَّل، والمنفِّذ يفحص ثانيةً على أي حال.
+  if (access.mode !== "financial") {
+    return denied("البيانات المالية متاحة لمن يملك صلاحية المحاسبة فقط.");
+  }
+  //  حدٌّ أقصى سنةٌ واحدة — يكفي أطول مقارنةٍ معقولة (شهرٌ مقابل شهر قبله
+  //  مضروبةً باثني عشر) بلا مسحٍ غير محدود.
+  const range = resolveDateRange(input ?? {}, 366);
+  if (!range.ok) return denied(range.error);
+  const requestedBranchId = access.isAdmin && Number.isFinite(Number(input?.branchId))
+    ? Number(input.branchId) : null;
+  const compare = input?.compare === true;
+
+  const result = await getFinancialSummary({
+    isAdmin: access.isAdmin, accessBranchId: access.branchId, requestedBranchId,
+    start: range.start, end: range.end, compare,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
 // ══ السجلّ الثابت ════════════════════════════════════════════════════════
 
 const CODE_ARG = {
@@ -647,6 +751,64 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     },
     offeredTo: () => true,
     run: (a) => myWorklist(a),
+  },
+  patient_search: {
+    spec: {
+      name: "patient_search",
+      description:
+        "بحثٌ عن مريضٍ بالاسم (أو جزءٍ منه) أو الهاتف حين لا يملك المستخدم رمزه — يُرجع "
+        + "أقصى خمسة مرشَّحين برموزهم العلنية وأسمائهم وفروعهم فقط. استعملها حين يذكر "
+        + "المستخدم اسماً لا رمزاً، ثم نادِ patient_lookup على الرمز الذي يختاره المستخدم.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "اسمٌ كاملٌ أو جزئيّ، أو رقم هاتف" },
+        },
+        required: ["query"],
+      } as any,
+    },
+    //  ══ خلافاً لبقيّة الأدوات: ليست متاحةً للجميع — راجع تعليق الدالّة.
+    offeredTo: (a) => a.isAdmin || a.permissions?.canViewPatients === true,
+    run: patientSearch,
+  },
+  operational_summary: {
+    spec: {
+      name: "operational_summary",
+      description:
+        "ملخّصٌ تشغيليّ لفترة (مرضى جدد، زيارات، جلسات علاج طبيعي، طابور المعاينة الآن، "
+        + "أوامر التصنيع النشطة الآن) ضمن نطاق فروع المستخدم. المسؤولُ العام وحده يستطيع "
+        + "تمرير branchId لتضييق النطاق أو تركه لرؤية كلّ الفروع مع تفصيلٍ لكلّ فرع.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "YYYY-MM-DD — افتراضاً اليوم" },
+          endDate: { type: "string", description: "YYYY-MM-DD — افتراضاً نفس startDate أو اليوم" },
+          branchId: { type: "number", description: "للمسؤول العام فقط — رقم فرعٍ لتضييق النطاق" },
+        },
+      } as any,
+    },
+    offeredTo: () => true,
+    run: operationalSummaryTool,
+  },
+  financial_summary: {
+    spec: {
+      name: "financial_summary",
+      description:
+        "ملخّصٌ ماليّ لفترة محدَّدة (المبيعات، المقبوض نقداً، المصاريف، الصافي) مع مقارنةٍ "
+        + "اختيارية بالفترة السابقة بنفس الطول، ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن "
+        + "يملك صلاحية المحاسبة. المسؤولُ العام وحده يستطيع طلب فرعٍ بعينه أو كلّ الفروع.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "YYYY-MM-DD — افتراضاً اليوم" },
+          endDate: { type: "string", description: "YYYY-MM-DD — افتراضاً نفس startDate أو اليوم" },
+          branchId: { type: "number", description: "للمسؤول العام فقط — رقم فرعٍ لتضييق النطاق" },
+          compare: { type: "boolean", description: "قارن بالفترة السابقة بنفس الطول" },
+        },
+      } as any,
+    },
+    offeredTo: (a) => a.mode === "financial",
+    run: financialSummaryTool,
   },
   } satisfies Record<string, ToolEntry>,
 );
