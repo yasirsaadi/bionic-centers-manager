@@ -1061,6 +1061,15 @@ export const aiKnowledgeArticles = pgTable("ai_knowledge_articles", {
   approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // ══ تدريبُ الموظّفين (migration 076) ══════════════════════════════════
+  // `audience` — مصفوفةُ قدراتٍ من `shared/ai_capabilities.ts` (jsonb).
+  // `NULL` = لا فلترةَ قدرةٍ إضافية (السلوكُ القديم بالحرف، قبل ٠٧٦). صفّان
+  // موسومان صراحةً منذ الزرع (`operational_reports_overview`،
+  // `ai_knowledge_admin_workflow`) وحدهما يملآن هذا العمود اليوم.
+  audience: jsonb("audience"),
+  // 'workflow' | 'troubleshooting' — نفس جدول المعرفة ودورة حياته بالحرف،
+  // لا جدولٌ ثانٍ لمحتوى استكشاف الأعطال (القسم H من مهمّة ٠٧٦).
+  contentType: text("content_type").notNull().default("workflow"),
 });
 
 export type AiKnowledgeArticle = typeof aiKnowledgeArticles.$inferSelect;
@@ -1093,6 +1102,79 @@ export const aiKnowledgeSuggestions = pgTable("ai_knowledge_suggestions", {
 });
 
 export type AiKnowledgeSuggestion = typeof aiKnowledgeSuggestions.$inferSelect;
+
+// ══ تدريبُ الموظّفين — فوق المعرفة الموثوقة أعلاه، لا بديلاً عنها (migration
+// 076) ═══════════════════════════════════════════════════════════════════
+// «الموظّف لا يدرّب المساعد»: المسؤولُ العام يزرع المسارات والوحدات
+// (مباشرةً، أو باعتماد اقتراحٍ يُصبح مقالةً تربطها وحدةٌ لاحقاً)، والمساعدُ
+// يدرّب الموظّف. الكتابةُ الوحيدة التي يفعلها المساعد نفسُه هي
+// `employeeTrainingProgress` — تتبّعٌ لا معرفة.
+
+export const trainingTracks = pgTable("training_tracks", {
+  id: serial("id").primaryKey(),
+  seedKey: text("seed_key").unique(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  // مصفوفةُ قدراتٍ (`shared/ai_capabilities.ts`) — إلزاميّة هنا (بخلاف عمود
+  // المقالة الاختياري)، فكلّ مسارٍ يُبنى لجمهورٍ محدَّد منذ إنشائه.
+  audience: jsonb("audience").notNull().default(["general"]),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name").notNull(),
+  approvedBy: integer("approved_by").references(() => systemUsers.id),
+  approvedByName: text("approved_by_name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TrainingTrack = typeof trainingTracks.$inferSelect;
+
+export const trainingModules = pgTable("training_modules", {
+  id: serial("id").primaryKey(),
+  trackId: integer("track_id").references(() => trainingTracks.id).notNull(),
+  seedKey: text("seed_key").unique(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  position: integer("position").notNull().default(0),
+  // لقطةُ أرقام مقالاتٍ — بلا FK صارم (نفسُ درس proposed_expert_user_id
+  // ٠٣٥). القراءةُ تحلّ السلسلةَ الفعّالة حيّاً، لا هذا الرقم حرفياً —
+  // راجع `resolveActiveArticleChain` في `server/training/store.ts`.
+  knowledgeArticleIds: jsonb("knowledge_article_ids").notNull().default([]),
+  learningObjectives: jsonb("learning_objectives"), // string[] | null
+  // {question, requiredConcepts:[{keywords:[...], hint}]} | null — راجع
+  // `shared/ai_training.ts: QuizSpec`.
+  quiz: jsonb("quiz"),
+  practiceOnly: boolean("practice_only").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TrainingModule = typeof trainingModules.$inferSelect;
+
+// **الكتابةُ الوحيدة الجديدة** التي يفعلها المساعدُ نفسُه (عبر أداتَين
+// ضيّقتين لا مساراً عامّاً) — تتبّعُ تقدّمٍ، لا معرفةٌ ولا سجلُّ محادثة.
+// `status` يحمل دورةَ الحياة والنتيجة معاً — لا عمود `result` ثانٍ يكرّر
+// القيمة نفسَها لوحدات الاختبار.
+export const employeeTrainingProgress = pgTable("employee_training_progress", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => systemUsers.id).notNull(),
+  trackId: integer("track_id").references(() => trainingTracks.id).notNull(),
+  moduleId: integer("module_id").references(() => trainingModules.id).notNull(),
+  status: text("status").notNull().default("started"), // started|completed|needs_review|practice_only
+  // بياناتُ تقييمٍ مدمَجة للتدقيق — مفاهيمُ تحقّقت/فاتت وعددُ الإجابة
+  // المقتطَع، لا نصّ محادثةٍ كامل.
+  answerSummary: jsonb("answer_summary"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }).notNull().defaultNow(),
+  attemptCount: integer("attempt_count").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EmployeeTrainingProgress = typeof employeeTrainingProgress.$inferSelect;
 
 // Follow-up call reminders for physiotherapy patients who stopped coming.
 // Active reminders are computed on the fly (physio patient whose last

@@ -9,6 +9,7 @@
 
 import { listActiveArticlesInScope } from "./store";
 import { selectTopArticles, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
+import { capabilitiesFor } from "@shared/ai_capabilities";
 import type { AiAccessContext } from "../access";
 
 export const MAX_KNOWLEDGE_RESULTS = 3;
@@ -18,6 +19,11 @@ export const MAX_KNOWLEDGE_RESULTS = 3;
  *
  * `finance`/`administration` مستبعَدتان قبل الترشيح لا بعده — فمقالةٌ
  * مالية لا تصل موظّفاً عاماً حتى لو طابق سؤالُه كلماتِها حرفياً.
+ *
+ * ══ وقدراتُ الجلسة تُفحَص أيضاً — قبل الترشيح كذلك (٠٧٦) ═══════════════
+ * `capabilitiesFor(access)` نفسُ الدالّة التي تحرس أدوات التدريب — مصدرُ
+ * حقيقةٍ واحد. مقالةٌ بلا `audience` لا تتأثّر (كلّ معرفة ٠٧٥)، ومقالةٌ
+ * موسومةٌ بجمهورٍ (تدريبٌ غالباً) تصل فقط مَن يملك إحدى قدراته.
  */
 export async function retrieveKnowledge(
   access: AiAccessContext, queryText: string,
@@ -28,6 +34,7 @@ export async function retrieveKnowledge(
     //  «سلطةٌ إدارية» هنا = نفسُ مَن يملك التصحيح الإداريّ فعلياً في
     //  التطبيق: المسؤولُ العام، أو مديرُ الفرع ضمن فرعه.
     allowAdministration: access.isAdmin || access.role === "branch_manager",
+    capabilities: Array.from(capabilitiesFor(access)),
   });
   return selectTopArticles(queryText, candidates, MAX_KNOWLEDGE_RESULTS);
 }

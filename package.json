@@ -121,7 +121,10 @@
     "test:ai-knowledge-retrieval": "tsx shared/ai_knowledge_retrieval.test.ts",
     "test:ai-knowledge": "tsx server/ai_knowledge.test.ts",
     "test:ai-tools-reports": "tsx server/ai_tools_reports.test.ts",
-    "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts"
+    "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts",
+    "test:ai-capabilities": "tsx shared/ai_capabilities.test.ts",
+    "test:ai-training-rules": "tsx shared/ai_training.test.ts",
+    "test:training": "tsx server/training.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

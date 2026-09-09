@@ -19,6 +19,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { aiKnowledgeArticles, aiKnowledgeSuggestions } from "@shared/schema";
 import { logAudit } from "../../accounting/ledger";
+import type { Capability } from "@shared/ai_capabilities";
 
 export type KnowledgeScope =
   | "general" | "reception" | "medical" | "manufacturing"
@@ -72,6 +73,22 @@ function branchScopeCondition(operationalBranches: number[] | null) {
 }
 
 /**
+ * شرطُ الجمهور — **إضافيٌّ فوق قاعدة `scope` القديمة، لا بديلٌ عنها**
+ * (القسم I من مهمّة ٠٧٦).
+ *
+ * `audience IS NULL` (كلّ مقالات ٠٧٥ وما قبلها) ⟶ لا فلترةَ إضافية، السلوكُ
+ * القديم بالحرف. وإلّا: تقاطعٌ — `?|` عاملُ jsonb «يحوي أيّاً من» — بين
+ * مصفوفة الجمهور المخزَّنة وقدرات الجلسة، أو أن يحوي الجمهورُ `general`
+ * صراحةً (مقالةٌ مُقيَّدةٌ بجمهورٍ لكنها تريد فتح بابٍ عامّاً أيضاً).
+ */
+function audienceCondition(capabilities: readonly Capability[]) {
+  const capsArray = sql.join(capabilities.map((c) => sql`${c}`), sql`, `);
+  return sql`(${aiKnowledgeArticles.audience} IS NULL
+    OR ${aiKnowledgeArticles.audience} ?| ARRAY[${capsArray}]
+    OR ${aiKnowledgeArticles.audience} @> '["general"]'::jsonb)`;
+}
+
+/**
  * كلُّ المقالات **الفعّالة** الواقعة ضمن نطاق هذا المستخدم — **قبل**
  * الترشيح بالسؤال، لا بعده.
  *
@@ -80,11 +97,18 @@ function branchScopeCondition(operationalBranches: number[] | null) {
  * تصل من ليس في الوضع الماليّ فعلاً، ومقالاتُ `administration` لا تصل
  * لمن لا يملك سلطةً إدارية — بصرف النظر عمّا يسأله، فالحجبُ هنا حجبُ
  * **معرفةٍ عن سياقٍ إداريّ/ماليّ حسّاس**، لا حجبَ إجابةٍ عن سؤالٍ بعينه.
+ *
+ * ══ و`capabilities` — طبقةٌ ثانية اختيارية (٠٧٦) ═══════════════════════
+ * قدراتُ الجلسة (`shared/ai_capabilities.ts`) تُفحَص **أيضاً** عبر
+ * `audienceCondition` — لا تحلّ محلّ فحص `finance`/`administration` أعلاه،
+ * بل تضيف تصفيةً أدقّ لمقالاتٍ وسمها المسؤولُ بجمهورٍ محدَّد (تدريبٌ في
+ * الغالب). مقالةٌ بلا `audience` (كلّ ما قبل ٠٧٦) لا تتأثّر بهذا الشرط.
  */
 export async function listActiveArticlesInScope(params: {
   operationalBranches: number[] | null;
   allowFinance: boolean;
   allowAdministration: boolean;
+  capabilities: readonly Capability[];
 }): Promise<ActiveArticleRow[]> {
   const excludedScopes: string[] = [];
   if (!params.allowFinance) excludedScopes.push("finance");
@@ -101,6 +125,7 @@ export async function listActiveArticlesInScope(params: {
       excludedScopes.length
         ? sql`${aiKnowledgeArticles.scope} NOT IN (${sql.join(excludedScopes.map((s) => sql`${s}`), sql`, `)})`
         : sql`TRUE`,
+      audienceCondition(params.capabilities),
     ));
   return rows;
 }

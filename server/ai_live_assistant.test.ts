@@ -174,20 +174,26 @@ async function main() {
     //  ══ (مراجعةٌ حيّة) operational_summary لم تعد تصل بلا canViewReports ══
     //  لا `S.recv` ولا `S.acc` يحملانها — فتغيّب عن كليهما هنا، وتظهر مع
     //  `S.recvReports` تحديداً (تحتها مباشرةً).
+    //  ══ (مدرّبُ الموظّفين) ثلاثُ أدواتِ تدريبٍ **مُعرَضةٌ للجميع** ══════════
+    //  training_catalog/training_lesson/training_submit_answer مثل my_worklist
+    //  بالحرف — لا يستثنيها أيّ دورٍ أو صلاحية، فتُضاف إلى كلّ قائمةٍ أدناه.
     console.log("\n── ما يُعرَض على النموذج ──");
-    same("ب. الموظّف العادي (بلا canViewReports): أربع أدوات بلا المالية ولا التقارير",
+    same("ب. الموظّف العادي (بلا canViewReports): سبعُ أدواتٍ بلا المالية ولا التقارير",
       seen[0].tools.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search"]);
+      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search",
+        "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.recvReports), ask("مرحباً"));
-    same("   ومعه canViewReports: خمسٌ (يضاف operational_summary)",
+    same("   ومعه canViewReports: ثمانٍ (يضاف operational_summary)",
       seen[0].tools.sort(),
-      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search"]);
+      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search",
+        "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب (بلا canViewReports أيضاً): ستّ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
+    same("   والمحاسب (بلا canViewReports أيضاً): تسعٌ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
       "financial_summary", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
+      "training_catalog", "training_lesson", "training_submit_answer",
     ]);
 
     // ══ ج. الخلط بين التشغيلي والمالي ═══════════════════════════════

@@ -55,6 +55,7 @@ import {
   Activity,
   Plus,
   Trash2, Bell,
+  GraduationCap,
 } from "lucide-react";
 import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1776,6 +1777,195 @@ function AiKnowledgeTab() {
   );
 }
 
+// ══ تدريبُ الموظّفين — لوحةٌ مضغوطة فوق البنية القائمة (ترحيل ٠٧٦) ═══════
+//
+// «الموظّفُ لا يدرّب المساعد»: هذه اللوحةُ لا تُنشئ معرفةً ولا تحرّرها —
+// التفعيل/التعطيل فقط، وعرضُ تقدّمٍ للقراءة. محتوى الدروس يبقى مبنياً فوق
+// معرفة المساعد المعتمَدة (تبويب «معرفة المساعد» المجاور) — تعديلُ مقالةٍ
+// هناك يصل دروسَ التدريب هنا تلقائياً بلا أي فعلٍ إضافي.
+
+interface TrainingModuleRow {
+  id: number; trackId: number; seedKey: string | null; title: string; description: string;
+  position: number; isActive: boolean; practiceOnly: boolean; quiz: unknown;
+}
+interface TrainingTrackRow {
+  id: number; seedKey: string | null; title: string; description: string;
+  audience: string[]; isActive: boolean; sortOrder: number; modules: TrainingModuleRow[];
+}
+interface ManagementTrackProgressRow {
+  trackId: number; trackTitle: string; completedModules: number; totalModules: number; needsReviewCount: number;
+}
+interface ManagementEmployeeRow {
+  userId: number; displayName: string; branchId: number | null; branchName: string | null;
+  tracks: ManagementTrackProgressRow[]; lastActivityAt: string | null;
+}
+
+/** نفسُ مفردات `shared/ai_capabilities.ts: CAPABILITY_LABELS` — تسميةٌ للعرض هنا وحده. */
+const TRAINING_CAPABILITY_LABELS: Record<string, string> = {
+  general: "عامّ", reception: "الاستقبال", patients: "سجلّ المرضى", medical: "الطبيب",
+  expert: "الخبير", physio: "العلاج الطبيعي", finance: "المحاسبة",
+  reports: "التقارير", manager: "مديرو الفروع", admin: "المسؤول العام",
+};
+
+function TrainingAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: tracksData, isLoading: tracksLoading } = useQuery<{ tracks: TrainingTrackRow[] }>({
+    queryKey: ["/api/training/admin/tracks"],
+  });
+  const { data: progressData, isLoading: progressLoading } = useQuery<{ rows: ManagementEmployeeRow[] }>({
+    queryKey: ["/api/training/management/progress"],
+  });
+
+  const tracks = tracksData?.tracks ?? [];
+  const employees = progressData?.rows ?? [];
+
+  const invalidateTraining = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/training/admin/tracks"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/training/management/progress"] });
+  };
+
+  const toggleTrackActive = useMutation({
+    mutationFn: async (params: { id: number; active: boolean }) => {
+      const res = await fetch(`/api/training/admin/tracks/${params.id}/active`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ active: params.active }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "تعذّر التغيير"); }
+      return res.json();
+    },
+    onSuccess: () => { invalidateTraining(); toast({ title: "تم تحديث حالة المسار" }); },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  const toggleModuleActive = useMutation({
+    mutationFn: async (params: { id: number; active: boolean }) => {
+      const res = await fetch(`/api/training/admin/modules/${params.id}/active`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ active: params.active }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "تعذّر التغيير"); }
+      return res.json();
+    },
+    onSuccess: () => { invalidateTraining(); toast({ title: "تم تحديث حالة الوحدة" }); },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <GraduationCap className="h-5 w-5 text-primary" />
+            مساراتُ التدريب ووحداتُها
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+            مبنيّةٌ فوق معرفة المساعد المعتمَدة — تعديلُ مقالةٍ من تبويب «معرفة المساعد» يصل دروسَها المرتبطة
+            تلقائياً. التفعيل والتعطيل هنا فقط.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {tracksLoading ? (
+            <p className="text-center text-muted-foreground py-8">جارٍ التحميل...</p>
+          ) : tracks.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">لا مساراتٍ بعد.</p>
+          ) : tracks.map((t) => (
+            <div key={t.id} className="rounded-lg border p-3 space-y-2" data-testid={`training-track-${t.id}`}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold">{t.title}</span>
+                  {(t.audience ?? []).map((a) => (
+                    <Badge key={a} variant="outline" className="text-[10px]">
+                      {TRAINING_CAPABILITY_LABELS[a] ?? a}
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{t.isActive ? "فعّال" : "معطَّل"}</span>
+                  <Switch
+                    checked={t.isActive}
+                    onCheckedChange={(v) => toggleTrackActive.mutate({ id: t.id, active: v })}
+                    data-testid={`switch-track-active-${t.id}`}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">{t.description}</p>
+              <div className="space-y-1.5 pr-2">
+                {t.modules.map((m) => (
+                  <div key={m.id} className="flex items-center justify-between gap-2 text-sm border-t pt-1.5">
+                    <div className="flex items-center gap-2">
+                      <span>{m.title}</span>
+                      {m.quiz ? <Badge variant="secondary" className="text-[10px]">اختبار</Badge> : null}
+                      {m.practiceOnly ? <Badge variant="outline" className="text-[10px]">تدريبٌ عمليّ</Badge> : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-muted-foreground">{m.isActive ? "فعّالة" : "معطَّلة"}</span>
+                      <Switch
+                        checked={m.isActive}
+                        onCheckedChange={(v) => toggleModuleActive.mutate({ id: m.id, active: v })}
+                        data-testid={`switch-module-active-${m.id}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            تقدّمُ الموظّفين
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+            ضمن نطاقك: كلّ الفروع للمسؤول العام، وفرعُك وحده إن كنتَ مديرَ فرع.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {progressLoading ? (
+            <p className="text-center text-muted-foreground py-8">جارٍ التحميل...</p>
+          ) : employees.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">لا موظّفين ضمن نطاقك بعد.</p>
+          ) : employees.map((e) => (
+            <div key={e.userId} className="rounded-lg border p-3 space-y-2" data-testid={`training-progress-${e.userId}`}>
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <div>
+                  <span className="font-semibold">{e.displayName}</span>
+                  {e.branchName ? <span className="text-xs text-muted-foreground mr-2">— {e.branchName}</span> : null}
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {e.lastActivityAt ? `آخر نشاط: ${new Date(e.lastActivityAt).toLocaleDateString("ar-IQ")}` : "بلا نشاطٍ بعد"}
+                </span>
+              </div>
+              {e.tracks.length === 0 ? (
+                <p className="text-xs text-muted-foreground">لا مساراتٍ متاحة لهذا الموظّف.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {e.tracks.map((t) => (
+                    <div key={t.trackId} className="text-xs rounded border px-2 py-1.5 flex items-center justify-between">
+                      <span>{t.trackTitle}</span>
+                      <span className="flex items-center gap-1.5">
+                        <Badge variant="secondary" className="text-[10px]">{t.completedModules}/{t.totalModules}</Badge>
+                        {t.needsReviewCount > 0 && (
+                          <Badge variant="destructive" className="text-[10px]">{t.needsReviewCount} يحتاج مراجعة</Badge>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 export default function AdminSettings() {
   const { t } = useTranslation();
   const branchSession = useBranchSession();
@@ -2377,7 +2567,7 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-4 md:grid-cols-8 w-full max-w-4xl mb-6">
+        <TabsList className="grid grid-cols-4 md:grid-cols-9 w-full max-w-5xl mb-6">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
             {t.adminSettings.tabUsers}
@@ -2405,6 +2595,10 @@ export default function AdminSettings() {
           <TabsTrigger value="ai-knowledge" className="gap-2" data-testid="tab-ai-knowledge">
             <Sparkles className="w-4 h-4" />
             معرفة المساعد
+          </TabsTrigger>
+          <TabsTrigger value="training" className="gap-2" data-testid="tab-training">
+            <GraduationCap className="w-4 h-4" />
+            تدريب الموظفين
           </TabsTrigger>
           <TabsTrigger value="accuracy" className="gap-2">
             <Activity className="w-4 h-4" />
@@ -2979,6 +3173,10 @@ export default function AdminSettings() {
 
         <TabsContent value="ai-knowledge" className="space-y-6">
           <AiKnowledgeTab />
+        </TabsContent>
+
+        <TabsContent value="training" className="space-y-6">
+          <TrainingAdminTab />
         </TabsContent>
 
         <TabsContent value="accuracy" className="space-y-6">

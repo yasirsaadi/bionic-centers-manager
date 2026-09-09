@@ -558,8 +558,9 @@ async function main() {
     //  المقاييسُ الأربعة داخل metrics، كلٌّ منها كائنٌ محسوبٌ كاملاً ══════
     same("ج.١٧.٢ **والمستوى الأعلى start/end/metrics فقط**",
       Object.keys(cmpFin ?? {}).sort(), ["end", "metrics", "start"]);
-    same("ج.١٧.٢ب ومقاييسُ metrics الأربعة بالضبط — salesValue/revenue/expenses/net",
-      Object.keys(cmpFin?.metrics ?? {}).sort(), ["expenses", "net", "revenue", "salesValue"]);
+    same("ج.١٧.٢ب ومقاييسُ metrics الخمسة بالضبط — salesValue/revenue/expenses/net/uncollectedSalesValue",
+      Object.keys(cmpFin?.metrics ?? {}).sort(),
+      ["expenses", "net", "revenue", "salesValue", "uncollectedSalesValue"]);
     const netCmp = cmpFin?.metrics?.net;
     same("ج.١٧.٢ج وكلُّ حقلٍ منها أربعةُ مفاتيح بالضبط — currentValue/previousValue/delta/percentChange",
       Object.keys(netCmp ?? {}).sort(), ["currentValue", "delta", "percentChange", "previousValue"]);
@@ -579,6 +580,39 @@ async function main() {
     const firstBranchRow = ((finAdminByBranch.data as any).byBranch ?? [])[0];
     check(Boolean(firstBranchRow) && "outstandingLifetime" in firstBranchRow && "collectionRateLifetime" in firstBranchRow,
       "ج.١٧.٤ **وbyBranch كذلك يحتفظ بهما لكلّ فرع**", JSON.stringify(firstBranchRow));
+
+    //  ══ ج.١٨ — uncollectedSalesValue: حسابٌ صحيح، ومفهومٌ مستقلٌّ عن
+    //  outstandingLifetime (القسم K من المهمّة) ══════════════════════════
+    console.log("\n── ج.١٨ uncollectedSalesValue — صحّةٌ واستقلالٌ عن outstandingLifetime ──");
+    same("ج.١٨.١ current.uncollectedSalesValue = salesValue − revenue **بالضبط** — لا حسابَ آخر",
+      curFin.uncollectedSalesValue, curFin.salesValue - curFin.revenue);
+    check(curFin.uncollectedSalesValue === SALES_AMOUNT - PAID_AMOUNT,
+      "ج.١٨.٢ وبالأرقام المعروفة للفترة: ٥٠٠,٠٠٠ − ٢٠٠,٠٠٠ = ٣٠٠,٠٠٠",
+      `got=${curFin.uncollectedSalesValue}`);
+    //  ══ **مفهومٌ منفصل لا اسمٌ بديل لنفس الرقم**: مبيعاتُ الفترة التي لم
+    //  تُقبَض بعد **في نفس الفترة** ≠ إجماليُّ ما لم يُقبَض من المريض مدى
+    //  الحياة حتى الآن (outstandingLifetime يشمل مرضى آخرين وفتراتٍ أخرى) ══
+    check(curFin.uncollectedSalesValue !== curFin.outstandingLifetime,
+      "ج.١٨.٣ **ومختلفٌ فعلياً عن outstandingLifetime في نفس الاستجابة** — رقمان بمعنيين مختلفين، لا تطابقَ صدفويّاً يُخفي أنهما نفسَ الحساب",
+      `uncollectedSalesValue=${curFin.uncollectedSalesValue} outstandingLifetime=${curFin.outstandingLifetime}`);
+
+    const uncCmp = cmpFin?.metrics?.uncollectedSalesValue;
+    check(Boolean(uncCmp) && typeof uncCmp.currentValue === "number",
+      "ج.١٨.٤ compare=true يضيف uncollectedSalesValue إلى metrics أيضاً، كائناً محسوباً كاملاً", JSON.stringify(uncCmp));
+    same("ج.١٨.٥ ودلتاه/نسبتُه المئوية تطابقان computeComparison على نفس الرقمين حرفياً — لا حسابَ ثانٍ داخل الأداة",
+      [uncCmp?.delta, uncCmp?.percentChange],
+      [
+        computeComparison(uncCmp?.currentValue, uncCmp?.previousValue).delta,
+        computeComparison(uncCmp?.currentValue, uncCmp?.previousValue).percentChange,
+      ]);
+
+    //  ══ توجيهُ الأداة يمنع النموذج من طرحها يدوياً — نفسُ نصّ الوصف الذي
+    //  يقرؤه النموذج فعلياً، لا افتراضٌ عن نيّته ══
+    const finSpec = toolsFor(financeAccess).find((t) => t.name === "financial_summary");
+    check(Boolean(finSpec) && finSpec!.description.includes("uncollectedSalesValue"),
+      "ج.١٨.٦ وصفُ الأداة يذكر uncollectedSalesValue صراحةً للنموذج");
+    check(Boolean(finSpec) && /يدويّاً|يدوياً/.test(finSpec!.description) && finSpec!.description.includes("لا تحسبها بنفسك"),
+      "ج.١٨.٧ **ويمنع صراحةً حسابها يدوياً بالطرح** — لا تعليمة نموذجٍ مفقودة", finSpec?.description);
 
     // ══ د. computeComparison — حسابٌ خالص، دقيقٌ حرفياً («exact arithmetic») ══
     //  الدالّةُ الواحدة التي يبنى عليها comparison.metrics.* في كلا التقريرين

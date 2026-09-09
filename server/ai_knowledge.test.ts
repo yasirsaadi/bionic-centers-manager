@@ -227,7 +227,7 @@ async function main() {
 
     const deactivated = await setArticleActive({ id: articleId, active: false, actor: actorFor(ADMIN, "مسؤول", "admin", null) });
     check(deactivated.ok === true, "ح.٣ تعطيلُ المقالة ينجح");
-    const scopeAfterDeactivate = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true });
+    const scopeAfterDeactivate = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true, capabilities: ["general"] });
     check(!scopeAfterDeactivate.some((a) => a.id === articleId), "ح.٤ **مقالةٌ غيرُ فعّالة لا تصل الاسترجاع**");
     const reactivated = await setArticleActive({ id: articleId, active: true, actor: actorFor(ADMIN, "مسؤول", "admin", null) });
     check(reactivated.ok === true, "ح.٥ إعادةُ تفعيلها تنجح (لا نسخةَ أحدث تمنعها)");
@@ -242,7 +242,7 @@ async function main() {
     if (edited.ok) {
       same("ط.٢ الإصدارُ ارتفع بواحد", edited.article.version, 2);
       same("ط.٣ supersedesId يشير للأصل", edited.article.supersedesId, articleId);
-      const oldRow = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true });
+      const oldRow = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true, capabilities: ["general"] });
       check(!oldRow.some((a) => a.id === articleId), "ط.٤ النسخةُ القديمة لم تعد فعّالة");
       check(oldRow.some((a) => a.id === edited.article.id), "ط.٥ النسخةُ الجديدة فعّالة");
       //  ولا يمكن تعديل النسخة القديمة (غير الفعّالة) مباشرة بعد الآن.
@@ -262,11 +262,11 @@ async function main() {
       title: `${MARK} — مقالةُ فرعٍ واحد`, body: `${MARK} — خاصّةٌ بفرع ب`, scope: "general", branchId: B2,
       actor: actorFor(ADMIN, "مسؤول", "admin", null),
     });
-    const scopeB1 = await listActiveArticlesInScope({ operationalBranches: [B1], allowFinance: true, allowAdministration: true });
+    const scopeB1 = await listActiveArticlesInScope({ operationalBranches: [B1], allowFinance: true, allowAdministration: true, capabilities: ["general"] });
     check(!scopeB1.some((a) => a.id === branchArticle.id), "ي.١ مقالةُ فرع ب لا تصل مستخدماً نطاقُه فرع أ وحده");
-    const scopeB2 = await listActiveArticlesInScope({ operationalBranches: [B2], allowFinance: true, allowAdministration: true });
+    const scopeB2 = await listActiveArticlesInScope({ operationalBranches: [B2], allowFinance: true, allowAdministration: true, capabilities: ["general"] });
     check(scopeB2.some((a) => a.id === branchArticle.id), "ي.٢ وتصل مستخدماً نطاقُه فرع ب");
-    const scopeAdmin = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true });
+    const scopeAdmin = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true, capabilities: ["general"] });
     check(scopeAdmin.some((a) => a.id === branchArticle.id), "ي.٣ والمسؤولُ (نطاقٌ null) يراها من أيّ فرع");
     await setArticleActive({ id: branchArticle.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
 
@@ -276,9 +276,9 @@ async function main() {
       title: `${MARK} — مقالةٌ مالية`, body: `${MARK} — تفصيلٌ محاسبيّ حسّاس`, scope: "finance", branchId: null,
       actor: actorFor(ADMIN, "مسؤول", "admin", null),
     });
-    const generalNoFinance = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: false, allowAdministration: true });
+    const generalNoFinance = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: false, allowAdministration: true, capabilities: ["general"] });
     check(!generalNoFinance.some((a) => a.id === financeArticle.id), "ك.١ مقالةٌ ماليةٌ لا تصل مستخدماً غير مخوَّلٍ مالياً");
-    const financeYes = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true });
+    const financeYes = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: true, capabilities: ["general"] });
     check(financeYes.some((a) => a.id === financeArticle.id), "ك.٢ وتصل مستخدماً مخوَّلاً مالياً");
     await setArticleActive({ id: financeArticle.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
 
@@ -286,7 +286,7 @@ async function main() {
       title: `${MARK} — مقالةٌ إدارية`, body: `${MARK} — تفصيلٌ إداريّ`, scope: "administration", branchId: null,
       actor: actorFor(ADMIN, "مسؤول", "admin", null),
     });
-    const noAdmin = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: false });
+    const noAdmin = await listActiveArticlesInScope({ operationalBranches: null, allowFinance: true, allowAdministration: false, capabilities: ["general"] });
     check(!noAdmin.some((a) => a.id === adminArticle.id), "ك.٣ مقالةٌ إداريةٌ لا تصل مَن ليس مسؤولاً/مديراً");
     await setArticleActive({ id: adminArticle.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
 
