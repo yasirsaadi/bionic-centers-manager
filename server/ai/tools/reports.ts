@@ -25,21 +25,59 @@ export function todayInBaghdad(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Baghdad" }).format(new Date());
 }
 
+/**
+ * صيغةٌ صحيحة **وتاريخٌ موجودٌ فعلاً** — `DATE_RE` وحدها كانت تقبل
+ * `2026-02-31` (٣١ شباط لا يوجد). `Date.UTC` يفيض الشهر/اليوم الزائد إلى
+ * الشهر التالي صامتاً بدل أن يرفض، فالمقارنةُ بعد البناء (أعاد المكوّناتُ
+ * نفسَها التي أُدخلت؟) هي الكاشفُ الوحيد للفيضان.
+ */
+function isRealCalendarDate(s: string): boolean {
+  if (!DATE_RE.test(s)) return false;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
 export type DateRangeResult =
   | { ok: true; start: string; end: string }
   | { ok: false; error: string };
 
 /**
- * يحسم `start`/`end`: تاريخٌ واحدٌ فقط ⟶ يوماً واحداً. لا شيء ⟶ اليوم
- * (بتقويم بغداد). **ومدىً أطول من `maxDays` يُرفَض صراحةً** — لا يُقصَّر
- * صامتاً فيبدو تقريراً كاملاً وهو جزءٌ منه فقط.
+ * يحسم `start`/`end`: تاريخٌ واحدٌ فقط ⟶ يوماً واحداً. **غيابٌ** (المفتاحُ
+ * غيرُ موجودٍ في الطلب، أو `null` صريحة) ⟶ اليوم (بتقويم بغداد) كالمعتاد.
+ * **ومدىً أطول من `maxDays` يُرفَض صراحةً** — لا يُقصَّر صامتاً فيبدو
+ * تقريراً كاملاً وهو جزءٌ منه فقط.
+ *
+ * ══ الحضورُ المشوَّه لا يُقرأ غياباً بعد اليوم (تصحيحٌ — مراجعةٌ حيّة) ══
+ * كان `typeof v === "string" && DATE_RE.test(v)` الفاشل يسقط صامتاً إلى
+ * `null` ⟶ فتُقرأ قيمةٌ **مُرسَلة صراحةً** (نصٌّ مشوَّه، `2026-02-31`
+ * الشكليّة، رقمٌ، بوليان) كأنها لم تُطلَب أصلاً، فتحلّ محلَّها `اليوم` أو
+ * التاريخُ الآخر صامتاً — طلبٌ لفترةٍ محدَّدة يتحوّل بصمتٍ إلى فترةٍ لم
+ * تُطلَب. الآن: **مفتاحٌ حاضرٌ بقيمةٍ لا تصلح تاريخاً حقيقياً ⟶ خطأٌ
+ * صريح**، لا استبدالاً.
  */
 export function resolveDateRange(
   input: { startDate?: unknown; endDate?: unknown }, maxDays: number,
 ): DateRangeResult {
   const today = todayInBaghdad();
-  const startRaw = typeof input.startDate === "string" && DATE_RE.test(input.startDate) ? input.startDate : null;
-  const endRaw = typeof input.endDate === "string" && DATE_RE.test(input.endDate) ? input.endDate : null;
+
+  const startField = input.startDate;
+  const endField = input.endDate;
+  //  ══ الغيابُ = `undefined` أو `null` صريحة فقط ══ — كلّ ما عداهما
+  //  (بما فيه السلسلة الفارغة، الأرقام، البوليان، الكائنات) **حضورٌ** يجب
+  //  أن يصلح تاريخاً أو يُرفَض، لا أن يُقرأ غياباً.
+  const startPresent = startField !== undefined && startField !== null;
+  const endPresent = endField !== undefined && endField !== null;
+
+  if (startPresent && !(typeof startField === "string" && isRealCalendarDate(startField))) {
+    return { ok: false, error: "startDate يجب أن يكون تاريخاً حقيقياً بصيغة YYYY-MM-DD" };
+  }
+  if (endPresent && !(typeof endField === "string" && isRealCalendarDate(endField))) {
+    return { ok: false, error: "endDate يجب أن يكون تاريخاً حقيقياً بصيغة YYYY-MM-DD" };
+  }
+
+  const startRaw = startPresent ? (startField as string) : null;
+  const endRaw = endPresent ? (endField as string) : null;
   const start = startRaw ?? endRaw ?? today;
   const end = endRaw ?? startRaw ?? today;
   if (start > end) return { ok: false, error: "تاريخ البداية يجب أن يسبق تاريخ النهاية أو يساويه" };
@@ -285,7 +323,12 @@ export async function getOperationalSummary(params: {
 //   salesValue = totalRevenue   (قيمةُ المبيعات/الكلفة المسجَّلة، وليست نقداً)
 //   revenue    = totalPaid      (الإيرادُ الفعليّ = النقد المقبوض فعلاً)
 // فلا حقلَ اسمُه «revenue» يحمل قيمة `totalRevenue` بعد اليوم.
-export interface FinancialPeriodFigures {
+/**
+ * مقاييسُ **الفترة** الأربعة وحدها — لا رقمَ «الآن». هذا الشكل، لا
+ * `FinancialPeriodFigures` الأوسع، هو ما يصحّ لمقارنةٍ تاريخية: كلُّ حقلٍ
+ * فيه قيمةٌ **وقعت** ضمن `start..end` بعينهما.
+ */
+export interface FinancialPeriodMetrics {
   start: string;
   end: string;
   /** قيمةُ المبيعات — قيودُ الكلفة المؤرَّخة في الفترة. **ليست نقداً مقبوضاً.** */
@@ -295,13 +338,28 @@ export interface FinancialPeriodFigures {
   expenses: number;
   /** الصافي = الإيرادُ الفعليّ (النقد المقبوض) ناقص المصاريف. */
   net: number;
+}
+
+/**
+ * ══ لماذا حالةٌ حاضرة لا تدخل مقارنةً تاريخية (تصحيحٌ — مراجعةٌ حيّة) ══
+ * `getAccountingSummary` يعرّف `totalRemaining`/`collectionRate` صراحةً
+ * أرقاماً **مدى الحياة حتى الآن** (كلفةٌ إجمالية ناقص مدفوعٍ إجماليّ، ونسبةُ
+ * الثاني من الأوّل) — لا مقياسَ فترة. فحملُهما داخل `comparison` كان يوهم
+ * أن «الرصيدَ المستحقّ» أو «نسبةَ التحصيل» كانا كذلك في الفترة السابقة، وهما
+ * لم يُقاسا هناك أصلاً — رقمُ اليوم بعينه يُنسَب زوراً إلى الأمس. فبقيا في
+ * `current`/`byBranch` (حالةٌ حاضرة، اسمُهما يقولها صراحةً) ولا يدخلان
+ * `comparison` (فترةٌ تاريخية، مقاييسُها الأربعة فقط) إطلاقاً.
+ */
+export interface FinancialPeriodFigures extends FinancialPeriodMetrics {
   collectionRateLifetime: number; // **ليست فترةً** — نسبةٌ إجمالية حتى الآن (توثيقٌ صريح للحقل)
   outstandingLifetime: number; // **ليست فترةً** — رصيدٌ إجماليّ مستحقّ حتى الآن
 }
 
 export interface FinancialSummaryResult {
   current: FinancialPeriodFigures;
-  comparison: FinancialPeriodFigures | null;
+  /** الفترةُ السابقة — **مقاييسُ الفترة الأربعة فقط**، بلا `outstandingLifetime`/
+   *  `collectionRateLifetime` (راجع التعليق أعلاه `FinancialPeriodFigures`). */
+  comparison: FinancialPeriodMetrics | null;
   byBranch: (FinancialPeriodFigures & { branchId: number; branchName: string })[] | null;
 }
 
@@ -321,6 +379,13 @@ async function summaryFor(branchId: number | undefined, start: string, end: stri
   };
 }
 
+/** مقاييسُ الفترة فقط من نتيجة `summaryFor` — تُسقِط الحقلين «مدى الحياة»
+ *  صراحةً (لا تكتفي بعدم قراءتهما) قبل أن يدخلا `comparison`. */
+function periodMetricsOnly(full: FinancialPeriodFigures): FinancialPeriodMetrics {
+  const { collectionRateLifetime: _collectionRateLifetime, outstandingLifetime: _outstandingLifetime, ...period } = full;
+  return period;
+}
+
 export async function getFinancialSummary(params: {
   isAdmin: boolean;
   /** نطاقُ الجلسة المالي — `null` = كلّ الفروع (مسؤولٌ بلا اختيار). */
@@ -338,10 +403,11 @@ export async function getFinancialSummary(params: {
 
   const current = await summaryFor(branchId ?? undefined, params.start, params.end);
 
-  let comparison: FinancialPeriodFigures | null = null;
+  let comparison: FinancialPeriodMetrics | null = null;
   if (params.compare) {
     const prev = previousPeriod(params.start, params.end);
-    comparison = await summaryFor(branchId ?? undefined, prev.start, prev.end);
+    const prevFull = await summaryFor(branchId ?? undefined, prev.start, prev.end);
+    comparison = periodMetricsOnly(prevFull);
   }
 
   let byBranch: FinancialSummaryResult["byBranch"] = null;

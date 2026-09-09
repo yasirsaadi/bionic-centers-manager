@@ -387,6 +387,82 @@ async function main() {
       `status=${badTarget.status}`);
     const stillPending4 = await rejectSuggestion({ id: suggestion4.id, decisionNote: "cleanup", actor: actorFor(ADMIN, "م", "admin", null) });
     check(stillPending4.ok === true, "ن.٩ب والاقتراحُ يبقى قابلاً للحسم — لم يُكتب نصفُ تغيير على الرفض المشوَّه");
+
+    // ══ ن.١٠ — معرّفُ المسار (:id) صارمٌ في كلّ نقاط knowledge (مراجعةٌ حيّة) ══
+    //  كانت `parseInt(String(req.params.id))` تقرأ حتى أوّل حرفٍ غيرِ رقميّ
+    //  ثمّ تتوقّف — `parseInt("12abc")` ⟶ ١٢ **صامتاً**، فطلبٌ مشوَّه كان
+    //  يُصيب معرّفاً حقيقياً بالخطأ بدل أن يُرفَض. الآن `parsePositiveIntId`
+    //  (نفسُ الدالّة المستعملة لـ`targetArticleId` أصلاً) تحرس الأربعةَ كلَّها.
+    console.log("\n── ن.١٠ معرّفُ المسار صارمٌ في كلّ نقاط :id ──");
+
+    //  مقالةٌ طازجة لهذا القسم وحده — لإثبات أن معرّفاً «قريباً» من معرّفٍ
+    //  حقيقيّ (بلصق حرفٍ خلفه) لا يُصيب ذلك المعرّفَ الحقيقيّ بالخطأ.
+    const idTestArticle = await createArticle({
+      title: `${MARK} — معرّف`, body: `${MARK} — متنُ اختبار المعرّف الصارم`,
+      scope: "general", branchId: null, actor: actorFor(ADMIN, "م", "admin", null),
+    });
+    const realId = idTestArticle.id;
+    const malformedNearId = `${realId}abc`; // parseInt القديمة كانت تقرؤه = realId خطأً
+
+    const activeMalformed = await fetch(`${BASE}/api/ai/knowledge/articles/${malformedNearId}/active`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ active: false }),
+    });
+    check(activeMalformed.status === 400,
+      `ن.١٠.١ PATCH .../articles/:id/active بمعرّفٍ «${malformedNearId}» (parseInt القديمة تقرؤه ${realId} خطأً) ⟶ ٤٠٠`,
+      `status=${activeMalformed.status}`);
+    const [afterMalformedRow] = (await q(`SELECT is_active FROM ai_knowledge_articles WHERE id = $1`, [realId])).rows;
+    check(afterMalformedRow?.is_active === true,
+      "ن.١٠.١ب **والمقالةُ الحقيقية بقيت نشطةً بلا مسّ** — لم يُصِبها المعرّفُ المشوَّه بالخطأ",
+      JSON.stringify(afterMalformedRow));
+
+    for (const [label, badId] of [
+      ["ن.١٠.٢ صفر", "0"], ["ن.١٠.٣ سالب", "-5"], ["ن.١٠.٤ كسريّ", "3.5"], ["ن.١٠.٥ نصٌّ عشوائيّ", "abc"],
+    ] as [string, string][]) {
+      const r = await fetch(`${BASE}/api/ai/knowledge/articles/${badId}/active`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({ active: false }),
+      });
+      check(r.status === 400, `${label} (:id=${badId}) على .../active ⟶ ٤٠٠`, `status=${r.status}`);
+    }
+
+    const editMalformed = await fetch(`${BASE}/api/ai/knowledge/articles/${malformedNearId}`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ title: "x", body: "y", scope: "general" }),
+    });
+    check(editMalformed.status === 400,
+      `ن.١٠.٦ PATCH .../articles/:id (تعديل) بمعرّفٍ «${malformedNearId}» ⟶ ٤٠٠`, `status=${editMalformed.status}`);
+
+    const suggestion5 = await createSuggestion({
+      suggestedText: `${MARK} — ٥`, reason: `${MARK} — سبب`,
+      actor: actorFor(STAFF, "موظّف اختبار", "reception", B1),
+    });
+    const malformedSuggId = `${suggestion5.id}abc`;
+    const approveMalformed = await fetch(`${BASE}/api/ai/knowledge/suggestions/${malformedSuggId}/approve`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ title: "x", body: "y", scope: "general" }),
+    });
+    check(approveMalformed.status === 400,
+      `ن.١٠.٧ PATCH .../suggestions/:id/approve بمعرّفٍ «${malformedSuggId}» ⟶ ٤٠٠`, `status=${approveMalformed.status}`);
+    const rejectMalformed = await fetch(`${BASE}/api/ai/knowledge/suggestions/${malformedSuggId}/reject`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ decisionNote: "x" }),
+    });
+    check(rejectMalformed.status === 400,
+      `ن.١٠.٨ PATCH .../suggestions/:id/reject بمعرّفٍ «${malformedSuggId}» ⟶ ٤٠٠`, `status=${rejectMalformed.status}`);
+    const suggestion5StillPending = await rejectSuggestion({
+      id: suggestion5.id, decisionNote: "cleanup", actor: actorFor(ADMIN, "م", "admin", null),
+    });
+    check(suggestion5StillPending.ok === true,
+      "ن.١٠.٨ب **والاقتراحُ الحقيقيّ بقي pending حتى هذا الرفض النظيف** — المعرّفُ المشوَّه لم يُصِبه");
+
+    //  والمعرّفُ الصحيح يبقى يعمل بعد كلّ الرفض أعلاه — الحارسُ لم يكسر المسار السليم.
+    const cleanDeactivate = await fetch(`${BASE}/api/ai/knowledge/articles/${realId}/active`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ active: false }),
+    });
+    check(cleanDeactivate.status === 200,
+      "ن.١٠.٩ ومعرّفٌ صحيحٌ يعمل كما كان بعد كلّ الرفض أعلاه", `status=${cleanDeactivate.status}`);
   } finally {
     await cleanup();
     httpServer.close();

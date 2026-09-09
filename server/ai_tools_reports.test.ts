@@ -356,6 +356,67 @@ async function main() {
       "ب.١٧ج **وغيرُ المسؤول بـbranchId مشوَّه لا يُرفَض** — يُتجاهَل بصمت لأنه ليس سلطةً أصلاً",
       JSON.stringify(nonAdminBadBranch));
 
+    //  ══ ب.١٨ — branchId="" (فراغٌ صريح) **ليس غياباً** ══════════════════
+    //  (تصحيحٌ — مراجعةٌ حيّة) — كانت `""` تُقرأ مثل الغياب تماماً ⟶ «كلّ
+    //  الفروع» صامتاً. المفتاحُ وصل بقيمةٍ لا تصلح رقماً، فيُرفَض كأيّ
+    //  قيمةٍ أخرى في `badAdminBranchIds` أعلاه — لا استثناءَ للفراغ.
+    console.log("\n── ب.١٨ branchId=\"\" (فراغٌ صريح) للمسؤول ──");
+    for (const emptyLike of ["", "   "]) {
+      const r = await executeTool(adminAccess, "operational_summary",
+        { startDate: TODAY, endDate: TODAY, branchId: emptyLike });
+      check(r.ok === false,
+        `ب.١٨ branchId=${JSON.stringify(emptyLike)} ⟶ خطأٌ صريح — **ليس** غياباً ولا كلّ الفروع`,
+        JSON.stringify(r));
+    }
+    //  وغيرُ المسؤول: الفراغُ يُتجاهَل كأيّ قيمةٍ أخرى، بلا فحصٍ أصلاً.
+    const nonAdminEmptyBranch = await executeTool(scopedRecepReports, "operational_summary",
+      { startDate: TODAY, endDate: TODAY, branchId: "" });
+    check(nonAdminEmptyBranch.ok === true,
+      "ب.١٨ب وغيرُ المسؤول بـbranchId=\"\" لا يُرفَض كذلك — نطاقُه من الجلسة وحدها");
+
+    //  ══ ب.١٩ — تحقّقٌ صارمٌ من التاريخ: حضورٌ مشوَّه لا يُقرأ غياباً ═════
+    //  (تصحيحٌ — مراجعةٌ حيّة) — كان تاريخٌ **مُرسَلٌ صراحةً** بصيغةٍ خاطئة
+    //  أو تقويمٍ مستحيل يسقط بصمتٍ إلى `null` فيحلّ محلَّه «اليوم» أو
+    //  التاريخُ الآخر — طلبٌ لفترةٍ محدَّدة ينقلب صمتاً إلى فترةٍ لم تُطلَب.
+    console.log("\n── ب.١٩ تحقّقٌ صارمٌ من startDate/endDate ──");
+    const badDates: Array<{ v: unknown; label: string }> = [
+      { v: "2026-02-31", label: "تقويمٌ مستحيل — لا ٣١ شباط" },
+      { v: "2026-13-01", label: "شهرٌ غيرُ موجود" },
+      { v: "2026-00-10", label: "شهرٌ صفر" },
+      { v: "2026-04-31", label: "نيسان بلا يوم ٣١" },
+      { v: "09/09/2026", label: "صيغةٌ مختلفة (DD/MM/YYYY)" },
+      { v: "2026-9-9", label: "بلا أصفارٍ بادئة" },
+      { v: "not-a-date", label: "نصٌّ عشوائيّ" },
+      { v: "", label: "سلسلةٌ فارغة" },
+      { v: "   ", label: "بياضٌ محض" },
+      { v: 20260909, label: "رقمٌ لا نصّاً" },
+      { v: true, label: "بوليان" },
+      { v: {}, label: "كائن" },
+      { v: [TODAY], label: "مصفوفة" },
+    ];
+    for (const { v, label } of badDates) {
+      const rStart = await executeTool(scopedRecepReports, "operational_summary", { startDate: v, endDate: TODAY });
+      check(rStart.ok === false,
+        `ب.١٩ operational_summary: startDate=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح لا استبدالاً باليوم`,
+        JSON.stringify(rStart));
+      const rEnd = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: v });
+      check(rEnd.ok === false,
+        `ب.١٩ operational_summary: endDate=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح`,
+        JSON.stringify(rEnd));
+    }
+    //  ══ والسلوكُ الصحيح لم يتغيّر: تاريخٌ صحيحٌ واحد ⟶ يومٌ واحد، وغيابٌ
+    //  (بلا startDate/endDate إطلاقاً، أو `null` صريحة) ⟶ اليوم كالمعتاد.
+    const oneValidDate = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY });
+    same("ب.١٩ب **تاريخٌ صحيحٌ واحد يبقى يومَه نفسَه** (لم يتغيّر السلوك القائم)",
+      [oneValidDate.data.start, oneValidDate.data.end], [TODAY, TODAY]);
+    const noDatesAtAll = await executeTool(scopedRecepReports, "operational_summary", {});
+    same("ب.١٩ج وغيابُ الحقلين معاً يبقى اليوم — كالمعتاد",
+      [noDatesAtAll.data.start, noDatesAtAll.data.end], [TODAY, TODAY]);
+    const explicitNullDates = await executeTool(scopedRecepReports, "operational_summary",
+      { startDate: null, endDate: null });
+    same("ب.١٩د و`null` صريحةً تُقرأ غياباً أيضاً — اليوم كالمعتاد",
+      [explicitNullDates.data.start, explicitNullDates.data.end], [TODAY, TODAY]);
+
     // ══ ج. financial_summary ══════════════════════════════════════════════
     console.log("\n── ج. financial_summary ──");
     const financeAccess = resolveAiAccess({
@@ -432,6 +493,56 @@ async function main() {
     check(nonAdminBadFinBranch.ok === true,
       "ج.١٤ **وغيرُ المسؤول بـbranchId مشوَّه لا يُرفَض** — نطاقُه الماليّ الموقَّع وحده يُستعمَل",
       JSON.stringify(nonAdminBadFinBranch));
+
+    //  ══ ج.١٥ — branchId="" للمسؤول الماليّ: فراغٌ صريحٌ لا غياب ══════════
+    console.log("\n── ج.١٥ branchId=\"\" للمسؤول (ماليّ) ──");
+    for (const emptyLike of ["", "  "]) {
+      const r = await executeTool(financeAdminAccess, "financial_summary",
+        { startDate: TODAY, endDate: TODAY, branchId: emptyLike });
+      check(r.ok === false,
+        `ج.١٥ branchId=${JSON.stringify(emptyLike)} ⟶ خطأٌ صريح — ليس غياباً`, JSON.stringify(r));
+    }
+
+    //  ══ ج.١٦ — تحقّقٌ صارمٌ من التاريخ (نفسُ قائمة ب.١٩، نقطةٌ ثانية) ═════
+    console.log("\n── ج.١٦ تحقّقٌ صارمٌ من startDate/endDate (ماليّ) ──");
+    for (const { v, label } of [
+      { v: "2026-02-31", label: "تقويمٌ مستحيل" },
+      { v: "09/09/2026", label: "صيغةٌ مختلفة" },
+      { v: "", label: "سلسلةٌ فارغة" },
+      { v: 20260909, label: "رقمٌ" },
+    ]) {
+      const r = await executeTool(financeAccess, "financial_summary", { startDate: v, endDate: TODAY });
+      check(r.ok === false,
+        `ج.١٦ financial_summary: startDate=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح`, JSON.stringify(r));
+    }
+    const finOneValidDate = await executeTool(financeAccess, "financial_summary", { startDate: TODAY });
+    same("ج.١٦ب وتاريخٌ صحيحٌ واحد يبقى يومَه نفسَه", finOneValidDate.data.current.start, TODAY);
+
+    //  ══ ج.١٧ — شكلُ `comparison`: مقاييسُ الفترة فقط، بلا أرقام «الآن» ════
+    //  `getAccountingSummary` يعرّف `totalRemaining`/`collectionRate` صراحةً
+    //  أرقاماً **مدى الحياة حتى الآن** — لا مقياسَ فترة. فحملُهما في مقارنةٍ
+    //  بفترةٍ سابقة يوهم بأنهما قيسا هناك، وهما لم يُقاسا. `current`/
+    //  `byBranch` يحتفظان بهما (حالةٌ حاضرة، الاسمُ يقولها) — `comparison`
+    //  وحدها تخلو منهما.
+    console.log("\n── ج.١٧ شكلُ المقارنة — بلا أرقام «الآن» ──");
+    const finCompareShape = await executeTool(financeAccess, "financial_summary",
+      { startDate: TODAY, endDate: TODAY, compare: true });
+    const cmpFin = (finCompareShape.data as any).comparison;
+    check(cmpFin !== null, "ج.١٧.٠ (تجهيز) المقارنةُ موجودة فعلاً");
+    check(!("outstandingLifetime" in (cmpFin ?? {})) && !("collectionRateLifetime" in (cmpFin ?? {})),
+      "ج.١٧.١ **لا outstandingLifetime ولا collectionRateLifetime في comparison** — أرقامُ «الآن» لا الفترة",
+      JSON.stringify(cmpFin));
+    same("ج.١٧.٢ **ومقاييسُ الفترة الستّة بالضبط** — start/end/salesValue/revenue/expenses/net",
+      Object.keys(cmpFin ?? {}).sort(),
+      ["end", "expenses", "net", "revenue", "salesValue", "start"]);
+    //  ══ وcurrent/byBranch يحتفظان بالحقلين — لم يُحذَفا من هناك ══
+    const curFin = (finCompareShape.data as any).current;
+    check("outstandingLifetime" in curFin && "collectionRateLifetime" in curFin,
+      "ج.١٧.٣ **وcurrent يحتفظ بهما** — حالةٌ حاضرة، لم تُمَسّ", JSON.stringify(curFin));
+    const finAdminByBranch = await executeTool(financeAdminAccess, "financial_summary", { startDate: TODAY, endDate: TODAY });
+    const firstBranchRow = ((finAdminByBranch.data as any).byBranch ?? [])[0];
+    check(Boolean(firstBranchRow) && "outstandingLifetime" in firstBranchRow && "collectionRateLifetime" in firstBranchRow,
+      "ج.١٧.٤ **وbyBranch كذلك يحتفظ بهما لكلّ فرع**", JSON.stringify(firstBranchRow));
   } finally {
     await cleanup();
   }

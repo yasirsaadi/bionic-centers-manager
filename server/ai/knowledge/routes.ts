@@ -121,8 +121,12 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   // ══ ٣. اعتمادُ اقتراح — يكتب مقالةً (جديدة أو نسخةً) في نفس المعاملة ═══
   app.patch("/api/ai/knowledge/suggestions/:id/approve", isAuthenticated, async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
-    const id = parseInt(String(req.params.id));
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    //  ══ `parsePositiveIntId` لا `parseInt` — `parseInt("12abc")` يُرجع
+    //  ١٢ صامتاً (يقرأ حتى أوّل حرفٍ غيرِ رقميّ ثمّ يتوقّف)، فيصيب الطلبُ
+    //  المشوَّه معرّفاً حقيقياً بالخطأ (تصحيحٌ — مراجعةٌ حيّة).
+    const idParsed = parsePositiveIntId(req.params.id);
+    if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const id = idParsed;
 
     //  ══ targetArticleId — إمّا غائبٌ (مقالةٌ جديدة) أو معرّفٌ صحيح، لا ثالث ══
     //  كان `NaN`/سالبٌ/كسريّ يُقرأ صمتاً «مقالةً جديدة» عبر `x && Number.isFinite(x)`
@@ -164,8 +168,9 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   // ══ ٤. رفضُ اقتراح — بسببٍ حرٍّ إلزاميّ ════════════════════════════════
   app.patch("/api/ai/knowledge/suggestions/:id/reject", isAuthenticated, async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
-    const id = parseInt(String(req.params.id));
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const idParsed = parsePositiveIntId(req.params.id);
+    if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const id = idParsed;
     const decisionNote = str(req.body?.decisionNote);
     if (!decisionNote) return res.status(400).json({ error: "سببُ الرفض مطلوب" });
 
@@ -203,8 +208,9 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   // ══ ٧. تعديلُ مقالةٍ قائمة — نسخةٌ جديدة ═══════════════════════════════
   app.patch("/api/ai/knowledge/articles/:id", isAuthenticated, async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
-    const id = parseInt(String(req.params.id));
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const idParsed = parsePositiveIntId(req.params.id);
+    if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const id = idParsed;
     const title = str(req.body?.title);
     const body = str(req.body?.body);
     const scope = req.body?.scope;
@@ -225,8 +231,9 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   // ══ ٨. تفعيل/تعطيل ═════════════════════════════════════════════════════
   app.patch("/api/ai/knowledge/articles/:id/active", isAuthenticated, async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
-    const id = parseInt(String(req.params.id));
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const idParsed = parsePositiveIntId(req.params.id);
+    if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+    const id = idParsed;
     //  ══ بوليانٌ حقيقيّ لا تحويلاً قسرياً ══ — `Boolean("false")` سلسلةٌ غير
     //  فارغة فتُقيَّم `true` رغم نصّها الظاهر؛ نفسُ فخّ `Boolean(0)`/`Boolean("0")`
     //  المعكوس. النوعُ وحده يقرّر (تصحيحٌ — مراجعةٌ حيّة على PR #281).
