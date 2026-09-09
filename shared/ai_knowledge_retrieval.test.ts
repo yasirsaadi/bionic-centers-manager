@@ -1,6 +1,8 @@
 // اختبارُ الاسترجاع الخالص — بلا قاعدة بيانات، `npm run test:ai-knowledge-retrieval`.
 
-import { scoreArticle, selectTopArticles, tokenize, type RetrievableArticle } from "./ai_knowledge_retrieval";
+import {
+  isLiveDataOnlyQuestion, scoreArticle, selectTopArticles, tokenize, type RetrievableArticle,
+} from "./ai_knowledge_retrieval";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -60,6 +62,38 @@ console.log("\n── ج. selectTopArticles ──");
   same("ج.٦ مقالةٌ مُحقونة لا تتصدّر سؤالاً لا يطابقها فعلياً — الترشيحُ نصّيٌّ محضٌ لا سلطة",
     top.map((x) => x.id), [A.id]);
 }
+
+console.log("\n── د. isLiveDataOnlyQuestion — بوّابةُ النيّة ──");
+//  ══ الأربعُ حالاتٌ التي تطلبها المهمّة صراحةً ══
+same("د.١ «ما حالة WB-02119؟» ⟶ بياناتٌ حيّة صرفة، لا معرفة",
+  isLiveDataOnlyQuestion("ما حالة WB-02119؟"), true);
+same("د.٢ «ما تشخيص WB-02119؟» ⟶ بياناتٌ حيّة صرفة، لا معرفة",
+  isLiveDataOnlyQuestion("ما تشخيص WB-02119؟"), true);
+same("د.٣ طلبُ تقريرٍ ماليّ («أعطني تقرير المبيعات لهذا الشهر») ⟶ بياناتٌ حيّة، لا معرفة",
+  isLiveDataOnlyQuestion("أعطني تقرير المبيعات لهذا الشهر"), true);
+same("د.٤ «كيف أسجل مريض طرف صناعي جديد؟» ⟶ سؤالُ مسارِ عملٍ حقيقيّ — المعرفةُ تبقى مفتوحة",
+  isLiveDataOnlyQuestion("كيف أسجل مريض طرف صناعي جديد؟"), false);
+
+//  ══ صيغٌ إضافية لنفس الأربع — التغطيةُ لا تعتمد على مثالٍ واحد بعينه ══
+same("   والصيغةُ بلا شرطة أيضاً: «شنو حالة wb02119»",
+  isLiveDataOnlyQuestion("شنو حالة wb02119"), true);
+same("   وسؤالُ ملخّصٍ تشغيليّ «ملخص عملي اليوم» ⟶ بياناتٌ حيّة",
+  isLiveDataOnlyQuestion("ملخص عملي اليوم"), true);
+same("   وسؤالُ مسارِ عملٍ آخر «ما هي خطوات فتح صيانة؟» ⟶ يبقى مفتوحاً للمعرفة",
+  isLiveDataOnlyQuestion("ما هي خطوات فتح صيانة؟"), false);
+same("   وسؤالُ سياسة «هل يحق للاستقبال إدخال بيانات البتر؟» ⟶ يبقى مفتوحاً للمعرفة",
+  isLiveDataOnlyQuestion("هل يحق للاستقبال إدخال بيانات البتر؟"), false);
+
+//  ══ رسالةٌ مختلطة: رمزٌ حاضر **مع** إشارة مسار عمل ⟶ لا تُقصى المعرفة ══
+same("د.٥ رسالةٌ مختلطة «لماذا حالة WB-02119 بانتظار معاينة؟» ⟶ المعرفةُ تبقى مفتوحة",
+  isLiveDataOnlyQuestion("لماذا حالة WB-02119 بانتظار معاينة؟"), false);
+
+//  ══ حالاتٌ حدّية ══
+same("د.٦ رسالةٌ فارغة ⟶ false (لا بياناتٍ حيّة ولا شيء)", isLiveDataOnlyQuestion(""), false);
+same("   ورسالةٌ عامّة بلا رمزٍ ولا إشارة تقرير («مرحباً») ⟶ false — الاسترجاعُ يمضي كالمعتاد",
+  isLiveDataOnlyQuestion("مرحباً، كيف حالك؟"), false);
+same("   ورمزُ مريضٍ ضمن جملةٍ أطول يبقى مُكتشَفاً",
+  isLiveDataOnlyQuestion("بخصوص المريض ذو الرمز WB-00042 من فضلك أعطني التفاصيل"), true);
 
 console.log(`\n${failures === 0 ? "✅ كل الاختبارات نجحت" : `❌ ${failures} فشل`}`);
 process.exit(failures === 0 ? 0 : 1);

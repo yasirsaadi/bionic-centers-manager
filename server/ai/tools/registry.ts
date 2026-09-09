@@ -29,6 +29,7 @@ import {
 } from "@shared/schema";
 import { resolvePatientByPublicCode } from "../../patient_code/store";
 import { normalizePatientCode } from "@shared/patient_code";
+import { parseInjuries, specsForSpecialty } from "@shared/case_fields";
 import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
@@ -339,6 +340,61 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
   const hit = await resolveInScope(access, raw);
   if (!hit) return denied(NOT_FOUND);
 
+  //  ══ حقائقُ ملفّ المريض — لا معاينةً موقّعة (مراجعةٌ إنتاجية) ══════════
+  //  مريضُ علاجٍ طبيعي حمل «التشخيص / الحالة» في `patients.disease_type` —
+  //  الحقلُ الذي تعرضه صفحة المريض فعلاً (`CaseDetailSections.tsx`) — بلا
+  //  معاينةٍ طبية موقّعة (نظامُ المعاينة أُضيف لاحقاً، أو الملفُّ قديم). وكان
+  //  هذا التابع يقرأ `medical_exams` وحدها فيجيب «لا يوجد» رغم أن التشخيصَ
+  //  مكتوبٌ في ملفّه أمام أيّ موظّف. **«لا توجد معاينة موقّعة» ليست «لا
+  //  يوجد تشخيص»** — فالحقلان يُقرآن معاً هنا ويُعادان متمايزين صراحةً.
+  const [p] = await db.select({
+    isAmputee: patients.isAmputee, isMedicalSupport: patients.isMedicalSupport,
+    isPhysiotherapy: patients.isPhysiotherapy,
+    diseaseType: patients.diseaseType, injuries: patients.injuries, treatmentType: patients.treatmentType,
+    amputationSite: patients.amputationSite, injurySide: patients.injurySide,
+    prostheticType: patients.prostheticType, siliconType: patients.siliconType,
+    siliconSize: patients.siliconSize, suspensionSystem: patients.suspensionSystem,
+    footType: patients.footType, footSize: patients.footSize, kneeJointType: patients.kneeJointType,
+    supportType: patients.supportType,
+  }).from(patients).where(and(eq(patients.id, hit.patientId), activePatientDrizzle()));
+  if (!p) return denied(NOT_FOUND);
+
+  //  الحقولُ الفنية الحرّة لكلّ اختصاص (نوعُ الطرف، السليكون…) — من
+  //  `specsForSpecialty` **القانونية نفسِها** التي يبنيها نموذجُ التسجيل
+  //  و«تخصيص وإسناد خبير» — لا قائمةَ ثانية تنحرف عنها.
+  const patientRow = p as unknown as Record<string, unknown>;
+  const specValues = (caseType: "prosthetic" | "medical_support") =>
+    Object.fromEntries(specsForSpecialty(caseType).map((spec) => [spec.key, patientRow[spec.key] ?? null]));
+
+  //  **بلا مبلغ ولا حقلٍ ماليّ في أيٍّ من الأقسام الثلاثة** — كلُّ حقلٍ هنا
+  //  سريريٌّ أو فنيٌّ صرف، مطابقٌ لِما يعرضه `CaseDetailSections.tsx` بلا
+  //  الأعمدة المالية.
+  const patientFileClinicalFacts: Record<string, unknown> = {
+    ...(p.isPhysiotherapy ? {
+      physiotherapy: {
+        diagnosisCondition: p.diseaseType ?? null,
+        injuries: parseInjuries(p.injuries),
+        treatmentType: p.treatmentType ?? null,
+      },
+    } : {}),
+    ...(p.isAmputee ? {
+      prosthetic: {
+        //  «التشخيص / الحالة» لقسم الأطراف في ملفّ المريض مصدرُه
+        //  `amputationSite` (موقعُ البتر) — نفسُ ما تعرضه الصفحةُ تحت
+        //  اللافتة نفسِها، لا حقلَ تشخيصٍ نصّيّ مستقلّ لهذا القسم.
+        diagnosisCondition: p.amputationSite ?? null,
+        injurySide: p.injurySide ?? null,
+        ...specValues("prosthetic"),
+      },
+    } : {}),
+    ...(p.isMedicalSupport ? {
+      medicalSupport: {
+        injurySide: p.injurySide ?? null,
+        ...specValues("medical_support"),
+      },
+    } : {}),
+  };
+
   //  المعاينات الموقّعة وحدها، والأحدث لكل اختصاص. ولا نسخَ سابقة ولا
   //  ملاحق ولا محذوف — التصحيح تاريخٌ إداري لا جوابٌ عن «ما حالته الآن».
   const rows = await db.select({
@@ -357,10 +413,28 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
     latestBySpecialty.push(r);
   }
 
+  //  ══ وسمُ «توجد معاينة موقّعة؟» صريحاً — لا استنتاجاً من غياب صفٍّ ══════
+  //  `true` = وُقّعت لهذا الاختصاص · `false` = المريضُ يحمل الاختصاصَ ولم
+  //  تُوقَّع له معاينةٌ بعد · `null` = المريضُ لا يحمل هذا الاختصاص أصلاً.
+  //  فالنموذج لا يُترَك يخمّن غيابَ سطرٍ من مصفوفة `exams`، وهذا الحقلُ هو
+  //  ما يُختبَر مباشرةً في الانحدار بدل صياغة ردّ نموذجٍ حيّ لا يمكن التنبّؤ
+  //  بحروفها.
+  const signedSpecialties = new Set(latestBySpecialty.map((r) => r.caseType));
+  const hasSignedExam = {
+    prosthetic: p.isAmputee ? signedSpecialties.has("prosthetic") : null,
+    medicalSupport: p.isMedicalSupport ? signedSpecialties.has("medical_support") : null,
+    physiotherapy: p.isPhysiotherapy ? signedSpecialties.has("physiotherapy") : null,
+  };
+
   return {
     ok: true,
     data: {
       patientCode: hit.patientCode,
+      //  ══ حقائقُ الملفّ — مستقلّةٌ عن المعاينة الموقّعة ══════════════════
+      patientFileClinicalFacts,
+      hasSignedExam,
+      note: "patientFileClinicalFacts من ملفّ المريض المسجَّل وموجودةٌ بصرف النظر عن hasSignedExam. "
+        + "«لا توجد معاينة موقّعة» (hasSignedExam=false) ليست «لا يوجد تشخيص» — بلّغ عن الحقيقتين معاً ولا تخلطهما.",
       //  **لا `deviceCost` ولا أي مبلغ — لأحدٍ كائناً من كان.** المال بابُه
       //  `patient_finance` وحده، فلا تصير المعاينة قناةً جانبية للأسعار.
       exams: latestBySpecialty.slice(0, MAX_LIST_ITEMS).map((r) => ({
@@ -850,9 +924,15 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     spec: {
       name: "patient_clinical_summary",
       description:
-        "الخلاصةُ السريرية الموقّعة لمريض: التشخيص والوصفة وتاريخ المعاينة وطبيبها لكل اختصاص. "
-        + "بلا أي مبلغ. متاحةٌ فقط لمن يملك صلاحية عرض المرضى. "
-        + "استعملها حين يُسأل عن التشخيص أو الخطة العلاجية تحديداً.",
+        "الخلاصةُ السريرية لمريض من مصدرين مستقلّين لا يتبادلان: patientFileClinicalFacts "
+        + "(حقائقُ ملفّه المسجَّلة لكلّ اختصاصٍ يحمله — التشخيص/الحالة، الإصابات، نوع العلاج، "
+        + "جهة الإصابة، مواصفات الجهاز — موجودةٌ بصرف النظر عن وجود معاينةٍ موقّعة)، وexams "
+        + "(المعاينات الطبية الموقّعة فقط، بتشخيصها ووصفتها وتاريخها وطبيبها). وhasSignedExam "
+        + "يقول صراحةً لكلّ اختصاصٍ يحمله المريض: true إن وُقّعت له معاينة، false إن لم تُوقَّع بعد، "
+        + "null إن كان لا يحمل هذا الاختصاص أصلاً. **«لا توجد معاينة موقّعة» ليست «لا يوجد تشخيص» "
+        + "— أبلغ عن الحقيقتين معاً من مصدريهما ولا تخلطهما ولا تفترض أن غياب المعاينة يعني غياب "
+        + "التشخيص.** بلا أي مبلغ. متاحةٌ فقط لمن يملك صلاحية عرض المرضى. استعملها حين يُسأل عن "
+        + "التشخيص أو الحالة أو الإصابات أو الخطة العلاجية.",
       input_schema: CODE_ARG as any,
     },
     offeredTo: (a) => canViewPatientRecords(a),
@@ -907,11 +987,15 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
         "ملخّصٌ تشغيليّ لفترة (مرضى جدد، زيارات، جلسات علاج طبيعي) بالإضافة إلى حالةٍ **الآن** "
         + "لا تتبع الفترة (طابور المعاينة، أوامر التصنيع النشطة، مرضى العلاج الطبيعي "
         + "activePhysiotherapyPatientsNow ذوو الحالة النشطة) ضمن نطاق فروع المستخدم. متاحةٌ "
-        + "فقط لمن يملك صلاحية عرض التقارير. مع compare اختياريّ: يقارن مقاييس الفترة الثلاثة "
-        + "فقط (لا مقاييس «الآن») بالفترة السابقة بنفس الطول، في حقل comparison منفصل بتاريخه "
-        + "الخاصّ. المسؤولُ العام وحده يستطيع تمرير branchId لتضييق النطاق أو تركه لرؤية كلّ "
-        + "الفروع مع تفصيلٍ لكلّ فرع — غيابُه (لا يُرسَل) وحده يعني كلّ الفروع؛ فارغٌ أو غير صحيح "
-        + "من المسؤول يُرفَض صراحةً بدل أن يتحوّل صمتاً إلى كلّ الفروع.",
+        + "فقط لمن يملك صلاحية عرض التقارير. مع compare اختياريّ: comparison.metrics تحمل "
+        + "newPatients/visits/physiotherapySessions (لا مقاييس «الآن») — كلُّ حقلٍ منها كائنٌ "
+        + "**محسوبٌ بالكامل في الخادم**: currentValue وpreviousValue (رقما الفترتين) وdelta "
+        + "(الفرقُ الجاهز = currentValue − previousValue) وpercentChange (النسبةُ الجاهزة، أو "
+        + "null حين previousValue=0 فلا نسبةَ ذاتَ معنى). **انقل هذه الأرقامَ كما هي ولا تحسبها "
+        + "بنفسك، ولا تخترع نسبةً حين percentChange تصل null.** comparison.start/end تاريخُ "
+        + "الفترة السابقة. المسؤولُ العام وحده يستطيع تمرير branchId لتضييق النطاق أو تركه لرؤية "
+        + "كلّ الفروع مع تفصيلٍ لكلّ فرع — غيابُه (لا يُرسَل) وحده يعني كلّ الفروع؛ فارغٌ أو غير "
+        + "صحيح من المسؤول يُرفَض صراحةً بدل أن يتحوّل صمتاً إلى كلّ الفروع.",
       input_schema: {
         type: "object",
         properties: {
@@ -939,12 +1023,15 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
         + "وسؤالٌ عن «كم بعنا» أو «قيمة المبيعات» يُجاب من salesValue لا revenue. current وbyBranch "
         + "يحملان أيضاً outstandingLifetime/collectionRateLifetime — رصيدٌ مستحقّ ونسبةُ تحصيلٍ "
         + "**إجماليّان حتى الآن**، لا رقمَي الفترة. مع مقارنةٍ اختيارية بالفترة السابقة بنفس الطول "
-        + "(compare) تُرجع أربعة حقول الفترة فقط في comparison — **بلا** outstandingLifetime/"
-        + "collectionRateLifetime هناك، إذ لم تُقاسا في الفترة السابقة أصلاً؛ لا يُستنتَج رصيدٌ أو "
-        + "نسبةُ تحصيلٍ «كما كانا في الفترة السابقة». ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن "
-        + "يملك صلاحية المحاسبة. المسؤولُ العام وحده يستطيع طلب فرعٍ بعينه أو كلّ الفروع — وbranchId "
-        + "غائبٌ (لا يُرسَل) وحده يعني كلّ الفروع؛ فارغٌ أو غير صحيح من المسؤول يُرفَض صراحةً بدل أن "
-        + "يتحوّل صمتاً إلى كلّ الفروع.",
+        + "(compare): comparison.metrics تحمل salesValue/revenue/expenses/net — كلُّ حقلٍ كائنٌ "
+        + "**محسوبٌ بالكامل في الخادم**: currentValue وpreviousValue وdelta (الفرقُ الجاهز) "
+        + "وpercentChange (النسبةُ الجاهزة، أو null حين previousValue=0). **انقل هذه الأرقامَ كما "
+        + "هي ولا تحسبها بنفسك، ولا تجمع ولا تطرح، ولا تخترع نسبةً حين percentChange تصل null.** "
+        + "**وبلا** outstandingLifetime/collectionRateLifetime في comparison.metrics، إذ لم تُقاسا "
+        + "في الفترة السابقة أصلاً؛ لا يُستنتَج رصيدٌ أو نسبةُ تحصيلٍ «كما كانا في الفترة السابقة». "
+        + "ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن يملك صلاحية المحاسبة. المسؤولُ العام وحده "
+        + "يستطيع طلب فرعٍ بعينه أو كلّ الفروع — وbranchId غائبٌ (لا يُرسَل) وحده يعني كلّ الفروع؛ "
+        + "فارغٌ أو غير صحيح من المسؤول يُرفَض صراحةً بدل أن يتحوّل صمتاً إلى كلّ الفروع.",
       input_schema: {
         type: "object",
         properties: {

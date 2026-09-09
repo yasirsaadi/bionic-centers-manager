@@ -14,6 +14,7 @@ import { pool } from "./db";
 import { storage } from "./storage";
 import { executeTool, toolsFor } from "./ai/tools/registry";
 import { resolveAiAccess, type AiAccessContext } from "./ai/access";
+import { computeComparison } from "./ai/tools/reports";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -286,7 +287,12 @@ async function main() {
       check(cmp !== null, "ب.١٥.٢ compare:true ⟶ comparison غيرُ فارغة");
       same("ب.١٥.٣ **الفترةُ السابقة بنفس الطول بالضبط** — يومٌ واحدٌ سابقٌ ليومٍ واحد",
         [cmp?.start, cmp?.end], [PREV_DAY, PREV_DAY]);
-      check(cmp?.newPatients >= 1, "ب.١٥.٤ ومريضُ الفترة السابقة مُحتسَبٌ فيها", `newPatients=${cmp?.newPatients}`);
+      //  ══ (مراجعةٌ إنتاجية) — كلُّ مقياسٍ كائنٌ محسوبٌ، لا رقمَ فترتين خامَين ══
+      //  `metrics.newPatients` (وأخواتها) صار `{currentValue, previousValue,
+      //  delta, percentChange}` — النموذج يرحّله كما هو، ولا يطرح بنفسه.
+      const newPatientsCmp = cmp?.metrics?.newPatients;
+      check(newPatientsCmp?.previousValue >= 1,
+        "ب.١٥.٤ ومريضُ الفترة السابقة مُحتسَبٌ في previousValue", `newPatients=${JSON.stringify(newPatientsCmp)}`);
       //  ══ **ولا مقياسَ «آن» واحداً يتسلّل إلى المقارنة** — الأثبتُ هنا: ══
       //  مقارنةُ فترةٍ تاريخية بحالةٍ حاضرة تُنتج رقماً لا معنى له (كأنّ
       //  الطابورَ أو التصنيعَ «كانا كذلك» في الأمس، وهما لم يُقاسا هناك أصلاً).
@@ -298,6 +304,22 @@ async function main() {
       same("ب.١٥.٦ ومقاييسُ الفترة الحاضرة نفسُها لم تتحرّك بسبب compare — مطابقةٌ لنداءٍ بلا compare",
         [(opsCompare.data as any).newPatients, (opsCompare.data as any).visits, (opsCompare.data as any).physiotherapySessions],
         [opsData.newPatients, opsData.visits, opsData.physiotherapySessions]);
+      //  ══ ب.١٥.٧ — شكلُ `metrics`: ثلاثةٌ فقط، وكلٌّ كائنٌ محسوبٌ كاملاً ══
+      same("ب.١٥.٧ metrics تحمل newPatients/visits/physiotherapySessions فقط",
+        Object.keys(cmp?.metrics ?? {}).sort(), ["newPatients", "physiotherapySessions", "visits"]);
+      same("   وكلُّ حقلٍ منها أربعةُ مفاتيح بالضبط",
+        Object.keys(newPatientsCmp ?? {}).sort(), ["currentValue", "delta", "percentChange", "previousValue"]);
+      //  ══ ب.١٥.٨ — الحسابُ الحقيقيّ يطابق `computeComparison` نفسَها حرفياً:
+      //  currentValue من العدّ الحاضر، وdelta/percentChange مشتقّان منه ومن
+      //  previousValue بالصيغة نفسِها — لا نسخةَ حسابٍ ثانية داخل الأداة ══
+      same("ب.١٥.٨ currentValue يطابق newPatients الحاضر بالضبط",
+        newPatientsCmp?.currentValue, (opsCompare.data as any).newPatients);
+      same("   وdelta/percentChange يطابقان computeComparison على نفس الرقمين حرفياً",
+        [newPatientsCmp?.delta, newPatientsCmp?.percentChange],
+        [
+          computeComparison(newPatientsCmp?.currentValue, newPatientsCmp?.previousValue).delta,
+          computeComparison(newPatientsCmp?.currentValue, newPatientsCmp?.previousValue).percentChange,
+        ]);
     } finally {
       await q(`DELETE FROM patients WHERE id = $1`, [P6_PREV]);
     }
@@ -524,7 +546,7 @@ async function main() {
     //  بفترةٍ سابقة يوهم بأنهما قيسا هناك، وهما لم يُقاسا. `current`/
     //  `byBranch` يحتفظان بهما (حالةٌ حاضرة، الاسمُ يقولها) — `comparison`
     //  وحدها تخلو منهما.
-    console.log("\n── ج.١٧ شكلُ المقارنة — بلا أرقام «الآن» ──");
+    console.log("\n── ج.١٧ شكلُ المقارنة — بلا أرقام «الآن»، وكلُّ مقياسٍ محسوبٌ كاملاً ──");
     const finCompareShape = await executeTool(financeAccess, "financial_summary",
       { startDate: TODAY, endDate: TODAY, compare: true });
     const cmpFin = (finCompareShape.data as any).comparison;
@@ -532,9 +554,23 @@ async function main() {
     check(!("outstandingLifetime" in (cmpFin ?? {})) && !("collectionRateLifetime" in (cmpFin ?? {})),
       "ج.١٧.١ **لا outstandingLifetime ولا collectionRateLifetime في comparison** — أرقامُ «الآن» لا الفترة",
       JSON.stringify(cmpFin));
-    same("ج.١٧.٢ **ومقاييسُ الفترة الستّة بالضبط** — start/end/salesValue/revenue/expenses/net",
-      Object.keys(cmpFin ?? {}).sort(),
-      ["end", "expenses", "net", "revenue", "salesValue", "start"]);
+    //  ══ (مراجعةٌ إنتاجية) — start/end/metrics فقط على المستوى الأعلى؛
+    //  المقاييسُ الأربعة داخل metrics، كلٌّ منها كائنٌ محسوبٌ كاملاً ══════
+    same("ج.١٧.٢ **والمستوى الأعلى start/end/metrics فقط**",
+      Object.keys(cmpFin ?? {}).sort(), ["end", "metrics", "start"]);
+    same("ج.١٧.٢ب ومقاييسُ metrics الأربعة بالضبط — salesValue/revenue/expenses/net",
+      Object.keys(cmpFin?.metrics ?? {}).sort(), ["expenses", "net", "revenue", "salesValue"]);
+    const netCmp = cmpFin?.metrics?.net;
+    same("ج.١٧.٢ج وكلُّ حقلٍ منها أربعةُ مفاتيح بالضبط — currentValue/previousValue/delta/percentChange",
+      Object.keys(netCmp ?? {}).sort(), ["currentValue", "delta", "percentChange", "previousValue"]);
+    //  ══ الحسابُ الحقيقيّ يطابق computeComparison على الرقمين المُبلَّغين
+    //  حرفياً — لا نسخةَ حسابٍ ثانية داخل الأداة ══
+    same("ج.١٧.٢د وdelta/percentChange في net يطابقان computeComparison على نفس الرقمين",
+      [netCmp?.delta, netCmp?.percentChange],
+      [
+        computeComparison(netCmp?.currentValue, netCmp?.previousValue).delta,
+        computeComparison(netCmp?.currentValue, netCmp?.previousValue).percentChange,
+      ]);
     //  ══ وcurrent/byBranch يحتفظان بالحقلين — لم يُحذَفا من هناك ══
     const curFin = (finCompareShape.data as any).current;
     check("outstandingLifetime" in curFin && "collectionRateLifetime" in curFin,
@@ -543,6 +579,31 @@ async function main() {
     const firstBranchRow = ((finAdminByBranch.data as any).byBranch ?? [])[0];
     check(Boolean(firstBranchRow) && "outstandingLifetime" in firstBranchRow && "collectionRateLifetime" in firstBranchRow,
       "ج.١٧.٤ **وbyBranch كذلك يحتفظ بهما لكلّ فرع**", JSON.stringify(firstBranchRow));
+
+    // ══ د. computeComparison — حسابٌ خالص، دقيقٌ حرفياً («exact arithmetic») ══
+    //  الدالّةُ الواحدة التي يبنى عليها comparison.metrics.* في كلا التقريرين
+    //  (تشغيليّ وماليّ) — أربعُ حالاتٍ تطلبها المهمّة صراحةً: زيادةٌ موجبة،
+    //  نقصانٌ، قيمةٌ سابقة صفر، وصافٍ سالب (net قد يكون سالباً).
+    console.log("\n── د. computeComparison — حسابٌ خالص ──");
+    same("د.١ زيادةٌ موجبة: ١٠٠ ⟶ ١٢٠ ⟶ delta=+20، نسبة=+20%",
+      computeComparison(120, 100), { currentValue: 120, previousValue: 100, delta: 20, percentChange: 20 });
+    same("د.٢ نقصان: ١٠٠ ⟶ ٨٠ ⟶ delta=-20، نسبة=-20%",
+      computeComparison(80, 100), { currentValue: 80, previousValue: 100, delta: -20, percentChange: -20 });
+    same("د.٣ القيمةُ السابقة صفر ⟶ percentChange=null صراحةً — لا رقمَ مختلَق",
+      computeComparison(50, 0), { currentValue: 50, previousValue: 0, delta: 50, percentChange: null });
+    same("   وصفرٌ مقابل صفر ⟶ null أيضاً — لا 0% ملفَّقة توهم بقياسٍ وقع",
+      computeComparison(0, 0), { currentValue: 0, previousValue: 0, delta: 0, percentChange: null });
+    //  ══ صافٍ سالب: القسمةُ على |previousValue| عمداً — خسارةٌ تصغر (تحسّنٌ
+    //  حقيقيّ) يجب أن تُقرأ نسبةً **موجبة**، لا سالبة توهم بمزيد تراجع ══
+    same("د.٤ صافٍ سالبٌ يتحسّن: -50,000 ⟶ -20,000 ⟶ +60% (تحسّنٌ لا تراجع)",
+      computeComparison(-20000, -50000),
+      { currentValue: -20000, previousValue: -50000, delta: 30000, percentChange: 60 });
+    same("   ومقابلُها — صافٍ سالبٌ يزداد سوءاً: -20,000 ⟶ -50,000 ⟶ -150%",
+      computeComparison(-50000, -20000),
+      { currentValue: -50000, previousValue: -20000, delta: -30000, percentChange: -150 });
+    //  ══ ودقّةُ التقريب — منزلةٌ عشرية واحدة ══
+    same("د.٥ التقريبُ لمنزلةٍ عشرية واحدة: ٣ ⟶ ١ ⟶ -66.7%",
+      computeComparison(1, 3).percentChange, -66.7);
   } finally {
     await cleanup();
   }

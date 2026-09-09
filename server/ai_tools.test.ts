@@ -114,6 +114,17 @@ async function mkPatient(name: string, branchId: number, opts: any = {}) {
     [`${MARK} ${name}`, MARK, branchId, opts.isAmputee ?? true, opts.isPhysio ?? false,
       opts.isSupport ?? false, opts.totalCost ?? 0, opts.treatmentType ?? null]);
   created.patients++;
+  //  ══ حقولٌ سريريةٌ اختيارية — لاختبار «حقائق ملفّ المريض» (قسم ي) ══════
+  //  اختياريّةٌ وبلا أثرٍ على أيّ استدعاءٍ قائم: تُترَك NULL كما تولد ما لم
+  //  يمرّرها المُنشئ صراحةً.
+  if (opts.diseaseType != null || opts.injuries != null || opts.amputationSite != null
+    || opts.injurySide != null || opts.supportType != null) {
+    await q(
+      `UPDATE patients SET disease_type=$2, injuries=$3, amputation_site=$4, injury_side=$5, support_type=$6
+       WHERE id=$1`,
+      [r[0].id, opts.diseaseType ?? null, opts.injuries ?? null, opts.amputationSite ?? null,
+        opts.injurySide ?? null, opts.supportType ?? null]);
+  }
   return r[0];
 }
 async function mkPayment(patientId: number, branchId: number, amount: number) {
@@ -353,6 +364,87 @@ async function main() {
     const clinExpert = await executeTool(access(sess.expert1), "patient_clinical_summary", { patientCode: p1.patient_code });
     check(!/1500000/.test(JSON.stringify(clinExpert.data)),
       "   وخبيرُ الأطراف خصوصاً", JSON.stringify(clinExpert.data));
+
+    // ══ ي. حقائقُ ملفّ المريض — مستقلّةٌ عن المعاينة الموقّعة ══════════
+    //  مراجعةٌ إنتاجية: مريضُ علاجٍ طبيعي حمل «التشخيص / الحالة» في ملفّه
+    //  (شلل نصفي) بلا معاينةٍ طبية موقّعة، فأجاب المساعدُ «لا يوجد» —
+    //  والصحيحُ أن يُبلَّغ عن الحقيقتين معاً: التشخيصُ موجود، والمعاينةُ
+    //  غيرُ موقّعة، وهما مستقلّتان.
+    console.log("\n── حقائق الملفّ ──");
+    const pPhysioNoExam = await mkPatient("علاج طبيعي بلا معاينة", 1, {
+      isAmputee: false, isPhysio: true,
+      diseaseType: "شلل نصفي",
+      injuries: JSON.stringify([{ type: "شلل دماغ", area: "الرأس", side: "كلاهما" }]),
+      treatmentType: "روبوت (10 جلسات)",
+    });
+    const physioClin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: pPhysioNoExam.patient_code });
+    same("ي. الخلاصةُ تصل حتى بلا معاينةٍ موقّعة", physioClin.ok, true);
+    same("   والتشخيصُ من ملفّ المريض يصل صراحةً — لا «لا يوجد»",
+      physioClin.data.patientFileClinicalFacts?.physiotherapy?.diagnosisCondition, "شلل نصفي");
+    same("   ونوعُ العلاج المسجَّل يصل معه",
+      physioClin.data.patientFileClinicalFacts?.physiotherapy?.treatmentType, "روبوت (10 جلسات)");
+    same("   والإصاباتُ المسجَّلة تُقرأ من JSON الملفّ",
+      physioClin.data.patientFileClinicalFacts?.physiotherapy?.injuries,
+      [{ type: "شلل دماغ", area: "الرأس", side: "كلاهما" }]);
+    //  ══ الحقيقةُ الحاسمة: hasSignedExam=false صريحةً — لا استنتاجاً من
+    //  غياب سطرٍ في مصفوفة exams، وهذا ما يُختبَر مباشرةً بدل انتظار صياغة
+    //  ردّ نموذجٍ حيّ لا يمكن التنبّؤ بحروفها ══
+    same("   وhasSignedExam.physiotherapy = false صراحةً",
+      physioClin.data.hasSignedExam?.physiotherapy, false);
+    same("   والاختصاصان الآخران غيرُ محمولين ⟶ null لا false",
+      [physioClin.data.hasSignedExam?.prosthetic, physioClin.data.hasSignedExam?.medicalSupport],
+      [null, null]);
+    check(!(physioClin.data.exams as any[]).some((e: any) => e.specialty === "physiotherapy"),
+      "   وexams لا تحمل سطراً لهذا الاختصاص (لا معاينة موقّعة فعلاً)",
+      JSON.stringify(physioClin.data.exams));
+
+    //  ══ مقابلُها: مريضٌ بمعاينةٍ موقّعة فعلاً (p1) ⟶ hasSignedExam=true ══
+    const p1Clin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: p1.patient_code });
+    same("   ومريضٌ بمعاينةٍ موقّعة فعلاً ⟶ hasSignedExam.prosthetic = true",
+      p1Clin.data.hasSignedExam?.prosthetic, true);
+
+    //  ══ الأطراف: التشخيص من amputationSite، وجهةُ الإصابة، ومواصفاتُ
+    //  الجهاز الفنية — نفسُ ما تعرضه CaseDetailSections.tsx بلا المال ══
+    const pProsthetic = await mkPatient("أطراف بحقائق ملفّ", 1, {
+      isAmputee: true, isPhysio: false,
+      amputationSite: "بتر تحت الركبة يمين", injurySide: "يمين",
+    });
+    await q(`UPDATE patients SET prosthetic_type=$2, foot_type=$3, knee_joint_type=$4 WHERE id=$1`,
+      [pProsthetic.id, "طرف سفلي ذكي", "قدم كربون", "مفصل هيدروليكي"]);
+    const prostheticClin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: pProsthetic.patient_code });
+    same("   وقسمُ الأطراف: تشخيصٌ وجهةُ إصابةٍ ومواصفاتٌ فنية",
+      [
+        prostheticClin.data.patientFileClinicalFacts?.prosthetic?.diagnosisCondition,
+        prostheticClin.data.patientFileClinicalFacts?.prosthetic?.injurySide,
+        prostheticClin.data.patientFileClinicalFacts?.prosthetic?.prostheticType,
+        prostheticClin.data.patientFileClinicalFacts?.prosthetic?.footType,
+        prostheticClin.data.patientFileClinicalFacts?.prosthetic?.kneeJointType,
+      ],
+      ["بتر تحت الركبة يمين", "يمين", "طرف سفلي ذكي", "قدم كربون", "مفصل هيدروليكي"]);
+    check(!/total_cost|totalCost|كلفة|1500000/i.test(JSON.stringify(prostheticClin.data.patientFileClinicalFacts)),
+      "   **وبلا أي مبلغ في حقائق الملفّ**", JSON.stringify(prostheticClin.data.patientFileClinicalFacts));
+
+    //  ══ المسند الطبي: نوعُ المسند وجهةُ الإصابة، وبلا أقسامٍ لا يحملها ══
+    const pSupport = await mkPatient("مسند بحقائق ملفّ", 1, {
+      isAmputee: false, isSupport: true, supportType: "مسند ظهر", injurySide: "يسار",
+    });
+    const supportClin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: pSupport.patient_code });
+    same("   وقسمُ المساند: نوعُ المسند وجهةُ الإصابة",
+      [
+        supportClin.data.patientFileClinicalFacts?.medicalSupport?.supportType,
+        supportClin.data.patientFileClinicalFacts?.medicalSupport?.injurySide,
+      ],
+      ["مسند ظهر", "يسار"]);
+    same("   ولا قسمَ أطرافٍ ولا علاجٍ طبيعي لمريضٍ لا يحملهما",
+      [
+        supportClin.data.patientFileClinicalFacts?.prosthetic,
+        supportClin.data.patientFileClinicalFacts?.physiotherapy,
+      ],
+      [undefined, undefined]);
 
     // ══ ط. قائمة العمل ═══════════════════════════════════════════════
     console.log("\n── قائمة العمل ──");

@@ -45,6 +45,7 @@
     "test:ai-access": "tsx server/ai/access.test.ts",
     "test:ai-confidentiality": "tsx server/ai_chat_confidentiality.test.ts",
     "test:ai-ui": "tsx client/src/components/ai_assistant_access.test.ts",
+    "test:assistant-markdown": "tsx client/src/components/assistant_markdown.test.ts",
     "test:patient-code": "tsx shared/patient_code.test.ts",
     "test:migration-052": "tsx server/migration_052.test.ts",
     "test:patient-code-api": "tsx server/patient_code_api.test.ts",

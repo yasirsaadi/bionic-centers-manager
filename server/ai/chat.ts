@@ -40,7 +40,7 @@ import {
 import { executeTool, toolsFor } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
-import type { KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
+import { isLiveDataOnlyQuestion, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
 import { toolProvenanceLabels } from "./semantics";
 
 export interface ChatMessage {
@@ -207,6 +207,7 @@ const TOOL_TRUST_RULES = `قواعد الأدوات والمعرفة:
 - إن ردّت أداةٌ برفضٍ أو بخطأ، قل ذلك بإيجاز ولا تحاول الالتفاف عليها بأداةٍ أخرى.
 - أنت للقراءة فقط: لا تنشئ ولا تعدّل ولا تحذف ولا توافق على شيء. إن طُلب منك تنفيذ إجراء، دُلّ المستخدم على الشاشة التي تفعله.
 - **لا تحسب رقماً مالياً أو إحصائياً بنفسك أبداً.** أدواتُ التقارير (operational_summary، financial_summary) تُعيد أرقاماً محسوبةً جاهزة من الخادم — انقلها كما هي، ولا تجمع ولا تطرح ولا تقارن فترتين يدوياً ولو بدا الحساب بسيطاً.
+- **ومع compare: كلُّ مقياسِ مقارنةٍ يصل كائناً جاهزاً** currentValue وpreviousValue وdelta وpercentChange — **رحّل delta وpercentChange كما وصلا حرفياً، ولا تعد حسابهما من currentValue/previousValue بنفسك ولو للتحقّق.** وpercentChange قد تصل قيمةً فارغة (null، حين كانت القيمة السابقة صفراً فلا نسبةَ ذاتَ معنى) — قل ذلك صراحةً («لا نسبةَ مئوية — القيمة السابقة صفر») ولا تخترع رقماً بديلاً ولا تصفه بصفرٍ ولا بمئة بالمئة.
 - **المبيعات ليست إيراداً حتى تُقبض.** أداة financial_summary تُرجع salesValue (قيمةُ ما بِيع/التزم به المريض في الفترة، ولو لم يُقبض) وrevenue (النقدُ المقبوضُ فعلاً) حقلين منفصلين تماماً — لا تسمِّ salesValue «إيراداً»، ولا تجمعهما، ولا تفترض تطابقهما.`;
 
 const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدارة مراكز "بايونيك" الطبية في العراق.
@@ -227,6 +228,7 @@ const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدار
 الـ snapshot الذي تعمل عليه يُحدَّث كل دقائق، وهو محصور بالفرع الذي يطّلع عليه المستخدم.
 - ولديك أدوات قراءةٍ حيّة. **ونادِ منها ما يجيب السؤال المطروح لا كلَّ ما تملكه**:
   · سؤالٌ عن الحالة أو المرحلة أو الخبير أو الموعد (مثل «ما حالة WB-02119؟» أو «من الخبير المسؤول عنه؟») ⟶ patient_lookup **وحدها**.
+  · سؤالٌ عن التشخيص أو الحالة السريرية أو الإصابات أو الخطة العلاجية ⟶ patient_clinical_summary — بلّغ عن patientFileClinicalFacts وhasSignedExam معاً؛ «لا توجد معاينة موقّعة» ليست «لا يوجد تشخيص».
   · سؤالٌ عن المال (كم دفع، المتبقّي، الفواتير، الرصيد) ⟶ patient_finance، ومعها patient_lookup **فقط** إن لزمت الحالةُ للجواب.
   · سؤالٌ يجمع الاثنين («ما حالته وكم دفع») ⟶ الأداتان معاً.
   · سؤالٌ عن فترةٍ (المبيعات أو الإيراد الفعلي هذا الشهر، مقارنةٌ بالفترة السابقة) ⟶ financial_summary — بلا حسابٍ يدويّ منك، ومع التفريق بين salesValue وrevenue كما يصفهما وصفُ الأداة.
@@ -260,6 +262,7 @@ const GENERAL_SYSTEM_PROMPT = `أنت المساعد الداخلي لنظام �
 - لا تخترع أسماء مرضى ولا أرقام فواتير ولا أرقام أوامر.
 - **لديك أدوات قراءةٍ حيّة مصرَّح بها.** استعملها بدل التخمين، ولا تخترع بديلاً عنها.
 - إن ذكر المستخدم رمز مريض (WB-xxxxx) — ولو بلا سؤالٍ صريح — نادِ patient_lookup فوراً وأجب من نتيجتها. ولا تطلب منه أن يسمّي الأداة.
+- **سؤالٌ عن التشخيص أو الحالة السريرية أو الإصابات أو الخطة العلاجية** ⟶ نادِ patient_clinical_summary أيضاً — patient_lookup وحدها لا تحمل هذا التفصيل. وبلّغ عن patientFileClinicalFacts وhasSignedExam كما تصفهما الأداة: «لا توجد معاينة موقّعة» ليست «لا يوجد تشخيص»، فإن وُجد تشخيصٌ في الملفّ بلا معاينةٍ موقّعة اذكر الحقيقتين معاً بوضوح.
 - سمِّ المريض برمزه العلني دائماً. ولا تذكر أرقاماً داخلية إطلاقاً.
 - إن ردّت الأداة أن المريض غير موجود ضمن نطاقك فقل ذلك كما هو، ولا تخمّن ولا تلمّح إلى وجوده في مكانٍ آخر.
 - الأسئلة المالية (الوارد، المصاريف، الذمم، القاصة، الفواتير، كم دفع المريض) خارج صلاحيتك: اعتذر بلطف واذكر أنها متاحة لمن يملك صلاحية المحاسبة، بلا ذكر أي رقم. وأجب عمّا تستطيع من الشقّ التشغيلي.
@@ -302,6 +305,22 @@ function latestUserQuestion(history: ChatMessage[]): string {
     if (history[i].role === "user") return history[i].content;
   }
   return "";
+}
+
+/**
+ * المعرفةُ الموثوقة لهذه المحادثة — **ببوّابة نيّةٍ حتميّة قبل الاسترجاع**
+ * (مراجعةٌ إنتاجية). سؤالٌ عن بياناتٍ حيّة صرفة («ما حالة WB-02119؟»،
+ * طلبُ تقريرٍ ماليّ) لا يستدعي `retrieveKnowledge` أصلاً — لا مقالاتِ مسارِ
+ * عملٍ عامّة («تسجيل مريض جديد») في تزويد سؤالٍ عن سجلّ مريضٍ بعينه.
+ * والقرارُ **حتميٌّ من نصّ السؤال وحده** (`isLiveDataOnlyQuestion`،
+ * `shared/ai_knowledge_retrieval.ts`) — لا سؤالَ للنموذج. وسؤالٌ مسارُ عملٍ
+ * حقيقيّ، أو رسالةٌ مختلطة تذكر رمزاً مع «كيف»/«لماذا» ونحوهما، يمرّ
+ * بالاسترجاع كالمعتاد — لا إضعافَ لسؤالٍ إرشاديّ حقيقيّ.
+ */
+async function resolveKnowledge(access: AiAccessContext, history: ChatMessage[]): Promise<KnowledgeMatch[]> {
+  const question = latestUserQuestion(history);
+  if (isLiveDataOnlyQuestion(question)) return [];
+  return retrieveKnowledge(access, question);
 }
 
 /** أقصى عددٍ من جولات الأدوات. بعده يُجاب ممّا تجمّع، ولا حلقة لا تنتهي. */
@@ -435,7 +454,7 @@ export async function aiChat(
       if (!result.ok) return result;
       return { ok: true, value: { reply: result.value, snapshotAt: null, mode: "general" } };
     }
-    const knowledge = await retrieveKnowledge(access, latestUserQuestion(history));
+    const knowledge = await resolveKnowledge(access, history);
     const system = `${GENERAL_SYSTEM_PROMPT}${knowledgeBlock(knowledge)}`;
     const run = await runWithTools({ access, system, history, step });
     if (!run.ok) return run;
@@ -476,7 +495,7 @@ ${snapshotJson}
     };
   }
 
-  const knowledge = await retrieveKnowledge(access, latestUserQuestion(history));
+  const knowledge = await resolveKnowledge(access, history);
   const systemText = `${SYSTEM_PROMPT}
 
 البيانات المالية الحالية (snapshot):

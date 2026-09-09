@@ -363,6 +363,48 @@ async function main() {
 
     await setArticleActive({ id: kArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
 
+    // ══ ح.٧ — بوّابةُ النيّة: سؤالُ بياناتٍ حيّة لا يستدرج معرفةً مطابِقة
+    // فعلياً (مراجعةٌ إنتاجية) ══════════════════════════════════════════
+    //  نفسُ العنصر السابق يُستعمَل مرّتين — **لإثبات أن الغياب سببُه
+    //  البوّابة لا عدمُ التطابق**: أوّلاً بسؤال مسارِ عملٍ حقيقيّ يشارك
+    //  الكلمةَ المفتاحية نفسها («حالة») فتظهر المقالة، ثم بسؤالٍ عن مريضٍ
+    //  بعينه يشارك الكلمةَ نفسَها ومع ذلك **لا** تظهر — لأن البوّابة منعت
+    //  النداء قبل الترشيح أصلاً، لا لأن الترشيح لم يطابق.
+    console.log("\n── ح.٧ بوّابةُ النيّة — بياناتٌ حيّة لا تستدرج معرفةً ──");
+    const statusArticle = await createArticle({
+      title: `${MARK} — حالة الطلب وتتبّعها في النظام`,
+      body: `${MARK} — تمرّ حالة الطلب بعدّة مراحل من الاستلام إلى التسليم`,
+      scope: "general", branchId: null,
+      actor: { userId: ADMIN, name: "مسؤول" },
+    });
+    try {
+      //  ══ أوّلاً: سؤالُ مسارِ عملٍ يشارك «حالة» — يظهر (البوّابةُ مفتوحة) ══
+      runScript([{ text: "شرح تتبّع الحالة." }]);
+      const workflowStatus: any = await chat(access(S.recv), ask("ما هي خطوات تحديث حالة الطلب؟"));
+      check(seen[0].system.includes(statusArticle.body),
+        "ح.٧.١ (تجهيز) سؤالُ مسارِ عملٍ يشارك «حالة» ⟶ المقالةُ تصل نصَّ النظام فعلياً — إثباتُ تطابقٍ حقيقي");
+      check(workflowStatus.value.knowledge.some((k: any) => k.id === statusArticle.id),
+        "ح.٧.٢ وتظهر في knowledge أيضاً");
+
+      //  ══ ثانياً: نفسُ الكلمة، لكنّ السؤال عن مريضٍ بعينه ⟶ **لا تظهر** ══
+      resetFin();
+      runScript([
+        { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+        { text: `حالة ${p1.patient_code}: قيد المتابعة.` },
+      ]);
+      const liveStatus: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
+      same("ح.٧.٣ الطلبُ نجح والأداةُ الحيّة نُفِّذت", liveStatus.value.tools, { names: ["patient_lookup"], count: 1 });
+      check(!seen[0].system.includes(statusArticle.body),
+        "ح.٧.٤ **وبلا نصّ المقالة في نصّ النظام** — رغم أنها تطابق «حالة» فعلياً كما أُثبت في ح.٧.١",
+        seen[0].system.slice(-400));
+      same("ح.٧.٥ **وknowledge فارغةٌ صراحةً** — بياناتُ المريض الحيّة وحدها هي المصدر",
+        liveStatus.value.knowledge, []);
+      same("ح.٧.٦ وtoolsUsed يبقى المصدرَ الوحيد للتزويد",
+        liveStatus.value.toolsUsed, ["بيانات المريض الحية"]);
+    } finally {
+      await setArticleActive({ id: statusArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
+    }
+
     // ══ ط. الأدواتُ الجديدة تُعرَض بحسب الدور (D1/D2/D3) ═════════════════
     console.log("\n── الأدواتُ الجديدة بحسب الدور ──");
     runScript([{ text: "تمام." }]);
