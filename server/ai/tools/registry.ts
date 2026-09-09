@@ -25,11 +25,11 @@ import { db } from "../../db";
 import { storage } from "../../storage";
 import {
   patients, patientCases, patientDeviceEpisodes, prostheticWorkOrders,
-  medicalExams, visits, systemUsers, branches,
+  medicalExams, visits, systemUsers, branches, payments,
 } from "@shared/schema";
 import { resolvePatientByPublicCode } from "../../patient_code/store";
 import { normalizePatientCode } from "@shared/patient_code";
-import { parseInjuries, specsForSpecialty } from "@shared/case_fields";
+import { injuriesWithLegacyFallback, specsForSpecialty } from "@shared/case_fields";
 import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
@@ -350,7 +350,8 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
   const [p] = await db.select({
     isAmputee: patients.isAmputee, isMedicalSupport: patients.isMedicalSupport,
     isPhysiotherapy: patients.isPhysiotherapy,
-    diseaseType: patients.diseaseType, injuries: patients.injuries, treatmentType: patients.treatmentType,
+    diseaseType: patients.diseaseType,
+    injuries: patients.injuries, injuryType: patients.injuryType, injuryArea: patients.injuryArea,
     amputationSite: patients.amputationSite, injurySide: patients.injurySide,
     prostheticType: patients.prostheticType, siliconType: patients.siliconType,
     siliconSize: patients.siliconSize, suspensionSystem: patients.suspensionSystem,
@@ -366,6 +367,39 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
   const specValues = (caseType: "prosthetic" | "medical_support") =>
     Object.fromEntries(specsForSpecialty(caseType).map((spec) => [spec.key, patientRow[spec.key] ?? null]));
 
+  //  ══ أنواعُ العلاج — من الدفعات كما تعرضها الصفحة، لا `patients.treatmentType`
+  //  (مراجعةٌ إنتاجية ثانية) ═══════════════════════════════════════════════
+  //  `CaseDetailSections.tsx` يبني شارات «نوع العلاج» من دفعات المريض
+  //  (`paymentTreatmentType`، مفصولةً بفاصلة، مجموعةً بلا تكرار) — لا من
+  //  `patients.treatmentType` الذي كان يقرؤه هذا التابع، وهو عمودٌ راكد لا
+  //  يتبع آخر دفعة. **والاستعلامُ يقرأ العمودَ الوحيد المحتاج فقط — بلا
+  //  مبلغ ولا تاريخ ولا معرّف.**
+  //
+  //  **ومحجوبةٌ عمّن لا يملك `canViewPayments`** — تماماً كما تُخفي الصفحةُ
+  //  الحقيقية `patient.payments` كاملةً عن هذا المستخدم فتختفي شاراتُ نوع
+  //  العلاج معها بلا أي إشارةٍ إلى أنها موجودة (`server/routes.ts`، نقطة
+  //  تفاصيل المريض: «حذفُ الحقل لا تصفيره»). فالحقلُ هنا **يُحذَف من
+  //  الكائن لا يُصفَّر ولا يُعاد `null`** حين يغيب — نفسُ مبدأ تلك النقطة
+  //  بالحرف — كي لا يصير المساعدُ قناةً تكشف ما تُخفيه الصفحةُ نفسها عن
+  //  نفس المستخدم، ولا حتى بإشارةِ «هناك شيءٌ محجوب».
+  const canSeePayments = access.isAdmin || access.permissions?.canViewPayments === true;
+  let treatmentTypes: string[] = [];
+  if (p.isPhysiotherapy && canSeePayments) {
+    const paymentRows = await db.select({ paymentTreatmentType: payments.paymentTreatmentType })
+      .from(payments).where(eq(payments.patientId, hit.patientId))
+      //  ══ ترتيبٌ حتميّ — الأقدمُ أوّلاً، لا ترتيبَ السطور العشوائيّ ══
+      .orderBy(payments.id);
+    const set = new Set<string>();
+    for (const row of paymentRows) {
+      if (!row.paymentTreatmentType) continue;
+      for (const tt of row.paymentTreatmentType.split(",")) {
+        const x = tt.trim();
+        if (x) set.add(x);
+      }
+    }
+    treatmentTypes = Array.from(set);
+  }
+
   //  **بلا مبلغ ولا حقلٍ ماليّ في أيٍّ من الأقسام الثلاثة** — كلُّ حقلٍ هنا
   //  سريريٌّ أو فنيٌّ صرف، مطابقٌ لِما يعرضه `CaseDetailSections.tsx` بلا
   //  الأعمدة المالية.
@@ -373,8 +407,11 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
     ...(p.isPhysiotherapy ? {
       physiotherapy: {
         diagnosisCondition: p.diseaseType ?? null,
-        injuries: parseInjuries(p.injuries),
-        treatmentType: p.treatmentType ?? null,
+        //  الفعليّة أوّلاً، فالأعمدة القديمة (مرضى ما قبل الوصفة المهيكَلة)
+        //  — نفسُ سلوك الصفحة الحقيقية بالحرف. بلا اختراع جهةِ إصابة.
+        injuries: injuriesWithLegacyFallback(p.injuries, p.injuryType, p.injuryArea),
+        //  ══ محجوبةٌ لا مصفَّرة حين لا يملك المستخدم `canViewPayments` ══
+        ...(canSeePayments ? { treatmentTypes } : {}),
       },
     } : {}),
     ...(p.isAmputee ? {

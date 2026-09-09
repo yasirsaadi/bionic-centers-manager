@@ -283,6 +283,31 @@ export function parseInjuries(raw: unknown): InjuryEntry[] {
   }
 }
 
+/**
+ * Injuries exactly as the real patient-file page displays them
+ * (`CaseDetailSections.tsx`): the JSON array first (`parseInjuries`); when
+ * that produces no entries, fall back to splitting the legacy
+ * `injuryType`/`injuryArea` columns on the Arabic/Latin comma — the same
+ * split the page itself uses, pairing them up by position. Side is never
+ * invented for the legacy fallback: those two columns never carried it, so
+ * every entry built here gets `side: ""` exactly like the page does.
+ */
+export function injuriesWithLegacyFallback(
+  injuriesJson: unknown, legacyInjuryType: unknown, legacyInjuryArea: unknown,
+): InjuryEntry[] {
+  const fromJson = parseInjuries(injuriesJson);
+  if (fromJson.length > 0) return fromJson;
+  const typeStr = typeof legacyInjuryType === "string" ? legacyInjuryType : "";
+  const areaStr = typeof legacyInjuryArea === "string" ? legacyInjuryArea : "";
+  if (!typeStr && !areaStr) return [];
+  const types = typeStr.split(/، |, /).filter(Boolean);
+  const areas = areaStr.split(/، |, /).filter(Boolean);
+  const maxLen = Math.max(types.length, areas.length, 1);
+  const out: InjuryEntry[] = [];
+  for (let i = 0; i < maxLen; i++) out.push({ type: types[i] || "", area: areas[i] || "", side: "" });
+  return out;
+}
+
 /** تشخيص الحالة / نوع المرض — free text, as on the registration form. */
 export const DISEASE_TYPE_LABEL = "تشخيص الحالة / نوع المرض";
 export const DISEASE_TYPE_PLACEHOLDER = "مثال: شلل نصفي، إصابة عمود فقري...";

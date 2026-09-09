@@ -116,20 +116,26 @@ async function mkPatient(name: string, branchId: number, opts: any = {}) {
   created.patients++;
   //  ══ حقولٌ سريريةٌ اختيارية — لاختبار «حقائق ملفّ المريض» (قسم ي) ══════
   //  اختياريّةٌ وبلا أثرٍ على أيّ استدعاءٍ قائم: تُترَك NULL كما تولد ما لم
-  //  يمرّرها المُنشئ صراحةً.
+  //  يمرّرها المُنشئ صراحةً. **و`injuryType`/`injuryArea`** — الأعمدةُ
+  //  القديمة (تصحيحٌ إنتاجيّ ثانٍ، fallback الإصابات الموروثة).
   if (opts.diseaseType != null || opts.injuries != null || opts.amputationSite != null
-    || opts.injurySide != null || opts.supportType != null) {
+    || opts.injurySide != null || opts.supportType != null
+    || opts.injuryType != null || opts.injuryArea != null) {
     await q(
-      `UPDATE patients SET disease_type=$2, injuries=$3, amputation_site=$4, injury_side=$5, support_type=$6
+      `UPDATE patients SET disease_type=$2, injuries=$3, amputation_site=$4, injury_side=$5, support_type=$6,
+         injury_type=$7, injury_area=$8
        WHERE id=$1`,
       [r[0].id, opts.diseaseType ?? null, opts.injuries ?? null, opts.amputationSite ?? null,
-        opts.injurySide ?? null, opts.supportType ?? null]);
+        opts.injurySide ?? null, opts.supportType ?? null, opts.injuryType ?? null, opts.injuryArea ?? null]);
   }
   return r[0];
 }
-async function mkPayment(patientId: number, branchId: number, amount: number) {
-  await q(`INSERT INTO payments (patient_id, branch_id, amount, notes) VALUES ($1,$2,$3,'دفعة')`,
-    [patientId, branchId, amount]);
+/** `treatmentType?` — لاختبار أنواع العلاج المشتقّة من الدفعات (تصحيحٌ إنتاجيّ ثانٍ). */
+async function mkPayment(patientId: number, branchId: number, amount: number, treatmentType?: string) {
+  await q(
+    `INSERT INTO payments (patient_id, branch_id, amount, notes, payment_treatment_type)
+     VALUES ($1,$2,$3,'دفعة',$4)`,
+    [patientId, branchId, amount, treatmentType ?? null]);
   created.payments++;
 }
 async function mkAlias(code: string, patientId: number) {
@@ -382,8 +388,13 @@ async function main() {
     same("ي. الخلاصةُ تصل حتى بلا معاينةٍ موقّعة", physioClin.ok, true);
     same("   والتشخيصُ من ملفّ المريض يصل صراحةً — لا «لا يوجد»",
       physioClin.data.patientFileClinicalFacts?.physiotherapy?.diagnosisCondition, "شلل نصفي");
-    same("   ونوعُ العلاج المسجَّل يصل معه",
-      physioClin.data.patientFileClinicalFacts?.physiotherapy?.treatmentType, "روبوت (10 جلسات)");
+    //  ══ `treatmentType` المفرد (من `patients.treatmentType` الراكد) لم يعد
+    //  يُكتب أصلاً — استُبدل بـ`treatmentTypes` المشتقّ من الدفعات (تصحيحٌ
+    //  إنتاجيّ ثانٍ، القسم أدناه). ومريضٌ بلا دفعاتٍ أصلاً، وجلسةُ الطبيب
+    //  هنا بلا `canViewPayments` — فالمفتاحُ **غائبٌ** لا فارغاً ولا `null`.
+    check(!("treatmentTypes" in (physioClin.data.patientFileClinicalFacts as any).physiotherapy),
+      "   ولا `treatmentTypes` لجلسةٍ بلا `canViewPayments` أصلاً (محجوبٌ لا مصفَّر)",
+      JSON.stringify(physioClin.data.patientFileClinicalFacts));
     same("   والإصاباتُ المسجَّلة تُقرأ من JSON الملفّ",
       physioClin.data.patientFileClinicalFacts?.physiotherapy?.injuries,
       [{ type: "شلل دماغ", area: "الرأس", side: "كلاهما" }]);
@@ -445,6 +456,81 @@ async function main() {
         supportClin.data.patientFileClinicalFacts?.physiotherapy,
       ],
       [undefined, undefined]);
+
+    // ══ ي.٢ الإصاباتُ — fallback الأعمدة القديمة (تصحيحٌ إنتاجيّ ثانٍ) ═══
+    //  مريضٌ من قبل الوصفة المُهيكَلة: `injuries` فارغة، والإصاباتُ محفوظةٌ
+    //  فقط في `injury_type`/`injury_area` القديمين — تماماً كما يعرضها
+    //  `CaseDetailSections.tsx` (المصدرُ الحيّ أوّلاً، فالقديمُ عند غيابه).
+    console.log("\n── إصاباتٌ قديمة (fallback) ──");
+    const pLegacyInjuries = await mkPatient("علاج طبيعي بإصاباتٍ قديمة", 1, {
+      isAmputee: false, isPhysio: true,
+      diseaseType: "شلل نصفي",
+      injuries: null, // بلا JSON إطلاقاً
+      injuryType: "قطع اوتار، كسر", injuryArea: "اليد، الساق",
+    });
+    const legacyClin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: pLegacyInjuries.patient_code });
+    same("ي.٢ الإصاباتُ القديمة تُقرأ من العمودين حين تغيب JSON — بنفس تركيب الصفحة الحقيقية",
+      legacyClin.data.patientFileClinicalFacts?.physiotherapy?.injuries,
+      [{ type: "قطع اوتار", area: "اليد", side: "" }, { type: "كسر", area: "الساق", side: "" }]);
+    check(!/يمين|يسار|كلاهما/.test(
+      JSON.stringify(legacyClin.data.patientFileClinicalFacts?.physiotherapy?.injuries)),
+      "   **ولا جهةَ إصابةٍ مخترَعة** — الأعمدةُ القديمة لم تحملها أصلاً",
+      JSON.stringify(legacyClin.data.patientFileClinicalFacts?.physiotherapy?.injuries));
+
+    //  ومريضٌ يحمل JSON فعليّاً وأعمدةً قديمةً معاً ⟶ JSON يتصدّر (لا اثنان معاً).
+    const pJsonWins = await mkPatient("علاج طبيعي بإصابتين معاً", 1, {
+      isAmputee: false, isPhysio: true,
+      injuries: JSON.stringify([{ type: "حروق", area: "الصدر", side: "كلاهما" }]),
+      injuryType: "قطع اوتار", injuryArea: "اليد",
+    });
+    const jsonWinsClin: any = await executeTool(
+      access(sess.doctor), "patient_clinical_summary", { patientCode: pJsonWins.patient_code });
+    same("   وحين يوجد JSON فعليّاً فهو المصدرُ — لا اثنان معاً ولا العمودان القديمان",
+      jsonWinsClin.data.patientFileClinicalFacts?.physiotherapy?.injuries,
+      [{ type: "حروق", area: "الصدر", side: "كلاهما" }]);
+
+    // ══ ي.٣ أنواعُ العلاج — من الدفعات لا `patients.treatmentType` (تصحيحٌ
+    //  إنتاجيّ ثانٍ) ═══════════════════════════════════════════════════
+    //  `patients.treatmentType` يحمل قيمةً **راكدة/خاطئة عمداً** هنا لإثبات
+    //  أنها تُتجاهَل تماماً؛ ودفعتان بأنواعٍ مختلفة (إحداهما تحمل نوعين
+    //  مفصولين بفاصلة في نفس الحقل) هما مصدرُ الحقيقة — نفسُ ما يبنيه
+    //  `CaseDetailSections.tsx` من `patient.payments` بالحرف.
+    console.log("\n── أنواعُ العلاج من الدفعات ──");
+    const pPayTreat = await mkPatient("علاج طبيعي بدفعات", 1, {
+      isAmputee: false, isPhysio: true, treatmentType: "قيمةٌ راكدةٌ من ملفٍّ قديم",
+    });
+    await mkPayment(pPayTreat.id, 1, 150_000, "روبوت");
+    await mkPayment(pPayTreat.id, 1, 733733, "أبر صينية, تحفيز");
+    //  دفعةٌ بلا نوعٍ إطلاقاً — تُتجاهَل بصمت، لا `""` في المجموعة.
+    await mkPayment(pPayTreat.id, 1, 25_000);
+
+    const payTreatAdmin: any = await executeTool(
+      access(sess.admin), "patient_clinical_summary", { patientCode: pPayTreat.patient_code });
+    same("ي.٣ أنواعُ العلاج من الدفعات — لا من `patients.treatmentType` الراكد",
+      payTreatAdmin.data.patientFileClinicalFacts?.physiotherapy?.treatmentTypes,
+      ["روبوت", "أبر صينية", "تحفيز"]);
+    check(!JSON.stringify(payTreatAdmin.data.patientFileClinicalFacts)
+      .includes("قيمةٌ راكدةٌ من ملفٍّ قديم"),
+      "   **والقيمةُ الراكدةُ في `patients.treatmentType` لا تصل إطلاقاً**",
+      JSON.stringify(payTreatAdmin.data.patientFileClinicalFacts));
+
+    //  ══ ي.٤ بلا أيّ مبلغ — لا مبلغَ الدفعة ٧٣٣٧٣٣ ولا غيره ══════════════
+    check(!/733733|150000|25000|amount|مبلغ/i.test(JSON.stringify(payTreatAdmin.data)),
+      "ي.٤ **وبلا أيّ مبلغٍ في الخلاصة كلّها** — لا قيمةَ الدفعات ولا كلمة «مبلغ»",
+      JSON.stringify(payTreatAdmin.data));
+
+    //  ══ ي.٥ محجوبةٌ عمّن لا يملك `canViewPayments` — الحقلُ نفسُه، لا
+    //  فارغاً ولا `null`، بل **غائب** (نفسُ ما تفعله الصفحةُ الحقيقية حين
+    //  يغيب `patient.payments` كاملاً عن هذا المستخدم) ══════════════════
+    const payTreatRecv: any = await executeTool(
+      access(sess.recv1), "patient_clinical_summary", { patientCode: pPayTreat.patient_code });
+    check(!("treatmentTypes" in (payTreatRecv.data.patientFileClinicalFacts as any).physiotherapy),
+      "ي.٥ **بلا `canViewPayments` ⟶ `treatmentTypes` غائبةٌ تماماً من الكائن**",
+      JSON.stringify(payTreatRecv.data.patientFileClinicalFacts));
+    same("   وبقيّةُ حقائق الملفّ (خارج نطاق `canViewPayments`) تبقى كما هي",
+      payTreatRecv.data.patientFileClinicalFacts?.physiotherapy?.diagnosisCondition,
+      payTreatAdmin.data.patientFileClinicalFacts?.physiotherapy?.diagnosisCondition);
 
     // ══ ط. قائمة العمل ═══════════════════════════════════════════════
     console.log("\n── قائمة العمل ──");
