@@ -80,6 +80,20 @@ export interface OperationalBranchBreakdown {
   visits: number;
 }
 
+/**
+ * مقارنةُ الفترة السابقة — **مقاييسُ الفترة الثلاثة فقط**. لا
+ * `awaitingExamNow`/`manufacturingNow`/`activePhysiotherapyPatientsNow` هنا:
+ * تلك حالةٌ الآن، وإدراجُها في مقارنةٍ تاريخية يوهم بأنها كانت كذلك في
+ * الفترة السابقة — وهي لم تُقَس أصلاً في أيّ فترةٍ ماضية.
+ */
+export interface OperationalPeriodComparison {
+  start: string;
+  end: string;
+  newPatients: number;
+  visits: number;
+  physiotherapySessions: number;
+}
+
 export interface OperationalSummaryResult {
   start: string;
   end: string;
@@ -88,7 +102,11 @@ export interface OperationalSummaryResult {
   physiotherapySessions: number;
   awaitingExamNow: number;
   manufacturingNow: { activeBuilds: number; activeMaintenance: number; readyForFitting: number };
+  /** مرضى العلاج الطبيعي ذوو الحالة النشطة **الآن** — ليست مقياسَ فترة. */
+  activePhysiotherapyPatientsNow: number;
   byBranch: OperationalBranchBreakdown[] | null;
+  /** الفترةُ السابقة بنفس الطول — فقط حين طُلبت (`compare: true`). */
+  comparison: OperationalPeriodComparison | null;
 }
 
 function branchScopeSql(col: string, scope: number[] | null) {
@@ -120,19 +138,13 @@ function baghdadRangeBounds(start: string, end: string): { startTs: Date; endExc
   };
 }
 
-export async function getOperationalSummary(params: {
-  operationalBranches: number[] | null;
-  isAdmin: boolean;
-  requestedBranchId: number | null;
-  start: string;
-  end: string;
-}): Promise<OperationalSummaryResult> {
-  const scope = effectiveScope(params);
-  const { start, end } = params;
-  //  ══ حدَّا بغداد — **لا `::date` خامة بعد اليوم** على هذين العمودين ══
-  const { startTs, endExclusiveTs } = baghdadRangeBounds(start, end);
-
-  const [newPatientsR, visitsR, physioR, awaitingExamRows, manufacturingR] = await Promise.all([
+/** مقاييسُ الفترة الثلاثة (مرضى جدد، زيارات، جلسات علاج طبيعي) لمدىً واحد —
+ *  دالّةٌ واحدة تُنادى للفترة الحالية، **وثانيةً للسابقة حين تُطلَب
+ *  المقارنة** — لا نسخةَ SQL ثانية تنحرف عنها. */
+async function countPeriodMetrics(
+  scope: number[] | null, startTs: Date, endExclusiveTs: Date,
+): Promise<{ newPatients: number; visits: number; physiotherapySessions: number }> {
+  const [newPatientsR, visitsR, physioR] = await Promise.all([
     db.execute(sql`
       SELECT COUNT(*)::int AS n FROM patients
        WHERE deleted_at IS NULL AND ${branchScopeSql("branch_id", scope)}
@@ -161,6 +173,30 @@ export async function getOperationalSummary(params: {
          AND COALESCE(v.notes, '') NOT LIKE 'خدمة جديدة:%'
          AND v.treatment_type IS DISTINCT FROM 'استشارة طبية'
     `),
+  ]);
+  return {
+    newPatients: Number((newPatientsR.rows ?? [])[0]?.n ?? 0),
+    visits: Number((visitsR.rows ?? [])[0]?.n ?? 0),
+    physiotherapySessions: Number((physioR.rows ?? [])[0]?.n ?? 0),
+  };
+}
+
+export async function getOperationalSummary(params: {
+  operationalBranches: number[] | null;
+  isAdmin: boolean;
+  requestedBranchId: number | null;
+  start: string;
+  end: string;
+  /** قارن مقاييسَ الفترة الثلاثة بالفترة السابقة بنفس الطول. */
+  compare: boolean;
+}): Promise<OperationalSummaryResult> {
+  const scope = effectiveScope(params);
+  const { start, end } = params;
+  //  ══ حدَّا بغداد — **لا `::date` خامة بعد اليوم** على هذين العمودين ══
+  const { startTs, endExclusiveTs } = baghdadRangeBounds(start, end);
+
+  const [current, awaitingExamRows, manufacturingR, physioActiveR] = await Promise.all([
+    countPeriodMetrics(scope, startTs, endExclusiveTs),
     //  ══ طابورٌ حيّ لا فترةٌ زمنية ══ — «الآن» لا «خلال المدى المطلوب».
     medical.getPendingExams(scope),
     db.execute(sql`
@@ -170,6 +206,18 @@ export async function getOperationalSummary(params: {
         COUNT(*) FILTER (WHERE current_stage = 'ready_for_fitting')::int AS ready_for_fitting
       FROM prosthetic_work_orders
       WHERE status NOT IN ('completed','cancelled') AND ${branchScopeSql("branch_id", scope)}
+    `),
+    //  ══ مرضى علاجٍ طبيعيّ نشطون **الآن** — نفسُ حقيقة `my_worklist` بالحرف
+    //  (`patients.is_physiotherapy = TRUE` + `patient_cases` بنوعٍ physiotherapy
+    //  وحالةٍ active + غيرُ محذوف) — لا تعريفٌ ثانٍ. حالةٌ الآن لا مقياسَ
+    //  فترة، فلا تدخل حساب المقارنة أدناه بحال.
+    db.execute(sql`
+      SELECT COUNT(*)::int AS n
+        FROM patients p
+        JOIN patient_cases pc ON pc.patient_id = p.id
+         AND pc.case_type = 'physiotherapy' AND pc.status = 'active'
+       WHERE p.deleted_at IS NULL AND p.is_physiotherapy = TRUE
+         AND ${branchScopeSql("p.branch_id", scope)}
     `),
   ]);
 
@@ -182,6 +230,10 @@ export async function getOperationalSummary(params: {
          WHERE deleted_at IS NULL AND created_at >= ${startTs} AND created_at < ${endExclusiveTs}
          GROUP BY branch_id
       `),
+      //  ══ `deleted_at IS NULL` — **مطابقةً للعدّ الرئيسيّ أعلاه بالحرف**.
+      //  زيارةٌ محذوفةٌ ناعماً (ترحيل ٠١١) لا تُحتسَب هنا كما لا تُحتسَب في
+      //  `visits`/`countPeriodMetrics` — عدّادٌ واحد لا عدّادان ينحرفان.
+      //  مُثبَتٌ حيّاً بزيارةٍ محذوفة في `test:ai-tools-reports`.
       db.execute(sql`
         SELECT branch_id, COUNT(*)::int AS n FROM visits
          WHERE deleted_at IS NULL AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
@@ -196,19 +248,27 @@ export async function getOperationalSummary(params: {
     }));
   }
 
+  let comparison: OperationalPeriodComparison | null = null;
+  if (params.compare) {
+    const prev = previousPeriod(start, end);
+    const prevBounds = baghdadRangeBounds(prev.start, prev.end);
+    const prevMetrics = await countPeriodMetrics(scope, prevBounds.startTs, prevBounds.endExclusiveTs);
+    comparison = { start: prev.start, end: prev.end, ...prevMetrics };
+  }
+
   const mfg = (manufacturingR.rows ?? [])[0] as any;
   return {
     start, end,
-    newPatients: Number((newPatientsR.rows ?? [])[0]?.n ?? 0),
-    visits: Number((visitsR.rows ?? [])[0]?.n ?? 0),
-    physiotherapySessions: Number((physioR.rows ?? [])[0]?.n ?? 0),
+    ...current,
     awaitingExamNow: awaitingExamRows.length,
     manufacturingNow: {
       activeBuilds: Number(mfg?.active_builds ?? 0),
       activeMaintenance: Number(mfg?.active_maintenance ?? 0),
       readyForFitting: Number(mfg?.ready_for_fitting ?? 0),
     },
+    activePhysiotherapyPatientsNow: Number((physioActiveR.rows ?? [])[0]?.n ?? 0),
     byBranch,
+    comparison,
   };
 }
 

@@ -191,6 +191,15 @@ async function main() {
     check(typeof opsData.manufacturingNow.activeBuilds === "number", "ب.٥ manufacturingNow.activeBuilds رقمٌ حاضر");
     check(opsData.byBranch === null, "ب.٦ **بلا تفصيلٍ بالفرع لغير المسؤول**");
     check(opsData.physiotherapySessions >= 1, "ب.٧ جلسةُ العلاج الطبيعي المُدرَجة مُحتسَبة", `n=${opsData.physiotherapySessions}`);
+    //  ══ ب.٧ب — activePhysiotherapyPatientsNow (المهمّة الأصلية، أُكمِلت الآن) ══
+    //  **حالةٌ الآن لا مقياسَ فترة**: P5_PHYSIO يحمل `patient_cases` بنوع
+    //  physiotherapy وحالة active — نفسُ حقيقة `my_worklist` بالحرف
+    //  (`shared` بين الأداتين لا حسابٌ ثانٍ). ويبقى حاضراً بصرف النظر عن
+    //  startDate/endDate المطلوبتين — لذلك لا يظهر في `comparison` أدناه.
+    check(typeof opsData.activePhysiotherapyPatientsNow === "number"
+      && opsData.activePhysiotherapyPatientsNow >= 1,
+      "ب.٧ب **activePhysiotherapyPatientsNow** يحتسب مريض العلاج الطبيعي النشط",
+      `n=${opsData.activePhysiotherapyPatientsNow}`);
 
     //  ══ فرعٌ من الطلب لا يُعتمَد لغير المسؤول — ولو ملك canViewReports ══
     const opsIgnoredBranch = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: TODAY, branchId: B2 });
@@ -249,6 +258,104 @@ async function main() {
       await q(`DELETE FROM patients WHERE id = $1`, [PBOUNDARY]);
     }
 
+    //  ══ ب.١٥ — compare: مقاييسُ الفترة فقط، بفترتها الخاصّة ═════════════
+    //  المهمّة الأصلية تطلب مقارنةً بالفترة السابقة بنفس الطول لـ
+    //  newPatients/visits/physiotherapySessions **فقط** — لا حالة الآن.
+    console.log("\n── ب.١٥ compare (الفترة السابقة) ──");
+    const prevDayDate = new Date(`${TODAY}T00:00:00Z`);
+    prevDayDate.setUTCDate(prevDayDate.getUTCDate() - 1);
+    const PREV_DAY = prevDayDate.toISOString().slice(0, 10);
+    const P6_PREV = 89407;
+    //  ٠٩:٠٠ UTC = ١٢:٠٠ بغداد — منتصفَ اليوم السابق بكلا التقويمين، فلا
+    //  التباسَ حدوديّاً كالذي يثبته ب.١٤ عمداً.
+    await q(`
+      INSERT INTO patients
+        (id, patient_code, name, phone, branch_id, is_amputee, is_physiotherapy, total_cost,
+         referral_source, age, medical_condition, created_at, deleted_at)
+      VALUES ($1, $2, '${MARK} فترة سابقة', '07701110007', $3, false, false, 0, '${MARK}', '30', '${MARK}',
+        '${PREV_DAY} 09:00:00'::timestamp, NULL)
+    `, [P6_PREV, patientCode(7), B1]);
+    try {
+      const opsNoCompare = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: TODAY });
+      check((opsNoCompare.data as any).comparison === null,
+        "ب.١٥.١ بلا compare ⟶ comparison تبقى null (كالسلوك الافتراضي دائماً)");
+
+      const opsCompare = await executeTool(scopedRecepReports, "operational_summary",
+        { startDate: TODAY, endDate: TODAY, compare: true });
+      const cmp = (opsCompare.data as any).comparison;
+      check(cmp !== null, "ب.١٥.٢ compare:true ⟶ comparison غيرُ فارغة");
+      same("ب.١٥.٣ **الفترةُ السابقة بنفس الطول بالضبط** — يومٌ واحدٌ سابقٌ ليومٍ واحد",
+        [cmp?.start, cmp?.end], [PREV_DAY, PREV_DAY]);
+      check(cmp?.newPatients >= 1, "ب.١٥.٤ ومريضُ الفترة السابقة مُحتسَبٌ فيها", `newPatients=${cmp?.newPatients}`);
+      //  ══ **ولا مقياسَ «آن» واحداً يتسلّل إلى المقارنة** — الأثبتُ هنا: ══
+      //  مقارنةُ فترةٍ تاريخية بحالةٍ حاضرة تُنتج رقماً لا معنى له (كأنّ
+      //  الطابورَ أو التصنيعَ «كانا كذلك» في الأمس، وهما لم يُقاسا هناك أصلاً).
+      check(!("awaitingExamNow" in (cmp ?? {}))
+        && !("manufacturingNow" in (cmp ?? {}))
+        && !("activePhysiotherapyPatientsNow" in (cmp ?? {})),
+        "ب.١٥.٥ **بلا awaitingExamNow/manufacturingNow/activePhysiotherapyPatientsNow في comparison** — تلك حالةٌ الآن لا فترة",
+        JSON.stringify(cmp));
+      same("ب.١٥.٦ ومقاييسُ الفترة الحاضرة نفسُها لم تتحرّك بسبب compare — مطابقةٌ لنداءٍ بلا compare",
+        [(opsCompare.data as any).newPatients, (opsCompare.data as any).visits, (opsCompare.data as any).physiotherapySessions],
+        [opsData.newPatients, opsData.visits, opsData.physiotherapySessions]);
+    } finally {
+      await q(`DELETE FROM patients WHERE id = $1`, [P6_PREV]);
+    }
+
+    //  ══ ب.١٦ — زيارةٌ محذوفةٌ ناعماً لا تُحتسَب في تفصيل الفرع (byBranch) ══
+    //  «العدُّ الرئيسيّ يستبعد المحذوف؛ تفصيلُ byBranch للمسؤول يجب أن يطابقه
+    //  بالحرف» — نفسُ الاستبعاد الذي يفرضه `deleted_at IS NULL` على العدّ
+    //  الرئيسيّ (سطرٌ ١٤١ في `reports.ts`) يجب أن يفرضه أيضاً على تجميع
+    //  الفرع (سطرٌ ١٨٦-١٨٩). **مُتحقَّقٌ حيّاً هنا لا مُفترَض**: قراءةٌ فُحص
+    //  الكودُ قبلها ووُجد فيه `deleted_at IS NULL` بالفعل — هذا الاختبارُ
+    //  يقفلها ثابتةً بدل تركها ادّعاءً غيرَ مُختبَر.
+    console.log("\n── ب.١٦ زيارةٌ محذوفة لا تُحتسَب في byBranch ──");
+    const beforeDel = await executeTool(adminAccess, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    const b1VisitsBefore = ((beforeDel.data as any).byBranch as any[]).find((b) => b.branchId === B1)?.visits ?? 0;
+    const [delVisitRow] = (await q(`
+      INSERT INTO visits (patient_id, branch_id, treatment_type, visit_date, cost, deleted_at)
+      VALUES ($1, $2, '${MARK} محذوفة', NOW(), 0, NOW()) RETURNING id
+    `, [P1, B1])).rows;
+    const afterDel = await executeTool(adminAccess, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    const b1VisitsAfter = ((afterDel.data as any).byBranch as any[]).find((b) => b.branchId === B1)?.visits ?? 0;
+    same("ب.١٦.١ **زيارةٌ محذوفةٌ ناعماً لا تُضيف إلى تفصيل الفرع (byBranch)** — مطابقةً للعدّ الرئيسيّ",
+      b1VisitsAfter, b1VisitsBefore);
+    //  والعدُّ الرئيسيّ (لا byBranch) على نفس الجلسة يبقى غيرَ متأثّرٍ أيضاً —
+    //  إثباتُ أن كِلا العدّادين يتّفقان لا أحدُهما فقط.
+    const mainAfterDel = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    same("ب.١٦.٢ والعدُّ الرئيسيّ (visits) لنفس الفرع أيضاً لم يتغيّر",
+      (mainAfterDel.data as any).visits, opsData.visits);
+    await q(`DELETE FROM visits WHERE id = $1`, [delVisitRow.id]);
+
+    //  ══ ب.١٧ — branchId فاشلٌ مغلَقاً للمسؤول: لا تحوّلَ صامتاً لكلّ الفروع ══
+    console.log("\n── ب.١٧ branchId فاشلٌ مغلَقاً (المسؤول) ──");
+    const badAdminBranchIds: Array<{ v: unknown; label: string }> = [
+      { v: "abc", label: "نصٌّ غيرُ رقميّ" },
+      { v: 0, label: "صفر" },
+      { v: -3, label: "سالب" },
+      { v: 2.5, label: "كسريّ" },
+      { v: 999999, label: "فرعٌ غيرُ موجود" },
+      { v: true, label: "بوليان (لا يُقبَل رقماً)" },
+      { v: [B1], label: "مصفوفة" },
+      { v: {}, label: "كائن" },
+    ];
+    for (const { v, label } of badAdminBranchIds) {
+      const r = await executeTool(adminAccess, "operational_summary", { startDate: TODAY, endDate: TODAY, branchId: v });
+      check(r.ok === false, `ب.١٧ branchId=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح لا كلّ الفروع صامتاً`,
+        JSON.stringify(r));
+    }
+    //  والغيابُ الصريح يبقى صحيحاً بعد كلّ هذه المحاولات — لا أثرَ جانبيّ.
+    const opsAdminAgain = await executeTool(adminAccess, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    check(Array.isArray((opsAdminAgain.data as any).byBranch),
+      "ب.١٧ب وغيابُ branchId يبقى «كلّ الفروع» بلا أثرٍ من المحاولات الفاشلة أعلاه");
+    //  ══ وغيرُ المسؤول: **لا يُفحَص أصلاً** — يُتجاهَل كأيّ قيمةٍ أخرى، ولا
+    //  يُرَدّ بخطإٍ بسبب شكله (السلطةُ من الجلسة فقط، فالتحقّقُ لا يخصّه).
+    const nonAdminBadBranch = await executeTool(scopedRecepReports, "operational_summary",
+      { startDate: TODAY, endDate: TODAY, branchId: "abc" });
+    check(nonAdminBadBranch.ok === true,
+      "ب.١٧ج **وغيرُ المسؤول بـbranchId مشوَّه لا يُرفَض** — يُتجاهَل بصمت لأنه ليس سلطةً أصلاً",
+      JSON.stringify(nonAdminBadBranch));
+
     // ══ ج. financial_summary ══════════════════════════════════════════════
     console.log("\n── ج. financial_summary ──");
     const financeAccess = resolveAiAccess({
@@ -295,6 +402,36 @@ async function main() {
 
     const finTooLong = await executeTool(financeAccess, "financial_summary", { startDate: "2020-01-01", endDate: "2025-01-01" });
     check(finTooLong.ok === false, "ج.١٢ مدىً أطول من سنة يُرفَض صراحةً");
+
+    //  ══ ج.١٣ — branchId فاشلٌ مغلَقاً للمسؤول (نفسُ حارس operational_summary) ══
+    console.log("\n── ج.١٣ branchId فاشلٌ مغلَقاً (المسؤول، ماليّ) ──");
+    const financeAdminAccess = resolveAiAccess({
+      session: { userId: ADMIN, role: "admin", isAdmin: true, permissions: {} },
+    });
+    check(financeAdminAccess.mode === "financial" && financeAdminAccess.isAdmin,
+      "ج.١٣.٠ (تجهيز) جلسةُ مسؤولٍ ماليّة فعلاً — بلا هذا الشرط تصبح الاختباراتُ التالية بلا معنى");
+    const badFinBranchIds: Array<{ v: unknown; label: string }> = [
+      { v: "abc", label: "نصٌّ غيرُ رقميّ" }, { v: 0, label: "صفر" },
+      { v: -1, label: "سالب" }, { v: 1.5, label: "كسريّ" },
+      { v: 999999, label: "فرعٌ غيرُ موجود" }, { v: false, label: "بوليان" },
+    ];
+    for (const { v, label } of badFinBranchIds) {
+      const r = await executeTool(financeAdminAccess, "financial_summary", { startDate: TODAY, endDate: TODAY, branchId: v });
+      check(r.ok === false, `ج.١٣ branchId=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح لا كلّ الفروع صامتاً`,
+        JSON.stringify(r));
+    }
+    const finAdminValidBranch = await executeTool(financeAdminAccess, "financial_summary",
+      { startDate: TODAY, endDate: TODAY, branchId: B1 });
+    check(finAdminValidBranch.ok === true, "ج.١٣ب وbranchId صحيحٌ وموجودٌ يبقى يعمل بعد كلّ الرفض أعلاه");
+    const finAdminAbsent = await executeTool(financeAdminAccess, "financial_summary", { startDate: TODAY, endDate: TODAY });
+    check(Array.isArray(finAdminAbsent.data.byBranch), "ج.١٣ج وغيابُ branchId يبقى «كلّ الفروع» — تفصيلٌ بكلّ فرع");
+
+    //  ══ ج.١٤ — غيرُ المسؤول: branchId مشوَّه يُتجاهَل بصمت (لا يُفحَص أصلاً) ══
+    const nonAdminBadFinBranch = await executeTool(financeAccess, "financial_summary",
+      { startDate: TODAY, endDate: TODAY, branchId: "abc" });
+    check(nonAdminBadFinBranch.ok === true,
+      "ج.١٤ **وغيرُ المسؤول بـbranchId مشوَّه لا يُرفَض** — نطاقُه الماليّ الموقَّع وحده يُستعمَل",
+      JSON.stringify(nonAdminBadFinBranch));
   } finally {
     await cleanup();
   }

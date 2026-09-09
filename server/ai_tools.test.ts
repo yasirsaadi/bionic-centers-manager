@@ -41,7 +41,10 @@ function same(msg: string, got: unknown, expected: unknown) {
 const MARK = "اختبار-أدوات-الذكاء";
 const ADMIN = 9901, RECV1 = 9902, RECV2 = 9903, DOC = 9904, EXP1 = 9905, EXP2 = 9906, ACC1 = 9907;
 const PHY1 = 9908, PHY2 = 9909;
-const ALL_USERS = [ADMIN, RECV1, RECV2, DOC, EXP1, EXP2, ACC1, PHY1, PHY2];
+const NOVIEW_ADD = 9910, NOVIEW_MGR = 9911, NOVIEW_SESS = 9912;
+const ALL_USERS = [
+  ADMIN, RECV1, RECV2, DOC, EXP1, EXP2, ACC1, PHY1, PHY2, NOVIEW_ADD, NOVIEW_MGR, NOVIEW_SESS,
+];
 
 const sess = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [1, 2],
@@ -64,6 +67,15 @@ const sess = {
     displayName: "ph1", permissions: { canViewPatients: true, canEnterSessions: true } },
   physio2: { userId: PHY2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "ph2", permissions: { canViewPatients: true, canEnterSessions: true } },
+  //  ══ ثلاثةُ من دونَ `canViewPatients` — يثبتون أن لا شيء **غيرها** يفتح
+  //  طوابيرَ الفرع بأسماء مرضى، مهما بدا مانحاً سطحياً (مطابقةً لِما فرضته
+  //  المراجعةُ الحيّة على `GET /api/patients`/`GET /api/follow-ups`) ══════
+  noViewCanAdd: { userId: NOVIEW_ADD, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nva", permissions: { canViewPatients: false, canAddPatients: true } },
+  noViewManager: { userId: NOVIEW_MGR, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nvm", permissions: { canViewPatients: false } },
+  noViewSessions: { userId: NOVIEW_SESS, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nvs", permissions: { canViewPatients: false, canEnterSessions: true } },
 };
 const access = (s: any) => resolveAiAccess({ session: s, scopeBranchId: s.isAdmin ? undefined : s.branchId });
 
@@ -380,6 +392,22 @@ async function main() {
     await executeTool(access(sess.recv1), "my_worklist", {});
     same("   وبلا قراءةٍ مالية", finCalls, []);
 
+    //  ══ ك١. لا شيءَ غير `canViewPatients` يفتح طوابيرَ الفرع بأسماء ═════
+    //  مرضى — لا الدور (`branch_manager`)، ولا `canAddPatients` (تسجّل
+    //  مريضاً جديداً ولا تفتح قائمة الموجودين، `GET /api/patients` نفسُها
+    //  تحجب مديرَ الفرع بلا هذا العَلَم بالحرف: «لا منحَ دورٍ إضافي»).
+    const noQueue = (data: any) =>
+      data.awaitingExam === undefined && data.awaitingExpertAssignment === undefined
+      && data.manufacturing === undefined && data.physiotherapy === undefined;
+    const addList: any = (await executeTool(access(sess.noViewCanAdd), "my_worklist", {})).data;
+    check(noQueue(addList),
+      "   **`canAddPatients=true` بلا `canViewPatients` ⟶ لا طابورَ فرعٍ إطلاقاً**",
+      JSON.stringify(addList));
+    const mgrList: any = (await executeTool(access(sess.noViewManager), "my_worklist", {})).data;
+    check(noQueue(mgrList),
+      "   **`branch_manager` بلا `canViewPatients` ⟶ لا طابورَ فرعٍ إطلاقاً**",
+      JSON.stringify(mgrList));
+
     // ══ ك2. «بانتظار تخصيص خبير» — لكل خدمة، ومطروحاً منها المُسنَد ═════
     console.log("\n── طابور التخصيص ──");
     const awaitingOf = async (session: any) =>
@@ -465,17 +493,24 @@ async function main() {
           && (typeof v === "number" ? v >= 1000 : /\d{4,}/.test(JSON.stringify(v)))),
       []);
 
-    //  ══ الطابور بالقدرة الحقيقية ══════════════════════════════════════
-    //  `canEnterSessions` هي مَن يُدخل الجلسات في النظام. فموظّفُ استقبالٍ
-    //  بلا هذه القدرة لا طابورَ له — والقدرة لا تعبر الفرع.
+    //  ══ الطابور بالقدرة الحقيقية: `canViewPatients` — لا `canEnterSessions` ══
+    //  `canEnterSessions` تفتح إدخال عدّادات أجهزةٍ **مجهولة الهويّة** في
+    //  `server/sessions_module/routes.ts` ولا تمنح رؤية اسم مريضٍ واحد في
+    //  التطبيق الحيّ. فحاملُها بلا `canViewPatients` يبقى محجوباً هنا تماماً
+    //  كأيّ موظّفٍ آخر — والعكس: مَن يملك `canViewPatients` يرى الطابور ولو
+    //  لم يُدخل جلسةً يوماً (physio1/2 يملكانها معاً فيبقيان مثالاً صحيحاً
+    //  لموظّف علاجٍ طبيعيّ نمطيّ، لا لأن القدرة هي البوّابة).
     const physioOf = async (s: any) =>
       ((await executeTool(access(s), "my_worklist", {})).data as any).physiotherapy;
     check(JSON.stringify(await physioOf(sess.physio1)).includes(pBoth.patient_code),
-      "   ومُدخِل الجلسات يرى طابور فرعه", JSON.stringify(await physioOf(sess.physio1)));
-    same("   **وموظّفٌ بلا `canEnterSessions` لا طابورَ له**",
-      await physioOf(sess.recv1), undefined);
+      "   ومُدخِل الجلسات (بصلاحية canViewPatients) يرى طابور فرعه", JSON.stringify(await physioOf(sess.physio1)));
+    same("   **وموظّفٌ يملك `canEnterSessions` وحدها بلا `canViewPatients` لا طابورَ له**",
+      await physioOf(sess.noViewSessions), undefined);
+    check(JSON.stringify(await physioOf(sess.recv1)).includes(pBoth.patient_code),
+      "   **وموظّفٌ يملك `canViewPatients` بلا `canEnterSessions` يراه — القدرةُ ليست البوّابة**",
+      JSON.stringify(await physioOf(sess.recv1)));
     check(!JSON.stringify(await physioOf(sess.physio2) ?? {}).includes(pBoth.patient_code),
-      "   **والقدرة لا تعبر الفرع**", JSON.stringify(await physioOf(sess.physio2)));
+      "   **والفرع يبقى حاجزاً بصرف النظر عن القدرة**", JSON.stringify(await physioOf(sess.physio2)));
     same("   **والخبير الصِرف لا يرى طابور العلاج الطبيعي**",
       await physioOf(sess.expert1), undefined);
     resetFin();
