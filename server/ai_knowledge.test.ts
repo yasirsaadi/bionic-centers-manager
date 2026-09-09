@@ -322,6 +322,71 @@ async function main() {
     check(badApprove.ok === false, "م.١ اعتمادٌ بمقالةٍ مستهدَفة غير موجودة يُرفَض");
     const stillPending = await rejectSuggestion({ id: suggestion3.id, decisionNote: "cleanup", actor: actorFor(ADMIN, "م", "admin", null) });
     check(stillPending.ok === true, "م.٢ الاقتراحُ يبقى pending فعلياً بعد الفشل — لم يُكتب نصفُ تغيير");
+
+    // ══ ن. الفشلُ المغلَق على مدخلات النقاط الإدارية (مراجعةٌ حيّة) ═══════
+    //  الفحصُ على **المسار الحقيقيّ** (نفسُ مبدأ الملفّ كلّه): قيمةٌ مشوَّهة
+    //  لم تعد تُقرأ صمتاً «نطاقاً عامّاً»/«مقالةً جديدة»/«تفعيلاً» — تُردّ ٤٠٠
+    //  قبل أن تُلمَس القاعدة.
+    console.log("\n── ن. الفشلُ المغلَق على مدخلاتٍ مشوَّهة ──");
+
+    //  ن.١-٢: `active` بوليانٌ حقيقيّ لا تحويلاً قسرياً — `Boolean("false")`
+    //  كانت ستُقيَّم true (سلسلةٌ غير فارغة) فتُفعِّل مقالةً يُراد تعطيلُها.
+    const activeAsString = await fetch(`${BASE}/api/ai/knowledge/articles/${articleId}/active`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ active: "false" }),
+    });
+    check(activeAsString.status === 400,
+      "ن.١ **`active: \"false\"` (نصٌّ) يُردّ ٤٠٠** — لا `Boolean(\"false\") === true` صامتة",
+      `status=${activeAsString.status}`);
+    const activeAsNumber = await fetch(`${BASE}/api/ai/knowledge/articles/${articleId}/active`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ active: 1 }),
+    });
+    check(activeAsNumber.status === 400, "ن.٢ و`active: 1` (رقمٌ) يُردّ ٤٠٠ كذلك", `status=${activeAsNumber.status}`);
+
+    //  ن.٣-٦: `branchId` عند إنشاء مقالة — مشوَّهٌ/سالبٌ/كسريٌّ/غيرُ موجود.
+    const baseArticleBody = { title: `${MARK} — ن`, body: `${MARK} — متنُ اختبار الفشل المغلَق`, scope: "general" };
+    for (const [label, branchId] of [
+      ["ن.٣ نصٌّ غير رقميّ", "abc"], ["ن.٤ سالب", -5], ["ن.٥ كسريّ", 1.5], ["ن.٦ صفر", 0],
+    ] as [string, unknown][]) {
+      const res = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+        method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({ ...baseArticleBody, branchId }),
+      });
+      check(res.status === 400, `${label} (branchId=${JSON.stringify(branchId)}) ⟶ ٤٠٠ لا نطاقٌ عامٌّ صامت`, `status=${res.status}`);
+    }
+    const nonexistentBranch = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ ...baseArticleBody, branchId: 999999999 }),
+    });
+    check(nonexistentBranch.status === 400,
+      "ن.٧ **فرعٌ رقميٌّ صحيحُ الشكل لكن غيرُ موجود فعلاً ⟶ ٤٠٠** أيضاً (تحقّقٌ من القاعدة لا شكلاً فقط)",
+      `status=${nonexistentBranch.status}`);
+
+    //  ن.٨: الغيابُ الصريح يبقى نطاقاً عامّاً صحيحاً — لا فشلَ في المسار السليم.
+    const globalOk = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify(baseArticleBody),
+    });
+    check(globalOk.status === 201, "ن.٨ وغيابُ branchId يبقى ٢٠١ بنطاقٍ عامّ صحيح", `status=${globalOk.status}`);
+    const globalOkBody = await globalOk.json();
+    same("   بـbranchId=null فعلياً في المقالة الناتجة", globalOkBody.article.branchId, null);
+    await setArticleActive({ id: globalOkBody.article.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
+
+    //  ن.٩: `targetArticleId` مشوَّهٌ عند الاعتماد — لا يُقرأ «مقالةً جديدة» صمتاً.
+    const suggestion4 = await createSuggestion({
+      suggestedText: `${MARK} — ٤`, reason: `${MARK} — سبب`,
+      actor: actorFor(STAFF, "موظّف اختبار", "reception", B1),
+    });
+    const badTarget = await fetch(`${BASE}/api/ai/knowledge/suggestions/${suggestion4.id}/approve`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ title: "x", body: "y", scope: "general", targetArticleId: "abc" }),
+    });
+    check(badTarget.status === 400,
+      "ن.٩ **`targetArticleId: \"abc\"` يُردّ ٤٠٠** — لا يُفتَح مقالةٌ جديدة خطأً بدل تنسيخ المقصودة",
+      `status=${badTarget.status}`);
+    const stillPending4 = await rejectSuggestion({ id: suggestion4.id, decisionNote: "cleanup", actor: actorFor(ADMIN, "م", "admin", null) });
+    check(stillPending4.ok === true, "ن.٩ب والاقتراحُ يبقى قابلاً للحسم — لم يُكتب نصفُ تغيير على الرفض المشوَّه");
   } finally {
     await cleanup();
     httpServer.close();

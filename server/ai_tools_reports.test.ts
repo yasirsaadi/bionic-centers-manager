@@ -106,12 +106,33 @@ async function main() {
     VALUES ($1, $2, 'زيارة عادية', NOW(), 0)
   `, [P1, B1]);
 
+  //  ══ مبيعاتٌ ونقدٌ مقبوض **بمبلغين مختلفين عمداً** ══════════════════════
+  //  لو تساوى الرقمان (كما كانا صفرَين قبل هذه الإضافة) يمرّ اختبارُ
+  //  التطابق حتى لو انعكس الحقلان خطأً — ٥٠٠,٠٠٠ مقابل ٢٠٠,٠٠٠ يفضح أيّ
+  //  تبديلٍ مستقبليّ بين salesValue وrevenue فوراً.
+  const SALES_AMOUNT = 500000, PAID_AMOUNT = 200000;
+  await q(`
+    INSERT INTO cost_entries (patient_id, branch_id, amount, source, notes)
+    VALUES ($1, $2, $3, 'registration', '${MARK}')
+  `, [P1, B1, SALES_AMOUNT]);
+  await q(`
+    INSERT INTO payments (patient_id, branch_id, amount, notes)
+    VALUES ($1, $2, $3, '${MARK}')
+  `, [P1, B1, PAID_AMOUNT]);
+
   try {
     // ══ أ. patient_search ═══════════════════════════════════════════════
     console.log("\n── أ. patient_search ──");
     const scopedRecep = access({ userId: RECEPTION, role: "reception", permissions: { canViewPatients: true }, operationalBranches: [B1] });
     const scopedNoView = access({ userId: RECEPTION_NO_VIEW, role: "reception", permissions: { canViewPatients: false }, operationalBranches: [B1] });
     const adminAccess = access({ userId: ADMIN, role: "admin", isAdmin: true, operationalBranches: null });
+    //  ══ (ب) موظّفٌ يملك صلاحية التقارير تحديداً — منفصلةٌ عن canViewPatients
+    //  عمداً: التقاريرُ صلاحيةٌ حقيقية بذاتها (`canViewReports`)، لا تابعةٌ
+    //  لصلاحية عرض سجلّ المرضى.
+    const scopedRecepReports = access({
+      userId: RECEPTION, role: "reception",
+      permissions: { canViewPatients: true, canViewReports: true }, operationalBranches: [B1],
+    });
 
     check(!toolsFor(scopedNoView).some((t) => t.name === "patient_search"),
       "أ.١ **لا تُعرَض** لمن لا يملك canViewPatients");
@@ -143,13 +164,26 @@ async function main() {
     check((adminSearch.data as any).results.some((r: any) => r.patientCode === patientCode(3)),
       "أ.١٢ المسؤولُ (نطاقٌ null) يرى مرضى كلّ الفروع");
 
-    // ══ ب. operational_summary ═══════════════════════════════════════════
+    // ══ ب. operational_summary — صلاحيةٌ حقيقية (canViewReports)، لا للجميع ═
     console.log("\n── ب. operational_summary ──");
-    check(toolsFor(scopedNoView).some((t) => t.name === "operational_summary"),
-      "ب.١ operational_summary متاحةٌ للجميع (خلافاً لـpatient_search)");
+    //  ══ (تصحيحٌ — مراجعةٌ حيّة على PR #281) لم تعد «متاحةً للجميع» ══════
+    //  التقاريرُ صلاحيةٌ حقيقية في التطبيق (`canViewReports`، تحرس كلّ نقطة
+    //  تقريرٍ في `server/routes.ts`) — لا افتراضَ دورٍ ولا اشتقاقٌ من
+    //  `canViewPatients`. `scopedRecep` يملك الثانية دون الأولى فيبقى محجوباً.
+    check(!toolsFor(scopedRecep).some((t) => t.name === "operational_summary"),
+      "ب.١ **بلا canViewReports لا تُعرَض** — ولو ملك المستخدم canViewPatients");
+    const opsDeniedDirect = await executeTool(scopedRecep, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    check(opsDeniedDirect.ok === false, "ب.١ب ونداءٌ مباشر (متجاوزاً toolsFor، كأنّ النموذج اخترع الاسم) يُرفَض أيضاً");
+    check(!toolsFor(scopedNoView).some((t) => t.name === "operational_summary"),
+      "ب.١ج ومن لا يملك أيّ صلاحيةٍ عرضٍ لا يراها كذلك");
 
-    const opsB1 = await executeTool(scopedRecep, "operational_summary", { startDate: TODAY, endDate: TODAY });
-    check(opsB1.ok === true, "ب.٢ نجاحٌ لموظّف فرع أ");
+    check(toolsFor(scopedRecepReports).some((t) => t.name === "operational_summary"),
+      "ب.١د **canViewReports=true ⟶ تُعرَض** ضمن نطاق الفرع");
+    check(toolsFor(adminAccess).some((t) => t.name === "operational_summary"),
+      "ب.١هـ والمسؤولُ العام يراها دائماً — بسلطته لا بعَلَمٍ صريح على صفّه");
+
+    const opsB1 = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: TODAY });
+    check(opsB1.ok === true, "ب.٢ نجاحٌ لموظّف فرع أ يملك canViewReports");
     const opsData = opsB1.data as any;
     check(opsData.newPatients >= 3, "ب.٣ عدّ المرضى الجدد يشمل المرضى الثلاثة الفعّالين في فرع أ (وربما أكثر من تشغيلاتٍ أخرى)",
       `newPatients=${opsData.newPatients}`);
@@ -158,8 +192,8 @@ async function main() {
     check(opsData.byBranch === null, "ب.٦ **بلا تفصيلٍ بالفرع لغير المسؤول**");
     check(opsData.physiotherapySessions >= 1, "ب.٧ جلسةُ العلاج الطبيعي المُدرَجة مُحتسَبة", `n=${opsData.physiotherapySessions}`);
 
-    //  ══ فرعٌ من الطلب لا يُعتمَد لغير المسؤول ══
-    const opsIgnoredBranch = await executeTool(scopedRecep, "operational_summary", { startDate: TODAY, endDate: TODAY, branchId: B2 });
+    //  ══ فرعٌ من الطلب لا يُعتمَد لغير المسؤول — ولو ملك canViewReports ══
+    const opsIgnoredBranch = await executeTool(scopedRecepReports, "operational_summary", { startDate: TODAY, endDate: TODAY, branchId: B2 });
     check((opsIgnoredBranch.data as any).newPatients === opsData.newPatients,
       "ب.٨ **فرعٌ في الطلب من غير مسؤول يُتجاهَل** — النتيجةُ مطابقةٌ لنطاق جلسته لا للفرع المطلوب");
 
@@ -175,9 +209,45 @@ async function main() {
     const opsBadRange = await executeTool(adminAccess, "operational_summary", { startDate: TODAY, endDate: "2020-01-01" });
     check(opsBadRange.ok === false, "ب.١٢ تاريخُ بدايةٍ بعد تاريخ النهاية يُرفَض");
 
-    const emptyScope = access({ userId: 777, role: "reception", operationalBranches: [] });
+    //  ══ canViewReports:true هنا **لأنّ ما يُختبَر نطاقُ الفرع لا الصلاحية**
+    //  — بلا هذا العَلَم يُرَدّ الطلبُ بسبب الصلاحية فيُخفي ما يُراد إثباته.
+    const emptyScope = access({
+      userId: 777, role: "reception", permissions: { canViewReports: true }, operationalBranches: [],
+    });
     const opsEmptyScope = await executeTool(emptyScope, "operational_summary", { startDate: TODAY, endDate: TODAY });
     same("ب.١٣ نطاقٌ فارغٌ (جلسةٌ بلا فرع) ⟶ صفرٌ حقيقيّ لا خطأ — مطابقٌ لبقيّة أدوات المساعد", opsEmptyScope.data.newPatients, 0);
+
+    //  ══ ب.١٤ — حدودُ اليوم **بتوقيت بغداد لا UTC** (مراجعةٌ حيّة) ══════════
+    //  `patients.created_at`/`visits.visit_date` أعمدةُ `TIMESTAMP WITHOUT
+    //  TIME ZONE` تُكتَب بـNOW() على جلسةٍ توقيتُها UTC — فمقارنةٌ خاميّة
+    //  بـ`'YYYY-MM-DD'::date` تحسب حدود اليوم بتوقيت UTC لا بغداد (فرقُ ٣
+    //  ساعات). مريضٌ سُجّل بتوقيت بغداد ٠٠:٣٠ (= ٢١:٣٠ UTC اليوم السابق)
+    //  زمنٌ اخترناه عمداً — يقع بين منتصفَي الليلين فيفضح أيّ إزاحةٍ ناقصة.
+    console.log("\n── ب.١٤ حدود اليوم بتوقيت بغداد ──");
+    const BOUNDARY_DAY = "2025-01-16"; // بتوقيت بغداد
+    const BOUNDARY_UTC_PREV_DAY = "2025-01-15"; // نفسُ اللحظة بتوقيت UTC الخام
+    const PBOUNDARY = 89406;
+    await q(`
+      INSERT INTO patients
+        (id, patient_code, name, phone, branch_id, is_amputee, is_physiotherapy, total_cost,
+         referral_source, age, medical_condition, created_at, deleted_at)
+      VALUES ($1, $2, '${MARK} حدّ التوقيت', '07701110006', $3, false, false, 0, '${MARK}', '30', '${MARK}',
+        '2025-01-15 21:30:00'::timestamp, NULL)
+    `, [PBOUNDARY, patientCode(6), B1]);
+    try {
+      const opsBoundaryDay = await executeTool(scopedRecepReports, "operational_summary",
+        { startDate: BOUNDARY_DAY, endDate: BOUNDARY_DAY });
+      check(opsBoundaryDay.data.newPatients === 1,
+        "ب.١٤.١ **مريضٌ سُجّل ٠٠:٣٠ بتوقيت بغداد يُحتسَب ضمن يومه ببغداد (١٦ كانون الثاني) لا يوم UTC (١٥)**",
+        `newPatients=${opsBoundaryDay.data.newPatients}`);
+      const opsBoundaryPrevDay = await executeTool(scopedRecepReports, "operational_summary",
+        { startDate: BOUNDARY_UTC_PREV_DAY, endDate: BOUNDARY_UTC_PREV_DAY });
+      check(opsBoundaryPrevDay.data.newPatients === 0,
+        "ب.١٤.٢ **ولا يظهر في يوم UTC الخام (١٥) رغم أن `created_at` مكتوبٌ بتاريخه**",
+        `newPatients=${opsBoundaryPrevDay.data.newPatients}`);
+    } finally {
+      await q(`DELETE FROM patients WHERE id = $1`, [PBOUNDARY]);
+    }
 
     // ══ ج. financial_summary ══════════════════════════════════════════════
     console.log("\n── ج. financial_summary ──");
@@ -197,10 +267,20 @@ async function main() {
     //  ══ التطابقُ البنيويّ مع `storage.getAccountingSummary` — **لا حسابَ
     //  ثانياً**: نفسُ الاستدعاء بنفس الوسائط يجب أن يعطي نفسَ الأرقام.
     const canonical = await storage.getAccountingSummary(B1, TODAY, TODAY, { baghdadDays: true });
-    same("ج.٤ **المبيعات مطابقةٌ حرفياً** لـ`getAccountingSummary` — لا حسابَ مُوازٍ", finData.current.revenue, canonical.totalRevenue);
-    same("ج.٥ **المقبوضُ نقداً مطابقٌ حرفياً**", finData.current.receivedCash, canonical.totalPaid);
+    //  ══ لا تبديلَ بين المبيعات والإيراد الفعليّ ══
+    //  `totalRevenue` (الاسمُ الموروث في `storage.ts`) هو **قيمةُ المبيعات**
+    //  (قيدُ كلفة)، و`totalPaid` هو **النقدُ المقبوضُ فعلاً**. محوِّلُ
+    //  المساعد يخرج بأسماءَ صادقة: salesValue ⟵ totalRevenue، وrevenue ⟵
+    //  totalPaid — لا العكس.
+    same("ج.٤ **قيمةُ المبيعات (salesValue) مطابقةٌ حرفياً** لـ`totalRevenue` — لا حسابَ مُوازٍ", finData.current.salesValue, canonical.totalRevenue);
+    same("ج.٥ **الإيرادُ الفعليّ (revenue) مطابقٌ حرفياً** لـ`totalPaid` — النقدُ المقبوض لا المبيعات", finData.current.revenue, canonical.totalPaid);
+    check(finData.current.salesValue === SALES_AMOUNT, "ج.٥.١ salesValue = مبلغُ قيد الكلفة المُدرَج (٥٠٠,٠٠٠)", `got=${finData.current.salesValue}`);
+    check(finData.current.revenue === PAID_AMOUNT, "ج.٥.٢ revenue = مبلغُ الدفعة المُدرَجة (٢٠٠,٠٠٠) — **وليس** ٥٠٠,٠٠٠", `got=${finData.current.revenue}`);
+    check(finData.current.salesValue !== finData.current.revenue,
+      "ج.٥.٣ **الحقلان مختلفان فعلياً في هذه البيانات** — فتطابقٌ صدفويّ (كلاهما صفر) لا يمكن أن يُخفي انعكاساً مستقبلياً");
+    check(!("receivedCash" in finData.current), "ج.٥.٤ لا حقلَ `receivedCash` قديماً متروكاً في المخرَج");
     same("ج.٦ **المصاريفُ مطابقةٌ حرفياً**", finData.current.expenses, canonical.totalExpenses);
-    same("ج.٧ **الصافي مطابقٌ حرفياً**", finData.current.net, canonical.netProfit);
+    same("ج.٧ **الصافي مطابقٌ حرفياً** (= revenue − expenses، نقدٌ لا مبيعات)", finData.current.net, canonical.netProfit);
     check(finData.comparison === null, "ج.٨ بلا مقارنةٍ ما لم تُطلَب صراحةً");
 
     const finCompare = await executeTool(financeAccess, "financial_summary", { startDate: TODAY, endDate: TODAY, compare: true });

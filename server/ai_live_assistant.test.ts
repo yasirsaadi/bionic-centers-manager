@@ -43,6 +43,11 @@ const ADMIN = 9911, RECV = 9912, ACC = 9913, EXPERT = 9914;
 const S = {
   recv: { userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "r", permissions: { canViewPatients: true, canAddPatients: true } },
+  //  ══ (مراجعةٌ حيّة) — التقاريرُ صلاحيةٌ حقيقية مستقلّة (`canViewReports`)
+  //  لا يحملها `S.recv` ولا `S.acc` أدناه؛ هذه الجلسةُ نفسُ الاستقبال زائداً
+  //  ذلك العَلَم وحده، لاختبار الفرق بدقّة.
+  recvReports: { userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "r", permissions: { canViewPatients: true, canAddPatients: true, canViewReports: true } },
   acc: { userId: ACC, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "a", permissions: { canViewPatients: true, canManageAccounting: true } },
   expert: { userId: EXPERT, role: "prosthetics_expert", isAdmin: false, branchId: 1,
@@ -151,6 +156,9 @@ async function main() {
     const r1: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
     same("أ. الطلب نجح", r1.ok, true);
     same("   والأداة نُفِّذت وسُجِّلت", r1.value.tools, { names: ["patient_lookup"], count: 1 });
+    //  ══ (مراجعةٌ حيّة — تزويدُ البيانات الحيّة) ══
+    //  `toolsUsed` تسميةٌ عربيةٌ مُشتَقّة من `tools.names`، لا اسمَ أداةٍ خام.
+    same("   ومعها تسميتُها العربية للعرض (toolsUsed)", r1.value.toolsUsed, ["بيانات المريض الحية"]);
     const res1 = lastResults()[0];
     same("   **ونتيجتُها الحيّة وصلت النموذج**",
       [res1?.patientCode, String(res1?.name).includes("الحيّ")], [p1.patient_code, true]);
@@ -160,17 +168,25 @@ async function main() {
       "   ونصّ النظام يأمره باستعمالها عند ذكر رمز");
 
     // ══ ب. الأدوات المعروضة بالدور ══════════════════════════════════
-    //  ══ (AI Assistant v2) صار العددُ خمساً/ستّاً بعد إضافة patient_search
+    //  ══ (AI Assistant v2) صار العددُ أربعاً/ستّاً بعد إضافة patient_search
     //  وoperational_summary (وfinancial_summary للمحاسب) — راجع القسم ط
     //  أدناه لتفصيل كلّ أداةٍ على حدة بحسب الدور.
+    //  ══ (مراجعةٌ حيّة) operational_summary لم تعد تصل بلا canViewReports ══
+    //  لا `S.recv` ولا `S.acc` يحملانها — فتغيّب عن كليهما هنا، وتظهر مع
+    //  `S.recvReports` تحديداً (تحتها مباشرةً).
     console.log("\n── ما يُعرَض على النموذج ──");
-    same("ب. الموظّف العادي: خمس أدوات بلا المالية",
+    same("ب. الموظّف العادي (بلا canViewReports): أربع أدوات بلا المالية ولا التقارير",
+      seen[0].tools.sort(),
+      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search"]);
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.recvReports), ask("مرحباً"));
+    same("   ومعه canViewReports: خمسٌ (يضاف operational_summary)",
       seen[0].tools.sort(),
       ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب: سبع (يضاف financial_summary)", seen[0].tools.sort(), [
-      "financial_summary", "my_worklist", "operational_summary",
+    same("   والمحاسب (بلا canViewReports أيضاً): ستّ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
+      "financial_summary", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
     ]);
 
@@ -352,20 +368,47 @@ async function main() {
     runScript([{ text: "تمام." }]);
     await chat(access(S.recv), ask("مرحباً"));
     check(seen[0].tools.includes("patient_search"), "ط.١ الاستقبال (canViewPatients) يرى patient_search");
-    check(seen[0].tools.includes("operational_summary"), "ط.٢ ويرى operational_summary");
+    //  ══ (تصحيحٌ — مراجعةٌ حيّة على PR #281) ══════════════════════════════
+    //  operational_summary كانت «متاحةً للجميع» بلا قيد — عرّافةٌ فعلياً لمن
+    //  لا يملك صلاحية تقاريرَ حقيقية. صارت تُشترَط `canViewReports` بالحرف
+    //  (نفس عَلَم `server/routes.ts` على كلّ نقطة تقرير)، فـ`S.recv` (بلا
+    //  هذا العَلَم) لم يعد يراها — راجع ط.٨-ط.١٠ للحالة الموجَبة.
+    check(!seen[0].tools.includes("operational_summary"),
+      "ط.٢ **ولا يرى operational_summary بلا canViewReports** — ولو ملك canViewPatients");
     check(!seen[0].tools.includes("financial_summary"), "ط.٣ ولا يرى financial_summary");
 
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
     check(seen[0].tools.includes("financial_summary"), "ط.٤ والمحاسب يرى financial_summary");
     check(seen[0].tools.includes("patient_search"), "ط.٥ ويرى patient_search أيضاً");
+    check(!seen[0].tools.includes("operational_summary"),
+      "ط.٥ب **والمحاسبُ نفسُه لا يرى operational_summary بلا canViewReports** — صلاحيةٌ مستقلّة عن المحاسبة");
 
     runScript([{ text: "تمام." }]);
     await chat(access(S.expert), ask("مرحباً"));
     check(!seen[0].tools.includes("patient_search"),
       "ط.٦ **الخبيرُ الصِّرف (بلا canViewPatients) لا يرى patient_search** — لا دليلَ مرضى بديلاً له");
+    check(!seen[0].tools.includes("operational_summary"),
+      "ط.٧ **ولا operational_summary أيضاً** (بلا canViewReports — كان يراها خطأً قبل هذا التصحيح)");
+
+    //  ══ ط.٨-١٠ — الحالةُ الموجَبة: canViewReports صراحةً، والمسؤول العام ══
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.recvReports), ask("مرحباً"));
     check(seen[0].tools.includes("operational_summary"),
-      "ط.٧ لكنه يرى operational_summary (بلا أسماء مرضى، أرقامٌ مجمَّعة فقط)");
+      "ط.٨ **canViewReports=true ⟶ operational_summary تظهر** لموظّفٍ عاديّ");
+
+    runScript([{ text: "تمام." }]);
+    await chat(access(S.admin), ask("مرحباً"));
+    check(seen[0].tools.includes("operational_summary"),
+      "ط.٩ والمسؤولُ العام يراها دائماً — بسلطته لا بعَلَمٍ صريح على صفّه");
+
+    //  ══ ط.١٠ — نداءٌ مباشر كأنّ النموذج اخترع الاسم رغم عدم عرضها ══
+    runScript([{ toolCalls: [{ name: "operational_summary", input: {} }] }, { text: "لا أملك هذا." }]);
+    const invented: any = await chat(access(S.recv), ask("أعطني ملخّصاً تشغيلياً"));
+    check(invented.ok === true, "ط.١٠ الحلقةُ لا تنهار على أداةٍ مرفوضة — تُكمل بجوابٍ");
+    const deniedResult = lastResults()[0];
+    check(deniedResult?.error !== undefined,
+      "ط.١٠ب **والنتيجةُ رفضٌ صريح** — لا بياناتٍ تشغيلية وصلت النموذج", JSON.stringify(deniedResult));
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[ADMIN, RECV, ACC, EXPERT]]);

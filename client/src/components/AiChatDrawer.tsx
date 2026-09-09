@@ -30,6 +30,13 @@ interface ChatMessage {
   content: string;
   /** بطاقاتُ المعرفة الموثوقة التي اعتمد عليها **هذا الردّ بعينه** — للعرض والاقتراح، لا أكثر. */
   knowledge?: KnowledgeProvenance[];
+  /**
+   * تسمياتٌ عربية لمصادر البيانات الحيّة التي قرأها هذا الردّ (مثل «بيانات
+   * المريض الحية»، «الملخص المالي») — **بلا اسم أداةٍ تقنيّ ولا وسائط ولا
+   * معرّفاتٍ داخلية إطلاقاً**؛ الخادمُ يترجمها قبل الإرسال
+   * (`server/ai/semantics.ts: toolProvenanceLabels`) ولا يرسل الاسم الخام أصلاً.
+   */
+  toolsUsed?: string[];
 }
 
 export function AiChatDrawer() {
@@ -82,12 +89,13 @@ export function AiChatDrawer() {
         reply: string;
         snapshotAt: string;
         knowledge?: KnowledgeProvenance[];
+        toolsUsed?: string[];
       }>;
     },
     onSuccess: (data) => {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.reply, knowledge: data.knowledge },
+        { role: "assistant", content: data.reply, knowledge: data.knowledge, toolsUsed: data.toolsUsed },
       ]);
     },
     onError: (err: any) => {
@@ -239,10 +247,16 @@ export function AiChatDrawer() {
 
                     {m.role === "assistant" && (
                       <div className="px-1 space-y-1.5 w-full">
-                        {/*  ══ بطاقاتُ المعرفة — عنوانٌ فقط، بلا رقمٍ داخليّ للمستخدم. ══ */}
-                        {m.knowledge && m.knowledge.length > 0 && (
+                        {/*  ══ سطرُ التزويد — بطاقاتُ المعرفة **وبيانات الأدوات الحيّة معاً** ══
+                            عناوينُ المعرفة (بلا رقمٍ داخليّ) وتسمياتُ الأدوات العربية (بلا اسمٍ
+                            تقنيّ ولا وسائط — `toolsUsed` وصلت مُترجَمةً من الخادم أصلاً) في
+                            سطرٍ واحد: كلاهما «اعتمدتُ على ماذا» من منظور الموظّف. */}
+                        {((m.knowledge && m.knowledge.length > 0) || (m.toolsUsed && m.toolsUsed.length > 0)) && (
                           <p className="text-[11px] text-muted-foreground" data-testid={`text-ai-provenance-${i}`}>
-                            اعتمدتُ على: {m.knowledge.map((k) => k.title).join("، ")}
+                            اعتمدتُ على: {[
+                              ...(m.toolsUsed ?? []),
+                              ...(m.knowledge ?? []).map((k) => k.title),
+                            ].join("، ")}
                           </p>
                         )}
 

@@ -97,6 +97,29 @@ function branchScopeSql(col: string, scope: number[] | null) {
   return sql`${sql.raw(col)} IN (${sql.join(scope.map((b) => sql`${b}`), sql`, `)})`;
 }
 
+/**
+ * حدَّا مدىً بتوقيت بغداد — **نفسُ إزاحة `storage.getAccountingSummary`
+ * بالحرف** (٣ ساعات، `baghdadDays: true`)، لا حسابٌ ثانٍ ينحرف عنه يوماً.
+ *
+ * ══ لماذا لازمة (تصحيحٌ — مراجعةٌ حيّة، مُثبَتٌ حيّاً) ═══════════════════
+ * `patients.created_at` و`visits.visit_date` كلاهما `TIMESTAMP WITHOUT
+ * TIME ZONE` يُكتَبان بـ`NOW()` على جلسةٍ توقيتُها `UTC` (لا `SET
+ * timezone` في `server/db.ts`، ومُتحقَّقٌ منه حيّاً على القاعدة). فمقارنةُ
+ * العمود مباشرةً بـ`'YYYY-MM-DD'::date` (بلا إزاحة، كما كانت هذه الدالّة
+ * تفعل) تحسب حدودَ اليوم **بتوقيت UTC** لا بغداد — فحدثٌ وقع بين ٢١:٠٠
+ * و٢٣:٥٩ بتوقيت UTC (= منتصف الليل حتى ٠٢:٥٩ بتوقيت بغداد، اليوم التالي)
+ * يُنسَب إلى يومٍ خطأ. مريضٌ سُجّل ٠٠:٣٠ بتوقيت بغداد كان يظهر ضمن «الأمس»
+ * لا «اليوم» — `test:ai-tools-reports` يثبت الفرق بمريضٍ حقيقيّ عند هذه
+ * اللحظة بعينها.
+ */
+function baghdadRangeBounds(start: string, end: string): { startTs: Date; endExclusiveTs: Date } {
+  const BAGHDAD_MS = 3 * 60 * 60 * 1000;
+  return {
+    startTs: new Date(new Date(start).getTime() - BAGHDAD_MS),
+    endExclusiveTs: new Date(new Date(end).getTime() + 24 * 60 * 60 * 1000 - BAGHDAD_MS),
+  };
+}
+
 export async function getOperationalSummary(params: {
   operationalBranches: number[] | null;
   isAdmin: boolean;
@@ -106,17 +129,19 @@ export async function getOperationalSummary(params: {
 }): Promise<OperationalSummaryResult> {
   const scope = effectiveScope(params);
   const { start, end } = params;
+  //  ══ حدَّا بغداد — **لا `::date` خامة بعد اليوم** على هذين العمودين ══
+  const { startTs, endExclusiveTs } = baghdadRangeBounds(start, end);
 
   const [newPatientsR, visitsR, physioR, awaitingExamRows, manufacturingR] = await Promise.all([
     db.execute(sql`
       SELECT COUNT(*)::int AS n FROM patients
        WHERE deleted_at IS NULL AND ${branchScopeSql("branch_id", scope)}
-         AND created_at >= ${start}::date AND created_at < (${end}::date + INTERVAL '1 day')
+         AND created_at >= ${startTs} AND created_at < ${endExclusiveTs}
     `),
     db.execute(sql`
       SELECT COUNT(*)::int AS n FROM visits
        WHERE deleted_at IS NULL AND ${branchScopeSql("branch_id", scope)}
-         AND visit_date >= ${start}::date AND visit_date < (${end}::date + INTERVAL '1 day')
+         AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
     `),
     //  **نفسُ تعريف `patient_lookup` للجلسة**: زيارةُ خيط العلاج الطبيعي
     //  وحده، بلا «خدمة جديدة» (قيدٌ ماليّ لا جلسة) ولا «استشارة طبية».
@@ -126,7 +151,7 @@ export async function getOperationalSummary(params: {
         JOIN patients p ON p.id = v.patient_id AND p.deleted_at IS NULL AND p.is_physiotherapy = TRUE
         JOIN patient_cases pc ON pc.id = v.case_id AND pc.case_type = 'physiotherapy'
        WHERE v.deleted_at IS NULL AND ${branchScopeSql("v.branch_id", scope)}
-         AND v.visit_date >= ${start}::date AND v.visit_date < (${end}::date + INTERVAL '1 day')
+         AND v.visit_date >= ${startTs} AND v.visit_date < ${endExclusiveTs}
          --  ══ NULL-آمن — لا صيغة NOT(details = x OR notes LIKE y) ══
          --  زيارةٌ عاديةٌ بلا details/notes (الحالة الغالبة) تجعل تلك
          --  المقارنةَ NULL لا FALSE، وNOT NULL يبقى NULL — أي أن WHERE
@@ -154,12 +179,12 @@ export async function getOperationalSummary(params: {
     const [newByBranch, visitsByBranch] = await Promise.all([
       db.execute(sql`
         SELECT branch_id, COUNT(*)::int AS n FROM patients
-         WHERE deleted_at IS NULL AND created_at >= ${start}::date AND created_at < (${end}::date + INTERVAL '1 day')
+         WHERE deleted_at IS NULL AND created_at >= ${startTs} AND created_at < ${endExclusiveTs}
          GROUP BY branch_id
       `),
       db.execute(sql`
         SELECT branch_id, COUNT(*)::int AS n FROM visits
-         WHERE deleted_at IS NULL AND visit_date >= ${start}::date AND visit_date < (${end}::date + INTERVAL '1 day')
+         WHERE deleted_at IS NULL AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
          GROUP BY branch_id
       `),
     ]);
@@ -188,13 +213,27 @@ export async function getOperationalSummary(params: {
 }
 
 // ══ ٢. المُلخَّص الماليّ (D3) — `storage.getAccountingSummary` وحدها ══════
-
+//
+// ══ المبيعاتُ ليست إيراداً حتى تُقبض (تصحيحٌ لاحق، مراجعةٌ حيّة) ══════════
+// `storage.getAccountingSummary().totalRevenue` اسمٌ موروث مضلِّل: قيمتُه
+// من دفتر الكلف (`cost_entries`) — أي **ما بِيع أو التزم به المريض**، ولو
+// لم يُقبض ديناراً واحداً بعد. والمالُ المقبوضُ فعلاً هو `totalPaid`.
+// والتقريرُ اليوميّ يطبّق هذه القاعدة أصلاً («الوارد» = كل المقبوض). فلا
+// يجوز أن تُسمَّى قيمةُ `totalRevenue` «إيراداً» هنا — الاسمُ الموروث في
+// `storage.ts` **لا يُعاد تسميته** (خارج نطاق هذه المهمّة)، لكنّ محوِّل
+// المساعد يُصحِّح الدلالة عند الخروج فقط:
+//   salesValue = totalRevenue   (قيمةُ المبيعات/الكلفة المسجَّلة، وليست نقداً)
+//   revenue    = totalPaid      (الإيرادُ الفعليّ = النقد المقبوض فعلاً)
+// فلا حقلَ اسمُه «revenue» يحمل قيمة `totalRevenue` بعد اليوم.
 export interface FinancialPeriodFigures {
   start: string;
   end: string;
-  revenue: number; // مبيعات — قيود الكلفة المؤرَّخة في الفترة
-  receivedCash: number; // الدفعاتُ الفعلية المقبوضة في الفترة
+  /** قيمةُ المبيعات — قيودُ الكلفة المؤرَّخة في الفترة. **ليست نقداً مقبوضاً.** */
+  salesValue: number;
+  /** الإيرادُ الفعليّ — النقدُ المقبوضُ فعلاً في الفترة. القاعدة: لا إيراد بلا قبضٍ فعليّ. */
+  revenue: number;
   expenses: number;
+  /** الصافي = الإيرادُ الفعليّ (النقد المقبوض) ناقص المصاريف. */
   net: number;
   collectionRateLifetime: number; // **ليست فترةً** — نسبةٌ إجمالية حتى الآن (توثيقٌ صريح للحقل)
   outstandingLifetime: number; // **ليست فترةً** — رصيدٌ إجماليّ مستحقّ حتى الآن
@@ -210,7 +249,14 @@ async function summaryFor(branchId: number | undefined, start: string, end: stri
   const s = await storage.getAccountingSummary(branchId, start, end, { baghdadDays: true });
   return {
     start, end,
-    revenue: s.totalRevenue, receivedCash: s.totalPaid, expenses: s.totalExpenses, net: s.netProfit,
+    //  ══ لا تُبدَّل — `totalRevenue` (مبيعات/كلفة) و`totalPaid` (نقدٌ
+    //  مقبوض) حقيقتان مختلفتان في `storage.ts` نفسِه (راجع تعليقه هناك:
+    //  "totalPaid الوارد = payments … / totalRevenue المبيعات = cost-ledger
+    //  entries …"). المحوِّلُ هنا يسمّيهما بصدقٍ للنموذج فقط.
+    salesValue: s.totalRevenue,
+    revenue: s.totalPaid,
+    expenses: s.totalExpenses,
+    net: s.netProfit,
     collectionRateLifetime: s.collectionRate, outstandingLifetime: s.totalRemaining,
   };
 }

@@ -11,6 +11,7 @@
 // وأثرُها صفٌّ `pending` وحده — لا تغييرَ على أيّ مقالةٍ فعّالة.
 
 import type { Express } from "express";
+import { storage } from "../../storage";
 import {
   approveSuggestion, createArticle, createSuggestion, editArticle,
   isKnowledgeScope, listArticlesForAdmin, listSuggestions, rejectSuggestion,
@@ -39,15 +40,46 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-function branchIdOrNull(v: unknown): number | null {
+/**
+ * فرعُ المقالة — **الغيابُ لا يُخلَط بالخطأ**.
+ *
+ * `null` نطاقٌ عامّ **صحيح** (غيابٌ صريح أو فراغٌ من النموذج). أمّا قيمةٌ
+ * غير فارغة لا تُحلَّل رقماً صحيحاً موجباً فترجع `INVALID` — مُميَّزةً عن
+ * `null` عمداً؛ كانتا تُخلَطان معاً فيصير خطأ إملائيّ في رقم الفرع نطاقاً
+ * عامّاً بصمت (تصحيحٌ — مراجعةٌ حيّة على PR #281).
+ */
+const INVALID_ID = Symbol("invalid_id");
+function parseBranchId(v: unknown): number | null | typeof INVALID_ID {
   if (v === undefined || v === null || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return INVALID_ID;
+  return n;
+}
+
+/**
+ * تُقرأ الفرعَ من الطلب وتتحقّق منه: تُرجع `{ok:false}` لصنفٍ غير صالح **أو**
+ * لفرعٍ غير موجود فعلاً (تحقّقٌ من القاعدة، لا شكلاً فقط) — ولا صفَّ يُكتب
+ * قبل هذا التحقّق. القيمةُ الغائبة/الفارغة تبقى `null` صحيحاً بلا استعلام.
+ */
+async function resolveBranchIdField(v: unknown): Promise<{ ok: true; value: number | null } | { ok: false }> {
+  const parsed = parseBranchId(v);
+  if (parsed === INVALID_ID) return { ok: false };
+  if (parsed === null) return { ok: true, value: null };
+  const branches = await storage.getBranches();
+  if (!branches.some((b) => b.id === parsed)) return { ok: false };
+  return { ok: true, value: parsed };
 }
 
 function articleIdList(v: unknown): number[] {
   if (!Array.isArray(v)) return [];
   return v.filter((x) => Number.isInteger(x) && x > 0);
+}
+
+/** معرّفٌ موجبٌ صحيح، أو `INVALID_ID`-مثله للفشل الصريح — لا `NaN` صامتة. */
+function parsePositiveIntId(v: unknown): number | typeof INVALID_ID {
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return INVALID_ID;
+  return n;
 }
 
 export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
@@ -92,18 +124,37 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const id = parseInt(String(req.params.id));
     if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
 
-    const targetArticleId = req.body?.targetArticleId != null ? Number(req.body.targetArticleId) : null;
+    //  ══ targetArticleId — إمّا غائبٌ (مقالةٌ جديدة) أو معرّفٌ صحيح، لا ثالث ══
+    //  كان `NaN`/سالبٌ/كسريّ يُقرأ صمتاً «مقالةً جديدة» عبر `x && Number.isFinite(x)`
+    //  الفالسة على `NaN` — فقيمةٌ ملفوفة أو مطبوعةٌ خطأً كانت تفتح مقالةً
+    //  مستقلّة بدل تنسيخ المقالة المقصودة (تصحيحٌ — مراجعةٌ حيّة).
+    let targetArticleId: number | null = null;
+    if (req.body?.targetArticleId !== undefined && req.body?.targetArticleId !== null) {
+      const parsed = parsePositiveIntId(req.body.targetArticleId);
+      if (parsed === INVALID_ID) return res.status(400).json({ error: "معرّفُ المقالة الهدف غير صالح" });
+      targetArticleId = parsed;
+    }
+
     const scope = req.body?.scope;
     if (scope !== undefined && scope !== null && !isKnowledgeScope(scope)) {
       return res.status(400).json({ error: "نطاقٌ غير معروف" });
     }
+
+    //  ══ branchId — يُحلّ ويُتحقَّق منه **قبل** أي كتابة، لا بعدها ══
+    let branchId: number | null | undefined;
+    if (req.body?.branchId !== undefined) {
+      const resolved = await resolveBranchIdField(req.body.branchId);
+      if (!resolved.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
+      branchId = resolved.value;
+    }
+
     const result = await approveSuggestion({
       id,
-      targetArticleId: targetArticleId && Number.isFinite(targetArticleId) ? targetArticleId : null,
+      targetArticleId,
       title: str(req.body?.title) ?? undefined,
       body: str(req.body?.body) ?? undefined,
       scope: isKnowledgeScope(scope) ? scope : undefined,
-      branchId: req.body?.branchId !== undefined ? branchIdOrNull(req.body.branchId) : undefined,
+      branchId,
       actor: actorFrom(req),
     });
     if (!result.ok) return res.status(409).json({ error: result.error });
@@ -140,8 +191,11 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     if (!body) return res.status(400).json({ error: "النصّ مطلوب" });
     if (!isKnowledgeScope(scope)) return res.status(400).json({ error: "النطاق مطلوب وصحيح" });
 
+    const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
+    if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
+
     const article = await createArticle({
-      title, body, scope, branchId: branchIdOrNull(req.body?.branchId), actor: actorFrom(req),
+      title, body, scope, branchId: resolvedBranch.value, actor: actorFrom(req),
     });
     res.status(201).json({ article });
   });
@@ -158,8 +212,11 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     if (!body) return res.status(400).json({ error: "النصّ مطلوب" });
     if (!isKnowledgeScope(scope)) return res.status(400).json({ error: "النطاق مطلوب وصحيح" });
 
+    const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
+    if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
+
     const result = await editArticle({
-      id, title, body, scope, branchId: branchIdOrNull(req.body?.branchId), actor: actorFrom(req),
+      id, title, body, scope, branchId: resolvedBranch.value, actor: actorFrom(req),
     });
     if (!result.ok) return res.status(409).json({ error: result.error });
     res.json({ article: result.article });
@@ -170,7 +227,13 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const id = parseInt(String(req.params.id));
     if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّفٌ غير صالح" });
-    const active = Boolean(req.body?.active);
+    //  ══ بوليانٌ حقيقيّ لا تحويلاً قسرياً ══ — `Boolean("false")` سلسلةٌ غير
+    //  فارغة فتُقيَّم `true` رغم نصّها الظاهر؛ نفسُ فخّ `Boolean(0)`/`Boolean("0")`
+    //  المعكوس. النوعُ وحده يقرّر (تصحيحٌ — مراجعةٌ حيّة على PR #281).
+    if (typeof req.body?.active !== "boolean") {
+      return res.status(400).json({ error: "الحقل active يجب أن يكون true أو false" });
+    }
+    const active: boolean = req.body.active;
 
     const result = await setArticleActive({ id, active, actor: actorFrom(req) });
     if (!result.ok) return res.status(409).json({ error: result.error });

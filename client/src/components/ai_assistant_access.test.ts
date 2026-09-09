@@ -177,8 +177,19 @@ console.log("\n── اقترح تصحيحاً ──");
     "و.٦ **وإغلاقُ النافذة يمسح نموذج الاقتراح أيضاً** — لا يبقى نصفُ اقتراحٍ معلَّقاً بعد إغلاقٍ وفتحٍ لاحق");
 
   //  ══ بطاقةُ التزويد — عنوانٌ فقط، بلا رقمٍ داخليّ للمستخدم ══
-  check(/اعتمدتُ على: \{m\.knowledge\.map\(\(k\) => k\.title\)/.test(drawer),
-    "و.٧ **بطاقةُ التزويد تعرض العناوين وحدها** — لا `k.id` في أيّ نصٍّ يصل الشاشة");
+  check(/m\.knowledge \?\? \[\]\)\.map\(\(k\) => k\.title\)/.test(drawer),
+    "و.٧ **بطاقةُ التزويد تعرض عناوين المعرفة وحدها** — لا `k.id` في أيّ نصٍّ يصل الشاشة");
+
+  //  ══ (مراجعةٌ حيّة) — تزويدُ البيانات الحيّة مع المعرفة في نفس السطر ══
+  //  `toolsUsed` تصل مُترجَمةً عربياً من الخادم (`server/ai/semantics.ts`)
+  //  فلا اسمَ أداةٍ تقنيّ (`patient_lookup`، `financial_summary`، …) يصل
+  //  الواجهةَ أصلاً — الفحصُ هنا على المصدر لا على تنفيذ الشبكة.
+  check(/toolsUsed\?: string\[\]/.test(drawer),
+    "و.٨ **الرسالةُ تحمل `toolsUsed` بجانب `knowledge`** — نفسُ سطر التزويد");
+  check(/\.\.\.\(m\.toolsUsed \?\? \[\]\)/.test(drawer),
+    "و.٩ وسطرُ العرض يدمج تسميات الأدوات مع عناوين المعرفة معاً");
+  check(!/patient_lookup|patient_clinical_summary|financial_summary|operational_summary|patient_finance|my_worklist/.test(drawer),
+    "و.١٠ **ولا اسمَ أداةٍ تقنيّ واحد مكتوبٌ في هذا الملفّ** — الترجمةُ من الخادم وحده");
 }
 
 console.log(`\n${failures === 0 ? "✅ all ai-ui cases pass" : `❌ ${failures} case(s) failed`}`);

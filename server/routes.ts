@@ -6780,7 +6780,13 @@ export async function registerRoutes(
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
       return res.status(status).json({ error: result.message, reason: result.reason });
     }
-    res.json(result.value);
+    //  ══ ردٌّ صريحُ الحقول — **لا `tools` الخام إلى العميل أبداً** ═════════
+    //  `result.value` يحمل `tools.names` (أسماءُ أدواتٍ تقنية: patient_lookup،
+    //  financial_summary…) لأجل سطر التدقيق أعلاه وحده. بثُّه كما هو للمتصفّح
+    //  كان يسرّب تلك الأسماء إلى أدوات المطوّر — بلا أن تعرضها الواجهة، لكنها
+    //  تصل الشبكة. `toolsUsed` (مُترجَمةٌ عربياً، `chat.ts`) هو وحده ما يصل.
+    const { tools: _rawTools, ...clientSafe } = result.value;
+    res.json(clientSafe);
   });
 
   // Generates an Arabic narrative monthly report for a given branch/

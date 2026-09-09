@@ -36,6 +36,9 @@ import { activeExamDrizzle } from "../../medical/active_exam";
 import { activePatientDrizzle } from "../../patients/active_patient";
 import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
 import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
+import {
+  orderStatusLabel, purposeLabel, serviceTypeLabel, specialtyLabel, stageLabel,
+} from "../semantics";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -179,11 +182,20 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
     return !isPureExpert(access);
   };
 
+  //  ══ تسميةٌ عربية مرافقة — بلا حذف الرمز الخام ══════════════════════════
+  //  `server/ai/semantics.ts` وحده مصدر التسمية (تركيبٌ فوق
+  //  `shared/manufacturing.ts` القائم) — لا قاعدة عملٍ ثانية هنا، ولا
+  //  الرمزُ يُحذَف: النموذج يقرأ الاسمَ العربيّ ويبقى الرمز للتدقيق ولمن
+  //  يحتاج المطابقة الدقيقة.
   const visibleOrders = orders.filter(maySeeOrder).slice(0, MAX_LIST_ITEMS).map((o) => ({
     serviceType: o.serviceType,
+    serviceTypeLabel: serviceTypeLabel(o.serviceType),
     purpose: o.purpose ?? "initial_build",
+    purposeLabel: purposeLabel(o.purpose),
     currentStage: o.currentStage,
+    currentStageLabel: stageLabel(o.currentStage),
     status: o.status,
+    statusLabel: orderStatusLabel(o.status),
     expectedDeliveryDate: o.expectedDeliveryDate ? String(o.expectedDeliveryDate) : null,
     expertName: o.expertName ?? null,
   }));
@@ -265,18 +277,26 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
         p.isMedicalSupport ? "medical_support" : null,
         p.isPhysiotherapy ? "physiotherapy" : null,
       ].filter(Boolean),
-      awaitingExam: pending.filter((r) => r.patientId === patientId).map((r) => r.caseType),
-      decidedExam: decided.filter((r) => r.patientId === patientId).map((r) => r.caseType),
+      awaitingExam: pending.filter((r) => r.patientId === patientId)
+        .map((r) => ({ specialty: r.caseType, specialtyLabel: specialtyLabel(r.caseType) })),
+      decidedExam: decided.filter((r) => r.patientId === patientId)
+        .map((r) => ({ specialty: r.caseType, specialtyLabel: specialtyLabel(r.caseType) })),
       latestExam: lastExam
         ? {
           specialty: lastExam.caseType,
+          specialtyLabel: specialtyLabel(lastExam.caseType),
           date: lastExam.signedAt ? new Date(lastExam.signedAt).toISOString().slice(0, 10) : null,
           doctor: lastExam.doctorName ?? null,
         }
         : null,
       deviceEpisodes: episodes.slice(0, MAX_LIST_ITEMS).map((e) => ({
         serviceType: caseTypes.get(e.caseId) ?? null,
+        serviceTypeLabel: serviceTypeLabel(caseTypes.get(e.caseId) ?? null),
         sequenceNumber: e.sequenceNumber,
+        //  ══ بلا تسميةٍ لحالة الحلقة عمداً ══ — `awaiting_exam/examined/
+        //  in_manufacturing/delivered/cancelled` ليست رموزَ أمر تصنيعٍ
+        //  (`STATUS_LABELS`) ولا مرحلته (`STAGE_LABELS`)؛ تطبيقُ أيٍّ منهما
+        //  هنا يكون تسميةً مخترَعة لا مصدرَ حقيقةٍ لها في `shared/`.
         status: e.status,
         isOpen: !["delivered", "cancelled"].includes(String(e.status)),
       })),
@@ -327,6 +347,7 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
       //  `patient_finance` وحده، فلا تصير المعاينة قناةً جانبية للأسعار.
       exams: latestBySpecialty.slice(0, MAX_LIST_ITEMS).map((r) => ({
         specialty: r.caseType,
+        specialtyLabel: specialtyLabel(r.caseType),
         date: r.signedAt ? new Date(r.signedAt).toISOString().slice(0, 10) : null,
         doctor: r.doctorName ?? null,
         diagnosis: r.diagnosis ?? null,
@@ -418,6 +439,9 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         .from(patients).where(and(inArray(patients.id, shown.map((r) => r.patientId)), activePatientDrizzle()));
       for (const r of rowsWithCode) codeById.set(r.id, r.code);
     }
+    //  ══ `doctorSpecialties` يبقى مصفوفةَ رموزٍ خامٍ بلا تغيير شكل ══
+    //  عقدٌ قائم يعتمده مستهلِكون آخرون (ومنه اختبارٌ حيّ يقارنه بمساواةٍ
+    //  تامّة) — لا يُعاد بناؤه إلى كائناتٍ لأجل تسميةٍ وحدها.
     out.doctorSpecialties = specialties;
     out.awaitingMyExam = {
       total: rows.length,
@@ -425,6 +449,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         patientCode: codeById.get(r.patientId) ?? null,
         name: r.patientName,
         specialty: r.caseType,
+        specialtyLabel: specialtyLabel(r.caseType),
       })),
       ...(rows.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
     };
@@ -454,9 +479,13 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         patientCode: o.patientCode,
         name: o.patientName,
         serviceType: o.serviceType,
+        serviceTypeLabel: serviceTypeLabel(o.serviceType),
         purpose: o.purpose ?? "initial_build",
+        purposeLabel: purposeLabel(o.purpose),
         stage: o.currentStage,
+        stageLabel: stageLabel(o.currentStage),
         status: o.status,
+        statusLabel: orderStatusLabel(o.status),
         expectedDeliveryDate: o.expectedDeliveryDate ? String(o.expectedDeliveryDate) : null,
       })),
       ...(mine.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
@@ -527,6 +556,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
           patientCode: codeByPatient.get(r.patientId)?.patientCode ?? null,
           name: codeByPatient.get(r.patientId)?.name ?? null,
           serviceType: r.caseType,
+          serviceTypeLabel: serviceTypeLabel(r.caseType),
         }))
         .filter((i) => i.patientCode !== null),
       ...(stillAwaiting.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
@@ -643,6 +673,14 @@ async function patientSearch(access: AiAccessContext, input: any): Promise<ToolO
 // ══ ٦. operational_summary — أرقامٌ محسوبةٌ في الخادم، لا في النموذج ═════
 
 async function operationalSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً وقبل أي قراءة** — نفسُ نمط `patient_finance` بالحرف:
+  //  التقاريرُ صلاحيةٌ حقيقية في التطبيق (`canViewReports`، يحرسها
+  //  `server/routes.ts` على كل نقطة تقرير)، لا مجرّد دورٍ. الأداة لا
+  //  تُعرَض أصلاً لغير المخوَّل (`offeredTo` أدناه)، لكنّ النموذج قد يخترع
+  //  اسمها فيُردّ هنا قبل أن تُلمس القاعدة.
+  if (!(access.isAdmin || access.permissions?.canViewReports === true)) {
+    return denied("التقارير التشغيلية متاحة لمن يملك صلاحية عرض التقارير فقط.");
+  }
   //  حدٌّ أقصى ٩٢ يوماً (نحو ثلاثة أشهر) — يمنع مسحاً ضخماً غير مقصود.
   const range = resolveDateRange(input ?? {}, 92);
   if (!range.ok) return denied(range.error);
@@ -776,8 +814,9 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
       name: "operational_summary",
       description:
         "ملخّصٌ تشغيليّ لفترة (مرضى جدد، زيارات، جلسات علاج طبيعي، طابور المعاينة الآن، "
-        + "أوامر التصنيع النشطة الآن) ضمن نطاق فروع المستخدم. المسؤولُ العام وحده يستطيع "
-        + "تمرير branchId لتضييق النطاق أو تركه لرؤية كلّ الفروع مع تفصيلٍ لكلّ فرع.",
+        + "أوامر التصنيع النشطة الآن) ضمن نطاق فروع المستخدم. متاحةٌ فقط لمن يملك صلاحية "
+        + "عرض التقارير. المسؤولُ العام وحده يستطيع تمرير branchId لتضييق النطاق أو تركه "
+        + "لرؤية كلّ الفروع مع تفصيلٍ لكلّ فرع.",
       input_schema: {
         type: "object",
         properties: {
@@ -787,16 +826,23 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
         },
       } as any,
     },
-    offeredTo: () => true,
+    //  ══ **ليست متاحةً للجميع** — التقاريرُ صلاحيةٌ حقيقية (`canViewReports`)
+    //  لا افتراضَ دورٍ. لا يُشتقّ من الدور وحده (موظّفُ استقبالٍ بلا هذا
+    //  العَلَم يبقى محجوباً حتى لو كان دوره يوحي بخلاف ذلك).
+    offeredTo: (a) => a.isAdmin || a.permissions?.canViewReports === true,
     run: operationalSummaryTool,
   },
   financial_summary: {
     spec: {
       name: "financial_summary",
       description:
-        "ملخّصٌ ماليّ لفترة محدَّدة (المبيعات، المقبوض نقداً، المصاريف، الصافي) مع مقارنةٍ "
-        + "اختيارية بالفترة السابقة بنفس الطول، ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن "
-        + "يملك صلاحية المحاسبة. المسؤولُ العام وحده يستطيع طلب فرعٍ بعينه أو كلّ الفروع.",
+        "ملخّصٌ ماليّ لفترة محدَّدة، بأربعة حقول لا تتبادل: salesValue (قيمةُ المبيعات — قيودُ "
+        + "الكلفة المسجَّلة في الفترة، ولو لم تُقبض بعد)، وrevenue (الإيرادُ الفعليّ — النقدُ "
+        + "المقبوضُ فعلاً في الفترة)، وexpenses (المصاريف)، وnet (الصافي = revenue − expenses). "
+        + "**المبيعات ليست إيراداً حتى تُقبض**: سؤالٌ عن «الإيراد» يُجاب من revenue لا salesValue، "
+        + "وسؤالٌ عن «كم بعنا» أو «قيمة المبيعات» يُجاب من salesValue لا revenue. "
+        + "مع مقارنةٍ اختيارية بالفترة السابقة بنفس الطول، ضمن النطاق الماليّ للمستخدم. متاحةٌ "
+        + "فقط لمن يملك صلاحية المحاسبة. المسؤولُ العام وحده يستطيع طلب فرعٍ بعينه أو كلّ الفروع.",
       input_schema: {
         type: "object",
         properties: {

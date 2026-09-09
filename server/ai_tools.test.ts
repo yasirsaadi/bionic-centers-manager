@@ -259,6 +259,17 @@ async function main() {
       (look.data.activeOrders as any[])[0].currentStage
       + "|" + (look.data.activeOrders as any[])[0].expectedDeliveryDate,
       "measurements|2026-12-25");
+    //  ══ (E) المفرداتُ التجارية — تسميةٌ عربية مرافقةٌ للرمز الخام ══
+    //  `server/ai/semantics.ts` فوق `shared/manufacturing.ts` — لا تسميةً
+    //  مخترَعة، ولا حذفَ للرمز الأصليّ (كلاهما موجودان معاً في الاستجابة).
+    same("   ومعها تسميتُها العربية (serviceType/purpose/stage/status)",
+      [
+        (look.data.activeOrders as any[])[0].serviceTypeLabel,
+        (look.data.activeOrders as any[])[0].purposeLabel,
+        (look.data.activeOrders as any[])[0].currentStageLabel,
+        (look.data.activeOrders as any[])[0].statusLabel,
+      ],
+      ["أطراف صناعية", "بناء أولي", "القياسات والتقييم", "قيد العمل"]);
     same("   **ولا مبلغَ في النتيجة إطلاقاً**",
       Object.keys(look.data).filter((k) => /cost|paid|price|amount|total/i.test(k)), []);
     same("   ولا رقمَ صفٍّ داخلي",
@@ -337,6 +348,9 @@ async function main() {
     const mine = expertList.myManufacturingOrders?.items ?? [];
     same("ط. **الخبير يرى أمره هو فقط**",
       mine.map((o: any) => o.patientCode), [p1.patient_code]);
+    same("   ومعه تسميتُه العربية أيضاً",
+      [mine[0]?.serviceTypeLabel, mine[0]?.purposeLabel, mine[0]?.stageLabel, mine[0]?.statusLabel],
+      ["أطراف صناعية", "بناء أولي", "القياسات والتقييم", "قيد العمل"]);
     check(!JSON.stringify(expertList).includes(pOther.patient_code),
       "   ولا أمرَ زميله", JSON.stringify(expertList));
     const expert2List: any = (await executeTool(access(sess.expert2), "my_worklist", {})).data;
@@ -353,6 +367,8 @@ async function main() {
     same("ي. **الطبيب يرى اختصاصه هو**", docList.doctorSpecialties, ["prosthetic"]);
     const waiting = (docList.awaitingMyExam?.items ?? []).map((r: any) => r.patientCode);
     check(waiting.includes(pWait.patient_code), "   ومريضَه المنتظر", JSON.stringify(waiting));
+    const waitingRow = (docList.awaitingMyExam?.items ?? []).find((r: any) => r.patientCode === pWait.patient_code);
+    same("   وبتسمية اختصاصه العربية", waitingRow?.specialtyLabel, "أطراف صناعية");
     check(!waiting.includes(p2.patient_code), "   **ولا مريضَ فرعٍ آخر**", JSON.stringify(waiting));
     check(waiting.every((c: string) => /^WB-/.test(c)), "   وبالرموز العلنية لا بالأرقام", JSON.stringify(waiting));
 
