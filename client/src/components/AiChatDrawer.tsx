@@ -8,9 +8,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, Send, X, Loader2, Bot, User } from "lucide-react";
+import { Sparkles, Send, X, Loader2, Bot, User, MessageSquareWarning } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -19,9 +20,23 @@ import {
   canOpenAssistant, introTextFor, scopeLabelFor, suggestionsFor,
 } from "@/components/ai_assistant_access";
 
+interface KnowledgeProvenance {
+  id: number;
+  title: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /** بطاقاتُ المعرفة الموثوقة التي اعتمد عليها **هذا الردّ بعينه** — للعرض والاقتراح، لا أكثر. */
+  knowledge?: KnowledgeProvenance[];
+  /**
+   * تسمياتٌ عربية لمصادر البيانات الحيّة التي قرأها هذا الردّ (مثل «بيانات
+   * المريض الحية»، «الملخص المالي») — **بلا اسم أداةٍ تقنيّ ولا وسائط ولا
+   * معرّفاتٍ داخلية إطلاقاً**؛ الخادمُ يترجمها قبل الإرسال
+   * (`server/ai/semantics.ts: toolProvenanceLabels`) ولا يرسل الاسم الخام أصلاً.
+   */
+  toolsUsed?: string[];
 }
 
 export function AiChatDrawer() {
@@ -31,6 +46,13 @@ export function AiChatDrawer() {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  //  ══ «اقترح تصحيحاً» — فهرسُ رسالة المساعد المفتوحة نموذجُها الآن ══════
+  //  فهرسٌ واحد لا خريطة: نافذةُ تصحيحٍ واحدة مفتوحة في كل لحظة تكفي، وتبسّط
+  //  إعادة الضبط عند الإغلاق (راجع `closeDrawer`).
+  const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
+  const [whatIsWrong, setWhatIsWrong] = useState("");
+  const [suggestedFix, setSuggestedFix] = useState("");
 
   // Hide entirely when AI isn't configured — otherwise every authenticated
   // employee gets the assistant. What it can SEE is decided server-side.
@@ -53,15 +75,28 @@ export function AiChatDrawer() {
     setOpen(false);
     setMessages([]);
     setDraft("");
+    setCorrectingIndex(null);
+    setWhatIsWrong("");
+    setSuggestedFix("");
   };
 
   const askMutation = useMutation({
     mutationFn: async (history: ChatMessage[]) => {
-      const res = await apiRequest("POST", "/api/ai/chat", { messages: history });
-      return res.json() as Promise<{ reply: string; snapshotAt: string }>;
+      const res = await apiRequest("POST", "/api/ai/chat", {
+        messages: history.map(({ role, content }) => ({ role, content })),
+      });
+      return res.json() as Promise<{
+        reply: string;
+        snapshotAt: string;
+        knowledge?: KnowledgeProvenance[];
+        toolsUsed?: string[];
+      }>;
     },
     onSuccess: (data) => {
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.reply, knowledge: data.knowledge, toolsUsed: data.toolsUsed },
+      ]);
     },
     onError: (err: any) => {
       toast({
@@ -71,6 +106,38 @@ export function AiChatDrawer() {
       });
       // Roll back the optimistic user message so the user can retype.
       setMessages((prev) => prev.slice(0, -1));
+    },
+  });
+
+  //  ══ «اقترح تصحيحاً» — يُرسل، لا يُطبَّق ═════════════════════════════════
+  //  إرسالُ الاقتراح لا يغيّر معرفة المساعد بحرف — صفٌّ `pending` وحده،
+  //  ينتظر قرار المسؤول العام. `server/ai/knowledge/store.ts` هو الحارس
+  //  الحقيقيّ؛ هذا الزرّ مجرّد بابٍ إليه.
+  const suggestMutation = useMutation({
+    mutationFn: async (params: { index: number; reason: string; suggestedText: string }) => {
+      const assistantMsg = messages[params.index];
+      const priorUserMsg = [...messages.slice(0, params.index)].reverse().find((m) => m.role === "user");
+      const res = await apiRequest("POST", "/api/ai/knowledge/suggestions", {
+        reason: params.reason,
+        suggestedText: params.suggestedText,
+        sourceQuestion: priorUserMsg?.content ?? null,
+        sourceAnswer: assistantMsg?.content ?? null,
+        referencedArticleIds: (assistantMsg?.knowledge ?? []).map((k) => k.id),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم إرسال الاقتراح للمراجعة", description: "سيراجعه المسؤول العام." });
+      setCorrectingIndex(null);
+      setWhatIsWrong("");
+      setSuggestedFix("");
+    },
+    onError: (err: any) => {
+      toast({
+        title: "تعذّر إرسال الاقتراح",
+        description: err?.message ?? "حاول مرة أخرى بعد قليل",
+        variant: "destructive",
+      });
     },
   });
 
@@ -161,10 +228,7 @@ export function AiChatDrawer() {
               )}
 
               {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`flex gap-2 ${m.role === "user" ? "flex-row-reverse" : ""}`}
-                >
+                <div key={i} className={`flex gap-2 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
                   <div
                     className={`shrink-0 h-7 w-7 rounded-full flex items-center justify-center ${
                       m.role === "user" ? "bg-primary/15 text-primary" : "bg-muted text-foreground"
@@ -172,14 +236,89 @@ export function AiChatDrawer() {
                   >
                     {m.role === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
                   </div>
-                  <div
-                    className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                      m.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    }`}
-                  >
-                    {m.content}
+                  <div className={`max-w-[80%] space-y-1 ${m.role === "user" ? "items-end" : ""} flex flex-col`}>
+                    <div
+                      className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                        m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+
+                    {m.role === "assistant" && (
+                      <div className="px-1 space-y-1.5 w-full">
+                        {/*  ══ سطرُ التزويد — بطاقاتُ المعرفة **وبيانات الأدوات الحيّة معاً** ══
+                            عناوينُ المعرفة (بلا رقمٍ داخليّ) وتسمياتُ الأدوات العربية (بلا اسمٍ
+                            تقنيّ ولا وسائط — `toolsUsed` وصلت مُترجَمةً من الخادم أصلاً) في
+                            سطرٍ واحد: كلاهما «اعتمدتُ على ماذا» من منظور الموظّف. */}
+                        {((m.knowledge && m.knowledge.length > 0) || (m.toolsUsed && m.toolsUsed.length > 0)) && (
+                          <p className="text-[11px] text-muted-foreground" data-testid={`text-ai-provenance-${i}`}>
+                            اعتمدتُ على: {[
+                              ...(m.toolsUsed ?? []),
+                              ...(m.knowledge ?? []).map((k) => k.title),
+                            ].join("، ")}
+                          </p>
+                        )}
+
+                        {correctingIndex === i ? (
+                          <div className="rounded-md border bg-background p-2.5 space-y-2" data-testid={`form-ai-suggest-${i}`}>
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-medium text-muted-foreground">ما الخطأ في هذا الجواب؟</label>
+                              <Textarea
+                                value={whatIsWrong}
+                                onChange={(e) => setWhatIsWrong(e.target.value)}
+                                rows={2}
+                                className="text-xs"
+                                placeholder="مثلاً: هذا لم يعد صحيحاً، الخطوة الآن مختلفة"
+                                data-testid={`input-ai-suggest-reason-${i}`}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-medium text-muted-foreground">ما الذي يجب أن يقوله المساعد بدلاً من ذلك؟</label>
+                              <Textarea
+                                value={suggestedFix}
+                                onChange={(e) => setSuggestedFix(e.target.value)}
+                                rows={2}
+                                className="text-xs"
+                                placeholder="اكتب الصياغة الصحيحة"
+                                data-testid={`input-ai-suggest-text-${i}`}
+                              />
+                            </div>
+                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                              سيُرسل الاقتراح للمراجعة ولن يغيّر معرفة المساعد مباشرةً.
+                            </p>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button" size="sm" variant="ghost" className="h-7 text-xs"
+                                onClick={() => { setCorrectingIndex(null); setWhatIsWrong(""); setSuggestedFix(""); }}
+                              >
+                                إلغاء
+                              </Button>
+                              <Button
+                                type="button" size="sm" className="h-7 text-xs"
+                                disabled={!whatIsWrong.trim() || !suggestedFix.trim() || suggestMutation.isPending}
+                                onClick={() => suggestMutation.mutate({
+                                  index: i, reason: whatIsWrong.trim(), suggestedText: suggestedFix.trim(),
+                                })}
+                                data-testid={`button-ai-suggest-submit-${i}`}
+                              >
+                                {suggestMutation.isPending ? "جارٍ الإرسال…" : "إرسال الاقتراح"}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition"
+                            onClick={() => { setCorrectingIndex(i); setWhatIsWrong(""); setSuggestedFix(""); }}
+                            data-testid={`button-ai-suggest-correction-${i}`}
+                          >
+                            <MessageSquareWarning className="h-3 w-3" />
+                            اقترح تصحيحاً
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

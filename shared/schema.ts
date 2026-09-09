@@ -1027,6 +1027,73 @@ export const aiMemoryNotes = pgTable("ai_memory_notes", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// ══ معرفةٌ موثوقة للمساعد الذكي — Trusted Knowledge Layer (AI Assistant v2،
+// migration 075) ═══════════════════════════════════════════════════════
+//
+// مستقلٌّ تماماً عن `aiMemoryNotes` أعلاه: ذاك سياقٌ لمفسِّر الشذوذ
+// الإحصائي وحده (`server/ai/explain_anomaly.ts`) — لا يقرؤه المساعد
+// المحادثي إطلاقاً. هذان الجدولان خاصّان بمساعد الدردشة وحده.
+//
+// `aiKnowledgeArticles` — المعرفةُ الفعّالة المعتمَدة. **لا تُمحى صفوفها
+// ولا يُكتَب فوقها**: تعديلٌ يُنشئ صفّاً جديداً بـ`supersedesId` يشير
+// للقديم، ويُطفَأ القديم (`isActive=false`) — فالتاريخ الكامل يبقى
+// مقروءاً. `supersedesId` بلا `.references()` هنا عمداً — القيدُ الحقيقيّ
+// مكتوبٌ في SQL الترحيل مباشرة (المرجعُ ذاتيٌّ داخل نفس الجدول)، وهذا
+// الملفّ يعكس الترحيل للأنواع لا يولّده.
+export const aiKnowledgeArticles = pgTable("ai_knowledge_articles", {
+  id: serial("id").primaryKey(),
+  // مفتاحٌ ثابتٌ للمقالات المزروعة بالترحيل وحدها — فارغٌ لكل مقالةٍ من
+  // إنشاء بشريّ (اقتراحٍ مُعتمَد أو تحريرٍ مباشر من المسؤول).
+  seedKey: text("seed_key").unique(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  scope: text("scope").notNull(),
+  // 'general' | 'reception' | 'medical' | 'manufacturing' | 'physiotherapy'
+  // | 'finance' | 'administration'
+  branchId: integer("branch_id").references(() => branches.id), // null = كل الفروع
+  isActive: boolean("is_active").notNull().default(true),
+  version: integer("version").notNull().default(1),
+  supersedesId: integer("supersedes_id"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name").notNull(),
+  approvedBy: integer("approved_by").references(() => systemUsers.id),
+  approvedByName: text("approved_by_name").notNull(),
+  approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiKnowledgeArticle = typeof aiKnowledgeArticles.$inferSelect;
+
+// `aiKnowledgeSuggestions` — اقتراحُ تصحيحٍ من موظّف. **لا يغيّر المعرفة
+// الفعّالة بذاته أبداً** — حالتُه `pending` حتى يقرّر المسؤول العام
+// صراحةً، ولا يُحذف الصفّ في أيّ اتجاه — القرارُ يُسجَّل لا يُمحى.
+export const aiKnowledgeSuggestions = pgTable("ai_knowledge_suggestions", {
+  id: serial("id").primaryKey(),
+  submittedBy: integer("submitted_by").references(() => systemUsers.id).notNull(),
+  submittedByName: text("submitted_by_name").notNull(),
+  submittedByRole: text("submitted_by_role"),
+  branchId: integer("branch_id").references(() => branches.id),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  sourceQuestion: text("source_question"),
+  sourceAnswer: text("source_answer"),
+  // مصفوفةُ أرقام مقالاتٍ استُعملت في الجواب المتحدَّى — لقطةٌ مرجعية،
+  // بلا مفتاحٍ أجنبيّ (نفسُ درس ٠٣٥/٠٣٨: مقالةٌ قد تُستبدَل بنسخةٍ لاحقة).
+  referencedArticleIds: jsonb("referenced_article_ids"),
+  suggestedText: text("suggested_text").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  decidedBy: integer("decided_by").references(() => systemUsers.id),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  resultingArticleId: integer("resulting_article_id").references(() => aiKnowledgeArticles.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiKnowledgeSuggestion = typeof aiKnowledgeSuggestions.$inferSelect;
+
 // Follow-up call reminders for physiotherapy patients who stopped coming.
 // Active reminders are computed on the fly (physio patient whose last
 // non-deleted visit is >= 7 days ago). A row here marks a *handled* episode:

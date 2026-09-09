@@ -41,7 +41,10 @@ function same(msg: string, got: unknown, expected: unknown) {
 const MARK = "اختبار-أدوات-الذكاء";
 const ADMIN = 9901, RECV1 = 9902, RECV2 = 9903, DOC = 9904, EXP1 = 9905, EXP2 = 9906, ACC1 = 9907;
 const PHY1 = 9908, PHY2 = 9909;
-const ALL_USERS = [ADMIN, RECV1, RECV2, DOC, EXP1, EXP2, ACC1, PHY1, PHY2];
+const NOVIEW_ADD = 9910, NOVIEW_MGR = 9911, NOVIEW_SESS = 9912;
+const ALL_USERS = [
+  ADMIN, RECV1, RECV2, DOC, EXP1, EXP2, ACC1, PHY1, PHY2, NOVIEW_ADD, NOVIEW_MGR, NOVIEW_SESS,
+];
 
 const sess = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [1, 2],
@@ -64,6 +67,15 @@ const sess = {
     displayName: "ph1", permissions: { canViewPatients: true, canEnterSessions: true } },
   physio2: { userId: PHY2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "ph2", permissions: { canViewPatients: true, canEnterSessions: true } },
+  //  ══ ثلاثةُ من دونَ `canViewPatients` — يثبتون أن لا شيء **غيرها** يفتح
+  //  طوابيرَ الفرع بأسماء مرضى، مهما بدا مانحاً سطحياً (مطابقةً لِما فرضته
+  //  المراجعةُ الحيّة على `GET /api/patients`/`GET /api/follow-ups`) ══════
+  noViewCanAdd: { userId: NOVIEW_ADD, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nva", permissions: { canViewPatients: false, canAddPatients: true } },
+  noViewManager: { userId: NOVIEW_MGR, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nvm", permissions: { canViewPatients: false } },
+  noViewSessions: { userId: NOVIEW_SESS, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "nvs", permissions: { canViewPatients: false, canEnterSessions: true } },
 };
 const access = (s: any) => resolveAiAccess({ session: s, scopeBranchId: s.isAdmin ? undefined : s.branchId });
 
@@ -259,6 +271,17 @@ async function main() {
       (look.data.activeOrders as any[])[0].currentStage
       + "|" + (look.data.activeOrders as any[])[0].expectedDeliveryDate,
       "measurements|2026-12-25");
+    //  ══ (E) المفرداتُ التجارية — تسميةٌ عربية مرافقةٌ للرمز الخام ══
+    //  `server/ai/semantics.ts` فوق `shared/manufacturing.ts` — لا تسميةً
+    //  مخترَعة، ولا حذفَ للرمز الأصليّ (كلاهما موجودان معاً في الاستجابة).
+    same("   ومعها تسميتُها العربية (serviceType/purpose/stage/status)",
+      [
+        (look.data.activeOrders as any[])[0].serviceTypeLabel,
+        (look.data.activeOrders as any[])[0].purposeLabel,
+        (look.data.activeOrders as any[])[0].currentStageLabel,
+        (look.data.activeOrders as any[])[0].statusLabel,
+      ],
+      ["أطراف صناعية", "بناء أولي", "القياسات والتقييم", "قيد العمل"]);
     same("   **ولا مبلغَ في النتيجة إطلاقاً**",
       Object.keys(look.data).filter((k) => /cost|paid|price|amount|total/i.test(k)), []);
     same("   ولا رقمَ صفٍّ داخلي",
@@ -337,6 +360,9 @@ async function main() {
     const mine = expertList.myManufacturingOrders?.items ?? [];
     same("ط. **الخبير يرى أمره هو فقط**",
       mine.map((o: any) => o.patientCode), [p1.patient_code]);
+    same("   ومعه تسميتُه العربية أيضاً",
+      [mine[0]?.serviceTypeLabel, mine[0]?.purposeLabel, mine[0]?.stageLabel, mine[0]?.statusLabel],
+      ["أطراف صناعية", "بناء أولي", "القياسات والتقييم", "قيد العمل"]);
     check(!JSON.stringify(expertList).includes(pOther.patient_code),
       "   ولا أمرَ زميله", JSON.stringify(expertList));
     const expert2List: any = (await executeTool(access(sess.expert2), "my_worklist", {})).data;
@@ -353,6 +379,8 @@ async function main() {
     same("ي. **الطبيب يرى اختصاصه هو**", docList.doctorSpecialties, ["prosthetic"]);
     const waiting = (docList.awaitingMyExam?.items ?? []).map((r: any) => r.patientCode);
     check(waiting.includes(pWait.patient_code), "   ومريضَه المنتظر", JSON.stringify(waiting));
+    const waitingRow = (docList.awaitingMyExam?.items ?? []).find((r: any) => r.patientCode === pWait.patient_code);
+    same("   وبتسمية اختصاصه العربية", waitingRow?.specialtyLabel, "أطراف صناعية");
     check(!waiting.includes(p2.patient_code), "   **ولا مريضَ فرعٍ آخر**", JSON.stringify(waiting));
     check(waiting.every((c: string) => /^WB-/.test(c)), "   وبالرموز العلنية لا بالأرقام", JSON.stringify(waiting));
 
@@ -363,6 +391,22 @@ async function main() {
     resetFin();
     await executeTool(access(sess.recv1), "my_worklist", {});
     same("   وبلا قراءةٍ مالية", finCalls, []);
+
+    //  ══ ك١. لا شيءَ غير `canViewPatients` يفتح طوابيرَ الفرع بأسماء ═════
+    //  مرضى — لا الدور (`branch_manager`)، ولا `canAddPatients` (تسجّل
+    //  مريضاً جديداً ولا تفتح قائمة الموجودين، `GET /api/patients` نفسُها
+    //  تحجب مديرَ الفرع بلا هذا العَلَم بالحرف: «لا منحَ دورٍ إضافي»).
+    const noQueue = (data: any) =>
+      data.awaitingExam === undefined && data.awaitingExpertAssignment === undefined
+      && data.manufacturing === undefined && data.physiotherapy === undefined;
+    const addList: any = (await executeTool(access(sess.noViewCanAdd), "my_worklist", {})).data;
+    check(noQueue(addList),
+      "   **`canAddPatients=true` بلا `canViewPatients` ⟶ لا طابورَ فرعٍ إطلاقاً**",
+      JSON.stringify(addList));
+    const mgrList: any = (await executeTool(access(sess.noViewManager), "my_worklist", {})).data;
+    check(noQueue(mgrList),
+      "   **`branch_manager` بلا `canViewPatients` ⟶ لا طابورَ فرعٍ إطلاقاً**",
+      JSON.stringify(mgrList));
 
     // ══ ك2. «بانتظار تخصيص خبير» — لكل خدمة، ومطروحاً منها المُسنَد ═════
     console.log("\n── طابور التخصيص ──");
@@ -449,17 +493,24 @@ async function main() {
           && (typeof v === "number" ? v >= 1000 : /\d{4,}/.test(JSON.stringify(v)))),
       []);
 
-    //  ══ الطابور بالقدرة الحقيقية ══════════════════════════════════════
-    //  `canEnterSessions` هي مَن يُدخل الجلسات في النظام. فموظّفُ استقبالٍ
-    //  بلا هذه القدرة لا طابورَ له — والقدرة لا تعبر الفرع.
+    //  ══ الطابور بالقدرة الحقيقية: `canViewPatients` — لا `canEnterSessions` ══
+    //  `canEnterSessions` تفتح إدخال عدّادات أجهزةٍ **مجهولة الهويّة** في
+    //  `server/sessions_module/routes.ts` ولا تمنح رؤية اسم مريضٍ واحد في
+    //  التطبيق الحيّ. فحاملُها بلا `canViewPatients` يبقى محجوباً هنا تماماً
+    //  كأيّ موظّفٍ آخر — والعكس: مَن يملك `canViewPatients` يرى الطابور ولو
+    //  لم يُدخل جلسةً يوماً (physio1/2 يملكانها معاً فيبقيان مثالاً صحيحاً
+    //  لموظّف علاجٍ طبيعيّ نمطيّ، لا لأن القدرة هي البوّابة).
     const physioOf = async (s: any) =>
       ((await executeTool(access(s), "my_worklist", {})).data as any).physiotherapy;
     check(JSON.stringify(await physioOf(sess.physio1)).includes(pBoth.patient_code),
-      "   ومُدخِل الجلسات يرى طابور فرعه", JSON.stringify(await physioOf(sess.physio1)));
-    same("   **وموظّفٌ بلا `canEnterSessions` لا طابورَ له**",
-      await physioOf(sess.recv1), undefined);
+      "   ومُدخِل الجلسات (بصلاحية canViewPatients) يرى طابور فرعه", JSON.stringify(await physioOf(sess.physio1)));
+    same("   **وموظّفٌ يملك `canEnterSessions` وحدها بلا `canViewPatients` لا طابورَ له**",
+      await physioOf(sess.noViewSessions), undefined);
+    check(JSON.stringify(await physioOf(sess.recv1)).includes(pBoth.patient_code),
+      "   **وموظّفٌ يملك `canViewPatients` بلا `canEnterSessions` يراه — القدرةُ ليست البوّابة**",
+      JSON.stringify(await physioOf(sess.recv1)));
     check(!JSON.stringify(await physioOf(sess.physio2) ?? {}).includes(pBoth.patient_code),
-      "   **والقدرة لا تعبر الفرع**", JSON.stringify(await physioOf(sess.physio2)));
+      "   **والفرع يبقى حاجزاً بصرف النظر عن القدرة**", JSON.stringify(await physioOf(sess.physio2)));
     same("   **والخبير الصِرف لا يرى طابور العلاج الطبيعي**",
       await physioOf(sess.expert1), undefined);
     resetFin();
@@ -496,9 +547,15 @@ async function main() {
         finCalls.length], [false, 0]);
 
     // ══ م. أسماء الأدوات مغلقة ═══════════════════════════════════════
+    //  ══ (AI Assistant v2) صارت سبعاً — أُضيفت patient_search،
+    //  operational_summary، financial_summary. السجلُّ **لا يزال مغلقاً**
+    //  — القائمة صريحةٌ هنا فقط لتبقى دليلاً حيّاً على كل اسمٍ مسموح، لا
+    //  لأن العدد ثابتٌ للأبد.
     console.log("\n── السجلّ مغلق ──");
-    same("م. الأدوات أربع لا غير", TOOL_NAMES.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_finance", "patient_lookup"]);
+    same("م. سبعُ أدواتٍ لا غير", TOOL_NAMES.sort(), [
+      "financial_summary", "my_worklist", "operational_summary", "patient_clinical_summary",
+      "patient_finance", "patient_lookup", "patient_search",
+    ]);
     for (const bogus of ["run_sql", "query", "exec", "patient_update", "delete_patient", "__proto__"]) {
       same(`   «${bogus}» ⟶ يُردّ`,
         (await executeTool(access(sess.admin), bogus, { patientCode: p1.patient_code })).ok, false);

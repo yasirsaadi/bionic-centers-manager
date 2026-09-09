@@ -13,7 +13,8 @@
 //
 // ══ وما لا يوجد هنا عمداً ═══════════════════════════════════════════════
 // لا أداةَ «نفّذ SQL»، ولا «اقرأ جدولاً»، ولا «شغّل أمراً». فالنموذج لا يملك
-// إلا أربع نوافذ محدّدة الشكل، وكلُّ واحدةٍ تعرف مَن يحقّ له فتحها.
+// إلا نوافذَ محدّدة الشكل (سبعاً اليوم — راجع TOOL_NAMES)، وكلُّ واحدةٍ
+// تعرف مَن يحقّ له فتحها.
 //
 // ══ ونتيجة الأداة **بيانات لا تعليمات** ═════════════════════════════════
 // اسمُ مريضٍ أو ملاحظةٌ في ملفّه قد تحوي نصّاً يشبه الأمر. فالمخرَج يُعاد
@@ -33,6 +34,11 @@ import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
 import { activeExamDrizzle } from "../../medical/active_exam";
 import { activePatientDrizzle } from "../../patients/active_patient";
+import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
+import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
+import {
+  orderStatusLabel, purposeLabel, serviceTypeLabel, specialtyLabel, stageLabel,
+} from "../semantics";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -95,7 +101,21 @@ async function resolveInScope(
 
 // ══ ١. patient_lookup ════════════════════════════════════════════════════
 
+/** هل تملك الجلسةُ صلاحيةَ رؤية سجلّ مريضٍ عامّة — نفسُ بوّابة `GET
+ *  /api/patients/registry`/`GET /api/patients` بالحرف: `canViewPatients`
+ *  وحدها، **بلا استثناءٍ من الدور** (إصلاحاتٌ 2026-09-01/02 في التطبيق
+ *  الحيّ نفسِه). فمديرُ فرعٍ أو استقبالٌ سُحبت منه الرايةُ يُحجَب هنا
+ *  تماماً كما يُحجَب في تلك النقاط — والمساعدُ لا يصير باباً بديلاً. */
+const canViewPatientRecords = (a: AiAccessContext) =>
+  a.isAdmin || a.permissions?.canViewPatients === true;
+
 async function patientLookup(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً وقبل أي قراءة** — نفسُ نمط `patient_finance`: الأداة لا
+  //  تُعرَض أصلاً لغير المخوَّل (`offeredTo` أدناه)، لكنّ النموذج قد يخترع
+  //  اسمها فيُردّ هنا أيضاً قبل أن تُلمس القاعدة.
+  if (!canViewPatientRecords(access)) {
+    return denied("بيانات المريض متاحة لمن يملك صلاحية عرض المرضى فقط.");
+  }
   const raw = strArg(input, "patientCode");
   if (!raw) return denied("رمز المريض مطلوب بصيغة WB-xxxxx.");
   if (!normalizePatientCode(raw)) return denied("صيغة الرمز غير صحيحة — المتوقّع WB-xxxxx.");
@@ -176,11 +196,20 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
     return !isPureExpert(access);
   };
 
+  //  ══ تسميةٌ عربية مرافقة — بلا حذف الرمز الخام ══════════════════════════
+  //  `server/ai/semantics.ts` وحده مصدر التسمية (تركيبٌ فوق
+  //  `shared/manufacturing.ts` القائم) — لا قاعدة عملٍ ثانية هنا، ولا
+  //  الرمزُ يُحذَف: النموذج يقرأ الاسمَ العربيّ ويبقى الرمز للتدقيق ولمن
+  //  يحتاج المطابقة الدقيقة.
   const visibleOrders = orders.filter(maySeeOrder).slice(0, MAX_LIST_ITEMS).map((o) => ({
     serviceType: o.serviceType,
+    serviceTypeLabel: serviceTypeLabel(o.serviceType),
     purpose: o.purpose ?? "initial_build",
+    purposeLabel: purposeLabel(o.purpose),
     currentStage: o.currentStage,
+    currentStageLabel: stageLabel(o.currentStage),
     status: o.status,
+    statusLabel: orderStatusLabel(o.status),
     expectedDeliveryDate: o.expectedDeliveryDate ? String(o.expectedDeliveryDate) : null,
     expertName: o.expertName ?? null,
   }));
@@ -262,18 +291,26 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
         p.isMedicalSupport ? "medical_support" : null,
         p.isPhysiotherapy ? "physiotherapy" : null,
       ].filter(Boolean),
-      awaitingExam: pending.filter((r) => r.patientId === patientId).map((r) => r.caseType),
-      decidedExam: decided.filter((r) => r.patientId === patientId).map((r) => r.caseType),
+      awaitingExam: pending.filter((r) => r.patientId === patientId)
+        .map((r) => ({ specialty: r.caseType, specialtyLabel: specialtyLabel(r.caseType) })),
+      decidedExam: decided.filter((r) => r.patientId === patientId)
+        .map((r) => ({ specialty: r.caseType, specialtyLabel: specialtyLabel(r.caseType) })),
       latestExam: lastExam
         ? {
           specialty: lastExam.caseType,
+          specialtyLabel: specialtyLabel(lastExam.caseType),
           date: lastExam.signedAt ? new Date(lastExam.signedAt).toISOString().slice(0, 10) : null,
           doctor: lastExam.doctorName ?? null,
         }
         : null,
       deviceEpisodes: episodes.slice(0, MAX_LIST_ITEMS).map((e) => ({
         serviceType: caseTypes.get(e.caseId) ?? null,
+        serviceTypeLabel: serviceTypeLabel(caseTypes.get(e.caseId) ?? null),
         sequenceNumber: e.sequenceNumber,
+        //  ══ بلا تسميةٍ لحالة الحلقة عمداً ══ — `awaiting_exam/examined/
+        //  in_manufacturing/delivered/cancelled` ليست رموزَ أمر تصنيعٍ
+        //  (`STATUS_LABELS`) ولا مرحلته (`STAGE_LABELS`)؛ تطبيقُ أيٍّ منهما
+        //  هنا يكون تسميةً مخترَعة لا مصدرَ حقيقةٍ لها في `shared/`.
         status: e.status,
         isOpen: !["delivered", "cancelled"].includes(String(e.status)),
       })),
@@ -293,6 +330,10 @@ async function patientLookup(access: AiAccessContext, input: any): Promise<ToolO
 // ══ ٢. patient_clinical_summary ══════════════════════════════════════════
 
 async function patientClinicalSummary(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **نفسُ حارس `patient_lookup` بالحرف** — راجع تعليقَ `canViewPatientRecords`.
+  if (!canViewPatientRecords(access)) {
+    return denied("بيانات المريض متاحة لمن يملك صلاحية عرض المرضى فقط.");
+  }
   const raw = strArg(input, "patientCode");
   if (!raw) return denied("رمز المريض مطلوب بصيغة WB-xxxxx.");
   const hit = await resolveInScope(access, raw);
@@ -324,6 +365,7 @@ async function patientClinicalSummary(access: AiAccessContext, input: any): Prom
       //  `patient_finance` وحده، فلا تصير المعاينة قناةً جانبية للأسعار.
       exams: latestBySpecialty.slice(0, MAX_LIST_ITEMS).map((r) => ({
         specialty: r.caseType,
+        specialtyLabel: specialtyLabel(r.caseType),
         date: r.signedAt ? new Date(r.signedAt).toISOString().slice(0, 10) : null,
         doctor: r.doctorName ?? null,
         diagnosis: r.diagnosis ?? null,
@@ -415,6 +457,9 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         .from(patients).where(and(inArray(patients.id, shown.map((r) => r.patientId)), activePatientDrizzle()));
       for (const r of rowsWithCode) codeById.set(r.id, r.code);
     }
+    //  ══ `doctorSpecialties` يبقى مصفوفةَ رموزٍ خامٍ بلا تغيير شكل ══
+    //  عقدٌ قائم يعتمده مستهلِكون آخرون (ومنه اختبارٌ حيّ يقارنه بمساواةٍ
+    //  تامّة) — لا يُعاد بناؤه إلى كائناتٍ لأجل تسميةٍ وحدها.
     out.doctorSpecialties = specialties;
     out.awaitingMyExam = {
       total: rows.length,
@@ -422,6 +467,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         patientCode: codeById.get(r.patientId) ?? null,
         name: r.patientName,
         specialty: r.caseType,
+        specialtyLabel: specialtyLabel(r.caseType),
       })),
       ...(rows.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
     };
@@ -451,20 +497,42 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
         patientCode: o.patientCode,
         name: o.patientName,
         serviceType: o.serviceType,
+        serviceTypeLabel: serviceTypeLabel(o.serviceType),
         purpose: o.purpose ?? "initial_build",
+        purposeLabel: purposeLabel(o.purpose),
         stage: o.currentStage,
+        stageLabel: stageLabel(o.currentStage),
         status: o.status,
+        statusLabel: orderStatusLabel(o.status),
         expectedDeliveryDate: o.expectedDeliveryDate ? String(o.expectedDeliveryDate) : null,
       })),
       ...(mine.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
     };
   }
 
-  //  **الاستقبال والمدير والمسؤول**: طوابيرُ الفرع كما يعرّفها النظام —
-  //  «بانتظار معاينة» و«تم تحديد» إشارتان قائمتان لا مخترَعتان هنا.
-  const seesBranchQueues = access.isAdmin || isManager(access)
-    || access.permissions?.canViewPatients === true || access.permissions?.canAddPatients === true;
-  if (seesBranchQueues && !isPureExpert(access)) {
+  //  **طوابيرُ الفرع بأسماء مرضى — بابٌ واحد: `canViewPatients`.**
+  //
+  //  كانت هذه القوائمُ (بانتظار معاينة / بانتظار تخصيص خبير / علاجٌ طبيعيّ
+  //  نشط، بأسماء المرضى ورموزهم) تُفتَح لمجرّد `role === branch_manager` أو
+  //  `canAddPatients === true` — وكلاهما **لا يمنحان رؤية سجلّ مريضٍ** في
+  //  التطبيق الحيّ نفسِه: `canAddPatients` تسجّل مريضاً جديداً ولا تفتح
+  //  قائمة الموجودين، ومديرُ الفرع الذي سُحبت منه `canViewPatients` يُحجَب
+  //  عن `GET /api/patients`/`GET /api/patients/:id/cases`/`GET
+  //  /api/follow-ups` بلا استثناءٍ من دوره (إصلاحاتٌ 2026-09-01/02/03 —
+  //  المُثبَّتة في تلك النقاط بالحرف «لا منحَ دورٍ إضافي»). فمساعدٌ يمنح هذه
+  //  الأسماء لمجرّد الدور كان بالضبط الثغرة التي أُغلقت هناك — تُفتَح من
+  //  هنا بدلاً منها.
+  //
+  //  والاستثناءان الشرعيّان الوحيدان لا يمرّان من هنا أصلاً: عملُ الطبيب
+  //  الخاصّ (فوق، باختصاصاته هو) وأوامرُ الخبير الخاصّة (فوق، بمعرّفه هو) —
+  //  كلاهما مطابقٌ لبوّابتَي `GET /api/medical/worklist` و`GET
+  //  /api/manufacturing/my-orders` الحيّتين بالحرف: `isAuthenticated` فقط،
+  //  بلا `canViewPatients`، لأن النطاق هناك عملُ صاحب الجلسة نفسه لا سجلّاً
+  //  عامّاً. وطابورُ الجلسات اليومية (`canEnterSessions`) لا يمنح أسماء
+  //  مرضى في التطبيق أصلاً — عدّاداتُ أجهزةٍ مجهولة الهويّة فقط
+  //  (`server/sessions_module/routes.ts`) — فلا يُستعمَل هنا شرطاً بديلاً.
+  const seesBranchPatientQueues = canViewPatientRecords(access);
+  if (seesBranchPatientQueues && !isPureExpert(access)) {
     const [pending, decided] = await Promise.all([
       medical.getPendingExams(scope), medical.getDecidedExams(scope),
     ]);
@@ -524,6 +592,7 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
           patientCode: codeByPatient.get(r.patientId)?.patientCode ?? null,
           name: codeByPatient.get(r.patientId)?.name ?? null,
           serviceType: r.caseType,
+          serviceTypeLabel: serviceTypeLabel(r.caseType),
         }))
         .filter((i) => i.patientCode !== null),
       ...(stillAwaiting.length > MAX_LIST_ITEMS ? { truncated: true } : {}),
@@ -545,11 +614,17 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
     };
 
     //  ══ طابور العلاج الطبيعي — **بالفرع لا بالموظّف** ══════════════════
-    //  لا يوجد في النظام إسنادُ معالجٍ بعينه لمريض: `canEnterSessions` تُدخل
-    //  الجلسات، و`treatment_plans` خطّةُ مريضٍ لا ملكيّةُ موظّف. فاختراعُ
-    //  «مرضاي» كان سيقسّم عملاً لا يقسّمه النظام أصلاً — والطابور بالفرع هو
-    //  ما تعرضه الشاشات فعلاً.
-    if (access.permissions?.canEnterSessions === true || access.isAdmin || isManager(access)) {
+    //  لا يوجد في النظام إسنادُ معالجٍ بعينه لمريض: `treatment_plans` خطّةُ
+    //  مريضٍ لا ملكيّةُ موظّف. فاختراعُ «مرضاي» كان سيقسّم عملاً لا يقسّمه
+    //  النظام أصلاً — والطابور بالفرع هو ما تعرضه الشاشات فعلاً.
+    //
+    //  **بلا شرطٍ إضافيّ هنا** — القائمةُ تحمل أسماءَ مرضى، والبوّابةُ
+    //  الوحيدةُ لاسم مريضٍ هي `seesBranchPatientQueues` أعلاه (نفسها
+    //  المفروضة على الكتلة كلّها). `canEnterSessions` **لا تُستعمَل شرطاً
+    //  بديلاً** — تلك تفتح إدخال عدّادات أجهزةٍ مجهولة الهويّة
+    //  (`server/sessions_module/routes.ts`) ولا تمنح رؤية اسم مريضٍ واحد في
+    //  التطبيق الحيّ.
+    {
       const activePhysio = await db.select({
         code: patients.patientCode, name: patients.name,
       }).from(patients)
@@ -576,6 +651,159 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
   }
 
   return { ok: true, data: out };
+}
+
+// ══ ٥. patient_search — مرشَّحون قليلون، لا دليلَ مرضى بديل ═══════════════
+//
+// النطاقُ هنا «أعطني كلَّ مَن يشبه هذا الاسم» — قدرةُ دليلٍ حقيقية، فتُشترَط
+// `canViewPatientRecords` (نفسُ حارس `patient_lookup`/`patient_clinical_summary`
+// أعلاه — لا نسخةٌ ثانية من الشرط). خبيرٌ صِرف (بلا هذه الصلاحية افتراضاً)
+// لا يصير له دليلُ مرضى بديل عبر المساعد لمجرّد أنه يستطيع مناداة أداة.
+async function patientSearch(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  if (!canViewPatientRecords(access)) {
+    return denied("ليس لديك صلاحية البحث عن المرضى بالاسم — استعمل رمز المريض إن كان معك.");
+  }
+  const raw = strArg(input, "query");
+  if (!raw || raw.length < 2) return denied("اكتب حرفين على الأقلّ من الاسم أو الرمز أو رقم الهاتف.");
+
+  const scope = scopedBranchIds(access);
+  //  ══ الفرعُ يُفرَض **قبل** القراءة، داخل شرط SQL نفسِه — لا ترشيحٌ بعد
+  //  الجلب. فمريضٌ خارج النطاق لا يصل الاستعلام أصلاً، لا يظهر ثم يُحذَف.
+  if (scope !== null && scope.length === 0) {
+    return { ok: true, data: { query: raw, results: [] } };
+  }
+
+  const trigram = await hasTrigram(db);
+  const built = buildPatientSearch(raw, { trigram });
+  const branchCond = scope === null
+    ? sql`TRUE`
+    : sql`${patients.branchId} IN (${sql.join(scope.map((b) => sql`${b}`), sql`, `)})`;
+
+  const rows = await db.select({
+    code: patients.patientCode, name: patients.name, branchId: patients.branchId,
+  }).from(patients)
+    .where(and(activePatientDrizzle(), branchCond, built.where))
+    //  ══ نفسُ نمط `GET /api/patients/registry` بالحرف — `built.rank`
+    //  تعبيرٌ خام يحتاج `ASC` صريحاً، لا عموداً يفهم `asc()`/`desc()`.
+    .orderBy(sql`${built.rank} ASC`, searchTieBreaker(raw, { trigram }))
+    //  ══ سقفٌ ضيّق **بذاته** — أضيقُ من MAX_LIST_ITEMS المعتاد. هذه أداةُ
+    //  ترشيحٍ لا قائمةَ عمل: خمسةٌ يكفون لاختيار المقصود، وأكثرُ منها يبدأ
+    //  يشبه تصفّح سجلٍّ كامل بالاسم.
+    .limit(5);
+
+  const branchIds = Array.from(new Set(rows.map((r) => r.branchId)));
+  const branchRows = branchIds.length
+    ? await db.select({ id: branches.id, name: branches.name })
+      .from(branches).where(inArray(branches.id, branchIds))
+    : [];
+  const branchNameById = new Map(branchRows.map((b) => [b.id, b.name]));
+
+  return {
+    ok: true,
+    data: {
+      query: raw,
+      //  **لا رقمَ مريضٍ داخليّاً هنا** — الرمزُ العلنيّ وحده، كبقيّة الأدوات.
+      results: rows.map((r) => ({
+        patientCode: r.code, name: r.name, branch: branchNameById.get(r.branchId) ?? null,
+      })),
+      ...(rows.length === 5 ? { truncated: true } : {}),
+    },
+  };
+}
+
+// ══ فرعٌ مطلوبٌ من مدخل النموذج — للمسؤول العام فقط، ويفشل مغلَقاً ═══════
+//
+// **الغيابُ صحيحٌ** (كلّ الفروع، مع تفصيلٍ لكلّ فرع) — لكنّ **الحضورَ
+// المشوَّه لا يتحوّل صمتاً إلى ذلك**. قبل هذا كان `Number(input?.branchId)`
+// غيرَ المنتهي (نصٌّ غيرُ رقميّ، مثلاً) يسقط بصمتٍ إلى `null` ⟶ «كلّ
+// الفروع» — فطلبٌ مشوَّه من نموذجٍ مخطئ أو خبيث كان يوسّع النطاق صامتاً
+// بدل أن يُرفَض، وفرعاً كـ`0` أو رقماً سالباً أو كسرياً كان يمرّ إلى
+// `effectiveScope` كأنه فرعٌ صالح فيُنتج تقريراً بفرعٍ لا وجود له (أصفارٌ
+// مضلِّلة لا خطأٌ صريح). **وغيرُ المسؤول لا يُفحَص هنا إطلاقاً** —
+// `branchId` من طلبه ليس سلطةً بحالٍ، تماماً كبقيّة الأدوات.
+//
+// ══ **الغيابُ ≠ الفراغ** (تصحيحٌ — مراجعةٌ حيّة) ═══════════════════════════
+// `branchId: ""` كان يُقرأ مثل `undefined`/`null` تماماً — سلسلةٌ فارغة أو
+// بياضٌ محض **وصلت صراحةً** في الطلب، وليست غياباً للمفتاح. المفتاحُ
+// الغائب حقّاً هو الغيابُ الصحيح الوحيد؛ فراغٌ مُرسَل عمداً أو بالخطأ من
+// النموذج يُرفَض الآن كأيّ قيمةٍ أخرى لا تصلح رقم فرع.
+async function resolveAdminRequestedBranchId(
+  access: AiAccessContext, input: any,
+): Promise<{ ok: true; branchId: number | null } | { ok: false; error: string }> {
+  if (!access.isAdmin) return { ok: true, branchId: null };
+  const raw = input?.branchId;
+  if (raw === undefined || raw === null) return { ok: true, branchId: null };
+  //  ══ شكلٌ صريح فقط — لا بوليان ولا كائن ولا مصفوفة يُقبَل كرقم فرع ══
+  if (typeof raw !== "number" && typeof raw !== "string") {
+    return { ok: false, error: "رقم الفرع (branchId) غير صالح." };
+  }
+  //  ══ فراغٌ صريح **حضورٌ لا غياب** — يُرفَض لا يُقرأ «كلّ الفروع» ══
+  if (typeof raw === "string" && raw.trim() === "") {
+    return { ok: false, error: "رقم الفرع (branchId) لا يمكن أن يكون فارغاً." };
+  }
+  const n = Number(raw);
+  //  صحيحٌ وموجبٌ فقط — صفرٌ أو سالبٌ أو كسريّ أو غيرُ رقميّ يُرفَض صراحةً.
+  if (!Number.isInteger(n) || n <= 0) {
+    return { ok: false, error: "رقم الفرع (branchId) يجب أن يكون عدداً صحيحاً موجباً." };
+  }
+  //  ══ وجودٌ فعليّ — لا فرعَ ملفَّقاً يُقرأ منه تقريرٌ بأصفار ══
+  const allBranches = await storage.getBranches();
+  if (!allBranches.some((b) => b.id === n)) {
+    return { ok: false, error: `لا يوجد فرعٌ بالرقم ${n}.` };
+  }
+  return { ok: true, branchId: n };
+}
+
+// ══ ٦. operational_summary — أرقامٌ محسوبةٌ في الخادم، لا في النموذج ═════
+
+async function operationalSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً وقبل أي قراءة** — نفسُ نمط `patient_finance` بالحرف:
+  //  التقاريرُ صلاحيةٌ حقيقية في التطبيق (`canViewReports`، يحرسها
+  //  `server/routes.ts` على كل نقطة تقرير)، لا مجرّد دورٍ. الأداة لا
+  //  تُعرَض أصلاً لغير المخوَّل (`offeredTo` أدناه)، لكنّ النموذج قد يخترع
+  //  اسمها فيُردّ هنا قبل أن تُلمس القاعدة.
+  if (!(access.isAdmin || access.permissions?.canViewReports === true)) {
+    return denied("التقارير التشغيلية متاحة لمن يملك صلاحية عرض التقارير فقط.");
+  }
+  //  حدٌّ أقصى ٩٢ يوماً (نحو ثلاثة أشهر) — يمنع مسحاً ضخماً غير مقصود.
+  const range = resolveDateRange(input ?? {}, 92);
+  if (!range.ok) return denied(range.error);
+  //  فرعٌ من الطلب **لا يُعتمَد إلا للمسؤول**، ويفشل مغلَقاً إن شُوِّه.
+  const branchResolved = await resolveAdminRequestedBranchId(access, input);
+  if (!branchResolved.ok) return denied(branchResolved.error);
+  const compare = input?.compare === true;
+
+  const result = await getOperationalSummary({
+    operationalBranches: scopedBranchIds(access),
+    isAdmin: access.isAdmin,
+    requestedBranchId: branchResolved.branchId,
+    start: range.start, end: range.end,
+    compare,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
+// ══ ٧. financial_summary — فوق `storage.getAccountingSummary` وحدها ══════
+
+async function financialSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً** — نفسُ نمط `patient_finance` بالحرف: لا تُعرَض أصلاً
+  //  لغير المخوَّل، والمنفِّذ يفحص ثانيةً على أي حال.
+  if (access.mode !== "financial") {
+    return denied("البيانات المالية متاحة لمن يملك صلاحية المحاسبة فقط.");
+  }
+  //  حدٌّ أقصى سنةٌ واحدة — يكفي أطول مقارنةٍ معقولة (شهرٌ مقابل شهر قبله
+  //  مضروبةً باثني عشر) بلا مسحٍ غير محدود.
+  const range = resolveDateRange(input ?? {}, 366);
+  if (!range.ok) return denied(range.error);
+  const branchResolved = await resolveAdminRequestedBranchId(access, input);
+  if (!branchResolved.ok) return denied(branchResolved.error);
+  const compare = input?.compare === true;
+
+  const result = await getFinancialSummary({
+    isAdmin: access.isAdmin, accessBranchId: access.branchId, requestedBranchId: branchResolved.branchId,
+    start: range.start, end: range.end, compare,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
 }
 
 // ══ السجلّ الثابت ════════════════════════════════════════════════════════
@@ -608,11 +836,14 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
       name: "patient_lookup",
       description:
         "حالةُ مريضٍ الحيّة برمزه العلني (WB-xxxxx): بياناته الأساسية، وما ينتظر من معاينات، "
-        + "وحلقات أجهزته، وأوامر تصنيعه الفعّالة، وآخر زياراته. بلا أي مبلغ. "
-        + "استعملها كلّما ذكر المستخدم رمزاً مثل WB-02119 ولو لم يطلب الأداة صراحةً.",
+        + "وحلقات أجهزته، وأوامر تصنيعه الفعّالة، وآخر زياراته. بلا أي مبلغ. متاحةٌ فقط لمن "
+        + "يملك صلاحية عرض المرضى. استعملها كلّما ذكر المستخدم رمزاً مثل WB-02119 ولو لم يطلب الأداة صراحةً.",
       input_schema: CODE_ARG as any,
     },
-    offeredTo: () => true,
+    //  ══ **ليست متاحةً للجميع** — نفسُ بوّابة سجلّ المرضى في التطبيق
+    //  (`canViewPatients`)، لا افتراضَ مصادقةٍ أو دور. راجع
+    //  `canViewPatientRecords` أعلاه.
+    offeredTo: (a) => canViewPatientRecords(a),
     run: patientLookup,
   },
   patient_clinical_summary: {
@@ -620,10 +851,11 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
       name: "patient_clinical_summary",
       description:
         "الخلاصةُ السريرية الموقّعة لمريض: التشخيص والوصفة وتاريخ المعاينة وطبيبها لكل اختصاص. "
-        + "بلا أي مبلغ. استعملها حين يُسأل عن التشخيص أو الخطة العلاجية تحديداً.",
+        + "بلا أي مبلغ. متاحةٌ فقط لمن يملك صلاحية عرض المرضى. "
+        + "استعملها حين يُسأل عن التشخيص أو الخطة العلاجية تحديداً.",
       input_schema: CODE_ARG as any,
     },
-    offeredTo: () => true,
+    offeredTo: (a) => canViewPatientRecords(a),
     run: patientClinicalSummary,
   },
   patient_finance: {
@@ -642,11 +874,89 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
       name: "my_worklist",
       description:
         "عملُ المستخدم الحالي الآن: مَن ينتظر معاينته إن كان طبيباً، وأوامرُ التصنيع المسنَدة "
-        + "إليه إن كان خبيراً، وطوابيرُ فرعه إن كان استقبالاً أو مديراً. بلا وسائط، وبلا أي مبلغ.",
+        + "إليه إن كان خبيراً، وطوابيرُ فرعه بأسماء المرضى إن كان يملك صلاحية عرض المرضى. "
+        + "بلا وسائط، وبلا أي مبلغ.",
       input_schema: { type: "object", properties: {} } as any,
     },
     offeredTo: () => true,
     run: (a) => myWorklist(a),
+  },
+  patient_search: {
+    spec: {
+      name: "patient_search",
+      description:
+        "بحثٌ عن مريضٍ بالاسم (أو جزءٍ منه) أو الهاتف حين لا يملك المستخدم رمزه — يُرجع "
+        + "أقصى خمسة مرشَّحين برموزهم العلنية وأسمائهم وفروعهم فقط. استعملها حين يذكر "
+        + "المستخدم اسماً لا رمزاً، ثم نادِ patient_lookup على الرمز الذي يختاره المستخدم.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "اسمٌ كاملٌ أو جزئيّ، أو رقم هاتف" },
+        },
+        required: ["query"],
+      } as any,
+    },
+    //  ══ خلافاً لبقيّة الأدوات: ليست متاحةً للجميع — راجع تعليق الدالّة.
+    offeredTo: (a) => canViewPatientRecords(a),
+    run: patientSearch,
+  },
+  operational_summary: {
+    spec: {
+      name: "operational_summary",
+      description:
+        "ملخّصٌ تشغيليّ لفترة (مرضى جدد، زيارات، جلسات علاج طبيعي) بالإضافة إلى حالةٍ **الآن** "
+        + "لا تتبع الفترة (طابور المعاينة، أوامر التصنيع النشطة، مرضى العلاج الطبيعي "
+        + "activePhysiotherapyPatientsNow ذوو الحالة النشطة) ضمن نطاق فروع المستخدم. متاحةٌ "
+        + "فقط لمن يملك صلاحية عرض التقارير. مع compare اختياريّ: يقارن مقاييس الفترة الثلاثة "
+        + "فقط (لا مقاييس «الآن») بالفترة السابقة بنفس الطول، في حقل comparison منفصل بتاريخه "
+        + "الخاصّ. المسؤولُ العام وحده يستطيع تمرير branchId لتضييق النطاق أو تركه لرؤية كلّ "
+        + "الفروع مع تفصيلٍ لكلّ فرع — غيابُه (لا يُرسَل) وحده يعني كلّ الفروع؛ فارغٌ أو غير صحيح "
+        + "من المسؤول يُرفَض صراحةً بدل أن يتحوّل صمتاً إلى كلّ الفروع.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "YYYY-MM-DD — افتراضاً اليوم" },
+          endDate: { type: "string", description: "YYYY-MM-DD — افتراضاً نفس startDate أو اليوم" },
+          branchId: { type: "number", description: "للمسؤول العام فقط — رقم فرعٍ صحيحٍ موجود لتضييق النطاق" },
+          compare: { type: "boolean", description: "قارن مقاييس الفترة (لا حالة الآن) بالفترة السابقة بنفس الطول" },
+        },
+      } as any,
+    },
+    //  ══ **ليست متاحةً للجميع** — التقاريرُ صلاحيةٌ حقيقية (`canViewReports`)
+    //  لا افتراضَ دورٍ. لا يُشتقّ من الدور وحده (موظّفُ استقبالٍ بلا هذا
+    //  العَلَم يبقى محجوباً حتى لو كان دوره يوحي بخلاف ذلك).
+    offeredTo: (a) => a.isAdmin || a.permissions?.canViewReports === true,
+    run: operationalSummaryTool,
+  },
+  financial_summary: {
+    spec: {
+      name: "financial_summary",
+      description:
+        "ملخّصٌ ماليّ لفترة محدَّدة، بأربعة حقول لا تتبادل: salesValue (قيمةُ المبيعات — قيودُ "
+        + "الكلفة المسجَّلة في الفترة، ولو لم تُقبض بعد)، وrevenue (الإيرادُ الفعليّ — النقدُ "
+        + "المقبوضُ فعلاً في الفترة)، وexpenses (المصاريف)، وnet (الصافي = revenue − expenses). "
+        + "**المبيعات ليست إيراداً حتى تُقبض**: سؤالٌ عن «الإيراد» يُجاب من revenue لا salesValue، "
+        + "وسؤالٌ عن «كم بعنا» أو «قيمة المبيعات» يُجاب من salesValue لا revenue. current وbyBranch "
+        + "يحملان أيضاً outstandingLifetime/collectionRateLifetime — رصيدٌ مستحقّ ونسبةُ تحصيلٍ "
+        + "**إجماليّان حتى الآن**، لا رقمَي الفترة. مع مقارنةٍ اختيارية بالفترة السابقة بنفس الطول "
+        + "(compare) تُرجع أربعة حقول الفترة فقط في comparison — **بلا** outstandingLifetime/"
+        + "collectionRateLifetime هناك، إذ لم تُقاسا في الفترة السابقة أصلاً؛ لا يُستنتَج رصيدٌ أو "
+        + "نسبةُ تحصيلٍ «كما كانا في الفترة السابقة». ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن "
+        + "يملك صلاحية المحاسبة. المسؤولُ العام وحده يستطيع طلب فرعٍ بعينه أو كلّ الفروع — وbranchId "
+        + "غائبٌ (لا يُرسَل) وحده يعني كلّ الفروع؛ فارغٌ أو غير صحيح من المسؤول يُرفَض صراحةً بدل أن "
+        + "يتحوّل صمتاً إلى كلّ الفروع.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "YYYY-MM-DD — افتراضاً اليوم" },
+          endDate: { type: "string", description: "YYYY-MM-DD — افتراضاً نفس startDate أو اليوم" },
+          branchId: { type: "number", description: "للمسؤول العام فقط — رقم فرعٍ لتضييق النطاق" },
+          compare: { type: "boolean", description: "قارن بالفترة السابقة بنفس الطول" },
+        },
+      } as any,
+    },
+    offeredTo: (a) => a.mode === "financial",
+    run: financialSummaryTool,
   },
   } satisfies Record<string, ToolEntry>,
 );

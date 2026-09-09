@@ -1,0 +1,97 @@
+// اختيارُ أقرب مقالات معرفةٍ موثوقة لسؤال المستخدم — منطقٌ خالص، بلا شبكة
+// ولا قاعدة بيانات، يُختبَر وحده.
+//
+// ══ لماذا هذا ليس بحثاً دلالياً ═══════════════════════════════════════════
+// «تطابقُ كلماتٍ مفتاحية بعد تطبيعٍ عربيّ» كافٍ هنا ومقصود — لا فهرسةً
+// دلالية، ولا نموذجَ تضمين، ولا قاعدة بيانات متجهات (ممنوعةٌ صراحةً في هذه
+// المرحلة). السؤالُ محدودٌ («كيف أفتح صيانة؟») والمعرفةُ صغيرة (عشراتُ
+// مقالات لا آلاف)، فتطابقُ الكلمات المفتاحية يكفي ويبقى قابلاً للفهم
+// والتصحيح — بعكس أيّ نموذج صندوقٍ أسود.
+//
+// ══ إعادةُ استعمال التطبيع — لا مطبِّعَ عربيّ ثانٍ ═════════════════════════
+// `normalizeSearchText` (`shared/patient_search.ts`) هي **نفسُها** التي
+// تُطبِّع بها أسماء المرضى: أُلفٌ وياءٌ وتاءٌ مربوطة وتشكيلٌ وأرقامٌ هندية.
+// فما يُطابَق هنا يُطابَق بنفس القواعد التي يعرفها الموظّف من شاشة البحث.
+
+import { normalizeSearchText } from "./patient_search";
+
+export interface RetrievableArticle {
+  id: number;
+  title: string;
+  body: string;
+  scope: string;
+}
+
+export interface KnowledgeMatch extends RetrievableArticle {
+  score: number;
+}
+
+/**
+ * كلماتٌ عربية عالية التكرار بلا قيمة تمييزية — تُستبعَد من التطابق.
+ *
+ * ══ بصيغتها **بعد** التطبيع لا قبله ═══════════════════════════════════
+ * المقارنةُ تقع على مخرَج `normalizeSearchText`، فكلمةٌ كُتبت هنا بصيغتها
+ * الأصلية («على»، «إلى»، «متى» — بالألف المقصورة أو الهمزة) لن تطابق
+ * التوكِن أبداً بعد أن يُطبَّع إلى («علي»، «الي»، «متي»). كلُّ إدخالٍ هنا
+ * مُتحقَّقٌ فعلياً بتشغيل `tokenize` عليه (`shared/
+ * ai_knowledge_retrieval.test.ts`، القسم أ).
+ */
+const STOPWORDS = new Set([
+  "في", "من", "الي", "علي", "عن", "مع", "او", "ثم",
+  "هل", "ما", "ماذا", "كيف", "متي", "اين", "لماذا", "هذا", "هذه",
+  "ذلك", "التي", "الذي", "كل", "لا", "لم", "لن", "قد", "كان", "يكون",
+  "هي", "هو", "انا", "انت", "بعد", "قبل", "عند", "بين",
+]);
+
+/**
+ * علاماتُ ترقيمٍ عربية ولاتينية شائعة في أسئلة المحادثة الحرّة — `؟!،؛:.`
+ * وأخواتها. `normalizeSearchText` **لا تحذفها** عمداً (مصمَّمةٌ لأسماء
+ * مرضى ورموز، لا لجملٍ فيها علامات استفهام)، فسؤال «كيف أفتح صيانة؟» كان
+ * سيُطبَّع إلى كلمةٍ أخيرة `صيانه؟` لا تطابق «صيانه» في متن مقالة أبداً.
+ */
+const PUNCTUATION_SPLIT = /[\s؟!،؛:."'«»()\[\]{}\-_/\\,.]+/;
+
+/** نصٌّ ⟶ رموزٌ مطبَّعة، بلا علامات ترقيم ولا كلمات وقفٍ ولا كلمةٍ أقصر من حرفين. */
+export function tokenize(text: string): string[] {
+  return normalizeSearchText(text)
+    .split(PUNCTUATION_SPLIT)
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+}
+
+/**
+ * درجةُ مطابقة مقالةٍ واحدة لرموز سؤالٍ مطبَّعة سلفاً.
+ *
+ * العنوانُ يزن ثلاثة أضعاف المتن — تطابقُ عنوانٍ («فتح صيانة» مقابل «كيف
+ * أفتح صيانة») أدلّ من تطابقِ كلمةٍ عابرة داخل فقرة طويلة.
+ */
+export function scoreArticle(queryTokens: readonly string[], article: RetrievableArticle): number {
+  if (queryTokens.length === 0) return 0;
+  const titleTokens = new Set(tokenize(article.title));
+  const bodyTokens = new Set(tokenize(article.body));
+  let score = 0;
+  for (const t of queryTokens) {
+    if (titleTokens.has(t)) score += 3;
+    if (bodyTokens.has(t)) score += 1;
+  }
+  return score;
+}
+
+/**
+ * أقربُ المقالات لسؤال — **مرتّبةً ومحدودة**، ولا تُدرَج مقالةٌ بدرجة صفر.
+ *
+ * ولا يُخمَّن بديلٌ حين لا يوجد: سؤالٌ لا يطابق شيئاً يُرجع مصفوفةً فارغة —
+ * والمساعد يقول ذلك صراحةً بدل أن يُحشى نصّ النظام بمعرفةٍ لا صلة لها.
+ * وكسرُ التعادل بأصغر `id` — **حتميٌّ لا عشوائيّ**، فنفسَ السؤال يُعيد
+ * نفسَ الترتيب دائماً.
+ */
+export function selectTopArticles(
+  query: string, articles: readonly RetrievableArticle[], limit = 3,
+): KnowledgeMatch[] {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return [];
+  const scored = articles
+    .map((a) => ({ ...a, score: scoreArticle(queryTokens, a) }))
+    .filter((a) => a.score > 0);
+  scored.sort((a, b) => b.score - a.score || a.id - b.id);
+  return scored.slice(0, limit);
+}

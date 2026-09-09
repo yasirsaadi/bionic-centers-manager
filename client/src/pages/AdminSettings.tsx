@@ -1301,6 +1301,481 @@ function AiMemoryTab() {
   );
 }
 
+// ══ معرفةُ المساعد الموثوقة (AI Assistant v2) — للمسؤول العام حصراً ═══════
+//
+// اقتراحاتُ الموظّفين هنا **بيانات، لا قرارات** — الاعتمادُ أو الرفضُ فعلٌ
+// بشريّ صريح من هذه الشاشة وحدها. راجع `server/ai/knowledge/store.ts`.
+
+interface AiKnowledgeArticleRow {
+  id: number;
+  title: string;
+  body: string;
+  scope: string;
+  branchId: number | null;
+  seedKey: string | null;
+  isActive: boolean;
+  version: number;
+  supersedesId: number | null;
+  createdByName: string;
+  approvedByName: string;
+  approvedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AiKnowledgeSuggestionRow {
+  id: number;
+  submittedByName: string;
+  submittedByRole: string | null;
+  branchId: number | null;
+  submittedAt: string;
+  sourceQuestion: string | null;
+  sourceAnswer: string | null;
+  referencedArticleIds: number[] | null;
+  suggestedText: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  decidedByName: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  resultingArticleId: number | null;
+}
+
+const KNOWLEDGE_SCOPE_LABELS: Record<string, string> = {
+  general: "عامّة", reception: "استقبال", medical: "معاينة طبّية",
+  manufacturing: "تصنيع", physiotherapy: "علاج طبيعي", finance: "محاسبة",
+  administration: "إدارة",
+};
+const KNOWLEDGE_SCOPES = Object.keys(KNOWLEDGE_SCOPE_LABELS);
+
+function AiKnowledgeTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [articleDialog, setArticleDialog] = useState<{ mode: "create" | "edit"; article: AiKnowledgeArticleRow | null } | null>(null);
+  const [decision, setDecision] = useState<{ suggestion: AiKnowledgeSuggestionRow; mode: "approve" | "reject" } | null>(null);
+  const [approveAsNew, setApproveAsNew] = useState(true);
+  const [approveTargetId, setApproveTargetId] = useState<string>("");
+
+  const { data: branches = [] } = useQuery<BranchOption[]>({ queryKey: ["/api/branches"] });
+  const { data: articlesData, isLoading: articlesLoading } = useQuery<{ rows: AiKnowledgeArticleRow[] }>({
+    queryKey: ["/api/ai/knowledge/articles"],
+  });
+  const { data: suggestionsData, isLoading: suggestionsLoading } = useQuery<{ rows: AiKnowledgeSuggestionRow[] }>({
+    queryKey: ["/api/ai/knowledge/suggestions"],
+  });
+
+  const articles = articlesData?.rows ?? [];
+  const activeArticles = articles.filter((a) => a.isActive);
+  const suggestions = suggestionsData?.rows ?? [];
+  const pending = suggestions.filter((s) => s.status === "pending");
+  const decided = suggestions.filter((s) => s.status !== "pending");
+
+  const invalidateKnowledge = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/ai/knowledge/articles"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/ai/knowledge/suggestions"] });
+  };
+
+  const saveArticle = useMutation({
+    mutationFn: async (data: { id?: number; title: string; body: string; scope: string; branchId: number | null }) => {
+      const url = data.id ? `/api/ai/knowledge/articles/${data.id}` : "/api/ai/knowledge/articles";
+      const method = data.id ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ title: data.title, body: data.body, scope: data.scope, branchId: data.branchId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "تعذّر الحفظ");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateKnowledge();
+      toast({ title: articleDialog?.mode === "edit" ? "تم حفظ نسخةٍ جديدة من المقالة" : "تمت إضافة المقالة" });
+      setArticleDialog(null);
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: async (params: { id: number; active: boolean }) => {
+      const res = await fetch(`/api/ai/knowledge/articles/${params.id}/active`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ active: params.active }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "تعذّر التغيير");
+      }
+      return res.json();
+    },
+    onSuccess: () => { invalidateKnowledge(); toast({ title: "تم تحديث حالة المقالة" }); },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  const decideSuggestion = useMutation({
+    mutationFn: async (params: {
+      id: number; mode: "approve" | "reject";
+      decisionNote?: string; targetArticleId?: number | null;
+      title?: string; body?: string; scope?: string; branchId?: number | null;
+    }) => {
+      const url = `/api/ai/knowledge/suggestions/${params.id}/${params.mode === "approve" ? "approve" : "reject"}`;
+      const res = await fetch(url, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(
+          params.mode === "approve"
+            ? {
+              targetArticleId: params.targetArticleId ?? null,
+              title: params.title, body: params.body, scope: params.scope, branchId: params.branchId,
+            }
+            : { decisionNote: params.decisionNote },
+        ),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "تعذّر الحسم");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      invalidateKnowledge();
+      toast({ title: vars.mode === "approve" ? "تم اعتماد الاقتراح" : "تم رفض الاقتراح" });
+      setDecision(null);
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              اقتراحاتُ الموظّفين — بانتظار المراجعة
+              {pending.length > 0 && <Badge variant="secondary">{pending.length}</Badge>}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+              يقترحها الموظّفون من داخل المحادثة. لا تُغيّر معرفة المساعد إلا بعد اعتمادك صراحةً هنا.
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {suggestionsLoading ? (
+            <p className="text-center text-muted-foreground py-8">جارٍ التحميل...</p>
+          ) : pending.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">لا اقتراحات معلَّقة الآن.</p>
+          ) : (
+            pending.map((s) => (
+              <div key={s.id} className="rounded-md border p-4 space-y-2" data-testid={`suggestion-${s.id}`}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-sm font-medium">
+                    {s.submittedByName}
+                    {s.submittedByRole && <span className="text-muted-foreground font-normal"> — {s.submittedByRole}</span>}
+                  </div>
+                  <span className="text-xs text-muted-foreground">{new Date(s.submittedAt).toLocaleString("ar-IQ")}</span>
+                </div>
+                {s.sourceQuestion && (
+                  <p className="text-xs text-muted-foreground">سؤال الموظّف: {s.sourceQuestion}</p>
+                )}
+                {s.sourceAnswer && (
+                  <p className="text-xs text-muted-foreground">جوابُ المساعد المتحدَّى: {s.sourceAnswer}</p>
+                )}
+                <p className="text-sm"><span className="font-medium">الخطأ المذكور: </span>{s.reason}</p>
+                <p className="text-sm"><span className="font-medium">التصحيح المقترَح: </span>{s.suggestedText}</p>
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    onClick={() => { setDecision({ suggestion: s, mode: "approve" }); setApproveAsNew(true); setApproveTargetId(""); }}
+                    data-testid={`button-approve-suggestion-${s.id}`}
+                  >
+                    اعتماد
+                  </Button>
+                  <Button
+                    size="sm" variant="outline" className="text-destructive"
+                    onClick={() => setDecision({ suggestion: s, mode: "reject" })}
+                    data-testid={`button-reject-suggestion-${s.id}`}
+                  >
+                    رفض
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
+
+          {decided.length > 0 && (
+            <details className="pt-2">
+              <summary className="text-sm text-muted-foreground cursor-pointer">سجلّ القرارات ({decided.length})</summary>
+              <div className="space-y-2 mt-2">
+                {decided.map((s) => (
+                  <div key={s.id} className="rounded-md border p-3 text-xs space-y-1" data-testid={`decided-suggestion-${s.id}`}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant={s.status === "approved" ? "default" : "outline"}>
+                        {s.status === "approved" ? "اعتُمد" : "رُفض"}
+                      </Badge>
+                      <span className="text-muted-foreground">{s.submittedByName} ← {s.decidedByName}</span>
+                    </div>
+                    <p className="text-muted-foreground">{s.suggestedText}</p>
+                    {s.decisionNote && <p className="text-muted-foreground">سبب الرفض: {s.decisionNote}</p>}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              المقالاتُ الموثوقة
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+              ما يقرأه المساعد فعلياً عند شرح مسارات العمل. تعديلٌ ينشئ نسخةً جديدة ويحفظ القديمة — لا شيء يُمحى.
+            </p>
+          </div>
+          <Button
+            onClick={() => setArticleDialog({ mode: "create", article: null })}
+            className="gap-2 shrink-0"
+            data-testid="button-add-knowledge-article"
+          >
+            <Plus className="h-4 w-4" />
+            مقالة جديدة
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {articlesLoading ? (
+            <p className="text-center text-muted-foreground py-8">جارٍ التحميل...</p>
+          ) : articles.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">لا مقالات بعد.</p>
+          ) : (
+            <div className="space-y-2">
+              {articles.map((a) => (
+                <div
+                  key={a.id}
+                  className={`rounded-md border p-3 space-y-1.5 ${a.isActive ? "" : "opacity-60"}`}
+                  data-testid={`article-${a.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-semibold text-sm">{a.title}</h4>
+                        <Badge variant="outline" className="font-normal">{KNOWLEDGE_SCOPE_LABELS[a.scope] ?? a.scope}</Badge>
+                        <Badge variant="secondary" className="font-normal">
+                          {a.branchId === null ? "كل الفروع" : branches.find((b) => b.id === a.branchId)?.name ?? `فرع ${a.branchId}`}
+                        </Badge>
+                        <Badge variant={a.isActive ? "default" : "outline"} className="font-normal">
+                          {a.isActive ? "فعّالة" : "غير فعّالة"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">نسخة {a.version}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{a.body}</p>
+                      <p className="text-[11px] text-muted-foreground">أنشأها: {a.createdByName} — اعتمدها: {a.approvedByName}</p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {a.isActive && (
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setArticleDialog({ mode: "edit", article: a })}
+                          data-testid={`button-edit-article-${a.id}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => toggleActive.mutate({ id: a.id, active: !a.isActive })}
+                        disabled={toggleActive.isPending}
+                        data-testid={`button-toggle-article-${a.id}`}
+                      >
+                        {a.isActive ? "تعطيل" : "تفعيل"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ══ نافذةُ إنشاء/تعديل مقالة ══ */}
+      <Dialog open={articleDialog !== null} onOpenChange={(o) => { if (!o) setArticleDialog(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{articleDialog?.mode === "edit" ? "تعديل مقالة (نسخةٌ جديدة)" : "مقالةٌ جديدة"}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const title = String(fd.get("title") || "").trim();
+              const body = String(fd.get("body") || "").trim();
+              const scope = String(fd.get("scope") || "general");
+              const branchId = fd.get("branchId") ? parseInt(String(fd.get("branchId"))) : null;
+              if (!title || !body) {
+                toast({ title: "العنوان والنص مطلوبان", variant: "destructive" });
+                return;
+              }
+              saveArticle.mutate({ id: articleDialog?.article?.id, title, body, scope, branchId });
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">النطاق *</label>
+                <select
+                  name="scope"
+                  defaultValue={articleDialog?.article?.scope || "general"}
+                  required
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {KNOWLEDGE_SCOPES.map((s) => (
+                    <option key={s} value={s}>{KNOWLEDGE_SCOPE_LABELS[s]}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">الفرع</label>
+                <select
+                  name="branchId"
+                  defaultValue={articleDialog?.article?.branchId ?? ""}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">كل الفروع</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">العنوان *</label>
+                <Input name="title" defaultValue={articleDialog?.article?.title || ""} required />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">النصّ *</label>
+                <Textarea name="body" defaultValue={articleDialog?.article?.body || ""} rows={6} required />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setArticleDialog(null)}>إلغاء</Button>
+              <Button type="submit" disabled={saveArticle.isPending}>
+                {saveArticle.isPending ? "جارٍ الحفظ..." : "حفظ"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══ نافذةُ حسم اقتراح ══ */}
+      <Dialog open={decision !== null} onOpenChange={(o) => { if (!o) setDecision(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{decision?.mode === "approve" ? "اعتمادُ الاقتراح" : "رفضُ الاقتراح"}</DialogTitle>
+          </DialogHeader>
+          {decision?.mode === "reject" ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                const decisionNote = String(fd.get("decisionNote") || "").trim();
+                if (!decisionNote) { toast({ title: "سبب الرفض مطلوب", variant: "destructive" }); return; }
+                decideSuggestion.mutate({ id: decision.suggestion.id, mode: "reject", decisionNote });
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label className="text-sm font-medium">سبب الرفض *</label>
+                <Textarea name="decisionNote" rows={3} required />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setDecision(null)}>إلغاء</Button>
+                <Button type="submit" variant="destructive" disabled={decideSuggestion.isPending}>
+                  {decideSuggestion.isPending ? "جارٍ الرفض..." : "رفض الاقتراح"}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : decision?.mode === "approve" ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                const body = String(fd.get("body") || "").trim();
+                if (!body) { toast({ title: "نصّ المقالة مطلوب", variant: "destructive" }); return; }
+                if (approveAsNew) {
+                  const title = String(fd.get("title") || "").trim();
+                  const scope = String(fd.get("scope") || "general");
+                  const branchId = fd.get("branchId") ? parseInt(String(fd.get("branchId"))) : null;
+                  if (!title) { toast({ title: "عنوان المقالة الجديدة مطلوب", variant: "destructive" }); return; }
+                  decideSuggestion.mutate({ id: decision.suggestion.id, mode: "approve", title, body, scope, branchId });
+                } else {
+                  if (!approveTargetId) { toast({ title: "اختر المقالة المستهدَفة", variant: "destructive" }); return; }
+                  decideSuggestion.mutate({ id: decision.suggestion.id, mode: "approve", targetArticleId: parseInt(approveTargetId), body });
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="flex gap-2">
+                <Button type="button" size="sm" variant={approveAsNew ? "default" : "outline"} onClick={() => setApproveAsNew(true)}>
+                  مقالةٌ جديدة
+                </Button>
+                <Button type="button" size="sm" variant={!approveAsNew ? "default" : "outline"} onClick={() => setApproveAsNew(false)}>
+                  تعديلُ مقالةٍ قائمة
+                </Button>
+              </div>
+              {approveAsNew ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">النطاق *</label>
+                    <select name="scope" required defaultValue="general" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                      {KNOWLEDGE_SCOPES.map((s) => (<option key={s} value={s}>{KNOWLEDGE_SCOPE_LABELS[s]}</option>))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">الفرع</label>
+                    <select name="branchId" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                      <option value="">كل الفروع</option>
+                      {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                    </select>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <label className="text-sm font-medium">العنوان *</label>
+                    <Input name="title" required />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">المقالةُ المستهدَفة *</label>
+                  <select
+                    value={approveTargetId}
+                    onChange={(e) => setApproveTargetId(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">اختر مقالة...</option>
+                    {activeArticles.map((a) => (<option key={a.id} value={a.id}>{a.title}</option>))}
+                  </select>
+                </div>
+              )}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">نصُّ المقالة النهائيّ *</label>
+                <Textarea name="body" rows={5} defaultValue={decision.suggestion.suggestedText} required />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setDecision(null)}>إلغاء</Button>
+                <Button type="submit" disabled={decideSuggestion.isPending}>
+                  {decideSuggestion.isPending ? "جارٍ الاعتماد..." : "اعتماد"}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export default function AdminSettings() {
   const { t } = useTranslation();
   const branchSession = useBranchSession();
@@ -1902,7 +2377,7 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-4 md:grid-cols-7 w-full max-w-3xl mb-6">
+        <TabsList className="grid grid-cols-4 md:grid-cols-8 w-full max-w-4xl mb-6">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
             {t.adminSettings.tabUsers}
@@ -1926,6 +2401,10 @@ export default function AdminSettings() {
           <TabsTrigger value="ai-memory" className="gap-2">
             <Sparkles className="w-4 h-4" />
             ذاكرة الذكاء
+          </TabsTrigger>
+          <TabsTrigger value="ai-knowledge" className="gap-2" data-testid="tab-ai-knowledge">
+            <Sparkles className="w-4 h-4" />
+            معرفة المساعد
           </TabsTrigger>
           <TabsTrigger value="accuracy" className="gap-2">
             <Activity className="w-4 h-4" />
@@ -2496,6 +2975,10 @@ export default function AdminSettings() {
 
         <TabsContent value="ai-memory" className="space-y-6">
           <AiMemoryTab />
+        </TabsContent>
+
+        <TabsContent value="ai-knowledge" className="space-y-6">
+          <AiKnowledgeTab />
         </TabsContent>
 
         <TabsContent value="accuracy" className="space-y-6">
