@@ -19,6 +19,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import {
   canOpenAssistant, introTextFor, scopeLabelFor, suggestionsFor,
 } from "@/components/ai_assistant_access";
+import { AssistantMarkdown } from "@/components/AssistantMarkdown";
 
 interface KnowledgeProvenance {
   id: number;
@@ -238,11 +239,16 @@ export function AiChatDrawer() {
                   </div>
                   <div className={`max-w-[80%] space-y-1 ${m.role === "user" ? "items-end" : ""} flex flex-col`}>
                     <div
-                      className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                        m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                      className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                        m.role === "user"
+                          ? "bg-primary text-primary-foreground whitespace-pre-wrap"
+                          : "bg-muted"
                       }`}
                     >
-                      {m.content}
+                      {/*  ══ رسالةُ المستخدم نصٌّ عاديّ دائماً؛ ردُّ المساعد وحده يُرسَم
+                          كـMarkdown آمنٍ صغير — لا HTML خام، ولا رابط، ولا صورة
+                          (`AssistantMarkdown.tsx`) ══ */}
+                      {m.role === "assistant" ? <AssistantMarkdown text={m.content} /> : m.content}
                     </div>
 
                     {m.role === "assistant" && (

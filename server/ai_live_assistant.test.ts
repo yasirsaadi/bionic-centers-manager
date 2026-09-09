@@ -363,6 +363,95 @@ async function main() {
 
     await setArticleActive({ id: kArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
 
+    // ══ ح.٧ — بوّابةُ النيّة: سؤالُ بياناتٍ حيّة لا يستدرج معرفةً مطابِقة
+    // فعلياً (مراجعةٌ إنتاجية) ══════════════════════════════════════════
+    //  نفسُ العنصر السابق يُستعمَل مرّتين — **لإثبات أن الغياب سببُه
+    //  البوّابة لا عدمُ التطابق**: أوّلاً بسؤال مسارِ عملٍ حقيقيّ يشارك
+    //  الكلمةَ المفتاحية نفسها («حالة») فتظهر المقالة، ثم بسؤالٍ عن مريضٍ
+    //  بعينه يشارك الكلمةَ نفسَها ومع ذلك **لا** تظهر — لأن البوّابة منعت
+    //  النداء قبل الترشيح أصلاً، لا لأن الترشيح لم يطابق.
+    console.log("\n── ح.٧ بوّابةُ النيّة — بياناتٌ حيّة لا تستدرج معرفةً ──");
+    const statusArticle = await createArticle({
+      title: `${MARK} — حالة الطلب وتتبّعها في النظام`,
+      body: `${MARK} — تمرّ حالة الطلب بعدّة مراحل من الاستلام إلى التسليم`,
+      scope: "general", branchId: null,
+      actor: { userId: ADMIN, name: "مسؤول" },
+    });
+    try {
+      //  ══ أوّلاً: سؤالُ مسارِ عملٍ يشارك «حالة» — يظهر (البوّابةُ مفتوحة) ══
+      runScript([{ text: "شرح تتبّع الحالة." }]);
+      const workflowStatus: any = await chat(access(S.recv), ask("ما هي خطوات تحديث حالة الطلب؟"));
+      check(seen[0].system.includes(statusArticle.body),
+        "ح.٧.١ (تجهيز) سؤالُ مسارِ عملٍ يشارك «حالة» ⟶ المقالةُ تصل نصَّ النظام فعلياً — إثباتُ تطابقٍ حقيقي");
+      check(workflowStatus.value.knowledge.some((k: any) => k.id === statusArticle.id),
+        "ح.٧.٢ وتظهر في knowledge أيضاً");
+
+      //  ══ ثانياً: نفسُ الكلمة، لكنّ السؤال عن مريضٍ بعينه ⟶ **لا تظهر** ══
+      resetFin();
+      runScript([
+        { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+        { text: `حالة ${p1.patient_code}: قيد المتابعة.` },
+      ]);
+      const liveStatus: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
+      same("ح.٧.٣ الطلبُ نجح والأداةُ الحيّة نُفِّذت", liveStatus.value.tools, { names: ["patient_lookup"], count: 1 });
+      check(!seen[0].system.includes(statusArticle.body),
+        "ح.٧.٤ **وبلا نصّ المقالة في نصّ النظام** — رغم أنها تطابق «حالة» فعلياً كما أُثبت في ح.٧.١",
+        seen[0].system.slice(-400));
+      same("ح.٧.٥ **وknowledge فارغةٌ صراحةً** — بياناتُ المريض الحيّة وحدها هي المصدر",
+        liveStatus.value.knowledge, []);
+      same("ح.٧.٦ وtoolsUsed يبقى المصدرَ الوحيد للتزويد",
+        liveStatus.value.toolsUsed, ["بيانات المريض الحية"]);
+    } finally {
+      await setArticleActive({ id: statusArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
+    }
+
+    // ══ ح.٨ — بوّابةُ النيّة تشمل طلبَ البحث عن مريضٍ بالاسم أيضاً (تصحيحٌ
+    // إنتاجيّ ثانٍ) ═════════════════════════════════════════════════════
+    //  نفسُ منهج ح.٧ بالحرف: مقالةٌ تشارك مفردات السؤال الحيّ فعلياً («ابحث»
+    //  و«المريض» بصيغتَيهما الحرفيّتين، لا مجرّد جذرٍ) — فتصل حين يُسأل
+    //  سؤالُ مسارِ عملٍ يستعمل المفردتين نفسيهما، **ولا تصل** حين يكون
+    //  السؤالُ طلبَ بحثٍ حيّاً عن مريضٍ بعينه — رغم التطابق النصّي الحقيقيّ.
+    console.log("\n── ح.٨ بوّابةُ النيّة — طلبُ البحث عن مريضٍ بالاسم لا يستدرج معرفةً ──");
+    const searchArticle = await createArticle({
+      title: `${MARK} — كيف تبحث عن مريضٍ في سجلّ المرضى`,
+      body: `${MARK} — يمكن للموظّف أن يكتب في خانة البحث: ابحث عن اسم المريض أو رقم هاتفه، `
+        + `ثم يفتح ملفّ المريض من نتائج البحث.`,
+      scope: "general", branchId: null,
+      actor: { userId: ADMIN, name: "مسؤول" },
+    });
+    try {
+      //  ══ أوّلاً: سؤالُ مسارِ عملٍ يشارك «ابحث»/«المريض» حرفياً ⟶ تظهر
+      //  (البوّابةُ مفتوحة — «كيف» إشارةُ مسارِ عملٍ صريحة) ══════════════
+      runScript([{ text: "توضيحُ آلية البحث." }]);
+      const workflowSearch: any = await chat(access(S.recv), ask("كيف ابحث عن مريض بالاسم؟"));
+      check(seen[0].system.includes(searchArticle.body),
+        "ح.٨.١ (تجهيز) سؤالُ مسارِ عملٍ («كيف ابحث...») ⟶ المقالةُ تصل نصَّ النظام فعلياً — إثباتُ تطابقٍ حقيقي",
+        seen[0].system.slice(-400));
+      check(workflowSearch.value.knowledge.some((k: any) => k.id === searchArticle.id),
+        "ح.٨.٢ وتظهر في knowledge أيضاً");
+
+      //  ══ ثانياً: طلبُ بحثٍ حيّ فعليّ عن مريضٍ بعينه — بنفس المفردتين
+      //  الحرفيّتين تقريباً («ابحث»، «المريض») — ⟶ **لا تظهر**، والأداةُ
+      //  الحيّة (`patient_search`) تُنفَّذ بدلاً منها ══════════════════════
+      resetFin();
+      runScript([
+        { toolCalls: [{ name: "patient_search", input: { query: "احمد حسين" } }] },
+        { text: "وجدتُ مريضاً واحداً بهذا الاسم." },
+      ]);
+      const liveSearch: any = await chat(access(S.recv), ask("ابحث عن المريض احمد حسين"));
+      same("ح.٨.٣ الطلبُ نجح والأداةُ الحيّة (patient_search) نُفِّذت",
+        liveSearch.value.tools, { names: ["patient_search"], count: 1 });
+      check(!seen[0].system.includes(searchArticle.body),
+        "ح.٨.٤ **وبلا نصّ المقالة في نصّ النظام** — رغم أنها تطابق «ابحث»/«المريض» فعلياً كما أُثبت في ح.٨.١",
+        seen[0].system.slice(-400));
+      same("ح.٨.٥ **وknowledge فارغةٌ صراحةً** — نتائجُ البحث الحيّة وحدها هي المصدر",
+        liveSearch.value.knowledge, []);
+      same("ح.٨.٦ وtoolsUsed يبقى المصدرَ الوحيد للتزويد",
+        liveSearch.value.toolsUsed, ["بحث المرضى"]);
+    } finally {
+      await setArticleActive({ id: searchArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
+    }
+
     // ══ ط. الأدواتُ الجديدة تُعرَض بحسب الدور (D1/D2/D3) ═════════════════
     console.log("\n── الأدواتُ الجديدة بحسب الدور ──");
     runScript([{ text: "تمام." }]);

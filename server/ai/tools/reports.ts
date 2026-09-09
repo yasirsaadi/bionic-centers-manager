@@ -109,6 +109,37 @@ function effectiveScope(params: {
   return params.operationalBranches;
 }
 
+// ══ الفرقُ والنسبة — يُحسبان في الخادم دائماً، لا في النموذج (مراجعةٌ
+// إنتاجية) ═══════════════════════════════════════════════════════════════
+// كانت `comparison` تُرجع رقمَي الفترتين خاماً (الحاليّ والسابق) فتُرِك
+// النموذجُ يطرحهما ويحسب النسبةَ بنفسه — وهذا ما رصدته المراجعةُ فعلياً،
+// وهو مخالفةٌ صريحة لقاعدة «لا تحسب رقماً مالياً أو إحصائياً بنفسك».
+// فصار **كلُّ** حقل مقارنة كائناً واحداً محسوباً بالكامل: `currentValue`
+// و`previousValue` (للسياق) و`delta` (فرقٌ جاهز) و`percentChange` (نسبةٌ
+// جاهزة). والنموذجُ **يرحّل** هذا الكائن، ولا يُطلَب منه حسابٌ إطلاقاً.
+export interface MetricComparison {
+  currentValue: number;
+  previousValue: number;
+  /** currentValue − previousValue — جاهزٌ، بلا طرحٍ من النموذج. */
+  delta: number;
+  /**
+   * `(delta / |previousValue|) × 100`، بمنزلةٍ عشرية واحدة — أو `null` حين
+   * `previousValue = 0` (لا مقامَ يُقسَم عليه، فلا نسبةَ ذاتَ معنى). **القسمةُ
+   * على القيمة المطلَقة عمداً**: مقياسٌ قد يكون سالباً (`net` مثلاً) —
+   * فتحسّنٌ من -50,000 إلى -20,000 (خسارةٌ أصغر) يجب أن يُقرأ +60% لا -60%،
+   * وإلّا بدا تحسّناً حقيقياً وكأنه تراجع.
+   */
+  percentChange: number | null;
+}
+
+export function computeComparison(currentValue: number, previousValue: number): MetricComparison {
+  const delta = currentValue - previousValue;
+  const percentChange = previousValue === 0
+    ? null
+    : Math.round((delta / Math.abs(previousValue)) * 1000) / 10;
+  return { currentValue, previousValue, delta, percentChange };
+}
+
 // ══ ١. المُلخَّص التشغيليّ (D2) ═══════════════════════════════════════════
 
 export interface OperationalBranchBreakdown {
@@ -123,13 +154,18 @@ export interface OperationalBranchBreakdown {
  * `awaitingExamNow`/`manufacturingNow`/`activePhysiotherapyPatientsNow` هنا:
  * تلك حالةٌ الآن، وإدراجُها في مقارنةٍ تاريخية يوهم بأنها كانت كذلك في
  * الفترة السابقة — وهي لم تُقَس أصلاً في أيّ فترةٍ ماضية.
+ *
+ * **وكلُّ مقياسٍ `MetricComparison` كاملٌ محسوبٌ** — لا رقمَي فترتين خامَين
+ * يُترَك النموذجُ يطرحهما (راجع التعليق فوق `computeComparison`).
  */
 export interface OperationalPeriodComparison {
   start: string;
   end: string;
-  newPatients: number;
-  visits: number;
-  physiotherapySessions: number;
+  metrics: {
+    newPatients: MetricComparison;
+    visits: MetricComparison;
+    physiotherapySessions: MetricComparison;
+  };
 }
 
 export interface OperationalSummaryResult {
@@ -291,7 +327,14 @@ export async function getOperationalSummary(params: {
     const prev = previousPeriod(start, end);
     const prevBounds = baghdadRangeBounds(prev.start, prev.end);
     const prevMetrics = await countPeriodMetrics(scope, prevBounds.startTs, prevBounds.endExclusiveTs);
-    comparison = { start: prev.start, end: prev.end, ...prevMetrics };
+    comparison = {
+      start: prev.start, end: prev.end,
+      metrics: {
+        newPatients: computeComparison(current.newPatients, prevMetrics.newPatients),
+        visits: computeComparison(current.visits, prevMetrics.visits),
+        physiotherapySessions: computeComparison(current.physiotherapySessions, prevMetrics.physiotherapySessions),
+      },
+    };
   }
 
   const mfg = (manufacturingR.rows ?? [])[0] as any;
@@ -355,11 +398,26 @@ export interface FinancialPeriodFigures extends FinancialPeriodMetrics {
   outstandingLifetime: number; // **ليست فترةً** — رصيدٌ إجماليّ مستحقّ حتى الآن
 }
 
+/**
+ * مقارنةٌ ماليّة محسوبةٌ بالكامل — **الأربعةُ حقولٌ محسوبة، لا رقمَي
+ * فترتين خامَين** (راجع التعليق فوق `computeComparison`). بلا
+ * `outstandingLifetime`/`collectionRateLifetime` (راجع التعليق أعلاه
+ * `FinancialPeriodFigures`) — لم تُقاسا في الفترة السابقة أصلاً.
+ */
+export interface FinancialMetricsComparison {
+  start: string;
+  end: string;
+  metrics: {
+    salesValue: MetricComparison;
+    revenue: MetricComparison;
+    expenses: MetricComparison;
+    net: MetricComparison;
+  };
+}
+
 export interface FinancialSummaryResult {
   current: FinancialPeriodFigures;
-  /** الفترةُ السابقة — **مقاييسُ الفترة الأربعة فقط**، بلا `outstandingLifetime`/
-   *  `collectionRateLifetime` (راجع التعليق أعلاه `FinancialPeriodFigures`). */
-  comparison: FinancialPeriodMetrics | null;
+  comparison: FinancialMetricsComparison | null;
   byBranch: (FinancialPeriodFigures & { branchId: number; branchName: string })[] | null;
 }
 
@@ -379,13 +437,6 @@ async function summaryFor(branchId: number | undefined, start: string, end: stri
   };
 }
 
-/** مقاييسُ الفترة فقط من نتيجة `summaryFor` — تُسقِط الحقلين «مدى الحياة»
- *  صراحةً (لا تكتفي بعدم قراءتهما) قبل أن يدخلا `comparison`. */
-function periodMetricsOnly(full: FinancialPeriodFigures): FinancialPeriodMetrics {
-  const { collectionRateLifetime: _collectionRateLifetime, outstandingLifetime: _outstandingLifetime, ...period } = full;
-  return period;
-}
-
 export async function getFinancialSummary(params: {
   isAdmin: boolean;
   /** نطاقُ الجلسة المالي — `null` = كلّ الفروع (مسؤولٌ بلا اختيار). */
@@ -403,11 +454,19 @@ export async function getFinancialSummary(params: {
 
   const current = await summaryFor(branchId ?? undefined, params.start, params.end);
 
-  let comparison: FinancialPeriodMetrics | null = null;
+  let comparison: FinancialMetricsComparison | null = null;
   if (params.compare) {
     const prev = previousPeriod(params.start, params.end);
     const prevFull = await summaryFor(branchId ?? undefined, prev.start, prev.end);
-    comparison = periodMetricsOnly(prevFull);
+    comparison = {
+      start: prev.start, end: prev.end,
+      metrics: {
+        salesValue: computeComparison(current.salesValue, prevFull.salesValue),
+        revenue: computeComparison(current.revenue, prevFull.revenue),
+        expenses: computeComparison(current.expenses, prevFull.expenses),
+        net: computeComparison(current.net, prevFull.net),
+      },
+    };
   }
 
   let byBranch: FinancialSummaryResult["byBranch"] = null;
